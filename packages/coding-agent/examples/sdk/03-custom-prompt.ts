@@ -4,52 +4,21 @@
  * Shows how to replace or modify the default system prompt.
  */
 
-import { createAgentSession, DefaultResourceLoader, SessionManager } from "@mariozechner/pi-coding-agent";
+import { createAgentSession, SessionManager } from "@mariozechner/pi-coding-agent";
 
-// Option 1: Replace prompt entirely
-const loader1 = new DefaultResourceLoader({
-	systemPromptOverride: () => `You are a helpful assistant that speaks like a pirate.
-Always end responses with "Arrr!"`,
-	// Needed to avoid DefaultResourceLoader appending APPEND_SYSTEM.md from ~/.pi/agent or <cwd>/.pi.
-	appendSystemPromptOverride: () => [],
-});
-await loader1.reload();
+// Note: DefaultResourceLoader no longer supports systemPromptOverride.
+// Use system prompt events in extensions or modify APPEND_SYSTEM.md instead.
 
-const { session: session1 } = await createAgentSession({
-	resourceLoader: loader1,
+const { session } = await createAgentSession({
 	sessionManager: SessionManager.inMemory(),
 });
 
-session1.subscribe((event) => {
+session.subscribe((event) => {
 	if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
 		process.stdout.write(event.assistantMessageEvent.delta);
 	}
 });
 
-console.log("=== Replace prompt ===");
-await session1.prompt("What is 2 + 2?");
+console.log("=== Custom prompt via APPEND_SYSTEM.md ===");
+await session.prompt("What is 2 + 2?");
 console.log("\n");
-
-// Option 2: Append instructions to the default prompt
-const loader2 = new DefaultResourceLoader({
-	appendSystemPromptOverride: (base) => [
-		...base,
-		"## Additional Instructions\n- Always be concise\n- Use bullet points when listing things",
-	],
-});
-await loader2.reload();
-
-const { session: session2 } = await createAgentSession({
-	resourceLoader: loader2,
-	sessionManager: SessionManager.inMemory(),
-});
-
-session2.subscribe((event) => {
-	if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-		process.stdout.write(event.assistantMessageEvent.delta);
-	}
-});
-
-console.log("=== Modify prompt ===");
-await session2.prompt("List 3 benefits of TypeScript.");
-console.log();

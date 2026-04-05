@@ -435,19 +435,7 @@ Content`,
 			expect(skills).toHaveLength(1);
 			expect(skills[0].name).toBe("injected");
 		});
-
-		it("should apply systemPromptOverride", async () => {
-			const loader = new DefaultResourceLoader({
-				cwd,
-				agentDir,
-				systemPromptOverride: () => "Custom system prompt",
-			});
-			await loader.reload();
-
-			expect(loader.getSystemPrompt()).toBe("Custom system prompt");
-		});
 	});
-
 	describe("extension conflict detection", () => {
 		it("should detect tool conflicts between extensions", async () => {
 			// Create two extensions that register the same tool
