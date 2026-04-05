@@ -39,7 +39,6 @@ import {
 import { spawn, spawnSync } from "child_process";
 import {
 	APP_NAME,
-	getAgentDir,
 	getAuthPath,
 	getDebugLogPath,
 	getShareViewerUrl,
@@ -59,7 +58,6 @@ import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.js";
 import { createCompactionSummaryMessage } from "../../core/messages.js";
 import { findExactModelReferenceMatch, resolveModelScope } from "../../core/model-resolver.js";
-import { DefaultPackageManager } from "../../core/package-manager.js";
 import type { ResourceDiagnostic } from "../../core/resource-loader.js";
 import { type SessionContext, SessionManager } from "../../core/session-manager.js";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.js";
@@ -650,43 +648,11 @@ export class InteractiveMode {
 	 * Check npm registry for a newer version.
 	 */
 	private async checkForNewVersion(): Promise<string | undefined> {
-		if (process.env.PI_SKIP_VERSION_CHECK || process.env.PI_OFFLINE) return undefined;
-
-		try {
-			const response = await fetch("https://registry.npmjs.org/@mariozechner/pi-coding-agent/latest", {
-				signal: AbortSignal.timeout(10000),
-			});
-			if (!response.ok) return undefined;
-
-			const data = (await response.json()) as { version?: string };
-			const latestVersion = data.version;
-
-			if (latestVersion && latestVersion !== this.version) {
-				return latestVersion;
-			}
-
-			return undefined;
-		} catch {
-			return undefined;
-		}
+		return undefined;
 	}
 
 	private async checkForPackageUpdates(): Promise<string[]> {
-		if (process.env.PI_OFFLINE) {
-			return [];
-		}
-
-		try {
-			const packageManager = new DefaultPackageManager({
-				cwd: this.sessionManager.getCwd(),
-				agentDir: getAgentDir(),
-				settingsManager: this.settingsManager,
-			});
-			const updates = await packageManager.checkForAvailableUpdates();
-			return updates.map((update) => update.displayName);
-		} catch {
-			return [];
-		}
+		return [];
 	}
 
 	private async checkTmuxKeyboardSetup(): Promise<string | undefined> {
@@ -776,10 +742,23 @@ export class InteractiveMode {
 	// Extension System
 	// =========================================================================
 
-	private formatDisplayPath(p: string): string {
+	private getBuiltinExtensionDisplayName(extensionId: string): string {
+		return extensionId === "todowrite" ? "todo" : extensionId;
+	}
+
+	private getBuiltinExtensionNameFromPath(p: string): string | undefined {
 		const builtinMatch = p.match(/^<builtin:([^>]+)>$/);
-		if (builtinMatch) {
-			return `builtin/${builtinMatch[1]}`;
+		if (!builtinMatch) {
+			return undefined;
+		}
+
+		return this.getBuiltinExtensionDisplayName(builtinMatch[1]);
+	}
+
+	private formatDisplayPath(p: string): string {
+		const builtinName = this.getBuiltinExtensionNameFromPath(p);
+		if (builtinName) {
+			return `builtin/${builtinName}`;
 		}
 
 		const home = os.homedir();
@@ -919,6 +898,51 @@ export class InteractiveMode {
 				for (const item of sortedPackagePaths) {
 					lines.push(theme.fg("dim", `      ${options.formatPackagePath(item, source)}`));
 				}
+			}
+		}
+
+		return lines.join("\n");
+	}
+
+	private formatExtensionScopeGroups(extensions: Array<{ path: string; sourceInfo?: SourceInfo }>): string {
+		const lines: string[] = [];
+		const builtinExtensions: Array<{ path: string; sourceInfo?: SourceInfo }> = [];
+		const scopedExtensions: Array<{ path: string; sourceInfo?: SourceInfo }> = [];
+
+		for (const extension of extensions) {
+			if (this.getBuiltinExtensionNameFromPath(extension.path)) {
+				builtinExtensions.push(extension);
+			} else {
+				scopedExtensions.push(extension);
+			}
+		}
+
+		if (builtinExtensions.length > 0) {
+			lines.push(`  ${theme.fg("accent", "builtin")}`);
+
+			const sortedBuiltinExtensions = [...builtinExtensions].sort((left, right) => {
+				const leftName = this.getBuiltinExtensionNameFromPath(left.path) ?? left.path;
+				const rightName = this.getBuiltinExtensionNameFromPath(right.path) ?? right.path;
+				return leftName.localeCompare(rightName);
+			});
+
+			for (const extension of sortedBuiltinExtensions) {
+				const builtinName = this.getBuiltinExtensionNameFromPath(extension.path);
+				if (!builtinName) {
+					continue;
+				}
+				lines.push(theme.fg("dim", `    ${builtinName}`));
+			}
+		}
+
+		if (scopedExtensions.length > 0) {
+			const groups = this.buildScopeGroups(scopedExtensions);
+			const scopedList = this.formatScopeGroups(groups, {
+				formatPath: (item) => this.formatDisplayPath(item.path),
+				formatPackagePath: (item) => this.getShortPath(item.path, item.sourceInfo),
+			});
+			if (scopedList) {
+				lines.push(scopedList);
 			}
 		}
 
@@ -1091,11 +1115,7 @@ export class InteractiveMode {
 			}
 
 			if (extensions.length > 0) {
-				const groups = this.buildScopeGroups(extensions);
-				const extList = this.formatScopeGroups(groups, {
-					formatPath: (item) => this.formatDisplayPath(item.path),
-					formatPackagePath: (item) => this.getShortPath(item.path, item.sourceInfo),
-				});
+				const extList = this.formatExtensionScopeGroups(extensions);
 				this.chatContainer.addChild(new Text(`${sectionHeader("Extensions", "mdHeading")}\n${extList}`, 0, 0));
 				this.chatContainer.addChild(new Spacer(1));
 			}
