@@ -1,3 +1,4 @@
+import os from "node:os";
 import { Container } from "@mariozechner/pi-tui";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.js";
@@ -186,11 +187,58 @@ describe("InteractiveMode.showLoadedResources", () => {
 	test("formats builtin synthetic extension paths with readable builtin labels", () => {
 		// given
 		const path = "<builtin:todowrite>";
+		const fakeThis = {
+			getBuiltinExtensionNameFromPath: (InteractiveMode as any).prototype.getBuiltinExtensionNameFromPath,
+			getBuiltinExtensionDisplayName: (InteractiveMode as any).prototype.getBuiltinExtensionDisplayName,
+		};
 
 		// when
-		const displayPath = (InteractiveMode as any).prototype.formatDisplayPath.call({}, path);
+		const displayPath = (InteractiveMode as any).prototype.formatDisplayPath.call(fakeThis, path);
 
 		// then
-		expect(displayPath).toBe("builtin/todowrite");
+		expect(displayPath).toBe("builtin/todo");
+	});
+
+	test("groups builtin extensions separately from user extensions", () => {
+		const home = os.homedir();
+		const fakeThis: any = createShowLoadedResourcesThis({
+			quietStartup: false,
+		});
+		fakeThis.getBuiltinExtensionDisplayName = (InteractiveMode as any).prototype.getBuiltinExtensionDisplayName;
+		fakeThis.getBuiltinExtensionNameFromPath = (InteractiveMode as any).prototype.getBuiltinExtensionNameFromPath;
+		fakeThis.formatDisplayPath = (InteractiveMode as any).prototype.formatDisplayPath;
+		fakeThis.getShortPath = (InteractiveMode as any).prototype.getShortPath;
+		fakeThis.getScopeGroup = (InteractiveMode as any).prototype.getScopeGroup;
+		fakeThis.isPackageSource = (InteractiveMode as any).prototype.isPackageSource;
+		fakeThis.buildScopeGroups = (InteractiveMode as any).prototype.buildScopeGroups;
+		fakeThis.formatScopeGroups = (InteractiveMode as any).prototype.formatScopeGroups;
+		fakeThis.formatExtensionScopeGroups = (InteractiveMode as any).prototype.formatExtensionScopeGroups;
+
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
+			extensions: [
+				{ path: "<builtin:todowrite>" },
+				{ path: "<builtin:redraws>" },
+				{
+					path: `${home}/.pi/agent/extensions/diff.js`,
+					sourceInfo: {
+						path: `${home}/.pi/agent/extensions/diff.js`,
+						source: "local",
+						scope: "user",
+						origin: "top-level",
+						baseDir: `${home}/.pi/agent/extensions`,
+					},
+				},
+			],
+			force: true,
+		});
+
+		const output = renderAll(fakeThis.chatContainer);
+		expect(output).toContain("[Extensions]");
+		expect(output).toContain("builtin");
+		expect(output).toContain("redraws");
+		expect(output).toContain("todo");
+		expect(output).toContain("user");
+		expect(output).toContain("~/.pi/agent/extensions/diff.js");
+		expect(output).not.toContain("todowrite");
 	});
 });
