@@ -35,3 +35,5 @@ out.html
 packages/coding-agent/binaries/
 todo.md
 plans/
+
+local-ignore/
