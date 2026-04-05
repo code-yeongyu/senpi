@@ -14,7 +14,7 @@ This repo is a **fork** of `upstream` ([badlogic/pi-mono](https://github.com/bad
 
 ### Rules
 
-1. **Extension-first**: All changes and feature additions MUST use pi-mono's [extension system](packages/coding-agent/docs/extensions.md). Add builtin extensions rather than modifying core code.
+1. **Builtin extension-first**: All changes and feature additions MUST use pi-mono's [extension system](packages/coding-agent/docs/extensions.md). Add **builtin extensions** at `packages/coding-agent/src/core/extensions/builtin/` and register them in `builtin/index.ts`. These load automatically via `resource-loader.ts` without requiring `.pi/extensions/` or `~/.pi/agent/extensions/`.
 2. **If extension is impossible**: Only then modify upstream source. When you do, create/update a `changes.md` in the affected subdirectory documenting:
    - What was changed and why
    - Which files were modified
@@ -36,7 +36,7 @@ This repo is a **fork** of `upstream` ([badlogic/pi-mono](https://github.com/bad
 | UI customization | `pi.ui.setFooter()`, `setWidget()`, etc. | `examples/extensions/custom-footer.ts` |
 | Custom renderers | `pi.registerMessageRenderer()` | Extension docs |
 
-Extensions load from: `.pi/extensions/` (project-local), `~/.pi/agent/extensions/` (global), or `-e ./path.ts` (ad-hoc).
+Extensions load from: builtin (`packages/coding-agent/src/core/extensions/builtin/`), `.pi/extensions/` (project-local), `~/.pi/agent/extensions/` (global), or `-e ./path.ts` (ad-hoc).
 
 ## STRUCTURE
 
@@ -62,7 +62,7 @@ Build dependency order: `tui` -> `ai` -> `agent` -> `coding-agent` -> `mom` -> `
 | Task | Location | Notes |
 |------|----------|-------|
 | Add LLM provider | `packages/ai/src/providers/` | 7-step checklist below |
-| Add coding agent feature | Write an extension first | See Fork Strategy |
+| Add coding agent feature | Add builtin extension at `src/core/extensions/builtin/` | Register in `builtin/index.ts` |
 | Modify core tools | `packages/coding-agent/src/core/tools/` | bash, read, write, edit, grep, find, ls |
 | Extension system internals | `packages/coding-agent/src/core/extensions/` | types.ts (1450 lines), loader.ts, runner.ts |
 | TUI components | `packages/coding-agent/src/modes/interactive/components/` | 35 files |

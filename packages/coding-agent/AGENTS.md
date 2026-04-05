@@ -7,7 +7,7 @@ Main CLI application. **Primary package** of the monorepo and primary focus for 
 Changes here have the highest merge conflict risk with upstream. Before modifying any file:
 
 1. **Check if an extension can do it** - See `docs/extensions.md` (2262 lines of API reference)
-2. **If yes**: Add to `.pi/extensions/` (project-local) or `~/.pi/agent/extensions/` (global)
+2. **If yes**: Add as a **builtin extension** at `src/core/extensions/builtin/` and register in `builtin/index.ts`. These load automatically via `resource-loader.ts` without requiring `.pi/extensions/` or `~/.pi/agent/extensions/`.
 3. **If no**: Modify source, then create/update `changes.md` in the affected subdirectory
 
 Extension system supports: tools, commands, shortcuts, flags, providers, event interception, UI customization, message renderers. 30+ event types. See root AGENTS.md for the capability table.
@@ -27,7 +27,8 @@ src/
 │   ├── extensions/              # Extension system (types, loader, runner)
 │   │   ├── types.ts             # 1450 lines - ExtensionAPI, events, tools
 │   │   ├── loader.ts            # jiti-based TS loading, discovery
-│   │   └── runner.ts            # ExtensionRunner, event emission
+│   │   ├── runner.ts            # ExtensionRunner, event emission
+│   │   └── builtin/             # Builtin extensions (todowrite, diff, files, etc.)
 │   └── tools/                   # Built-in tools
 │       ├── bash.ts, read.ts, write.ts, edit.ts
 │       ├── grep.ts, find.ts, ls.ts

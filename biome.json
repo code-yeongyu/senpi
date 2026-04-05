@@ -33,10 +33,10 @@
 			"!**/node_modules/**/*",
 			"!**/test-sessions.ts",
 			"!**/models.generated.ts",
-"!packages/web-ui/src/app.css",
+			"!packages/web-ui/src/app.css",
 			"!packages/mom/data/**/*",
 			"!local-ignore/**/*",
-"!!**/node_modules"
+			"!!**/node_modules"
 		]
 	}
 }
