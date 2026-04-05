@@ -1,4 +1,5 @@
 import type { ExtensionFactory } from "../types.js";
+import backgroundTaskExtension from "./background-task/index.js";
 import parallelToolCallsExtension from "./parallel-tool-calls.js";
 import redrawsExtension from "./redraws.js";
 import todowriteExtension from "./todowrite.js";
@@ -11,6 +12,7 @@ export interface BuiltinExtensionFactory {
 export const globalDefaultExtensionIds = ["diff", "files", "prompt-url-widget", "tps"] as const;
 
 export const builtinExtensions: BuiltinExtensionFactory[] = [
+	{ id: "background-task", factory: backgroundTaskExtension },
 	{ id: "todowrite", factory: todowriteExtension },
 	{ id: "redraws", factory: redrawsExtension },
 	{ id: "parallel-tool-calls", factory: parallelToolCallsExtension },
