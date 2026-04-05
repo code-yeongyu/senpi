@@ -6,11 +6,16 @@ import redrawsExtension from "./redraws.js";
 import todowriteExtension from "./todowrite.js";
 import tpsExtension from "./tps.js";
 
-export const builtinExtensions: ExtensionFactory[] = [
-	todowriteExtension,
-	diffExtension,
-	filesExtension,
-	promptUrlWidgetExtension,
-	redrawsExtension,
-	tpsExtension,
+export interface BuiltinExtensionFactory {
+	id: string;
+	factory: ExtensionFactory;
+}
+
+export const builtinExtensions: BuiltinExtensionFactory[] = [
+	{ id: "todowrite", factory: todowriteExtension },
+	{ id: "diff", factory: diffExtension },
+	{ id: "files", factory: filesExtension },
+	{ id: "prompt-url-widget", factory: promptUrlWidgetExtension },
+	{ id: "redraws", factory: redrawsExtension },
+	{ id: "tps", factory: tpsExtension },
 ];

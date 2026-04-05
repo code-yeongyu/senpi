@@ -777,6 +777,11 @@ export class InteractiveMode {
 	// =========================================================================
 
 	private formatDisplayPath(p: string): string {
+		const builtinMatch = p.match(/^<builtin:([^>]+)>$/);
+		if (builtinMatch) {
+			return `builtin/${builtinMatch[1]}`;
+		}
+
 		const home = os.homedir();
 		let result = p;
 

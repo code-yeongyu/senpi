@@ -297,6 +297,25 @@ Content`,
 
 			expect(loader.getAppendSystemPrompt()).toContain("Additional instructions.");
 		});
+
+		it("should assign stable builtin identifiers to builtin extension factories", async () => {
+			// given
+			const loader = new DefaultResourceLoader({ cwd, agentDir });
+
+			// when
+			await loader.reload();
+			const builtinPaths = loader.getExtensions().extensions.map((extension) => extension.path);
+
+			// then
+			expect(builtinPaths).toEqual([
+				"<builtin:todowrite>",
+				"<builtin:diff>",
+				"<builtin:files>",
+				"<builtin:prompt-url-widget>",
+				"<builtin:redraws>",
+				"<builtin:tps>",
+			]);
+		});
 	});
 
 	describe("extendResources", () => {

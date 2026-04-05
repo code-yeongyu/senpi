@@ -9,7 +9,7 @@ import type { ResourceDiagnostic } from "./diagnostics.js";
 export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.js";
 
 import { createEventBus, type EventBus } from "./event-bus.js";
-import { builtinExtensions } from "./extensions/builtin/index.js";
+import { type BuiltinExtensionFactory, builtinExtensions } from "./extensions/builtin/index.js";
 import { createExtensionRuntime, loadExtensionFromFactory, loadExtensions } from "./extensions/loader.js";
 import type { Extension, ExtensionFactory, ExtensionRuntime, LoadExtensionsResult } from "./extensions/types.js";
 import { DefaultPackageManager, type PathMetadata } from "./package-manager.js";
@@ -137,6 +137,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private additionalSkillPaths: string[];
 	private additionalPromptTemplatePaths: string[];
 	private additionalThemePaths: string[];
+	private builtinExtensionFactories: BuiltinExtensionFactory[];
 	private extensionFactories: ExtensionFactory[];
 	private noExtensions: boolean;
 	private noSkills: boolean;
@@ -188,7 +189,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.additionalSkillPaths = options.additionalSkillPaths ?? [];
 		this.additionalPromptTemplatePaths = options.additionalPromptTemplatePaths ?? [];
 		this.additionalThemePaths = options.additionalThemePaths ?? [];
-		this.extensionFactories = [...builtinExtensions, ...(options.extensionFactories ?? [])];
+		this.builtinExtensionFactories = builtinExtensions;
+		this.extensionFactories = options.extensionFactories ?? [];
 		this.noExtensions = options.noExtensions ?? false;
 		this.noSkills = options.noSkills ?? false;
 		this.noPromptTemplates = options.noPromptTemplates ?? false;
@@ -718,6 +720,23 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}> {
 		const extensions: Extension[] = [];
 		const errors: Array<{ path: string; error: string }> = [];
+
+		for (const builtinExtension of this.builtinExtensionFactories) {
+			const extensionPath = `<builtin:${builtinExtension.id}>`;
+			try {
+				const extension = await loadExtensionFromFactory(
+					builtinExtension.factory,
+					this.cwd,
+					this.eventBus,
+					runtime,
+					extensionPath,
+				);
+				extensions.push(extension);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : "failed to load extension";
+				errors.push({ path: extensionPath, error: message });
+			}
+		}
 
 		for (const [index, factory] of this.extensionFactories.entries()) {
 			const extensionPath = `<inline:${index + 1}>`;

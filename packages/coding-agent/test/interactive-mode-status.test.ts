@@ -182,4 +182,15 @@ describe("InteractiveMode.showLoadedResources", () => {
 		expect(output).toContain("[Skill conflicts]");
 		expect(output).not.toContain("[Skills]");
 	});
+
+	test("formats builtin synthetic extension paths with readable builtin labels", () => {
+		// given
+		const path = "<builtin:todowrite>";
+
+		// when
+		const displayPath = (InteractiveMode as any).prototype.formatDisplayPath.call({}, path);
+
+		// then
+		expect(displayPath).toBe("builtin/todowrite");
+	});
 });
