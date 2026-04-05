@@ -480,8 +480,6 @@ export async function main(args: string[]) {
 				noSkills: parsed.noSkills,
 				noPromptTemplates: parsed.noPromptTemplates,
 				noThemes: parsed.noThemes,
-				systemPrompt: parsed.systemPrompt,
-				appendSystemPrompt: parsed.appendSystemPrompt,
 			},
 		});
 		const { settingsManager, modelRegistry, resourceLoader } = services;
