@@ -2,8 +2,8 @@ import type { Skill } from "../skills.js";
 import { formatSkillsForPrompt } from "../skills.js";
 import { buildIntentGate } from "./intent-gate.js";
 import { buildPoliciesSection } from "./policies.js";
-import { buildToolSection } from "./tool-section.js";
 import { categorizeTools } from "./tool-categorization.js";
+import { buildToolSection } from "./tool-section.js";
 
 export interface BuildDynamicSystemPromptOptions {
 	cwd: string;
