@@ -395,10 +395,11 @@ async function executeToolCallsParallel(
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
 ): Promise<ToolResultMessage[]> {
-	const results: ToolResultMessage[] = [];
+	const orderedResults: Promise<ToolResultMessage>[] = [];
+	const preparedIndices: number[] = [];
 	const runnableCalls: PreparedToolCall[] = [];
 
-	for (const toolCall of toolCalls) {
+	for (const [index, toolCall] of toolCalls.entries()) {
 		await emit({
 			type: "tool_execution_start",
 			toolCallId: toolCall.id,
@@ -408,33 +409,20 @@ async function executeToolCallsParallel(
 
 		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
 		if (preparation.kind === "immediate") {
-			results.push(await emitToolCallOutcome(toolCall, preparation.result, preparation.isError, emit));
+			orderedResults[index] = emitToolCallOutcome(toolCall, preparation.result, preparation.isError, emit);
 		} else {
+			preparedIndices.push(index);
 			runnableCalls.push(preparation);
 		}
 	}
 
-	const runningCalls = runnableCalls.map((prepared) => ({
-		prepared,
-		execution: executePreparedToolCall(prepared, signal, emit),
-	}));
-
-	for (const running of runningCalls) {
-		const executed = await running.execution;
-		results.push(
-			await finalizeExecutedToolCall(
-				currentContext,
-				assistantMessage,
-				running.prepared,
-				executed,
-				config,
-				signal,
-				emit,
-			),
+	for (const [offset, prepared] of runnableCalls.entries()) {
+		orderedResults[preparedIndices[offset]] = executePreparedToolCall(prepared, signal, emit).then((executed) =>
+			finalizeExecutedToolCall(currentContext, assistantMessage, prepared, executed, config, signal, emit),
 		);
 	}
 
-	return results;
+	return Promise.all(orderedResults);
 }
 
 type PreparedToolCall = {

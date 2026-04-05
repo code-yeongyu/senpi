@@ -30,7 +30,7 @@ export type StreamFn = (
  *
  * - "sequential": each tool call is prepared, executed, and finalized before the next one starts.
  * - "parallel": tool calls are prepared sequentially, then allowed tools execute concurrently.
- *   Final tool results are still emitted in assistant source order.
+ *   Completion events can arrive as each tool finishes, while the returned tool results remain in assistant source order.
  */
 export type ToolExecutionMode = "sequential" | "parallel";
 

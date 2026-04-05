@@ -101,7 +101,7 @@ prompt("Read config.json")
 
 Tool execution mode is configurable:
 
-- `parallel` (default): preflight tool calls sequentially, execute allowed tools concurrently, emit final `tool_execution_end` and `toolResult` messages in assistant source order
+- `parallel` (default): preflight tool calls sequentially, execute allowed tools concurrently, emit completion events as each tool finishes, and keep the returned `toolResults` array in assistant source order
 - `sequential`: execute tool calls one by one, matching the historical behavior
 
 The `beforeToolCall` hook runs after `tool_execution_start` and validated argument parsing. It can block execution. The `afterToolCall` hook runs after tool execution finishes and before `tool_execution_end` and final tool result message events are emitted.

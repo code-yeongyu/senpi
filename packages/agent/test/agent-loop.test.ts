@@ -449,7 +449,7 @@ describe("agentLoop with AgentMessage", () => {
 		expect(executed).toEqual([[{ oldText: "before", newText: "after" }]]);
 	});
 
-	it("should execute tool calls in parallel and emit tool results in source order", async () => {
+	it("should execute tool calls in parallel and emit completion events as tools finish", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		let firstResolved = false;
 		let parallelObserved = false;
@@ -527,7 +527,102 @@ describe("agentLoop with AgentMessage", () => {
 		});
 
 		expect(parallelObserved).toBe(true);
-		expect(toolResultIds).toEqual(["tool-1", "tool-2"]);
+		expect(toolResultIds).toEqual(["tool-2", "tool-1"]);
+	});
+
+	it("should emit parallel completion events early while keeping turn results in source order", async () => {
+		// given
+		const toolSchema = Type.Object({ value: Type.String() });
+		let releaseFirst: (() => void) | undefined;
+		const firstFinished = new Promise<void>((resolve) => {
+			releaseFirst = resolve;
+		});
+
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			async execute(_toolCallId, params) {
+				if (params.value === "first") {
+					await firstFinished;
+				}
+
+				return {
+					content: [{ type: "text", text: `echoed: ${params.value}` }],
+					details: { value: params.value },
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+
+		const userPrompt: AgentMessage = createUserMessage("echo both");
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			toolExecution: "parallel",
+		};
+
+		let callIndex = 0;
+		const stream = agentLoop([userPrompt], context, config, undefined, () => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					const message = createAssistantMessage(
+						[
+							{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "first" } },
+							{ type: "toolCall", id: "tool-2", name: "echo", arguments: { value: "second" } },
+						],
+						"toolUse",
+					);
+					mockStream.push({ type: "done", reason: "toolUse", message });
+					setTimeout(() => releaseFirst?.(), 20);
+				} else {
+					const message = createAssistantMessage([{ type: "text", text: "done" }]);
+					mockStream.push({ type: "done", reason: "stop", message });
+				}
+				callIndex++;
+			});
+			return mockStream;
+		});
+
+		const events: AgentEvent[] = [];
+
+		// when
+		for await (const event of stream) {
+			events.push(event);
+		}
+
+		const toolExecutionEndIds = events.flatMap((event) => {
+			if (event.type !== "tool_execution_end") {
+				return [];
+			}
+			return [event.toolCallId];
+		});
+
+		const toolResultMessageIds = events.flatMap((event) => {
+			if (event.type !== "message_end" || event.message.role !== "toolResult") {
+				return [];
+			}
+			return [event.message.toolCallId];
+		});
+
+		const turnEndEvent = events.find((event): event is Extract<AgentEvent, { type: "turn_end" }> => {
+			return event.type === "turn_end" && event.toolResults.length > 0;
+		});
+
+		// then
+		expect(toolExecutionEndIds).toEqual(["tool-2", "tool-1"]);
+		expect(toolResultMessageIds).toEqual(["tool-2", "tool-1"]);
+		if (!turnEndEvent) {
+			throw new Error("Expected turn_end event");
+		}
+		expect(turnEndEvent.toolResults.map((result) => result.toolCallId)).toEqual(["tool-1", "tool-2"]);
 	});
 
 	it("should inject queued messages after all tool calls complete", async () => {
