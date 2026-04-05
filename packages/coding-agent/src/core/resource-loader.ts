@@ -9,6 +9,7 @@ import type { ResourceDiagnostic } from "./diagnostics.js";
 export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.js";
 
 import { createEventBus, type EventBus } from "./event-bus.js";
+import { builtinExtensions } from "./extensions/builtin/index.js";
 import { createExtensionRuntime, loadExtensionFromFactory, loadExtensions } from "./extensions/loader.js";
 import type { Extension, ExtensionFactory, ExtensionRuntime, LoadExtensionsResult } from "./extensions/types.js";
 import { DefaultPackageManager, type PathMetadata } from "./package-manager.js";
@@ -187,7 +188,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.additionalSkillPaths = options.additionalSkillPaths ?? [];
 		this.additionalPromptTemplatePaths = options.additionalPromptTemplatePaths ?? [];
 		this.additionalThemePaths = options.additionalThemePaths ?? [];
-		this.extensionFactories = options.extensionFactories ?? [];
+		this.extensionFactories = [...builtinExtensions, ...(options.extensionFactories ?? [])];
 		this.noExtensions = options.noExtensions ?? false;
 		this.noSkills = options.noSkills ?? false;
 		this.noPromptTemplates = options.noPromptTemplates ?? false;
