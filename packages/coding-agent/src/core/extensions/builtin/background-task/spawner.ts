@@ -5,6 +5,7 @@ import {
 	AGENT_TYPE_ENV_VAR,
 	DEPTH_ENV_VAR,
 	MAX_SUBAGENT_DEPTH,
+	type SpawnEvent,
 	type SpawnedAgent,
 	type SpawnOptions,
 } from "./types.js";
@@ -45,6 +46,10 @@ function ensureCleanupRegistered(): void {
 
 type MessagePart = { type: string; text?: string };
 type NdjsonMessage = { role: string; content: MessagePart[] };
+
+function emitSpawnEvent(options: SpawnOptions, event: SpawnEvent): void {
+	options.onEvent?.(event);
+}
 
 export function spawnSubagent(options: SpawnOptions): SpawnedAgent {
 	const currentDepth = parseInt(process.env[DEPTH_ENV_VAR] ?? "0", 10);
@@ -134,6 +139,40 @@ export function spawnSubagent(options: SpawnOptions): SpawnedAgent {
 						accumulatedText.push(...updateText);
 					}
 				}
+			}
+		}
+
+		if (
+			typeof event === "object" &&
+			event !== null &&
+			"type" in event &&
+			"toolCallId" in event &&
+			"toolName" in event
+		) {
+			const typedEvent = event as {
+				type: string;
+				toolCallId: unknown;
+				toolName: unknown;
+			};
+
+			if (typeof typedEvent.toolCallId !== "string" || typeof typedEvent.toolName !== "string") {
+				return;
+			}
+
+			if (typedEvent.type === "tool_execution_start") {
+				emitSpawnEvent(options, {
+					type: "tool_execution_start",
+					toolCallId: typedEvent.toolCallId,
+					toolName: typedEvent.toolName,
+				});
+			}
+
+			if (typedEvent.type === "tool_execution_end") {
+				emitSpawnEvent(options, {
+					type: "tool_execution_end",
+					toolCallId: typedEvent.toolCallId,
+					toolName: typedEvent.toolName,
+				});
 			}
 		}
 	};

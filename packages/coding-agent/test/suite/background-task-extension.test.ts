@@ -60,6 +60,25 @@ async function createHarnessWithBgExtension(): Promise<Harness> {
 	return createHarness({ resourceLoader: createTestResourceLoader({ extensionsResult }) });
 }
 
+function createTaskInput(
+	overrides: Partial<Omit<BackgroundTask, "id" | "status" | "startedAt">> = {},
+): Omit<BackgroundTask, "id" | "status" | "startedAt"> {
+	return {
+		description: "Test task",
+		prompt: "Do something",
+		model: undefined,
+		agentType: undefined,
+		pid: undefined,
+		sessionPath: undefined,
+		activeToolNames: [],
+		completedAt: undefined,
+		result: undefined,
+		error: undefined,
+		parentSessionId: "test-session",
+		...overrides,
+	};
+}
+
 function getLatestToolResult(harness: Harness, toolName: string) {
 	const results = harness.session.messages.filter(
 		(message) => message.role === "toolResult" && message.toolName === toolName,
@@ -86,17 +105,7 @@ describe("background-task extension", () => {
 		it("launch creates task with bg_ prefix ID format", () => {
 			const manager = new BackgroundManager();
 
-			const task = manager.launch({
-				description: "Test task",
-				prompt: "Do something",
-				model: undefined,
-				pid: undefined,
-				sessionPath: undefined,
-				completedAt: undefined,
-				result: undefined,
-				error: undefined,
-				parentSessionId: "test-session",
-			});
+			const task = manager.launch(createTaskInput());
 
 			expect(task.id).toMatch(/^bg_[0-9a-f]{8}$/);
 			expect(task.status).toBe("pending");
@@ -107,47 +116,17 @@ describe("background-task extension", () => {
 			const manager = new BackgroundManager();
 
 			for (let i = 0; i < MAX_CONCURRENT_TASKS; i++) {
-				manager.launch({
-					description: `Task ${i}`,
-					prompt: `Do ${i}`,
-					model: undefined,
-					pid: undefined,
-					sessionPath: undefined,
-					completedAt: undefined,
-					result: undefined,
-					error: undefined,
-					parentSessionId: "test-session",
-				});
+				manager.launch(createTaskInput({ description: `Task ${i}`, prompt: `Do ${i}` }));
 			}
 
 			expect(() => {
-				manager.launch({
-					description: "Overflow task",
-					prompt: "Do overflow",
-					model: undefined,
-					pid: undefined,
-					sessionPath: undefined,
-					completedAt: undefined,
-					result: undefined,
-					error: undefined,
-					parentSessionId: "test-session",
-				});
+				manager.launch(createTaskInput({ description: "Overflow task", prompt: "Do overflow" }));
 			}).toThrow(`Maximum concurrent tasks (${MAX_CONCURRENT_TASKS}) reached`);
 		});
 
 		it("cancel sets status and returns correct boolean", () => {
 			const manager = new BackgroundManager();
-			const task = manager.launch({
-				description: "Test task",
-				prompt: "Do something",
-				model: undefined,
-				pid: undefined,
-				sessionPath: undefined,
-				completedAt: undefined,
-				result: undefined,
-				error: undefined,
-				parentSessionId: "test-session",
-			});
+			const task = manager.launch(createTaskInput());
 
 			const cancelled = manager.cancelTask(task.id);
 
@@ -177,28 +156,8 @@ describe("background-task extension", () => {
 
 		it("getWidgetLines shows active tasks", () => {
 			const manager = new BackgroundManager();
-			manager.launch({
-				description: "Pending task",
-				prompt: "Do pending",
-				model: undefined,
-				pid: undefined,
-				sessionPath: undefined,
-				completedAt: undefined,
-				result: undefined,
-				error: undefined,
-				parentSessionId: "test-session",
-			});
-			const runningTask = manager.launch({
-				description: "Running task",
-				prompt: "Do running",
-				model: undefined,
-				pid: undefined,
-				sessionPath: undefined,
-				completedAt: undefined,
-				result: undefined,
-				error: undefined,
-				parentSessionId: "test-session",
-			});
+			manager.launch(createTaskInput({ description: "Pending task", prompt: "Do pending" }));
+			const runningTask = manager.launch(createTaskInput({ description: "Running task", prompt: "Do running" }));
 			manager.updateTask(runningTask.id, { status: "running" });
 
 			const lines = getWidgetLines(manager);
@@ -217,23 +176,39 @@ describe("background-task extension", () => {
 			expect(emptyLines).toBeUndefined();
 
 			// when - add active task
-			manager.launch({
-				description: "active task",
-				prompt: "test",
-				model: undefined,
-				pid: undefined,
-				sessionPath: undefined,
-				completedAt: undefined,
-				result: undefined,
-				error: undefined,
-				parentSessionId: "test-session",
-			});
+			manager.launch(createTaskInput({ description: "active task", prompt: "test" }));
 			const activeLines = getWidgetLines(manager);
 
 			// then
 			expect(activeLines).toBeDefined();
 			expect(activeLines?.[0]).toBe("Background Tasks");
 			expect(activeLines?.[1]).toContain("active task");
+		});
+
+		it("getWidgetLines shows compact agent, model, and tool overview", () => {
+			// given
+			const manager = new BackgroundManager();
+			const task = manager.launch(
+				createTaskInput({
+					description: "Investigate auth",
+					prompt: "Inspect auth flow",
+					model: "anthropic/claude-3-7-sonnet",
+					agentType: "explore",
+					activeToolNames: ["grep", "read", "grep"],
+				}),
+			);
+			manager.updateTask(task.id, { status: "running" });
+
+			// when
+			const lines = getWidgetLines(manager);
+
+			// then
+			expect(lines).toEqual([
+				"Background Tasks",
+				"[▶] Investigate auth",
+				"    explore · anthropic/claude-3-7-sonnet",
+				"    tools: grep×2, read",
+			]);
 		});
 	});
 
@@ -309,6 +284,96 @@ describe("background-task extension", () => {
 			const text = result.content[0]?.type === "text" ? result.content[0].text : "";
 			expect(text).toMatch(/Task started: bg_[0-9a-f]{8}/);
 			expect(text).toContain("Description: Async task");
+		});
+
+		it("tracks active subagent tools without bloating the task result text", async () => {
+			// given
+			const manager = new BackgroundManager();
+			const mockPi = {
+				appendEntry: vi.fn(),
+				on: vi.fn(),
+				registerTool: vi.fn(),
+				registerCommand: vi.fn(),
+				registerShortcut: vi.fn(),
+				registerFlag: vi.fn(),
+				registerProvider: vi.fn(),
+				registerMessageRenderer: vi.fn(),
+				ui: { setFooter: vi.fn(), setWidget: vi.fn(), confirm: vi.fn(), notify: vi.fn() },
+				sendMessage: vi.fn(),
+			};
+			const mockCtx = {
+				cwd: "/tmp",
+				model: undefined,
+				signal: undefined,
+				ui: { setWidget: vi.fn(), confirm: vi.fn(), notify: vi.fn() },
+				sessionManager: { getBranch: () => [] },
+				hasUI: false,
+				isIdle: () => true,
+				hasPendingMessages: () => false,
+				abort: () => {},
+				shutdown: () => {},
+				getContextUsage: () => undefined,
+				compact: () => {},
+				getSystemPrompt: () => "",
+			};
+			let emitEvent:
+				| ((event: {
+						type: "tool_execution_start" | "tool_execution_end";
+						toolCallId: string;
+						toolName: string;
+				  }) => void)
+				| undefined;
+			let resolveResult: ((value: { text: string; exitCode: number }) => void) | undefined;
+			const mockSpawner = vi.fn((options: { onEvent?: typeof emitEvent }) => {
+				emitEvent = options.onEvent;
+				return {
+					process: { pid: 12345 },
+					result: new Promise<{ text: string; exitCode: number }>((resolve) => {
+						resolveResult = resolve;
+					}),
+				};
+			});
+			const tool = createTaskTool(
+				manager,
+				mockSpawner as unknown as Parameters<typeof createTaskTool>[1],
+				mockPi as unknown as Parameters<typeof createTaskTool>[2],
+			);
+
+			// when
+			const result = await tool.execute(
+				"call-1",
+				{
+					description: "Inspect auth",
+					prompt: "Do auth work",
+					run_in_background: true,
+					agent_type: "explore",
+					model: "anthropic/claude-3-7-sonnet",
+				},
+				undefined,
+				vi.fn(),
+				mockCtx as unknown as Parameters<typeof tool.execute>[4],
+			);
+			const [task] = manager.getAllTasks();
+			if (!task) {
+				throw new Error("Expected task to be launched");
+			}
+			emitEvent?.({ type: "tool_execution_start", toolCallId: "tool-1", toolName: "grep" });
+			emitEvent?.({ type: "tool_execution_start", toolCallId: "tool-2", toolName: "read" });
+
+			// then
+			const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+			expect(text).toContain(`Task started: ${task.id}`);
+			expect(text).toContain("Description: Inspect auth");
+			expect(text).not.toContain("Agent:");
+			expect(text).not.toContain("Model:");
+			expect(manager.getTask(task.id)?.activeToolNames).toEqual(["grep", "read"]);
+
+			resolveResult?.({ text: "done", exitCode: 0 });
+			await Promise.resolve();
+			await Promise.resolve();
+
+			expect(manager.getTask(task.id)?.activeToolNames).toEqual([]);
+			expect(manager.getTask(task.id)?.status).toBe("completed");
 		});
 
 		it("keeps async task cancelled when the sub-agent completes later", async () => {
@@ -404,17 +469,7 @@ describe("background-task extension", () => {
 	describe("BackgroundOutput tool", () => {
 		it("returns completed task result", async () => {
 			const manager = new BackgroundManager();
-			const task = manager.launch({
-				description: "Completed task",
-				prompt: "Do it",
-				model: undefined,
-				pid: 12345,
-				sessionPath: undefined,
-				completedAt: undefined,
-				result: undefined,
-				error: undefined,
-				parentSessionId: "test-session",
-			});
+			const task = manager.launch(createTaskInput({ description: "Completed task", prompt: "Do it", pid: 12345 }));
 
 			// Mark as completed
 			manager.updateTask(task.id, {
@@ -441,17 +496,7 @@ describe("background-task extension", () => {
 
 		it("returns running task status when not blocking", async () => {
 			const manager = new BackgroundManager();
-			const task = manager.launch({
-				description: "Running task",
-				prompt: "Do it",
-				model: undefined,
-				pid: 12345,
-				sessionPath: undefined,
-				completedAt: undefined,
-				result: undefined,
-				error: undefined,
-				parentSessionId: "test-session",
-			});
+			const task = manager.launch(createTaskInput({ description: "Running task", prompt: "Do it", pid: 12345 }));
 			manager.updateTask(task.id, { status: "running" });
 
 			const tool = createBackgroundOutputTool(manager);
@@ -490,17 +535,9 @@ describe("background-task extension", () => {
 			// given
 			const manager = new BackgroundManager();
 			const outputTool = createBackgroundOutputTool(manager);
-			const task = manager.launch({
-				description: "blocking test",
-				prompt: "test",
-				model: undefined,
-				pid: undefined,
-				sessionPath: undefined,
-				completedAt: undefined,
-				result: undefined,
-				error: undefined,
-				parentSessionId: "test",
-			});
+			const task = manager.launch(
+				createTaskInput({ description: "blocking test", prompt: "test", parentSessionId: "test" }),
+			);
 			manager.updateTask(task.id, { status: "running" });
 
 			// Complete the task after 50ms
@@ -531,17 +568,7 @@ describe("background-task extension", () => {
 	describe("BackgroundCancel tool", () => {
 		it("cancels running task", async () => {
 			const manager = new BackgroundManager();
-			const task = manager.launch({
-				description: "Running task",
-				prompt: "Do it",
-				model: undefined,
-				pid: 12345,
-				sessionPath: undefined,
-				completedAt: undefined,
-				result: undefined,
-				error: undefined,
-				parentSessionId: "test-session",
-			});
+			const task = manager.launch(createTaskInput({ description: "Running task", prompt: "Do it", pid: 12345 }));
 			manager.updateTask(task.id, { status: "running" });
 
 			const tool = createBackgroundCancelTool(manager);
@@ -561,28 +588,8 @@ describe("background-task extension", () => {
 
 		it("cancels all tasks", async () => {
 			const manager = new BackgroundManager();
-			const task1 = manager.launch({
-				description: "Task 1",
-				prompt: "Do 1",
-				model: undefined,
-				pid: 12345,
-				sessionPath: undefined,
-				completedAt: undefined,
-				result: undefined,
-				error: undefined,
-				parentSessionId: "test-session",
-			});
-			const task2 = manager.launch({
-				description: "Task 2",
-				prompt: "Do 2",
-				model: undefined,
-				pid: 12346,
-				sessionPath: undefined,
-				completedAt: undefined,
-				result: undefined,
-				error: undefined,
-				parentSessionId: "test-session",
-			});
+			const task1 = manager.launch(createTaskInput({ description: "Task 1", prompt: "Do 1", pid: 12345 }));
+			const task2 = manager.launch(createTaskInput({ description: "Task 2", prompt: "Do 2", pid: 12346 }));
 			manager.updateTask(task1.id, { status: "running" });
 			manager.updateTask(task2.id, { status: "running" });
 
@@ -621,17 +628,9 @@ describe("background-task extension", () => {
 
 		it("returns message when cancelling non-active task", async () => {
 			const manager = new BackgroundManager();
-			const task = manager.launch({
-				description: "Completed task",
-				prompt: "Do it",
-				model: undefined,
-				pid: undefined,
-				sessionPath: undefined,
-				completedAt: undefined,
-				result: "Done",
-				error: undefined,
-				parentSessionId: "test-session",
-			});
+			const task = manager.launch(
+				createTaskInput({ description: "Completed task", prompt: "Do it", result: "Done" }),
+			);
 			manager.updateTask(task.id, { status: "completed" });
 
 			const tool = createBackgroundCancelTool(manager);
@@ -674,9 +673,11 @@ describe("background-task extension", () => {
 				description: "Restored task",
 				prompt: "Do restored",
 				model: undefined,
+				agentType: undefined,
 				status: "completed",
 				pid: undefined,
 				sessionPath: undefined,
+				activeToolNames: [],
 				startedAt: new Date("2024-01-01"),
 				completedAt: new Date("2024-01-02"),
 				result: "Restored result",
@@ -701,9 +702,11 @@ describe("background-task extension", () => {
 				description: "restored task",
 				prompt: "test",
 				model: undefined,
+				agentType: undefined,
 				status: "completed",
 				pid: undefined,
 				sessionPath: undefined,
+				activeToolNames: [],
 				startedAt: new Date("2024-01-01"),
 				completedAt: new Date("2024-01-01"),
 				result: "restored result",

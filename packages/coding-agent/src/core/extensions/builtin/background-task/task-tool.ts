@@ -5,6 +5,25 @@ import type { BackgroundManager } from "./manager.js";
 import type { spawnSubagent } from "./spawner.js";
 import { DEPTH_ENV_VAR, MAX_SUBAGENT_DEPTH, TASK_ENTRY_TYPE } from "./types.js";
 
+function buildTaskMetadata(args: {
+	description: string;
+	runInBackground: boolean;
+	agentType?: string;
+	model?: string;
+	activeToolNames?: string[];
+}): { headline: string; overview?: string } {
+	const overview = [
+		args.agentType,
+		args.model,
+		args.activeToolNames && args.activeToolNames.length > 0 ? `tools: ${args.activeToolNames.join(", ")}` : undefined,
+	].filter((value): value is string => typeof value === "string" && value.length > 0);
+
+	return {
+		headline: `${args.description}${args.runInBackground ? " [async]" : " [sync]"}`,
+		...(overview.length > 0 ? { overview: overview.join(" · ") } : {}),
+	};
+}
+
 const TaskToolParams = Type.Object({
 	description: Type.String({
 		description: "A short (3-5 words) description of the task",
@@ -118,8 +137,10 @@ model is optional and defaults to the current model.`;
 					description: params.description,
 					prompt: params.prompt,
 					model,
+					agentType: params.agent_type,
 					pid: undefined,
 					sessionPath: params.session_id,
+					activeToolNames: [],
 					completedAt: undefined,
 					result: undefined,
 					error: undefined,
@@ -135,6 +156,30 @@ model is optional and defaults to the current model.`;
 					agentType: params.agent_type,
 					sessionPath: params.session_id,
 					signal,
+					onEvent: (() => {
+						const activeToolCalls = new Map<string, string>();
+						return (event) => {
+							if (event.type === "tool_execution_start") {
+								activeToolCalls.set(event.toolCallId, event.toolName);
+							} else if (event.type === "tool_execution_end") {
+								activeToolCalls.delete(event.toolCallId);
+							}
+
+							const currentTask = manager.getTask(task.id);
+							if (!currentTask) {
+								return;
+							}
+
+							manager.updateTask(task.id, {
+								activeToolNames: Array.from(activeToolCalls.values()),
+								...(activeToolCalls.size > 0 && currentTask.status === "pending" ? { status: "running" } : {}),
+							});
+							const activeTask = manager.getTask(task.id);
+							if (activeTask) {
+								pi.appendEntry(TASK_ENTRY_TYPE, activeTask);
+							}
+						};
+					})(),
 				});
 
 				if (spawned.process.pid !== undefined) {
@@ -154,6 +199,7 @@ model is optional and defaults to the current model.`;
 						manager.updateTask(task.id, {
 							status: result.exitCode === 0 ? "completed" : "error",
 							completedAt: new Date(),
+							activeToolNames: [],
 							result: result.text,
 							error: result.exitCode === 0 ? undefined : `Sub-agent exited with code ${result.exitCode}`,
 						});
@@ -185,6 +231,7 @@ model is optional and defaults to the current model.`;
 						manager.updateTask(task.id, {
 							status: "error",
 							completedAt: new Date(),
+							activeToolNames: [],
 							error: error instanceof Error ? error.message : String(error),
 						});
 
@@ -212,7 +259,11 @@ model is optional and defaults to the current model.`;
 					content: [
 						{
 							type: "text",
-							text: `Task started: ${task.id}\nDescription: ${params.description}\nUse BackgroundOutput to retrieve results.`,
+							text: [
+								`Task started: ${task.id}`,
+								`Description: ${params.description}`,
+								"Use BackgroundOutput to retrieve results.",
+							].join("\n"),
 						},
 					],
 					details: undefined,
@@ -222,11 +273,17 @@ model is optional and defaults to the current model.`;
 			}
 		},
 		renderCall(args, theme) {
-			const mode = args.run_in_background ? "async" : "sync";
+			const metadata = buildTaskMetadata({
+				description: args.description,
+				runInBackground: args.run_in_background,
+				agentType: args.agent_type,
+				model: args.model,
+			});
 			return new Text(
-				theme.fg("toolTitle", theme.bold("Task ")) +
-					theme.fg("accent", args.description) +
-					theme.fg("muted", ` [${mode}]`),
+				[
+					theme.fg("toolTitle", theme.bold("Task ")) + theme.fg("accent", metadata.headline),
+					...(metadata.overview ? [theme.fg("muted", `  ${metadata.overview}`)] : []),
+				].join("\n"),
 				0,
 				0,
 			);

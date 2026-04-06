@@ -52,8 +52,12 @@ function parseBackgroundTask(value: unknown): BackgroundTask | undefined {
 		typeof taskRecord.prompt !== "string" ||
 		!isTaskStatus(taskRecord.status) ||
 		(taskRecord.model !== undefined && typeof taskRecord.model !== "string") ||
+		(taskRecord.agentType !== undefined && typeof taskRecord.agentType !== "string") ||
 		(taskRecord.pid !== undefined && typeof taskRecord.pid !== "number") ||
 		(taskRecord.sessionPath !== undefined && typeof taskRecord.sessionPath !== "string") ||
+		(taskRecord.activeToolNames !== undefined &&
+			(!Array.isArray(taskRecord.activeToolNames) ||
+				taskRecord.activeToolNames.some((toolName) => typeof toolName !== "string"))) ||
 		startedAt === undefined ||
 		(taskRecord.completedAt !== undefined && completedAt === undefined) ||
 		(taskRecord.result !== undefined && typeof taskRecord.result !== "string") ||
@@ -68,9 +72,11 @@ function parseBackgroundTask(value: unknown): BackgroundTask | undefined {
 		description: taskRecord.description,
 		prompt: taskRecord.prompt,
 		model: taskRecord.model,
+		agentType: taskRecord.agentType,
 		status: taskRecord.status,
 		pid: taskRecord.pid,
 		sessionPath: taskRecord.sessionPath,
+		activeToolNames: Array.isArray(taskRecord.activeToolNames) ? taskRecord.activeToolNames : [],
 		startedAt,
 		completedAt,
 		result: taskRecord.result,

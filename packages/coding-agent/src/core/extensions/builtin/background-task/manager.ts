@@ -89,6 +89,31 @@ export class BackgroundManager {
 	}
 }
 
+function formatTaskMetadata(task: BackgroundTask): string | undefined {
+	const metadata = [task.agentType, task.model].filter(
+		(value): value is string => typeof value === "string" && value.length > 0,
+	);
+	if (metadata.length === 0) {
+		return undefined;
+	}
+	return metadata.join(" · ");
+}
+
+function formatActiveTools(task: BackgroundTask): string | undefined {
+	if (task.activeToolNames.length === 0) {
+		return undefined;
+	}
+
+	const counts = new Map<string, number>();
+	for (const toolName of task.activeToolNames) {
+		counts.set(toolName, (counts.get(toolName) ?? 0) + 1);
+	}
+
+	return Array.from(counts.entries())
+		.map(([toolName, count]) => (count > 1 ? `${toolName}×${count}` : toolName))
+		.join(", ");
+}
+
 export function getWidgetLines(manager: BackgroundManager): string[] | undefined {
 	const activeTasks = manager.getActiveTasks();
 
@@ -96,9 +121,21 @@ export function getWidgetLines(manager: BackgroundManager): string[] | undefined
 		return undefined;
 	}
 
-	const taskLines = activeTasks.map((task) => {
+	const taskLines = activeTasks.flatMap((task) => {
 		const indicator = task.status === "pending" ? "[⏳]" : "[▶]";
-		return `${indicator} ${task.description}`;
+		const lines = [`${indicator} ${task.description}`];
+		const metadata = formatTaskMetadata(task);
+		const activeTools = formatActiveTools(task);
+
+		if (metadata) {
+			lines.push(`    ${metadata}`);
+		}
+
+		if (activeTools) {
+			lines.push(`    tools: ${activeTools}`);
+		}
+
+		return lines;
 	});
 
 	return ["Background Tasks", ...taskLines];

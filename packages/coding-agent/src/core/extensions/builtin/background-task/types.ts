@@ -8,7 +8,20 @@ export type SpawnOptions = {
 	sessionPath?: string;
 	signal?: AbortSignal;
 	env?: Record<string, string>;
+	onEvent?: (event: SpawnEvent) => void;
 };
+
+export type SpawnEvent =
+	| {
+			type: "tool_execution_start";
+			toolCallId: string;
+			toolName: string;
+	  }
+	| {
+			type: "tool_execution_end";
+			toolCallId: string;
+			toolName: string;
+	  };
 
 export type SpawnedAgent = {
 	process: import("node:child_process").ChildProcess;
@@ -20,9 +33,11 @@ export type BackgroundTask = {
 	description: string;
 	prompt: string;
 	model: string | undefined;
+	agentType: string | undefined;
 	status: "pending" | "running" | "completed" | "error" | "cancelled";
 	pid: number | undefined;
 	sessionPath: string | undefined;
+	activeToolNames: string[];
 	startedAt: Date;
 	completedAt: Date | undefined;
 	result: string | undefined;
