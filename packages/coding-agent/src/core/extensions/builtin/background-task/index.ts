@@ -216,7 +216,7 @@ export default function backgroundTaskExtension(pi: ExtensionAPI): void {
 				if (taskId) {
 					const task = manager.getTask(taskId);
 					if (task && isTerminalTask(task)) {
-						sendCompletionNotification(pi, task);
+						sendCompletionNotification(pi, task, manager);
 						return;
 					}
 				}
