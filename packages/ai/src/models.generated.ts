@@ -3018,7 +3018,7 @@ export const MODELS = {
 		} satisfies Model<"openai-responses">,
 		"gpt-5.4-mini": {
 			id: "gpt-5.4-mini",
-			name: "GPT-5.4 mini",
+			name: "GPT-5.4 Mini",
 			api: "openai-responses",
 			provider: "github-copilot",
 			baseUrl: "https://api.individual.githubcopilot.com",
@@ -3480,8 +3480,8 @@ export const MODELS = {
 			contextWindow: 131072,
 			maxTokens: 8192,
 		} satisfies Model<"google-generative-ai">,
-		"gemma-4-26b": {
-			id: "gemma-4-26b",
+		"gemma-4-26b-it": {
+			id: "gemma-4-26b-it",
 			name: "Gemma 4 26B",
 			api: "google-generative-ai",
 			provider: "google",
@@ -3497,8 +3497,8 @@ export const MODELS = {
 			contextWindow: 256000,
 			maxTokens: 8192,
 		} satisfies Model<"google-generative-ai">,
-		"gemma-4-31b": {
-			id: "gemma-4-31b",
+		"gemma-4-31b-it": {
+			id: "gemma-4-31b-it",
 			name: "Gemma 4 31B",
 			api: "google-generative-ai",
 			provider: "google",
