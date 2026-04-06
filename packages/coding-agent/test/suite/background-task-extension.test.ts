@@ -311,6 +311,74 @@ describe("background-task extension", () => {
 			expect(text).toContain("Description: Async task");
 		});
 
+		it("keeps async task cancelled when the sub-agent completes later", async () => {
+			// given
+			const manager = new BackgroundManager();
+			const mockPi = {
+				appendEntry: vi.fn(),
+				on: vi.fn(),
+				registerTool: vi.fn(),
+				registerCommand: vi.fn(),
+				registerShortcut: vi.fn(),
+				registerFlag: vi.fn(),
+				registerProvider: vi.fn(),
+				registerMessageRenderer: vi.fn(),
+				ui: { setFooter: vi.fn(), setWidget: vi.fn(), confirm: vi.fn(), notify: vi.fn() },
+				sendMessage: vi.fn(),
+			};
+			const mockCtx = {
+				cwd: "/tmp",
+				model: undefined,
+				signal: undefined,
+				ui: { setWidget: vi.fn(), confirm: vi.fn(), notify: vi.fn() },
+				sessionManager: { getBranch: () => [] },
+				hasUI: false,
+				isIdle: () => true,
+				hasPendingMessages: () => false,
+				abort: () => {},
+				shutdown: () => {},
+				getContextUsage: () => undefined,
+				compact: () => {},
+				getSystemPrompt: () => "",
+			};
+			let resolveResult: ((value: { text: string; exitCode: number }) => void) | undefined;
+			const mockSpawner = vi.fn(() => ({
+				process: { pid: 12345 },
+				result: new Promise<{ text: string; exitCode: number }>((resolve) => {
+					resolveResult = resolve;
+				}),
+			}));
+
+			const tool = createTaskTool(
+				manager,
+				mockSpawner as unknown as Parameters<typeof createTaskTool>[1],
+				mockPi as unknown as Parameters<typeof createTaskTool>[2],
+			);
+
+			await tool.execute(
+				"call-1",
+				{ description: "Async task", prompt: "Do async", run_in_background: true },
+				undefined,
+				vi.fn(),
+				mockCtx as unknown as Parameters<typeof tool.execute>[4],
+			);
+
+			const [task] = manager.getAllTasks();
+			if (!task) {
+				throw new Error("Expected task to be launched");
+			}
+			manager.cancelTask(task.id);
+
+			// when
+			resolveResult?.({ text: "late result", exitCode: 0 });
+			await Promise.resolve();
+			await Promise.resolve();
+
+			// then
+			expect(manager.getTask(task.id)?.status).toBe("cancelled");
+			expect(mockPi.sendMessage).not.toHaveBeenCalled();
+		});
+
 		it("depth limit blocks execution at MAX_SUBAGENT_DEPTH", async () => {
 			vi.stubEnv(DEPTH_ENV_VAR, String(MAX_SUBAGENT_DEPTH));
 
