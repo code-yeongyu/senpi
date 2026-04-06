@@ -157,6 +157,7 @@ model is optional and defaults to the current model.`;
 				};
 			}
 
+			let executeReturned = false;
 			try {
 				const task = manager.launch({
 					description: params.description,
@@ -201,7 +202,7 @@ model is optional and defaults to the current model.`;
 								activeToolNames,
 								...(activeToolCalls.size > 0 && currentTask.status === "pending" ? { status: "running" } : {}),
 							});
-							try {
+							if (!executeReturned) {
 								onUpdate?.({
 									content: [],
 									details: {
@@ -209,8 +210,6 @@ model is optional and defaults to the current model.`;
 										activeToolNames,
 									},
 								});
-							} catch {
-								// Parent agent run may have ended; onUpdate is no longer valid
 							}
 							const activeTask = manager.getTask(task.id);
 							if (activeTask) {
@@ -302,6 +301,7 @@ model is optional and defaults to the current model.`;
 						);
 					});
 
+				executeReturned = true;
 				return {
 					content: [
 						{
