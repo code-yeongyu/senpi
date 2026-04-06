@@ -18,6 +18,12 @@ const TaskToolParams = Type.Object({
 	}),
 	session_id: Type.Optional(Type.String({ description: "Existing Task session to continue" })),
 	model: Type.Optional(Type.String({ description: "Model to use for this task" })),
+	agent_type: Type.Optional(
+		Type.String({
+			description:
+				"Agent type to use for this task (e.g. 'explore', 'general'). Determines available tools and permissions.",
+		}),
+	),
 });
 
 function createErrorResult(text: string): {
@@ -52,17 +58,24 @@ export function createTaskTool(
 	manager: BackgroundManager,
 	spawner: typeof spawnSubagent,
 	pi: ExtensionAPI,
+	agentDescriptions?: string,
 ): ToolDefinition<typeof TaskToolParams> {
-	const taskTool: ToolDefinition<typeof TaskToolParams> = {
-		name: "task",
-		label: "Task",
-		description: `Run a sub-agent in sync or async mode.
+	const baseDescription = `Run a sub-agent in sync or async mode.
 
 Sync mode (run_in_background=false): waits for the sub-agent to finish and returns its text output directly.
 Async mode (run_in_background=true): starts the sub-agent, returns a task_id immediately, and use BackgroundOutput to retrieve results later.
 
 session_id is optional and continues an existing session when provided.
-model is optional and defaults to the current model.`,
+model is optional and defaults to the current model.`;
+
+	const fullDescription = agentDescriptions
+		? `${baseDescription}\n\nAvailable agent types:\n${agentDescriptions}`
+		: baseDescription;
+
+	const taskTool: ToolDefinition<typeof TaskToolParams> = {
+		name: "task",
+		label: "Task",
+		description: fullDescription,
 		promptSnippet:
 			"Run a sub-agent either synchronously for direct output or asynchronously for a background task_id.",
 		promptGuidelines: [
@@ -88,6 +101,7 @@ model is optional and defaults to the current model.`,
 					prompt: params.prompt,
 					cwd: ctx.cwd,
 					model,
+					agentType: params.agent_type,
 					sessionPath: params.session_id,
 					signal,
 				});
@@ -118,6 +132,7 @@ model is optional and defaults to the current model.`,
 					prompt: params.prompt,
 					cwd: ctx.cwd,
 					model,
+					agentType: params.agent_type,
 					sessionPath: params.session_id,
 					signal,
 				});

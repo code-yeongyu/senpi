@@ -43,6 +43,11 @@ export interface MarkdownSettings {
 	codeBlockIndent?: string; // default: "  "
 }
 
+export interface AgentDefaultsSettings {
+	permission?: Record<string, "allow" | "deny" | "ask">;
+	model?: string;
+}
+
 export type TransportSetting = Transport;
 
 /**
@@ -95,6 +100,7 @@ export interface Settings {
 	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
 	markdown?: MarkdownSettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
+	agentDefaults?: AgentDefaultsSettings;
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */

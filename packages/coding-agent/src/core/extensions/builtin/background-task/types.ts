@@ -4,6 +4,7 @@ export type SpawnOptions = {
 	prompt: string;
 	cwd: string;
 	model?: string;
+	agentType?: string;
 	sessionPath?: string;
 	signal?: AbortSignal;
 	env?: Record<string, string>;
@@ -38,6 +39,12 @@ export const TaskToolParams = Type.Object({
 	}),
 	session_id: Type.Optional(Type.String({ description: "Existing Task session to continue" })),
 	model: Type.Optional(Type.String({ description: "Model to use for this task" })),
+	agent_type: Type.Optional(
+		Type.String({
+			description:
+				"Agent type to use for this task (e.g. 'explore', 'general'). Determines available tools and permissions.",
+		}),
+	),
 });
 
 export type TaskToolParamsType = Static<typeof TaskToolParams>;
@@ -64,6 +71,7 @@ export type BackgroundCancelParamsType = Static<typeof BackgroundCancelParams>;
 export const MAX_CONCURRENT_TASKS = 8;
 export const MAX_SUBAGENT_DEPTH = 3;
 export const DEPTH_ENV_VAR = "SANEPI_SUBAGENT_DEPTH";
+export const AGENT_TYPE_ENV_VAR = "SANEPI_AGENT_TYPE";
 export const TASK_ENTRY_TYPE = "background-task.state";
 export const DEFAULT_BLOCK_TIMEOUT = 60000;
 export const MAX_BLOCK_TIMEOUT = 300000;

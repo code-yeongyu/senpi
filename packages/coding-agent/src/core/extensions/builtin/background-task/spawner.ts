@@ -1,7 +1,13 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { DEPTH_ENV_VAR, MAX_SUBAGENT_DEPTH, type SpawnedAgent, type SpawnOptions } from "./types.js";
+import {
+	AGENT_TYPE_ENV_VAR,
+	DEPTH_ENV_VAR,
+	MAX_SUBAGENT_DEPTH,
+	type SpawnedAgent,
+	type SpawnOptions,
+} from "./types.js";
 
 export type { SpawnOptions, SpawnedAgent };
 
@@ -58,11 +64,15 @@ export function spawnSubagent(options: SpawnOptions): SpawnedAgent {
 
 	const invocation = getPiInvocation(args);
 
-	const childEnv = {
+	const childEnv: Record<string, string | undefined> = {
 		...process.env,
 		[DEPTH_ENV_VAR]: String(currentDepth + 1),
 		...options.env,
 	};
+
+	if (options.agentType) {
+		childEnv[AGENT_TYPE_ENV_VAR] = options.agentType;
+	}
 
 	const proc = spawn(invocation.command, invocation.args, {
 		cwd: options.cwd,
