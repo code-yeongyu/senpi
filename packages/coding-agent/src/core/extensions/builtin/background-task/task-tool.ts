@@ -53,7 +53,7 @@ const TaskToolParams = Type.Object({
 	}),
 	run_in_background: Type.Boolean({
 		description:
-			"REQUIRED. true: run asynchronously (use BackgroundOutput to get results), false: run synchronously and wait for completion",
+			"REQUIRED. true=async (returns task_id, system notifies on completion), false=sync (waits for result).",
 	}),
 	session_id: Type.Optional(Type.String({ description: "Existing Task session to continue" })),
 	model: Type.Optional(Type.String({ description: "Model to use for this task" })),
@@ -102,7 +102,7 @@ export function createTaskTool(
 	const baseDescription = `Run a sub-agent in sync or async mode.
 
 Sync mode (run_in_background=false): waits for the sub-agent to finish and returns its text output directly.
-Async mode (run_in_background=true): starts the sub-agent, returns a task_id immediately, and use BackgroundOutput to retrieve results later.
+Async mode (run_in_background=true): starts the sub-agent, returns a task_id immediately. System sends a notification when done.
 
 session_id is optional and continues an existing session when provided.
 model is optional and defaults to the current model.`;
@@ -119,7 +119,7 @@ model is optional and defaults to the current model.`;
 			"Run a sub-agent either synchronously for direct output or asynchronously for a background task_id.",
 		promptGuidelines: [
 			"Use run_in_background=false when you need the sub-agent result in the same turn.",
-			"Use run_in_background=true when work can continue later and retrieve output via BackgroundOutput.",
+			"Use run_in_background=true for parallel work. System notifies on completion.",
 			"Pass session_id to continue an existing sub-agent session.",
 		],
 		parameters: TaskToolParams,
@@ -201,13 +201,17 @@ model is optional and defaults to the current model.`;
 								activeToolNames,
 								...(activeToolCalls.size > 0 && currentTask.status === "pending" ? { status: "running" } : {}),
 							});
-							onUpdate?.({
-								content: [],
-								details: {
-									...taskDetails,
-									activeToolNames,
-								},
-							});
+							try {
+								onUpdate?.({
+									content: [],
+									details: {
+										...taskDetails,
+										activeToolNames,
+									},
+								});
+							} catch {
+								// Parent agent run may have ended; onUpdate is no longer valid
+							}
 							const activeTask = manager.getTask(task.id);
 							if (activeTask) {
 								pi.appendEntry(TASK_ENTRY_TYPE, activeTask);
@@ -251,7 +255,12 @@ model is optional and defaults to the current model.`;
 								content: [
 									{
 										type: "text",
-										text: `Task ${task.id} completed: ${params.description}`,
+										text: [
+											`Task ${task.id} completed: ${params.description}`,
+											"",
+											"Result:",
+											result.text || "(no output)",
+										].join("\n"),
 									},
 								],
 							},
@@ -275,6 +284,7 @@ model is optional and defaults to the current model.`;
 							pi.appendEntry(TASK_ENTRY_TYPE, erroredTask);
 						}
 
+						const errorMsg = error instanceof Error ? error.message : String(error);
 						pi.sendMessage(
 							{
 								customType: "background-task.complete",
@@ -282,7 +292,9 @@ model is optional and defaults to the current model.`;
 								content: [
 									{
 										type: "text",
-										text: `Task ${task.id} failed: ${params.description}`,
+										text: [`Task ${task.id} failed: ${params.description}`, "", "Error:", errorMsg].join(
+											"\n",
+										),
 									},
 								],
 							},
@@ -297,7 +309,7 @@ model is optional and defaults to the current model.`;
 							text: [
 								`Task started: ${task.id}`,
 								`Description: ${params.description}`,
-								"Use BackgroundOutput to retrieve results.",
+								"System will notify when done. Do NOT call BackgroundOutput until notified.",
 							].join("\n"),
 						},
 					],

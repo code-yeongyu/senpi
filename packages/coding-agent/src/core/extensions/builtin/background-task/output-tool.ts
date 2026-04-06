@@ -49,12 +49,12 @@ export function createBackgroundOutputTool(manager: BackgroundManager): ToolDefi
 		name: "background_output",
 		label: "BackgroundOutput",
 		description:
-			"Get the output from a background task. Use block=true to wait for completion. System notifies when tasks complete, so blocking is rarely needed.",
-		promptSnippet: "Retrieve results from a background task by task_id.",
+			"Get the output from a completed background task. ONLY call AFTER receiving a completion notification for the task.",
+		promptSnippet: "Retrieve results from a completed background task by task_id.",
 		promptGuidelines: [
-			"Use this tool to check the status and results of background tasks.",
-			"Set block=true to wait for a running task to complete (with optional timeout).",
-			"System sends notifications when background tasks complete, so blocking is rarely needed.",
+			"ONLY call this tool AFTER receiving a completion notification for the task.",
+			"Do NOT call this immediately after launching a background task - the system will notify you when done.",
+			"Set block=true only if you must wait synchronously (rarely needed).",
 		],
 		parameters: BackgroundOutputParams,
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
@@ -77,7 +77,12 @@ export function createBackgroundOutputTool(manager: BackgroundManager): ToolDefi
 
 			if (!params.block) {
 				return {
-					content: [{ type: "text", text: formatTaskOutput(task) }],
+					content: [
+						{
+							type: "text",
+							text: `Task ${params.task_id} is still running. Do NOT call BackgroundOutput again for this task - the system will notify you when it completes. Continue with other work or end your response.`,
+						},
+					],
 					details: { task },
 				};
 			}

@@ -50,7 +50,7 @@ export const TaskToolParams = Type.Object({
 	prompt: Type.String({ description: "The task for the agent to perform" }),
 	run_in_background: Type.Boolean({
 		description:
-			"REQUIRED. true: run asynchronously (use background_output to get results), false: run synchronously and wait for completion",
+			"REQUIRED. true=async (returns task_id, system notifies on completion), false=sync (waits for result).",
 	}),
 	session_id: Type.Optional(Type.String({ description: "Existing Task session to continue" })),
 	model: Type.Optional(Type.String({ description: "Model to use for this task" })),

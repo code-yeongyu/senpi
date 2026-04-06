@@ -341,7 +341,7 @@ describe("background-task extension", () => {
 					content: [
 						{
 							type: "text",
-							text: "Task started: bg_1234abcd\nDescription: Inspect auth\nUse BackgroundOutput to retrieve results.",
+							text: "Task started: bg_1234abcd\nDescription: Inspect auth\nSystem will notify when done. Do NOT call BackgroundOutput until notified.",
 						},
 					],
 					details: {
@@ -674,12 +674,14 @@ describe("background-task extension", () => {
 		});
 
 		it("returns running task status when not blocking", async () => {
+			// given
 			const manager = new BackgroundManager();
 			const task = manager.launch(createTaskInput({ description: "Running task", prompt: "Do it", pid: 12345 }));
 			manager.updateTask(task.id, { status: "running" });
 
 			const tool = createBackgroundOutputTool(manager);
 
+			// when
 			const result = await tool.execute(
 				"call-1",
 				{ task_id: task.id, block: false },
@@ -688,9 +690,11 @@ describe("background-task extension", () => {
 				{} as unknown as Parameters<typeof tool.execute>[4],
 			);
 
+			// then
 			const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-			expect(text).toContain("Status: running");
-			expect(text).toContain("Elapsed:");
+			expect(text).toContain(`Task ${task.id} is still running.`);
+			expect(text).toContain("Do NOT call BackgroundOutput again for this task");
+			expect(text).toContain("the system will notify you when it completes");
 		});
 
 		it("returns error for non-existent task", async () => {
