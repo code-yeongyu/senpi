@@ -5,6 +5,12 @@ import type { BackgroundManager } from "./manager.js";
 import type { spawnSubagent } from "./spawner.js";
 import { DEPTH_ENV_VAR, MAX_SUBAGENT_DEPTH, TASK_ENTRY_TYPE } from "./types.js";
 
+type TaskToolDetails = {
+	agentType?: string;
+	model?: string;
+	activeToolNames?: string[];
+};
+
 function buildTaskMetadata(args: {
 	description: string;
 	runInBackground: boolean;
@@ -22,6 +28,20 @@ function buildTaskMetadata(args: {
 		headline: `${args.description}${args.runInBackground ? " [async]" : " [sync]"}`,
 		...(overview.length > 0 ? { overview: overview.join(" · ") } : {}),
 	};
+}
+
+function buildTaskOverviewItems(details: TaskToolDetails | undefined): string[] {
+	if (!details) {
+		return [];
+	}
+
+	return [
+		details.agentType,
+		details.model,
+		details.activeToolNames && details.activeToolNames.length > 0
+			? `tools: ${details.activeToolNames.join(", ")}`
+			: undefined,
+	].filter((value): value is string => typeof value === "string" && value.length > 0);
 }
 
 const TaskToolParams = Type.Object({
@@ -47,12 +67,12 @@ const TaskToolParams = Type.Object({
 
 function createErrorResult(text: string): {
 	content: [{ type: "text"; text: string }];
-	details: undefined;
+	details: TaskToolDetails;
 	isError: true;
 } {
 	return {
 		content: [{ type: "text", text }],
-		details: undefined,
+		details: {},
 		isError: true,
 	};
 }
@@ -78,7 +98,7 @@ export function createTaskTool(
 	spawner: typeof spawnSubagent,
 	pi: ExtensionAPI,
 	agentDescriptions?: string,
-): ToolDefinition<typeof TaskToolParams> {
+): ToolDefinition<typeof TaskToolParams, TaskToolDetails> {
 	const baseDescription = `Run a sub-agent in sync or async mode.
 
 Sync mode (run_in_background=false): waits for the sub-agent to finish and returns its text output directly.
@@ -91,7 +111,7 @@ model is optional and defaults to the current model.`;
 		? `${baseDescription}\n\nAvailable agent types:\n${agentDescriptions}`
 		: baseDescription;
 
-	const taskTool: ToolDefinition<typeof TaskToolParams> = {
+	const taskTool: ToolDefinition<typeof TaskToolParams, TaskToolDetails> = {
 		name: "task",
 		label: "Task",
 		description: fullDescription,
@@ -103,7 +123,7 @@ model is optional and defaults to the current model.`;
 			"Pass session_id to continue an existing sub-agent session.",
 		],
 		parameters: TaskToolParams,
-		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			if (!params.description.trim()) {
 				return createErrorResult("Error: description is required");
 			}
@@ -114,6 +134,11 @@ model is optional and defaults to the current model.`;
 			}
 
 			const model = resolveModel(params, ctx);
+			const taskDetails: TaskToolDetails = {
+				agentType: params.agent_type,
+				model,
+				activeToolNames: [],
+			};
 
 			if (!params.run_in_background) {
 				const spawned = spawner({
@@ -128,7 +153,7 @@ model is optional and defaults to the current model.`;
 
 				return {
 					content: [{ type: "text", text: result.text || "(no output)" }],
-					details: undefined,
+					details: taskDetails,
 				};
 			}
 
@@ -170,9 +195,18 @@ model is optional and defaults to the current model.`;
 								return;
 							}
 
+							const activeToolNames = Array.from(activeToolCalls.values());
+
 							manager.updateTask(task.id, {
-								activeToolNames: Array.from(activeToolCalls.values()),
+								activeToolNames,
 								...(activeToolCalls.size > 0 && currentTask.status === "pending" ? { status: "running" } : {}),
+							});
+							onUpdate?.({
+								content: [],
+								details: {
+									...taskDetails,
+									activeToolNames,
+								},
 							});
 							const activeTask = manager.getTask(task.id);
 							if (activeTask) {
@@ -184,6 +218,7 @@ model is optional and defaults to the current model.`;
 
 				if (spawned.process.pid !== undefined) {
 					manager.updateTask(task.id, { pid: spawned.process.pid, status: "running" });
+					onUpdate?.({ content: [], details: taskDetails });
 					const runningTask = manager.getTask(task.id);
 					if (runningTask) {
 						pi.appendEntry(TASK_ENTRY_TYPE, runningTask);
@@ -266,7 +301,7 @@ model is optional and defaults to the current model.`;
 							].join("\n"),
 						},
 					],
-					details: undefined,
+					details: taskDetails,
 				};
 			} catch (error: unknown) {
 				return createErrorResult(error instanceof Error ? error.message : String(error));
@@ -288,10 +323,34 @@ model is optional and defaults to the current model.`;
 				0,
 			);
 		},
-		renderResult(result, _options, theme) {
+		renderResult(result, options, theme, context) {
 			const firstContent = result.content[0];
-			const text = firstContent?.type === "text" ? firstContent.text : "(no output)";
-			return new Text(theme.fg("muted", text), 0, 0);
+			const text = firstContent?.type === "text" ? firstContent.text : undefined;
+			const argDetails: TaskToolDetails = {
+				agentType: context.args.agent_type,
+				model: context.args.model,
+			};
+			const callOverviewItems = new Set(buildTaskOverviewItems(argDetails));
+			const extraOverviewItems = buildTaskOverviewItems(result.details).filter(
+				(item) => !callOverviewItems.has(item),
+			);
+			const overview = extraOverviewItems.length > 0 ? extraOverviewItems.join(" · ") : undefined;
+
+			if (!text && !overview) {
+				return new Text("", 0, 0);
+			}
+
+			if (options.isPartial && !text) {
+				return new Text(overview ? theme.fg("muted", overview) : "", 0, 0);
+			}
+
+			return new Text(
+				[...(overview ? [theme.fg("muted", overview)] : []), ...(text ? [theme.fg("muted", text)] : [])].join(
+					"\n\n",
+				),
+				0,
+				0,
+			);
 		},
 	};
 

@@ -13,6 +13,7 @@ import { EventEmitter } from "node:events";
 import { createBackgroundCancelTool } from "../../src/core/extensions/builtin/background-task/cancel-tool.js";
 import { BackgroundManager, getWidgetLines } from "../../src/core/extensions/builtin/background-task/manager.js";
 import { createBackgroundOutputTool } from "../../src/core/extensions/builtin/background-task/output-tool.js";
+import { spawnSubagent } from "../../src/core/extensions/builtin/background-task/spawner.js";
 import { createTaskTool } from "../../src/core/extensions/builtin/background-task/task-tool.js";
 import type { BackgroundTask } from "../../src/core/extensions/builtin/background-task/types.js";
 import {
@@ -49,6 +50,33 @@ function createMockProcess(options: { stdout: string; exitCode?: number }) {
 			},
 		});
 		proc.stdout.emit("data", Buffer.from(`${ndjson}\n`));
+		proc.emit("close", options.exitCode ?? 0);
+	}, 10);
+
+	return proc;
+}
+
+function createMockProcessFromEvents(options: { events: unknown[]; exitCode?: number }) {
+	const proc = new EventEmitter() as EventEmitter & {
+		stdout: EventEmitter;
+		stderr: EventEmitter;
+		pid: number;
+		killed: boolean;
+		kill: (signal?: string) => boolean;
+	};
+	proc.stdout = new EventEmitter();
+	proc.stderr = new EventEmitter();
+	proc.pid = 12345;
+	proc.killed = false;
+	proc.kill = () => {
+		proc.killed = true;
+		return true;
+	};
+
+	setTimeout(() => {
+		for (const event of options.events) {
+			proc.stdout.emit("data", Buffer.from(`${JSON.stringify(event)}\n`));
+		}
 		proc.emit("close", options.exitCode ?? 0);
 	}, 10);
 
@@ -286,6 +314,116 @@ describe("background-task extension", () => {
 			expect(text).toContain("Description: Async task");
 		});
 
+		it("renderResult shows compact resolved overview when details are provided", () => {
+			// given
+			const manager = new BackgroundManager();
+			const mockPi = {
+				appendEntry: vi.fn(),
+				on: vi.fn(),
+				registerTool: vi.fn(),
+				registerCommand: vi.fn(),
+				registerShortcut: vi.fn(),
+				registerFlag: vi.fn(),
+				registerProvider: vi.fn(),
+				registerMessageRenderer: vi.fn(),
+				ui: { setFooter: vi.fn(), setWidget: vi.fn(), confirm: vi.fn(), notify: vi.fn() },
+				sendMessage: vi.fn(),
+			};
+			const tool = createTaskTool(
+				manager,
+				vi.fn() as unknown as Parameters<typeof createTaskTool>[1],
+				mockPi as unknown as Parameters<typeof createTaskTool>[2],
+			);
+
+			// when
+			const rendered = tool.renderResult?.(
+				{
+					content: [
+						{
+							type: "text",
+							text: "Task started: bg_1234abcd\nDescription: Inspect auth\nUse BackgroundOutput to retrieve results.",
+						},
+					],
+					details: {
+						agentType: "explore",
+						model: "anthropic/claude-3-7-sonnet",
+					},
+				},
+				{ expanded: false, isPartial: false },
+				{
+					fg: (_token: string, text: string) => text,
+					bold: (text: string) => text,
+				} as never,
+				{
+					args: {
+						description: "Inspect auth",
+						prompt: "Do auth work",
+						run_in_background: true,
+						agent_type: "explore",
+					},
+				} as never,
+			);
+
+			// then
+			const output = rendered?.render(120).join("\n") ?? "";
+			expect(output).toContain("anthropic/claude-3-7-sonnet");
+			expect(output).not.toContain("explore · anthropic/claude-3-7-sonnet");
+		});
+
+		it("renderResult hides empty partial placeholder and only shows new tool overview", () => {
+			// given
+			const manager = new BackgroundManager();
+			const mockPi = {
+				appendEntry: vi.fn(),
+				on: vi.fn(),
+				registerTool: vi.fn(),
+				registerCommand: vi.fn(),
+				registerShortcut: vi.fn(),
+				registerFlag: vi.fn(),
+				registerProvider: vi.fn(),
+				registerMessageRenderer: vi.fn(),
+				ui: { setFooter: vi.fn(), setWidget: vi.fn(), confirm: vi.fn(), notify: vi.fn() },
+				sendMessage: vi.fn(),
+			};
+			const tool = createTaskTool(
+				manager,
+				vi.fn() as unknown as Parameters<typeof createTaskTool>[1],
+				mockPi as unknown as Parameters<typeof createTaskTool>[2],
+			);
+
+			// when
+			const rendered = tool.renderResult?.(
+				{
+					content: [],
+					details: {
+						agentType: "explore",
+						model: "anthropic/claude-3-7-sonnet",
+						activeToolNames: ["grep", "read"],
+					},
+				},
+				{ expanded: false, isPartial: true },
+				{
+					fg: (_token: string, text: string) => text,
+					bold: (text: string) => text,
+				} as never,
+				{
+					args: {
+						description: "Inspect auth",
+						prompt: "Do auth work",
+						run_in_background: true,
+						agent_type: "explore",
+						model: "anthropic/claude-3-7-sonnet",
+					},
+				} as never,
+			);
+
+			// then
+			const output = rendered?.render(120).join("\n") ?? "";
+			expect(output).toContain("tools: grep, read");
+			expect(output).not.toContain("(no output)");
+			expect(output).not.toContain("anthropic/claude-3-7-sonnet");
+		});
+
 		it("tracks active subagent tools without bloating the task result text", async () => {
 			// given
 			const manager = new BackgroundManager();
@@ -463,6 +601,47 @@ describe("background-task extension", () => {
 			const result = getLatestToolResult(harness, "task");
 			const text = result.content[0]?.type === "text" ? result.content[0].text : "";
 			expect(text).toContain(`max subagent depth (${MAX_SUBAGENT_DEPTH}) exceeded`);
+		});
+	});
+
+	describe("spawnSubagent", () => {
+		it("emits running tool events from child ndjson output", async () => {
+			// given
+			const events: Array<{
+				type: "tool_execution_start" | "tool_execution_end";
+				toolCallId: string;
+				toolName: string;
+			}> = [];
+			mockSpawn.mockReturnValue(
+				createMockProcessFromEvents({
+					events: [
+						{ type: "tool_execution_start", toolCallId: "tool-1", toolName: "grep" },
+						{ type: "tool_execution_end", toolCallId: "tool-1", toolName: "grep" },
+						{
+							type: "message_end",
+							message: {
+								role: "assistant",
+								content: [{ type: "text", text: "done" }],
+							},
+						},
+					],
+				}),
+			);
+
+			// when
+			const spawned = spawnSubagent({
+				prompt: "inspect auth",
+				cwd: "/tmp",
+				onEvent: (event) => events.push(event),
+			});
+			const result = await spawned.result;
+
+			// then
+			expect(events).toEqual([
+				{ type: "tool_execution_start", toolCallId: "tool-1", toolName: "grep" },
+				{ type: "tool_execution_end", toolCallId: "tool-1", toolName: "grep" },
+			]);
+			expect(result.text).toBe("done");
 		});
 	});
 
