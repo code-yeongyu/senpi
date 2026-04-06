@@ -44,6 +44,10 @@ function resolveModel(params: { model?: string }, ctx: ExtensionContext): string
 	return `${ctx.model.provider}/${ctx.model.id}`;
 }
 
+function isCancelledTask(manager: BackgroundManager, taskId: string): boolean {
+	return manager.getTask(taskId)?.status === "cancelled";
+}
+
 export function createTaskTool(
 	manager: BackgroundManager,
 	spawner: typeof spawnSubagent,
@@ -128,6 +132,10 @@ model is optional and defaults to the current model.`,
 
 				spawned.result
 					.then((result) => {
+						if (isCancelledTask(manager, task.id)) {
+							return;
+						}
+
 						manager.updateTask(task.id, {
 							status: result.exitCode === 0 ? "completed" : "error",
 							completedAt: new Date(),
@@ -155,6 +163,10 @@ model is optional and defaults to the current model.`,
 						);
 					})
 					.catch((error: unknown) => {
+						if (isCancelledTask(manager, task.id)) {
+							return;
+						}
+
 						manager.updateTask(task.id, {
 							status: "error",
 							completedAt: new Date(),
