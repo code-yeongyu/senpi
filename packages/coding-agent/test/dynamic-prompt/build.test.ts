@@ -33,8 +33,16 @@ describe("buildDynamicSystemPrompt", () => {
 	test("includes policies section", () => {
 		const prompt = buildDynamicSystemPrompt(baseOptions);
 
-		expect(prompt).toContain("as any");
-		expect(prompt).toContain("ts-ignore");
+		expect(prompt).toContain("## Policies");
+		expect(prompt).toContain("Hard Blocks");
+		expect(prompt).toContain("Anti-Patterns");
+	});
+
+	test("policies section is language-agnostic", () => {
+		const prompt = buildDynamicSystemPrompt(baseOptions);
+
+		expect(prompt).not.toContain("as any");
+		expect(prompt).not.toContain("ts-ignore");
 	});
 
 	test("includes current date", () => {
