@@ -79,7 +79,11 @@ function createMockContext(overrides: { hasUI?: boolean; ui?: ExtensionUIContext
 function createService(staticRuleset: Ruleset = [], approved: Ruleset = []) {
 	const emitter = createLocalEventEmitter();
 	const askedEvents: Request[] = [];
-	const repliedEvents: Array<{ requestID: string; sessionID: string; reply: "once" | "always" | "reject" }> = [];
+	const repliedEvents: Array<{
+		requestID: string;
+		sessionID: string;
+		reply: "once" | "always" | "reject" | "allow";
+	}> = [];
 
 	emitter.onAsked((request) => {
 		askedEvents.push(request);

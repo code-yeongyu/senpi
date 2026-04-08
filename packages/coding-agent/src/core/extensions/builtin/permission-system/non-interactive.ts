@@ -16,10 +16,10 @@ export function handleNoUI(
 	// Emit permission_asked event for logging/telemetry
 	emitEvent("permission_asked", request);
 
-	// Evaluate with CLI override first (highest precedence)
 	const cliRule = evaluate(request.permission, request.patterns[0], cliOverride);
 	if (cliRule.action === "allow") {
-		return undefined; // Allow - no prompt needed
+		emitEvent("permission_replied", { requestID: request.id, sessionID: request.sessionID, reply: "allow" });
+		return undefined;
 	}
 	if (cliRule.action === "deny") {
 		return {
@@ -29,10 +29,10 @@ export function handleNoUI(
 		};
 	}
 
-	// Evaluate with static ruleset
 	const staticRule = evaluate(request.permission, request.patterns[0], staticRuleset);
 	if (staticRule.action === "allow") {
-		return undefined; // Allow - no prompt needed
+		emitEvent("permission_replied", { requestID: request.id, sessionID: request.sessionID, reply: "allow" });
+		return undefined;
 	}
 	if (staticRule.action === "deny") {
 		return {

@@ -1315,8 +1315,10 @@ describe("permission integration", () => {
 
 				// then
 				expect(result).toBeUndefined();
-				expect(events).toHaveLength(1);
+				expect(events).toHaveLength(2);
 				expect(events[0]?.event).toBe("permission_asked");
+				expect(events[1]?.event).toBe("permission_replied");
+				expect((events[1]?.data as { reply: string }).reply).toBe("allow");
 			});
 
 			it("should reject when CLI override denies", () => {

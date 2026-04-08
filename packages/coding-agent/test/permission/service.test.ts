@@ -24,7 +24,8 @@ function createRequest(overrides: Partial<Request> = {}): Request {
 function createService(staticRuleset: Ruleset = [], approved: Ruleset = []) {
 	const emitter = createLocalEventEmitter();
 	const askedEvents: Request[] = [];
-	const repliedEvents: Array<{ requestID: string; sessionID: string; reply: "once" | "always" | "reject" }> = [];
+	const repliedEvents: Array<{ requestID: string; sessionID: string; reply: "once" | "always" | "reject" | "allow" }> =
+		[];
 
 	emitter.onAsked((request) => {
 		askedEvents.push(request);
@@ -45,7 +46,9 @@ describe("PermissionService", () => {
 	describe("ask", () => {
 		it("returns immediately when static rules allow every pattern", async () => {
 			// given
-			const { service, askedEvents } = createService([{ permission: "bash", pattern: "*", action: "allow" }]);
+			const { service, askedEvents, repliedEvents } = createService([
+				{ permission: "bash", pattern: "*", action: "allow" },
+			]);
 
 			// when
 			await expect(service.ask(createRequest())).resolves.toBeUndefined();
@@ -53,17 +56,22 @@ describe("PermissionService", () => {
 			// then
 			expect(service.list()).toEqual([]);
 			expect(askedEvents).toEqual([]);
+			expect(repliedEvents).toEqual([{ requestID: "request-1", sessionID: "session-1", reply: "allow" }]);
 		});
 
 		it("returns immediately when approved rules allow every pattern", async () => {
 			// given
-			const { service } = createService([], [{ permission: "bash", pattern: "git *", action: "allow" }]);
+			const { service, repliedEvents } = createService(
+				[],
+				[{ permission: "bash", pattern: "git *", action: "allow" }],
+			);
 
 			// when
 			await expect(service.ask(createRequest())).resolves.toBeUndefined();
 
 			// then
 			expect(service.list()).toEqual([]);
+			expect(repliedEvents).toEqual([{ requestID: "request-1", sessionID: "session-1", reply: "allow" }]);
 		});
 
 		it("throws DeniedError when static rules deny a pattern", async () => {

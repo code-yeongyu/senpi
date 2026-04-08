@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "../../types.js";
-import type { Reply, Request } from "./types.js";
+import type { PermissionDecision, Request } from "./types.js";
 
 /**
  * Event type for when a permission is asked.
@@ -14,7 +14,7 @@ export type PermissionAskedEvent = Request;
 export type PermissionRepliedEvent = {
 	requestID: string;
 	sessionID: string;
-	reply: Reply;
+	reply: PermissionDecision;
 };
 
 /**
@@ -34,7 +34,7 @@ export interface PermissionEventEmitter {
 	 * @param sessionID - The session ID associated with the request
 	 * @param reply - The user's reply (once, always, or reject)
 	 */
-	emitReplied(requestID: string, sessionID: string, reply: Reply): void;
+	emitReplied(requestID: string, sessionID: string, reply: PermissionDecision): void;
 }
 
 /**
@@ -49,7 +49,7 @@ export function createEventEmitter(pi: ExtensionAPI): PermissionEventEmitter {
 		emitAsked: (request: Request) => {
 			pi.events.emit("permission_asked", request);
 		},
-		emitReplied: (requestID: string, sessionID: string, reply: Reply) => {
+		emitReplied: (requestID: string, sessionID: string, reply: PermissionDecision) => {
 			pi.events.emit("permission_replied", { requestID, sessionID, reply });
 		},
 	};
@@ -95,7 +95,7 @@ export function createLocalEventEmitter(): PermissionEventEmitter & {
 			}
 		},
 
-		emitReplied: (requestID: string, sessionID: string, reply: Reply) => {
+		emitReplied: (requestID: string, sessionID: string, reply: PermissionDecision) => {
 			const event: PermissionRepliedEvent = { requestID, sessionID, reply };
 			for (const handler of repliedHandlers) {
 				try {

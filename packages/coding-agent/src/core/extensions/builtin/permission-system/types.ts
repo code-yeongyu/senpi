@@ -17,6 +17,9 @@ export type PermissionConfig = Record<string, Action | Record<string, Action>>;
 /** User reply to a permission request */
 export type Reply = "once" | "always" | "reject";
 
+/** Final permission decision: user reply or auto-grant from rules */
+export type PermissionDecision = Reply | "allow";
+
 /** Permission request sent to user for approval */
 export type Request = {
 	id: string;

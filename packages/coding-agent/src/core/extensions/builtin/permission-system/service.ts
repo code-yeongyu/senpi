@@ -54,6 +54,7 @@ export class PermissionService {
 		}
 
 		if (!needsAsk) {
+			this.emitter.emitReplied(info.id, info.sessionID, "allow");
 			return;
 		}
 

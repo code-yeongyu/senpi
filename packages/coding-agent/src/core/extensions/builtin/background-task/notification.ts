@@ -35,16 +35,16 @@ export function formatCompletionNotification(input: NotificationInput): string {
 
 	const isFailure = statusText !== "COMPLETED";
 
-	const resultBlock = task.result ? `\n\n**Result:**\n${task.result}` : "";
-
 	return `<system-reminder>
 [BACKGROUND TASK ${statusText}]
 **ID:** \`${task.id}\`
 **Description:** ${safeDescription(task)}
-**Duration:** ${duration}${errorInfo}${resultBlock}
+**Duration:** ${duration}${errorInfo}
 
 **${remainingCount} task${remainingCount === 1 ? "" : "s"} still in progress.** You WILL be notified when ALL complete.
 ${isFailure ? "**ACTION REQUIRED:** This task failed. Check the error and decide whether to retry, cancel remaining tasks, or continue." : "Do NOT poll - continue productive work."}
+
+Use \`background_output(task_id="${task.id}")\` to retrieve this result when ready.
 </system-reminder>`;
 }
 
@@ -80,16 +80,12 @@ function formatAllCompleteNotification(task: NotificationTask, completedTasks: N
 		body = `- \`${task.id}\`: ${safeDescription(task)} [${task.status.toUpperCase()}]${task.error ? ` - ${task.error}` : ""}\n`;
 	}
 
-	const resultBlocks = completedTasks
-		.filter((t) => t.status === "completed" && t.result)
-		.map((t) => `**[${t.id}] ${safeDescription(t)}:**\n${t.result}`)
-		.join("\n\n");
-	const resultSection = resultBlocks ? `\n\n${resultBlocks}` : "";
-
 	return `<system-reminder>
 ${header}
 
-${body.trim()}${resultSection}${hasFailures ? `\n\n**ACTION REQUIRED:** ${failedTasks.length} task(s) failed. Check errors above and decide whether to retry or proceed.` : ""}
+${body.trim()}
+
+Use \`background_output(task_id="<id>")\` to retrieve each result.${hasFailures ? `\n\n**ACTION REQUIRED:** ${failedTasks.length} task(s) failed. Check errors above and decide whether to retry or proceed.` : ""}
 </system-reminder>`;
 }
 

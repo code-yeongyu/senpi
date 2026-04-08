@@ -117,7 +117,11 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 				const reply = await showPermissionPrompt(ctx, request);
 				service.reply(reply);
 			} else {
-				const reply = handleNoUI(request, staticRuleset, cliRuleset, () => undefined);
+				const reply = handleNoUI(request, staticRuleset, cliRuleset, (eventName, data) => {
+					if (eventName !== "permission_asked") {
+						pi.events.emit(eventName, data);
+					}
+				});
 				if (reply) {
 					service.reply(reply);
 				}
