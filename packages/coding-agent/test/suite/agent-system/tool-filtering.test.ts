@@ -65,27 +65,23 @@ describe("agent-system tool filtering", () => {
 
 	it("activates only read-only tools for explore agent", async () => {
 		// given
-		const tools = ["read", "grep", "find", "ls", "bash", "glob", "write", "edit", "task", "todowrite"].map(
-			createToolInfo,
-		);
+		const tools = ["read", "grep", "find", "ls", "bash", "write", "edit", "task", "todowrite"].map(createToolInfo);
 
 		// when
 		const activeTools = await runSessionStart({ agentType: "explore", tools });
 
 		// then
-		expect(activeTools).toEqual(["read", "grep", "find", "ls", "bash", "glob"]);
+		expect(activeTools).toEqual(["read", "grep", "find", "ls", "bash"]);
 	});
 
 	it("excludes task and todowrite for general agent", async () => {
 		// given
-		const tools = ["read", "grep", "find", "ls", "bash", "glob", "write", "edit", "task", "todowrite"].map(
-			createToolInfo,
-		);
+		const tools = ["read", "grep", "find", "ls", "bash", "write", "edit", "task", "todowrite"].map(createToolInfo);
 
 		// when
 		const activeTools = await runSessionStart({ agentType: "general", tools });
 
 		// then
-		expect(activeTools).toEqual(["read", "grep", "find", "ls", "bash", "glob", "write", "edit"]);
+		expect(activeTools).toEqual(["read", "grep", "find", "ls", "bash", "write", "edit"]);
 	});
 });

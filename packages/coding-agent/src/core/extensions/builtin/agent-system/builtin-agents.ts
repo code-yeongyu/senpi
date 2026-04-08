@@ -23,7 +23,6 @@ export const BUILTIN_AGENTS: Record<string, AgentInfo> = {
 				find: "allow",
 				ls: "allow",
 				bash: "allow",
-				glob: "allow",
 			}),
 		),
 		prompt: `You are a file search specialist. You excel at thoroughly navigating and exploring codebases.

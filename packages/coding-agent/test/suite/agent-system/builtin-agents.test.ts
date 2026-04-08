@@ -56,3 +56,31 @@ describe("BUILTIN_AGENTS.general", () => {
 		expect(prompt).toBeUndefined();
 	});
 });
+
+describe("BUILTIN_AGENTS.explore.permission", () => {
+	it("does not grant permission to phantom tools that do not exist", () => {
+		// given
+		const permission = BUILTIN_AGENTS.explore.permission;
+		// when
+		const permittedNames = permission.map((rule) => rule.permission);
+		// then
+		expect(permittedNames).not.toContain("glob");
+		expect(permittedNames).not.toContain("lsp_goto_definition");
+		expect(permittedNames).not.toContain("lsp_find_references");
+		expect(permittedNames).not.toContain("lsp_diagnostics");
+		expect(permittedNames).not.toContain("ast_grep");
+	});
+
+	it("grants allow to the real built-in tools the explore agent should use", () => {
+		// given
+		const permission = BUILTIN_AGENTS.explore.permission;
+		// when
+		const allowedReadOnlyTools = permission.filter((rule) => rule.action === "allow").map((rule) => rule.permission);
+		// then
+		expect(allowedReadOnlyTools).toContain("read");
+		expect(allowedReadOnlyTools).toContain("grep");
+		expect(allowedReadOnlyTools).toContain("find");
+		expect(allowedReadOnlyTools).toContain("ls");
+		expect(allowedReadOnlyTools).toContain("bash");
+	});
+});
