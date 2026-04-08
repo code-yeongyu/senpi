@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Added
+
+- Permission system builtin extension: full port of opencode's permission system
+  - Rule evaluation with wildcard matching (last-match-wins)
+  - Bash command arity parsing for granular command-level permissions
+  - Per-tool pattern rules (e.g., `bash: { "git *": "allow", "rm *": "deny" }`)
+  - Edit-tool unification (edit/write/apply_patch/multiedit share permissions)
+  - Persistent approved rules via .pi/permissions-approved.jsonl
+  - External directory detection and permission gating
+  - Event publishing: permission_asked, permission_replied (subscribable via pi.events)
+  - TUI permission prompt with Allow once / Always / Deny / Deny with feedback
+  - Non-interactive mode: fail-closed with --permission flag override
+  - settings.json `permission` field for declarative configuration
+  - CLI `--permission` flag for runtime override
+
+### Changed
+
+- agent-system extension: permission handling delegated to permission-system
+
 ### Fixed
 
 - RpcClient now forwards subprocess stderr to parent process in real-time ([#2805](https://github.com/badlogic/pi-mono/issues/2805))
