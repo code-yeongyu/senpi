@@ -16,7 +16,7 @@ Replaces pi's static system prompt with a prompt that adapts to the current tool
 |-----------|-------------|
 | **Intent Gate** | Forces the model to classify user intent (research / implementation / investigation / evaluation / fix / open-ended) and verbalize its routing decision before acting. Prevents the model from jumping straight into edits on ambiguous requests. |
 | **Tool Categorization** | Groups registered tools by type (LSP, AST, search, session, command) and generates a categorized tool reference with per-tool snippets and usage guidelines. |
-| **Policy Enforcement** | Injects hard blocks (`as any`, `@ts-ignore`, speculative commits) and anti-patterns directly into the prompt so models self-enforce code quality rules. |
+| **Policy Enforcement** | Injects language-agnostic hard blocks (no unauthorized git commits, no speculation about unread code, no suppression of type/lint/test failures) and anti-patterns (no deleted failing tests, no silently swallowed errors, no shotgun debugging) directly into the prompt so models self-enforce code quality rules. |
 
 Source: [`packages/coding-agent/src/core/dynamic-prompt/`](packages/coding-agent/src/core/dynamic-prompt/)
 
@@ -29,7 +29,7 @@ A new extension loading tier that ships first-party extensions as part of the co
 | Extension | Description |
 |-----------|-------------|
 | **todowrite** | Structured task management. Adds `todowrite` and `todoread` tools with a TUI sidebar widget. Enforces WHERE/WHY/HOW/RESULT format for each todo item. Injects task management rules into the system prompt via `before_agent_start`. |
-| **parallel-tool-calls** | Intercepts OpenAI provider requests and adds `parallel_tool_calls: true` to payloads when tools are present. Covers `openai-completions`, `openai-responses`, `openai-codex-responses`, and `azure-openai-responses` APIs. |
+| **parallel-tool-calls** | Intercepts OpenAI provider requests and adds `parallel_tool_calls: true` to payloads when tools are present. Covers `openai-completions`, `openai-responses`, `openai-codex-responses`, and `azure-openai-responses` APIs. Also injects a tool-agnostic Execution Strategy section into the system prompt describing parallelization and context-breadth guidance. |
 | **redraws** | Adds `/tui` command to display full-redraw count for TUI debugging. |
 
 **Global defaults** (seeded to `~/.pi/agent/extensions/` on first run):
