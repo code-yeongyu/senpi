@@ -31,7 +31,7 @@ Agents are typed subagent profiles that control which tools a spawned task can u
 | Agent | Tools | System Prompt | Description |
 |-------|-------|---------------|-------------|
 | `general` | All except `task`, `todowrite` | Default pi prompt | General-purpose agent for parallel work |
-| `explore` | `read`, `grep`, `find`, `ls`, `bash`, `glob` | File search specialist | Read-only codebase exploration |
+| `explore` | `read`, `grep`, `find`, `ls`, `bash` | File search specialist | Read-only codebase exploration |
 
 ### general
 
@@ -59,8 +59,7 @@ Permission config:
    "grep": "allow",
    "find": "allow",
    "ls": "allow",
-   "bash": "allow",
-   "glob": "allow"
+   "bash": "allow"
 }
 ```
 
@@ -69,9 +68,9 @@ System prompt appended:
 ```
 You are a file search specialist. You excel at thoroughly navigating and exploring codebases.
 Guidelines:
-- Use grep for searching file contents with regex
-- Use read when you know the specific file path
-- Use bash for file operations like listing directory contents
+- Search file contents by regex or literal pattern when you need to locate usages or definitions
+- Read files directly when you already know the path
+- List directory contents to build a map of unfamiliar areas
 - Return file paths as absolute paths
 - Do not create any files or modify the system state
 Complete the search request efficiently and report findings clearly.
