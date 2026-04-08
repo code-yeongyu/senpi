@@ -140,6 +140,11 @@ model is optional and defaults to the current model.`;
 				activeToolNames: [],
 			};
 
+			const permissionFlag =
+				typeof pi.getFlag === "function"
+					? ((pi.getFlag("permission") as string | undefined) ?? undefined)
+					: undefined;
+
 			if (!params.run_in_background) {
 				const spawned = spawner({
 					prompt: params.prompt,
@@ -147,6 +152,7 @@ model is optional and defaults to the current model.`;
 					model,
 					agentType: params.agent_type,
 					sessionPath: params.session_id,
+					permissionFlag: permissionFlag ?? undefined,
 					signal,
 				});
 				const result = await spawned.result;
@@ -181,6 +187,7 @@ model is optional and defaults to the current model.`;
 					model,
 					agentType: params.agent_type,
 					sessionPath: params.session_id,
+					permissionFlag: permissionFlag ?? undefined,
 					signal,
 					onEvent: (() => {
 						const activeToolCalls = new Map<string, string>();

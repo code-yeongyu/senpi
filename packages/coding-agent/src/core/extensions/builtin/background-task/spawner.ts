@@ -67,6 +67,10 @@ export function spawnSubagent(options: SpawnOptions): SpawnedAgent {
 		args.push("--session", options.sessionPath);
 	}
 
+	if (options.permissionFlag) {
+		args.push("--permission", options.permissionFlag);
+	}
+
 	const invocation = getPiInvocation(args);
 
 	const childEnv: Record<string, string | undefined> = {

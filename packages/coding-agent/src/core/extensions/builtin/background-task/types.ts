@@ -6,6 +6,7 @@ export type SpawnOptions = {
 	model?: string;
 	agentType?: string;
 	sessionPath?: string;
+	permissionFlag?: string;
 	signal?: AbortSignal;
 	env?: Record<string, string>;
 	onEvent?: (event: SpawnEvent) => void;
