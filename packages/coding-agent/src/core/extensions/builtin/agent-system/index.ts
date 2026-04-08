@@ -36,62 +36,10 @@ export default function agentSystemExtension(pi: ExtensionAPI): void {
 			.map((tool) => tool.name);
 		pi.setActiveTools(allowedTools);
 
-		const sessionAllowed = new Set<string>();
-
 		pi.on("before_agent_start", async (event, _ctx) => {
 			if (!agentInfo?.prompt) return undefined;
 			return {
 				systemPrompt: `${event.systemPrompt}\n\n${agentInfo.prompt}`,
-			};
-		});
-
-		pi.on("tool_call", async (event, toolContext) => {
-			if (!agentInfo) return undefined;
-
-			const toolName = event.toolName;
-
-			if (sessionAllowed.has(toolName)) {
-				return undefined;
-			}
-
-			const rule = evaluate(toolName, "*", agentInfo.permission);
-
-			if (rule.action === "allow") {
-				return undefined;
-			}
-
-			if (rule.action === "deny") {
-				return {
-					block: true,
-					reason: `Agent "${agentType}" does not have permission to use "${toolName}". This tool is denied by the agent's permission policy.`,
-				};
-			}
-
-			if (!toolContext.hasUI) {
-				return {
-					block: true,
-					reason: `Agent "${agentType}" requires confirmation to use "${toolName}", but no UI is available. Auto-denied in non-interactive mode.`,
-				};
-			}
-
-			const selection = await toolContext.ui.select("Agent permission required", [
-				"Allow once",
-				"Allow always",
-				"Deny",
-			]);
-
-			if (selection === "Allow once") {
-				return undefined;
-			}
-
-			if (selection === "Allow always") {
-				sessionAllowed.add(toolName);
-				return undefined;
-			}
-
-			return {
-				block: true,
-				reason: `Agent "${agentType}" requires confirmation to use "${toolName}". Please configure explicit allow/deny in agent permissions.`,
 			};
 		});
 	});
