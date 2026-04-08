@@ -29,7 +29,7 @@ A new extension loading tier that ships first-party extensions as part of the co
 | Extension | Description |
 |-----------|-------------|
 | **todowrite** | Structured task management. Adds `todowrite` and `todoread` tools with a TUI sidebar widget. Enforces WHERE/WHY/HOW/RESULT format for each todo item. Injects task management rules into the system prompt via `before_agent_start`. |
-| **parallel-tool-calls** | Intercepts OpenAI provider requests and adds `parallel_tool_calls: true` to payloads when tools are present. Covers `openai-completions`, `openai-responses`, `openai-codex-responses`, and `azure-openai-responses` APIs. Also injects a tool-agnostic Execution Strategy section into the system prompt describing parallelization and context-breadth guidance. |
+| **parallel-tool-calls** | Intercepts OpenAI provider requests and adds `parallel_tool_calls: true` to payloads when tools are present. Covers `openai-completions`, `openai-responses`, `openai-codex-responses`, and `azure-openai-responses` APIs. Also injects an Execution Strategy section into the system prompt that describes parallelization and context-breadth guidance without hardcoding specific tool names. |
 | **redraws** | Adds `/tui` command to display full-redraw count for TUI debugging. |
 
 **Global defaults** (seeded to `~/.pi/agent/extensions/` on first run):
