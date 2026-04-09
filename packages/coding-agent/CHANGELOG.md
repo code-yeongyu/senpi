@@ -4,6 +4,9 @@
 
 ### Added
 
+- `todotools` builtin extension: refactored the todo tooling into the new `todotools/` module tree and added
+  todo continuation, configurable via `todotools.continuation.enabled` or disabled per run with
+  `--disable-todo-continuation`
 - Permission system builtin extension: full port of opencode's permission system
   - Rule evaluation with wildcard matching (last-match-wins)
   - Bash command arity parsing for granular command-level permissions
