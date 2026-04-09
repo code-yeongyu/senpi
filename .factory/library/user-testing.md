@@ -116,6 +116,7 @@ For the `continuation-core` milestone specifically, run at most **2 validators t
 - Stay read-only and limit work to static repo/mission inspection.
 - Use `rg`, `git status`, `git diff --name-only`, and file reads to verify source-level assertions such as flag registration, event wiring, allow-listed diff scope, and changelog/help text presence.
 - For `continuation-core`, this surface owns the static assertions around `agent_end` registration, absence of `turn_end`, config purity, and fork/git-safety audit evidence.
+- If current `main` has later non-mission commits, do not rely on a raw `git diff <base>..HEAD` alone for mission audit assertions; reconstruct the mission-scoped commit/path set from mission logs (for example `progress_log.jsonl` worker-completed commit IDs) before judging allow-list compliance.
 - Do not edit repository files or mission files from this surface.
 
 ## Flow Validator Guidance: manual-cli

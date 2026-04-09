@@ -1,0 +1,59 @@
+{
+  "surface": "grep-check",
+  "testedAt": "2026-04-09T08:08:58.587496+00:00",
+  "assertions": [
+    {
+      "id": "VAL-CROSS-012",
+      "status": "pass",
+      "reason": "Using the mission-scoped commit set recorded in progress_log.jsonl, the effective continuation-core path set covers 17 mission commits / 44 unique paths and stays entirely within the updated allow-list, including the intentional deletion of packages/coding-agent/src/core/extensions/builtin/todowrite.ts.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/audit-rerun/path-audit.json",
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/audit-rerun/mission-paths.txt",
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/audit-rerun/git-log-stat.txt",
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/audit-rerun/range-notes.json"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-013",
+      "status": "pass",
+      "reason": "The same mission-scoped git log/stat stays within the approved allow-list, and a structured scan of actual command fields in progress_log.jsonl and worker-transcripts.jsonl found zero forbidden git verbs; the recorded staging evidence that remains is path-explicit.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/audit-rerun/path-audit.json",
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/audit-rerun/git-log-stat.txt",
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/audit-rerun/forbidden-git-verb-scan.json"
+      ]
+    }
+  ],
+  "toolsUsed": [
+    "grep-check"
+  ],
+  "frictions": [
+    "A raw git diff against the current main HEAD is no longer authoritative for this mission because later non-mission commits are present on the branch; the audit had to reconstruct the effective mission commit set from progress_log.jsonl worker_completed commitIds.",
+    "Raw text grep over mission logs produces false hits from historical regex strings and audit notes, so the forbidden-verb check was narrowed to structured command fields / execute blocks only."
+  ],
+  "blockers": [],
+  "commands": [
+    {
+      "command": "git -C \"/Users/yeongyu/local-workspaces/sanepi-mono\" rev-parse HEAD && git -C \"/Users/yeongyu/local-workspaces/sanepi-mono\" merge-base HEAD main && git -C \"/Users/yeongyu/local-workspaces/sanepi-mono\" log --oneline --reverse 1677c199..HEAD",
+      "exitCode": 0,
+      "observation": "Confirmed the current branch HEAD is 75064599 and merge-base HEAD main also resolves to HEAD, while the broad 1677c199..HEAD log now includes later non-mission commits; this is why a mission-scoped reconstruction was required."
+    },
+    {
+      "command": "python3 - <<'PY' ... reconstruct mission commitIds from progress_log.jsonl and classify each commit path against the updated allow-list ... PY",
+      "exitCode": 0,
+      "observation": "Reconstructed 17 mission commitIds, 44 unique touched paths, and 0 allow-list violations. Commit 619efcff is now correctly treated as compliant because the deleted legacy todowrite.ts path is explicitly allowed."
+    },
+    {
+      "command": "python3 - <<'PY' ... structured scan of progress_log.jsonl handoff verification commands and worker-transcripts.jsonl Execute blocks for forbidden git verbs ... PY",
+      "exitCode": 0,
+      "observation": "Found 0 forbidden git-verb executions in actual command fields. The structured scan also retained an example of explicit path-based staging (`git add .factory/... && git commit ...`)."
+    }
+  ],
+  "artifacts": [
+    "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/audit-rerun/path-audit.json",
+    "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/audit-rerun/mission-paths.txt",
+    "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/audit-rerun/git-log-stat.txt",
+    "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/audit-rerun/forbidden-git-verb-scan.json",
+    "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/audit-rerun/range-notes.json"
+  ]
+}

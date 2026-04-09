@@ -1,0 +1,62 @@
+{
+  "surface": "vitest",
+  "assertions": [
+    {
+      "id": "VAL-CONTINUATION-001",
+      "status": "pass",
+      "reason": "The live contract now requires default-enabled continuation to dispatch via deferred idle polling and plain pi.sendUserMessage(prompt) without deliverAs. The runtime source uses ctx.isIdle() polling and await pi.sendUserMessage(prompt), the unit file passed 11/11 including the asynchronous idle-dispatch assertion, and the integration file passed 16/16 with exactly one injected continuation follow-up in session history by default.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-rerun/continuation-runtime-unit.log",
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-rerun/continuation-runtime-integration.log",
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-rerun/coding-agent-full-suite.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-006",
+      "status": "pass",
+      "reason": "The live contract and mission clarifications require deferred injection via ctx.isIdle() and plain sendUserMessage(prompt), plus cancellation on fresh prompts/reload/shutdown. runtime.ts implements idle polling with AbortController-backed cancellation and calls pi.sendUserMessage(prompt) with no second argument. The focused unit test file passed its cancellation and no-deliverAs assertions, and the integration file passed end-to-end continuation injection checks.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-rerun/continuation-runtime-unit.log",
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-rerun/continuation-runtime-integration.log"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-003",
+      "status": "pass",
+      "reason": "The authoritative coding-agent suite exited 1, but the only failing file was the mission-documented non-mission exception test/suite/final-qa.test.ts Scenario 2 (rm * deny rule). The documented flaky files test/footer-data-provider.test.ts and test/permission/integration.test.ts both passed in the same run, and both todotools continuation files passed in the full suite. This passes against the live validation contract plus mission AGENTS guidance, and it passes only because the prior hard-baseline failures are no longer present.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-rerun/coding-agent-full-suite.log",
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-rerun/command-results.json"
+      ]
+    }
+  ],
+  "toolsUsed": [
+    "vitest"
+  ],
+  "frictions": [],
+  "blockers": [],
+  "commands": [
+    {
+      "command": "cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/suite/todotools-continuation-runtime-unit.test.ts",
+      "exitCode": 0,
+      "observation": "Passed: 1 file, 11 tests. Includes the deferred idle-dispatch assertion that expects pi.sendUserMessage(buildContinuationPrompt(todos)) with no deliverAs argument and the cancellation-on-fresh-prompt/reload/shutdown assertions."
+    },
+    {
+      "command": "cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/suite/todotools-continuation-runtime.test.ts",
+      "exitCode": 0,
+      "observation": "Passed: 1 file, 16 tests. Includes the default-enabled integration case with exactly one injected continuation follow-up in session history."
+    },
+    {
+      "command": "cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run",
+      "exitCode": 1,
+      "observation": "Allowed failure set only: 1 failed file, 124 passed, 7 skipped. The sole failure was test/suite/final-qa.test.ts Scenario 2, which is documented in mission AGENTS as a deterministic non-mission failure. test/footer-data-provider.test.ts and test/permission/integration.test.ts passed, and test/suite/todotools-continuation-runtime.test.ts plus test/suite/todotools-continuation-runtime-unit.test.ts both passed in the full suite."
+    }
+  ],
+  "artifacts": [
+    "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-rerun/continuation-runtime-unit.log",
+    "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-rerun/continuation-runtime-integration.log",
+    "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-rerun/coding-agent-full-suite.log",
+    "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-rerun/command-results.json"
+  ],
+  "testedAt": "2026-04-09T08:01:06.744944+00:00"
+}
