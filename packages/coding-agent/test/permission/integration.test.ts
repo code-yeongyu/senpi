@@ -1,10 +1,11 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os, { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parsePermissionFlag } from "../../src/core/extensions/builtin/permission-system/cli.js";
 import { disabled, expand, fromConfig, merge } from "../../src/core/extensions/builtin/permission-system/config.js";
 import { evaluate } from "../../src/core/extensions/builtin/permission-system/evaluate.js";
+import { loadPermissionSettings } from "../../src/core/extensions/builtin/permission-system/settings.js";
 import {
 	createLocalEventEmitter,
 	type PermissionAskedEvent,
@@ -26,6 +27,7 @@ import {
 	type Request,
 	type Ruleset,
 } from "../../src/core/extensions/builtin/permission-system/types.js";
+import { SettingsManager } from "../../src/core/settings-manager.js";
 
 // Helper to create temp project directory
 function createTempProject(): string {
@@ -593,7 +595,7 @@ describe("permission integration", () => {
 			expect(requests).toHaveLength(1);
 			expect(requests[0]?.permission).toBe("bash");
 			expect(requests[0]?.patterns).toEqual(["git commit"]);
-			expect(requests[0]?.always).toEqual(["git commit *"]);
+			expect(requests[0]?.always).toEqual(["git commit", "git commit *"]);
 		});
 
 		it("should extract npm prefix for npm commands", () => {
@@ -605,7 +607,7 @@ describe("permission integration", () => {
 
 			// then
 			expect(requests[0]?.patterns).toEqual(["npm install"]);
-			expect(requests[0]?.always).toEqual(["npm install *"]);
+			expect(requests[0]?.always).toEqual(["npm install", "npm install *"]);
 		});
 
 		it("should handle simple commands", () => {
@@ -617,7 +619,7 @@ describe("permission integration", () => {
 
 			// then
 			expect(requests[0]?.patterns).toEqual(["ls"]);
-			expect(requests[0]?.always).toEqual(["ls *"]);
+			expect(requests[0]?.always).toEqual(["ls", "ls *"]);
 		});
 
 		it("should allow git commit with git * rule", async () => {
@@ -629,7 +631,7 @@ describe("permission integration", () => {
 				createRequest({
 					permission: "bash",
 					patterns: ["git commit"],
-					always: ["git commit *"],
+					always: ["git commit", "git commit *"],
 				}),
 			);
 
@@ -1089,6 +1091,22 @@ describe("permission integration", () => {
 			// then
 			const loaded = loadApproved(tempDir);
 			expect(loaded).toEqual([]);
+		});
+
+		it("should load approved rules from cwd even when project settings define sessionDir", () => {
+			// given
+			const sessionDir = createTempProject();
+			const approvedRules: Ruleset = [{ permission: "bash", pattern: "git *", action: "allow" }];
+			appendApproved(tempDir, approvedRules);
+			writeFileSync(join(tempDir, ".pi", "settings.json"), JSON.stringify({ sessionDir }, null, 2));
+			const settingsManager = SettingsManager.create(tempDir);
+
+			// when
+			const loaded = loadPermissionSettings(settingsManager, [], tempDir);
+
+			// then
+			expect(loaded.approved).toEqual(approvedRules);
+			cleanupTempProject(sessionDir);
 		});
 	});
 

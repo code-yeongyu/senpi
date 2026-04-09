@@ -17,6 +17,7 @@ import type { PermissionConfig, Ruleset } from "./types.js";
 export function loadPermissionSettings(
 	settingsManager: SettingsManager,
 	cliOverride: Ruleset,
+	projectDir: string,
 ): { staticRuleset: Ruleset; approved: Ruleset } {
 	const globalSettings = settingsManager.getGlobalSettings() as Settings & { permission?: PermissionConfig };
 	const globalRuleset = globalSettings.permission ? fromConfig(globalSettings.permission) : [];
@@ -25,8 +26,6 @@ export function loadPermissionSettings(
 	const projectRuleset = projectSettings.permission ? fromConfig(projectSettings.permission) : [];
 
 	const staticRuleset = merge(globalRuleset, projectRuleset, cliOverride);
-
-	const projectDir = projectSettings.sessionDir || process.cwd();
 	const approved = loadApproved(projectDir);
 
 	return { staticRuleset, approved };

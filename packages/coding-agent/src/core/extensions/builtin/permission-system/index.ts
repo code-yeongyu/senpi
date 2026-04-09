@@ -70,7 +70,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		const permissionFlag = pi.getFlag("permission");
 		cliRuleset = typeof permissionFlag === "string" ? parsePermissionFlag(permissionFlag) : [];
 
-		const loadedSettings = loadPermissionSettings(settingsManager, cliRuleset);
+		const loadedSettings = loadPermissionSettings(settingsManager, cliRuleset, ctx.cwd);
 		staticRuleset = loadedSettings.staticRuleset;
 		const approved = loadedSettings.approved;
 		parserRegistry = createBuiltinParserRegistry();
