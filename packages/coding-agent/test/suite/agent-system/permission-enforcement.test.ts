@@ -248,7 +248,7 @@ describe("permission-system enforcement", () => {
 		expect(lastMessage).toContain("--permission echo=allow");
 	});
 
-	it("remembers allow always in a session-local set and bypasses the second prompt", async () => {
+	it("reuses an allow always approval within the session and bypasses the second prompt", async () => {
 		// given
 		const executedTools: string[] = [];
 		const permissionSystemExtension = await loadPermissionSystemExtension();

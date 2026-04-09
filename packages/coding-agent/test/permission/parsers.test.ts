@@ -45,7 +45,9 @@ describe("permission parsers", () => {
 				const result = registry.parse("bash", input, cwd);
 
 				// then
-				expect(result).toEqual([{ permission: "bash", patterns: ["git commit"], always: ["git commit *"] }]);
+				expect(result).toEqual([
+					{ permission: "bash", patterns: ["git commit"], always: ["git commit", "git commit *"] },
+				]);
 			});
 
 			it("trims repeated whitespace before parsing prefix", () => {
@@ -57,7 +59,11 @@ describe("permission parsers", () => {
 
 				// then
 				expect(result).toEqual([
-					{ permission: "bash", patterns: ["docker compose up"], always: ["docker compose up *"] },
+					{
+						permission: "bash",
+						patterns: ["docker compose up"],
+						always: ["docker compose up", "docker compose up *"],
+					},
 				]);
 			});
 
@@ -69,7 +75,9 @@ describe("permission parsers", () => {
 				const result = registry.parse("bash", input, cwd);
 
 				// then
-				expect(result).toEqual([{ permission: "bash", patterns: ["custom-script"], always: ["custom-script *"] }]);
+				expect(result).toEqual([
+					{ permission: "bash", patterns: ["custom-script"], always: ["custom-script", "custom-script *"] },
+				]);
 			});
 
 			it("returns wildcard fallback when command is missing", () => {
@@ -92,7 +100,7 @@ describe("permission parsers", () => {
 
 				// then
 				expect(result).toEqual([
-					{ permission: "bash", patterns: ["cat"], always: ["cat *"] },
+					{ permission: "bash", patterns: ["cat"], always: ["cat", "cat *"] },
 					{
 						permission: "external_directory",
 						patterns: ["/Users/other/project/file.txt"],
@@ -110,7 +118,7 @@ describe("permission parsers", () => {
 
 				// then
 				expect(result).toEqual([
-					{ permission: "bash", patterns: ["cp"], always: ["cp *"] },
+					{ permission: "bash", patterns: ["cp"], always: ["cp", "cp *"] },
 					{
 						permission: "external_directory",
 						patterns: ["/Users/other/file1.txt", "/Users/other/file2.txt"],
@@ -128,7 +136,7 @@ describe("permission parsers", () => {
 
 				// then
 				expect(result).toEqual([
-					{ permission: "bash", patterns: ["cat"], always: ["cat *"] },
+					{ permission: "bash", patterns: ["cat"], always: ["cat", "cat *"] },
 					{
 						permission: "external_directory",
 						patterns: ["~/other-project/file.txt"],
@@ -146,7 +154,7 @@ describe("permission parsers", () => {
 
 				// then
 				expect(result).toEqual([
-					{ permission: "bash", patterns: ["cat"], always: ["cat *"] },
+					{ permission: "bash", patterns: ["cat"], always: ["cat", "cat *"] },
 					{
 						permission: "external_directory",
 						patterns: ["/Users/other/project/file with spaces.txt"],
@@ -163,7 +171,7 @@ describe("permission parsers", () => {
 				const result = registry.parse("bash", input, cwd);
 
 				// then
-				expect(result).toEqual([{ permission: "bash", patterns: ["cat"], always: ["cat *"] }]);
+				expect(result).toEqual([{ permission: "bash", patterns: ["cat"], always: ["cat", "cat *"] }]);
 			});
 		});
 

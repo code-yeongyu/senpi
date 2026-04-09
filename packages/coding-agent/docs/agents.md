@@ -205,7 +205,7 @@ In **interactive mode**, when a tool with `"ask"` permission is called:
 
 1. TUI displays a select prompt: "Allow once / Allow always / Deny"
 2. "Allow once" permits this single call
-3. "Allow always" remembers the choice for the current session only (stored in memory, not persisted)
+3. "Allow always" persists a matching approval rule to `.pi/permissions-approved.jsonl`, so matching calls are auto-allowed after reload too
 4. "Deny" blocks with an error message
 
 In **non-interactive mode** (json or print output), `ask` permissions are auto-denied with an explanatory message.

@@ -77,11 +77,12 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 
 		const tokens = command.split(/\s+/).filter(Boolean);
 		const prefix = BashArity.prefix(tokens).join(" ");
+		const always = prefix ? [prefix, `${prefix} *`] : ["*"];
 		const requests: PermissionRequest[] = [
 			{
 				permission: "bash",
 				patterns: [prefix || command],
-				always: [prefix ? `${prefix} *` : "*"],
+				always,
 			},
 		];
 
