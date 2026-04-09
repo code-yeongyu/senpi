@@ -1,0 +1,21 @@
+{
+  "featureId": "fix-deferred-callback-cleanup",
+  "reviewedAt": "2026-04-09T07:19:32Z",
+  "commitId": "e9f4d83ca7418ffa7e166c6e52270792d627ed40",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "This cleanup fix addresses the prior blocking race. The runtime now tracks a per-session abort controller for the deferred idle-dispatch callback, aborts it on fresh non-continuation prompts, reload/resume/compact resets, and shutdown, and clears the controller after the callback finishes. The added unit tests cover the three stale-callback paths called out in the prior failure.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The coding-agent-extension-worker skill still treats creating a local commit as a mandatory worker step even though worker sessions can be unable to approve that command. The skill should either document an orchestrator handoff path for blocked commit approval or note when Step 8 may be skipped in worker contexts.",
+      "evidence": "/Users/yeongyu/local-workspaces/sanepi-mono/.factory/skills/coding-agent-extension-worker/SKILL.md:78 requires \"Step 8 — Commit\", while /Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/handoffs/2026-04-09T07-01-59-367Z__fix-deferred-callback-cleanup__6a8bc250-6ccc-49d1-9b7d-99e60b1169cd.json:80-88 records `followedProcedure: false` solely because the worker could not complete that commit step."
+    }
+  ],
+  "addressesFailureFrom": "/Users/yeongyu/local-workspaces/sanepi-mono/.factory/validation/continuation-core/scrutiny/reviews/fix-continuation-auto-dispatch.json",
+  "summary": "Pass: the reviewed fix closes the stale deferred-callback race from the prior failed feature by aborting pending continuation dispatches on fresh prompts, reload/resume/compact, and shutdown. I found no remaining blocking or non-blocking code issues in the reviewed diff."
+}

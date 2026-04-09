@@ -1,0 +1,166 @@
+{
+  "milestone": "continuation-core",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "build": {
+      "passed": true,
+      "command": "npm run build",
+      "exitCode": 0
+    },
+    "test": {
+      "passed": true,
+      "command": "npm test --workspaces --if-present",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "npm run check",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "npm run check",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 14,
+    "passed": 3,
+    "failed": 11,
+    "failedFeatures": [
+      "continuation-bounded-chain-cap",
+      "continuation-compat-tests",
+      "continuation-config-resolver",
+      "continuation-fork-and-git-safety-audit",
+      "continuation-integration-tests-core",
+      "continuation-non-interactive-mode",
+      "continuation-prompt-builder",
+      "continuation-runtime-agent-end-handler",
+      "continuation-whole-repo-gates",
+      "fix-ai-live-api-tests",
+      "fix-continuation-auto-dispatch"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "continuation-runtime-agent-end-handler",
+      "severity": "blocking",
+      "description": "The original runtime queued continuation with `deliverAs: \"followUp\"` during `agent_end`, so the directive did not start a fresh agent turn automatically."
+    },
+    {
+      "featureId": "fix-continuation-auto-dispatch",
+      "severity": "blocking",
+      "description": "The deferred idle-dispatch fix leaves pending callbacks uncancelled across fresh prompts and reload/shutdown, so stale continuation turns can still fire later with outdated todo state."
+    },
+    {
+      "featureId": "continuation-integration-tests-core",
+      "severity": "blocking",
+      "description": "Positive-path continuation runtime tests assert queue internals instead of the required injected user-message surface in session history."
+    },
+    {
+      "featureId": "continuation-compat-tests",
+      "severity": "blocking",
+      "description": "Compatibility tests also validate queued follow-ups rather than visible injected continuation messages plus the next assistant turn."
+    },
+    {
+      "featureId": "continuation-bounded-chain-cap",
+      "severity": "blocking",
+      "description": "The chain-cap test manually replays continuation prompts and drains the follow-up queue, so it does not prove bounded automatic continuation in one user-initiated chain."
+    },
+    {
+      "featureId": "continuation-config-resolver",
+      "severity": "blocking",
+      "description": "The CLI-flag coercion test does not prove that truthy non-boolean values leave an enabled settings-derived result unchanged."
+    },
+    {
+      "featureId": "continuation-prompt-builder",
+      "severity": "blocking",
+      "description": "The continuation prompt status arithmetic mishandles cancelled todos, violating the required `X + Z === Y` invariant for mixed-status lists."
+    },
+    {
+      "featureId": "continuation-prompt-builder",
+      "severity": "blocking",
+      "description": "The prompt builder interpolates raw todo content, so multiline/control text can break the one-bullet-per-task format and inject extra prompt lines."
+    },
+    {
+      "featureId": "continuation-non-interactive-mode",
+      "severity": "blocking",
+      "description": "The non-interactive bypass uses `!ctx.hasUI`, but RPC mode binds a UI context; the accompanying test therefore does not exercise real RPC behavior."
+    },
+    {
+      "featureId": "continuation-whole-repo-gates",
+      "severity": "blocking",
+      "description": "The capstone verification feature recorded non-zero coding-agent and root workspace test exits, so it never achieved the required green whole-repo gate."
+    },
+    {
+      "featureId": "continuation-fork-and-git-safety-audit",
+      "severity": "blocking",
+      "description": "The audit failed on a false positive because its allow-list omitted the mission-required deletion of `packages/coding-agent/src/core/extensions/builtin/todowrite.ts`."
+    },
+    {
+      "featureId": "fix-ai-live-api-tests",
+      "severity": "blocking",
+      "description": "The AI test fix added extra opt-in env gates that suppress live coverage even when credentials exist and also exceeded the mission allow-list for that feature."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "services.yaml",
+      "description": "Added `commands.init: .factory/init.sh` so workers and validators can discover the mission bootstrap entrypoint from the shared manifest.",
+      "sourceFeature": "continuation-harness-observability"
+    },
+    {
+      "target": "library",
+      "description": "Updated `.factory/library/architecture.md` to document the current deferred continuation auto-dispatch path and note that `hasUI` is not a reliable RPC/non-interactive signal.",
+      "sourceFeature": "continuation-runtime-agent-end-handler"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "coding-agent-extension-worker skill",
+      "suggestion": "When a feature validates continuation behavior, require positive-path integration tests to assert through `harness.getInjectedUserMessages()` / session history rather than `session.getFollowUpMessages()` or queue-drain helpers.",
+      "evidence": "Three reviewed features (`continuation-integration-tests-core`, `continuation-compat-tests`, `continuation-bounded-chain-cap`) relied on queue-based assertions while missing the actual injected-user-message surface required by the mission.",
+      "isSystemic": true
+    },
+    {
+      "target": "Mission AGENTS.md / validation contract",
+      "suggestion": "Clarify the continuation status-line rule for cancelled todos so `X`, `Y`, and `Z` have a non-contradictory definition.",
+      "evidence": "The prompt-builder feature weakened its mixed-status test because the current contract simultaneously excludes `cancelled` from `remaining` and requires `X + Z === Y` with `Y = todos.length`.",
+      "isSystemic": false
+    },
+    {
+      "target": "Mission AGENTS.md / feature allow-list",
+      "suggestion": "Align the git-safety audit allow-list with the mission's explicit refactor deletion of `packages/coding-agent/src/core/extensions/builtin/todowrite.ts`.",
+      "evidence": "`continuation-fork-and-git-safety-audit` failed solely because its allow-list omitted a deletion that mission guidance and the refactor feature both explicitly required.",
+      "isSystemic": false
+    },
+    {
+      "target": "Mission AGENTS.md / validation contract",
+      "suggestion": "Reconcile the capstone gate requirements: either require full green coding-agent/root workspace tests, or explicitly preserve the documented baseline-failure exception and credential-sensitive AI-test caveat.",
+      "evidence": "`continuation-whole-repo-gates` encountered a direct mismatch between `validation-contract.md` (exit 0 required) and mission `AGENTS.md` (baseline failures acceptable), while the root workspace test command also reaches live-credential AI suites.",
+      "isSystemic": true
+    },
+    {
+      "target": "coding-agent-extension-worker skill",
+      "suggestion": "Document how mission-level scope overrides interact with the skill's default path restrictions so dedicated fix features do not have to ignore the skill when a mission explicitly opens narrow external paths.",
+      "evidence": "`fix-ai-live-api-tests` had mission-approved `packages/ai` scope, but the skill still hard-coded coding-agent-only edits, creating conflicting instructions.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "`.factory/init.sh` is missing from the shared manifest.",
+      "reason": "applied to services.yaml"
+    },
+    {
+      "observation": "Library architecture still prescribed `deliverAs: \"followUp\"` from `agent_end` and omitted the RPC `hasUI` caveat.",
+      "reason": "applied to .factory/library/architecture.md"
+    },
+    {
+      "observation": "Multiple queue-based continuation-test warnings from `continuation-integration-tests-core`, `continuation-compat-tests`, and `continuation-bounded-chain-cap`.",
+      "reason": "deduplicated into one systemic skill recommendation"
+    }
+  ],
+  "previousRound": null
+}

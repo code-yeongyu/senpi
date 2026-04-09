@@ -1,0 +1,26 @@
+{
+  "featureId": "fix-prompt-builder-edge-cases",
+  "reviewedAt": "2026-04-09T07:19:28.154261+00:00",
+  "commitId": "7385f3ff05e0a98dc52b00b06d6d84e1cebe2e87",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The rerun fix addresses both prior blocking issues. The prompt builder now excludes cancelled todos from the displayed denominator and sanitizes multiline/control-character todo text before rendering bullets, and the updated tests cover both edge cases.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "Mission shared-state docs still describe the continuation status line with mutually incompatible cancelled-todo arithmetic. The fix and updated tests effectively settle on an active-total denominator, so features.json, validation-contract.md, and architecture.md should be updated to reflect that resolved rule.",
+      "evidence": "features.json:355 says the status line uses Y = todos.length while features.json:364 also requires X+Z===Y with Z excluding cancelled; validation-contract.md:179 repeats the same X + Z === Y invariant; architecture.md:67 and :121 still describe the status line as [Status: X/Y completed, Z remaining]. The fix commit 7385f3ff05e0a98dc52b00b06d6d84e1cebe2e87 changes prompt.ts:27-34 to use activeTotal = completed + remaining, and the updated test at todotools-continuation-prompt.test.ts:58-59 asserts the mixed cancelled case reports a displayed total of 3 rather than todos.length 4."
+    },
+    {
+      "area": "skills",
+      "observation": "The coding-agent-extension-worker skill should warn that npm run check can rewrite unrelated tracked files and should instruct workers to restore out-of-scope formatter-only diffs before final staging or handoff.",
+      "evidence": "The fix handoff records that npm run check reformatted an unrelated file and required restoration afterward (handoff for 387b72f0-428c-4fa5-ae0d-4196e1806476:31-33), and its skillFeedback explicitly suggests adding that guidance to the skill (same handoff:50-55). The transcript skeleton for workerSessionId 387b72f0-428c-4fa5-ae0d-4196e1806476 also shows repeated git restore steps after validation before and after commit."
+    }
+  ],
+  "addressesFailureFrom": "/Users/yeongyu/local-workspaces/sanepi-mono/.factory/validation/continuation-core/scrutiny/reviews/continuation-prompt-builder.json",
+  "summary": "Reviewed the prior failed prompt-builder commit, the rerun fix commit, the fix transcript skeleton, and the relevant mission docs. Pass: commit 7385f3ff05e0a98dc52b00b06d6d84e1cebe2e87 fixes the cancelled-todo status arithmetic and sanitizes multiline/control text in continuation bullets, with targeted tests covering the original failure modes."
+}

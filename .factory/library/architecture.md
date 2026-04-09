@@ -64,7 +64,7 @@ builtin/todotools/
    d. Retrieves current todos via the injected `getCurrentTodos()` accessor (NEVER from a local cache). If empty or all terminal (`completed` / `cancelled`) → skip.
    e. Checks the per-session re-entry flag — if already injected for this cycle → skip. Otherwise set the flag.
    f. Checks the per-session chain counter — if it has reached the cap (default 10 consecutive auto-injections without a human user prompt) → skip.
-   g. Builds the prompt via `buildPrompt(todos)` (header + status line `[Status: X/Y completed, Z remaining]` + bullets `- [<status>] <content>`).
+   g. Builds the prompt via `buildPrompt(todos)` (header + status line `[Status: X/Y completed, Z remaining]`, where `Y = completed + remaining` so cancelled todos are excluded from the displayed denominator, plus bullets `- [<status>] <content>`).
    h. Builds the prompt via `buildPrompt(todos)` (header + status line + remaining-task bullets).
    i. Schedules a deferred continuation dispatch: after the current `agent_end` microtask unwinds, poll `ctx.isIdle()` and then call `pi.sendUserMessage(prompt)` **without** `deliverAs: "followUp"`. This avoids the still-streaming `agent_end` window, where `deliverAs: "followUp"` only queues the prompt instead of starting a new turn.
    j. Increments the per-session chain counter.
@@ -125,7 +125,7 @@ Remaining tasks:
 - [in_progress] second remaining todo
 ```
 
-The builder takes a `TodoItem[]`, counts non-terminal items, and emits the bullets in source order. Completed and cancelled items are excluded from the bullet list. The header/footer text is a constant — a golden-file snapshot test catches drift.
+The builder takes a `TodoItem[]`, counts completed items plus remaining non-terminal items for the displayed denominator, and emits the bullets in source order. Completed and cancelled items are excluded from the bullet list. The header/footer text is a constant — a golden-file snapshot test catches drift.
 
 ## Invariants
 
