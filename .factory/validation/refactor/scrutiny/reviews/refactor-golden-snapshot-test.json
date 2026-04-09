@@ -1,0 +1,26 @@
+{
+  "featureId": "refactor-golden-snapshot-test",
+  "reviewedAt": "2026-04-09T02:56:08.140841+00:00",
+  "commitId": "8ecdd54526dbc3000233659e35bf4b7ac6d10dd7",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The feature cleanly implements VAL-REFACTOR-015. The commit adds a committed fixture under `packages/coding-agent/test/suite/fixtures/` with the exact `TASK_MANAGEMENT_SECTION` bytes and a Vitest that reads the fixture from disk and compares it byte-for-byte against the exported constant from `todotools/prompt.ts`. The diff is tightly scoped to the two expected test files and I found no high-confidence correctness or maintainability regressions in the added coverage.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The worker skill's escalation guidance is too strict for missions that explicitly document allowed pre-existing failures. The worker correctly continued after the full coding-agent suite reproduced only the mission-approved 8 known failures, but the skill still frames out-of-scope pre-existing failures as an immediate return-to-orchestrator condition.",
+      "evidence": "`.factory/skills/coding-agent-extension-worker/SKILL.md:94` says to return when a verification step fails for a reason outside the worker's changes, while mission `AGENTS.md:97-121` explicitly documents the 8 known pre-existing failures and says to proceed if the failure set matches exactly. The handoff's `skillFeedback.followedProcedure` is `false` for this exact reason."
+    },
+    {
+      "area": "knowledge",
+      "observation": "Mission shared state does not document that `npm run build` can dirty unrelated tracked files by regenerating `packages/ai/src/models.generated.ts`, which is easy for workers to mistake as their own change during verification.",
+      "evidence": "The handoff verification for `npm run build` states that the build regenerated `packages/ai/src/models.generated.ts` and the worker had to restore it before committing. `.factory/library/environment.md` documents the build/check toolchain but does not mention this repo-specific side effect."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Pass. The golden snapshot feature is correctly implemented and scoped: it adds the required committed fixture plus a byte-for-byte Vitest for `TASK_MANAGEMENT_SECTION`, and I found no actionable code-review defects in the change itself. I noted one skill-procedure gap around documented pre-existing failures and one shared knowledge gap about `npm run build` dirtying `packages/ai/src/models.generated.ts`."
+}

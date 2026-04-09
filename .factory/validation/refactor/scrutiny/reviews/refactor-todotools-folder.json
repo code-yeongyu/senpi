@@ -1,0 +1,21 @@
+{
+  "featureId": "refactor-todotools-folder",
+  "reviewedAt": "2026-04-09T02:57:12.240799+00:00",
+  "commitId": "619efcff864e06645b11dfc714c5cada4d0cffe3",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The refactor cleanly preserves the legacy `todowrite` builtin behavior while moving it into the expected `builtin/todotools/` folder layout. The commit keeps the builtin id and event wiring intact, re-exports the required public symbols from `todotools/index.ts`, deletes the legacy single-file module, and updates the broken test import path without changing assertions. I found no high-confidence correctness, contract-compliance, or maintainability defects in the implementation.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The worker skill's escalation guidance is ambiguous for missions that begin with scoped, in-progress changes already present in the assigned feature paths. In this run the worker audited and successfully validated those scoped changes instead of immediately returning, and the handoff explicitly flags that as a procedure deviation.",
+      "evidence": "`.factory/skills/coding-agent-extension-worker/SKILL.md:95` says to return when uncommitted changes are present that the worker did not author, while the handoff at `~/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/handoffs/2026-04-09T02-44-33-731Z__refactor-todotools-folder__d6efad7e-eeb2-4fde-bd06-3da5e9090ce5.json:86-94` records `followedProcedure: false` because the session started with scoped feature-path changes and the worker proceeded after auditing them."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Pass. The folder-based `todotools/` refactor matches the feature contract and preserves the legacy builtin behavior; I found no actionable code defects in the reviewed commit. I noted one skill-procedure gap around how workers should handle scoped pre-existing dirty state in assigned feature paths."
+}

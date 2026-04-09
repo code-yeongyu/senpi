@@ -1,0 +1,58 @@
+{
+   "milestone": "refactor",
+   "round": 1,
+   "status": "fail",
+   "validatorsRun": {
+      "test": {
+         "passed": false,
+         "command": "cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run",
+         "exitCode": 1
+      },
+      "typecheck": {
+         "passed": true,
+         "command": "npm run check",
+         "exitCode": 0
+      },
+      "lint": {
+         "passed": true,
+         "command": "npm run check",
+         "exitCode": 0
+      }
+   },
+   "reviewsSummary": {
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "failedFeatures": []
+   },
+   "blockingIssues": [
+      {
+         "featureId": "scrutiny-validator-refactor",
+         "severity": "blocking",
+         "description": "The milestone's coding-agent test suite is not fully green: `test/resource-loader.test.ts` fails 4 assertions, `test/suite/agent-system/integration.test.ts` fails 1 assertion, and `test/suite/agent-system/permission-enforcement.test.ts` fails 3 assertions (8 total). These matched the mission's documented pre-existing baseline failures, so no new regressions were found in the reviewed refactor features, but the validator gate itself remains red."
+      }
+   ],
+   "appliedUpdates": [
+      {
+         "target": "library",
+         "description": "Documented in `.factory/library/environment.md` that `npm run build` regenerates `packages/ai/src/models.generated.ts`, which can dirty an unrelated tracked file during coding-agent-only validation.",
+         "sourceFeature": "refactor-golden-snapshot-test"
+      }
+   ],
+   "suggestedGuidanceUpdates": [
+      {
+         "target": "skills",
+         "suggestion": "Clarify that mission-specific documented baseline failures override the generic 'return on out-of-scope validator failures' rule when the observed failure set matches exactly.",
+         "evidence": "Both completed refactor feature handoffs reported `followedProcedure: false` because the coding-agent-extension-worker skill said to return on failures outside the worker's changes, while the mission AGENTS explicitly allowed proceeding when the failure set matched the known 8 pre-existing failures.",
+         "isSystemic": true
+      },
+      {
+         "target": "skills",
+         "suggestion": "Clarify how workers should handle scoped dirty state already present in their assigned feature paths at session start after auditing that the changes match the assigned feature and can be fully validated.",
+         "evidence": "The `refactor-todotools-folder` handoff recorded a deliberate deviation because the worker found scoped in-progress changes in the assigned feature paths, validated them successfully, and committed them instead of immediately returning to the orchestrator.",
+         "isSystemic": true
+      }
+   ],
+   "rejectedObservations": [],
+   "previousRound": null
+}
