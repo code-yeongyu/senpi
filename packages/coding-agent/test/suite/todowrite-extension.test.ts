@@ -6,7 +6,9 @@ import { SessionManager } from "../../src/core/session-manager.js";
 import { assistantMsg, createTestResourceLoader, userMsg } from "../utilities.js";
 import { createHarness, getAssistantTexts, type Harness } from "./harness.js";
 
-const TODOWRITE_EXTENSION_PATH = fileURLToPath(new URL("../../../../.pi/extensions/todowrite.ts", import.meta.url));
+const TODOWRITE_EXTENSION_PATH = fileURLToPath(
+	new URL("../../src/core/extensions/builtin/todotools/index.ts", import.meta.url),
+);
 const REPO_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
 
 async function createHarnessWithTodoExtension(): Promise<Harness> {

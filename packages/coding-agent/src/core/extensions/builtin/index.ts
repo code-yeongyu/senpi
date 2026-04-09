@@ -4,7 +4,7 @@ import backgroundTaskExtension from "./background-task/index.js";
 import parallelToolCallsExtension from "./parallel-tool-calls.js";
 import permissionSystemExtension from "./permission-system/index.js";
 import redrawsExtension from "./redraws.js";
-import todowriteExtension from "./todowrite.js";
+import todowriteExtension from "./todotools/index.js";
 
 export interface BuiltinExtensionFactory {
 	id: string;
