@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "../../types.js";
+import { installContinuation } from "./continuation/index.js";
 import { TASK_MANAGEMENT_SECTION } from "./prompt.js";
 import { getLatestTodosFromBranchEntries, getTodoWidgetLines, type TodoItem } from "./state.js";
 import { registerTodoReadTool } from "./tools/todoread.js";
@@ -25,6 +26,8 @@ export default function todowriteExtension(pi: ExtensionAPI): void {
 		currentTodos = getLatestTodos(ctx);
 		syncWidget(ctx);
 	};
+
+	installContinuation(pi, { getCurrentTodos });
 
 	pi.on("session_start", async (_event, ctx) => {
 		syncFromSession(ctx);
