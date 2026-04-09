@@ -1,0 +1,22 @@
+{
+  "featureId": "continuation-config-resolver",
+  "reviewedAt": "2026-04-09T06:24:27.644924Z",
+  "commitId": "642077d9735008be150b0125d40d75cf8806150b",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The resolver implementation itself matches the requested precedence and purity constraints, but the committed unit coverage misses a required CLI-flag coercion case from the feature spec.",
+    "issues": [
+      {
+        "file": "packages/coding-agent/test/suite/todotools-continuation-config.test.ts",
+        "line": 55,
+        "severity": "blocking",
+        "description": "The `treats only a strict true cli flag as disable` test does not actually prove that non-boolean truthy flag values are ignored. It sets `globalSettings: true` and `projectSettings: false`, so the resolved value is already `false` before the flag is applied. A buggy resolver that disables on any truthy `cliFlag` (for example `\"true\"`, `1`, `{}`, or `[]`) would still pass this test. The feature description explicitly required coverage that these non-`true` flag values leave the settings-derived result unchanged, so this test does not fully satisfy the requested behavior."
+      }
+    ]
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the handoff, transcript skeleton, mission docs, skill instructions, and commit `642077d9735008be150b0125d40d75cf8806150b`. The resolver code is sound, but the feature still fails review because the CLI-flag coercion test is under-specified and does not cover the required non-boolean truthy cases against an enabled settings baseline."
+}

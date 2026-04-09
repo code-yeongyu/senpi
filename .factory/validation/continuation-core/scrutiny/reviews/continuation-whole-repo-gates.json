@@ -1,0 +1,44 @@
+{
+  "featureId": "continuation-whole-repo-gates",
+  "reviewedAt": "2026-04-09T06:26:50.287959Z",
+  "commitId": null,
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "This was a validation-only feature with no source diff or feature commit to inspect. The worker stayed in scope and accurately documented the observed blockers, but the recorded results do not satisfy the feature's own acceptance criteria because both the root workspace test gate and the full coding-agent Vitest gate still exited non-zero.",
+    "issues": [
+      {
+        "file": "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/handoffs/2026-04-09T05-06-26-530Z__continuation-whole-repo-gates__4df511c0-6b29-47b9-b082-735b75380eff.json",
+        "line": 25,
+        "severity": "blocking",
+        "description": "The handoff records the required `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run` verification with `exitCode: 1`, and the same handoff is marked `successState: \"partial\"` at line 6. That directly misses `validation-contract.md:294-297`, which requires the coding-agent Vitest suite to exit 0 for `VAL-CROSS-003`."
+      },
+      {
+        "file": "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/handoffs/2026-04-09T05-06-26-530Z__continuation-whole-repo-gates__4df511c0-6b29-47b9-b082-735b75380eff.json",
+        "line": 50,
+        "severity": "blocking",
+        "description": "The handoff records `npm test --workspaces --if-present` with `exitCode: 1`, and line 11 says the worker could not complete the requested 'all green' verification. That means the feature never achieved the green-gate capstone described in `features.json:639-656`, where the expected behavior says the whole-repo test command should report the coding-agent suite passing in full."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The mission documents disagree on whether the full coding-agent suite must be green for this capstone. `validation-contract.md` says `VAL-CROSS-003` MUST exit 0, but mission `AGENTS.md` explicitly says the documented 8-case baseline may remain red and workers may proceed.",
+      "evidence": "`validation-contract.md:294-297` requires `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run` to exit 0, while `AGENTS.md:145-156` says the hard-baseline failures are acceptable and 'Proceed to commit'. The worker also called out this mismatch in `.../handoffs/2026-04-09T05-06-26-530Z__continuation-whole-repo-gates__4df511c0-6b29-47b9-b082-735b75380eff.json:75`."
+    },
+    {
+      "area": "services",
+      "observation": "The repo-level test gate used for this capstone routes into credential-sensitive `packages/ai` tests, but the mission guidance does not warn that the root workspace test command reaches off-limits, live-provider suites.",
+      "evidence": "`package.json:22` defines root `test` as `npm run test --workspaces --if-present`. The AI tests read live credentials at `packages/ai/test/tool-call-id-normalization.test.ts:21-23` and gate cases on those credentials at lines `46` and `116`; `packages/ai/test/cross-provider-handoff.test.ts:141-143` and `335` likewise depend on live fixture generation. The reviewed handoff shows this command failing outside mission scope at line `50`."
+    },
+    {
+      "area": "skills",
+      "observation": "The assigned worker skill is written for code-producing feature work and assumes a commit step, which is a poor fit for validation-only capstone features that may intentionally produce no diff and no commit id.",
+      "evidence": "`coding-agent-extension-worker/SKILL.md:78-79` mandates 'Step 8 — Commit', but the reviewed handoff states 'No source changes were made for this validation-only feature' at `.../handoffs/2026-04-09T05-06-26-530Z__continuation-whole-repo-gates__4df511c0-6b29-47b9-b082-735b75380eff.json:10`."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the feature spec, validation contract, mission guidance, worker skill, transcript skeleton, and the validation-only handoff for `continuation-whole-repo-gates`. There was no source diff or commit to inspect, but the recorded verification still fails review because the worker's own evidence shows both `npm test --workspaces --if-present` and the full coding-agent Vitest run exited non-zero, so the capstone did not satisfy its assigned green-gate acceptance criteria."
+}

@@ -1,0 +1,28 @@
+{
+  "featureId": "continuation-integration-tests-core",
+  "reviewedAt": "2026-04-09T06:24:45.571410Z",
+  "commitId": "d6b6ee64",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature stays in scope and adds the requested integration suite, but the positive-path assertions stop at the internal follow-up queue instead of verifying that continuation is injected as a user-visible message in session history. That misses the feature contract's end-to-end observability requirement and can pass even when auto-dispatch to the transcript is broken.",
+    "issues": [
+      {
+        "file": "packages/coding-agent/test/suite/todotools-continuation-runtime.test.ts",
+        "line": 88,
+        "severity": "blocking",
+        "description": "The suite introduces `getQueuedContinuationMessages()` and uses it in the positive-path tests (for example lines 157-159, 192, 255-259, 269, and 280-287 in commit `d6b6ee64`) to assert only `session.getFollowUpMessages()` / `pendingMessageCount`. The feature description and VAL-CONTINUATION-001 / 006 / 028 require end-to-end verification that the continuation appears as an injected user message via the harness observability helper (`harness.getInjectedUserMessages()` backed by `session.messages`). As written, these tests still pass when continuation never becomes a visible user message, so they do not fully cover the required behavior."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The worker deviated from the prescribed baseline-validation command by running the repo-root `npm run test` before correcting to the manifest-defined coding-agent Vitest command. The skill may benefit from inlining the current `test-coding-agent` command from `.factory/services.yaml` in its startup checklist to reduce this recurring misread.",
+      "evidence": "`/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/handoffs/2026-04-09T04-09-30-549Z__continuation-integration-tests-core__a105319f-a381-411e-9a77-065e3a49d40c.json` -> `handoff.skillFeedback.deviations[0]` and `suggestedChanges[0]`."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Fail: the added tests validate queued follow-up state rather than the required injected user-message surface, so the feature does not fully satisfy its end-to-end continuation coverage contract."
+}

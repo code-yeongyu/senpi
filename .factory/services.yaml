@@ -1,4 +1,5 @@
 commands:
+  init: .factory/init.sh
   install: npm install
   build: npm run build
   check: npm run check

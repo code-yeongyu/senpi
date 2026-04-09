@@ -1,0 +1,45 @@
+{
+  "featureId": "fix-ai-live-api-tests",
+  "reviewedAt": "2026-04-09T06:25:25Z",
+  "commitId": "66d6749dbf78a22f349362817b9fc1dfd9ce79c3",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The commit fixes the two AI failures called out in the feature spec, but it also broadens the change into additional live-test files and turns two OpenRouter regressions into opt-in-only coverage. That violates both the mission allow-list and the feature requirement to keep keyed live tests running when credentials are available.",
+    "issues": [
+      {
+        "file": "packages/ai/test/openrouter-cache-write-repro.test.ts",
+        "line": 14,
+        "severity": "blocking",
+        "description": "The new `PI_ENABLE_OPENROUTER_CACHE_WRITE_REPRO` gate skips this regression unless an extra opt-in env var is set, even when `OPENROUTER_API_KEY` is already present. The feature was supposed to preserve live coverage when proper API keys are available; this change makes the cache-write regression silently disappear from normal credentialed runs."
+      },
+      {
+        "file": "packages/ai/test/total-tokens.test.ts",
+        "line": 465,
+        "severity": "blocking",
+        "description": "The new `PI_ENABLE_OPENROUTER_DEEPSEEK_TOTAL_TOKENS` gate disables the DeepSeek total-token regression by default, so the test no longer runs just because valid OpenRouter credentials are configured. That contradicts the feature's expected behavior that live tests still run and pass when proper API keys are available."
+      },
+      {
+        "file": "packages/ai/changes.md",
+        "line": 9,
+        "severity": "blocking",
+        "description": "This report documents edits to `bedrock-utils.ts`, `context-overflow.test.ts`, `openrouter-cache-write-repro.test.ts`, and `total-tokens.test.ts`, but mission AGENTS only opened `packages/ai/test/tool-call-id-normalization.test.ts`, `packages/ai/test/cross-provider-handoff.test.ts`, and `packages/ai/changes.md` for `fix-ai-live-api-tests`. The implementation therefore exceeded the documented scope for this feature."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "`coding-agent-extension-worker` still hard-codes coding-agent-only path restrictions, so scope-expansion fix features have to ignore the skill and rely on mission-specific overrides.",
+      "evidence": "`.factory/skills/coding-agent-extension-worker/SKILL.md:21-23` forbids `packages/ai` edits, while mission `AGENTS.md:36-46` explicitly opens `packages/ai/test/tool-call-id-normalization.test.ts`, `packages/ai/test/cross-provider-handoff.test.ts`, and `packages/ai/changes.md` for `fix-ai-live-api-tests`; the handoff's `skillFeedback` also calls this mismatch out."
+    },
+    {
+      "area": "knowledge",
+      "observation": "The mission feature spec and allow-list no longer match the AI failure surface encountered during repo-wide verification. Shared state should either document the additional unstable OpenRouter/Bedrock/local-test cases or explicitly say they must be escalated instead of broadening the feature scope.",
+      "evidence": "`features.json` describes only two failing AI files for `fix-ai-live-api-tests`, and mission `AGENTS.md:44-46` only permits those two files plus `packages/ai/changes.md`; commit `66d6749d` additionally changed `bedrock-utils.ts`, `context-overflow.test.ts`, `openrouter-cache-write-repro.test.ts`, and `total-tokens.test.ts` (see `packages/ai/changes.md:9-12` and `:29-32`)."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Review failed. The worker resolved the two named failures, but also made out-of-scope AI test changes and converted two OpenRouter regressions into opt-in-only tests, so default keyed runs lose coverage and the feature does not satisfy its documented scope/behavior."
+}

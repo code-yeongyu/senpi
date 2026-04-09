@@ -1,0 +1,28 @@
+{
+  "featureId": "continuation-compat-tests",
+  "reviewedAt": "2026-04-09T06:27:15.368857+00:00",
+  "commitId": "66aa4ee2",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature stays in scope and adds the requested compat suite, but its continuation assertions are wired to the internal follow-up queue instead of the user-visible injected-message surface required by the mission contract. That means the tests can pass even when continuation never lands in session history or drives the next assistant turn, so the end-to-end compatibility coverage is incomplete.",
+    "issues": [
+      {
+        "file": "packages/coding-agent/test/suite/todotools-continuation-compat.test.ts",
+        "line": 135,
+        "severity": "blocking",
+        "description": "The suite introduces `getQueuedContinuationMessages()` on top of `harness.session.getFollowUpMessages()` and uses it for the positive-path compatibility assertions (lines 277, 309, 324-325, 349, and 376 in commit `66aa4ee2`). Mission AGENTS requires `harness.getInjectedUserMessages()` for continuation integration tests, and the validation contract requires observing a follow-up user message plus a subsequent assistant turn (`VAL-CROSS-004`) rather than only an internal queued follow-up. As written, these tests still pass when continuation is queued but never becomes a visible injected user message or never runs the next turn, so the feature does not fully cover the specified behavior."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The worker marked `skillFeedback.followedProcedure` as true, but the reviewed commit bypasses the mission's canonical continuation observability path by asserting on `session.getFollowUpMessages()` instead of `harness.getInjectedUserMessages()`. The extension-worker skill would benefit from explicitly restating that continuation integration tests must use the harness helper, not queue internals, when a feature depends on runtime follow-up behavior.",
+      "evidence": "Mission guidance: `/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/AGENTS.md:92`. Reviewed code: `packages/coding-agent/test/suite/todotools-continuation-compat.test.ts` lines 135-137 and 277/309/324-325/349/376 in commit `66aa4ee2`. Transcript skeleton still reports `handoff.skillFeedback.followedProcedure: true` for worker session `49e7c7b0-a3c0-4f1c-b604-1cf360da6485`."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Fail: the compat suite validates queued follow-up state rather than the required injected user-message/end-to-end continuation surface, so it does not fully satisfy the continuation compatibility contract."
+}

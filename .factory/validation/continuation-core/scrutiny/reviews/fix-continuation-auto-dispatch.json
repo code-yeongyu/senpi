@@ -1,0 +1,28 @@
+{
+  "featureId": "fix-continuation-auto-dispatch",
+  "reviewedAt": "2026-04-09T06:25:59Z",
+  "commitId": "e4b17d9c090885ae51eb18745ea044a5cb9bbb94",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The fix correctly replaces the broken queued follow-up path with deferred idle-time dispatch, but the new callback is never cancelled or invalidated. That leaves a stale continuation able to fire after session state has been reset by a fresh user turn or by shutdown/reload.",
+    "issues": [
+      {
+        "file": "packages/coding-agent/src/core/extensions/builtin/todotools/continuation/runtime.ts",
+        "line": 184,
+        "severity": "blocking",
+        "description": "`agent_end` snapshots `prompt` and schedules an uncancelled `setTimeout` that later calls `dispatchContinuationWhenIdle(pi, ctx, prompt)`, but the only reset paths (`before_agent_start` at lines 128-133 and `session_shutdown` at lines 143-144) mutate `sessionStates` only; they do not cancel or invalidate that pending callback. If a human prompt starts a new turn before `ctx.isIdle()` flips, or the session reloads/shuts down during the 10s polling window, the old callback still reaches `pi.sendUserMessage(prompt)`. `AgentSession.sendUserMessage()` then calls `prompt()` as soon as the session becomes idle (`packages/coding-agent/src/core/agent-session.ts:1295-1299`), so the stale callback can start an extra turn with an outdated todo snapshot after the newer turn or reload finishes. The updated tests only exercise reload after `waitForHarnessToSettle()`, so this race remains uncovered."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The mission\u2019s shared architecture/spec still documents the pre-fix `deliverAs: \"followUp\"` design even though this feature intentionally changes continuation to deferred idle polling plus plain `pi.sendUserMessage(prompt)`. Future workers reviewing the mission docs would be steered back toward the broken behavior unless those shared docs are updated.",
+      "evidence": "/Users/yeongyu/local-workspaces/sanepi-mono/.factory/library/architecture.md:68,136 and /Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/features.json:392,671-682 still prescribe `deliverAs: \"followUp\"`, while commit e4b17d9c replaces that path with deferred idle dispatch in continuation/runtime.ts."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Fail: the happy-path auto-dispatch fix works, but the deferred callback is not invalidated on fresh-user/reset or shutdown/reload, so a stale continuation turn can still fire later."
+}

@@ -1,0 +1,15 @@
+{
+  "featureId": "fix-coding-agent-baseline-tests",
+  "reviewedAt": "2026-04-09T06:25:29.653213+00:00",
+  "commitId": "dabe5164fc6205f9f513514aa14079d59f83e909",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Pass. The commit stays within scope (three test files plus `packages/coding-agent/changes.md`) and the updated assertions match the current code: `resource-loader` no longer loads `SYSTEM.md` / `APPEND_SYSTEM.md` and now includes six builtin extensions, `agent-system` no longer registers a `tool_call` blocker, and the rewritten permission tests exercise the live `permission-system` deny/allow/ask flows that the implementation actually owns.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the feature handoff, transcript skeleton, mission guidance, skill instructions, and commit `dabe5164fc6205f9f513514aa14079d59f83e909`. I found no correctness or scope-compliance issues in the test fixes: the changes are consistent with `packages/coding-agent/src/core/resource-loader.ts`, `packages/coding-agent/src/core/extensions/builtin/index.ts`, `packages/coding-agent/src/core/extensions/builtin/agent-system/index.ts`, and `packages/coding-agent/src/core/extensions/builtin/permission-system/*`, and I did not identify any missing shared-state documentation gaps requiring escalation."
+}

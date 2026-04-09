@@ -38,8 +38,8 @@ builtin/todotools/
     │                     remaining-tasks bullets from a TodoItem[].
     └── runtime.ts        Agent-end handler, per-session state store,
                           re-entry guard, chain-cap counter, abort / stop
-                          reason detection, and the actual sendUserMessage
-                          call.
+                          reason detection, and deferred auto-dispatch once
+                          the session becomes idle.
 ```
 
 ## Data flow
@@ -65,8 +65,9 @@ builtin/todotools/
    e. Checks the per-session re-entry flag — if already injected for this cycle → skip. Otherwise set the flag.
    f. Checks the per-session chain counter — if it has reached the cap (default 10 consecutive auto-injections without a human user prompt) → skip.
    g. Builds the prompt via `buildPrompt(todos)` (header + status line `[Status: X/Y completed, Z remaining]` + bullets `- [<status>] <content>`).
-   h. Calls `pi.sendUserMessage(prompt, { deliverAs: "followUp" })`.
-   i. Increments the per-session chain counter.
+   h. Builds the prompt via `buildPrompt(todos)` (header + status line + remaining-task bullets).
+   i. Schedules a deferred continuation dispatch: after the current `agent_end` microtask unwinds, poll `ctx.isIdle()` and then call `pi.sendUserMessage(prompt)` **without** `deliverAs: "followUp"`. This avoids the still-streaming `agent_end` window, where `deliverAs: "followUp"` only queues the prompt instead of starting a new turn.
+   j. Increments the per-session chain counter.
 5. When a fresh user-originated prompt arrives (any `before_agent_start` NOT triggered by a continuation follow-up), the runtime resets the chain counter AND the per-cycle re-entry flag for that session.
 6. `session_shutdown` clears per-session state for that session id.
 
@@ -133,9 +134,9 @@ The builder takes a `TodoItem[]`, counts non-terminal items, and emits the bulle
 - `getTodoWidgetLines`, `getTodoResultLines`, `getLatestTodosFromBranchEntries`, `TODO_STATE_ENTRY_TYPE` are exported from a stable path inside `todotools/` (either via `index.ts` re-exports or directly from `state.ts`).
 - `TASK_MANAGEMENT_SECTION` is byte-equivalent to the pre-refactor constant.
 - Continuation registers only on `agent_end` (NEVER on `turn_end`, which would cause infinite recursion inside the tool-calling loop).
-- Continuation uses `pi.sendUserMessage(prompt, { deliverAs: "followUp" })` exactly. First arg is a string, not a content array.
+- Continuation auto-dispatches with a deferred `pi.sendUserMessage(prompt)` call once the session is idle. Calling `deliverAs: "followUp"` directly from `agent_end` only queues the prompt while streaming is still active.
 - Continuation MUST NOT modify `packages/coding-agent/src/core/settings-manager.ts`. The upstream `Settings` interface is treated as opaque; access happens through a local typed accessor.
-- Non-interactive modes (`--print`, RPC) MUST NOT inject continuation (interactive-only by design; the user has no way to observe or interrupt a print-mode loop).
+- Non-interactive modes (`--print`, RPC) MUST NOT inject continuation (interactive-only by design; the user has no way to observe or interrupt a print-mode loop). `ExtensionContext.hasUI` is not a reliable RPC detector because rpc-mode binds a UI context.
 
 ## Off-limits
 

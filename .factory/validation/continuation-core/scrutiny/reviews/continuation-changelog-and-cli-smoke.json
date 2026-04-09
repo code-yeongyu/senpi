@@ -1,0 +1,15 @@
+{
+  "featureId": "continuation-changelog-and-cli-smoke",
+  "reviewedAt": "2026-04-09T06:24:23Z",
+  "commitId": "1380cbd454fd0063b2f2c503354095bf44792981",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Pass. The commit is scoped to `packages/coding-agent/CHANGELOG.md` and adds the required `[Unreleased]` entry mentioning the `todotools` refactor, todo continuation, `todotools.continuation.enabled`, and `--disable-todo-continuation`. The worker transcript and captured `local-ignore/qa-help-output.txt` provide matching evidence that the built CLI and `./pi-test.sh` help surfaces expose the flag and that the wrapper preserves `--disable-todo-continuation`.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the feature handoff, transcript skeleton, commit diff, changelog change, validation-contract assertions, and captured help-output evidence. I found no correctness, regression, or scope-compliance issues, so this feature passes scrutiny."
+}

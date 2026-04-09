@@ -1,0 +1,21 @@
+{
+  "featureId": "continuation-harness-observability",
+  "reviewedAt": "2026-04-09T06:26:08.486056+00:00",
+  "commitId": "d2f50c6346ac104f03c572660ea179fcba421ec2",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The change is narrowly scoped to the test harness, matches the feature's allowed session-message-based observability approach, and correctly exposes a typed accessor without touching production code. The helper is sound because `AgentSession.sendUserMessage(..., { deliverAs: \"followUp\" })` ultimately produces a `role: \"user\"` message in session history, so filtering `session.messages` by the SANEPI directive header observes real continuation injections.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "services",
+      "observation": "The worker used the repo init entrypoint `.factory/init.sh`, but that setup command is not represented in `.factory/services.yaml`, so future workers have to discover it ad hoc from transcripts or habit instead of from the shared command manifest.",
+      "evidence": "Transcript skeleton for worker session 71378999-63e8-43e9-a6d0-ca96d8c1fd18 shows `Execute` of `/Users/yeongyu/local-workspaces/sanepi-mono/.factory/init.sh`; `/Users/yeongyu/local-workspaces/sanepi-mono/.factory/services.yaml` lists install/build/check/test commands only and no init/setup entry."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed handoff, transcript skeleton, commit d2f50c6346ac104f03c572660ea179fcba421ec2, and shared-state docs. The feature passes review: it adds the requested additive harness helper, stays out of `src/`, leaves existing harness behavior intact, and aligns with VAL-CROSS-016."
+}

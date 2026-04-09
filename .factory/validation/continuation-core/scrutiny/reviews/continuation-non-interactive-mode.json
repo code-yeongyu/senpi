@@ -1,0 +1,34 @@
+{
+  "featureId": "continuation-non-interactive-mode",
+  "reviewedAt": "2026-04-09T06:26:41.289852Z",
+  "commitId": "855c1b551ef5ed07ae2604056273ed4e12a80e36",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The change stays in scope, but it does not actually implement the required RPC-mode bypass. The runtime treats non-interactive mode as `!ctx.hasUI`, while RPC binds a real extension UI context, so continuation can still fire in RPC sessions. The added test also mis-simulates RPC by reusing the same no-UI harness as print mode, so it cannot catch that regression.",
+    "issues": [
+      {
+        "file": "packages/coding-agent/src/core/extensions/builtin/todotools/continuation/runtime.ts",
+        "line": 74,
+        "severity": "blocking",
+        "description": "`isNonInteractiveContext()` equates non-interactive mode with `!ctx.hasUI`, but RPC mode binds a concrete UI context (`packages/coding-agent/src/modes/rpc/rpc-mode.ts:125,288`), and `ExtensionRunner.hasUI()` returns true whenever the context is not the noop UI (`packages/coding-agent/src/core/extensions/runner.ts:342-343`). As a result, the new guard suppresses continuation in print mode but not in real RPC mode, so the feature does not satisfy the required `--print` / RPC bypass behavior."
+      },
+      {
+        "file": "packages/coding-agent/test/suite/todotools-continuation-non-interactive.test.ts",
+        "line": 41,
+        "severity": "blocking",
+        "description": "The parameterized \"print mode\" / \"rpc mode\" cases both call the same `createNonInteractiveHarness()` helper, which simply omits `uiContext` and therefore only exercises `ctx.hasUI === false`. Because actual RPC mode binds a UI context, this test is not an RPC simulation and cannot verify the behavior promised by the feature description and handoff."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The repository has conflicting shared guidance about RPC-mode UI semantics. `ExtensionContext.hasUI` is commented as \"false in print/RPC mode\", but the real RPC runtime binds an `ExtensionUIContext`, which makes `hasUI()` true. This mismatch is likely what led the worker to implement and test the wrong signal.",
+      "evidence": "`packages/coding-agent/src/core/extensions/types.ts:268` says `hasUI` is false in print/RPC mode, while `packages/coding-agent/src/modes/rpc/rpc-mode.ts:125,288` creates and binds a UI context and `packages/coding-agent/src/core/extensions/runner.ts:342-343` defines `hasUI()` as `this.uiContext !== noOpUIContext`."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Fail: the feature only gates on `ctx.hasUI === false`, which covers print mode but not actual RPC mode, and the added test mislabels a no-UI harness as an RPC simulation so the bug goes undetected."
+}

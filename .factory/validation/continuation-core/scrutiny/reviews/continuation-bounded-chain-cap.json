@@ -1,0 +1,28 @@
+{
+  "featureId": "continuation-bounded-chain-cap",
+  "reviewedAt": "2026-04-09T06:29:31.083213Z",
+  "commitId": "9b2609b5eb69fdf3ee346934e69531ada006b74c",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature stays in scope and adds the requested chain-cap test, but the test advances the continuation chain by manually replaying the continuation prompt and inspecting the internal follow-up queue. That means it can pass even when the runtime never auto-dispatches continuation turns, so it does not fully cover the bounded auto-injection behavior required by the feature contract.",
+    "issues": [
+      {
+        "file": "packages/coding-agent/test/suite/todotools-continuation-chain-cap.test.ts",
+        "line": 122,
+        "severity": "blocking",
+        "description": "The 12-cycle loop calls `await harness.session.prompt(continuationPrompt)` on every iteration and counts injections by draining `harness.session.clearQueue().followUp` via `drainContinuationFollowUps()` (lines 93-95, 122-145 in commit `9b2609b5`). Because the test itself feeds the previous continuation prompt back into the session, it will keep progressing the chain even if the runtime never auto-dispatches the queued continuation as a new user turn. The feature description and VAL-CONTINUATION-024 / VAL-CROSS-018 are specifically about bounding consecutive automatic continuation injections in one user-initiated chain; this test only proves queue bookkeeping under manual replay, so the key end-to-end regression surface remains uncovered."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The worker fell back to queue-inspection assertions for a continuation integration test even though the mission provides a harness-level observability helper for injected user messages. The package skill only tells workers to read `test/suite/harness.ts`; it does not restate the mission-specific rule to assert continuation through the canonical helper, which makes this mistake easier to repeat.",
+      "evidence": "`/Users/yeongyu/local-workspaces/sanepi-mono/.factory/skills/coding-agent-extension-worker/SKILL.md` Step 2 mentions reading `test/suite/harness.ts` but not using `harness.getInjectedUserMessages()`. The transcript skeleton for worker session `eca5c85f-1083-4d02-bcf9-7fc6dafb7b50` shows a queue-API search (`getFollowUpMessages|clearQueue|pendingMessageCount`) followed by implementation of `drainContinuationFollowUps()` in the added test file."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Fail: the added chain-cap test measures manual queue replay instead of the actual automatic continuation chain, so it does not fully validate the bounded auto-injection behavior this feature was supposed to cover."
+}

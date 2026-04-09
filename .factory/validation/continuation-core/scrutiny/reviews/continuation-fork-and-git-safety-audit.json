@@ -1,0 +1,28 @@
+{
+  "featureId": "continuation-fork-and-git-safety-audit",
+  "reviewedAt": "2026-04-09T06:25:27.041310Z",
+  "commitId": null,
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The worker gathered the right evidence sources and correctly noted that `merge-base HEAD main..HEAD` is empty on this checkout, but the final audit result is wrong: it reports a blocking fork-strategy violation for deleting `packages/coding-agent/src/core/extensions/builtin/todowrite.ts`, even though the mission guidance and the refactor feature explicitly required that legacy-file deletion.",
+    "issues": [
+      {
+        "file": "local-ignore/qa-git-safety-audit.txt",
+        "line": 22,
+        "severity": "blocking",
+        "description": "The report classifies `packages/coding-agent/src/core/extensions/builtin/todowrite.ts` as an off-allow-list violation and concludes the audit should fail, but that deletion was explicitly required by the mission itself. Mission `AGENTS.md` says the legacy file is deleted after the refactor and lists `packages/coding-agent/src/core/extensions/builtin/todowrite.ts` under allowed changes for deletion, and the `refactor-todotools-folder` feature description also says `DELETE packages/coding-agent/src/core/extensions/builtin/todowrite.ts`. Because the audit omitted that intentional deletion from its allow-list, its `FAIL` result is a false positive rather than a real fork-strategy finding."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The audit feature's path allow-list conflicts with other mission shared state: it omitted the intentional deletion of `packages/coding-agent/src/core/extensions/builtin/todowrite.ts`, which mission guidance and the refactor feature both explicitly required. That mismatch caused this worker to escalate a false blocking violation.",
+      "evidence": "Mission AGENTS.md:12 and AGENTS.md:28 explicitly say `packages/coding-agent/src/core/extensions/builtin/todowrite.ts` is deleted / allowed to be deleted; features.json:153 says `DELETE packages/coding-agent/src/core/extensions/builtin/todowrite.ts`; progress_log.jsonl:69 records the orchestrator dismissing the audit finding as a false positive for that intentional legacy deletion."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the handoff, transcript skeleton, mission docs, validation contract, the generated `local-ignore/qa-git-safety-audit.txt` artifact, and commit `619efcff864e06645b11dfc714c5cada4d0cffe3` that the audit flagged. The review fails because the audit report incorrectly treats the intentional legacy `todowrite.ts` deletion as a fork-strategy violation, so its overall `FAIL` conclusion is not correct."
+}

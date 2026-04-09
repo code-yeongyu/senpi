@@ -1,0 +1,39 @@
+{
+  "featureId": "continuation-runtime-agent-end-handler",
+  "reviewedAt": "2026-04-09T06:27:56Z",
+  "commitId": "0ed6ddcf87d5d871a4a36f69bcff6e950fa7acfc",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature stays within the allowed todotools/runtime scope and wires the new continuation module into the extension correctly, but the core dispatch path is wrong: calling `pi.sendUserMessage(..., { deliverAs: \"followUp\" })` from `agent_end` only queues the continuation while the session is still streaming, so the agent does not actually resume automatically.",
+    "issues": [
+      {
+        "file": "packages/coding-agent/src/core/extensions/builtin/todotools/continuation/runtime.ts",
+        "line": 154,
+        "severity": "blocking",
+        "description": "This `pi.sendUserMessage(buildContinuationPrompt(todos), { deliverAs: \"followUp\" })` call runs inside the `agent_end` handler while the session is still streaming. `sendUserMessage()` forwards `deliverAs` to `prompt(..., { streamingBehavior })`, and `prompt()` queues follow-up messages whenever `isStreaming` is true (`packages/coding-agent/src/core/agent-session.ts:961-970, 1294-1298`). That means the SANEPI directive is only queued instead of starting a fresh agent turn, so the feature misses its required automatic continuation behavior. The mission later had to add `fix-continuation-auto-dispatch` with this exact root cause in `features.json:671`."
+      },
+      {
+        "file": "packages/coding-agent/test/suite/todotools-continuation-runtime-unit.test.ts",
+        "line": 126,
+        "severity": "non_blocking",
+        "description": "The new unit test only asserts that `sendUserMessage(..., { deliverAs: \"followUp\" })` was invoked. It never verifies that a new agent turn actually starts or that the continuation becomes a visible user message in session history, so it locks in the broken queuing behavior instead of catching it."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The shared architecture/spec guidance encoded the broken continuation-dispatch approach, so workers following the mission docs exactly would reproduce this bug.",
+      "evidence": "`.factory/library/architecture.md:68` and `:136` instruct workers to call `pi.sendUserMessage(prompt, { deliverAs: \"followUp\" })` from `agent_end`; mission `features.json:671` later documents the actual timing problem: `agent_end` fires while `isStreaming` is still true, so that call is silently queued and never auto-dispatches."
+    },
+    {
+      "area": "services",
+      "observation": "Workers are still discovering the repo init/setup command from transcripts instead of from the shared service manifest.",
+      "evidence": "The transcript skeleton for worker session `8d36681e-7f5c-477d-9a9a-0567d15db005` includes an `Execute` of `/Users/yeongyu/local-workspaces/sanepi-mono/.factory/init.sh`, but `/Users/yeongyu/local-workspaces/sanepi-mono/.factory/services.yaml` defines install/build/check/test commands only and no init/setup entry."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Review failed. The runtime wiring is otherwise scoped correctly, but its `agent_end` dispatch only queues the continuation directive instead of starting the next agent cycle, so the feature does not actually provide automatic todo continuation."
+}

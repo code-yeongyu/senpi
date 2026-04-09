@@ -1,0 +1,39 @@
+{
+  "featureId": "continuation-prompt-builder",
+  "reviewedAt": "2026-04-09T06:26:39.109417+00:00",
+  "commitId": "67aef2dc2071568d6409ac5f54abe42ae0f7b6e6",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The prompt-builder implementation matches the happy-path fixture, but it misses two contract-breaking edge cases: cancelled todos make the status arithmetic inconsistent, and raw multiline todo content breaks the required one-bullet-per-item formatting.",
+    "issues": [
+      {
+        "file": "packages/coding-agent/src/core/extensions/builtin/todotools/continuation/prompt.ts",
+        "line": 25,
+        "severity": "blocking",
+        "description": "`completedCount` only counts `status === \"completed\"` while `remainingTodos` excludes both `completed` and `cancelled`. For a valid list like `[completed, cancelled, pending]`, `buildContinuationPrompt()` emits `[Status: 1/3 completed, 1 remaining]`, so cancelled items are unaccounted for and the required `X+Z===Y` invariant is violated. The worker transcript explicitly noted this conflict and narrowed the mixed-list test instead of fixing the implementation."
+      },
+      {
+        "file": "packages/coding-agent/src/core/extensions/builtin/todotools/continuation/prompt.ts",
+        "line": 27,
+        "severity": "blocking",
+        "description": "The prompt builder interpolates `todo.content` directly into `- [<status>] <content>` lines. `todowrite` accepts arbitrary strings, so a todo like `\"Line one\\nLine two\"` renders as two physical lines and breaks the contract that the `Remaining tasks:` section contains one bullet per non-terminal todo in that exact format. This also opens the door to prompt-text injection via embedded newlines/control text."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The mission contract is internally ambiguous for cancelled todos: it defines `Z` as the non-terminal count (excluding `cancelled`) but also requires `X+Z===Y` with `Y = todos.length`. The worker transcript shows this ambiguity led to weakening the mixed-list test rather than resolving cancelled-item accounting.",
+      "evidence": "features.json:354 and :363 require `Y = todos.length`, `X = count(status === 'completed')`, `Z = count(non-terminal)` and also `X+Z===Y`; validation-contract.md:166 excludes `cancelled` from the incomplete count while :179 still requires `X + Z === Y`; transcript artifact grep_tool_cli-call_xFbaSTflXjgfzGY5NS8j1xvX-15770902.log line 3 records: \"the failing assertion was in my mixed-list test case because I included a `cancelled` item while also enforcing the contract\u2019s `X + Z === Y` invariant. I\u2019m tightening that test to use a non-cancelled mixed list\"."
+    },
+    {
+      "area": "knowledge",
+      "observation": "Shared docs do not call out that continuation prompt bullets should reuse the existing todo text sanitizer, even though `state.ts` already has `sanitizeTodoText()` and `todowrite` accepts arbitrary strings. That omission made it easy for the prompt builder to ship raw multiline content that breaks prompt structure.",
+      "evidence": "packages/coding-agent/src/core/extensions/builtin/todotools/state.ts:25-30 defines `sanitizeTodoText()` and lines 43-49 reuse it for widget/result rendering; packages/coding-agent/src/core/extensions/builtin/todotools/tools/todowrite.ts:39-50 accepts any string content; packages/coding-agent/src/core/extensions/builtin/todotools/continuation/prompt.ts:27 interpolates `todo.content` without sanitization."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the handoff, transcript skeleton, mission docs, and commit 67aef2dc2071568d6409ac5f54abe42ae0f7b6e6. The feature should not pass as implemented: cancelled todos produce inconsistent status counts, and multiline todo content breaks the required bullet formatting in the continuation prompt."
+}
