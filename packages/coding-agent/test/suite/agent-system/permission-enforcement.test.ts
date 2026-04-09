@@ -7,7 +7,6 @@ import { fauxAssistantMessage, fauxToolCall } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.js";
-import { AGENT_TYPE_ENV_VAR } from "../../../src/core/extensions/builtin/background-task/types.js";
 import { ExtensionRunner } from "../../../src/core/extensions/runner.js";
 import type { ExtensionUIContext } from "../../../src/core/extensions/types.js";
 import { ModelRegistry } from "../../../src/core/model-registry.js";
@@ -17,12 +16,12 @@ import { theme } from "../../../src/modes/interactive/theme/theme.js";
 import { createTestExtensionsResult } from "../../utilities.js";
 import { createHarness, getMessageText, type Harness } from "../harness.js";
 
-const AGENT_SYSTEM_EXTENSION_PATH = fileURLToPath(
-	new URL("../../../src/core/extensions/builtin/agent-system/index.ts", import.meta.url),
+const PERMISSION_SYSTEM_EXTENSION_PATH = fileURLToPath(
+	new URL("../../../src/core/extensions/builtin/permission-system/index.ts", import.meta.url),
 );
 
-async function loadAgentSystemExtension() {
-	const module = await import(AGENT_SYSTEM_EXTENSION_PATH);
+async function loadPermissionSystemExtension() {
+	const module = await import(PERMISSION_SYSTEM_EXTENSION_PATH);
 	return module.default;
 }
 
@@ -43,10 +42,10 @@ function createEchoTool(onExecute?: (text: string) => void): AgentTool {
 	};
 }
 
-async function writeAgentFile(harness: Harness, agentName: string, body: string): Promise<void> {
-	const agentDir = path.join(harness.tempDir, ".sanepi", "agent");
-	await fs.mkdir(agentDir, { recursive: true });
-	await fs.writeFile(path.join(agentDir, `${agentName}.md`), body);
+async function writePermissionSettings(tempDir: string, permissionConfig: Record<string, unknown>): Promise<void> {
+	const piDir = path.join(tempDir, ".pi");
+	await fs.mkdir(piDir, { recursive: true });
+	await fs.writeFile(path.join(piDir, "settings.json"), JSON.stringify({ permission: permissionConfig }, null, 3));
 }
 
 function createToolResultResponder() {
@@ -96,15 +95,14 @@ function createRunnerContextActions() {
 }
 
 async function createPermissionRunner(options: {
-	agentType: string;
-	agentFileBody?: string;
+	permissionConfig?: Record<string, unknown>;
 	tools?: AgentTool[];
 	uiContext?: ExtensionUIContext;
 }): Promise<{ runner: ExtensionRunner; tempDir: string }> {
 	const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-system-permission-"));
 	const tools = options.tools ?? [createEchoTool()];
-	const agentSystemExtension = await loadAgentSystemExtension();
-	const extensionsResult = await createTestExtensionsResult([agentSystemExtension], tempDir);
+	const permissionSystemExtension = await loadPermissionSystemExtension();
+	const extensionsResult = await createTestExtensionsResult([permissionSystemExtension], tempDir);
 	const runner = new ExtensionRunner(
 		extensionsResult.extensions,
 		extensionsResult.runtime,
@@ -116,10 +114,8 @@ async function createPermissionRunner(options: {
 	runner.bindCore(createRunnerActions(tools), createRunnerContextActions());
 	runner.setUIContext(options.uiContext);
 
-	if (options.agentFileBody) {
-		const agentDir = path.join(tempDir, ".sanepi", "agent");
-		await fs.mkdir(agentDir, { recursive: true });
-		await fs.writeFile(path.join(agentDir, `${options.agentType}.md`), options.agentFileBody);
+	if (options.permissionConfig) {
+		await writePermissionSettings(tempDir, options.permissionConfig);
 	}
 
 	await runner.emit({ type: "session_start", reason: "startup" });
@@ -162,10 +158,9 @@ function createUiContext(selection: string | undefined): ExtensionUIContext {
 	};
 }
 
-describe("agent-system permission enforcement", () => {
+describe("permission-system enforcement", () => {
 	const harnesses: Harness[] = [];
 	const tempDirs: string[] = [];
-	const originalAgentType = process.env[AGENT_TYPE_ENV_VAR];
 
 	afterEach(() => {
 		while (harnesses.length > 0) {
@@ -177,20 +172,13 @@ describe("agent-system permission enforcement", () => {
 				void fs.rm(tempDir, { recursive: true, force: true });
 			}
 		}
-
-		if (originalAgentType === undefined) {
-			delete process.env[AGENT_TYPE_ENV_VAR];
-		} else {
-			process.env[AGENT_TYPE_ENV_VAR] = originalAgentType;
-		}
 	});
 
-	it("returns block result with agent and tool name when permission denies the tool", async () => {
+	it("returns a block result when a deny rule rejects the tool call", async () => {
 		// given
-		process.env[AGENT_TYPE_ENV_VAR] = "explore";
 		const { runner, tempDir } = await createPermissionRunner({
-			agentType: "explore",
 			tools: [createEchoTool()],
+			permissionConfig: { echo: "deny" },
 		});
 		tempDirs.push(tempDir);
 
@@ -205,21 +193,20 @@ describe("agent-system permission enforcement", () => {
 		// then
 		expect(result).toEqual({
 			block: true,
-			reason:
-				'Agent "explore" does not have permission to use "echo". This tool is denied by the agent\'s permission policy.',
+			reason: "The user has specified a rule which prevents you from using this specific tool call.",
 		});
 	});
 
 	it("returns undefined and allows tool execution when permission allows the tool", async () => {
 		// given
-		process.env[AGENT_TYPE_ENV_VAR] = "general";
 		const executedTools: string[] = [];
-		const agentSystemExtension = await loadAgentSystemExtension();
+		const permissionSystemExtension = await loadPermissionSystemExtension();
 		const harness = await createHarness({
 			tools: [createEchoTool((text) => executedTools.push(text))],
-			extensionFactories: [agentSystemExtension],
+			extensionFactories: [permissionSystemExtension],
 		});
 		harnesses.push(harness);
+		await writePermissionSettings(harness.tempDir, { echo: "allow" });
 		await harness.session.bindExtensions({});
 		harness.setResponses([
 			fauxAssistantMessage(fauxToolCall("echo", { text: "allowed" }), { stopReason: "toolUse" }),
@@ -237,22 +224,14 @@ describe("agent-system permission enforcement", () => {
 
 	it("auto-denies ask mode without UI and explains that no UI is available", async () => {
 		// given
-		process.env[AGENT_TYPE_ENV_VAR] = "ask-without-ui";
-		const agentSystemExtension = await loadAgentSystemExtension();
+		const executedTools: string[] = [];
+		const permissionSystemExtension = await loadPermissionSystemExtension();
 		const harness = await createHarness({
-			tools: [createEchoTool()],
-			extensionFactories: [agentSystemExtension],
+			tools: [createEchoTool((text) => executedTools.push(text))],
+			extensionFactories: [permissionSystemExtension],
 		});
 		harnesses.push(harness);
-		await writeAgentFile(
-			harness,
-			"ask-without-ui",
-			`---
-tools:
-  echo: ask
----
-Requires confirmation.\n`,
-		);
+		await writePermissionSettings(harness.tempDir, { echo: "ask" });
 		await harness.session.bindExtensions({});
 		harness.setResponses([
 			fauxAssistantMessage(fauxToolCall("echo", { text: "needs-ui" }), { stopReason: "toolUse" }),
@@ -263,30 +242,23 @@ Requires confirmation.\n`,
 		await harness.session.prompt("use echo");
 
 		// then
-		expect(getMessageText(getMessageFromEnd(harness, 2))).toContain("no UI is available");
-		expect(getMessageText(getMessageFromEnd(harness, 1))).toContain("no UI is available");
+		expect(executedTools).toEqual([]);
+		const lastMessage = getMessageText(getMessageFromEnd(harness, 1));
+		expect(lastMessage).toContain("Permission required for echo (*)");
+		expect(lastMessage).toContain("--permission echo=allow");
 	});
 
 	it("remembers allow always in a session-local set and bypasses the second prompt", async () => {
 		// given
-		process.env[AGENT_TYPE_ENV_VAR] = "ask-with-ui";
 		const executedTools: string[] = [];
-		const agentSystemExtension = await loadAgentSystemExtension();
+		const permissionSystemExtension = await loadPermissionSystemExtension();
 		const uiContext = createUiContext("Allow always");
 		const harness = await createHarness({
 			tools: [createEchoTool((text) => executedTools.push(text))],
-			extensionFactories: [agentSystemExtension],
+			extensionFactories: [permissionSystemExtension],
 		});
 		harnesses.push(harness);
-		await writeAgentFile(
-			harness,
-			"ask-with-ui",
-			`---
-tools:
-  echo: ask
----
-Requires confirmation.\n`,
-		);
+		await writePermissionSettings(harness.tempDir, { echo: "ask" });
 		await harness.session.bindExtensions({ uiContext });
 		harness.setResponses([
 			fauxAssistantMessage(fauxToolCall("echo", { text: "first" }), { stopReason: "toolUse" }),

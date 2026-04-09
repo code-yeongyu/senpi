@@ -194,7 +194,10 @@ Project skill`,
 			await loader.reload();
 
 			const extensionsResult = loader.getExtensions();
-			expect(extensionsResult.extensions).toHaveLength(2);
+			const discoveredExtensions = extensionsResult.extensions.filter(
+				(extension) => !extension.path.startsWith("<builtin:"),
+			);
+			expect(discoveredExtensions).toHaveLength(2);
 			expect(extensionsResult.errors.some((e) => e.error.includes('Command "/deploy" conflicts'))).toBe(false);
 
 			const sessionManager = SessionManager.inMemory();
@@ -214,12 +217,8 @@ Project skill`,
 			expect(runner.getCommand("user-only")?.description).toBe("user only");
 
 			const commands = runner.getRegisteredCommands();
-			expect(commands.map((command) => command.invocationName)).toEqual([
-				"deploy:1",
-				"project-only",
-				"deploy:2",
-				"user-only",
-			]);
+			const invocationNames = commands.map((command) => command.invocationName).filter((name) => name !== "tui");
+			expect(invocationNames).toEqual(["deploy:1", "project-only", "deploy:2", "user-only"]);
 		});
 
 		it("should honor overrides for auto-discovered resources", async () => {
@@ -276,7 +275,7 @@ Content`,
 			expect(agentsFiles.some((f) => f.path.includes("AGENTS.md"))).toBe(true);
 		});
 
-		it("should discover SYSTEM.md from cwd/.pi", async () => {
+		it("should ignore SYSTEM.md from cwd/.pi", async () => {
 			const piDir = join(cwd, ".pi");
 			mkdirSync(piDir, { recursive: true });
 			writeFileSync(join(piDir, "SYSTEM.md"), "You are a helpful assistant.");
@@ -284,10 +283,10 @@ Content`,
 			const loader = new DefaultResourceLoader({ cwd, agentDir });
 			await loader.reload();
 
-			expect(loader.getSystemPrompt()).toBe("You are a helpful assistant.");
+			expect(loader.getSystemPrompt()).toBeUndefined();
 		});
 
-		it("should discover APPEND_SYSTEM.md", async () => {
+		it("should ignore APPEND_SYSTEM.md", async () => {
 			const piDir = join(cwd, ".pi");
 			mkdirSync(piDir, { recursive: true });
 			writeFileSync(join(piDir, "APPEND_SYSTEM.md"), "Additional instructions.");
@@ -295,7 +294,7 @@ Content`,
 			const loader = new DefaultResourceLoader({ cwd, agentDir });
 			await loader.reload();
 
-			expect(loader.getAppendSystemPrompt()).toContain("Additional instructions.");
+			expect(loader.getAppendSystemPrompt()).toEqual([]);
 		});
 
 		it("should assign stable builtin identifiers to builtin extension factories", async () => {
@@ -307,7 +306,14 @@ Content`,
 			const builtinPaths = loader.getExtensions().extensions.map((extension) => extension.path);
 
 			// then
-			expect(builtinPaths).toEqual(["<builtin:todowrite>", "<builtin:redraws>"]);
+			expect(builtinPaths).toEqual([
+				"<builtin:background-task>",
+				"<builtin:agent-system>",
+				"<builtin:permission-system>",
+				"<builtin:todowrite>",
+				"<builtin:redraws>",
+				"<builtin:parallel-tool-calls>",
+			]);
 		});
 
 		it("should seed default global extensions into the default global agent extensions directory", async () => {

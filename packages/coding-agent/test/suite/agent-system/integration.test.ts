@@ -149,7 +149,7 @@ describe("agent-system extension integration", () => {
 		expect(mockPi._handlers.tool_call).toBeUndefined();
 	});
 
-	it("blocks denied tool calls for the explore agent", async () => {
+	it("defers denied tool-call blocking to the permission-system extension", async () => {
 		// given
 		process.env[AGENT_TYPE_ENV_VAR] = BUILTIN_AGENTS.explore.name;
 		const mockPi = createMockPi();
@@ -165,11 +165,7 @@ describe("agent-system extension integration", () => {
 		);
 
 		// then
-		expect(result).toEqual({
-			block: true,
-			reason:
-				'Agent "explore" does not have permission to use "edit". This tool is denied by the agent\'s permission policy.',
-		});
+		expect(result).toBeUndefined();
 	});
 
 	it("allows permitted tool calls for the explore agent", async () => {
