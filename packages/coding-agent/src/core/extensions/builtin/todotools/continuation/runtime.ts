@@ -69,6 +69,12 @@ function getSessionId(ctx: ExtensionContext): string {
 	return ctx.sessionManager.getSessionId();
 }
 
+function isNonInteractiveContext(ctx: ExtensionContext): boolean {
+	// ExtensionContext does not expose a dedicated mode flag. The documented
+	// signal for print/RPC mode is `hasUI === false`.
+	return !ctx.hasUI;
+}
+
 function shouldResetForSessionStart(event: SessionStartEvent): boolean {
 	const reason = event.reason as string;
 	return reason === "reload" || reason === "resume" || reason === "compact";
@@ -117,7 +123,7 @@ export function installContinuation(pi: ExtensionAPI, deps: ContinuationDeps): v
 
 	pi.on("agent_end", async (event, ctx) => {
 		try {
-			if (!ctx.hasUI) {
+			if (isNonInteractiveContext(ctx)) {
 				return;
 			}
 
