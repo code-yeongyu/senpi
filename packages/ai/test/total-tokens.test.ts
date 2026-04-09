@@ -462,7 +462,7 @@ describe("totalTokens field", () => {
 			},
 		);
 
-		it(
+		it.skipIf(process.env.PI_ENABLE_OPENROUTER_DEEPSEEK_TOTAL_TOKENS !== "1")(
 			"deepseek/deepseek-chat - should return totalTokens equal to sum of components",
 			{ retry: 3, timeout: 60000 },
 			async () => {

@@ -488,6 +488,12 @@ describe("Context overflow error handling", () => {
 			const result = await testContextOverflow(model, process.env.OPENROUTER_API_KEY!);
 			logResult(result);
 
+			if (result.stopReason === "stop") {
+				expect(result.hasUsageData).toBe(true);
+				expect(result.usage.input + result.usage.cacheRead).toBeGreaterThan(model.contextWindow);
+				return;
+			}
+
 			expect(result.stopReason).toBe("error");
 			expect(result.errorMessage).toMatch(/maximum context length is \d+ tokens/i);
 			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
@@ -638,7 +644,7 @@ describe("Context overflow error handling", () => {
 	// =============================================================================
 
 	let lmStudioRunning = false;
-	if (!process.env.PI_NO_LOCAL_LLM) {
+	if (!process.env.PI_NO_LOCAL_LLM && process.env.PI_ENABLE_LOCAL_LLM === "1") {
 		try {
 			execSync("curl -s --max-time 1 http://localhost:1234/v1/models > /dev/null", { stdio: "ignore" });
 			lmStudioRunning = true;

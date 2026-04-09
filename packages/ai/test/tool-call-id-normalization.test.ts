@@ -101,7 +101,7 @@ describe("Tool Call ID Normalization - Live Handoff", () => {
 					],
 					tools: [echoTool],
 				},
-				{ apiKey: openrouterKey },
+				{ apiKey: openrouterKey, reasoning: "high" },
 			);
 
 			// Should NOT fail with "call_id too long" error
@@ -250,7 +250,7 @@ describe("Tool Call ID Normalization - Prefilled Context", () => {
 					messages,
 					tools: [echoTool],
 				},
-				{ apiKey: openrouterKey },
+				{ apiKey: openrouterKey, reasoning: "high" },
 			);
 
 			// Should NOT fail with "call_id too long" error
