@@ -78,3 +78,33 @@ The existing todowrite extension already handles branch-scoped todo state via `S
 4. `agent_end` fires even for aborted agents (emitted unconditionally by `agent-session.ts`). The runtime must detect abort via `event.messages` last assistant's `stopReason`. This is why VAL-CONTINUATION-017 and VAL-CONTINUATION-020 exist.
 
 5. Non-interactive modes (`--print`, `rpc`) exit after one cycle — if continuation fires there, the follow-up is never delivered and the design becomes confusing. VAL-CROSS-020 pins the bypass.
+
+## Validation Concurrency
+
+Use these ceilings unless current machine load is materially worse than what was observed during planning.
+
+| Surface | Max concurrent validators | Why |
+| --- | --- | --- |
+| `manual-fs-check` / `grep-check` | 2 | Read-only filesystem checks are cheap and do not interfere with each other. |
+| `vitest` automated surface | 1 | Vitest runs share the same repo, temp/build outputs, and test harness resources; serialize to avoid noisy contention. |
+| `manual-cli` | 1 | Low cost, but these assertions are few and don't benefit meaningfully from parallel runs. |
+| `manual-tmux` | 1 | Interactive and provider-backed; always serialize. |
+
+For the `refactor` milestone specifically, run at most **2 validators total** at once: one static validator (`manual-fs-check` / `grep-check`) and one automated validator (`vitest`).
+
+## Flow Validator Guidance: manual-fs-check
+
+- Stay read-only.
+- Use `LS`, `Glob`, `Read`, and `Grep` style checks; do not edit repo files.
+- Safe scope for `refactor`: verify the `todotools/` layout, builtin registration path/id, absence of legacy imports, and absence of forbidden type suppressions.
+- Do not treat unrelated untracked files under `.pi/` or `.sisyphus/` as failures.
+
+## Flow Validator Guidance: vitest
+
+- Stay within the existing repo and test harness; do not modify source or test files.
+- Use the faux-provider-based coding-agent tests only; no real network/provider calls.
+- For `refactor`, prefer the focused suite files first:
+  - `packages/coding-agent/test/suite/todowrite-extension.test.ts`
+  - `packages/coding-agent/test/suite/task-management-section.test.ts`
+- If broader verification is needed, run repo-level `npm run check` and/or the coding-agent Vitest suite, but account for the mission-documented pre-existing failures only.
+- Treat the known pre-existing failures listed in mission `AGENTS.md` as non-blocking unless any new failure appears outside that allowlist.

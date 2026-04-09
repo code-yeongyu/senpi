@@ -1,0 +1,73 @@
+{
+  "groupId": "static",
+  "surface": "manual-fs-check",
+  "testedAt": "2026-04-09T03:07:49.342058+00:00",
+  "status": "pass",
+  "assertions": [
+    {
+      "id": "VAL-REFACTOR-001",
+      "status": "pass",
+      "reason": "The new builtin/todotools folder contains all required files, and the legacy builtin/todowrite.ts file is absent.",
+      "evidence": [
+        "LS builtin/todotools => index.ts, prompt.ts, state.ts, tools/",
+        "LS builtin/todotools/tools => todoread.ts, todowrite.ts",
+        "Filesystem check => legacy_exists=false, missing_required=[] for builtin/todowrite.ts and required todotools files"
+      ]
+    },
+    {
+      "id": "VAL-REFACTOR-002",
+      "status": "pass",
+      "reason": "The builtin registry imports from ./todotools/index.js and preserves id: \"todowrite\".",
+      "evidence": [
+        "packages/coding-agent/src/core/extensions/builtin/index.ts:7 => import todowriteExtension from \"./todotools/index.js\";",
+        "packages/coding-agent/src/core/extensions/builtin/index.ts:20 => { id: \"todowrite\", factory: todowriteExtension },"
+      ]
+    },
+    {
+      "id": "VAL-REFACTOR-012",
+      "status": "pass",
+      "reason": "No source or test imports reference the legacy builtin/todowrite path, and the updated test constant points at an existing file inside builtin/todotools/.",
+      "evidence": [
+        "Grep packages/coding-agent/src for 'builtin/todowrite' => no matches",
+        "packages/coding-agent/test/suite/todowrite-extension.test.ts:10 => new URL(\"../../src/core/extensions/builtin/todotools/index.ts\", import.meta.url)",
+        "Grep remaining todotools import paths => builtin/index.ts imports ./todotools/index.js; todotools/index.ts imports ./tools/todoread.js and ./tools/todowrite.js"
+      ]
+    },
+    {
+      "id": "VAL-REFACTOR-013",
+      "status": "pass",
+      "reason": "No forbidden type suppressions or any-typed patterns were found anywhere under builtin/todotools/.",
+      "evidence": [
+        "Grep builtin/todotools for 'as any|@ts-ignore|@ts-expect-error|: any|<any>|any[]|any | | any|Array<any>|Record<string, any>|Promise<any>|satisfies any' => no matches"
+      ]
+    },
+    {
+      "id": "VAL-REFACTOR-014",
+      "status": "pass",
+      "reason": "before_agent_start is registered from the new todotools folder, and the deleted legacy file cannot contain any remaining registration.",
+      "evidence": [
+        "packages/coding-agent/src/core/extensions/builtin/todotools/index.ts:37 => pi.on(\"before_agent_start\", async (event) => {",
+        "LS packages/coding-agent/src/core/extensions/builtin => todotools/ present and no todowrite.ts file listed"
+      ]
+    },
+    {
+      "id": "VAL-REFACTOR-016",
+      "status": "pass",
+      "reason": "settings-manager.ts is unchanged in git diff output, and it contains no todotools-related widening.",
+      "evidence": [
+        "git diff -- packages/coding-agent/src/core/settings-manager.ts => empty output",
+        "Grep packages/coding-agent/src/core/settings-manager.ts for 'todotools' => no matches"
+      ]
+    }
+  ],
+  "toolsUsed": [
+    "LS",
+    "Read",
+    "Grep",
+    "Glob",
+    "Execute"
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Validated 6 assigned read-only refactor assertions against the current repo state; all 6 passed."
+}

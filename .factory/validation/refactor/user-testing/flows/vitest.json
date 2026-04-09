@@ -1,0 +1,122 @@
+{
+  "groupId": "vitest",
+  "surface": "vitest",
+  "testedAt": "2026-04-09T03:10:38Z",
+  "status": "pass",
+  "assertions": [
+    {
+      "id": "VAL-REFACTOR-003",
+      "status": "pass",
+      "reason": "Current builtin loading still includes the todowrite extension exactly once with no load errors for that builtin.",
+      "evidence": [
+        "Repo-local tsx runtime check against DefaultResourceLoader.reload() reported builtinTodowriteCount=1 and builtinTodowriteErrors=[] with builtinPaths including '<builtin:todowrite>'.",
+        "Source registration still preserves the builtin id in packages/coding-agent/src/core/extensions/builtin/index.ts as { id: 'todowrite', factory: todowriteExtension }."
+      ]
+    },
+    {
+      "id": "VAL-REFACTOR-004",
+      "status": "pass",
+      "reason": "The refactored todowrite tool still preserves replace semantics, JSON output shape, and empty-array acceptance end-to-end through the faux provider harness.",
+      "evidence": [
+        "Focused vitest run passed test/suite/todowrite-extension.test.ts including 'stores the complete todo list and returns JSON output'.",
+        "The same run passed 'replaces the entire todo list instead of merging entries' and 'allows replacing the todo list with an empty array'.",
+        "Vitest summary: 2 files passed, 8 tests passed, exit code 0."
+      ]
+    },
+    {
+      "id": "VAL-REFACTOR-005",
+      "status": "pass",
+      "reason": "The refactored todoread tool returns the latest todos with the expected details/content shape.",
+      "evidence": [
+        "Focused vitest run passed test/suite/todowrite-extension.test.ts case 'reads the latest todos through the agent-facing todoread tool'.",
+        "The test asserts result.details deep-equals the latest todos and result.content[0].text equals JSON.stringify(todos, null, 2)."
+      ]
+    },
+    {
+      "id": "VAL-REFACTOR-006",
+      "status": "pass",
+      "reason": "Both session_start and session_tree rebuild todo state from branch entries and re-render the todo-sidebar widget with the helper-produced lines.",
+      "evidence": [
+        "Repo-local tsx runtime check invoked the registered session_start handler on a SessionManager containing a sanepi.todo-state custom entry and observed setWidget('todo-sidebar', ['Todo', '[ ] Custom todo']).",
+        "The same runtime check invoked session_tree on a SessionManager containing a todowrite toolResult entry and observed setWidget('todo-sidebar', ['Todo', '[\u2022] Tool todo']).",
+        "packages/coding-agent/src/core/extensions/builtin/todotools/index.ts routes both handlers through syncFromSession(), which assigns getLatestTodosFromBranchEntries(ctx.sessionManager.getBranch()) before calling ctx.ui.setWidget('todo-sidebar', getTodoWidgetLines(currentTodos))."
+      ]
+    },
+    {
+      "id": "VAL-REFACTOR-007",
+      "status": "pass",
+      "reason": "before_agent_start still appends the task-management section exactly as `${original}\\n${TASK_MANAGEMENT_SECTION}` and the literal matches the committed golden fixture byte-for-byte.",
+      "evidence": [
+        "Repo-local tsx runtime check invoked the registered before_agent_start handler and observed beforeAgentStartMatches=true for input systemPrompt='BASE'.",
+        "Focused vitest run passed test/suite/task-management-section.test.ts, which compares Buffer.from(TASK_MANAGEMENT_SECTION, 'utf8') against test/suite/fixtures/task-management-section.txt byte-for-byte.",
+        "packages/coding-agent/src/core/extensions/builtin/todotools/index.ts returns { systemPrompt: `${event.systemPrompt}\\n${TASK_MANAGEMENT_SECTION}` }."
+      ]
+    },
+    {
+      "id": "VAL-REFACTOR-008",
+      "status": "pass",
+      "reason": "Widget sidebar helper behavior is preserved, including marker formatting and sanitization; the empty/all-completed undefined behavior is still present in source.",
+      "evidence": [
+        "Focused vitest run passed test/suite/todowrite-extension.test.ts cases 'builds sidebar widget lines from the current todo state' and 'sanitizes todo widget output before rendering'.",
+        "That test asserts ['Todo', '[\u2022] Active task', '[\u2713] Done task', '[ ] Queued task'] and ['Todo', '[ ] Unsafe text next line'] exactly.",
+        "packages/coding-agent/src/core/extensions/builtin/todotools/state.ts returns undefined when todos.length === 0 or when no todo has status !== 'completed'."
+      ]
+    },
+    {
+      "id": "VAL-REFACTOR-009",
+      "status": "pass",
+      "reason": "Result-line helper still reports open-count first and preserves the same marker/sanitized formatting for each todo.",
+      "evidence": [
+        "Focused vitest run passed test/suite/todowrite-extension.test.ts assertion expect(getTodoResultLines(todos)).toEqual(['2 todos', '[\u2022] Active task', '[\u2713] Done task', '[ ] Queued task']).",
+        "packages/coding-agent/src/core/extensions/builtin/todotools/state.ts still implements getTodoResultLines() using countOpenTodos(todos) followed by the marker + sanitized content mapping."
+      ]
+    },
+    {
+      "id": "VAL-REFACTOR-010",
+      "status": "pass",
+      "reason": "The entry type literal is unchanged and branch reconstruction still handles both custom todo-state entries and todowrite toolResult entries, with [] returned when no matching entry is found.",
+      "evidence": [
+        "Repo-local tsx runtime check imported TODO_STATE_ENTRY_TYPE='sanepi.todo-state' and confirmed getLatestTodosFromBranchEntries() reconstructed toolResult-backed todos as branchToolTodos=[{content:'Tool todo',status:'in_progress',priority:'medium'}].",
+        "Focused vitest run passed test/suite/todowrite-extension.test.ts case 'reconstructs todo state from branch-specific custom entries', including a root branch assertion returning [].",
+        "packages/coding-agent/src/core/extensions/builtin/todotools/state.ts explicitly updates from custom entries whose customType === TODO_STATE_ENTRY_TYPE and from message entries whose role === 'toolResult' and toolName === 'todowrite'."
+      ]
+    },
+    {
+      "id": "VAL-REFACTOR-011",
+      "status": "pass",
+      "reason": "The new todotools entry module exports the required public symbols from a single stable specifier and loads without import errors.",
+      "evidence": [
+        "Repo-local tsx runtime import from packages/coding-agent/src/core/extensions/builtin/todotools/index.ts reported exportedSymbols = { TODO_STATE_ENTRY_TYPE: 'sanepi.todo-state', getLatestTodosFromBranchEntries: 'function', getTodoWidgetLines: 'function', getTodoResultLines: 'function' }.",
+        "packages/coding-agent/src/core/extensions/builtin/todotools/index.ts re-exports TASK_MANAGEMENT_SECTION plus TODO_STATE_ENTRY_TYPE, getLatestTodosFromBranchEntries, getTodoWidgetLines, and getTodoResultLines from the folder entrypoint."
+      ]
+    },
+    {
+      "id": "VAL-REFACTOR-015",
+      "status": "pass",
+      "reason": "The task-management section is guarded by a committed golden snapshot test and the fixture exists under the suite fixtures directory.",
+      "evidence": [
+        "Focused vitest run passed test/suite/task-management-section.test.ts ('TASK_MANAGEMENT_SECTION golden snapshot').",
+        "The test reads packages/coding-agent/test/suite/fixtures/task-management-section.txt and compares its bytes to TASK_MANAGEMENT_SECTION from packages/coding-agent/src/core/extensions/builtin/todotools/prompt.js.",
+        "Directory inspection confirmed packages/coding-agent/test/suite/fixtures/task-management-section.txt exists in the committed test suite."
+      ]
+    }
+  ],
+  "toolsUsed": [
+    "Read",
+    "Grep",
+    "LS",
+    "Execute"
+  ],
+  "frictions": [
+    {
+      "description": "A targeted broader check of test/resource-loader.test.ts is stale: the specific case 'should assign stable builtin identifiers to builtin extension factories' still expects only todowrite/redraws, while current runtime loads six builtins including <builtin:todowrite> exactly once.",
+      "resolved": true,
+      "resolution": "Used a direct repo-local DefaultResourceLoader runtime check instead; it confirmed builtinTodowriteCount=1 and builtinTodowriteErrors=[].",
+      "affectedAssertions": [
+        "VAL-REFACTOR-003"
+      ]
+    }
+  ],
+  "blockers": [],
+  "summary": "Validated 10 assigned refactor assertions. Focused Vitest coverage passed (2 files, 8 tests), and supplemental repo-local runtime checks confirmed builtin loading, event wiring, handler prompt appending, toolResult branch reconstruction, and public exports."
+}

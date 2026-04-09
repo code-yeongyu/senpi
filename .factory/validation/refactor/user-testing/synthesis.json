@@ -1,0 +1,39 @@
+{
+  "milestone": "refactor",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 16,
+    "passed": 16,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-REFACTOR-001",
+    "VAL-REFACTOR-002",
+    "VAL-REFACTOR-003",
+    "VAL-REFACTOR-004",
+    "VAL-REFACTOR-005",
+    "VAL-REFACTOR-006",
+    "VAL-REFACTOR-007",
+    "VAL-REFACTOR-008",
+    "VAL-REFACTOR-009",
+    "VAL-REFACTOR-010",
+    "VAL-REFACTOR-011",
+    "VAL-REFACTOR-012",
+    "VAL-REFACTOR-013",
+    "VAL-REFACTOR-014",
+    "VAL-REFACTOR-015",
+    "VAL-REFACTOR-016"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Added Validation Concurrency ceilings and flow-validator guidance for manual-fs-check and vitest surfaces used by the refactor milestone.",
+      "source": "setup"
+    }
+  ],
+  "previousRound": null
+}
