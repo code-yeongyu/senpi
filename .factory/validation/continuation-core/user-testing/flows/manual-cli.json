@@ -1,0 +1,79 @@
+{
+  "groupId": "manual-cli",
+  "surface": "manual-cli",
+  "testedAt": "2026-04-09T07:46:56.324059Z",
+  "assertions": [
+    {
+      "id": "VAL-CROSS-007",
+      "status": "pass",
+      "reason": "The flag `--disable-todo-continuation` appears in both the dev-wrapper help capture and the built `dist/cli.js` help capture, so the shared CLI help surface exposes the flag as required.",
+      "evidence": [
+        "continuation-core/manual-cli/pi-test-help.txt",
+        "continuation-core/manual-cli/built-cli-help.txt"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-020",
+      "status": "pass",
+      "reason": "A `--print` run created two pending todos via `todowrite` and exited single-shot with final text `saved`; the JSON print-mode event stream shows the `todowrite` tool result, then a final assistant `saved`, with no extra user follow-up message and no `SANEPI` directive.",
+      "evidence": [
+        "continuation-core/manual-cli/print-mode.txt",
+        "continuation-core/manual-cli/print-mode-status.json",
+        "continuation-core/manual-cli/print-mode-json.txt",
+        "continuation-core/manual-cli/print-mode-json-status.json"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-021",
+      "status": "pass",
+      "reason": "`./pi-test.sh --disable-todo-continuation --help` completed successfully and still printed the flag, showing the dev wrapper passes it through to the CLI help surface.",
+      "evidence": [
+        "continuation-core/manual-cli/pi-test-disable-help.txt"
+      ]
+    }
+  ],
+  "toolsUsed": [
+    "manual-cli"
+  ],
+  "frictions": [
+    "The JSON print-mode event stream is verbose; targeted searches were needed to confirm the `todowrite` result, the final assistant `saved`, and the absence of any follow-up user directive."
+  ],
+  "blockers": [],
+  "commands": [
+    {
+      "command": "./pi-test.sh --help",
+      "exitCode": 0,
+      "observation": "The help output completed successfully and listed `--disable-todo-continuation`."
+    },
+    {
+      "command": "./pi-test.sh --disable-todo-continuation --help",
+      "exitCode": 0,
+      "observation": "The help output still listed `--disable-todo-continuation`, confirming wrapper flag pass-through."
+    },
+    {
+      "command": "node packages/coding-agent/dist/cli.js --help",
+      "exitCode": 0,
+      "observation": "The built CLI help completed successfully and listed `--disable-todo-continuation`."
+    },
+    {
+      "command": "./pi-test.sh --no-session --print \"Create and persist a todo list using the todowrite tool with exactly two incomplete items, then reply only with the single word saved.\"",
+      "exitCode": 0,
+      "observation": "The single-shot print run exited 0 and emitted only `saved`."
+    },
+    {
+      "command": "./pi-test.sh --no-session --mode json --print \"Create and persist a todo list using the todowrite tool with exactly two incomplete items, then reply only with the single word saved.\"",
+      "exitCode": 0,
+      "observation": "The JSON event stream showed a `todowrite` tool result with two pending todos, then a final assistant `saved`, with no extra user follow-up or `SANEPI` directive before `agent_end`."
+    }
+  ],
+  "artifacts": [
+    "continuation-core/manual-cli/pi-test-help.txt",
+    "continuation-core/manual-cli/pi-test-disable-help.txt",
+    "continuation-core/manual-cli/built-cli-help.txt",
+    "continuation-core/manual-cli/print-mode.txt",
+    "continuation-core/manual-cli/print-mode-status.json",
+    "continuation-core/manual-cli/print-mode-json.txt",
+    "continuation-core/manual-cli/print-mode-json-status.json"
+  ],
+  "summary": "Validated 3 manual-cli assertions (VAL-CROSS-007, VAL-CROSS-020, VAL-CROSS-021); all 3 passed."
+}

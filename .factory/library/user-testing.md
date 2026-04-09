@@ -92,6 +92,8 @@ Use these ceilings unless current machine load is materially worse than what was
 
 For the `refactor` milestone specifically, run at most **2 validators total** at once: one static validator (`manual-fs-check` / `grep-check`) and one automated validator (`vitest`).
 
+For the `continuation-core` milestone specifically, run at most **2 validators total** at once: one `vitest` validator plus one lightweight static or CLI validator. Do **not** run two Vitest validators concurrently.
+
 ## Flow Validator Guidance: manual-fs-check
 
 - Stay read-only.
@@ -108,3 +110,17 @@ For the `refactor` milestone specifically, run at most **2 validators total** at
   - `packages/coding-agent/test/suite/task-management-section.test.ts`
 - If broader verification is needed, run repo-level `npm run check` and/or the coding-agent Vitest suite, but account for the mission-documented pre-existing failures only.
 - Treat the known pre-existing failures listed in mission `AGENTS.md` as non-blocking unless any new failure appears outside that allowlist.
+
+## Flow Validator Guidance: grep-check
+
+- Stay read-only and limit work to static repo/mission inspection.
+- Use `rg`, `git status`, `git diff --name-only`, and file reads to verify source-level assertions such as flag registration, event wiring, allow-listed diff scope, and changelog/help text presence.
+- For `continuation-core`, this surface owns the static assertions around `agent_end` registration, absence of `turn_end`, config purity, and fork/git-safety audit evidence.
+- Do not edit repository files or mission files from this surface.
+
+## Flow Validator Guidance: manual-cli
+
+- Stay within non-interactive CLI surfaces only: `node packages/coding-agent/dist/cli.js --help`, `./pi-test.sh --help`, `./pi-test.sh --disable-todo-continuation --help`, and `./pi-test.sh --print ...`.
+- Run from the repo root unless a scratch directory under `local-ignore/` is explicitly needed for isolation.
+- For `continuation-core`, this surface verifies help output, dev-wrapper flag pass-through, and the non-interactive continuation bypass.
+- Do not use real provider-backed interactive sessions here; manual tmux assertions belong to the separate `manual-qa` milestone.

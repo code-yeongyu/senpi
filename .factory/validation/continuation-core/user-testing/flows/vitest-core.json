@@ -1,0 +1,357 @@
+{
+  "surface": "vitest",
+  "assertions": [
+    {
+      "id": "VAL-CONTINUATION-001",
+      "status": "fail",
+      "reason": "Default-enabled continuation behavior is covered and the focused suite passes, but the runtime calls `pi.sendUserMessage(prompt)` without the contract-required `{ deliverAs: \"followUp\" }` options bag (`runtime.ts`).",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log",
+        "/Users/yeongyu/local-workspaces/sanepi-mono/packages/coding-agent/src/core/extensions/builtin/todotools/continuation/runtime.ts"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-002",
+      "status": "pass",
+      "reason": "Focused continuation integration tests passed for global settings `{ todotools.continuation.enabled: false }`, with zero injected continuation messages.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-003",
+      "status": "pass",
+      "reason": "Focused config and integration tests passed for project-overrides-global precedence in both directions.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-004",
+      "status": "pass",
+      "reason": "Focused integration tests passed for the CLI disable flag overriding enabled settings.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-005",
+      "status": "pass",
+      "reason": "Focused config tests passed the full global/project truth table with no CLI flag.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-006",
+      "status": "fail",
+      "reason": "The runtime does not inject via `sendUserMessage(prompt, { deliverAs: \"followUp\" })`; source inspection shows no `deliverAs: \"followUp\"` usage in todotools continuation and the unit test asserts a single string argument only.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log",
+        "/Users/yeongyu/local-workspaces/sanepi-mono/packages/coding-agent/src/core/extensions/builtin/todotools/continuation/runtime.ts"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-007",
+      "status": "pass",
+      "reason": "Focused integration tests passed with continuation disabled and no injected follow-up across the cycle.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-008",
+      "status": "pass",
+      "reason": "Focused unit/integration tests passed for all-completed, all-cancelled, and mixed terminal todo lists producing no continuation.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-009",
+      "status": "pass",
+      "reason": "Focused integration tests passed for an empty todo list producing no continuation.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-010",
+      "status": "pass",
+      "reason": "Focused prompt/runtime tests passed for mixed statuses, counting only non-terminal todos and listing only incomplete items.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-011",
+      "status": "pass",
+      "reason": "Focused prompt tests passed for the required directive header, phrases, and status-line shape.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-012",
+      "status": "pass",
+      "reason": "Focused prompt tests passed for ordered remaining-task bullets excluding completed and cancelled items.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-013",
+      "status": "pass",
+      "reason": "Focused runtime integration tests passed for duplicate `agent_end` registration injecting only once in a cycle.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-014",
+      "status": "pass",
+      "reason": "Focused runtime tests passed for re-entry reset across sequential warranted cycles.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-016",
+      "status": "pass",
+      "reason": "Focused config tests passed for reading only `todotools.continuation.enabled` and ignoring misnamed/alternate paths.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log",
+        "/Users/yeongyu/local-workspaces/sanepi-mono/packages/coding-agent/src/core/extensions/builtin/todotools/continuation/runtime.ts"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-017",
+      "status": "pass",
+      "reason": "Focused integration tests passed for aborted turns suppressing continuation even when incomplete todos already exist.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-018",
+      "status": "pass",
+      "reason": "Focused runtime tests passed for reload/resume/compact-safe state resets and legitimate reinjection on the next cycle.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-020",
+      "status": "pass",
+      "reason": "Focused runtime unit tests passed for aborted/error/length stop reasons suppressing continuation before todo reads.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-021",
+      "status": "pass",
+      "reason": "Focused config tests passed for strict-boolean settings coercion, falling back to default true on non-boolean inputs.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-022",
+      "status": "pass",
+      "reason": "Focused config tests passed for treating only an exact `cliFlag === true` as disabling continuation.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-023",
+      "status": "pass",
+      "reason": "Focused unit/integration tests passed for catching continuation handler errors without breaking later prompts or leaking unhandled rejections.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-024",
+      "status": "pass",
+      "reason": "Focused chain-cap integration test passed with the default cap enforced at 10 consecutive auto-injections and reset on a fresh user prompt.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-025",
+      "status": "pass",
+      "reason": "Focused runtime integration tests passed for isolated continuation state across two concurrent harness sessions.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-026",
+      "status": "pass",
+      "reason": "Focused runtime integration tests passed for `session_shutdown` plus reload clearing per-session continuation state and allowing reinjection.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-028",
+      "status": "pass",
+      "reason": "Focused integration tests passed with the continuation directive visible in session history as a user message.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log",
+        "/Users/yeongyu/local-workspaces/sanepi-mono/packages/coding-agent/test/suite/harness.ts"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-029",
+      "status": "pass",
+      "reason": "Focused prompt tests passed the committed continuation golden snapshot byte-for-byte.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-030",
+      "status": "pass",
+      "reason": "Focused runtime unit tests and source inspection show the runtime reads todos through the injected `getCurrentTodos` accessor per `agent_end` and keeps no local runtime copy of current todos.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log",
+        "/Users/yeongyu/local-workspaces/sanepi-mono/packages/coding-agent/src/core/extensions/builtin/todotools/continuation/runtime.ts"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-001",
+      "status": "pass",
+      "reason": "`npm run check` exited 0.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/npm-check.log"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-002",
+      "status": "pass",
+      "reason": "`npm run build` exited 0 and emitted the expected `dist/core/extensions/builtin/todotools` files, including `index.js`, `state.js`, `prompt.js`, `continuation/*.js`, and `tools/*.js`.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/npm-build.log",
+        "/Users/yeongyu/local-workspaces/sanepi-mono/packages/coding-agent/dist/core/extensions/builtin/todotools/index.js"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-003",
+      "status": "fail",
+      "reason": "The authoritative full coding-agent Vitest rerun exited 1: `test/suite/final-qa.test.ts` failed in Scenario 2 (`blocks rm commands when bash permission is configured with \"rm *\" deny pattern`).",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/coding-agent-suite-rerun.log"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-004",
+      "status": "pass",
+      "reason": "Focused continuation integration tests passed for end-to-end faux-provider continuation enabled/disabled behavior with visible follow-up user messages and subsequent assistant processing.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-005",
+      "status": "pass",
+      "reason": "Focused compatibility tests passed for identical todo-sidebar widget lines before and after warranted continuation injection.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-006",
+      "status": "pass",
+      "reason": "Focused compatibility tests passed for branch navigation restoring todo state, rerendering the widget, and allowing fresh continuation on the new branch.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-014",
+      "status": "pass",
+      "reason": "The existing todowrite compatibility suite passed against the relocated todotools entrypoint and preserved public exports/behavior.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-015",
+      "status": "pass",
+      "reason": "Focused config + compatibility tests passed the four-scenario priority chain: default \u2192 global \u2192 project \u2192 CLI flag.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-016",
+      "status": "pass",
+      "reason": "The test harness exposes `getInjectedUserMessages()` and focused continuation integration tests consume it successfully without any production-code hooks.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log",
+        "/Users/yeongyu/local-workspaces/sanepi-mono/packages/coding-agent/test/suite/harness.ts"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-017",
+      "status": "pass",
+      "reason": "Focused compatibility tests passed with `parallel-tool-calls` active, injecting continuation exactly once after a multi-tool turn.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-018",
+      "status": "pass",
+      "reason": "Focused chain-cap integration coverage passed the 12-cycle bound test with the default cap of 10 total injections.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log"
+      ]
+    }
+  ],
+  "toolsUsed": [
+    "vitest",
+    "npm-build",
+    "npm-check"
+  ],
+  "frictions": [
+    "`npm run build` regenerates `packages/ai/src/models.generated.ts` from public model catalogs; I restored that file afterward because it was clean before validation.",
+    "`npm run check` runs `biome check --write`; it reordered imports in `packages/coding-agent/test/permission/integration.test.ts`, and I restored that file afterward because it was clean before validation.",
+    "The broader coding-agent suite and build gate are not fully network-isolated: logs show public npm/GitHub negative-path requests during tests and public model-catalog fetches during build."
+  ],
+  "blockers": [
+    "VAL-CROSS-003 is red because the full coding-agent Vitest suite currently fails in `test/suite/final-qa.test.ts` Scenario 2 (`rm *` deny rule)."
+  ],
+  "commands": [
+    {
+      "command": "cd /Users/yeongyu/local-workspaces/sanepi-mono/packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/suite/todowrite-extension.test.ts test/suite/task-management-section.test.ts test/suite/todotools-continuation-config.test.ts test/suite/todotools-continuation-prompt.test.ts test/suite/todotools-continuation-runtime-unit.test.ts test/suite/todotools-continuation-runtime.test.ts test/suite/todotools-continuation-compat.test.ts test/suite/todotools-continuation-chain-cap.test.ts test/suite/todotools-continuation-non-interactive.test.ts",
+      "exitCode": 0,
+      "observation": "Focused continuation/todotools coverage passed: 9 files, 63 tests, 0 failures."
+    },
+    {
+      "command": "cd /Users/yeongyu/local-workspaces/sanepi-mono/packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run",
+      "exitCode": 1,
+      "observation": "Authoritative rerun finished with 124 passed, 1 failed, 7 skipped; the failure was `test/suite/final-qa.test.ts` Scenario 2 (`rm *` deny rule)."
+    },
+    {
+      "command": "cd /Users/yeongyu/local-workspaces/sanepi-mono && npm run build",
+      "exitCode": 0,
+      "observation": "Whole-repo build succeeded and emitted the expected coding-agent todotools dist artifacts, but also regenerated `packages/ai/src/models.generated.ts`; that file was restored afterward."
+    },
+    {
+      "command": "cd /Users/yeongyu/local-workspaces/sanepi-mono && npm run check",
+      "exitCode": 0,
+      "observation": "Whole-repo check succeeded; Biome reported `Fixed 1 file` and reordered imports in `packages/coding-agent/test/permission/integration.test.ts`, which I restored afterward."
+    }
+  ],
+  "artifacts": [
+    "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/focused-vitest.log",
+    "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/coding-agent-suite-rerun.log",
+    "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/npm-build.log",
+    "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/evidence/continuation-core/vitest-core/npm-check.log"
+  ]
+}

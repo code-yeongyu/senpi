@@ -1,0 +1,102 @@
+{
+  "surface": "grep-check",
+  "assertions": [
+    {
+      "id": "VAL-CONTINUATION-015",
+      "status": "pass",
+      "reason": "`packages/coding-agent/src/core/extensions/builtin/todotools/continuation/runtime.ts` registers `disable-todo-continuation` as a boolean flag with `default: false` and description text containing both 'Disable' and 'todo continuation'; the captured help artifact also lists the flag.",
+      "evidence": [
+        "/Users/yeongyu/local-workspaces/sanepi-mono/packages/coding-agent/src/core/extensions/builtin/todotools/continuation/runtime.ts:149-153",
+        "/Users/yeongyu/local-workspaces/sanepi-mono/local-ignore/qa-help-output.txt:55",
+        "/Users/yeongyu/local-workspaces/sanepi-mono/local-ignore/qa-help-output.txt:200",
+        "/Users/yeongyu/local-workspaces/sanepi-mono/local-ignore/qa-help-output.txt:345",
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/handoffs/2026-04-09T04-49-58-459Z__continuation-changelog-and-cli-smoke__05429ce3-bb83-430c-9416-328e4d629484.json"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-019",
+      "status": "pass",
+      "reason": "The continuation runtime currently registers `pi.on(\"agent_end\"...)` and repo inspection found no `pi.on(\"turn_end\"...)` registrations under `builtin/todotools/continuation/`.",
+      "evidence": [
+        "/Users/yeongyu/local-workspaces/sanepi-mono/packages/coding-agent/src/core/extensions/builtin/todotools/continuation/runtime.ts:185",
+        "rg -n 'pi\\.on\\(\"agent_end\"|pi\\.on\\(\"turn_end\"' /Users/yeongyu/local-workspaces/sanepi-mono/packages/coding-agent/src/core/extensions/builtin/todotools/continuation"
+      ]
+    },
+    {
+      "id": "VAL-CONTINUATION-027",
+      "status": "pass",
+      "reason": "`continuation/config.ts` is a pure resolver over preloaded settings + flag values and the forbidden filesystem/process/network pattern scan returned no matches.",
+      "evidence": [
+        "/Users/yeongyu/local-workspaces/sanepi-mono/packages/coding-agent/src/core/extensions/builtin/todotools/continuation/config.ts",
+        "python pattern scan over /Users/yeongyu/local-workspaces/sanepi-mono/packages/coding-agent/src/core/extensions/builtin/todotools/continuation/config.ts reported `none` for readFile/readFileSync/existsSync/writeFile/writeFileSync/fetch/child_process/spawn/exec/import(\"fs\")"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-012",
+      "status": "fail",
+      "reason": "The dedicated fork-strategy audit reconstructed the effective continuation-core mission range and found one non-allow-listed path: commit `619efcff864e06645b11dfc714c5cada4d0cffe3` deleted `packages/coding-agent/src/core/extensions/builtin/todowrite.ts`, so the strict allow-list assertion is not satisfied.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/handoffs/2026-04-09T04-57-10-307Z__continuation-fork-and-git-safety-audit__1b6e8ca7-0427-4dca-8392-35fa9edc43a7.json",
+        "git show --stat 619efcff864e06645b11dfc714c5cada4d0cffe3",
+        "/Users/yeongyu/local-workspaces/sanepi-mono/packages/coding-agent/src/core/extensions/builtin/todowrite.ts (deleted in commit 619efcff864e06645b11dfc714c5cada4d0cffe3)"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-013",
+      "status": "fail",
+      "reason": "The mission/session logs show no forbidden git verbs, but the same audit reports that mission commit `619efcff864e06645b11dfc714c5cada4d0cffe3` makes the mission `git log --stat` path set exceed the contract\u2019s allow-list, so the combined git-safety check does not pass as written.",
+      "evidence": [
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/handoffs/2026-04-09T04-57-10-307Z__continuation-fork-and-git-safety-audit__1b6e8ca7-0427-4dca-8392-35fa9edc43a7.json",
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/progress_log.jsonl",
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/worker-transcripts.jsonl"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-019",
+      "status": "pass",
+      "reason": "`packages/coding-agent/CHANGELOG.md` contains a new `[Unreleased]` bullet that mentions the `todotools` refactor and `todo continuation`, including the settings key and CLI flag.",
+      "evidence": [
+        "/Users/yeongyu/local-workspaces/sanepi-mono/packages/coding-agent/CHANGELOG.md:6-9",
+        "/Users/yeongyu/.factory/missions/604eaa29-2cf3-4c01-af2e-35ceedb95304/handoffs/2026-04-09T04-49-58-459Z__continuation-changelog-and-cli-smoke__05429ce3-bb83-430c-9416-328e4d629484.json"
+      ]
+    }
+  ],
+  "toolsUsed": [
+    "grep-check"
+  ],
+  "frictions": [
+    "Direct `git diff --name-only $(git merge-base HEAD main)..HEAD` is empty on the current `main` checkout, so the git-scope assertions required the mission audit handoff's reconstructed continuation-core range instead of the live merge-base diff.",
+    "Current working tree noise is limited to `.factory/library/user-testing.md` plus unrelated untracked `.pi/` and `.sisyphus/` entries; per task guidance, the untracked local artifacts were treated as non-failures."
+  ],
+  "blockers": [],
+  "commands": [
+    {
+      "command": "git -C \"/Users/yeongyu/local-workspaces/sanepi-mono\" status --short && printf '\\n---DIFF-NAME-ONLY---\\n' && git -C \"/Users/yeongyu/local-workspaces/sanepi-mono\" diff --name-only && printf '\\n---LOG-STAT-12---\\n' && git -C \"/Users/yeongyu/local-workspaces/sanepi-mono\" log --stat --oneline -12",
+      "exitCode": 0,
+      "observation": "Current working tree shows only `.factory/library/user-testing.md` modified plus unrelated untracked `.pi/` / `.sisyphus/` paths; recent history includes the continuation-related changelog and runtime commits but current live diff alone is insufficient for mission-range fork auditing."
+    },
+    {
+      "command": "git -C \"/Users/yeongyu/local-workspaces/sanepi-mono\" log --oneline --follow -- \"packages/coding-agent/src/core/extensions/builtin/todowrite.ts\" && printf '\\n---SHOW-619efcff---\\n' && git -C \"/Users/yeongyu/local-workspaces/sanepi-mono\" show --stat --oneline 619efcff864e06645b11dfc714c5cada4d0cffe3",
+      "exitCode": 0,
+      "observation": "Confirmed commit `619efcff` deleted the legacy `builtin/todowrite.ts` file while introducing the `todotools` module tree, which is the path-scope violation called out by the prior audit handoff."
+    },
+    {
+      "command": "rg -n \"disable-todo-continuation|pi\\.on\\(\\\"agent_end\\\"|pi\\.on\\(\\\"turn_end\\\"|todotools\\.continuation\\.enabled\" \"/Users/yeongyu/local-workspaces/sanepi-mono/packages/coding-agent/src/core/extensions/builtin/todotools/continuation\" \"/Users/yeongyu/local-workspaces/sanepi-mono/packages/coding-agent/CHANGELOG.md\"",
+      "exitCode": 0,
+      "observation": "Matched the CLI flag registration, the `agent_end` event registration, and the changelog entry; there was no `turn_end` output in the continuation folder scan."
+    },
+    {
+      "command": "python3 - <<'PY' ... pattern scan config.ts ... PY",
+      "exitCode": 0,
+      "observation": "Static scan of `continuation/config.ts` reported `none` for every forbidden I/O/process/network pattern, supporting the pure-resolver assertion."
+    },
+    {
+      "command": "rg -n \"disable-todo-continuation\" \"/Users/yeongyu/local-workspaces/sanepi-mono/local-ignore/qa-help-output.txt\"",
+      "exitCode": 0,
+      "observation": "The captured help-output artifact contains `--disable-todo-continuation` in the built CLI help and both `pi-test.sh` help captures."
+    }
+  ],
+  "artifacts": [
+    "/Users/yeongyu/local-workspaces/sanepi-mono/.factory/validation/continuation-core/user-testing/flows/static-audit.json"
+  ]
+}

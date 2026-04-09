@@ -1,0 +1,91 @@
+{
+  "milestone": "continuation-core",
+  "round": 1,
+  "status": "fail",
+  "assertionsSummary": {
+    "total": 47,
+    "passed": 42,
+    "failed": 5,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-CONTINUATION-002",
+    "VAL-CONTINUATION-003",
+    "VAL-CONTINUATION-004",
+    "VAL-CONTINUATION-005",
+    "VAL-CONTINUATION-007",
+    "VAL-CONTINUATION-008",
+    "VAL-CONTINUATION-009",
+    "VAL-CONTINUATION-010",
+    "VAL-CONTINUATION-011",
+    "VAL-CONTINUATION-012",
+    "VAL-CONTINUATION-013",
+    "VAL-CONTINUATION-014",
+    "VAL-CONTINUATION-015",
+    "VAL-CONTINUATION-016",
+    "VAL-CONTINUATION-017",
+    "VAL-CONTINUATION-018",
+    "VAL-CONTINUATION-019",
+    "VAL-CONTINUATION-020",
+    "VAL-CONTINUATION-021",
+    "VAL-CONTINUATION-022",
+    "VAL-CONTINUATION-023",
+    "VAL-CONTINUATION-024",
+    "VAL-CONTINUATION-025",
+    "VAL-CONTINUATION-026",
+    "VAL-CONTINUATION-027",
+    "VAL-CONTINUATION-028",
+    "VAL-CONTINUATION-029",
+    "VAL-CONTINUATION-030",
+    "VAL-CROSS-001",
+    "VAL-CROSS-002",
+    "VAL-CROSS-004",
+    "VAL-CROSS-005",
+    "VAL-CROSS-006",
+    "VAL-CROSS-007",
+    "VAL-CROSS-014",
+    "VAL-CROSS-015",
+    "VAL-CROSS-016",
+    "VAL-CROSS-017",
+    "VAL-CROSS-018",
+    "VAL-CROSS-019",
+    "VAL-CROSS-020",
+    "VAL-CROSS-021"
+  ],
+  "failedAssertions": [
+    {
+      "id": "VAL-CONTINUATION-001",
+      "reason": "Runtime defaults to enabled but dispatches continuation with plain sendUserMessage(prompt) instead of the contract-required sendUserMessage(prompt, { deliverAs: \"followUp\" })."
+    },
+    {
+      "id": "VAL-CONTINUATION-006",
+      "reason": "Continuation injection is not performed with deliverAs: \"followUp\"; runtime source shows only sendUserMessage(prompt)."
+    },
+    {
+      "id": "VAL-CROSS-003",
+      "reason": "Full coding-agent Vitest suite exits non-zero because test/suite/final-qa.test.ts Scenario 2 fails (rm * deny rule)."
+    },
+    {
+      "id": "VAL-CROSS-012",
+      "reason": "Contract allow-list audit fails because commit 619efcff deleted packages/coding-agent/src/core/extensions/builtin/todowrite.ts, which falls outside the strict path allow-list."
+    },
+    {
+      "id": "VAL-CROSS-013",
+      "reason": "Combined git-safety contract fails because the same allow-list violation appears in mission commit history, even though no forbidden git verbs were reported."
+    }
+  ],
+  "blockedAssertions": [],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Added continuation-core concurrency guidance plus grep-check and manual-cli flow-validator guidance sections.",
+      "source": "setup"
+    }
+  ],
+  "previousRound": null,
+  "flowReports": [
+    ".factory/validation/continuation-core/user-testing/flows/vitest-core.json",
+    ".factory/validation/continuation-core/user-testing/flows/static-audit.json",
+    ".factory/validation/continuation-core/user-testing/flows/manual-cli.json"
+  ]
+}
