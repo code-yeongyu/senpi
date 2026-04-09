@@ -85,8 +85,43 @@ function createNoInjectionResponses(todos: TodoItem[]): FauxResponseStep[] {
 	];
 }
 
-function getQueuedContinuationMessages(harness: Harness): string[] {
-	return harness.session.getFollowUpMessages().filter((message) => message.includes(CONTINUATION_DIRECTIVE));
+function markTodosCompleted(todos: TodoItem[]): TodoItem[] {
+	return todos.map((todo) => ({
+		...todo,
+		status: "completed",
+	}));
+}
+
+function createContinuationThenCompleteResponses(
+	todos: TodoItem[],
+	completedTodos: TodoItem[] = markTodosCompleted(todos),
+): FauxResponseStep[] {
+	return [
+		...createNoInjectionResponses(todos),
+		fauxAssistantMessage([fauxToolCall("todowrite", { todos: completedTodos })], { stopReason: "toolUse" }),
+		fauxAssistantMessage("completed"),
+	];
+}
+
+function getInjectedContinuationMessages(harness: Harness): string[] {
+	return harness.getInjectedUserMessages().filter((message) => message.includes(CONTINUATION_DIRECTIVE));
+}
+
+async function waitForHarnessToSettle(harness: Harness, timeoutMs = 1_500): Promise<void> {
+	const start = Date.now();
+
+	while (Date.now() - start < timeoutMs) {
+		if (!harness.session.isStreaming && harness.getPendingResponseCount() === 0) {
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			if (!harness.session.isStreaming && harness.getPendingResponseCount() === 0) {
+				return;
+			}
+		}
+
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+
+	throw new Error("Timed out waiting for continuation dispatch to settle");
 }
 
 function createDuplicatedAgentEndExtension(pi: ExtensionAPI): void {
@@ -150,13 +185,14 @@ describe("todotools continuation runtime integration", () => {
 	it("injects exactly one continuation follow-up by default when pending todos remain", async () => {
 		useIsolatedAgentDir();
 		const { harness } = await createTodoHarness();
-		harness.setResponses(createNoInjectionResponses(PENDING_TODOS));
+		harness.setResponses(createContinuationThenCompleteResponses(PENDING_TODOS));
 
 		await harness.session.prompt("start the continuation test");
+		await waitForHarnessToSettle(harness);
 
-		expect(getQueuedContinuationMessages(harness)).toHaveLength(1);
-		expect(getQueuedContinuationMessages(harness)[0]).toContain(CONTINUATION_DIRECTIVE);
-		expect(harness.session.pendingMessageCount).toBe(1);
+		expect(getInjectedContinuationMessages(harness)).toHaveLength(1);
+		expect(getInjectedContinuationMessages(harness)[0]).toContain(CONTINUATION_DIRECTIVE);
+		expect(harness.session.pendingMessageCount).toBe(0);
 	});
 
 	it("does not inject when global settings disable continuation", async () => {
@@ -185,11 +221,12 @@ describe("todotools continuation runtime integration", () => {
 		useIsolatedAgentDir(todoSettings(false));
 		const { harness } = await createTodoHarness();
 		setProjectSettings(harness, todoSettings(true));
-		harness.setResponses(createNoInjectionResponses(PENDING_TODOS));
+		harness.setResponses(createContinuationThenCompleteResponses(PENDING_TODOS));
 
 		await harness.session.prompt("project override wins");
+		await waitForHarnessToSettle(harness);
 
-		expect(getQueuedContinuationMessages(harness)).toHaveLength(1);
+		expect(getInjectedContinuationMessages(harness)).toHaveLength(1);
 	});
 
 	it("does not inject when the CLI flag disables continuation even if settings enable it", async () => {
@@ -248,25 +285,27 @@ describe("todotools continuation runtime integration", () => {
 			{ content: "Queued task", status: "pending", priority: "medium" },
 			{ content: "Cancelled task", status: "cancelled", priority: "low" },
 		];
-		harness.setResponses(createNoInjectionResponses(mixedTodos));
+		harness.setResponses(createContinuationThenCompleteResponses(mixedTodos));
 
 		await harness.session.prompt("mixed statuses");
+		await waitForHarnessToSettle(harness);
 
-		expect(getQueuedContinuationMessages(harness)).toHaveLength(1);
-		expect(getQueuedContinuationMessages(harness)[0]).toContain("- [in_progress] Active task");
-		expect(getQueuedContinuationMessages(harness)[0]).toContain("- [pending] Queued task");
-		expect(getQueuedContinuationMessages(harness)[0]).not.toContain("- [completed] Done task");
-		expect(getQueuedContinuationMessages(harness)[0]).not.toContain("- [cancelled] Cancelled task");
+		expect(getInjectedContinuationMessages(harness)).toHaveLength(1);
+		expect(getInjectedContinuationMessages(harness)[0]).toContain("- [in_progress] Active task");
+		expect(getInjectedContinuationMessages(harness)[0]).toContain("- [pending] Queued task");
+		expect(getInjectedContinuationMessages(harness)[0]).not.toContain("- [completed] Done task");
+		expect(getInjectedContinuationMessages(harness)[0]).not.toContain("- [cancelled] Cancelled task");
 	});
 
 	it("injects only once when the same agent_end handler is registered twice in one cycle", async () => {
 		useIsolatedAgentDir();
 		const { harness } = await createTodoHarness(createDuplicatedAgentEndExtension);
-		harness.setResponses(createNoInjectionResponses(PENDING_TODOS));
+		harness.setResponses(createContinuationThenCompleteResponses(PENDING_TODOS));
 
 		await harness.session.prompt("duplicate handler");
+		await waitForHarnessToSettle(harness);
 
-		expect(getQueuedContinuationMessages(harness)).toHaveLength(1);
+		expect(getInjectedContinuationMessages(harness)).toHaveLength(1);
 	});
 
 	it("injects once per warranted cycle when a fresh user prompt arrives between cycles", async () => {
@@ -274,17 +313,17 @@ describe("todotools continuation runtime integration", () => {
 		const { harness } = await createTodoHarness();
 		const firstTodos: TodoItem[] = [{ content: "First cycle todo", status: "pending", priority: "high" }];
 		const secondTodos: TodoItem[] = [{ content: "Second cycle todo", status: "pending", priority: "high" }];
-		harness.setResponses([...createNoInjectionResponses(firstTodos), ...createNoInjectionResponses(secondTodos)]);
+		harness.setResponses(createContinuationThenCompleteResponses(firstTodos));
 
 		await harness.session.prompt("first cycle");
-		const [firstQueuedMessage] = harness.session
-			.clearQueue()
-			.followUp.filter((message) => message.includes(CONTINUATION_DIRECTIVE));
+		await waitForHarnessToSettle(harness);
+		harness.setResponses(createContinuationThenCompleteResponses(secondTodos));
 		await harness.session.prompt("second cycle");
+		await waitForHarnessToSettle(harness);
 
-		expect(firstQueuedMessage).toContain("First cycle todo");
-		expect(getQueuedContinuationMessages(harness)).toHaveLength(1);
-		expect(getQueuedContinuationMessages(harness)[0]).toContain("Second cycle todo");
+		expect(getInjectedContinuationMessages(harness)).toHaveLength(2);
+		expect(getInjectedContinuationMessages(harness)[0]).toContain("First cycle todo");
+		expect(getInjectedContinuationMessages(harness)[1]).toContain("Second cycle todo");
 	});
 
 	it("does not inject after an aborted agent turn when incomplete todos already exist", async () => {
@@ -346,20 +385,21 @@ describe("todotools continuation runtime integration", () => {
 		]);
 		const firstTodos: TodoItem[] = [{ content: "First harness todo", status: "pending", priority: "high" }];
 		const secondTodos: TodoItem[] = [{ content: "Second harness todo", status: "pending", priority: "high" }];
-		firstHarness.setResponses(createNoInjectionResponses(firstTodos));
-		secondHarness.setResponses(createNoInjectionResponses(secondTodos));
+		firstHarness.setResponses(createContinuationThenCompleteResponses(firstTodos));
+		secondHarness.setResponses(createContinuationThenCompleteResponses(secondTodos));
 
 		await Promise.all([
 			firstHarness.session.prompt("first concurrent prompt"),
 			secondHarness.session.prompt("second concurrent prompt"),
 		]);
+		await Promise.all([waitForHarnessToSettle(firstHarness), waitForHarnessToSettle(secondHarness)]);
 
-		expect(getQueuedContinuationMessages(firstHarness)).toHaveLength(1);
-		expect(getQueuedContinuationMessages(secondHarness)).toHaveLength(1);
-		expect(getQueuedContinuationMessages(firstHarness)[0]).toContain("First harness todo");
-		expect(getQueuedContinuationMessages(firstHarness)[0]).not.toContain("Second harness todo");
-		expect(getQueuedContinuationMessages(secondHarness)[0]).toContain("Second harness todo");
-		expect(getQueuedContinuationMessages(secondHarness)[0]).not.toContain("First harness todo");
+		expect(getInjectedContinuationMessages(firstHarness)).toHaveLength(1);
+		expect(getInjectedContinuationMessages(secondHarness)).toHaveLength(1);
+		expect(getInjectedContinuationMessages(firstHarness)[0]).toContain("First harness todo");
+		expect(getInjectedContinuationMessages(firstHarness)[0]).not.toContain("Second harness todo");
+		expect(getInjectedContinuationMessages(secondHarness)[0]).toContain("Second harness todo");
+		expect(getInjectedContinuationMessages(secondHarness)[0]).not.toContain("First harness todo");
 	});
 
 	it("injects again after session shutdown and reload clear the per-session state", async () => {
@@ -374,12 +414,10 @@ describe("todotools continuation runtime integration", () => {
 			sessionManager: harness.sessionManager,
 			ui: uiContext,
 		} as unknown as ExtensionContext;
-		harness.setResponses([...createNoInjectionResponses(firstTodos), ...createNoInjectionResponses(secondTodos)]);
+		harness.setResponses(createContinuationThenCompleteResponses(firstTodos));
 
 		await harness.session.prompt("before reload");
-		const [beforeReloadMessage] = harness.session
-			.clearQueue()
-			.followUp.filter((message) => message.includes(CONTINUATION_DIRECTIVE));
+		await waitForHarnessToSettle(harness);
 
 		for (const handler of extension.handlers.get("session_shutdown") ?? []) {
 			await handler({ type: "session_shutdown" }, ctx);
@@ -387,10 +425,12 @@ describe("todotools continuation runtime integration", () => {
 		for (const handler of extension.handlers.get("session_start") ?? []) {
 			await handler({ type: "session_start", reason: "reload" }, ctx);
 		}
+		harness.setResponses(createContinuationThenCompleteResponses(secondTodos));
 		await harness.session.prompt("after reload");
+		await waitForHarnessToSettle(harness);
 
-		expect(beforeReloadMessage).toContain("Before reload");
-		expect(getQueuedContinuationMessages(harness)).toHaveLength(1);
-		expect(getQueuedContinuationMessages(harness)[0]).toContain("After reload");
+		expect(getInjectedContinuationMessages(harness)).toHaveLength(2);
+		expect(getInjectedContinuationMessages(harness)[0]).toContain("Before reload");
+		expect(getInjectedContinuationMessages(harness)[1]).toContain("After reload");
 	});
 });

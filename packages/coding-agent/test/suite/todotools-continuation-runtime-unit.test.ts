@@ -1,5 +1,5 @@
 import { fauxAssistantMessage } from "@mariozechner/pi-ai";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildContinuationPrompt } from "../../src/core/extensions/builtin/todotools/continuation/prompt.js";
 import { installContinuation } from "../../src/core/extensions/builtin/todotools/continuation/runtime.js";
 import type { TodoItem } from "../../src/core/extensions/builtin/todotools/state.js";
@@ -50,10 +50,16 @@ function createMockPi(cliFlag?: unknown): MockPi {
 	};
 }
 
-function createMockContext(options?: { cwd?: string; hasUI?: boolean; sessionId?: string }): ExtensionContext {
+function createMockContext(options?: {
+	cwd?: string;
+	hasUI?: boolean;
+	sessionId?: string;
+	isIdle?: () => boolean;
+}): ExtensionContext {
 	return {
 		cwd: options?.cwd ?? "/tmp/project",
 		hasUI: options?.hasUI ?? true,
+		isIdle: options?.isIdle ?? (() => true),
 		sessionManager: {
 			getSessionId: () => options?.sessionId ?? "session-1",
 		},
@@ -88,6 +94,10 @@ describe("todotools continuation runtime", () => {
 		vi.restoreAllMocks();
 	});
 
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
 	it("registers the flag and required lifecycle handlers without turn_end injection", () => {
 		const mockPi = createMockPi();
 
@@ -109,26 +119,32 @@ describe("todotools continuation runtime", () => {
 		expect(mockPi._handlers.turn_end).toBeUndefined();
 	});
 
-	it("injects a follow-up string and reads current todos once per agent_end dispatch", async () => {
+	it("dispatches continuation asynchronously once the session becomes idle", async () => {
+		vi.useFakeTimers();
 		const mockPi = createMockPi();
-		let currentTodos = pendingTodos;
-		const getCurrentTodos = vi.fn(() => currentTodos);
+		const getCurrentTodos = vi.fn(() => pendingTodos);
+		let idleChecks = 0;
+		const ctx = createMockContext({
+			isIdle: () => {
+				idleChecks += 1;
+				return idleChecks >= 2;
+			},
+		});
 
 		installContinuation(mockPi as never, { getCurrentTodos });
 
-		await mockPi._trigger("agent_end", createAgentEndEvent("stop"));
+		await mockPi._trigger("agent_end", createAgentEndEvent("stop"), ctx);
 
-		currentTodos = [{ content: "Run repo validation", status: "pending", priority: "high" }];
-		await mockPi._trigger("before_agent_start", createBeforeAgentStartEvent("Continue the work"));
-		await mockPi._trigger("agent_end", createAgentEndEvent("toolUse"));
+		expect(getCurrentTodos).toHaveBeenCalledTimes(1);
+		expect(mockPi.sendUserMessage).not.toHaveBeenCalled();
 
-		expect(getCurrentTodos).toHaveBeenCalledTimes(2);
-		expect(mockPi.sendUserMessage).toHaveBeenNthCalledWith(1, buildContinuationPrompt(pendingTodos), {
-			deliverAs: "followUp",
-		});
-		expect(mockPi.sendUserMessage).toHaveBeenNthCalledWith(2, buildContinuationPrompt(currentTodos), {
-			deliverAs: "followUp",
-		});
+		await vi.advanceTimersByTimeAsync(0);
+		expect(mockPi.sendUserMessage).not.toHaveBeenCalled();
+
+		await vi.advanceTimersByTimeAsync(50);
+		expect(mockPi.sendUserMessage).toHaveBeenCalledTimes(1);
+		expect(mockPi.sendUserMessage).toHaveBeenNthCalledWith(1, buildContinuationPrompt(pendingTodos));
+		expect(mockPi.sendUserMessage.mock.calls[0]).toHaveLength(1);
 		expect(typeof mockPi.sendUserMessage.mock.calls[0]?.[0]).toBe("string");
 	});
 
@@ -160,6 +176,7 @@ describe("todotools continuation runtime", () => {
 	});
 
 	it("allows the next continuation cycle after a continuation-originated follow-up prompt", async () => {
+		vi.useFakeTimers();
 		const mockPi = createMockPi();
 
 		installContinuation(mockPi as never, {
@@ -167,13 +184,16 @@ describe("todotools continuation runtime", () => {
 		});
 
 		await mockPi._trigger("agent_end", createAgentEndEvent("stop"));
+		await vi.advanceTimersByTimeAsync(0);
 		await mockPi._trigger("before_agent_start", createBeforeAgentStartEvent(buildContinuationPrompt(pendingTodos)));
 		await mockPi._trigger("agent_end", createAgentEndEvent("stop"));
+		await vi.advanceTimersByTimeAsync(0);
 
 		expect(mockPi.sendUserMessage).toHaveBeenCalledTimes(2);
 	});
 
 	it("resets or clears per-session state on reload and shutdown events", async () => {
+		vi.useFakeTimers();
 		const mockPi = createMockPi();
 		const ctx = createMockContext({ sessionId: "session-2" });
 
@@ -182,19 +202,41 @@ describe("todotools continuation runtime", () => {
 		});
 
 		await mockPi._trigger("agent_end", createAgentEndEvent("stop"), ctx);
+		await vi.advanceTimersByTimeAsync(0);
 		await mockPi._trigger(
 			"session_start",
 			{ type: "session_start", reason: "reload" } satisfies SessionStartEvent,
 			ctx,
 		);
 		await mockPi._trigger("agent_end", createAgentEndEvent("stop"), ctx);
+		await vi.advanceTimersByTimeAsync(0);
 		await mockPi._trigger("session_shutdown", { type: "session_shutdown" } satisfies SessionShutdownEvent, ctx);
 		await mockPi._trigger("agent_end", createAgentEndEvent("stop"), ctx);
+		await vi.advanceTimersByTimeAsync(0);
 
 		expect(mockPi.sendUserMessage).toHaveBeenCalledTimes(3);
 	});
 
-	it("catches sendUserMessage errors and reports them without throwing", async () => {
+	it("logs a warning and gives up if the session never becomes idle", async () => {
+		vi.useFakeTimers();
+		const mockPi = createMockPi();
+		const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+		installContinuation(mockPi as never, {
+			getCurrentTodos: () => pendingTodos,
+		});
+
+		await mockPi._trigger("agent_end", createAgentEndEvent("stop"), createMockContext({ isIdle: () => false }));
+		await vi.advanceTimersByTimeAsync(10_050);
+
+		expect(mockPi.sendUserMessage).not.toHaveBeenCalled();
+		expect(warning).toHaveBeenCalledWith(
+			"[todotools continuation] Timed out waiting for idle state; skipping auto-dispatch.",
+		);
+	});
+
+	it("catches deferred sendUserMessage errors and reports them without throwing", async () => {
+		vi.useFakeTimers();
 		const mockPi = createMockPi();
 		const ctx = createMockContext({ sessionId: "session-3" });
 		mockPi.sendUserMessage.mockImplementation(() => {
@@ -206,6 +248,7 @@ describe("todotools continuation runtime", () => {
 		});
 
 		await expect(mockPi._trigger("agent_end", createAgentEndEvent("stop"), ctx)).resolves.toBeUndefined();
+		await vi.advanceTimersByTimeAsync(0);
 		expect(mockPi.events.emit).toHaveBeenCalledWith(
 			"todotools:continuation_error",
 			expect.objectContaining({

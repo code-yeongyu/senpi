@@ -66,6 +66,34 @@ function createNoCompletionResponses(todos: TodoItem[]): FauxResponseStep[] {
 	];
 }
 
+function markTodosCompleted(todos: TodoItem[]): TodoItem[] {
+	return todos.map((todo) => ({
+		...todo,
+		status: "completed",
+	}));
+}
+
+function getInjectedContinuationMessages(harness: Harness): string[] {
+	return harness.getInjectedUserMessages().filter((message) => message.includes(CONTINUATION_DIRECTIVE));
+}
+
+async function waitForHarnessToSettle(harness: Harness, timeoutMs = 2_000): Promise<void> {
+	const start = Date.now();
+
+	while (Date.now() - start < timeoutMs) {
+		if (!harness.session.isStreaming && harness.getPendingResponseCount() === 0) {
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			if (!harness.session.isStreaming && harness.getPendingResponseCount() === 0) {
+				return;
+			}
+		}
+
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+
+	throw new Error("Timed out waiting for continuation dispatch to settle");
+}
+
 function createMockUI(): ExtensionUIContext {
 	return {
 		select: vi.fn().mockResolvedValue(undefined),
@@ -90,10 +118,6 @@ function createMockUI(): ExtensionUIContext {
 	} as unknown as ExtensionUIContext;
 }
 
-function drainContinuationFollowUps(harness: Harness): string[] {
-	return harness.session.clearQueue().followUp.filter((message) => message.includes(CONTINUATION_DIRECTIVE));
-}
-
 afterEach(() => {
 	while (harnesses.length > 0) {
 		harnesses.pop()?.cleanup();
@@ -114,34 +138,31 @@ describe("todotools continuation chain cap", () => {
 		harness.setResponses(createNoCompletionResponses(PENDING_TODOS));
 		await harness.session.prompt("seed todos without continuation");
 		runtime.flagValues.set("disable-todo-continuation", false);
-		harness.session.clearQueue();
+		harness.setResponses(
+			Array.from({ length: CONTINUATION_CHAIN_CAP + 1 }, () =>
+				fauxAssistantMessage("still not done", { stopReason: "stop" }),
+			),
+		);
+		await harness.session.prompt("kick off the automatic continuation chain");
+		await waitForHarnessToSettle(harness);
 
-		let injectionCount = 0;
-		let continuationPrompt = buildContinuationPrompt(PENDING_TODOS);
+		const injectedMessages = getInjectedContinuationMessages(harness);
+		expect(injectedMessages).toHaveLength(CONTINUATION_CHAIN_CAP);
+		expect(injectedMessages).toEqual(
+			Array.from({ length: CONTINUATION_CHAIN_CAP }, () => buildContinuationPrompt(PENDING_TODOS)),
+		);
 
-		for (let index = 0; index < 12; index += 1) {
-			harness.setResponses([fauxAssistantMessage("still not done", { stopReason: "stop" })]);
-			await harness.session.prompt(continuationPrompt);
-
-			const queuedContinuations = drainContinuationFollowUps(harness);
-			const expectedInjectionCount = index < CONTINUATION_CHAIN_CAP ? 1 : 0;
-
-			expect(queuedContinuations).toHaveLength(expectedInjectionCount);
-			if (queuedContinuations[0]) {
-				continuationPrompt = queuedContinuations[0];
-			}
-
-			injectionCount += queuedContinuations.length;
-		}
-
-		expect(injectionCount).toBeLessThanOrEqual(CONTINUATION_CHAIN_CAP);
-		expect(injectionCount).toBe(CONTINUATION_CHAIN_CAP);
-
-		harness.setResponses([fauxAssistantMessage("fresh prompt finished", { stopReason: "stop" })]);
+		harness.setResponses([
+			fauxAssistantMessage("fresh prompt finished", { stopReason: "stop" }),
+			fauxAssistantMessage([fauxToolCall("todowrite", { todos: markTodosCompleted(PENDING_TODOS) })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("completed", { stopReason: "stop" }),
+		]);
 		await harness.session.prompt("fresh user prompt resets the chain");
+		await waitForHarnessToSettle(harness);
 
-		const queuedAfterReset = drainContinuationFollowUps(harness);
-		expect(queuedAfterReset).toHaveLength(1);
-		expect(queuedAfterReset[0]).toContain(CONTINUATION_DIRECTIVE);
+		expect(getInjectedContinuationMessages(harness)).toHaveLength(CONTINUATION_CHAIN_CAP + 1);
+		expect(getInjectedContinuationMessages(harness).at(-1)).toContain(CONTINUATION_DIRECTIVE);
 	});
 });

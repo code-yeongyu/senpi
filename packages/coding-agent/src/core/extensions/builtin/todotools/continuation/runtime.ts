@@ -16,6 +16,8 @@ type ContinuationDeps = {
 
 const CLEAN_STOP_REASONS = new Set(["stop", "toolUse", "endTurn", "end_turn"]);
 export const CONTINUATION_CHAIN_CAP = 10;
+const IDLE_POLL_INTERVAL_MS = 50;
+const IDLE_WAIT_TIMEOUT_MS = 10_000;
 
 function isAssistantMessage(message: unknown): message is AssistantMessage {
 	if (!message || typeof message !== "object") {
@@ -93,6 +95,27 @@ function reportContinuationError(pi: ExtensionAPI, ctx: ExtensionContext, error:
 	process.stderr.write(`[todotools continuation] ${message}\n`);
 }
 
+function wait(ms: number): Promise<void> {
+	return new Promise((resolve) => {
+		setTimeout(resolve, ms);
+	});
+}
+
+async function dispatchContinuationWhenIdle(pi: ExtensionAPI, ctx: ExtensionContext, prompt: string): Promise<void> {
+	const startedAt = Date.now();
+
+	while (Date.now() - startedAt < IDLE_WAIT_TIMEOUT_MS) {
+		if (ctx.isIdle()) {
+			await pi.sendUserMessage(prompt);
+			return;
+		}
+
+		await wait(IDLE_POLL_INTERVAL_MS);
+	}
+
+	console.warn("[todotools continuation] Timed out waiting for idle state; skipping auto-dispatch.");
+}
+
 export function installContinuation(pi: ExtensionAPI, deps: ContinuationDeps): void {
 	const sessionStates = new Map<string, ContinuationState>();
 
@@ -155,9 +178,18 @@ export function installContinuation(pi: ExtensionAPI, deps: ContinuationDeps): v
 				return;
 			}
 
+			const prompt = buildContinuationPrompt(todos);
 			sessionState.reEntryFlag = true;
 			sessionState.chainCount += 1;
-			await Promise.resolve(pi.sendUserMessage(buildContinuationPrompt(todos), { deliverAs: "followUp" }));
+			setTimeout(() => {
+				void (async () => {
+					try {
+						await dispatchContinuationWhenIdle(pi, ctx, prompt);
+					} catch (error) {
+						reportContinuationError(pi, ctx, error);
+					}
+				})();
+			}, 0);
 		} catch (error) {
 			reportContinuationError(pi, ctx, error);
 		}
