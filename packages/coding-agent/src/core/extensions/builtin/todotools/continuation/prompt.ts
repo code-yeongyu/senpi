@@ -1,4 +1,4 @@
-import type { TodoItem } from "../state.js";
+import { sanitizeTodoText, type TodoItem } from "../state.js";
 
 function isIncompleteTodo(todo: TodoItem): boolean {
 	return todo.status !== "completed" && todo.status !== "cancelled";
@@ -24,11 +24,14 @@ export function buildContinuationPrompt(todos: TodoItem[]): string {
 
 	const completedCount = todos.filter((todo) => todo.status === "completed").length;
 	const remainingTodos = todos.filter(isIncompleteTodo);
-	const remainingLines = remainingTodos.map((todo) => `- [${todo.status}] ${todo.content}`).join("\n");
+	const activeTotal = completedCount + remainingTodos.length;
+	const remainingLines = remainingTodos
+		.map((todo) => `- [${todo.status}] ${sanitizeTodoText(todo.content)}`)
+		.join("\n");
 
 	return `${CONTINUATION_DIRECTIVE}
 
-[Status: ${completedCount}/${todos.length} completed, ${remainingTodos.length} remaining]
+[Status: ${completedCount}/${activeTotal} completed, ${remainingTodos.length} remaining]
 
 Remaining tasks:
 ${remainingLines}

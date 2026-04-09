@@ -40,6 +40,7 @@ describe("todotools continuation prompt builder", () => {
 		const todos: TodoItem[] = [
 			{ content: "Done", status: "completed", priority: "low" },
 			{ content: "Active", status: "in_progress", priority: "high" },
+			{ content: "Cancelled", status: "cancelled", priority: "low" },
 			{ content: "Queued", status: "pending", priority: "medium" },
 		];
 		const prompt = buildContinuationPrompt(todos);
@@ -55,6 +56,7 @@ describe("todotools continuation prompt builder", () => {
 		const remainingCount = Number(match?.[3]);
 
 		expect(completedCount + remainingCount).toBe(totalCount);
+		expect(totalCount).toBe(3);
 		expect(remainingCount).toBeGreaterThan(0);
 	});
 
@@ -98,6 +100,27 @@ describe("todotools continuation prompt builder", () => {
 
 	it("returns an empty string for an empty todo list", () => {
 		expect(buildContinuationPrompt([])).toBe("");
+	});
+
+	it("uses an active-total denominator when every todo is cancelled", () => {
+		const todos: TodoItem[] = [
+			{ content: "Cancelled one", status: "cancelled", priority: "low" },
+			{ content: "Cancelled two", status: "cancelled", priority: "medium" },
+		];
+
+		expect(buildContinuationPrompt(todos)).toContain("[Status: 0/0 completed, 0 remaining]");
+	});
+
+	it("sanitizes multiline todo content before rendering continuation bullets", () => {
+		const todos: TodoItem[] = [
+			{ content: "Done", status: "completed", priority: "low" },
+			{ content: "Line one\nline two\u001b[31m", status: "pending", priority: "high" },
+		];
+		const prompt = buildContinuationPrompt(todos);
+		const remainingSection = prompt.split("Remaining tasks:\n")[1];
+
+		expect(remainingSection).toBeDefined();
+		expect(remainingSection?.trim().split("\n")).toEqual(["- [pending] Line one line two"]);
 	});
 
 	it("matches the committed golden prompt fixture byte-for-byte", () => {
