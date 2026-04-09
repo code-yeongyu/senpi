@@ -8,6 +8,7 @@ import { buildContinuationPrompt, CONTINUATION_DIRECTIVE, countIncomplete } from
 type ContinuationState = {
 	reEntryFlag: boolean;
 	chainCount: number;
+	pendingDispatchAbortController?: AbortController;
 };
 
 type ContinuationDeps = {
@@ -56,6 +57,11 @@ function createInitialState(): ContinuationState {
 	};
 }
 
+function abortPendingDispatch(state: ContinuationState): void {
+	state.pendingDispatchAbortController?.abort();
+	state.pendingDispatchAbortController = undefined;
+}
+
 function getSessionState(sessionStates: Map<string, ContinuationState>, sessionId: string): ContinuationState {
 	const existingState = sessionStates.get(sessionId);
 	if (existingState) {
@@ -101,16 +107,37 @@ function wait(ms: number): Promise<void> {
 	});
 }
 
-async function dispatchContinuationWhenIdle(pi: ExtensionAPI, ctx: ExtensionContext, prompt: string): Promise<void> {
+async function dispatchContinuationWhenIdle(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	prompt: string,
+	signal: AbortSignal,
+): Promise<void> {
 	const startedAt = Date.now();
 
+	if (signal.aborted) {
+		return;
+	}
+
 	while (Date.now() - startedAt < IDLE_WAIT_TIMEOUT_MS) {
+		if (signal.aborted) {
+			return;
+		}
+
 		if (ctx.isIdle()) {
+			if (signal.aborted) {
+				return;
+			}
+
 			await pi.sendUserMessage(prompt);
 			return;
 		}
 
 		await wait(IDLE_POLL_INTERVAL_MS);
+
+		if (signal.aborted) {
+			return;
+		}
 	}
 
 	console.warn("[todotools continuation] Timed out waiting for idle state; skipping auto-dispatch.");
@@ -130,6 +157,7 @@ export function installContinuation(pi: ExtensionAPI, deps: ContinuationDeps): v
 		sessionState.reEntryFlag = false;
 		if (!isContinuationFollowUpPrompt(event.prompt)) {
 			sessionState.chainCount = 0;
+			abortPendingDispatch(sessionState);
 		}
 	});
 
@@ -137,11 +165,21 @@ export function installContinuation(pi: ExtensionAPI, deps: ContinuationDeps): v
 		if (!shouldResetForSessionStart(event)) {
 			return;
 		}
-		sessionStates.set(getSessionId(ctx), createInitialState());
+		const sessionId = getSessionId(ctx);
+		const existingState = sessionStates.get(sessionId);
+		if (existingState) {
+			abortPendingDispatch(existingState);
+		}
+		sessionStates.set(sessionId, createInitialState());
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
-		sessionStates.delete(getSessionId(ctx));
+		const sessionId = getSessionId(ctx);
+		const existingState = sessionStates.get(sessionId);
+		if (existingState) {
+			abortPendingDispatch(existingState);
+		}
+		sessionStates.delete(sessionId);
 	});
 
 	pi.on("agent_end", async (event, ctx) => {
@@ -170,7 +208,8 @@ export function installContinuation(pi: ExtensionAPI, deps: ContinuationDeps): v
 				return;
 			}
 
-			const sessionState = getSessionState(sessionStates, getSessionId(ctx));
+			const sessionId = getSessionId(ctx);
+			const sessionState = getSessionState(sessionStates, sessionId);
 			if (sessionState.reEntryFlag) {
 				return;
 			}
@@ -179,14 +218,22 @@ export function installContinuation(pi: ExtensionAPI, deps: ContinuationDeps): v
 			}
 
 			const prompt = buildContinuationPrompt(todos);
+			abortPendingDispatch(sessionState);
+			const pendingDispatchAbortController = new AbortController();
+			sessionState.pendingDispatchAbortController = pendingDispatchAbortController;
 			sessionState.reEntryFlag = true;
 			sessionState.chainCount += 1;
 			setTimeout(() => {
 				void (async () => {
 					try {
-						await dispatchContinuationWhenIdle(pi, ctx, prompt);
+						await dispatchContinuationWhenIdle(pi, ctx, prompt, pendingDispatchAbortController.signal);
 					} catch (error) {
 						reportContinuationError(pi, ctx, error);
+					} finally {
+						const currentState = sessionStates.get(sessionId);
+						if (currentState?.pendingDispatchAbortController === pendingDispatchAbortController) {
+							currentState.pendingDispatchAbortController = undefined;
+						}
 					}
 				})();
 			}, 0);

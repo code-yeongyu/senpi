@@ -192,6 +192,29 @@ describe("todotools continuation runtime", () => {
 		expect(mockPi.sendUserMessage).toHaveBeenCalledTimes(2);
 	});
 
+	it("aborts a pending deferred dispatch when a fresh prompt arrives", async () => {
+		vi.useFakeTimers();
+		const mockPi = createMockPi();
+		let isIdle = false;
+		const ctx = createMockContext({
+			sessionId: "session-fresh-prompt",
+			isIdle: () => isIdle,
+		});
+
+		installContinuation(mockPi as never, {
+			getCurrentTodos: () => pendingTodos,
+		});
+
+		await mockPi._trigger("agent_end", createAgentEndEvent("stop"), ctx);
+		await vi.advanceTimersByTimeAsync(0);
+		await mockPi._trigger("before_agent_start", createBeforeAgentStartEvent("new user request"), ctx);
+
+		isIdle = true;
+		await vi.advanceTimersByTimeAsync(100);
+
+		expect(mockPi.sendUserMessage).not.toHaveBeenCalled();
+	});
+
 	it("resets or clears per-session state on reload and shutdown events", async () => {
 		vi.useFakeTimers();
 		const mockPi = createMockPi();
@@ -215,6 +238,56 @@ describe("todotools continuation runtime", () => {
 		await vi.advanceTimersByTimeAsync(0);
 
 		expect(mockPi.sendUserMessage).toHaveBeenCalledTimes(3);
+	});
+
+	it("aborts a pending deferred dispatch when the session reloads", async () => {
+		vi.useFakeTimers();
+		const mockPi = createMockPi();
+		let isIdle = false;
+		const ctx = createMockContext({
+			sessionId: "session-reload-abort",
+			isIdle: () => isIdle,
+		});
+
+		installContinuation(mockPi as never, {
+			getCurrentTodos: () => pendingTodos,
+		});
+
+		await mockPi._trigger("agent_end", createAgentEndEvent("stop"), ctx);
+		await vi.advanceTimersByTimeAsync(0);
+		await mockPi._trigger(
+			"session_start",
+			{ type: "session_start", reason: "reload" } satisfies SessionStartEvent,
+			ctx,
+		);
+
+		isIdle = true;
+		await vi.advanceTimersByTimeAsync(100);
+
+		expect(mockPi.sendUserMessage).not.toHaveBeenCalled();
+	});
+
+	it("aborts a pending deferred dispatch when the session shuts down", async () => {
+		vi.useFakeTimers();
+		const mockPi = createMockPi();
+		let isIdle = false;
+		const ctx = createMockContext({
+			sessionId: "session-shutdown-abort",
+			isIdle: () => isIdle,
+		});
+
+		installContinuation(mockPi as never, {
+			getCurrentTodos: () => pendingTodos,
+		});
+
+		await mockPi._trigger("agent_end", createAgentEndEvent("stop"), ctx);
+		await vi.advanceTimersByTimeAsync(0);
+		await mockPi._trigger("session_shutdown", { type: "session_shutdown" } satisfies SessionShutdownEvent, ctx);
+
+		isIdle = true;
+		await vi.advanceTimersByTimeAsync(100);
+
+		expect(mockPi.sendUserMessage).not.toHaveBeenCalled();
 	});
 
 	it("logs a warning and gives up if the session never becomes idle", async () => {
