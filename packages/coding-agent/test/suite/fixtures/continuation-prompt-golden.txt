@@ -1,0 +1,14 @@
+[SYSTEM DIRECTIVE: SANEPI - TODO CONTINUATION]
+
+Incomplete tasks remain in your todo list. Continue working on the next pending task.
+
+- Proceed without asking for permission
+- Mark each task complete when finished
+- Do not stop until all tasks are done
+- If you believe all work is already complete, the system is questioning your completion claim. Critically re-examine each todo item from a skeptical perspective, verify the work was actually done correctly, and update the todo list accordingly.
+
+[Status: 1/3 completed, 2 remaining]
+
+Remaining tasks:
+- [in_progress] Implement the runtime
+- [pending] Add integration coverage
