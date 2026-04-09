@@ -87,12 +87,33 @@ Return a structured handoff (the mission runner collects this):
 - `whatWasLeftUndone`: anything you skipped or couldn't finish inside your scope. If anything, explain why.
 - `criticalContext`: anything a subsequent worker needs to know that isn't already in the architecture or environment docs.
 
+## Mission-documented baseline failures (precedence rule)
+
+Mission `AGENTS.md` MAY contain a section titled **"Known Pre-Existing Issues (Do Not Fix — Out of Scope)"** listing test files and case counts that are red at the mission's base commit. When such a section exists, the following rule applies and **overrides** the generic "return on out-of-scope validator failure" escalation:
+
+1. After running the full test command, compare the **set** of failing files and the **total failing case count** against the documented baseline.
+2. If the observed set is **exactly** the documented set (same files, same total count), you MAY proceed and commit. The mission has explicitly waived these failures.
+3. If the observed set has **any new file**, **any new failing case in a non-baseline file**, **a higher count in any baseline file**, or **a missing failure that the baseline expected**, you MUST stop and return to orchestrator. This indicates either a regression introduced by your change or a baseline shift that needs orchestrator attention.
+4. Always include the observed-vs-documented comparison in your handoff verification log so the orchestrator can audit it.
+
+## Scoped pre-existing dirty state at session start
+
+If `git status` at the start of your session shows uncommitted changes that are **entirely inside your assigned feature's allowed paths**, treat this as a recoverable in-progress state from a prior worker session, NOT an immediate escalation. Procedure:
+
+1. Run `git status --short` and `git diff` (and `git diff --cached`) over the dirty files. Confirm every dirty path is inside your feature's allow-list.
+2. If ANY dirty path is outside your allow-list, stop and return to orchestrator immediately — do not modify those files and do not commit them.
+3. If all dirty paths are in-scope, audit the changes against your feature's `description`, `expectedBehavior`, and `fulfills`. If they are correct and complete, proceed to Step 5 (verify) and Step 6 (run verification commands), then commit them as your feature's commit.
+4. If they are partially correct, finish them, then verify and commit.
+5. If they are wrong or contradict the spec, return to orchestrator with a summary — do NOT silently revert another worker's intent.
+
+Untracked files outside your feature paths (e.g., `.pi/permissions-approved.jsonl`, `.pi/settings.json`, `.sisyphus/`, `local-ignore/`) are unrelated user-local artifacts and should be ignored, never staged.
+
 ## Escalation triggers
 
 Return control to the orchestrator immediately (do NOT attempt creative workarounds) when:
 - A required ExtensionAPI does not exist with the signature you expected.
-- A verification step fails for a reason outside your changes (pre-existing broken test that isn't within your feature's fix scope, broken upstream dependency, etc.).
-- You encounter uncommitted changes in the working tree you did not author.
+- A verification step fails for a reason outside your changes AND outside the mission-documented baseline failures (see precedence rule above).
+- You encounter uncommitted changes in the working tree you did not author AND the changes are outside your feature's allowed paths (see scoped dirty state rule above).
 - `npm run check` or `npm run build` fails for reasons unrelated to your edits.
 - You discover an assertion in your `fulfills` that is impossible to satisfy as written.
 - A boundary violation would be required to complete the feature.
