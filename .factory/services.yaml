@@ -1,0 +1,9 @@
+commands:
+  install: npm install
+  build: npm run build
+  check: npm run check
+  test-all: npm test --workspaces --if-present
+  test-coding-agent: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run
+  test-coding-agent-file: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run
+
+services: {}
