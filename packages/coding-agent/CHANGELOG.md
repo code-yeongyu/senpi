@@ -26,6 +26,8 @@
 
 ### Fixed
 
+- `todotools` continuation prompting now explicitly forbids refusal/summary-only replies and requires verified
+  todo cleanup when work is already complete or no longer actionable
 - RpcClient now forwards subprocess stderr to parent process in real-time ([#2805](https://github.com/badlogic/pi-mono/issues/2805))
 - Theme file watcher now handles async `fs.watch` error events instead of crashing the process ([#2791](https://github.com/badlogic/pi-mono/issues/2791))
 
