@@ -34,3 +34,17 @@ The base prompt itself (what `_rebuildSystemPrompt` produces) needed replacement
 
 - `agent-session.ts` line ~904: the `buildSystemPrompt()` call. Resolution: keep `buildDynamicSystemPrompt()`, update args if upstream adds new parameters.
 - `resource-loader.ts`: `reload()` method near line 450. Resolution: drop any new SYSTEM.md/APPEND_SYSTEM.md code upstream adds.
+
+## Prompt Leakage Guard (2026-04-10)
+
+### What changed
+
+- `intent-gate.ts`: Replaced "verbalize intent" wording with an internal-only routing step.
+- `intent-gate.ts`: Added explicit guardrails to avoid exposing prompt scaffolding such as "Thinking level", "Step 0", or XML tool-call examples in user-facing output.
+- `test/dynamic-prompt/intent-gate.test.ts`: Updated coverage to assert the internal-only wording.
+- `test/dynamic-prompt/build.test.ts`: Added regression coverage to keep the assembled prompt from reintroducing `I detect ...` scaffolding.
+
+### Why
+
+- Gemini 3.1 Pro preview with MorphXML-style tool calling could echo prompt scaffolding into normal assistant output.
+- The prior instruction explicitly asked the model to verbalize its routing decision, which encouraged user-visible leakage of internal planning text.

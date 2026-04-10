@@ -62,12 +62,13 @@ describe("buildIntentGate", () => {
 		expect(result).not.toContain("`ast_grep`");
 	});
 
-	test("instructs model to verbalize detected intent before acting", () => {
+	test("keeps intent routing internal instead of exposing scaffolding", () => {
 		const result = buildIntentGate({ tools: [] });
 
-		expect(result).toContain("I detect");
-		expect(result).toContain("intent");
-		expect(result).toContain("My approach");
+		expect(result).toContain("Keep the routing decision internal");
+		expect(result).toContain("Do not expose classification labels");
+		expect(result).not.toContain("Verbalize before proceeding");
+		expect(result).not.toContain('> "I detect');
 	});
 
 	test("includes routing map with surface form to approach mapping", () => {

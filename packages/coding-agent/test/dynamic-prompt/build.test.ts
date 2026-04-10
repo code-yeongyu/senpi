@@ -21,6 +21,9 @@ describe("buildDynamicSystemPrompt", () => {
 
 		expect(prompt).toContain("Intent");
 		expect(prompt).toContain("Surface Form");
+		expect(prompt).toContain("Keep the routing decision internal");
+		expect(prompt).not.toContain("Verbalize before proceeding");
+		expect(prompt).not.toContain('> "I detect');
 	});
 
 	test("includes tool section with categorized tools", () => {
