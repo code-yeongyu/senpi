@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parsePermissionFlag } from "../../src/core/extensions/builtin/permission-system/cli.js";
 import { disabled, expand, fromConfig, merge } from "../../src/core/extensions/builtin/permission-system/config.js";
 import { evaluate } from "../../src/core/extensions/builtin/permission-system/evaluate.js";
-import { loadPermissionSettings } from "../../src/core/extensions/builtin/permission-system/settings.js";
 import {
 	createLocalEventEmitter,
 	type PermissionAskedEvent,
@@ -14,6 +13,7 @@ import {
 import { handleNoUI } from "../../src/core/extensions/builtin/permission-system/non-interactive.js";
 import { createBuiltinParserRegistry } from "../../src/core/extensions/builtin/permission-system/parsers.js";
 import { PermissionService } from "../../src/core/extensions/builtin/permission-system/service.js";
+import { loadPermissionSettings } from "../../src/core/extensions/builtin/permission-system/settings.js";
 import {
 	appendApproved,
 	clearApproved,
