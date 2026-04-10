@@ -310,8 +310,10 @@ describe("background-task extension", () => {
 
 			const result = getLatestToolResult(harness, "task");
 			const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-			expect(text).toMatch(/Task started: bg_[0-9a-f]{8}/);
+			expect(text).toContain("Background task launched.");
+			expect(text).toMatch(/Background Task ID: bg_[0-9a-f]{8}/);
 			expect(text).toContain("Description: Async task");
+			expect(text).toContain("Do NOT call background_output now. Wait for <system-reminder> notification first.");
 		});
 
 		it("renderResult shows compact resolved overview when details are provided", () => {
@@ -341,7 +343,7 @@ describe("background-task extension", () => {
 					content: [
 						{
 							type: "text",
-							text: "Task started: bg_1234abcd\nDescription: Inspect auth\nSystem will notify when done. Do NOT call BackgroundOutput until notified.",
+							text: 'Background task launched.\n\nBackground Task ID: bg_1234abcd\nDescription: Inspect auth\nAgent: explore\nStatus: pending\n\nSystem notifies on completion. Use `background_output` with task_id="bg_1234abcd" to check.\n\nDo NOT call background_output now. Wait for <system-reminder> notification first.',
 						},
 					],
 					details: {
@@ -500,10 +502,11 @@ describe("background-task extension", () => {
 
 			// then
 			const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-			expect(text).toContain(`Task started: ${task.id}`);
+			expect(text).toContain("Background task launched.");
+			expect(text).toContain(`Background Task ID: ${task.id}`);
 			expect(text).toContain("Description: Inspect auth");
-			expect(text).not.toContain("Agent:");
-			expect(text).not.toContain("Model:");
+			expect(text).toContain("Agent: explore");
+			expect(text).toContain("Do NOT call background_output now. Wait for <system-reminder> notification first.");
 			expect(manager.getTask(task.id)?.activeToolNames).toEqual(["grep", "read"]);
 
 			resolveResult?.({ text: "done", exitCode: 0 });

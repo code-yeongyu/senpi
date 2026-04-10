@@ -119,7 +119,8 @@ model is optional and defaults to the current model.`;
 			"Run a sub-agent either synchronously for direct output or asynchronously for a background task_id.",
 		promptGuidelines: [
 			"Use run_in_background=false when you need the sub-agent result in the same turn.",
-			"Use run_in_background=true for parallel work. System notifies on completion.",
+			"Use run_in_background=true for parallel work. System notifies on completion via <system-reminder>.",
+			"After launching a background task, do NOT call background_output - wait for the <system-reminder> notification first.",
 			"Pass session_id to continue an existing sub-agent session.",
 		],
 		parameters: TaskToolParams,
@@ -309,15 +310,25 @@ model is optional and defaults to the current model.`;
 					});
 
 				executeReturned = true;
+
+				const sessionIdBlock = params.session_id
+					? `\n\n<task_metadata>\nsession_id: ${params.session_id}\ntask_id: ${task.id}\nbackground_task_id: ${task.id}\n</task_metadata>\n\nto continue: task(session_id="${params.session_id}", run_in_background=false, prompt="...")`
+					: `\n\n<task_metadata>\ntask_id: ${task.id}\nbackground_task_id: ${task.id}\n</task_metadata>`;
+
 				return {
 					content: [
 						{
 							type: "text",
-							text: [
-								`Task started: ${task.id}`,
-								`Description: ${params.description}`,
-								"System will notify when done. Do NOT call BackgroundOutput until notified.",
-							].join("\n"),
+							text: `Background task launched.
+
+Background Task ID: ${task.id}
+Description: ${params.description}
+Agent: ${params.agent_type ?? "default"}
+Status: ${task.status}
+
+System notifies on completion. Use \`background_output\` with task_id="${task.id}" to check.
+
+Do NOT call background_output now. Wait for <system-reminder> notification first.${sessionIdBlock}`,
 						},
 					],
 					details: taskDetails,

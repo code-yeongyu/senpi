@@ -48,12 +48,13 @@ export function createBackgroundOutputTool(manager: BackgroundManager): ToolDefi
 	return {
 		name: "background_output",
 		label: "BackgroundOutput",
-		description:
-			"Get the output from a completed background task. ONLY call AFTER receiving a completion notification for the task.",
+		description: `Get output from background task. System notifies on completion, so block=true rarely needed.
+
+IMPORTANT: ONLY call this tool AFTER receiving a <system-reminder> notification for the task. Do NOT call immediately after launching a background task - wait for the notification first.`,
 		promptSnippet: "Retrieve results from a completed background task by task_id.",
 		promptGuidelines: [
-			"ONLY call this tool AFTER receiving a completion notification for the task.",
-			"Do NOT call this immediately after launching a background task - the system will notify you when done.",
+			"ONLY call this tool AFTER receiving a <system-reminder> notification for the task.",
+			"Do NOT call this immediately after launching a background task - wait for the notification first.",
 			"Set block=true only if you must wait synchronously (rarely needed).",
 		],
 		parameters: BackgroundOutputParams,
