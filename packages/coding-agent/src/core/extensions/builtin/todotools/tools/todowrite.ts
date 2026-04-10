@@ -41,7 +41,7 @@ Each todo MUST be a single atomic action completable in 1-3 tool calls. If it ne
 ## Task Management
 - One in_progress at a time. Complete it before starting the next.
 - Mark completed immediately after finishing each item.
-- Skip this tool for single trivial tasks (one-step, obvious action).
+- ALWAYS use todos. No "trivial task" exemptions.
 </task_management>`;
 
 const TodoItemSchema = Type.Object({
@@ -75,9 +75,9 @@ export function registerTodoWriteTool(pi: ExtensionAPI, accessors: TodoAccessors
 		label: "TodoWrite",
 		description: DESCRIPTION,
 		promptSnippet:
-			"MANDATORY for multi-step work (2+ steps). Create and track structured todos with WHERE/WHY/HOW/RESULT format. Mark completed IMMEDIATELY after each step.",
+			"MANDATORY for ALL tasks. Follow EXPLORE -> DEFINE -> PLAN -> TODO -> EXECUTE workflow. No exceptions.",
 		promptGuidelines: [
-			"Create todos BEFORE any non-trivial task (2+ steps). This is MANDATORY, not optional. Do it IMMEDIATELY on receiving the request - no announcements, just create.",
+			"Create todos for EVERY task. No 'trivial task' exemptions. Follow EXPLORE -> DEFINE -> PLAN -> TODO -> EXECUTE workflow always.",
 			"Each todo title MUST encode WHERE, WHY, HOW, and EXPECTED RESULT. Format: '[WHERE] [HOW] to [WHY] - expect [RESULT]'. Vague todos are useless.",
 			"Each todo MUST be a single atomic action completable in 1-3 tool calls. If bigger, split it. Size test: one file edit or one command.",
 			"Pass the complete updated todo list on every call instead of incremental operations.",

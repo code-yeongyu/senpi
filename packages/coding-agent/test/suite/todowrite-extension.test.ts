@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { fauxAssistantMessage, fauxToolCall } from "@mariozechner/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { discoverAndLoadExtensions } from "../../src/core/extensions/loader.js";
+import type { ExtensionAPI, ToolDefinition } from "../../src/core/extensions/types.js";
 import { SessionManager } from "../../src/core/session-manager.js";
 import { assistantMsg, createTestResourceLoader, userMsg } from "../utilities.js";
 import { createHarness, getAssistantTexts, type Harness } from "./harness.js";
@@ -18,6 +19,30 @@ async function createHarnessWithTodoExtension(): Promise<Harness> {
 
 async function loadTodoExtensionModule() {
 	return import(TODOWRITE_EXTENSION_PATH);
+}
+
+async function captureTodoWriteToolDefinition() {
+	const { registerTodoWriteTool } = await import("../../src/core/extensions/builtin/todotools/tools/todowrite.js");
+	let capturedTool: ToolDefinition | undefined;
+
+	const mockPi = {
+		registerTool(tool: ToolDefinition) {
+			capturedTool = tool;
+		},
+		appendEntry() {},
+	} as Pick<ExtensionAPI, "registerTool" | "appendEntry"> as ExtensionAPI;
+
+	registerTodoWriteTool(mockPi, {
+		getCurrentTodos: () => [],
+		setCurrentTodos: () => {},
+		syncWidget: () => {},
+	});
+
+	if (!capturedTool) {
+		throw new Error("Expected todowrite tool to be registered");
+	}
+
+	return capturedTool;
 }
 
 function getLatestToolResult(harness: Harness, toolName: "todowrite" | "todoread") {
@@ -179,6 +204,18 @@ describe("todowrite extension", () => {
 
 		// then
 		expect(lines).toEqual(["Todo", "[ ] Unsafe text next line"]);
+	});
+
+	it("registers workflow-first prompt guidance for all tasks", async () => {
+		// given
+		const tool = await captureTodoWriteToolDefinition();
+
+		// then
+		expect(tool.promptSnippet).toContain("MANDATORY for ALL tasks");
+		expect(tool.promptSnippet).toContain("EXPLORE -> DEFINE -> PLAN -> TODO -> EXECUTE");
+		expect(tool.promptGuidelines).toContain(
+			"Create todos for EVERY task. No 'trivial task' exemptions. Follow EXPLORE -> DEFINE -> PLAN -> TODO -> EXECUTE workflow always.",
+		);
 	});
 
 	it("reconstructs todo state from branch-specific custom entries", async () => {
