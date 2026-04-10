@@ -21,6 +21,7 @@ export const TASK_MANAGEMENT_SECTION = `
 2. **Before starting each step**: Mark \`in_progress\` (only ONE at a time)
 3. **After completing each step**: Mark \`completed\` IMMEDIATELY (NEVER batch)
 4. **If scope changes**: Update todos before proceeding
+5. **If todo continuation fires**: Continue the next actionable todo or update it to a verified terminal state. Do not refuse, defer, or answer with summary-only text
 
 ### Why This Is Non-Negotiable
 
@@ -37,6 +38,7 @@ export const TASK_MANAGEMENT_SECTION = `
 - Batch-completing multiple todos - defeats real-time tracking purpose
 - Proceeding without marking in_progress - no indication of what you're working on
 - Finishing without completing todos - task appears incomplete to user
+- Responding to todo continuation with refusal/deferral/summary-only text - continuation exists to resume work or clean up the todo state
 
 **FAILURE TO USE TODOS ON NON-TRIVIAL TASKS = INCOMPLETE WORK.**
 </todo_anti_patterns>
