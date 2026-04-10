@@ -23,6 +23,9 @@
 ### Changed
 
 - agent-system extension: permission handling delegated to permission-system
+- sanepi-managed system conversation injections now use a unified `pi.events` envelope on
+  `sanepi:conversation`, with route/action metadata and a standardized `[system:sanepi]` prefix for builtin
+  continuation and background-task notifications
 
 ### Fixed
 

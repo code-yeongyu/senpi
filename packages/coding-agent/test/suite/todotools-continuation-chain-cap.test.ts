@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { type FauxResponseStep, fauxAssistantMessage, fauxToolCall } from "@mariozechner/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../../src/config.js";
+import { SANEPI_SYSTEM_PREFIX } from "../../src/core/extensions/builtin/system-messages.js";
 import {
 	buildContinuationPrompt,
 	CONTINUATION_DIRECTIVE,
@@ -149,7 +150,10 @@ describe("todotools continuation chain cap", () => {
 		const injectedMessages = getInjectedContinuationMessages(harness);
 		expect(injectedMessages).toHaveLength(CONTINUATION_CHAIN_CAP);
 		expect(injectedMessages).toEqual(
-			Array.from({ length: CONTINUATION_CHAIN_CAP }, () => buildContinuationPrompt(PENDING_TODOS)),
+			Array.from(
+				{ length: CONTINUATION_CHAIN_CAP },
+				() => `${SANEPI_SYSTEM_PREFIX}\n${buildContinuationPrompt(PENDING_TODOS)}`,
+			),
 		);
 
 		harness.setResponses([

@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "../../types.js";
+import { sendBuiltinCustomMessage } from "../system-messages.js";
 import { createBackgroundCancelTool } from "./cancel-tool.js";
 import { BackgroundManager, getWidgetLines } from "./manager.js";
 import { sendCompletionNotification } from "./notification.js";
@@ -220,6 +221,9 @@ export default function backgroundTaskExtension(pi: ExtensionAPI): void {
 						return;
 					}
 				}
+
+				sendBuiltinCustomMessage(pi, "background-task.notification", message, options);
+				return;
 			}
 
 			pi.sendMessage(message, options);

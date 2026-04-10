@@ -1,6 +1,7 @@
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { SettingsManager } from "../../../../settings-manager.js";
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "../../../types.js";
+import { emitBuiltinSystemMessageFailure, sendBuiltinUserMessage } from "../../system-messages.js";
 import type { TodoItem } from "../state.js";
 import { resolveContinuationConfig } from "./config.js";
 import { buildContinuationPrompt, CONTINUATION_DIRECTIVE, countIncomplete } from "./prompt.js";
@@ -88,8 +89,15 @@ function shouldResetForSessionStart(event: SessionStartEvent): boolean {
 	return reason === "reload" || reason === "resume" || reason === "compact";
 }
 
-function reportContinuationError(pi: ExtensionAPI, ctx: ExtensionContext, error: unknown): void {
+function reportContinuationError(pi: ExtensionAPI, ctx: ExtensionContext, error: unknown, prompt?: string): void {
 	const message = error instanceof Error ? error.message : String(error);
+	emitBuiltinSystemMessageFailure(pi, {
+		route: "todotools.continuation",
+		sessionId: getSessionId(ctx),
+		kind: "user_message",
+		content: prompt ?? "",
+		errorMessage: message,
+	});
 	pi.events.emit("todotools:continuation_error", {
 		sessionId: getSessionId(ctx),
 		message,
@@ -129,7 +137,9 @@ async function dispatchContinuationWhenIdle(
 				return;
 			}
 
-			await pi.sendUserMessage(prompt);
+			sendBuiltinUserMessage(pi, "todotools.continuation", prompt, {
+				sessionId: getSessionId(ctx),
+			});
 			return;
 		}
 
@@ -228,7 +238,7 @@ export function installContinuation(pi: ExtensionAPI, deps: ContinuationDeps): v
 					try {
 						await dispatchContinuationWhenIdle(pi, ctx, prompt, pendingDispatchAbortController.signal);
 					} catch (error) {
-						reportContinuationError(pi, ctx, error);
+						reportContinuationError(pi, ctx, error, prompt);
 					} finally {
 						const currentState = sessionStates.get(sessionId);
 						if (currentState?.pendingDispatchAbortController === pendingDispatchAbortController) {

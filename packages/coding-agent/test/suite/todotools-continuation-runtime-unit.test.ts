@@ -1,5 +1,6 @@
 import { fauxAssistantMessage } from "@mariozechner/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SANEPI_CONVERSATION_EVENT, SANEPI_SYSTEM_PREFIX } from "../../src/core/extensions/builtin/system-messages.js";
 import { buildContinuationPrompt } from "../../src/core/extensions/builtin/todotools/continuation/prompt.js";
 import { installContinuation } from "../../src/core/extensions/builtin/todotools/continuation/runtime.js";
 import type { TodoItem } from "../../src/core/extensions/builtin/todotools/state.js";
@@ -143,9 +144,27 @@ describe("todotools continuation runtime", () => {
 
 		await vi.advanceTimersByTimeAsync(50);
 		expect(mockPi.sendUserMessage).toHaveBeenCalledTimes(1);
-		expect(mockPi.sendUserMessage).toHaveBeenNthCalledWith(1, buildContinuationPrompt(pendingTodos));
+		expect(mockPi.sendUserMessage).toHaveBeenNthCalledWith(
+			1,
+			`${SANEPI_SYSTEM_PREFIX}\n${buildContinuationPrompt(pendingTodos)}`,
+		);
 		expect(mockPi.sendUserMessage.mock.calls[0]).toHaveLength(1);
 		expect(typeof mockPi.sendUserMessage.mock.calls[0]?.[0]).toBe("string");
+		expect(mockPi.events.emit).toHaveBeenCalledWith(
+			SANEPI_CONVERSATION_EVENT,
+			expect.objectContaining({
+				version: 1,
+				source: "builtin",
+				action: "injected",
+				route: "todotools.continuation",
+				sessionId: "session-1",
+				conversation: expect.objectContaining({
+					kind: "user_message",
+					prefix: SANEPI_SYSTEM_PREFIX,
+				}),
+				text: `${SANEPI_SYSTEM_PREFIX}\n${buildContinuationPrompt(pendingTodos)}`,
+			}),
+		);
 	});
 
 	it("suppresses continuation for non-clean stop reasons before reading todos", async () => {
@@ -327,6 +346,21 @@ describe("todotools continuation runtime", () => {
 			expect.objectContaining({
 				sessionId: "session-3",
 				message: "follow-up failed",
+			}),
+		);
+		expect(mockPi.events.emit).toHaveBeenCalledWith(
+			SANEPI_CONVERSATION_EVENT,
+			expect.objectContaining({
+				version: 1,
+				source: "builtin",
+				action: "failed",
+				route: "todotools.continuation",
+				sessionId: "session-3",
+				conversation: expect.objectContaining({
+					kind: "user_message",
+					prefix: SANEPI_SYSTEM_PREFIX,
+				}),
+				errorMessage: "follow-up failed",
 			}),
 		);
 		expect(ctx.ui.notify).toHaveBeenCalledWith("Todo continuation failed: follow-up failed", "error");

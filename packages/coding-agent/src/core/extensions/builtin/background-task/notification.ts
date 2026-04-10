@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "../../types.js";
+import { sendBuiltinCustomMessage } from "../system-messages.js";
 import type { BackgroundManager } from "./manager.js";
 import type { BackgroundTask } from "./types.js";
 
@@ -140,12 +141,14 @@ export function sendCompletionNotification(pi: ExtensionAPI, task: BackgroundTas
 		completedTasks,
 	});
 
-	pi.sendMessage(
+	sendBuiltinCustomMessage(
+		pi,
+		"background-task.notification",
 		{
 			customType: "background-task.complete",
 			display: true,
 			content: [{ type: "text", text: message }],
 		},
-		{ triggerTurn: true, deliverAs: "followUp" },
+		{ triggerTurn: true, deliverAs: "followUp", sessionId: task.parentSessionId },
 	);
 }

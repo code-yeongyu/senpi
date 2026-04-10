@@ -1,8 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
 	formatCompletionNotification,
 	type NotificationInput,
+	sendCompletionNotification,
 } from "../../src/core/extensions/builtin/background-task/notification.js";
+import type { BackgroundTask } from "../../src/core/extensions/builtin/background-task/types.js";
+import { SANEPI_CONVERSATION_EVENT, SANEPI_SYSTEM_PREFIX } from "../../src/core/extensions/builtin/system-messages.js";
 
 describe("formatCompletionNotification", () => {
 	describe("#given one task still running after a completed task notification", () => {
@@ -200,5 +203,71 @@ Use \`background_output(task_id="<id>")\` to retrieve each result.
 			expect(notification).not.toContain("Result:");
 			expect(notification).toContain("background_output");
 		});
+	});
+});
+
+describe("sendCompletionNotification", () => {
+	it("prefixes the injected message and emits sanepi notification events", () => {
+		// given
+		const sendMessage = vi.fn();
+		const emit = vi.fn();
+		const pi = {
+			sendMessage,
+			events: { emit },
+		};
+		const task: BackgroundTask = {
+			id: "bg_1234abcd",
+			description: "Analyze code",
+			prompt: "Analyze code",
+			model: undefined,
+			agentType: undefined,
+			status: "completed" as const,
+			pid: undefined,
+			sessionPath: undefined,
+			startedAt: new Date("2026-01-01T00:00:00.000Z"),
+			completedAt: new Date("2026-01-01T00:00:10.000Z"),
+			parentSessionId: "session-1",
+			activeToolNames: [],
+			result: "done",
+			error: undefined,
+		};
+		const manager = {
+			getActiveTasks: () => [],
+			getAllTasks: () => [task],
+		};
+
+		// when
+		sendCompletionNotification(pi as never, task, manager as never);
+
+		// then
+		expect(sendMessage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				customType: "background-task.complete",
+				content: [
+					expect.objectContaining({
+						type: "text",
+						text: expect.stringContaining(`${SANEPI_SYSTEM_PREFIX}\n<system-reminder>`),
+					}),
+				],
+			}),
+			{ triggerTurn: true, deliverAs: "followUp" },
+		);
+		expect(emit).toHaveBeenCalledWith(
+			SANEPI_CONVERSATION_EVENT,
+			expect.objectContaining({
+				version: 1,
+				source: "builtin",
+				action: "injected",
+				route: "background-task.notification",
+				sessionId: "session-1",
+				conversation: expect.objectContaining({
+					kind: "custom_message",
+					customType: "background-task.complete",
+					prefix: SANEPI_SYSTEM_PREFIX,
+					triggerTurn: true,
+					deliverAs: "followUp",
+				}),
+			}),
+		);
 	});
 });
