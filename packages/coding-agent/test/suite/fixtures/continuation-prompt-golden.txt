@@ -2,9 +2,12 @@
 
 Incomplete tasks remain in your todo list. Continue working on the next pending task.
 
+- FIRST: Continue the first actionable remaining task now. If an in-progress task is already done, verify it and mark it completed before moving on
 - Proceed without asking for permission
-- Mark each task complete when finished
+- Mark each task complete immediately when finished
 - Do not stop until all tasks are done
+- Do not reply with refusal, deferral, or a summary-only response
+- If a task is already complete, no longer needed, or blocked, verify that and update the todo list to a terminal state instead of leaving it pending
 - If you believe all work is already complete, the system is questioning your completion claim. Critically re-examine each todo item from a skeptical perspective, verify the work was actually done correctly, and update the todo list accordingly.
 
 [Status: 1/3 completed, 2 remaining]

@@ -26,9 +26,12 @@ describe("todotools continuation prompt builder", () => {
 
 		expect(prompt).toContain("[SYSTEM DIRECTIVE: SANEPI - TODO CONTINUATION]");
 		expect(prompt).toContain("Incomplete tasks remain in your todo list. Continue working on the next pending task.");
+		expect(prompt).toContain("Continue the first actionable remaining task now.");
 		expect(prompt).toContain("Proceed without asking for permission");
-		expect(prompt).toContain("Mark each task complete when finished");
+		expect(prompt).toContain("Mark each task complete immediately when finished");
 		expect(prompt).toContain("Do not stop until all tasks are done");
+		expect(prompt).toContain("Do not reply with refusal, deferral, or a summary-only response");
+		expect(prompt).toContain("update the todo list to a terminal state instead of leaving it pending");
 		expect(prompt).toContain(
 			"If you believe all work is already complete, the system is questioning your completion claim.",
 		);
