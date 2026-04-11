@@ -239,4 +239,86 @@ describe("createYamlXmlStreamParser", () => {
 			{ type: "text", text: " suffix" },
 		]);
 	});
+
+	it("parses tool calls split across multiple chunks", () => {
+		// given
+		const parser = createYamlXmlStreamParser([weatherTool]);
+		const chunks = ["<get_wea", "ther>\n", "location: Ber", "lin\n", "</get_weather>"];
+		const events = [];
+
+		// when
+		for (const chunk of chunks) {
+			events.push(...parser.feed(chunk));
+		}
+		events.push(...parser.finish());
+
+		// then
+		const toolcallEnd = events.find((event) => event.type === "toolcall_end");
+		expect(toolcallEnd).toMatchObject({
+			type: "toolcall_end",
+			name: "get_weather",
+			arguments: {
+				location: "Berlin",
+			},
+		});
+	});
+
+	it("parses self-closing tags split across multiple chunks", () => {
+		// given
+		const parser = createYamlXmlStreamParser([
+			{
+				name: "get_location",
+				description: "Get location",
+				parameters: Type.Object({}),
+			},
+		]);
+
+		// when
+		const allEvents = [...parser.feed("<get_loca"), ...parser.feed("tion/>"), ...parser.finish()];
+
+		// then
+		expect(allEvents).toEqual([
+			{ type: "toolcall_start", index: 0, name: "get_location", id: "yaml-xml-tool-0" },
+			{ type: "toolcall_end", index: 0, name: "get_location", id: "yaml-xml-tool-0", arguments: {} },
+		]);
+	});
+
+	it("parses multiline yaml values split across multiple chunks", () => {
+		// given
+		const writeFile = {
+			name: "write_file",
+			description: "Write file",
+			parameters: Type.Object({
+				file_path: Type.String(),
+				contents: Type.String(),
+			}),
+		} satisfies Tool;
+		const parser = createYamlXmlStreamParser([writeFile]);
+		const chunks = [
+			"<write_file>\n",
+			"file_path: /tmp/test.txt\n",
+			"contents: |\n",
+			"  Line one\n",
+			"  Line two\n",
+			"</write_file>",
+		];
+		const events = [];
+
+		// when
+		for (const chunk of chunks) {
+			events.push(...parser.feed(chunk));
+		}
+		events.push(...parser.finish());
+
+		// then
+		const toolcallEnd = events.find((event) => event.type === "toolcall_end");
+		expect(toolcallEnd).toMatchObject({
+			type: "toolcall_end",
+			name: "write_file",
+			arguments: {
+				file_path: "/tmp/test.txt",
+				contents: "Line one\nLine two\n",
+			},
+		});
+	});
 });
