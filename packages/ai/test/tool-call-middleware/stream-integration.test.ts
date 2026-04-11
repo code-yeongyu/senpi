@@ -4,6 +4,10 @@ import { fauxAssistantMessage, fauxText, registerFauxProvider } from "../../src/
 import { stream, streamSimple } from "../../src/stream.js";
 import type { Context, Model, Tool } from "../../src/types.js";
 
+function userMessage(content: string) {
+	return { role: "user" as const, content, timestamp: Date.now() };
+}
+
 const weatherTool: Tool = {
 	name: "get_weather",
 	description: "Get weather for a location",
@@ -55,7 +59,7 @@ describe("stream() with tool-call-middleware integration", () => {
 
 		const model = createModelWithToolCallFormat(faux, "hermes");
 		const context: Context = {
-			messages: [{ role: "user", content: "What's the weather in Seoul?" }],
+			messages: [userMessage("What's the weather in Seoul?")],
 			tools: [weatherTool],
 		};
 
@@ -95,7 +99,7 @@ describe("stream() with tool-call-middleware integration", () => {
 
 		const model = faux.getModel();
 		const context: Context = {
-			messages: [{ role: "user", content: "What's the weather in Seoul?" }],
+			messages: [userMessage("What's the weather in Seoul?")],
 			tools: [weatherTool],
 		};
 
@@ -134,7 +138,7 @@ describe("stream() with tool-call-middleware integration", () => {
 
 		const model = createModelWithToolCallFormat(faux, "hermes");
 		const context: Context = {
-			messages: [{ role: "user", content: "Hi there!" }],
+			messages: [userMessage("Hi there!")],
 			// No tools
 		};
 
@@ -167,7 +171,7 @@ describe("stream() with tool-call-middleware integration", () => {
 
 		const model = createModelWithToolCallFormat(faux, "hermes");
 		const context: Context = {
-			messages: [{ role: "user", content: "Weather in Seoul and convert 25C to F" }],
+			messages: [userMessage("Weather in Seoul and convert 25C to F")],
 			tools: [weatherTool, calculatorTool],
 		};
 
@@ -203,7 +207,7 @@ describe("stream() with tool-call-middleware integration", () => {
 
 		const model = createModelWithToolCallFormat(faux, "xml");
 		const context: Context = {
-			messages: [{ role: "user", content: "Weather in Tokyo?" }],
+			messages: [userMessage("Weather in Tokyo?")],
 			tools: [weatherTool],
 		};
 
@@ -234,7 +238,7 @@ describe("stream() with tool-call-middleware integration", () => {
 
 		const model = createModelWithToolCallFormat(faux, "hermes");
 		const context: Context = {
-			messages: [{ role: "user", content: "Weather in Paris?" }],
+			messages: [userMessage("Weather in Paris?")],
 			tools: [weatherTool],
 		};
 
@@ -266,7 +270,7 @@ describe("stream() with tool-call-middleware integration", () => {
 
 		const model = createModelWithToolCallFormat(faux, "hermes");
 		const context: Context = {
-			messages: [{ role: "user", content: "Test error" }],
+			messages: [userMessage("Test error")],
 			tools: [weatherTool],
 		};
 
@@ -294,7 +298,7 @@ describe("streamSimple() with tool-call-middleware integration", () => {
 
 		const model = createModelWithToolCallFormat(faux, "hermes");
 		const context: Context = {
-			messages: [{ role: "user", content: "What's the weather in London?" }],
+			messages: [userMessage("What's the weather in London?")],
 			tools: [weatherTool],
 		};
 
@@ -326,7 +330,7 @@ describe("streamSimple() with tool-call-middleware integration", () => {
 
 		const model = faux.getModel();
 		const context: Context = {
-			messages: [{ role: "user", content: "What's the weather in London?" }],
+			messages: [userMessage("What's the weather in London?")],
 			tools: [weatherTool],
 		};
 
@@ -358,7 +362,7 @@ describe("streamSimple() with tool-call-middleware integration", () => {
 
 		const model = createModelWithToolCallFormat(faux, "hermes");
 		const context: Context = {
-			messages: [{ role: "user", content: "Weather in Berlin and calculate 10+20" }],
+			messages: [userMessage("Weather in Berlin and calculate 10+20")],
 			tools: [weatherTool, calculatorTool],
 		};
 
@@ -395,7 +399,7 @@ describe("getToolCallFormat edge cases", () => {
 		// Model with anthropic-messages API (not openai-completions)
 		const model = faux.getModel();
 		const context: Context = {
-			messages: [{ role: "user", content: "Hi" }],
+			messages: [userMessage("Hi")],
 			tools: [weatherTool],
 		};
 
@@ -424,7 +428,7 @@ describe("getToolCallFormat edge cases", () => {
 		// Model with invalid toolCallFormat
 		const model = createModelWithToolCallFormat(faux, "invalid-format");
 		const context: Context = {
-			messages: [{ role: "user", content: "Hi" }],
+			messages: [userMessage("Hi")],
 			tools: [weatherTool],
 		};
 

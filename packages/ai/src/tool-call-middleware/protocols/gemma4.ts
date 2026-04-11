@@ -33,14 +33,14 @@ function formatGemma4Value(value: unknown): string {
 
 	if (Array.isArray(value)) {
 		const items = value.map((item) => formatGemma4Value(item));
-		return "[" + items.join(",") + "]";
+		return `[${items.join(",")}]`;
 	}
 
 	if (typeof value === "object" && value !== null) {
 		const entries = Object.entries(value).map(([key, val]) => {
-			return key + ":" + formatGemma4Value(val);
+			return `${key}:${formatGemma4Value(val)}`;
 		});
-		return "{" + entries.join(",") + "}";
+		return `{${entries.join(",")}}`;
 	}
 
 	return STRING_DELIM + String(value) + STRING_DELIM;
@@ -52,7 +52,7 @@ function formatGemma4Value(value: unknown): string {
  */
 function formatGemma4Args(args: Record<string, unknown>): string {
 	const entries = Object.entries(args).map(([key, value]) => {
-		return key + ":" + formatGemma4Value(value);
+		return `${key}:${formatGemma4Value(value)}`;
 	});
 	return entries.join(",");
 }
@@ -63,7 +63,7 @@ function formatGemma4Args(args: Record<string, unknown>): string {
  */
 export function gemma4FormatToolCall(name: string, args: Record<string, unknown>): string {
 	const argsStr = formatGemma4Args(args);
-	return TOOL_CALL_START + "call:" + name + "{" + argsStr + "}" + TOOL_CALL_END;
+	return `${TOOL_CALL_START}call:${name}{${argsStr}}${TOOL_CALL_END}`;
 }
 
 /**
@@ -488,8 +488,6 @@ class Gemma4StreamParser implements StreamParser {
 	private currentToolName: string | null = null;
 	private currentArgumentsJson = "";
 
-	constructor(_tools: Tool[]) {}
-
 	feed(textDelta: string): StreamParserEvent[] {
 		const events: StreamParserEvent[] = [];
 		let remaining = textDelta;
@@ -675,6 +673,6 @@ class Gemma4StreamParser implements StreamParser {
 	}
 }
 
-export function gemma4CreateStreamParser(tools: Tool[]): StreamParser {
-	return new Gemma4StreamParser(tools);
+export function gemma4CreateStreamParser(_tools: Tool[]): StreamParser {
+	return new Gemma4StreamParser();
 }

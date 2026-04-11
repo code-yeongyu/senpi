@@ -77,6 +77,14 @@ const OpenAICompletionsCompatSchema = Type.Object({
 	openRouterRouting: Type.Optional(OpenRouterRoutingSchema),
 	vercelGatewayRouting: Type.Optional(VercelGatewayRoutingSchema),
 	supportsStrictMode: Type.Optional(Type.Boolean()),
+	toolCallFormat: Type.Optional(
+		Type.Union([
+			Type.Literal("hermes"),
+			Type.Literal("gemma4"),
+			Type.Literal("gemma4-delimiter"),
+			Type.Literal("xml"),
+		]),
+	),
 });
 
 const OpenAIResponsesCompatSchema = Type.Object({
@@ -93,7 +101,7 @@ const ModelDefinitionSchema = Type.Object({
 	api: Type.Optional(Type.String({ minLength: 1 })),
 	baseUrl: Type.Optional(Type.String({ minLength: 1 })),
 	reasoning: Type.Optional(Type.Boolean()),
-	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]))),
+	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image"), Type.Literal("video")]))),
 	cost: Type.Optional(
 		Type.Object({
 			input: Type.Number(),
@@ -112,7 +120,7 @@ const ModelDefinitionSchema = Type.Object({
 const ModelOverrideSchema = Type.Object({
 	name: Type.Optional(Type.String({ minLength: 1 })),
 	reasoning: Type.Optional(Type.Boolean()),
-	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]))),
+	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image"), Type.Literal("video")]))),
 	cost: Type.Optional(
 		Type.Object({
 			input: Type.Optional(Type.Number()),

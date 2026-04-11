@@ -4,6 +4,32 @@ import { getProtocol, transformContext } from "../../src/tool-call-middleware/co
 import type { ToolCallProtocol } from "../../src/tool-call-middleware/types.js";
 import type { AssistantMessage, Context, Tool, ToolResultMessage } from "../../src/types.js";
 
+const now = () => Date.now();
+
+function userMessage(content: string) {
+	return { role: "user" as const, content, timestamp: now() };
+}
+
+function assistantMessage(content: AssistantMessage["content"], timestamp = now()): AssistantMessage {
+	return {
+		role: "assistant",
+		content,
+		api: "faux",
+		provider: "faux",
+		model: "faux-1",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "stop",
+		timestamp,
+	};
+}
+
 describe("getProtocol", () => {
 	it("should return hermes protocol for 'hermes' format", () => {
 		const protocol = getProtocol("hermes");
@@ -43,7 +69,9 @@ describe("transformContext", () => {
 		formatToolsSystemPrompt: (tools) =>
 			tools.length > 0 ? `<tools>${tools.map((t) => t.name).join(", ")}</tools>` : "",
 		formatToolResponse: (toolName, _toolCallId, content) =>
-			`<tool_response>${toolName}:${content.map((c) => c.text).join("")}</tool_response>`,
+			`<tool_response>${toolName}:${content
+				.map((block) => (block.type === "text" ? block.text : ""))
+				.join("")}</tool_response>`,
 		formatToolCall: (name, args) => `<tool_call>${name}:${JSON.stringify(args)}</tool_call>`,
 		parseGeneratedText: () => [],
 		createStreamParser: () => ({
@@ -55,7 +83,7 @@ describe("transformContext", () => {
 	it("should strip tools from context", () => {
 		const context: Context = {
 			systemPrompt: "You are helpful",
-			messages: [{ role: "user", content: "Hello" }],
+			messages: [userMessage("Hello")],
 			tools: [weatherTool],
 		};
 
@@ -67,7 +95,7 @@ describe("transformContext", () => {
 	it("should inject tool definitions into system prompt", () => {
 		const context: Context = {
 			systemPrompt: "You are helpful",
-			messages: [{ role: "user", content: "Hello" }],
+			messages: [userMessage("Hello")],
 			tools: [weatherTool],
 		};
 
@@ -81,7 +109,7 @@ describe("transformContext", () => {
 	it("should not modify system prompt when no tools", () => {
 		const context: Context = {
 			systemPrompt: "You are helpful",
-			messages: [{ role: "user", content: "Hello" }],
+			messages: [userMessage("Hello")],
 			tools: [],
 		};
 
@@ -93,7 +121,7 @@ describe("transformContext", () => {
 	it("should not mutate original context", () => {
 		const context: Context = {
 			systemPrompt: "You are helpful",
-			messages: [{ role: "user", content: "Hello" }],
+			messages: [userMessage("Hello")],
 			tools: [weatherTool],
 		};
 
@@ -114,23 +142,19 @@ describe("transformContext", () => {
 	});
 
 	it("should convert AssistantMessage tool calls to text", () => {
-		const assistantMessage: AssistantMessage = {
-			role: "assistant",
-			content: [
-				{ type: "text", text: "Let me check the weather" },
-				{
-					type: "toolCall",
-					id: "call_123",
-					name: "get_weather",
-					arguments: { city: "Seoul" },
-				},
-			],
-			timestamp: Date.now(),
-		};
+		const assistantTurn = assistantMessage([
+			{ type: "text", text: "Let me check the weather" },
+			{
+				type: "toolCall",
+				id: "call_123",
+				name: "get_weather",
+				arguments: { city: "Seoul" },
+			},
+		]);
 
 		const context: Context = {
 			systemPrompt: "You are helpful",
-			messages: [assistantMessage],
+			messages: [assistantTurn],
 			tools: [weatherTool],
 		};
 
@@ -146,21 +170,17 @@ describe("transformContext", () => {
 	});
 
 	it("should pass through AssistantMessage without tool calls unchanged", () => {
-		const assistantMessage: AssistantMessage = {
-			role: "assistant",
-			content: [{ type: "text", text: "Hello there" }],
-			timestamp: Date.now(),
-		};
+		const assistantTurn = assistantMessage([{ type: "text", text: "Hello there" }]);
 
 		const context: Context = {
 			systemPrompt: "You are helpful",
-			messages: [assistantMessage],
+			messages: [assistantTurn],
 			tools: [weatherTool],
 		};
 
 		const transformed = transformContext(context, mockProtocol);
 
-		expect(transformed.messages[0]).toEqual(assistantMessage);
+		expect(transformed.messages[0]).toEqual(assistantTurn);
 	});
 
 	it("should convert ToolResultMessage to UserMessage", () => {
@@ -189,25 +209,21 @@ describe("transformContext", () => {
 	it("should pass through user messages unchanged", () => {
 		const context: Context = {
 			systemPrompt: "You are helpful",
-			messages: [
-				{ role: "user", content: "Hello" },
-				{ role: "user", content: "How are you?" },
-			],
+			messages: [userMessage("Hello"), userMessage("How are you?")],
 			tools: [weatherTool],
 		};
 
 		const transformed = transformContext(context, mockProtocol);
 
-		expect(transformed.messages[0]).toEqual({ role: "user", content: "Hello" });
-		expect(transformed.messages[1]).toEqual({ role: "user", content: "How are you?" });
+		expect(transformed.messages[0]).toEqual(context.messages[0]);
+		expect(transformed.messages[1]).toEqual(context.messages[1]);
 	});
 
 	it("should handle complex conversation history", () => {
 		const messages: Context["messages"] = [
-			{ role: "user", content: "What's the weather?" },
-			{
-				role: "assistant",
-				content: [
+			userMessage("What's the weather?"),
+			assistantMessage(
+				[
 					{ type: "text", text: "I'll check" },
 					{
 						type: "toolCall",
@@ -216,8 +232,8 @@ describe("transformContext", () => {
 						arguments: { city: "Tokyo" },
 					},
 				],
-				timestamp: 1,
-			},
+				1,
+			),
 			{
 				role: "toolResult",
 				toolCallId: "call_1",
@@ -226,11 +242,7 @@ describe("transformContext", () => {
 				isError: false,
 				timestamp: 2,
 			},
-			{
-				role: "assistant",
-				content: [{ type: "text", text: "It's rainy in Tokyo" }],
-				timestamp: 3,
-			},
+			assistantMessage([{ type: "text", text: "It's rainy in Tokyo" }], 3),
 		];
 
 		const context: Context = {
@@ -242,7 +254,7 @@ describe("transformContext", () => {
 		const transformed = transformContext(context, mockProtocol);
 
 		// User message unchanged
-		expect(transformed.messages[0]).toEqual({ role: "user", content: "What's the weather?" });
+		expect(transformed.messages[0]).toEqual(messages[0]);
 
 		// Assistant with tool call converted
 		const transformedAssistant1 = transformed.messages[1] as AssistantMessage;
@@ -274,7 +286,7 @@ describe("transformContext with real protocols", () => {
 		const protocol = getProtocol("hermes");
 		const context: Context = {
 			systemPrompt: "You are helpful",
-			messages: [{ role: "user", content: "Hello" }],
+			messages: [userMessage("Hello")],
 			tools: [weatherTool],
 		};
 
@@ -289,7 +301,7 @@ describe("transformContext with real protocols", () => {
 		const protocol = getProtocol("xml");
 		const context: Context = {
 			systemPrompt: "You are helpful",
-			messages: [{ role: "user", content: "Hello" }],
+			messages: [userMessage("Hello")],
 			tools: [weatherTool],
 		};
 
@@ -303,7 +315,7 @@ describe("transformContext with real protocols", () => {
 		const protocol = getProtocol("gemma4-delimiter");
 		const context: Context = {
 			systemPrompt: "You are helpful",
-			messages: [{ role: "user", content: "Hello" }],
+			messages: [userMessage("Hello")],
 			tools: [weatherTool],
 		};
 

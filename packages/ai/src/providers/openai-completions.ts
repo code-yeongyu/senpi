@@ -714,10 +714,7 @@ export function convertMessages(
 	return params;
 }
 
-function convertTools(
-	tools: Tool[],
-	compat: OpenAICompletionsCompat,
-): OpenAI.Chat.Completions.ChatCompletionTool[] {
+function convertTools(tools: Tool[], compat: OpenAICompletionsCompat): OpenAI.Chat.Completions.ChatCompletionTool[] {
 	return tools.map((tool) => ({
 		type: "function",
 		function: {
