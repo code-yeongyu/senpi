@@ -51,6 +51,12 @@ describe("getProtocol", () => {
 		expect(typeof protocol.formatToolsSystemPrompt).toBe("function");
 	});
 
+	it("should return yamlXml protocol for 'yaml-xml' format", () => {
+		const protocol = getProtocol("yaml-xml");
+		expect(protocol).toBeDefined();
+		expect(typeof protocol.formatToolsSystemPrompt).toBe("function");
+	});
+
 	it("should throw error for unsupported format", () => {
 		expect(() => getProtocol("unsupported" as any)).toThrow("Unsupported tool call format");
 	});
@@ -323,5 +329,20 @@ describe("transformContext with real protocols", () => {
 
 		expect(transformed.systemPrompt).toContain("<|tool_call>");
 		expect(transformed.systemPrompt).toContain("get_weather");
+	});
+
+	it("should use yamlXml protocol correctly", () => {
+		const protocol = getProtocol("yaml-xml");
+		const context: Context = {
+			systemPrompt: "You are helpful",
+			messages: [userMessage("Hello")],
+			tools: [weatherTool],
+		};
+
+		const transformed = transformContext(context, protocol);
+
+		expect(transformed.systemPrompt).toContain("<tools>");
+		expect(transformed.systemPrompt).toContain("get_weather");
+		expect(transformed.systemPrompt).toContain("Inside the XML element, specify parameters using YAML syntax");
 	});
 });

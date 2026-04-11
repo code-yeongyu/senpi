@@ -6,7 +6,7 @@ import type { ImageContent, TextContent, Tool } from "../types.js";
  * - "xml": XML-based tool call format
  * - "gemma4-delimiter": Gemma 4 specific delimiter format
  */
-export type ToolCallFormat = "hermes" | "xml" | "gemma4-delimiter";
+export type ToolCallFormat = "hermes" | "xml" | "yaml-xml" | "gemma4-delimiter";
 
 /**
  * Content type for tool results (text or image)

@@ -83,6 +83,7 @@ const OpenAICompletionsCompatSchema = Type.Object({
 			Type.Literal("gemma4"),
 			Type.Literal("gemma4-delimiter"),
 			Type.Literal("xml"),
+			Type.Literal("yaml-xml"),
 		]),
 	),
 });

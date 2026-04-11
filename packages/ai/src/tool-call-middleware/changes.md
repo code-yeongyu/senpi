@@ -15,6 +15,7 @@
 - Completed:
   - `morph xml` now rejects malformed `array<object>` payloads instead of coercing them into invalid strings.
   - `hermes` now delegates parsing/streaming to a shared JSON-mix helper so delimiter-based protocols can share logic with less drift.
+  - `yaml+xml` support is now wired into the protocol registry with parser/formatter/stream coverage.
 
 ### Files expected to change
 

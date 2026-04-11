@@ -28,6 +28,13 @@ import {
 	morphXmlFormatToolsSystemPrompt,
 	parseMorphXmlGeneratedText,
 } from "./protocols/morph-xml.js";
+import {
+	createYamlXmlStreamParser,
+	parseYamlXmlGeneratedText,
+	yamlXmlFormatToolCall,
+	yamlXmlFormatToolResponse,
+	yamlXmlFormatToolsSystemPrompt,
+} from "./protocols/yaml-xml.js";
 import type { ToolCallFormat, ToolCallProtocol } from "./types.js";
 
 /**
@@ -52,6 +59,14 @@ const morphXmlProtocol: ToolCallProtocol = {
 	createStreamParser: createMorphXmlStreamParser,
 };
 
+const yamlXmlProtocol: ToolCallProtocol = {
+	formatToolsSystemPrompt: yamlXmlFormatToolsSystemPrompt,
+	formatToolResponse: yamlXmlFormatToolResponse,
+	formatToolCall: yamlXmlFormatToolCall,
+	parseGeneratedText: parseYamlXmlGeneratedText,
+	createStreamParser: createYamlXmlStreamParser,
+};
+
 /**
  * Gemma 4 protocol implementation for tool call formatting and parsing.
  */
@@ -69,6 +84,7 @@ const gemma4Protocol: ToolCallProtocol = {
 const protocolRegistry: Record<ToolCallFormat, ToolCallProtocol> = {
 	hermes: hermesProtocol,
 	xml: morphXmlProtocol,
+	"yaml-xml": yamlXmlProtocol,
 	"gemma4-delimiter": gemma4Protocol,
 };
 
