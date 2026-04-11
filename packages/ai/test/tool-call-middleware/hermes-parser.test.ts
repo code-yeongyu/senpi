@@ -161,6 +161,35 @@ describe("hermesCreateStreamParser", () => {
 		expect(finishEvents).toEqual([]);
 	});
 
+	it("handles tool call end tag split across streaming chunk boundaries", () => {
+		// given
+		const parser = hermesCreateStreamParser([weatherTool]);
+
+		// when
+		const firstEvents = parser.feed('<tool_call>{"name":"get_weather","arguments":{"city":"Seoul"}}</tool');
+		const secondEvents = parser.feed("_call> suffix");
+		const finishEvents = parser.finish();
+
+		// then
+		expect(firstEvents).toEqual([
+			{ type: "toolcall_start", index: 0, name: "get_weather", id: "hermes-tool-0" },
+			{ type: "toolcall_delta", index: 0, argumentsDelta: '{"city":"Seoul"}' },
+		]);
+		expect(secondEvents).toEqual([
+			{
+				type: "toolcall_end",
+				index: 0,
+				name: "get_weather",
+				id: "hermes-tool-0",
+				arguments: {
+					city: "Seoul",
+				},
+			},
+			{ type: "text", text: " suffix" },
+		]);
+		expect(finishEvents).toEqual([]);
+	});
+
 	it("emits malformed hermes tool call markup as text when json is invalid", () => {
 		// given
 		const parser = hermesCreateStreamParser([weatherTool]);

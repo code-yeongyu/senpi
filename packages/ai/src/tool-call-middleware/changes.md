@@ -10,6 +10,12 @@
   - `hermes` should move toward a shared JSON-mix style parser/stream model.
   - `yaml+xml` support should be added with minimal surface-area changes.
 
+### Progress
+
+- Completed:
+  - `morph xml` now rejects malformed `array<object>` payloads instead of coercing them into invalid strings.
+  - `hermes` now delegates parsing/streaming to a shared JSON-mix helper so delimiter-based protocols can share logic with less drift.
+
 ### Files expected to change
 
 - `packages/ai/src/tool-call-middleware/protocols/morph-xml.ts`
