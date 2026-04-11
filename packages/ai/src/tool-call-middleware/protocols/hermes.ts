@@ -1,6 +1,6 @@
 import type { TSchema } from "@sinclair/typebox";
 import type { ImageContent, TextContent, Tool } from "../../types.js";
-import type { ParsedToolCall, StreamParser } from "../types.js";
+import type { ParsedToolCall, ParserOptions, StreamParser } from "../types.js";
 import { createJsonMixStreamParser, formatJsonMixToolCall, parseJsonMixGeneratedText } from "./json-mix.js";
 
 const TOOL_CALL_START = "<tool_call>";
@@ -70,17 +70,26 @@ export function hermesFormatToolCall(name: string, args: Record<string, unknown>
 	});
 }
 
-export function hermesParseGeneratedText(text: string, tools: Tool[]): ParsedToolCall[] {
-	return parseJsonMixGeneratedText(text, tools, {
-		toolCallStart: TOOL_CALL_START,
-		toolCallEnd: TOOL_CALL_END,
-	});
+export function hermesParseGeneratedText(text: string, tools: Tool[], options?: ParserOptions): ParsedToolCall[] {
+	return parseJsonMixGeneratedText(
+		text,
+		tools,
+		{
+			toolCallStart: TOOL_CALL_START,
+			toolCallEnd: TOOL_CALL_END,
+		},
+		options,
+	);
 }
 
-export function hermesCreateStreamParser(tools: Tool[]): StreamParser {
-	return createJsonMixStreamParser(tools, {
-		toolCallStart: TOOL_CALL_START,
-		toolCallEnd: TOOL_CALL_END,
-		createToolCallId: (index) => `hermes-tool-${index}`,
-	});
+export function hermesCreateStreamParser(tools: Tool[], options?: ParserOptions): StreamParser {
+	return createJsonMixStreamParser(
+		tools,
+		{
+			toolCallStart: TOOL_CALL_START,
+			toolCallEnd: TOOL_CALL_END,
+			createToolCallId: (index) => `hermes-tool-${index}`,
+		},
+		options,
+	);
 }

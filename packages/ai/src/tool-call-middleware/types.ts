@@ -13,6 +13,11 @@ export type ToolCallFormat = "hermes" | "xml" | "yaml-xml" | "gemma4-delimiter";
  */
 export type ToolResultContent = TextContent | ImageContent;
 
+export interface ParserOptions {
+	emitRawToolCallTextOnError?: boolean;
+	onError?: (message: string, metadata?: Record<string, unknown>) => void;
+}
+
 /**
  * A parsed tool call extracted from generated text
  */
@@ -90,12 +95,12 @@ export interface ToolCallProtocol {
 	 * @param tools - Available tools for validation
 	 * @returns Array of parsed tool calls
 	 */
-	parseGeneratedText(text: string, tools: Tool[]): ParsedToolCall[];
+	parseGeneratedText(text: string, tools: Tool[], options?: ParserOptions): ParsedToolCall[];
 
 	/**
 	 * Create a stream parser for incremental parsing during streaming.
 	 * @param tools - Available tools for the parser to recognize
 	 * @returns A new StreamParser instance
 	 */
-	createStreamParser(tools: Tool[]): StreamParser;
+	createStreamParser(tools: Tool[], options?: ParserOptions): StreamParser;
 }

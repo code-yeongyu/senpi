@@ -1,6 +1,6 @@
 import type { TextContent, Tool } from "../../types.js";
 import { validateToolArguments } from "../../utils/validation.js";
-import type { ParsedToolCall, StreamParser, StreamParserEvent } from "../types.js";
+import type { ParsedToolCall, ParserOptions, StreamParser, StreamParserEvent } from "../types.js";
 import { findEarliestXmlToolTag, findSelfClosingToolTag, getSafeXmlTextLength } from "./xml-tool-tag-scanner.js";
 
 const INDENT = "   ";
@@ -462,7 +462,7 @@ function parseMorphXmlPartialArgumentsSafely(toolBody: string, schema: JsonSchem
 	}
 }
 
-export function parseMorphXmlGeneratedText(text: string, tools: Tool[]): ParsedToolCall[] {
+export function parseMorphXmlGeneratedText(text: string, tools: Tool[], _options?: ParserOptions): ParsedToolCall[] {
 	if (tools.length === 0 || text.length === 0) {
 		return [];
 	}
@@ -514,7 +514,7 @@ export function parseMorphXmlGeneratedText(text: string, tools: Tool[]): ParsedT
 	return parsedToolCalls;
 }
 
-export function createMorphXmlStreamParser(tools: Tool[]): StreamParser {
+export function createMorphXmlStreamParser(tools: Tool[], _options?: ParserOptions): StreamParser {
 	const toolSchemaMap = createToolSchemaMap(tools);
 	const toolNames = tools.map((tool) => tool.name);
 	const toolMap = new Map(tools.map((tool) => [tool.name, tool]));

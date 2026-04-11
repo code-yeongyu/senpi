@@ -1,6 +1,6 @@
 import YAML from "yaml";
 import type { TextContent, Tool } from "../../types.js";
-import type { ParsedToolCall, StreamParser, StreamParserEvent } from "../types.js";
+import type { ParsedToolCall, ParserOptions, StreamParser, StreamParserEvent } from "../types.js";
 import { findEarliestXmlToolTag, getSafeXmlTextLength } from "./xml-tool-tag-scanner.js";
 
 function escapeRegExp(text: string): string {
@@ -103,7 +103,7 @@ export function yamlXmlFormatToolResponse(toolName: string, _toolCallId: string,
 	].join("\n");
 }
 
-export function parseYamlXmlGeneratedText(text: string, tools: Tool[]): ParsedToolCall[] {
+export function parseYamlXmlGeneratedText(text: string, tools: Tool[], _options?: ParserOptions): ParsedToolCall[] {
 	if (tools.length === 0 || text.length === 0) {
 		return [];
 	}
@@ -154,7 +154,7 @@ export function parseYamlXmlGeneratedText(text: string, tools: Tool[]): ParsedTo
 	return parsedToolCalls;
 }
 
-export function createYamlXmlStreamParser(tools: Tool[]): StreamParser {
+export function createYamlXmlStreamParser(tools: Tool[], _options?: ParserOptions): StreamParser {
 	const toolNames = tools.map((tool) => tool.name);
 	let buffer = "";
 	let currentToolState: {

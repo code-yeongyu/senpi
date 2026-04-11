@@ -1,5 +1,5 @@
 import type { Tool } from "../../types.js";
-import type { ParsedToolCall, StreamParser, StreamParserEvent } from "../types.js";
+import type { ParsedToolCall, ParserOptions, StreamParser, StreamParserEvent } from "../types.js";
 
 type JsonMixOptions = {
 	toolCallStart: string;
@@ -598,6 +598,7 @@ export function parseJsonMixGeneratedText(
 	text: string,
 	tools: Tool[],
 	options: Pick<JsonMixOptions, "toolCallStart" | "toolCallEnd">,
+	_parserOptions?: ParserOptions,
 ): ParsedToolCall[] {
 	const parsedToolCalls: ParsedToolCall[] = [];
 	const toolCallRegex = new RegExp(
@@ -618,7 +619,11 @@ export function parseJsonMixGeneratedText(
 	return parsedToolCalls;
 }
 
-export function createJsonMixStreamParser(tools: Tool[], options: JsonMixOptions): StreamParser {
+export function createJsonMixStreamParser(
+	tools: Tool[],
+	options: JsonMixOptions,
+	_parserOptions?: ParserOptions,
+): StreamParser {
 	const state: JsonMixStreamState = {
 		activeToolCall: null,
 		buffer: "",

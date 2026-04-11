@@ -1,5 +1,5 @@
 import type { ImageContent, TextContent, Tool } from "../../types.js";
-import type { ParsedToolCall, StreamParser, StreamParserEvent } from "../types.js";
+import type { ParsedToolCall, ParserOptions, StreamParser, StreamParserEvent } from "../types.js";
 
 const STRING_DELIM = '<|"|>';
 const TOOL_CALL_START = "<|tool_call>";
@@ -459,7 +459,7 @@ function findEarliestToken(text: string, tokens: string[]): { index: number; tok
 	return earliestMatch;
 }
 
-export function gemma4ParseGeneratedText(text: string, _tools: Tool[]): ParsedToolCall[] {
+export function gemma4ParseGeneratedText(text: string, _tools: Tool[], _options?: ParserOptions): ParsedToolCall[] {
 	const parsedToolCalls: ParsedToolCall[] = [];
 
 	for (const match of extractToolCalls(text)) {
@@ -673,6 +673,6 @@ class Gemma4StreamParser implements StreamParser {
 	}
 }
 
-export function gemma4CreateStreamParser(_tools: Tool[]): StreamParser {
+export function gemma4CreateStreamParser(_tools: Tool[], _options?: ParserOptions): StreamParser {
 	return new Gemma4StreamParser();
 }
