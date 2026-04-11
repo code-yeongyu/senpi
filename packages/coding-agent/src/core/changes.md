@@ -12,3 +12,10 @@
 - `DefaultResourceLoader` now seeds generated shim files for those four defaults into the real global `agentDir/extensions/` directory, so they load through normal global extension discovery instead of builtin registration.
 - This had to be done in core because builtin-vs-global extension ownership is determined during resource bootstrap, before any extension code runs.
 - Expected merge-conflict zone on upstream sync: builtin extension registration and early resource bootstrap in `src/core/resource-loader.ts`.
+
+## disable builtin extensions from settings
+
+- Changed `src/core/settings-manager.ts` and `src/core/resource-loader.ts` so `settings.json` can disable selected builtin extensions with `disabledBuiltinExtensions`.
+- `DefaultResourceLoader` now skips builtin factories whose ids are listed in settings (for example `"background-task"` to hide the `task` tool and related background-task builtins).
+- This had to be done in core because builtin extensions are instantiated during early resource bootstrap, before project extensions can intercept or unregister them.
+- Expected merge-conflict zone on upstream sync: settings schema/getters in `src/core/settings-manager.ts` and builtin factory loading in `src/core/resource-loader.ts`.

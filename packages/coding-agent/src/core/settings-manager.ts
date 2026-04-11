@@ -84,6 +84,7 @@ export interface Settings {
 	npmCommand?: string[]; // Command used for npm package lookup/install operations, argv-style (e.g., ["mise", "exec", "node@20", "--", "npm"])
 	collapseChangelog?: boolean; // Show condensed changelog after update (use /changelog for full)
 	packages?: PackageSource[]; // Array of npm/git package sources (string or object with filtering)
+	disabledBuiltinExtensions?: string[]; // Builtin extension ids to skip loading (e.g. ["background-task"])
 	extensions?: string[]; // Array of local extension file paths or directories
 	skills?: string[]; // Array of local skill file paths or directories
 	prompts?: string[]; // Array of local prompt template paths or directories
@@ -744,6 +745,10 @@ export class SettingsManager {
 
 	getPackages(): PackageSource[] {
 		return [...(this.settings.packages ?? [])];
+	}
+
+	getDisabledBuiltinExtensions(): string[] {
+		return [...(this.settings.disabledBuiltinExtensions ?? [])];
 	}
 
 	setPackages(packages: PackageSource[]): void {

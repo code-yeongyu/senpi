@@ -763,8 +763,13 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}> {
 		const extensions: Extension[] = [];
 		const errors: Array<{ path: string; error: string }> = [];
+		const disabledBuiltinExtensions = new Set(this.settingsManager.getDisabledBuiltinExtensions());
 
 		for (const builtinExtension of this.builtinExtensionFactories) {
+			if (disabledBuiltinExtensions.has(builtinExtension.id)) {
+				continue;
+			}
+
 			const extensionPath = `<builtin:${builtinExtension.id}>`;
 			try {
 				const extension = await loadExtensionFromFactory(

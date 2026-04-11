@@ -316,6 +316,27 @@ Content`,
 			]);
 		});
 
+		it("should allow settings to disable selected builtin extensions", async () => {
+			// given
+			const piDir = join(cwd, ".pi");
+			mkdirSync(piDir, { recursive: true });
+			writeFileSync(
+				join(piDir, "settings.json"),
+				JSON.stringify({ disabledBuiltinExtensions: ["background-task", "redraws"] }, null, 2),
+			);
+			const loader = new DefaultResourceLoader({ cwd, agentDir });
+
+			// when
+			await loader.reload();
+			const builtinPaths = loader.getExtensions().extensions.map((extension) => extension.path);
+
+			// then
+			expect(builtinPaths).not.toContain("<builtin:background-task>");
+			expect(builtinPaths).not.toContain("<builtin:redraws>");
+			expect(builtinPaths).toContain("<builtin:agent-system>");
+			expect(builtinPaths).toContain("<builtin:todowrite>");
+		});
+
 		it("should seed default global extensions into the default global agent extensions directory", async () => {
 			// given
 			const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
