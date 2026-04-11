@@ -213,6 +213,49 @@ function finalizeMessage(
 	return finalMessage;
 }
 
+function hasCompletedToolCallContent(message: AssistantMessage): boolean {
+	return message.content.some((block) => block.type === "toolCall");
+}
+
+function finalizePendingTextBlock(
+	outerStream: AssistantMessageEventStream,
+	outerMessage: AssistantMessage,
+	parser: ReturnType<ToolCallProtocol["createStreamParser"]>,
+	textBlockIndexByInnerIndex: Map<number, number | null>,
+	toolCallIndexByParserIndex: Map<number, number>,
+	currentInnerTextIndex: number | null,
+	sawToolCall: boolean,
+): { currentInnerTextIndex: null; sawToolCall: boolean } {
+	const nextSawToolCall =
+		processParserEvents(
+			parser.finish(),
+			outerStream,
+			outerMessage,
+			textBlockIndexByInnerIndex,
+			toolCallIndexByParserIndex,
+			currentInnerTextIndex,
+		) || sawToolCall;
+
+	const outerContentIndex =
+		currentInnerTextIndex == null ? null : (textBlockIndexByInnerIndex.get(currentInnerTextIndex) ?? null);
+	if (outerContentIndex != null) {
+		const outerBlock = outerMessage.content[outerContentIndex];
+		if (outerBlock?.type === "text") {
+			outerStream.push({
+				type: "text_end",
+				contentIndex: outerContentIndex,
+				content: outerBlock.text,
+				partial: outerMessage,
+			});
+		}
+	}
+
+	return {
+		currentInnerTextIndex: null,
+		sawToolCall: nextSawToolCall,
+	};
+}
+
 export function wrapStreamWithToolCallMiddleware(
 	innerStream: AssistantMessageEventStream,
 	protocol: ToolCallProtocol,
@@ -269,31 +312,15 @@ export function wrapStreamWithToolCallMiddleware(
 							break;
 						}
 						syncOuterMetadata(outerMessage, event.partial);
-						sawToolCall =
-							processParserEvents(
-								parser.finish(),
-								outerStream,
-								outerMessage,
-								textBlockIndexByInnerIndex,
-								toolCallIndexByParserIndex,
-								currentInnerTextIndex,
-							) || sawToolCall;
-						const outerContentIndex =
-							currentInnerTextIndex == null
-								? null
-								: (textBlockIndexByInnerIndex.get(currentInnerTextIndex) ?? null);
-						if (outerContentIndex != null) {
-							const outerBlock = outerMessage.content[outerContentIndex];
-							if (outerBlock?.type === "text") {
-								outerStream.push({
-									type: "text_end",
-									contentIndex: outerContentIndex,
-									content: outerBlock.text,
-									partial: outerMessage,
-								});
-							}
-						}
-						currentInnerTextIndex = null;
+						({ currentInnerTextIndex, sawToolCall } = finalizePendingTextBlock(
+							outerStream,
+							outerMessage,
+							parser,
+							textBlockIndexByInnerIndex,
+							toolCallIndexByParserIndex,
+							currentInnerTextIndex,
+							sawToolCall,
+						));
 						break;
 					}
 					case "thinking_start": {
@@ -363,8 +390,37 @@ export function wrapStreamWithToolCallMiddleware(
 						return;
 					}
 					case "error": {
-						outerStream.push(event);
-						outerStream.end();
+						if (!outerMessage) {
+							outerStream.push(event);
+							outerStream.end(event.error);
+							return;
+						}
+
+						syncOuterMetadata(outerMessage, event.error);
+						if (currentInnerTextIndex != null) {
+							({ currentInnerTextIndex, sawToolCall } = finalizePendingTextBlock(
+								outerStream,
+								outerMessage,
+								parser,
+								textBlockIndexByInnerIndex,
+								toolCallIndexByParserIndex,
+								currentInnerTextIndex,
+								sawToolCall,
+							));
+						}
+
+						const finalErrorMessage = finalizeMessage(outerMessage, event.error, sawToolCall);
+						if (sawToolCall && hasCompletedToolCallContent(finalErrorMessage)) {
+							const recoveredMessage: AssistantMessage = {
+								...finalErrorMessage,
+								stopReason: "toolUse",
+							};
+							outerStream.push({ type: "done", reason: "toolUse", message: recoveredMessage });
+							outerStream.end(recoveredMessage);
+							return;
+						}
+						outerStream.push({ type: "error", reason: event.reason, error: finalErrorMessage });
+						outerStream.end(finalErrorMessage);
 						return;
 					}
 				}

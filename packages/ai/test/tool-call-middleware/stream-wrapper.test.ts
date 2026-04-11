@@ -77,6 +77,22 @@ function createHermesInnerStream(): AssistantMessageEventStream {
 	return innerStream;
 }
 
+function createErroredMorphXmlInnerStream(): AssistantMessageEventStream {
+	const innerStream = new AssistantMessageEventStream();
+	const partial = createAssistantMessage([]);
+	const xmlText = "<get_weather><city>Seoul</city></get_weather>\n\n";
+	const errorMessage = createAssistantMessage([{ type: "text", text: xmlText }], "error");
+	errorMessage.errorMessage = "JSON error injected into SSE stream";
+
+	innerStream.push({ type: "start", partial });
+	innerStream.push({ type: "text_start", contentIndex: 0, partial });
+	partial.content.push({ type: "text", text: xmlText });
+	innerStream.push({ type: "text_delta", contentIndex: 0, delta: xmlText, partial });
+	innerStream.push({ type: "error", reason: "error", error: errorMessage });
+
+	return innerStream;
+}
+
 function createThinkingInnerStream(): AssistantMessageEventStream {
 	const innerStream = new AssistantMessageEventStream();
 	const partial = createAssistantMessage([]);
@@ -229,6 +245,40 @@ describe("wrapStreamWithToolCallMiddleware", () => {
 		expect(result.content).toEqual([
 			{ type: "thinking", thinking: "Need to think carefully" },
 			{ type: "text", text: "Done" },
+		]);
+	});
+
+	it("recovers completed tool calls when the inner stream ends with a transport error", async () => {
+		// given
+		const innerStream = createErroredMorphXmlInnerStream();
+		const protocol = getProtocol("xml");
+
+		// when
+		const outerStream = wrapStreamWithToolCallMiddleware(innerStream, protocol, [weatherTool]);
+		const events = await collectEvents(outerStream);
+		const result = await outerStream.result();
+
+		// then
+		expect(events.map((event) => event.type)).toEqual([
+			"start",
+			"text_start",
+			"toolcall_start",
+			"toolcall_delta",
+			"toolcall_end",
+			"text_delta",
+			"text_end",
+			"done",
+		]);
+		expect(result.stopReason).toBe("toolUse");
+		expect(result.errorMessage).toBe("JSON error injected into SSE stream");
+		expect(result.content).toEqual([
+			{
+				type: "toolCall",
+				id: expect.any(String),
+				name: "get_weather",
+				arguments: { city: "Seoul" },
+			},
+			{ type: "text", text: "\n\n" },
 		]);
 	});
 });
