@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { hermesCreateStreamParser, hermesParseGeneratedText } from "../../src/tool-call-middleware/protocols/hermes.js";
 import type { Tool } from "../../src/types.js";
 
@@ -97,6 +97,19 @@ describe("hermesParseGeneratedText", () => {
 
 		// then
 		expect(result).toEqual([]);
+	});
+
+	it("reports malformed json parse failures through onError", () => {
+		// given
+		const onError = vi.fn();
+		const text = "before <tool_call>{invalid}</tool_call> after";
+
+		// when
+		const result = hermesParseGeneratedText(text, [weatherTool], { onError });
+
+		// then
+		expect(result).toEqual([]);
+		expect(onError).toHaveBeenCalled();
 	});
 
 	it("recovers common qwen-style malformed tool call json", () => {
@@ -216,9 +229,9 @@ describe("hermesCreateStreamParser", () => {
 		expect(finishEvents).toEqual([]);
 	});
 
-	it("emits malformed hermes tool call markup as text when json is invalid", () => {
+	it("emits malformed hermes tool call markup as text when json is invalid and raw fallback is enabled", () => {
 		// given
-		const parser = hermesCreateStreamParser([weatherTool]);
+		const parser = hermesCreateStreamParser([weatherTool], { emitRawToolCallTextOnError: true });
 
 		// when
 		const feedEvents = parser.feed(
@@ -236,6 +249,76 @@ describe("hermesCreateStreamParser", () => {
 			{ type: "text", text: " suffix" },
 		]);
 		expect(finishEvents).toEqual([]);
+	});
+
+	it("suppresses malformed hermes tool markup by default and reports onError", () => {
+		// given
+		const onError = vi.fn();
+		const parser = hermesCreateStreamParser([weatherTool], { onError });
+
+		// when
+		const feedEvents = parser.feed(
+			'prefix <tool_call>{"name":"get_weather","arguments":{"city":"Seoul"</tool_call> suffix',
+		);
+		const finishEvents = parser.finish();
+
+		// then
+		expect(feedEvents).toEqual([
+			{ type: "text", text: "prefix " },
+			{ type: "text", text: " suffix" },
+		]);
+		expect(finishEvents).toEqual([]);
+		expect(onError).toHaveBeenCalled();
+	});
+
+	it("emits malformed hermes tool markup when raw fallback is explicitly enabled", () => {
+		// given
+		const parser = hermesCreateStreamParser([weatherTool], { emitRawToolCallTextOnError: true });
+
+		// when
+		const feedEvents = parser.feed(
+			'prefix <tool_call>{"name":"get_weather","arguments":{"city":"Seoul"</tool_call> suffix',
+		);
+		const finishEvents = parser.finish();
+
+		// then
+		expect(feedEvents).toEqual([
+			{ type: "text", text: "prefix " },
+			{
+				type: "text",
+				text: '<tool_call>{"name":"get_weather","arguments":{"city":"Seoul"</tool_call>',
+			},
+			{ type: "text", text: " suffix" },
+		]);
+		expect(finishEvents).toEqual([]);
+	});
+
+	it("suppresses unfinished hermes tool markup at finish by default", () => {
+		// given
+		const onError = vi.fn();
+		const parser = hermesCreateStreamParser([weatherTool], { onError });
+
+		// when
+		const feedEvents = parser.feed('prefix <tool_call>{"name":"get_weather"');
+		const finishEvents = parser.finish();
+
+		// then
+		expect(feedEvents).toEqual([{ type: "text", text: "prefix " }]);
+		expect(finishEvents).toEqual([]);
+		expect(onError).toHaveBeenCalled();
+	});
+
+	it("emits unfinished hermes tool markup at finish when raw fallback is enabled", () => {
+		// given
+		const parser = hermesCreateStreamParser([weatherTool], { emitRawToolCallTextOnError: true });
+
+		// when
+		const feedEvents = parser.feed('prefix <tool_call>{"name":"get_weather"');
+		const finishEvents = parser.finish();
+
+		// then
+		expect(feedEvents).toEqual([{ type: "text", text: "prefix " }]);
+		expect(finishEvents).toEqual([{ type: "text", text: '<tool_call>{"name":"get_weather"' }]);
 	});
 
 	it("streams recovered qwen-style malformed tool call json as a tool call instead of raw text", () => {

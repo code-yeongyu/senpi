@@ -7,6 +7,10 @@ type JsonMixOptions = {
 	createToolCallId: (index: number) => string;
 };
 
+function shouldEmitRawToolCallTextOnError(options?: ParserOptions): boolean {
+	return options?.emitRawToolCallTextOnError === true;
+}
+
 const JSON_WHITESPACE_REGEX = /\s/;
 
 function escapeRegExp(text: string): string {
@@ -499,11 +503,17 @@ function finalizeToolCall(
 	events: StreamParserEvent[],
 	tools: Tool[],
 	options: JsonMixOptions,
+	parserOptions?: ParserOptions,
 ): void {
 	const fullSegment = `${options.toolCallStart}${state.currentToolCallJson}${options.toolCallEnd}`;
 	const parsedToolCall = parseToolCallJson(state.currentToolCallJson, tools);
 	if (!parsedToolCall) {
-		emitText(events, fullSegment);
+		parserOptions?.onError?.("Could not process JSON tool call, keeping original text.", {
+			toolCall: fullSegment,
+		});
+		if (shouldEmitRawToolCallTextOnError(parserOptions)) {
+			emitText(events, fullSegment);
+		}
 		state.activeToolCall = null;
 		state.currentToolCallJson = "";
 		state.isInsideToolCall = false;
@@ -598,7 +608,7 @@ export function parseJsonMixGeneratedText(
 	text: string,
 	tools: Tool[],
 	options: Pick<JsonMixOptions, "toolCallStart" | "toolCallEnd">,
-	_parserOptions?: ParserOptions,
+	parserOptions?: ParserOptions,
 ): ParsedToolCall[] {
 	const parsedToolCalls: ParsedToolCall[] = [];
 	const toolCallRegex = new RegExp(
@@ -612,6 +622,10 @@ export function parseJsonMixGeneratedText(
 		const parsedToolCall = parseToolCallJson(toolCallJson, tools);
 		if (parsedToolCall) {
 			parsedToolCalls.push(parsedToolCall);
+		} else {
+			parserOptions?.onError?.("Could not process JSON tool call, keeping original text.", {
+				toolCall: match[0],
+			});
 		}
 		match = toolCallRegex.exec(text);
 	}
@@ -622,7 +636,7 @@ export function parseJsonMixGeneratedText(
 export function createJsonMixStreamParser(
 	tools: Tool[],
 	options: JsonMixOptions,
-	_parserOptions?: ParserOptions,
+	parserOptions?: ParserOptions,
 ): StreamParser {
 	const state: JsonMixStreamState = {
 		activeToolCall: null,
@@ -652,7 +666,7 @@ export function createJsonMixStreamParser(
 					state.currentToolCallJson += state.buffer.slice(0, nextTagIndex);
 					state.buffer = state.buffer.slice(nextTagIndex + currentTag.length);
 					emitToolCallProgress(state, events, tools, options);
-					finalizeToolCall(state, events, tools, options);
+					finalizeToolCall(state, events, tools, options, parserOptions);
 				} else {
 					emitText(events, state.buffer.slice(0, nextTagIndex));
 					state.buffer = state.buffer.slice(nextTagIndex + currentTag.length);
@@ -680,7 +694,12 @@ export function createJsonMixStreamParser(
 
 			if (state.isInsideToolCall) {
 				const unfinishedToolCall = `${options.toolCallStart}${state.currentToolCallJson}${state.buffer}`;
-				emitText(events, unfinishedToolCall);
+				parserOptions?.onError?.("Could not complete streaming JSON tool call at finish.", {
+					toolCall: unfinishedToolCall,
+				});
+				if (shouldEmitRawToolCallTextOnError(parserOptions)) {
+					emitText(events, unfinishedToolCall);
+				}
 				state.activeToolCall = null;
 				state.currentToolCallJson = "";
 				state.isInsideToolCall = false;
