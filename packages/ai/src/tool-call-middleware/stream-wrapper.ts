@@ -278,7 +278,21 @@ export function wrapStreamWithToolCallMiddleware(
 								toolCallIndexByParserIndex,
 								currentInnerTextIndex,
 							) || sawToolCall;
-						outerStream.push({ ...event, partial: outerMessage });
+						const outerContentIndex =
+							currentInnerTextIndex == null
+								? null
+								: (textBlockIndexByInnerIndex.get(currentInnerTextIndex) ?? null);
+						if (outerContentIndex != null) {
+							const outerBlock = outerMessage.content[outerContentIndex];
+							if (outerBlock?.type === "text") {
+								outerStream.push({
+									type: "text_end",
+									contentIndex: outerContentIndex,
+									content: outerBlock.text,
+									partial: outerMessage,
+								});
+							}
+						}
 						currentInnerTextIndex = null;
 						break;
 					}

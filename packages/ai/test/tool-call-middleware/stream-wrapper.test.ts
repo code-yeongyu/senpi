@@ -158,6 +158,12 @@ describe("wrapStreamWithToolCallMiddleware", () => {
 				},
 			},
 		});
+
+		const textEndEvent = events.find((event) => event.type === "text_end");
+		expect(textEndEvent).toMatchObject({
+			type: "text_end",
+			content: " after",
+		});
 	});
 
 	it("returns reconstructed assistant content with tool call blocks from result", async () => {
