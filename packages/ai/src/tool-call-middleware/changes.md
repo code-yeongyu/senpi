@@ -16,6 +16,8 @@
   - `morph xml` now rejects malformed `array<object>` payloads instead of coercing them into invalid strings.
   - `hermes` now delegates parsing/streaming to a shared JSON-mix helper so delimiter-based protocols can share logic with less drift.
   - `yaml+xml` support is now wired into the protocol registry with parser/formatter/stream coverage.
+  - The stream wrapper now preserves reconstructed outer tool-call/text content across provider-side stream errors instead of falling back to the raw provider message.
+  - When a transport error happens after complete tool-call blocks were already recovered, the wrapper now finishes the turn as `toolUse` so the agent can execute those tools instead of dropping the whole turn.
 
 ### Files expected to change
 
@@ -24,6 +26,7 @@
 - `packages/ai/src/tool-call-middleware/context-transformer.ts`
 - `packages/ai/src/tool-call-middleware/types.ts`
 - `packages/ai/src/tool-call-middleware/index.ts`
+- `packages/ai/src/tool-call-middleware/stream-wrapper.ts`
 - `packages/ai/test/tool-call-middleware/*`
 
 ### Why the extension system could not handle this
