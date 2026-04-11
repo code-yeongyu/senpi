@@ -281,6 +281,12 @@ export interface OpenAICompletionsCompat {
 	zaiToolStream?: boolean;
 	/** Whether the provider supports the `strict` field in tool definitions. Default: true. */
 	supportsStrictMode?: boolean;
+	/**
+	 * Tool call format for models that don't natively support tool calling.
+	 * When set, the middleware will intercept tool calls and format them as text.
+	 * Supported values: "hermes", "xml", "gemma4-delimiter"
+	 */
+	toolCallFormat?: string;
 }
 
 /** Compatibility settings for OpenAI Responses APIs. */

@@ -1,6 +1,12 @@
 import "./providers/register-builtins.js";
 
 import { getApiProvider } from "./api-registry.js";
+import {
+	getProtocol,
+	getToolCallFormat,
+	transformContext,
+	wrapStreamWithToolCallMiddleware,
+} from "./tool-call-middleware/index.js";
 import type {
 	Api,
 	AssistantMessage,
@@ -28,6 +34,15 @@ export function stream<TApi extends Api>(
 	options?: ProviderStreamOptions,
 ): AssistantMessageEventStream {
 	const provider = resolveApiProvider(model.api);
+
+	const format = getToolCallFormat(model);
+	if (format && context.tools && context.tools.length > 0) {
+		const protocol = getProtocol(format);
+		const transformedContext = transformContext(context, protocol);
+		const innerStream = provider.stream(model, transformedContext, options as StreamOptions);
+		return wrapStreamWithToolCallMiddleware(innerStream, protocol, context.tools);
+	}
+
 	return provider.stream(model, context, options as StreamOptions);
 }
 
@@ -46,6 +61,15 @@ export function streamSimple<TApi extends Api>(
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream {
 	const provider = resolveApiProvider(model.api);
+
+	const format = getToolCallFormat(model);
+	if (format && context.tools && context.tools.length > 0) {
+		const protocol = getProtocol(format);
+		const transformedContext = transformContext(context, protocol);
+		const innerStream = provider.streamSimple(model, transformedContext, options);
+		return wrapStreamWithToolCallMiddleware(innerStream, protocol, context.tools);
+	}
+
 	return provider.streamSimple(model, context, options);
 }
 

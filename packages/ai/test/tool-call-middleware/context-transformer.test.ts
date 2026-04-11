@@ -1,0 +1,315 @@
+import { Type } from "@sinclair/typebox";
+import { describe, expect, it } from "vitest";
+import { getProtocol, transformContext } from "../../src/tool-call-middleware/context-transformer.js";
+import type { ToolCallProtocol } from "../../src/tool-call-middleware/types.js";
+import type { AssistantMessage, Context, Tool, ToolResultMessage } from "../../src/types.js";
+
+describe("getProtocol", () => {
+	it("should return hermes protocol for 'hermes' format", () => {
+		const protocol = getProtocol("hermes");
+		expect(protocol).toBeDefined();
+		expect(typeof protocol.formatToolsSystemPrompt).toBe("function");
+		expect(typeof protocol.formatToolResponse).toBe("function");
+		expect(typeof protocol.formatToolCall).toBe("function");
+	});
+
+	it("should return morphXml protocol for 'xml' format", () => {
+		const protocol = getProtocol("xml");
+		expect(protocol).toBeDefined();
+		expect(typeof protocol.formatToolsSystemPrompt).toBe("function");
+	});
+
+	it("should return gemma4 protocol for 'gemma4-delimiter' format", () => {
+		const protocol = getProtocol("gemma4-delimiter");
+		expect(protocol).toBeDefined();
+		expect(typeof protocol.formatToolsSystemPrompt).toBe("function");
+	});
+
+	it("should throw error for unsupported format", () => {
+		expect(() => getProtocol("unsupported" as any)).toThrow("Unsupported tool call format");
+	});
+});
+
+describe("transformContext", () => {
+	const weatherTool: Tool = {
+		name: "get_weather",
+		description: "Get weather for a location",
+		parameters: Type.Object({
+			city: Type.String({ description: "City name" }),
+		}),
+	};
+
+	const mockProtocol: ToolCallProtocol = {
+		formatToolsSystemPrompt: (tools) =>
+			tools.length > 0 ? `<tools>${tools.map((t) => t.name).join(", ")}</tools>` : "",
+		formatToolResponse: (toolName, _toolCallId, content) =>
+			`<tool_response>${toolName}:${content.map((c) => c.text).join("")}</tool_response>`,
+		formatToolCall: (name, args) => `<tool_call>${name}:${JSON.stringify(args)}</tool_call>`,
+		parseGeneratedText: () => [],
+		createStreamParser: () => ({
+			feed: () => [],
+			finish: () => [],
+		}),
+	};
+
+	it("should strip tools from context", () => {
+		const context: Context = {
+			systemPrompt: "You are helpful",
+			messages: [{ role: "user", content: "Hello" }],
+			tools: [weatherTool],
+		};
+
+		const transformed = transformContext(context, mockProtocol);
+
+		expect(transformed.tools).toBeUndefined();
+	});
+
+	it("should inject tool definitions into system prompt", () => {
+		const context: Context = {
+			systemPrompt: "You are helpful",
+			messages: [{ role: "user", content: "Hello" }],
+			tools: [weatherTool],
+		};
+
+		const transformed = transformContext(context, mockProtocol);
+
+		expect(transformed.systemPrompt).toContain("<tools>");
+		expect(transformed.systemPrompt).toContain("get_weather");
+		expect(transformed.systemPrompt).toContain("You are helpful");
+	});
+
+	it("should not modify system prompt when no tools", () => {
+		const context: Context = {
+			systemPrompt: "You are helpful",
+			messages: [{ role: "user", content: "Hello" }],
+			tools: [],
+		};
+
+		const transformed = transformContext(context, mockProtocol);
+
+		expect(transformed.systemPrompt).toBe("You are helpful");
+	});
+
+	it("should not mutate original context", () => {
+		const context: Context = {
+			systemPrompt: "You are helpful",
+			messages: [{ role: "user", content: "Hello" }],
+			tools: [weatherTool],
+		};
+
+		const originalSystemPrompt = context.systemPrompt;
+		const originalMessages = context.messages;
+		const originalTools = context.tools;
+
+		const transformed = transformContext(context, mockProtocol);
+
+		// Original context should be unchanged
+		expect(context.systemPrompt).toBe(originalSystemPrompt);
+		expect(context.messages).toBe(originalMessages);
+		expect(context.tools).toBe(originalTools);
+
+		// Transformed context should be different
+		expect(transformed).not.toBe(context);
+		expect(transformed.systemPrompt).not.toBe(context.systemPrompt);
+	});
+
+	it("should convert AssistantMessage tool calls to text", () => {
+		const assistantMessage: AssistantMessage = {
+			role: "assistant",
+			content: [
+				{ type: "text", text: "Let me check the weather" },
+				{
+					type: "toolCall",
+					id: "call_123",
+					name: "get_weather",
+					arguments: { city: "Seoul" },
+				},
+			],
+			timestamp: Date.now(),
+		};
+
+		const context: Context = {
+			systemPrompt: "You are helpful",
+			messages: [assistantMessage],
+			tools: [weatherTool],
+		};
+
+		const transformed = transformContext(context, mockProtocol);
+
+		const transformedAssistant = transformed.messages[0] as AssistantMessage;
+		expect(transformedAssistant.content).toHaveLength(2);
+		expect(transformedAssistant.content[0]).toEqual({ type: "text", text: "Let me check the weather" });
+		expect(transformedAssistant.content[1]).toEqual({
+			type: "text",
+			text: '<tool_call>get_weather:{"city":"Seoul"}</tool_call>',
+		});
+	});
+
+	it("should pass through AssistantMessage without tool calls unchanged", () => {
+		const assistantMessage: AssistantMessage = {
+			role: "assistant",
+			content: [{ type: "text", text: "Hello there" }],
+			timestamp: Date.now(),
+		};
+
+		const context: Context = {
+			systemPrompt: "You are helpful",
+			messages: [assistantMessage],
+			tools: [weatherTool],
+		};
+
+		const transformed = transformContext(context, mockProtocol);
+
+		expect(transformed.messages[0]).toEqual(assistantMessage);
+	});
+
+	it("should convert ToolResultMessage to UserMessage", () => {
+		const toolResultMessage: ToolResultMessage = {
+			role: "toolResult",
+			toolCallId: "call_123",
+			toolName: "get_weather",
+			content: [{ type: "text", text: "Sunny, 23C" }],
+			isError: false,
+			timestamp: Date.now(),
+		};
+
+		const context: Context = {
+			systemPrompt: "You are helpful",
+			messages: [toolResultMessage],
+			tools: [weatherTool],
+		};
+
+		const transformed = transformContext(context, mockProtocol);
+
+		const transformedUser = transformed.messages[0];
+		expect(transformedUser.role).toBe("user");
+		expect(transformedUser.content).toBe("<tool_response>get_weather:Sunny, 23C</tool_response>");
+	});
+
+	it("should pass through user messages unchanged", () => {
+		const context: Context = {
+			systemPrompt: "You are helpful",
+			messages: [
+				{ role: "user", content: "Hello" },
+				{ role: "user", content: "How are you?" },
+			],
+			tools: [weatherTool],
+		};
+
+		const transformed = transformContext(context, mockProtocol);
+
+		expect(transformed.messages[0]).toEqual({ role: "user", content: "Hello" });
+		expect(transformed.messages[1]).toEqual({ role: "user", content: "How are you?" });
+	});
+
+	it("should handle complex conversation history", () => {
+		const messages: Context["messages"] = [
+			{ role: "user", content: "What's the weather?" },
+			{
+				role: "assistant",
+				content: [
+					{ type: "text", text: "I'll check" },
+					{
+						type: "toolCall",
+						id: "call_1",
+						name: "get_weather",
+						arguments: { city: "Tokyo" },
+					},
+				],
+				timestamp: 1,
+			},
+			{
+				role: "toolResult",
+				toolCallId: "call_1",
+				toolName: "get_weather",
+				content: [{ type: "text", text: "Rainy" }],
+				isError: false,
+				timestamp: 2,
+			},
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "It's rainy in Tokyo" }],
+				timestamp: 3,
+			},
+		];
+
+		const context: Context = {
+			systemPrompt: "You are helpful",
+			messages,
+			tools: [weatherTool],
+		};
+
+		const transformed = transformContext(context, mockProtocol);
+
+		// User message unchanged
+		expect(transformed.messages[0]).toEqual({ role: "user", content: "What's the weather?" });
+
+		// Assistant with tool call converted
+		const transformedAssistant1 = transformed.messages[1] as AssistantMessage;
+		expect(transformedAssistant1.content).toHaveLength(2);
+		expect(transformedAssistant1.content[1]).toEqual({
+			type: "text",
+			text: '<tool_call>get_weather:{"city":"Tokyo"}</tool_call>',
+		});
+
+		// Tool result converted to user message
+		const transformedToolResult = transformed.messages[2];
+		expect(transformedToolResult.role).toBe("user");
+
+		// Final assistant unchanged
+		expect(transformed.messages[3]).toEqual(messages[3]);
+	});
+});
+
+describe("transformContext with real protocols", () => {
+	const weatherTool: Tool = {
+		name: "get_weather",
+		description: "Get weather for a location",
+		parameters: Type.Object({
+			city: Type.String({ description: "City name" }),
+		}),
+	};
+
+	it("should use hermes protocol correctly", () => {
+		const protocol = getProtocol("hermes");
+		const context: Context = {
+			systemPrompt: "You are helpful",
+			messages: [{ role: "user", content: "Hello" }],
+			tools: [weatherTool],
+		};
+
+		const transformed = transformContext(context, protocol);
+
+		expect(transformed.systemPrompt).toContain("<tools>");
+		expect(transformed.systemPrompt).toContain("get_weather");
+		expect(transformed.systemPrompt).toContain("<tool_call>");
+	});
+
+	it("should use morphXml protocol correctly", () => {
+		const protocol = getProtocol("xml");
+		const context: Context = {
+			systemPrompt: "You are helpful",
+			messages: [{ role: "user", content: "Hello" }],
+			tools: [weatherTool],
+		};
+
+		const transformed = transformContext(context, protocol);
+
+		expect(transformed.systemPrompt).toContain("<tools>");
+		expect(transformed.systemPrompt).toContain("get_weather");
+	});
+
+	it("should use gemma4 protocol correctly", () => {
+		const protocol = getProtocol("gemma4-delimiter");
+		const context: Context = {
+			systemPrompt: "You are helpful",
+			messages: [{ role: "user", content: "Hello" }],
+			tools: [weatherTool],
+		};
+
+		const transformed = transformContext(context, protocol);
+
+		expect(transformed.systemPrompt).toContain("<|tool_call>");
+		expect(transformed.systemPrompt).toContain("get_weather");
+	});
+});

@@ -449,9 +449,9 @@ function buildParams(model: Model<"openai-completions">, context: Context, optio
 
 function mapReasoningEffort(
 	effort: NonNullable<OpenAICompletionsOptions["reasoningEffort"]>,
-	reasoningEffortMap: Partial<Record<NonNullable<OpenAICompletionsOptions["reasoningEffort"]>, string>>,
+	reasoningEffortMap: Partial<Record<NonNullable<OpenAICompletionsOptions["reasoningEffort"]>, string>> | undefined,
 ): string {
-	return reasoningEffortMap[effort] ?? effort;
+	return reasoningEffortMap?.[effort] ?? effort;
 }
 
 function maybeAddOpenRouterAnthropicCacheControl(
@@ -490,7 +490,7 @@ function maybeAddOpenRouterAnthropicCacheControl(
 export function convertMessages(
 	model: Model<"openai-completions">,
 	context: Context,
-	compat: Required<OpenAICompletionsCompat>,
+	compat: OpenAICompletionsCompat,
 ): ChatCompletionMessageParam[] {
 	const params: ChatCompletionMessageParam[] = [];
 
@@ -716,7 +716,7 @@ export function convertMessages(
 
 function convertTools(
 	tools: Tool[],
-	compat: Required<OpenAICompletionsCompat>,
+	compat: OpenAICompletionsCompat,
 ): OpenAI.Chat.Completions.ChatCompletionTool[] {
 	return tools.map((tool) => ({
 		type: "function",
@@ -799,7 +799,7 @@ function mapStopReason(reason: ChatCompletionChunk.Choice["finish_reason"] | str
  * Provider takes precedence over URL-based detection since it's explicitly configured.
  * Returns a fully resolved OpenAICompletionsCompat object with all fields set.
  */
-function detectCompat(model: Model<"openai-completions">): Required<OpenAICompletionsCompat> {
+function detectCompat(model: Model<"openai-completions">): OpenAICompletionsCompat {
 	const provider = model.provider;
 	const baseUrl = model.baseUrl;
 
@@ -850,6 +850,7 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
 		vercelGatewayRouting: {},
 		zaiToolStream: false,
 		supportsStrictMode: true,
+		toolCallFormat: undefined,
 	};
 }
 
@@ -857,7 +858,7 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
  * Get resolved compatibility settings for a model.
  * Uses explicit model.compat if provided, otherwise auto-detects from provider/URL.
  */
-function getCompat(model: Model<"openai-completions">): Required<OpenAICompletionsCompat> {
+function getCompat(model: Model<"openai-completions">): OpenAICompletionsCompat {
 	const detected = detectCompat(model);
 	if (!model.compat) return detected;
 
@@ -877,5 +878,6 @@ function getCompat(model: Model<"openai-completions">): Required<OpenAICompletio
 		vercelGatewayRouting: model.compat.vercelGatewayRouting ?? detected.vercelGatewayRouting,
 		zaiToolStream: model.compat.zaiToolStream ?? detected.zaiToolStream,
 		supportsStrictMode: model.compat.supportsStrictMode ?? detected.supportsStrictMode,
+		toolCallFormat: model.compat.toolCallFormat ?? detected.toolCallFormat,
 	};
 }
