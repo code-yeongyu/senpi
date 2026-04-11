@@ -1,6 +1,7 @@
 import YAML from "yaml";
 import type { TextContent, Tool } from "../../types.js";
 import type { ParsedToolCall, StreamParser, StreamParserEvent } from "../types.js";
+import { findEarliestXmlToolTag, findSelfClosingToolTag, getSafeXmlTextLength } from "./xml-tool-tag-scanner.js";
 
 function escapeRegExp(text: string): string {
 	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -41,46 +42,6 @@ function parseYamlMapping(yamlContent: string): Record<string, unknown> | null {
 	} catch {
 		return null;
 	}
-}
-
-function findEarliestTag(
-	text: string,
-	toolNames: string[],
-): { index: number; name: string; tag: string; selfClosing: boolean } | null {
-	let earliest: { index: number; name: string; tag: string; selfClosing: boolean } | null = null;
-
-	for (const toolName of toolNames) {
-		const directTag = `<${toolName}>`;
-		const directIndex = text.indexOf(directTag);
-		if (directIndex !== -1 && (!earliest || directIndex < earliest.index)) {
-			earliest = { index: directIndex, name: toolName, tag: directTag, selfClosing: false };
-		}
-
-		const selfClosingRegex = new RegExp(`<\\s*${escapeRegExp(toolName)}\\s*\\/\\s*>`);
-		const selfClosingMatch = selfClosingRegex.exec(text);
-		if (selfClosingMatch?.index !== undefined && (!earliest || selfClosingMatch.index < earliest.index)) {
-			earliest = { index: selfClosingMatch.index, name: toolName, tag: selfClosingMatch[0], selfClosing: true };
-		}
-	}
-
-	return earliest;
-}
-
-function getSafeTextLength(text: string, toolNames: string[]): number {
-	const lastTagIndex = text.lastIndexOf("<");
-	if (lastTagIndex === -1) {
-		return text.length;
-	}
-
-	const trailingCandidate = text.slice(lastTagIndex);
-	const hasPotentialToolStart = toolNames.some(
-		(toolName) => `<${toolName}>`.startsWith(trailingCandidate) || `<${toolName} />`.startsWith(trailingCandidate),
-	);
-	if (!hasPotentialToolStart) {
-		return text.length;
-	}
-
-	return lastTagIndex;
 }
 
 export function yamlXmlFormatToolsSystemPrompt(tools: Tool[]): string {
@@ -144,12 +105,10 @@ export function parseYamlXmlGeneratedText(text: string, tools: Tool[]): ParsedTo
 	const parsedToolCalls: ParsedToolCall[] = [];
 
 	for (const toolName of toolNames) {
-		const selfClosingRegex = new RegExp(`<\\s*${escapeRegExp(toolName)}\\s*\\/\\s*>`, "g");
-		for (const match of text.matchAll(selfClosingRegex)) {
-			if (match.index === undefined) {
-				continue;
-			}
+		let selfClosingMatch = findSelfClosingToolTag(text, toolName, 0);
+		while (selfClosingMatch) {
 			parsedToolCalls.push({ name: toolName, arguments: {} });
+			selfClosingMatch = findSelfClosingToolTag(text, toolName, selfClosingMatch.index + selfClosingMatch.length);
 		}
 
 		const toolCallRegex = new RegExp(
@@ -256,9 +215,9 @@ export function createYamlXmlStreamParser(tools: Tool[]): StreamParser {
 				continue;
 			}
 
-			const openingTag = findEarliestTag(buffer, toolNames);
+			const openingTag = findEarliestXmlToolTag(buffer, toolNames);
 			if (!openingTag) {
-				const textLength = getSafeTextLength(buffer, toolNames);
+				const textLength = getSafeXmlTextLength(buffer, toolNames);
 				if (textLength === 0) {
 					break;
 				}

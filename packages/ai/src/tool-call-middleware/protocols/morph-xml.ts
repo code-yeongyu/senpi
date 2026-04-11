@@ -1,6 +1,7 @@
 import type { TextContent, Tool } from "../../types.js";
 import { validateToolArguments } from "../../utils/validation.js";
 import type { ParsedToolCall, StreamParser, StreamParserEvent } from "../types.js";
+import { findEarliestXmlToolTag, findSelfClosingToolTag, getSafeXmlTextLength } from "./xml-tool-tag-scanner.js";
 
 const INDENT = "   ";
 
@@ -470,16 +471,22 @@ export function parseMorphXmlGeneratedText(text: string, tools: Tool[]): ParsedT
 	const parsedToolCalls: ParsedToolCall[] = [];
 
 	for (const tool of tools) {
-		const selfClosingPattern = new RegExp(`<\\s*${escapeRegExp(tool.name)}\\s*\\/\\s*>`, "g");
-		for (const _match of text.matchAll(selfClosingPattern)) {
+		let selfClosingMatch = findSelfClosingToolTag(text, tool.name, 0);
+		while (selfClosingMatch) {
 			const parsedArguments = parseAndValidateMorphXmlArguments(tool, "", toolSchemaMap.get(tool.name));
 			if (!parsedArguments) {
+				selfClosingMatch = findSelfClosingToolTag(
+					text,
+					tool.name,
+					selfClosingMatch.index + selfClosingMatch.length,
+				);
 				continue;
 			}
 			parsedToolCalls.push({
 				name: tool.name,
 				arguments: parsedArguments,
 			});
+			selfClosingMatch = findSelfClosingToolTag(text, tool.name, selfClosingMatch.index + selfClosingMatch.length);
 		}
 
 		const toolCallPattern = new RegExp(
@@ -626,9 +633,9 @@ export function createMorphXmlStreamParser(tools: Tool[]): StreamParser {
 				continue;
 			}
 
-			const openingTag = findEarliestToolOpeningTag(buffer, toolNames);
+			const openingTag = findEarliestXmlToolTag(buffer, toolNames);
 			if (!openingTag) {
-				const textLength = getSafeTextLength(buffer, toolNames);
+				const textLength = getSafeXmlTextLength(buffer, toolNames);
 				if (textLength === 0) {
 					break;
 				}
@@ -1103,57 +1110,6 @@ function parseOpeningTag(text: string, startIndex: number): { endIndex: number; 
 		endIndex: match.index + match[0].length,
 		name: tagName,
 	};
-}
-
-function findEarliestToolOpeningTag(
-	text: string,
-	toolNames: string[],
-): { index: number; name: string; tag: string; selfClosing: boolean } | null {
-	let earliestTag: { index: number; name: string; tag: string; selfClosing: boolean } | null = null;
-
-	for (const toolName of toolNames) {
-		const tagPattern = new RegExp(`<\\s*${escapeRegExp(toolName)}\\s*(\\/)?\\s*>`);
-		const match = tagPattern.exec(text);
-		if (!match || match.index === undefined) {
-			continue;
-		}
-
-		if (!earliestTag || match.index < earliestTag.index) {
-			earliestTag = {
-				index: match.index,
-				name: toolName,
-				tag: match[0],
-				selfClosing: match[1] === "/",
-			};
-		}
-	}
-
-	return earliestTag;
-}
-
-function getSafeTextLength(text: string, toolNames: string[]): number {
-	const lastTagIndex = text.lastIndexOf("<");
-	if (lastTagIndex === -1) {
-		return text.length;
-	}
-
-	const trailingCandidate = text.slice(lastTagIndex);
-	const hasPotentialToolStart = toolNames.some((toolName) => {
-		const candidates = [
-			`<${toolName}>`,
-			`<${toolName}/>`,
-			`< ${toolName}>`,
-			`< ${toolName}/>`,
-			`<${toolName} />`,
-			`< ${toolName} />`,
-		];
-		return candidates.some((candidate) => candidate.startsWith(trailingCandidate));
-	});
-	if (!hasPotentialToolStart) {
-		return text.length;
-	}
-
-	return lastTagIndex;
 }
 
 function escapeXml(text: string): string {

@@ -353,6 +353,44 @@ describe("createMorphXmlStreamParser", () => {
 		expect(textOutput).not.toContain("<tool_b>");
 	});
 
+	it("handles consecutive tool calls with no text between them", () => {
+		// given
+		const toolA: Tool = { name: "tool_a", description: "A", parameters: Type.Object({}) };
+		const toolB: Tool = { name: "tool_b", description: "B", parameters: Type.Object({}) };
+		const parser = createMorphXmlStreamParser([toolA, toolB]);
+
+		// when
+		const allEvents = [...parser.feed("<tool_a></tool_a><tool_b></tool_b>"), ...parser.finish()];
+
+		// then
+		const toolCalls = allEvents.filter((event) => event.type === "toolcall_end");
+		const textOutput = allEvents
+			.filter((event) => event.type === "text")
+			.map((event) => event.text)
+			.join("");
+		expect(toolCalls).toHaveLength(2);
+		expect(textOutput).not.toContain("<tool_a>");
+		expect(textOutput).not.toContain("<tool_b>");
+	});
+
+	it("accepts whitespace in the closing tag name while streaming", () => {
+		// given
+		const parser = createMorphXmlStreamParser([weatherTool]);
+
+		// when
+		const allEvents = [...parser.feed("<get_weather><city>SF</city></ get_weather>"), ...parser.finish()];
+
+		// then
+		const toolcallEnd = allEvents.find((event) => event.type === "toolcall_end");
+		expect(toolcallEnd).toMatchObject({
+			type: "toolcall_end",
+			name: "get_weather",
+			arguments: {
+				city: "SF",
+			},
+		});
+	});
+
 	it("parses xml tool calls correctly when streamed character by character", () => {
 		// given
 		const parser = createMorphXmlStreamParser([weatherTool]);
