@@ -315,6 +315,8 @@ describe("transformContext with real protocols", () => {
 
 		expect(transformed.systemPrompt).toContain("<tools>");
 		expect(transformed.systemPrompt).toContain("get_weather");
+		expect(transformed.systemPrompt).toContain("wrap each element in an <item> tag");
+		expect(transformed.systemPrompt).toContain("Array<object> example");
 	});
 
 	it("should use gemma4 protocol correctly", () => {

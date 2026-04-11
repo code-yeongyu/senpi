@@ -20,6 +20,9 @@ You may call one or more functions to assist with the user query.`;
 - Use exactly one XML element whose tag name is the function name.
 - Put each parameter as a child element.
 - Values must follow the schema exactly (numbers, arrays, objects, enums -> copy as-is).
+- For array parameters, wrap each element in an <item> tag inside the parameter tag.
+- For array<object> parameters, every <item> must contain the object's fields as child tags.
+- Never repeat the array parameter tag to represent multiple entries.
 - Do not add or remove functions or parameters.
 - Each required parameter must appear once.
 - Output nothing before or after the function call.
@@ -34,7 +37,33 @@ that can span
 multiple lines</example_parameter_2>
 </example_function_name>`;
 
-	return [header, definitions, rules, examples].filter((section) => section.trim().length > 0).join("\n\n");
+	const arrayExample = `Array example:
+<example_array_tool>
+   <items>
+      <item>first</item>
+      <item>second</item>
+   </items>
+</example_array_tool>
+
+Array<object> example:
+<example_todo_tool>
+   <todos>
+      <item>
+         <content>Inspect parser edge cases</content>
+         <status>in_progress</status>
+         <priority>high</priority>
+      </item>
+      <item>
+         <content>Add regression tests</content>
+         <status>pending</status>
+         <priority>medium</priority>
+      </item>
+   </todos>
+</example_todo_tool>`;
+
+	return [header, definitions, rules, examples, arrayExample]
+		.filter((section) => section.trim().length > 0)
+		.join("\n\n");
 }
 
 function renderToolsForXmlPrompt(tools: Tool[]): string {
