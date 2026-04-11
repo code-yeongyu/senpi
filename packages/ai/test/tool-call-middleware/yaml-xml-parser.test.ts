@@ -373,4 +373,32 @@ describe("createYamlXmlStreamParser", () => {
 		expect(textOutput).toContain("found!");
 		expect(textOutput).not.toContain("<get_weather>");
 	});
+
+	it("preserves text boundaries around tool calls in the parser stream", () => {
+		// given
+		const parser = createYamlXmlStreamParser([weatherTool]);
+
+		// when
+		const allEvents = [
+			...parser.feed("Before <get_weather>\nlocation: SF\n</get_weather> After"),
+			...parser.finish(),
+		];
+
+		// then
+		expect(allEvents).toEqual([
+			{ type: "text", text: "Before " },
+			{ type: "toolcall_start", index: 0, name: "get_weather", id: "yaml-xml-tool-0" },
+			{ type: "toolcall_delta", index: 0, argumentsDelta: '{"location":"SF"}' },
+			{
+				type: "toolcall_end",
+				index: 0,
+				name: "get_weather",
+				id: "yaml-xml-tool-0",
+				arguments: {
+					location: "SF",
+				},
+			},
+			{ type: "text", text: " After" },
+		]);
+	});
 });
