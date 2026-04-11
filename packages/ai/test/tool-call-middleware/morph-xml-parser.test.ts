@@ -506,4 +506,49 @@ describe("createMorphXmlStreamParser", () => {
 		expect(textOutput).not.toContain("</bad_tool>");
 		expect(textOutput).not.toContain("<name>");
 	});
+
+	it("preserves raw inner xml for string-typed fields", () => {
+		// given
+		const writeFileTool: Tool = {
+			name: "write_file",
+			description: "Write a file",
+			parameters: Type.Object({
+				file_path: Type.String(),
+				content: Type.String(),
+				encoding: Type.Optional(Type.String()),
+			}),
+		};
+		const parser = createMorphXmlStreamParser([writeFileTool]);
+		const html = "<html><body><h1>Hi</h1><p>World</p></body></html>";
+		const parts = [
+			"<write_file>",
+			"<file_path>/home/username/myfile.html</file_path>",
+			"<content>",
+			html,
+			"</content>",
+			"<encoding>utf-8</encoding>",
+			"</write_file>",
+		];
+		const events = [];
+
+		// when
+		for (const part of parts) {
+			for (let index = 0; index < part.length; index += 7) {
+				events.push(...parser.feed(part.slice(index, index + 7)));
+			}
+		}
+		events.push(...parser.finish());
+
+		// then
+		const toolcallEnd = events.find((event) => event.type === "toolcall_end");
+		expect(toolcallEnd).toMatchObject({
+			type: "toolcall_end",
+			name: "write_file",
+			arguments: {
+				file_path: "/home/username/myfile.html",
+				content: html,
+				encoding: "utf-8",
+			},
+		});
+	});
 });

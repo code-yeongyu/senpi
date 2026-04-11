@@ -340,6 +340,7 @@ type JsonSchema = Record<string, unknown> | boolean | undefined;
 type XmlNode = {
 	name: string;
 	children: XmlNode[];
+	parts: Array<{ type: "text"; value: string } | { type: "child"; value: XmlNode }>;
 	textSegments: string[];
 };
 
@@ -584,28 +585,7 @@ export function createMorphXmlStreamParser(tools: Tool[]): StreamParser {
 				const originalCallText = `<${currentToolState.name}>${toolBody}${closingTagMatch[0]}`;
 				buffer = buffer.slice(closingTagMatch.index + closingTagMatch[0].length);
 				if (!parsedArguments) {
-					if (currentToolState.lastArgumentsSnapshot) {
-						const recoveredArguments = JSON.parse(currentToolState.lastArgumentsSnapshot) as Record<
-							string,
-							unknown
-						>;
-						if (!currentToolState.started) {
-							events.push({
-								type: "toolcall_start",
-								index: currentToolState.index,
-								name: currentToolState.name,
-								id: currentToolState.id,
-							});
-							currentToolState.started = true;
-						}
-						events.push({
-							type: "toolcall_end",
-							index: currentToolState.index,
-							name: currentToolState.name,
-							id: currentToolState.id,
-							arguments: recoveredArguments,
-						});
-					} else {
+					if (!currentToolState.started) {
 						events.push({ type: "text", text: originalCallText });
 					}
 					currentToolState = null;
@@ -882,6 +862,7 @@ function parseXmlRoot(xml: string): XmlNode | null {
 		const textContent = xml.slice(lastIndex, matchIndex);
 		if (stack.length > 0 && textContent.length > 0) {
 			stack[stack.length - 1]?.textSegments.push(textContent);
+			stack[stack.length - 1]?.parts.push({ type: "text", value: textContent });
 		} else if (stack.length === 0 && textContent.trim().length > 0) {
 			return null;
 		}
@@ -894,6 +875,7 @@ function parseXmlRoot(xml: string): XmlNode | null {
 
 			if (stack.length > 0) {
 				stack[stack.length - 1]?.children.push(completedNode);
+				stack[stack.length - 1]?.parts.push({ type: "child", value: completedNode });
 			} else if (!rootNode) {
 				rootNode = completedNode;
 			} else {
@@ -903,12 +885,14 @@ function parseXmlRoot(xml: string): XmlNode | null {
 			const node: XmlNode = {
 				name: tagName,
 				children: [],
+				parts: [],
 				textSegments: [],
 			};
 
 			if (isSelfClosing) {
 				if (stack.length > 0) {
 					stack[stack.length - 1]?.children.push(node);
+					stack[stack.length - 1]?.parts.push({ type: "child", value: node });
 				} else if (!rootNode) {
 					rootNode = node;
 				} else {
@@ -931,6 +915,13 @@ function parseXmlRoot(xml: string): XmlNode | null {
 	}
 
 	return rootNode;
+}
+
+function serializeXmlNode(node: XmlNode): string {
+	const innerContent = node.parts
+		.map((part) => (part.type === "text" ? part.value : serializeXmlNode(part.value)))
+		.join("");
+	return `<${node.name}>${innerContent}</${node.name}>`;
 }
 
 function convertChildrenToObject(children: XmlNode[], schema: JsonSchema): Record<string, unknown> {
@@ -959,9 +950,16 @@ function convertChildrenToObject(children: XmlNode[], schema: JsonSchema): Recor
 
 function convertXmlNodeValue(node: XmlNode, schema: JsonSchema): unknown {
 	const normalizedSchema = normalizeSchema(schema);
+	const schemaTypes = getSchemaTypes(normalizedSchema);
 
 	if (node.children.length === 0) {
 		return coerceXmlValue(node.textSegments.join(""), normalizedSchema);
+	}
+
+	if (schemaTypes.includes("string")) {
+		return node.parts
+			.map((part) => (part.type === "text" ? unescapeXml(part.value) : serializeXmlNode(part.value)))
+			.join("");
 	}
 
 	if (shouldTreatAsArray(node, normalizedSchema)) {
