@@ -1,4 +1,5 @@
 import type { TextContent, Tool } from "../../types.js";
+import { validateToolArguments } from "../../utils/validation.js";
 import type { ParsedToolCall, StreamParser, StreamParserEvent } from "../types.js";
 
 const INDENT = "   ";
@@ -318,7 +319,104 @@ type StreamToolState = {
 	lastArgumentsSnapshot: string | null;
 	name: string;
 	schema: JsonSchema;
+	started: boolean;
+	tool: Tool | undefined;
 };
+
+function getSchemaTypesFromValue(schema: JsonSchema): string[] {
+	if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+		return [];
+	}
+
+	const typeValue = schema.type;
+	if (typeof typeValue === "string") {
+		return [typeValue];
+	}
+	if (Array.isArray(typeValue)) {
+		return typeValue.filter((entry): entry is string => typeof entry === "string");
+	}
+	return [];
+}
+
+function isStructurallyCompatibleWithSchema(value: unknown, schema: JsonSchema): boolean {
+	if (schema === undefined || schema === true) {
+		return true;
+	}
+	if (schema === false) {
+		return false;
+	}
+	if (typeof schema !== "object" || Array.isArray(schema) || schema === null) {
+		return true;
+	}
+
+	const schemaTypes = getSchemaTypesFromValue(schema);
+	if (value === null) {
+		return schemaTypes.length === 0 || schemaTypes.includes("null");
+	}
+
+	if (Array.isArray(value)) {
+		if (schemaTypes.length > 0 && !schemaTypes.includes("array")) {
+			return false;
+		}
+		const itemSchema = getArrayItemSchema(schema);
+		return value.every((item) => isStructurallyCompatibleWithSchema(item, itemSchema));
+	}
+
+	if (typeof value === "object") {
+		if (schemaTypes.length > 0 && !schemaTypes.includes("object")) {
+			return false;
+		}
+		const record = value as Record<string, unknown>;
+		return Object.entries(record).every(([key, entryValue]) =>
+			isStructurallyCompatibleWithSchema(entryValue, getPropertySchema(schema, key)),
+		);
+	}
+
+	if (typeof value === "string") {
+		return schemaTypes.length === 0 || schemaTypes.includes("string");
+	}
+	if (typeof value === "number") {
+		return schemaTypes.length === 0 || schemaTypes.includes("number") || schemaTypes.includes("integer");
+	}
+	if (typeof value === "boolean") {
+		return schemaTypes.length === 0 || schemaTypes.includes("boolean");
+	}
+
+	return true;
+}
+
+function validateMorphXmlArguments(tool: Tool | undefined, argumentsRecord: Record<string, unknown>): boolean {
+	if (!tool) {
+		return true;
+	}
+
+	try {
+		validateToolArguments(tool, {
+			type: "toolCall",
+			id: "morph-xml-validation",
+			name: tool.name,
+			arguments: argumentsRecord,
+		});
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function parseAndValidateMorphXmlArguments(
+	tool: Tool | undefined,
+	toolBody: string,
+	schema: JsonSchema,
+): Record<string, unknown> | null {
+	const parsedArguments = parseMorphXmlArguments(toolBody, schema);
+	if (!isStructurallyCompatibleWithSchema(parsedArguments, schema)) {
+		return null;
+	}
+	if (!validateMorphXmlArguments(tool, parsedArguments)) {
+		return null;
+	}
+	return parsedArguments;
+}
 
 export function parseMorphXmlGeneratedText(text: string, tools: Tool[]): ParsedToolCall[] {
 	if (tools.length === 0 || text.length === 0) {
@@ -326,6 +424,7 @@ export function parseMorphXmlGeneratedText(text: string, tools: Tool[]): ParsedT
 	}
 
 	const toolSchemaMap = createToolSchemaMap(tools);
+	const toolMap = new Map(tools.map((tool) => [tool.name, tool]));
 	const toolNamesPattern = tools.map((tool) => escapeRegExp(tool.name)).join("|");
 	const toolCallPattern = new RegExp(`<\\s*(${toolNamesPattern})\\s*>([\\s\\S]*?)<\\/\\s*\\1\\s*>`, "g");
 	const parsedToolCalls: ParsedToolCall[] = [];
@@ -337,9 +436,18 @@ export function parseMorphXmlGeneratedText(text: string, tools: Tool[]): ParsedT
 			continue;
 		}
 
+		const parsedArguments = parseAndValidateMorphXmlArguments(
+			toolMap.get(toolName),
+			toolBody,
+			toolSchemaMap.get(toolName),
+		);
+		if (!parsedArguments) {
+			continue;
+		}
+
 		parsedToolCalls.push({
 			name: toolName,
-			arguments: parseMorphXmlArguments(toolBody, toolSchemaMap.get(toolName)),
+			arguments: parsedArguments,
 		});
 	}
 
@@ -349,6 +457,7 @@ export function parseMorphXmlGeneratedText(text: string, tools: Tool[]): ParsedT
 export function createMorphXmlStreamParser(tools: Tool[]): StreamParser {
 	const toolSchemaMap = createToolSchemaMap(tools);
 	const toolNames = tools.map((tool) => tool.name);
+	const toolMap = new Map(tools.map((tool) => [tool.name, tool]));
 
 	let buffer = "";
 	let nextToolCallIndex = 0;
@@ -359,9 +468,23 @@ export function createMorphXmlStreamParser(tools: Tool[]): StreamParser {
 		toolState: StreamToolState,
 		argumentsRecord: Record<string, unknown>,
 	): void {
+		if (!isStructurallyCompatibleWithSchema(argumentsRecord, toolState.schema)) {
+			return;
+		}
+
 		const argumentsSnapshot = JSON.stringify(argumentsRecord);
 		if (argumentsSnapshot === toolState.lastArgumentsSnapshot || argumentsSnapshot === "{}") {
 			return;
+		}
+
+		if (!toolState.started) {
+			events.push({
+				type: "toolcall_start",
+				index: toolState.index,
+				name: toolState.name,
+				id: toolState.id,
+			});
+			toolState.started = true;
 		}
 
 		toolState.lastArgumentsSnapshot = argumentsSnapshot;
@@ -396,8 +519,31 @@ export function createMorphXmlStreamParser(tools: Tool[]): StreamParser {
 					parseMorphXmlPartialArguments(toolBody, currentToolState.schema),
 				);
 
-				const parsedArguments = parseMorphXmlArguments(toolBody, currentToolState.schema);
+				const parsedArguments = parseAndValidateMorphXmlArguments(
+					currentToolState.tool,
+					toolBody,
+					currentToolState.schema,
+				);
+				const originalCallText = `<${currentToolState.name}>${toolBody}${closingTagMatch[0]}`;
 				buffer = buffer.slice(closingTagMatch.index + closingTagMatch[0].length);
+				if (!parsedArguments) {
+					if (!currentToolState.started) {
+						events.push({ type: "text", text: originalCallText });
+					}
+					currentToolState = null;
+					continue;
+				}
+
+				if (!currentToolState.started) {
+					events.push({
+						type: "toolcall_start",
+						index: currentToolState.index,
+						name: currentToolState.name,
+						id: currentToolState.id,
+					});
+					currentToolState.started = true;
+					emitArgumentsSnapshot(events, currentToolState, parsedArguments);
+				}
 				events.push({
 					type: "toolcall_end",
 					index: currentToolState.index,
@@ -432,14 +578,10 @@ export function createMorphXmlStreamParser(tools: Tool[]): StreamParser {
 				lastArgumentsSnapshot: null,
 				name: openingTag.name,
 				schema: toolSchemaMap.get(openingTag.name),
+				started: false,
+				tool: toolMap.get(openingTag.name),
 			};
 			nextToolCallIndex += 1;
-			events.push({
-				type: "toolcall_start",
-				index: currentToolState.index,
-				name: currentToolState.name,
-				id: currentToolState.id,
-			});
 		}
 
 		return events;

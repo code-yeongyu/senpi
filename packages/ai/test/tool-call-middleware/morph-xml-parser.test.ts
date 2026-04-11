@@ -16,6 +16,20 @@ describe("parseMorphXmlGeneratedText", () => {
 		}),
 	};
 
+	const todoWriteTool: Tool = {
+		name: "todowrite",
+		description: "Write todos",
+		parameters: Type.Object({
+			todos: Type.Array(
+				Type.Object({
+					content: Type.String(),
+					status: Type.String(),
+					priority: Type.String(),
+				}),
+			),
+		}),
+	};
+
 	it("parses multiple XML tool calls with string and number parameters", () => {
 		// given
 		const text = [
@@ -63,6 +77,17 @@ describe("parseMorphXmlGeneratedText", () => {
 		});
 		expect(typeof parsedToolCall?.arguments.days).toBe("number");
 	});
+
+	it("rejects malformed array<object> payloads instead of coercing empty items into strings", () => {
+		// given
+		const text = "<todowrite><todos><item/></todos></todowrite>";
+
+		// when
+		const parsedToolCalls = parseMorphXmlGeneratedText(text, [todoWriteTool]);
+
+		// then
+		expect(parsedToolCalls).toEqual([]);
+	});
 });
 
 describe("createMorphXmlStreamParser", () => {
@@ -72,6 +97,20 @@ describe("createMorphXmlStreamParser", () => {
 		parameters: Type.Object({
 			city: Type.String(),
 			days: Type.Integer(),
+		}),
+	};
+
+	const todoWriteTool: Tool = {
+		name: "todowrite",
+		description: "Write todos",
+		parameters: Type.Object({
+			todos: Type.Array(
+				Type.Object({
+					content: Type.String(),
+					status: Type.String(),
+					priority: Type.String(),
+				}),
+			),
 		}),
 	};
 
@@ -108,5 +147,16 @@ describe("createMorphXmlStreamParser", () => {
 				},
 			}),
 		);
+	});
+
+	it("falls back to text when a self-closing array<object> item cannot satisfy the schema", () => {
+		// given
+		const parser = createMorphXmlStreamParser([todoWriteTool]);
+
+		// when
+		const allEvents = [...parser.feed("<todowrite><todos><item/></todos></todowrite>"), ...parser.finish()];
+
+		// then
+		expect(allEvents).toEqual([{ type: "text", text: "<todowrite><todos><item/></todos></todowrite>" }]);
 	});
 });
