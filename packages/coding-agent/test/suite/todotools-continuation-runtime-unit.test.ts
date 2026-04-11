@@ -77,6 +77,14 @@ function createAgentEndEvent(stopReason: "stop" | "toolUse" | "error" | "aborted
 	};
 }
 
+function createAgentEndEventWithErrorMessage(stopReason: "stop" | "toolUse", errorMessage: string): AgentEndEvent {
+	const assistant = fauxAssistantMessage("done", { stopReason, errorMessage });
+	return {
+		type: "agent_end",
+		messages: [assistant],
+	};
+}
+
 function createBeforeAgentStartEvent(prompt: string): BeforeAgentStartEvent {
 	return {
 		type: "before_agent_start",
@@ -180,6 +188,23 @@ describe("todotools continuation runtime", () => {
 			expect(getCurrentTodos).not.toHaveBeenCalled();
 			expect(mockPi.sendUserMessage).not.toHaveBeenCalled();
 		}
+	});
+
+	it("still dispatches continuation for recovered toolUse turns that retain an errorMessage", async () => {
+		vi.useFakeTimers();
+		const mockPi = createMockPi();
+		const getCurrentTodos = vi.fn(() => pendingTodos);
+
+		installContinuation(mockPi as never, { getCurrentTodos });
+
+		await mockPi._trigger(
+			"agent_end",
+			createAgentEndEventWithErrorMessage("toolUse", "JSON error injected into SSE stream"),
+		);
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(getCurrentTodos).toHaveBeenCalledTimes(1);
+		expect(mockPi.sendUserMessage).toHaveBeenCalledTimes(1);
 	});
 
 	it("skips continuation in non-interactive contexts", async () => {
