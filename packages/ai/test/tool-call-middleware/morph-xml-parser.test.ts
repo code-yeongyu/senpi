@@ -88,6 +88,18 @@ describe("parseMorphXmlGeneratedText", () => {
 		// then
 		expect(parsedToolCalls).toEqual([]);
 	});
+
+	it("rejects array<object> payloads when object fields are provided without item wrappers", () => {
+		// given
+		const text =
+			"<todowrite><todos><content>Inspect code</content><status>pending</status><priority>high</priority></todos></todowrite>";
+
+		// when
+		const parsedToolCalls = parseMorphXmlGeneratedText(text, [todoWriteTool]);
+
+		// then
+		expect(parsedToolCalls).toEqual([]);
+	});
 });
 
 describe("createMorphXmlStreamParser", () => {
@@ -158,5 +170,20 @@ describe("createMorphXmlStreamParser", () => {
 
 		// then
 		expect(allEvents).toEqual([{ type: "text", text: "<todowrite><todos><item/></todos></todowrite>" }]);
+	});
+
+	it("does not emit partial toolcall progress for arrays that violate minItems before the call is complete", () => {
+		// given
+		const parser = createMorphXmlStreamParser([todoWriteTool]);
+
+		// when
+		const firstEvents = parser.feed("<todowrite><todos></todos>");
+		const secondEvents = parser.feed("<content>x</content></todowrite>");
+
+		// then
+		expect(firstEvents).toEqual([]);
+		expect(secondEvents).toEqual([
+			{ type: "text", text: "<todowrite><todos></todos><content>x</content></todowrite>" },
+		]);
 	});
 });

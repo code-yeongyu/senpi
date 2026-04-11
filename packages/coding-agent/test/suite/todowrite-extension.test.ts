@@ -124,13 +124,13 @@ describe("todowrite extension", () => {
 		]);
 	});
 
-	it("allows replacing the todo list with an empty array", async () => {
+	it("rejects replacing the todo list with an empty array", async () => {
 		// given
 		const harness = await createHarnessWithTodoExtension();
 		harnesses.push(harness);
 		harness.setResponses([
 			fauxAssistantMessage([fauxToolCall("todowrite", { todos: [] })], { stopReason: "toolUse" }),
-			fauxAssistantMessage("cleared"),
+			fauxAssistantMessage("validation failed"),
 		]);
 
 		// when
@@ -138,13 +138,13 @@ describe("todowrite extension", () => {
 
 		// then
 		const result = getLatestToolResult(harness, "todowrite");
-		expect(result.details).toEqual({ todos: [] });
-		expect(result.content).toEqual([
-			{
-				type: "text",
-				text: JSON.stringify([], null, 2),
-			},
-		]);
+		expect(result.isError).toBe(true);
+		const text = result.content
+			.filter((item): item is { type: "text"; text: string } => item.type === "text")
+			.map((item) => item.text)
+			.join("\n");
+		expect(text).toContain('Validation failed for tool "todowrite"');
+		expect(text).toContain("must NOT have fewer than 1 items");
 	});
 
 	it("reads the latest todos through the agent-facing todoread tool", async () => {

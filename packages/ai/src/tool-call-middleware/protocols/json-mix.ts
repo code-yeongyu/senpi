@@ -65,8 +65,66 @@ function removeTrailingCommas(text: string): string {
 	return result;
 }
 
+function normalizeMalformedObjectKeys(text: string): string {
+	return text.replace(/"([A-Za-z0-9_.$-]+)'(?=\s*:)/g, '"$1"');
+}
+
+function ensureObjectDelimiters(text: string): string {
+	const trimmed = text.trim();
+	if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+		return trimmed;
+	}
+
+	if (trimmed.includes(":")) {
+		return `{${trimmed}}`;
+	}
+
+	return trimmed;
+}
+
+function trimExcessTrailingClosers(text: string): string {
+	let openBraces = 0;
+	let closeBraces = 0;
+	for (const character of text) {
+		if (character === "{") {
+			openBraces += 1;
+		} else if (character === "}") {
+			closeBraces += 1;
+		}
+	}
+
+	let excessClosers = closeBraces - openBraces;
+	if (excessClosers <= 0) {
+		return text;
+	}
+
+	let result = text;
+	while (excessClosers > 0 && result.endsWith("}")) {
+		result = result.slice(0, -1);
+		excessClosers -= 1;
+	}
+	return result;
+}
+
 function parseRelaxedJson(text: string): unknown {
-	return JSON.parse(removeTrailingCommas(text));
+	const attempts = [
+		text,
+		removeTrailingCommas(text),
+		normalizeMalformedObjectKeys(removeTrailingCommas(text)),
+		ensureObjectDelimiters(normalizeMalformedObjectKeys(removeTrailingCommas(text))),
+		trimExcessTrailingClosers(ensureObjectDelimiters(normalizeMalformedObjectKeys(removeTrailingCommas(text)))),
+	];
+
+	let lastError: unknown;
+	for (const candidate of attempts) {
+		try {
+			return JSON.parse(candidate);
+		} catch (error) {
+			lastError = error;
+		}
+	}
+
+	throw lastError instanceof Error ? lastError : new Error("Failed to parse relaxed JSON");
 }
 
 function parseToolCallJson(text: string, tools: Tool[]): ParsedToolCall | null {
@@ -444,12 +502,28 @@ function finalizeToolCall(
 ): void {
 	const fullSegment = `${options.toolCallStart}${state.currentToolCallJson}${options.toolCallEnd}`;
 	const parsedToolCall = parseToolCallJson(state.currentToolCallJson, tools);
-	if (!parsedToolCall || !state.activeToolCall) {
+	if (!parsedToolCall) {
 		emitText(events, fullSegment);
 		state.activeToolCall = null;
 		state.currentToolCallJson = "";
 		state.isInsideToolCall = false;
 		return;
+	}
+
+	if (!state.activeToolCall) {
+		state.activeToolCall = {
+			index: state.toolCallCount,
+			id: options.createToolCallId(state.toolCallCount),
+			name: parsedToolCall.name,
+			emittedArguments: "",
+		};
+		state.toolCallCount += 1;
+		events.push({
+			type: "toolcall_start",
+			index: state.activeToolCall.index,
+			name: state.activeToolCall.name,
+			id: state.activeToolCall.id,
+		});
 	}
 
 	const canonicalArguments = JSON.stringify(parsedToolCall.arguments);

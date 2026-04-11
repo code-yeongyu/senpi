@@ -408,7 +408,12 @@ function parseAndValidateMorphXmlArguments(
 	toolBody: string,
 	schema: JsonSchema,
 ): Record<string, unknown> | null {
-	const parsedArguments = parseMorphXmlArguments(toolBody, schema);
+	let parsedArguments: Record<string, unknown>;
+	try {
+		parsedArguments = parseMorphXmlArguments(toolBody, schema);
+	} catch {
+		return null;
+	}
 	if (!isStructurallyCompatibleWithSchema(parsedArguments, schema)) {
 		return null;
 	}
@@ -416,6 +421,14 @@ function parseAndValidateMorphXmlArguments(
 		return null;
 	}
 	return parsedArguments;
+}
+
+function parseMorphXmlPartialArgumentsSafely(toolBody: string, schema: JsonSchema): Record<string, unknown> | null {
+	try {
+		return parseMorphXmlPartialArguments(toolBody, schema);
+	} catch {
+		return null;
+	}
 }
 
 export function parseMorphXmlGeneratedText(text: string, tools: Tool[]): ParsedToolCall[] {
@@ -504,20 +517,18 @@ export function createMorphXmlStreamParser(tools: Tool[]): StreamParser {
 				const closingTagMatch = closingTagPattern.exec(buffer);
 
 				if (!closingTagMatch || closingTagMatch.index === undefined) {
-					emitArgumentsSnapshot(
-						events,
-						currentToolState,
-						parseMorphXmlPartialArguments(buffer, currentToolState.schema),
-					);
+					const partialArguments = parseMorphXmlPartialArgumentsSafely(buffer, currentToolState.schema);
+					if (partialArguments) {
+						emitArgumentsSnapshot(events, currentToolState, partialArguments);
+					}
 					break;
 				}
 
 				const toolBody = buffer.slice(0, closingTagMatch.index);
-				emitArgumentsSnapshot(
-					events,
-					currentToolState,
-					parseMorphXmlPartialArguments(toolBody, currentToolState.schema),
-				);
+				const partialArguments = parseMorphXmlPartialArgumentsSafely(toolBody, currentToolState.schema);
+				if (partialArguments) {
+					emitArgumentsSnapshot(events, currentToolState, partialArguments);
+				}
 
 				const parsedArguments = parseAndValidateMorphXmlArguments(
 					currentToolState.tool,
@@ -809,6 +820,9 @@ function convertXmlNodeValue(node: XmlNode, schema: JsonSchema): unknown {
 	}
 
 	if (shouldTreatAsArray(node, normalizedSchema)) {
+		if (node.children.some((child) => child.name !== "item")) {
+			throw new Error("Array-valued XML nodes must wrap entries in <item> tags");
+		}
 		const itemSchema = getArrayItemSchema(normalizedSchema);
 		const itemNodes = node.children.filter((child) => child.name === "item");
 		return itemNodes.map((child) => convertXmlNodeValue(child, itemSchema));

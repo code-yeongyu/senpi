@@ -60,7 +60,10 @@ const TodoItemSchema = Type.Object({
 });
 
 const TodoWriteParams = Type.Object({
-	todos: Type.Array(TodoItemSchema, { description: "The updated todo list" }),
+	todos: Type.Array(TodoItemSchema, {
+		description: "The updated todo list",
+		minItems: 1,
+	}),
 });
 
 type TodoAccessors = {

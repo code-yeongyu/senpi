@@ -98,6 +98,32 @@ describe("hermesParseGeneratedText", () => {
 		// then
 		expect(result).toEqual([]);
 	});
+
+	it("recovers common qwen-style malformed tool call json", () => {
+		// given
+		const text = '<tool_call>\n"name\': "read", "arguments": {"path": "/tmp/example.txt"}}\n</tool_call>';
+
+		// when
+		const result = hermesParseGeneratedText(text, [
+			{
+				name: "read",
+				description: "Read a file",
+				parameters: Type.Object({
+					path: Type.String(),
+				}),
+			},
+		]);
+
+		// then
+		expect(result).toEqual([
+			{
+				name: "read",
+				arguments: {
+					path: "/tmp/example.txt",
+				},
+			},
+		]);
+	});
 });
 
 describe("hermesCreateStreamParser", () => {
@@ -208,6 +234,41 @@ describe("hermesCreateStreamParser", () => {
 				text: '<tool_call>{"name":"get_weather","arguments":{"city":"Seoul"</tool_call>',
 			},
 			{ type: "text", text: " suffix" },
+		]);
+		expect(finishEvents).toEqual([]);
+	});
+
+	it("streams recovered qwen-style malformed tool call json as a tool call instead of raw text", () => {
+		// given
+		const parser = hermesCreateStreamParser([
+			{
+				name: "read",
+				description: "Read a file",
+				parameters: Type.Object({
+					path: Type.String(),
+				}),
+			},
+		]);
+
+		// when
+		const feedEvents = parser.feed(
+			'<tool_call>\n"name\': "read", "arguments": {"path": "/tmp/example.txt"}}\n</tool_call>',
+		);
+		const finishEvents = parser.finish();
+
+		// then
+		expect(feedEvents).toEqual([
+			{ type: "toolcall_start", index: 0, name: "read", id: "hermes-tool-0" },
+			{ type: "toolcall_delta", index: 0, argumentsDelta: '{"path":"/tmp/example.txt"}' },
+			{
+				type: "toolcall_end",
+				index: 0,
+				name: "read",
+				id: "hermes-tool-0",
+				arguments: {
+					path: "/tmp/example.txt",
+				},
+			},
 		]);
 		expect(finishEvents).toEqual([]);
 	});
