@@ -6,9 +6,10 @@
  */
 
 import { resolve } from "node:path";
+import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual, supportsXhigh } from "@mariozechner/pi-ai";
+import { ProcessTerminal, setKeybindings, TUI } from "@mariozechner/pi-tui";
 import chalk from "chalk";
-import { createInterface } from "readline";
 import { type Args, type Mode, parseArgs, printHelp } from "./cli/args.js";
 import { processFileArguments } from "./cli/file-processor.js";
 import { buildInitialMessage } from "./cli/initial-message.js";
@@ -23,18 +24,27 @@ import {
 } from "./core/agent-session-services.js";
 import { AuthStorage } from "./core/auth-storage.js";
 import { exportFromFile } from "./core/export-html/index.js";
+import { KeybindingsManager } from "./core/keybindings.js";
 import type { ModelRegistry } from "./core/model-registry.js";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.js";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.js";
 import type { CreateAgentSessionOptions } from "./core/sdk.js";
+import {
+	formatMissingSessionCwdPrompt,
+	getMissingSessionCwdIssue,
+	MissingSessionCwdError,
+	type SessionCwdIssue,
+} from "./core/session-cwd.js";
 import { SessionManager } from "./core/session-manager.js";
 import { SettingsManager } from "./core/settings-manager.js";
 import { printTimings, resetTimings, time } from "./core/timings.js";
 import { allTools } from "./core/tools/index.js";
 import { runMigrations, showDeprecationWarnings } from "./migrations.js";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.js";
+import { ExtensionSelectorComponent } from "./modes/interactive/components/extension-selector.js";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.js";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.js";
+import { isLocalPath } from "./utils/paths.js";
 
 /**
  * Read all content from piped stdin.
@@ -371,7 +381,41 @@ function buildSessionOptions(
 }
 
 function resolveCliPaths(cwd: string, paths: string[] | undefined): string[] | undefined {
-	return paths?.map((value) => resolve(cwd, value));
+	return paths?.map((value) => (isLocalPath(value) ? resolve(cwd, value) : value));
+}
+
+async function promptForMissingSessionCwd(
+	issue: SessionCwdIssue,
+	settingsManager: SettingsManager,
+): Promise<string | undefined> {
+	initTheme(settingsManager.getTheme());
+	setKeybindings(KeybindingsManager.create());
+
+	return new Promise((resolve) => {
+		const ui = new TUI(new ProcessTerminal(), settingsManager.getShowHardwareCursor());
+		ui.setClearOnShrink(settingsManager.getClearOnShrink());
+
+		let settled = false;
+		const finish = (result: string | undefined) => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			ui.stop();
+			resolve(result);
+		};
+
+		const selector = new ExtensionSelectorComponent(
+			formatMissingSessionCwdPrompt(issue),
+			["Continue", "Cancel"],
+			(option) => finish(option === "Continue" ? issue.fallbackCwd : undefined),
+			() => finish(undefined),
+			{ tui: ui },
+		);
+		ui.addChild(selector);
+		ui.setFocus(selector);
+		ui.start();
+	});
 }
 
 export async function main(args: string[]) {
@@ -447,12 +491,21 @@ export async function main(args: string[]) {
 	// settings, resources, provider registrations, and models must be resolved only after
 	// the target session cwd is known. The startup-cwd settings manager is used only for
 	// sessionDir lookup during session selection.
-	const sessionManager = await createSessionManager(
-		parsed,
-		cwd,
-		parsed.sessionDir ?? startupSettingsManager.getSessionDir(),
-		startupSettingsManager,
-	);
+	const sessionDir = parsed.sessionDir ?? startupSettingsManager.getSessionDir();
+	let sessionManager = await createSessionManager(parsed, cwd, sessionDir, startupSettingsManager);
+	const missingSessionCwdIssue = getMissingSessionCwdIssue(sessionManager, cwd);
+	if (missingSessionCwdIssue) {
+		if (appMode === "interactive") {
+			const selectedCwd = await promptForMissingSessionCwd(missingSessionCwdIssue, startupSettingsManager);
+			if (!selectedCwd) {
+				process.exit(0);
+			}
+			sessionManager = SessionManager.open(missingSessionCwdIssue.sessionFile!, sessionDir, selectedCwd);
+		} else {
+			console.error(chalk.red(new MissingSessionCwdError(missingSessionCwdIssue).message));
+			process.exit(1);
+		}
+	}
 	time("createSessionManager");
 
 	const resolvedExtensionPaths = resolveCliPaths(cwd, parsed.extensions);
@@ -575,7 +628,7 @@ export async function main(args: string[]) {
 	let stdinContent: string | undefined;
 	if (appMode !== "rpc") {
 		stdinContent = await readPipedStdin();
-		if (stdinContent !== undefined) {
+		if (stdinContent !== undefined && appMode === "interactive") {
 			appMode = "print";
 		}
 	}

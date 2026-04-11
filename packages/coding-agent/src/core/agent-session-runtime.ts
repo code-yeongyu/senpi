@@ -5,6 +5,7 @@ import type { AgentSessionRuntimeDiagnostic, AgentSessionServices } from "./agen
 import type { SessionStartEvent } from "./extensions/index.js";
 import { emitSessionShutdownEvent } from "./extensions/runner.js";
 import type { CreateAgentSessionResult } from "./sdk.js";
+import { assertSessionCwdExists } from "./session-cwd.js";
 import { SessionManager } from "./session-manager.js";
 
 /**
@@ -124,14 +125,15 @@ export class AgentSessionRuntime {
 		this._modelFallbackMessage = result.modelFallbackMessage;
 	}
 
-	async switchSession(sessionPath: string): Promise<{ cancelled: boolean }> {
+	async switchSession(sessionPath: string, cwdOverride?: string): Promise<{ cancelled: boolean }> {
 		const beforeResult = await this.emitBeforeSwitch("resume", sessionPath);
 		if (beforeResult.cancelled) {
 			return beforeResult;
 		}
 
 		const previousSessionFile = this.session.sessionFile;
-		const sessionManager = SessionManager.open(sessionPath);
+		const sessionManager = SessionManager.open(sessionPath, undefined, cwdOverride);
+		assertSessionCwdExists(sessionManager, this.cwd);
 		await this.teardownCurrent();
 		this.apply(
 			await this.createRuntime({
@@ -246,7 +248,7 @@ export class AgentSessionRuntime {
 		return { cancelled: false, selectedText };
 	}
 
-	async importFromJsonl(inputPath: string): Promise<{ cancelled: boolean }> {
+	async importFromJsonl(inputPath: string, cwdOverride?: string): Promise<{ cancelled: boolean }> {
 		const resolvedPath = resolve(inputPath);
 		if (!existsSync(resolvedPath)) {
 			throw new Error(`File not found: ${resolvedPath}`);
@@ -268,7 +270,8 @@ export class AgentSessionRuntime {
 			copyFileSync(resolvedPath, destinationPath);
 		}
 
-		const sessionManager = SessionManager.open(destinationPath, sessionDir);
+		const sessionManager = SessionManager.open(destinationPath, sessionDir, cwdOverride);
+		assertSessionCwdExists(sessionManager, this.cwd);
 		await this.teardownCurrent();
 		this.apply(
 			await this.createRuntime({
@@ -302,6 +305,7 @@ export async function createAgentSessionRuntime(
 		sessionStartEvent?: SessionStartEvent;
 	},
 ): Promise<AgentSessionRuntime> {
+	assertSessionCwdExists(options.sessionManager, options.cwd);
 	const result = await createRuntime(options);
 	if (process.cwd() !== result.services.cwd) {
 		process.chdir(result.services.cwd);

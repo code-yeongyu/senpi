@@ -9,6 +9,7 @@ import type { ResourceDiagnostic } from "./diagnostics.js";
 
 export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.js";
 
+import { isLocalPath } from "../utils/paths.js";
 import { createEventBus, type EventBus } from "./event-bus.js";
 import {
 	type BuiltinExtensionFactory,
@@ -395,7 +396,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 
 		for (const p of this.additionalExtensionPaths) {
-			if (!existsSync(p)) {
+			if (isLocalPath(p) && !existsSync(p)) {
 				extensionsResult.errors.push({ path: p, error: `Extension path does not exist: ${p}` });
 			}
 		}
@@ -409,7 +410,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.lastSkillPaths = skillPaths;
 		this.updateSkillsFromPaths(skillPaths, metadataByPath);
 		for (const p of this.additionalSkillPaths) {
-			if (!existsSync(p) && !this.skillDiagnostics.some((d) => d.path === p)) {
+			if (isLocalPath(p) && !existsSync(p) && !this.skillDiagnostics.some((d) => d.path === p)) {
 				this.skillDiagnostics.push({ type: "error", message: "Skill path does not exist", path: p });
 			}
 		}
@@ -421,7 +422,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.lastPromptPaths = promptPaths;
 		this.updatePromptsFromPaths(promptPaths, metadataByPath);
 		for (const p of this.additionalPromptTemplatePaths) {
-			if (!existsSync(p) && !this.promptDiagnostics.some((d) => d.path === p)) {
+			if (isLocalPath(p) && !existsSync(p) && !this.promptDiagnostics.some((d) => d.path === p)) {
 				this.promptDiagnostics.push({ type: "error", message: "Prompt template path does not exist", path: p });
 			}
 		}
