@@ -310,7 +310,7 @@ describe("createMorphXmlStreamParser", () => {
 			.filter((event) => event.type === "text")
 			.map((event) => event.text)
 			.join("");
-		expect(hasToolCall || textOutput.length > 0).toBe(true);
+		expect(hasToolCall || textOutput.length === 0).toBe(true);
 	});
 
 	it("force-completes unfinished calls at finish when the partial xml is parseable", () => {
@@ -395,7 +395,14 @@ describe("createMorphXmlStreamParser", () => {
 
 	it("accepts whitespace in the closing tag name while streaming", () => {
 		// given
-		const parser = createMorphXmlStreamParser([weatherTool]);
+		const locationOnlyTool: Tool = {
+			name: "get_weather",
+			description: "Get weather",
+			parameters: Type.Object({
+				city: Type.String(),
+			}),
+		};
+		const parser = createMorphXmlStreamParser([locationOnlyTool]);
 
 		// when
 		const allEvents = [...parser.feed("<get_weather><city>SF</city></ get_weather>"), ...parser.finish()];
@@ -465,5 +472,38 @@ describe("createMorphXmlStreamParser", () => {
 		expect(textOutput).toContain("Checking...");
 		expect(textOutput).toContain("found!");
 		expect(textOutput).not.toContain("<get_weather>");
+	});
+
+	it("suppresses malformed xml tool markup from text output by default when parsing fails", () => {
+		// given
+		const strictTool: Tool = {
+			name: "bad_tool",
+			description: "Strict tool",
+			parameters: Type.Object({
+				name: Type.String(),
+			}),
+		};
+		const parser = createMorphXmlStreamParser([strictTool]);
+
+		// when
+		const allEvents = [
+			...parser.feed("Calling tool:\n"),
+			...parser.feed("<bad_tool><name>first</name><name>second</name></bad_tool>"),
+			...parser.feed("\nDone!"),
+			...parser.finish(),
+		];
+
+		// then
+		const toolCalls = allEvents.filter((event) => event.type === "toolcall_end");
+		const textOutput = allEvents
+			.filter((event) => event.type === "text")
+			.map((event) => event.text)
+			.join("");
+		expect(toolCalls).toHaveLength(0);
+		expect(textOutput).toContain("Calling tool:");
+		expect(textOutput).toContain("Done!");
+		expect(textOutput).not.toContain("<bad_tool>");
+		expect(textOutput).not.toContain("</bad_tool>");
+		expect(textOutput).not.toContain("<name>");
 	});
 });
