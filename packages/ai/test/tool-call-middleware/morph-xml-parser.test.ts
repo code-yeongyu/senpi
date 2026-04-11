@@ -352,4 +352,28 @@ describe("createMorphXmlStreamParser", () => {
 		expect(textOutput).not.toContain("<tool_a>");
 		expect(textOutput).not.toContain("<tool_b>");
 	});
+
+	it("parses xml tool calls correctly when streamed character by character", () => {
+		// given
+		const parser = createMorphXmlStreamParser([weatherTool]);
+		const input = "<get_weather><city>Seoul</city><days>3</days></get_weather>";
+		const events = [];
+
+		// when
+		for (const character of input) {
+			events.push(...parser.feed(character));
+		}
+		events.push(...parser.finish());
+
+		// then
+		const toolcallEnd = events.find((event) => event.type === "toolcall_end");
+		expect(toolcallEnd).toMatchObject({
+			type: "toolcall_end",
+			name: "get_weather",
+			arguments: {
+				city: "Seoul",
+				days: 3,
+			},
+		});
+	});
 });
