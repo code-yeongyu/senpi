@@ -51,6 +51,10 @@ function findClosingTagEnd(text: string, contentStart: number, toolName: string)
 	return match?.index === undefined ? -1 : match.index + match[0].length;
 }
 
+function shouldEmitRawToolCallTextOnError(options?: ParserOptions): boolean {
+	return options?.emitRawToolCallTextOnError === true;
+}
+
 export function yamlXmlFormatToolsSystemPrompt(tools: Tool[]): string {
 	if (tools.length === 0) {
 		return "";
@@ -103,7 +107,7 @@ export function yamlXmlFormatToolResponse(toolName: string, _toolCallId: string,
 	].join("\n");
 }
 
-export function parseYamlXmlGeneratedText(text: string, tools: Tool[], _options?: ParserOptions): ParsedToolCall[] {
+export function parseYamlXmlGeneratedText(text: string, tools: Tool[], options?: ParserOptions): ParsedToolCall[] {
 	if (tools.length === 0 || text.length === 0) {
 		return [];
 	}
@@ -146,6 +150,10 @@ export function parseYamlXmlGeneratedText(text: string, tools: Tool[], _options?
 				name: openingTag.name,
 				arguments: parsedArguments,
 			});
+		} else {
+			options?.onError?.("Could not process YAML XML tool call, keeping original text.", {
+				toolCall: text.slice(absoluteIndex, closingTagEnd),
+			});
 		}
 
 		cursor = closingTagEnd;
@@ -154,7 +162,7 @@ export function parseYamlXmlGeneratedText(text: string, tools: Tool[], _options?
 	return parsedToolCalls;
 }
 
-export function createYamlXmlStreamParser(tools: Tool[], _options?: ParserOptions): StreamParser {
+export function createYamlXmlStreamParser(tools: Tool[], options?: ParserOptions): StreamParser {
 	const toolNames = tools.map((tool) => tool.name);
 	let buffer = "";
 	let currentToolState: {
@@ -213,7 +221,12 @@ export function createYamlXmlStreamParser(tools: Tool[], _options?: ParserOption
 				const parsedArguments = parseYamlMapping(yamlContent);
 				buffer = buffer.slice(closingTagMatch.index + closingTagMatch[0].length);
 				if (parsedArguments === null) {
-					events.push({ type: "text", text: originalCallText });
+					options?.onError?.("Could not process YAML XML tool call, keeping original text.", {
+						toolCall: originalCallText,
+					});
+					if (shouldEmitRawToolCallTextOnError(options)) {
+						events.push({ type: "text", text: originalCallText });
+					}
 					currentToolState = null;
 					continue;
 				}
@@ -290,7 +303,33 @@ export function createYamlXmlStreamParser(tools: Tool[], _options?: ParserOption
 				buffer = "";
 			}
 			if (currentToolState && buffer.length > 0) {
-				events.push({ type: "text", text: `<${currentToolState.name}>${buffer}` });
+				const parsedArguments = parseYamlMapping(buffer);
+				if (parsedArguments !== null) {
+					emitSnapshot(events, buffer);
+					if (currentToolState.lastArgumentsSnapshot === null) {
+						events.push({
+							type: "toolcall_start",
+							index: currentToolState.index,
+							name: currentToolState.name,
+							id: currentToolState.id,
+						});
+					}
+					events.push({
+						type: "toolcall_end",
+						index: currentToolState.index,
+						name: currentToolState.name,
+						id: currentToolState.id,
+						arguments: parsedArguments,
+					});
+				} else {
+					const rawToolCall = `<${currentToolState.name}>${buffer}`;
+					options?.onError?.("Could not complete streaming YAML XML tool call at finish.", {
+						toolCall: rawToolCall,
+					});
+					if (shouldEmitRawToolCallTextOnError(options)) {
+						events.push({ type: "text", text: rawToolCall });
+					}
+				}
 				buffer = "";
 				currentToolState = null;
 			}

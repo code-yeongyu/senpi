@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
 	createYamlXmlStreamParser,
 	parseYamlXmlGeneratedText,
@@ -212,6 +212,19 @@ location: Seoul
 			},
 		]);
 	});
+
+	it("reports invalid yaml through onError", () => {
+		// given
+		const onError = vi.fn();
+		const text = "<get_weather>\n[invalid: yaml:\n</get_weather>";
+
+		// when
+		const parsedToolCalls = parseYamlXmlGeneratedText(text, [weatherTool], { onError });
+
+		// then
+		expect(parsedToolCalls).toEqual([]);
+		expect(onError).toHaveBeenCalled();
+	});
 });
 
 describe("createYamlXmlStreamParser", () => {
@@ -340,6 +353,88 @@ describe("createYamlXmlStreamParser", () => {
 				contents: "Line one\nLine two\n",
 			},
 		});
+	});
+
+	it("suppresses invalid yaml tool markup by default and reports onError", () => {
+		// given
+		const onError = vi.fn();
+		const parser = createYamlXmlStreamParser([weatherTool], { onError });
+
+		// when
+		const allEvents = [
+			...parser.feed("prefix <get_weather>\n[invalid: yaml:\n</get_weather> suffix"),
+			...parser.finish(),
+		];
+
+		// then
+		expect(allEvents).toEqual([
+			{ type: "text", text: "prefix " },
+			{ type: "text", text: " suffix" },
+		]);
+		expect(onError).toHaveBeenCalled();
+	});
+
+	it("emits invalid yaml tool markup when raw fallback is enabled", () => {
+		// given
+		const parser = createYamlXmlStreamParser([weatherTool], { emitRawToolCallTextOnError: true });
+
+		// when
+		const allEvents = [
+			...parser.feed("prefix <get_weather>\n[invalid: yaml:\n</get_weather> suffix"),
+			...parser.finish(),
+		];
+
+		// then
+		expect(allEvents).toEqual([
+			{ type: "text", text: "prefix " },
+			{ type: "text", text: "<get_weather>\n[invalid: yaml:\n</get_weather>" },
+			{ type: "text", text: " suffix" },
+		]);
+	});
+
+	it("force-completes unfinished yaml tool calls at finish when the content is parseable", () => {
+		// given
+		const parser = createYamlXmlStreamParser([weatherTool]);
+
+		// when
+		const allEvents = [...parser.feed("<get_weather>\ncity: Seoul"), ...parser.finish()];
+
+		// then
+		expect(allEvents).toEqual([
+			{ type: "toolcall_start", index: 0, name: "get_weather", id: "yaml-xml-tool-0" },
+			{ type: "toolcall_delta", index: 0, argumentsDelta: '{"city":"Seoul"}' },
+			{
+				type: "toolcall_end",
+				index: 0,
+				name: "get_weather",
+				id: "yaml-xml-tool-0",
+				arguments: { city: "Seoul" },
+			},
+		]);
+	});
+
+	it("suppresses unfinished invalid yaml tool calls at finish by default", () => {
+		// given
+		const onError = vi.fn();
+		const parser = createYamlXmlStreamParser([weatherTool], { onError });
+
+		// when
+		const allEvents = [...parser.feed("<get_weather>\n[invalid: yaml:"), ...parser.finish()];
+
+		// then
+		expect(allEvents).toEqual([]);
+		expect(onError).toHaveBeenCalled();
+	});
+
+	it("emits unfinished invalid yaml tool calls at finish when raw fallback is enabled", () => {
+		// given
+		const parser = createYamlXmlStreamParser([weatherTool], { emitRawToolCallTextOnError: true });
+
+		// when
+		const allEvents = [...parser.feed("<get_weather>\n[invalid: yaml:"), ...parser.finish()];
+
+		// then
+		expect(allEvents).toEqual([{ type: "text", text: "<get_weather>\n[invalid: yaml:" }]);
 	});
 
 	it.each([0, 1, 7, 13, 21])("keeps yaml xml parsing stable across random chunk splits (seed %s)", (seed) => {
