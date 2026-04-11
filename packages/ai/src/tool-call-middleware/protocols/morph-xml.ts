@@ -577,7 +577,28 @@ export function createMorphXmlStreamParser(tools: Tool[]): StreamParser {
 				const originalCallText = `<${currentToolState.name}>${toolBody}${closingTagMatch[0]}`;
 				buffer = buffer.slice(closingTagMatch.index + closingTagMatch[0].length);
 				if (!parsedArguments) {
-					if (!currentToolState.started) {
+					if (currentToolState.lastArgumentsSnapshot) {
+						const recoveredArguments = JSON.parse(currentToolState.lastArgumentsSnapshot) as Record<
+							string,
+							unknown
+						>;
+						if (!currentToolState.started) {
+							events.push({
+								type: "toolcall_start",
+								index: currentToolState.index,
+								name: currentToolState.name,
+								id: currentToolState.id,
+							});
+							currentToolState.started = true;
+						}
+						events.push({
+							type: "toolcall_end",
+							index: currentToolState.index,
+							name: currentToolState.name,
+							id: currentToolState.id,
+							arguments: recoveredArguments,
+						});
+					} else {
 						events.push({ type: "text", text: originalCallText });
 					}
 					currentToolState = null;
@@ -679,6 +700,58 @@ export function createMorphXmlStreamParser(tools: Tool[]): StreamParser {
 			if (!currentToolState && buffer.length > 0) {
 				events.push({ type: "text", text: buffer });
 				buffer = "";
+			}
+
+			if (currentToolState) {
+				const parsedArguments = parseAndValidateMorphXmlArguments(
+					currentToolState.tool,
+					buffer,
+					currentToolState.schema,
+				);
+				if (parsedArguments) {
+					if (!currentToolState.started) {
+						events.push({
+							type: "toolcall_start",
+							index: currentToolState.index,
+							name: currentToolState.name,
+							id: currentToolState.id,
+						});
+						currentToolState.started = true;
+					}
+					if (currentToolState.lastArgumentsSnapshot !== JSON.stringify(parsedArguments)) {
+						emitArgumentsSnapshot(events, currentToolState, parsedArguments);
+					}
+					events.push({
+						type: "toolcall_end",
+						index: currentToolState.index,
+						name: currentToolState.name,
+						id: currentToolState.id,
+						arguments: parsedArguments,
+					});
+				} else if (currentToolState.lastArgumentsSnapshot) {
+					const recoveredArguments = JSON.parse(currentToolState.lastArgumentsSnapshot) as Record<string, unknown>;
+					if (!currentToolState.started) {
+						events.push({
+							type: "toolcall_start",
+							index: currentToolState.index,
+							name: currentToolState.name,
+							id: currentToolState.id,
+						});
+						currentToolState.started = true;
+					}
+					events.push({
+						type: "toolcall_end",
+						index: currentToolState.index,
+						name: currentToolState.name,
+						id: currentToolState.id,
+						arguments: recoveredArguments,
+					});
+				} else {
+					events.push({ type: "text", text: `<${currentToolState.name}>${buffer}` });
+				}
+
+				buffer = "";
+				currentToolState = null;
 			}
 
 			return events;

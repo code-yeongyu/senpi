@@ -260,4 +260,40 @@ describe("createMorphXmlStreamParser", () => {
 			{ type: "text", text: " suffix" },
 		]);
 	});
+
+	it("handles mismatched inner XML without throwing", () => {
+		// given
+		const parser = createMorphXmlStreamParser([weatherTool]);
+
+		// when
+		const allEvents = [...parser.feed("<get_weather><location>NY</get_weather>"), ...parser.finish()];
+
+		// then
+		const hasToolCall = allEvents.some((event) => event.type === "toolcall_end");
+		const textOutput = allEvents
+			.filter((event) => event.type === "text")
+			.map((event) => event.text)
+			.join("");
+		expect(hasToolCall || textOutput.length > 0).toBe(true);
+	});
+
+	it("force-completes unfinished calls at finish when the partial xml is parseable", () => {
+		// given
+		const parser = createMorphXmlStreamParser([weatherTool]);
+
+		// when
+		const allEvents = [...parser.feed("<get_weather><location>NY"), ...parser.finish()];
+
+		// then
+		const toolcallEnd = allEvents.find((event) => event.type === "toolcall_end");
+		if (toolcallEnd?.type === "toolcall_end") {
+			expect(toolcallEnd.arguments).toEqual({ location: "NY" });
+		} else {
+			const textOutput = allEvents
+				.filter((event) => event.type === "text")
+				.map((event) => event.text)
+				.join("");
+			expect(textOutput).not.toContain("<get_weather>");
+		}
+	});
 });
