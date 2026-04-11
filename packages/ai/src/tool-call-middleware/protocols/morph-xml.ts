@@ -354,6 +354,10 @@ type StreamToolState = {
 	tool: Tool | undefined;
 };
 
+function shouldEmitRawToolCallTextOnError(options?: ParserOptions): boolean {
+	return options?.emitRawToolCallTextOnError === true;
+}
+
 function getSchemaTypesFromValue(schema: JsonSchema): string[] {
 	if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
 		return [];
@@ -462,7 +466,7 @@ function parseMorphXmlPartialArgumentsSafely(toolBody: string, schema: JsonSchem
 	}
 }
 
-export function parseMorphXmlGeneratedText(text: string, tools: Tool[], _options?: ParserOptions): ParsedToolCall[] {
+export function parseMorphXmlGeneratedText(text: string, tools: Tool[], options?: ParserOptions): ParsedToolCall[] {
 	if (tools.length === 0 || text.length === 0) {
 		return [];
 	}
@@ -476,6 +480,9 @@ export function parseMorphXmlGeneratedText(text: string, tools: Tool[], _options
 		while (selfClosingMatch) {
 			const parsedArguments = parseAndValidateMorphXmlArguments(tool, "", toolSchemaMap.get(tool.name));
 			if (!parsedArguments) {
+				options?.onError?.("Could not process XML tool call.", {
+					toolCall: selfClosingMatch.tag,
+				});
 				selfClosingMatch = findSelfClosingToolTag(
 					text,
 					tool.name,
@@ -502,6 +509,9 @@ export function parseMorphXmlGeneratedText(text: string, tools: Tool[], _options
 				toolSchemaMap.get(tool.name),
 			);
 			if (!parsedArguments) {
+				options?.onError?.("Could not process XML tool call.", {
+					toolCall: match[0],
+				});
 				continue;
 			}
 			parsedToolCalls.push({
@@ -514,7 +524,7 @@ export function parseMorphXmlGeneratedText(text: string, tools: Tool[], _options
 	return parsedToolCalls;
 }
 
-export function createMorphXmlStreamParser(tools: Tool[], _options?: ParserOptions): StreamParser {
+export function createMorphXmlStreamParser(tools: Tool[], options?: ParserOptions): StreamParser {
 	const toolSchemaMap = createToolSchemaMap(tools);
 	const toolNames = tools.map((tool) => tool.name);
 	const toolMap = new Map(tools.map((tool) => [tool.name, tool]));
@@ -585,7 +595,10 @@ export function createMorphXmlStreamParser(tools: Tool[], _options?: ParserOptio
 				const originalCallText = `<${currentToolState.name}>${toolBody}${closingTagMatch[0]}`;
 				buffer = buffer.slice(closingTagMatch.index + closingTagMatch[0].length);
 				if (!parsedArguments) {
-					if (!currentToolState.started) {
+					options?.onError?.("Could not process streaming XML tool call.", {
+						toolCall: originalCallText,
+					});
+					if (!currentToolState.started && shouldEmitRawToolCallTextOnError(options)) {
 						events.push({ type: "text", text: originalCallText });
 					}
 					currentToolState = null;
@@ -635,7 +648,12 @@ export function createMorphXmlStreamParser(tools: Tool[], _options?: ParserOptio
 				const schema = toolSchemaMap.get(openingTag.name);
 				const parsedArguments = parseAndValidateMorphXmlArguments(tool, "", schema);
 				if (!parsedArguments) {
-					events.push({ type: "text", text: openingTag.tag });
+					options?.onError?.("Could not process XML tool call.", {
+						toolCall: openingTag.tag,
+					});
+					if (shouldEmitRawToolCallTextOnError(options)) {
+						events.push({ type: "text", text: openingTag.tag });
+					}
 					continue;
 				}
 				const id = globalThis.crypto.randomUUID();
@@ -734,7 +752,13 @@ export function createMorphXmlStreamParser(tools: Tool[], _options?: ParserOptio
 						arguments: recoveredArguments,
 					});
 				} else {
-					events.push({ type: "text", text: `<${currentToolState.name}>${buffer}` });
+					const rawToolCall = `<${currentToolState.name}>${buffer}`;
+					options?.onError?.("Could not complete streaming XML tool call at finish.", {
+						toolCall: rawToolCall,
+					});
+					if (shouldEmitRawToolCallTextOnError(options)) {
+						events.push({ type: "text", text: rawToolCall });
+					}
 				}
 
 				buffer = "";

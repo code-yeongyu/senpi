@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
 	createMorphXmlStreamParser,
 	parseMorphXmlGeneratedText,
@@ -158,6 +158,19 @@ describe("parseMorphXmlGeneratedText", () => {
 			},
 		]);
 	});
+
+	it("reports invalid xml tool calls through onError", () => {
+		// given
+		const onError = vi.fn();
+		const text = "<todowrite><todos><item/></todos></todowrite>";
+
+		// when
+		const parsedToolCalls = parseMorphXmlGeneratedText(text, [todoWriteTool], { onError });
+
+		// then
+		expect(parsedToolCalls).toEqual([]);
+		expect(onError).toHaveBeenCalled();
+	});
 });
 
 describe("createMorphXmlStreamParser", () => {
@@ -225,7 +238,7 @@ describe("createMorphXmlStreamParser", () => {
 		);
 	});
 
-	it("falls back to text when a self-closing array<object> item cannot satisfy the schema", () => {
+	it("suppresses malformed array<object> xml by default when it cannot satisfy the schema", () => {
 		// given
 		const parser = createMorphXmlStreamParser([todoWriteTool]);
 
@@ -233,7 +246,7 @@ describe("createMorphXmlStreamParser", () => {
 		const allEvents = [...parser.feed("<todowrite><todos><item/></todos></todowrite>"), ...parser.finish()];
 
 		// then
-		expect(allEvents).toEqual([{ type: "text", text: "<todowrite><todos><item/></todos></todowrite>" }]);
+		expect(allEvents).toEqual([]);
 	});
 
 	it("does not emit partial toolcall progress for arrays that violate minItems before the call is complete", () => {
@@ -246,9 +259,7 @@ describe("createMorphXmlStreamParser", () => {
 
 		// then
 		expect(firstEvents).toEqual([]);
-		expect(secondEvents).toEqual([
-			{ type: "text", text: "<todowrite><todos></todos><content>x</content></todowrite>" },
-		]);
+		expect(secondEvents).toEqual([]);
 	});
 
 	it("parses self-closing tool calls in the stream", () => {
@@ -311,6 +322,67 @@ describe("createMorphXmlStreamParser", () => {
 			.map((event) => event.text)
 			.join("");
 		expect(hasToolCall || textOutput.length === 0).toBe(true);
+	});
+
+	it("suppresses malformed xml tool markup by default and reports onError", () => {
+		// given
+		const onError = vi.fn();
+		const parser = createMorphXmlStreamParser([todoWriteTool], { onError });
+
+		// when
+		const allEvents = [
+			...parser.feed("prefix <todowrite><todos><item/></todos></todowrite> suffix"),
+			...parser.finish(),
+		];
+
+		// then
+		expect(allEvents).toEqual([
+			{ type: "text", text: "prefix " },
+			{ type: "text", text: " suffix" },
+		]);
+		expect(onError).toHaveBeenCalled();
+	});
+
+	it("emits malformed xml tool markup when raw fallback is explicitly enabled", () => {
+		// given
+		const parser = createMorphXmlStreamParser([todoWriteTool], { emitRawToolCallTextOnError: true });
+
+		// when
+		const allEvents = [
+			...parser.feed("prefix <todowrite><todos><item/></todos></todowrite> suffix"),
+			...parser.finish(),
+		];
+
+		// then
+		expect(allEvents).toEqual([
+			{ type: "text", text: "prefix " },
+			{ type: "text", text: "<todowrite><todos><item/></todos></todowrite>" },
+			{ type: "text", text: " suffix" },
+		]);
+	});
+
+	it("suppresses unfinished invalid xml tool calls at finish by default", () => {
+		// given
+		const onError = vi.fn();
+		const parser = createMorphXmlStreamParser([todoWriteTool], { onError });
+
+		// when
+		const allEvents = [...parser.feed("<todowrite><todos><item/></todos>"), ...parser.finish()];
+
+		// then
+		expect(allEvents).toEqual([]);
+		expect(onError).toHaveBeenCalled();
+	});
+
+	it("emits unfinished invalid xml tool calls at finish when raw fallback is enabled", () => {
+		// given
+		const parser = createMorphXmlStreamParser([todoWriteTool], { emitRawToolCallTextOnError: true });
+
+		// when
+		const allEvents = [...parser.feed("<todowrite><todos><item/></todos>"), ...parser.finish()];
+
+		// then
+		expect(allEvents).toEqual([{ type: "text", text: "<todowrite><todos><item/></todos>" }]);
 	});
 
 	it("force-completes unfinished calls at finish when the partial xml is parseable", () => {
