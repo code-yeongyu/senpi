@@ -7,6 +7,26 @@ import {
 } from "../../src/tool-call-middleware/protocols/yaml-xml.js";
 import type { Tool } from "../../src/types.js";
 
+function seededRandom(seed: number): () => number {
+	let current = seed;
+	return () => {
+		current = (current * 9301 + 49_297) % 233_280;
+		return current / 233_280;
+	};
+}
+
+function randomChunkSplit(text: string, minSize = 1, maxSize = 8, seed = 0): string[] {
+	const random = seededRandom(seed);
+	const chunks: string[] = [];
+	let index = 0;
+	while (index < text.length) {
+		const size = Math.floor(random() * (maxSize - minSize + 1)) + minSize;
+		chunks.push(text.slice(index, index + size));
+		index += size;
+	}
+	return chunks;
+}
+
 const weatherTool: Tool = {
 	name: "get_weather",
 	description: "Get weather for a location",
@@ -320,5 +340,37 @@ describe("createYamlXmlStreamParser", () => {
 				contents: "Line one\nLine two\n",
 			},
 		});
+	});
+
+	it.each([0, 1, 7, 13, 21])("keeps yaml xml parsing stable across random chunk splits (seed %s)", (seed) => {
+		// given
+		const parser = createYamlXmlStreamParser([weatherTool]);
+		const input = "Checking... <get_weather>\nlocation: NYC\nunit: celsius\n</get_weather> found!";
+		const chunks = randomChunkSplit(input, 1, 8, seed);
+		const events = [];
+
+		// when
+		for (const chunk of chunks) {
+			events.push(...parser.feed(chunk));
+		}
+		events.push(...parser.finish());
+
+		// then
+		const toolcallEnd = events.find((event) => event.type === "toolcall_end");
+		const textOutput = events
+			.filter((event) => event.type === "text")
+			.map((event) => event.text)
+			.join("");
+		expect(toolcallEnd).toMatchObject({
+			type: "toolcall_end",
+			name: "get_weather",
+			arguments: {
+				location: "NYC",
+				unit: "celsius",
+			},
+		});
+		expect(textOutput).toContain("Checking...");
+		expect(textOutput).toContain("found!");
+		expect(textOutput).not.toContain("<get_weather>");
 	});
 });
