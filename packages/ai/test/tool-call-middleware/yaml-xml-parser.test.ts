@@ -95,6 +95,28 @@ describe("parseYamlXmlGeneratedText", () => {
 			},
 		]);
 	});
+
+	it("parses self-closing tags with surrounding text", () => {
+		// given
+		const text = "Getting your location now... <get_location/> Done!";
+
+		// when
+		const parsedToolCalls = parseYamlXmlGeneratedText(text, [
+			{
+				name: "get_location",
+				description: "Get location",
+				parameters: Type.Object({}),
+			},
+		]);
+
+		// then
+		expect(parsedToolCalls).toEqual([
+			{
+				name: "get_location",
+				arguments: {},
+			},
+		]);
+	});
 });
 
 describe("createYamlXmlStreamParser", () => {
@@ -118,6 +140,28 @@ describe("createYamlXmlStreamParser", () => {
 					city: "Seoul",
 				},
 			},
+		]);
+	});
+
+	it("parses self-closing tags with surrounding text in the stream", () => {
+		// given
+		const parser = createYamlXmlStreamParser([
+			{
+				name: "get_location",
+				description: "Get location",
+				parameters: Type.Object({}),
+			},
+		]);
+
+		// when
+		const allEvents = [...parser.feed("prefix <get_location /> suffix"), ...parser.finish()];
+
+		// then
+		expect(allEvents).toEqual([
+			{ type: "text", text: "prefix " },
+			{ type: "toolcall_start", index: 0, name: "get_location", id: "yaml-xml-tool-0" },
+			{ type: "toolcall_end", index: 0, name: "get_location", id: "yaml-xml-tool-0", arguments: {} },
+			{ type: "text", text: " suffix" },
 		]);
 	});
 });
