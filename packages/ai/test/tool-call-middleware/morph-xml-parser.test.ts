@@ -30,6 +30,12 @@ describe("parseMorphXmlGeneratedText", () => {
 		}),
 	};
 
+	const locationTool: Tool = {
+		name: "get_location",
+		description: "Get the location",
+		parameters: Type.Object({}),
+	};
+
 	it("parses multiple XML tool calls with string and number parameters", () => {
 		// given
 		const text = [
@@ -100,6 +106,38 @@ describe("parseMorphXmlGeneratedText", () => {
 		// then
 		expect(parsedToolCalls).toEqual([]);
 	});
+
+	it("parses self-closing tool calls without arguments", () => {
+		// given
+		const text = "<get_location/>";
+
+		// when
+		const parsedToolCalls = parseMorphXmlGeneratedText(text, [locationTool]);
+
+		// then
+		expect(parsedToolCalls).toEqual([
+			{
+				name: "get_location",
+				arguments: {},
+			},
+		]);
+	});
+
+	it("parses self-closing tool calls with surrounding text", () => {
+		// given
+		const text = "prefix <get_location /> suffix";
+
+		// when
+		const parsedToolCalls = parseMorphXmlGeneratedText(text, [locationTool]);
+
+		// then
+		expect(parsedToolCalls).toEqual([
+			{
+				name: "get_location",
+				arguments: {},
+			},
+		]);
+	});
 });
 
 describe("createMorphXmlStreamParser", () => {
@@ -124,6 +162,12 @@ describe("createMorphXmlStreamParser", () => {
 				}),
 			),
 		}),
+	};
+
+	const locationTool: Tool = {
+		name: "get_location",
+		description: "Get the location",
+		parameters: Type.Object({}),
 	};
 
 	it("emits streaming events while parsing incremental XML tool call content", () => {
@@ -184,6 +228,36 @@ describe("createMorphXmlStreamParser", () => {
 		expect(firstEvents).toEqual([]);
 		expect(secondEvents).toEqual([
 			{ type: "text", text: "<todowrite><todos></todos><content>x</content></todowrite>" },
+		]);
+	});
+
+	it("parses self-closing tool calls in the stream", () => {
+		// given
+		const parser = createMorphXmlStreamParser([locationTool]);
+
+		// when
+		const allEvents = [...parser.feed("<get_location/>"), ...parser.finish()];
+
+		// then
+		expect(allEvents).toEqual([
+			{ type: "toolcall_start", index: 0, name: "get_location", id: expect.any(String) },
+			{ type: "toolcall_end", index: 0, name: "get_location", id: expect.any(String), arguments: {} },
+		]);
+	});
+
+	it("parses self-closing tool calls with surrounding text in the stream", () => {
+		// given
+		const parser = createMorphXmlStreamParser([locationTool]);
+
+		// when
+		const allEvents = [...parser.feed("prefix <get_location /> suffix"), ...parser.finish()];
+
+		// then
+		expect(allEvents).toEqual([
+			{ type: "text", text: "prefix " },
+			{ type: "toolcall_start", index: 0, name: "get_location", id: expect.any(String) },
+			{ type: "toolcall_end", index: 0, name: "get_location", id: expect.any(String), arguments: {} },
+			{ type: "text", text: " suffix" },
 		]);
 	});
 });
