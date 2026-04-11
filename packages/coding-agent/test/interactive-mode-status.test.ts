@@ -125,6 +125,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 			chatContainer: new Container(),
 			settingsManager: {
 				getQuietStartup: () => options.quietStartup,
+				getDisabledBuiltinExtensions: () => [],
 			},
 			session: {
 				promptTemplates: [],
