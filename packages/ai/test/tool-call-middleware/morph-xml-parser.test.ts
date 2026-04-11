@@ -261,6 +261,22 @@ describe("createMorphXmlStreamParser", () => {
 		]);
 	});
 
+	it("parses self-closing tool calls when whitespace appears after the opening bracket across chunks", () => {
+		// given
+		const parser = createMorphXmlStreamParser([locationTool]);
+
+		// when
+		const allEvents = [...parser.feed("prefix < get_loc"), ...parser.feed("ation/> suffix"), ...parser.finish()];
+
+		// then
+		expect(allEvents).toEqual([
+			{ type: "text", text: "prefix " },
+			{ type: "toolcall_start", index: 0, name: "get_location", id: expect.any(String) },
+			{ type: "toolcall_end", index: 0, name: "get_location", id: expect.any(String), arguments: {} },
+			{ type: "text", text: " suffix" },
+		]);
+	});
+
 	it("handles mismatched inner XML without throwing", () => {
 		// given
 		const parser = createMorphXmlStreamParser([weatherTool]);

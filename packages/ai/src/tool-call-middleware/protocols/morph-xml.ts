@@ -1138,9 +1138,17 @@ function getSafeTextLength(text: string, toolNames: string[]): number {
 	}
 
 	const trailingCandidate = text.slice(lastTagIndex);
-	const hasPotentialToolStart = toolNames.some(
-		(toolName) => `<${toolName}>`.startsWith(trailingCandidate) || `<${toolName}/>`.startsWith(trailingCandidate),
-	);
+	const hasPotentialToolStart = toolNames.some((toolName) => {
+		const candidates = [
+			`<${toolName}>`,
+			`<${toolName}/>`,
+			`< ${toolName}>`,
+			`< ${toolName}/>`,
+			`<${toolName} />`,
+			`< ${toolName} />`,
+		];
+		return candidates.some((candidate) => candidate.startsWith(trailingCandidate));
+	});
 	if (!hasPotentialToolStart) {
 		return text.length;
 	}
