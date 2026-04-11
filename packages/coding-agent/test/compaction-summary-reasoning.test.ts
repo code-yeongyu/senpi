@@ -2,6 +2,7 @@ import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, Model } from "@mariozechner/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { generateSummary } from "../src/core/compaction/index.js";
+import { SANEPI_SYSTEM_PREFIX } from "../src/core/extensions/builtin/system-messages.js";
 
 const { completeSimpleMock } = vi.hoisted(() => ({
 	completeSimpleMock: vi.fn(),
@@ -74,5 +75,34 @@ describe("generateSummary reasoning options", () => {
 			apiKey: "test-key",
 		});
 		expect(completeSimpleMock.mock.calls[0][2]).not.toHaveProperty("reasoning");
+	});
+
+	it("excludes background task system reminders from the summarization prompt", async () => {
+		// given
+		const currentMessages: AgentMessage[] = [
+			{ role: "user", content: "Fix the compaction system.", timestamp: Date.now() },
+			{
+				role: "custom",
+				customType: "background-task.complete",
+				content: `${SANEPI_SYSTEM_PREFIX}\n<system-reminder>\nUse background_output(task_id="bg_123")\n</system-reminder>`,
+				display: true,
+				timestamp: Date.now() + 1,
+			},
+			{
+				...mockSummaryResponse,
+				content: [{ type: "text", text: "I found the compaction path." }],
+			},
+		];
+
+		// when
+		await generateSummary(currentMessages, createModel(false), 2000, "test-key");
+
+		// then
+		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
+		const promptText = completeSimpleMock.mock.calls[0][1].messages[0].content[0].text;
+		expect(promptText).toContain("Fix the compaction system.");
+		expect(promptText).not.toContain("background_output(task_id");
+		expect(promptText).not.toContain("<system-reminder>");
+		expect(promptText).not.toContain(SANEPI_SYSTEM_PREFIX);
 	});
 });

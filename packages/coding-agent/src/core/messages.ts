@@ -23,6 +23,22 @@ export const BRANCH_SUMMARY_PREFIX = `The following is a summary of a branch tha
 
 export const BRANCH_SUMMARY_SUFFIX = `</summary>`;
 
+const CONTEXT_EXCLUDED_CUSTOM_TYPES = new Set(["background-task.complete"]);
+
+export function isContextExcludedCustomMessage(customType: string): boolean {
+	return CONTEXT_EXCLUDED_CUSTOM_TYPES.has(customType);
+}
+
+export function filterContextExcludedMessages(messages: AgentMessage[]): AgentMessage[] {
+	return messages.filter((message) => {
+		if (message.role !== "custom") {
+			return true;
+		}
+
+		return !isContextExcludedCustomMessage(message.customType);
+	});
+}
+
 /**
  * Message type for bash executions via the ! command.
  */
@@ -160,6 +176,10 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						timestamp: m.timestamp,
 					};
 				case "custom": {
+					if (isContextExcludedCustomMessage(m.customType)) {
+						return undefined;
+					}
+
 					const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
 					return {
 						role: "user",

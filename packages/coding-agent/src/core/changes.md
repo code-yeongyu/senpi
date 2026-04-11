@@ -19,3 +19,9 @@
 - `DefaultResourceLoader` now skips builtin factories whose ids are listed in settings (for example `"background-task"` to hide the `task` tool and related background-task builtins).
 - This had to be done in core because builtin extensions are instantiated during early resource bootstrap, before project extensions can intercept or unregister them.
 - Expected merge-conflict zone on upstream sync: settings schema/getters in `src/core/settings-manager.ts` and builtin factory loading in `src/core/resource-loader.ts`.
+
+## exclude background-task reminders from compaction context
+
+- Changed `src/core/messages.ts`, `src/core/compaction/compaction.ts`, `src/core/compaction/branch-summarization.ts`, and `src/core/agent-session.ts` so builtin `background-task.complete` system reminders are excluded from LLM context, summary generation, compaction boundary calculation, and token estimation.
+- This was changed in core because the reminders are injected as `custom_message` session entries before compaction/branch summarization runs, so an extension cannot reliably strip them from every internal context-building path.
+- Expected merge-conflict zone on upstream sync: custom-message conversion in `src/core/messages.ts`, entry-to-message/boundary filtering in `src/core/compaction/*.ts`, and context usage estimation in `src/core/agent-session.ts`.

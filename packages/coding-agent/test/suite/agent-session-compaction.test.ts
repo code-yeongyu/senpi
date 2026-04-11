@@ -1,6 +1,13 @@
 import { type AssistantMessage, fauxAssistantMessage, type Model } from "@mariozechner/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { estimateContextTokens } from "../../src/core/compaction/index.js";
+import { SANEPI_SYSTEM_PREFIX } from "../../src/core/extensions/builtin/system-messages.js";
 import { createHarness, type Harness } from "./harness.js";
+
+const BACKGROUND_REMINDER_TEXT = `${SANEPI_SYSTEM_PREFIX}
+<system-reminder>
+Use background_output(task_id="bg_123")
+</system-reminder>`;
 
 type SessionWithCompactionInternals = {
 	_checkCompaction: (assistantMessage: AssistantMessage, skipAbortedCheck?: boolean) => Promise<void>;
@@ -21,6 +28,7 @@ function createUsage(totalTokens: number) {
 function createAssistant(
 	harness: Harness,
 	options: {
+		text?: string;
 		stopReason?: AssistantMessage["stopReason"];
 		errorMessage?: string;
 		totalTokens?: number;
@@ -29,7 +37,7 @@ function createAssistant(
 ): AssistantMessage {
 	const model = harness.getModel();
 	return {
-		...fauxAssistantMessage("", {
+		...fauxAssistantMessage(options.text ?? "", {
 			stopReason: options.stopReason,
 			errorMessage: options.errorMessage,
 			timestamp: options.timestamp,
@@ -78,6 +86,78 @@ describe("AgentSession compaction characterization", () => {
 		expect(result.summary).toBe("summary from extension");
 		expect(compactionEntries).toHaveLength(1);
 		expect(harness.session.messages[0]?.role).toBe("compactionSummary");
+	});
+
+	it("manual session.compact excludes background task reminders from preparation and token estimates", async () => {
+		// given
+		const userText = "Investigate why /compact is broken. ".repeat(120).trim();
+		const assistantText = "I am checking the compaction path. ".repeat(120).trim();
+		const trailingUserText = "Port the fix with tests. ".repeat(120).trim();
+		const captured: {
+			firstKeptEntryId?: string;
+			tokensBefore?: number;
+		} = {};
+
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 20 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => {
+						captured.firstKeptEntryId = event.preparation.firstKeptEntryId;
+						captured.tokensBefore = event.preparation.tokensBefore;
+
+						return {
+							compaction: {
+								summary: "filtered manual compaction summary",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: event.preparation.tokensBefore,
+							},
+						};
+					});
+				},
+			],
+		});
+
+		harnesses.push(harness);
+
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: userText }],
+			timestamp: Date.now() - 2_000,
+		});
+		const assistantMessage = createAssistant(harness, {
+			text: assistantText,
+			stopReason: "stop",
+			totalTokens: 9_000,
+			timestamp: Date.now() - 1_000,
+		});
+		const trailingUserMessage = {
+			role: "user" as const,
+			content: [{ type: "text" as const, text: trailingUserText }],
+			timestamp: Date.now(),
+		};
+
+		harness.sessionManager.appendMessage(assistantMessage);
+		harness.sessionManager.appendCustomMessageEntry("background-task.complete", BACKGROUND_REMINDER_TEXT, true);
+		const reminderEntryId = harness.sessionManager.getEntries()[harness.sessionManager.getEntries().length - 1]?.id;
+		harness.sessionManager.appendMessage({
+			...trailingUserMessage,
+		});
+
+		// when
+		await harness.session.compact();
+
+		// then
+		expect(captured.firstKeptEntryId).not.toBe(reminderEntryId);
+		expect(captured.firstKeptEntryId).toBeDefined();
+		expect(captured.firstKeptEntryId).not.toBeUndefined();
+		expect(captured.tokensBefore).toBe(
+			estimateContextTokens([
+				{ role: "user", content: [{ type: "text", text: userText }], timestamp: Date.now() - 2_000 },
+				assistantMessage,
+				trailingUserMessage,
+			]).tokens,
+		);
 	});
 
 	it("throws when compacting without a model", async () => {
@@ -248,6 +328,86 @@ describe("AgentSession compaction characterization", () => {
 		await sessionInternals._checkCompaction(errorAssistant);
 
 		expect(runAutoCompactionSpy).toHaveBeenCalledWith("threshold", false);
+	});
+
+	it("ignores background task reminders when estimating threshold compaction for error messages", async () => {
+		// given
+		const harness = await createHarness();
+		harnesses.push(harness);
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+		const successfulAssistant = createAssistant(harness, {
+			stopReason: "stop",
+			totalTokens: 190_000,
+			timestamp: Date.now(),
+		});
+		const errorAssistant = createAssistant(harness, {
+			stopReason: "error",
+			errorMessage: "529 overloaded",
+			timestamp: Date.now() + 1_000,
+		});
+
+		harness.session.agent.state.messages = [
+			{ role: "user", content: [{ type: "text", text: "hello" }], timestamp: Date.now() - 1_000 },
+			successfulAssistant,
+			{
+				role: "custom",
+				customType: "background-task.complete",
+				content: BACKGROUND_REMINDER_TEXT,
+				display: true,
+				timestamp: Date.now() - 500,
+			},
+			errorAssistant,
+		];
+
+		const estimateSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue();
+
+		// when
+		await sessionInternals._checkCompaction(errorAssistant);
+
+		// then
+		expect(estimateSpy).toHaveBeenCalledWith("threshold", false);
+	});
+
+	it("getContextUsage excludes background task reminders from token estimates", async () => {
+		// given
+		const harness = await createHarness();
+		harnesses.push(harness);
+		const assistant = createAssistant(harness, {
+			text: "Compaction context is large.",
+			stopReason: "stop",
+			totalTokens: 4_000,
+			timestamp: Date.now() - 1_000,
+		});
+		const trailingUser = {
+			role: "user" as const,
+			content: [{ type: "text" as const, text: "Continue with the fix." }],
+			timestamp: Date.now(),
+		};
+
+		harness.session.agent.state.messages = [
+			{ role: "user", content: [{ type: "text", text: "Start the repair." }], timestamp: Date.now() - 2_000 },
+			assistant,
+			{
+				role: "custom",
+				customType: "background-task.complete",
+				content: BACKGROUND_REMINDER_TEXT,
+				display: true,
+				timestamp: Date.now() - 500,
+			},
+			trailingUser,
+		];
+
+		// when
+		const contextUsage = harness.session.getContextUsage();
+
+		// then
+		expect(contextUsage?.tokens).toBe(
+			estimateContextTokens([
+				{ role: "user", content: [{ type: "text", text: "Start the repair." }], timestamp: Date.now() - 2_000 },
+				assistant,
+				trailingUser,
+			]).tokens,
+		);
 	});
 
 	it("does not trigger threshold compaction for error messages when no prior usage exists", async () => {

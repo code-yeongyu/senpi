@@ -68,7 +68,7 @@ import {
 	type TurnStartEvent,
 	wrapRegisteredTools,
 } from "./extensions/index.js";
-import type { BashExecutionMessage, CustomMessage } from "./messages.js";
+import { type BashExecutionMessage, type CustomMessage, filterContextExcludedMessages } from "./messages.js";
 import type { ModelRegistry } from "./model-registry.js";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.js";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.js";
@@ -1787,7 +1787,7 @@ export class AgentSession {
 		// This ensures sessions that hit persistent API errors (e.g. 529) can still compact.
 		let contextTokens: number;
 		if (assistantMessage.stopReason === "error") {
-			const messages = this.agent.state.messages;
+			const messages = filterContextExcludedMessages(this.agent.state.messages);
 			const estimate = estimateContextTokens(messages);
 			if (estimate.lastUsageIndex === null) return; // No usage data at all
 			// Verify the usage source is post-compaction. Kept pre-compaction messages
@@ -2932,7 +2932,7 @@ export class AgentSession {
 			}
 		}
 
-		const estimate = estimateContextTokens(this.messages);
+		const estimate = estimateContextTokens(filterContextExcludedMessages(this.messages));
 		const percent = (estimate.tokens / contextWindow) * 100;
 
 		return {

@@ -15,9 +15,11 @@ import {
 	prepareCompaction,
 	shouldCompact,
 } from "../src/core/compaction/index.js";
+import { SANEPI_SYSTEM_PREFIX } from "../src/core/extensions/builtin/system-messages.js";
 import {
 	buildSessionContext,
 	type CompactionEntry,
+	type CustomMessageEntry,
 	type ModelChangeEntry,
 	migrateSessionEntries,
 	parseSessionEntries,
@@ -129,6 +131,21 @@ function createThinkingLevelEntry(thinkingLevel: string): ThinkingLevelChangeEnt
 		parentId: lastId,
 		timestamp: new Date().toISOString(),
 		thinkingLevel,
+	};
+	lastId = id;
+	return entry;
+}
+
+function createCustomMessageEntry(customType: string, content: string): CustomMessageEntry {
+	const id = `test-id-${entryCounter++}`;
+	const entry: CustomMessageEntry = {
+		type: "custom_message",
+		customType,
+		content,
+		display: true,
+		id,
+		parentId: lastId,
+		timestamp: new Date().toISOString(),
 	};
 	lastId = id;
 	return entry;
@@ -307,6 +324,29 @@ describe("findCutPoint", () => {
 			expect(result.turnStartIndex).toBe(2); // Turn 2 starts at index 2
 		}
 	});
+
+	it("ignores excluded custom messages when finding cut points and turn starts", () => {
+		const entries: SessionEntry[] = [
+			createMessageEntry(createUserMessage("Turn 1")),
+			createMessageEntry(createAssistantMessage("A1", createMockUsage(0, 100, 1000, 0))),
+			createMessageEntry(createUserMessage("Turn 2")),
+			createCustomMessageEntry(
+				"background-task.complete",
+				`${SANEPI_SYSTEM_PREFIX}\n<system-reminder>\nUse background_output(task_id="bg_123")\n</system-reminder>`,
+			),
+			createMessageEntry(createAssistantMessage("A2-1", createMockUsage(0, 100, 5000, 0))),
+			createMessageEntry(createAssistantMessage("A2-2", createMockUsage(0, 100, 8000, 0))),
+		];
+
+		// given / when
+		const result = findCutPoint(entries, 0, entries.length, 3000);
+
+		// then
+		expect(result.firstKeptEntryIndex).not.toBe(3);
+		if (result.isSplitTurn) {
+			expect(result.turnStartIndex).toBe(2);
+		}
+	});
 });
 
 describe("buildSessionContext", () => {
@@ -456,6 +496,78 @@ describe("prepareCompaction with previous compaction", () => {
 		expect(summarizedText).toContain("user msg 3 - kept by compaction1");
 		expect(summarizedText).not.toContain("First summary");
 		expect(preparation!.previousSummary).toBe("First summary");
+	});
+
+	it("excludes background task reminders from compaction summaries and token estimates", () => {
+		// given
+		const firstUserText = "Investigate why /compact is broken. ".repeat(12).trim();
+		const firstAssistantText = "I am checking the compaction path. ".repeat(12).trim();
+		const secondUserText = "Port the fix with tests. ".repeat(12).trim();
+		const secondAssistantText = "I found the root cause. ".repeat(12).trim();
+
+		const user1 = createMessageEntry(createUserMessage(firstUserText));
+		const assistant1 = createMessageEntry(createAssistantMessage(firstAssistantText));
+		const reminder = createCustomMessageEntry(
+			"background-task.complete",
+			`${SANEPI_SYSTEM_PREFIX}\n<system-reminder>\nUse background_output(task_id="bg_123")\n</system-reminder>`,
+		);
+		const user2 = createMessageEntry(createUserMessage(secondUserText));
+		const assistant2 = createMessageEntry(createAssistantMessage(secondAssistantText, createMockUsage(5000, 500)));
+
+		const settings: CompactionSettings = {
+			...DEFAULT_COMPACTION_SETTINGS,
+			keepRecentTokens: 80,
+		};
+
+		// when
+		const preparation = prepareCompaction([user1, assistant1, reminder, user2, assistant2], settings);
+
+		// then
+		expect(preparation).toBeDefined();
+		const summarizedText = extractText(preparation!.messagesToSummarize);
+		expect(summarizedText).toContain("Investigate why /compact is broken.");
+		expect(summarizedText).toContain("I am checking the compaction path.");
+		expect(summarizedText).not.toContain("background_output(task_id");
+		expect(summarizedText).not.toContain("<system-reminder>");
+		expect(preparation!.tokensBefore).toBe(
+			estimateContextTokens([
+				createUserMessage(firstUserText),
+				createAssistantMessage(firstAssistantText),
+				createUserMessage(secondUserText),
+				createAssistantMessage(secondAssistantText, createMockUsage(5000, 500)),
+			]).tokens,
+		);
+	});
+
+	it("keeps tokensBefore aligned with active context when previous compaction and reminders exist", () => {
+		// given
+		const u1 = createMessageEntry(createUserMessage("summarized user 1"));
+		const a1 = createMessageEntry(createAssistantMessage("summarized assistant 1"));
+		const keptUser = createMessageEntry(createUserMessage("kept user after compaction"));
+		const keptAssistant = createMessageEntry(
+			createAssistantMessage("kept assistant after compaction", createMockUsage(3000, 500)),
+		);
+		const compaction1 = createCompactionEntry("Previous summary", keptUser.id);
+		const reminder = createCustomMessageEntry(
+			"background-task.complete",
+			`${SANEPI_SYSTEM_PREFIX}\n<system-reminder>\nUse background_output(task_id="bg_123")\n</system-reminder>`,
+		);
+		const latestUser = createMessageEntry(createUserMessage("latest user after reminder"));
+		const latestAssistant = createMessageEntry(
+			createAssistantMessage("latest assistant", createMockUsage(5000, 500)),
+		);
+
+		const entries = [u1, a1, keptUser, keptAssistant, compaction1, reminder, latestUser, latestAssistant];
+
+		// when
+		const preparation = prepareCompaction(entries, DEFAULT_COMPACTION_SETTINGS);
+
+		// then
+		expect(preparation).toBeDefined();
+		const activeContext = buildSessionContext(entries).messages.filter(
+			(message) => !(message.role === "custom" && message.customType === "background-task.complete"),
+		);
+		expect(preparation!.tokensBefore).toBe(estimateContextTokens(activeContext).tokens);
 	});
 });
 

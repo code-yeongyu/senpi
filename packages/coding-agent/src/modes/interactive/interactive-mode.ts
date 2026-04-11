@@ -917,7 +917,14 @@ export class InteractiveMode {
 			}
 		}
 
-		if (builtinExtensions.length > 0) {
+		const disabledIds = new Set(this.settingsManager.getDisabledBuiltinExtensions());
+		const loadedIds = new Set(
+			builtinExtensions
+				.map((e) => e.path.match(/^<builtin:([^>]+)>$/)?.[1])
+				.filter((id): id is string => id !== undefined),
+		);
+
+		if (builtinExtensions.length > 0 || disabledIds.size > 0) {
 			lines.push(`  ${theme.fg("accent", "builtin")}`);
 
 			const sortedBuiltinExtensions = [...builtinExtensions].sort((left, right) => {
@@ -932,6 +939,12 @@ export class InteractiveMode {
 					continue;
 				}
 				lines.push(theme.fg("dim", `    ${builtinName}`));
+			}
+
+			const disabledNotLoaded = [...disabledIds].filter((id) => !loadedIds.has(id)).sort();
+			for (const id of disabledNotLoaded) {
+				const displayName = this.getBuiltinExtensionDisplayName(id);
+				lines.push(theme.fg("dim", `    ${displayName} `) + theme.fg("error", "[disabled]"));
 			}
 		}
 
