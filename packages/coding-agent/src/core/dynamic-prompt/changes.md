@@ -35,6 +35,34 @@ The base prompt itself (what `_rebuildSystemPrompt` produces) needed replacement
 - `agent-session.ts` line ~904: the `buildSystemPrompt()` call. Resolution: keep `buildDynamicSystemPrompt()`, update args if upstream adds new parameters.
 - `resource-loader.ts`: `reload()` method near line 450. Resolution: drop any new SYSTEM.md/APPEND_SYSTEM.md code upstream adds.
 
+## Remove LSP/AST Categories + Generalize Hero Line (2026-04-11)
+
+### What changed
+
+- `build.ts`: Hero line changed from coding-specific ("expert coding assistant operating inside pi") to generic ("You are a helpful assistant."). Two supporting coding-context lines removed.
+- `types.ts`: `AvailableTool.category` union narrowed from 6 to 4 values (removed `"lsp"` | `"ast"`).
+- `tool-categorization.ts`: Removed `lsp_` and `ast_grep` prefix detection in `getToolCategory()`. Removed `lsp_*` and `ast_grep` entries from `getToolsPromptDisplay()`.
+- `tool-section.ts`: Removed `"lsp"` and `"ast"` from `CATEGORY_ORDER` and `CATEGORY_LABELS`.
+- Tests updated: `build.test.ts`, `tool-categorization.test.ts`, `intent-gate.test.ts`, `tool-section.test.ts` — all lsp/ast-specific test cases removed or converted.
+
+### Why
+
+- System prompt should be domain-agnostic (not coding-specific).
+- LSP and AST tool categories are not used in this fork's tool set.
+
+### Why extension system couldn't handle this
+
+These are core type definitions and prompt builder internals, not per-turn modifications.
+
+### Modified upstream files
+
+All changes are within the `dynamic-prompt/` directory which is already a fork modification.
+
+### Expected merge conflict zones
+
+- `types.ts`: If upstream adds the `"lsp" | "ast"` categories. Resolution: keep narrowed union.
+- `tool-categorization.ts`, `tool-section.ts`: If upstream references lsp/ast categories. Resolution: drop those references.
+
 ## Prompt Leakage Guard (2026-04-10)
 
 ### What changed

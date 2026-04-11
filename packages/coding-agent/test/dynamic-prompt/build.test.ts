@@ -122,20 +122,6 @@ describe("buildDynamicSystemPrompt", () => {
 		expect(prompt).toBeTruthy();
 	});
 
-	test("includes lsp key triggers when lsp tools present", () => {
-		const prompt = buildDynamicSystemPrompt({
-			...baseOptions,
-			selectedTools: ["read", "lsp_goto_definition", "lsp_diagnostics"],
-			toolSnippets: {
-				read: "Read file contents",
-				lsp_goto_definition: "Jump to definition",
-				lsp_diagnostics: "Check diagnostics",
-			},
-		});
-
-		expect(prompt).toContain("lsp");
-	});
-
 	test("includes custom prompt guidelines", () => {
 		const prompt = buildDynamicSystemPrompt({
 			...baseOptions,

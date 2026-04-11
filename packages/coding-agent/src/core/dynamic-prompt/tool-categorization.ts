@@ -1,12 +1,6 @@
 import type { AvailableTool } from "./types.js";
 
 function getToolCategory(name: string): AvailableTool["category"] {
-	if (name.startsWith("lsp_")) {
-		return "lsp";
-	}
-	if (name.startsWith("ast_grep")) {
-		return "ast";
-	}
 	if (name === "grep" || name === "glob") {
 		return "search";
 	}
@@ -31,12 +25,6 @@ export function getToolsPromptDisplay(tools: AvailableTool[]): string {
 	}
 	if (tools.some((tool) => tool.category === "search" && tool.name === "glob")) {
 		displayNames.push("`glob`");
-	}
-	if (tools.some((tool) => tool.category === "lsp")) {
-		displayNames.push("`lsp_*`");
-	}
-	if (tools.some((tool) => tool.category === "ast")) {
-		displayNames.push("`ast_grep`");
 	}
 
 	return displayNames.join(", ");

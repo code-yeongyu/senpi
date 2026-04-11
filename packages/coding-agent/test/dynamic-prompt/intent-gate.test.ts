@@ -33,33 +33,11 @@ describe("buildIntentGate", () => {
 		expect(result).toContain("Turn-Local Intent Reset");
 	});
 
-	test("adds lsp trigger when lsp tools are available", () => {
-		const tools: AvailableTool[] = [{ name: "lsp_goto_definition", category: "lsp" }];
-		const result = buildIntentGate({ tools });
-
-		expect(result).toContain("lsp");
-	});
-
-	test("adds ast_grep trigger when ast tools are available", () => {
-		const tools: AvailableTool[] = [{ name: "ast_grep_search", category: "ast" }];
-		const result = buildIntentGate({ tools });
-
-		expect(result).toContain("ast_grep");
-	});
-
 	test("adds search trigger when search tools are available", () => {
 		const tools: AvailableTool[] = [{ name: "grep", category: "search" }];
 		const result = buildIntentGate({ tools });
 
 		expect(result).toContain("grep");
-	});
-
-	test("omits triggers for categories not present", () => {
-		const tools: AvailableTool[] = [{ name: "read", category: "other" }];
-		const result = buildIntentGate({ tools });
-
-		expect(result).not.toContain("`lsp_*`");
-		expect(result).not.toContain("`ast_grep`");
 	});
 
 	test("keeps intent routing internal instead of exposing scaffolding", () => {
@@ -80,17 +58,13 @@ describe("buildIntentGate", () => {
 		expect(result).toContain("refactor");
 	});
 
-	test("includes all triggers when all tool categories present", () => {
+	test("includes search triggers when search tools present", () => {
 		const tools: AvailableTool[] = [
-			{ name: "lsp_diagnostics", category: "lsp" },
-			{ name: "ast_grep_search", category: "ast" },
 			{ name: "grep", category: "search" },
 			{ name: "read", category: "other" },
 		];
 		const result = buildIntentGate({ tools });
 
-		expect(result).toContain("lsp");
-		expect(result).toContain("ast_grep");
 		expect(result).toContain("grep");
 	});
 });

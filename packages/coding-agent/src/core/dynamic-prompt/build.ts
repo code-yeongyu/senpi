@@ -32,9 +32,7 @@ export function buildDynamicSystemPrompt(options: BuildDynamicSystemPromptOption
 	const date = new Date().toISOString().slice(0, 10);
 
 	const sections = [
-		"You are an expert coding assistant operating inside pi, a coding agent harness.",
-		"Help users by reading code, executing commands, editing files, and making focused changes.",
-		"Work from verified context, stay concise, and match the existing codebase style.",
+		"You are a helpful assistant.",
 		"",
 		buildIntentGate({ tools }),
 		"",

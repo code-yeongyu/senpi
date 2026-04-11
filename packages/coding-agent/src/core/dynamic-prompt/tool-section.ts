@@ -1,11 +1,9 @@
 import type { AvailableTool } from "./types.js";
 
-const CATEGORY_ORDER = ["search", "lsp", "ast", "other", "session", "command"] as const;
+const CATEGORY_ORDER = ["search", "other", "session", "command"] as const;
 
 const CATEGORY_LABELS: Record<AvailableTool["category"], string> = {
 	search: "Search",
-	lsp: "LSP",
-	ast: "AST",
 	other: "Core Tools",
 	session: "Session",
 	command: "Commands",

@@ -49,33 +49,6 @@ describe("buildToolSection", () => {
 		expect(result).not.toContain("secret_tool");
 	});
 
-	test("shows lsp category when lsp tools present", () => {
-		const tools: AvailableTool[] = [
-			{ name: "lsp_goto_definition", category: "lsp" },
-			{ name: "lsp_find_references", category: "lsp" },
-		];
-		const result = buildToolSection({
-			tools,
-			toolSnippets: {
-				lsp_goto_definition: "Jump to symbol definition",
-				lsp_find_references: "Find all references",
-			},
-		});
-
-		expect(result).toContain("lsp_goto_definition");
-		expect(result).toContain("lsp_find_references");
-	});
-
-	test("shows ast category when ast tools present", () => {
-		const tools: AvailableTool[] = [{ name: "ast_grep_search", category: "ast" }];
-		const result = buildToolSection({
-			tools,
-			toolSnippets: { ast_grep_search: "AST-aware code search" },
-		});
-
-		expect(result).toContain("ast_grep_search");
-	});
-
 	test("returns minimal output for empty tools", () => {
 		const result = buildToolSection({ tools: [], toolSnippets: {} });
 

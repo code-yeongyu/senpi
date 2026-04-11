@@ -2,19 +2,11 @@ import { describe, expect, test } from "vitest";
 import { categorizeTools, getToolsPromptDisplay } from "../../src/core/dynamic-prompt/tool-categorization.js";
 
 describe("categorizeTools", () => {
-	test("categorizes lsp_ prefixed tools as lsp", () => {
-		const tools = categorizeTools(["lsp_goto_definition", "lsp_find_references", "lsp_diagnostics"]);
+	test("categorizes lsp_ and ast_grep prefixed tools as other", () => {
+		const tools = categorizeTools(["lsp_goto_definition", "ast_grep_search"]);
 
 		for (const tool of tools) {
-			expect(tool.category).toBe("lsp");
-		}
-	});
-
-	test("categorizes ast_grep prefixed tools as ast", () => {
-		const tools = categorizeTools(["ast_grep_search", "ast_grep_replace"]);
-
-		for (const tool of tools) {
-			expect(tool.category).toBe("ast");
+			expect(tool.category).toBe("other");
 		}
 	});
 
@@ -53,9 +45,9 @@ describe("categorizeTools", () => {
 		const tools = categorizeTools(["read", "lsp_diagnostics", "grep", "ast_grep_search", "bash"]);
 
 		expect(tools).toHaveLength(5);
-		expect(tools.find((t) => t.name === "lsp_diagnostics")?.category).toBe("lsp");
+		expect(tools.find((t) => t.name === "lsp_diagnostics")?.category).toBe("other");
 		expect(tools.find((t) => t.name === "grep")?.category).toBe("search");
-		expect(tools.find((t) => t.name === "ast_grep_search")?.category).toBe("ast");
+		expect(tools.find((t) => t.name === "ast_grep_search")?.category).toBe("other");
 		expect(tools.find((t) => t.name === "read")?.category).toBe("other");
 		expect(tools.find((t) => t.name === "bash")?.category).toBe("other");
 	});
@@ -66,12 +58,11 @@ describe("categorizeTools", () => {
 });
 
 describe("getToolsPromptDisplay", () => {
-	test("groups lsp tools as lsp_*", () => {
+	test("does not display lsp tools", () => {
 		const tools = categorizeTools(["lsp_goto_definition", "lsp_find_references"]);
 		const display = getToolsPromptDisplay(tools);
 
-		expect(display).toContain("`lsp_*`");
-		expect(display).not.toContain("lsp_goto_definition");
+		expect(display).toBe("");
 	});
 
 	test("shows search tools individually", () => {
@@ -82,21 +73,13 @@ describe("getToolsPromptDisplay", () => {
 		expect(display).toContain("`glob`");
 	});
 
-	test("groups ast_grep tools as ast_grep", () => {
-		const tools = categorizeTools(["ast_grep_search", "ast_grep_replace"]);
-		const display = getToolsPromptDisplay(tools);
-
-		expect(display).toContain("`ast_grep`");
-		expect(display).not.toContain("ast_grep_search");
-	});
-
-	test("combines multiple categories with comma separation", () => {
+	test("only displays search tools, not lsp or ast", () => {
 		const tools = categorizeTools(["grep", "lsp_diagnostics", "ast_grep_search"]);
 		const display = getToolsPromptDisplay(tools);
 
 		expect(display).toContain("`grep`");
-		expect(display).toContain("`lsp_*`");
-		expect(display).toContain("`ast_grep`");
+		expect(display).not.toContain("lsp");
+		expect(display).not.toContain("ast");
 	});
 
 	test("returns empty string when only other-category tools exist", () => {
