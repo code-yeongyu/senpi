@@ -312,4 +312,44 @@ describe("createMorphXmlStreamParser", () => {
 			expect(textOutput).not.toContain("<get_weather>");
 		}
 	});
+
+	it("handles consecutive tool calls without leaking xml tags into text output", () => {
+		// given
+		const toolA: Tool = { name: "tool_a", description: "A", parameters: Type.Object({}) };
+		const toolB: Tool = { name: "tool_b", description: "B", parameters: Type.Object({}) };
+		const parser = createMorphXmlStreamParser([toolA, toolB]);
+
+		// when
+		const allEvents = [...parser.feed("<tool_a></tool_a><tool_b></tool_b>"), ...parser.finish()];
+
+		// then
+		const toolCalls = allEvents.filter((event) => event.type === "toolcall_end");
+		const textOutput = allEvents
+			.filter((event) => event.type === "text")
+			.map((event) => event.text)
+			.join("");
+		expect(toolCalls).toHaveLength(2);
+		expect(textOutput).not.toContain("<tool_a>");
+		expect(textOutput).not.toContain("<tool_b>");
+	});
+
+	it("handles tool calls separated only by whitespace without leaking xml tags", () => {
+		// given
+		const toolA: Tool = { name: "tool_a", description: "A", parameters: Type.Object({}) };
+		const toolB: Tool = { name: "tool_b", description: "B", parameters: Type.Object({}) };
+		const parser = createMorphXmlStreamParser([toolA, toolB]);
+
+		// when
+		const allEvents = [...parser.feed("<tool_a></tool_a>\n  \n<tool_b></tool_b>"), ...parser.finish()];
+
+		// then
+		const toolCalls = allEvents.filter((event) => event.type === "toolcall_end");
+		const textOutput = allEvents
+			.filter((event) => event.type === "text")
+			.map((event) => event.text)
+			.join("");
+		expect(toolCalls).toHaveLength(2);
+		expect(textOutput).not.toContain("<tool_a>");
+		expect(textOutput).not.toContain("<tool_b>");
+	});
 });
