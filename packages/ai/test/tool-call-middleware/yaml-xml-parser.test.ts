@@ -117,6 +117,81 @@ describe("parseYamlXmlGeneratedText", () => {
 			},
 		]);
 	});
+
+	it("does not parse tool tags that appear inside a yaml block scalar body", () => {
+		// given
+		const writeFile = {
+			name: "write_file",
+			description: "Write file",
+			parameters: Type.Object({
+				file_path: Type.String(),
+				contents: Type.String(),
+			}),
+		} satisfies Tool;
+		const getLocation = {
+			name: "get_location",
+			description: "Get location",
+			parameters: Type.Object({}),
+		} satisfies Tool;
+		const text = `<write_file>
+file_path: /tmp/test.txt
+contents: |
+  The text contains <get_location/> tag
+</write_file>`;
+
+		// when
+		const parsedToolCalls = parseYamlXmlGeneratedText(text, [writeFile, getLocation]);
+
+		// then
+		expect(parsedToolCalls).toEqual([
+			{
+				name: "write_file",
+				arguments: {
+					file_path: "/tmp/test.txt",
+					contents: "The text contains <get_location/> tag\n",
+				},
+			},
+		]);
+	});
+
+	it("parses multiple tool calls where the second starts after the first ends", () => {
+		// given
+		const writeFile = {
+			name: "write_file",
+			description: "Write file",
+			parameters: Type.Object({
+				file_path: Type.String(),
+				contents: Type.String(),
+			}),
+		} satisfies Tool;
+		const text = `<write_file>
+file_path: test.txt
+contents: normal content
+</write_file>
+<get_weather>
+location: Seoul
+</get_weather>`;
+
+		// when
+		const parsedToolCalls = parseYamlXmlGeneratedText(text, [writeFile, weatherTool]);
+
+		// then
+		expect(parsedToolCalls).toEqual([
+			{
+				name: "write_file",
+				arguments: {
+					file_path: "test.txt",
+					contents: "normal content",
+				},
+			},
+			{
+				name: "get_weather",
+				arguments: {
+					location: "Seoul",
+				},
+			},
+		]);
+	});
 });
 
 describe("createYamlXmlStreamParser", () => {

@@ -1,7 +1,7 @@
 import YAML from "yaml";
 import type { TextContent, Tool } from "../../types.js";
 import type { ParsedToolCall, StreamParser, StreamParserEvent } from "../types.js";
-import { findEarliestXmlToolTag, findSelfClosingToolTag, getSafeXmlTextLength } from "./xml-tool-tag-scanner.js";
+import { findEarliestXmlToolTag, getSafeXmlTextLength } from "./xml-tool-tag-scanner.js";
 
 function escapeRegExp(text: string): string {
 	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -42,6 +42,13 @@ function parseYamlMapping(yamlContent: string): Record<string, unknown> | null {
 	} catch {
 		return null;
 	}
+}
+
+function findClosingTagEnd(text: string, contentStart: number, toolName: string): number {
+	const closingPattern = new RegExp(`</\\s*${escapeRegExp(toolName)}\\s*>`, "g");
+	closingPattern.lastIndex = contentStart;
+	const match = closingPattern.exec(text);
+	return match?.index === undefined ? -1 : match.index + match[0].length;
 }
 
 export function yamlXmlFormatToolsSystemPrompt(tools: Tool[]): string {
@@ -101,31 +108,47 @@ export function parseYamlXmlGeneratedText(text: string, tools: Tool[]): ParsedTo
 		return [];
 	}
 
-	const toolNames = tools.map((tool) => tool.name);
 	const parsedToolCalls: ParsedToolCall[] = [];
+	const toolNames = tools.map((tool) => tool.name);
+	let cursor = 0;
 
-	for (const toolName of toolNames) {
-		let selfClosingMatch = findSelfClosingToolTag(text, toolName, 0);
-		while (selfClosingMatch) {
-			parsedToolCalls.push({ name: toolName, arguments: {} });
-			selfClosingMatch = findSelfClosingToolTag(text, toolName, selfClosingMatch.index + selfClosingMatch.length);
+	while (cursor < text.length) {
+		const openingTag = findEarliestXmlToolTag(text.slice(cursor), toolNames);
+		if (!openingTag) {
+			break;
 		}
 
-		const toolCallRegex = new RegExp(
-			`<\\s*${escapeRegExp(toolName)}\\s*>([\\s\\S]*?)<\\/\\s*${escapeRegExp(toolName)}\\s*>`,
-			"g",
-		);
-		for (const match of text.matchAll(toolCallRegex)) {
-			const yamlContent = match[1] ?? "";
-			const parsedArguments = parseYamlMapping(yamlContent);
-			if (parsedArguments === null) {
-				continue;
-			}
+		const absoluteIndex = cursor + openingTag.index;
+		if (openingTag.selfClosing) {
+			parsedToolCalls.push({ name: openingTag.name, arguments: {} });
+			cursor = absoluteIndex + openingTag.tag.length;
+			continue;
+		}
+
+		const contentStart = absoluteIndex + openingTag.tag.length;
+		const closingTagEnd = findClosingTagEnd(text, contentStart, openingTag.name);
+		if (closingTagEnd === -1) {
+			break;
+		}
+
+		const closingTagText = text.slice(contentStart, closingTagEnd);
+		const closingTagMatch = new RegExp(`</\\s*${escapeRegExp(openingTag.name)}\\s*>`).exec(closingTagText);
+		const closingTagIndex = closingTagMatch?.index;
+		if (closingTagIndex === undefined) {
+			cursor = closingTagEnd;
+			continue;
+		}
+
+		const yamlContent = closingTagText.slice(0, closingTagIndex);
+		const parsedArguments = parseYamlMapping(yamlContent);
+		if (parsedArguments !== null) {
 			parsedToolCalls.push({
-				name: toolName,
+				name: openingTag.name,
 				arguments: parsedArguments,
 			});
 		}
+
+		cursor = closingTagEnd;
 	}
 
 	return parsedToolCalls;
