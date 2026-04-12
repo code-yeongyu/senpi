@@ -155,6 +155,17 @@ describe("SettingsManager", () => {
 	});
 
 	describe("reload", () => {
+		it("should default steering mode to all when unset", () => {
+			// given
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			// when
+			const steeringMode = manager.getSteeringMode();
+
+			// then
+			expect(steeringMode).toBe("all");
+		});
+
 		it("should reload global settings from disk", async () => {
 			const settingsPath = join(agentDir, "settings.json");
 			writeFileSync(
