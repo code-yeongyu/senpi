@@ -25,3 +25,10 @@
 - Changed `src/core/messages.ts`, `src/core/compaction/compaction.ts`, `src/core/compaction/branch-summarization.ts`, and `src/core/agent-session.ts` so builtin `background-task.complete` system reminders are excluded from LLM context, summary generation, compaction boundary calculation, and token estimation.
 - This was changed in core because the reminders are injected as `custom_message` session entries before compaction/branch summarization runs, so an extension cannot reliably strip them from every internal context-building path.
 - Expected merge-conflict zone on upstream sync: custom-message conversion in `src/core/messages.ts`, entry-to-message/boundary filtering in `src/core/compaction/*.ts`, and context usage estimation in `src/core/agent-session.ts`.
+
+## steering default mode to all
+
+- Changed `src/core/settings-manager.ts` so `getSteeringMode()` now defaults to `"all"` instead of `"one-at-a-time"` when no explicit setting is present.
+- Added `test/settings-manager.test.ts` coverage to lock the new default behavior.
+- This was changed in core because the default steering mode is injected into `Agent` during session creation via `SettingsManager`, so an extension cannot change the built-in default before the session runtime is constructed.
+- Expected merge-conflict zone on upstream sync: `src/core/settings-manager.ts` default getter behavior.
