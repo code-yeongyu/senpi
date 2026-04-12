@@ -1,11 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { CONFIG_DIR_NAME } from "../../../../config.js";
 import type { Rule, Ruleset } from "./types.js";
 
 const PERMISSIONS_FILE = "permissions-approved.jsonl";
 
 function getPermissionsPath(projectDir: string): string {
-	return path.join(projectDir, ".pi", PERMISSIONS_FILE);
+	return path.join(projectDir, CONFIG_DIR_NAME, PERMISSIONS_FILE);
 }
 
 export function loadApproved(projectDir: string): Ruleset {

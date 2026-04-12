@@ -744,7 +744,7 @@ export interface ToolAPI {
 
 Tools are discovered from:
 1. `data/tools/**/index.ts` (workspace-local, recursive)
-2. `~/.pi/mom/tools/**/index.ts` (global, recursive)
+2. `~/.senpi/mom/tools/**/index.ts` (global, recursive)
 
 ```typescript
 // loader.ts

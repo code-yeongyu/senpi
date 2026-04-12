@@ -7,11 +7,11 @@ import type { PermissionConfig, Ruleset } from "./types.js";
  * Load permission settings from global and project settings.json files.
  *
  * Merge order (highest precedence last):
- *   1. Global settings (~/.pi/agent/settings.json)
- *   2. Project settings (.pi/settings.json)
+ *   1. Global settings (~/.senpi/agent/settings.json)
+ *   2. Project settings (.senpi/settings.json)
  *   3. CLI override (passed directly to this function)
  *
- * Runtime approvals are stored separately in .pi/permissions-approved.jsonl
+ * Runtime approvals are stored separately in .senpi/permissions-approved.jsonl
  * and loaded via loadApproved() from storage.ts.
  */
 export function loadPermissionSettings(
