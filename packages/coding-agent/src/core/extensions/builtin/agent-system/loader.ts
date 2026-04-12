@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { CONFIG_DIR_NAME } from "../../../../config.js";
 import { parseFrontmatter } from "../../../../utils/frontmatter.js";
 import { type AgentFrontmatter, type AgentInfo, validateAgentConfig } from "./agent-types.js";
 
@@ -54,7 +55,7 @@ export async function loadAgentsFromDirectory(dir: string): Promise<Record<strin
 }
 
 export async function loadAllAgents(cwd: string, homeDir: string = os.homedir()): Promise<Record<string, AgentInfo>> {
-	const globalAgents = await loadAgentsFromDirectory(path.join(homeDir, ".sanepi"));
-	const localAgents = await loadAgentsFromDirectory(path.join(cwd, ".sanepi"));
+	const globalAgents = await loadAgentsFromDirectory(path.join(homeDir, CONFIG_DIR_NAME));
+	const localAgents = await loadAgentsFromDirectory(path.join(cwd, CONFIG_DIR_NAME));
 	return { ...globalAgents, ...localAgents };
 }

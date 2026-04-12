@@ -2,6 +2,7 @@
  * One-time migrations that run on startup.
  */
 
+import os from "node:os";
 import chalk from "chalk";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
@@ -170,6 +171,35 @@ function migrateKeybindingsConfigFile(): void {
 	}
 }
 
+function migrateLegacySenpiDirs(cwd: string): void {
+	if (CONFIG_DIR_NAME === ".pi") return;
+
+	const homeDir = os.homedir();
+	const globalOldAgentDir = join(homeDir, ".pi", "agent");
+	const globalNewAgentDir = getAgentDir();
+	const globalOldMomDir = join(homeDir, ".pi", "mom");
+	const globalNewMomDir = join(homeDir, CONFIG_DIR_NAME, "mom");
+	const projectOldDir = join(cwd, ".pi");
+	const projectNewDir = join(cwd, CONFIG_DIR_NAME);
+
+	const moves: Array<[string, string, string]> = [
+		[globalOldAgentDir, globalNewAgentDir, "global agent directory"],
+		[globalOldMomDir, globalNewMomDir, "global mom directory"],
+		[projectOldDir, projectNewDir, "project config directory"],
+	];
+
+	for (const [oldPath, newPath, label] of moves) {
+		if (!existsSync(oldPath) || existsSync(newPath)) continue;
+		try {
+			mkdirSync(dirname(newPath), { recursive: true });
+			renameSync(oldPath, newPath);
+			console.log(chalk.green(`Migrated ${label} ${oldPath} → ${newPath}`));
+		} catch {
+			// Ignore migration failures and keep startup working.
+		}
+	}
+}
+
 /**
  * Move fd/rg binaries from tools/ to bin/ if they exist.
  */
@@ -306,6 +336,7 @@ export function runMigrations(cwd: string = process.cwd()): {
 	deprecationWarnings: string[];
 } {
 	const migratedAuthProviders = migrateAuthToAuthJson();
+	migrateLegacySenpiDirs(cwd);
 	migrateSessionsFromAgentRoot();
 	migrateToolsToBin();
 	migrateKeybindingsConfigFile();

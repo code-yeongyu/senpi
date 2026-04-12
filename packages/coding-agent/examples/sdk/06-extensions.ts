@@ -46,7 +46,7 @@ console.log();
 
 // Example extension file (./my-logging-extension.ts):
 /*
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@code-yeongyu/senpi";
 
 export default function (pi: ExtensionAPI) {
 	pi.on("agent_start", async () => {

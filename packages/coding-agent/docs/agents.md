@@ -93,8 +93,8 @@ Without `agent_type`, the task tool works exactly as before (no restrictions, fu
 
 Pi loads custom agents from Markdown files in:
 
-- Global: `~/.sanepi/agent/**/*.md` and `~/.sanepi/agents/**/*.md`
-- Project: `.sanepi/agent/**/*.md` and `.sanepi/agents/**/*.md` (in current working directory)
+- Global: `~/.senpi/agent/**/*.md` and `~/.senpi/agents/**/*.md`
+- Project: `.senpi/agent/**/*.md` and `.senpi/agents/**/*.md` (in current working directory)
 
 Both `agent/` and `agents/` directories are scanned recursively. The agent name is derived from the filename: `my-agent.md` becomes `my-agent`.
 
@@ -120,7 +120,7 @@ Custom agents use YAML frontmatter (same format as skills):
 
 ### Example
 
-Create `.sanepi/agents/readonly.md`:
+Create `.senpi/agents/readonly.md`:
 
 ```markdown
 ---
@@ -205,7 +205,7 @@ In **interactive mode**, when a tool with `"ask"` permission is called:
 
 1. TUI displays a select prompt: "Allow once / Allow always / Deny"
 2. "Allow once" permits this single call
-3. "Allow always" persists a matching approval rule to `.pi/permissions-approved.jsonl`, so matching calls are auto-allowed after reload too
+3. "Allow always" persists a matching approval rule to `.senpi/permissions-approved.jsonl`, so matching calls are auto-allowed after reload too
 4. "Deny" blocks with an error message
 
 In **non-interactive mode** (json or print output), `ask` permissions are auto-denied with an explanatory message.
@@ -218,13 +218,13 @@ Create your agent directory structure:
 
 ```
 # Project-local agents (recommended)
-.sanepi/
+.senpi/
    agents/
       my-agent.md
       code-reviewer.md
 
 # Global agents (shared across projects)
-~/.sanepi/
+~/.senpi/
    agents/
       my-global-agent.md
 ```
@@ -310,7 +310,7 @@ task(agent_type="explore", prompt="Find all error handling patterns", run_in_bac
 ```
 
 **Custom strict reviewer:**
-1. Create `.sanepi/agents/reviewer.md` (see [Writing an Agent File](#writing-an-agent-file))
+1. Create `.senpi/agents/reviewer.md` (see [Writing an Agent File](#writing-an-agent-file))
 2. Use: `task(agent_type="reviewer", prompt="Review changes in src/auth/", run_in_background=false)`
 
 **Restrict all agents by default:**
@@ -332,7 +332,7 @@ Now every agent must get user confirmation before writing or editing files.
 The agent system is implemented as a builtin extension that intercepts the task tool:
 
 1. **Environment variable** - When `task(agent_type="...")` is called, the agent type is passed via `SANEPI_AGENT_TYPE` environment variable to the subprocess
-2. **Registry lookup** - On session start, the extension scans `~/.sanepi/` and `.sanepi/` for agent definitions, merges with built-in agents, and resolves by name
+2. **Registry lookup** - On session start, the extension scans `~/.senpi/` and `.senpi/` for agent definitions, merges with built-in agents, and resolves by name
 3. **Tool filtering** - `setActiveTools()` removes denied tools from the LLM's tool list entirely (they don't appear in the API call)
 4. **Defense in depth** - A `tool_call` event handler acts as backup, catching any tools that slip through (e.g., added dynamically after session start)
 5. **System prompt** - The `before_agent_start` event appends the agent's custom prompt to the existing system prompt (doesn't replace it)
