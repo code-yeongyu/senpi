@@ -1,5 +1,5 @@
 {
-	"name": "pi-monorepo",
+	"name": "senpi-monorepo",
 	"private": true,
 	"type": "module",
 	"workspaces": [
@@ -48,7 +48,7 @@
 	"version": "0.0.3",
 	"dependencies": {
 		"@mariozechner/jiti": "^2.6.5",
-		"@mariozechner/pi-coding-agent": "^0.30.2",
+		"@code-yeongyu/senpi": "^0.30.2",
 		"get-east-asian-width": "^1.4.0"
 	},
 	"overrides": {

@@ -7,7 +7,7 @@
  * - /timed-signal - Shows confirm using AbortSignal (manual approach)
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@code-yeongyu/senpi";
 
 export default function (pi: ExtensionAPI) {
 	// Simple approach: use timeout option (recommended)

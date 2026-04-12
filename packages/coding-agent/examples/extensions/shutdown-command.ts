@@ -5,7 +5,7 @@
  * Demonstrates how extensions can use ctx.shutdown() to exit pi cleanly.
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@code-yeongyu/senpi";
 import { Type } from "@sinclair/typebox";
 
 export default function (pi: ExtensionAPI) {

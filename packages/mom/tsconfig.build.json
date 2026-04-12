@@ -2,7 +2,12 @@
 	"extends": "../../tsconfig.base.json",
 	"compilerOptions": {
 		"outDir": "./dist",
-		"rootDir": "./src"
+		"rootDir": "./src",
+		"paths": {
+			"*": ["./*"],
+			"@code-yeongyu/senpi": ["../coding-agent/dist/index.d.ts"],
+			"@code-yeongyu/senpi/*": ["../coding-agent/dist/*"]
+		}
 	},
 	"include": ["src/**/*.ts"],
 	"exclude": ["node_modules", "dist", "**/*.d.ts", "src/**/*.d.ts"]

@@ -4,7 +4,7 @@
  * Shows how to replace or modify the default system prompt.
  */
 
-import { createAgentSession, SessionManager } from "@mariozechner/pi-coding-agent";
+import { createAgentSession, SessionManager } from "@code-yeongyu/senpi";
 
 // Note: DefaultResourceLoader no longer supports systemPromptOverride.
 // Use system prompt events in extensions or modify APPEND_SYSTEM.md instead.
