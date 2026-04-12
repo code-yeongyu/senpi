@@ -20,3 +20,14 @@
   - Updated `agent-system/permission-enforcement.test.ts` to exercise the current `permission-system` extension behavior for deny, allow, ask-without-UI, and `Allow always` flows.
 - Why the extension system could not handle this: these failures were stale assertions in test files. No runtime extension could correct incorrect test expectations without changing the tests themselves.
 - Merge-conflict risk: medium. The likely conflict zones are the affected assertion blocks in those three test files if upstream changes resource loading, builtin registration, or permission-system behavior again.
+
+## 2026-04-12 — emit a callable `senpi` artifact from the standard build
+
+- Changed:
+  - `packages/coding-agent/package.json`
+- Why: The user wants root-level `npm run build` to be sufficient, and that root build already delegates to `packages/coding-agent`. The missing behavior was that the normal package build only emitted `dist/cli.js`, while the user expected a directly callable `dist/senpi` artifact like the earlier `sanepi` flow.
+- What changed:
+  - Updated the coding-agent `build` script to copy the shebang entrypoint from `dist/cli.js` to `dist/senpi` and mark it executable.
+  - Kept the change scoped to packaging/build output, so the existing root build chain now produces the callable artifact without changing runtime logic.
+- Why the extension system could not handle this: build output shape is controlled by package scripts and emitted files, not by runtime extensions.
+- Merge-conflict risk: low. The only expected conflict zone is the `scripts.build` line in `packages/coding-agent/package.json` if upstream changes the coding-agent packaging flow.
