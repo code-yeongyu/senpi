@@ -1,10 +1,14 @@
-# sanepi-mono
+# senpi-mono
 
-An opinionated fork of [badlogic/pi-mono](https://github.com/badlogic/pi-mono) that adds a dynamic system prompt engine, builtin extension infrastructure, and structured task management to the pi coding agent.
+An opinionated fork of [badlogic/pi-mono](https://github.com/badlogic/pi-mono) that turns the coding agent into **senpi**: a senpai-name pun, and a more sane pi with extra batteries included.
 
 > **Upstream**: [pi-mono](https://github.com/badlogic/pi-mono) by [@mariozechner](https://github.com/badlogic) -- tools for building AI agents and managing LLM deployments.
 
 ## What This Fork Adds
+
+## Why "senpi"
+
+`senpi` is a small joke on **senpai**, but it is also literal project positioning: this fork aims to be a more **sane** pi with practical additions that make everyday agent work smoother without abandoning upstream's core design.
 
 All additions follow pi's extension-first philosophy. Core source modifications are minimized and [documented in `changes.md` files](#fork-strategy) to keep upstream rebases clean.
 
@@ -22,7 +26,7 @@ Source: [`packages/coding-agent/src/core/dynamic-prompt/`](packages/coding-agent
 
 ### Builtin Extension System
 
-A new extension loading tier that ships first-party extensions as part of the coding agent binary. These load automatically without requiring files in `.pi/extensions/` or `~/.pi/agent/extensions/`.
+A new extension loading tier that ships first-party extensions as part of the coding agent binary. These load automatically without requiring files in `.senpi/extensions/` or `~/.senpi/agent/extensions/`.
 
 **Core builtins** (always loaded):
 
@@ -32,7 +36,7 @@ A new extension loading tier that ships first-party extensions as part of the co
 | **parallel-tool-calls** | Intercepts OpenAI provider requests and adds `parallel_tool_calls: true` to payloads when tools are present. Covers `openai-completions`, `openai-responses`, `openai-codex-responses`, and `azure-openai-responses` APIs. Also injects an Execution Strategy section into the system prompt that describes parallelization and context-breadth guidance without hardcoding specific tool names. |
 | **redraws** | Adds `/tui` command to display full-redraw count for TUI debugging. |
 
-**Global defaults** (seeded to `~/.pi/agent/extensions/` on first run):
+**Global defaults** (seeded to `~/.senpi/agent/extensions/` on first run):
 
 | Extension | Description |
 |-----------|-------------|
@@ -47,7 +51,7 @@ Source: [`packages/coding-agent/src/core/extensions/builtin/`](packages/coding-a
 
 | Change | Details |
 |--------|---------|
-| **`sanepi` CLI alias** | `npx sanepi` works alongside `npx pi`. Added as a second bin entry in `package.json`. |
+| **`senpi` CLI branding** | The coding agent now identifies itself as `senpi`, uses `.senpi/agent` for config storage, and publishes as `@code-yeongyu/senpi`. |
 | **No startup update checks** | Removed npm registry version checking and package update prompts at launch. |
 | **Builtin extension UI grouping** | Builtin extensions render under a separate `builtin/` group in the startup header, visually distinct from user and project extensions. |
 | **Updated model registry** | Refreshed `models.generated.ts` with latest model additions and deprecations. |
@@ -67,7 +71,7 @@ Modified upstream files:
 | `agent-session.ts` | Calls `buildDynamicSystemPrompt()` instead of `buildSystemPrompt()` |
 | `resource-loader.ts` | Removed SYSTEM.md/APPEND_SYSTEM.md discovery; added builtin extension loading |
 | `interactive-mode.ts` | Builtin extension display formatting; disabled update checks |
-| `package.json` | Added `sanepi` bin alias |
+| `package.json` | Rebranded the coding agent package and runtime identity to `senpi` |
 
 ## Share your OSS coding agent sessions
 
@@ -91,7 +95,7 @@ I regularly publish my own `pi-mono` work sessions here:
 |---------|-------------|
 | **[@mariozechner/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
 | **[@mariozechner/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
-| **[@mariozechner/pi-coding-agent](packages/coding-agent)** | Interactive coding agent CLI (primary fork target) |
+| **[@code-yeongyu/senpi](packages/coding-agent)** | Interactive coding agent CLI, rebranded as senpi |
 | **[@mariozechner/pi-mom](packages/mom)** | Slack bot that delegates messages to the pi coding agent |
 | **[@mariozechner/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
 | **[@mariozechner/pi-web-ui](packages/web-ui)** | Web components for AI chat interfaces |

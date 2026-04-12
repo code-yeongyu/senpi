@@ -21,7 +21,7 @@ Use `/login` in interactive mode, then select a provider:
 - Google Gemini CLI
 - Google Antigravity
 
-Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired.
+Use `/logout` to clear credentials. Tokens are stored in `~/.senpi/agent/auth.json` and auto-refresh when expired.
 
 ### GitHub Copilot
 
@@ -75,7 +75,7 @@ Reference for environment variables and `auth.json` keys: [`const envMap`](https
 
 #### Auth File
 
-Store credentials in `~/.pi/agent/auth.json`:
+Store credentials in `~/.senpi/agent/auth.json`:
 
 ```json
 {

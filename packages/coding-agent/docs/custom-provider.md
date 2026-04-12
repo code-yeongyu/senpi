@@ -31,7 +31,7 @@ See these complete provider examples:
 ## Quick Reference
 
 ```typescript
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@code-yeongyu/senpi";
 
 export default function (pi: ExtensionAPI) {
   // Override baseUrl for existing provider
@@ -291,7 +291,7 @@ interface OAuthLoginCallbacks {
 
 ### OAuthCredentials
 
-Credentials are persisted in `~/.pi/agent/auth.json`:
+Credentials are persisted in `~/.senpi/agent/auth.json`:
 
 ```typescript
 interface OAuthCredentials {

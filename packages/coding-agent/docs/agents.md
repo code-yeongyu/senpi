@@ -266,8 +266,8 @@ Configure default permissions and model for all agents in `settings.json`.
 
 | Location | Scope |
 |----------|-------|
-| `~/.pi/agent/settings.json` | Global (all projects) |
-| `.pi/settings.json` | Project (overrides global) |
+| `~/.senpi/agent/settings.json` | Global (all projects) |
+| `.senpi/settings.json` | Project (overrides global) |
 
 Add the `agentDefaults` key:
 
@@ -314,7 +314,7 @@ task(agent_type="explore", prompt="Find all error handling patterns", run_in_bac
 2. Use: `task(agent_type="reviewer", prompt="Review changes in src/auth/", run_in_background=false)`
 
 **Restrict all agents by default:**
-Add to `~/.pi/agent/settings.json`:
+Add to `~/.senpi/agent/settings.json`:
 ```json
 {
    "agentDefaults": {
