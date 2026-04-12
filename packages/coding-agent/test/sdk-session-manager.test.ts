@@ -63,4 +63,22 @@ describe("createAgentSession session manager defaults", () => {
 
 		session.dispose();
 	});
+
+	it("defaults steering mode to all on created sessions", async () => {
+		// given
+		const model = getModel("anthropic", "claude-sonnet-4-5");
+		expect(model).toBeTruthy();
+
+		// when
+		const { session } = await createAgentSession({
+			cwd,
+			agentDir,
+			model: model!,
+		});
+
+		// then
+		expect(session.steeringMode).toBe("all");
+
+		session.dispose();
+	});
 });
