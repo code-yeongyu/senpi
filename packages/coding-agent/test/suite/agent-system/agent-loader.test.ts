@@ -159,8 +159,8 @@ describe("loadAllAgents", () => {
 		// given
 		const fakeHome = path.join(tmpDir, "home");
 		const projectDir = path.join(tmpDir, "project");
-		const globalAgentsDir = path.join(fakeHome, ".sanepi", "agents");
-		const localAgentsDir = path.join(projectDir, ".sanepi", "agents");
+		const globalAgentsDir = path.join(fakeHome, ".senpi", "agents");
+		const localAgentsDir = path.join(projectDir, ".senpi", "agents");
 		await fs.mkdir(globalAgentsDir, { recursive: true });
 		await fs.mkdir(localAgentsDir, { recursive: true });
 
