@@ -102,6 +102,22 @@ When a provider requests a retry delay longer than `maxDelayMs` (e.g., Google's 
 | `followUpMode` | string | `"one-at-a-time"` | How follow-up messages are sent: `"all"` or `"one-at-a-time"` |
 | `transport` | string | `"sse"` | Preferred transport for providers that support multiple transports: `"sse"`, `"websocket"`, or `"auto"` |
 
+### OpenAI
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `openai.serviceTier` | string | - | Injects OpenAI Responses `service_tier`: `"auto"`, `"flex"`, or `"priority"` |
+
+```json
+{
+  "openai": {
+    "serviceTier": "priority"
+  }
+}
+```
+
+When unset, senpi leaves provider payloads unchanged. This setting currently applies only to the built-in OpenAI Responses provider path.
+
 ### Terminal & Images
 
 | Setting | Type | Default | Description |
