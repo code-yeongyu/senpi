@@ -69,12 +69,15 @@ function getInjectedUserMessagesFromSession(session: AgentSession): string[] {
 
 export interface HarnessOptions {
 	models?: FauxModelDefinition[];
+	api?: string;
+	provider?: string;
 	settings?: Partial<Settings>;
 	systemPrompt?: string;
 	tools?: AgentTool[];
 	resourceLoader?: ResourceLoader;
 	extensionFactories?: Array<ExtensionFactory | CreateTestExtensionsResultInput>;
 	withConfiguredAuth?: boolean;
+	onPayload?: (payload: unknown) => void;
 }
 
 export interface Harness {
@@ -105,6 +108,8 @@ function createTempDir(): string {
 export async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
 	const tempDir = createTempDir();
 	const fauxProvider: FauxProviderRegistration = registerFauxProvider({
+		api: options.api,
+		provider: options.provider,
 		models: options.models,
 	});
 	fauxProvider.setResponses([]);
@@ -149,6 +154,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		},
 		convertToLlm,
 		onPayload: async (payload) => {
+			options.onPayload?.(payload);
 			const runner = extensionRunnerRef.current;
 			if (!runner?.hasHandlers("before_provider_request")) {
 				return payload;
