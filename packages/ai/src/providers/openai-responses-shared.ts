@@ -79,6 +79,18 @@ export interface ConvertResponsesToolsOptions {
 	strict?: boolean | null;
 }
 
+function isFreeformTool(tool: Tool): boolean {
+	return tool.freeform !== undefined;
+}
+
+function isFreeformToolName(toolName: string, tools: Tool[] | undefined): boolean {
+	return tools?.some((tool) => tool.name === toolName && isFreeformTool(tool)) ?? false;
+}
+
+function getFreeformToolInput(argumentsValue: Record<string, any>): string {
+	return typeof argumentsValue.input === "string" ? argumentsValue.input : JSON.stringify(argumentsValue);
+}
+
 // =============================================================================
 // Message conversion
 // =============================================================================
@@ -202,13 +214,22 @@ export function convertResponsesMessages<TApi extends Api>(
 						itemId = undefined;
 					}
 
-					output.push({
-						type: "function_call",
-						id: itemId,
-						call_id: callId,
-						name: toolCall.name,
-						arguments: JSON.stringify(toolCall.arguments),
-					});
+					if (isFreeformToolName(toolCall.name, context.tools)) {
+						output.push({
+							type: "custom_tool_call",
+							call_id: callId,
+							name: toolCall.name,
+							input: getFreeformToolInput(toolCall.arguments),
+						} as any);
+					} else {
+						output.push({
+							type: "function_call",
+							id: itemId,
+							call_id: callId,
+							name: toolCall.name,
+							arguments: JSON.stringify(toolCall.arguments),
+						});
+					}
 				}
 			}
 			if (output.length === 0) continue;
@@ -248,11 +269,20 @@ export function convertResponsesMessages<TApi extends Api>(
 				output = sanitizeSurrogates(hasText ? textResult : "(see attached image)");
 			}
 
-			messages.push({
-				type: "function_call_output",
-				call_id: callId,
-				output,
-			});
+			if (isFreeformToolName(msg.toolName, context.tools)) {
+				messages.push({
+					type: "custom_tool_call_output",
+					call_id: callId,
+					name: msg.toolName,
+					output,
+				} as any);
+			} else {
+				messages.push({
+					type: "function_call_output",
+					call_id: callId,
+					output,
+				});
+			}
 		}
 		msgIndex++;
 	}
@@ -266,13 +296,24 @@ export function convertResponsesMessages<TApi extends Api>(
 
 export function convertResponsesTools(tools: Tool[], options?: ConvertResponsesToolsOptions): OpenAITool[] {
 	const strict = options?.strict === undefined ? false : options.strict;
-	return tools.map((tool) => ({
-		type: "function",
-		name: tool.name,
-		description: tool.description,
-		parameters: tool.parameters as any, // TypeBox already generates JSON Schema
-		strict,
-	}));
+	return tools.map((tool) => {
+		if (tool.freeform) {
+			return {
+				type: "custom",
+				name: tool.name,
+				description: tool.description,
+				format: tool.freeform,
+			} as OpenAITool;
+		}
+
+		return {
+			type: "function",
+			name: tool.name,
+			description: tool.description,
+			parameters: tool.parameters as any, // TypeBox already generates JSON Schema
+			strict,
+		} as OpenAITool;
+	});
 }
 
 // =============================================================================
@@ -314,6 +355,17 @@ export async function processResponsesStream<TApi extends Api>(
 					name: item.name,
 					arguments: {},
 					partialJson: item.arguments || "",
+				};
+				output.content.push(currentBlock);
+				stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
+			} else if ((item as any).type === "custom_tool_call") {
+				currentItem = item as any;
+				currentBlock = {
+					type: "toolCall",
+					id: `${(item as any).call_id}|custom`,
+					name: (item as any).name,
+					arguments: { input: (item as any).input || "" },
+					partialJson: JSON.stringify({ input: (item as any).input || "" }),
 				};
 				output.content.push(currentBlock);
 				stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
@@ -457,6 +509,17 @@ export async function processResponsesStream<TApi extends Api>(
 					id: `${item.call_id}|${item.id}`,
 					name: item.name,
 					arguments: args,
+				};
+
+				currentBlock = null;
+				stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
+			} else if ((item as any).type === "custom_tool_call") {
+				const input = typeof (item as any).input === "string" ? (item as any).input : "";
+				const toolCall: ToolCall = {
+					type: "toolCall",
+					id: `${(item as any).call_id}|custom`,
+					name: (item as any).name,
+					arguments: { input },
 				};
 
 				currentBlock = null;
