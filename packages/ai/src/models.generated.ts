@@ -7378,13 +7378,13 @@ export const MODELS = {
 			reasoning: true,
 			input: ["text"],
 			cost: {
-				input: 0.44999999999999996,
+				input: 0.5,
 				output: 2.1500000000000004,
-				cacheRead: 0.22499999999999998,
+				cacheRead: 0.35,
 				cacheWrite: 0,
 			},
 			contextWindow: 163840,
-			maxTokens: 65536,
+			maxTokens: 4096,
 		} satisfies Model<"openai-completions">,
 		"deepseek/deepseek-v3.1-terminus": {
 			id: "deepseek/deepseek-v3.1-terminus",
@@ -8013,7 +8013,7 @@ export const MODELS = {
 				cacheWrite: 0,
 			},
 			contextWindow: 196608,
-			maxTokens: 196608,
+			maxTokens: 8192,
 		} satisfies Model<"openai-completions">,
 		"minimax/minimax-m2.7": {
 			id: "minimax/minimax-m2.7",
@@ -9441,7 +9441,7 @@ export const MODELS = {
 				cacheWrite: 0,
 			},
 			contextWindow: 131072,
-			maxTokens: 131072,
+			maxTokens: 8192,
 		} satisfies Model<"openai-completions">,
 		"openai/gpt-oss-safeguard-20b": {
 			id: "openai/gpt-oss-safeguard-20b",
@@ -10013,13 +10013,13 @@ export const MODELS = {
 			reasoning: false,
 			input: ["text"],
 			cost: {
-				input: 0.12,
-				output: 0.75,
-				cacheRead: 0.06,
+				input: 0.15,
+				output: 0.7999999999999999,
+				cacheRead: 0.12,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
-			maxTokens: 65536,
+			maxTokens: 262144,
 		} satisfies Model<"openai-completions">,
 		"qwen/qwen3-coder-plus": {
 			id: "qwen/qwen3-coder-plus",
