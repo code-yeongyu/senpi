@@ -48,6 +48,10 @@ export interface AgentDefaultsSettings {
 	model?: string;
 }
 
+export interface OpenAISettings {
+	serviceTier?: "auto" | "flex" | "priority";
+}
+
 export type TransportSetting = Transport;
 
 /**
@@ -102,6 +106,7 @@ export interface Settings {
 	markdown?: MarkdownSettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
 	agentDefaults?: AgentDefaultsSettings;
+	openai?: OpenAISettings;
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -613,6 +618,10 @@ export class SettingsManager {
 
 	getTransport(): TransportSetting {
 		return this.settings.transport ?? "sse";
+	}
+
+	getOpenAIServiceTier(): OpenAISettings["serviceTier"] {
+		return this.settings.openai?.serviceTier;
 	}
 
 	setTransport(transport: TransportSetting): void {
