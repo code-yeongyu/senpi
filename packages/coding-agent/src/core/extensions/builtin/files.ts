@@ -8,6 +8,7 @@
 import { Container, Key, matchesKey, type SelectItem, SelectList, Text } from "@mariozechner/pi-tui";
 import { DynamicBorder } from "../../../modes/interactive/components/dynamic-border.js";
 import type { ExtensionAPI } from "../types.js";
+import { extractPatchedPaths } from "./gpt-apply-patch.js";
 
 interface FileEntry {
 	path: string;
@@ -30,7 +31,7 @@ export default function (pi: ExtensionAPI) {
 			const branch = ctx.sessionManager.getBranch();
 
 			// First pass: collect tool calls (id -> {path, name}) from assistant messages
-			const toolCalls = new Map<string, { path: string; name: FileToolName; timestamp: number }>();
+			const toolCalls = new Map<string, { paths: string[]; name: FileToolName; timestamp: number }>();
 
 			for (const entry of branch) {
 				if (entry.type !== "message") continue;
@@ -43,7 +44,15 @@ export default function (pi: ExtensionAPI) {
 							if (name === "read" || name === "write" || name === "edit") {
 								const path = block.arguments?.path;
 								if (path && typeof path === "string") {
-									toolCalls.set(block.id, { path, name, timestamp: msg.timestamp });
+									toolCalls.set(block.id, { paths: [path], name, timestamp: msg.timestamp });
+								}
+							} else if (name === "apply_patch") {
+								const input = block.arguments?.input;
+								if (typeof input === "string") {
+									const paths = extractPatchedPaths(input);
+									if (paths.length > 0) {
+										toolCalls.set(block.id, { paths, name: "edit", timestamp: msg.timestamp });
+									}
 								}
 							}
 						}
@@ -62,21 +71,22 @@ export default function (pi: ExtensionAPI) {
 					const toolCall = toolCalls.get(msg.toolCallId);
 					if (!toolCall) continue;
 
-					const { path, name } = toolCall;
+					const { paths, name } = toolCall;
 					const timestamp = msg.timestamp;
-
-					const existing = fileMap.get(path);
-					if (existing) {
-						existing.operations.add(name);
-						if (timestamp > existing.lastTimestamp) {
-							existing.lastTimestamp = timestamp;
+					for (const path of paths) {
+						const existing = fileMap.get(path);
+						if (existing) {
+							existing.operations.add(name);
+							if (timestamp > existing.lastTimestamp) {
+								existing.lastTimestamp = timestamp;
+							}
+						} else {
+							fileMap.set(path, {
+								path,
+								operations: new Set([name]),
+								lastTimestamp: timestamp,
+							});
 						}
-					} else {
-						fileMap.set(path, {
-							path,
-							operations: new Set([name]),
-							lastTimestamp: timestamp,
-						});
 					}
 				}
 			}

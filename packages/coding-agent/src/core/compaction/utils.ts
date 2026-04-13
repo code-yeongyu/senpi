@@ -4,6 +4,7 @@
 
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { Message } from "@mariozechner/pi-ai";
+import { extractPatchedPaths } from "../extensions/builtin/gpt-apply-patch.js";
 
 // ============================================================================
 // File Operation Tracking
@@ -38,19 +39,26 @@ export function extractFileOpsFromMessage(message: AgentMessage, fileOps: FileOp
 		const args = block.arguments as Record<string, unknown> | undefined;
 		if (!args) continue;
 
-		const path = typeof args.path === "string" ? args.path : undefined;
-		if (!path) continue;
-
 		switch (block.name) {
 			case "read":
-				fileOps.read.add(path);
+				if (typeof args.path !== "string") continue;
+				fileOps.read.add(args.path);
 				break;
 			case "write":
-				fileOps.written.add(path);
+				if (typeof args.path !== "string") continue;
+				fileOps.written.add(args.path);
 				break;
 			case "edit":
-				fileOps.edited.add(path);
+				if (typeof args.path !== "string") continue;
+				fileOps.edited.add(args.path);
 				break;
+			case "apply_patch": {
+				if (typeof args.input !== "string") continue;
+				for (const patchedPath of extractPatchedPaths(args.input)) {
+					fileOps.edited.add(patchedPath);
+				}
+				break;
+			}
 		}
 	}
 }
