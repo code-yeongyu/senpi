@@ -314,6 +314,7 @@ Content`,
 				"<builtin:todowrite>",
 				"<builtin:redraws>",
 				"<builtin:parallel-tool-calls>",
+				"<builtin:service-tier>",
 			]);
 		});
 

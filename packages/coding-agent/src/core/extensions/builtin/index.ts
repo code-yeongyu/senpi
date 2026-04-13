@@ -4,6 +4,7 @@ import backgroundTaskExtension from "./background-task/index.js";
 import parallelToolCallsExtension from "./parallel-tool-calls.js";
 import permissionSystemExtension from "./permission-system/index.js";
 import redrawsExtension from "./redraws.js";
+import serviceTierExtension from "./service-tier.js";
 import todowriteExtension from "./todotools/index.js";
 
 export interface BuiltinExtensionFactory {
@@ -20,4 +21,5 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "todowrite", factory: todowriteExtension },
 	{ id: "redraws", factory: redrawsExtension },
 	{ id: "parallel-tool-calls", factory: parallelToolCallsExtension },
+	{ id: "service-tier", factory: serviceTierExtension },
 ];
