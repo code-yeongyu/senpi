@@ -214,10 +214,17 @@ export type Message = UserMessage | AssistantMessage | ToolResultMessage;
 
 import type { TSchema } from "@sinclair/typebox";
 
+export interface FreeformToolFormat {
+	type: "grammar";
+	syntax: "lark";
+	definition: string;
+}
+
 export interface Tool<TParameters extends TSchema = TSchema> {
 	name: string;
 	description: string;
 	parameters: TParameters;
+	freeform?: FreeformToolFormat;
 }
 
 export interface Context {
