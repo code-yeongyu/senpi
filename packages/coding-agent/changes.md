@@ -25,9 +25,13 @@
 
 - Changed:
   - `packages/coding-agent/package.json`
-- Why: The user wants root-level `npm run build` to be sufficient, and that root build already delegates to `packages/coding-agent`. The missing behavior was that the normal package build only emitted `dist/cli.js`, while the user expected a directly callable `dist/senpi` artifact like the earlier `sanepi` flow.
+  - `package.json`
+  - `scripts/create-root-senpi-wrapper.mjs`
+- Why: The user wants root-level `npm run build` to be sufficient in the same practical sense that `sanepi` was: after building, there should be a directly callable `senpi` command, not just an internal package artifact. A plain copied file in root `dist/` was not enough for `which senpi`; the build also needed to refresh a PATH-visible shim.
 - What changed:
-  - Updated the coding-agent `build` script to copy the shebang entrypoint from `dist/cli.js` to `dist/senpi` and mark it executable.
-  - Kept the change scoped to packaging/build output, so the existing root build chain now produces the callable artifact without changing runtime logic.
-- Why the extension system could not handle this: build output shape is controlled by package scripts and emitted files, not by runtime extensions.
-- Merge-conflict risk: low. The only expected conflict zone is the `scripts.build` line in `packages/coding-agent/package.json` if upstream changes the coding-agent packaging flow.
+  - Updated the coding-agent `build` script to emit `dist/senpi` alongside `dist/cli.js`.
+  - Updated the root `build` script to generate a root `dist/senpi` wrapper that delegates to `packages/coding-agent/dist/cli.js`.
+  - Added a small build helper at `scripts/create-root-senpi-wrapper.mjs` to write that root wrapper.
+  - Updated the root build helper to also write a small `senpi` shim into npm's global `bin/` directory, so `which senpi` resolves after a successful root build.
+- Why the extension system could not handle this: root build orchestration, emitted files, and PATH-visible shim installation are packaging concerns controlled by package scripts, not runtime extensions.
+- Merge-conflict risk: low to medium. The likely conflict zones are the root `scripts.build` line, the coding-agent `scripts.build` line, the build helper script, and this fork note if upstream changes packaging flow or build helpers.

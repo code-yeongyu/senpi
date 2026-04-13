@@ -6,7 +6,7 @@ This guide provides step-by-step instructions for manually testing each tool cal
 
 ### Required Configuration
 
-Your `~/.pi/agent/models.json` must include the following provider configurations (already present in your setup):
+Your `~/.senpi/agent/models.json` must include the following provider configurations:
 
 ```json
 {
