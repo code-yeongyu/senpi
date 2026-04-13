@@ -26,3 +26,17 @@ Following pi-mono's extension-first philosophy. All permission logic is in the e
 - agent-system handles agent definitions and agent-level tool filtering
 - permission-system handles user permission prompts and per-tool access control
 - Clean separation of concerns
+
+## 2026-04-13 - apply_patch path extraction
+
+### What changed and why
+- Extended `apply_patch` permission parsing and request metadata extraction to read file paths from patch bodies (`input` / `patchText`) instead of falling back to wildcard edit permissions.
+- This change was required once GPT sessions started using `apply_patch` instead of `write` / `edit`; otherwise permission prompts and approvals would lose per-file scope.
+
+### Files modified
+- `parsers.ts`
+- `index.ts`
+
+### Expected merge conflict zones
+- `parsers.ts` edit-tool parsing logic
+- `index.ts` request metadata extraction

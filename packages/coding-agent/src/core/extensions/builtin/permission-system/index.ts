@@ -1,5 +1,6 @@
 import { SettingsManager } from "../../../settings-manager.js";
 import type { ExtensionAPI } from "../../types.js";
+import { extractPatchedPaths } from "../gpt-apply-patch.js";
 import { parsePermissionFlag } from "./cli.js";
 import { disabled } from "./config.js";
 import { createEventEmitter } from "./events.js";
@@ -39,9 +40,11 @@ function createRequestMetadata(toolName: string, input: Record<string, unknown>)
 
 	const pathValue = typeof input.path === "string" ? input.path : undefined;
 	const filePathValue = typeof input.file_path === "string" ? input.file_path : undefined;
+	const patchTextValue =
+		typeof input.input === "string" ? input.input : typeof input.patchText === "string" ? input.patchText : undefined;
 
 	if (toolName === "edit" || toolName === "write" || toolName === "apply_patch" || toolName === "multiedit") {
-		metadata.filepath = pathValue ?? filePathValue;
+		metadata.filepath = pathValue ?? filePathValue ?? extractPatchedPaths(patchTextValue ?? "")[0];
 	}
 
 	if (toolName === "read") {

@@ -1,3 +1,4 @@
+import { extractPatchedPaths } from "../gpt-apply-patch.js";
 import { BashArity } from "../permission-system/arity.js";
 import { extractExternalPaths } from "../permission-system/external-dir.js";
 import type { Request } from "../permission-system/types.js";
@@ -104,17 +105,31 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 
 	const parseEditPermission: ToolPermissionParser = (_toolName, input) => {
 		const filePath = parseFilePath(input);
-		if (!filePath) {
+		if (filePath) {
+			return [
+				{
+					permission: "edit",
+					patterns: [filePath],
+					always: [filePath],
+				},
+			];
+		}
+
+		const patchText = getString(input, "input", "patchText");
+		if (!patchText) {
 			return editParser("edit", input, "");
 		}
 
-		return [
-			{
-				permission: "edit",
-				patterns: [filePath],
-				always: [filePath],
-			},
-		];
+		const patchedPaths = extractPatchedPaths(patchText);
+		if (patchedPaths.length === 0) {
+			return editParser("edit", input, "");
+		}
+
+		return patchedPaths.map((patchedPath) => ({
+			permission: "edit",
+			patterns: [patchedPath],
+			always: [patchedPath],
+		}));
 	};
 
 	registry.register("edit", parseEditPermission);
