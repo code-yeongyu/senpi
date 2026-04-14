@@ -65,6 +65,7 @@ function createMockContext(overrides: { hasUI?: boolean; ui?: ExtensionUIContext
 		sessionManager: {} as any,
 		modelRegistry: {} as any,
 		model: undefined,
+		serviceTier: undefined,
 		isIdle: vi.fn().mockReturnValue(true),
 		signal: undefined,
 		abort: vi.fn(),
@@ -676,9 +677,9 @@ describe("Permission System - Ported from opencode", () => {
 			const { service } = createService([{ permission: "bash", pattern: "rm -rf /", action: "deny" }]);
 
 			// Even with auto-accept for some patterns, dangerous ones should still deny
-			await expect(
-				service.ask(createRequest({ permission: "bash", patterns: ["rm -rf /"] })),
-			).rejects.toBeInstanceOf(DeniedError);
+			await expect(service.ask(createRequest({ permission: "bash", patterns: ["rm -rf /"] }))).rejects.toBeInstanceOf(
+				DeniedError,
+			);
 		});
 
 		it("directory-scoped auto-accept", async () => {
@@ -700,13 +701,11 @@ describe("Permission System - Ported from opencode", () => {
 			const overrideRules: Ruleset = [{ permission: "bash", pattern: "rm *", action: "deny" }];
 			const { service } = createService(baseRules, overrideRules);
 
-			await expect(
-				service.ask(createRequest({ permission: "bash", patterns: ["rm -rf tmp"] })),
-			).rejects.toBeInstanceOf(DeniedError);
+			await expect(service.ask(createRequest({ permission: "bash", patterns: ["rm -rf tmp"] }))).rejects.toBeInstanceOf(
+				DeniedError,
+			);
 
-			await expect(
-				service.ask(createRequest({ permission: "bash", patterns: ["ls -la"] })),
-			).resolves.toBeUndefined();
+			await expect(service.ask(createRequest({ permission: "bash", patterns: ["ls -la"] }))).resolves.toBeUndefined();
 		});
 	});
 

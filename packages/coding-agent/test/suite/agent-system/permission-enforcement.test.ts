@@ -83,6 +83,7 @@ function createRunnerActions(tools: AgentTool[]) {
 function createRunnerContextActions() {
 	return {
 		getModel: () => undefined,
+		getServiceTier: () => undefined,
 		isIdle: () => true,
 		getSignal: () => undefined,
 		abort: () => {},
