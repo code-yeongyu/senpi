@@ -297,6 +297,10 @@ export class SettingsManager {
 	/** Create an in-memory SettingsManager (no file I/O) */
 	static inMemory(settings: Partial<Settings> = {}): SettingsManager {
 		const storage = new InMemorySettingsStorage();
+		// Persist initial settings to storage so reload() preserves them
+		if (Object.keys(settings).length > 0) {
+			storage.withLock("global", () => JSON.stringify(settings));
+		}
 		return new SettingsManager(storage, settings, {});
 	}
 

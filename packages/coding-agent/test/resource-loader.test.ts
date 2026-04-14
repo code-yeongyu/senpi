@@ -338,6 +338,24 @@ Content`,
 			expect(builtinPaths).toContain("<builtin:todowrite>");
 		});
 
+		it("should allow SettingsManager.inMemory() to disable selected builtin extensions", async () => {
+			// given
+			const settingsManager = SettingsManager.inMemory({
+				disabledBuiltinExtensions: ["background-task", "redraws"],
+			});
+			const loader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
+
+			// when
+			await loader.reload();
+			const builtinPaths = loader.getExtensions().extensions.map((extension) => extension.path);
+
+			// then
+			expect(builtinPaths).not.toContain("<builtin:background-task>");
+			expect(builtinPaths).not.toContain("<builtin:redraws>");
+			expect(builtinPaths).toContain("<builtin:agent-system>");
+			expect(builtinPaths).toContain("<builtin:todowrite>");
+		});
+
 		it("should seed default global extensions into the default global agent extensions directory", async () => {
 			// given
 			const previousAgentDir = process.env[ENV_AGENT_DIR];
