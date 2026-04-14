@@ -1,9 +1,9 @@
 import type { Api } from "@mariozechner/pi-ai";
 import { SettingsManager } from "../../settings-manager.js";
-import type { ExtensionAPI } from "../types.js";
+import type { ExtensionAPI, ServiceTier } from "../types.js";
 
+export type { ServiceTier };
 type ProviderPayload = Record<string, unknown>;
-export type ServiceTier = "auto" | "flex" | "priority";
 
 const SERVICE_TIER_APIS: ReadonlySet<Api> = new Set(["openai-responses"]);
 
@@ -27,14 +27,15 @@ export function addServiceTierToPayload(api: Api | undefined, payload: unknown, 
 }
 
 export default function serviceTierExtension(pi: ExtensionAPI): void {
-	let serviceTier: ServiceTier | undefined;
+	let settingsServiceTier: ServiceTier | undefined;
 
 	pi.on("session_start", async (_event, ctx) => {
 		const settingsManager = SettingsManager.create(ctx.cwd);
-		serviceTier = settingsManager.getOpenAIServiceTier();
+		settingsServiceTier = settingsManager.getOpenAIServiceTier();
 	});
 
 	pi.on("before_provider_request", (event, ctx) => {
-		return addServiceTierToPayload(ctx.model?.api, event.payload, serviceTier);
+		const effectiveServiceTier = ctx.serviceTier ?? settingsServiceTier;
+		return addServiceTierToPayload(ctx.model?.api, event.payload, effectiveServiceTier);
 	});
 }

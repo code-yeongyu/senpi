@@ -40,6 +40,7 @@ import type {
 	ResolvedCommand,
 	ResourcesDiscoverEvent,
 	ResourcesDiscoverResult,
+	ServiceTier,
 	SessionBeforeCompactResult,
 	SessionBeforeForkResult,
 	SessionBeforeSwitchResult,
@@ -208,6 +209,7 @@ export class ExtensionRunner {
 	private modelRegistry: ModelRegistry;
 	private errorListeners: Set<ExtensionErrorListener> = new Set();
 	private getModel: () => Model<any> | undefined = () => undefined;
+	private getServiceTier: () => ServiceTier | undefined = () => undefined;
 	private isIdleFn: () => boolean = () => true;
 	private getSignalFn: () => AbortSignal | undefined = () => undefined;
 	private waitForIdleFn: () => Promise<void> = async () => {};
@@ -266,6 +268,7 @@ export class ExtensionRunner {
 
 		// Context actions (required)
 		this.getModel = contextActions.getModel;
+		this.getServiceTier = contextActions.getServiceTier;
 		this.isIdleFn = contextActions.isIdle;
 		this.getSignalFn = contextActions.getSignal;
 		this.abortFn = contextActions.abort;
@@ -534,6 +537,7 @@ export class ExtensionRunner {
 	 */
 	createContext(): ExtensionContext {
 		const getModel = this.getModel;
+		const getServiceTier = this.getServiceTier;
 		return {
 			ui: this.uiContext,
 			hasUI: this.hasUI(),
@@ -542,6 +546,9 @@ export class ExtensionRunner {
 			modelRegistry: this.modelRegistry,
 			get model() {
 				return getModel();
+			},
+			get serviceTier() {
+				return getServiceTier();
 			},
 			isIdle: () => this.isIdleFn(),
 			signal: this.getSignalFn(),

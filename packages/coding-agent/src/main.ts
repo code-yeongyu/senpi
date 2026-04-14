@@ -358,6 +358,7 @@ function buildSessionOptions(
 		options.scopedModels = scopedModels.map((sm) => ({
 			model: sm.model,
 			thinkingLevel: sm.thinkingLevel,
+			serviceTier: sm.serviceTier,
 		}));
 	}
 

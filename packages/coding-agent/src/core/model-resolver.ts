@@ -8,6 +8,7 @@ import chalk from "chalk";
 import { minimatch } from "minimatch";
 import { isValidThinkingLevel } from "../cli/args.js";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
+import type { ServiceTier } from "./extensions/builtin/service-tier.js";
 import type { ModelRegistry } from "./model-registry.js";
 
 /** Default model IDs for each known provider */
@@ -41,6 +42,8 @@ export interface ScopedModel {
 	model: Model<Api>;
 	/** Thinking level if explicitly specified in pattern (e.g., "model:high"), undefined otherwise */
 	thinkingLevel?: ThinkingLevel;
+	/** Service tier if explicitly specified via -fast suffix (e.g., "model-fast"), undefined otherwise */
+	serviceTier?: ServiceTier;
 }
 
 /**
@@ -143,8 +146,8 @@ function tryMatchModel(modelPattern: string, availableModels: Model<Api>[]): Mod
 
 export interface ParsedModelResult {
 	model: Model<Api> | undefined;
-	/** Thinking level if explicitly specified in pattern, undefined otherwise */
 	thinkingLevel?: ThinkingLevel;
+	serviceTier?: ServiceTier;
 	warning: string | undefined;
 }
 
@@ -182,53 +185,54 @@ export function parseModelPattern(
 	availableModels: Model<Api>[],
 	options?: { allowInvalidThinkingLevelFallback?: boolean },
 ): ParsedModelResult {
+	let serviceTier: ServiceTier | undefined;
+	let effectivePattern = pattern;
+	if (pattern.endsWith("-fast")) {
+		serviceTier = "priority";
+		effectivePattern = pattern.slice(0, -5);
+	}
+
 	// Try exact match first
-	const exactMatch = tryMatchModel(pattern, availableModels);
+	const exactMatch = tryMatchModel(effectivePattern, availableModels);
 	if (exactMatch) {
-		return { model: exactMatch, thinkingLevel: undefined, warning: undefined };
+		return { model: exactMatch, thinkingLevel: undefined, serviceTier, warning: undefined };
 	}
 
-	// No match - try splitting on last colon if present
-	const lastColonIndex = pattern.lastIndexOf(":");
+	const lastColonIndex = effectivePattern.lastIndexOf(":");
 	if (lastColonIndex === -1) {
-		// No colons, pattern simply doesn't match any model
-		return { model: undefined, thinkingLevel: undefined, warning: undefined };
+		return { model: undefined, thinkingLevel: undefined, serviceTier, warning: undefined };
 	}
 
-	const prefix = pattern.substring(0, lastColonIndex);
-	const suffix = pattern.substring(lastColonIndex + 1);
+	const prefix = effectivePattern.substring(0, lastColonIndex);
+	const suffix = effectivePattern.substring(lastColonIndex + 1);
 
 	if (isValidThinkingLevel(suffix)) {
-		// Valid thinking level - recurse on prefix and use this level
 		const result = parseModelPattern(prefix, availableModels, options);
 		if (result.model) {
-			// Only use this thinking level if no warning from inner recursion
 			return {
 				model: result.model,
 				thinkingLevel: result.warning ? undefined : suffix,
+				serviceTier: serviceTier ?? result.serviceTier,
 				warning: result.warning,
 			};
 		}
-		return result;
+		return { ...result, serviceTier: serviceTier ?? result.serviceTier };
 	} else {
-		// Invalid suffix
 		const allowFallback = options?.allowInvalidThinkingLevelFallback ?? true;
 		if (!allowFallback) {
-			// In strict mode (CLI --model parsing), treat it as part of the model id and fail.
-			// This avoids accidentally resolving to a different model.
-			return { model: undefined, thinkingLevel: undefined, warning: undefined };
+			return { model: undefined, thinkingLevel: undefined, serviceTier, warning: undefined };
 		}
 
-		// Scope mode: recurse on prefix and warn
 		const result = parseModelPattern(prefix, availableModels, options);
 		if (result.model) {
 			return {
 				model: result.model,
 				thinkingLevel: undefined,
-				warning: `Invalid thinking level "${suffix}" in pattern "${pattern}". Using default instead.`,
+				serviceTier: serviceTier ?? result.serviceTier,
+				warning: `Invalid thinking level "${suffix}" in pattern "${effectivePattern}". Using default instead.`,
 			};
 		}
-		return result;
+		return { ...result, serviceTier: serviceTier ?? result.serviceTier };
 	}
 }
 
@@ -248,12 +252,16 @@ export async function resolveModelScope(patterns: string[], modelRegistry: Model
 	const scopedModels: ScopedModel[] = [];
 
 	for (const pattern of patterns) {
-		// Check if pattern contains glob characters
 		if (pattern.includes("*") || pattern.includes("?") || pattern.includes("[")) {
-			// Extract optional thinking level suffix (e.g., "provider/*:high")
 			const colonIdx = pattern.lastIndexOf(":");
 			let globPattern = pattern;
 			let thinkingLevel: ThinkingLevel | undefined;
+			let serviceTier: ServiceTier | undefined;
+
+			if (globPattern.endsWith("-fast")) {
+				serviceTier = "priority";
+				globPattern = globPattern.slice(0, -5);
+			}
 
 			if (colonIdx !== -1) {
 				const suffix = pattern.substring(colonIdx + 1);
@@ -263,8 +271,6 @@ export async function resolveModelScope(patterns: string[], modelRegistry: Model
 				}
 			}
 
-			// Match against "provider/modelId" format OR just model ID
-			// This allows "*sonnet*" to match without requiring "anthropic/*sonnet*"
 			const matchingModels = availableModels.filter((m) => {
 				const fullId = `${m.provider}/${m.id}`;
 				return minimatch(fullId, globPattern, { nocase: true }) || minimatch(m.id, globPattern, { nocase: true });
@@ -277,13 +283,13 @@ export async function resolveModelScope(patterns: string[], modelRegistry: Model
 
 			for (const model of matchingModels) {
 				if (!scopedModels.find((sm) => modelsAreEqual(sm.model, model))) {
-					scopedModels.push({ model, thinkingLevel });
+					scopedModels.push({ model, thinkingLevel, serviceTier });
 				}
 			}
 			continue;
 		}
 
-		const { model, thinkingLevel, warning } = parseModelPattern(pattern, availableModels);
+		const { model, thinkingLevel, serviceTier, warning } = parseModelPattern(pattern, availableModels);
 
 		if (warning) {
 			console.warn(chalk.yellow(`Warning: ${warning}`));
@@ -294,9 +300,8 @@ export async function resolveModelScope(patterns: string[], modelRegistry: Model
 			continue;
 		}
 
-		// Avoid duplicates
 		if (!scopedModels.find((sm) => modelsAreEqual(sm.model, model))) {
-			scopedModels.push({ model, thinkingLevel });
+			scopedModels.push({ model, thinkingLevel, serviceTier });
 		}
 	}
 
@@ -306,11 +311,8 @@ export async function resolveModelScope(patterns: string[], modelRegistry: Model
 export interface ResolveCliModelResult {
 	model: Model<Api> | undefined;
 	thinkingLevel?: ThinkingLevel;
+	serviceTier?: ServiceTier;
 	warning: string | undefined;
-	/**
-	 * Error message suitable for CLI display.
-	 * When set, model will be undefined.
-	 */
 	error: string | undefined;
 }
 
@@ -404,27 +406,22 @@ export function resolveCliModel(options: {
 	}
 
 	const candidates = provider ? availableModels.filter((m) => m.provider === provider) : availableModels;
-	const { model, thinkingLevel, warning } = parseModelPattern(pattern, candidates, {
+	const { model, thinkingLevel, serviceTier, warning } = parseModelPattern(pattern, candidates, {
 		allowInvalidThinkingLevelFallback: false,
 	});
 
 	if (model) {
-		return { model, thinkingLevel, warning, error: undefined };
+		return { model, thinkingLevel, serviceTier, warning, error: undefined };
 	}
 
-	// If we inferred a provider from the slash but found no match within that provider,
-	// fall back to matching the full input as a raw model id across all models.
-	// This handles OpenRouter-style IDs like "openai/gpt-4o:extended" where "openai"
-	// looks like a provider but the full string is actually a model id on openrouter.
 	if (inferredProvider) {
 		const lower = cliModel.toLowerCase();
 		const exact = availableModels.find(
 			(m) => m.id.toLowerCase() === lower || `${m.provider}/${m.id}`.toLowerCase() === lower,
 		);
 		if (exact) {
-			return { model: exact, warning: undefined, thinkingLevel: undefined, error: undefined };
+			return { model: exact, warning: undefined, thinkingLevel: undefined, serviceTier, error: undefined };
 		}
-		// Also try parseModelPattern on the full input against all models
 		const fallback = parseModelPattern(cliModel, availableModels, {
 			allowInvalidThinkingLevelFallback: false,
 		});
@@ -432,6 +429,7 @@ export function resolveCliModel(options: {
 			return {
 				model: fallback.model,
 				thinkingLevel: fallback.thinkingLevel,
+				serviceTier: fallback.serviceTier,
 				warning: fallback.warning,
 				error: undefined,
 			};
@@ -444,7 +442,13 @@ export function resolveCliModel(options: {
 			const fallbackWarning = warning
 				? `${warning} Model "${pattern}" not found for provider "${provider}". Using custom model id.`
 				: `Model "${pattern}" not found for provider "${provider}". Using custom model id.`;
-			return { model: fallbackModel, thinkingLevel: undefined, warning: fallbackWarning, error: undefined };
+			return {
+				model: fallbackModel,
+				thinkingLevel: undefined,
+				serviceTier,
+				warning: fallbackWarning,
+				error: undefined,
+			};
 		}
 	}
 
@@ -452,6 +456,7 @@ export function resolveCliModel(options: {
 	return {
 		model: undefined,
 		thinkingLevel: undefined,
+		serviceTier,
 		warning,
 		error: `Model "${display}" not found. Use --list-models to see available models.`,
 	};

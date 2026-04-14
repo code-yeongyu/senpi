@@ -44,6 +44,7 @@ import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
 import { buildDynamicSystemPrompt } from "./dynamic-prompt/index.js";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.js";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.js";
+import type { ServiceTier } from "./extensions/builtin/service-tier.js";
 import {
 	type ContextUsage,
 	type ExtensionCommandContextActions,
@@ -141,7 +142,7 @@ export interface AgentSessionConfig {
 	settingsManager: SettingsManager;
 	cwd: string;
 	/** Models to cycle through with Ctrl+P (from --models flag) */
-	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>;
 	/** Resource loader for skills, prompts, themes, context files, system prompt */
 	resourceLoader: ResourceLoader;
 	/** SDK custom tools registered outside extensions */
@@ -234,7 +235,7 @@ export class AgentSession {
 	readonly sessionManager: SessionManager;
 	readonly settingsManager: SettingsManager;
 
-	private _scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	private _scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>;
 
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
@@ -295,6 +296,7 @@ export class AgentSession {
 
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
 	private _baseSystemPrompt = "";
+	private _currentServiceTier: ServiceTier | undefined = undefined;
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
@@ -310,8 +312,12 @@ export class AgentSession {
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
 
-		// Always subscribe to agent events for internal handling
-		// (session persistence, extensions, auto-compaction, retry logic)
+		const initialModel = this.agent.state.model;
+		if (initialModel) {
+			const scopedMatch = this._scopedModels.find((sm) => modelsAreEqual(sm.model, initialModel));
+			this._currentServiceTier = scopedMatch?.serviceTier;
+		}
+
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 		this._installAgentToolHooks();
 
@@ -738,6 +744,10 @@ export class AgentSession {
 		return this.agent.state.thinkingLevel;
 	}
 
+	get serviceTier(): ServiceTier | undefined {
+		return this._currentServiceTier;
+	}
+
 	/** Whether agent is currently streaming a response */
 	get isStreaming(): boolean {
 		return this.agent.state.isStreaming;
@@ -840,12 +850,14 @@ export class AgentSession {
 	}
 
 	/** Scoped models for cycling (from --models flag) */
-	get scopedModels(): ReadonlyArray<{ model: Model<any>; thinkingLevel?: ThinkingLevel }> {
+	get scopedModels(): ReadonlyArray<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }> {
 		return this._scopedModels;
 	}
 
 	/** Update scoped models for cycling */
-	setScopedModels(scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>): void {
+	setScopedModels(
+		scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>,
+	): void {
 		this._scopedModels = scopedModels;
 	}
 
@@ -1378,7 +1390,9 @@ export class AgentSession {
 		this.sessionManager.appendModelChange(model.provider, model.id);
 		this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
 
-		// Re-clamp thinking level for new model's capabilities
+		const scopedMatch = this._scopedModels.find((sm) => modelsAreEqual(sm.model, model));
+		this._currentServiceTier = scopedMatch?.serviceTier;
+
 		this.setThinkingLevel(thinkingLevel);
 
 		await this._emitModelSelect(model, previousModel, "set");
@@ -1410,10 +1424,10 @@ export class AgentSession {
 		const next = scopedModels[nextIndex];
 		const thinkingLevel = this._getThinkingLevelForModelSwitch(next.thinkingLevel);
 
-		// Apply model
 		this.agent.state.model = next.model;
 		this.sessionManager.appendModelChange(next.model.provider, next.model.id);
 		this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
+		this._currentServiceTier = next.serviceTier;
 
 		// Apply thinking level.
 		// - Explicit scoped model thinking level overrides current session level
@@ -2169,6 +2183,7 @@ export class AgentSession {
 			},
 			{
 				getModel: () => this.model,
+				getServiceTier: () => this.serviceTier,
 				isIdle: () => !this.isStreaming,
 				getSignal: () => this.agent.signal,
 				abort: () => this.abort(),

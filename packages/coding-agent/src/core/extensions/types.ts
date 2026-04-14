@@ -78,6 +78,8 @@ export type { ExecOptions, ExecResult } from "../exec.js";
 export type { AgentToolResult, AgentToolUpdateCallback };
 export type { AppKeybinding, KeybindingsManager } from "../keybindings.js";
 
+export type ServiceTier = "auto" | "flex" | "priority";
+
 // ============================================================================
 // UI Context
 // ============================================================================
@@ -276,6 +278,8 @@ export interface ExtensionContext {
 	modelRegistry: ModelRegistry;
 	/** Current model (may be undefined) */
 	model: Model<any> | undefined;
+	/** Current service tier for the active model (from -fast suffix or scoped model config) */
+	serviceTier: ServiceTier | undefined;
 	/** Whether the agent is idle (not streaming) */
 	isIdle(): boolean;
 	/** The current abort signal, or undefined when the agent is not streaming. */
@@ -1385,6 +1389,7 @@ export interface ExtensionActions {
  */
 export interface ExtensionContextActions {
 	getModel: () => Model<any> | undefined;
+	getServiceTier: () => ServiceTier | undefined;
 	isIdle: () => boolean;
 	getSignal: () => AbortSignal | undefined;
 	abort: () => void;
