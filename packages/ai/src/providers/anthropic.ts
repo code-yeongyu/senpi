@@ -157,22 +157,21 @@ export type AnthropicEffort = "low" | "medium" | "high" | "xhigh" | "max";
 export interface AnthropicOptions extends StreamOptions {
 	/**
 	 * Enable extended thinking.
-	 * For Opus 4.6 and Sonnet 4.6: uses adaptive thinking (model decides when/how much to think).
+	 * For Opus 4.6, Sonnet 4.6 and Opus 4.7: uses adaptive thinking (model decides when/how much to think).
 	 * For older models: uses budget-based thinking with thinkingBudgetTokens.
 	 */
 	thinkingEnabled?: boolean;
 	/**
 	 * Token budget for extended thinking (older models only).
-	 * Ignored for Opus 4.6 and Sonnet 4.6, which use adaptive thinking.
+	 * Ignored for adaptive-thinking models (Opus 4.6+, Sonnet 4.6+).
 	 */
 	thinkingBudgetTokens?: number;
 	/**
-	 * Effort level for adaptive thinking (Opus 4.6 and Sonnet 4.6).
-	 * Controls how much thinking Claude allocates:
-	 * - "max": Always thinks with no constraints (Opus 4.6 only)
-	 * - "high": Always thinks, deep reasoning (default)
-	 * - "medium": Moderate thinking, may skip for simple queries
-	 * - "low": Minimal thinking, skips for simple tasks
+	 * Effort level for adaptive thinking (Opus 4.6, Sonnet 4.6 and Opus 4.7).
+	 * Model-specific tiers:
+	 * - Opus 4.7: "low" | "medium" | "high" | "xhigh" | "max" (native Anthropic tiers)
+	 * - Opus 4.6: "low" | "medium" | "high" | "max"          ("max" is Opus 4.6 top tier)
+	 * - Sonnet 4.6: "low" | "medium" | "high"                ("xhigh"/"max" not supported)
 	 * Ignored for older models.
 	 */
 	effort?: AnthropicEffort;
@@ -203,9 +202,11 @@ const ANTHROPIC_RESERVED_BODY_KEYS: ReadonlySet<string> = new Set([
 	"stream",
 	"tools",
 	"tool_choice",
+	"temperature",
 	"max_tokens",
 	"thinking",
 	"output_config",
+	"metadata",
 ]);
 
 export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOptions> = (
@@ -478,9 +479,9 @@ function isOpus47(modelId: string): boolean {
  * Map ThinkingLevel to Anthropic effort levels for adaptive thinking.
  *
  * Model-specific effort tiers:
- * - Opus 4.7: supports "low" | "medium" | "high" | "xhigh" | "max"  (xhigh maps to native "xhigh")
- * - Opus 4.6: supports "low" | "medium" | "high" | "max"            (xhigh maps to "max" since 4.6 lacks xhigh)
- * - Sonnet 4.6 and other adaptive models: "low" | "medium" | "high" (xhigh clamps to "high")
+ * - Opus 4.7: supports "low" | "medium" | "high" | "xhigh" | "max" (native passthrough for xhigh and max)
+ * - Opus 4.6: supports "low" | "medium" | "high" | "max"           (xhigh or max both route to "max")
+ * - Sonnet 4.6 and other adaptive models: "low" | "medium" | "high" (xhigh/max clamp to "high")
  */
 function mapThinkingLevelToEffort(level: SimpleStreamOptions["reasoning"], modelId: string): AnthropicEffort {
 	switch (level) {
@@ -495,6 +496,9 @@ function mapThinkingLevelToEffort(level: SimpleStreamOptions["reasoning"], model
 		case "xhigh":
 			if (isOpus47(modelId)) return "xhigh";
 			if (isOpus46(modelId)) return "max";
+			return "high";
+		case "max":
+			if (isOpus47(modelId) || isOpus46(modelId)) return "max";
 			return "high";
 		default:
 			return "high";

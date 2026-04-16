@@ -448,18 +448,18 @@ function buildParams(
 		config.abortSignal = options.signal;
 	}
 
+	applyExtraBody(config as unknown as Record<string, unknown>, options?.extraBody, GOOGLE_RESERVED_BODY_KEYS);
+
 	const params: GenerateContentParameters = {
 		model: model.id,
 		contents,
 		config,
 	};
 
-	applyExtraBody(params as unknown as Record<string, unknown>, options?.extraBody, GOOGLE_RESERVED_BODY_KEYS);
-
 	return params;
 }
 
-type ClampedThinkingLevel = Exclude<PiThinkingLevel, "xhigh">;
+type ClampedThinkingLevel = Exclude<PiThinkingLevel, "xhigh" | "max">;
 
 function isGemini3ProModel(model: Model<"google-generative-ai">): boolean {
 	return /gemini-3(?:\.\d+)?-pro/.test(model.id.toLowerCase());

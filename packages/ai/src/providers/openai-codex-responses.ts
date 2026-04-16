@@ -31,6 +31,7 @@ import { convertResponsesMessages, convertResponsesTools, processResponsesStream
 import {
 	applyExtraBody,
 	buildBaseOptions,
+	clampMaxForOpenAI,
 	clampReasoning,
 	OPENAI_RESPONSES_RESERVED_BODY_KEYS,
 } from "./simple-options.js";
@@ -286,7 +287,10 @@ export const streamSimpleOpenAICodexResponses: StreamFunction<"openai-codex-resp
 	}
 
 	const base = buildBaseOptions(model, options, apiKey);
-	const reasoningEffort = supportsXhigh(model) ? options?.reasoning : clampReasoning(options?.reasoning);
+	const xhighSupported = supportsXhigh(model);
+	const reasoningEffort: OpenAICodexResponsesOptions["reasoningEffort"] = xhighSupported
+		? clampMaxForOpenAI(options?.reasoning, true)
+		: clampReasoning(options?.reasoning);
 
 	return streamOpenAICodexResponses(model, context, {
 		...base,

@@ -16,6 +16,7 @@ import { convertResponsesMessages, convertResponsesTools, processResponsesStream
 import {
 	applyExtraBody,
 	buildBaseOptions,
+	clampMaxForOpenAI,
 	clampReasoning,
 	OPENAI_RESPONSES_RESERVED_BODY_KEYS,
 } from "./simple-options.js";
@@ -136,7 +137,10 @@ export const streamSimpleAzureOpenAIResponses: StreamFunction<"azure-openai-resp
 	}
 
 	const base = buildBaseOptions(model, options, apiKey);
-	const reasoningEffort = supportsXhigh(model) ? options?.reasoning : clampReasoning(options?.reasoning);
+	const xhighSupported = supportsXhigh(model);
+	const reasoningEffort: AzureOpenAIResponsesOptions["reasoningEffort"] = xhighSupported
+		? clampMaxForOpenAI(options?.reasoning, true)
+		: clampReasoning(options?.reasoning);
 
 	return streamAzureOpenAIResponses(model, context, {
 		...base,
