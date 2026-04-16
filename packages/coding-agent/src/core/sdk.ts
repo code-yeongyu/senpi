@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, type ThinkingLevel } from "@mariozechner/pi-agent-core";
-import { type Message, type Model, streamSimple } from "@mariozechner/pi-ai";
+import { type Api, type Message, type Model, streamSimple, supportsXhigh } from "@mariozechner/pi-ai";
 import { getAgentDir, getDocsPath } from "../config.js";
 import { AgentSession } from "./agent-session.js";
 import { AuthStorage } from "./auth-storage.js";
@@ -238,10 +238,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		thinkingLevel = settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL;
 	}
 
-	// Clamp to model capabilities
-	if (!model || !model.reasoning) {
-		thinkingLevel = "off";
-	}
+	thinkingLevel = clampThinkingLevelToModel(thinkingLevel, model);
 
 	const defaultActiveToolNames: ToolName[] = ["read", "bash", "edit", "write"];
 	const initialActiveToolNames: ToolName[] = options.tools
@@ -363,4 +360,19 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		extensionsResult,
 		modelFallbackMessage,
 	};
+}
+
+/**
+ * Clamp a requested thinking level to what the resolved model actually exposes.
+ * Non-reasoning models collapse everything to "off"; models without xhigh/max
+ * capability downgrade both tiers to "high" so session state never claims a
+ * level the provider will silently drop.
+ */
+export function clampThinkingLevelToModel(
+	level: ThinkingLevel | undefined,
+	model: Model<Api> | undefined,
+): ThinkingLevel {
+	if (!model || !model.reasoning) return "off";
+	if ((level === "xhigh" || level === "max") && !supportsXhigh(model)) return "high";
+	return level ?? "off";
 }

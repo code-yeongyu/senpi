@@ -7,7 +7,7 @@
 
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { type ImageContent, modelsAreEqual, supportsXhigh } from "@mariozechner/pi-ai";
+import { type ImageContent, modelsAreEqual } from "@mariozechner/pi-ai";
 import { ProcessTerminal, setKeybindings, TUI } from "@mariozechner/pi-tui";
 import chalk from "chalk";
 import { type Args, type Mode, parseArgs, printHelp } from "./cli/args.js";
@@ -28,7 +28,7 @@ import { KeybindingsManager } from "./core/keybindings.js";
 import type { ModelRegistry } from "./core/model-registry.js";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.js";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.js";
-import type { CreateAgentSessionOptions } from "./core/sdk.js";
+import { type CreateAgentSessionOptions, clampThinkingLevelToModel } from "./core/sdk.js";
 import {
 	formatMissingSessionCwdPrompt,
 	getMissingSessionCwdIssue,
@@ -585,14 +585,9 @@ export async function main(args: string[]) {
 		});
 		const cliThinkingOverride = parsed.thinking !== undefined || cliThinkingFromModel;
 		if (created.session.model && cliThinkingOverride) {
-			let effectiveThinking = created.session.thinkingLevel;
-			if (!created.session.model.reasoning) {
-				effectiveThinking = "off";
-			} else if (effectiveThinking === "xhigh" && !supportsXhigh(created.session.model)) {
-				effectiveThinking = "high";
-			}
-			if (effectiveThinking !== created.session.thinkingLevel) {
-				created.session.setThinkingLevel(effectiveThinking);
+			const clamped = clampThinkingLevelToModel(created.session.thinkingLevel, created.session.model);
+			if (clamped !== created.session.thinkingLevel) {
+				created.session.setThinkingLevel(clamped);
 			}
 		}
 
