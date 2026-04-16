@@ -338,13 +338,14 @@ export class AgentSession {
 	private async _getRequiredRequestAuth(model: Model<any>): Promise<{
 		apiKey: string;
 		headers?: Record<string, string>;
+		extraBody?: Record<string, unknown>;
 	}> {
 		const result = await this._modelRegistry.getApiKeyAndHeaders(model);
 		if (!result.ok) {
 			throw new Error(result.error);
 		}
 		if (result.apiKey) {
-			return { apiKey: result.apiKey, headers: result.headers };
+			return { apiKey: result.apiKey, headers: result.headers, extraBody: result.extraBody };
 		}
 
 		const isOAuth = this._modelRegistry.isUsingOAuth(model);
@@ -1554,17 +1555,17 @@ export class AgentSession {
 	}
 
 	private _clampThinkingLevel(level: ThinkingLevel, availableLevels: ThinkingLevel[]): ThinkingLevel {
-		const ordered = THINKING_LEVELS_WITH_XHIGH;
+		const ordered = THINKING_LEVELS_WITH_MAX;
 		const available = new Set(availableLevels);
 		const requestedIndex = ordered.indexOf(level);
 		if (requestedIndex === -1) {
 			return availableLevels[0] ?? "off";
 		}
-		for (let i = requestedIndex; i < ordered.length; i++) {
+		for (let i = requestedIndex; i >= 0; i--) {
 			const candidate = ordered[i];
 			if (available.has(candidate)) return candidate;
 		}
-		for (let i = requestedIndex - 1; i >= 0; i--) {
+		for (let i = requestedIndex + 1; i < ordered.length; i++) {
 			const candidate = ordered[i];
 			if (available.has(candidate)) return candidate;
 		}
@@ -1613,7 +1614,7 @@ export class AgentSession {
 				throw new Error("No model selected");
 			}
 
-			const { apiKey, headers } = await this._getRequiredRequestAuth(this.model);
+			const { apiKey, headers, extraBody } = await this._getRequiredRequestAuth(this.model);
 
 			const pathEntries = this.sessionManager.getBranch();
 			const settings = this.settingsManager.getCompactionSettings();
@@ -1670,6 +1671,7 @@ export class AgentSession {
 					headers,
 					customInstructions,
 					this._compactionAbortController.signal,
+					extraBody,
 				);
 				summary = result.summary;
 				firstKeptEntryId = result.firstKeptEntryId;
@@ -1869,7 +1871,7 @@ export class AgentSession {
 				});
 				return;
 			}
-			const { apiKey, headers } = authResult;
+			const { apiKey, headers, extraBody } = authResult;
 
 			const pathEntries = this.sessionManager.getBranch();
 
@@ -1934,6 +1936,7 @@ export class AgentSession {
 					headers,
 					undefined,
 					this._autoCompactionAbortController.signal,
+					extraBody,
 				);
 				summary = compactResult.summary;
 				firstKeptEntryId = compactResult.firstKeptEntryId;
@@ -2748,12 +2751,13 @@ export class AgentSession {
 		let summaryDetails: unknown;
 		if (options.summarize && entriesToSummarize.length > 0 && !extensionSummary) {
 			const model = this.model!;
-			const { apiKey, headers } = await this._getRequiredRequestAuth(model);
+			const { apiKey, headers, extraBody } = await this._getRequiredRequestAuth(model);
 			const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
 			const result = await generateBranchSummary(entriesToSummarize, {
 				model,
 				apiKey,
 				headers,
+				extraBody,
 				signal: this._branchSummaryAbortController.signal,
 				customInstructions,
 				replaceInstructions,
