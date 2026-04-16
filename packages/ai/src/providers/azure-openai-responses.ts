@@ -13,7 +13,12 @@ import type {
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.js";
-import { buildBaseOptions, clampReasoning } from "./simple-options.js";
+import {
+	applyExtraBody,
+	buildBaseOptions,
+	clampReasoning,
+	OPENAI_RESPONSES_RESERVED_BODY_KEYS,
+} from "./simple-options.js";
 
 const DEFAULT_AZURE_API_VERSION = "v1";
 const AZURE_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode", "azure-openai-responses"]);
@@ -243,6 +248,12 @@ function buildParams(
 			params.reasoning = { effort: "none" };
 		}
 	}
+
+	applyExtraBody(
+		params as unknown as Record<string, unknown>,
+		options?.extraBody,
+		OPENAI_RESPONSES_RESERVED_BODY_KEYS,
+	);
 
 	return params;
 }

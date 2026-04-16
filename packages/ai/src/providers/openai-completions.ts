@@ -30,7 +30,12 @@ import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.js";
-import { buildBaseOptions, clampReasoning } from "./simple-options.js";
+import {
+	applyExtraBody,
+	buildBaseOptions,
+	clampReasoning,
+	OPENAI_COMPLETIONS_RESERVED_BODY_KEYS,
+} from "./simple-options.js";
 import { transformMessages } from "./transform-messages.js";
 
 /**
@@ -443,6 +448,12 @@ function buildParams(model: Model<"openai-completions">, context: Context, optio
 			(params as any).providerOptions = { gateway: gatewayOptions };
 		}
 	}
+
+	applyExtraBody(
+		params as unknown as Record<string, unknown>,
+		options?.extraBody,
+		OPENAI_COMPLETIONS_RESERVED_BODY_KEYS,
+	);
 
 	return params;
 }

@@ -90,6 +90,13 @@ export interface StreamOptions {
 	 */
 	headers?: Record<string, string>;
 	/**
+	 * Optional custom fields to merge into the outgoing provider request body.
+	 * Applied before `onPayload` so `onPayload` can observe/override them.
+	 * Provider-managed fields (e.g. `model`, `messages`, `stream`) are preserved
+	 * and cannot be overridden to avoid breaking core request semantics.
+	 */
+	extraBody?: Record<string, unknown>;
+	/**
 	 * Maximum delay in milliseconds to wait for a retry when the server requests a long wait.
 	 * If the server's requested delay exceeds this value, the request fails immediately
 	 * with an error containing the requested delay, allowing higher-level retry logic

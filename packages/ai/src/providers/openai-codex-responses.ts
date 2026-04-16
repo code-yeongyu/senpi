@@ -28,7 +28,12 @@ import type {
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.js";
-import { buildBaseOptions, clampReasoning } from "./simple-options.js";
+import {
+	applyExtraBody,
+	buildBaseOptions,
+	clampReasoning,
+	OPENAI_RESPONSES_RESERVED_BODY_KEYS,
+} from "./simple-options.js";
 
 // ============================================================================
 // Configuration
@@ -329,6 +334,8 @@ function buildRequestBody(
 			summary: options.reasoningSummary ?? "auto",
 		};
 	}
+
+	applyExtraBody(body as unknown as Record<string, unknown>, options?.extraBody, OPENAI_RESPONSES_RESERVED_BODY_KEYS);
 
 	return body;
 }

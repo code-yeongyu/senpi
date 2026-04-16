@@ -27,7 +27,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { shortHash } from "../utils/hash.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
-import { buildBaseOptions, clampReasoning } from "./simple-options.js";
+import { applyExtraBody, buildBaseOptions, clampReasoning, MISTRAL_RESERVED_BODY_KEYS } from "./simple-options.js";
 import { transformMessages } from "./transform-messages.js";
 
 const MISTRAL_TOOL_CALL_ID_LENGTH = 9;
@@ -247,6 +247,8 @@ function buildChatPayload(
 			content: sanitizeSurrogates(context.systemPrompt),
 		});
 	}
+
+	applyExtraBody(payload as unknown as Record<string, unknown>, options?.extraBody, MISTRAL_RESERVED_BODY_KEYS);
 
 	return payload;
 }
