@@ -24,7 +24,7 @@ import type {
 	ThinkingLevel,
 } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@mariozechner/pi-ai";
-import { isContextOverflow, modelsAreEqual, resetApiProviders, supportsXhigh } from "@mariozechner/pi-ai";
+import { isContextOverflow, modelsAreEqual, resetApiProviders, supportsMax, supportsXhigh } from "@mariozechner/pi-ai";
 import { getDocsPath } from "../config.js";
 import { theme } from "../modes/interactive/theme/theme.js";
 import { stripFrontmatter } from "../utils/frontmatter.js";
@@ -223,8 +223,11 @@ interface ToolDefinitionEntry {
 /** Standard thinking levels */
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high"];
 
-/** Thinking levels including xhigh and max (for supported models; max unlocks the native Anthropic "max" effort on Opus 4.7). */
-const THINKING_LEVELS_WITH_XHIGH: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+/** Thinking levels up through xhigh (GPT-5.x codex-max, Opus 4.6/4.7). */
+const THINKING_LEVELS_WITH_XHIGH: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+
+/** Thinking levels including native max (Opus 4.6 legacy / Opus 4.7 native). */
+const THINKING_LEVELS_WITH_MAX: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 // ============================================================================
 // AgentSession Class
@@ -1513,7 +1516,9 @@ export class AgentSession {
 	 */
 	getAvailableThinkingLevels(): ThinkingLevel[] {
 		if (!this.supportsThinking()) return ["off"];
-		return this.supportsXhighThinking() ? THINKING_LEVELS_WITH_XHIGH : THINKING_LEVELS;
+		if (this.supportsMaxThinking()) return THINKING_LEVELS_WITH_MAX;
+		if (this.supportsXhighThinking()) return THINKING_LEVELS_WITH_XHIGH;
+		return THINKING_LEVELS;
 	}
 
 	/**
@@ -1521,6 +1526,14 @@ export class AgentSession {
 	 */
 	supportsXhighThinking(): boolean {
 		return this.model ? supportsXhigh(this.model) : false;
+	}
+
+	/**
+	 * Check if current model exposes the native "max" adaptive thinking tier
+	 * (currently Anthropic Opus 4.6 legacy and Opus 4.7 native).
+	 */
+	supportsMaxThinking(): boolean {
+		return this.model ? supportsMax(this.model) : false;
 	}
 
 	/**

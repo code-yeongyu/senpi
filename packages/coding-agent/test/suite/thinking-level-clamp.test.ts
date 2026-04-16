@@ -28,6 +28,21 @@ describe("clampThinkingLevelToModel", () => {
 		expect(clampThinkingLevelToModel("max", model)).toBe("max");
 	});
 
+	it("downgrades max to xhigh on xhigh-only OpenAI models (GPT-5.2)", () => {
+		const model = getModel("openai", "gpt-5.2");
+		expect(clampThinkingLevelToModel("max", model)).toBe("xhigh");
+	});
+
+	it("downgrades max to xhigh on GPT-5.4", () => {
+		const model = getModel("openai", "gpt-5.4");
+		expect(clampThinkingLevelToModel("max", model)).toBe("xhigh");
+	});
+
+	it("preserves xhigh on xhigh-only OpenAI models", () => {
+		const model = getModel("openai", "gpt-5.2");
+		expect(clampThinkingLevelToModel("xhigh", model)).toBe("xhigh");
+	});
+
 	it("forces off on non-reasoning models", () => {
 		const model = getModel("anthropic", "claude-3-5-haiku-latest");
 		const nonReasoning = { ...model, reasoning: false };

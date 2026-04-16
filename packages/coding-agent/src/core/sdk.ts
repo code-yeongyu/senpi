@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, type ThinkingLevel } from "@mariozechner/pi-agent-core";
-import { type Api, type Message, type Model, streamSimple, supportsXhigh } from "@mariozechner/pi-ai";
+import { type Api, type Message, type Model, streamSimple, supportsMax, supportsXhigh } from "@mariozechner/pi-ai";
 import { getAgentDir, getDocsPath } from "../config.js";
 import { AgentSession } from "./agent-session.js";
 import { AuthStorage } from "./auth-storage.js";
@@ -364,15 +364,24 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 /**
  * Clamp a requested thinking level to what the resolved model actually exposes.
- * Non-reasoning models collapse everything to "off"; models without xhigh/max
- * capability downgrade both tiers to "high" so session state never claims a
- * level the provider will silently drop.
+ *
+ * Capability tiers:
+ * - Non-reasoning model: everything collapses to "off".
+ * - No xhigh support:   xhigh and max both collapse to "high".
+ * - xhigh but no max:   max collapses to "xhigh" (currently GPT-5.2/5.3/5.4).
+ * - Native max support: xhigh and max are both preserved (Opus 4.6 / 4.7).
+ *
+ * This keeps session state aligned with `getAvailableThinkingLevels()` so the
+ * UI never claims a tier the provider will silently downgrade at request time.
  */
 export function clampThinkingLevelToModel(
 	level: ThinkingLevel | undefined,
 	model: Model<Api> | undefined,
 ): ThinkingLevel {
 	if (!model || !model.reasoning) return "off";
-	if ((level === "xhigh" || level === "max") && !supportsXhigh(model)) return "high";
+	if (level === "max" && !supportsMax(model)) {
+		return supportsXhigh(model) ? "xhigh" : "high";
+	}
+	if (level === "xhigh" && !supportsXhigh(model)) return "high";
 	return level ?? "off";
 }
