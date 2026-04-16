@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Claude Opus 4.7 (`claude-opus-4-7`) plus Bedrock cross-region profiles (`anthropic.claude-opus-4-7-v1`, `us.*`, `eu.*`, `global.*`). 1M context window, 128k max output tokens, adaptive thinking.
+- Added native `"max"` thinking level to `ThinkingLevel` union. Opus 4.7 maps `max` to Anthropic's native `max` effort; Opus 4.6 preserves the legacy `max` tier; other adaptive models clamp to `high`; budget-based Anthropic models fall back to the highest budget; OpenAI-style providers clamp `max` to `xhigh` on supported models or `high` otherwise.
+- Extended `supportsXhigh()` to include Opus 4.7 so `xhigh` is available in addition to `max`.
+- Added `StreamOptions.extraBody` for user-supplied custom request body fields (mirrors opencode's provider options). Wired through every builtin provider's payload builder (Anthropic, OpenAI Responses/Completions/Codex/Azure, Mistral, Google, Google Vertex, Google Gemini CLI, Amazon Bedrock). Provider-managed fields (model, messages, stream, reasoning, cache keys, service_tier, metadata, etc.) are protected via per-provider reserved-key sets; Google and Vertex merge extras into `config` (the SDK's generationConfig surface) so custom fields actually reach the wire.
+
 ### Fixed
 
 - Bumped default Antigravity User-Agent version to `1.21.9` ([#2901](https://github.com/badlogic/pi-mono/pull/2901) by [@aadishv](https://github.com/aadishv))
