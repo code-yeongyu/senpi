@@ -49,9 +49,9 @@ export function calculateCost<TApi extends Api>(model: Model<TApi>, usage: Usage
  * Check if a model supports xhigh thinking level.
  *
  * Supported today:
- * - GPT-5.2 / GPT-5.3 / GPT-5.4 model families
+ * - GPT-5.2 / GPT-5.3 / GPT-5.4 model families (native xhigh, no native max)
  * - Opus 4.6 models (xhigh maps to adaptive effort "max" on Anthropic-compatible providers)
- * - Opus 4.7 models (xhigh maps to adaptive effort "xhigh"; "max" also available)
+ * - Opus 4.7 models (native xhigh and max both available)
  */
 export function supportsXhigh<TApi extends Api>(model: Model<TApi>): boolean {
 	if (model.id.includes("gpt-5.2") || model.id.includes("gpt-5.3") || model.id.includes("gpt-5.4")) {
@@ -66,6 +66,24 @@ export function supportsXhigh<TApi extends Api>(model: Model<TApi>): boolean {
 		return true;
 	}
 
+	return false;
+}
+
+/**
+ * Check if a model exposes the native "max" thinking tier.
+ *
+ * Today this is Anthropic-only: Opus 4.6 (legacy max) and Opus 4.7
+ * (native max). OpenAI xhigh-capable models (GPT-5.2/5.3/5.4) do not
+ * have a native max tier; callers that want to expose "max" to users
+ * should gate UI/session state on this check rather than supportsXhigh.
+ */
+export function supportsMax<TApi extends Api>(model: Model<TApi>): boolean {
+	if (model.id.includes("opus-4-6") || model.id.includes("opus-4.6")) {
+		return true;
+	}
+	if (model.id.includes("opus-4-7") || model.id.includes("opus-4.7")) {
+		return true;
+	}
 	return false;
 }
 
