@@ -45,6 +45,7 @@ export const OPENAI_RESPONSES_RESERVED_BODY_KEYS: ReadonlySet<string> = new Set(
 	"stream",
 	"tools",
 	"tool_choice",
+	"parallel_tool_calls",
 	"reasoning",
 	"max_output_tokens",
 	"temperature",
@@ -73,6 +74,21 @@ export const GOOGLE_RESERVED_BODY_KEYS: ReadonlySet<string> = new Set([
 	"cachedContent",
 	"abortSignal",
 	"httpOptions",
+]);
+
+/**
+ * Reserved keys for the Google Gemini CLI (Cloud Code Assist) inner `request`
+ * object. Unlike the @google/genai SDK, gemini-cli serializes the whole
+ * `request` body directly, so session/system/tool fields live at this level.
+ */
+export const GOOGLE_GEMINI_CLI_RESERVED_BODY_KEYS: ReadonlySet<string> = new Set([
+	"contents",
+	"sessionId",
+	"systemInstruction",
+	"tools",
+	"toolConfig",
+	"generationConfig",
+	"cachedContent",
 ]);
 
 export const MISTRAL_RESERVED_BODY_KEYS: ReadonlySet<string> = new Set([

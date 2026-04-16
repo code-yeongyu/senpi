@@ -489,10 +489,15 @@ export class ModelRegistry {
 				providerConfig.modelOverrides && Object.keys(providerConfig.modelOverrides).length > 0;
 
 			if (models.length === 0) {
-				// Override-only config: needs baseUrl, compat, modelOverrides, or some combination.
-				if (!providerConfig.baseUrl && !providerConfig.compat && !hasModelOverrides) {
+				const hasProviderExtras =
+					!!providerConfig.baseUrl ||
+					!!providerConfig.compat ||
+					hasModelOverrides ||
+					(providerConfig.headers && Object.keys(providerConfig.headers).length > 0) ||
+					(providerConfig.extraBody && Object.keys(providerConfig.extraBody).length > 0);
+				if (!hasProviderExtras) {
 					throw new Error(
-						`Provider ${providerName}: must specify "baseUrl", "compat", "modelOverrides", or "models".`,
+						`Provider ${providerName}: must specify "baseUrl", "compat", "modelOverrides", "headers", "extraBody", or "models".`,
 					);
 				}
 			} else {
