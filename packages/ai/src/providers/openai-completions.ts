@@ -33,6 +33,7 @@ import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copi
 import {
 	applyExtraBody,
 	buildBaseOptions,
+	clampMaxForOpenAI,
 	clampReasoning,
 	OPENAI_COMPLETIONS_RESERVED_BODY_KEYS,
 } from "./simple-options.js";
@@ -319,7 +320,10 @@ export const streamSimpleOpenAICompletions: StreamFunction<"openai-completions",
 	}
 
 	const base = buildBaseOptions(model, options, apiKey);
-	const reasoningEffort = supportsXhigh(model) ? options?.reasoning : clampReasoning(options?.reasoning);
+	const xhighSupported = supportsXhigh(model);
+	const reasoningEffort: OpenAICompletionsOptions["reasoningEffort"] = xhighSupported
+		? clampMaxForOpenAI(options?.reasoning, true)
+		: clampReasoning(options?.reasoning);
 	const toolChoice = (options as OpenAICompletionsOptions | undefined)?.toolChoice;
 
 	return streamOpenAICompletions(model, context, {

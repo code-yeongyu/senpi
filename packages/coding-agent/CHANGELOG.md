@@ -4,6 +4,8 @@
 
 ### Added
 
+- Exposed the new `"max"` thinking level end-to-end: CLI `--thinking max`, `/settings` selector, session cycle on Shift+Tab, `settings.json` `defaultThinkingLevel`, scoped-model thinking borders. `max` routes to Anthropic's native adaptive `max` effort on Opus 4.6/4.7 and clamps to `high` elsewhere.
+- Added `extraBody` pass-through at the config/model layer in `models.json`: providers and per-model overrides accept an `extraBody` object that is merged into outgoing provider request bodies (layered over any `extraBody` supplied at the call site). Pairs with pi-ai's new `StreamOptions.extraBody`.
 - `todotools` builtin extension: refactored the todo tooling into the new `todotools/` module tree and added
   todo continuation, configurable via `todotools.continuation.enabled` or disabled per run with
   `--disable-todo-continuation`

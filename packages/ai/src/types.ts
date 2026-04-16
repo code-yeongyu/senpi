@@ -42,7 +42,7 @@ export type KnownProvider =
 	| "kimi-coding";
 export type Provider = KnownProvider | string;
 
-export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 /** Token budgets for each thinking level (token-based providers only) */
 export interface ThinkingBudgets {

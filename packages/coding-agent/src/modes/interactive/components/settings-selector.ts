@@ -25,7 +25,8 @@ const THINKING_DESCRIPTIONS: Record<ThinkingLevel, string> = {
 	low: "Light reasoning (~2k tokens)",
 	medium: "Moderate reasoning (~8k tokens)",
 	high: "Deep reasoning (~16k tokens)",
-	xhigh: "Maximum reasoning (~32k tokens)",
+	xhigh: "Extended reasoning (~32k tokens or native xhigh effort)",
+	max: "Unbounded reasoning (Anthropic native max effort; Opus 4.7)",
 };
 
 export interface SettingsConfig {

@@ -16,7 +16,7 @@ function makePayloadCaptureContext(): Context {
 
 async function capturePayloadWithReasoning(
 	model: Model<"anthropic-messages">,
-	reasoning: "minimal" | "low" | "medium" | "high" | "xhigh" | undefined,
+	reasoning: "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | undefined,
 ): Promise<AnthropicThinkingPayload> {
 	let capturedPayload: AnthropicThinkingPayload | undefined;
 	const payloadCaptureModel: Model<"anthropic-messages"> = {
@@ -96,5 +96,25 @@ describe("Anthropic Opus 4.6 xhigh keeps mapping to effort=max", () => {
 		const payload = await capturePayloadWithReasoning(getModel("anthropic", "claude-opus-4-6"), "xhigh");
 		expect(payload.thinking).toEqual({ type: "adaptive" });
 		expect(payload.output_config).toEqual({ effort: "max" });
+	});
+});
+
+describe("Anthropic Opus 4.7 native max effort", () => {
+	it("maps reasoning=max to adaptive effort=max on Opus 4.7", async () => {
+		const payload = await capturePayloadWithReasoning(getModel("anthropic", "claude-opus-4-7"), "max");
+		expect(payload.thinking).toEqual({ type: "adaptive" });
+		expect(payload.output_config).toEqual({ effort: "max" });
+	});
+
+	it("maps reasoning=max to adaptive effort=max on Opus 4.6 too (legacy parity)", async () => {
+		const payload = await capturePayloadWithReasoning(getModel("anthropic", "claude-opus-4-6"), "max");
+		expect(payload.thinking).toEqual({ type: "adaptive" });
+		expect(payload.output_config).toEqual({ effort: "max" });
+	});
+
+	it("clamps reasoning=max to budget-based thinking on non-adaptive Anthropic models", async () => {
+		const payload = await capturePayloadWithReasoning(getModel("anthropic", "claude-sonnet-4-5"), "max");
+		expect(payload.thinking?.type).toBe("enabled");
+		expect(payload.output_config).toBeUndefined();
 	});
 });

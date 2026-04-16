@@ -130,6 +130,8 @@ const OpenAICompatSchema = Type.Union([OpenAICompletionsCompatSchema, OpenAIResp
 
 // Schema for custom model definition
 // Most fields are optional with sensible defaults for local models (Ollama, LM Studio, etc.)
+const ExtraBodySchema = Type.Record(Type.String(), Type.Unknown());
+
 const ModelDefinitionSchema = Type.Object({
 	id: Type.String({ minLength: 1 }),
 	name: Type.Optional(Type.String({ minLength: 1 })),
@@ -148,6 +150,7 @@ const ModelDefinitionSchema = Type.Object({
 	contextWindow: Type.Optional(Type.Number()),
 	maxTokens: Type.Optional(Type.Number()),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
+	extraBody: Type.Optional(ExtraBodySchema),
 	compat: Type.Optional(OpenAICompatSchema),
 });
 
@@ -167,6 +170,7 @@ const ModelOverrideSchema = Type.Object({
 	contextWindow: Type.Optional(Type.Number()),
 	maxTokens: Type.Optional(Type.Number()),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
+	extraBody: Type.Optional(ExtraBodySchema),
 	compat: Type.Optional(OpenAICompatSchema),
 });
 
@@ -177,6 +181,7 @@ const ProviderConfigSchema = Type.Object({
 	apiKey: Type.Optional(Type.String({ minLength: 1 })),
 	api: Type.Optional(Type.String({ minLength: 1 })),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
+	extraBody: Type.Optional(ExtraBodySchema),
 	compat: Type.Optional(OpenAICompatSchema),
 	authHeader: Type.Optional(Type.Boolean()),
 	models: Type.Optional(Type.Array(ModelDefinitionSchema)),
@@ -200,6 +205,7 @@ interface ProviderOverride {
 interface ProviderRequestConfig {
 	apiKey?: string;
 	headers?: Record<string, string>;
+	extraBody?: Record<string, unknown>;
 	authHeader?: boolean;
 }
 
@@ -208,6 +214,7 @@ export type ResolvedRequestAuth =
 			ok: true;
 			apiKey?: string;
 			headers?: Record<string, string>;
+			extraBody?: Record<string, unknown>;
 	  }
 	| {
 			ok: false;
@@ -299,6 +306,7 @@ export class ModelRegistry {
 	private models: Model<Api>[] = [];
 	private providerRequestConfigs: Map<string, ProviderRequestConfig> = new Map();
 	private modelRequestHeaders: Map<string, Record<string, string>> = new Map();
+	private modelRequestExtraBody: Map<string, Record<string, unknown>> = new Map();
 	private registeredProviders: Map<string, ProviderConfigInput> = new Map();
 	private loadError: string | undefined = undefined;
 
@@ -323,6 +331,7 @@ export class ModelRegistry {
 	refresh(): void {
 		this.providerRequestConfigs.clear();
 		this.modelRequestHeaders.clear();
+		this.modelRequestExtraBody.clear();
 		this.loadError = undefined;
 
 		// Ensure dynamic API/OAuth registrations are rebuilt from current provider state.
@@ -456,6 +465,7 @@ export class ModelRegistry {
 					modelOverrides.set(providerName, new Map(Object.entries(providerConfig.modelOverrides)));
 					for (const [modelId, modelOverride] of Object.entries(providerConfig.modelOverrides)) {
 						this.storeModelHeaders(providerName, modelId, modelOverride.headers);
+						this.storeModelExtraBody(providerName, modelId, modelOverride.extraBody);
 					}
 				}
 			}
@@ -527,6 +537,7 @@ export class ModelRegistry {
 
 				const compat = mergeCompat(providerConfig.compat, modelDef.compat);
 				this.storeModelHeaders(providerName, modelDef.id, modelDef.headers);
+				this.storeModelExtraBody(providerName, modelDef.id, modelDef.extraBody);
 
 				// Provider baseUrl is required when custom models are defined.
 				// Individual models can override it with modelDef.baseUrl.
@@ -593,16 +604,18 @@ export class ModelRegistry {
 		config: {
 			apiKey?: string;
 			headers?: Record<string, string>;
+			extraBody?: Record<string, unknown>;
 			authHeader?: boolean;
 		},
 	): void {
-		if (!config.apiKey && !config.headers && !config.authHeader) {
+		if (!config.apiKey && !config.headers && !config.extraBody && !config.authHeader) {
 			return;
 		}
 
 		this.providerRequestConfigs.set(providerName, {
 			apiKey: config.apiKey,
 			headers: config.headers,
+			extraBody: config.extraBody,
 			authHeader: config.authHeader,
 		});
 	}
@@ -614,6 +627,15 @@ export class ModelRegistry {
 			return;
 		}
 		this.modelRequestHeaders.set(key, headers);
+	}
+
+	private storeModelExtraBody(providerName: string, modelId: string, extraBody?: Record<string, unknown>): void {
+		const key = this.getModelRequestKey(providerName, modelId);
+		if (!extraBody || Object.keys(extraBody).length === 0) {
+			this.modelRequestExtraBody.delete(key);
+			return;
+		}
+		this.modelRequestExtraBody.set(key, extraBody);
 	}
 
 	/**
@@ -647,10 +669,16 @@ export class ModelRegistry {
 				headers = { ...headers, Authorization: `Bearer ${apiKey}` };
 			}
 
+			const providerExtraBody = providerConfig?.extraBody;
+			const modelExtraBody = this.modelRequestExtraBody.get(this.getModelRequestKey(model.provider, model.id));
+			const extraBody =
+				providerExtraBody || modelExtraBody ? { ...providerExtraBody, ...modelExtraBody } : undefined;
+
 			return {
 				ok: true,
 				apiKey,
 				headers: headers && Object.keys(headers).length > 0 ? headers : undefined,
+				extraBody: extraBody && Object.keys(extraBody).length > 0 ? extraBody : undefined,
 			};
 		} catch (error) {
 			return {
@@ -766,6 +794,7 @@ export class ModelRegistry {
 			for (const modelDef of config.models) {
 				const api = modelDef.api || config.api;
 				this.storeModelHeaders(providerName, modelDef.id, modelDef.headers);
+				this.storeModelExtraBody(providerName, modelDef.id, modelDef.extraBody);
 
 				this.models.push({
 					id: modelDef.id,
@@ -790,8 +819,8 @@ export class ModelRegistry {
 					this.models = config.oauth.modifyModels(this.models, cred);
 				}
 			}
-		} else if (config.baseUrl || config.headers) {
-			// Override-only: update baseUrl for existing models. Request headers are resolved per request.
+		} else if (config.baseUrl || config.headers || config.extraBody) {
+			// Override-only: update baseUrl for existing models. Request headers and extraBody are resolved per request.
 			this.models = this.models.map((m) => {
 				if (m.provider !== providerName) return m;
 				return {
@@ -812,6 +841,7 @@ export interface ProviderConfigInput {
 	api?: Api;
 	streamSimple?: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
 	headers?: Record<string, string>;
+	extraBody?: Record<string, unknown>;
 	authHeader?: boolean;
 	/** OAuth provider for /login support */
 	oauth?: Omit<OAuthProviderInterface, "id">;
@@ -826,6 +856,7 @@ export interface ProviderConfigInput {
 		contextWindow: number;
 		maxTokens: number;
 		headers?: Record<string, string>;
+		extraBody?: Record<string, unknown>;
 		compat?: Model<Api>["compat"];
 	}>;
 }

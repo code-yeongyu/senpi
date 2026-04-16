@@ -65,13 +65,41 @@ describe("Anthropic provider extraBody pass-through", () => {
 });
 
 describe("OpenAI Responses extraBody pass-through", () => {
-	it("merges extraBody into OpenAI Responses request", async () => {
+	it("merges arbitrary custom extraBody fields into OpenAI Responses request", async () => {
 		const payload = await capturePayload(getModel("openai", "gpt-5-mini"), {
-			prompt_cache_key: "my-cache-key",
+			x_vendor_experiment: "flag-a",
 		});
 
-		expect(payload.prompt_cache_key).toBe("my-cache-key");
+		expect(payload.x_vendor_experiment).toBe("flag-a");
 		expect(payload.model).toBe("gpt-5-mini");
+	});
+
+	it("blocks extraBody from overriding prompt_cache_key and service_tier", async () => {
+		const payload = await capturePayload(getModel("openai", "gpt-5-mini"), {
+			prompt_cache_key: "user-attempted-override",
+			service_tier: "user-attempted-override",
+		});
+
+		expect(payload.prompt_cache_key).not.toBe("user-attempted-override");
+		expect(payload.service_tier).not.toBe("user-attempted-override");
+	});
+});
+
+describe("Anthropic extraBody reserved keys", () => {
+	it("does not allow extraBody to overwrite metadata", async () => {
+		const payload = await capturePayload(getModel("anthropic", "claude-sonnet-4-5"), {
+			metadata: { user_id: "hacker" },
+		});
+
+		expect(payload.metadata).toBeUndefined();
+	});
+
+	it("allows extraBody custom anthropic_beta_feature_flag", async () => {
+		const payload = await capturePayload(getModel("anthropic", "claude-sonnet-4-5"), {
+			anthropic_beta_feature_flag: "xyz",
+		});
+
+		expect(payload.anthropic_beta_feature_flag).toBe("xyz");
 	});
 });
 

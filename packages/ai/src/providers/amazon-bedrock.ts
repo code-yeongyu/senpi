@@ -763,11 +763,15 @@ function buildAdditionalModelRequestFields(
 						low: 2048,
 						medium: 8192,
 						high: 16384,
-						xhigh: 16384, // Claude doesn't support xhigh, clamp to high
+						xhigh: 16384,
+						max: 16384,
 					};
 
-					// Custom budgets override defaults (xhigh not in ThinkingBudgets, use high)
-					const level = options.reasoning === "xhigh" ? "high" : options.reasoning;
+					// Custom ThinkingBudgets only declares minimal/low/medium/high; xhigh and max
+					// fall back to defaultBudgets (the Bedrock budget-based path doesn't know the
+					// native Anthropic adaptive "max" tier, and this model is not on the adaptive
+					// path anyway).
+					const level = options.reasoning === "xhigh" || options.reasoning === "max" ? "high" : options.reasoning;
 					const budget = options.thinkingBudgets?.[level] ?? defaultBudgets[options.reasoning];
 
 					return {

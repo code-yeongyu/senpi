@@ -223,8 +223,8 @@ interface ToolDefinitionEntry {
 /** Standard thinking levels */
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high"];
 
-/** Thinking levels including xhigh (for supported models) */
-const THINKING_LEVELS_WITH_XHIGH: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+/** Thinking levels including xhigh and max (for supported models; max unlocks the native Anthropic "max" effort on Opus 4.7). */
+const THINKING_LEVELS_WITH_XHIGH: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 // ============================================================================
 // AgentSession Class
