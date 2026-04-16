@@ -30,7 +30,12 @@ import {
 	mapToolChoice,
 	retainThoughtSignature,
 } from "./google-shared.js";
-import { applyExtraBody, buildBaseOptions, clampReasoning, GOOGLE_RESERVED_BODY_KEYS } from "./simple-options.js";
+import {
+	applyExtraBody,
+	buildBaseOptions,
+	clampReasoning,
+	GOOGLE_GEMINI_CLI_RESERVED_BODY_KEYS,
+} from "./simple-options.js";
 
 /**
  * Thinking level for Gemini 3 models.
@@ -945,7 +950,11 @@ export function buildRequest(
 		requestId: `${isAntigravity ? "agent" : "pi"}-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
 	};
 
-	applyExtraBody(request as unknown as Record<string, unknown>, options.extraBody, GOOGLE_RESERVED_BODY_KEYS);
+	applyExtraBody(
+		request as unknown as Record<string, unknown>,
+		options.extraBody,
+		GOOGLE_GEMINI_CLI_RESERVED_BODY_KEYS,
+	);
 
 	return finalRequest;
 }

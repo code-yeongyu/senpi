@@ -431,21 +431,25 @@ function handleContentBlockStop(
 }
 
 /**
- * Check if the model supports adaptive thinking (Opus 4.6 and Sonnet 4.6).
+ * Check if the model supports adaptive thinking (Opus 4.6, Sonnet 4.6, Opus 4.7).
  */
 function supportsAdaptiveThinking(modelId: string): boolean {
 	return (
 		modelId.includes("opus-4-6") ||
 		modelId.includes("opus-4.6") ||
 		modelId.includes("sonnet-4-6") ||
-		modelId.includes("sonnet-4.6")
+		modelId.includes("sonnet-4.6") ||
+		modelId.includes("opus-4-7") ||
+		modelId.includes("opus-4.7")
 	);
 }
 
 function mapThinkingLevelToEffort(
 	level: SimpleStreamOptions["reasoning"],
 	modelId: string,
-): "low" | "medium" | "high" | "max" {
+): "low" | "medium" | "high" | "xhigh" | "max" {
+	const isOpus47 = modelId.includes("opus-4-7") || modelId.includes("opus-4.7");
+	const isOpus46 = modelId.includes("opus-4-6") || modelId.includes("opus-4.6");
 	switch (level) {
 		case "minimal":
 		case "low":
@@ -455,7 +459,12 @@ function mapThinkingLevelToEffort(
 		case "high":
 			return "high";
 		case "xhigh":
-			return modelId.includes("opus-4-6") || modelId.includes("opus-4.6") ? "max" : "high";
+			if (isOpus47) return "xhigh";
+			if (isOpus46) return "max";
+			return "high";
+		case "max":
+			if (isOpus47 || isOpus46) return "max";
+			return "high";
 		default:
 			return "high";
 	}
