@@ -306,6 +306,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				...options,
 				apiKey: auth.apiKey,
 				headers: auth.headers || options?.headers ? { ...auth.headers, ...options?.headers } : undefined,
+				extraBody: auth.extraBody || options?.extraBody ? { ...auth.extraBody, ...options?.extraBody } : undefined,
 			});
 		},
 		onPayload: async (payload, _model) => {
