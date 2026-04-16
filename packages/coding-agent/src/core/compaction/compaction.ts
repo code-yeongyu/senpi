@@ -549,6 +549,7 @@ export async function generateSummary(
 	signal?: AbortSignal,
 	customInstructions?: string,
 	previousSummary?: string,
+	extraBody?: Record<string, unknown>,
 ): Promise<string> {
 	const maxTokens = Math.floor(0.8 * reserveTokens);
 
@@ -579,8 +580,8 @@ export async function generateSummary(
 	];
 
 	const completionOptions = model.reasoning
-		? { maxTokens, signal, apiKey, headers, reasoning: "high" as const }
-		: { maxTokens, signal, apiKey, headers };
+		? { maxTokens, signal, apiKey, headers, extraBody, reasoning: "high" as const }
+		: { maxTokens, signal, apiKey, headers, extraBody };
 
 	const response = await completeSimple(
 		model,
@@ -734,6 +735,7 @@ export async function compact(
 	headers?: Record<string, string>,
 	customInstructions?: string,
 	signal?: AbortSignal,
+	extraBody?: Record<string, unknown>,
 ): Promise<CompactionResult> {
 	const {
 		firstKeptEntryId,
@@ -762,9 +764,18 @@ export async function compact(
 						signal,
 						customInstructions,
 						previousSummary,
+						extraBody,
 					)
 				: Promise.resolve("No prior history."),
-			generateTurnPrefixSummary(turnPrefixMessages, model, settings.reserveTokens, apiKey, headers, signal),
+			generateTurnPrefixSummary(
+				turnPrefixMessages,
+				model,
+				settings.reserveTokens,
+				apiKey,
+				headers,
+				signal,
+				extraBody,
+			),
 		]);
 		// Merge into single summary
 		summary = `${historyResult}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult}`;
@@ -779,6 +790,7 @@ export async function compact(
 			signal,
 			customInstructions,
 			previousSummary,
+			extraBody,
 		);
 	}
 
@@ -808,6 +820,7 @@ async function generateTurnPrefixSummary(
 	apiKey: string,
 	headers?: Record<string, string>,
 	signal?: AbortSignal,
+	extraBody?: Record<string, unknown>,
 ): Promise<string> {
 	const maxTokens = Math.floor(0.5 * reserveTokens); // Smaller budget for turn prefix
 	const llmMessages = convertToLlm(messages);
@@ -824,7 +837,7 @@ async function generateTurnPrefixSummary(
 	const response = await completeSimple(
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		{ maxTokens, signal, apiKey, headers },
+		{ maxTokens, signal, apiKey, headers, extraBody },
 	);
 
 	if (response.stopReason === "error") {
