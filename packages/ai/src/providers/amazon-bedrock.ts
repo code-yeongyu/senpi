@@ -43,7 +43,13 @@ import type {
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
-import { adjustMaxTokensForThinking, buildBaseOptions, clampReasoning } from "./simple-options.js";
+import {
+	adjustMaxTokensForThinking,
+	applyExtraBody,
+	BEDROCK_RESERVED_BODY_KEYS,
+	buildBaseOptions,
+	clampReasoning,
+} from "./simple-options.js";
 import { transformMessages } from "./transform-messages.js";
 
 export interface BedrockOptions extends StreamOptions {
@@ -161,6 +167,11 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options),
 				...(options.requestMetadata !== undefined && { requestMetadata: options.requestMetadata }),
 			};
+			applyExtraBody(
+				commandInput as unknown as Record<string, unknown>,
+				options.extraBody,
+				BEDROCK_RESERVED_BODY_KEYS,
+			);
 			const nextCommandInput = await options?.onPayload?.(commandInput, model);
 			if (nextCommandInput !== undefined) {
 				commandInput = nextCommandInput as typeof commandInput;

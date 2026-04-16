@@ -676,7 +676,9 @@ async function generateModels() {
 			(candidate.id === "claude-opus-4-6" ||
 				candidate.id === "claude-sonnet-4-6" ||
 				candidate.id === "claude-opus-4.6" ||
-				candidate.id === "claude-sonnet-4.6")
+				candidate.id === "claude-sonnet-4.6" ||
+				candidate.id === "claude-opus-4-7" ||
+				candidate.id === "claude-opus-4.7")
 		) {
 			candidate.contextWindow = 1000000;
 		}
@@ -758,6 +760,56 @@ async function generateModels() {
 			contextWindow: 1000000,
 			maxTokens: 128000,
 		});
+	}
+
+	// Add missing Claude Opus 4.7 (released April 16, 2026)
+	if (!allModels.some(m => m.provider === "anthropic" && m.id === "claude-opus-4-7")) {
+		allModels.push({
+			id: "claude-opus-4-7",
+			name: "Claude Opus 4.7",
+			api: "anthropic-messages",
+			baseUrl: "https://api.anthropic.com",
+			provider: "anthropic",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 5,
+				output: 25,
+				cacheRead: 0.5,
+				cacheWrite: 6.25,
+			},
+			contextWindow: 1000000,
+			maxTokens: 128000,
+		});
+	}
+
+	// Add missing Bedrock Opus 4.7 cross-region profiles
+	const bedrockOpus47Profiles: Array<{ id: string; name: string }> = [
+		{ id: "anthropic.claude-opus-4-7-v1", name: "Claude Opus 4.7" },
+		{ id: "us.anthropic.claude-opus-4-7-v1", name: "Claude Opus 4.7 (US)" },
+		{ id: "eu.anthropic.claude-opus-4-7-v1", name: "Claude Opus 4.7 (EU)" },
+		{ id: "global.anthropic.claude-opus-4-7-v1", name: "Claude Opus 4.7 (Global)" },
+	];
+	for (const profile of bedrockOpus47Profiles) {
+		if (!allModels.some((m) => m.provider === "amazon-bedrock" && m.id === profile.id)) {
+			allModels.push({
+				id: profile.id,
+				name: profile.name,
+				api: "bedrock-converse-stream",
+				provider: "amazon-bedrock",
+				baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+				reasoning: true,
+				input: ["text", "image"],
+				cost: {
+					input: 5,
+					output: 25,
+					cacheRead: 0.5,
+					cacheWrite: 6.25,
+				},
+				contextWindow: 1000000,
+				maxTokens: 128000,
+			});
+		}
 	}
 
 	// Add missing Claude Sonnet 4.6

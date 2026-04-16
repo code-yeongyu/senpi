@@ -1,0 +1,100 @@
+import { describe, expect, it } from "vitest";
+import { getModel, supportsXhigh } from "../src/models.js";
+import { streamSimple } from "../src/stream.js";
+import type { Context, Model } from "../src/types.js";
+
+interface AnthropicThinkingPayload {
+	thinking?: { type: string; budget_tokens?: number };
+	output_config?: { effort?: string };
+}
+
+function makePayloadCaptureContext(): Context {
+	return {
+		messages: [{ role: "user", content: "Hello", timestamp: Date.now() }],
+	};
+}
+
+async function capturePayloadWithReasoning(
+	model: Model<"anthropic-messages">,
+	reasoning: "minimal" | "low" | "medium" | "high" | "xhigh" | undefined,
+): Promise<AnthropicThinkingPayload> {
+	let capturedPayload: AnthropicThinkingPayload | undefined;
+	const payloadCaptureModel: Model<"anthropic-messages"> = {
+		...model,
+		baseUrl: "http://127.0.0.1:9",
+	};
+
+	const s = streamSimple(payloadCaptureModel, makePayloadCaptureContext(), {
+		apiKey: "fake-key",
+		reasoning,
+		onPayload: (payload) => {
+			capturedPayload = payload as AnthropicThinkingPayload;
+			return payload;
+		},
+	});
+
+	await s.result();
+
+	if (!capturedPayload) {
+		throw new Error("Expected payload to be captured before request failure");
+	}
+
+	return capturedPayload;
+}
+
+describe("Claude Opus 4.7 model catalog", () => {
+	it("exposes claude-opus-4-7 on anthropic provider with 1M context and 128k max tokens", () => {
+		const model = getModel("anthropic", "claude-opus-4-7");
+		expect(model).toBeDefined();
+		expect(model!.id).toBe("claude-opus-4-7");
+		expect(model!.api).toBe("anthropic-messages");
+		expect(model!.reasoning).toBe(true);
+		expect(model!.contextWindow).toBe(1_000_000);
+		expect(model!.maxTokens).toBe(128_000);
+	});
+
+	it("exposes Bedrock cross-region Opus 4.7 profiles (us, eu, global)", () => {
+		const us = getModel("amazon-bedrock", "us.anthropic.claude-opus-4-7-v1");
+		const eu = getModel("amazon-bedrock", "eu.anthropic.claude-opus-4-7-v1");
+		const global = getModel("amazon-bedrock", "global.anthropic.claude-opus-4-7-v1");
+		expect(us).toBeDefined();
+		expect(eu).toBeDefined();
+		expect(global).toBeDefined();
+	});
+});
+
+describe("supportsXhigh for Opus 4.7", () => {
+	it("returns true for Anthropic Opus 4.7", () => {
+		const model = getModel("anthropic", "claude-opus-4-7");
+		expect(model).toBeDefined();
+		expect(supportsXhigh(model!)).toBe(true);
+	});
+});
+
+describe("Anthropic adaptive thinking for Opus 4.7", () => {
+	it("maps reasoning=xhigh to adaptive effort=xhigh", async () => {
+		const payload = await capturePayloadWithReasoning(getModel("anthropic", "claude-opus-4-7"), "xhigh");
+		expect(payload.thinking).toEqual({ type: "adaptive" });
+		expect(payload.output_config).toEqual({ effort: "xhigh" });
+	});
+
+	it("maps reasoning=high to adaptive effort=high", async () => {
+		const payload = await capturePayloadWithReasoning(getModel("anthropic", "claude-opus-4-7"), "high");
+		expect(payload.thinking).toEqual({ type: "adaptive" });
+		expect(payload.output_config).toEqual({ effort: "high" });
+	});
+
+	it("disables thinking when no reasoning provided", async () => {
+		const payload = await capturePayloadWithReasoning(getModel("anthropic", "claude-opus-4-7"), undefined);
+		expect(payload.thinking).toEqual({ type: "disabled" });
+		expect(payload.output_config).toBeUndefined();
+	});
+});
+
+describe("Anthropic Opus 4.6 xhigh keeps mapping to effort=max", () => {
+	it("still maps xhigh to max for Opus 4.6", async () => {
+		const payload = await capturePayloadWithReasoning(getModel("anthropic", "claude-opus-4-6"), "xhigh");
+		expect(payload.thinking).toEqual({ type: "adaptive" });
+		expect(payload.output_config).toEqual({ effort: "max" });
+	});
+});

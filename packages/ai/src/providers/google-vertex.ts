@@ -31,7 +31,7 @@ import {
 	mapToolChoice,
 	retainThoughtSignature,
 } from "./google-shared.js";
-import { buildBaseOptions, clampReasoning } from "./simple-options.js";
+import { applyExtraBody, buildBaseOptions, clampReasoning, GOOGLE_RESERVED_BODY_KEYS } from "./simple-options.js";
 
 export interface GoogleVertexOptions extends StreamOptions {
 	toolChoice?: "auto" | "none" | "any";
@@ -453,6 +453,8 @@ function buildParams(
 		contents,
 		config,
 	};
+
+	applyExtraBody(params as unknown as Record<string, unknown>, options?.extraBody, GOOGLE_RESERVED_BODY_KEYS);
 
 	return params;
 }

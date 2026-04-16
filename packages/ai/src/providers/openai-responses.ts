@@ -16,7 +16,12 @@ import type {
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.js";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.js";
-import { buildBaseOptions, clampReasoning } from "./simple-options.js";
+import {
+	applyExtraBody,
+	buildBaseOptions,
+	clampReasoning,
+	OPENAI_RESPONSES_RESERVED_BODY_KEYS,
+} from "./simple-options.js";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
 
@@ -224,6 +229,12 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 			params.reasoning = { effort: "none" };
 		}
 	}
+
+	applyExtraBody(
+		params as unknown as Record<string, unknown>,
+		options?.extraBody,
+		OPENAI_RESPONSES_RESERVED_BODY_KEYS,
+	);
 
 	return params;
 }

@@ -29,7 +29,7 @@ import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.js";
-import { adjustMaxTokensForThinking, buildBaseOptions } from "./simple-options.js";
+import { adjustMaxTokensForThinking, applyExtraBody, buildBaseOptions } from "./simple-options.js";
 import { transformMessages } from "./transform-messages.js";
 
 /**
@@ -152,7 +152,7 @@ function convertContentBlocks(content: (TextContent | ImageContent)[]):
 	return blocks;
 }
 
-export type AnthropicEffort = "low" | "medium" | "high" | "max";
+export type AnthropicEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface AnthropicOptions extends StreamOptions {
 	/**
@@ -195,6 +195,18 @@ function mergeHeaders(...headerSources: (Record<string, string> | undefined)[]):
 	}
 	return merged;
 }
+
+const ANTHROPIC_RESERVED_BODY_KEYS: ReadonlySet<string> = new Set([
+	"model",
+	"messages",
+	"system",
+	"stream",
+	"tools",
+	"tool_choice",
+	"max_tokens",
+	"thinking",
+	"output_config",
+]);
 
 export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 	model: Model<"anthropic-messages">,
@@ -441,21 +453,34 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 };
 
 /**
- * Check if a model supports adaptive thinking (Opus 4.6 and Sonnet 4.6)
+ * Check if a model supports adaptive thinking (Opus 4.6, Sonnet 4.6, Opus 4.7 and later).
  */
 function supportsAdaptiveThinking(modelId: string): boolean {
-	// Opus 4.6 and Sonnet 4.6 model IDs (with or without date suffix)
 	return (
 		modelId.includes("opus-4-6") ||
 		modelId.includes("opus-4.6") ||
 		modelId.includes("sonnet-4-6") ||
-		modelId.includes("sonnet-4.6")
+		modelId.includes("sonnet-4.6") ||
+		modelId.includes("opus-4-7") ||
+		modelId.includes("opus-4.7")
 	);
+}
+
+function isOpus46(modelId: string): boolean {
+	return modelId.includes("opus-4-6") || modelId.includes("opus-4.6");
+}
+
+function isOpus47(modelId: string): boolean {
+	return modelId.includes("opus-4-7") || modelId.includes("opus-4.7");
 }
 
 /**
  * Map ThinkingLevel to Anthropic effort levels for adaptive thinking.
- * Note: effort "max" is only valid on Opus 4.6.
+ *
+ * Model-specific effort tiers:
+ * - Opus 4.7: supports "low" | "medium" | "high" | "xhigh" | "max"  (xhigh maps to native "xhigh")
+ * - Opus 4.6: supports "low" | "medium" | "high" | "max"            (xhigh maps to "max" since 4.6 lacks xhigh)
+ * - Sonnet 4.6 and other adaptive models: "low" | "medium" | "high" (xhigh clamps to "high")
  */
 function mapThinkingLevelToEffort(level: SimpleStreamOptions["reasoning"], modelId: string): AnthropicEffort {
 	switch (level) {
@@ -468,7 +493,9 @@ function mapThinkingLevelToEffort(level: SimpleStreamOptions["reasoning"], model
 		case "high":
 			return "high";
 		case "xhigh":
-			return modelId.includes("opus-4-6") || modelId.includes("opus-4.6") ? "max" : "high";
+			if (isOpus47(modelId)) return "xhigh";
+			if (isOpus46(modelId)) return "max";
+			return "high";
 		default:
 			return "high";
 	}
@@ -662,7 +689,10 @@ function buildParams(
 				// Adaptive thinking: Claude decides when and how much to think
 				params.thinking = { type: "adaptive" };
 				if (options.effort) {
-					params.output_config = { effort: options.effort };
+					// Cast through unknown to allow "xhigh" until @anthropic-ai/sdk widens its union.
+					(params as { output_config?: { effort: AnthropicEffort } }).output_config = {
+						effort: options.effort,
+					};
 				}
 			} else {
 				// Budget-based thinking for older models
@@ -690,6 +720,8 @@ function buildParams(
 			params.tool_choice = options.toolChoice;
 		}
 	}
+
+	applyExtraBody(params as unknown as Record<string, unknown>, options?.extraBody, ANTHROPIC_RESERVED_BODY_KEYS);
 
 	return params;
 }
