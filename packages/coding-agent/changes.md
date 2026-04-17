@@ -47,3 +47,24 @@
   - Removed `"uuid": "^11.1.0"` from `dependencies`, eliminating the transitive requirement entirely.
 - Why the extension system could not handle this: session id generation runs inside core `SessionManager` before any extension context exists. Extensions cannot patch an `import` in `dist/`, and consumers hit the failure before any extension hook fires.
 - Merge-conflict risk: medium. The expected conflict zones are `packages/coding-agent/src/core/session-manager.ts` lines ~1-45 (imports + inline `uuidv7` helper) and `packages/coding-agent/package.json` `dependencies` block if upstream changes the `uuid` version or adds a different session id generator. On the next upstream sync, the resolution is: keep this fork's inline implementation; do NOT re-add `"uuid"` to dependencies.
+
+## 2026-04-17 — make monorepo build cleanly under npm, bun, and pnpm
+
+- Changed:
+  - `package.json` (root)
+  - `packages/agent/package.json`
+  - `packages/ai/package.json`
+  - `packages/coding-agent/package.json`
+  - `packages/web-ui/package.json`
+  - `pnpm-workspace.yaml` (new)
+- Why: The existing layout relied exclusively on npm's flat/hoisted install to satisfy cross-workspace transitive imports. bun's isolated workspace install and pnpm's default symlink layout both refused to build because several workspaces imported from packages they did not declare as direct deps, and the root `package.json` still carried a stale `"@code-yeongyu/senpi": "^0.30.2"` dependency left over from the original rename from `@mariozechner/pi-coding-agent`. bun also has no way to discover the workspace list from npm's `workspaces` field until there is a `pnpm-workspace.yaml` equivalent — for pnpm, the `workspaces` field is outright ignored.
+- What changed:
+  - Root `package.json`: removed orphaned `"@code-yeongyu/senpi": "^0.30.2"` from `dependencies`. Nothing in root source/scripts imports from `@code-yeongyu/senpi`; this line only existed because it was never bumped after the rename. Leaving it in place forced bun to fetch `@code-yeongyu/senpi@^0.30.2` from the public npm registry, which does not exist, and `bun install` therefore aborted before touching workspace resolution.
+  - Added missing direct dependencies that are used in `src/`:
+    - `packages/agent/package.json`: `@sinclair/typebox` (used in `src/types.ts`).
+    - `packages/ai/package.json`: `@smithy/node-http-handler`, `@smithy/types` (used in `src/providers/amazon-bedrock.ts`), and `yaml` (used in `src/tool-call-middleware/protocols/yaml-xml.ts`, which is a fork-only file).
+    - `packages/coding-agent/package.json`: `@sinclair/typebox` (used throughout `src/core/tools/*`).
+    - `packages/web-ui/package.json`: `@mariozechner/pi-agent-core`, `@sinclair/typebox`, and `highlight.js` (used in the artifact renderers).
+  - Added `pnpm-workspace.yaml` pinned to the exact workspace list from the root `package.json`, with `node-linker: hoisted` so pnpm behaves closely enough to npm that the existing source code keeps resolving transitive modules without a broader audit.
+- Why the extension system could not handle this: package-manager compatibility and direct-dep declarations are controlled by `package.json` and workspace config files, not anything the runtime extension API can intercept.
+- Merge-conflict risk: low to medium per file. Expected conflict zones are the `dependencies` blocks of the five modified `package.json` files and the list in `pnpm-workspace.yaml`. If upstream introduces its own `pnpm-workspace.yaml`, keep ours or reconcile entry-for-entry; if upstream changes a direct dep version we also bumped here, prefer the upstream version unless it regresses bun/pnpm compatibility.

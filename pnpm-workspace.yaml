@@ -1,0 +1,12 @@
+packages:
+  - "packages/*"
+  - "packages/web-ui/example"
+  - "packages/coding-agent/examples/extensions/with-deps"
+  - "packages/coding-agent/examples/extensions/custom-provider-anthropic"
+  - "packages/coding-agent/examples/extensions/custom-provider-gitlab-duo"
+  - "packages/coding-agent/examples/extensions/custom-provider-qwen-cli"
+
+# Match npm's hoisted layout so workspaces can see transitive deps
+# (matches how npm install behaves; required to keep existing source working
+# without declaring every single transitive as a direct dep)
+node-linker: hoisted
