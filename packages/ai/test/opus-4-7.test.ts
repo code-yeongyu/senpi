@@ -4,7 +4,7 @@ import { streamSimple } from "../src/stream.js";
 import type { Context, Model } from "../src/types.js";
 
 interface AnthropicThinkingPayload {
-	thinking?: { type: string; budget_tokens?: number };
+	thinking?: { type: string; budget_tokens?: number; display?: string };
 	output_config?: { effort?: string };
 }
 
@@ -74,13 +74,13 @@ describe("supportsXhigh for Opus 4.7", () => {
 describe("Anthropic adaptive thinking for Opus 4.7", () => {
 	it("maps reasoning=xhigh to adaptive effort=xhigh", async () => {
 		const payload = await capturePayloadWithReasoning(getModel("anthropic", "claude-opus-4-7"), "xhigh");
-		expect(payload.thinking).toEqual({ type: "adaptive" });
+		expect(payload.thinking).toEqual({ type: "adaptive", display: "summarized" });
 		expect(payload.output_config).toEqual({ effort: "xhigh" });
 	});
 
 	it("maps reasoning=high to adaptive effort=high", async () => {
 		const payload = await capturePayloadWithReasoning(getModel("anthropic", "claude-opus-4-7"), "high");
-		expect(payload.thinking).toEqual({ type: "adaptive" });
+		expect(payload.thinking).toEqual({ type: "adaptive", display: "summarized" });
 		expect(payload.output_config).toEqual({ effort: "high" });
 	});
 
@@ -94,7 +94,7 @@ describe("Anthropic adaptive thinking for Opus 4.7", () => {
 describe("Anthropic Opus 4.6 xhigh keeps mapping to effort=max", () => {
 	it("still maps xhigh to max for Opus 4.6", async () => {
 		const payload = await capturePayloadWithReasoning(getModel("anthropic", "claude-opus-4-6"), "xhigh");
-		expect(payload.thinking).toEqual({ type: "adaptive" });
+		expect(payload.thinking).toEqual({ type: "adaptive", display: "summarized" });
 		expect(payload.output_config).toEqual({ effort: "max" });
 	});
 });
@@ -102,13 +102,13 @@ describe("Anthropic Opus 4.6 xhigh keeps mapping to effort=max", () => {
 describe("Anthropic Opus 4.7 native max effort", () => {
 	it("maps reasoning=max to adaptive effort=max on Opus 4.7", async () => {
 		const payload = await capturePayloadWithReasoning(getModel("anthropic", "claude-opus-4-7"), "max");
-		expect(payload.thinking).toEqual({ type: "adaptive" });
+		expect(payload.thinking).toEqual({ type: "adaptive", display: "summarized" });
 		expect(payload.output_config).toEqual({ effort: "max" });
 	});
 
 	it("maps reasoning=max to adaptive effort=max on Opus 4.6 too (legacy parity)", async () => {
 		const payload = await capturePayloadWithReasoning(getModel("anthropic", "claude-opus-4-6"), "max");
-		expect(payload.thinking).toEqual({ type: "adaptive" });
+		expect(payload.thinking).toEqual({ type: "adaptive", display: "summarized" });
 		expect(payload.output_config).toEqual({ effort: "max" });
 	});
 
