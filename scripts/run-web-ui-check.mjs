@@ -38,11 +38,14 @@ function detectPm() {
 }
 
 const pm = detectPm();
-const args = pm.execpath ? [pm.execpath, "run", "check"] : ["run", "check"];
-const result = spawnSync(pm.execpath ? process.execPath : pm.cmd, args, {
-	cwd: webUiDir,
-	stdio: "inherit",
-	env,
-	shell: false,
-});
-process.exit(result.status ?? 1);
+// bun's execpath is a native binary, npm/pnpm are .js we load via Node.
+function runCheck() {
+	if (pm.execpath && pm.cmd === "bun") {
+		return spawnSync(pm.execpath, ["run", "check"], { cwd: webUiDir, stdio: "inherit", env, shell: false });
+	}
+	if (pm.execpath) {
+		return spawnSync(process.execPath, [pm.execpath, "run", "check"], { cwd: webUiDir, stdio: "inherit", env, shell: false });
+	}
+	return spawnSync(pm.cmd, ["run", "check"], { cwd: webUiDir, stdio: "inherit", env, shell: false });
+}
+process.exit(runCheck().status ?? 1);

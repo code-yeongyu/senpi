@@ -30,6 +30,7 @@
 		"release:patch": "node scripts/release.mjs patch",
 		"release:minor": "node scripts/release.mjs minor",
 		"release:major": "node scripts/release.mjs major",
+		"preinstall": "node scripts/create-bin-stubs.mjs",
 		"prepare": "husky"
 	},
 	"devDependencies": {

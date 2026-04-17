@@ -66,17 +66,22 @@ function cleanEnv() {
 	return env;
 }
 
+function spawnPm(pm, args, cwd, env) {
+	// bun's execpath is a native binary so we invoke it directly.
+	// npm's and pnpm's execpaths are .js / .cjs entry points that have to
+	// be loaded through the current Node runtime.
+	if (pm.execpath && pm.cmd === "bun") {
+		return spawnSync(pm.execpath, args, { cwd, stdio: "inherit", env, shell: false });
+	}
+	if (pm.execpath) {
+		return spawnSync(process.execPath, [pm.execpath, ...args], { cwd, stdio: "inherit", env, shell: false });
+	}
+	return spawnSync(pm.cmd, args, { cwd, stdio: "inherit", env, shell: false });
+}
+
 function runBuild(pm, cwd) {
 	const env = cleanEnv();
-	const args = pm.execpath
-		? [pm.execpath, "run", "build"]
-		: ["run", "build"];
-	const result = spawnSync(pm.execpath ? process.execPath : pm.cmd, args, {
-		cwd,
-		stdio: "inherit",
-		env,
-		shell: false,
-	});
+	const result = spawnPm(pm, ["run", "build"], cwd, env);
 	if (result.status !== 0) {
 		const rel = cwd.replace(`${root}/`, "");
 		console.error(`\n[build-all] build failed in ${rel} (exit ${result.status})`);
