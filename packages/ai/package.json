@@ -64,12 +64,13 @@
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
-		"generate-models": "npx tsx scripts/generate-models.ts",
-		"build": "npm run generate-models && tsgo -p tsconfig.build.json",
+		"generate-models": "tsx scripts/generate-models.ts",
+		"prebuild": "tsx scripts/generate-models.ts",
+		"build": "tsgo -p tsconfig.build.json",
 		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
 		"dev:tsc": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
 		"test": "vitest --run",
-		"prepublishOnly": "npm run clean && npm run build"
+		"prepublishOnly": "shx rm -rf dist && tsx scripts/generate-models.ts && tsgo -p tsconfig.build.json"
 	},
 	"dependencies": {
 		"@anthropic-ai/sdk": "^0.90.0",

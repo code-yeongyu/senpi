@@ -6,10 +6,13 @@ packages:
   - "packages/coding-agent/examples/extensions/custom-provider-gitlab-duo"
   - "packages/coding-agent/examples/extensions/custom-provider-qwen-cli"
 
-# node-linker: hoisted mirrors npm's flat install so transitive deps stay
-# resolvable across workspaces without declaring every single one directly.
-# link-workspace-packages: deep lets semver ranges ('^0.67.6') resolve to the
-# local workspace copy instead of hitting the public npm registry; without
-# it, pnpm 10 tries to fetch `@code-yeongyu/senpi` from npmjs.org and fails.
-node-linker: hoisted
-link-workspace-packages: deep
+nodeLinker: hoisted
+linkWorkspacePackages: deep
+preferWorkspacePackages: true
+
+onlyBuiltDependencies:
+  - "@parcel/watcher"
+  - canvas
+  - esbuild
+  - koffi
+  - protobufjs
