@@ -8790,9 +8790,9 @@ export const MODELS = {
 			reasoning: true,
 			input: ["text"],
 			cost: {
-				input: 0.09999999999999999,
-				output: 0.5,
-				cacheRead: 0.09999999999999999,
+				input: 0.09,
+				output: 0.44999999999999996,
+				cacheRead: 0,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
@@ -13137,7 +13137,7 @@ export const MODELS = {
 		} satisfies Model<"anthropic-messages">,
 		"openai/gpt-oss-20b": {
 			id: "openai/gpt-oss-20b",
-			name: "gpt-oss-20b",
+			name: "GPT OSS 120B",
 			api: "anthropic-messages",
 			provider: "vercel-ai-gateway",
 			baseUrl: "https://ai-gateway.vercel.sh",
@@ -13154,7 +13154,7 @@ export const MODELS = {
 		} satisfies Model<"anthropic-messages">,
 		"openai/gpt-oss-safeguard-20b": {
 			id: "openai/gpt-oss-safeguard-20b",
-			name: "gpt-oss-safeguard-20b",
+			name: "GPT OSS Safeguard 20B",
 			api: "anthropic-messages",
 			provider: "vercel-ai-gateway",
 			baseUrl: "https://ai-gateway.vercel.sh",
