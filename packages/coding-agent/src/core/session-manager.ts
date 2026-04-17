@@ -1,6 +1,6 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ImageContent, Message, TextContent } from "@mariozechner/pi-ai";
-import { randomUUID } from "crypto";
+import { randomBytes, randomUUID } from "crypto";
 import {
 	appendFileSync,
 	closeSync,
@@ -15,8 +15,29 @@ import {
 } from "fs";
 import { readdir, readFile, stat } from "fs/promises";
 import { join, resolve } from "path";
-import { v7 as uuidv7 } from "uuid";
 import { getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.js";
+
+// Fork change: inlined UUIDv7 (upstream uses the `uuid` npm package). Keeps this
+// package self-contained so consumers don't need a transitive `uuid` install.
+function uuidv7(): string {
+	const ts = BigInt(Date.now());
+	const bytes = randomBytes(10);
+	const hex = [
+		((ts >> 40n) & 0xffn).toString(16).padStart(2, "0"),
+		((ts >> 32n) & 0xffn).toString(16).padStart(2, "0"),
+		((ts >> 24n) & 0xffn).toString(16).padStart(2, "0"),
+		((ts >> 16n) & 0xffn).toString(16).padStart(2, "0"),
+		((ts >> 8n) & 0xffn).toString(16).padStart(2, "0"),
+		(ts & 0xffn).toString(16).padStart(2, "0"),
+		(0x70 | (bytes[0]! & 0x0f)).toString(16).padStart(2, "0"),
+		bytes[1]!.toString(16).padStart(2, "0"),
+		(0x80 | (bytes[2]! & 0x3f)).toString(16).padStart(2, "0"),
+		bytes[3]!.toString(16).padStart(2, "0"),
+		...Array.from(bytes.slice(4), (b) => b.toString(16).padStart(2, "0")),
+	].join("");
+	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
 import {
 	type BashExecutionMessage,
 	type CustomMessage,
