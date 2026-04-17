@@ -153,7 +153,7 @@ export type {
 } from "./core/package-manager.js";
 export { DefaultPackageManager } from "./core/package-manager.js";
 export type { ResourceCollision, ResourceDiagnostic, ResourceLoader } from "./core/resource-loader.js";
-export { DefaultResourceLoader } from "./core/resource-loader.js";
+export { DefaultResourceLoader, loadProjectContextFiles } from "./core/resource-loader.js";
 // SDK for programmatic usage
 export {
 	AgentSessionRuntime,
@@ -291,12 +291,19 @@ export {
 	writeToolDefinition,
 } from "./core/tools/index.js";
 // Main entry point
-export { main } from "./main.js";
+export { type MainOptions, main } from "./main.js";
 // Run modes for programmatic SDK usage
 export {
 	InteractiveMode,
 	type InteractiveModeOptions,
+	type ModelInfo,
 	type PrintModeOptions,
+	RpcClient,
+	type RpcClientOptions,
+	type RpcCommand,
+	type RpcEventListener,
+	type RpcResponse,
+	type RpcSessionState,
 	runPrintMode,
 	runRpcMode,
 } from "./modes/index.js";

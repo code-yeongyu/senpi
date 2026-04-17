@@ -92,7 +92,12 @@ describe("parseArgs", () => {
 
 		test("parses --append-system-prompt", () => {
 			const result = parseArgs(["--append-system-prompt", "Additional context"]);
-			expect(result.appendSystemPrompt).toBe("Additional context");
+			expect(result.appendSystemPrompt).toEqual(["Additional context"]);
+		});
+
+		test("parses multiple --append-system-prompt flags", () => {
+			const result = parseArgs(["--append-system-prompt", "Context A", "--append-system-prompt", "Context B"]);
+			expect(result.appendSystemPrompt).toEqual(["Context A", "Context B"]);
 		});
 
 		test("parses --mode", () => {
@@ -223,6 +228,18 @@ describe("parseArgs", () => {
 		test("parses --no-themes flag", () => {
 			const result = parseArgs(["--no-themes"]);
 			expect(result.noThemes).toBe(true);
+		});
+	});
+
+	describe("--no-context-files flag", () => {
+		test("parses --no-context-files flag", () => {
+			const result = parseArgs(["--no-context-files"]);
+			expect(result.noContextFiles).toBe(true);
+		});
+
+		test("parses -nc shorthand", () => {
+			const result = parseArgs(["-nc"]);
+			expect(result.noContextFiles).toBe(true);
 		});
 	});
 

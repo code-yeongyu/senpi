@@ -2,9 +2,48 @@
 
 ## [Unreleased]
 
+## [0.67.6] - 2026-04-16
+
+### Added
+
+- Added OSC 8 hyperlink rendering for markdown links when the terminal advertises support. Introduces a public `hyperlink(text, url)` helper and a `setCapabilities()` test override in `packages/tui` ([#3248](https://github.com/badlogic/pi-mono/pull/3248) by [@ofa1](https://github.com/ofa1)).
+- Added `argumentHint` to `SlashCommand` interface, displayed before the description in the autocomplete dropdown ([#2780](https://github.com/badlogic/pi-mono/pull/2780) by [@andresvi94](https://github.com/andresvi94))
+
+### Changed
+
+- Tightened `detectCapabilities()` to default `hyperlinks: false` for unknown terminals and to force `hyperlinks: false` under tmux/screen (including nested sessions where the outer terminal would otherwise advertise OSC 8). Prevents markdown link URLs from disappearing on terminals that silently swallow OSC 8 sequences ([#3248](https://github.com/badlogic/pi-mono/pull/3248)).
+
+## [0.67.5] - 2026-04-16
+
+### Fixed
+
+- Fixed Zellij `Shift+Enter` regressions by reverting the Zellij-specific Kitty keyboard query bypass and restoring the previous keyboard negotiation behavior ([#3259](https://github.com/badlogic/pi-mono/issues/3259))
+
+## [0.67.4] - 2026-04-16
+
+### Fixed
+
+- Fixed markdown strikethrough parsing to require strict double-tilde delimiters (`~~text~~`) with non-whitespace boundaries, preventing accidental strikethrough from loose tilde usage.
+
+## [0.67.2] - 2026-04-14
+
+### Added
+
+- Added full helper support for Kitty `super`-modified shortcuts, including combinations such as `super+k`, `super+enter`, and `ctrl+super+k` ([#2979](https://github.com/badlogic/pi-mono/issues/2979))
+
+### Fixed
+
+- Fixed Ctrl+Alt letter key matching in tmux by falling through from legacy ESC-prefixed handling to CSI-u and xterm `modifyOtherKeys` parsing when the legacy form does not match ([#2989](https://github.com/badlogic/pi-mono/pull/2989) by [@kaofelix](https://github.com/kaofelix))
+
+## [0.67.1] - 2026-04-13
+
+## [0.67.0] - 2026-04-13
+
 ### Fixed
 
 - Fixed `Container.render()` stack overflow on long sessions by replacing `Array.push(...spread)` with a loop-based push, preventing `RangeError: Maximum call stack size exceeded` when child output exceeds the V8 call stack argument limit ([#2651](https://github.com/badlogic/pi-mono/issues/2651))
+- Fixed editor sticky-column tracking around paste markers so vertical cursor navigation restores the column from before the cursor entered a paste marker instead of jumping inside or past pasted content ([#3092](https://github.com/badlogic/pi-mono/pull/3092) by [@Perlence](https://github.com/Perlence))
+- Fixed TUI test suite failures caused by render throttle scheduling: added `VirtualTerminal.waitForRender()` helper that waits for the 16ms throttled render pipeline to settle before asserting viewport state ([#3076](https://github.com/badlogic/pi-mono/pull/3076) by [@aliou](https://github.com/aliou))
 
 ## [0.66.1] - 2026-04-08
 

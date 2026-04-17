@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type {
+	CacheControlEphemeral,
 	ContentBlockParam,
 	MessageCreateParamsStreaming,
 	MessageParam,
@@ -25,11 +26,17 @@ import type {
 	ToolResultMessage,
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
+import { headersToRecord } from "../utils/headers.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.js";
-import { adjustMaxTokensForThinking, applyExtraBody, buildBaseOptions } from "./simple-options.js";
+import {
+	ANTHROPIC_RESERVED_BODY_KEYS,
+	adjustMaxTokensForThinking,
+	applyExtraBody,
+	buildBaseOptions,
+} from "./simple-options.js";
 import { transformMessages } from "./transform-messages.js";
 
 /**
@@ -49,7 +56,7 @@ function resolveCacheRetention(cacheRetention?: CacheRetention): CacheRetention 
 function getCacheControl(
 	baseUrl: string,
 	cacheRetention?: CacheRetention,
-): { retention: CacheRetention; cacheControl?: { type: "ephemeral"; ttl?: "1h" } } {
+): { retention: CacheRetention; cacheControl?: CacheControlEphemeral } {
 	const retention = resolveCacheRetention(cacheRetention);
 	if (retention === "none") {
 		return { retention };
@@ -154,6 +161,8 @@ function convertContentBlocks(content: (TextContent | ImageContent)[]):
 
 export type AnthropicEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
+export type AnthropicThinkingDisplay = "summarized" | "omitted";
+
 export interface AnthropicOptions extends StreamOptions {
 	/**
 	 * Enable extended thinking.
@@ -170,11 +179,23 @@ export interface AnthropicOptions extends StreamOptions {
 	 * Effort level for adaptive thinking (Opus 4.6, Sonnet 4.6 and Opus 4.7).
 	 * Model-specific tiers:
 	 * - Opus 4.7: "low" | "medium" | "high" | "xhigh" | "max" (native Anthropic tiers)
-	 * - Opus 4.6: "low" | "medium" | "high" | "max"          ("max" is Opus 4.6 top tier)
-	 * - Sonnet 4.6: "low" | "medium" | "high"                ("xhigh"/"max" not supported)
+	 * - Opus 4.6: "low" | "medium" | "high" | "max" ("xhigh" maps to "max")
+	 * - Sonnet 4.6: "low" | "medium" | "high" ("xhigh"/"max" clamp to "high")
 	 * Ignored for older models.
 	 */
 	effort?: AnthropicEffort;
+	/**
+	 * Controls how thinking content is returned in API responses.
+	 * - "summarized": Thinking blocks contain summarized thinking text (default here).
+	 * - "omitted": Thinking blocks return an empty thinking field; the encrypted
+	 *   signature still travels back for multi-turn continuity. Use for faster
+	 *   time-to-first-text-token when your UI does not surface thinking.
+	 *
+	 * Note: Anthropic's API default for Claude Opus 4.7 and Claude Mythos Preview
+	 * is "omitted". We default to "summarized" here to keep behavior consistent
+	 * with older Claude 4 models. Set this explicitly to "omitted" to opt in.
+	 */
+	thinkingDisplay?: AnthropicThinkingDisplay;
 	interleavedThinking?: boolean;
 	toolChoice?: "auto" | "any" | "none" | { type: "tool"; name: string };
 	/**
@@ -194,20 +215,6 @@ function mergeHeaders(...headerSources: (Record<string, string> | undefined)[]):
 	}
 	return merged;
 }
-
-const ANTHROPIC_RESERVED_BODY_KEYS: ReadonlySet<string> = new Set([
-	"model",
-	"messages",
-	"system",
-	"stream",
-	"tools",
-	"tool_choice",
-	"temperature",
-	"max_tokens",
-	"thinking",
-	"output_config",
-	"metadata",
-]);
 
 export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 	model: Model<"anthropic-messages">,
@@ -269,7 +276,10 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 			if (nextParams !== undefined) {
 				params = nextParams as MessageCreateParamsStreaming;
 			}
-			const anthropicStream = client.messages.stream({ ...params, stream: true }, { signal: options?.signal });
+			const { data: anthropicStream, response } = await client.messages
+				.stream({ ...params, stream: true }, { signal: options?.signal })
+				.withResponse();
+			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
 			type Block = (ThinkingContent | TextContent | (ToolCall & { partialJson: string })) & { index: number };
@@ -397,7 +407,9 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 							});
 						} else if (block.type === "toolCall") {
 							block.arguments = parseStreamingJson(block.partialJson);
-							delete (block as any).partialJson;
+							// Finalize in-place and strip the scratch buffer so replay only
+							// carries parsed arguments.
+							delete (block as { partialJson?: string }).partialJson;
 							stream.push({
 								type: "toolcall_end",
 								contentIndex: index,
@@ -442,7 +454,11 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
-			for (const block of output.content) delete (block as any).index;
+			for (const block of output.content) {
+				delete (block as { index?: number }).index;
+				// partialJson is only a streaming scratch buffer; never persist it.
+				delete (block as { partialJson?: string }).partialJson;
+			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
@@ -457,14 +473,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
  * Check if a model supports adaptive thinking (Opus 4.6, Sonnet 4.6, Opus 4.7 and later).
  */
 function supportsAdaptiveThinking(modelId: string): boolean {
-	return (
-		modelId.includes("opus-4-6") ||
-		modelId.includes("opus-4.6") ||
-		modelId.includes("sonnet-4-6") ||
-		modelId.includes("sonnet-4.6") ||
-		modelId.includes("opus-4-7") ||
-		modelId.includes("opus-4.7")
-	);
+	return isOpus46(modelId) || isOpus47(modelId) || modelId.includes("sonnet-4-6") || modelId.includes("sonnet-4.6");
 }
 
 function isOpus46(modelId: string): boolean {
@@ -479,12 +488,14 @@ function isOpus47(modelId: string): boolean {
  * Map ThinkingLevel to Anthropic effort levels for adaptive thinking.
  *
  * Model-specific effort tiers:
- * - Opus 4.7: supports "low" | "medium" | "high" | "xhigh" | "max" (native passthrough for xhigh and max)
- * - Opus 4.6: supports "low" | "medium" | "high" | "max"           (xhigh or max both route to "max")
- * - Sonnet 4.6 and other adaptive models: "low" | "medium" | "high" (xhigh/max clamp to "high")
+ * - Opus 4.7: supports "low" | "medium" | "high" | "xhigh" | "max"
+ * - Opus 4.6: supports "low" | "medium" | "high" | "max" ("xhigh" maps to "max")
+ * - Sonnet 4.6 and other adaptive models: "low" | "medium" | "high" ("xhigh"/"max" clamp to "high")
  */
-function mapThinkingLevelToEffort(level: SimpleStreamOptions["reasoning"], modelId: string): AnthropicEffort {
+function mapThinkingLevelToEffort(level: SimpleStreamOptions["reasoning"] | "off", modelId: string): AnthropicEffort {
 	switch (level) {
+		case "off":
+			return "low";
 		case "minimal":
 			return "low";
 		case "low":
@@ -682,28 +693,32 @@ function buildParams(
 	}
 
 	if (context.tools) {
-		params.tools = convertTools(context.tools, isOAuthToken);
+		params.tools = convertTools(context.tools, isOAuthToken, cacheControl);
 	}
 
-	// Configure thinking mode: adaptive (Opus 4.6 and Sonnet 4.6),
+	// Configure thinking mode: adaptive (Opus 4.6+ and Sonnet 4.6),
 	// budget-based (older models), or explicitly disabled.
 	if (model.reasoning) {
 		if (options?.thinkingEnabled) {
+			// Default to "summarized" so Opus 4.7 and Mythos Preview behave like
+			// older Claude 4 models (whose API default is also "summarized").
+			const display: AnthropicThinkingDisplay = options.thinkingDisplay ?? "summarized";
 			if (supportsAdaptiveThinking(model.id)) {
-				// Adaptive thinking: Claude decides when and how much to think
-				params.thinking = { type: "adaptive" };
+				// Adaptive thinking: Claude decides when and how much to think.
+				params.thinking = { type: "adaptive", display } as MessageCreateParamsStreaming["thinking"];
 				if (options.effort) {
-					// Cast through unknown to allow "xhigh" until @anthropic-ai/sdk widens its union.
-					(params as { output_config?: { effort: AnthropicEffort } }).output_config = {
-						effort: options.effort,
-					};
+					// The Anthropic SDK types can lag newly supported effort values such as "xhigh" and "max".
+					params.output_config = { effort: options.effort } as NonNullable<
+						MessageCreateParamsStreaming["output_config"]
+					>;
 				}
 			} else {
 				// Budget-based thinking for older models
 				params.thinking = {
 					type: "enabled",
 					budget_tokens: options.thinkingBudgetTokens || 1024,
-				};
+					display,
+				} as MessageCreateParamsStreaming["thinking"];
 			}
 		} else if (options?.thinkingEnabled === false) {
 			params.thinking = { type: "disabled" };
@@ -739,7 +754,7 @@ function convertMessages(
 	messages: Message[],
 	model: Model<"anthropic-messages">,
 	isOAuthToken: boolean,
-	cacheControl?: { type: "ephemeral"; ttl?: "1h" },
+	cacheControl?: CacheControlEphemeral,
 ): MessageParam[] {
 	const params: MessageParam[] = [];
 
@@ -900,20 +915,25 @@ function convertMessages(
 	return params;
 }
 
-function convertTools(tools: Tool[], isOAuthToken: boolean): Anthropic.Messages.Tool[] {
+function convertTools(
+	tools: Tool[],
+	isOAuthToken: boolean,
+	cacheControl?: CacheControlEphemeral,
+): Anthropic.Messages.Tool[] {
 	if (!tools) return [];
 
-	return tools.map((tool) => {
-		const jsonSchema = tool.parameters as any; // TypeBox already generates JSON Schema
+	return tools.map((tool, index) => {
+		const schema = tool.parameters as { properties?: unknown; required?: string[] };
 
 		return {
 			name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name,
 			description: tool.description,
 			input_schema: {
-				type: "object" as const,
-				properties: jsonSchema.properties || {},
-				required: jsonSchema.required || [],
+				type: "object",
+				properties: schema.properties ?? {},
+				required: schema.required ?? [],
 			},
+			...(cacheControl && index === tools.length - 1 ? { cache_control: cacheControl } : {}),
 		};
 	});
 }

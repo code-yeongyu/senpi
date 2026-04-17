@@ -70,22 +70,14 @@ interface ModelItem {
 
 export interface ModelsConfig {
 	allModels: Model<any>[];
-	enabledModelIds: Set<string>;
-	/** true if enabledModels setting is defined (empty = all enabled) */
-	hasEnabledModelsFilter: boolean;
+	enabledModelIds: string[] | null;
 }
 
 export interface ModelsCallbacks {
-	/** Called when a model is toggled (session-only, no persist) */
-	onModelToggle: (modelId: string, enabled: boolean) => void;
+	/** Called whenever the enabled model set or order changes (session-only, no persist) */
+	onChange: (enabledModelIds: string[] | null) => void | Promise<void>;
 	/** Called when user wants to persist current selection to settings */
-	onPersist: (enabledModelIds: string[]) => void;
-	/** Called when user enables all models. Returns list of all model IDs. */
-	onEnableAll: (allModelIds: string[]) => void;
-	/** Called when user clears all models */
-	onClearAll: () => void;
-	/** Called when user toggles all models for a provider. Returns affected model IDs. */
-	onToggleProvider: (provider: string, modelIds: string[], enabled: boolean) => void;
+	onPersist: (enabledModelIds: string[] | null) => void | Promise<void>;
 	onCancel: () => void;
 }
 
@@ -126,7 +118,7 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 			this.allIds.push(fullId);
 		}
 
-		this.enabledIds = config.hasEnabledModelsFilter ? [...config.enabledModelIds] : null;
+		this.enabledIds = config.enabledModelIds === null ? null : [...config.enabledModelIds];
 		this.filteredItems = this.buildItems();
 
 		// Header
@@ -182,6 +174,10 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 		this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, this.filteredItems.length - 1));
 		this.updateList();
 		this.footerText.setText(this.getFooterText());
+	}
+
+	private notifyChange(): void {
+		this.callbacks.onChange(this.enabledIds === null ? null : [...this.enabledIds]);
 	}
 
 	private updateList(): void {
@@ -254,6 +250,7 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 					this.isDirty = true;
 					this.selectedIndex += delta;
 					this.refresh();
+					this.notifyChange();
 				}
 			}
 			return;
@@ -263,12 +260,10 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 		if (matchesKey(data, Key.enter)) {
 			const item = this.filteredItems[this.selectedIndex];
 			if (item) {
-				const wasAllEnabled = this.enabledIds === null;
 				this.enabledIds = toggle(this.enabledIds, item.fullId);
 				this.isDirty = true;
-				if (wasAllEnabled) this.callbacks.onClearAll();
-				this.callbacks.onModelToggle(item.fullId, isEnabled(this.enabledIds, item.fullId));
 				this.refresh();
+				this.notifyChange();
 			}
 			return;
 		}
@@ -278,8 +273,8 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 			const targetIds = this.searchInput.getValue() ? this.filteredItems.map((i) => i.fullId) : undefined;
 			this.enabledIds = enableAll(this.enabledIds, this.allIds, targetIds);
 			this.isDirty = true;
-			this.callbacks.onEnableAll(targetIds ?? this.allIds);
 			this.refresh();
+			this.notifyChange();
 			return;
 		}
 
@@ -288,8 +283,8 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 			const targetIds = this.searchInput.getValue() ? this.filteredItems.map((i) => i.fullId) : undefined;
 			this.enabledIds = clearAll(this.enabledIds, this.allIds, targetIds);
 			this.isDirty = true;
-			this.callbacks.onClearAll();
 			this.refresh();
+			this.notifyChange();
 			return;
 		}
 
@@ -304,15 +299,15 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 					? clearAll(this.enabledIds, this.allIds, providerIds)
 					: enableAll(this.enabledIds, this.allIds, providerIds);
 				this.isDirty = true;
-				this.callbacks.onToggleProvider(provider, providerIds, !allEnabled);
 				this.refresh();
+				this.notifyChange();
 			}
 			return;
 		}
 
 		// Ctrl+S - Save/persist to settings
 		if (matchesKey(data, Key.ctrl("s"))) {
-			this.callbacks.onPersist(this.enabledIds ?? [...this.allIds]);
+			this.callbacks.onPersist(this.enabledIds === null ? null : [...this.enabledIds]);
 			this.isDirty = false;
 			this.footerText.setText(this.getFooterText());
 			return;

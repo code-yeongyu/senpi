@@ -9,6 +9,7 @@
 import type { AssistantMessage, ImageContent } from "@mariozechner/pi-ai";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.js";
 import { flushRawStdout, writeRawStdout } from "../core/output-guard.js";
+import { killTrackedDetachedChildren } from "../utils/shell.js";
 
 /**
  * Options for print mode.
@@ -33,6 +34,35 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 	let exitCode = 0;
 	let session = runtimeHost.session;
 	let unsubscribe: (() => void) | undefined;
+	let disposed = false;
+	const signalCleanupHandlers: Array<() => void> = [];
+
+	const disposeRuntime = async (): Promise<void> => {
+		if (disposed) return;
+		disposed = true;
+		unsubscribe?.();
+		await runtimeHost.dispose();
+	};
+
+	const registerSignalHandlers = (): void => {
+		const signals: NodeJS.Signals[] = ["SIGTERM"];
+		if (process.platform !== "win32") {
+			signals.push("SIGHUP");
+		}
+
+		for (const signal of signals) {
+			const handler = () => {
+				killTrackedDetachedChildren();
+				void disposeRuntime().finally(() => {
+					process.exit(signal === "SIGHUP" ? 129 : 143);
+				});
+			};
+			process.on(signal, handler);
+			signalCleanupHandlers.push(() => process.off(signal, handler));
+		}
+	};
+
+	registerSignalHandlers();
 
 	const rebindSession = async (): Promise<void> => {
 		session = runtimeHost.session;
@@ -128,8 +158,10 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 		console.error(error instanceof Error ? error.message : String(error));
 		return 1;
 	} finally {
-		unsubscribe?.();
-		await runtimeHost.dispose();
+		for (const cleanup of signalCleanupHandlers) {
+			cleanup();
+		}
+		await disposeRuntime();
 		await flushRawStdout();
 	}
 }

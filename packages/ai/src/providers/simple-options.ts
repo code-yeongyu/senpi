@@ -91,6 +91,20 @@ export const GOOGLE_GEMINI_CLI_RESERVED_BODY_KEYS: ReadonlySet<string> = new Set
 	"cachedContent",
 ]);
 
+export const ANTHROPIC_RESERVED_BODY_KEYS: ReadonlySet<string> = new Set([
+	"model",
+	"messages",
+	"system",
+	"stream",
+	"tools",
+	"tool_choice",
+	"temperature",
+	"max_tokens",
+	"thinking",
+	"output_config",
+	"metadata",
+]);
+
 export const MISTRAL_RESERVED_BODY_KEYS: ReadonlySet<string> = new Set([
 	"model",
 	"messages",
@@ -123,6 +137,7 @@ export function buildBaseOptions(model: Model<Api>, options?: SimpleStreamOption
 		headers: options?.headers,
 		extraBody: options?.extraBody,
 		onPayload: options?.onPayload,
+		onResponse: options?.onResponse,
 		maxRetryDelayMs: options?.maxRetryDelayMs,
 		metadata: options?.metadata,
 	};

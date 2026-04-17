@@ -58,11 +58,12 @@ export function supportsXhigh<TApi extends Api>(model: Model<TApi>): boolean {
 		return true;
 	}
 
-	if (model.id.includes("opus-4-6") || model.id.includes("opus-4.6")) {
-		return true;
-	}
-
-	if (model.id.includes("opus-4-7") || model.id.includes("opus-4.7")) {
+	if (
+		model.id.includes("opus-4-6") ||
+		model.id.includes("opus-4.6") ||
+		model.id.includes("opus-4-7") ||
+		model.id.includes("opus-4.7")
+	) {
 		return true;
 	}
 

@@ -278,6 +278,17 @@ Content`,
 			expect(agentsFiles.some((f) => f.path.includes("AGENTS.md"))).toBe(true);
 		});
 
+		it("should skip AGENTS.md and CLAUDE.md discovery when noContextFiles is true", async () => {
+			writeFileSync(join(cwd, "AGENTS.md"), "# Project Guidelines\n\nBe helpful.");
+			writeFileSync(join(cwd, "CLAUDE.md"), "# Claude Guidelines\n\nBe helpful.");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir, noContextFiles: true });
+			await loader.reload();
+
+			const { agentsFiles } = loader.getAgentsFiles();
+			expect(agentsFiles).toEqual([]);
+		});
+
 		it(`should ignore SYSTEM.md from cwd/${CONFIG_DIR_NAME}`, async () => {
 			mkdirSync(projectConfigDir, { recursive: true });
 			writeFileSync(join(projectConfigDir, "SYSTEM.md"), "You are a helpful assistant.");

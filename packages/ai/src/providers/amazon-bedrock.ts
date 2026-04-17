@@ -15,11 +15,14 @@ import {
 	type ConverseStreamMetadataEvent,
 	ImageFormat,
 	type Message,
+	type ServiceInputTypes,
+	type ServiceOutputTypes,
 	type SystemContentBlock,
 	type ToolChoice,
 	type ToolConfiguration,
 	ToolResultStatus,
 } from "@aws-sdk/client-bedrock-runtime";
+import type { FinalizeRequestMiddleware } from "@smithy/types";
 
 import { calculateCost } from "../models.js";
 import type {
@@ -52,6 +55,8 @@ import {
 } from "./simple-options.js";
 import { transformMessages } from "./transform-messages.js";
 
+export type BedrockThinkingDisplay = "summarized" | "omitted";
+
 export interface BedrockOptions extends StreamOptions {
 	region?: string;
 	profile?: string;
@@ -62,11 +67,28 @@ export interface BedrockOptions extends StreamOptions {
 	thinkingBudgets?: ThinkingBudgets;
 	/* Only supported by Claude 4.x models, see https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-extended-thinking.html#claude-messages-extended-thinking-tool-use-interleaved */
 	interleavedThinking?: boolean;
+	/**
+	 * Controls how Claude's thinking content is returned in responses.
+	 * - "summarized": Thinking blocks contain summarized thinking text (default here).
+	 * - "omitted": Thinking content is redacted but the signature still travels back
+	 *   for multi-turn continuity, reducing time-to-first-text-token.
+	 *
+	 * Note: Anthropic's API default for Claude Opus 4.7 and Mythos Preview is
+	 * "omitted". We default to "summarized" here to keep behavior consistent with
+	 * older Claude 4 models. Only applies to Claude models on Bedrock.
+	 */
+	thinkingDisplay?: BedrockThinkingDisplay;
 	/** Key-value pairs attached to the inference request for cost allocation tagging.
 	 * Keys: max 64 chars, no `aws:` prefix. Values: max 256 chars. Max 50 pairs.
 	 * Tags appear in AWS Cost Explorer split cost allocation data.
 	 * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ConverseStream.html */
 	requestMetadata?: Record<string, string>;
+	/** Bearer token for Bedrock API key authentication.
+	 * When set, bypasses SigV4 signing and sends Authorization: Bearer <token> instead.
+	 * Requires `bedrock:CallWithBearerToken` IAM permission on the token's identity.
+	 * Set via AWS_BEARER_TOKEN_BEDROCK env var or pass directly.
+	 * @see https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonbedrock.html */
+	bearerToken?: string;
 }
 
 type Block = (TextContent | ThinkingContent | ToolCall) & { index?: number; partialJson?: string };
@@ -103,6 +125,9 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 			profile: options.profile,
 		};
 
+		// Resolve bearer token for API key auth (bypasses SigV4)
+		const bearerToken = options.bearerToken || process.env.AWS_BEARER_TOKEN_BEDROCK || undefined;
+
 		// in Node.js/Bun environment only
 		if (typeof process !== "undefined" && (process.versions?.node || process.versions?.bun)) {
 			// Region resolution: explicit option > env vars > SDK default chain.
@@ -120,6 +145,15 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 				config.credentials = {
 					accessKeyId: "dummy-access-key",
 					secretAccessKey: "dummy-secret-key",
+				};
+			}
+
+			// Bearer token auth: use API key instead of SigV4 signing.
+			// Requires bedrock:CallWithBearerToken IAM permission.
+			if (bearerToken && process.env.AWS_BEDROCK_SKIP_AUTH !== "1") {
+				config.credentials = {
+					accessKeyId: "bearer-token-auth",
+					secretAccessKey: "bearer-token-auth",
 				};
 			}
 
@@ -157,6 +191,34 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 		try {
 			const client = new BedrockRuntimeClient(config);
 
+			// Inject bearer token middleware after SigV4 signing
+			if (bearerToken) {
+				const bearerTokenAuthMiddleware: FinalizeRequestMiddleware<ServiceInputTypes, ServiceOutputTypes> =
+					(next) => async (args) => {
+						const request = args.request;
+						if (
+							typeof request === "object" &&
+							request !== null &&
+							"headers" in request &&
+							typeof request.headers === "object" &&
+							request.headers !== null
+						) {
+							const headers = request.headers as Record<string, string>;
+							headers.authorization = `Bearer ${bearerToken}`;
+							delete headers["x-amz-date"];
+							delete headers["x-amz-security-token"];
+							delete headers["x-amz-content-sha256"];
+						}
+						return next(args);
+					};
+
+				client.middlewareStack.addRelativeTo(bearerTokenAuthMiddleware, {
+					relation: "after",
+					toMiddleware: "awsAuthMiddleware",
+					name: "bearerTokenAuth",
+				});
+			}
+
 			const cacheRetention = resolveCacheRetention(options.cacheRetention);
 			let commandInput = {
 				modelId: model.id,
@@ -179,6 +241,13 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 			const command = new ConverseStreamCommand(commandInput);
 
 			const response = await client.send(command, { abortSignal: options.signal });
+			if (response.$metadata.httpStatusCode !== undefined) {
+				const responseHeaders: Record<string, string> = {};
+				if (response.$metadata.requestId) {
+					responseHeaders["x-amzn-requestid"] = response.$metadata.requestId;
+				}
+				await options?.onResponse?.({ status: response.$metadata.httpStatusCode, headers: responseHeaders }, model);
+			}
 
 			for await (const item of response.stream!) {
 				if (item.messageStart) {
@@ -222,6 +291,7 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 		} catch (error) {
 			for (const block of output.content) {
 				delete (block as Block).index;
+				// partialJson is only a streaming scratch buffer; never persist it.
 				delete (block as Block).partialJson;
 			}
 			output.stopReason = options.signal?.aborted ? "aborted" : "error";
@@ -424,6 +494,8 @@ function handleContentBlockStop(
 			break;
 		case "toolCall":
 			block.arguments = parseStreamingJson(block.partialJson);
+			// Finalize in-place and strip the scratch buffer so replay only
+			// carries parsed arguments.
 			delete (block as Block).partialJson;
 			stream.push({ type: "toolcall_end", contentIndex: index, toolCall: block, partial: output });
 			break;
@@ -431,16 +503,16 @@ function handleContentBlockStop(
 }
 
 /**
- * Check if the model supports adaptive thinking (Opus 4.6, Sonnet 4.6, Opus 4.7).
+ * Check if the model supports adaptive thinking (Opus 4.6+, Sonnet 4.6).
  */
 function supportsAdaptiveThinking(modelId: string): boolean {
 	return (
 		modelId.includes("opus-4-6") ||
 		modelId.includes("opus-4.6") ||
-		modelId.includes("sonnet-4-6") ||
-		modelId.includes("sonnet-4.6") ||
 		modelId.includes("opus-4-7") ||
-		modelId.includes("opus-4.7")
+		modelId.includes("opus-4.7") ||
+		modelId.includes("sonnet-4-6") ||
+		modelId.includes("sonnet-4.6")
 	);
 }
 
@@ -761,9 +833,12 @@ function buildAdditionalModelRequestFields(
 	}
 
 	if (model.id.includes("anthropic.claude") || model.id.includes("anthropic/claude")) {
+		// Default to "summarized" so Opus 4.7 and Mythos Preview behave like
+		// older Claude 4 models (whose API default is also "summarized").
+		const display: BedrockThinkingDisplay = options.thinkingDisplay ?? "summarized";
 		const result: Record<string, any> = supportsAdaptiveThinking(model.id)
 			? {
-					thinking: { type: "adaptive" },
+					thinking: { type: "adaptive", display },
 					output_config: { effort: mapThinkingLevelToEffort(options.reasoning, model.id) },
 				}
 			: (() => {
@@ -787,6 +862,7 @@ function buildAdditionalModelRequestFields(
 						thinking: {
 							type: "enabled",
 							budget_tokens: budget,
+							display,
 						},
 					};
 				})();
