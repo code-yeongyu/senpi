@@ -64,4 +64,5 @@ jobs:
 
       - name: Test
         if: matrix.pm == 'npm'
+        timeout-minutes: 50
         run: npm test
