@@ -11,6 +11,43 @@ if [ $? -ne 0 ]; then
   exit 1
 fi
 
+# Detect changes that can affect npm/bun/pnpm install or build behavior.
+# When any of these are touched, run a full install+build against all three
+# package managers in isolated temp dirs. Set SENPI_SKIP_PM_VERIFY=1 to skip
+# (CI will still enforce it on the PR).
+RUN_PM_VERIFY=0
+for file in $STAGED_FILES; do
+  case "$file" in
+    package.json|package-lock.json|pnpm-workspace.yaml|.npmrc|bun.lock|bun.lockb|pnpm-lock.yaml)
+      RUN_PM_VERIFY=1
+      break
+      ;;
+    packages/*/package.json|packages/*/package-lock.json)
+      RUN_PM_VERIFY=1
+      break
+      ;;
+    scripts/build-all.mjs|scripts/run-web-ui-check.mjs|scripts/create-bin-stubs.mjs|scripts/verify-package-managers.mjs)
+      RUN_PM_VERIFY=1
+      break
+      ;;
+  esac
+done
+
+if [ $RUN_PM_VERIFY -eq 1 ]; then
+  if [ -n "$SENPI_SKIP_PM_VERIFY" ]; then
+    echo "⚠️  package-manager files changed; skipping npm/bun/pnpm verify (SENPI_SKIP_PM_VERIFY set)."
+    echo "   CI will still enforce. Run 'npm run verify:pms' before pushing if you want to catch it locally."
+  else
+    echo "Package-manager files changed. Verifying npm/bun/pnpm install + build..."
+    echo "(set SENPI_SKIP_PM_VERIFY=1 to skip; CI enforces this regardless)"
+    npm run verify:pms
+    if [ $? -ne 0 ]; then
+      echo "❌ Multi package-manager verification failed."
+      exit 1
+    fi
+  fi
+fi
+
 RUN_BROWSER_SMOKE=0
 for file in $STAGED_FILES; do
   case "$file" in

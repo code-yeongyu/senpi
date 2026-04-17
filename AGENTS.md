@@ -103,6 +103,7 @@ Build dependency order: `tui` -> `ai` -> `agent` -> `coding-agent` -> `mom` -> `
 npm install                    # Install all deps
 npm run build                  # Build all packages (dependency order)
 npm run check                  # Biome lint/format + tsgo type check + browser smoke + web-ui check
+npm run verify:pms             # Fresh install + build under npm, bun, and pnpm in isolated temp dirs
 npm run release:patch          # Release (fixes + features)
 npm run release:minor          # Release (breaking changes)
 
@@ -112,6 +113,8 @@ npx tsx ../../node_modules/vitest/dist/cli.js --run test/specific.test.ts
 # coding-agent test suite: use faux provider, never real APIs
 # Regression tests: packages/coding-agent/test/suite/regressions/<issue>-<slug>.test.ts
 ```
+
+This repo supports npm, bun, and pnpm as first-class package managers. Build output, install warnings, and bin linking must stay clean under all three. The `verify:pms` script snapshots the current working tree into isolated temp dirs and runs install + build for each PM without touching local `node_modules`/`dist`.
 
 ## ADDING A NEW LLM PROVIDER (packages/ai)
 
@@ -146,7 +149,8 @@ Multiple agents may work simultaneously. Rules:
 
 - `npm run check` requires `npm run build` first (web-ui needs compiled `.d.ts` from deps)
 - CI installs system deps: libcairo2-dev, libpango1.0-dev, ripgrep, fd-find
+- CI runs a matrix of npm/bun/pnpm for install + build; `check` and `test` still run on the npm entry only
 - Binary builds use Bun (v1.2.20) for cross-platform compilation
 - Pi philosophy: no built-in MCP, sub-agents, permission popups, plan mode, or todos. All implementable via extensions.
 - `web-ui` excluded from root tsconfig (handled separately)
-- Pre-commit hook runs `npm run check` + conditional browser smoke test
+- Pre-commit hook runs `npm run check`, conditional browser smoke, and (when package-manager-affecting files are staged) `npm run verify:pms`. Set `SENPI_SKIP_PM_VERIFY=1` to skip the multi-PM check locally; CI still enforces it.
