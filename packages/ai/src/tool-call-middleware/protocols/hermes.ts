@@ -1,4 +1,4 @@
-import type { TSchema } from "@sinclair/typebox";
+import type { TSchema } from "typebox";
 import type { ImageContent, TextContent, Tool } from "../../types.js";
 import type { ParsedToolCall, ParserOptions, StreamParser } from "../types.js";
 import { createJsonMixStreamParser, formatJsonMixToolCall, parseJsonMixGeneratedText } from "./json-mix.js";

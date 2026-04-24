@@ -6,7 +6,7 @@
  */
 
 import type { ExtensionAPI } from "@code-yeongyu/senpi";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 
 export default function (pi: ExtensionAPI) {
 	// Command entrypoint for reload.

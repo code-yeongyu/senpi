@@ -32,6 +32,7 @@ const THINKING_DESCRIPTIONS: Record<ThinkingLevel, string> = {
 export interface SettingsConfig {
 	autoCompact: boolean;
 	showImages: boolean;
+	imageWidthCells: number;
 	autoResizeImages: boolean;
 	blockImages: boolean;
 	enableSkillCommands: boolean;
@@ -52,11 +53,13 @@ export interface SettingsConfig {
 	autocompleteMaxVisible: number;
 	quietStartup: boolean;
 	clearOnShrink: boolean;
+	showTerminalProgress: boolean;
 }
 
 export interface SettingsCallbacks {
 	onAutoCompactChange: (enabled: boolean) => void;
 	onShowImagesChange: (enabled: boolean) => void;
+	onImageWidthCellsChange: (width: number) => void;
 	onAutoResizeImagesChange: (enabled: boolean) => void;
 	onBlockImagesChange: (blocked: boolean) => void;
 	onEnableSkillCommandsChange: (enabled: boolean) => void;
@@ -76,6 +79,7 @@ export interface SettingsCallbacks {
 	onAutocompleteMaxVisibleChange: (maxVisible: number) => void;
 	onQuietStartupChange: (enabled: boolean) => void;
 	onClearOnShrinkChange: (enabled: boolean) => void;
+	onShowTerminalProgressChange: (enabled: boolean) => void;
 	onCancel: () => void;
 }
 
@@ -293,10 +297,17 @@ export class SettingsSelectorComponent extends Container {
 				currentValue: config.showImages ? "true" : "false",
 				values: ["true", "false"],
 			});
+			items.splice(2, 0, {
+				id: "image-width-cells",
+				label: "Image width",
+				description: "Preferred inline image width in terminal cells",
+				currentValue: String(config.imageWidthCells),
+				values: ["60", "80", "120"],
+			});
 		}
 
 		// Image auto-resize toggle (always available, affects both attached and read images)
-		items.splice(supportsImages ? 2 : 1, 0, {
+		items.splice(supportsImages ? 3 : 1, 0, {
 			id: "auto-resize-images",
 			label: "Auto-resize images",
 			description: "Resize large images to 2000x2000 max for better model compatibility",
@@ -364,6 +375,16 @@ export class SettingsSelectorComponent extends Container {
 			values: ["true", "false"],
 		});
 
+		// Terminal progress toggle (insert after clear-on-shrink)
+		const clearOnShrinkIndex = items.findIndex((item) => item.id === "clear-on-shrink");
+		items.splice(clearOnShrinkIndex + 1, 0, {
+			id: "terminal-progress",
+			label: "Terminal progress",
+			description: "Show OSC 9;4 progress indicators in the terminal tab bar",
+			currentValue: config.showTerminalProgress ? "true" : "false",
+			values: ["true", "false"],
+		});
+
 		// Add borders
 		this.addChild(new DynamicBorder());
 
@@ -378,6 +399,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "show-images":
 						callbacks.onShowImagesChange(newValue === "true");
+						break;
+					case "image-width-cells":
+						callbacks.onImageWidthCellsChange(parseInt(newValue, 10));
 						break;
 					case "auto-resize-images":
 						callbacks.onAutoResizeImagesChange(newValue === "true");
@@ -428,6 +452,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "clear-on-shrink":
 						callbacks.onClearOnShrinkChange(newValue === "true");
+						break;
+					case "terminal-progress":
+						callbacks.onShowTerminalProgressChange(newValue === "true");
 						break;
 				}
 			},

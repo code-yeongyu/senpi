@@ -15,15 +15,12 @@ import {
 	type ConverseStreamMetadataEvent,
 	ImageFormat,
 	type Message,
-	type ServiceInputTypes,
-	type ServiceOutputTypes,
 	type SystemContentBlock,
 	type ToolChoice,
 	type ToolConfiguration,
 	ToolResultStatus,
 } from "@aws-sdk/client-bedrock-runtime";
-import type { FinalizeRequestMiddleware } from "@smithy/types";
-
+import type { DocumentType } from "@smithy/types";
 import { calculateCost } from "../models.js";
 import type {
 	Api,
@@ -124,19 +121,36 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 		const config: BedrockRuntimeClientConfig = {
 			profile: options.profile,
 		};
+		const configuredRegion = getConfiguredBedrockRegion(options);
+		const hasConfiguredProfile = hasConfiguredBedrockProfile();
+		const endpointRegion = getStandardBedrockEndpointRegion(model.baseUrl);
+		const useExplicitEndpoint = shouldUseExplicitBedrockEndpoint(
+			model.baseUrl,
+			configuredRegion,
+			hasConfiguredProfile,
+		);
 
-		// Resolve bearer token for API key auth (bypasses SigV4)
+		// Only pin standard AWS Bedrock runtime endpoints when no region/profile is configured.
+		// This preserves custom endpoints (VPC/proxy) from #3402 without forcing built-in
+		// catalog defaults such as us-east-1 to override AWS_REGION/AWS_PROFILE.
+		if (useExplicitEndpoint) {
+			config.endpoint = model.baseUrl;
+		}
+
+		// Resolve bearer token for Bedrock API key auth.
 		const bearerToken = options.bearerToken || process.env.AWS_BEARER_TOKEN_BEDROCK || undefined;
+		const useBearerToken = bearerToken !== undefined && process.env.AWS_BEDROCK_SKIP_AUTH !== "1";
 
 		// in Node.js/Bun environment only
 		if (typeof process !== "undefined" && (process.versions?.node || process.versions?.bun)) {
 			// Region resolution: explicit option > env vars > SDK default chain.
 			// When AWS_PROFILE is set, we leave region undefined so the SDK can
 			// resovle it from aws profile configs. Otherwise fall back to us-east-1.
-			const explicitRegion = options.region || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION;
-			if (explicitRegion) {
-				config.region = explicitRegion;
-			} else if (!process.env.AWS_PROFILE) {
+			if (configuredRegion) {
+				config.region = configuredRegion;
+			} else if (endpointRegion && useExplicitEndpoint) {
+				config.region = endpointRegion;
+			} else if (!hasConfiguredProfile) {
 				config.region = "us-east-1";
 			}
 
@@ -145,15 +159,6 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 				config.credentials = {
 					accessKeyId: "dummy-access-key",
 					secretAccessKey: "dummy-secret-key",
-				};
-			}
-
-			// Bearer token auth: use API key instead of SigV4 signing.
-			// Requires bedrock:CallWithBearerToken IAM permission.
-			if (bearerToken && process.env.AWS_BEDROCK_SKIP_AUTH !== "1") {
-				config.credentials = {
-					accessKeyId: "bearer-token-auth",
-					secretAccessKey: "bearer-token-auth",
 				};
 			}
 
@@ -185,46 +190,26 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 		} else {
 			// Non-Node environment (browser): fall back to us-east-1 since
 			// there's no config file resolution available.
-			config.region = options.region || "us-east-1";
+			config.region =
+				configuredRegion || (endpointRegion && useExplicitEndpoint ? endpointRegion : undefined) || "us-east-1";
+		}
+
+		if (useBearerToken) {
+			config.token = { token: bearerToken };
+			config.authSchemePreference = ["httpBearerAuth"];
 		}
 
 		try {
 			const client = new BedrockRuntimeClient(config);
-
-			// Inject bearer token middleware after SigV4 signing
-			if (bearerToken) {
-				const bearerTokenAuthMiddleware: FinalizeRequestMiddleware<ServiceInputTypes, ServiceOutputTypes> =
-					(next) => async (args) => {
-						const request = args.request;
-						if (
-							typeof request === "object" &&
-							request !== null &&
-							"headers" in request &&
-							typeof request.headers === "object" &&
-							request.headers !== null
-						) {
-							const headers = request.headers as Record<string, string>;
-							headers.authorization = `Bearer ${bearerToken}`;
-							delete headers["x-amz-date"];
-							delete headers["x-amz-security-token"];
-							delete headers["x-amz-content-sha256"];
-						}
-						return next(args);
-					};
-
-				client.middlewareStack.addRelativeTo(bearerTokenAuthMiddleware, {
-					relation: "after",
-					toMiddleware: "awsAuthMiddleware",
-					name: "bearerTokenAuth",
-				});
-			}
-
 			const cacheRetention = resolveCacheRetention(options.cacheRetention);
 			let commandInput = {
 				modelId: model.id,
 				messages: convertMessages(context, model, cacheRetention),
 				system: buildSystemPrompt(context.systemPrompt, model, cacheRetention),
-				inferenceConfig: { maxTokens: options.maxTokens, temperature: options.temperature },
+				inferenceConfig: {
+					...(options.maxTokens !== undefined && { maxTokens: options.maxTokens }),
+					...(options.temperature !== undefined && { temperature: options.temperature }),
+				},
 				toolConfig: convertToolConfig(context.tools, options.toolChoice),
 				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options),
 				...(options.requestMetadata !== undefined && { requestMetadata: options.requestMetadata }),
@@ -788,7 +773,7 @@ function convertToolConfig(
 		toolSpec: {
 			name: tool.name,
 			description: tool.description,
-			inputSchema: { json: tool.parameters },
+			inputSchema: { json: tool.parameters as unknown as DocumentType },
 		},
 	}));
 
@@ -824,6 +809,59 @@ function mapStopReason(reason: string | undefined): StopReason {
 	}
 }
 
+function getConfiguredBedrockRegion(options: BedrockOptions): string | undefined {
+	if (typeof process === "undefined") {
+		return options.region;
+	}
+
+	return options.region || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || undefined;
+}
+
+function hasConfiguredBedrockProfile(): boolean {
+	if (typeof process === "undefined") {
+		return false;
+	}
+
+	return Boolean(process.env.AWS_PROFILE);
+}
+
+function getStandardBedrockEndpointRegion(baseUrl: string | undefined): string | undefined {
+	if (!baseUrl) {
+		return undefined;
+	}
+
+	try {
+		const { hostname } = new URL(baseUrl);
+		const match = hostname.toLowerCase().match(/^bedrock-runtime(?:-fips)?\.([a-z0-9-]+)\.amazonaws\.com(?:\.cn)?$/);
+		return match?.[1];
+	} catch {
+		return undefined;
+	}
+}
+
+function shouldUseExplicitBedrockEndpoint(
+	baseUrl: string,
+	configuredRegion: string | undefined,
+	hasConfiguredProfile: boolean,
+): boolean {
+	const endpointRegion = getStandardBedrockEndpointRegion(baseUrl);
+	if (!endpointRegion) {
+		return true;
+	}
+
+	return !configuredRegion && !hasConfiguredProfile;
+}
+
+function isGovCloudBedrockTarget(model: Model<"bedrock-converse-stream">, options: BedrockOptions): boolean {
+	const region = getConfiguredBedrockRegion(options);
+	if (region?.toLowerCase().startsWith("us-gov-")) {
+		return true;
+	}
+
+	const modelId = model.id.toLowerCase();
+	return modelId.startsWith("us-gov.") || modelId.startsWith("arn:aws-us-gov:");
+}
+
 function buildAdditionalModelRequestFields(
 	model: Model<"bedrock-converse-stream">,
 	options: BedrockOptions,
@@ -833,12 +871,12 @@ function buildAdditionalModelRequestFields(
 	}
 
 	if (model.id.includes("anthropic.claude") || model.id.includes("anthropic/claude")) {
-		// Default to "summarized" so Opus 4.7 and Mythos Preview behave like
-		// older Claude 4 models (whose API default is also "summarized").
-		const display: BedrockThinkingDisplay = options.thinkingDisplay ?? "summarized";
+		// GovCloud Bedrock currently rejects the Claude thinking.display field.
+		// Omit it there until the GovCloud Converse schema catches up.
+		const display = isGovCloudBedrockTarget(model, options) ? undefined : (options.thinkingDisplay ?? "summarized");
 		const result: Record<string, any> = supportsAdaptiveThinking(model.id)
 			? {
-					thinking: { type: "adaptive", display },
+					thinking: { type: "adaptive", ...(display !== undefined ? { display } : {}) },
 					output_config: { effort: mapThinkingLevelToEffort(options.reasoning, model.id) },
 				}
 			: (() => {
@@ -862,7 +900,7 @@ function buildAdditionalModelRequestFields(
 						thinking: {
 							type: "enabled",
 							budget_tokens: budget,
-							display,
+							...(display !== undefined ? { display } : {}),
 						},
 					};
 				})();

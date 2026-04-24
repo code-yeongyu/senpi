@@ -159,6 +159,7 @@ const runtime = await createAgentSessionRuntime(createRuntime, {
 - `newSession()`
 - `switchSession()`
 - `fork()`
+- clone flows via `fork(entryId, { position: "at" })`
 - `importFromJsonl()`
 
 Important behavior:
@@ -528,7 +529,7 @@ const { session } = await createAgentSession({
 ### Custom Tools
 
 ```typescript
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { createAgentSession, defineTool } from "@code-yeongyu/senpi";
 
 // Inline custom tool
@@ -718,7 +719,7 @@ const { session: opened } = await createAgentSession({
 const currentProjectSessions = await SessionManager.list(process.cwd());
 const allSessions = await SessionManager.listAll(process.cwd());
 
-// Session replacement API for /new, /resume, /fork, and import flows.
+// Session replacement API for /new, /resume, /fork, /clone, and import flows.
 const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
   const services = await createAgentSessionServices({ cwd });
   return {
@@ -744,8 +745,11 @@ await runtime.newSession();
 // Replace the active session with another saved session
 await runtime.switchSession("/path/to/session.jsonl");
 
-// Replace the active session with a fork from a specific entry
+// Replace the active session with a fork from a specific user entry
 await runtime.fork("entry-id");
+
+// Clone the active path through a specific entry
+await runtime.fork("entry-id", { position: "at" });
 ```
 
 **SessionManager tree API:**
@@ -878,7 +882,7 @@ interface LoadExtensionsResult {
 
 ```typescript
 import { getModel } from "@mariozechner/pi-ai";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import {
   AuthStorage,
   bashTool,

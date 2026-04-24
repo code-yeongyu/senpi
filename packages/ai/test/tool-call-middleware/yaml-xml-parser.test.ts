@@ -1,4 +1,4 @@
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
 import {
 	createYamlXmlStreamParser,

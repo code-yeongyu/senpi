@@ -137,7 +137,7 @@ async function walkDirectoryWithFd(
 		"f",
 		"--type",
 		"d",
-		"--full-path",
+		"--follow",
 		"--hidden",
 		"--exclude",
 		".git",
@@ -146,6 +146,10 @@ async function walkDirectoryWithFd(
 		"--exclude",
 		".git/**",
 	];
+
+	if (toDisplayPath(query).includes("/")) {
+		args.push("--full-path");
+	}
 
 	if (query) {
 		args.push(buildFdPathQuery(query));
@@ -257,6 +261,9 @@ export interface AutocompleteProvider {
 		cursorLine: number;
 		cursorCol: number;
 	};
+
+	// Check if file completion should trigger for explicit Tab completion
+	shouldTriggerFileCompletion?(lines: string[], cursorLine: number, cursorCol: number): boolean;
 }
 
 // Combined provider that handles both slash commands and file paths
@@ -265,11 +272,7 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 	private basePath: string;
 	private fdPath: string | null;
 
-	constructor(
-		commands: (SlashCommand | AutocompleteItem)[] = [],
-		basePath: string = process.cwd(),
-		fdPath: string | null = null,
-	) {
+	constructor(commands: (SlashCommand | AutocompleteItem)[] = [], basePath: string, fdPath: string | null = null) {
 		this.commands = commands;
 		this.basePath = basePath;
 		this.fdPath = fdPath;

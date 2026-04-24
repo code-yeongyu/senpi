@@ -1,4 +1,4 @@
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { getProtocol } from "../../src/tool-call-middleware/context-transformer.js";
 import { wrapStreamWithToolCallMiddleware } from "../../src/tool-call-middleware/stream-wrapper.js";

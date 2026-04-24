@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getModel } from "../src/models.js";
-import { streamBedrock } from "../src/providers/amazon-bedrock.js";
-import type { Context, Model, SimpleStreamOptions } from "../src/types.js";
+import { type BedrockOptions, streamBedrock } from "../src/providers/amazon-bedrock.js";
+import type { Context, Model } from "../src/types.js";
 
 interface BedrockThinkingPayload {
 	additionalModelRequestFields?: {
@@ -19,7 +19,7 @@ function makeContext(): Context {
 
 async function capturePayload(
 	model: Model<"bedrock-converse-stream">,
-	options?: SimpleStreamOptions,
+	options?: BedrockOptions,
 ): Promise<BedrockThinkingPayload> {
 	let capturedPayload: BedrockThinkingPayload | undefined;
 	const s = streamBedrock(model, makeContext(), {
@@ -73,6 +73,35 @@ describe("Bedrock thinking payload", () => {
 
 		expect(payload.additionalModelRequestFields?.thinking).toEqual({ type: "adaptive", display: "summarized" });
 		expect(payload.additionalModelRequestFields?.output_config).toEqual({ effort: "xhigh" });
+		expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
+	});
+
+	it("omits display for GovCloud model ids on non-adaptive Claude thinking", async () => {
+		const baseModel = getModel("amazon-bedrock", "us.anthropic.claude-sonnet-4-5-20250929-v1:0");
+		const model: Model<"bedrock-converse-stream"> = {
+			...baseModel,
+			id: "us-gov.anthropic.claude-sonnet-4-5-20250929-v1:0",
+			name: "Claude Sonnet 4.5 (GovCloud)",
+		};
+
+		const payload = await capturePayload(model);
+
+		expect(payload.additionalModelRequestFields?.thinking).toEqual({ type: "enabled", budget_tokens: 16384 });
+		expect(payload.additionalModelRequestFields?.anthropic_beta).toEqual(["interleaved-thinking-2025-05-14"]);
+	});
+
+	it("omits display for GovCloud regions on adaptive Claude thinking", async () => {
+		const baseModel = getModel("amazon-bedrock", "global.anthropic.claude-opus-4-6-v1");
+		const model: Model<"bedrock-converse-stream"> = {
+			...baseModel,
+			id: "global.anthropic.claude-opus-4-7-v1",
+			name: "Claude Opus 4.7 (Global)",
+		};
+
+		const payload = await capturePayload(model, { region: "us-gov-west-1" });
+
+		expect(payload.additionalModelRequestFields?.thinking).toEqual({ type: "adaptive" });
+		expect(payload.additionalModelRequestFields?.output_config).toEqual({ effort: "high" });
 		expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
 	});
 });

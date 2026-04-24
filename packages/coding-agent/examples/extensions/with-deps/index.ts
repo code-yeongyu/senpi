@@ -6,8 +6,8 @@
  */
 
 import type { ExtensionAPI } from "@code-yeongyu/senpi";
-import { Type } from "@sinclair/typebox";
 import ms from "ms";
+import { Type } from "typebox";
 
 export default function (pi: ExtensionAPI) {
 	// Register a tool that uses ms

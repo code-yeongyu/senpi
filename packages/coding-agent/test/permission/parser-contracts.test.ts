@@ -1,16 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { createBuiltinParserRegistry } from "../../src/core/extensions/builtin/permission-system/parsers.js";
-import { bashToolDefinition } from "../../src/core/tools/bash.js";
-import { editToolDefinition } from "../../src/core/tools/edit.js";
-import { findToolDefinition } from "../../src/core/tools/find.js";
-import { grepToolDefinition } from "../../src/core/tools/grep.js";
-import { lsToolDefinition } from "../../src/core/tools/ls.js";
-import { readToolDefinition } from "../../src/core/tools/read.js";
-import { writeToolDefinition } from "../../src/core/tools/write.js";
+import { createBashToolDefinition } from "../../src/core/tools/bash.js";
+import { createEditToolDefinition } from "../../src/core/tools/edit.js";
+import { createFindToolDefinition } from "../../src/core/tools/find.js";
+import { createGrepToolDefinition } from "../../src/core/tools/grep.js";
+import { createLsToolDefinition } from "../../src/core/tools/ls.js";
+import { createReadToolDefinition } from "../../src/core/tools/read.js";
+import { createWriteToolDefinition } from "../../src/core/tools/write.js";
 
 describe("parser contract tests", () => {
 	const cwd = "/workspace/project";
 	const registry = createBuiltinParserRegistry();
+	const bashToolDefinition = createBashToolDefinition(cwd);
+	const editToolDefinition = createEditToolDefinition(cwd);
+	const findToolDefinition = createFindToolDefinition(cwd);
+	const grepToolDefinition = createGrepToolDefinition(cwd);
+	const lsToolDefinition = createLsToolDefinition(cwd);
+	const readToolDefinition = createReadToolDefinition(cwd);
+	const writeToolDefinition = createWriteToolDefinition(cwd);
 
 	describe("bash parser contract", () => {
 		it("should have command field in bash schema", () => {

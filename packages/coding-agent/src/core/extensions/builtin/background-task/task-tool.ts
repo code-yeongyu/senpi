@@ -1,5 +1,5 @@
 import { Text } from "@mariozechner/pi-tui";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../types.js";
 import type { BackgroundManager } from "./manager.js";
 import type { spawnSubagent } from "./spawner.js";

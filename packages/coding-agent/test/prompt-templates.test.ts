@@ -12,6 +12,7 @@ import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterAll, describe, expect, test } from "vitest";
+import { getAgentDir } from "../src/config.js";
 import { loadPromptTemplates, parseCommandArgs, substituteArgs } from "../src/core/prompt-templates.js";
 
 // ============================================================================
@@ -406,6 +407,8 @@ You are given one or more GitHub PR URLs: $@`,
 		);
 
 		const templates = loadPromptTemplates({
+			cwd: process.cwd(),
+			agentDir: getAgentDir(),
 			promptPaths: [testDir],
 			includeDefaults: false,
 		});
@@ -427,6 +430,8 @@ Wrap it. Additional instructions: $ARGUMENTS`,
 		);
 
 		const templates = loadPromptTemplates({
+			cwd: process.cwd(),
+			agentDir: getAgentDir(),
 			promptPaths: [testDir],
 			includeDefaults: false,
 		});
@@ -447,6 +452,8 @@ Audit changelog entries for all commits since the last release.`,
 		);
 
 		const templates = loadPromptTemplates({
+			cwd: process.cwd(),
+			agentDir: getAgentDir(),
 			promptPaths: [testDir],
 			includeDefaults: false,
 		});
@@ -467,6 +474,8 @@ Do something`,
 		);
 
 		const templates = loadPromptTemplates({
+			cwd: process.cwd(),
+			agentDir: getAgentDir(),
 			promptPaths: [testDir],
 			includeDefaults: false,
 		});
@@ -487,6 +496,8 @@ Analyze GitHub issue(s): $ARGUMENTS`,
 		);
 
 		const templates = loadPromptTemplates({
+			cwd: process.cwd(),
+			agentDir: getAgentDir(),
 			promptPaths: [testDir],
 			includeDefaults: false,
 		});

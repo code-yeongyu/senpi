@@ -55,6 +55,117 @@ sanepi-mono/                        # Fork of badlogic/pi-mono
 └── local-ignore/                   # Local workspace (gitignored)
 ```
 
+### 1. Core Types (`packages/ai/src/types.ts`)
+
+- Add API identifier to `Api` type union (e.g., `"bedrock-converse-stream"`)
+- Create options interface extending `StreamOptions`
+- Add mapping to `ApiOptionsMap`
+- Add provider name to `KnownProvider` type union
+
+### 2. Provider Implementation (`packages/ai/src/providers/`)
+
+Create provider file exporting:
+
+- `stream<Provider>()` function returning `AssistantMessageEventStream`
+- `streamSimple<Provider>()` for `SimpleStreamOptions` mapping
+- Provider-specific options interface
+- Message/tool conversion functions
+- Response parsing emitting standardized events (`text`, `tool_call`, `thinking`, `usage`, `stop`)
+
+### 3. Provider Exports and Lazy Registration
+
+- Add a package subpath export in `packages/ai/package.json` pointing at `./dist/providers/<provider>.js`
+- Add `export type` re-exports in `packages/ai/src/index.ts` for provider option types that should remain available from the root entry
+- Register the provider in `packages/ai/src/providers/register-builtins.ts` via lazy loader wrappers, do not statically import provider implementation modules there
+- Add credential detection in `packages/ai/src/env-api-keys.ts`
+
+### 4. Model Generation (`packages/ai/scripts/generate-models.ts`)
+
+- Add logic to fetch/parse models from provider source
+- Map to standardized `Model` interface
+
+### 5. Tests (`packages/ai/test/`)
+
+Add provider to: `stream.test.ts`, `tokens.test.ts`, `abort.test.ts`, `empty.test.ts`, `context-overflow.test.ts`, `image-limits.test.ts`, `unicode-surrogate.test.ts`, `tool-call-without-result.test.ts`, `image-tool-result.test.ts`, `total-tokens.test.ts`, `cross-provider-handoff.test.ts`.
+
+For `cross-provider-handoff.test.ts`, add at least one provider/model pair. If the provider exposes multiple model families (for example GPT and Claude), add at least one pair per family.
+
+For non-standard auth, create utility (e.g., `bedrock-utils.ts`) with credential detection.
+
+### 6. Coding Agent (`packages/coding-agent/`)
+
+- `src/core/model-resolver.ts`: Add default model ID to `DEFAULT_MODELS`
+- `src/cli/args.ts`: Add env var documentation
+- `README.md`: Add provider setup instructions
+
+### 7. Documentation
+
+- `packages/ai/README.md`: Add to providers table, document options/auth, add env vars
+- `packages/ai/CHANGELOG.md`: Add entry under `## [Unreleased]`
+
+## Releasing
+
+**Lockstep versioning**: All packages always share the same version number. Every release updates all packages together.
+
+**Version semantics** (no major releases):
+
+- `patch`: Bug fixes and new features
+- `minor`: API breaking changes
+
+### Steps
+
+1. **Update CHANGELOGs**: Ensure all changes since last release are documented in the `[Unreleased]` section of each affected package's CHANGELOG.md
+
+2. **Run release script**:
+   ```bash
+   npm run release:patch    # Fixes and additions
+   npm run release:minor    # API breaking changes
+   ```
+
+The script handles: version bump, CHANGELOG finalization, commit, tag, publish, and adding new `[Unreleased]` sections.
+
+## **CRITICAL** Git Rules for Parallel Agents **CRITICAL**
+
+Multiple agents may work on different files in the same worktree simultaneously. You MUST follow these rules:
+
+### Committing
+
+- **ONLY commit files YOU changed in THIS session**
+- ALWAYS include `fixes #<number>` or `closes #<number>` in the commit message when there is a related issue or PR
+- NEVER use `git add -A` or `git add .` - these sweep up changes from other agents
+- ALWAYS use `git add <specific-file-paths>` listing only files you modified
+- Before committing, run `git status` and verify you are only staging YOUR files
+- Track which files you created/modified/deleted during the session
+- It is always fine to include `packages/ai/src/models.generated.ts` in a commit alongside the actual files you want to commit
+
+### Forbidden Git Operations
+
+These commands can destroy other agents' work:
+
+- `git reset --hard` - destroys uncommitted changes
+- `git checkout .` - destroys uncommitted changes
+- `git clean -fd` - deletes untracked files
+- `git stash` - stashes ALL changes including other agents' work
+- `git add -A` / `git add .` - stages other agents' uncommitted work
+- `git commit --no-verify` - bypasses required checks and is never allowed
+
+### Safe Workflow
+
+```bash
+# 1. Check status first
+git status
+
+# 2. Add ONLY your specific files
+git add packages/ai/src/providers/transform-messages.ts
+git add packages/ai/CHANGELOG.md
+
+# 3. Commit
+git commit -m "fix(ai): description"
+
+# 4. Push (pull --rebase if needed, but NEVER reset/checkout)
+git pull --rebase && git push
+```
+
 Build dependency order: `tui` -> `ai` -> `agent` -> `coding-agent` -> `mom` -> `web-ui` -> `pods`
 
 ## WHERE TO LOOK

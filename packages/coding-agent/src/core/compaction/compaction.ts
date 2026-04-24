@@ -5,7 +5,7 @@
  * and after compaction the session is reloaded.
  */
 
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage, ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, Model, Usage } from "@mariozechner/pi-ai";
 import { completeSimple } from "@mariozechner/pi-ai";
 import {
@@ -550,6 +550,7 @@ export async function generateSummary(
 	customInstructions?: string,
 	previousSummary?: string,
 	extraBody?: Record<string, unknown>,
+	thinkingLevel?: ThinkingLevel,
 ): Promise<string> {
 	const maxTokens = Math.floor(0.8 * reserveTokens);
 
@@ -579,9 +580,10 @@ export async function generateSummary(
 		},
 	];
 
-	const completionOptions = model.reasoning
-		? { maxTokens, signal, apiKey, headers, extraBody, reasoning: "high" as const }
-		: { maxTokens, signal, apiKey, headers, extraBody };
+	const completionOptions =
+		model.reasoning && thinkingLevel && thinkingLevel !== "off"
+			? { maxTokens, signal, apiKey, headers, extraBody, reasoning: thinkingLevel }
+			: { maxTokens, signal, apiKey, headers, extraBody };
 
 	const response = await completeSimple(
 		model,
@@ -736,6 +738,7 @@ export async function compact(
 	customInstructions?: string,
 	signal?: AbortSignal,
 	extraBody?: Record<string, unknown>,
+	thinkingLevel?: ThinkingLevel,
 ): Promise<CompactionResult> {
 	const {
 		firstKeptEntryId,
@@ -765,6 +768,7 @@ export async function compact(
 						customInstructions,
 						previousSummary,
 						extraBody,
+						thinkingLevel,
 					)
 				: Promise.resolve("No prior history."),
 			generateTurnPrefixSummary(
@@ -775,6 +779,7 @@ export async function compact(
 				headers,
 				signal,
 				extraBody,
+				thinkingLevel,
 			),
 		]);
 		// Merge into single summary
@@ -791,6 +796,7 @@ export async function compact(
 			customInstructions,
 			previousSummary,
 			extraBody,
+			thinkingLevel,
 		);
 	}
 
@@ -821,6 +827,7 @@ async function generateTurnPrefixSummary(
 	headers?: Record<string, string>,
 	signal?: AbortSignal,
 	extraBody?: Record<string, unknown>,
+	thinkingLevel?: ThinkingLevel,
 ): Promise<string> {
 	const maxTokens = Math.floor(0.5 * reserveTokens); // Smaller budget for turn prefix
 	const llmMessages = convertToLlm(messages);
@@ -837,7 +844,9 @@ async function generateTurnPrefixSummary(
 	const response = await completeSimple(
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		{ maxTokens, signal, apiKey, headers, extraBody },
+		model.reasoning && thinkingLevel && thinkingLevel !== "off"
+			? { maxTokens, signal, apiKey, headers, extraBody, reasoning: thinkingLevel }
+			: { maxTokens, signal, apiKey, headers, extraBody },
 	);
 
 	if (response.stopReason === "error") {

@@ -15,6 +15,8 @@ Sessions are stored as trees where each entry has an `id` and `parentId`. The "l
 | Summary | Never | Optional (user prompted) |
 | Events | `session_before_fork` / `session_start` (`reason: "fork"`) | `session_before_tree` / `session_tree` |
 
+Use `/clone` when you want a new session file containing the full current active branch without rewinding to an earlier user message.
+
 ## Tree UI
 
 ```

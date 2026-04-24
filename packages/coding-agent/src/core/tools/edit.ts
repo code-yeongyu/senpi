@@ -1,8 +1,8 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Box, Container, Spacer, Text } from "@mariozechner/pi-tui";
-import { type Static, Type } from "@sinclair/typebox";
 import { constants } from "fs";
 import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile } from "fs/promises";
+import { type Static, Type } from "typebox";
 import { renderDiff } from "../../modes/interactive/components/diff.js";
 import type { ToolDefinition } from "../extensions/types.js";
 import {
@@ -92,14 +92,24 @@ function prepareEditArguments(input: unknown): EditToolInput {
 		return input as EditToolInput;
 	}
 
-	const args = input as LegacyEditToolInput;
-	if (typeof args.oldText !== "string" || typeof args.newText !== "string") {
-		return input as EditToolInput;
+	const args = input as Record<string, unknown>;
+
+	// Some models (Opus 4.6, GLM-5.1) send edits as a JSON string instead of an array
+	if (typeof args.edits === "string") {
+		try {
+			const parsed = JSON.parse(args.edits);
+			if (Array.isArray(parsed)) args.edits = parsed;
+		} catch {}
 	}
 
-	const edits = Array.isArray(args.edits) ? [...args.edits] : [];
-	edits.push({ oldText: args.oldText, newText: args.newText });
-	const { oldText: _oldText, newText: _newText, ...rest } = args;
+	const legacy = args as LegacyEditToolInput;
+	if (typeof legacy.oldText !== "string" || typeof legacy.newText !== "string") {
+		return args as EditToolInput;
+	}
+
+	const edits = Array.isArray(legacy.edits) ? [...legacy.edits] : [];
+	edits.push({ oldText: legacy.oldText, newText: legacy.newText });
+	const { oldText: _oldText, newText: _newText, ...rest } = legacy;
 	return { ...rest, edits } as EditToolInput;
 }
 
@@ -475,7 +485,3 @@ export function createEditToolDefinition(
 export function createEditTool(cwd: string, options?: EditToolOptions): AgentTool<typeof editSchema> {
 	return wrapToolDefinition(createEditToolDefinition(cwd, options));
 }
-
-/** Default edit tool using process.cwd() for backwards compatibility. */
-export const editToolDefinition = createEditToolDefinition(process.cwd());
-export const editTool = createEditTool(process.cwd());

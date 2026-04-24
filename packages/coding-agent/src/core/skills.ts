@@ -374,14 +374,14 @@ function escapeXml(str: string): string {
 }
 
 export interface LoadSkillsOptions {
-	/** Working directory for project-local skills. Default: process.cwd() */
-	cwd?: string;
+	/** Working directory for project-local skills. */
+	cwd: string;
 	/** Agent config directory for global skills. Default: ~/.senpi/agent */
-	agentDir?: string;
+	agentDir: string;
 	/** Explicit skill paths (files or directories) */
-	skillPaths?: string[];
-	/** Include default skills directories. Default: true */
-	includeDefaults?: boolean;
+	skillPaths: string[];
+	/** Include default skills directories. */
+	includeDefaults: boolean;
 }
 
 function normalizePath(input: string): string {
@@ -401,8 +401,8 @@ function resolveSkillPath(p: string, cwd: string): string {
  * Load skills from all configured locations.
  * Returns skills and any validation diagnostics.
  */
-export function loadSkills(options: LoadSkillsOptions = {}): LoadSkillsResult {
-	const { cwd = process.cwd(), agentDir, skillPaths = [], includeDefaults = true } = options;
+export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
+	const { cwd, agentDir, skillPaths, includeDefaults } = options;
 
 	// Resolve agentDir - if not provided, use default from config
 	const resolvedAgentDir = agentDir ?? getAgentDir();

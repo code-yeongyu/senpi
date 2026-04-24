@@ -1,5 +1,5 @@
 import { Text } from "@mariozechner/pi-tui";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import type { ExtensionAPI } from "../../../types.js";
 import { getTodoResultLines, type TodoItem, type TodoWriteDetails } from "../state.js";
 

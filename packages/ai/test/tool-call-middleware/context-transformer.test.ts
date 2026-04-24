@@ -1,4 +1,4 @@
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { getProtocol, transformContext } from "../../src/tool-call-middleware/context-transformer.js";
 import type { ToolCallProtocol } from "../../src/tool-call-middleware/types.js";

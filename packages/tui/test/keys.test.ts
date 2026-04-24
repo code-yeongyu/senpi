@@ -4,7 +4,14 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { decodeKittyPrintable, Key, matchesKey, parseKey, setKittyProtocolActive } from "../src/keys.js";
+import {
+	decodeKittyPrintable,
+	decodePrintableKey,
+	Key,
+	matchesKey,
+	parseKey,
+	setKittyProtocolActive,
+} from "../src/keys.js";
 
 function withEnv(name: string, value: string | undefined, fn: () => void): void {
 	const previous = process.env[name];
@@ -268,6 +275,14 @@ describe("matchesKey", () => {
 			assert.strictEqual(parseKey("\x1b[27;2;49~"), "shift+1");
 		});
 
+		it("should match xterm modifyOtherKeys shifted uppercase letters", () => {
+			setKittyProtocolActive(false);
+			assert.strictEqual(matchesKey("\x1b[27;2;69~", "shift+e"), true);
+			assert.strictEqual(matchesKey("\x1b[27;6;69~", "ctrl+shift+e"), true);
+			assert.strictEqual(parseKey("\x1b[27;2;69~"), "shift+e");
+			assert.strictEqual(parseKey("\x1b[27;6;69~"), "shift+ctrl+e");
+		});
+
 		it("should match Ctrl+Alt+letter via CSI-u when kitty inactive", () => {
 			setKittyProtocolActive(false);
 			assert.strictEqual(matchesKey("\x1b[104;7u", "ctrl+alt+h"), true);
@@ -493,6 +508,16 @@ describe("decodeKittyPrintable", () => {
 	});
 });
 
+describe("decodePrintableKey", () => {
+	it("should decode printable xterm modifyOtherKeys sequences", () => {
+		assert.strictEqual(decodePrintableKey("\x1b[27;2;69~"), "E");
+		assert.strictEqual(decodePrintableKey("\x1b[27;2;196~"), "Ä");
+		assert.strictEqual(decodePrintableKey("\x1b[27;2;32~"), " ");
+		assert.strictEqual(decodePrintableKey("\x1b[27;2;13~"), undefined);
+		assert.strictEqual(decodePrintableKey("\x1b[27;6;69~"), undefined);
+	});
+});
+
 describe("parseKey", () => {
 	describe("Kitty protocol with alternate keys", () => {
 		it("should return Latin key name when base layout key is present", () => {
@@ -523,6 +548,13 @@ describe("parseKey", () => {
 			setKittyProtocolActive(true);
 			const latinCtrlC = "\x1b[99;5u";
 			assert.strictEqual(parseKey(latinCtrlC), "ctrl+c");
+			setKittyProtocolActive(false);
+		});
+
+		it("should parse shifted uppercase CSI-u letters as shift+letter", () => {
+			setKittyProtocolActive(true);
+			assert.strictEqual(matchesKey("\x1b[69;2u", "shift+e"), true);
+			assert.strictEqual(parseKey("\x1b[69;2u"), "shift+e");
 			setKittyProtocolActive(false);
 		});
 

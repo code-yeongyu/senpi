@@ -90,6 +90,7 @@ function createBeforeAgentStartEvent(prompt: string): BeforeAgentStartEvent {
 		type: "before_agent_start",
 		prompt,
 		systemPrompt: "Base system prompt",
+		systemPromptOptions: { cwd: "/tmp/test" },
 	};
 }
 
@@ -277,7 +278,11 @@ describe("todotools continuation runtime", () => {
 		);
 		await mockPi._trigger("agent_end", createAgentEndEvent("stop"), ctx);
 		await vi.advanceTimersByTimeAsync(0);
-		await mockPi._trigger("session_shutdown", { type: "session_shutdown" } satisfies SessionShutdownEvent, ctx);
+		await mockPi._trigger(
+			"session_shutdown",
+			{ type: "session_shutdown", reason: "quit" } satisfies SessionShutdownEvent,
+			ctx,
+		);
 		await mockPi._trigger("agent_end", createAgentEndEvent("stop"), ctx);
 		await vi.advanceTimersByTimeAsync(0);
 
@@ -326,7 +331,11 @@ describe("todotools continuation runtime", () => {
 
 		await mockPi._trigger("agent_end", createAgentEndEvent("stop"), ctx);
 		await vi.advanceTimersByTimeAsync(0);
-		await mockPi._trigger("session_shutdown", { type: "session_shutdown" } satisfies SessionShutdownEvent, ctx);
+		await mockPi._trigger(
+			"session_shutdown",
+			{ type: "session_shutdown", reason: "quit" } satisfies SessionShutdownEvent,
+			ctx,
+		);
 
 		isIdle = true;
 		await vi.advanceTimersByTimeAsync(100);

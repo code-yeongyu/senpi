@@ -1,4 +1,4 @@
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { gemma4CreateStreamParser, gemma4ParseGeneratedText } from "../../src/tool-call-middleware/protocols/gemma4.js";
 import type { Tool } from "../../src/types.js";

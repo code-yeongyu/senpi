@@ -1,5 +1,5 @@
-import { type Static, Type } from "@sinclair/typebox";
-import { TypeCompiler } from "@sinclair/typebox/compiler";
+import { type Static, Type } from "typebox";
+import { Compile } from "typebox/compile";
 import { fromConfig } from "./permission.js";
 import type { PermissionConfig, Ruleset } from "./types.js";
 
@@ -20,7 +20,7 @@ export const AgentFrontmatterSchema = Type.Object({
 });
 export type AgentFrontmatter = Static<typeof AgentFrontmatterSchema>;
 
-const CompiledAgentFrontmatterSchema = TypeCompiler.Compile(AgentFrontmatterSchema);
+const CompiledAgentFrontmatterSchema = Compile(AgentFrontmatterSchema);
 
 export type AgentInfo = {
 	name: string;
@@ -39,7 +39,7 @@ export function validateAgentConfig(name: string, frontmatter: AgentFrontmatter,
 		const errors = CompiledAgentFrontmatterSchema.Errors(frontmatter);
 		const errorMessages = [];
 		for (const error of errors) {
-			errorMessages.push(`${error.path}: ${error.message}`);
+			errorMessages.push(`${error.instancePath}: ${error.message}`);
 		}
 		return new Error(`Invalid agent config: ${errorMessages.join(", ")}`);
 	}

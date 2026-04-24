@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@mariozechner/pi-ai";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parsePermissionFlag } from "../../src/core/extensions/builtin/permission-system/cli.js";
 import { theme } from "../../src/modes/interactive/theme/theme.js";
@@ -50,6 +50,8 @@ function createMockUI(selections: (string | undefined)[], inputValue?: string) {
 		onTerminalInput: () => () => {},
 		setStatus: () => {},
 		setWorkingMessage: () => {},
+		setWorkingIndicator: () => {},
+		addAutocompleteProvider: () => {},
 		setHiddenThinkingLabel: () => {},
 		setWidget: () => {},
 		setFooter: () => {},

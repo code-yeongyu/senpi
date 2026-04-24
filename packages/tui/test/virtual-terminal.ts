@@ -100,6 +100,8 @@ export class VirtualTerminal implements Terminal {
 		this.xterm.write(`\x1b]0;${title}\x07`);
 	}
 
+	setProgress(_active: boolean): void {}
+
 	// Test-specific methods not in Terminal interface
 
 	/**

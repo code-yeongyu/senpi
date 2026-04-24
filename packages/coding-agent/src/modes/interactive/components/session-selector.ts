@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import * as os from "node:os";
 import {
@@ -45,6 +45,15 @@ function formatSessionDate(date: Date): string {
 	if (diffDays < 30) return `${Math.floor(diffDays / 7)}w`;
 	if (diffDays < 365) return `${Math.floor(diffDays / 30)}mo`;
 	return `${Math.floor(diffDays / 365)}y`;
+}
+
+function canonicalizePath(path: string | undefined): string | undefined {
+	if (!path) return path;
+	try {
+		return realpathSync(path);
+	} catch {
+		return path;
+	}
 }
 
 class SessionSelectorHeader implements Component {
@@ -203,14 +212,16 @@ function buildSessionTree(sessions: SessionInfo[]): SessionTreeNode[] {
 	const byPath = new Map<string, SessionTreeNode>();
 
 	for (const session of sessions) {
-		byPath.set(session.path, { session, children: [] });
+		const sessionPath = canonicalizePath(session.path) ?? session.path;
+		byPath.set(sessionPath, { session, children: [] });
 	}
 
 	const roots: SessionTreeNode[] = [];
 
 	for (const session of sessions) {
-		const node = byPath.get(session.path)!;
-		const parentPath = session.parentSessionPath;
+		const sessionPath = canonicalizePath(session.path) ?? session.path;
+		const node = byPath.get(sessionPath)!;
+		const parentPath = canonicalizePath(session.parentSessionPath);
 
 		if (parentPath && byPath.has(parentPath)) {
 			byPath.get(parentPath)!.children.push(node);
@@ -273,7 +284,7 @@ class SessionList implements Component, Focusable {
 	private keybindings: KeybindingsManager;
 	private showPath = false;
 	private confirmingDeletePath: string | null = null;
-	private currentSessionFilePath?: string;
+	private currentSessionCanonicalPath?: string;
 	public onSelect?: (sessionPath: string) => void;
 	public onCancel?: () => void;
 	public onExit: () => void = () => {};
@@ -312,7 +323,7 @@ class SessionList implements Component, Focusable {
 		this.sortMode = sortMode;
 		this.nameFilter = nameFilter;
 		this.keybindings = keybindings;
-		this.currentSessionFilePath = currentSessionFilePath;
+		this.currentSessionCanonicalPath = canonicalizePath(currentSessionFilePath);
 		this.filterSessions("");
 
 		// Handle Enter in search input - select current item
@@ -374,12 +385,17 @@ class SessionList implements Component, Focusable {
 		if (!selected) return;
 
 		// Prevent deleting current session
-		if (this.currentSessionFilePath && selected.session.path === this.currentSessionFilePath) {
+		if (this.isCurrentSessionPath(selected.session.path)) {
 			this.onError?.("Cannot delete the currently active session");
 			return;
 		}
 
 		this.setConfirmingDeletePath(selected.session.path);
+	}
+
+	private isCurrentSessionPath(path: string): boolean {
+		if (!this.currentSessionCanonicalPath) return false;
+		return (canonicalizePath(path) ?? path) === this.currentSessionCanonicalPath;
 	}
 
 	invalidate(): void {}
@@ -424,7 +440,7 @@ class SessionList implements Component, Focusable {
 			const session = node.session;
 			const isSelected = i === this.selectedIndex;
 			const isConfirmingDelete = session.path === this.confirmingDeletePath;
-			const isCurrent = this.currentSessionFilePath === session.path;
+			const isCurrent = this.isCurrentSessionPath(session.path);
 
 			// Build tree prefix
 			const prefix = this.buildTreePrefix(node);

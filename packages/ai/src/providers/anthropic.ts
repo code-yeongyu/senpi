@@ -4,10 +4,12 @@ import type {
 	ContentBlockParam,
 	MessageCreateParamsStreaming,
 	MessageParam,
+	RawMessageStreamEvent,
 } from "@anthropic-ai/sdk/resources/messages.js";
 import { getEnvApiKey } from "../env-api-keys.js";
 import { calculateCost } from "../models.js";
 import type {
+	AnthropicMessagesCompat,
 	Api,
 	AssistantMessage,
 	CacheRetention,
@@ -27,7 +29,7 @@ import type {
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { headersToRecord } from "../utils/headers.js";
-import { parseStreamingJson } from "../utils/json-parse.js";
+import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.js";
@@ -54,14 +56,14 @@ function resolveCacheRetention(cacheRetention?: CacheRetention): CacheRetention 
 }
 
 function getCacheControl(
-	baseUrl: string,
+	model: Model<"anthropic-messages">,
 	cacheRetention?: CacheRetention,
 ): { retention: CacheRetention; cacheControl?: CacheControlEphemeral } {
 	const retention = resolveCacheRetention(cacheRetention);
 	if (retention === "none") {
 		return { retention };
 	}
-	const ttl = retention === "long" && baseUrl.includes("api.anthropic.com") ? "1h" : undefined;
+	const ttl = retention === "long" && getAnthropicCompat(model).supportsLongCacheRetention ? "1h" : undefined;
 	return {
 		retention,
 		cacheControl: { type: "ephemeral", ...(ttl && { ttl }) },
@@ -163,6 +165,16 @@ export type AnthropicEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 export type AnthropicThinkingDisplay = "summarized" | "omitted";
 
+const FINE_GRAINED_TOOL_STREAMING_BETA = "fine-grained-tool-streaming-2025-05-14";
+const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
+
+function getAnthropicCompat(model: Model<"anthropic-messages">): Required<AnthropicMessagesCompat> {
+	return {
+		supportsEagerToolInputStreaming: model.compat?.supportsEagerToolInputStreaming ?? true,
+		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
+	};
+}
+
 export interface AnthropicOptions extends StreamOptions {
 	/**
 	 * Enable extended thinking.
@@ -216,6 +228,176 @@ function mergeHeaders(...headerSources: (Record<string, string> | undefined)[]):
 	return merged;
 }
 
+interface ServerSentEvent {
+	event: string | null;
+	data: string;
+	raw: string[];
+}
+
+interface SseDecoderState {
+	event: string | null;
+	data: string[];
+	raw: string[];
+}
+
+function flushSseEvent(state: SseDecoderState): ServerSentEvent | null {
+	if (!state.event && state.data.length === 0) {
+		return null;
+	}
+
+	const event: ServerSentEvent = {
+		event: state.event,
+		data: state.data.join("\n"),
+		raw: [...state.raw],
+	};
+	state.event = null;
+	state.data = [];
+	state.raw = [];
+	return event;
+}
+
+function decodeSseLine(line: string, state: SseDecoderState): ServerSentEvent | null {
+	if (line === "") {
+		return flushSseEvent(state);
+	}
+
+	state.raw.push(line);
+	if (line.startsWith(":")) {
+		return null;
+	}
+
+	const delimiterIndex = line.indexOf(":");
+	const fieldName = delimiterIndex === -1 ? line : line.slice(0, delimiterIndex);
+	let value = delimiterIndex === -1 ? "" : line.slice(delimiterIndex + 1);
+	if (value.startsWith(" ")) {
+		value = value.slice(1);
+	}
+
+	if (fieldName === "event") {
+		state.event = value;
+	} else if (fieldName === "data") {
+		state.data.push(value);
+	}
+
+	return null;
+}
+
+function nextLineBreakIndex(text: string): number {
+	const carriageReturnIndex = text.indexOf("\r");
+	const newlineIndex = text.indexOf("\n");
+	if (carriageReturnIndex === -1) {
+		return newlineIndex;
+	}
+	if (newlineIndex === -1) {
+		return carriageReturnIndex;
+	}
+	return Math.min(carriageReturnIndex, newlineIndex);
+}
+
+function consumeLine(text: string): { line: string; rest: string } | null {
+	const lineBreakIndex = nextLineBreakIndex(text);
+	if (lineBreakIndex === -1) {
+		return null;
+	}
+
+	let nextIndex = lineBreakIndex + 1;
+	if (text[lineBreakIndex] === "\r" && text[nextIndex] === "\n") {
+		nextIndex += 1;
+	}
+
+	return {
+		line: text.slice(0, lineBreakIndex),
+		rest: text.slice(nextIndex),
+	};
+}
+
+async function* iterateSseMessages(
+	body: ReadableStream<Uint8Array>,
+	signal?: AbortSignal,
+): AsyncGenerator<ServerSentEvent> {
+	const reader = body.getReader();
+	const decoder = new TextDecoder();
+	const state: SseDecoderState = { event: null, data: [], raw: [] };
+	let buffer = "";
+
+	try {
+		while (true) {
+			if (signal?.aborted) {
+				throw new Error("Request was aborted");
+			}
+
+			const { value, done } = await reader.read();
+			if (done) {
+				break;
+			}
+
+			buffer += decoder.decode(value, { stream: true });
+			let consumed = consumeLine(buffer);
+			while (consumed) {
+				buffer = consumed.rest;
+				const event = decodeSseLine(consumed.line, state);
+				if (event) {
+					yield event;
+				}
+				consumed = consumeLine(buffer);
+			}
+		}
+
+		buffer += decoder.decode();
+		let consumed = consumeLine(buffer);
+		while (consumed) {
+			buffer = consumed.rest;
+			const event = decodeSseLine(consumed.line, state);
+			if (event) {
+				yield event;
+			}
+			consumed = consumeLine(buffer);
+		}
+
+		if (buffer.length > 0) {
+			const event = decodeSseLine(buffer, state);
+			if (event) {
+				yield event;
+			}
+		}
+
+		const trailingEvent = flushSseEvent(state);
+		if (trailingEvent) {
+			yield trailingEvent;
+		}
+	} finally {
+		reader.releaseLock();
+	}
+}
+
+async function* iterateAnthropicEvents(
+	response: Response,
+	signal?: AbortSignal,
+): AsyncGenerator<RawMessageStreamEvent> {
+	if (!response.body) {
+		throw new Error("Attempted to iterate over an Anthropic response with no body");
+	}
+
+	for await (const sse of iterateSseMessages(response.body, signal)) {
+		if (!sse.event || sse.event === "ping") {
+			continue;
+		}
+
+		if (sse.event === "error") {
+			throw new Error(sse.data);
+		}
+
+		try {
+			yield parseJsonWithRepair<RawMessageStreamEvent>(sse.data);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			throw new Error(
+				`Could not parse Anthropic SSE event ${sse.event}: ${message}; data=${sse.data}; raw=${sse.raw.join("\\n")}`,
+			);
+		}
+	}
+}
+
 export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 	model: Model<"anthropic-messages">,
 	context: Context,
@@ -265,6 +447,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 					model,
 					apiKey,
 					options?.interleavedThinking ?? true,
+					shouldUseFineGrainedToolStreamingBeta(model, context),
 					options?.headers,
 					copilotDynamicHeaders,
 				);
@@ -276,16 +459,16 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 			if (nextParams !== undefined) {
 				params = nextParams as MessageCreateParamsStreaming;
 			}
-			const { data: anthropicStream, response } = await client.messages
-				.stream({ ...params, stream: true }, { signal: options?.signal })
-				.withResponse();
+			const response = await client.messages
+				.create({ ...params, stream: true }, { signal: options?.signal })
+				.asResponse();
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
 			type Block = (ThinkingContent | TextContent | (ToolCall & { partialJson: string })) & { index: number };
 			const blocks = output.content as Block[];
 
-			for await (const event of anthropicStream) {
+			for await (const event of iterateAnthropicEvents(response, options?.signal)) {
 				if (event.type === "message_start") {
 					output.responseId = event.message.id;
 					// Capture initial token usage from message_start event
@@ -565,6 +748,7 @@ function createClient(
 	model: Model<"anthropic-messages">,
 	apiKey: string,
 	interleavedThinking: boolean,
+	useFineGrainedToolStreamingBeta: boolean,
 	optionsHeaders?: Record<string, string>,
 	dynamicHeaders?: Record<string, string>,
 ): { client: Anthropic; isOAuthToken: boolean } {
@@ -572,11 +756,14 @@ function createClient(
 	// The beta header is deprecated on Opus 4.6 and redundant on Sonnet 4.6, so skip it.
 	const needsInterleavedBeta = interleavedThinking && !supportsAdaptiveThinking(model.id);
 
-	// Copilot: Bearer auth, selective betas (no fine-grained-tool-streaming)
+	// Copilot: Bearer auth, selective betas.
 	if (model.provider === "github-copilot") {
 		const betaFeatures: string[] = [];
+		if (useFineGrainedToolStreamingBeta) {
+			betaFeatures.push(FINE_GRAINED_TOOL_STREAMING_BETA);
+		}
 		if (needsInterleavedBeta) {
-			betaFeatures.push("interleaved-thinking-2025-05-14");
+			betaFeatures.push(INTERLEAVED_THINKING_BETA);
 		}
 
 		const client = new Anthropic({
@@ -599,9 +786,12 @@ function createClient(
 		return { client, isOAuthToken: false };
 	}
 
-	const betaFeatures = ["fine-grained-tool-streaming-2025-05-14"];
+	const betaFeatures: string[] = [];
+	if (useFineGrainedToolStreamingBeta) {
+		betaFeatures.push(FINE_GRAINED_TOOL_STREAMING_BETA);
+	}
 	if (needsInterleavedBeta) {
-		betaFeatures.push("interleaved-thinking-2025-05-14");
+		betaFeatures.push(INTERLEAVED_THINKING_BETA);
 	}
 
 	// OAuth: Bearer auth, Claude Code identity headers
@@ -615,7 +805,7 @@ function createClient(
 				{
 					accept: "application/json",
 					"anthropic-dangerous-direct-browser-access": "true",
-					"anthropic-beta": `claude-code-20250219,oauth-2025-04-20,${betaFeatures.join(",")}`,
+					"anthropic-beta": ["claude-code-20250219", "oauth-2025-04-20", ...betaFeatures].join(","),
 					"user-agent": `claude-cli/${claudeCodeVersion}`,
 					"x-app": "cli",
 				},
@@ -636,7 +826,7 @@ function createClient(
 			{
 				accept: "application/json",
 				"anthropic-dangerous-direct-browser-access": "true",
-				"anthropic-beta": betaFeatures.join(","),
+				...(betaFeatures.length > 0 ? { "anthropic-beta": betaFeatures.join(",") } : {}),
 			},
 			model.headers,
 			optionsHeaders,
@@ -652,7 +842,7 @@ function buildParams(
 	isOAuthToken: boolean,
 	options?: AnthropicOptions,
 ): MessageCreateParamsStreaming {
-	const { cacheControl } = getCacheControl(model.baseUrl, options?.cacheRetention);
+	const { cacheControl } = getCacheControl(model, options?.cacheRetention);
 	const params: MessageCreateParamsStreaming = {
 		model: model.id,
 		messages: convertMessages(context.messages, model, isOAuthToken, cacheControl),
@@ -693,7 +883,12 @@ function buildParams(
 	}
 
 	if (context.tools) {
-		params.tools = convertTools(context.tools, isOAuthToken, cacheControl);
+		params.tools = convertTools(
+			context.tools,
+			isOAuthToken,
+			getAnthropicCompat(model).supportsEagerToolInputStreaming,
+			cacheControl,
+		);
 	}
 
 	// Configure thinking mode: adaptive (Opus 4.6+ and Sonnet 4.6),
@@ -790,8 +985,7 @@ function convertMessages(
 						};
 					}
 				});
-				let filteredBlocks = !model?.input.includes("image") ? blocks.filter((b) => b.type !== "image") : blocks;
-				filteredBlocks = filteredBlocks.filter((b) => {
+				const filteredBlocks = blocks.filter((b) => {
 					if (b.type === "text") {
 						return b.text.trim().length > 0;
 					}
@@ -915,9 +1109,14 @@ function convertMessages(
 	return params;
 }
 
+function shouldUseFineGrainedToolStreamingBeta(model: Model<"anthropic-messages">, context: Context): boolean {
+	return !!context.tools?.length && !getAnthropicCompat(model).supportsEagerToolInputStreaming;
+}
+
 function convertTools(
 	tools: Tool[],
 	isOAuthToken: boolean,
+	supportsEagerToolInputStreaming: boolean,
 	cacheControl?: CacheControlEphemeral,
 ): Anthropic.Messages.Tool[] {
 	if (!tools) return [];
@@ -928,6 +1127,7 @@ function convertTools(
 		return {
 			name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name,
 			description: tool.description,
+			...(supportsEagerToolInputStreaming ? { eager_input_streaming: true } : {}),
 			input_schema: {
 				type: "object",
 				properties: schema.properties ?? {},

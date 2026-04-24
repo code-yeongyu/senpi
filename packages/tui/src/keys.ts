@@ -357,6 +357,14 @@ function normalizeKittyFunctionalCodepoint(codepoint: number): number {
 	return KITTY_FUNCTIONAL_KEY_EQUIVALENTS.get(codepoint) ?? codepoint;
 }
 
+function normalizeShiftedLetterIdentityCodepoint(codepoint: number, modifier: number): number {
+	const effectiveModifier = modifier & ~LOCK_MASK;
+	if ((effectiveModifier & MODIFIERS.shift) !== 0 && codepoint >= 65 && codepoint <= 90) {
+		return codepoint + 32;
+	}
+	return codepoint;
+}
+
 const LEGACY_KEY_SEQUENCES = {
 	up: ["\x1b[A", "\x1bOA"],
 	down: ["\x1b[B", "\x1bOB"],
@@ -651,8 +659,14 @@ function matchesKittySequence(data: string, expectedCodepoint: number, expectedM
 	// Check if modifiers match
 	if (actualMod !== expectedMod) return false;
 
-	const normalizedCodepoint = normalizeKittyFunctionalCodepoint(parsed.codepoint);
-	const normalizedExpectedCodepoint = normalizeKittyFunctionalCodepoint(expectedCodepoint);
+	const normalizedCodepoint = normalizeShiftedLetterIdentityCodepoint(
+		normalizeKittyFunctionalCodepoint(parsed.codepoint),
+		parsed.modifier,
+	);
+	const normalizedExpectedCodepoint = normalizeShiftedLetterIdentityCodepoint(
+		normalizeKittyFunctionalCodepoint(expectedCodepoint),
+		expectedModifier,
+	);
 
 	// Primary match: codepoint matches directly after normalizing functional keys
 	if (normalizedCodepoint === normalizedExpectedCodepoint) return true;
@@ -751,7 +765,12 @@ function isDigitKey(key: string): boolean {
 
 function matchesPrintableModifyOtherKeys(data: string, expectedKeycode: number, expectedModifier: number): boolean {
 	if (expectedModifier === 0) return false;
-	return matchesModifyOtherKeys(data, expectedKeycode, expectedModifier);
+	const parsed = parseModifyOtherKeysSequence(data);
+	if (!parsed || parsed.modifier !== expectedModifier) return false;
+	return (
+		normalizeShiftedLetterIdentityCodepoint(parsed.codepoint, parsed.modifier) ===
+		normalizeShiftedLetterIdentityCodepoint(expectedKeycode, expectedModifier)
+	);
 }
 
 function formatKeyNameWithModifiers(keyName: string, modifier: number): string | undefined {
@@ -1192,17 +1211,18 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
  */
 function formatParsedKey(codepoint: number, modifier: number, baseLayoutKey?: number): string | undefined {
 	const normalizedCodepoint = normalizeKittyFunctionalCodepoint(codepoint);
+	const identityCodepoint = normalizeShiftedLetterIdentityCodepoint(normalizedCodepoint, modifier);
 
 	// Use base layout key only when codepoint is not a recognized Latin
 	// letter (a-z), digit (0-9), or symbol (/, -, [, ;, etc.). For those,
 	// the codepoint is authoritative regardless of physical key position.
 	// This prevents remapped layouts (Dvorak, Colemak, xremap, etc.) from
 	// reporting the wrong key name based on the QWERTY physical position.
-	const isLatinLetter = normalizedCodepoint >= 97 && normalizedCodepoint <= 122; // a-z
-	const isDigit = normalizedCodepoint >= 48 && normalizedCodepoint <= 57; // 0-9
-	const isKnownSymbol = SYMBOL_KEYS.has(String.fromCharCode(normalizedCodepoint));
+	const isLatinLetter = identityCodepoint >= 97 && identityCodepoint <= 122; // a-z
+	const isDigit = identityCodepoint >= 48 && identityCodepoint <= 57; // 0-9
+	const isKnownSymbol = SYMBOL_KEYS.has(String.fromCharCode(identityCodepoint));
 	const effectiveCodepoint =
-		isLatinLetter || isDigit || isKnownSymbol ? normalizedCodepoint : (baseLayoutKey ?? normalizedCodepoint);
+		isLatinLetter || isDigit || isKnownSymbol ? identityCodepoint : (baseLayoutKey ?? identityCodepoint);
 
 	let keyName: string | undefined;
 	if (effectiveCodepoint === CODEPOINTS.escape) keyName = "escape";
@@ -1359,4 +1379,22 @@ export function decodeKittyPrintable(data: string): string | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+function decodeModifyOtherKeysPrintable(data: string): string | undefined {
+	const parsed = parseModifyOtherKeysSequence(data);
+	if (!parsed) return undefined;
+	const modifier = parsed.modifier & ~LOCK_MASK;
+	if ((modifier & ~MODIFIERS.shift) !== 0) return undefined;
+	if (!Number.isFinite(parsed.codepoint) || parsed.codepoint < 32) return undefined;
+
+	try {
+		return String.fromCodePoint(parsed.codepoint);
+	} catch {
+		return undefined;
+	}
+}
+
+export function decodePrintableKey(data: string): string | undefined {
+	return decodeKittyPrintable(data) ?? decodeModifyOtherKeysPrintable(data);
 }

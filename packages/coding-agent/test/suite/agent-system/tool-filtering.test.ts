@@ -1,4 +1,4 @@
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BUILTIN_AGENTS } from "../../../src/core/extensions/builtin/agent-system/builtin-agents.js";
 import agentSystemExtension from "../../../src/core/extensions/builtin/agent-system/index.js";

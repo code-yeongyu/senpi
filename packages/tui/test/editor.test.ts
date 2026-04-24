@@ -374,6 +374,22 @@ describe("Editor component", () => {
 
 			assert.strictEqual(editor.getText(), "");
 		});
+
+		it("inserts shifted CSI-u letters as text", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+
+			editor.handleInput("\x1b[69;2u");
+
+			assert.strictEqual(editor.getText(), "E");
+		});
+
+		it("inserts shifted xterm modifyOtherKeys letters as text", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+
+			editor.handleInput("\x1b[27;2;69~");
+
+			assert.strictEqual(editor.getText(), "E");
+		});
 	});
 
 	describe("Unicode text editing behavior", () => {
@@ -2116,6 +2132,39 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.isShowingAutocomplete(), true);
 		});
 
+		it("debounces # autocomplete while typing", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let suggestionCalls = 0;
+
+			const mockProvider: AutocompleteProvider = {
+				getSuggestions: async (lines, _cursorLine, cursorCol) => {
+					suggestionCalls += 1;
+					const text = (lines[0] || "").slice(0, cursorCol);
+					return {
+						items: [{ value: "#2983", label: "#2983" }],
+						prefix: text,
+					};
+				},
+				applyCompletion,
+			};
+
+			editor.setAutocompleteProvider(mockProvider);
+
+			editor.handleInput("#");
+			editor.handleInput("2");
+			editor.handleInput("9");
+			editor.handleInput("8");
+
+			assert.strictEqual(suggestionCalls, 0);
+			assert.strictEqual(editor.isShowingAutocomplete(), false);
+
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			await flushAutocomplete();
+
+			assert.strictEqual(suggestionCalls, 1);
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+		});
+
 		it("aborts active @ autocomplete when typing continues", async () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 			let aborts = 0;
@@ -2460,14 +2509,17 @@ describe("Editor component", () => {
 
 		it("awaits async slash command argument completions", async () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
-			const provider = new CombinedAutocompleteProvider([
-				{
-					name: "load-skills",
-					description: "Load skills",
-					getArgumentCompletions: async (prefix) =>
-						prefix.startsWith("s") ? [{ value: "skill-a", label: "skill-a" }] : null,
-				},
-			]);
+			const provider = new CombinedAutocompleteProvider(
+				[
+					{
+						name: "load-skills",
+						description: "Load skills",
+						getArgumentCompletions: async (prefix) =>
+							prefix.startsWith("s") ? [{ value: "skill-a", label: "skill-a" }] : null,
+					},
+				],
+				process.cwd(),
+			);
 			editor.setAutocompleteProvider(provider);
 			editor.setText("/load-skills ");
 
@@ -2482,15 +2534,18 @@ describe("Editor component", () => {
 
 		it("ignores invalid slash command argument completion results", async () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
-			const provider = new CombinedAutocompleteProvider([
-				{
-					name: "load-skills",
-					description: "Load skills",
-					getArgumentCompletions: (() => "not-an-array") as unknown as (
-						argumentPrefix: string,
-					) => Promise<{ value: string; label: string }[] | null>,
-				},
-			]);
+			const provider = new CombinedAutocompleteProvider(
+				[
+					{
+						name: "load-skills",
+						description: "Load skills",
+						getArgumentCompletions: (() => "not-an-array") as unknown as (
+							argumentPrefix: string,
+						) => Promise<{ value: string; label: string }[] | null>,
+					},
+				],
+				process.cwd(),
+			);
 			editor.setAutocompleteProvider(provider);
 			editor.setText("/load-skills ");
 
@@ -2502,14 +2557,17 @@ describe("Editor component", () => {
 
 		it("does not show argument completions when command has no argument completer", async () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
-			const provider = new CombinedAutocompleteProvider([
-				{ name: "help", description: "Show help" },
-				{
-					name: "model",
-					description: "Switch model",
-					getArgumentCompletions: () => [{ value: "claude-opus", label: "claude-opus" }],
-				},
-			]);
+			const provider = new CombinedAutocompleteProvider(
+				[
+					{ name: "help", description: "Show help" },
+					{
+						name: "model",
+						description: "Switch model",
+						getArgumentCompletions: () => [{ value: "claude-opus", label: "claude-opus" }],
+					},
+				],
+				process.cwd(),
+			);
 			editor.setAutocompleteProvider(provider);
 
 			editor.handleInput("/");

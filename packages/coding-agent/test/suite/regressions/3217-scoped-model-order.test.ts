@@ -1,6 +1,7 @@
-import type { TUI } from "@mariozechner/pi-tui";
+import { setKeybindings, type TUI } from "@mariozechner/pi-tui";
 import stripAnsi from "strip-ansi";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { KeybindingsManager } from "../../../src/core/keybindings.js";
 import { ModelSelectorComponent } from "../../../src/modes/interactive/components/model-selector.js";
 import { ScopedModelsSelectorComponent } from "../../../src/modes/interactive/components/scoped-models-selector.js";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.js";
@@ -21,6 +22,11 @@ describe("issue #3217 scoped model ordering", () => {
 
 	beforeAll(() => {
 		initTheme("dark");
+	});
+
+	beforeEach(() => {
+		// Ensure test isolation: keybindings are a global singleton
+		setKeybindings(new KeybindingsManager());
 	});
 
 	afterEach(() => {

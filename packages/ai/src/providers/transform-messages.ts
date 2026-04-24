@@ -1,4 +1,60 @@
-import type { Api, AssistantMessage, Message, Model, ToolCall, ToolResultMessage } from "../types.js";
+import type {
+	Api,
+	AssistantMessage,
+	ImageContent,
+	Message,
+	Model,
+	TextContent,
+	ToolCall,
+	ToolResultMessage,
+} from "../types.js";
+
+const NON_VISION_USER_IMAGE_PLACEHOLDER = "(image omitted: model does not support images)";
+const NON_VISION_TOOL_IMAGE_PLACEHOLDER = "(tool image omitted: model does not support images)";
+
+function replaceImagesWithPlaceholder(content: (TextContent | ImageContent)[], placeholder: string): TextContent[] {
+	const result: TextContent[] = [];
+	let previousWasPlaceholder = false;
+
+	for (const block of content) {
+		if (block.type === "image") {
+			if (!previousWasPlaceholder) {
+				result.push({ type: "text", text: placeholder });
+			}
+			previousWasPlaceholder = true;
+			continue;
+		}
+
+		result.push(block);
+		previousWasPlaceholder = block.text === placeholder;
+	}
+
+	return result;
+}
+
+function downgradeUnsupportedImages<TApi extends Api>(messages: Message[], model: Model<TApi>): Message[] {
+	if (model.input.includes("image")) {
+		return messages;
+	}
+
+	return messages.map((msg) => {
+		if (msg.role === "user" && Array.isArray(msg.content)) {
+			return {
+				...msg,
+				content: replaceImagesWithPlaceholder(msg.content, NON_VISION_USER_IMAGE_PLACEHOLDER),
+			};
+		}
+
+		if (msg.role === "toolResult") {
+			return {
+				...msg,
+				content: replaceImagesWithPlaceholder(msg.content, NON_VISION_TOOL_IMAGE_PLACEHOLDER),
+			};
+		}
+
+		return msg;
+	});
+}
 
 /**
  * Normalize tool call ID for cross-provider compatibility.
@@ -12,9 +68,10 @@ export function transformMessages<TApi extends Api>(
 ): Message[] {
 	// Build a map of original tool call IDs to normalized IDs
 	const toolCallIdMap = new Map<string, string>();
+	const imageAwareMessages = downgradeUnsupportedImages(messages, model);
 
-	// First pass: transform messages (thinking blocks, tool call ID normalization)
-	const transformed = messages.map((msg) => {
+	// First pass: transform messages (unsupported image downgrade, thinking blocks, tool call ID normalization)
+	const transformed = imageAwareMessages.map((msg) => {
 		// User messages pass through unchanged
 		if (msg.role === "user") {
 			return msg;
@@ -155,6 +212,9 @@ export function transformMessages<TApi extends Api>(
 			result.push(msg);
 		}
 	}
+
+	// If the conversation ends with unresolved tool calls, synthesize results now.
+	insertSyntheticToolResults();
 
 	return result;
 }

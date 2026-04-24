@@ -83,7 +83,7 @@ function renderToolForXmlPrompt(tool: Tool): string {
 	}
 
 	lines.push("parameters:");
-	const normalizedSchema = normalizeSchema(tool.parameters);
+	const normalizedSchema = normalizeSchema(tool.parameters as Record<string, unknown>);
 	lines.push(...renderParametersSummary(normalizedSchema, 1));
 	lines.push(`schema: ${stringifySchema(normalizedSchema)}`);
 
@@ -808,7 +808,7 @@ function formatXmlNode(tagName: string, value: unknown, depth: number): string[]
 }
 
 function createToolSchemaMap(tools: Tool[]): Map<string, JsonSchema> {
-	return new Map(tools.map((tool) => [tool.name, normalizeSchema(tool.parameters)]));
+	return new Map(tools.map((tool) => [tool.name, normalizeSchema(tool.parameters as Record<string, unknown>)]));
 }
 
 function parseMorphXmlArguments(toolBody: string, schema: JsonSchema): Record<string, unknown> {

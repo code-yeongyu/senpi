@@ -1,4 +1,4 @@
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { fauxAssistantMessage, fauxText, registerFauxProvider } from "../../src/providers/faux.js";
 import { complete, stream } from "../../src/stream.js";

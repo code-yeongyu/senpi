@@ -36,6 +36,8 @@ function createMockUI(overrides: Partial<ExtensionUIContext> = {}): ExtensionUIC
 		onTerminalInput: vi.fn().mockReturnValue(() => {}),
 		setStatus: vi.fn(),
 		setWorkingMessage: vi.fn(),
+		setWorkingIndicator: vi.fn(),
+		addAutocompleteProvider: vi.fn(),
 		setHiddenThinkingLabel: vi.fn(),
 		setWidget: vi.fn(),
 		setFooter: vi.fn(),
