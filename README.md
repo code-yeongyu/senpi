@@ -40,6 +40,7 @@ A new extension loading tier that ships first-party extensions as part of the co
 | **todowrite** | Structured task management. Adds `todowrite` and `todoread` tools with a TUI sidebar widget. Enforces WHERE/WHY/HOW/RESULT format for each todo item. Injects task management rules into the system prompt via `before_agent_start`. |
 | **parallel-tool-calls** | Intercepts OpenAI provider requests and adds `parallel_tool_calls: true` to payloads when tools are present. Covers `openai-completions`, `openai-responses`, `openai-codex-responses`, and `azure-openai-responses` APIs. Also injects an Execution Strategy section into the system prompt that describes parallelization and context-breadth guidance without hardcoding specific tool names. |
 | **redraws** | Adds `/tui` command to display full-redraw count for TUI debugging. |
+| **bash-timeout** | Applies a default timeout (120s) to every `bash` tool call when the model omits one and caps over-generous timeouts at a maximum (600s). Mirrors free-code's behavior. Configurable via `PI_BASH_DEFAULT_TIMEOUT_SECONDS` and `PI_BASH_MAX_TIMEOUT_SECONDS`. Injects a system-prompt rider so the model knows the active limits. |
 
 **Global defaults** (seeded to `~/.senpi/agent/extensions/` on first run):
 

@@ -605,6 +605,8 @@ senpi --thinking high "Solve this complex problem"
 | `PI_SKIP_VERSION_CHECK` | Skip version check at startup |
 | `PI_TELEMETRY` | Override install telemetry. Use `1`/`true`/`yes` to enable or `0`/`false`/`no` to disable |
 | `PI_CACHE_RETENTION` | Set to `long` for extended prompt cache (Anthropic: 1h, OpenAI: 24h) |
+| `PI_BASH_DEFAULT_TIMEOUT_SECONDS` | Default timeout in seconds applied to `bash` tool calls when the model omits `timeout` (default: `120`). |
+| `PI_BASH_MAX_TIMEOUT_SECONDS` | Maximum timeout in seconds. Larger values requested by the model are capped to this (default: `600`, automatically raised to default if a smaller value is configured). |
 | `VISUAL`, `EDITOR` | External editor for Ctrl+G |
 
 ---
