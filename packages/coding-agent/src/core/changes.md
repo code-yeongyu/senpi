@@ -1,5 +1,13 @@
 # changes
 
+## Unified Compaction Pipeline (2026-04-27)
+
+- Changed `src/core/agent-session.ts` so manual, threshold, overflow, pre-prompt, and extension-triggered compaction routes share a private `_executeCompaction()` pipeline for preparation, extension hook execution, summary generation, pre-append token simulation, session append, context rebuild, and completion event emission.
+- This was changed in core because the user identified 9 route inconsistencies caused by duplicated compaction code paths. The unified pipeline fixes the core event/pipeline inconsistencies: route-specific metadata, custom instructions, thinking/max-token behavior, error handling, retry handling, token estimation before append, and abort handling now flow through one seam.
+- The extension system could not handle this alone because the duplicated route control flow lives inside `AgentSession`; extensions can customize compaction content but cannot unify internal caller behavior, append semantics, context rebuilds, or core event ordering.
+- Files modified: `agent-session.ts`.
+- Expected merge conflict zone on upstream sync: HIGH. `agent-session.ts` is the highest-churn upstream file; rebase conflict resolution must preserve the `_executeCompaction()` pipeline and keep branch summarization outside this helper.
+
 ## builtin extension labels
 
 - Changed `src/core/extensions/builtin/index.ts` and `src/core/resource-loader.ts` so builtin extensions keep stable synthetic ids like `<builtin:todowrite>` instead of being loaded as numbered inline factories.
