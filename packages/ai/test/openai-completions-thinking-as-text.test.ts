@@ -207,7 +207,7 @@ describe("openai-completions thinking-as-text replay", () => {
 				],
 			});
 
-			const terminalEvent = events.at(-1);
+			const terminalEvent = events[events.length - 1];
 			expect(terminalEvent?.type).toBe("done");
 		} finally {
 			server.close();
