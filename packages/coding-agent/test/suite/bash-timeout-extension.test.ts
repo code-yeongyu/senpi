@@ -3,6 +3,7 @@ import {
 	applyBashTimeout,
 	BASH_DEFAULT_TIMEOUT_SECONDS,
 	BASH_MAX_TIMEOUT_SECONDS,
+	buildBashTimeoutPrompt,
 	resolveBashTimeoutDefaults,
 } from "../../src/core/extensions/builtin/bash-timeout.js";
 
@@ -96,5 +97,34 @@ describe("applyBashTimeout", () => {
 		applyBashTimeout(input, defaults);
 
 		expect(input.timeout).toBeUndefined();
+	});
+});
+
+describe("buildBashTimeoutPrompt", () => {
+	it("includes the resolved default and max in the prompt rider", () => {
+		const prompt = buildBashTimeoutPrompt({ defaultSeconds: 120, maxSeconds: 600 });
+
+		expect(prompt).toContain("Default timeout: 120s (2 min)");
+		expect(prompt).toContain("Maximum timeout: 600s (10 min)");
+	});
+
+	it("falls back to seconds for non-minute-aligned values", () => {
+		const prompt = buildBashTimeoutPrompt({ defaultSeconds: 45, maxSeconds: 90 });
+
+		expect(prompt).toContain("Default timeout: 45s (45s)");
+		expect(prompt).toContain("Maximum timeout: 90s (90s)");
+	});
+
+	it("instructs the model to set timeout explicitly for long-running commands", () => {
+		const prompt = buildBashTimeoutPrompt({ defaultSeconds: 120, maxSeconds: 600 });
+
+		expect(prompt).toMatch(/long-running commands/i);
+		expect(prompt).toMatch(/explicit `timeout`/i);
+	});
+
+	it("references tmux as the escape hatch for very long workloads", () => {
+		const prompt = buildBashTimeoutPrompt({ defaultSeconds: 120, maxSeconds: 600 });
+
+		expect(prompt).toContain("tmux");
 	});
 });

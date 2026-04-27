@@ -10,7 +10,7 @@
   todo continuation, configurable via `todotools.continuation.enabled` or disabled per run with
   `--disable-todo-continuation`
 - Added `ctx.ui.setWorkingVisible()` so extensions can hide the built-in interactive working loader row without reserving layout space, plus a border-status editor example that moves working state into a custom editor border ([#3674](https://github.com/badlogic/pi-mono/issues/3674))
-- `bash-timeout` builtin extension: applies a default timeout to every `bash` tool call when the model does not specify one, and caps over-generous timeouts. Defaults to 120 s default / 600 s max, configurable via `PI_BASH_DEFAULT_TIMEOUT_SECONDS` and `PI_BASH_MAX_TIMEOUT_SECONDS` env vars. Mirrors free-code's behavior so long-running shells fail fast instead of hanging the agent.
+- `bash-timeout` builtin extension: applies a default timeout to every `bash` tool call when the model does not specify one, and caps over-generous timeouts. Defaults to 120 s default / 600 s max, configurable via `PI_BASH_DEFAULT_TIMEOUT_SECONDS` and `PI_BASH_MAX_TIMEOUT_SECONDS` env vars. Also injects a system prompt rider so the model knows the active default and maximum (mirrors free-code's tool-prompt behavior). Long-running shells fail fast instead of hanging the agent.
 
 ### Fixed
 

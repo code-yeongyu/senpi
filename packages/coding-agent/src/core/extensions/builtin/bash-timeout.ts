@@ -41,9 +41,15 @@ export function applyBashTimeout<T extends BashToolInputLike>(input: T, defaults
 	return input;
 }
 
+export function buildBashTimeoutPrompt(defaults: BashTimeoutDefaults): string {
+	const minutes = (seconds: number) => (seconds % 60 === 0 ? `${seconds / 60} min` : `${seconds}s`);
+	return `\n## Bash Tool Timeout Policy\n\nThe \`bash\` tool enforces timeouts even when you omit the \`timeout\` parameter:\n\n- Default timeout: ${defaults.defaultSeconds}s (${minutes(defaults.defaultSeconds)}). Applied automatically when you do not set \`timeout\`.\n- Maximum timeout: ${defaults.maxSeconds}s (${minutes(defaults.maxSeconds)}). Larger values are silently capped to this maximum.\n- For long-running commands (builds, installs, test suites), set an explicit \`timeout\` that fits the workload. Do not assume commands run forever.\n- For commands that legitimately need to run beyond the maximum, run them in the background via tmux or a similar mechanism instead of relying on bash timeout.\n`;
+}
+
 export default function bashTimeoutExtension(pi: ExtensionAPI): void {
 	const env = typeof process !== "undefined" ? process.env : {};
 	const defaults = resolveBashTimeoutDefaults(env);
+	const promptSection = buildBashTimeoutPrompt(defaults);
 
 	pi.on("tool_call", async (event) => {
 		if (event.toolName !== "bash") return;
@@ -52,5 +58,11 @@ export default function bashTimeoutExtension(pi: ExtensionAPI): void {
 		if (updated !== input) {
 			input.timeout = updated.timeout;
 		}
+	});
+
+	pi.on("before_agent_start", async (event) => {
+		return {
+			systemPrompt: `${event.systemPrompt}${promptSection}`,
+		};
 	});
 }
