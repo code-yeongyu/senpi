@@ -2,6 +2,7 @@ import type { ExtensionFactory } from "../types.js";
 import agentSystemExtension from "./agent-system/index.js";
 import backgroundTaskExtension from "./background-task/index.js";
 import bashTimeoutExtension from "./bash-timeout.js";
+import compactionExtension from "./compaction/index.js";
 import gptApplyPatchExtension from "./gpt-apply-patch.js";
 import parallelToolCallsExtension from "./parallel-tool-calls.js";
 import permissionSystemExtension from "./permission-system/index.js";
@@ -26,4 +27,5 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "parallel-tool-calls", factory: parallelToolCallsExtension },
 	{ id: "service-tier", factory: serviceTierExtension },
 	{ id: "bash-timeout", factory: bashTimeoutExtension },
+	{ id: "compaction", factory: compactionExtension },
 ];
