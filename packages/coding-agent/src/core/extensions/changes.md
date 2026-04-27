@@ -30,6 +30,10 @@ Extensions can observe hooks and return summaries during a core-driven compactio
 - HIGH: `types.ts` and `runner.ts` around `ExtensionContext`/`ExtensionContextActions` definitions and context construction.
 - HIGH: `interactive-mode.ts` shortcut context literals must retain parity with `ExtensionRunner.createContext()`.
 
+### Migration notes
+
+If upstream adds new `ExtensionContext` methods or changes `AgentSession` message mutation logic, preserve the monotonic revision counter and the `applyCompaction()` compare-and-apply semantics. The revision guard must remain in-memory and advance on every context-affecting mutation. Do not let upstream's `ExtensionContext` additions shadow the new methods.
+
 ## 2026-04-27 - Seam 1: Compaction Event Metadata
 
 ### What changed
@@ -57,6 +61,10 @@ Event payloads are core-defined types. Extensions can consume compaction events,
 ### Expected merge conflict zones on next upstream sync
 
 - HIGH: `types.ts` is high-churn upstream, especially around extension event definitions. Resolution: preserve additive compaction metadata and keep `reason` semantically separate from `rejectionCause`.
+
+### Migration notes
+
+If upstream modifies compaction event definitions in `types.ts`, preserve the additive metadata fields (`reason`, `willRetry`, `requestId`, `accepted`, `rejectionCause`) and keep them semantically separate from upstream's existing fields. Update the 4 event construction sites in `agent-session.ts` to populate the new fields with the correct route-specific values.
 
 ## 2026-04-13 - GPT apply_patch builtin support
 

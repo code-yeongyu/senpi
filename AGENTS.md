@@ -184,6 +184,7 @@ Build dependency order: `tui` -> `ai` -> `agent` -> `coding-agent` -> `mom` -> `
 | Test harness (coding-agent) | `packages/coding-agent/test/suite/harness.ts` | Uses faux provider, no real APIs |
 | Test harness (ai) | `packages/ai/src/providers/faux.ts` | Mock LLM provider |
 | Release scripts | `scripts/release.mjs` | Lockstep versioning |
+| Compaction core seams (v1) | `packages/coding-agent/src/core/changes.md` (Seam 3+4), `packages/coding-agent/src/core/compaction/changes.md` (Seam 2), `packages/coding-agent/src/core/extensions/changes.md` (Seam 1+3) | 4 surgical core modifications for unified compaction pipeline |
 
 ## CONVENTIONS
 

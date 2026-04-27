@@ -24,4 +24,8 @@ The branch summarization path did not emit a compaction event before building it
 
 ### Expected merge conflict zones
 
-- Low — `branch-summarization.ts` is rarely touched upstream. If upstream changes branch summary preparation, keep the hook emission before default prompt construction and update the `CompactionPreparation` mapping to match the new data flow.
+- LOW: `branch-summarization.ts` is rarely touched upstream. If upstream changes branch summary preparation, keep the hook emission before default prompt construction and update the `CompactionPreparation` mapping to match the new data flow.
+
+### Migration notes
+
+If upstream changes branch summary preparation or adds new branch summary data sources, keep the `session_before_compact` hook emission before default prompt construction and update the `CompactionPreparation` mapping to match the new data flow. The `BRANCH_SUMMARY_PROMPT` fallback must remain intact for sessions without the compaction extension.

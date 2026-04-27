@@ -1,20 +1,59 @@
 # changes
 
-## Compaction Apply ExtensionContext API (2026-04-27)
+## Seam 3: Compaction Apply ExtensionContext API (2026-04-27)
 
-- Changed `src/core/agent-session.ts` so context-affecting message mutations advance an in-memory monotonic message revision, and added `getMessageRevision()` plus `applyCompaction(precomputed, { reason, expectedRevision })` for compare-and-apply speculative compaction.
-- Extended the unified `_executeCompaction()` pipeline to accept a precomputed `CompactionResult` while preserving overflow rejection, compaction append, context rebuild, and compaction event emission semantics.
-- This was changed in core because extensions cannot atomically append compaction entries, rebuild `agent.state.messages`, or guard precomputed summaries against stale message context from outside `AgentSession`.
-- Files modified: `agent-session.ts`, `extensions/types.ts`, `extensions/runner.ts`, `modes/interactive/interactive-mode.ts`.
-- Expected merge conflict zone on upstream sync: HIGH. Preserve the revision guard and keep `applyCompaction()` as a v2 prep API; the v1 builtin compaction extension must not consume it.
+### What changed
 
-## Unified Compaction Pipeline (2026-04-27)
+- `src/core/agent-session.ts`: Added in-memory monotonic message revision counter. Added `getMessageRevision()` and `applyCompaction(precomputed, { reason, expectedRevision })` for compare-and-apply speculative compaction.
+- `src/core/agent-session.ts`: Extended `_executeCompaction()` to accept a precomputed `CompactionResult`.
+- `src/core/extensions/types.ts`: Added `ApplyCompactionOptions`, `ApplyCompactionResult`, `ExtensionContext.getMessageRevision()`, `ExtensionContext.applyCompaction()`.
+- `src/core/extensions/runner.ts`: Wired new context actions through `bindCore()` and `createContext()`.
+- `src/modes/interactive/interactive-mode.ts`: Added same methods to inline shortcut `ExtensionContext` literal.
 
-- Changed `src/core/agent-session.ts` so manual, threshold, overflow, pre-prompt, and extension-triggered compaction routes share a private `_executeCompaction()` pipeline for preparation, extension hook execution, summary generation, pre-append token simulation, session append, context rebuild, and completion event emission.
-- This was changed in core because the user identified 9 route inconsistencies caused by duplicated compaction code paths. The unified pipeline fixes the core event/pipeline inconsistencies: route-specific metadata, custom instructions, thinking/max-token behavior, error handling, retry handling, token estimation before append, and abort handling now flow through one seam.
-- The extension system could not handle this alone because the duplicated route control flow lives inside `AgentSession`; extensions can customize compaction content but cannot unify internal caller behavior, append semantics, context rebuilds, or core event ordering.
-- Files modified: `agent-session.ts`.
-- Expected merge conflict zone on upstream sync: HIGH. `agent-session.ts` is the highest-churn upstream file; rebase conflict resolution must preserve the `_executeCompaction()` pipeline and keep branch summarization outside this helper.
+### Why
+
+- Speculative/v2 compaction needs a stable compare-and-apply seam: extensions can prepare a compaction summary against revision N and only apply it if no context-affecting message mutation has happened since.
+- `getMessageRevision()` is intentionally monotonic and in-memory only; it is a staleness guard, not persisted session data.
+- `applyCompaction()` returns explicit `ok`, `stale`, or `rejected` outcomes so extensions can avoid racing the live session.
+
+### Why extension system couldn't handle this
+
+Extensions can observe hooks and return summaries during a core-driven compaction, but they cannot append a compaction entry, rebuild agent context, emit core compaction events, or atomically guard against stale session context without a typed core API.
+
+### Expected merge conflict zones on next upstream sync
+
+- HIGH: `agent-session.ts` around message revision and `applyCompaction()` implementation.
+- HIGH: `extensions/types.ts` and `extensions/runner.ts` around `ExtensionContext`/`ExtensionContextActions` definitions.
+- MEDIUM: `interactive-mode.ts` shortcut context literals must retain parity with `ExtensionRunner.createContext()`.
+
+### Migration notes
+
+If upstream adds new `ExtensionContext` methods or changes `AgentSession` message mutation logic, preserve the monotonic revision counter and the `applyCompaction()` compare-and-apply semantics. The revision guard must remain in-memory and advance on every context-affecting mutation. Do not let upstream's `ExtensionContext` additions shadow the new methods.
+
+## Seam 4: Unified Compaction Pipeline (2026-04-27)
+
+### What changed
+
+- `src/core/agent-session.ts`: Consolidated manual, threshold, overflow, pre-prompt, and extension-triggered compaction routes into a single private `_executeCompaction()` pipeline.
+- The unified pipeline covers: preparation, extension hook execution (`session_before_compact`), summary generation, pre-append token simulation, session append, context rebuild, and completion event emission (`session_compact`).
+- Route-specific metadata (reason, custom instructions, thinking/max-token behavior), error handling, retry handling, token estimation before append, and abort handling now flow through one seam.
+
+### Why
+
+- The user identified 9 route inconsistencies caused by duplicated compaction code paths across manual `/compact`, threshold-triggered, overflow-recovery, pre-prompt, and extension-triggered compaction.
+- Without unification, each route handled metadata, error recovery, token estimation, and event emission differently, causing observable behavioral differences for extensions consuming compaction events.
+
+### Why extension system couldn't handle this
+
+The duplicated route control flow lives inside `AgentSession`. Extensions can customize compaction content via `session_before_compact` hooks, but they cannot unify internal caller behavior, append semantics, context rebuilds, or core event ordering from outside the session.
+
+### Expected merge conflict zones on next upstream sync
+
+- HIGH: `agent-session.ts` is the highest-churn upstream file. Rebase conflict resolution must preserve the `_executeCompaction()` pipeline and keep branch summarization outside this helper.
+
+### Migration notes
+
+If upstream modifies any compaction route (manual, threshold, overflow, pre-prompt), resolve conflicts by routing the modified logic through `_executeCompaction()` rather than restoring inline duplication. Preserve the 6-route coverage: manual, threshold, overflow-recovery, pre-prompt, extension-triggered, and branch summarization (which routes through the hook but remains a separate caller). Keep the pre-append token simulation step to prevent post-compaction overflow.
 
 ## builtin extension labels
 
