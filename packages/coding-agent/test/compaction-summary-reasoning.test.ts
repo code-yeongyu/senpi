@@ -68,7 +68,6 @@ describe("generateSummary reasoning options", () => {
 			undefined,
 			undefined,
 			undefined,
-			undefined,
 			"medium",
 		);
 
@@ -90,7 +89,6 @@ describe("generateSummary reasoning options", () => {
 			undefined,
 			undefined,
 			undefined,
-			undefined,
 			"off",
 		);
 
@@ -107,7 +105,6 @@ describe("generateSummary reasoning options", () => {
 			createModel(false),
 			2000,
 			"test-key",
-			undefined,
 			undefined,
 			undefined,
 			undefined,
