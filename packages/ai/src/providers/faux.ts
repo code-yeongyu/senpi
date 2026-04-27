@@ -102,6 +102,15 @@ export type FauxResponseFactory = (
 
 export type FauxResponseStep = AssistantMessage | FauxResponseFactory;
 
+export type FauxSchedulerHook = (chunk: string) => Promise<void> | void;
+
+export interface RequestSnapshot {
+	context: Context;
+	options?: StreamOptions;
+	timestamp: number;
+	modelId: string;
+}
+
 export interface RegisterFauxProviderOptions {
 	api?: string;
 	provider?: string;
@@ -111,6 +120,7 @@ export interface RegisterFauxProviderOptions {
 		min?: number;
 		max?: number;
 	};
+	schedulerHook?: FauxSchedulerHook;
 }
 
 export interface FauxProviderRegistration {
@@ -122,6 +132,7 @@ export interface FauxProviderRegistration {
 	setResponses: (responses: FauxResponseStep[]) => void;
 	appendResponses: (responses: FauxResponseStep[]) => void;
 	getPendingResponseCount: () => number;
+	getCallLog: () => RequestSnapshot[];
 	unregister: () => void;
 }
 
@@ -173,6 +184,14 @@ function messageToText(message: Message): string {
 		return assistantContentToText(message.content);
 	}
 	return toolResultToText(message);
+}
+
+function snapshotContext(context: Context): Context {
+	return {
+		systemPrompt: context.systemPrompt,
+		messages: [...context.messages],
+		tools: context.tools ? [...context.tools] : undefined,
+	};
 }
 
 function serializeContext(context: Context): string {
@@ -285,7 +304,14 @@ function createAbortedMessage(partial: AssistantMessage): AssistantMessage {
 	};
 }
 
-function scheduleChunk(chunk: string, tokensPerSecond: number | undefined): Promise<void> {
+function scheduleChunk(
+	chunk: string,
+	tokensPerSecond: number | undefined,
+	schedulerHook: FauxSchedulerHook | undefined,
+): Promise<void> {
+	if (schedulerHook) {
+		return Promise.resolve(schedulerHook(chunk));
+	}
 	if (!tokensPerSecond || tokensPerSecond <= 0) {
 		return new Promise((resolve) => queueMicrotask(resolve));
 	}
@@ -299,6 +325,7 @@ async function streamWithDeltas(
 	minTokenSize: number,
 	maxTokenSize: number,
 	tokensPerSecond: number | undefined,
+	schedulerHook: FauxSchedulerHook | undefined,
 	signal: AbortSignal | undefined,
 ): Promise<void> {
 	const partial: AssistantMessage = { ...message, content: [] };
@@ -325,7 +352,7 @@ async function streamWithDeltas(
 			partial.content = [...partial.content, { type: "thinking", thinking: "" }];
 			stream.push({ type: "thinking_start", contentIndex: index, partial: { ...partial } });
 			for (const chunk of splitStringByTokenSize(block.thinking, minTokenSize, maxTokenSize)) {
-				await scheduleChunk(chunk, tokensPerSecond);
+				await scheduleChunk(chunk, tokensPerSecond, schedulerHook);
 				if (signal?.aborted) {
 					const aborted = createAbortedMessage(partial);
 					stream.push({ type: "error", reason: "aborted", error: aborted });
@@ -348,7 +375,7 @@ async function streamWithDeltas(
 			partial.content = [...partial.content, { type: "text", text: "" }];
 			stream.push({ type: "text_start", contentIndex: index, partial: { ...partial } });
 			for (const chunk of splitStringByTokenSize(block.text, minTokenSize, maxTokenSize)) {
-				await scheduleChunk(chunk, tokensPerSecond);
+				await scheduleChunk(chunk, tokensPerSecond, schedulerHook);
 				if (signal?.aborted) {
 					const aborted = createAbortedMessage(partial);
 					stream.push({ type: "error", reason: "aborted", error: aborted });
@@ -365,7 +392,7 @@ async function streamWithDeltas(
 		partial.content = [...partial.content, { type: "toolCall", id: block.id, name: block.name, arguments: {} }];
 		stream.push({ type: "toolcall_start", contentIndex: index, partial: { ...partial } });
 		for (const chunk of splitStringByTokenSize(JSON.stringify(block.arguments), minTokenSize, maxTokenSize)) {
-			await scheduleChunk(chunk, tokensPerSecond);
+			await scheduleChunk(chunk, tokensPerSecond, schedulerHook);
 			if (signal?.aborted) {
 				const aborted = createAbortedMessage(partial);
 				stream.push({ type: "error", reason: "aborted", error: aborted });
@@ -399,8 +426,10 @@ export function registerFauxProvider(options: RegisterFauxProviderOptions = {}):
 	const maxTokenSize = Math.max(minTokenSize, options.tokenSize?.max ?? DEFAULT_MAX_TOKEN_SIZE);
 	let pendingResponses: FauxResponseStep[] = [];
 	const tokensPerSecond = options.tokensPerSecond;
+	const schedulerHook = options.schedulerHook;
 	const state = { callCount: 0 };
 	const promptCache = new Map<string, string>();
+	const callLog: RequestSnapshot[] = [];
 
 	const modelDefinitions = options.models?.length
 		? options.models
@@ -432,6 +461,12 @@ export function registerFauxProvider(options: RegisterFauxProviderOptions = {}):
 		const outer = createAssistantMessageEventStream();
 		const step = pendingResponses.shift();
 		state.callCount++;
+		callLog.push({
+			context: snapshotContext(context),
+			options: streamOptions,
+			timestamp: Date.now(),
+			modelId: requestModel.id,
+		});
 
 		queueMicrotask(async () => {
 			try {
@@ -453,7 +488,15 @@ export function registerFauxProvider(options: RegisterFauxProviderOptions = {}):
 					typeof step === "function" ? await step(context, streamOptions, state, requestModel) : step;
 				let message = cloneMessage(resolved, api, provider, requestModel.id);
 				message = withUsageEstimate(message, context, streamOptions, promptCache);
-				await streamWithDeltas(outer, message, minTokenSize, maxTokenSize, tokensPerSecond, streamOptions?.signal);
+				await streamWithDeltas(
+					outer,
+					message,
+					minTokenSize,
+					maxTokenSize,
+					tokensPerSecond,
+					schedulerHook,
+					streamOptions?.signal,
+				);
 			} catch (error) {
 				const message = createErrorMessage(error, api, provider, requestModel.id);
 				outer.push({ type: "error", reason: "error", error: message });
@@ -492,8 +535,21 @@ export function registerFauxProvider(options: RegisterFauxProviderOptions = {}):
 		getPendingResponseCount() {
 			return pendingResponses.length;
 		},
+		getCallLog() {
+			return callLog.map((entry) => ({ ...entry }));
+		},
 		unregister() {
 			unregisterApiProviders(sourceId);
 		},
 	};
+}
+
+export function fauxOverflowError(
+	provider: "anthropic" | "openai" | "google" | "bedrock" | "generic",
+	phrase: string,
+): AssistantMessage {
+	return fauxAssistantMessage([], {
+		stopReason: "error",
+		errorMessage: `[${provider}] ${phrase}`,
+	});
 }

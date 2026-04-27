@@ -4,6 +4,7 @@
 
 ### Added
 
+- Extended `registerFauxProvider()` (test-only) with three additive APIs: `getCallLog()` returns ordered `RequestSnapshot[]` capturing context, options, timestamp and resolved model id per stream invocation; `RegisterFauxProviderOptions.schedulerHook` replaces the default real-`setTimeout` chunk pacer so tests can integrate `vi.useFakeTimers()`; and `fauxOverflowError(provider, phrase)` returns an `AssistantMessage` with `stopReason: "error"` and an `errorMessage` that matches per-provider overflow regexes.
 - Added Claude Opus 4.7 (`claude-opus-4-7`) plus Bedrock cross-region profiles (`anthropic.claude-opus-4-7-v1`, `us.*`, `eu.*`, `global.*`). 1M context window, 128k max output tokens, adaptive thinking.
 - Added native `"max"` thinking level to `ThinkingLevel` union. Opus 4.7 maps `max` to Anthropic's native `max` effort; Opus 4.6 preserves the legacy `max` tier; other adaptive models clamp to `high`; budget-based Anthropic models fall back to the highest budget; OpenAI-style providers clamp `max` to `xhigh` on supported models or `high` otherwise.
 - Extended `supportsXhigh()` to include Opus 4.7 so `xhigh` is available in addition to `max`.
