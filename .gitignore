@@ -3,6 +3,7 @@ dist/
 *.log
 .DS_Store
 *.tsbuildinfo
+.sisyphus/
 # packages/*/node_modules/
 packages/*/dist/*
 # Keep only the bin-target stubs so pnpm/bun can create `node_modules/.bin`
