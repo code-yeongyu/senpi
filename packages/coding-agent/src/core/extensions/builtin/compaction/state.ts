@@ -1,11 +1,28 @@
+export interface CompactionYieldSnapshot {
+	savedTokens: number;
+	tokensBefore: number;
+}
+
 export interface CompactionExtensionState {
-	turnCount: number;
+	consecutiveFailures: number;
+	trippedAt: number | null;
+	acceptedThisTurn: number;
+	acceptedAbsolute: number;
+	lastYield: CompactionYieldSnapshot | null;
+	turnId: string | null;
 }
 
 export function createInitialState(): CompactionExtensionState {
-	return { turnCount: 0 };
+	return {
+		consecutiveFailures: 0,
+		trippedAt: null,
+		acceptedThisTurn: 0,
+		acceptedAbsolute: 0,
+		lastYield: null,
+		turnId: null,
+	};
 }
 
-export function resetTurnCounter(state: CompactionExtensionState): CompactionExtensionState {
-	return { ...state, turnCount: 0 };
+export function resetTurnCounter(state: CompactionExtensionState, turnId: string): CompactionExtensionState {
+	return { ...state, acceptedThisTurn: 0, turnId };
 }
