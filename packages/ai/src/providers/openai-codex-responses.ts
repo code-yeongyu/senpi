@@ -334,7 +334,7 @@ function buildRequestBody(
 		stream: true,
 		instructions: context.systemPrompt,
 		input: messages,
-		text: { verbosity: options?.textVerbosity || "medium" },
+		text: { verbosity: options?.textVerbosity || "low" },
 		include: ["reasoning.encrypted_content"],
 		prompt_cache_key: options?.sessionId,
 		tool_choice: "auto",
@@ -349,7 +349,7 @@ function buildRequestBody(
 		body.service_tier = options.serviceTier;
 	}
 
-	if (context.tools) {
+	if (context.tools && context.tools.length > 0) {
 		body.tools = convertResponsesTools(context.tools, { strict: null });
 	}
 

@@ -145,6 +145,9 @@ export interface ExtensionUIContext {
 	/** Set the working/loading message shown during streaming. Call with no argument to restore default. */
 	setWorkingMessage(message?: string): void;
 
+	/** Show or hide the built-in interactive working loader row during streaming. */
+	setWorkingVisible(visible: boolean): void;
+
 	/**
 	 * Configure the interactive working indicator shown during streaming.
 	 *

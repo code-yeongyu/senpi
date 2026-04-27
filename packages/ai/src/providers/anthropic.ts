@@ -240,6 +240,15 @@ interface SseDecoderState {
 	raw: string[];
 }
 
+const ANTHROPIC_MESSAGE_EVENTS: ReadonlySet<string> = new Set([
+	"message_start",
+	"message_delta",
+	"message_stop",
+	"content_block_start",
+	"content_block_delta",
+	"content_block_stop",
+]);
+
 function flushSseEvent(state: SseDecoderState): ServerSentEvent | null {
 	if (!state.event && state.data.length === 0) {
 		return null;
@@ -379,12 +388,12 @@ async function* iterateAnthropicEvents(
 	}
 
 	for await (const sse of iterateSseMessages(response.body, signal)) {
-		if (!sse.event || sse.event === "ping") {
-			continue;
-		}
-
 		if (sse.event === "error") {
 			throw new Error(sse.data);
+		}
+
+		if (!ANTHROPIC_MESSAGE_EVENTS.has(sse.event ?? "")) {
+			continue;
 		}
 
 		try {
@@ -459,9 +468,12 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 			if (nextParams !== undefined) {
 				params = nextParams as MessageCreateParamsStreaming;
 			}
-			const response = await client.messages
-				.create({ ...params, stream: true }, { signal: options?.signal })
-				.asResponse();
+			const requestOptions = {
+				...(options?.signal ? { signal: options.signal } : {}),
+				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
+				...(options?.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
+			};
+			const response = await client.messages.create({ ...params, stream: true }, requestOptions).asResponse();
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
@@ -882,7 +894,7 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
-	if (context.tools) {
+	if (context.tools && context.tools.length > 0) {
 		params.tools = convertTools(
 			context.tools,
 			isOAuthToken,

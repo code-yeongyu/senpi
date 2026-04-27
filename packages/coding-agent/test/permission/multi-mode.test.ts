@@ -37,6 +37,7 @@ function createMockUI(overrides: Partial<ExtensionUIContext> = {}): ExtensionUIC
 		setStatus: vi.fn(),
 		setWorkingMessage: vi.fn(),
 		setWorkingIndicator: vi.fn(),
+		setWorkingVisible: vi.fn(),
 		addAutocompleteProvider: vi.fn(),
 		setHiddenThinkingLabel: vi.fn(),
 		setWidget: vi.fn(),

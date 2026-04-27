@@ -51,6 +51,7 @@ function createMockUI(selections: (string | undefined)[], inputValue?: string) {
 		setStatus: () => {},
 		setWorkingMessage: () => {},
 		setWorkingIndicator: () => {},
+		setWorkingVisible: () => {},
 		addAutocompleteProvider: () => {},
 		setHiddenThinkingLabel: () => {},
 		setWidget: () => {},

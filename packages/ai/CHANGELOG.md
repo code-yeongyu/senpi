@@ -9,9 +9,35 @@
 - Extended `supportsXhigh()` to include Opus 4.7 so `xhigh` is available in addition to `max`.
 - Added `StreamOptions.extraBody` for user-supplied custom request body fields (mirrors opencode's provider options). Wired through every builtin provider's payload builder (Anthropic, OpenAI Responses/Completions/Codex/Azure, Mistral, Google, Google Vertex, Google Gemini CLI, Amazon Bedrock). Provider-managed fields (model, messages, stream, reasoning, cache keys, service_tier, metadata, etc.) are protected via per-provider reserved-key sets; Google and Vertex merge extras into `config` (the SDK's generationConfig surface) so custom fields actually reach the wire.
 
+### Changed
+
+- Changed OpenAI Codex Responses default text verbosity to `low` when no verbosity is specified.
+
 ### Fixed
 
+- Fixed Anthropic SSE parsing to ignore unknown proxy events such as OpenAI-style `done` terminators ([#3708](https://github.com/badlogic/pi-mono/issues/3708)).
+- Fixed OpenAI-compatible prompt cache tests to cover proxies that explicitly disable long cache retention.
+- Stopped sending `tools: []` on OpenAI-compatible, Anthropic, OpenAI Responses, OpenAI Codex Responses, and Azure OpenAI Responses requests when no tools are active (e.g. `pi --no-tools`). DashScope/Aliyun Qwen (OpenAI-compatible) rejects empty tools arrays with `"[] is too short - 'tools'"` (HTTP 400); the field is now omitted unless the conversation has tool history (the existing LiteLLM/Anthropic-proxy workaround).
+- Fixed `supportsXhigh()` to recognize DeepSeek V4 Pro, preserving `xhigh` reasoning requests so they map to DeepSeek's `max` effort ([#3662](https://github.com/badlogic/pi-mono/issues/3662))
+- Fixed OpenAI-compatible DeepSeek V4 model replay to include empty `reasoning_content` on assistant messages when needed, preventing OpenRouter DeepSeek V4 sessions from failing after responses without reasoning deltas ([#3668](https://github.com/badlogic/pi-mono/issues/3668))
+
+## [0.70.2] - 2026-04-24
+
+### Fixed
+
+- Fixed OpenAI/Azure/Anthropic provider request option forwarding to omit undefined `timeout`/`maxRetries`, avoiding SDK validation errors such as `timeout must be an integer` when provider controls are not set ([#3627](https://github.com/badlogic/pi-mono/issues/3627))
+
+## [0.70.1] - 2026-04-24
+
+### Added
+
+- Added DeepSeek as a built-in OpenAI-compatible provider with V4 Flash and V4 Pro models and `DEEPSEEK_API_KEY` authentication.
+
+### Fixed
+
+- Fixed DeepSeek V4 session replay 400 errors by adding `thinkingFormat: "deepseek"` (sends `thinking: { type }` + `reasoning_effort`), a `reasoningEffortMap`, and `requiresReasoningContentOnAssistantMessages` compat that injects empty `reasoning_content` on all replayed assistant messages when reasoning is enabled ([#3636](https://github.com/badlogic/pi-mono/issues/3636))
 - Fixed GPT-5.5 generated context window metadata to use the observed 272k limit.
+- Fixed provider request controls to expose `timeoutMs` and `maxRetries` in stream options and forward them through OpenAI/Azure/Anthropic request options, preventing unconfigurable SDK timeout/retry defaults on long-running local inference requests ([#3627](https://github.com/badlogic/pi-mono/issues/3627))
 
 ## [0.70.0] - 2026-04-23
 

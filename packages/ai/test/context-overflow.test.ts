@@ -113,7 +113,7 @@ describe("Context overflow error handling", () => {
 
 	describe.skipIf(!process.env.ANTHROPIC_OAUTH_TOKEN)("Anthropic (OAuth)", () => {
 		it("claude-sonnet-4 - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("anthropic", "claude-sonnet-4-20250514");
+			const model = getModel("anthropic", "claude-sonnet-4-6");
 			const result = await testContextOverflow(model, process.env.ANTHROPIC_OAUTH_TOKEN!);
 			logResult(result);
 
@@ -390,7 +390,7 @@ describe("Context overflow error handling", () => {
 
 	describe.skipIf(!process.env.ZAI_API_KEY)("z.ai", () => {
 		it("glm-4.5-flash - should detect overflow via isContextOverflow when z.ai reports it", async () => {
-			const model = getModel("zai", "glm-4.5-flash");
+			const model = getModel("zai", "glm-4.5-air");
 			const result = await testContextOverflow(model, process.env.ZAI_API_KEY!);
 			logResult(result);
 

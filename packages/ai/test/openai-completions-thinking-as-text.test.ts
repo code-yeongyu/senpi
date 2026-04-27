@@ -31,6 +31,7 @@ const compat = {
 	requiresToolResultName: false,
 	requiresAssistantAfterToolResult: false,
 	requiresThinkingAsText: true,
+	requiresReasoningContentOnAssistantMessages: false,
 	thinkingFormat: "openai",
 	openRouterRouting: {},
 	vercelGatewayRouting: {},

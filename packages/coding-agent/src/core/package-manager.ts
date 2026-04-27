@@ -2323,11 +2323,28 @@ export class DefaultPackageManager implements PackageManager {
 		};
 	}
 
+	private shouldUseWindowsShell(command: string): boolean {
+		if (process.platform !== "win32") {
+			return false;
+		}
+		const commandName = basename(command).toLowerCase();
+		return (
+			commandName === "npm" ||
+			commandName === "npx" ||
+			commandName === "pnpm" ||
+			commandName === "yarn" ||
+			commandName === "yarnpkg" ||
+			commandName === "corepack" ||
+			commandName.endsWith(".cmd") ||
+			commandName.endsWith(".bat")
+		);
+	}
+
 	private spawnCommand(command: string, args: string[], options?: { cwd?: string }): ChildProcess {
 		return spawn(command, args, {
 			cwd: options?.cwd,
 			stdio: isStdoutTakenOver() ? ["ignore", 2, 2] : "inherit",
-			shell: process.platform === "win32",
+			shell: this.shouldUseWindowsShell(command),
 		});
 	}
 
@@ -2339,7 +2356,7 @@ export class DefaultPackageManager implements PackageManager {
 		return spawn(command, args, {
 			cwd: options?.cwd,
 			stdio: ["ignore", "pipe", "pipe"],
-			shell: process.platform === "win32",
+			shell: this.shouldUseWindowsShell(command),
 			env: options?.env ? { ...process.env, ...options.env } : process.env,
 		});
 	}
@@ -2406,7 +2423,7 @@ export class DefaultPackageManager implements PackageManager {
 		const result = spawnSync(command, args, {
 			stdio: ["ignore", "pipe", "pipe"],
 			encoding: "utf-8",
-			shell: process.platform === "win32",
+			shell: this.shouldUseWindowsShell(command),
 		});
 		if (result.status !== 0) {
 			throw new Error(`Failed to run ${command} ${args.join(" ")}: ${result.stderr || result.stdout}`);
