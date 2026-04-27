@@ -25,7 +25,7 @@ import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
 import type { TLocalizedValidationError } from "typebox/error";
 import { getAgentDir } from "../config.js";
-import type { AuthStorage } from "./auth-storage.js";
+import type { AuthStatus, AuthStorage } from "./auth-storage.js";
 import {
 	clearConfigValueCache,
 	resolveConfigValueOrThrow,
@@ -98,10 +98,12 @@ const OpenAICompletionsCompatSchema = Type.Object({
 	requiresToolResultName: Type.Optional(Type.Boolean()),
 	requiresAssistantAfterToolResult: Type.Optional(Type.Boolean()),
 	requiresThinkingAsText: Type.Optional(Type.Boolean()),
+	requiresReasoningContentOnAssistantMessages: Type.Optional(Type.Boolean()),
 	thinkingFormat: Type.Optional(
 		Type.Union([
 			Type.Literal("openai"),
 			Type.Literal("openrouter"),
+			Type.Literal("deepseek"),
 			Type.Literal("zai"),
 			Type.Literal("qwen"),
 			Type.Literal("qwen-chat-template"),
@@ -743,6 +745,32 @@ export class ModelRegistry {
 	}
 
 	/**
+	 * Return auth status for a provider, including request auth configured in models.json.
+	 * This intentionally does not execute command-backed config values.
+	 */
+	getProviderAuthStatus(provider: string): AuthStatus {
+		const authStatus = this.authStorage.getAuthStatus(provider);
+		if (authStatus.source) {
+			return authStatus;
+		}
+
+		const providerApiKey = this.providerRequestConfigs.get(provider)?.apiKey;
+		if (!providerApiKey) {
+			return authStatus;
+		}
+
+		if (providerApiKey.startsWith("!")) {
+			return { configured: true, source: "models_json_command" };
+		}
+
+		if (process.env[providerApiKey]) {
+			return { configured: true, source: "environment", label: providerApiKey };
+		}
+
+		return { configured: true, source: "models_json_key" };
+	}
+
+	/**
 	 * Get API key for a provider.
 	 */
 	async getApiKeyForProvider(provider: string): Promise<string | undefined> {
@@ -773,7 +801,7 @@ export class ModelRegistry {
 	registerProvider(providerName: string, config: ProviderConfigInput): void {
 		this.validateProviderConfig(providerName, config);
 		this.applyProviderConfig(providerName, config);
-		this.registeredProviders.set(providerName, config);
+		this.upsertRegisteredProvider(providerName, config);
 	}
 
 	/**
@@ -789,6 +817,25 @@ export class ModelRegistry {
 		if (!this.registeredProviders.has(providerName)) return;
 		this.registeredProviders.delete(providerName);
 		this.refresh();
+	}
+
+	/**
+	 * Upsert a provider config into registeredProviders.
+	 * If the provider is already registered, defined values in the incoming config
+	 * override existing ones; undefined values are preserved from the stored config.
+	 * If the provider is not registered, the incoming config is stored as-is.
+	 */
+	private upsertRegisteredProvider(providerName: string, config: ProviderConfigInput): void {
+		const existing = this.registeredProviders.get(providerName);
+		if (!existing) {
+			this.registeredProviders.set(providerName, config);
+			return;
+		}
+		for (const k of Object.keys(config) as (keyof ProviderConfigInput)[]) {
+			if (config[k] !== undefined) {
+				(existing as Record<string, unknown>)[k] = config[k];
+			}
+		}
 	}
 
 	private validateProviderConfig(providerName: string, config: ProviderConfigInput): void {

@@ -138,6 +138,7 @@ function createUiContext(selection: string | undefined): ExtensionUIContext {
 		setStatus: () => {},
 		setWorkingMessage: () => {},
 		setWorkingIndicator: () => {},
+		setWorkingVisible: () => {},
 		addAutocompleteProvider: () => {},
 		setHiddenThinkingLabel: () => {},
 		setWidget: () => {},

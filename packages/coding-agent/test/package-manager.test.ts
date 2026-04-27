@@ -461,6 +461,20 @@ Content`,
 		});
 	});
 
+	describe("windows command spawning", () => {
+		it("should avoid the shell for git so Windows paths with spaces stay single arguments", () => {
+			vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+			const managerWithInternals = packageManager as unknown as {
+				shouldUseWindowsShell(command: string): boolean;
+			};
+
+			expect(managerWithInternals.shouldUseWindowsShell("git")).toBe(false);
+			expect(managerWithInternals.shouldUseWindowsShell("npm")).toBe(true);
+			expect(managerWithInternals.shouldUseWindowsShell("pnpm")).toBe(true);
+			expect(managerWithInternals.shouldUseWindowsShell("C:/Program Files/nodejs/npm.cmd")).toBe(true);
+		});
+	});
+
 	describe("npmCommand", () => {
 		it("should use npmCommand argv for npm installs", async () => {
 			settingsManager = SettingsManager.inMemory({

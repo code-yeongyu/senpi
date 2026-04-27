@@ -101,6 +101,7 @@ For each built-in provider, senpi maintains a list of tool-capable models, updat
 - Anthropic
 - OpenAI
 - Azure OpenAI
+- DeepSeek
 - Google Gemini
 - Google Vertex
 - Amazon Bedrock
@@ -374,8 +375,11 @@ senpi install ssh://git@github.com/user/repo@v1    # tag or commit
 senpi remove npm:@foo/senpi-tools
 senpi uninstall npm:@foo/senpi-tools          # alias for remove
 senpi list
-senpi update                               # skips pinned packages
-senpi config                               # enable/disable extensions, skills, prompts, themes
+senpi update                                  # update senpi and packages (skips pinned packages)
+senpi update --extensions                     # update packages only
+senpi update --self                           # update senpi only
+senpi update npm:@foo/senpi-tools             # update one package
+senpi config                                  # enable/disable extensions, skills, prompts, themes
 ```
 
 Packages install to `~/.senpi/agent/git/` (git) or global npm. Use `-l` for project-local installs (`.senpi/git/`, `.senpi/npm/`). Git packages install dependencies with `npm install --omit=dev` by default, so runtime deps must be listed under `dependencies`; when `npmCommand` is configured, git packages use plain `install` for compatibility with wrappers. If you use a Node version manager and want package installs to reuse a stable npm context, set `npmCommand` in `settings.json`, for example `["mise", "exec", "node@20", "--", "npm"]`.
@@ -466,12 +470,15 @@ senpi [options] [@files...] [messages...]
 ### Package Commands
 
 ```bash
-senpi install <source> [-l]     # Install package, -l for project-local
-senpi remove <source> [-l]      # Remove package
-senpi uninstall <source> [-l]   # Alias for remove
-senpi update [source]           # Update packages (skips pinned)
-senpi list                      # List installed packages
-senpi config                    # Enable/disable package resources
+senpi install <source> [-l]      # Install package, -l for project-local
+senpi remove <source> [-l]       # Remove package
+senpi uninstall <source> [-l]    # Alias for remove
+senpi update [source|self|senpi] # Update senpi and packages (skips pinned packages)
+senpi update --extensions        # Update packages only
+senpi update --self              # Update senpi only
+senpi update --extension <src>   # Update one package
+senpi list                       # List installed packages
+senpi config                     # Enable/disable package resources
 ```
 
 ### Modes
