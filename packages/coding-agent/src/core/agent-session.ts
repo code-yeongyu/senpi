@@ -37,6 +37,7 @@ import {
 	collectEntriesForBranchSummary,
 	compact,
 	estimateContextTokens,
+	estimateTokens,
 	generateBranchSummary,
 	prepareCompaction,
 	shouldCompact,
@@ -3111,9 +3112,11 @@ export class AgentSession {
 		const contextWindow = model.contextWindow ?? 0;
 		if (contextWindow <= 0) return undefined;
 
-		// After compaction, the last assistant usage reflects pre-compaction context size.
-		// We can only trust usage from an assistant that responded after the latest compaction.
-		// If no such assistant exists, context token count is unknown until the next LLM response.
+		const messages = filterContextExcludedMessages(this.messages);
+
+		// After compaction, kept assistant usage reflects pre-compaction context size.
+		// If no assistant has responded after the boundary yet, fall back to content
+		// estimates so auto-compaction can still see current context pressure.
 		const branchEntries = this.sessionManager.getBranch();
 		const latestCompaction = getLatestCompactionEntry(branchEntries);
 
@@ -3136,11 +3139,12 @@ export class AgentSession {
 			}
 
 			if (!hasPostCompactionUsage) {
-				return { tokens: null, contextWindow, percent: null };
+				const tokens = messages.reduce((sum, message) => sum + estimateTokens(message), 0);
+				return { tokens, contextWindow, percent: (tokens / contextWindow) * 100 };
 			}
 		}
 
-		const estimate = estimateContextTokens(filterContextExcludedMessages(this.messages));
+		const estimate = estimateContextTokens(messages);
 		const percent = (estimate.tokens / contextWindow) * 100;
 
 		return {

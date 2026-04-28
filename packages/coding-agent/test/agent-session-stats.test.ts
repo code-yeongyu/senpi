@@ -1,8 +1,9 @@
-import { Agent } from "@mariozechner/pi-agent-core";
+import { Agent, type AgentMessage } from "@mariozechner/pi-agent-core";
 import { type AssistantMessage, getModel, type Usage } from "@mariozechner/pi-ai";
 import { describe, expect, it } from "vitest";
 import { AgentSession } from "../src/core/agent-session.js";
 import { AuthStorage } from "../src/core/auth-storage.js";
+import { estimateTokens } from "../src/core/compaction/index.js";
 import { ModelRegistry } from "../src/core/model-registry.js";
 import { SessionManager } from "../src/core/session-manager.js";
 import { SettingsManager } from "../src/core/settings-manager.js";
@@ -96,7 +97,7 @@ describe("AgentSession.getSessionStats", () => {
 		}
 	});
 
-	it("reports unknown current context usage immediately after compaction", () => {
+	it("estimates current context usage immediately after compaction", () => {
 		const { session, sessionManager } = createSession();
 
 		try {
@@ -111,8 +112,13 @@ describe("AgentSession.getSessionStats", () => {
 			const stats = session.getSessionStats();
 			expect(stats.tokens.input).toBe(195_000);
 			expect(stats.contextUsage).toBeDefined();
-			expect(stats.contextUsage?.tokens).toBeNull();
-			expect(stats.contextUsage?.percent).toBeNull();
+			const expectedTokens = session.messages.reduce(
+				(sum, message) => sum + estimateTokens(message as AgentMessage),
+				0,
+			);
+			expect(stats.contextUsage?.tokens).toBe(expectedTokens);
+			expect(stats.contextUsage?.percent).toBe((expectedTokens / model.contextWindow) * 100);
+			expect(stats.contextUsage?.tokens).toBeLessThan(195_000);
 		} finally {
 			session.dispose();
 		}
