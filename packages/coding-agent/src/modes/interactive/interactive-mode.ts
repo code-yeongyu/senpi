@@ -81,8 +81,10 @@ import { getChangelogPath, getNewEntries, parseChangelog } from "../../utils/cha
 import { copyToClipboard } from "../../utils/clipboard.js";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.js";
 import { parseGitUrl } from "../../utils/git.js";
+import { getPiUserAgent } from "../../utils/pi-user-agent.js";
 import { killTrackedDetachedChildren } from "../../utils/shell.js";
 import { ensureTool } from "../../utils/tools-manager.js";
+import { checkForNewPiVersion } from "../../utils/version-check.js";
 import { ArminComponent } from "./components/armin.js";
 import { AssistantMessageComponent } from "./components/assistant-message.js";
 import { BashExecutionComponent } from "./components/bash-execution.js";
@@ -180,6 +182,7 @@ const API_KEY_LOGIN_PROVIDERS: Record<string, string> = {
 	[BEDROCK_PROVIDER_ID]: "Amazon Bedrock",
 	"azure-openai-responses": "Azure OpenAI Responses",
 	cerebras: "Cerebras",
+	"cloudflare-workers-ai": "Cloudflare Workers AI",
 	deepseek: "DeepSeek",
 	fireworks: "Fireworks",
 	google: "Google Gemini",
@@ -705,7 +708,7 @@ export class InteractiveMode {
 		await this.init();
 
 		// Start version check asynchronously
-		this.checkForNewVersion().then((newVersion) => {
+		checkForNewPiVersion(this.version).then((newVersion) => {
 			if (newVersion) {
 				this.showNewVersionNotification(newVersion);
 			}
@@ -774,13 +777,6 @@ export class InteractiveMode {
 				this.showError(errorMessage);
 			}
 		}
-	}
-
-	/**
-	 * Check npm registry for a newer version.
-	 */
-	private async checkForNewVersion(): Promise<string | undefined> {
-		return undefined;
 	}
 
 	private async checkForPackageUpdates(): Promise<string[]> {
@@ -874,7 +870,10 @@ export class InteractiveMode {
 			return;
 		}
 
-		void fetch(`https://pi.dev/install?version=${encodeURIComponent(version)}`, {
+		void fetch(`https://pi.dev/api/report-install?version=${encodeURIComponent(version)}`, {
+			headers: {
+				"User-Agent": getPiUserAgent(version),
+			},
 			signal: AbortSignal.timeout(5000),
 		})
 			.then(() => undefined)
@@ -3798,6 +3797,7 @@ export class InteractiveMode {
 					quietStartup: this.settingsManager.getQuietStartup(),
 					clearOnShrink: this.settingsManager.getClearOnShrink(),
 					showTerminalProgress: this.settingsManager.getShowTerminalProgress(),
+					warnings: this.settingsManager.getWarnings(),
 				},
 				{
 					onAutoCompactChange: (enabled) => {
@@ -3911,6 +3911,9 @@ export class InteractiveMode {
 					onShowTerminalProgressChange: (enabled) => {
 						this.settingsManager.setShowTerminalProgress(enabled);
 					},
+					onWarningsChange: (warnings) => {
+						this.settingsManager.setWarnings(warnings);
+					},
 					onCancel: () => {
 						done();
 						this.ui.requestRender();
@@ -3973,6 +3976,9 @@ export class InteractiveMode {
 	private async maybeWarnAboutAnthropicSubscriptionAuth(
 		model: Model<any> | undefined = this.session.model,
 	): Promise<void> {
+		if (this.settingsManager.getWarnings().anthropicExtraUsage === false) {
+			return;
+		}
 		if (this.anthropicSubscriptionWarningShown) {
 			return;
 		}

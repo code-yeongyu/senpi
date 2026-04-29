@@ -1,10 +1,17 @@
 import { describe, expect, test, vi } from "vitest";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.js";
 
+function createSettingsManager(warnings: { anthropicExtraUsage?: boolean } = {}) {
+	return {
+		getWarnings: vi.fn().mockReturnValue(warnings),
+	};
+}
+
 describe("InteractiveMode.maybeWarnAboutAnthropicSubscriptionAuth", () => {
 	test("warns once when Anthropic subscription auth is detected", async () => {
 		const fakeThis: any = {
 			anthropicSubscriptionWarningShown: false,
+			settingsManager: createSettingsManager(),
 			session: {
 				modelRegistry: {
 					authStorage: {
@@ -30,6 +37,7 @@ describe("InteractiveMode.maybeWarnAboutAnthropicSubscriptionAuth", () => {
 	test("warns when Anthropic OAuth is stored even if token refresh lookup would fail", async () => {
 		const fakeThis: any = {
 			anthropicSubscriptionWarningShown: false,
+			settingsManager: createSettingsManager(),
 			session: {
 				modelRegistry: {
 					authStorage: {
@@ -52,6 +60,7 @@ describe("InteractiveMode.maybeWarnAboutAnthropicSubscriptionAuth", () => {
 	test("does not warn for non-Anthropic models", async () => {
 		const fakeThis: any = {
 			anthropicSubscriptionWarningShown: false,
+			settingsManager: createSettingsManager(),
 			session: {
 				modelRegistry: {
 					authStorage: {
@@ -68,6 +77,30 @@ describe("InteractiveMode.maybeWarnAboutAnthropicSubscriptionAuth", () => {
 		});
 
 		expect(fakeThis.showWarning).not.toHaveBeenCalled();
+		expect(fakeThis.session.modelRegistry.getApiKeyForProvider).not.toHaveBeenCalled();
+	});
+
+	test("does not warn when Anthropic extra usage warning is disabled", async () => {
+		const fakeThis: any = {
+			anthropicSubscriptionWarningShown: false,
+			settingsManager: createSettingsManager({ anthropicExtraUsage: false }),
+			session: {
+				modelRegistry: {
+					authStorage: {
+						get: vi.fn(),
+					},
+					getApiKeyForProvider: vi.fn(),
+				},
+			},
+			showWarning: vi.fn(),
+		};
+
+		await (InteractiveMode as any).prototype.maybeWarnAboutAnthropicSubscriptionAuth.call(fakeThis, {
+			provider: "anthropic",
+		});
+
+		expect(fakeThis.showWarning).not.toHaveBeenCalled();
+		expect(fakeThis.session.modelRegistry.authStorage.get).not.toHaveBeenCalled();
 		expect(fakeThis.session.modelRegistry.getApiKeyForProvider).not.toHaveBeenCalled();
 	});
 });

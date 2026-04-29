@@ -108,6 +108,7 @@ For each built-in provider, senpi maintains a list of tool-capable models, updat
 - Mistral
 - Groq
 - Cerebras
+- Cloudflare Workers AI
 - xAI
 - OpenRouter
 - Vercel AI Gateway
@@ -211,7 +212,7 @@ Configure delivery in [settings](docs/settings.md): `steeringMode` and `followUp
 
 ## Sessions
 
-Sessions are stored as JSONL files with a tree structure. Each entry has an `id` and `parentId`, enabling in-place branching without creating new files. See [docs/session.md](docs/session.md) for file format.
+Sessions are stored as JSONL files with a tree structure. Each entry has an `id` and `parentId`, enabling in-place branching without creating new files. See [docs/session-format.md](docs/session-format.md) for file format.
 
 ### Management
 
@@ -378,6 +379,7 @@ senpi list
 senpi update                                  # update senpi and packages (skips pinned packages)
 senpi update --extensions                     # update packages only
 senpi update --self                           # update senpi only
+senpi update --self --force                   # reinstall senpi even if current
 senpi update npm:@foo/senpi-tools             # update one package
 senpi config                                  # enable/disable extensions, skills, prompts, themes
 ```
@@ -476,6 +478,7 @@ senpi uninstall <source> [-l]    # Alias for remove
 senpi update [source|self|senpi] # Update senpi and packages (skips pinned packages)
 senpi update --extensions        # Update packages only
 senpi update --self              # Update senpi only
+senpi update --self --force      # Reinstall senpi even if current
 senpi update --extension <src>   # Update one package
 senpi list                       # List installed packages
 senpi config                     # Enable/disable package resources

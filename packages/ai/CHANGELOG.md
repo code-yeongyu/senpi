@@ -16,11 +16,34 @@
 
 ### Fixed
 
+- Fixed API-key environment discovery to fall back to `/proc/self/environ` when Bun's sandbox leaves `process.env` empty ([#3801](https://github.com/badlogic/pi-mono/pull/3801) by [@mdsjip](https://github.com/mdsjip)).
+- Fixed Bedrock prompt-caching and adaptive-thinking capability checks to use the model name when the model id is an inference profile ARN ([#3527](https://github.com/badlogic/pi-mono/pull/3527) by [@anirudhmarc](https://github.com/anirudhmarc)).
 - Fixed Anthropic SSE parsing to ignore unknown proxy events such as OpenAI-style `done` terminators ([#3708](https://github.com/badlogic/pi-mono/issues/3708)).
 - Fixed OpenAI-compatible prompt cache tests to cover proxies that explicitly disable long cache retention.
-- Stopped sending `tools: []` on OpenAI-compatible, Anthropic, OpenAI Responses, OpenAI Codex Responses, and Azure OpenAI Responses requests when no tools are active (e.g. `pi --no-tools`). DashScope/Aliyun Qwen (OpenAI-compatible) rejects empty tools arrays with `"[] is too short - 'tools'"` (HTTP 400); the field is now omitted unless the conversation has tool history (the existing LiteLLM/Anthropic-proxy workaround).
+- Stopped sending `tools: []` on OpenAI-compatible, Anthropic, OpenAI Responses, OpenAI Codex Responses, and Azure OpenAI Responses requests when no tools are active (e.g. `pi --no-tools`). DashScope/Aliyun Qwen (OpenAI-compatible) rejects empty tools arrays with `"[] is too short - 'tools'"` (HTTP 400); the field is now omitted unless the conversation has tool history (the existing LiteLLM/Anthropic-proxy workaround) ([#3650](https://github.com/badlogic/pi-mono/pull/3650) by [@HQidea](https://github.com/HQidea)).
 - Fixed `supportsXhigh()` to recognize DeepSeek V4 Pro, preserving `xhigh` reasoning requests so they map to DeepSeek's `max` effort ([#3662](https://github.com/badlogic/pi-mono/issues/3662))
 - Fixed OpenAI-compatible DeepSeek V4 model replay to include empty `reasoning_content` on assistant messages when needed, preventing OpenRouter DeepSeek V4 sessions from failing after responses without reasoning deltas ([#3668](https://github.com/badlogic/pi-mono/issues/3668))
+
+## [0.70.6] - 2026-04-28
+
+### Added
+
+- Added Cloudflare Workers AI as a built-in provider with model catalog generation, `CLOUDFLARE_API_KEY`/`CLOUDFLARE_ACCOUNT_ID` authentication, and OpenAI-compatible streaming support ([#3851](https://github.com/badlogic/pi-mono/pull/3851) by [@mchenco](https://github.com/mchenco)).
+
+### Fixed
+
+- Removed generated Cloudflare Workers AI `User-Agent` model headers so attribution can be controlled by callers.
+- Fixed Bedrock inference profile capability checks by normalizing profile ARNs to the underlying model name.
+
+## [0.70.5] - 2026-04-27
+
+## [0.70.4] - 2026-04-27
+
+## [0.70.3] - 2026-04-27
+
+### Added
+
+- Added Azure Cognitive Services endpoint support for Azure OpenAI Responses base URLs ([#3799](https://github.com/badlogic/pi-mono/pull/3799) by [@marcbloech](https://github.com/marcbloech)).
 
 ## [0.70.2] - 2026-04-24
 

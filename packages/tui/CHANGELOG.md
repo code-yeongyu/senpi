@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.70.6] - 2026-04-28
+
+## [0.70.5] - 2026-04-27
+
+## [0.70.4] - 2026-04-27
+
+## [0.70.3] - 2026-04-27
+
+### Fixed
+
+- Fixed duplicate printable characters from Kitty keyboard protocol CSI-u plus raw character input on layouts such as Italian ([#3780](https://github.com/badlogic/pi-mono/issues/3780))
+
 ## [0.70.2] - 2026-04-24
 
 ## [0.70.1] - 2026-04-24

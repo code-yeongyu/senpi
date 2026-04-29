@@ -48,6 +48,20 @@ Edit directly or use `/settings` for common options.
 | `autocompleteMaxVisible` | number | `5` | Max visible items in autocomplete dropdown (3-20) |
 | `showHardwareCursor` | boolean | `false` | Show terminal cursor |
 
+### Warnings
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `warnings.anthropicExtraUsage` | boolean | `true` | Show a warning when Anthropic subscription auth may use paid extra usage |
+
+```json
+{
+  "warnings": {
+    "anthropicExtraUsage": false
+  }
+}
+```
+
 ### Compaction
 
 | Setting | Type | Default | Description |
@@ -250,27 +264,30 @@ Permission values: `"allow"`, `"deny"`, `"ask"`. See [agents.md](agents.md) for 
 
 ```json
 {
-   "defaultProvider": "anthropic",
-   "defaultModel": "claude-sonnet-4-20250514",
-   "defaultThinkingLevel": "medium",
-   "theme": "dark",
-   "compaction": {
-      "enabled": true,
-      "reserveTokens": 16384,
-      "keepRecentTokens": 20000
-   },
-   "retry": {
-      "enabled": true,
-      "maxRetries": 3
-   },
-   "enabledModels": ["claude-*", "gpt-4o"],
-   "packages": ["pi-skills"],
-   "agentDefaults": {
-      "permission": {
-         "edit": "ask",
-         "write": "ask"
-      }
-   }
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-sonnet-4-20250514",
+  "defaultThinkingLevel": "medium",
+  "theme": "dark",
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 16384,
+    "keepRecentTokens": 20000
+  },
+  "retry": {
+    "enabled": true,
+    "maxRetries": 3
+  },
+  "enabledModels": ["claude-*", "gpt-4o"],
+  "warnings": {
+    "anthropicExtraUsage": true
+  },
+  "packages": ["pi-skills"],
+  "agentDefaults": {
+    "permission": {
+      "edit": "ask",
+      "write": "ask"
+    }
+  }
 }
 ```
 

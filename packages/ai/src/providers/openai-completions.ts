@@ -34,6 +34,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { headersToRecord } from "../utils/headers.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
+import { isCloudflareProvider, resolveCloudflareBaseUrl } from "./cloudflare.js";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.js";
 import {
 	applyExtraBody,
@@ -469,7 +470,7 @@ function createClient(
 
 	return new OpenAI({
 		apiKey,
-		baseURL: model.baseUrl,
+		baseURL: isCloudflareProvider(model.provider) ? resolveCloudflareBaseUrl(model) : model.baseUrl,
 		dangerouslyAllowBrowser: true,
 		defaultHeaders: headers,
 	});
@@ -1041,6 +1042,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 	const baseUrl = model.baseUrl;
 
 	const isZai = provider === "zai" || baseUrl.includes("api.z.ai");
+	const isCloudflareWorkersAI = provider === "cloudflare-workers-ai" || baseUrl.includes("api.cloudflare.com");
 
 	const isNonStandard =
 		provider === "cerebras" ||
@@ -1051,7 +1053,8 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		baseUrl.includes("deepseek.com") ||
 		isZai ||
 		provider === "opencode" ||
-		baseUrl.includes("opencode.ai");
+		baseUrl.includes("opencode.ai") ||
+		isCloudflareWorkersAI;
 
 	const useMaxTokens = baseUrl.includes("chutes.ai");
 

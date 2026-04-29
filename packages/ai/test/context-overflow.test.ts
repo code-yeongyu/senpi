@@ -389,7 +389,7 @@ describe("Context overflow error handling", () => {
 	// =============================================================================
 
 	describe.skipIf(!process.env.ZAI_API_KEY)("z.ai", () => {
-		it("glm-4.5-flash - should detect overflow via isContextOverflow when z.ai reports it", async () => {
+		it("glm-4.5-air - should detect overflow via isContextOverflow when z.ai reports it", async () => {
 			const model = getModel("zai", "glm-4.5-air");
 			const result = await testContextOverflow(model, process.env.ZAI_API_KEY!);
 			logResult(result);
