@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CONFIG_DIR_NAME } from "../src/config.js";
 import { SettingsManager } from "../src/core/settings-manager.js";
 
 /**
@@ -25,7 +26,7 @@ describe("SettingsManager - External Edit Preservation", () => {
 			rmSync(testDir, { recursive: true });
 		}
 		mkdirSync(agentDir, { recursive: true });
-		mkdirSync(join(projectDir, ".pi"), { recursive: true });
+		mkdirSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
 	});
 
 	afterEach(() => {
@@ -100,7 +101,7 @@ describe("SettingsManager - External Edit Preservation", () => {
 	});
 
 	it("should preserve external project settings changes when updating unrelated project field", async () => {
-		const projectSettingsPath = join(projectDir, ".pi", "settings.json");
+		const projectSettingsPath = join(projectDir, CONFIG_DIR_NAME, "settings.json");
 		writeFileSync(
 			projectSettingsPath,
 			JSON.stringify({
@@ -124,7 +125,7 @@ describe("SettingsManager - External Edit Preservation", () => {
 	});
 
 	it("should let in-memory project changes override external changes for the same project field", async () => {
-		const projectSettingsPath = join(projectDir, ".pi", "settings.json");
+		const projectSettingsPath = join(projectDir, CONFIG_DIR_NAME, "settings.json");
 		writeFileSync(
 			projectSettingsPath,
 			JSON.stringify({

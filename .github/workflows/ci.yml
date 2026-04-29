@@ -56,7 +56,7 @@ jobs:
           esac
 
       - name: Build
-        run: ${{ matrix.pm }} run build
+        run: ${{ matrix.pm }} run build:${{ matrix.pm }}
 
       - name: Check
         if: matrix.pm == 'npm'

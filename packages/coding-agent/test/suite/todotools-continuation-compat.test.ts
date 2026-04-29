@@ -6,7 +6,7 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { type FauxResponseStep, fauxAssistantMessage, fauxToolCall } from "@mariozechner/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ENV_AGENT_DIR } from "../../src/config.js";
+import { CONFIG_DIR_NAME, ENV_AGENT_DIR } from "../../src/config.js";
 import parallelToolCallsExtension from "../../src/core/extensions/builtin/parallel-tool-calls.js";
 import { resolveContinuationConfig } from "../../src/core/extensions/builtin/todotools/continuation/config.js";
 import { CONTINUATION_DIRECTIVE } from "../../src/core/extensions/builtin/todotools/continuation/prompt.js";
@@ -98,7 +98,7 @@ function useIsolatedAgentDir(globalSettings?: Record<string, unknown>): string {
 }
 
 function setProjectSettings(harness: Harness, settings: Record<string, unknown>): void {
-	writeJson(join(harness.tempDir, ".pi", "settings.json"), settings);
+	writeJson(join(harness.tempDir, CONFIG_DIR_NAME, "settings.json"), settings);
 }
 
 function createMockUI(): {

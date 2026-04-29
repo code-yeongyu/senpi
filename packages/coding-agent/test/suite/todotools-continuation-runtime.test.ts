@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type FauxResponseStep, fauxAssistantMessage, fauxToolCall } from "@mariozechner/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ENV_AGENT_DIR } from "../../src/config.js";
+import { CONFIG_DIR_NAME, ENV_AGENT_DIR } from "../../src/config.js";
 import { CONTINUATION_DIRECTIVE } from "../../src/core/extensions/builtin/todotools/continuation/prompt.js";
 import { installContinuation } from "../../src/core/extensions/builtin/todotools/continuation/runtime.js";
 import todotoolsExtension from "../../src/core/extensions/builtin/todotools/index.js";
@@ -60,7 +60,7 @@ function useIsolatedAgentDir(globalSettings?: Record<string, unknown>): string {
 }
 
 function setProjectSettings(harness: Harness, settings: Record<string, unknown>): void {
-	writeJson(join(harness.tempDir, ".pi", "settings.json"), settings);
+	writeJson(join(harness.tempDir, CONFIG_DIR_NAME, "settings.json"), settings);
 }
 
 async function createTodoHarness(

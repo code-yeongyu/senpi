@@ -580,7 +580,7 @@ Content`,
 			});
 
 			const source = "git:github.com/user/repo";
-			const targetDir = join(tempDir, ".pi", "git", "github.com", "user", "repo");
+			const targetDir = join(tempDir, CONFIG_DIR_NAME, "git", "github.com", "user", "repo");
 			mkdirSync(targetDir, { recursive: true });
 			writeFileSync(join(targetDir, "package.json"), JSON.stringify({ name: "repo", version: "1.0.0" }));
 			settingsManager.setProjectPackages([source]);
@@ -1536,7 +1536,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 
 	describe("offline mode and network timeouts", () => {
 		it("should update project npm packages using @latest when newer version is available", async () => {
-			const installedPath = join(tempDir, ".pi", "npm", "node_modules", "example");
+			const installedPath = join(tempDir, CONFIG_DIR_NAME, "npm", "node_modules", "example");
 			mkdirSync(installedPath, { recursive: true });
 			writeFileSync(join(installedPath, "package.json"), JSON.stringify({ name: "example", version: "1.0.0" }));
 			settingsManager.setProjectPackages(["npm:example"]);
@@ -1559,7 +1559,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 		});
 
 		it("should skip project npm update when installed version matches latest", async () => {
-			const installedPath = join(tempDir, ".pi", "npm", "node_modules", "example");
+			const installedPath = join(tempDir, CONFIG_DIR_NAME, "npm", "node_modules", "example");
 			mkdirSync(installedPath, { recursive: true });
 			writeFileSync(join(installedPath, "package.json"), JSON.stringify({ name: "example", version: "1.2.3" }));
 			settingsManager.setProjectPackages(["npm:example"]);
@@ -1583,8 +1583,8 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			const userOldPath = join(agentDir, "node_modules", "user-old");
 			const userCurrentPath = join(agentDir, "node_modules", "user-current");
 			const userUnknownPath = join(agentDir, "node_modules", "user-unknown");
-			const projectOldPath = join(tempDir, ".pi", "npm", "node_modules", "project-old");
-			const projectCurrentPath = join(tempDir, ".pi", "npm", "node_modules", "project-current");
+			const projectOldPath = join(tempDir, CONFIG_DIR_NAME, "npm", "node_modules", "project-old");
+			const projectCurrentPath = join(tempDir, CONFIG_DIR_NAME, "npm", "node_modules", "project-current");
 			const installPaths = [userOldPath, userCurrentPath, userUnknownPath, projectOldPath, projectCurrentPath];
 			for (const installPath of installPaths) {
 				mkdirSync(installPath, { recursive: true });
@@ -1678,7 +1678,13 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			expect(runCommandSpy).toHaveBeenNthCalledWith(
 				2,
 				"npm",
-				["install", "project-old@latest", "project-missing@latest", "--prefix", join(tempDir, ".pi", "npm")],
+				[
+					"install",
+					"project-old@latest",
+					"project-missing@latest",
+					"--prefix",
+					join(tempDir, CONFIG_DIR_NAME, "npm"),
+				],
 				undefined,
 			);
 			expect(updateGitSpy).toHaveBeenCalledTimes(3);

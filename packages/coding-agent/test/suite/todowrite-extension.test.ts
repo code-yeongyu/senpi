@@ -144,7 +144,7 @@ describe("todowrite extension", () => {
 			.map((item) => item.text)
 			.join("\n");
 		expect(text).toContain('Validation failed for tool "todowrite"');
-		expect(text).toContain("must NOT have fewer than 1 items");
+		expect(text).toContain("must not have fewer than 1 items");
 	});
 
 	it("reads the latest todos through the agent-facing todoread tool", async () => {

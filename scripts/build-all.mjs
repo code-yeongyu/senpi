@@ -10,28 +10,51 @@
 // output of `npm run build` / `pnpm run build` / `bun run build` all stay
 // clean.
 //
-// Usage: node scripts/build-all.mjs
+// Usage: node scripts/build-all.mjs [--pm npm|bun|pnpm]
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = dirname(__dirname);
+const SUPPORTED_PMS = new Set(["npm", "bun", "pnpm"]);
 
-const BUILD_ORDER = [
-	"packages/tui",
-	"packages/ai",
-	"packages/agent",
-	"packages/coding-agent",
-	"packages/mom",
-	"packages/web-ui",
-	"packages/pods",
+export const BUILD_PHASES = [
+	["packages/tui", "packages/ai"],
+	["packages/agent"],
+	["packages/coding-agent", "packages/web-ui", "packages/pods"],
+	["packages/mom"],
 ];
 
-function detectPackageManager() {
-	const execpath = process.env.npm_execpath;
-	const userAgent = process.env.npm_config_user_agent ?? "";
+export function parseArgs(argv) {
+	let pm;
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--pm") {
+			pm = argv[++i];
+			continue;
+		}
+		if (arg.startsWith("--pm=")) {
+			pm = arg.slice("--pm=".length);
+			continue;
+		}
+		console.error(`unknown argument: ${arg}`);
+		process.exit(2);
+	}
+	if (pm && !SUPPORTED_PMS.has(pm)) {
+		console.error(`unknown package manager: ${pm}`);
+		console.error(`supported: ${[...SUPPORTED_PMS].join(", ")}`);
+		process.exit(2);
+	}
+	return { pm };
+}
+
+export function detectPackageManager(env = process.env, forcedPm) {
+	if (forcedPm) return { cmd: forcedPm, execpath: undefined };
+
+	const execpath = env.npm_execpath;
+	const userAgent = env.npm_config_user_agent ?? "";
 
 	if (execpath && /bun/i.test(execpath)) return { cmd: "bun", execpath };
 	if (userAgent.startsWith("bun/")) return { cmd: "bun", execpath: undefined };
@@ -41,7 +64,7 @@ function detectPackageManager() {
 	return { cmd: "npm", execpath: undefined };
 }
 
-function cleanEnv() {
+export function cleanEnv(envSource = process.env) {
 	// pnpm exports every .npmrc key as a lowercased npm_config_* env var and
 	// normalizes dashes to underscores. When the parent is pnpm and the
 	// child is npm (e.g. one of these builds still shells out to npm
@@ -56,7 +79,7 @@ function cleanEnv() {
 		"_jsr_registry",
 		"npm_globalconfig",
 	]);
-	const env = { ...process.env };
+	const env = { ...envSource };
 	for (const key of Object.keys(env)) {
 		const lower = key.toLowerCase();
 		if (!lower.startsWith("npm_config_")) continue;
@@ -66,38 +89,60 @@ function cleanEnv() {
 	return env;
 }
 
-function spawnPm(pm, args, cwd, env) {
+function spawnPmAsync(pm, args, cwd, env) {
 	// bun's execpath is a native binary so we invoke it directly.
 	// npm's and pnpm's execpaths are .js / .cjs entry points that have to
 	// be loaded through the current Node runtime.
+	let command = pm.cmd;
+	let spawnArgs = args;
 	if (pm.execpath && pm.cmd === "bun") {
-		return spawnSync(pm.execpath, args, { cwd, stdio: "inherit", env, shell: false });
+		command = pm.execpath;
+	} else if (pm.execpath) {
+		command = process.execPath;
+		spawnArgs = [pm.execpath, ...args];
 	}
-	if (pm.execpath) {
-		return spawnSync(process.execPath, [pm.execpath, ...args], { cwd, stdio: "inherit", env, shell: false });
-	}
-	return spawnSync(pm.cmd, args, { cwd, stdio: "inherit", env, shell: false });
+
+	return new Promise((resolve) => {
+		const child = spawn(command, spawnArgs, { cwd, stdio: "inherit", env, shell: false });
+		child.on("error", (error) => {
+			console.error(`\n[build-all] failed to spawn ${pm.cmd}: ${error.message}`);
+			resolve(1);
+		});
+		child.on("close", (status) => resolve(status ?? 1));
+	});
 }
 
-function runBuild(pm, cwd) {
+async function runBuild(pm, cwd) {
 	const env = cleanEnv();
-	const result = spawnPm(pm, ["run", "build"], cwd, env);
-	if (result.status !== 0) {
-		const rel = cwd.replace(`${root}/`, "");
-		console.error(`\n[build-all] build failed in ${rel} (exit ${result.status})`);
-		process.exit(result.status ?? 1);
+	const rel = cwd.replace(`${root}/`, "");
+	console.log(`[build-all] building ${rel}`);
+	const status = await spawnPmAsync(pm, ["run", "build"], cwd, env);
+	return { rel, status };
+}
+
+async function main() {
+	const args = parseArgs(process.argv.slice(2));
+	const pm = detectPackageManager(process.env, args.pm);
+	for (let i = 0; i < BUILD_PHASES.length; i++) {
+		const phase = BUILD_PHASES[i];
+		console.log(`\n[build-all] phase ${i + 1}: ${phase.join(", ")}`);
+		const results = await Promise.all(phase.map((rel) => runBuild(pm, join(root, rel))));
+		const failed = results.find((result) => result.status !== 0);
+		if (failed) {
+			console.error(`\n[build-all] build failed in ${failed.rel} (exit ${failed.status})`);
+			process.exit(failed.status);
+		}
 	}
+
+	// Root shim refresh lives in a separate script.
+	const wrapperResult = spawnSync(
+		process.execPath,
+		[join(root, "scripts/create-root-senpi-wrapper.mjs")],
+		{ cwd: root, stdio: "inherit", env: cleanEnv(), shell: false },
+	);
+	if (wrapperResult.status !== 0) process.exit(wrapperResult.status ?? 1);
 }
 
-const pm = detectPackageManager();
-for (const rel of BUILD_ORDER) {
-	runBuild(pm, join(root, rel));
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+	main();
 }
-
-// Root shim refresh lives in a separate script.
-const wrapperResult = spawnSync(
-	process.execPath,
-	[join(root, "scripts/create-root-senpi-wrapper.mjs")],
-	{ cwd: root, stdio: "inherit", env: cleanEnv(), shell: false },
-);
-if (wrapperResult.status !== 0) process.exit(wrapperResult.status ?? 1);
