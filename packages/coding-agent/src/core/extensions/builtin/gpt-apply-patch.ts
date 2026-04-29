@@ -25,6 +25,25 @@ type BaselineState = {
 	nonGptToolNames: string[];
 };
 
+type ApplyPatchParams = {
+	input: string;
+};
+
+function normalizeApplyPatchArguments(args: unknown): ApplyPatchParams {
+	if (typeof args === "string") {
+		return { input: args };
+	}
+
+	if (args && typeof args === "object" && "input" in args) {
+		const input = (args as { input?: unknown }).input;
+		if (typeof input === "string") {
+			return { input };
+		}
+	}
+
+	return { input: "" };
+}
+
 const EDIT_TOOL_NAMES = new Set(["write", "edit"]);
 export const APPLY_PATCH_FREEFORM_DESCRIPTION =
 	"Use the `apply_patch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.";
@@ -345,19 +364,21 @@ export function createApplyPatchTool(): ToolDefinition<typeof APPLY_PATCH_PARAMS
 		label: "ApplyPatch",
 		description: APPLY_PATCH_FREEFORM_DESCRIPTION,
 		parameters: APPLY_PATCH_PARAMS,
+		prepareArguments: normalizeApplyPatchArguments,
 		freeform: {
 			type: "grammar",
 			syntax: "lark",
 			definition: APPLY_PATCH_LARK_GRAMMAR,
 		},
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
-			if (!params.input) {
+			const normalizedParams = normalizeApplyPatchArguments(params);
+			if (!normalizedParams.input) {
 				throw new Error("input is required");
 			}
 
-			const hunks = parsePatch(params.input);
+			const hunks = parsePatch(normalizedParams.input);
 			if (hunks.length === 0) {
-				const normalized = normalizePatchText(params.input).trim();
+				const normalized = normalizePatchText(normalizedParams.input).trim();
 				if (normalized === "*** Begin Patch\n*** End Patch") {
 					throw new Error("patch rejected: empty patch");
 				}

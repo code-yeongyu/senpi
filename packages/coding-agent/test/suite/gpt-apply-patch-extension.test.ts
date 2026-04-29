@@ -45,6 +45,12 @@ describe("gpt-apply-patch builtin extension", () => {
 				},
 			},
 		});
+		expect(capturedTool?.prepareArguments?.("*** Begin Patch\n*** End Patch")).toEqual({
+			input: "*** Begin Patch\n*** End Patch",
+		});
+		expect(capturedTool?.prepareArguments?.({ input: "*** Begin Patch\n*** End Patch" })).toEqual({
+			input: "*** Begin Patch\n*** End Patch",
+		});
 		expect(capturedTool?.freeform).toEqual({
 			type: "grammar",
 			syntax: "lark",
@@ -61,7 +67,7 @@ describe("gpt-apply-patch builtin extension", () => {
 		expect(isOpenAIGptModel({ provider: "anthropic", id: "gpt-5" } as { provider: string; id: string })).toBe(false);
 	});
 
-	it("applies Codex-format patches to files", async () => {
+	it("applies Codex-format patches from JSON input to files", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
 		const targetPath = path.join(harness.tempDir, "sample.txt");
@@ -78,6 +84,29 @@ describe("gpt-apply-patch builtin extension", () => {
 +after
 *** End Patch`,
 			},
+			undefined,
+			undefined,
+			{ cwd: harness.tempDir } as Parameters<typeof tool.execute>[4],
+		);
+
+		expect(await readFile(targetPath, "utf-8")).toBe("after\n");
+	});
+
+	it("applies Codex-format patches from raw freeform input to files", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		const targetPath = path.join(harness.tempDir, "raw.txt");
+		await writeFile(targetPath, "before\n", "utf-8");
+		const tool = createApplyPatchTool();
+
+		await tool.execute(
+			"call-1",
+			`*** Begin Patch
+*** Update File: raw.txt
+@@
+-before
++after
+*** End Patch` as never,
 			undefined,
 			undefined,
 			{ cwd: harness.tempDir } as Parameters<typeof tool.execute>[4],
