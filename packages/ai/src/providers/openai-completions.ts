@@ -959,16 +959,22 @@ function convertTools(
 	tools: Tool[],
 	compat: ResolvedOpenAICompletionsCompat,
 ): OpenAI.Chat.Completions.ChatCompletionTool[] {
-	return tools.map((tool) => ({
-		type: "function",
-		function: {
-			name: tool.name,
-			description: tool.description,
-			parameters: tool.parameters as any, // TypeBox already generates JSON Schema
-			// Only include strict if provider supports it. Some reject unknown fields.
-			...(compat.supportsStrictMode !== false && { strict: false }),
-		},
-	}));
+	return tools.map((tool) => {
+		if (tool.freeform) {
+			throw new Error("Freeform tools cannot be sent to OpenAI Chat Completions; use Responses API");
+		}
+
+		return {
+			type: "function",
+			function: {
+				name: tool.name,
+				description: tool.description,
+				parameters: tool.parameters as any, // TypeBox already generates JSON Schema
+				// Only include strict if provider supports it. Some reject unknown fields.
+				...(compat.supportsStrictMode !== false && { strict: false }),
+			},
+		};
+	});
 }
 
 function parseChunkUsage(
