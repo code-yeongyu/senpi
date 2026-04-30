@@ -284,6 +284,9 @@ export class InteractiveMode {
 
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
+	private requestStreamingRender(): void {
+		this.ui.requestRender();
+	}
 
 	// Tool output expansion state
 	private toolOutputExpanded = false;
@@ -2731,7 +2734,7 @@ export class InteractiveMode {
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
 					this.streamingComponent.updateContent(this.streamingMessage);
-					this.ui.requestRender();
+					this.requestStreamingRender();
 				}
 				break;
 
@@ -2837,7 +2840,7 @@ export class InteractiveMode {
 				const component = this.pendingTools.get(event.toolCallId);
 				if (component) {
 					component.updateResult({ ...event.partialResult, isError: false }, true);
-					this.ui.requestRender();
+					this.requestStreamingRender();
 				}
 				break;
 			}

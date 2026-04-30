@@ -1059,11 +1059,41 @@ export class TUI extends Container {
 		}
 
 		// Differential rendering can only touch what was actually visible.
-		// If the first changed line is above the previous viewport, we need a full redraw.
+		// If changed lines start above the previous viewport, keep the differential path
+		// when the visible viewport can still be compared row-for-row. Streaming updates
+		// often mutate transcript content above the viewport without changing visible rows.
 		if (firstChanged < prevViewportTop) {
-			logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
-			fullRender(true);
-			return;
+			if (newLines.length < this.previousLines.length) {
+				logRedraw(`shrink changed above viewport (${newLines.length} < ${this.previousLines.length})`);
+				fullRender(true);
+				return;
+			}
+
+			let firstVisibleChanged = -1;
+			let lastVisibleChanged = -1;
+			for (let row = 0; row < height; row++) {
+				const previousLine = this.previousLines[prevViewportTop + row] ?? "";
+				const nextLine = newLines[viewportTop + row] ?? "";
+				if (previousLine !== nextLine) {
+					if (firstVisibleChanged === -1) {
+						firstVisibleChanged = row;
+					}
+					lastVisibleChanged = row;
+				}
+			}
+
+			if (firstVisibleChanged === -1) {
+				this.cursorRow = Math.max(0, newLines.length - 1);
+				this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length);
+				this.previousLines = newLines;
+				this.previousWidth = width;
+				this.previousHeight = height;
+				this.previousViewportTop = prevViewportTop;
+				return;
+			}
+
+			firstChanged = prevViewportTop + firstVisibleChanged;
+			lastChanged = Math.min(newLines.length - 1, prevViewportTop + lastVisibleChanged);
 		}
 
 		// Render from first changed line to end
