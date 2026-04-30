@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { convertResponsesTools } from "../../../ai/src/providers/openai-responses-shared.js";
 import gptApplyPatchExtension, {
 	APPLY_PATCH_FREEFORM_DESCRIPTION,
 	APPLY_PATCH_LARK_GRAMMAR,
@@ -32,10 +33,14 @@ describe("gpt-apply-patch builtin extension", () => {
 		} as never);
 
 		expect(capturedTool).toBeDefined();
-		expect(capturedTool?.name).toBe("apply_patch");
-		expect(capturedTool?.label).toBe("ApplyPatch");
-		expect(capturedTool?.description).toBe(APPLY_PATCH_FREEFORM_DESCRIPTION);
-		expect(capturedTool?.parameters).toMatchObject({
+		const registeredTool = capturedTool;
+		if (!registeredTool) {
+			throw new Error("apply_patch tool was not registered");
+		}
+		expect(registeredTool.name).toBe("apply_patch");
+		expect(registeredTool.label).toBe("ApplyPatch");
+		expect(registeredTool.description).toBe(APPLY_PATCH_FREEFORM_DESCRIPTION);
+		expect(registeredTool.parameters).toMatchObject({
 			type: "object",
 			required: ["input"],
 			properties: {
@@ -45,17 +50,21 @@ describe("gpt-apply-patch builtin extension", () => {
 				},
 			},
 		});
-		expect(capturedTool?.prepareArguments?.("*** Begin Patch\n*** End Patch")).toEqual({
+		expect(registeredTool.prepareArguments?.("*** Begin Patch\n*** End Patch")).toEqual({
 			input: "*** Begin Patch\n*** End Patch",
 		});
-		expect(capturedTool?.prepareArguments?.({ input: "*** Begin Patch\n*** End Patch" })).toEqual({
+		expect(registeredTool.prepareArguments?.({ input: "*** Begin Patch\n*** End Patch" })).toEqual({
 			input: "*** Begin Patch\n*** End Patch",
 		});
-		expect(capturedTool?.freeform).toEqual({
+		expect(registeredTool.freeform).toEqual({
 			type: "grammar",
 			syntax: "lark",
 			definition: APPLY_PATCH_LARK_GRAMMAR,
 		});
+
+		const [wireTool] = convertResponsesTools([registeredTool]);
+		expect(wireTool).not.toHaveProperty("parameters");
+		expect(wireTool).not.toHaveProperty("strict");
 	});
 
 	it("identifies only OpenAI GPT-family models", () => {
