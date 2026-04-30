@@ -10,11 +10,15 @@ const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
  * Component that renders a complete assistant message
  */
 export class AssistantMessageComponent extends Container {
+	private cachedLines?: string[];
+	private cachedSignature?: string;
+	private cachedWidth?: number;
 	private contentContainer: Container;
 	private hideThinkingBlock: boolean;
 	private markdownTheme: MarkdownTheme;
 	private hiddenThinkingLabel: string;
 	private lastMessage?: AssistantMessage;
+	private lastMessageSignature?: string;
 	private hasToolCalls = false;
 
 	constructor(
@@ -39,39 +43,58 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	override invalidate(): void {
+		this.invalidateRenderCache();
 		super.invalidate();
 		if (this.lastMessage) {
+			this.lastMessageSignature = undefined;
 			this.updateContent(this.lastMessage);
 		}
 	}
 
 	setHideThinkingBlock(hide: boolean): void {
+		if (this.hideThinkingBlock === hide) return;
 		this.hideThinkingBlock = hide;
 		if (this.lastMessage) {
+			this.lastMessageSignature = undefined;
 			this.updateContent(this.lastMessage);
 		}
 	}
 
 	setHiddenThinkingLabel(label: string): void {
+		if (this.hiddenThinkingLabel === label) return;
 		this.hiddenThinkingLabel = label;
 		if (this.lastMessage) {
+			this.lastMessageSignature = undefined;
 			this.updateContent(this.lastMessage);
 		}
 	}
 
 	override render(width: number): string[] {
+		const signature = this.lastMessageSignature ?? "";
+		if (this.cachedLines && this.cachedWidth === width && this.cachedSignature === signature) {
+			return [...this.cachedLines];
+		}
+
 		const lines = super.render(width);
 		if (this.hasToolCalls || lines.length === 0) {
+			this.cacheRender(width, signature, lines);
 			return lines;
 		}
 
 		lines[0] = OSC133_ZONE_START + lines[0];
 		lines[lines.length - 1] = OSC133_ZONE_END + OSC133_ZONE_FINAL + lines[lines.length - 1];
+		this.cacheRender(width, signature, lines);
 		return lines;
 	}
 
 	updateContent(message: AssistantMessage): void {
 		this.lastMessage = message;
+		const messageSignature = this.createMessageSignature(message);
+		if (this.lastMessageSignature === messageSignature) {
+			return;
+		}
+		this.lastMessageSignature = messageSignature;
+		this.invalidateRenderCache();
 
 		// Clear content container
 		this.contentContainer.clear();
@@ -143,5 +166,27 @@ export class AssistantMessageComponent extends Container {
 				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), 1, 0));
 			}
 		}
+	}
+
+	private createMessageSignature(message: AssistantMessage): string {
+		return JSON.stringify({
+			content: message.content,
+			hiddenThinkingLabel: this.hiddenThinkingLabel,
+			hideThinkingBlock: this.hideThinkingBlock,
+			errorMessage: message.errorMessage,
+			stopReason: message.stopReason,
+		});
+	}
+
+	private cacheRender(width: number, signature: string, lines: string[]): void {
+		this.cachedWidth = width;
+		this.cachedSignature = signature;
+		this.cachedLines = [...lines];
+	}
+
+	private invalidateRenderCache(): void {
+		this.cachedLines = undefined;
+		this.cachedSignature = undefined;
+		this.cachedWidth = undefined;
 	}
 }

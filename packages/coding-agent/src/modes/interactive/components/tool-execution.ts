@@ -1,3 +1,4 @@
+import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Box, type Component, Container, getCapabilities, Image, Spacer, Text, type TUI } from "@mariozechner/pi-tui";
 import type { ToolDefinition, ToolRenderContext } from "../../../core/extensions/types.js";
 import { createAllToolDefinitions, type ToolName } from "../../../core/tools/index.js";
@@ -10,7 +11,15 @@ export interface ToolExecutionOptions {
 	imageWidthCells?: number;
 }
 
+type ToolExecutionResult = Omit<AgentToolResult<unknown>, "details"> & {
+	details?: unknown;
+	isError: boolean;
+};
+
 export class ToolExecutionComponent extends Container {
+	private cachedLines?: string[];
+	private cachedSignature?: string;
+	private cachedWidth?: number;
 	private contentBox: Box;
 	private contentText: Text;
 	private selfRenderContainer: Container;
@@ -32,11 +41,7 @@ export class ToolExecutionComponent extends Container {
 	private cwd: string;
 	private executionStarted = false;
 	private argsComplete = false;
-	private result?: {
-		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
-		isError: boolean;
-		details?: any;
-	};
+	private result?: ToolExecutionResult;
 	private convertedImages: Map<number, { data: string; mimeType: string }> = new Map();
 	private hideComponent = false;
 
@@ -161,14 +166,7 @@ export class ToolExecutionComponent extends Container {
 		this.ui.requestRender();
 	}
 
-	updateResult(
-		result: {
-			content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
-			details?: any;
-			isError: boolean;
-		},
-		isPartial = false,
-	): void {
+	updateResult(result: ToolExecutionResult, isPartial = false): void {
 		this.result = result;
 		this.isPartial = isPartial;
 		this.updateDisplay();
@@ -214,7 +212,9 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	override invalidate(): void {
+		this.invalidateRenderCache();
 		super.invalidate();
+		this.lastDisplaySignature = undefined;
 		this.updateDisplay();
 	}
 
@@ -222,10 +222,27 @@ export class ToolExecutionComponent extends Container {
 		if (this.hideComponent) {
 			return [];
 		}
-		return super.render(width);
+		const signature = this.createRenderSignature();
+		if (this.cachedLines && this.cachedWidth === width && this.cachedSignature === signature) {
+			return [...this.cachedLines];
+		}
+		const lines = super.render(width);
+		this.cachedWidth = width;
+		this.cachedSignature = signature;
+		this.cachedLines = [...lines];
+		return lines;
 	}
 
+	private lastDisplaySignature?: string;
+
 	private updateDisplay(): void {
+		const displaySignature = this.createRenderSignature();
+		if (this.lastDisplaySignature === displaySignature) {
+			return;
+		}
+		this.lastDisplaySignature = displaySignature;
+		this.invalidateRenderCache();
+
 		const bgFn = this.isPartial
 			? (text: string) => theme.bg("toolPendingBg", text)
 			: this.result?.isError
@@ -268,8 +285,12 @@ export class ToolExecutionComponent extends Container {
 					}
 				} else {
 					try {
+						const agentToolResult = {
+							content: this.result.content,
+							details: this.result.details,
+						} satisfies AgentToolResult<unknown>;
 						const component = resultRenderer(
-							{ content: this.result.content as any, details: this.result.details },
+							agentToolResult,
 							{ expanded: this.expanded, isPartial: this.isPartial },
 							theme,
 							this.getRenderContext(this.resultRendererComponent),
@@ -348,5 +369,27 @@ export class ToolExecutionComponent extends Container {
 			text += `\n${output}`;
 		}
 		return text;
+	}
+
+	private createRenderSignature(): string {
+		return JSON.stringify({
+			args: this.args,
+			argsComplete: this.argsComplete,
+			executionStarted: this.executionStarted,
+			expanded: this.expanded,
+			hideComponent: this.hideComponent,
+			imageWidthCells: this.imageWidthCells,
+			isPartial: this.isPartial,
+			result: this.result,
+			showImages: this.showImages,
+			toolCallId: this.toolCallId,
+			toolName: this.toolName,
+		});
+	}
+
+	private invalidateRenderCache(): void {
+		this.cachedLines = undefined;
+		this.cachedSignature = undefined;
+		this.cachedWidth = undefined;
 	}
 }
