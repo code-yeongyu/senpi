@@ -6,6 +6,7 @@ import compactionExtension from "./compaction/index.js";
 import gptApplyPatchExtension from "./gpt-apply-patch.js";
 import parallelToolCallsExtension from "./parallel-tool-calls.js";
 import permissionSystemExtension from "./permission-system/index.js";
+import promptPresetExtension from "./prompt-preset/index.js";
 import redrawsExtension from "./redraws.js";
 import serviceTierExtension from "./service-tier.js";
 import todowriteExtension from "./todotools/index.js";
@@ -22,6 +23,7 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "agent-system", factory: agentSystemExtension },
 	{ id: "permission-system", factory: permissionSystemExtension },
 	{ id: "gpt-apply-patch", factory: gptApplyPatchExtension },
+	{ id: "prompt-preset", factory: promptPresetExtension },
 	{ id: "todowrite", factory: todowriteExtension },
 	{ id: "redraws", factory: redrawsExtension },
 	{ id: "parallel-tool-calls", factory: parallelToolCallsExtension },
