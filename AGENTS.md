@@ -6,11 +6,99 @@
 
 ## OVERVIEW
 
-Fork of [badlogic/pi-mono](https://github.com/badlogic/pi-mono). TypeScript monorepo for AI agent tooling: multi-provider LLM API, agent runtime, coding agent CLI, TUI library, web UI components, Slack bot, GPU pod manager. Built with npm workspaces, tsgo (native TS compiler), Vitest.
+Fork of [badlogic/pi-mono](https://github.com/badlogic/pi-mono). TypeScript monorepo for AI agent tooling: multi-provider LLM API, agent runtime, coding agent CLI, TUI library, web UI components, web UI components. Built with npm workspaces, tsgo (native TS compiler), Vitest.
 
 ## FORK STRATEGY (CRITICAL)
 
 This repo is a **fork** of `upstream` ([badlogic/pi-mono](https://github.com/badlogic/pi-mono)). All work must minimize merge conflict surface with upstream.
+
+## Commands
+
+- After code changes (not documentation changes): `npm run check` (get full output, no tail). Fix all errors, warnings, and infos before committing.
+- Note: `npm run check` does not run tests.
+- NEVER run: `npm run dev`, `npm run build`, `npm test`
+- Only run specific tests if user instructs: `npx tsx ../../node_modules/vitest/dist/cli.js --run test/specific.test.ts`
+- Run tests from the package root, not the repo root.
+- If you create or modify a test file, you MUST run that test file and iterate until it passes.
+- When writing tests, run them, identify issues in either the test or implementation, and iterate until fixed.
+- For `packages/coding-agent/test/suite/`, use `test/suite/harness.ts` plus the faux provider. Do not use real provider APIs, real API keys, or paid tokens.
+- Put issue-specific regressions under `packages/coding-agent/test/suite/regressions/` and name them `<issue-number>-<short-slug>.test.ts`.
+- NEVER commit unless user asks
+
+## Contribution Gate
+
+- New issues from new contributors are auto-closed by `.github/workflows/issue-gate.yml`
+- New PRs from new contributors without PR rights are auto-closed by `.github/workflows/pr-gate.yml`
+- Maintainer approval comments are handled by `.github/workflows/approve-contributor.yml`
+- Maintainers review auto-closed issues daily
+- Issues that do not meet the quality bar in `CONTRIBUTING.md` are not reopened and do not receive a reply
+- `lgtmi` approves future issues
+- `lgtm` approves future issues and rights to submit PRs
+
+When creating issues:
+
+- Add `pkg:*` labels to indicate which package(s) the issue affects
+  - Available labels: `pkg:agent`, `pkg:ai`, `pkg:coding-agent`, `pkg:tui`, `pkg:web-ui`
+- If an issue spans multiple packages, add all relevant labels
+
+When posting issue/PR comments:
+
+- Write the full comment to a temp file and use `gh issue comment --body-file` or `gh pr comment --body-file`
+- Never pass multi-line markdown directly via `--body` in shell commands
+- Preview the exact comment text before posting
+- Post exactly one final comment unless the user explicitly asks for multiple comments
+- If a comment is malformed, delete it immediately, then post one corrected comment
+- Keep comments concise, technical, and in the user's tone
+
+When closing issues via commit:
+
+- Include `fixes #<number>` or `closes #<number>` in the commit message
+- This automatically closes the issue when the commit is merged
+
+## PR Workflow
+
+- Analyze PRs without pulling locally first
+- If the user approves: create a feature branch, pull PR, rebase on main, apply adjustments, commit, merge into main, push, close PR, and leave a comment in the user's tone
+- You never open PRs yourself. We work in feature branches until everything is according to the user's requirements, then merge into main, and push.
+
+## Testing pi Interactive Mode with tmux
+
+To test pi's TUI in a controlled terminal environment:
+
+```bash
+# Create tmux session with specific dimensions
+tmux new-session -d -s pi-test -x 80 -y 24
+
+# Start pi from source
+tmux send-keys -t pi-test "cd /Users/badlogic/workspaces/pi-mono && ./pi-test.sh" Enter
+
+# Capture output
+tmux capture-pane -t pi-test -p
+
+# Send input
+tmux send-keys -t pi-test "your prompt here" Enter
+
+# Send special keys
+tmux send-keys -t pi-test Escape
+tmux send-keys -t pi-test C-o  # ctrl+o
+
+# Cleanup
+tmux kill-session -t pi-test
+```
+
+## Changelog
+
+Location: `packages/*/CHANGELOG.md` (each package has its own)
+
+### Format
+
+Use these sections under `## [Unreleased]`:
+
+- `### Breaking Changes` - API changes requiring migration
+- `### Added` - New features
+- `### Changed` - Changes to existing functionality
+- `### Fixed` - Bug fixes
+- `### Removed` - Removed features
 
 ### Rules
 
@@ -48,8 +136,6 @@ sanepi-mono/                        # Fork of badlogic/pi-mono
 │   ├── agent/                      # Agent runtime (tool calling, state)
 │   ├── tui/                        # Terminal UI library (differential rendering)
 │   ├── web-ui/                     # Lit-based web components for AI chat
-│   ├── mom/                        # Slack bot delegating to coding agent
-│   └── pods/                       # vLLM deployment on GPU pods
 ├── scripts/                        # Release, version sync, browser smoke check
 ├── .github/                        # CI, PR gate, OSS weekend, contributor approval
 └── local-ignore/                   # Local workspace (gitignored)

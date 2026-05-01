@@ -467,7 +467,7 @@ export function createEditToolDefinition(
 					changed = true;
 				}
 				if (changed) {
-					context.invalidate();
+					buildEditCallComponent(callComponent, context.args as RenderableEditArgs | undefined, theme);
 				}
 			}
 

@@ -183,7 +183,7 @@ Normally the package manager's global modules location is queried using `root -g
 { "sessionDir": ".pi/sessions" }
 ```
 
-When multiple sources specify a session directory, `--session-dir` CLI flag takes precedence over `sessionDir` in settings.json.
+When multiple sources specify a session directory, precedence is `--session-dir`, `PI_CODING_AGENT_SESSION_DIR`, then `sessionDir` in settings.json.
 
 ### Model Cycling
 

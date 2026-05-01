@@ -40,6 +40,7 @@ See [examples/extensions/](../examples/extensions/) for working implementations.
   - [Resource Events](#resource-events)
   - [Session Events](#session-events)
   - [Agent Events](#agent-events)
+  - [Model Events](#model-events)
   - [Tool Events](#tool-events)
 - [ExtensionContext](#extensioncontext)
 - [ExtensionCommandContext](#extensioncommandcontext)
@@ -323,7 +324,11 @@ user sends another prompt ◄─────────────────
   └─► session_tree
 
 /model or Ctrl+P (model selection/cycling)
+  ├─► thinking_level_select (if model change changes/clamps thinking level)
   └─► model_select
+
+thinking level changes (settings, keybinding, pi.setThinkingLevel())
+  └─► thinking_level_select
 
 exit (Ctrl+C, Ctrl+D, SIGHUP, SIGTERM)
   └─► session_shutdown
@@ -527,6 +532,7 @@ Fired for message lifecycle updates.
 
 - `message_start` and `message_end` fire for user, assistant, and toolResult messages.
 - `message_update` fires for assistant streaming updates.
+- `message_end` handlers can return `{ message }` to replace the finalized message. The replacement must keep the same `role`.
 
 ```typescript
 pi.on("message_start", async (event, ctx) => {
@@ -539,7 +545,20 @@ pi.on("message_update", async (event, ctx) => {
 });
 
 pi.on("message_end", async (event, ctx) => {
-  // event.message
+  if (event.message.role !== "assistant") return;
+
+  return {
+    message: {
+      ...event.message,
+      usage: {
+        ...event.message.usage,
+        cost: {
+          ...event.message.usage.cost,
+          total: 0.123,
+        },
+      },
+    },
+  };
 });
 ```
 
@@ -634,6 +653,21 @@ pi.on("model_select", async (event, ctx) => {
 ```
 
 Use this to update UI elements (status bars, footers) or perform model-specific initialization when the active model changes.
+
+#### thinking_level_select
+
+Fired when the thinking level changes. This is notification-only; handler return values are ignored.
+
+```typescript
+pi.on("thinking_level_select", async (event, ctx) => {
+  // event.level - newly selected thinking level
+  // event.previousLevel - previous thinking level
+
+  ctx.ui.setStatus("thinking", `thinking: ${event.level}`);
+});
+```
+
+Use this to update extension UI when `pi.setThinkingLevel()`, model changes, or built-in thinking-level controls change the active thinking level.
 
 ### Tool Events
 
@@ -1488,7 +1522,7 @@ if (model) {
 
 ### pi.getThinkingLevel() / pi.setThinkingLevel(level)
 
-Get or set the thinking level. Level is clamped to model capabilities (non-reasoning models always use "off").
+Get or set the thinking level. Level is clamped to model capabilities (non-reasoning models always use "off"). Changes emit `thinking_level_select`.
 
 ```typescript
 const current = pi.getThinkingLevel();  // "off" | "minimal" | "low" | "medium" | "high" | "xhigh"
@@ -2557,7 +2591,6 @@ All examples in [examples/extensions/](../examples/extensions/).
 | `session-name.ts` | Name sessions for selector | `setSessionName`, `getSessionName` |
 | `bookmark.ts` | Bookmark entries for /tree | `setLabel` |
 | **Misc** |||
-| `antigravity-image-gen.ts` | Image generation tool | `registerTool`, Google Antigravity |
 | `inline-bash.ts` | Inline bash in tool calls | `on("tool_call")` |
 | `bash-spawn-hook.ts` | Adjust bash command, cwd, and env before execution | `createBashTool`, `spawnHook` |
 | `with-deps/` | Extension with npm dependencies | Package structure with `package.json` |

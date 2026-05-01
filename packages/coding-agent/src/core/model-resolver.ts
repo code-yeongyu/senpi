@@ -20,8 +20,6 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	"openai-codex": "gpt-5.5",
 	deepseek: "deepseek-v4-pro",
 	google: "gemini-3.1-pro-preview",
-	"google-gemini-cli": "gemini-3.1-pro-preview",
-	"google-antigravity": "gemini-3.1-pro-high",
 	"google-vertex": "gemini-3.1-pro-preview",
 	"github-copilot": "gpt-5.4",
 	openrouter: "moonshotai/kimi-k2.6",
@@ -41,6 +39,7 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	"opencode-go": "kimi-k2.6",
 	"kimi-coding": "kimi-for-coding",
 	"cloudflare-workers-ai": "@cf/moonshotai/kimi-k2.6",
+	"cloudflare-ai-gateway": "workers-ai/@cf/moonshotai/kimi-k2.6",
 };
 
 export interface ScopedModel {

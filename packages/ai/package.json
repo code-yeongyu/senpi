@@ -1,6 +1,6 @@
 {
 	"name": "@mariozechner/pi-ai",
-	"version": "0.70.6",
+	"version": "0.71.0",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -21,10 +21,6 @@
 		"./google": {
 			"types": "./dist/providers/google.d.ts",
 			"import": "./dist/providers/google.js"
-		},
-		"./google-gemini-cli": {
-			"types": "./dist/providers/google-gemini-cli.d.ts",
-			"import": "./dist/providers/google-gemini-cli.js"
 		},
 		"./google-vertex": {
 			"types": "./dist/providers/google-vertex.d.ts",

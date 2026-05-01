@@ -2,14 +2,23 @@
 
 ## [Unreleased]
 
+## [0.71.0] - 2026-04-30
+
+### Breaking Changes
+
+- Removed built-in Google Gemini CLI and Google Antigravity support, including provider registration, model metadata, OAuth, and package exports. Existing callers must switch to another supported provider.
+
 ### Added
 
 - Extended `registerFauxProvider()` (test-only) with three additive APIs: `getCallLog()` returns ordered `RequestSnapshot[]` capturing context, options, timestamp and resolved model id per stream invocation; `RegisterFauxProviderOptions.schedulerHook` replaces the default real-`setTimeout` chunk pacer so tests can integrate `vi.useFakeTimers()`; and `fauxOverflowError(provider, phrase)` returns an `AssistantMessage` with `stopReason: "error"` and an `errorMessage` that matches per-provider overflow regexes.
 - Added Claude Opus 4.7 (`claude-opus-4-7`) plus Bedrock cross-region profiles (`anthropic.claude-opus-4-7-v1`, `us.*`, `eu.*`, `global.*`). 1M context window, 128k max output tokens, adaptive thinking.
 - Added native `"max"` thinking level to `ThinkingLevel` union. Opus 4.7 maps `max` to Anthropic's native `max` effort; Opus 4.6 preserves the legacy `max` tier; other adaptive models clamp to `high`; budget-based Anthropic models fall back to the highest budget; OpenAI-style providers clamp `max` to `xhigh` on supported models or `high` otherwise.
 - Extended `supportsXhigh()` to include Opus 4.7 so `xhigh` is available in addition to `max`.
-- Added `StreamOptions.extraBody` for user-supplied custom request body fields (mirrors opencode's provider options). Wired through every builtin provider's payload builder (Anthropic, OpenAI Responses/Completions/Codex/Azure, Mistral, Google, Google Vertex, Google Gemini CLI, Amazon Bedrock). Provider-managed fields (model, messages, stream, reasoning, cache keys, service_tier, metadata, etc.) are protected via per-provider reserved-key sets; Google and Vertex merge extras into `config` (the SDK's generationConfig surface) so custom fields actually reach the wire.
-- Added `AssistantMessage.responseModel` on the openai-completions path: surfaces the concrete `chunk.model` when it differs from the requested id (e.g. OpenRouter `auto` -> `anthropic/...`).
+- Added `StreamOptions.extraBody` for user-supplied custom request body fields (mirrors opencode's provider options). Wired through every builtin provider's payload builder (Anthropic, OpenAI Responses/Completions/Codex/Azure, Mistral, Google, Google Vertex, Amazon Bedrock). Provider-managed fields (model, messages, stream, reasoning, cache keys, service_tier, metadata, etc.) are protected via per-provider reserved-key sets; Google and Vertex merge extras into `config` (the SDK's generationConfig surface) so custom fields actually reach the wire.
+- Added Cloudflare AI Gateway as a built-in provider with OpenAI, Anthropic, and Workers AI gateway routing plus `CLOUDFLARE_API_KEY`/`CLOUDFLARE_ACCOUNT_ID`/`CLOUDFLARE_GATEWAY_ID` authentication ([#3856](https://github.com/badlogic/pi-mono/pull/3856) by [@mchenco](https://github.com/mchenco)).
+- Added Moonshot AI as a built-in OpenAI-compatible provider with model catalog generation and `MOONSHOT_API_KEY` authentication.
+- Added Mistral Medium 3.5 model metadata and reasoning-mode handling ([#4009](https://github.com/badlogic/pi-mono/pull/4009) by [@technocidal](https://github.com/technocidal)).
+- Added `AssistantMessage.responseModel` on the openai-completions path: surfaces the concrete `chunk.model` when it differs from the requested id (e.g. OpenRouter `auto` -> `anthropic/...`) ([#3968](https://github.com/badlogic/pi-mono/pull/3968) by [@purrgrammer](https://github.com/purrgrammer)).
 
 ### Changed
 
@@ -24,12 +33,18 @@
 - Stopped sending `tools: []` on OpenAI-compatible, Anthropic, OpenAI Responses, OpenAI Codex Responses, and Azure OpenAI Responses requests when no tools are active (e.g. `pi --no-tools`). DashScope/Aliyun Qwen (OpenAI-compatible) rejects empty tools arrays with `"[] is too short - 'tools'"` (HTTP 400); the field is now omitted unless the conversation has tool history (the existing LiteLLM/Anthropic-proxy workaround) ([#3650](https://github.com/badlogic/pi-mono/pull/3650) by [@HQidea](https://github.com/HQidea)).
 - Fixed `supportsXhigh()` to recognize DeepSeek V4 Pro, preserving `xhigh` reasoning requests so they map to DeepSeek's `max` effort ([#3662](https://github.com/badlogic/pi-mono/issues/3662))
 - Fixed OpenAI-compatible DeepSeek V4 model replay to include empty `reasoning_content` on assistant messages when needed, preventing OpenRouter DeepSeek V4 sessions from failing after responses without reasoning deltas ([#3668](https://github.com/badlogic/pi-mono/issues/3668))
+- Fixed Google Vertex Gemini 3 tool call replay by no longer sending the non-Vertex `skip_thought_signature_validator` sentinel for unsigned tool calls ([#4032](https://github.com/badlogic/pi-mono/issues/4032)).
 - Updated `@anthropic-ai/sdk` to `^0.91.1` to clear GHSA-p7fg-763f-g4gf audit findings ([#3992](https://github.com/badlogic/pi-mono/issues/3992)).
 - Fixed DeepSeek V4 Flash `xhigh` thinking support so requests preserve `xhigh` and map it to DeepSeek's `max` reasoning effort ([#3944](https://github.com/badlogic/pi-mono/issues/3944)).
 - Fixed Anthropic streams that end before `message_stop` to be treated as errors instead of successful partial responses ([#3936](https://github.com/badlogic/pi-mono/issues/3936)).
 - Fixed generated OpenAI-compatible DeepSeek V4 models to carry the provider-specific reasoning effort mapping outside the direct DeepSeek provider ([#3940](https://github.com/badlogic/pi-mono/issues/3940)).
 - Fixed DeepSeek V4 Flash and V4 Pro pricing metadata to match current official rates ([#3910](https://github.com/badlogic/pi-mono/issues/3910)).
 - Fixed DeepSeek prompt cache hits to be tracked from `prompt_cache_hit_tokens` in OpenAI-compatible usage responses ([#3880](https://github.com/badlogic/pi-mono/issues/3880)).
+
+### Removed
+
+- Removed built-in Google Gemini CLI and Google Antigravity provider, model, OAuth, and export support.
+
 ## [0.70.6] - 2026-04-28
 
 ### Added

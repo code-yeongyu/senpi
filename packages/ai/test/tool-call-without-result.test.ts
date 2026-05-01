@@ -8,17 +8,16 @@ type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.js";
 import { hasBedrockCredentials } from "./bedrock-utils.js";
+import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.js";
 import { resolveApiKey } from "./oauth.js";
 
 // Resolve OAuth tokens at module level (async, runs before tests)
 const oauthTokens = await Promise.all([
 	resolveApiKey("anthropic"),
 	resolveApiKey("github-copilot"),
-	resolveApiKey("google-gemini-cli"),
-	resolveApiKey("google-antigravity"),
 	resolveApiKey("openai-codex"),
 ]);
-const [anthropicOAuthToken, githubCopilotToken, geminiCliToken, antigravityToken, openaiCodexToken] = oauthTokens;
+const [anthropicOAuthToken, githubCopilotToken, openaiCodexToken] = oauthTokens;
 
 // Simple calculate tool
 const calculateSchema = Type.Object({
@@ -168,20 +167,21 @@ describe("Tool Call Without Result Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.CLOUDFLARE_API_KEY || !process.env.CLOUDFLARE_ACCOUNT_ID)(
-		"Cloudflare Workers AI Provider",
-		() => {
-			const model = getModel("cloudflare-workers-ai", "@cf/moonshotai/kimi-k2.6");
+	describe.skipIf(!hasCloudflareWorkersAICredentials())("Cloudflare Workers AI Provider", () => {
+		const model = getModel("cloudflare-workers-ai", "@cf/moonshotai/kimi-k2.6");
 
-			it(
-				"should filter out tool calls without corresponding tool results",
-				{ retry: 3, timeout: 30000 },
-				async () => {
-					await testToolCallWithoutResult(model);
-				},
-			);
-		},
-	);
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model);
+		});
+	});
+
+	describe.skipIf(!hasCloudflareAiGatewayCredentials())("Cloudflare AI Gateway Provider", () => {
+		const model = getModel("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.6");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model);
+		});
+	});
 
 	describe.skipIf(!process.env.HF_TOKEN)("Hugging Face Provider", () => {
 		const model = getModel("huggingface", "moonshotai/Kimi-K2.5");
@@ -271,46 +271,6 @@ describe("Tool Call Without Result Tests", () => {
 			async () => {
 				const model = getModel("github-copilot", "claude-sonnet-4");
 				await testToolCallWithoutResult(model, { apiKey: githubCopilotToken });
-			},
-		);
-	});
-
-	describe("Google Gemini CLI Provider", () => {
-		it.skipIf(!geminiCliToken)(
-			"gemini-2.5-flash - should filter out tool calls without corresponding tool results",
-			{ retry: 3, timeout: 30000 },
-			async () => {
-				const model = getModel("google-gemini-cli", "gemini-2.5-flash");
-				await testToolCallWithoutResult(model, { apiKey: geminiCliToken });
-			},
-		);
-	});
-
-	describe("Google Antigravity Provider", () => {
-		it.skipIf(!antigravityToken)(
-			"gemini-3-flash - should filter out tool calls without corresponding tool results",
-			{ retry: 3, timeout: 30000 },
-			async () => {
-				const model = getModel("google-antigravity", "gemini-3-flash");
-				await testToolCallWithoutResult(model, { apiKey: antigravityToken });
-			},
-		);
-
-		it.skipIf(!antigravityToken)(
-			"claude-sonnet-4-5 - should filter out tool calls without corresponding tool results",
-			{ retry: 3, timeout: 30000 },
-			async () => {
-				const model = getModel("google-antigravity", "claude-sonnet-4-5");
-				await testToolCallWithoutResult(model, { apiKey: antigravityToken });
-			},
-		);
-
-		it.skipIf(!antigravityToken)(
-			"gpt-oss-120b-medium - should filter out tool calls without corresponding tool results",
-			{ retry: 3, timeout: 30000 },
-			async () => {
-				const model = getModel("google-antigravity", "gpt-oss-120b-medium");
-				await testToolCallWithoutResult(model, { apiKey: antigravityToken });
 			},
 		);
 	});

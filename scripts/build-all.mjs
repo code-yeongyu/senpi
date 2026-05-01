@@ -23,8 +23,7 @@ const SUPPORTED_PMS = new Set(["npm", "bun", "pnpm"]);
 export const BUILD_PHASES = [
 	["packages/tui", "packages/ai"],
 	["packages/agent"],
-	["packages/coding-agent", "packages/web-ui", "packages/pods"],
-	["packages/mom"],
+	["packages/coding-agent", "packages/web-ui"],
 ];
 
 export function parseArgs(argv) {

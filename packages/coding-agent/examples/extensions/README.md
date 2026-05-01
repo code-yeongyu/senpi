@@ -38,7 +38,6 @@ cp permission-gate.ts ~/.senpi/agent/extensions/
 | `built-in-tool-renderer.ts` | Custom compact rendering for built-in tools (read, bash, edit, write) while keeping original behavior |
 | `minimal-mode.ts` | Override built-in tool rendering for minimal display (only tool calls, no output in collapsed mode) |
 | `truncated-tool.ts` | Wraps ripgrep with proper output truncation (50KB/2000 lines) |
-| `antigravity-image-gen.ts` | Generate images via Google Antigravity with optional save-to-disk modes |
 | `ssh.ts` | Delegate all tools to a remote machine via SSH using pluggable operations |
 | `subagent/` | Delegate tasks to specialized subagents with isolated context windows |
 
@@ -125,7 +124,6 @@ cp permission-gate.ts ~/.senpi/agent/extensions/
 |-----------|-------------|
 | `custom-provider-anthropic/` | Custom Anthropic provider with OAuth support and custom streaming implementation |
 | `custom-provider-gitlab-duo/` | GitLab Duo provider using pi-ai's built-in Anthropic/OpenAI streaming via proxy |
-| `custom-provider-qwen-cli/` | Qwen CLI provider with OAuth device flow and OpenAI-compatible models |
 
 ### External Dependencies
 
