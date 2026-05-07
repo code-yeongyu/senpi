@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- `ProviderNativeContent` content variant in `AssistantMessage.content` for surfacing provider-native blocks (web_search results, server tool calls, grounding metadata, etc.) without lossy normalization.
+- Added `repairOrphanedToolResults` and `TOOL_RESULT_PLACEHOLDER` in `pi-ai` utilities for bidirectional tool pair repair across consumers.
+
 ### Fixed
 
 - Fixed OpenAI Responses reasoning text streaming for LM Studio and other compatible providers that emit `response.reasoning_text.delta` events ([#4191](https://github.com/badlogic/pi-mono/pull/4191) by [@yaanfpv](https://github.com/yaanfpv)).

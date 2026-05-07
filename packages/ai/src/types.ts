@@ -201,6 +201,30 @@ export interface ToolCall {
 	thoughtSignature?: string; // Google-specific: opaque signature for reusing thought context
 }
 
+/**
+ * Provider-emitted content block whose semantics are owned by the originating
+ * provider. Surfaces server-side tool invocations (web_search), server-side
+ * tool results (web_search_tool_result), code execution traces, grounding
+ * metadata fragments, and any other vendor-specific block the core does not
+ * normalize.
+ *
+ * `subtype` mirrors the provider's wire `type` discriminator (e.g.
+ * "server_tool_use", "web_search_tool_result", "executableCode"). `raw` is
+ * the verbatim wire payload — extensions interpret it per provider+subtype.
+ *
+ * The owning provider id lives on the parent `AssistantMessage.provider`, not
+ * here, to avoid drift on replay.
+ *
+ * On replay across providers, `convertMessages` implementations MUST drop
+ * these blocks (they are not portable). This mirrors the existing
+ * `redacted_thinking` skip pattern.
+ */
+export interface ProviderNativeContent {
+	type: "providerNative";
+	subtype: string;
+	raw: unknown;
+}
+
 export interface Usage {
 	input: number;
 	output: number;
@@ -226,7 +250,7 @@ export interface UserMessage {
 
 export interface AssistantMessage {
 	role: "assistant";
-	content: (TextContent | ThinkingContent | ToolCall)[];
+	content: (TextContent | ThinkingContent | ToolCall | ProviderNativeContent)[];
 	api: Api;
 	provider: Provider;
 	model: string;

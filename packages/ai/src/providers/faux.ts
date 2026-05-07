@@ -6,6 +6,7 @@ import type {
 	ImageContent,
 	Message,
 	Model,
+	ProviderNativeContent,
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
@@ -44,7 +45,7 @@ export interface FauxModelDefinition {
 	maxTokens?: number;
 }
 
-export type FauxContentBlock = TextContent | ThinkingContent | ToolCall;
+export type FauxContentBlock = TextContent | ThinkingContent | ToolCall | ProviderNativeContent;
 
 export function fauxText(text: string): TextContent {
 	return { type: "text", text };
@@ -158,7 +159,9 @@ function contentToText(content: string | Array<TextContent | ImageContent>): str
 		.join("\n");
 }
 
-function assistantContentToText(content: Array<TextContent | ThinkingContent | ToolCall>): string {
+function assistantContentToText(
+	content: Array<TextContent | ThinkingContent | ToolCall | ProviderNativeContent>,
+): string {
 	return content
 		.map((block) => {
 			if (block.type === "text") {
@@ -166,6 +169,9 @@ function assistantContentToText(content: Array<TextContent | ThinkingContent | T
 			}
 			if (block.type === "thinking") {
 				return block.thinking;
+			}
+			if (block.type === "providerNative") {
+				return `${block.subtype}:${JSON.stringify(block.raw)}`;
 			}
 			return `${block.name}:${JSON.stringify(block.arguments)}`;
 		})
@@ -386,6 +392,10 @@ async function streamWithDeltas(
 				stream.push({ type: "text_delta", contentIndex: index, delta: chunk, partial: { ...partial } });
 			}
 			stream.push({ type: "text_end", contentIndex: index, content: block.text, partial: { ...partial } });
+			continue;
+		}
+
+		if (block.type !== "toolCall") {
 			continue;
 		}
 
