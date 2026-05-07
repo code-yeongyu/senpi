@@ -65,6 +65,11 @@
 			"version": "0.1.0",
 			"source": "../pi-extensions/pi-anthropic-text-editor"
 		},
+		"anthropic-computer-use": {
+			"packageName": "pi-anthropic-computer-use",
+			"version": "0.1.0",
+			"source": "../pi-extensions/pi-anthropic-computer-use"
+		},
 		"openai-web-search": {
 			"packageName": "pi-openai-web-search",
 			"version": "0.1.0",

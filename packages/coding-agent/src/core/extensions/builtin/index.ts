@@ -2,6 +2,7 @@ import type { ExtensionFactory } from "../types.js";
 import agentSystemExtension from "./agent-system/index.js";
 import anthropicBashExtension from "./anthropic-bash/index.js";
 import anthropicCodeExecutionExtension from "./anthropic-code-execution/index.js";
+import anthropicComputerUseExtension from "./anthropic-computer-use/index.js";
 import anthropicTextEditorExtension from "./anthropic-text-editor/index.js";
 import anthropicToolSearchExtension from "./anthropic-tool-search/index.js";
 import anthropicWebFetchExtension from "./anthropic-web-fetch/index.js";
@@ -45,6 +46,7 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "anthropic-code-execution", factory: anthropicCodeExecutionExtension },
 	{ id: "anthropic-bash", factory: anthropicBashExtension },
 	{ id: "anthropic-text-editor", factory: anthropicTextEditorExtension },
+	{ id: "anthropic-computer-use", factory: anthropicComputerUseExtension },
 	{ id: "openai-web-search", factory: openaiWebSearchExtension },
 	{ id: "openai-code-interpreter", factory: openaiCodeInterpreterExtension },
 	{ id: "google-google-search", factory: googleGoogleSearchExtension },
