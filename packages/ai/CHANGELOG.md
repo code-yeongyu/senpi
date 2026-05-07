@@ -5,6 +5,7 @@
 ### Added
 
 - `ProviderNativeContent` content variant in `AssistantMessage.content` for surfacing provider-native blocks (web_search results, server tool calls, grounding metadata, etc.) without lossy normalization.
+- Anthropic Messages now preserves unknown `content_block_start` variants as `ProviderNativeContent` (`subtype` + `raw`) and skips them when converting assistant history back into request payloads.
 - Added `repairOrphanedToolResults` and `TOOL_RESULT_PLACEHOLDER` in `pi-ai` utilities for bidirectional tool pair repair across consumers.
 
 ### Fixed

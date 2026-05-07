@@ -17,6 +17,7 @@ import type {
 	ImageContent,
 	Message,
 	Model,
+	ProviderNativeContent,
 	SimpleStreamOptions,
 	StopReason,
 	StreamFunction,
@@ -491,7 +492,11 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
-			type Block = (ThinkingContent | TextContent | (ToolCall & { partialJson: string })) & { index: number };
+			type Block =
+				| (ThinkingContent & { index: number })
+				| (TextContent & { index: number })
+				| ((ToolCall & { partialJson: string }) & { index: number })
+				| (ProviderNativeContent & { index: number });
 			const blocks = output.content as Block[];
 
 			for await (const event of iterateAnthropicEvents(response, options?.signal)) {
@@ -548,6 +553,15 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 						};
 						output.content.push(block);
 						stream.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
+					} else {
+						const block: Block = {
+							type: "providerNative",
+							subtype: event.content_block.type,
+							raw: event.content_block,
+							index: event.index,
+						};
+						output.content.push(block);
+						// Native blocks are represented in output.content but have no dedicated stream event variant.
 					}
 				} else if (event.type === "content_block_delta") {
 					if (event.delta.type === "text_delta") {
@@ -1082,6 +1096,7 @@ function convertMessages(
 						name: isOAuthToken ? toClaudeCodeName(block.name) : block.name,
 						input: block.arguments ?? {},
 					});
+				} else if (block.type === "providerNative") {
 				}
 			}
 			if (blocks.length === 0) continue;
