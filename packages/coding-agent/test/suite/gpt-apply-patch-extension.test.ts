@@ -76,6 +76,45 @@ describe("gpt-apply-patch builtin extension", () => {
 		expect(isOpenAIGptModel({ provider: "anthropic", id: "gpt-5" } as { provider: string; id: string })).toBe(false);
 	});
 
+	it("recognises GPT models hosted on Azure and GitHub Copilot providers", () => {
+		expect(
+			isOpenAIGptModel({ provider: "azure-openai-responses", id: "gpt-5.2" } as { provider: string; id: string }),
+		).toBe(true);
+		expect(
+			isOpenAIGptModel({ provider: "azure-openai-responses", id: "gpt-5.5" } as { provider: string; id: string }),
+		).toBe(true);
+		expect(isOpenAIGptModel({ provider: "github-copilot", id: "gpt-5" } as { provider: string; id: string })).toBe(
+			true,
+		);
+		expect(
+			isOpenAIGptModel({ provider: "azure-openai-responses", id: "o1" } as { provider: string; id: string }),
+		).toBe(false);
+		expect(
+			isOpenAIGptModel({ provider: "github-copilot", id: "claude-sonnet-4-5" } as {
+				provider: string;
+				id: string;
+			}),
+		).toBe(false);
+	});
+
+	it("exposes a codex-style promptSnippet and promptGuidelines on the apply_patch tool", () => {
+		const tool = createApplyPatchTool();
+
+		expect(typeof tool.promptSnippet).toBe("string");
+		expect(tool.promptSnippet ?? "").toMatch(/apply_patch/);
+
+		const guidelines = tool.promptGuidelines ?? [];
+		expect(Array.isArray(guidelines)).toBe(true);
+		expect(guidelines.length).toBeGreaterThanOrEqual(2);
+
+		const joined = guidelines.join("\n");
+		expect(joined).toMatch(/apply_patch/);
+		// Codex GPT-5.2 guard: ban inline python/heredoc-driven file mutation through bash.
+		expect(joined.toLowerCase()).toMatch(/python/);
+		// Codex GPT-5.2 guard: do not waste tokens re-reading after a successful patch.
+		expect(joined.toLowerCase()).toMatch(/re-?read|do not.*read/);
+	});
+
 	it("applies Codex-format patches from JSON input to files", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);

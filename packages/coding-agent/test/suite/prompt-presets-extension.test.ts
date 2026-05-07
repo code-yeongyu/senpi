@@ -287,4 +287,44 @@ describe("prompt preset resolver", () => {
 		expect(preset?.name).toBe("claude-opus-4-5");
 		expect(preset?.prompt).toContain("ordered steps");
 	});
+
+	// Codex-style File operations guard. Every GPT-5.x preset must teach the model to
+	// route file edits through `apply_patch`, file reads through `read`, and never to
+	// substitute inline python (or sed/awk/heredoc) through bash. This is the senpi
+	// equivalent of codex's `core/gpt_5_2_prompt.md` Task execution + Shell commands
+	// + apply_patch sections collapsed into a single tuning paragraph.
+	it.each([
+		{ presetName: "gpt-5" as const, modelId: "gpt-5", provider: "openai", api: "openai-responses" as const },
+		{ presetName: "gpt-5.2" as const, modelId: "gpt-5.2", provider: "openai", api: "openai-responses" as const },
+		{
+			presetName: "gpt-5.3-codex" as const,
+			modelId: "gpt-5.3-codex",
+			provider: "openai-codex",
+			api: "openai-codex-responses" as const,
+		},
+		{ presetName: "gpt-5.4" as const, modelId: "gpt-5.4", provider: "openai", api: "openai-responses" as const },
+		{ presetName: "gpt-5.5" as const, modelId: "gpt-5.5", provider: "openai", api: "openai-responses" as const },
+	])("$presetName preset includes the codex-style File operations guard", ({ presetName, modelId, provider, api }) => {
+		const settings: PromptPresetSettings = { promptPreset: presetName };
+		const model = createModel(modelId, provider, api);
+
+		const preset = resolvePreset(model, settings);
+
+		if (!preset) {
+			throw new Error(`expected ${presetName} preset to resolve`);
+		}
+		expect(preset.name).toBe(presetName);
+
+		const prompt = preset.prompt;
+		// Positive routing: apply_patch is the canonical edit verb.
+		expect(prompt).toMatch(/apply_patch/);
+		// Positive routing: read is the canonical inspect verb.
+		expect(prompt).toMatch(/\bread\b/);
+		// Negative guard: no inline python through bash for file mutation/inspection.
+		expect(prompt.toLowerCase()).toMatch(/python/);
+		// Negative guard: codex's "do not waste tokens re-reading after apply_patch".
+		expect(prompt.toLowerCase()).toMatch(/re-?read|do not.*read/);
+		// Positive routing: prefer the senpi `grep` tool over invoking grep/rg through bash.
+		expect(prompt.toLowerCase()).toMatch(/\brg\b|ripgrep/);
+	});
 });
