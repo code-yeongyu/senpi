@@ -1,9 +1,7 @@
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "../../../dynamic-prompt/build.js";
 
 function buildGpt5Tuning(): string {
-	return `## Model Notes (GPT-5)
-
-This model performs best with outcome-first framing: focus on what "done" looks like rather than chaining intermediate confirmations when the goal is already concrete. Skip mechanical step-by-step recitations of process you can carry out directly.
+	return `Focus on what "done" looks like rather than chaining intermediate confirmations when the goal is already concrete. Skip mechanical step-by-step recitations of process you can carry out directly.
 
 Retrieval budget: ordinary lookups should fit in one broad search wave. Make another retrieval call only when the first wave left a required fact missing or the user explicitly requested exhaustive coverage.`;
 }

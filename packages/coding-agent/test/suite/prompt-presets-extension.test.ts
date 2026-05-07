@@ -53,8 +53,7 @@ describe("prompt preset resolver", () => {
 		// then
 		expect(preset?.name).toBe(expectedName);
 		expect(preset?.prompt).toContain("You are senpi");
-		expect(preset?.prompt).toContain("## Model Notes (GPT-5)");
-		expect(preset?.prompt).toContain("outcome-first");
+		expect(preset?.prompt).toContain("reasoning effort");
 		expect(preset?.prompt).toContain("## Intent Gate");
 		expect(preset?.prompt).toContain("I read this as");
 		expect(preset?.prompt.length).toBeGreaterThan(2_000);
@@ -82,7 +81,7 @@ describe("prompt preset resolver", () => {
 		// then
 		expect(preset?.name).toBe("gpt-5.5");
 		expect(preset?.prompt).toContain("You are senpi");
-		expect(preset?.prompt).toContain("## Operator Notes");
+		expect(preset?.prompt).toContain("Reason efficiently");
 		expect(preset?.prompt).toContain("outcome-first");
 		expect(preset?.prompt).toContain("Preamble");
 		expect(preset?.prompt).toContain("Todo discipline");
@@ -91,16 +90,29 @@ describe("prompt preset resolver", () => {
 		expect(preset?.prompt).toContain("decision rules");
 		expect(preset?.prompt).toContain("## Intent Gate");
 		expect(preset?.prompt).toContain("I read this as");
-		expect(preset?.prompt).not.toContain("GPT-5.5");
-		expect(preset?.prompt).not.toContain("gpt-5.5");
 		expect(preset?.prompt.length).toBeGreaterThan(2_000);
 	});
 
 	it.each([
-		{ id: "claude-opus-4-7", provider: "anthropic", api: "anthropic-messages" as const },
-		{ id: "claude-opus-4-6", provider: "anthropic", api: "anthropic-messages" as const },
-		{ id: "us.anthropic.claude-opus-4-6-v1", provider: "amazon-bedrock", api: "bedrock-converse-stream" as const },
-	])("returns claude-opus preset for $provider/$id", ({ id, provider, api }) => {
+		{
+			id: "claude-opus-4-7",
+			provider: "anthropic",
+			api: "anthropic-messages" as const,
+			expectedName: "claude-opus-4-7",
+		},
+		{
+			id: "claude-opus-4-6",
+			provider: "anthropic",
+			api: "anthropic-messages" as const,
+			expectedName: "claude-opus-4-6",
+		},
+		{
+			id: "us.anthropic.claude-opus-4-6-v1",
+			provider: "amazon-bedrock",
+			api: "bedrock-converse-stream" as const,
+			expectedName: "claude-opus-4-6",
+		},
+	])("returns $expectedName preset for $provider/$id", ({ id, provider, api, expectedName }) => {
 		// given
 		const settings: PromptPresetSettings = { promptPreset: "auto" };
 		const model = createModel(id, provider, api);
@@ -109,64 +121,66 @@ describe("prompt preset resolver", () => {
 		const preset = resolvePreset(model, settings);
 
 		// then
-		expect(preset?.name).toBe("claude-opus");
+		expect(preset?.name).toBe(expectedName);
 		expect(preset?.prompt).toContain("You are senpi");
-		expect(preset?.prompt).toContain("## Model Notes (Claude Opus)");
-		expect(preset?.prompt).toContain("more literally");
 		expect(preset?.prompt).toContain("## Intent Gate");
 		expect(preset?.prompt).toContain("I read this as");
 		expect(preset?.prompt.length).toBeGreaterThan(2_000);
 	});
 
-	it("returns kimi-k2-6 preset for kimi/moonshotai/kimi-k2.6", () => {
+	it.each([{ id: "kimi-k2.6-0528", provider: "moonshot", api: "openai-responses" as const }])(
+		"returns kimi-k2-6 preset for $provider/$id",
+		({ id, provider, api }) => {
+			// given
+			const settings: PromptPresetSettings = { promptPreset: "auto" };
+			const model = createModel(id, provider, api);
+
+			// when
+			const preset = resolvePreset(model, settings);
+
+			// then
+			expect(preset?.name).toBe("kimi-k2-6");
+			expect(preset?.prompt).toContain("You are senpi");
+			expect(preset?.prompt).toContain("filler verification language");
+			expect(preset?.prompt).toContain("## Intent Gate");
+			expect(preset?.prompt.length).toBeGreaterThan(2_000);
+		},
+	);
+
+	it("returns undefined for unknown model", () => {
 		// given
 		const settings: PromptPresetSettings = { promptPreset: "auto" };
-		const model = createModel("moonshotai/kimi-k2.6", "kimi", "openai-completions");
+		const model = createModel("some-random-model", "some-provider", "openai-responses");
 
 		// when
 		const preset = resolvePreset(model, settings);
-
-		// then
-		expect(preset?.name).toBe("kimi-k2-6");
-		expect(preset?.prompt).toContain("You are senpi");
-		expect(preset?.prompt).toContain("## Model Notes (Kimi K2)");
-		expect(preset?.prompt).toContain("Toggle RL");
-		expect(preset?.prompt).toContain("intent gate routing line is exempt");
-		expect(preset?.prompt).toContain("## Intent Gate");
-	});
-
-	it.each([
-		{ id: "gpt-5.6", provider: "openai" },
-		{ id: "claude-sonnet-4-5", provider: "anthropic", api: "anthropic-messages" as const },
-	])("returns undefined so senpi-current remains unchanged for $provider/$id", ({ id, provider, api }) => {
-		// given
-		const settings: PromptPresetSettings = { promptPreset: "auto" };
-		const model = createModel(id, provider, api ?? "openai-responses");
-		const currentPrompt = fallbackPrompt();
-
-		// when
-		const preset = resolvePreset(model, settings);
-		const activePrompt = preset?.prompt ?? currentPrompt;
 
 		// then
 		expect(preset).toBeUndefined();
-		expect(activePrompt).toBe(currentPrompt);
-		expect(activePrompt.length).toBe(currentPrompt.length);
+	});
+
+	it("fallback prompt contains all expected structural sections", () => {
+		const activePrompt = fallbackPrompt();
+		expect(activePrompt).toContain("You are senpi");
+		expect(activePrompt).toContain("## Intent Gate");
+		expect(activePrompt).toContain("## Parallel Tool Calls");
+		expect(activePrompt).toContain("## Exploration");
+		expect(activePrompt).toContain("## Verification");
 		expect(activePrompt).toContain("## Available Tools");
 		expect(activePrompt).toContain("Current working directory: /repo");
 	});
 
-	it("allows settings.json to force claude-opus regardless of model id", () => {
+	it("allows settings.json to force claude-opus-4-7 regardless of model id", () => {
 		// given
-		const settings: PromptPresetSettings = { promptPreset: "claude-opus" };
+		const settings: PromptPresetSettings = { promptPreset: "claude-opus-4-7" };
 		const model = createModel("gpt-5.5", "openai-codex", "openai-codex-responses");
 
 		// when
 		const preset = resolvePreset(model, settings);
 
 		// then
-		expect(preset?.name).toBe("claude-opus");
-		expect(preset?.prompt).toContain("## Model Notes (Claude Opus)");
+		expect(preset?.name).toBe("claude-opus-4-7");
+		expect(preset?.prompt).toContain("full set rather than the first item");
 	});
 
 	it("allows settings.json to force gpt-5 regardless of model id", () => {
@@ -179,7 +193,7 @@ describe("prompt preset resolver", () => {
 
 		// then
 		expect(preset?.name).toBe("gpt-5");
-		expect(preset?.prompt).toContain("## Model Notes (GPT-5)");
+		expect(preset?.prompt).toContain("Retrieval budget");
 	});
 
 	it("allows settings.json to force kimi-k2-6 regardless of model id", () => {
@@ -192,11 +206,10 @@ describe("prompt preset resolver", () => {
 
 		// then
 		expect(preset?.name).toBe("kimi-k2-6");
-		expect(preset?.prompt).toContain("## Model Notes (Kimi K2)");
-		expect(preset?.prompt).toContain("Toggle RL");
+		expect(preset?.prompt).toContain("filler verification language");
 	});
 
-	it("does not include Kimi tuning in claude-opus preset", () => {
+	it("does not include Kimi tuning in claude-opus-4-7 preset", () => {
 		// given
 		const settings: PromptPresetSettings = { promptPreset: "auto" };
 		const model = createModel("claude-opus-4-7", "anthropic", "anthropic-messages");
@@ -205,10 +218,9 @@ describe("prompt preset resolver", () => {
 		const preset = resolvePreset(model, settings);
 
 		// then
-		expect(preset?.name).toBe("claude-opus");
-		expect(preset?.prompt).not.toContain("Toggle RL");
-		expect(preset?.prompt).not.toContain("Model Notes (Kimi K2)");
-		expect(preset?.prompt).not.toContain("Model Notes (GPT-5)");
+		expect(preset?.name).toBe("claude-opus-4-7");
+		expect(preset?.prompt).not.toContain("filler verification language");
+		expect(preset?.prompt).not.toContain("outcome-first");
 	});
 
 	it("does not include Kimi tuning in gpt-5 preset", () => {
@@ -221,9 +233,8 @@ describe("prompt preset resolver", () => {
 
 		// then
 		expect(preset?.name).toBe("gpt-5.5");
-		expect(preset?.prompt).not.toContain("Toggle RL");
-		expect(preset?.prompt).not.toContain("Model Notes (Kimi K2)");
-		expect(preset?.prompt).not.toContain("Model Notes (Claude Opus)");
+		expect(preset?.prompt).not.toContain("filler verification language");
+		expect(preset?.prompt).not.toContain("full set rather than the first item");
 	});
 
 	it("allows settings.json to force gpt-5.4 regardless of model id", () => {
@@ -236,7 +247,7 @@ describe("prompt preset resolver", () => {
 
 		// then
 		expect(preset?.name).toBe("gpt-5.4");
-		expect(preset?.prompt).toContain("## Model Notes (GPT-5)");
+		expect(preset?.prompt).toContain("reasoning effort");
 	});
 
 	it("allows settings.json to force gpt-5.5 regardless of model id", () => {
@@ -249,9 +260,31 @@ describe("prompt preset resolver", () => {
 
 		// then
 		expect(preset?.name).toBe("gpt-5.5");
-		expect(preset?.prompt).toContain("## Operator Notes");
 		expect(preset?.prompt).toContain("Todo discipline");
 		expect(preset?.prompt).toContain("Dig deeper");
-		expect(preset?.prompt).not.toContain("GPT-5.5");
+	});
+
+	it("resolves gpt-5.2 preset", () => {
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel("gpt-5.2", "openai", "openai-responses");
+		const preset = resolvePreset(model, settings);
+		expect(preset?.name).toBe("gpt-5.2");
+		expect(preset?.prompt).toContain("explicit budgets");
+	});
+
+	it("resolves gpt-5.3-codex preset", () => {
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel("gpt-5.3-codex", "openai-codex", "openai-codex-responses");
+		const preset = resolvePreset(model, settings);
+		expect(preset?.name).toBe("gpt-5.3-codex");
+		expect(preset?.prompt).toContain("Bias hard toward action");
+	});
+
+	it("resolves claude-opus-4-5 preset", () => {
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel("claude-opus-4-5", "anthropic", "anthropic-messages");
+		const preset = resolvePreset(model, settings);
+		expect(preset?.name).toBe("claude-opus-4-5");
+		expect(preset?.prompt).toContain("ordered steps");
 	});
 });

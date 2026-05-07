@@ -1,9 +1,7 @@
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "../../../dynamic-prompt/build.js";
 
 function buildGpt55Tuning(): string {
-	return `## Operator Notes
-
-Reason efficiently. Default to low or medium reasoning effort and re-evaluate before escalating; what earlier models needed walked through step by step, you can now hand off as an outcome plus a stopping condition. Skip mechanical step-by-step recitation when the goal is concrete - long process prompts narrow the search space and make answers feel mechanical. Prefer outcome-first framing: define the destination, the constraints, and the stopping condition, then let the path emerge from the work.
+	return `Reason efficiently. Default to low or medium reasoning effort and re-evaluate before escalating; what earlier models needed walked through step by step, you can now hand off as an outcome plus a stopping condition. Skip mechanical step-by-step recitation when the goal is concrete - long process prompts narrow the search space and make answers feel mechanical. Prefer outcome-first framing: define the destination, the constraints, and the stopping condition, then let the path emerge from the work.
 
 The intent gate routing line is non-optional. Every turn opens with one short read of what the user wants and what you are doing about it. If the latest message overrides earlier intent, drop the earlier path and serve the current request - do not keep pursuing an authorization the user did not re-issue this turn.
 

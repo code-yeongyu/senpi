@@ -1,6 +1,11 @@
 import type { Api, Model } from "@mariozechner/pi-ai";
 import type { BuildDynamicSystemPromptOptions } from "../../../dynamic-prompt/build.js";
-import { buildClaudeOpusPrompt } from "./claude-opus.js";
+import { buildClaudeOpus45Prompt } from "./claude-opus-4-5.js";
+import { buildClaudeOpus46Prompt } from "./claude-opus-4-6.js";
+import { buildClaudeOpus47Prompt } from "./claude-opus-4-7.js";
+import { buildGpt52Prompt } from "./gpt-5.2.js";
+import { buildGpt53CodexPrompt } from "./gpt-5.3-codex.js";
+import { buildGpt54Prompt } from "./gpt-5.4.js";
 import { buildGpt55Prompt } from "./gpt-5.5.js";
 import { buildGpt5Prompt } from "./gpt-5.js";
 import { buildKimiK26Prompt } from "./kimi-k2-6.js";
@@ -19,15 +24,21 @@ function normalizeModelId(modelId: string): string {
 	return modelId.toLowerCase();
 }
 
-type Gpt5Version = "gpt-5.4" | "gpt-5.5";
+type Gpt5Version = "gpt-5.2" | "gpt-5.3-codex" | "gpt-5.4" | "gpt-5.5";
 
 function extractGpt5Version(modelId: string): Gpt5Version | undefined {
 	const normalized = normalizeModelId(modelId);
+	if (normalized.includes("gpt-5.5")) {
+		return "gpt-5.5";
+	}
 	if (normalized.includes("gpt-5.4")) {
 		return "gpt-5.4";
 	}
-	if (normalized.includes("gpt-5.5")) {
-		return "gpt-5.5";
+	if (normalized.includes("gpt-5.3")) {
+		return "gpt-5.3-codex";
+	}
+	if (normalized.includes("gpt-5.2")) {
+		return "gpt-5.2";
 	}
 	return undefined;
 }
@@ -36,22 +47,27 @@ function isKimiK26Model(modelId: string): boolean {
 	return normalizeModelId(modelId).includes("kimi-k2.6");
 }
 
-function isClaudeOpusModel(modelId: string): boolean {
+type ClaudeOpusVersion = "claude-opus-4-7" | "claude-opus-4-6" | "claude-opus-4-5";
+
+function extractClaudeOpusVersion(modelId: string): ClaudeOpusVersion | undefined {
 	const normalized = normalizeModelId(modelId);
-	return normalized.includes("opus-4-7") || normalized.includes("opus-4-6");
+	if (normalized.includes("opus-4-7")) {
+		return "claude-opus-4-7";
+	}
+	if (normalized.includes("opus-4-6")) {
+		return "claude-opus-4-6";
+	}
+	if (normalized.includes("opus-4-5") || normalized.includes("opus-4.5")) {
+		return "claude-opus-4-5";
+	}
+	return undefined;
 }
 
 export function resolvePresetName(
 	model: Pick<Model<Api>, "id" | "provider">,
 	settings: PromptPresetSettings,
 ): ResolvedPresetName | undefined {
-	if (
-		settings.promptPreset === "claude-opus" ||
-		settings.promptPreset === "kimi-k2-6" ||
-		settings.promptPreset === "gpt-5" ||
-		settings.promptPreset === "gpt-5.4" ||
-		settings.promptPreset === "gpt-5.5"
-	) {
+	if (settings.promptPreset !== "auto") {
 		return settings.promptPreset;
 	}
 
@@ -62,23 +78,34 @@ export function resolvePresetName(
 	if (isKimiK26Model(model.id)) {
 		return "kimi-k2-6";
 	}
-	if (isClaudeOpusModel(model.id)) {
-		return "claude-opus";
+	const claudeVersion = extractClaudeOpusVersion(model.id);
+	if (claudeVersion) {
+		return claudeVersion;
 	}
 	return undefined;
 }
 
 function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPromptOptions): ResolvedPromptPreset {
-	if (name === "gpt-5.5") {
-		return { name, prompt: buildGpt55Prompt(options) };
+	switch (name) {
+		case "gpt-5.5":
+			return { name, prompt: buildGpt55Prompt(options) };
+		case "gpt-5.4":
+			return { name, prompt: buildGpt54Prompt(options) };
+		case "gpt-5.3-codex":
+			return { name, prompt: buildGpt53CodexPrompt(options) };
+		case "gpt-5.2":
+			return { name, prompt: buildGpt52Prompt(options) };
+		case "gpt-5":
+			return { name, prompt: buildGpt5Prompt(options) };
+		case "kimi-k2-6":
+			return { name, prompt: buildKimiK26Prompt(options) };
+		case "claude-opus-4-7":
+			return { name, prompt: buildClaudeOpus47Prompt(options) };
+		case "claude-opus-4-6":
+			return { name, prompt: buildClaudeOpus46Prompt(options) };
+		case "claude-opus-4-5":
+			return { name, prompt: buildClaudeOpus45Prompt(options) };
 	}
-	if (name === "gpt-5" || name === "gpt-5.4") {
-		return { name, prompt: buildGpt5Prompt(options) };
-	}
-	if (name === "kimi-k2-6") {
-		return { name, prompt: buildKimiK26Prompt(options) };
-	}
-	return { name, prompt: buildClaudeOpusPrompt(options) };
 }
 
 function withDefaults(options: Partial<BuildDynamicSystemPromptOptions> = {}): BuildDynamicSystemPromptOptions {
