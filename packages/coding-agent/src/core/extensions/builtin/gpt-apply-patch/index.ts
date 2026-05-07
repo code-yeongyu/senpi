@@ -322,13 +322,10 @@ function restoreEditToolsFromBaseline(currentToolNames: string[], baselineToolNa
 }
 
 function resolveWorkspacePath(cwd: string, filePath: string): string {
-	if (path.isAbsolute(filePath)) {
-		throw new Error("File references can only be relative, NEVER ABSOLUTE.");
-	}
-
-	const absolutePath = path.resolve(cwd, filePath);
-	const relativePath = path.relative(cwd, absolutePath);
-	if (relativePath === ".." || relativePath.startsWith(`..${path.sep}`)) {
+	const absoluteCwd = path.resolve(cwd);
+	const absolutePath = path.resolve(absoluteCwd, filePath);
+	const relativePath = path.relative(absoluteCwd, absolutePath);
+	if (relativePath === ".." || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
 		throw new Error("File references must stay within the current workspace.");
 	}
 
