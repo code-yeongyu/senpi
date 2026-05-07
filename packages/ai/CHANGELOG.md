@@ -7,6 +7,7 @@
 - `ProviderNativeContent` content variant in `AssistantMessage.content` for surfacing provider-native blocks (web_search results, server tool calls, grounding metadata, etc.) without lossy normalization.
 - Anthropic Messages now preserves unknown `content_block_start` variants as `ProviderNativeContent` (`subtype` + `raw`) and skips them when converting assistant history back into request payloads.
 - OpenAI Responses now preserves unknown `response.output_item.added` variants (for example `web_search_call`, `file_search_call`, `image_generation_call`, `code_interpreter_call`, `computer_call`, MCP calls, local shell calls, and future item types) as `ProviderNativeContent` and skips them when replaying assistant history.
+- Google AI Studio and Vertex now surface `executableCode` / `codeExecutionResult` parts and candidate-level `groundingMetadata` / `urlContextMetadata` as `ProviderNativeContent`, with replay conversion explicitly skipping provider-native blocks.
 - Added `repairOrphanedToolResults` and `TOOL_RESULT_PLACEHOLDER` in `pi-ai` utilities for bidirectional tool pair repair across consumers.
 
 ### Fixed

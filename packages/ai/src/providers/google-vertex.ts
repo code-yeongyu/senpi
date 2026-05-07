@@ -32,6 +32,7 @@ import {
 	mapStopReason,
 	mapToolChoice,
 	retainThoughtSignature,
+	toProviderNativeContent,
 } from "./google-shared.js";
 import { applyExtraBody, buildBaseOptions, GOOGLE_RESERVED_BODY_KEYS } from "./simple-options.js";
 
@@ -101,6 +102,8 @@ export const streamGoogleVertex: StreamFunction<"google-vertex", GoogleVertexOpt
 
 			stream.push({ type: "start", partial: output });
 			let currentBlock: TextContent | ThinkingContent | null = null;
+			let groundingMetadataEmitted = false;
+			let urlContextMetadataEmitted = false;
 			const blocks = output.content;
 			const blockIndex = () => blocks.length - 1;
 			for await (const chunk of googleStream) {
@@ -110,7 +113,9 @@ export const streamGoogleVertex: StreamFunction<"google-vertex", GoogleVertexOpt
 				const candidate = chunk.candidates?.[0];
 				if (candidate?.content?.parts) {
 					for (const part of candidate.content.parts) {
+						let handledAsKnownPart = false;
 						if (part.text !== undefined) {
+							handledAsKnownPart = true;
 							const isThinking = isThinkingPart(part);
 							if (
 								!currentBlock ||
@@ -172,6 +177,7 @@ export const streamGoogleVertex: StreamFunction<"google-vertex", GoogleVertexOpt
 						}
 
 						if (part.functionCall) {
+							handledAsKnownPart = true;
 							if (currentBlock) {
 								if (currentBlock.type === "text") {
 									stream.push({
@@ -216,7 +222,29 @@ export const streamGoogleVertex: StreamFunction<"google-vertex", GoogleVertexOpt
 							});
 							stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
 						}
+
+						if (!handledAsKnownPart) {
+							output.content.push(toProviderNativeContent(part));
+						}
 					}
+				}
+
+				if (candidate?.groundingMetadata && !groundingMetadataEmitted) {
+					output.content.push({
+						type: "providerNative",
+						subtype: "groundingMetadata",
+						raw: candidate.groundingMetadata,
+					});
+					groundingMetadataEmitted = true;
+				}
+
+				if (candidate?.urlContextMetadata && !urlContextMetadataEmitted) {
+					output.content.push({
+						type: "providerNative",
+						subtype: "urlContextMetadata",
+						raw: candidate.urlContextMetadata,
+					});
+					urlContextMetadataEmitted = true;
 				}
 
 				if (candidate?.finishReason) {

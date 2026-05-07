@@ -3,7 +3,7 @@
  */
 
 import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from "@google/genai";
-import type { Context, ImageContent, Model, StopReason, TextContent, Tool } from "../types.js";
+import type { Context, ImageContent, Model, ProviderNativeContent, StopReason, TextContent, Tool } from "../types.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { transformMessages } from "./transform-messages.js";
 
@@ -165,6 +165,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 						...(thoughtSignature && { thoughtSignature }),
 					};
 					parts.push(part);
+				} else if (block.type === "providerNative") {
 				}
 			}
 
@@ -232,6 +233,36 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 	}
 
 	return contents;
+}
+
+function dominantPartKey(part: Part): string {
+	const entries = Object.entries(part) as Array<[string, unknown]>;
+	const dominantEntry = entries.find(([, value]) => value !== undefined && value !== null);
+	return dominantEntry?.[0] ?? "unknown";
+}
+
+export function toProviderNativeContent(part: Part): ProviderNativeContent {
+	if (part.executableCode !== undefined) {
+		return {
+			type: "providerNative",
+			subtype: "executableCode",
+			raw: { executableCode: part.executableCode },
+		};
+	}
+
+	if (part.codeExecutionResult !== undefined) {
+		return {
+			type: "providerNative",
+			subtype: "codeExecutionResult",
+			raw: { codeExecutionResult: part.codeExecutionResult },
+		};
+	}
+
+	return {
+		type: "providerNative",
+		subtype: dominantPartKey(part),
+		raw: part,
+	};
 }
 
 const JSON_SCHEMA_META_DECLARATIONS = new Set([
