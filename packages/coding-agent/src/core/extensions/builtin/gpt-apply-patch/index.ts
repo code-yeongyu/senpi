@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Model } from "@mariozechner/pi-ai";
 import { Type } from "typebox";
@@ -17,7 +17,7 @@ type ParsedPatch =
 	| { type: "update"; filePath: string; movePath?: string; chunks: PatchChunk[] };
 
 type PatchChunk = {
-	changeContext?: string;
+	changeContexts: string[];
 	oldLines: string[];
 	newLines: string[];
 	isEndOfFile: boolean;
@@ -159,7 +159,7 @@ function seekSequence(lines: string[], pattern: string[], start: number, eof: bo
 
 export function extractPatchedPaths(patchText: string): string[] {
 	const normalized = stripHeredoc(normalizePatchText(patchText));
-	const matches = normalized.matchAll(/^\*\*\* (?:Add|Delete|Update) File: (.+)$/gm);
+	const matches = normalized.matchAll(/^\*\*\* (?:(?:Add|Delete|Update) File|Move to): (.+)$/gm);
 	return Array.from(matches, (match) => match[1] ?? "");
 }
 
@@ -233,12 +233,21 @@ function parsePatch(patchText: string): ParsedPatch[] {
 				}
 
 				const allowMissingContext = chunks.length === 0;
-				let changeContext: string | undefined;
-				if (nextLine === "@@") {
-					index++;
-				} else if (nextLine.startsWith("@@ ")) {
-					changeContext = nextLine.slice("@@ ".length);
-					index++;
+				const changeContexts: string[] = [];
+				if (nextLine.startsWith("@@")) {
+					while (index < endIndex) {
+						const contextLine = lines[index] ?? "";
+						if (contextLine === "@@") {
+							index++;
+							continue;
+						}
+						if (contextLine.startsWith("@@ ")) {
+							changeContexts.push(contextLine.slice("@@ ".length));
+							index++;
+							continue;
+						}
+						break;
+					}
 				} else if (!allowMissingContext) {
 					throw new Error(`Expected update hunk to start with a @@ context marker, got: '${nextLine}'`);
 				}
@@ -286,9 +295,9 @@ function parsePatch(patchText: string): ParsedPatch[] {
 				if (parsedLines === 0) {
 					throw new Error("Update hunk does not contain any lines");
 				}
-				chunks.push({ changeContext, oldLines, newLines, isEndOfFile });
+				chunks.push({ changeContexts, oldLines, newLines, isEndOfFile });
 			}
-			if (chunks.length === 0) {
+			if (chunks.length === 0 && !movePath) {
 				throw new Error(`Update file hunk for path '${filePath}' is empty`);
 			}
 
@@ -318,10 +327,10 @@ function replaceChunks(content: string, filePath: string, chunks: PatchChunk[]):
 	let lineIndex = 0;
 
 	for (const chunk of chunks) {
-		if (chunk.changeContext) {
-			const contextIndex = seekSequence(originalLines, [chunk.changeContext], lineIndex, false);
+		for (const changeContext of chunk.changeContexts) {
+			const contextIndex = seekSequence(originalLines, [changeContext], lineIndex, false);
 			if (contextIndex === undefined) {
-				throw new Error(`Failed to find context '${chunk.changeContext}' in ${filePath}`);
+				throw new Error(`Failed to find context '${changeContext}' in ${filePath}`);
 			}
 			lineIndex = contextIndex + 1;
 		}
@@ -364,9 +373,10 @@ async function applyParsedPatch(cwd: string, hunks: ParsedPatch[]): Promise<stri
 	const summaries: string[] = [];
 
 	for (const hunk of hunks) {
-		const absolutePath = resolveWorkspacePath(cwd, hunk.filePath);
+		const absolutePath = await resolveWorkspacePath(cwd, hunk.filePath);
 		if (hunk.type === "add") {
 			await mkdir(path.dirname(absolutePath), { recursive: true });
+			await assertWorkspacePath(cwd, absolutePath);
 			await writeFile(absolutePath, hunk.content, "utf-8");
 			summaries.push(`add: ${hunk.filePath}`);
 			continue;
@@ -374,16 +384,20 @@ async function applyParsedPatch(cwd: string, hunks: ParsedPatch[]): Promise<stri
 
 		if (hunk.type === "delete") {
 			await stat(absolutePath);
+			await assertWorkspacePath(cwd, absolutePath);
 			await rm(absolutePath);
 			summaries.push(`delete: ${hunk.filePath}`);
 			continue;
 		}
 
-		const nextContent = replaceChunks(await readFile(absolutePath, "utf-8"), hunk.filePath, hunk.chunks);
+		const currentContent = await readFile(absolutePath, "utf-8");
+		const nextContent =
+			hunk.chunks.length === 0 ? currentContent : replaceChunks(currentContent, hunk.filePath, hunk.chunks);
 
 		if (hunk.movePath) {
-			const absoluteMovePath = resolveWorkspacePath(cwd, hunk.movePath);
+			const absoluteMovePath = await resolveWorkspacePath(cwd, hunk.movePath);
 			await mkdir(path.dirname(absoluteMovePath), { recursive: true });
+			await assertWorkspacePath(cwd, absoluteMovePath);
 			await writeFile(absoluteMovePath, nextContent, "utf-8");
 			if (absoluteMovePath !== absolutePath) {
 				await rm(absolutePath);
@@ -392,6 +406,7 @@ async function applyParsedPatch(cwd: string, hunks: ParsedPatch[]): Promise<stri
 			continue;
 		}
 
+		await assertWorkspacePath(cwd, absolutePath);
 		await writeFile(absolutePath, nextContent, "utf-8");
 		summaries.push(`update: ${hunk.filePath}`);
 	}
@@ -436,13 +451,45 @@ function restoreEditToolsFromBaseline(currentToolNames: string[], baselineToolNa
 	return [...new Set(restoredToolNames)];
 }
 
-function resolveWorkspacePath(cwd: string, filePath: string): string {
+function isInsideWorkspace(absoluteCwd: string, absolutePath: string): boolean {
+	const relativePath = path.relative(absoluteCwd, absolutePath);
+	return (
+		relativePath === "" ||
+		(!relativePath.startsWith(`..${path.sep}`) && relativePath !== ".." && !path.isAbsolute(relativePath))
+	);
+}
+
+async function assertWorkspacePath(cwd: string, absolutePath: string): Promise<void> {
+	const absoluteCwd = await realpath(cwd);
+	let pathToCheck = absolutePath;
+	while (true) {
+		try {
+			const realPath = await realpath(pathToCheck);
+			if (!isInsideWorkspace(absoluteCwd, realPath)) {
+				throw new Error("File references must stay within the current workspace.");
+			}
+			return;
+		} catch (error) {
+			if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+				const parent = path.dirname(pathToCheck);
+				if (parent === pathToCheck) {
+					throw error;
+				}
+				pathToCheck = parent;
+				continue;
+			}
+			throw error;
+		}
+	}
+}
+
+async function resolveWorkspacePath(cwd: string, filePath: string): Promise<string> {
 	const absoluteCwd = path.resolve(cwd);
 	const absolutePath = path.resolve(absoluteCwd, filePath);
-	const relativePath = path.relative(absoluteCwd, absolutePath);
-	if (relativePath === ".." || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
+	if (!isInsideWorkspace(absoluteCwd, absolutePath)) {
 		throw new Error("File references must stay within the current workspace.");
 	}
+	await assertWorkspacePath(cwd, absolutePath);
 
 	return absolutePath;
 }
