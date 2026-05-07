@@ -167,7 +167,8 @@ function parsePatch(patchText: string): ParsedPatch[] {
 	const normalized = stripHeredoc(normalizePatchText(patchText).trim()).trim();
 	const lines = normalized.split("\n");
 	const beginIndex = lines[0]?.trim() === "*** Begin Patch" ? 0 : -1;
-	const endIndex = lines.at(-1)?.trim() === "*** End Patch" ? lines.length - 1 : -1;
+	const lastLine = lines[lines.length - 1];
+	const endIndex = lastLine?.trim() === "*** End Patch" ? lines.length - 1 : -1;
 
 	if (beginIndex === -1 || endIndex === -1 || endIndex < beginIndex) {
 		throw new Error("Invalid patch format: expected *** Begin Patch ... *** End Patch envelope");
@@ -197,7 +198,11 @@ function parsePatch(patchText: string): ParsedPatch[] {
 				contentLines.push(nextLine.slice(1));
 				index++;
 			}
-			hunks.push({ type: "add", filePath, content: `${contentLines.join("\n")}\n` });
+			hunks.push({
+				type: "add",
+				filePath,
+				content: contentLines.length === 0 ? "" : `${contentLines.join("\n")}\n`,
+			});
 			continue;
 		}
 
@@ -244,15 +249,15 @@ function parsePatch(patchText: string): ParsedPatch[] {
 				let parsedLines = 0;
 				while (index < endIndex) {
 					const hunkLine = lines[index] ?? "";
-					if (hunkLine.startsWith("@@") || hunkLine.startsWith("*** ")) {
-						break;
-					}
 					if (hunkLine === "*** End of File") {
 						if (parsedLines === 0) {
 							throw new Error("Update hunk does not contain any lines");
 						}
 						isEndOfFile = true;
 						index++;
+						break;
+					}
+					if (hunkLine.startsWith("@@") || hunkLine.startsWith("*** ")) {
 						break;
 					}
 					const prefix = hunkLine[0];
@@ -301,7 +306,7 @@ function parsePatch(patchText: string): ParsedPatch[] {
 
 function splitFileLines(content: string): string[] {
 	const lines = normalizePatchText(content).split("\n");
-	if (lines.at(-1) === "") {
+	if (lines[lines.length - 1] === "") {
 		lines.pop();
 	}
 	return lines;
@@ -322,7 +327,8 @@ function replaceChunks(content: string, filePath: string, chunks: PatchChunk[]):
 		}
 
 		if (chunk.oldLines.length === 0) {
-			const insertionIndex = originalLines.at(-1) === "" ? originalLines.length - 1 : originalLines.length;
+			const insertionIndex =
+				originalLines[originalLines.length - 1] === "" ? originalLines.length - 1 : originalLines.length;
 			replacements.push({ start: insertionIndex, oldLength: 0, newLines: chunk.newLines });
 			continue;
 		}
@@ -330,9 +336,9 @@ function replaceChunks(content: string, filePath: string, chunks: PatchChunk[]):
 		let pattern = chunk.oldLines;
 		let newLines = chunk.newLines;
 		let foundAt = seekSequence(originalLines, pattern, lineIndex, chunk.isEndOfFile);
-		if (foundAt === undefined && pattern.at(-1) === "") {
+		if (foundAt === undefined && pattern[pattern.length - 1] === "") {
 			pattern = pattern.slice(0, -1);
-			if (newLines.at(-1) === "") {
+			if (newLines[newLines.length - 1] === "") {
 				newLines = newLines.slice(0, -1);
 			}
 			foundAt = seekSequence(originalLines, pattern, lineIndex, chunk.isEndOfFile);
