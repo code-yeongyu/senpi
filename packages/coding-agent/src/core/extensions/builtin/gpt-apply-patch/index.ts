@@ -17,8 +17,10 @@ type ParsedPatch =
 	| { type: "update"; filePath: string; movePath?: string; chunks: PatchChunk[] };
 
 type PatchChunk = {
+	changeContext?: string;
 	oldLines: string[];
 	newLines: string[];
+	isEndOfFile: boolean;
 };
 
 type BaselineState = {
@@ -101,6 +103,60 @@ function stripHeredoc(input: string): string {
 	return input;
 }
 
+function normalizeSeekLine(line: string): string {
+	return line
+		.trim()
+		.replace(/[‐‑‒–—―−]/g, "-")
+		.replace(/[‘’‚‛]/g, "'")
+		.replace(/[“”„‟]/g, '"')
+		.replace(/[\u00A0\u2002-\u200A\u202F\u205F\u3000]/g, " ");
+}
+
+function seekSequence(lines: string[], pattern: string[], start: number, eof: boolean): number | undefined {
+	if (pattern.length === 0) {
+		return start;
+	}
+	if (pattern.length > lines.length) {
+		return undefined;
+	}
+
+	const searchStart = eof && lines.length >= pattern.length ? lines.length - pattern.length : start;
+	const lastStart = lines.length - pattern.length;
+	const matches = (index: number, compare: (left: string, right: string) => boolean): boolean => {
+		for (let patternIndex = 0; patternIndex < pattern.length; patternIndex++) {
+			const line = lines[index + patternIndex];
+			const expected = pattern[patternIndex];
+			if (line === undefined || expected === undefined || !compare(line, expected)) {
+				return false;
+			}
+		}
+		return true;
+	};
+
+	for (let index = searchStart; index <= lastStart; index++) {
+		if (matches(index, (line, expected) => line === expected)) {
+			return index;
+		}
+	}
+	for (let index = searchStart; index <= lastStart; index++) {
+		if (matches(index, (line, expected) => line.trimEnd() === expected.trimEnd())) {
+			return index;
+		}
+	}
+	for (let index = searchStart; index <= lastStart; index++) {
+		if (matches(index, (line, expected) => line.trim() === expected.trim())) {
+			return index;
+		}
+	}
+	for (let index = searchStart; index <= lastStart; index++) {
+		if (matches(index, (line, expected) => normalizeSeekLine(line) === normalizeSeekLine(expected))) {
+			return index;
+		}
+	}
+
+	return undefined;
+}
+
 export function extractPatchedPaths(patchText: string): string[] {
 	const normalized = stripHeredoc(normalizePatchText(patchText));
 	const matches = normalized.matchAll(/^\*\*\* (?:Add|Delete|Update) File: (.+)$/gm);
@@ -108,10 +164,10 @@ export function extractPatchedPaths(patchText: string): string[] {
 }
 
 function parsePatch(patchText: string): ParsedPatch[] {
-	const normalized = stripHeredoc(normalizePatchText(patchText).trim());
+	const normalized = stripHeredoc(normalizePatchText(patchText).trim()).trim();
 	const lines = normalized.split("\n");
-	const beginIndex = lines.findIndex((line) => line.trim() === "*** Begin Patch");
-	const endIndex = lines.findIndex((line) => line.trim() === "*** End Patch");
+	const beginIndex = lines[0]?.trim() === "*** Begin Patch" ? 0 : -1;
+	const endIndex = lines.at(-1)?.trim() === "*** End Patch" ? lines.length - 1 : -1;
 
 	if (beginIndex === -1 || endIndex === -1 || endIndex < beginIndex) {
 		throw new Error("Invalid patch format: expected *** Begin Patch ... *** End Patch envelope");
@@ -141,7 +197,7 @@ function parsePatch(patchText: string): ParsedPatch[] {
 				contentLines.push(nextLine.slice(1));
 				index++;
 			}
-			hunks.push({ type: "add", filePath, content: contentLines.join("\n") });
+			hunks.push({ type: "add", filePath, content: `${contentLines.join("\n")}\n` });
 			continue;
 		}
 
@@ -163,80 +219,139 @@ function parsePatch(patchText: string): ParsedPatch[] {
 			const chunks: PatchChunk[] = [];
 			while (index < endIndex) {
 				const nextLine = lines[index] ?? "";
+				if (nextLine.trim() === "") {
+					index++;
+					continue;
+				}
 				if (nextLine.startsWith("*** ")) {
 					break;
 				}
-				if (nextLine === "*** End of File") {
+
+				const allowMissingContext = chunks.length === 0;
+				let changeContext: string | undefined;
+				if (nextLine === "@@") {
 					index++;
-					continue;
+				} else if (nextLine.startsWith("@@ ")) {
+					changeContext = nextLine.slice("@@ ".length);
+					index++;
+				} else if (!allowMissingContext) {
+					throw new Error(`Expected update hunk to start with a @@ context marker, got: '${nextLine}'`);
 				}
-				if (nextLine.startsWith("@@")) {
-					index++;
-					const oldLines: string[] = [];
-					const newLines: string[] = [];
-					while (index < endIndex) {
-						const hunkLine = lines[index] ?? "";
-						if (hunkLine.startsWith("@@") || hunkLine.startsWith("*** ")) {
-							break;
-						}
-						if (hunkLine === "*** End of File") {
-							index++;
-							break;
-						}
-						const prefix = hunkLine[0];
-						const value = hunkLine.slice(1);
-						if (prefix === " ") {
-							oldLines.push(value);
-							newLines.push(value);
-						} else if (prefix === "-") {
-							oldLines.push(value);
-						} else if (prefix === "+") {
-							newLines.push(value);
-						} else {
-							throw new Error("Invalid patch format: update lines must start with ' ', '-', or '+'");
-						}
-						index++;
+
+				const oldLines: string[] = [];
+				const newLines: string[] = [];
+				let isEndOfFile = false;
+				let parsedLines = 0;
+				while (index < endIndex) {
+					const hunkLine = lines[index] ?? "";
+					if (hunkLine.startsWith("@@") || hunkLine.startsWith("*** ")) {
+						break;
 					}
-					chunks.push({ oldLines, newLines });
-					continue;
+					if (hunkLine === "*** End of File") {
+						if (parsedLines === 0) {
+							throw new Error("Update hunk does not contain any lines");
+						}
+						isEndOfFile = true;
+						index++;
+						break;
+					}
+					const prefix = hunkLine[0];
+					const value = hunkLine.slice(1);
+					if (prefix === undefined) {
+						oldLines.push("");
+						newLines.push("");
+					} else if (prefix === " ") {
+						oldLines.push(value);
+						newLines.push(value);
+					} else if (prefix === "-") {
+						oldLines.push(value);
+					} else if (prefix === "+") {
+						newLines.push(value);
+					} else if (parsedLines > 0) {
+						break;
+					} else {
+						throw new Error(
+							`Unexpected line found in update hunk: '${hunkLine}'. Every line should start with ' ' (context line), '+' (added line), or '-' (removed line)`,
+						);
+					}
+					parsedLines++;
+					index++;
 				}
-				throw new Error(`Invalid patch format: unexpected line "${nextLine}"`);
+
+				if (parsedLines === 0) {
+					throw new Error("Update hunk does not contain any lines");
+				}
+				chunks.push({ changeContext, oldLines, newLines, isEndOfFile });
+			}
+			if (chunks.length === 0) {
+				throw new Error(`Update file hunk for path '${filePath}' is empty`);
 			}
 
 			hunks.push({ type: "update", filePath, movePath, chunks });
 			continue;
 		}
 
-		index++;
+		throw new Error(
+			`'${line}' is not a valid hunk header. Valid hunk headers: '*** Add File: {path}', '*** Delete File: {path}', '*** Update File: {path}'`,
+		);
 	}
 
 	return hunks;
 }
 
-function replaceChunk(
-	content: string,
-	chunk: PatchChunk,
-	searchStart: number,
-): { content: string; nextSearchStart: number } {
-	const oldBlock = chunk.oldLines.join("\n");
-	const newBlock = chunk.newLines.join("\n");
+function splitFileLines(content: string): string[] {
+	const lines = normalizePatchText(content).split("\n");
+	if (lines.at(-1) === "") {
+		lines.pop();
+	}
+	return lines;
+}
 
-	if (oldBlock.length === 0) {
-		return {
-			content: content.slice(0, searchStart) + newBlock + content.slice(searchStart),
-			nextSearchStart: searchStart + newBlock.length,
-		};
+function replaceChunks(content: string, filePath: string, chunks: PatchChunk[]): string {
+	const originalLines = splitFileLines(content);
+	const replacements: { start: number; oldLength: number; newLines: string[] }[] = [];
+	let lineIndex = 0;
+
+	for (const chunk of chunks) {
+		if (chunk.changeContext) {
+			const contextIndex = seekSequence(originalLines, [chunk.changeContext], lineIndex, false);
+			if (contextIndex === undefined) {
+				throw new Error(`Failed to find context '${chunk.changeContext}' in ${filePath}`);
+			}
+			lineIndex = contextIndex + 1;
+		}
+
+		if (chunk.oldLines.length === 0) {
+			const insertionIndex = originalLines.at(-1) === "" ? originalLines.length - 1 : originalLines.length;
+			replacements.push({ start: insertionIndex, oldLength: 0, newLines: chunk.newLines });
+			continue;
+		}
+
+		let pattern = chunk.oldLines;
+		let newLines = chunk.newLines;
+		let foundAt = seekSequence(originalLines, pattern, lineIndex, chunk.isEndOfFile);
+		if (foundAt === undefined && pattern.at(-1) === "") {
+			pattern = pattern.slice(0, -1);
+			if (newLines.at(-1) === "") {
+				newLines = newLines.slice(0, -1);
+			}
+			foundAt = seekSequence(originalLines, pattern, lineIndex, chunk.isEndOfFile);
+		}
+
+		if (foundAt === undefined) {
+			throw new Error(`Failed to find expected lines in ${filePath}:\n${chunk.oldLines.join("\n")}`);
+		}
+
+		replacements.push({ start: foundAt, oldLength: pattern.length, newLines });
+		lineIndex = foundAt + pattern.length;
 	}
 
-	const foundAt = content.indexOf(oldBlock, searchStart);
-	if (foundAt === -1) {
-		throw new Error(`Failed to find patch chunk:\n${oldBlock}`);
+	const nextLines = [...originalLines];
+	for (const replacement of replacements.sort((left, right) => right.start - left.start)) {
+		nextLines.splice(replacement.start, replacement.oldLength, ...replacement.newLines);
 	}
-
-	return {
-		content: content.slice(0, foundAt) + newBlock + content.slice(foundAt + oldBlock.length),
-		nextSearchStart: foundAt + newBlock.length,
-	};
+	nextLines.push("");
+	return nextLines.join("\n");
 }
 
 async function applyParsedPatch(cwd: string, hunks: ParsedPatch[]): Promise<string[]> {
@@ -258,13 +373,7 @@ async function applyParsedPatch(cwd: string, hunks: ParsedPatch[]): Promise<stri
 			continue;
 		}
 
-		let nextContent = normalizePatchText(await readFile(absolutePath, "utf-8"));
-		let searchStart = 0;
-		for (const chunk of hunk.chunks) {
-			const result = replaceChunk(nextContent, chunk, searchStart);
-			nextContent = result.content;
-			searchStart = result.nextSearchStart;
-		}
+		const nextContent = replaceChunks(await readFile(absolutePath, "utf-8"), hunk.filePath, hunk.chunks);
 
 		if (hunk.movePath) {
 			const absoluteMovePath = resolveWorkspacePath(cwd, hunk.movePath);
