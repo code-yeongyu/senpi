@@ -119,6 +119,7 @@ export interface Settings {
 	enableSkillCommands?: boolean; // default: true - register skills as /skill:name commands
 	terminal?: TerminalSettings;
 	images?: ImageSettings;
+	favoriteModels?: string[]; // Model patterns for Ctrl+P cycling (same format as --models CLI flag)
 	enabledModels?: string[]; // Model patterns for cycling (same format as --models CLI flag)
 	doubleEscapeAction?: "fork" | "tree" | "none"; // Action for double-escape with empty editor (default: "tree")
 	treeFilterMode?: "default" | "no-tools" | "user-only" | "labeled-only" | "all"; // Default filter when opening /tree
@@ -1047,6 +1048,16 @@ export class SettingsManager {
 
 	getEnabledModels(): string[] | undefined {
 		return this.settings.enabledModels;
+	}
+
+	getFavoriteModels(): string[] | undefined {
+		return this.settings.favoriteModels;
+	}
+
+	setFavoriteModels(patterns: string[] | undefined): void {
+		this.globalSettings.favoriteModels = patterns;
+		this.markModified("favoriteModels");
+		this.save();
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {
