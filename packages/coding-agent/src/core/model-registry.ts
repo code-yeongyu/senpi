@@ -177,6 +177,7 @@ const ModelOverrideSchema = Type.Object({
 	name: Type.Optional(Type.String({ minLength: 1 })),
 	reasoning: Type.Optional(Type.Boolean()),
 	thinkingLevelMap: Type.Optional(ThinkingLevelMapSchema),
+	thinkingLevelMapMode: Type.Optional(Type.Union([Type.Literal("merge"), Type.Literal("replace")])),
 	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image"), Type.Literal("video")]))),
 	cost: Type.Optional(
 		Type.Object({
@@ -199,6 +200,7 @@ type ModelWithThinkingLevelMap = Model<Api> & { thinkingLevelMap?: ThinkingLevel
 
 const ProviderConfigSchema = Type.Object({
 	name: Type.Optional(Type.String({ minLength: 1 })),
+	disabled: Type.Optional(Type.Boolean()),
 	baseUrl: Type.Optional(Type.String({ minLength: 1 })),
 	apiKey: Type.Optional(Type.String({ minLength: 1 })),
 	api: Type.Optional(Type.String({ minLength: 1 })),
@@ -206,11 +208,14 @@ const ProviderConfigSchema = Type.Object({
 	extraBody: Type.Optional(ExtraBodySchema),
 	compat: Type.Optional(ProviderCompatSchema),
 	authHeader: Type.Optional(Type.Boolean()),
+	whitelist: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+	blacklist: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
 	models: Type.Optional(Type.Array(ModelDefinitionSchema)),
 	modelOverrides: Type.Optional(Type.Record(Type.String(), ModelOverrideSchema)),
 });
 
 const ModelsConfigSchema = Type.Object({
+	disabledProviders: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
 	providers: Type.Record(Type.String(), ProviderConfigSchema),
 });
 
@@ -270,11 +275,22 @@ interface CustomModelsResult {
 	overrides: Map<string, ProviderOverride>;
 	/** Per-model overrides: provider -> modelId -> override */
 	modelOverrides: Map<string, Map<string, ModelOverride>>;
+	disabledProviders: Set<string>;
+	modelWhitelists: Map<string, Set<string>>;
+	modelBlacklists: Map<string, Set<string>>;
 	error: string | undefined;
 }
 
 function emptyCustomModelsResult(error?: string): CustomModelsResult {
-	return { models: [], overrides: new Map(), modelOverrides: new Map(), error };
+	return {
+		models: [],
+		overrides: new Map(),
+		modelOverrides: new Map(),
+		disabledProviders: new Set(),
+		modelWhitelists: new Map(),
+		modelBlacklists: new Map(),
+		error,
+	};
 }
 
 function mergeCompat(
@@ -320,7 +336,10 @@ function applyModelOverride(model: Model<Api>, override: ModelOverride): Model<A
 	if (override.name !== undefined) result.name = override.name;
 	if (override.reasoning !== undefined) result.reasoning = override.reasoning;
 	if (override.thinkingLevelMap !== undefined) {
-		result.thinkingLevelMap = { ...modelWithThinkingLevelMap.thinkingLevelMap, ...override.thinkingLevelMap };
+		result.thinkingLevelMap =
+			override.thinkingLevelMapMode === "replace"
+				? { ...override.thinkingLevelMap }
+				: { ...modelWithThinkingLevelMap.thinkingLevelMap, ...override.thinkingLevelMap };
 	}
 	if (override.input !== undefined) result.input = override.input as Model<Api>["input"];
 	if (override.contextWindow !== undefined) result.contextWindow = override.contextWindow;
@@ -404,6 +423,9 @@ export class ModelRegistry {
 			models: customModels,
 			overrides,
 			modelOverrides,
+			disabledProviders,
+			modelWhitelists,
+			modelBlacklists,
 			error,
 		} = this.modelsJsonPath ? this.loadCustomModels(this.modelsJsonPath) : emptyCustomModelsResult();
 
@@ -412,7 +434,13 @@ export class ModelRegistry {
 			// Keep built-in models even if custom models failed to load
 		}
 
-		const builtInModels = this.loadBuiltInModels(overrides, modelOverrides);
+		const builtInModels = this.loadBuiltInModels(
+			overrides,
+			modelOverrides,
+			disabledProviders,
+			modelWhitelists,
+			modelBlacklists,
+		);
 		let combined = this.mergeCustomModels(builtInModels, customModels);
 
 		// Let OAuth providers modify their models (e.g., update baseUrl)
@@ -430,13 +458,25 @@ export class ModelRegistry {
 	private loadBuiltInModels(
 		overrides: Map<string, ProviderOverride>,
 		modelOverrides: Map<string, Map<string, ModelOverride>>,
+		disabledProviders: Set<string>,
+		modelWhitelists: Map<string, Set<string>>,
+		modelBlacklists: Map<string, Set<string>>,
 	): Model<Api>[] {
 		return getProviders().flatMap((provider) => {
+			if (disabledProviders.has(provider)) {
+				return [];
+			}
+
 			const models = getModels(provider as KnownProvider) as Model<Api>[];
 			const providerOverride = overrides.get(provider);
 			const perModelOverrides = modelOverrides.get(provider);
+			const whitelist = modelWhitelists.get(provider);
+			const blacklist = modelBlacklists.get(provider);
 
-			return models.map((m) => {
+			return models.flatMap((m) => {
+				if (whitelist && !whitelist.has(m.id)) return [];
+				if (blacklist?.has(m.id)) return [];
+
 				let model = m;
 
 				// Apply provider-level baseUrl/headers/compat override
@@ -454,7 +494,7 @@ export class ModelRegistry {
 					model = applyModelOverride(model, modelOverride);
 				}
 
-				return model;
+				return [model];
 			});
 		});
 	}
@@ -498,8 +538,22 @@ export class ModelRegistry {
 
 			const overrides = new Map<string, ProviderOverride>();
 			const modelOverrides = new Map<string, Map<string, ModelOverride>>();
+			const disabledProviders = new Set(config.disabledProviders ?? []);
+			const modelWhitelists = new Map<string, Set<string>>();
+			const modelBlacklists = new Map<string, Set<string>>();
 
 			for (const [providerName, providerConfig] of Object.entries(config.providers)) {
+				if (providerConfig.disabled) {
+					disabledProviders.add(providerName);
+				}
+
+				if (providerConfig.whitelist) {
+					modelWhitelists.set(providerName, new Set(providerConfig.whitelist));
+				}
+				if (providerConfig.blacklist) {
+					modelBlacklists.set(providerName, new Set(providerConfig.blacklist));
+				}
+
 				if (providerConfig.baseUrl || providerConfig.compat) {
 					overrides.set(providerName, {
 						baseUrl: providerConfig.baseUrl,
@@ -518,7 +572,15 @@ export class ModelRegistry {
 				}
 			}
 
-			return { models: this.parseModels(config), overrides, modelOverrides, error: undefined };
+			return {
+				models: this.parseModels(config, disabledProviders, modelWhitelists, modelBlacklists),
+				overrides,
+				modelOverrides,
+				disabledProviders,
+				modelWhitelists,
+				modelBlacklists,
+				error: undefined,
+			};
 		} catch (error) {
 			if (error instanceof SyntaxError) {
 				return emptyCustomModelsResult(`Failed to parse models.json: ${error.message}\n\nFile: ${modelsJsonPath}`);
@@ -533,6 +595,8 @@ export class ModelRegistry {
 		const builtInProviders = new Set<string>(getProviders());
 
 		for (const [providerName, providerConfig] of Object.entries(config.providers)) {
+			if (providerConfig.disabled) continue;
+
 			const isBuiltIn = builtInProviders.has(providerName);
 			const hasProviderApi = !!providerConfig.api;
 			const models = providerConfig.models ?? [];
@@ -546,7 +610,9 @@ export class ModelRegistry {
 					!providerConfig.headers &&
 					!providerConfig.compat &&
 					!hasModelOverrides &&
-					!providerConfig.extraBody
+					!providerConfig.extraBody &&
+					!providerConfig.whitelist &&
+					!providerConfig.blacklist
 				) {
 					throw new Error(
 						`Provider ${providerName}: must specify "baseUrl", "headers", "compat", "modelOverrides", "extraBody", or "models".`,
@@ -584,7 +650,12 @@ export class ModelRegistry {
 		}
 	}
 
-	private parseModels(config: ModelsConfig): Model<Api>[] {
+	private parseModels(
+		config: ModelsConfig,
+		disabledProviders: Set<string>,
+		modelWhitelists: Map<string, Set<string>>,
+		modelBlacklists: Map<string, Set<string>>,
+	): Model<Api>[] {
 		const models: Model<Api>[] = [];
 		const builtInProviders = new Set<string>(getProviders());
 
@@ -601,12 +672,19 @@ export class ModelRegistry {
 		};
 
 		for (const [providerName, providerConfig] of Object.entries(config.providers)) {
+			if (disabledProviders.has(providerName)) continue;
+
 			const modelDefs = providerConfig.models ?? [];
 			if (modelDefs.length === 0) continue; // Override-only, no custom models
 
 			const builtInDefaults = getBuiltInDefaults(providerName);
+			const whitelist = modelWhitelists.get(providerName);
+			const blacklist = modelBlacklists.get(providerName);
 
 			for (const modelDef of modelDefs) {
+				if (whitelist && !whitelist.has(modelDef.id)) continue;
+				if (blacklist?.has(modelDef.id)) continue;
+
 				const api = modelDef.api ?? providerConfig.api ?? builtInDefaults?.api;
 				if (!api) continue;
 

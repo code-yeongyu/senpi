@@ -27,6 +27,7 @@ import type {
 import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@mariozechner/pi-ai";
 import {
 	cleanupSessionResources,
+	getSupportedThinkingLevels,
 	isContextOverflow,
 	modelsAreEqual,
 	resetApiProviders,
@@ -89,6 +90,7 @@ import type {
 } from "./extensions/types.js";
 import { type BashExecutionMessage, type CustomMessage, filterContextExcludedMessages } from "./messages.js";
 import type { ModelRegistry } from "./model-registry.js";
+import { resolveModelScope } from "./model-resolver.js";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.js";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.js";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.js";
@@ -1537,7 +1539,7 @@ export class AgentSession {
 		if (this._scopedModels.length > 0) {
 			return this._cycleScopedModel(direction);
 		}
-		return this._cycleAvailableModel(direction);
+		return undefined;
 	}
 
 	private async _cycleScopedModel(direction: "forward" | "backward"): Promise<ModelCycleResult | undefined> {
@@ -1567,35 +1569,6 @@ export class AgentSession {
 		const systemPromptChange = await this._emitModelSelect(next.model, currentModel, "cycle");
 
 		const cycleResult: ModelCycleResult = { model: next.model, thinkingLevel: this.thinkingLevel, isScoped: true };
-		if (systemPromptChange) {
-			cycleResult.systemPromptChange = systemPromptChange;
-		}
-		return cycleResult;
-	}
-
-	private async _cycleAvailableModel(direction: "forward" | "backward"): Promise<ModelCycleResult | undefined> {
-		const availableModels = this._modelRegistry.getAvailable();
-		if (availableModels.length <= 1) return undefined;
-
-		const currentModel = this.model;
-		let currentIndex = availableModels.findIndex((m) => modelsAreEqual(m, currentModel));
-
-		if (currentIndex === -1) currentIndex = 0;
-		const len = availableModels.length;
-		const nextIndex = direction === "forward" ? (currentIndex + 1) % len : (currentIndex - 1 + len) % len;
-		const nextModel = availableModels[nextIndex];
-
-		const thinkingLevel = this._getThinkingLevelForModelSwitch();
-		this.agent.state.model = nextModel;
-		this.sessionManager.appendModelChange(nextModel.provider, nextModel.id);
-		this.settingsManager.setDefaultModelAndProvider(nextModel.provider, nextModel.id);
-
-		// Re-clamp thinking level for new model's capabilities
-		this.setThinkingLevel(thinkingLevel);
-
-		const systemPromptChange = await this._emitModelSelect(nextModel, currentModel, "cycle");
-
-		const cycleResult: ModelCycleResult = { model: nextModel, thinkingLevel: this.thinkingLevel, isScoped: false };
 		if (systemPromptChange) {
 			cycleResult.systemPromptChange = systemPromptChange;
 		}
@@ -1657,11 +1630,7 @@ export class AgentSession {
 	 */
 	getAvailableThinkingLevels(): ThinkingLevel[] {
 		const model = this.model;
-		if (!model?.reasoning) return ["off"];
-
-		if (supportsMax(model)) return THINKING_LEVELS_WITH_MAX;
-		if (supportsXhigh(model)) return ["off", "minimal", "low", "medium", "high", "xhigh"];
-		return ["off", "minimal", "low", "medium", "high"];
+		return model ? (getSupportedThinkingLevels(model) as ThinkingLevel[]) : ["off"];
 	}
 
 	/**
@@ -2609,6 +2578,10 @@ export class AgentSession {
 		await emitSessionShutdownEvent(this._extensionRunner, { type: "session_shutdown", reason: "reload" });
 		await this.settingsManager.reload();
 		resetApiProviders();
+		this._modelRegistry.refresh();
+		this.setScopedModels(
+			await resolveModelScope(this.settingsManager.getFavoriteModels() ?? [], this._modelRegistry),
+		);
 		await this._resourceLoader.reload();
 		this._buildRuntime({
 			activeToolNames: this.getActiveToolNames(),

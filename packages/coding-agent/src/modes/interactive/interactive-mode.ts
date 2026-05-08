@@ -3436,7 +3436,10 @@ export class InteractiveMode {
 		try {
 			const result = await this.session.cycleModel(direction);
 			if (result === undefined) {
-				const msg = this.session.scopedModels.length > 0 ? "Only one model in scope" : "Only one model available";
+				const msg =
+					this.session.scopedModels.length > 0
+						? "Only one favorite model configured"
+						: "No favorite models configured. Add favoriteModels to settings.json or use /scoped-models and save.";
 				this.showStatus(msg);
 			} else {
 				this.footer.invalidate();
@@ -4088,15 +4091,15 @@ export class InteractiveMode {
 		const sessionScopedModels = this.session.scopedModels;
 		const hasSessionScope = sessionScopedModels.length > 0;
 
-		// Build enabled model IDs from session state or settings
-		let currentEnabledIds: string[] | null = null;
+		// Build favorite model IDs from session state or settings
+		let currentEnabledIds: string[] | null = [];
 
 		if (hasSessionScope) {
 			// Use current session's scoped models
 			currentEnabledIds = sessionScopedModels.map((scoped) => `${scoped.model.provider}/${scoped.model.id}`);
 		} else {
 			// Fall back to settings
-			const patterns = this.settingsManager.getEnabledModels();
+			const patterns = this.settingsManager.getFavoriteModels();
 			if (patterns !== undefined && patterns.length > 0) {
 				const scopedModels = await resolveModelScope(patterns, this.session.modelRegistry);
 				currentEnabledIds = scopedModels.map((scoped) => `${scoped.model.provider}/${scoped.model.id}`);
@@ -4105,9 +4108,10 @@ export class InteractiveMode {
 
 		// Helper to update session's scoped models (session-only, no persist)
 		const updateSessionModels = async (enabledIds: string[] | null) => {
+			const nextIds = enabledIds === null ? allModels.map((model) => `${model.provider}/${model.id}`) : enabledIds;
 			currentEnabledIds = enabledIds === null ? null : [...enabledIds];
-			if (enabledIds && enabledIds.length > 0 && enabledIds.length < allModels.length) {
-				const newScopedModels = await resolveModelScope(enabledIds, this.session.modelRegistry);
+			if (nextIds.length > 0) {
+				const newScopedModels = await resolveModelScope(nextIds, this.session.modelRegistry);
 				this.session.setScopedModels(
 					newScopedModels.map((sm) => ({
 						model: sm.model,
@@ -4115,7 +4119,6 @@ export class InteractiveMode {
 					})),
 				);
 			} else {
-				// All enabled or none enabled = no filter
 				this.session.setScopedModels([]);
 			}
 			await this.updateAvailableProviderCount();
@@ -4133,13 +4136,10 @@ export class InteractiveMode {
 						await updateSessionModels(enabledIds);
 					},
 					onPersist: (enabledIds) => {
-						// Persist to settings
 						const newPatterns =
-							enabledIds === null || enabledIds.length === allModels.length
-								? undefined // All enabled = clear filter
-								: enabledIds;
-						this.settingsManager.setEnabledModels(newPatterns ? [...newPatterns] : undefined);
-						this.showStatus("Model selection saved to settings");
+							enabledIds === null ? allModels.map((model) => `${model.provider}/${model.id}`) : enabledIds;
+						this.settingsManager.setFavoriteModels(newPatterns.length > 0 ? [...newPatterns] : undefined);
+						this.showStatus("Favorite models saved to settings");
 					},
 					onCancel: () => {
 						done();
