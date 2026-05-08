@@ -5,7 +5,6 @@ import anthropicCodeExecutionExtension from "./anthropic-code-execution/index.js
 import anthropicComputerUseExtension from "./anthropic-computer-use/index.js";
 import anthropicTextEditorExtension from "./anthropic-text-editor/index.js";
 import anthropicToolSearchExtension from "./anthropic-tool-search/index.js";
-import anthropicWebFetchExtension from "./anthropic-web-fetch/index.js";
 import anthropicWebSearchExtension from "./anthropic-web-search/index.js";
 import backgroundTaskExtension from "./background-task/index.js";
 import bashTimeoutExtension from "./bash-timeout/index.js";
@@ -51,7 +50,6 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "todowrite", factory: todowriteExtension },
 	{ id: "redraws", factory: redrawsExtension },
 	{ id: "anthropic-web-search", factory: anthropicWebSearchExtension },
-	{ id: "anthropic-web-fetch", factory: anthropicWebFetchExtension },
 	{ id: "anthropic-tool-search", factory: anthropicToolSearchExtension },
 	{ id: "anthropic-code-execution", factory: anthropicCodeExecutionExtension },
 	{ id: "anthropic-bash", factory: anthropicBashExtension },

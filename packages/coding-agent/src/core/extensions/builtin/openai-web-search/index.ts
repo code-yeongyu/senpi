@@ -5,6 +5,7 @@ type ToolDefinition = Record<string, unknown>;
 
 const OPENAI_RESPONSES_APIS: ReadonlySet<Api> = new Set(["openai-responses", "azure-openai-responses"]);
 const ENABLE_ENV = "PI_OPENAI_WEB_SEARCH";
+const NATIVE_OPENAI_WEB_SEARCH_TYPE = "web_search_preview";
 
 function parseEnableEnv(envVar: string): boolean {
 	const envValue = process.env[envVar];
@@ -33,32 +34,56 @@ function isOpenAiResponsesApi(api: Api | undefined): api is "openai-responses" |
 	return api !== undefined && OPENAI_RESPONSES_APIS.has(api);
 }
 
-function isNativeOpenAiWebSearchType(value: unknown): value is "web_search" | "web_search_preview" {
-	return value === "web_search" || value === "web_search_preview";
+function isNativeOpenAiWebSearchType(value: unknown): value is "web_search_preview" | "web_search_preview_2025_03_11" {
+	return value === "web_search_preview" || value === "web_search_preview_2025_03_11";
 }
 
-function sanitizeTools(tools: unknown[]): ToolDefinition[] {
+function isUnsupportedWebSearchType(value: unknown): boolean {
+	return (
+		typeof value === "string" &&
+		(value === "web_search" || value.startsWith("web_search_")) &&
+		!isNativeOpenAiWebSearchType(value)
+	);
+}
+
+function isAnthropicWebFetchType(value: unknown): boolean {
+	return typeof value === "string" && value.startsWith("web_fetch_");
+}
+
+type SanitizedTools = {
+	changed: boolean;
+	tools: ToolDefinition[];
+};
+
+type SanitizeToolsOptions = {
+	stripFunctionWebSearch: boolean;
+};
+
+function sanitizeTools(tools: unknown[], options: SanitizeToolsOptions): SanitizedTools {
 	const sanitized: ToolDefinition[] = [];
+	let changed = false;
 	for (const tool of tools) {
 		if (!isRecord(tool)) {
+			changed = true;
 			continue;
 		}
 
-		const shouldStripFunctionVariant = tool.name === "web_search" && !isNativeOpenAiWebSearchType(tool.type);
-		if (!shouldStripFunctionVariant) {
+		const type = tool.type;
+		const shouldStripFunctionVariant =
+			options.stripFunctionWebSearch && tool.name === "web_search" && !isNativeOpenAiWebSearchType(type);
+		const shouldStripProviderNativeVariant = isUnsupportedWebSearchType(type) || isAnthropicWebFetchType(type);
+		if (shouldStripFunctionVariant || shouldStripProviderNativeVariant) {
+			changed = true;
+		} else {
 			sanitized.push(tool);
 		}
 	}
 
-	return sanitized;
+	return { changed, tools: sanitized };
 }
 
 export function addOpenAiWebSearchToPayload(api: Api | undefined, payload: unknown): unknown {
 	if (!isOpenAiResponsesApi(api)) {
-		return payload;
-	}
-
-	if (!isOpenaiWebSearchEnabled()) {
 		return payload;
 	}
 
@@ -67,13 +92,24 @@ export function addOpenAiWebSearchToPayload(api: Api | undefined, payload: unkno
 	}
 
 	const tools = Array.isArray(payload.tools) ? payload.tools : [];
-	const sanitizedTools = sanitizeTools(tools);
+	const shouldInjectWebSearch = isOpenaiWebSearchEnabled();
+	const sanitized = sanitizeTools(tools, { stripFunctionWebSearch: shouldInjectWebSearch });
+	const sanitizedTools = sanitized.tools;
+	if (!shouldInjectWebSearch) {
+		if (!sanitized.changed) {
+			return payload;
+		}
+
+		return {
+			...payload,
+			tools: sanitizedTools,
+		};
+	}
+
 	const hasNativeWebSearch = sanitizedTools.some((tool) => isNativeOpenAiWebSearchType(tool.type));
 
 	if (!hasNativeWebSearch) {
-		// Verified in openai/openai-node src/resources/responses/responses.ts (2026-05-07):
-		// GA discriminator includes type: "web_search" (preview variants also exist).
-		sanitizedTools.push({ type: "web_search" });
+		sanitizedTools.push({ type: NATIVE_OPENAI_WEB_SEARCH_TYPE });
 	}
 
 	return {
@@ -89,9 +125,9 @@ export function isOpenaiWebSearchEnabled(): boolean {
 export const OPENAI_WEB_SEARCH_SECTION = `
 ## Web Search
 
-The native web_search tool is available in this session.
-Use web_search when the user asks for current or online information.
-Prefer web_search over guessing when freshness matters.
+Native web search is available in this session.
+Use web search when the user asks for current or online information.
+Prefer web search over guessing when freshness matters.
 `;
 
 export default function openaiWebSearchExtension(pi: ExtensionAPI): void {

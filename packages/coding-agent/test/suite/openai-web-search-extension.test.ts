@@ -41,7 +41,7 @@ describe("openai-web-search builtin extension", () => {
 			tools: Array<Record<string, unknown>>;
 		};
 
-		expect(result.tools).toContainEqual({ type: "web_search" });
+		expect(result.tools).toContainEqual({ type: "web_search_preview" });
 	});
 
 	it("injects native web_search when on azure-openai-responses and none exists", () => {
@@ -53,7 +53,7 @@ describe("openai-web-search builtin extension", () => {
 			tools: Array<Record<string, unknown>>;
 		};
 
-		expect(result.tools).toContainEqual({ type: "web_search" });
+		expect(result.tools).toContainEqual({ type: "web_search_preview" });
 	});
 
 	it("preserves caller-supplied web_search_preview and does not duplicate", () => {
@@ -66,7 +66,7 @@ describe("openai-web-search builtin extension", () => {
 		};
 
 		const webSearchTools = result.tools.filter(
-			(tool) => tool.type === "web_search" || tool.type === "web_search_preview",
+			(tool) => tool.type === "web_search_preview" || tool.type === "web_search_preview_2025_03_11",
 		);
 		expect(webSearchTools).toHaveLength(1);
 		expect(webSearchTools[0]).toEqual({ type: "web_search_preview" });
@@ -82,7 +82,58 @@ describe("openai-web-search builtin extension", () => {
 		};
 
 		expect(result.tools).not.toContainEqual({ name: "web_search", description: "pi-websearch function" });
-		expect(result.tools).toContainEqual({ type: "web_search" });
+		expect(result.tools).toContainEqual({ type: "web_search_preview" });
+	});
+
+	it("strips Anthropic native web tool definitions before sending OpenAI Responses payloads", () => {
+		const payload = {
+			tools: [
+				{ type: "function", name: "other_tool" },
+				{ type: "web_search_20250305", name: "web_search", max_uses: 5 },
+				{ type: "web_fetch_20260309", name: "web_fetch", max_uses: 5 },
+			],
+		};
+
+		const result = addOpenAiWebSearchToPayload("openai-responses", payload) as {
+			tools: Array<Record<string, unknown>>;
+		};
+
+		expect(result.tools).toEqual([{ type: "function", name: "other_tool" }, { type: "web_search_preview" }]);
+	});
+
+	it("preserves Pi webfetch function tools while stripping Anthropic native web_fetch", () => {
+		const payload = {
+			tools: [
+				{ name: "webfetch", description: "Pi webfetch function tool" },
+				{ type: "web_fetch_20260309", name: "web_fetch", max_uses: 5 },
+			],
+		};
+
+		const result = addOpenAiWebSearchToPayload("openai-responses", payload) as {
+			tools: Array<Record<string, unknown>>;
+		};
+
+		expect(result.tools).toEqual([
+			{ name: "webfetch", description: "Pi webfetch function tool" },
+			{ type: "web_search_preview" },
+		]);
+	});
+
+	it("still strips Anthropic native web tool definitions when OpenAI web search injection is disabled", () => {
+		process.env[ENABLE_ENV] = "off";
+		const payload = {
+			tools: [
+				{ type: "function", name: "other_tool" },
+				{ type: "web_search_20250305", name: "web_search", max_uses: 5 },
+				{ type: "web_fetch_20260309", name: "web_fetch", max_uses: 5 },
+			],
+		};
+
+		const result = addOpenAiWebSearchToPayload("openai-responses", payload) as {
+			tools: Array<Record<string, unknown>>;
+		};
+
+		expect(result.tools).toEqual([{ type: "function", name: "other_tool" }]);
 	});
 
 	it("does not strip function-tool web_search when api is not Responses", () => {
@@ -115,7 +166,7 @@ describe("openai-web-search builtin extension", () => {
 			tools: Array<Record<string, unknown>>;
 		};
 
-		expect(result.tools).toContainEqual({ type: "web_search" });
+		expect(result.tools).toContainEqual({ type: "web_search_preview" });
 	});
 });
 

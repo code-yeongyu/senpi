@@ -7,18 +7,19 @@
 - Added builtin `tool-pair-guard` extension to sanitize Anthropic request payloads by removing orphan `tool_result` blocks before provider calls.
 - Added core fallback rendering for assistant `providerNative` content blocks across interactive surfaces and HTML export, including expandable summaries and truncated JSON previews so provider-native server outputs are visible.
 - Added builtin `anthropic-web-search` extension that injects Anthropic's native `web_search_20250305` tool for `anthropic-messages` requests, strips duplicate function-style `web_search` tool entries, and supports `PI_ANTHROPIC_WEB_SEARCH_MAX_USES` override.
-- Added builtin `anthropic-web-fetch` extension that injects Anthropic's native `web_fetch_20260309` tool for `anthropic-messages` requests, strips duplicate function-style `webfetch`/`web_fetch` tool entries, and supports optional `PI_ANTHROPIC_WEB_FETCH_MAX_USES` override.
 - Added builtin `anthropic-tool-search` extension that opt-in injects Anthropic native `tool_search_tool_regex_20251119` and/or `tool_search_tool_bm25_20251119` tools for `anthropic-messages` requests when `PI_ANTHROPIC_TOOL_SEARCH` is set to `regex`, `bm25`, or `both`.
-- Added builtin `openai-web-search` extension that injects OpenAI Responses native `web_search` for `openai-responses`/`azure-openai-responses` requests and strips duplicate function-style `web_search` tool entries so the native tool is used.
+- Added builtin `openai-web-search` extension that injects OpenAI Responses native `web_search_preview` for `openai-responses`/`azure-openai-responses` requests and strips duplicate function-style `web_search` tool entries so the native tool is used.
 
 ### Fixed
 
 - Fixed model catalog narrowing so `--models` / `enabledModels` constrain startup and selectors separately from Ctrl+P `favoriteModels`, preserve exact model IDs ending in `-fast`, and filter `/favorite-models` by canonical `provider/model` IDs without writing resolver warnings into the active TUI.
 - Fixed clean-profile startup spending seconds importing generated default global extension shims through jiti by loading unchanged generated shims from known factories while preserving custom-edited shim behavior.
+- Fixed OpenAI Responses request validation failures by using the `web_search_preview` native tool type and stripping leaked Anthropic native `web_search_*` / `web_fetch_*` tool descriptors from OpenAI payloads.
 
 ### Removed
 
-- Removed the `webfetch` builtin extension. Anthropic and Google users should rely on the native `anthropic-web-fetch` and `google-url-context` builtins respectively. OpenAI users lose function-tool web_fetch fallback.
+- Removed the `webfetch` builtin extension. Google users should rely on the native `google-url-context` builtin. OpenAI users lose function-tool web_fetch fallback.
+- Removed the Anthropic native `anthropic-web-fetch` builtin extension so Pi's function-style `webfetch` tool is no longer replaced by `web_fetch_20260309`.
 
 ## [0.74.0] - 2026-05-07
 
