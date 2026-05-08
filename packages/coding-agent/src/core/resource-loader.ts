@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import chalk from "chalk";
 import { CONFIG_DIR_NAME, getAgentDir, getPackageDir } from "../config.js";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.js";
@@ -57,8 +57,13 @@ function isGeneratedGlobalDefaultExtensionShim(content: string): boolean {
 
 function getGlobalDefaultExtensionModulePath(extensionId: (typeof globalDefaultExtensionIds)[number]): string {
 	const packageDir = getPackageDir();
-	const sourceRoot = existsSync(join(packageDir, "src")) ? "src" : "dist";
-	const extensionFile = sourceRoot === "src" ? `${extensionId}.ts` : `${extensionId}.js`;
+	const runningFromSource = fileURLToPath(import.meta.url).includes(`${sep}src${sep}core${sep}resource-loader.`);
+	const sourceRoot = runningFromSource ? "src" : "dist";
+	const extensionFile = runningFromSource ? `${extensionId}.ts` : `${extensionId}.js`;
+	const packageDirIsSourceRootPath = join(packageDir, "core", "extensions", "builtin", extensionFile);
+	if (!runningFromSource && existsSync(packageDirIsSourceRootPath)) {
+		return packageDirIsSourceRootPath;
+	}
 	return join(packageDir, sourceRoot, "core", "extensions", "builtin", extensionFile);
 }
 

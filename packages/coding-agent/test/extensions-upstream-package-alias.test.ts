@@ -51,6 +51,41 @@ describe("upstream package name alias for extension loader", () => {
 		expect(result.extensions[0]?.tools.has("upstream_aliased_tool")).toBe(true);
 	});
 
+	it("resolves runtime imports from the upstream @mariozechner package names", async () => {
+		// given extensions installed from upstream pi packages still import
+		// @mariozechner peer package names. Under senpi these must resolve to the
+		// already-loaded senpi runtime instead of an extension-local duplicate.
+		const extCode = `
+			import { StringEnum } from "@mariozechner/pi-ai";
+			import { Text } from "@mariozechner/pi-tui";
+			import { defineTool } from "@mariozechner/pi-coding-agent";
+			import { Type } from "typebox";
+
+			const rendered = new Text("ok", 0, 0);
+			const upstreamTool = defineTool({
+				name: "mario_aliased_tool",
+				label: "Mario Aliased Tool",
+				description: StringEnum(["ok"]).type,
+				parameters: Type.Object({}),
+				execute: async () => ({ content: [{ type: "text", text: rendered.render(10).join("\\n") }] }),
+			});
+
+			export default function (pi) {
+				pi.registerTool(upstreamTool);
+			}
+		`;
+		fs.writeFileSync(path.join(extensionsDir, "mario-import.ts"), extCode);
+
+		// when the extension is discovered and loaded
+		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+
+		// then it must load without falling through to an extension-local
+		// @mariozechner/pi-coding-agent install.
+		expect(result.errors).toHaveLength(0);
+		expect(result.extensions).toHaveLength(1);
+		expect(result.extensions[0]?.tools.has("mario_aliased_tool")).toBe(true);
+	});
+
 	it("resolves type-only imports from @code-yeongyu/senpi", async () => {
 		// given a third-party extension that uses a type-only import
 		// (the most common shape for upstream-named imports). Type-only

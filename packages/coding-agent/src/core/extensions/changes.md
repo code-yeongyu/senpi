@@ -1,5 +1,29 @@
 # Core Extensions Changes
 
+## 2026-05-08 - Shared Jiti Extension Importer
+
+### What changed
+
+- `loader.ts`: Reuses one `jiti` importer across each `loadExtensions()` batch while keeping `moduleCache: false` for reload freshness.
+- `loader.ts`: Aliases upstream `@mariozechner/pi-*` peer imports to the already-loaded senpi workspace packages.
+
+### Why
+
+- Startup was spending several seconds creating a fresh `jiti` instance for every configured extension, causing repeated TypeScript/dependency resolution work before the first TUI frame.
+- Installed pi extensions still import upstream `@mariozechner/pi-coding-agent`, `pi-ai`, and `pi-tui` peer names. Without aliases, jiti can fall through to each extension's own `node_modules` and load a duplicate pi runtime.
+
+### Why extension system couldn't handle this alone
+
+- Extension loading is core infrastructure; extensions cannot change how the core loader imports extension modules.
+
+### Files modified
+
+- `loader.ts`
+
+### Expected merge conflict zones on next upstream sync
+
+- MEDIUM: `loader.ts` around `loadExtensionModule()`, `loadExtension()`, and `loadExtensions()` importer construction.
+
 ## 2026-04-30 - Model Switch System Prompt Change Event
 
 ### What changed

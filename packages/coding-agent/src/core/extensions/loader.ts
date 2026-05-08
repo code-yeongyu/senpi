@@ -48,6 +48,11 @@ const VIRTUAL_MODULES: Record<string, unknown> = {
 	"@sinclair/typebox": _bundledTypebox,
 	"@sinclair/typebox/compile": _bundledTypeboxCompile,
 	"@sinclair/typebox/value": _bundledTypeboxValue,
+	"@mariozechner/pi-agent-core": _bundledPiAgentCore,
+	"@mariozechner/pi-tui": _bundledPiTui,
+	"@mariozechner/pi-ai": _bundledPiAi,
+	"@mariozechner/pi-ai/oauth": _bundledPiAiOauth,
+	"@mariozechner/pi-coding-agent": _bundledPiCodingAgent,
 	"@earendil-works/pi-agent-core": _bundledPiAgentCore,
 	"@earendil-works/pi-tui": _bundledPiTui,
 	"@earendil-works/pi-ai": _bundledPiAi,
@@ -90,6 +95,11 @@ function getAliases(): Record<string, string> {
 
 	_aliases = {
 		"@code-yeongyu/senpi": piCodingAgentEntry,
+		"@mariozechner/pi-coding-agent": piCodingAgentEntry,
+		"@mariozechner/pi-agent-core": piAgentCoreEntry,
+		"@mariozechner/pi-tui": piTuiEntry,
+		"@mariozechner/pi-ai": piAiEntry,
+		"@mariozechner/pi-ai/oauth": piAiOauthEntry,
 		"@earendil-works/pi-agent-core": piAgentCoreEntry,
 		"@earendil-works/pi-tui": piTuiEntry,
 		"@earendil-works/pi-ai": piAiEntry,
@@ -131,6 +141,7 @@ function resolvePath(extPath: string, cwd: string): string {
 }
 
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
+type ExtensionModuleImporter = ReturnType<typeof createJiti>;
 
 /**
  * Create a runtime with throwing stubs for action methods.
@@ -343,16 +354,18 @@ function createExtensionAPI(
 	return api;
 }
 
-async function loadExtensionModule(extensionPath: string) {
-	const jiti = createJiti(import.meta.url, {
+function createExtensionModuleImporter(): ExtensionModuleImporter {
+	return createJiti(import.meta.url, {
 		moduleCache: false,
 		// In Bun binary: use virtualModules for bundled packages (no filesystem resolution)
 		// Also disable tryNative so jiti handles ALL imports (not just the entry point)
 		// In Node.js/dev: use aliases to resolve to node_modules paths
 		...(isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases() }),
 	});
+}
 
-	const module = await jiti.import(extensionPath, { default: true });
+async function loadExtensionModule(extensionPath: string, importer: ExtensionModuleImporter) {
+	const module = await importer.import(extensionPath, { default: true });
 	const factory = module as ExtensionFactory;
 	return typeof factory !== "function" ? undefined : factory;
 }
@@ -385,11 +398,12 @@ async function loadExtension(
 	cwd: string,
 	eventBus: EventBus,
 	runtime: ExtensionRuntime,
+	importer: ExtensionModuleImporter,
 ): Promise<{ extension: Extension | null; error: string | null }> {
 	const resolvedPath = resolvePath(extensionPath, cwd);
 
 	try {
-		const factory = await loadExtensionModule(resolvedPath);
+		const factory = await loadExtensionModule(resolvedPath, importer);
 		if (!factory) {
 			return { extension: null, error: `Extension does not export a valid factory function: ${extensionPath}` };
 		}
@@ -429,9 +443,10 @@ export async function loadExtensions(paths: string[], cwd: string, eventBus?: Ev
 	const errors: Array<{ path: string; error: string }> = [];
 	const resolvedEventBus = eventBus ?? createEventBus();
 	const runtime = createExtensionRuntime();
+	const importer = createExtensionModuleImporter();
 
 	for (const extPath of paths) {
-		const { extension, error } = await loadExtension(extPath, cwd, resolvedEventBus, runtime);
+		const { extension, error } = await loadExtension(extPath, cwd, resolvedEventBus, runtime, importer);
 
 		if (error) {
 			errors.push({ path: extPath, error });

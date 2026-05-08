@@ -1,5 +1,23 @@
 # changes
 
+## Dist-backed default extension shims (2026-05-08)
+
+### What changed
+
+- `src/core/resource-loader.ts`: Default generated global extension shims now point at `dist` files when senpi itself is running from `dist`, even in a linked workspace that also has `src`.
+
+### Why
+
+- Linked CLI startup was re-transpiling default global extension TypeScript files through jiti before the first frame.
+
+### Why extension system couldn't handle this
+
+- Generated default global extension shims are created by core resource loading before extension code runs.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `resource-loader.ts` around `getGlobalDefaultExtensionModulePath()` and default shim generation.
+
 ## Model config controls (2026-05-08)
 
 ### What changed
