@@ -44,7 +44,7 @@ describe("AgentSession model and extension characterization", () => {
 		).toEqual([`${nextModel.provider}/${nextModel.id}`]);
 	});
 
-	it("cycles through scoped models and preserves the scoped thinking preference", async () => {
+	it("cycles through favorite models and preserves the favorite thinking preference", async () => {
 		const harness = await createHarness({
 			models: [
 				{ id: "faux-1", name: "One", reasoning: true },
@@ -54,7 +54,7 @@ describe("AgentSession model and extension characterization", () => {
 		harnesses.push(harness);
 		const modelOne = harness.getModel("faux-1")!;
 		const modelTwo = harness.getModel("faux-2")!;
-		harness.session.setScopedModels([{ model: modelOne, thinkingLevel: "high" }, { model: modelTwo }] as Array<{
+		harness.session.setFavoriteModels([{ model: modelOne, thinkingLevel: "high" }, { model: modelTwo }] as Array<{
 			model: Model<string>;
 			thinkingLevel?: ThinkingLevel;
 		}>);
