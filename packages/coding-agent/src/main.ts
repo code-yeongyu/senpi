@@ -28,7 +28,12 @@ import { exportFromFile } from "./core/export-html/index.js";
 import type { ExtensionFactory } from "./core/extensions/types.js";
 import { KeybindingsManager } from "./core/keybindings.js";
 import type { ModelRegistry } from "./core/model-registry.js";
-import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.js";
+import {
+	getModelNarrowingPatterns,
+	resolveCliModel,
+	resolveModelScope,
+	type ScopedModel,
+} from "./core/model-resolver.js";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.js";
 import type { CreateAgentSessionOptions } from "./core/sdk.js";
 import {
@@ -352,9 +357,9 @@ function buildSessionOptions(
 		options.thinkingLevel = parsed.thinking;
 	}
 
-	// Scoped models for Ctrl+P cycling
+	// Global model catalog narrowing
 	// Keep thinking level undefined when not explicitly set in the model pattern.
-	// Undefined means "inherit current session thinking level" during cycling.
+	// Undefined means "inherit current session thinking level" when selecting the narrowed model.
 	if (scopedModels.length > 0) {
 		options.scopedModels = scopedModels.map((sm) => ({
 			model: sm.model,
@@ -554,9 +559,13 @@ export async function main(args: string[], options?: MainOptions) {
 			})),
 		];
 
-		const modelPatterns = parsed.models ?? settingsManager.getEnabledModels();
+		const modelPatterns = getModelNarrowingPatterns({
+			cliPatterns: parsed.models,
+			legacyEnabledPatterns: settingsManager.getEnabledModels(),
+		});
 		const scopedModels =
 			modelPatterns && modelPatterns.length > 0 ? await resolveModelScope(modelPatterns, modelRegistry) : [];
+		const favoriteModels = await resolveModelScope(settingsManager.getFavoriteModels() ?? [], modelRegistry);
 		const {
 			options: sessionOptions,
 			cliThinkingFromModel,
@@ -588,6 +597,7 @@ export async function main(args: string[], options?: MainOptions) {
 			model: sessionOptions.model,
 			thinkingLevel: sessionOptions.thinkingLevel,
 			scopedModels: sessionOptions.scopedModels,
+			favoriteModels,
 			tools: sessionOptions.tools,
 			noTools: sessionOptions.noTools,
 			customTools: sessionOptions.customTools,
@@ -651,6 +661,14 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	const scopedModels = [...session.scopedModels];
+	const favoriteModels = [...session.favoriteModels];
+	const narrowedModelIds =
+		scopedModels.length > 0
+			? new Set(scopedModels.map((scoped) => `${scoped.model.provider}/${scoped.model.id}`))
+			: null;
+	const favoriteModelsForCycle = narrowedModelIds
+		? favoriteModels.filter((favorite) => narrowedModelIds.has(`${favorite.model.provider}/${favorite.model.id}`))
+		: favoriteModels;
 	time("resolveModelScope");
 	reportDiagnostics(runtime.diagnostics);
 	if (runtime.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
@@ -680,7 +698,16 @@ export async function main(args: string[], options?: MainOptions) {
 					return `${sm.model.id}${thinkingStr}`;
 				})
 				.join(", ");
-			console.log(chalk.dim(`Model scope: ${modelList} ${chalk.gray("(Ctrl+P to cycle)")}`));
+			console.log(chalk.dim(`Model catalog: ${modelList} ${chalk.gray("(narrowed)")}`));
+		}
+		if (favoriteModelsForCycle.length > 0 && (parsed.verbose || !settingsManager.getQuietStartup())) {
+			const modelList = favoriteModelsForCycle
+				.map((favorite) => {
+					const thinkingStr = favorite.thinkingLevel ? `:${favorite.thinkingLevel}` : "";
+					return `${favorite.model.id}${thinkingStr}`;
+				})
+				.join(", ");
+			console.log(chalk.dim(`Favorite models: ${modelList} ${chalk.gray("(Ctrl+P to cycle)")}`));
 		}
 
 		const interactiveMode = new InteractiveMode(runtime, {

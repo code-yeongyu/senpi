@@ -5,8 +5,8 @@
 ### What changed
 
 - `src/core/model-registry.ts`: `models.json` can disable providers with top-level `disabledProviders` or per-provider `disabled`, filter provider models with `whitelist` / `blacklist`, and replace built-in thinking-level mappings with `thinkingLevelMapMode: "replace"`.
-- `src/core/settings-manager.ts` and `src/core/sdk.ts`: added `favoriteModels` settings support and use it to populate the session model-cycling scope on startup.
-- `src/core/agent-session.ts`: reload refreshes the model registry and favorite model scope, Ctrl+P cycling only uses the configured favorite scope, and available thinking levels honor model-level mapping overrides.
+- `src/core/settings-manager.ts` and `src/core/sdk.ts`: added `favoriteModels` settings support and kept `enabledModels` as global model-catalog narrowing.
+- `src/core/agent-session.ts`: reload refreshes the model registry, global model narrowing, and favorite models; Ctrl+P cycling only uses the configured favorite models, and available thinking levels honor model-level mapping overrides.
 
 ### Why
 
@@ -14,16 +14,16 @@
 
 ### Why extension system couldn't handle this
 
-- Model discovery, startup model resolution, persisted settings, and Ctrl+P cycling are core session/model-registry responsibilities. Extensions can add providers or shortcuts, but cannot reliably replace the built-in model registry, default session scope, or internal cycling semantics before the TUI starts.
+- Model discovery, startup model resolution, persisted settings, and Ctrl+P cycling are core session/model-registry responsibilities. Extensions can add providers or shortcuts, but cannot reliably replace the built-in model registry, default catalog narrowing, or internal cycling semantics before the TUI starts.
 
 ### Expected merge conflict zones on next upstream sync
 
 - HIGH: `model-registry.ts` schema/loading and model filtering.
-- MEDIUM: `sdk.ts` startup model scope resolution and `agent-session.ts` reload/cycle paths.
+- MEDIUM: `sdk.ts` startup model narrowing resolution and `agent-session.ts` reload/cycle paths.
 
 ### Migration notes
 
-- `enabledModels` remains readable for existing settings, but Ctrl+P favorites are persisted through `favoriteModels`.
+- `enabledModels` remains readable as global model narrowing, but Ctrl+P favorites are persisted through `favoriteModels`.
 
 ## Git package dependency repair on update (2026-05-02)
 

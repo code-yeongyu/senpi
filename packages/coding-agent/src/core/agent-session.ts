@@ -90,7 +90,7 @@ import type {
 } from "./extensions/types.js";
 import { type BashExecutionMessage, type CustomMessage, filterContextExcludedMessages } from "./messages.js";
 import type { ModelRegistry } from "./model-registry.js";
-import { resolveModelScope } from "./model-resolver.js";
+import { getModelNarrowingPatterns, resolveModelScope } from "./model-resolver.js";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.js";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.js";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.js";
@@ -172,8 +172,10 @@ export interface AgentSessionConfig {
 	sessionManager: SessionManager;
 	settingsManager: SettingsManager;
 	cwd: string;
-	/** Models to cycle through with Ctrl+P (from --models flag) */
+	/** Global model narrowing for selectors and startup model choice (from --models / enabledModels) */
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>;
+	/** Favorite models to cycle through with Ctrl+P */
+	favoriteModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>;
 	/** Resource loader for skills, prompts, themes, context files, system prompt */
 	resourceLoader: ResourceLoader;
 	/** SDK custom tools registered outside extensions */
@@ -252,7 +254,7 @@ export interface PromptOptions {
 export interface ModelCycleResult {
 	model: Model<any>;
 	thinkingLevel: ThinkingLevel;
-	/** Whether cycling through scoped models (--models flag) or all available */
+	/** Whether cycling used the configured favorite model list */
 	isScoped: boolean;
 	/** Present when the model switch also changed the active system prompt. */
 	systemPromptChange?: SystemPromptChangeEvent;
@@ -300,6 +302,7 @@ export class AgentSession {
 	readonly settingsManager: SettingsManager;
 
 	private _scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>;
+	private _favoriteModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>;
 
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
@@ -370,6 +373,7 @@ export class AgentSession {
 		this.sessionManager = config.sessionManager;
 		this.settingsManager = config.settingsManager;
 		this._scopedModels = config.scopedModels ?? [];
+		this._favoriteModels = config.favoriteModels ?? [];
 		this._resourceLoader = config.resourceLoader;
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
@@ -949,16 +953,32 @@ export class AgentSession {
 		return this.sessionManager.getSessionName();
 	}
 
-	/** Scoped models for cycling (from --models flag) */
+	/** Globally narrowed models (from --models / enabledModels) */
 	get scopedModels(): ReadonlyArray<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }> {
 		return this._scopedModels;
 	}
 
-	/** Update scoped models for cycling */
+	/** Update global model narrowing */
 	setScopedModels(
 		scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>,
 	): void {
 		this._scopedModels = scopedModels;
+	}
+
+	/** Favorite models for Ctrl+P cycling */
+	get favoriteModels(): ReadonlyArray<{
+		model: Model<any>;
+		thinkingLevel?: ThinkingLevel;
+		serviceTier?: ServiceTier;
+	}> {
+		return this._favoriteModels;
+	}
+
+	/** Update favorite models for Ctrl+P cycling */
+	setFavoriteModels(
+		favoriteModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>,
+	): void {
+		this._favoriteModels = favoriteModels;
 	}
 
 	/** File-based prompt templates */
@@ -1531,28 +1551,40 @@ export class AgentSession {
 
 	/**
 	 * Cycle to next/previous model.
-	 * Uses scoped models (from --models flag) if available, otherwise all available models.
+	 * Uses favorite models, constrained by any global model narrowing.
 	 * @param direction - "forward" (default) or "backward"
 	 * @returns The new model info, or undefined if only one model available
 	 */
 	async cycleModel(direction: "forward" | "backward" = "forward"): Promise<ModelCycleResult | undefined> {
-		if (this._scopedModels.length > 0) {
-			return this._cycleScopedModel(direction);
+		if (this._favoriteModels.length > 0) {
+			return this._cycleFavoriteModel(direction);
 		}
 		return undefined;
 	}
 
-	private async _cycleScopedModel(direction: "forward" | "backward"): Promise<ModelCycleResult | undefined> {
-		const scopedModels = this._scopedModels.filter((scoped) => this._modelRegistry.hasConfiguredAuth(scoped.model));
-		if (scopedModels.length <= 1) return undefined;
+	private async _cycleFavoriteModel(direction: "forward" | "backward"): Promise<ModelCycleResult | undefined> {
+		const narrowedModelIds =
+			this._scopedModels.length > 0
+				? new Set(this._scopedModels.map((scoped) => `${scoped.model.provider}/${scoped.model.id}`))
+				: undefined;
+		const favoriteModels = this._favoriteModels.filter((favorite) => {
+			if (!this._modelRegistry.hasConfiguredAuth(favorite.model)) return false;
+			if (!narrowedModelIds) return true;
+			return narrowedModelIds.has(`${favorite.model.provider}/${favorite.model.id}`);
+		});
+		if (favoriteModels.length <= 1) return undefined;
 
 		const currentModel = this.model;
-		let currentIndex = scopedModels.findIndex((sm) => modelsAreEqual(sm.model, currentModel));
+		const currentIndex = favoriteModels.findIndex((sm) => modelsAreEqual(sm.model, currentModel));
 
-		if (currentIndex === -1) currentIndex = 0;
-		const len = scopedModels.length;
-		const nextIndex = direction === "forward" ? (currentIndex + 1) % len : (currentIndex - 1 + len) % len;
-		const next = scopedModels[nextIndex];
+		let nextIndex: number;
+		if (currentIndex === -1) {
+			nextIndex = direction === "forward" ? 0 : favoriteModels.length - 1;
+		} else {
+			const len = favoriteModels.length;
+			nextIndex = direction === "forward" ? (currentIndex + 1) % len : (currentIndex - 1 + len) % len;
+		}
+		const next = favoriteModels[nextIndex];
 		const thinkingLevel = this._getThinkingLevelForModelSwitch(next.thinkingLevel);
 
 		this.agent.state.model = next.model;
@@ -1561,8 +1593,8 @@ export class AgentSession {
 		this._currentServiceTier = next.serviceTier;
 
 		// Apply thinking level.
-		// - Explicit scoped model thinking level overrides current session level
-		// - Undefined scoped model thinking level inherits the current session preference
+		// - Explicit favorite model thinking level overrides current session level
+		// - Undefined favorite model thinking level inherits the current session preference
 		// setThinkingLevel clamps to model capabilities.
 		this.setThinkingLevel(thinkingLevel);
 
@@ -2580,6 +2612,14 @@ export class AgentSession {
 		resetApiProviders();
 		this._modelRegistry.refresh();
 		this.setScopedModels(
+			await resolveModelScope(
+				getModelNarrowingPatterns({
+					legacyEnabledPatterns: this.settingsManager.getEnabledModels(),
+				}),
+				this._modelRegistry,
+			),
+		);
+		this.setFavoriteModels(
 			await resolveModelScope(this.settingsManager.getFavoriteModels() ?? [], this._modelRegistry),
 		);
 		await this._resourceLoader.reload();

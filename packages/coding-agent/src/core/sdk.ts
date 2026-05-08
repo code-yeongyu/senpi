@@ -10,7 +10,7 @@ import type { ServiceTier } from "./extensions/builtin/service-tier.js";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.js";
 import { convertToLlm } from "./messages.js";
 import { ModelRegistry } from "./model-registry.js";
-import { findInitialModel, resolveModelScope } from "./model-resolver.js";
+import { findInitialModel, getModelNarrowingPatterns, resolveModelScope } from "./model-resolver.js";
 import type { ResourceLoader } from "./resource-loader.js";
 import { DefaultResourceLoader } from "./resource-loader.js";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.js";
@@ -50,8 +50,10 @@ export interface CreateAgentSessionOptions {
 	model?: Model<any>;
 	/** Thinking level. Default: from settings, else 'medium' (clamped to model capabilities) */
 	thinkingLevel?: ThinkingLevel;
-	/** Models available for cycling (Ctrl+P in interactive mode) */
+	/** Global model narrowing for selectors and startup model choice */
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>;
+	/** Favorite models for Ctrl+P cycling */
+	favoriteModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>;
 
 	/**
 	 * Optional default tool suppression mode when no explicit allowlist is provided.
@@ -209,7 +211,15 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
 	const sessionManager = options.sessionManager ?? SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));
 	const scopedModels =
-		options.scopedModels ?? (await resolveModelScope(settingsManager.getFavoriteModels() ?? [], modelRegistry));
+		options.scopedModels ??
+		(await resolveModelScope(
+			getModelNarrowingPatterns({
+				legacyEnabledPatterns: settingsManager.getEnabledModels(),
+			}),
+			modelRegistry,
+		));
+	const favoriteModels =
+		options.favoriteModels ?? (await resolveModelScope(settingsManager.getFavoriteModels() ?? [], modelRegistry));
 
 	if (!resourceLoader) {
 		resourceLoader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
@@ -399,6 +409,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		settingsManager,
 		cwd,
 		scopedModels,
+		favoriteModels,
 		resourceLoader,
 		customTools: options.customTools,
 		modelRegistry,

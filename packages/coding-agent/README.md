@@ -166,7 +166,7 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 |---------|-------------|
 | `/login`, `/logout` | OAuth authentication |
 | `/model` | Switch models |
-| `/scoped-models` | Enable/disable models for Ctrl+P cycling |
+| `/favorite-models` | Manage favorite models for Ctrl+P cycling |
 | `/settings` | Thinking level, theme, message delivery, transport |
 | `/resume` | Pick from previous sessions |
 | `/new` | Start a new session |
@@ -197,7 +197,7 @@ See `/hotkeys` for the full list. Customize via `~/.senpi/agent/keybindings.json
 | Escape | Cancel/abort |
 | Escape twice | Open `/tree` |
 | Ctrl+L | Open model selector |
-| Ctrl+P / Shift+Ctrl+P | Cycle scoped models forward/backward |
+| Ctrl+P / Shift+Ctrl+P | Cycle favorite models forward/backward |
 | Shift+Tab | Cycle thinking level |
 | Ctrl+O | Collapse/expand tool output |
 | Ctrl+T | Collapse/expand thinking blocks |
@@ -524,7 +524,7 @@ cat README.md | senpi -p "Summarize this text"
 | `--model <pattern>` | Model pattern or ID (supports `provider/id` and optional `:<thinking>`) |
 | `--api-key <key>` | API key (overrides env vars) |
 | `--thinking <level>` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
-| `--models <patterns>` | Comma-separated patterns for Ctrl+P cycling |
+| `--models <patterns>` | Comma-separated patterns that narrow the global model catalog |
 | `--list-models [search]` | List available models |
 
 ### Session Options

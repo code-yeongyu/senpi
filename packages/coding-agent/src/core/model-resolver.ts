@@ -54,6 +54,13 @@ export interface ScopedModel {
 	serviceTier?: ServiceTier;
 }
 
+export function getModelNarrowingPatterns(options: {
+	cliPatterns?: string[];
+	legacyEnabledPatterns?: string[];
+}): string[] {
+	return options.cliPatterns ?? options.legacyEnabledPatterns ?? [];
+}
+
 /**
  * Helper to check if a model ID looks like an alias (no date suffix)
  * Dates are typically in format: -20241022 or -20250929
@@ -193,6 +200,11 @@ export function parseModelPattern(
 	availableModels: Model<Api>[],
 	options?: { allowInvalidThinkingLevelFallback?: boolean },
 ): ParsedModelResult {
+	const fullMatch = tryMatchModel(pattern, availableModels);
+	if (fullMatch) {
+		return { model: fullMatch, thinkingLevel: undefined, serviceTier: undefined, warning: undefined };
+	}
+
 	let serviceTier: ServiceTier | undefined;
 	let effectivePattern = pattern;
 	if (pattern.endsWith("-fast")) {
@@ -200,7 +212,6 @@ export function parseModelPattern(
 		effectivePattern = pattern.slice(0, -5);
 	}
 
-	// Try exact match first
 	const exactMatch = tryMatchModel(effectivePattern, availableModels);
 	if (exactMatch) {
 		return { model: exactMatch, thinkingLevel: undefined, serviceTier, warning: undefined };
@@ -255,9 +266,20 @@ export function parseModelPattern(
  * The algorithm tries to match the full pattern first, then progressively
  * strips colon-suffixes to find a match.
  */
-export async function resolveModelScope(patterns: string[], modelRegistry: ModelRegistry): Promise<ScopedModel[]> {
+export async function resolveModelScope(
+	patterns: string[],
+	modelRegistry: ModelRegistry,
+	options?: { onWarning?: (message: string) => void },
+): Promise<ScopedModel[]> {
 	const availableModels = await modelRegistry.getAvailable();
 	const scopedModels: ScopedModel[] = [];
+	const emitWarning = (message: string): void => {
+		if (options?.onWarning) {
+			options.onWarning(message);
+			return;
+		}
+		console.warn(chalk.yellow(`Warning: ${message}`));
+	};
 
 	for (const pattern of patterns) {
 		if (pattern.includes("*") || pattern.includes("?") || pattern.includes("[")) {
@@ -285,7 +307,7 @@ export async function resolveModelScope(patterns: string[], modelRegistry: Model
 			});
 
 			if (matchingModels.length === 0) {
-				console.warn(chalk.yellow(`Warning: No models match pattern "${pattern}"`));
+				emitWarning(`No models match pattern "${pattern}"`);
 				continue;
 			}
 
@@ -300,11 +322,11 @@ export async function resolveModelScope(patterns: string[], modelRegistry: Model
 		const { model, thinkingLevel, serviceTier, warning } = parseModelPattern(pattern, availableModels);
 
 		if (warning) {
-			console.warn(chalk.yellow(`Warning: ${warning}`));
+			emitWarning(warning);
 		}
 
 		if (!model) {
-			console.warn(chalk.yellow(`Warning: No models match pattern "${pattern}"`));
+			emitWarning(`No models match pattern "${pattern}"`);
 			continue;
 		}
 

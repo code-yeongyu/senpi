@@ -37,7 +37,7 @@ Type `/` in the editor to open command completion. Extensions can register custo
 |---------|-------------|
 | `/login`, `/logout` | Manage OAuth or API-key credentials |
 | `/model` | Switch models |
-| `/scoped-models` | Enable/disable models for Ctrl+P cycling |
+| `/favorite-models` | Manage favorite models for Ctrl+P cycling |
 | `/settings` | Thinking level, theme, message delivery, transport |
 | `/resume` | Pick from previous sessions |
 | `/new` | Start a new session |
@@ -163,7 +163,7 @@ cat README.md | pi -p "Summarize this text"
 | `--model <pattern>` | Model pattern or ID; supports `provider/id` and optional `:<thinking>` |
 | `--api-key <key>` | API key, overriding environment variables |
 | `--thinking <level>` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh` |
-| `--models <patterns>` | Comma-separated patterns for Ctrl+P cycling |
+| `--models <patterns>` | Comma-separated patterns that narrow the global model catalog |
 | `--list-models [search]` | List available models |
 
 ### Session Options

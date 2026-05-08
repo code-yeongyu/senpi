@@ -1,16 +1,16 @@
-import { setKeybindings, type TUI } from "@earendil-works/pi-tui";
+import { setKeybindings } from "@earendil-works/pi-tui";
 import stripAnsi from "strip-ansi";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KeybindingsManager } from "../../../src/core/keybindings.js";
+import { FavoriteModelsSelectorComponent } from "../../../src/modes/interactive/components/favorite-models-selector.js";
 import { ModelSelectorComponent } from "../../../src/modes/interactive/components/model-selector.js";
-import { ScopedModelsSelectorComponent } from "../../../src/modes/interactive/components/scoped-models-selector.js";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.js";
 import { createHarness, type Harness } from "../harness.js";
 
-function createFakeTui(): TUI {
+function createFakeTui(): { requestRender: () => void } {
 	return {
 		requestRender: () => {},
-	} as unknown as TUI;
+	};
 }
 
 async function waitForAsyncRender(): Promise<void> {
@@ -47,14 +47,14 @@ describe("issue #3217 scoped model ordering", () => {
 
 		const orderedIds = harness.models.map((model) => `${model.provider}/${model.id}`);
 		const changes: Array<string[] | null> = [];
-		const selector = new ScopedModelsSelectorComponent(
+		const selector = new FavoriteModelsSelectorComponent(
 			{
 				allModels: [...harness.models],
-				enabledModelIds: orderedIds,
+				favoriteModelIds: orderedIds,
 			},
 			{
-				onChange: (enabledModelIds) => {
-					changes.push(enabledModelIds);
+				onChange: (favoriteModelIds) => {
+					changes.push(favoriteModelIds);
 				},
 				onPersist: () => {},
 				onCancel: () => {},
@@ -66,7 +66,39 @@ describe("issue #3217 scoped model ordering", () => {
 		expect(changes).toEqual([[orderedIds[1], orderedIds[0], orderedIds[2]]]);
 	});
 
-	it("preserves scoped model order in the /model scoped tab", async () => {
+	it("filters scoped models by canonical provider/model id", async () => {
+		const harness = await createHarness({
+			provider: "openai",
+			models: [
+				{ id: "gpt-5-4-mini-fast", name: "GPT 5.4 Mini Fast", reasoning: true },
+				{ id: "gpt-5.4", name: "GPT 5.4", reasoning: true },
+				{ id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true },
+			],
+		});
+		harnesses.push(harness);
+
+		const selector = new FavoriteModelsSelectorComponent(
+			{
+				allModels: [...harness.models],
+				favoriteModelIds: null,
+			},
+			{
+				onChange: () => {},
+				onPersist: () => {},
+				onCancel: () => {},
+			},
+		);
+
+		for (const char of "openai/gpt 5 4 mini fast") {
+			selector.handleInput(char);
+		}
+
+		const rendered = stripAnsi(selector.render(120).join("\n"));
+		expect(rendered).toContain("gpt-5-4-mini-fast [openai]");
+		expect(rendered).not.toContain("claude-sonnet-4-5");
+	});
+
+	it("preserves narrowed catalog order in the /model narrowed tab", async () => {
 		const harness = await createHarness({
 			models: [
 				{ id: "faux-1", name: "One", reasoning: true },
@@ -76,9 +108,12 @@ describe("issue #3217 scoped model ordering", () => {
 		});
 		harnesses.push(harness);
 
-		const modelOne = harness.getModel("faux-1")!;
-		const modelTwo = harness.getModel("faux-2")!;
-		const modelThree = harness.getModel("faux-3")!;
+		const modelOne = harness.getModel("faux-1");
+		const modelTwo = harness.getModel("faux-2");
+		const modelThree = harness.getModel("faux-3");
+		if (!modelOne || !modelTwo || !modelThree) {
+			throw new Error("expected faux models to be registered");
+		}
 		const selector = new ModelSelectorComponent(
 			createFakeTui(),
 			modelOne,

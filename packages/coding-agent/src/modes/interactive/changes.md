@@ -9,9 +9,9 @@
 
 ## favorite model cycling
 
-- Changed `src/modes/interactive/interactive-mode.ts` so Ctrl+P reports missing favorite models instead of cycling through every available model, and `/scoped-models` saves selections to the new `favoriteModels` settings field.
-- This was changed in core UI because the built-in status text and model-scope selector wiring are internal `InteractiveMode` behavior; extensions cannot replace the default Ctrl+P command semantics without racing the built-in binding.
-- Expected merge-conflict zone on upstream sync: model cycling status and `/scoped-models` selector wiring in `src/modes/interactive/interactive-mode.ts`.
+- Changed `src/modes/interactive/interactive-mode.ts` so Ctrl+P reports missing favorite models instead of cycling through every available model, and `/favorite-models` saves selections to the new `favoriteModels` settings field.
+- This was changed in core UI because the built-in status text and favorite-model selector wiring are internal `InteractiveMode` behavior; extensions cannot replace the default Ctrl+P command semantics without racing the built-in binding.
+- Expected merge-conflict zone on upstream sync: model cycling status and `/favorite-models` selector wiring in `src/modes/interactive/interactive-mode.ts`.
 
 ## builtin extension display paths
 

@@ -13,12 +13,16 @@ export { DynamicBorder } from "./dynamic-border.js";
 export { ExtensionEditorComponent } from "./extension-editor.js";
 export { ExtensionInputComponent } from "./extension-input.js";
 export { ExtensionSelectorComponent } from "./extension-selector.js";
+export {
+	type FavoriteModelsCallbacks,
+	type FavoriteModelsConfig,
+	FavoriteModelsSelectorComponent,
+} from "./favorite-models-selector.js";
 export { FooterComponent } from "./footer.js";
 export { keyHint, keyText, rawKeyHint } from "./keybinding-hints.js";
 export { LoginDialogComponent } from "./login-dialog.js";
 export { ModelSelectorComponent } from "./model-selector.js";
 export { OAuthSelectorComponent } from "./oauth-selector.js";
-export { type ModelsCallbacks, type ModelsConfig, ScopedModelsSelectorComponent } from "./scoped-models-selector.js";
 export { SessionSelectorComponent } from "./session-selector.js";
 export { type SettingsCallbacks, type SettingsConfig, SettingsSelectorComponent } from "./settings-selector.js";
 export { ShowImagesSelectorComponent } from "./show-images-selector.js";

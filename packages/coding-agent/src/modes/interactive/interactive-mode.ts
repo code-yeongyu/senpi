@@ -102,12 +102,12 @@ import { EarendilAnnouncementComponent } from "./components/earendil-announcemen
 import { ExtensionEditorComponent } from "./components/extension-editor.js";
 import { ExtensionInputComponent } from "./components/extension-input.js";
 import { ExtensionSelectorComponent } from "./components/extension-selector.js";
+import { FavoriteModelsSelectorComponent } from "./components/favorite-models-selector.js";
 import { FooterComponent } from "./components/footer.js";
 import { keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.js";
 import { LoginDialogComponent } from "./components/login-dialog.js";
 import { ModelSelectorComponent } from "./components/model-selector.js";
 import { type AuthSelectorProvider, OAuthSelectorComponent } from "./components/oauth-selector.js";
-import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.js";
 import { SessionSelectorComponent } from "./components/session-selector.js";
 import { SettingsSelectorComponent } from "./components/settings-selector.js";
 import { SkillInvocationMessageComponent } from "./components/skill-invocation-message.js";
@@ -2473,9 +2473,9 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
-			if (text === "/scoped-models") {
+			if (text === "/favorite-models") {
 				this.editor.setText("");
-				await this.showModelsSelector();
+				await this.showFavoriteModelsSelector();
 				return;
 			}
 			if (text === "/model" || text.startsWith("/model ")) {
@@ -3431,9 +3431,9 @@ export class InteractiveMode {
 			const result = await this.session.cycleModel(direction);
 			if (result === undefined) {
 				const msg =
-					this.session.scopedModels.length > 0
-						? "Only one favorite model configured"
-						: "No favorite models configured. Add favoriteModels to settings.json or use /scoped-models and save.";
+					this.session.favoriteModels.length > 0
+						? "Only one favorite model available"
+						: "No favorite models configured. Add favoriteModels to settings.json or use /favorite-models and save.";
 				this.showStatus(msg);
 			} else {
 				this.footer.invalidate();
@@ -3985,13 +3985,17 @@ export class InteractiveMode {
 	}
 
 	private async getModelCandidates(): Promise<Model<any>[]> {
-		if (this.session.scopedModels.length > 0) {
-			return this.session.scopedModels.map((scoped) => scoped.model);
-		}
-
 		this.session.modelRegistry.refresh();
 		try {
-			return await this.session.modelRegistry.getAvailable();
+			const availableModels = await this.session.modelRegistry.getAvailable();
+			if (this.session.scopedModels.length === 0) {
+				return availableModels;
+			}
+			const availableById = new Map(availableModels.map((model) => [`${model.provider}/${model.id}`, model]));
+			return this.session.scopedModels.flatMap((scoped) => {
+				const refreshed = availableById.get(`${scoped.model.provider}/${scoped.model.id}`);
+				return refreshed ? [refreshed] : [];
+			});
 		} catch {
 			return [];
 		}
@@ -4071,67 +4075,74 @@ export class InteractiveMode {
 		});
 	}
 
-	private async showModelsSelector(): Promise<void> {
-		// Get all available models
-		this.session.modelRegistry.refresh();
-		const allModels = this.session.modelRegistry.getAvailable();
+	private async showFavoriteModelsSelector(): Promise<void> {
+		const allModels = await this.getModelCandidates();
 
 		if (allModels.length === 0) {
 			this.showStatus("No models available");
 			return;
 		}
 
-		// Check if session has scoped models (from previous session-only changes or CLI --models)
-		const sessionScopedModels = this.session.scopedModels;
-		const hasSessionScope = sessionScopedModels.length > 0;
-
 		// Build favorite model IDs from session state or settings
-		let currentEnabledIds: string[] | null = [];
+		let currentFavoriteIds: string[] | null = [];
+		const candidateIds = new Set(allModels.map((model) => `${model.provider}/${model.id}`));
+		const resolveScopeForUi = async (patterns: string[]) => {
+			const warnings: string[] = [];
+			const resolvedModels = await resolveModelScope(patterns, this.session.modelRegistry, {
+				onWarning: (message) => warnings.push(message),
+			});
+			for (const warning of warnings) {
+				this.showWarning(warning);
+			}
+			return resolvedModels.filter((resolved) =>
+				candidateIds.has(`${resolved.model.provider}/${resolved.model.id}`),
+			);
+		};
 
-		if (hasSessionScope) {
-			// Use current session's scoped models
-			currentEnabledIds = sessionScopedModels.map((scoped) => `${scoped.model.provider}/${scoped.model.id}`);
+		if (this.session.favoriteModels.length > 0) {
+			currentFavoriteIds = this.session.favoriteModels
+				.map((favorite) => `${favorite.model.provider}/${favorite.model.id}`)
+				.filter((id) => candidateIds.has(id));
 		} else {
-			// Fall back to settings
-			const patterns = this.settingsManager.getFavoriteModels();
-			if (patterns !== undefined && patterns.length > 0) {
-				const scopedModels = await resolveModelScope(patterns, this.session.modelRegistry);
-				currentEnabledIds = scopedModels.map((scoped) => `${scoped.model.provider}/${scoped.model.id}`);
+			const patterns = this.settingsManager.getFavoriteModels() ?? [];
+			if (patterns.length > 0) {
+				const favoriteModels = await resolveScopeForUi(patterns);
+				currentFavoriteIds = favoriteModels.map((favorite) => `${favorite.model.provider}/${favorite.model.id}`);
 			}
 		}
 
-		// Helper to update session's scoped models (session-only, no persist)
-		const updateSessionModels = async (enabledIds: string[] | null) => {
-			const nextIds = enabledIds === null ? allModels.map((model) => `${model.provider}/${model.id}`) : enabledIds;
-			currentEnabledIds = enabledIds === null ? null : [...enabledIds];
+		// Helper to update session's favorite models (session-only, no persist)
+		const updateSessionFavorites = async (favoriteIds: string[] | null) => {
+			const nextIds = favoriteIds === null ? allModels.map((model) => `${model.provider}/${model.id}`) : favoriteIds;
+			currentFavoriteIds = favoriteIds === null ? null : [...favoriteIds];
 			if (nextIds.length > 0) {
-				const newScopedModels = await resolveModelScope(nextIds, this.session.modelRegistry);
-				this.session.setScopedModels(
-					newScopedModels.map((sm) => ({
+				const newFavoriteModels = await resolveScopeForUi(nextIds);
+				this.session.setFavoriteModels(
+					newFavoriteModels.map((sm) => ({
 						model: sm.model,
 						thinkingLevel: sm.thinkingLevel,
+						serviceTier: sm.serviceTier,
 					})),
 				);
 			} else {
-				this.session.setScopedModels([]);
+				this.session.setFavoriteModels([]);
 			}
-			await this.updateAvailableProviderCount();
 			this.ui.requestRender();
 		};
 
 		this.showSelector((done) => {
-			const selector = new ScopedModelsSelectorComponent(
+			const selector = new FavoriteModelsSelectorComponent(
 				{
 					allModels,
-					enabledModelIds: currentEnabledIds,
+					favoriteModelIds: currentFavoriteIds,
 				},
 				{
-					onChange: async (enabledIds) => {
-						await updateSessionModels(enabledIds);
+					onChange: async (favoriteIds) => {
+						await updateSessionFavorites(favoriteIds);
 					},
-					onPersist: (enabledIds) => {
+					onPersist: (favoriteIds) => {
 						const newPatterns =
-							enabledIds === null ? allModels.map((model) => `${model.provider}/${model.id}`) : enabledIds;
+							favoriteIds === null ? allModels.map((model) => `${model.provider}/${model.id}`) : favoriteIds;
 						this.settingsManager.setFavoriteModels(newPatterns.length > 0 ? [...newPatterns] : undefined);
 						this.showStatus("Favorite models saved to settings");
 					},

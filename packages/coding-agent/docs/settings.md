@@ -189,13 +189,17 @@ When multiple sources specify a session directory, precedence is `--session-dir`
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `enabledModels` | string[] | - | Model patterns for Ctrl+P cycling (same format as `--models` CLI flag) |
+| `favoriteModels` | string[] | - | Favorite model patterns for Ctrl+P cycling (same format as `--models` CLI flag) |
+| `enabledModels` | string[] | - | Legacy global model-catalog narrowing patterns (same format as `--models` CLI flag) |
 
 ```json
 {
-  "enabledModels": ["claude-*", "gpt-4o", "gemini-2*"]
+  "enabledModels": ["anthropic/*", "openai/*"],
+  "favoriteModels": ["anthropic/claude-*", "openai/gpt-5.4"]
 }
 ```
+
+`enabledModels` changes which models appear in the catalog, startup selection, and `/model` narrowing. `favoriteModels` is separate and only controls Ctrl+P cycling.
 
 ### Markdown
 
@@ -288,6 +292,7 @@ Permission values: `"allow"`, `"deny"`, `"ask"`. See [agents.md](agents.md) for 
     "maxRetries": 3
   },
   "enabledModels": ["claude-*", "gpt-4o"],
+  "favoriteModels": ["anthropic/claude-sonnet-4-20250514", "openai/gpt-4o"],
   "warnings": {
     "anthropicExtraUsage": true
   },

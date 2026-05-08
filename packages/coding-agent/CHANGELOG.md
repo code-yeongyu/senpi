@@ -11,6 +11,10 @@
 - Added builtin `anthropic-tool-search` extension that opt-in injects Anthropic native `tool_search_tool_regex_20251119` and/or `tool_search_tool_bm25_20251119` tools for `anthropic-messages` requests when `PI_ANTHROPIC_TOOL_SEARCH` is set to `regex`, `bm25`, or `both`.
 - Added builtin `openai-web-search` extension that injects OpenAI Responses native `web_search` for `openai-responses`/`azure-openai-responses` requests and strips duplicate function-style `web_search` tool entries so the native tool is used.
 
+### Fixed
+
+- Fixed model catalog narrowing so `--models` / `enabledModels` constrain startup and selectors separately from Ctrl+P `favoriteModels`, preserve exact model IDs ending in `-fast`, and filter `/favorite-models` by canonical `provider/model` IDs without writing resolver warnings into the active TUI.
+
 ### Removed
 
 - Removed the `webfetch` builtin extension. Anthropic and Google users should rely on the native `anthropic-web-fetch` and `google-url-context` builtins respectively. OpenAI users lose function-tool web_fetch fallback.

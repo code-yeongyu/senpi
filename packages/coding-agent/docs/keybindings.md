@@ -138,16 +138,16 @@ Modifier combinations: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, `ctrl+1
 | `app.tree.filter.cycleForward` | `ctrl+o` | Cycle tree filter forward |
 | `app.tree.filter.cycleBackward` | `shift+ctrl+o` | Cycle tree filter backward |
 
-### Scoped Models Selector
+### Favorite Models Selector
 
-Used inside the scoped models selector (opened via `/scoped-models`).
+Used inside the favorite models selector (opened via `/favorite-models`).
 
 | Keybinding id | Default | Description |
 |--------|---------|-------------|
-| `app.models.save` | `ctrl+s` | Save current model selection to settings |
-| `app.models.enableAll` | `ctrl+a` | Enable all models (or all matching the current search) |
+| `app.models.save` | `ctrl+s` | Save current favorite model selection to settings |
+| `app.models.enableAll` | `ctrl+a` | Favorite all models (or all matching the current search) |
 | `app.models.clearAll` | `ctrl+x` | Clear all models (or all matching the current search) |
-| `app.models.toggleProvider` | `ctrl+p` | Toggle all models for the current provider |
+| `app.models.toggleProvider` | `ctrl+p` | Toggle favorite models for the current provider |
 | `app.models.reorderUp` | `alt+up` | Move the selected model up in the cycle order |
 | `app.models.reorderDown` | `alt+down` | Move the selected model down in the cycle order |
 
