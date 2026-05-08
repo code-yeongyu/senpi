@@ -4,7 +4,7 @@
 
 ### What changed
 
-- `config.ts`: Bun-binary self-update fallback now points to `code-yeongyu/sanepi-mono` releases.
+- `config.ts`: Bun-binary self-update fallback now points to `code-yeongyu/senpi-mono` releases.
 - `package-manager-cli.ts`: `senpi update senpi` is accepted as the branded self-update target and help text uses senpi wording.
 - `package.json`: Repository metadata now points to the senpi fork.
 

@@ -1,7 +1,7 @@
 # Permission System Builtin Extension
 
 ## Overview
-Full port of opencode's permission system to sanepi-mono as a builtin extension.
+Full port of opencode's permission system to senpi-mono as a builtin extension.
 
 ## Files
 - `types.ts` - Core type definitions (Action, Rule, Request, Reply, etc.)
