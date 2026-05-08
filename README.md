@@ -11,7 +11,7 @@
 </p>
 <p align="center">
   <a href="https://discord.com/invite/3cU7Bz4UPx"><img alt="Discord" src="https://img.shields.io/badge/discord-community-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
-  <a href="https://github.com/code-yeongyu/sanepi-mono/actions/workflows/ci.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/code-yeongyu/sanepi-mono/ci.yml?style=flat-square&branch=main" /></a>
+  <a href="https://github.com/code-yeongyu/senpi-mono/actions/workflows/ci.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/code-yeongyu/senpi-mono/ci.yml?style=flat-square&branch=main" /></a>
 </p>
 
 An opinionated fork of [badlogic/pi-mono](https://github.com/badlogic/pi-mono) that turns the coding agent into **senpi**: a senpai-name pun, and a more sane pi with extra batteries included.
@@ -98,7 +98,7 @@ This fork rebases periodically on `upstream/main`. To minimize merge conflicts:
 
 1. **Extension-first**: All features use pi's [extension system](packages/coding-agent/docs/extensions.md) as builtin extensions.
 2. **Document core changes**: Every upstream file modification has a corresponding `changes.md` in the affected subdirectory, documenting what changed, why, and expected conflict zones.
-3. **Remotes**: `origin` = [code-yeongyu/sanepi-mono](https://github.com/code-yeongyu/sanepi-mono), `upstream` = [badlogic/pi-mono](https://github.com/badlogic/pi-mono).
+3. **Remotes**: `origin` = [code-yeongyu/senpi-mono](https://github.com/code-yeongyu/senpi-mono), `upstream` = [badlogic/pi-mono](https://github.com/badlogic/pi-mono).
 
 Modified upstream files:
 
@@ -157,3 +157,18 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [AGENTS.m
 ## License
 
 MIT
+
+## Ganbare Ganbare Senpi
+
+> *Hora, senpi senpi, senpi te kudasai!*
+> *Ganbare ganbare senpi, gan ganbare ganbare senpi ora!*
+
+A tiny, completely unserious love letter to the [Ganbare Ganbare Senpai](https://en.wikipedia.org/wiki/Don%27t_Toy_with_Me,_Miss_Nagatoro) meme that the project's name secretly bows to. Every time the rebase is clean and the tests are green, somewhere a kouhai whispers:
+
+- **C'mon senpi, c'mon!** Ship the PR.
+- **Notice me, senpi.** ...the diagnostics noticed first.
+- **Try harder, senpi!** *(she did look. and the build did pass.)*
+- **You can do it, senpi!** One more agent, one more tool, one more clean rebase.
+- **Ganbare, ganbare, senpi! 頑張れ頑張れ先輩!** *Do your best, do your best, senpai!*
+
+Yes, the entire project name is a senpai pun. Type strictly, run the tests, write a `changes.md`, keep the merge surface tiny — and *gan ganbare ganbare senpi ora!*

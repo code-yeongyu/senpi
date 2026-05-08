@@ -96,7 +96,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/code-yeongyu/sanepi-mono.git",
+		"url": "git+https://github.com/code-yeongyu/senpi-mono.git",
 		"directory": "packages/coding-agent"
 	},
 	"engines": {

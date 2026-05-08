@@ -117,7 +117,7 @@ Use these sections under `## [Unreleased]`:
    - Which files were modified
    - Why the extension system couldn't handle this
    - Expected merge conflict zones on next upstream sync
-3. **Remotes**: `origin` = `code-yeongyu/sanepi-mono`, `upstream` = `badlogic/pi-mono`
+3. **Remotes**: `origin` = `code-yeongyu/senpi-mono`, `upstream` = `badlogic/pi-mono`
 4. **Sync**: Periodically rebase on upstream/main. Fewer core modifications = fewer conflicts.
 
 ### Extension Points Available
@@ -138,7 +138,7 @@ Extensions load from: builtin (`packages/coding-agent/src/core/extensions/builti
 ## STRUCTURE
 
 ```
-sanepi-mono/                        # Fork of badlogic/pi-mono
+senpi-mono/                         # Fork of badlogic/pi-mono
 ├── packages/
 │   ├── coding-agent/               # Main CLI app (primary focus) - SEE packages/coding-agent/AGENTS.md
 │   ├── ai/                         # Multi-provider LLM API - SEE packages/ai/AGENTS.md
