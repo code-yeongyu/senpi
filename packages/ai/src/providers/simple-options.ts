@@ -152,15 +152,16 @@ export function clampReasoning(effort: ThinkingLevel | undefined): Exclude<Think
 }
 
 /**
- * Clamp "max" to an OpenAI-compatible effort. OpenAI-style reasoning APIs accept
- * low|medium|high|xhigh but not "max". Callers that know the model supports xhigh
- * should pass through xhigh; "max" downgrades to "xhigh" on xhigh-capable models
- * and to "high" otherwise.
+ * Clamp pi thinking levels to OpenAI-compatible efforts. Some OpenAI-compatible
+ * routers expose low|medium|high|xhigh and reject pi's "minimal" alias; treat it
+ * as the lowest accepted tier. "max" downgrades to "xhigh" on xhigh-capable
+ * models and to "high" otherwise.
  */
 export function clampMaxForOpenAI(
 	effort: ThinkingLevel | undefined,
 	xhighSupported: boolean,
-): Exclude<ThinkingLevel, "max"> | undefined {
+): Exclude<ThinkingLevel, "minimal" | "max"> | undefined {
+	if (effort === "minimal") return "low";
 	if (effort === "max") return xhighSupported ? "xhigh" : "high";
 	return effort;
 }

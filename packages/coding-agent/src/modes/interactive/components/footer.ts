@@ -26,6 +26,10 @@ function formatTokens(count: number): string {
 	return `${Math.round(count / 1000000)}M`;
 }
 
+function formatRawTokens(count: number): string {
+	return Math.trunc(count).toString();
+}
+
 /**
  * Footer component that shows pwd, token stats, and context usage.
  * Computes token/context stats from session, gets git branch and extension statuses from provider.
@@ -109,7 +113,7 @@ export class FooterComponent implements Component {
 		}
 
 		// Build stats line
-		const statsParts = [];
+		const statsParts: string[] = [];
 		if (totalInput) statsParts.push(`↑${formatTokens(totalInput)}`);
 		if (totalOutput) statsParts.push(`↓${formatTokens(totalOutput)}`);
 		if (totalCacheRead) statsParts.push(`R${formatTokens(totalCacheRead)}`);
@@ -127,8 +131,8 @@ export class FooterComponent implements Component {
 		const autoIndicator = this.autoCompactEnabled ? " (auto)" : "";
 		const contextPercentDisplay =
 			contextPercent === "?"
-				? `?/${formatTokens(contextWindow)}${autoIndicator}`
-				: `${contextPercent}%/${formatTokens(contextWindow)}${autoIndicator}`;
+				? `?/${formatRawTokens(contextWindow)}${autoIndicator}`
+				: `${contextPercent}%/${formatRawTokens(contextWindow)}${autoIndicator}`;
 		if (contextPercentValue > 90) {
 			contextPercentStr = theme.fg("error", contextPercentDisplay);
 		} else if (contextPercentValue > 70) {

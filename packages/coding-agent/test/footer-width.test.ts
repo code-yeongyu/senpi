@@ -1,6 +1,6 @@
 import { visibleWidth } from "@mariozechner/pi-tui";
 import { beforeAll, describe, expect, it } from "vitest";
-import type { AgentSession } from "../src/core/agent-session.js";
+import { AgentSession } from "../src/core/agent-session.js";
 import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.js";
 import { FooterComponent } from "../src/modes/interactive/components/footer.js";
 import { initTheme } from "../src/modes/interactive/theme/theme.js";
@@ -35,28 +35,37 @@ function createSession(options: {
 					},
 				];
 
-	const session = {
+	const session = Object.create(AgentSession.prototype) as AgentSession;
+	Object.defineProperties(session, {
 		state: {
-			model: {
-				id: options.modelId ?? "test-model",
-				provider: options.provider ?? "test",
-				contextWindow: 200_000,
-				reasoning: options.reasoning ?? false,
+			value: {
+				model: {
+					id: options.modelId ?? "test-model",
+					provider: options.provider ?? "test",
+					contextWindow: 200_000,
+					reasoning: options.reasoning ?? false,
+				},
+				thinkingLevel: options.thinkingLevel ?? "off",
 			},
-			thinkingLevel: options.thinkingLevel ?? "off",
 		},
 		sessionManager: {
-			getEntries: () => entries,
-			getSessionName: () => options.sessionName,
-			getCwd: () => "/tmp/project",
+			value: {
+				getEntries: () => entries,
+				getSessionName: () => options.sessionName,
+				getCwd: () => "/tmp/project",
+			},
 		},
-		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
+		getContextUsage: {
+			value: () => ({ contextWindow: 200_000, percent: 12.3 }),
+		},
 		modelRegistry: {
-			isUsingOAuth: () => false,
+			value: {
+				isUsingOAuth: () => false,
+			},
 		},
-	};
+	});
 
-	return session as unknown as AgentSession;
+	return session;
 }
 
 function createFooterData(providerCount: number): ReadonlyFooterDataProvider {
@@ -111,5 +120,15 @@ describe("FooterComponent width handling", () => {
 		for (const line of lines) {
 			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 		}
+	});
+
+	it("renders the context window as a raw token count", () => {
+		const session = createSession({ sessionName: "" });
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		const lines = footer.render(120);
+
+		expect(lines[1]).toContain("12.3%/200000");
+		expect(lines[1]).not.toContain("200k");
 	});
 });

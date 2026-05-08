@@ -46,10 +46,6 @@ function createAssistantMessage(text: string, overrides?: Partial<AssistantMessa
 	};
 }
 
-type SessionWithExtensionEmitHook = {
-	_emitExtensionEvent: (event: AgentEvent) => Promise<void>;
-};
-
 describe("AgentSession retry", () => {
 	let session: AgentSession;
 	let tempDir: string;
@@ -68,10 +64,16 @@ describe("AgentSession retry", () => {
 		}
 	});
 
-	function createSession(options?: { failCount?: number; maxRetries?: number; delayAssistantMessageEndMs?: number }) {
+	function createSession(options?: {
+		failCount?: number;
+		maxRetries?: number;
+		delayAssistantMessageEndMs?: number;
+		errorMessage?: string;
+	}) {
 		const failCount = options?.failCount ?? 1;
 		const maxRetries = options?.maxRetries ?? 3;
 		const delayAssistantMessageEndMs = options?.delayAssistantMessageEndMs ?? 0;
+		const errorMessage = options?.errorMessage ?? "overloaded_error";
 		let callCount = 0;
 
 		const model = getModel("anthropic", "claude-sonnet-4-5")!;
@@ -85,7 +87,7 @@ describe("AgentSession retry", () => {
 					if (callCount <= failCount) {
 						const msg = createAssistantMessage("", {
 							stopReason: "error",
-							errorMessage: "overloaded_error",
+							errorMessage,
 						});
 						stream.push({ type: "start", partial: msg });
 						stream.push({ type: "error", reason: "error", error: msg });
@@ -116,14 +118,13 @@ describe("AgentSession retry", () => {
 		});
 
 		if (delayAssistantMessageEndMs > 0) {
-			const sessionWithHook = session as unknown as SessionWithExtensionEmitHook;
-			const original = sessionWithHook._emitExtensionEvent.bind(sessionWithHook);
-			sessionWithHook._emitExtensionEvent = async (event: AgentEvent) => {
+			const original = Reflect.get(session, "_emitExtensionEvent") as (event: AgentEvent) => Promise<void>;
+			Reflect.set(session, "_emitExtensionEvent", async (event: AgentEvent) => {
 				if (event.type === "message_end" && event.message.role === "assistant") {
 					await new Promise((resolve) => setTimeout(resolve, delayAssistantMessageEndMs));
 				}
-				await original(event);
-			};
+				await original.call(session, event);
+			});
 		}
 
 		return { session, getCallCount: () => callCount };
@@ -158,6 +159,25 @@ describe("AgentSession retry", () => {
 		expect(events).toContain("start:1");
 		expect(events).toContain("start:2");
 		expect(events).toContain("end:success=false");
+		expect(created.session.isRetrying).toBe(false);
+	});
+
+	it("does not retry deterministic provider 400 validation errors", async () => {
+		const created = createSession({
+			failCount: 1,
+			errorMessage:
+				'Provider returned error: 400 level "minimal" not supported, valid levels: low, medium, high, xhigh',
+		});
+		const events: string[] = [];
+		created.session.subscribe((event) => {
+			if (event.type === "auto_retry_start") events.push(`start:${event.attempt}`);
+			if (event.type === "auto_retry_end") events.push(`end:success=${event.success}`);
+		});
+
+		await created.session.prompt("Test");
+
+		expect(created.getCallCount()).toBe(1);
+		expect(events).toEqual([]);
 		expect(created.session.isRetrying).toBe(false);
 	});
 
