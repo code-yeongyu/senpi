@@ -1,5 +1,24 @@
 # changes
 
+## Configured upstream model id and service tier (2026-05-09)
+
+### What changed
+
+- `src/core/model-registry.ts`: Custom `models.json` model entries can now set `upstreamModelId` and per-model `serviceTier`.
+- `src/core/sdk.ts`: Provider requests use the configured upstream model id while preserving the configured catalog id for model selection.
+
+### Why
+
+- Users need both a normal catalog entry and a priority catalog entry, such as `gpt-5.5` and `gpt-5.5-fast`, while sending the upstream request as `model: "gpt-5.5"` with `service_tier: "priority"` for only the priority entry.
+
+### Why extension system couldn't handle this
+
+- The model id is embedded by the provider payload builder before `before_provider_request` hooks run, and `service_tier` is a provider-managed field. The registry has to carry the configured wire id and tier into the stream call before payload construction.
+
+### Expected merge conflict zones on next upstream sync
+
+- MEDIUM: `model-registry.ts` schema/request-auth metadata and `sdk.ts` stream option composition.
+
 ## Generated default extension fast path (2026-05-08)
 
 ### What changed

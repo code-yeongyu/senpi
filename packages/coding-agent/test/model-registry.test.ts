@@ -780,6 +780,53 @@ describe("ModelRegistry", () => {
 			}
 		});
 
+		test("custom model can route to an upstream model id with a service tier", async () => {
+			writeRawModelsJson({
+				openai: {
+					baseUrl: "https://example.test/v1",
+					apiKey: "TEST_KEY",
+					api: "openai-responses",
+					models: [
+						{
+							id: "gpt-5.5",
+							name: "GPT-5.5",
+							reasoning: true,
+							input: ["text"],
+							contextWindow: 400000,
+							maxTokens: 128000,
+						},
+						{
+							id: "gpt-5.5-fast",
+							name: "GPT-5.5 Fast",
+							upstreamModelId: "gpt-5.5",
+							serviceTier: "priority",
+							reasoning: true,
+							input: ["text"],
+							contextWindow: 400000,
+							maxTokens: 128000,
+						},
+					],
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const normal = registry.find("openai", "gpt-5.5");
+			const priority = registry.find("openai", "gpt-5.5-fast");
+
+			expect(normal).toBeDefined();
+			expect(priority).toBeDefined();
+
+			const normalAuth = await registry.getApiKeyAndHeaders(normal!);
+			const priorityAuth = await registry.getApiKeyAndHeaders(priority!);
+
+			expect(normalAuth).toMatchObject({ ok: true });
+			expect(priorityAuth).toMatchObject({
+				ok: true,
+				upstreamModelId: "gpt-5.5",
+				serviceTier: "priority",
+			});
+		});
+
 		test("refresh() picks up model override changes", () => {
 			writeRawModelsJson({
 				openrouter: {
@@ -894,12 +941,13 @@ describe("ModelRegistry", () => {
 
 		test("failed registerProvider does not persist invalid streamSimple config", () => {
 			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const streamSimple: ProviderConfigInput["streamSimple"] = () => {
+				throw new Error("should not run");
+			};
 
 			expect(() =>
 				registry.registerProvider("broken-provider", {
-					streamSimple: (() => {
-						throw new Error("should not run");
-					}) as any,
+					streamSimple,
 				}),
 			).toThrow('Provider broken-provider: "api" is required when registering streamSimple.');
 

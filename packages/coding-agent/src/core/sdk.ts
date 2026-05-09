@@ -343,11 +343,13 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			if (!auth.ok) {
 				throw new Error(auth.error);
 			}
+			const requestModel = auth.upstreamModelId ? { ...model, id: auth.upstreamModelId } : model;
 			const providerRetrySettings = settingsManager.getProviderRetrySettings();
 			const attributionHeaders = getAttributionHeaders(model, settingsManager);
-			return streamSimple(model, context, {
+			const streamOptions = {
 				...options,
 				apiKey: auth.apiKey,
+				serviceTier: auth.serviceTier,
 				timeoutMs: options?.timeoutMs ?? providerRetrySettings.timeoutMs,
 				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
 				maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
@@ -356,7 +358,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 						? { ...attributionHeaders, ...auth.headers, ...options?.headers }
 						: undefined,
 				extraBody: auth.extraBody || options?.extraBody ? { ...auth.extraBody, ...options?.extraBody } : undefined,
-			});
+			};
+			return streamSimple(requestModel, context, streamOptions);
 		},
 		onPayload: async (payload, _model) => {
 			const runner = extensionRunnerRef.current;

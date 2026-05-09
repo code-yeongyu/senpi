@@ -148,10 +148,14 @@ const ProviderCompatSchema = Type.Union([
 // Schema for custom model definition
 // Most fields are optional with sensible defaults for local models (Ollama, LM Studio, etc.)
 const ExtraBodySchema = Type.Record(Type.String(), Type.Unknown());
+const ServiceTierSchema = Type.Union([Type.Literal("auto"), Type.Literal("flex"), Type.Literal("priority")]);
+type ModelServiceTier = Static<typeof ServiceTierSchema>;
 
 const ModelDefinitionSchema = Type.Object({
 	id: Type.String({ minLength: 1 }),
 	name: Type.Optional(Type.String({ minLength: 1 })),
+	upstreamModelId: Type.Optional(Type.String({ minLength: 1 })),
+	serviceTier: Type.Optional(ServiceTierSchema),
 	api: Type.Optional(Type.String({ minLength: 1 })),
 	baseUrl: Type.Optional(Type.String({ minLength: 1 })),
 	reasoning: Type.Optional(Type.Boolean()),
@@ -262,6 +266,8 @@ export type ResolvedRequestAuth =
 			apiKey?: string;
 			headers?: Record<string, string>;
 			extraBody?: Record<string, unknown>;
+			upstreamModelId?: string;
+			serviceTier?: ModelServiceTier;
 	  }
 	| {
 			ok: false;
@@ -372,6 +378,8 @@ export class ModelRegistry {
 	private providerRequestConfigs: Map<string, ProviderRequestConfig> = new Map();
 	private modelRequestHeaders: Map<string, Record<string, string>> = new Map();
 	private modelRequestExtraBody: Map<string, Record<string, unknown>> = new Map();
+	private modelRequestUpstreamIds: Map<string, string> = new Map();
+	private modelRequestServiceTiers: Map<string, ModelServiceTier> = new Map();
 	private registeredProviders: Map<string, ProviderConfigInput> = new Map();
 	private loadError: string | undefined = undefined;
 
@@ -397,6 +405,8 @@ export class ModelRegistry {
 		this.providerRequestConfigs.clear();
 		this.modelRequestHeaders.clear();
 		this.modelRequestExtraBody.clear();
+		this.modelRequestUpstreamIds.clear();
+		this.modelRequestServiceTiers.clear();
 		this.loadError = undefined;
 
 		// Ensure dynamic API/OAuth registrations are rebuilt from current provider state.
@@ -694,6 +704,8 @@ export class ModelRegistry {
 				const compat = mergeCompat(providerConfig.compat, modelDef.compat);
 				this.storeModelHeaders(providerName, modelDef.id, modelDef.headers);
 				this.storeModelExtraBody(providerName, modelDef.id, modelDef.extraBody);
+				this.storeModelUpstreamId(providerName, modelDef.id, modelDef.upstreamModelId);
+				this.storeModelServiceTier(providerName, modelDef.id, modelDef.serviceTier);
 
 				const defaultCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 				models.push({
@@ -793,6 +805,24 @@ export class ModelRegistry {
 		this.modelRequestExtraBody.set(key, extraBody);
 	}
 
+	private storeModelUpstreamId(providerName: string, modelId: string, upstreamModelId?: string): void {
+		const key = this.getModelRequestKey(providerName, modelId);
+		if (!upstreamModelId) {
+			this.modelRequestUpstreamIds.delete(key);
+			return;
+		}
+		this.modelRequestUpstreamIds.set(key, upstreamModelId);
+	}
+
+	private storeModelServiceTier(providerName: string, modelId: string, serviceTier?: ModelServiceTier): void {
+		const key = this.getModelRequestKey(providerName, modelId);
+		if (!serviceTier) {
+			this.modelRequestServiceTiers.delete(key);
+			return;
+		}
+		this.modelRequestServiceTiers.set(key, serviceTier);
+	}
+
 	/**
 	 * Get API key and request headers for a model.
 	 */
@@ -807,8 +837,9 @@ export class ModelRegistry {
 					: undefined);
 
 			const providerHeaders = resolveHeadersOrThrow(providerConfig?.headers, `provider "${model.provider}"`);
+			const modelRequestKey = this.getModelRequestKey(model.provider, model.id);
 			const modelHeaders = resolveHeadersOrThrow(
-				this.modelRequestHeaders.get(this.getModelRequestKey(model.provider, model.id)),
+				this.modelRequestHeaders.get(modelRequestKey),
 				`model "${model.provider}/${model.id}"`,
 			);
 
@@ -825,15 +856,19 @@ export class ModelRegistry {
 			}
 
 			const providerExtraBody = providerConfig?.extraBody;
-			const modelExtraBody = this.modelRequestExtraBody.get(this.getModelRequestKey(model.provider, model.id));
+			const modelExtraBody = this.modelRequestExtraBody.get(modelRequestKey);
 			const extraBody =
 				providerExtraBody || modelExtraBody ? { ...providerExtraBody, ...modelExtraBody } : undefined;
+			const upstreamModelId = this.modelRequestUpstreamIds.get(modelRequestKey);
+			const serviceTier = this.modelRequestServiceTiers.get(modelRequestKey);
 
 			return {
 				ok: true,
 				apiKey,
 				headers: headers && Object.keys(headers).length > 0 ? headers : undefined,
 				extraBody: extraBody && Object.keys(extraBody).length > 0 ? extraBody : undefined,
+				upstreamModelId,
+				serviceTier,
 			};
 		} catch (error) {
 			return {
@@ -1011,6 +1046,8 @@ export class ModelRegistry {
 				const api = modelDef.api || config.api;
 				this.storeModelHeaders(providerName, modelDef.id, modelDef.headers);
 				this.storeModelExtraBody(providerName, modelDef.id, modelDef.extraBody);
+				this.storeModelUpstreamId(providerName, modelDef.id, modelDef.upstreamModelId);
+				this.storeModelServiceTier(providerName, modelDef.id, modelDef.serviceTier);
 
 				this.models.push({
 					id: modelDef.id,
@@ -1066,6 +1103,8 @@ export interface ProviderConfigInput {
 	models?: Array<{
 		id: string;
 		name: string;
+		upstreamModelId?: string;
+		serviceTier?: ModelServiceTier;
 		api?: Api;
 		baseUrl?: string;
 		reasoning: boolean;
