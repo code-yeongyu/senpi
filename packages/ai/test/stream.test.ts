@@ -10,6 +10,10 @@ import type { Api, Context, ImageContent, Model, StreamOptions, Tool, ToolResult
 
 type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 import { StringEnum } from "../src/utils/typebox-helpers.js";
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.js";
 import { hasBedrockCredentials } from "./bedrock-utils.js";
@@ -128,9 +132,12 @@ async function handleToolCall<TApi extends Api>(model: Model<TApi>, options?: St
 				expect(toolCall.name).toBe("math_operation");
 				JSON.parse(accumulatedToolArgs);
 				expect(toolCall.arguments).not.toBeUndefined();
-				expect((toolCall.arguments as any).a).toBe(15);
-				expect((toolCall.arguments as any).b).toBe(27);
-				expect((toolCall.arguments as any).operation).oneOf(["add", "subtract", "multiply", "divide"]);
+				expect(isRecord(toolCall.arguments)).toBe(true);
+				if (isRecord(toolCall.arguments)) {
+					expect(toolCall.arguments.a).toBe(15);
+					expect(toolCall.arguments.b).toBe(27);
+					expect(toolCall.arguments.operation).oneOf(["add", "subtract", "multiply", "divide"]);
+				}
 			}
 		}
 	}
@@ -1244,8 +1251,8 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe("GitHub Copilot Provider (claude-sonnet-4 via Anthropic Messages)", () => {
-		const llm = getModel("github-copilot", "claude-sonnet-4");
+	describe("GitHub Copilot Provider (claude-sonnet-4.5 via Anthropic Messages)", () => {
+		const llm = getModel("github-copilot", "claude-sonnet-4.5");
 
 		it.skipIf(!githubCopilotToken)("should complete basic text generation", { retry: 3 }, async () => {
 			await basicTextGeneration(llm, { apiKey: githubCopilotToken });
