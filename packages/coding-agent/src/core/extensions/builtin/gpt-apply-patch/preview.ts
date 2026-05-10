@@ -34,7 +34,8 @@ export async function createPatchPreview(cwd: string, hunks: ParsedPatch[]): Pro
 		}
 
 		const oldContent = await readFile(absolutePath, "utf-8");
-		const newContent = hunk.chunks.length === 0 ? oldContent : replaceChunks(oldContent, hunk.filePath, hunk.chunks);
+		const newContent =
+			hunk.chunks.length === 0 ? oldContent : replaceChunks(oldContent, hunk.filePath, hunk.chunks).content;
 		if (hunk.movePath) await resolveWorkspacePath(cwd, hunk.movePath);
 		const diff = createPatchDiff(oldContent, newContent);
 		files.push({ filePath: hunk.filePath, movePath: hunk.movePath, operation: "update", ...diff });

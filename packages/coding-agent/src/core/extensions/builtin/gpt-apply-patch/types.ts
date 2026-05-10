@@ -46,6 +46,35 @@ export type ApplyPatchPreview = {
 
 export type ApplyPatchToolDetails = {
 	preview?: ApplyPatchPreview;
+	result?: ApplyPatchResult;
+};
+
+export type ApplyPatchFailure = {
+	filePath: string;
+	operation: ApplyPatchOperation;
+	message: string;
+};
+
+export type ApplyPatchRecoveryInstructions = {
+	mustReadFiles: string[];
+	mustNotReadFiles: string[];
+};
+
+export type ApplyPatchResult = {
+	summaries: string[];
+	appliedFiles: string[];
+	failures: ApplyPatchFailure[];
+	hasPartialSuccess: boolean;
+	recoveryInstructions: ApplyPatchRecoveryInstructions;
+	details: {
+		fuzz: number;
+	};
+};
+
+export type AtomicWriteOperations = {
+	writeFile: (filePath: string, content: string, encoding: "utf-8") => Promise<void>;
+	rename: (fromPath: string, toPath: string) => Promise<void>;
+	unlink: (filePath: string) => Promise<void>;
 };
 
 export type ApplyPatchThemeColor =
@@ -66,6 +95,11 @@ export type ApplyPatchTheme = {
 };
 
 export type ApplyPatchRenderState = {
+	cwd?: string;
+	patchText?: string;
+	callText?: string;
+	collapsed?: string;
+	expanded?: string;
 	streamingInput?: string;
 	streamingParser?: { pushDelta: (delta: string) => ParsedPatch[] };
 	streamingHunks?: ParsedPatch[];
