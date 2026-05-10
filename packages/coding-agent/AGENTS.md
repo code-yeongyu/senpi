@@ -1,88 +1,88 @@
-# coding-agent
+# packages/coding-agent
 
-Main CLI application. **Primary package** of the monorepo and primary focus for fork work.
-
-## FORK STRATEGY (THIS PACKAGE)
-
-Changes here have the highest merge conflict risk with upstream. Before modifying any file:
-
-1. **Check if an extension can do it** - See `docs/extensions.md` (2262 lines of API reference)
-2. **If yes**: Add as a **builtin extension** at `src/core/extensions/builtin/` and register in `builtin/index.ts`. These load automatically via `resource-loader.ts` without requiring `.pi/extensions/` or `~/.pi/agent/extensions/`.
-3. **If no**: Modify source, then create/update `changes.md` in the affected subdirectory
-
-Extension system supports: tools, commands, shortcuts, flags, providers, event interception, UI customization, message renderers. 30+ event types. See root AGENTS.md for the capability table.
+`@code-yeongyu/senpi` — primary fork target. The CLI app users actually run (`senpi`, `sanepi` aliases). Highest merge-conflict surface against upstream `pi-mono`. **Always reach for the extension API before touching anything in `src/core/`**.
 
 ## STRUCTURE
 
 ```
 src/
-├── cli.ts / main.ts            # CLI entry points
-├── cli/                         # Argument parsing, helpers
-├── core/                        # Core engine (32 files)
-│   ├── agent-session.ts         # Session lifecycle, event emission
-│   ├── session-manager.ts       # Session persistence
-│   ├── model-registry.ts        # Built-in + custom model resolution
-│   ├── model-resolver.ts        # DEFAULT_MODELS, provider defaults
-│   ├── system-prompt.ts         # System prompt construction
-│   ├── extensions/              # Extension system (types, loader, runner)
-│   │   ├── types.ts             # 1450 lines - ExtensionAPI, events, tools
-│   │   ├── loader.ts            # jiti-based TS loading, discovery
-│   │   ├── runner.ts            # ExtensionRunner, event emission
-│   │   └── builtin/             # Builtin extensions (todowrite, diff, files, etc.)
-│   └── tools/                   # Built-in tools
-│       ├── bash.ts, read.ts, write.ts, edit.ts
-│       ├── grep.ts, find.ts, ls.ts
-│       └── (each tool: definition + execute + render)
+├── cli.ts                     # Bun/Node entry — sets process.title, disables undici timeouts, calls main()
+├── main.ts                    # Arg parse → model resolution → mode dispatch
+├── index.ts                   # Public API (AgentSession, AuthStorage, compaction, extension types, tools)
+├── config.ts                  # APP_NAME, VERSION, configDir/cacheDir/sessionDir resolvers
+├── migrations.ts              # Settings/session schema migrations (incl. `pi → senpi` rename)
+├── package-manager-cli.ts     # `senpi update senpi`, package commands (install/list/remove)
+├── changes.md                 # Fork tracker (root-level src changes)
+├── bun/                       # Bun binary entry (cli.ts, register-bedrock.ts, restore-sandbox-env.ts)
+├── cli/                       # args.ts, file-processor.ts, initial-message.ts, list-models.ts, session-picker.ts, config-selector.ts
+├── core/                      # 32 files — see below; PRIMARY FORK SURFACE
+│   ├── agent-session.ts       # 3355-line session lifecycle, event emission, runtime
+│   ├── extensions/            # Extension API: types.ts (1636 LOC), loader, runner, builtin/ — see AGENTS.md
+│   ├── tools/                 # Built-in tools (bash/edit/grep/find/ls/read/write) — see AGENTS.md
+│   ├── compaction/            # Plugsuit-style compaction policy — see changes.md
+│   ├── dynamic-prompt/        # buildDynamicSystemPrompt() — see changes.md
+│   ├── export-html/           # session → HTML transcript renderer
+│   ├── auth-{guidance,storage}.ts, sdk.ts, model-{registry,resolver}.ts, settings-manager.ts, …
+│   └── changes.md             # Core-level fork changes
 ├── modes/
-│   ├── interactive/             # TUI mode
-│   │   └── components/          # 35 TUI components
-│   ├── rpc/                     # RPC mode (JSONL protocol)
-│   └── print-mode.ts            # Non-interactive mode
-├── utils/                       # Git, MIME, clipboard, etc.
-└── bun/                         # Bun-specific CLI entry (binary builds)
+│   ├── interactive/           # TUI mode — see AGENTS.md (35 components + interactive-mode.ts)
+│   ├── rpc/                   # JSONL RPC server (rpc-mode.ts, rpc-client.ts, jsonl.ts, rpc-types.ts)
+│   └── print-mode.ts          # One-shot non-interactive mode
+├── utils/                     # git, mime, clipboard, image, photon, version-check, …
+└── docs/                      # User-facing docs (extensions.md is 2262 lines of API ref)
 
 test/
 ├── suite/
-│   ├── harness.ts               # Modern test harness (use this)
-│   └── regressions/             # Issue-specific: <number>-<slug>.test.ts
-├── session-manager/             # SessionManager unit tests
-├── test-harness.ts              # Legacy harness
-└── utilities.ts                 # Shared helpers (createTestSession, etc.)
+│   ├── harness.ts             # MODERN test harness — use this
+│   ├── regressions/           # `<issue-number>-<slug>.test.ts` for upstream issues
+│   └── agent-system/          # Agent-system extension tests (loader, resolver, permission)
+├── test-harness.ts            # Legacy harness
+└── (~120 standalone .test.ts files)
 ```
 
 ## WHERE TO LOOK
 
-| Task | File(s) | Notes |
-|------|---------|-------|
-| Add a tool | `src/core/tools/` + extension system | Prefer extension; core tools only for upstream parity |
-| Add a slash command | Extension: `pi.registerCommand()` | Never modify `src/core/slash-commands.ts` directly |
-| Modify session lifecycle | `src/core/agent-session.ts` | Heavy file, high conflict risk |
-| Add CLI flag | Extension: `pi.registerFlag()` | Or `src/cli/args.ts` if upstream-compatible |
-| Modify system prompt | `src/core/system-prompt.ts` | Use `context` event in extensions instead |
-| Custom compaction | Extension: `on("session_before_compact")` | See `examples/extensions/custom-compaction.ts` |
-| Input transformation | Extension: `on("input")` | See `examples/extensions/input-transform.ts` |
-| Add TUI component | `src/modes/interactive/components/` | 35 existing components |
-| Write tests | `test/suite/harness.ts` + faux provider | Never use real APIs |
+| Task | First-choice path | Notes |
+|------|-------------------|-------|
+| Add tool | `src/core/extensions/builtin/<name>/` | Use `pi.registerTool()`. Core `tools/` only for upstream-parity edits. |
+| Add slash command | builtin extension | `pi.registerCommand()`. Never edit `src/core/slash-commands.ts`. |
+| Add CLI flag | builtin extension `pi.registerFlag()` | Or `src/cli/args.ts` if it must mirror upstream behavior |
+| Modify session lifecycle | `src/core/agent-session.ts` | High-conflict; document any change in `core/changes.md` |
+| Replace system prompt | extension `before_agent_start` | Or `src/core/dynamic-prompt/build.ts` (already modified — see `changes.md`) |
+| Custom compaction logic | extension `on("session_before_compact")` | Or `src/core/compaction/` for policy constants |
+| Add TUI component | `src/modes/interactive/components/` | 35 existing components — match local style |
+| Add regression test | `test/suite/regressions/<issue>-<slug>.test.ts` | Use `test/suite/harness.ts`, never real APIs |
 
-## EXTENSION LIFECYCLE
+## EXTENSION LIFECYCLE (1-line each)
 
-1. **Discovery**: `.pi/extensions/`, `~/.pi/agent/extensions/`, settings.json paths, `-e` flag
-2. **Loading**: jiti imports TS directly (no compilation)
-3. **Factory**: `export default function(pi: ExtensionAPI) { ... }` runs
-4. **Binding**: `ExtensionRunner.bindCore()` connects stubs to real implementations
-5. **Events**: `session_start` -> `resources_discover` -> runtime events
-6. **Reload**: `session_shutdown` -> reload files -> re-run factories -> `session_start(reason: "reload")`
+1. **Discovery**: builtin (`builtin/index.ts`) + `.pi/extensions/`, `.senpi/extensions/`, `~/.pi/agent/extensions/`, `settings.json` paths, `-e` CLI flag.
+2. **Loading**: `extensions/loader.ts` — single shared `jiti` importer (`changes.md` 2026-05-08), aliases `@mariozechner/pi-*` → workspace packages.
+3. **Factory**: `export default function(pi: ExtensionAPI) { … }` runs at load time.
+4. **Binding**: `ExtensionRunner.bindCore()` connects `pi.*` stubs to real implementations.
+5. **Events**: `session_start` → `resources_discover` → tool/command/UI events → `session_shutdown`.
+6. **Reload**: `session_shutdown` → reload changed files → re-run factories → `session_start({ reason: "reload" })`.
 
 ## CONVENTIONS
 
-- Tools follow pattern: definition (TypeBox schema) + execute function + renderCall/renderResult
-- Keybindings: always configurable via `DEFAULT_EDITOR_KEYBINDINGS` / `DEFAULT_APP_KEYBINDINGS`
-- Test naming: regression tests as `<issue-number>-<short-slug>.test.ts`
-- Pi philosophy: no built-in MCP, sub-agents, permission popups, plan mode, todos
+- **Tool shape**: TypeBox schema + `execute(input, ctx)` + `renderCall` + `renderResult`. Match `core/tools/` patterns; see `core/tools/AGENTS.md`.
+- **No built-in MCP / sub-agents / permission popups / plan mode / todos in core** — pi philosophy. The fork's `agent-system`, `permission-system`, `compaction`, `prompt-preset`, `todowrite` features all live as **builtin extensions**, not core.
+- **Keybindings always configurable** — `DEFAULT_EDITOR_KEYBINDINGS` / `DEFAULT_APP_KEYBINDINGS` are the source of truth.
+- **Faux provider for tests** — never spend a real token in `npm test`. Use `harness.ts` + `pi-ai/faux`.
+- **Inlined UUIDv7 in `core/session-manager.ts`** — do NOT re-add the `uuid` package. Documented in `changes.md` 2026-04-17.
+- **Branding**: package name `@code-yeongyu/senpi`, app name `senpi`, configDir `.senpi`. Self-update target is `code-yeongyu/senpi-mono`.
 
 ## ANTI-PATTERNS
 
-- Modifying `src/core/extensions/types.ts` without checking upstream compatibility
-- Hardcoding key bindings
-- Using real LLM APIs in tests (use faux provider)
-- Adding features to core that could be extensions
+- Touching `src/core/extensions/types.ts` without an `extensions/changes.md` entry — the public extension API is the fork's most-watched contract.
+- Hardcoding key bindings.
+- Real LLM API in tests.
+- Adding "would-be-an-extension" features to `core/` — bloats merge surface and violates pi's philosophy.
+- Re-running `prepublishOnly` to "fix" CI — it intentionally rebuilds dist + chmod's binaries; only run during release.
+- Editing `dist/` checked-in stubs (none here, but see `packages/{mom,pods}/`).
+
+## NOTES
+
+- The MODERN test harness is `test/suite/harness.ts`. `test/test-harness.ts` is legacy and only kept for already-converted suites.
+- `docs/extensions.md` is the 2262-line capability reference. Read it before claiming "no extension hook can do X".
+- `examples/extensions/` ships canonical extension reference implementations (sandbox, custom-provider-anthropic, custom-provider-gitlab-duo, with-deps).
+- The Bun binary build (`build:binary`) compiles `dist/bun/cli.js` into a single executable; `copy-binary-assets` copies fonts/themes/templates into `dist/`.
