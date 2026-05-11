@@ -76,35 +76,36 @@ Verified against `git diff upstream/main..HEAD` and every `changes.md` file in t
 
 ### Owned builtin extensions
 
-In-tree, tightly coupled to senpi internals. Loaded in this exact registration order (it matters for permission/agent stacking):
+In-tree, tightly coupled to senpi internals. Loaded in this exact registration order:
 
 | # | Extension | Role | Docs |
 |---|-----------|------|------|
 | 1 | [`background-task`](packages/coding-agent/src/core/extensions/builtin/background-task/) | `task` / `background_output` / `background_cancel` tools, sub-agent spawning into detached subprocesses, custom session entries, desktop notifications | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/background-task/AGENTS.md) |
-| 2 | [`agent-system`](packages/coding-agent/src/core/extensions/builtin/agent-system/) | Named agent profiles (default / editor / architect / custom) with wildcard tool allowlists and per-agent system-prompt fragments | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/agent-system/AGENTS.md) · [changes.md](packages/coding-agent/src/core/extensions/builtin/agent-system/changes.md) |
-| 3 | [`permission-system`](packages/coding-agent/src/core/extensions/builtin/permission-system/) | Full opencode-style permission port — rules, JSONL storage, TUI prompts, parser-aware patterns (bash arity, file globs, `apply_patch` body paths), non-interactive fallback | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/permission-system/AGENTS.md) · [changes.md](packages/coding-agent/src/core/extensions/builtin/permission-system/changes.md) |
-| 4 | [`gpt-apply-patch`](packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/) *(vendored)* | When the active model is OpenAI GPT, swaps `write`/`edit` for Codex-style freeform `apply_patch` with a Lark grammar. Synced from [`code-yeongyu/pi-apply-patch`](https://github.com/code-yeongyu/pi-apply-patch). | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/AGENTS.md) |
-| 5 | [`prompt-preset`](packages/coding-agent/src/core/extensions/builtin/prompt-preset/) | Per-model system prompt presets (gpt-5.x, claude-opus-4-{5,6,7}, kimi-k2-6) layered on top of the dynamic prompt. Shared codex-style file-operations tuning. | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/prompt-preset/AGENTS.md) · [changes.md](packages/coding-agent/src/core/extensions/builtin/prompt-preset/changes.md) |
-| 6 | [`todowrite`](packages/coding-agent/src/core/extensions/builtin/todotools/) | `todowrite` / `todoread` tools with branch-aware persistence, sidebar widget, and a continuation loop that nudges the model to keep working | — |
-| 7 | [`redraws`](packages/coding-agent/src/core/extensions/builtin/redraws.ts) | `/tui` command reporting cumulative TUI full-redraw count. Used for differential-rendering debugging. | — |
-| 8 | [`anthropic-web-search`](packages/coding-agent/src/core/extensions/builtin/anthropic-web-search/) | Anthropic native `web_search` tool | — |
-| 9 | [`anthropic-tool-search`](packages/coding-agent/src/core/extensions/builtin/anthropic-tool-search/) | Anthropic native `tool_search` tool | — |
-| 10 | [`anthropic-code-execution`](packages/coding-agent/src/core/extensions/builtin/anthropic-code-execution/) | Anthropic native code-execution sandbox | — |
-| 11 | [`anthropic-bash`](packages/coding-agent/src/core/extensions/builtin/anthropic-bash/) | Anthropic native bash tool variant | — |
-| 12 | [`anthropic-text-editor`](packages/coding-agent/src/core/extensions/builtin/anthropic-text-editor/) | Anthropic native `str_replace_based_edit_tool` | — |
-| 13 | [`anthropic-computer-use`](packages/coding-agent/src/core/extensions/builtin/anthropic-computer-use/) | Anthropic native computer-use bindings | — |
-| 14 | [`openai-web-search`](packages/coding-agent/src/core/extensions/builtin/openai-web-search/) | OpenAI Responses native `web_search` | — |
-| 15 | [`openai-code-interpreter`](packages/coding-agent/src/core/extensions/builtin/openai-code-interpreter/) | OpenAI Responses native `code_interpreter` | — |
-| 16 | [`google-google-search`](packages/coding-agent/src/core/extensions/builtin/google-google-search/) | Google `googleSearch` grounding tool | — |
-| 17 | [`google-code-execution`](packages/coding-agent/src/core/extensions/builtin/google-code-execution/) | Google `codeExecution` native tool | — |
-| 18 | [`google-url-context`](packages/coding-agent/src/core/extensions/builtin/google-url-context/) | Google `urlContext` grounding tool | — |
-| 19 | [`openai-api-parallel-tool-calls`](packages/coding-agent/src/core/extensions/builtin/openai-api-parallel-tool-calls/) *(vendored)* | Adds `parallel_tool_calls: true` to OpenAI-family payloads + nudges the system prompt to fan out. Synced from [`code-yeongyu/pi-openai-api-parallel-tool-calls`](https://github.com/code-yeongyu/pi-openai-api-parallel-tool-calls). | — |
-| 20 | [`service-tier`](packages/coding-agent/src/core/extensions/builtin/service-tier.ts) | Injects `service_tier` (`auto` / `flex` / `priority`) into OpenAI Responses payloads using per-model service tier or `openai.serviceTier` setting | — |
-| 21 | [`bash-timeout`](packages/coding-agent/src/core/extensions/builtin/bash-timeout/) *(vendored)* | Injects default + max bash timeouts, appends policy to system prompt. Synced from [`code-yeongyu/pi-bash-timeout`](https://github.com/code-yeongyu/pi-bash-timeout). | — |
-| 22 | [`tool-pair-guard`](packages/coding-agent/src/core/extensions/builtin/tool-pair-guard/) | Sanitizes Anthropic request payloads by removing orphan `tool_result` blocks — compaction safety | — |
-| 23 | [`compaction`](packages/coding-agent/src/core/extensions/builtin/compaction/) | Speculative + emergency compaction policy: degradation monitor, circuit breaker, per-turn cap, todo bridging, checkpoint state, restoration tracker, tool-result truncation | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/compaction/AGENTS.md) · [changes.md](packages/coding-agent/src/core/extensions/builtin/compaction/changes.md) |
+| 2 | [`permission-system`](packages/coding-agent/src/core/extensions/builtin/permission-system/) | Full opencode-style permission port — rules, JSONL storage, TUI prompts, parser-aware patterns (bash arity, file globs, `apply_patch` body paths), non-interactive fallback | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/permission-system/AGENTS.md) · [changes.md](packages/coding-agent/src/core/extensions/builtin/permission-system/changes.md) |
+| 3 | [`gpt-apply-patch`](packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/) *(vendored)* | When the active model is OpenAI GPT, swaps `write`/`edit` for Codex-style freeform `apply_patch` with a Lark grammar. Synced from [`code-yeongyu/pi-apply-patch`](https://github.com/code-yeongyu/pi-apply-patch). | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/AGENTS.md) |
+| 4 | [`prompt-preset`](packages/coding-agent/src/core/extensions/builtin/prompt-preset/) | Per-model system prompt presets (gpt-5.x, claude-opus-4-{5,6,7}, kimi-k2-6) layered on top of the dynamic prompt. Shared codex-style file-operations tuning. | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/prompt-preset/AGENTS.md) · [changes.md](packages/coding-agent/src/core/extensions/builtin/prompt-preset/changes.md) |
+| 5 | [`todowrite`](packages/coding-agent/src/core/extensions/builtin/todotools/) | `todowrite` / `todoread` tools with branch-aware persistence, sidebar widget, and a continuation loop that nudges the model to keep working | — |
+| 6 | [`redraws`](packages/coding-agent/src/core/extensions/builtin/redraws.ts) | `/tui` command reporting cumulative TUI full-redraw count. Used for differential-rendering debugging. | — |
+| 7 | [`anthropic-web-search`](packages/coding-agent/src/core/extensions/builtin/anthropic-web-search/) | Anthropic native `web_search` tool | — |
+| 8 | [`anthropic-tool-search`](packages/coding-agent/src/core/extensions/builtin/anthropic-tool-search/) | Anthropic native `tool_search` tool | — |
+| 9 | [`anthropic-code-execution`](packages/coding-agent/src/core/extensions/builtin/anthropic-code-execution/) | Anthropic native code-execution sandbox | — |
+| 10 | [`anthropic-bash`](packages/coding-agent/src/core/extensions/builtin/anthropic-bash/) | Anthropic native bash tool variant | — |
+| 11 | [`anthropic-text-editor`](packages/coding-agent/src/core/extensions/builtin/anthropic-text-editor/) | Anthropic native `str_replace_based_edit_tool` | — |
+| 12 | [`anthropic-computer-use`](packages/coding-agent/src/core/extensions/builtin/anthropic-computer-use/) | Anthropic native computer-use bindings | — |
+| 13 | [`openai-web-search`](packages/coding-agent/src/core/extensions/builtin/openai-web-search/) | OpenAI Responses native `web_search` | — |
+| 14 | [`openai-code-interpreter`](packages/coding-agent/src/core/extensions/builtin/openai-code-interpreter/) | OpenAI Responses native `code_interpreter` | — |
+| 15 | [`google-google-search`](packages/coding-agent/src/core/extensions/builtin/google-google-search/) | Google `googleSearch` grounding tool | — |
+| 16 | [`google-code-execution`](packages/coding-agent/src/core/extensions/builtin/google-code-execution/) | Google `codeExecution` native tool | — |
+| 17 | [`google-url-context`](packages/coding-agent/src/core/extensions/builtin/google-url-context/) | Google `urlContext` grounding tool | — |
+| 18 | [`openai-api-parallel-tool-calls`](packages/coding-agent/src/core/extensions/builtin/openai-api-parallel-tool-calls/) *(vendored)* | Adds `parallel_tool_calls: true` to OpenAI-family payloads + nudges the system prompt to fan out. Synced from [`code-yeongyu/pi-openai-api-parallel-tool-calls`](https://github.com/code-yeongyu/pi-openai-api-parallel-tool-calls). | — |
+| 19 | [`service-tier`](packages/coding-agent/src/core/extensions/builtin/service-tier.ts) | Injects `service_tier` (`auto` / `flex` / `priority`) into OpenAI Responses payloads using per-model service tier or `openai.serviceTier` setting | — |
+| 20 | [`bash-timeout`](packages/coding-agent/src/core/extensions/builtin/bash-timeout/) *(vendored)* | Injects default + max bash timeouts, appends policy to system prompt. Synced from [`code-yeongyu/pi-bash-timeout`](https://github.com/code-yeongyu/pi-bash-timeout). | — |
+| 21 | [`tool-pair-guard`](packages/coding-agent/src/core/extensions/builtin/tool-pair-guard/) | Sanitizes Anthropic request payloads by removing orphan `tool_result` blocks — compaction safety | — |
+| 22 | [`compaction`](packages/coding-agent/src/core/extensions/builtin/compaction/) | Speculative + emergency compaction policy: degradation monitor, circuit breaker, per-turn cap, todo bridging, checkpoint state, restoration tracker, tool-result truncation | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/compaction/AGENTS.md) · [changes.md](packages/coding-agent/src/core/extensions/builtin/compaction/changes.md) |
 
-> **All 21 directories** above are new vs upstream `pi-mono` — none exist in `badlogic/pi-mono`. Vendored versions are pinned in [`external-versions.json`](packages/coding-agent/src/core/extensions/builtin/external-versions.json) and synced from the sibling `pi-extensions` checkout at build time via [`sync-builtin-extensions.mjs`](packages/coding-agent/scripts/sync-builtin-extensions.mjs).
+> **All 20 directories** above are new vs upstream `pi-mono` — none exist in `badlogic/pi-mono`. Vendored versions are pinned in [`external-versions.json`](packages/coding-agent/src/core/extensions/builtin/external-versions.json) and synced from the sibling `pi-extensions` checkout at build time via [`sync-builtin-extensions.mjs`](packages/coding-agent/scripts/sync-builtin-extensions.mjs).
+
+Agent-profile tool filtering is no longer an owned builtin. Install `pi-agent-system` from `../pi-extensions/pi-agent-system` (or GitHub `code-yeongyu/pi-agent-system`) when named sub-agent profiles are wanted.
 
 ### Global default extensions
 

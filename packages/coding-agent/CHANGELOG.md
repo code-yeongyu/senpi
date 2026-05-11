@@ -22,6 +22,7 @@
 
 ### Removed
 
+- Removed the builtin `agent-system` extension. Named agent-profile tool filtering now ships as the standalone `pi-agent-system` extension.
 - Removed the `webfetch` builtin extension. Google users should rely on the native `google-url-context` builtin. OpenAI users lose function-tool web_fetch fallback.
 - Removed the Anthropic native `anthropic-web-fetch` builtin extension so Pi's function-style `webfetch` tool is no longer replaced by `web_fetch_20260309`.
 

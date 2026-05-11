@@ -1,6 +1,6 @@
 # builtin/permission-system
 
-Builtin extension #3. Full port of opencode's permission flow. Loads rules from CLI (`--permission tool=action`), settings (`permissions.always_allow`, `permissions.deny`), and per-session approvals. Prompts the user for unknown tool calls, persists "always allow" decisions, blocks denied calls with a structured error, and supports parser-aware patterns (bash command prefixes, file path globs for read/write/edit/apply_patch). **JSONL storage shape is a contract — migration required to change it.**
+Builtin extension #2. Full port of opencode's permission flow. Loads rules from CLI (`--permission tool=action`), settings (`permissions.always_allow`, `permissions.deny`), and per-session approvals. Prompts the user for unknown tool calls, persists "always allow" decisions, blocks denied calls with a structured error, and supports parser-aware patterns (bash command prefixes, file path globs for read/write/edit/apply_patch). **JSONL storage shape is a contract — migration required to change it.**
 
 ## FILES
 
@@ -9,6 +9,7 @@ permission-system/
 ├── index.ts            # Extension entry — wires beforeToolCall + UI prompt
 ├── service.ts          # Permission service core (ask/reply/list)
 ├── evaluate.ts         # Rule evaluator with wildcard matching
+├── wildcard.ts         # Wildcard matcher formerly shared with builtin agent-system
 ├── types.ts            # Action ("ask"|"allow"|"deny"), Rule, Request, Reply
 ├── settings.ts         # settings.json integration (always_allow, deny)
 ├── cli.ts              # `--permission tool=action` flag parser
@@ -48,12 +49,12 @@ Pattern syntax: tool name + optional arg pattern, e.g. `bash:rm *`, `write:/etc/
 
 - **JSONL storage is the contract**: `storage.ts` writes append-only newline-delimited JSON. Schema changes require a migration. Other tools (audit, replay) parse this format.
 - **Parsers are tool-aware**: `parsers.ts` extracts the *meaningful* arg per tool — file path for read/write/edit, command prefix for bash, file paths for `apply_patch` body (2026-04-13).
-- **`agent-system` does NOT call into permission-system** — the separation is deliberate (see `agent-system/changes.md` T15). Both gates can deny.
+- External agent-profile extensions do NOT call into permission-system; both gates can independently deny when such an extension is installed.
 - **`external-dir.ts` forces ask** when target path is outside repo root, regardless of allow-rules — explicit user consent required.
 
 ## ANTI-PATTERNS
 
-- Sharing state with `agent-system` (e.g. a global `sessionAllowed` Set) — kept separate by design.
+- Sharing state with external agent-profile extensions (e.g. a global `sessionAllowed` Set) — kept separate by design.
 - Changing the JSONL line shape without a migration script — breaks existing approval files.
 - Adding a new tool that mutates files without registering a parser in `parsers.ts` — falls back to wildcard, loses per-path granularity.
 - Bypassing the parser registry from a builtin tool's render path — render and approval must agree on the displayed action.

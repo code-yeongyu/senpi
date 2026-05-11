@@ -39,7 +39,7 @@ senpi-mono/
 | Change senpi system prompt | [`packages/coding-agent/src/core/dynamic-prompt/`](packages/coding-agent/src/core/dynamic-prompt/AGENTS.md) (or extensions/builtin/prompt-preset/ for per-model) |
 | Modify built-in extensions | [`packages/coding-agent/src/core/extensions/builtin/`](packages/coding-agent/src/core/extensions/builtin/AGENTS.md) — see per-extension AGENTS.md |
 | Sub-agent / background-task work | [`packages/coding-agent/src/core/extensions/builtin/background-task/`](packages/coding-agent/src/core/extensions/builtin/background-task/AGENTS.md) |
-| Permission/agent system | [`permission-system/`](packages/coding-agent/src/core/extensions/builtin/permission-system/AGENTS.md) + [`agent-system/`](packages/coding-agent/src/core/extensions/builtin/agent-system/AGENTS.md) |
+| Permission system / external agent profiles | [`permission-system/`](packages/coding-agent/src/core/extensions/builtin/permission-system/AGENTS.md); agent profiles live in sibling repo `../pi-extensions/pi-agent-system` |
 | Compaction policy | [`compaction/`](packages/coding-agent/src/core/extensions/builtin/compaction/AGENTS.md) (builtin extension; `core/compaction/` only holds constants) |
 | Per-model prompt presets | [`prompt-preset/`](packages/coding-agent/src/core/extensions/builtin/prompt-preset/AGENTS.md) |
 | GPT `apply_patch` tool | [`gpt-apply-patch/`](packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/AGENTS.md) |

@@ -1,6 +1,6 @@
 import os from "node:os";
-import { Wildcard } from "../agent-system/wildcard.js";
 import type { PermissionConfig, Rule, Ruleset } from "./types.js";
+import { Wildcard } from "./wildcard.js";
 
 export const EDIT_TOOLS = ["edit", "write", "apply_patch", "multiedit"];
 

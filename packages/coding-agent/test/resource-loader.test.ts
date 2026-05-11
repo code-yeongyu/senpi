@@ -353,7 +353,6 @@ Content`,
 			// then
 			expect(builtinPaths).toEqual([
 				"<builtin:background-task>",
-				"<builtin:agent-system>",
 				"<builtin:permission-system>",
 				"<builtin:gpt-apply-patch>",
 				"<builtin:prompt-preset>",
@@ -427,7 +426,7 @@ Content`,
 			// then
 			expect(builtinPaths).not.toContain("<builtin:background-task>");
 			expect(builtinPaths).not.toContain("<builtin:redraws>");
-			expect(builtinPaths).toContain("<builtin:agent-system>");
+			expect(builtinPaths).toContain("<builtin:permission-system>");
 			expect(builtinPaths).toContain("<builtin:todowrite>");
 		});
 
@@ -445,7 +444,7 @@ Content`,
 			// then
 			expect(builtinPaths).not.toContain("<builtin:background-task>");
 			expect(builtinPaths).not.toContain("<builtin:redraws>");
-			expect(builtinPaths).toContain("<builtin:agent-system>");
+			expect(builtinPaths).toContain("<builtin:permission-system>");
 			expect(builtinPaths).toContain("<builtin:todowrite>");
 		});
 

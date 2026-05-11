@@ -1,36 +1,21 @@
 # agent-system Extension Changes
 
-## Overview
-Agent definition and management system. Defines which tools each agent can use via wildcard patterns.
+## 2026-05-11 - Extracted to external repository
 
-## Files
-- `types.ts` - Core type definitions (AgentDefinition, AgentConfig)
-- `registry.ts` - Agent registry for looking up definitions
-- `loader.ts` - Agent definition loader from settings.json and config
-- `wildcard.ts` - Wildcard pattern matching utilities
-- `permission.ts` - Agent-level permission checking (which tools an agent can use)
-- `agent-types.ts` - Built-in agent type constants
-- `builtin-agents.ts` - Default agent definitions (default, editor, architect)
-- `index.ts` - Extension entry point
+### What changed
+- Removed the builtin `agent-system` extension implementation from senpi-mono.
+- Kept this tombstone `changes.md` because fork merge contracts track this path.
+- The extension now lives as the sibling repository `../pi-extensions/pi-agent-system`.
+- `permission-system` owns its own wildcard matcher so it no longer imports agent-system internals.
 
-## What Changed (T15)
-- Removed permission tool_call handler (delegated to permission-system extension)
-- Removed sessionAllowed Set (permission-system handles approvals)
-- Agent-level tool filtering remains (agents can only use their allowed tools)
+### Why
+- Agent profiles and per-agent tool filtering are extension features and can ship as an external extension like the other `pi-extensions` repositories.
+- Removing the builtin reduces monorepo surface area and avoids carrying agent-profile docs/tests inside senpi-mono.
 
-## Why
-- Separation of concerns: agent-system handles agent definitions, permission-system handles permission flow
-- Part of opencode permission system port
+### Why the extension system can handle this now
+- `ExtensionAPI.getAllTools()`, `setActiveTools()`, and `before_agent_start` are sufficient for the extracted extension to filter tools and append per-agent prompt fragments.
+- `background-task` already passes the agent type through `SANEPI_AGENT_TYPE`.
 
-## Relationship to permission-system
-- agent-system: decides which tools an agent is allowed to use (static configuration)
-- permission-system: decides whether user grants permission for a specific tool call (dynamic user approval)
-- Both can deny: agent-system denies based on agent type, permission-system denies based on user rules
-
-## Files Modified
-- `packages/coding-agent/src/core/extensions/builtin/agent-system/index.ts`
-  - Removed lines 48-96 (tool_call permission handler)
-  - Removed sessionAllowed Set
-
-## Expected Merge Conflict Zones
-- Lines 48-96 of index.ts if upstream modifies tool_call handling
+### Expected merge conflict zones
+- `builtin/index.ts` if upstream adds or reorders builtins.
+- `permission-system/evaluate.ts` if upstream changes wildcard rule evaluation.

@@ -1,5 +1,4 @@
 import type { ExtensionFactory } from "../types.js";
-import agentSystemExtension from "./agent-system/index.js";
 import anthropicBashExtension from "./anthropic-bash/index.js";
 import anthropicCodeExecutionExtension from "./anthropic-code-execution/index.js";
 import anthropicComputerUseExtension from "./anthropic-computer-use/index.js";
@@ -43,7 +42,6 @@ export const globalDefaultExtensionFactories = {
 
 export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "background-task", factory: backgroundTaskExtension },
-	{ id: "agent-system", factory: agentSystemExtension },
 	{ id: "permission-system", factory: permissionSystemExtension },
 	{ id: "gpt-apply-patch", factory: gptApplyPatchExtension },
 	{ id: "prompt-preset", factory: promptPresetExtension },

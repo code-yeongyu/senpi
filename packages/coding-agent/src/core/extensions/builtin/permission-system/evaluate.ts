@@ -1,5 +1,5 @@
-import { Wildcard } from "../agent-system/wildcard.js";
 import type { Rule, Ruleset } from "../permission-system/types.js";
+import { Wildcard } from "./wildcard.js";
 
 declare global {
 	interface Array<T> {

@@ -28,7 +28,7 @@ background-task/
 
 ## TASK LIFECYCLE
 
-1. `task(subagent_type, prompt, run_in_background)` → spawner forks subprocess with `AGENT_TYPE=<type>` env.
+1. `task(agent_type, prompt, run_in_background)` → spawner forks subprocess with `AGENT_TYPE=<type>` env.
 2. Manager assigns `bg_<short-hash>` task ID, writes a `BackgroundTaskMessage` custom session entry.
 3. Subprocess streams stdout via pipe; manager updates entry on completion.
 4. On `session_start` (reload), index.ts replays `BackgroundTaskMessage` entries to rebuild registry.
@@ -38,7 +38,7 @@ background-task/
 
 - **Spawn detached** — must survive parent session crashes; reattachment via PID + manifest file under `~/.senpi/agent/tasks/`.
 - **Custom session entries** — sub-agent state is persisted in the JSONL session via a custom message type (NOT regular `toolResult`). Survives forks and rebases.
-- **`AGENT_TYPE` env var** is the contract with `agent-system` — set it and `agent-system` narrows the toolset.
+- **`AGENT_TYPE` env var** is the contract consumed by the external `pi-agent-system` extension when installed.
 - **`run_in_background=false` is synchronous** — `task-tool.ts` awaits completion (with 30-min idle timeout reset on activity).
 - **Cancel never `--force`-kills by default** — use `background_cancel(all=true)` only for orchestrator teardown; prefer per-task `taskId`.
 
@@ -51,6 +51,6 @@ background-task/
 
 ## NOTES
 
-- This extension MUST register before `agent-system` and `permission-system` to ensure `AGENT_TYPE` is set before tool filtering runs.
+- This extension MUST register before `permission-system`; external agent-profile extensions read `AGENT_TYPE` from spawned subprocesses.
 - Sub-agent stdout is rendered through `core/agent-session.ts` event bus; the widget reads from `manager.ts`'s observable.
 - The `task_id` returned to the parent is the same one used by `background_output` and `background_cancel`.
