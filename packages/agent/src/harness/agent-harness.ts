@@ -54,8 +54,10 @@ function mergeHeaders(...headers: Array<Record<string, string> | undefined>): Re
 	return hasHeaders ? merged : undefined;
 }
 
+const objectHasOwnProperty = Object.prototype.hasOwnProperty;
+
 function hasOwn(object: object, key: PropertyKey): boolean {
-	return Object.hasOwn(object, key);
+	return objectHasOwnProperty.call(object, key);
 }
 
 function applyStreamOptionsPatch(
