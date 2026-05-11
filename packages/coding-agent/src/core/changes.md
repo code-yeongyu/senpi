@@ -1,24 +1,5 @@
 # changes
 
-## Canonical context-file dedupe (2026-05-11)
-
-### What changed
-
-- `src/core/resource-loader.ts`: `loadProjectContextFiles()` now dedupes AGENTS.md/CLAUDE.md context files by canonical filesystem path, so the same instructions file is not loaded twice through symlinks or overlapping agent/project paths.
-- `test/resource-loader.test.ts`: added a regression covering a symlinked `agentDir` that points at the project directory.
-
-### Why
-
-- Context instructions should be loaded once. If the global agent directory and project walk reach the same file through different path strings, duplicate instruction blocks waste context and can amplify stale rules.
-
-### Why extension system couldn't handle this
-
-- Context-file discovery happens during core resource bootstrap before extensions receive resources. The duplicate must be removed at the loader boundary.
-
-### Expected merge conflict zones on next upstream sync
-
-- LOW: `loadProjectContextFiles()` in `src/core/resource-loader.ts`, around AGENTS.md/CLAUDE.md discovery and dedupe.
-
 ## Configured upstream model id and service tier (2026-05-09)
 
 ### What changed

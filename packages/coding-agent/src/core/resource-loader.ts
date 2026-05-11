@@ -145,32 +145,23 @@ export function loadProjectContextFiles(options: {
 
 	const contextFiles: Array<{ path: string; content: string }> = [];
 	const seenPaths = new Set<string>();
-	const addContextFile = (contextFile: { path: string; content: string }) => {
-		const canonicalPath = canonicalizePath(contextFile.path);
-		if (seenPaths.has(canonicalPath)) return;
-		contextFiles.push(contextFile);
-		seenPaths.add(canonicalPath);
-	};
 
 	const globalContext = loadContextFileFromDir(resolvedAgentDir);
 	if (globalContext) {
-		addContextFile(globalContext);
+		contextFiles.push(globalContext);
+		seenPaths.add(globalContext.path);
 	}
 
 	const ancestorContextFiles: Array<{ path: string; content: string }> = [];
-	const queuedAncestorPaths = new Set<string>();
 
 	let currentDir = resolvedCwd;
 	const root = resolve("/");
 
 	while (true) {
 		const contextFile = loadContextFileFromDir(currentDir);
-		if (contextFile) {
-			const canonicalPath = canonicalizePath(contextFile.path);
-			if (!seenPaths.has(canonicalPath) && !queuedAncestorPaths.has(canonicalPath)) {
-				ancestorContextFiles.unshift(contextFile);
-				queuedAncestorPaths.add(canonicalPath);
-			}
+		if (contextFile && !seenPaths.has(contextFile.path)) {
+			ancestorContextFiles.unshift(contextFile);
+			seenPaths.add(contextFile.path);
 		}
 
 		if (currentDir === root) break;
@@ -180,9 +171,7 @@ export function loadProjectContextFiles(options: {
 		currentDir = parentDir;
 	}
 
-	for (const contextFile of ancestorContextFiles) {
-		addContextFile(contextFile);
-	}
+	contextFiles.push(...ancestorContextFiles);
 
 	return contextFiles;
 }

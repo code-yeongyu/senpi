@@ -6,7 +6,7 @@ import { CONFIG_DIR_NAME, ENV_AGENT_DIR } from "../src/config.js";
 import { AuthStorage } from "../src/core/auth-storage.js";
 import { ExtensionRunner } from "../src/core/extensions/runner.js";
 import { ModelRegistry } from "../src/core/model-registry.js";
-import { DefaultResourceLoader, loadProjectContextFiles } from "../src/core/resource-loader.js";
+import { DefaultResourceLoader } from "../src/core/resource-loader.js";
 import { SessionManager } from "../src/core/session-manager.js";
 import { SettingsManager } from "../src/core/settings-manager.js";
 import type { Skill } from "../src/core/skills.js";
@@ -309,17 +309,6 @@ Content`,
 
 			const { agentsFiles } = loader.getAgentsFiles();
 			expect(agentsFiles.some((f) => f.path.includes("AGENTS.md"))).toBe(true);
-		});
-
-		it("should dedupe context files by canonical path", () => {
-			writeFileSync(join(cwd, "AGENTS.md"), "# Project Guidelines\n\nBe helpful.");
-			const agentDirLink = join(tempDir, "agent-link");
-			symlinkSync(cwd, agentDirLink, "dir");
-
-			const contextFiles = loadProjectContextFiles({ cwd, agentDir: agentDirLink });
-
-			expect(contextFiles).toHaveLength(1);
-			expect(contextFiles[0]?.content).toBe("# Project Guidelines\n\nBe helpful.");
 		});
 
 		it("should skip AGENTS.md and CLAUDE.md discovery when noContextFiles is true", async () => {
