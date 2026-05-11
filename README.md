@@ -14,9 +14,45 @@
   <a href="https://github.com/code-yeongyu/senpi/actions/workflows/ci.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/code-yeongyu/senpi/ci.yml?style=flat-square&branch=main" /></a>
 </p>
 
-An opinionated fork of [badlogic/pi-mono](https://github.com/badlogic/pi-mono) that turns the coding agent into **senpi**: a senpai-name pun, and a more sane pi with extra batteries included.
+> ⚠️ **Experimental.** senpi is an opinionated, in-flight fork of [badlogic/pi-mono](https://github.com/badlogic/pi-mono). It powers [Dori](https://sisyphuslabs.ai) under the hood and reflects what one specific AI assistant needs from a coding-agent runtime. Use it; don't bet a production pipeline on it.
 
-> **Upstream**: [pi-mono](https://github.com/badlogic/pi-mono) by [@mariozechner](https://github.com/badlogic) -- tools for building AI agents and managing LLM deployments.
+senpi is a senpai-name pun and a more **sane** pi with extra batteries included — a TypeScript monorepo that rebrands pi-mono's coding agent as `senpi` and ships a curated set of builtin extensions and core tweaks on top of upstream.
+
+> **Upstream**: [pi-mono](https://github.com/badlogic/pi-mono) by [@mariozechner](https://github.com/badlogic) — tools for building AI agents and managing LLM deployments.
+
+## Inspired by OMO, built as Dori's coding-agent runtime
+
+senpi was born from two influences:
+
+- **Strong influence from [OMO (oh-my-openagent)](https://github.com/code-yeongyu/oh-my-openagent).** OMO is the heavyweight opencode harness with discipline agents (Sisyphus, Hephaestus, Prometheus), [IntentGate](https://factory.ai/news/terminal-bench), hash-anchored edits, Team Mode, skill-embedded MCPs, Ralph Loop, todo enforcers, and a lot more. senpi reuses many of OMO's signature ideas (intent gate, sub-agents, dynamic prompt, per-model presets, parallel-tool routing, todo continuation) but **keeps the surface as light as possible** so it can stay close to upstream pi-mono. Think of senpi as **a light version of OMO** that runs as a single pi CLI binary instead of an opencode plugin.
+- **senpi is the coding-agent runtime for [Dori](https://sisyphuslabs.ai).** Dori is Sisyphus Labs' AI assistant — see the [Dori callout in OMO's README](https://github.com/code-yeongyu/oh-my-openagent#oh-my-openagent) for context. senpi is usable standalone, but the design decisions (intent gate phrasing, builtin extension set, prompt presets per model family, branding) are tuned for what Dori needs when it executes code work.
+
+Core source modifications are minimised and tracked in [`changes.md`](#fork-strategy) files alongside every modified subdirectory so upstream rebases stay clean.
+
+## Want more? Try the pi-extensions ecosystem
+
+senpi ships a fixed set of builtin extensions and stops there. If you want **more capabilities** — LSP, AST-grep, sandboxing, goal tracking, web search/fetch, rule loading — the sibling **pi-extensions** repos cover the surface as standalone packages you can install on top:
+
+| Extension | What it adds |
+|---|---|
+| [`pi-ast-grep`](https://github.com/code-yeongyu/pi-ast-grep) | AST-aware code search/replace across 25 languages (ports OMO's AST-grep tool stack). Auto-downloads `sg` on first use. |
+| [`pi-lsp-client`](https://github.com/code-yeongyu/pi-lsp-client) | LSP integration: `lsp_rename`, `lsp_goto_definition`, `lsp_find_references`, `lsp_diagnostics`, plus a `/lsp` inspector (ports OMO's LSP stack). |
+| [`pi-rules`](https://github.com/code-yeongyu/pi-rules) | Auto-discovers rule files from `.sisyphus/rules/`, `.claude/rules/`, `.cursor/rules/`, `.github/instructions/`, AGENTS.md, CLAUDE.md and injects them into context. |
+| [`pi-sandbox`](https://github.com/code-yeongyu/pi-sandbox) | OS-level sandbox policy with native, Docker, justbash, and QEMU backends plus SSH transport facets. |
+| [`pi-nested-agents-md`](https://github.com/code-yeongyu/pi-nested-agents-md) | Auto-injects nearby `AGENTS.md` files when the agent reads from a nested directory (ports OMO behavior). |
+| [`pi-goal`](https://github.com/code-yeongyu/pi-goal) | Persistent goal tracking with Codex-style goal tools, TUI footer, and continuation prompts. |
+| [`pi-webfetch`](https://github.com/code-yeongyu/pi-webfetch) | `web_fetch` tool — URL content as markdown / plain text / HTML with bounded time and size. |
+| [`pi-websearch`](https://github.com/code-yeongyu/pi-websearch) | Provider-backed web search with config-gated activation, TUI status, and source-aware results. |
+
+Install any of them with:
+
+```bash
+senpi install git:github.com/code-yeongyu/pi-ast-grep
+senpi install git:github.com/code-yeongyu/pi-lsp-client
+# … etc.
+```
+
+See [Senpi Packages](packages/coding-agent/README.md#pi-packages) for the install / update / remove flow. The other pi-extensions packages (Anthropic / OpenAI / Google native tools, `pi-apply-patch`, `pi-bash-timeout`, `pi-openai-api-parallel-tool-calls`) are **already shipped as builtins inside senpi** — you don't need to install them.
 
 ## Why "senpi"
 
@@ -24,72 +60,82 @@ An opinionated fork of [badlogic/pi-mono](https://github.com/badlogic/pi-mono) t
 
 All additions follow pi's extension-first philosophy. Core source modifications are minimized and [documented in `changes.md` files](#fork-strategy) to keep upstream rebases clean.
 
-### Dynamic System Prompt
+## What this fork adds
 
-Replaces pi's static system prompt with a prompt that adapts to the current tool set and session context.
+senpi inherits pi's extension-first design — the core stays minimal, every feature lands as a builtin extension. The bet is that an opinionated set of features is wanted often enough to be in the binary; anything you don't want is still one settings flag away from being off (`disabledBuiltinExtensions` in `settings.json`).
 
-| Component | What it does |
-|-----------|-------------|
-| **Intent Gate** | Forces the model to classify user intent (research / implementation / investigation / evaluation / fix / open-ended) and verbalize its routing decision before acting. Prevents the model from jumping straight into edits on ambiguous requests. |
-| **Tool Categorization** | Groups registered tools by type (LSP, AST, search, session, command) and generates a categorized tool reference with per-tool snippets and usage guidelines. |
-| **Policy Enforcement** | Injects language-agnostic hard blocks (no unauthorized git commits, no speculation about unread code, no suppression of type/lint/test failures) and anti-patterns (no deleted failing tests, no silently swallowed errors, no shotgun debugging) directly into the prompt so models self-enforce code quality rules. |
+Verified against `git diff upstream/main..HEAD` and every `changes.md` file in the repo.
 
-Source: [`packages/coding-agent/src/core/dynamic-prompt/`](packages/coding-agent/src/core/dynamic-prompt/)
+### New core subsystems
 
-### Builtin Extension System
+| Subsystem | What it does | Docs |
+|-----------|--------------|------|
+| **Dynamic system prompt** | Replaces upstream's static prompt with an adaptive builder: senpi identity → forced intent gate → exploration discipline → parallel-tool guidance → verification tiers → categorized tool reference → policies → style → optional per-model tuning. | [`dynamic-prompt/`](packages/coding-agent/src/core/dynamic-prompt/AGENTS.md) · [`changes.md`](packages/coding-agent/src/core/dynamic-prompt/changes.md) |
+| **Compaction pipeline** | Plugsuit-style adaptive thresholds, empty-summarization guard, branch summarization hooks. Speculative + emergency compaction with restoration tracker lives as the [`compaction` builtin extension](#owned-builtin-extensions). | [`core/compaction/`](packages/coding-agent/src/core/compaction/) · [`changes.md`](packages/coding-agent/src/core/compaction/changes.md) |
+| **Tool-call middleware rewrite** | XML / Hermes / YAML+XML / Gemma4 text-tool protocols for models without native function calling. Strict parsing, stream-error preservation. | [`tool-call-middleware/`](packages/ai/src/tool-call-middleware/AGENTS.md) · [`changes.md`](packages/ai/src/tool-call-middleware/changes.md) |
 
-A new extension loading tier that ships first-party extensions as part of the coding agent binary. These load automatically without requiring files in `.senpi/extensions/` or `~/.senpi/agent/extensions/`.
+### Owned builtin extensions
 
-Senpi splits its builtins into two tracks. **Owned builtins** live in-tree and are tightly coupled to senpi internals (session manager, settings manager, dynamic prompt, custom session entries). **Vendored builtins** live in standalone public repos under `pi-extensions` and are synced into the coding agent at build time so that the same source is reusable as a regular pi extension by anyone, while senpi still ships them by default.
+In-tree, tightly coupled to senpi internals. Loaded in this exact registration order (it matters for permission/agent stacking):
 
-#### Owned builtins (managed in this repo)
+| # | Extension | Role | Docs |
+|---|-----------|------|------|
+| 1 | [`background-task`](packages/coding-agent/src/core/extensions/builtin/background-task/) | `task` / `background_output` / `background_cancel` tools, sub-agent spawning into detached subprocesses, custom session entries, desktop notifications | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/background-task/AGENTS.md) |
+| 2 | [`agent-system`](packages/coding-agent/src/core/extensions/builtin/agent-system/) | Named agent profiles (default / editor / architect / custom) with wildcard tool allowlists and per-agent system-prompt fragments | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/agent-system/AGENTS.md) · [changes.md](packages/coding-agent/src/core/extensions/builtin/agent-system/changes.md) |
+| 3 | [`permission-system`](packages/coding-agent/src/core/extensions/builtin/permission-system/) | Full opencode-style permission port — rules, JSONL storage, TUI prompts, parser-aware patterns (bash arity, file globs, `apply_patch` body paths), non-interactive fallback | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/permission-system/AGENTS.md) · [changes.md](packages/coding-agent/src/core/extensions/builtin/permission-system/changes.md) |
+| 4 | [`gpt-apply-patch`](packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/) *(vendored)* | When the active model is OpenAI GPT, swaps `write`/`edit` for Codex-style freeform `apply_patch` with a Lark grammar. Synced from [`code-yeongyu/pi-apply-patch`](https://github.com/code-yeongyu/pi-apply-patch). | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/AGENTS.md) |
+| 5 | [`prompt-preset`](packages/coding-agent/src/core/extensions/builtin/prompt-preset/) | Per-model system prompt presets (gpt-5.x, claude-opus-4-{5,6,7}, kimi-k2-6) layered on top of the dynamic prompt. Shared codex-style file-operations tuning. | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/prompt-preset/AGENTS.md) · [changes.md](packages/coding-agent/src/core/extensions/builtin/prompt-preset/changes.md) |
+| 6 | [`todowrite`](packages/coding-agent/src/core/extensions/builtin/todotools/) | `todowrite` / `todoread` tools with branch-aware persistence, sidebar widget, and a continuation loop that nudges the model to keep working | — |
+| 7 | [`redraws`](packages/coding-agent/src/core/extensions/builtin/redraws.ts) | `/tui` command reporting cumulative TUI full-redraw count. Used for differential-rendering debugging. | — |
+| 8 | [`anthropic-web-search`](packages/coding-agent/src/core/extensions/builtin/anthropic-web-search/) | Anthropic native `web_search` tool | — |
+| 9 | [`anthropic-tool-search`](packages/coding-agent/src/core/extensions/builtin/anthropic-tool-search/) | Anthropic native `tool_search` tool | — |
+| 10 | [`anthropic-code-execution`](packages/coding-agent/src/core/extensions/builtin/anthropic-code-execution/) | Anthropic native code-execution sandbox | — |
+| 11 | [`anthropic-bash`](packages/coding-agent/src/core/extensions/builtin/anthropic-bash/) | Anthropic native bash tool variant | — |
+| 12 | [`anthropic-text-editor`](packages/coding-agent/src/core/extensions/builtin/anthropic-text-editor/) | Anthropic native `str_replace_based_edit_tool` | — |
+| 13 | [`anthropic-computer-use`](packages/coding-agent/src/core/extensions/builtin/anthropic-computer-use/) | Anthropic native computer-use bindings | — |
+| 14 | [`openai-web-search`](packages/coding-agent/src/core/extensions/builtin/openai-web-search/) | OpenAI Responses native `web_search` | — |
+| 15 | [`openai-code-interpreter`](packages/coding-agent/src/core/extensions/builtin/openai-code-interpreter/) | OpenAI Responses native `code_interpreter` | — |
+| 16 | [`google-google-search`](packages/coding-agent/src/core/extensions/builtin/google-google-search/) | Google `googleSearch` grounding tool | — |
+| 17 | [`google-code-execution`](packages/coding-agent/src/core/extensions/builtin/google-code-execution/) | Google `codeExecution` native tool | — |
+| 18 | [`google-url-context`](packages/coding-agent/src/core/extensions/builtin/google-url-context/) | Google `urlContext` grounding tool | — |
+| 19 | [`openai-api-parallel-tool-calls`](packages/coding-agent/src/core/extensions/builtin/openai-api-parallel-tool-calls/) *(vendored)* | Adds `parallel_tool_calls: true` to OpenAI-family payloads + nudges the system prompt to fan out. Synced from [`code-yeongyu/pi-openai-api-parallel-tool-calls`](https://github.com/code-yeongyu/pi-openai-api-parallel-tool-calls). | — |
+| 20 | [`service-tier`](packages/coding-agent/src/core/extensions/builtin/service-tier.ts) | Injects `service_tier` (`auto` / `flex` / `priority`) into OpenAI Responses payloads using per-model service tier or `openai.serviceTier` setting | — |
+| 21 | [`bash-timeout`](packages/coding-agent/src/core/extensions/builtin/bash-timeout/) *(vendored)* | Injects default + max bash timeouts, appends policy to system prompt. Synced from [`code-yeongyu/pi-bash-timeout`](https://github.com/code-yeongyu/pi-bash-timeout). | — |
+| 22 | [`tool-pair-guard`](packages/coding-agent/src/core/extensions/builtin/tool-pair-guard/) | Sanitizes Anthropic request payloads by removing orphan `tool_result` blocks — compaction safety | — |
+| 23 | [`compaction`](packages/coding-agent/src/core/extensions/builtin/compaction/) | Speculative + emergency compaction policy: degradation monitor, circuit breaker, per-turn cap, todo bridging, checkpoint state, restoration tracker, tool-result truncation | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/compaction/AGENTS.md) · [changes.md](packages/coding-agent/src/core/extensions/builtin/compaction/changes.md) |
 
-Source: [`packages/coding-agent/src/core/extensions/builtin/`](packages/coding-agent/src/core/extensions/builtin/)
+> **All 21 directories** above are new vs upstream `pi-mono` — none exist in `badlogic/pi-mono`. Vendored versions are pinned in [`external-versions.json`](packages/coding-agent/src/core/extensions/builtin/external-versions.json) and synced from the sibling `pi-extensions` checkout at build time via [`sync-builtin-extensions.mjs`](packages/coding-agent/scripts/sync-builtin-extensions.mjs).
 
-| Extension | What it does | Why it lives here |
-|-----------|--------------|-------------------|
-| **background-task** | Adds `task`, `background_output`, `background_cancel` tools, spawns sub-agents in detached subprocesses, persists task state via custom session entries, restores tasks on session reload, renders a "background tasks" widget, and turns sub-agent completion messages into desktop notifications. | Sub-agents are not part of upstream pi by design. We need them for parallel exploration and long-running QA, and the implementation has to plug into the session manager, custom session entries, and the TUI widget API simultaneously. |
-| **agent-system** | Reads `AGENT_TYPE` from the env, looks up an agent profile from the local registry (`.senpi/agents/`, `~/.senpi/agent/agents/`), merges its tool permissions with global agent defaults, narrows the active toolset, and appends the agent's system prompt fragment. | Required to give `background-task` named agent profiles (explore, librarian, oracle, etc.) with per-agent tool whitelists and prompt overrides. Tool filtering must run before tool execution, so it has to be a builtin rather than a user extension. |
-| **permission-system** | Loads permission rules from CLI (`--permission tool=action`), settings (`permissions.always_allow`, `permissions.deny`), and per-session approvals. Prompts the user for unknown tool calls, persists "always allow" decisions back to the project, blocks denied calls with a structured error, and supports parser-aware patterns (e.g., bash command prefixes, file path globs for read/write/edit/apply_patch). | Upstream pi explicitly omits permission popups. We needed an opt-in permission gate for shared infra and untrusted prompts. The integration has to read settings, modify the active toolset on session start, and intercept `tool_call` before execution, which is impossible from a user extension without race conditions. |
-| **prompt-preset** | At `before_agent_start` and `model_select`, picks a system prompt preset based on the current model and `senpi-current` settings, falling back to senpi's dynamic prompt when nothing matches. Renders the active preset name in the startup header. | Different model families respond best to different system prompt styles (Claude vs GPT vs Gemini). Hard-coding one prompt for everyone is wrong, and switching prompts purely from the dynamic-prompt builder couples too much logic. Splitting it into an extension lets us tune presets per model without touching core. |
-| **todowrite** | Adds `todowrite` and `todoread` tools, persists todo state per branch, renders a sidebar widget, and injects a task-management section into the system prompt. Drives a continuation loop that nudges the model to keep working until all todos are done. | Upstream pi intentionally has no built-in todos. We chose to add them because the dynamic prompt and the rest of senpi already assume todos exist; making it an in-tree builtin lets us keep the continuation loop, branch-aware persistence, and TUI widget consistent across all sessions. |
-| **redraws** | Adds the `/tui` command, which reports the cumulative full-redraw count of the current TUI instance. | Tiny TUI debugging hook used while iterating on differential rendering bugs. Lives in-tree because it pokes at internal `tui.fullRedraws`. |
-| **service-tier** | At `before_provider_request`, injects `service_tier` (`"auto" \| "flex" \| "priority"`) into OpenAI Responses payloads using the per-model service tier (e.g., `-fast` suffix) or the value from `settings.json -> openai.serviceTier`. | OpenAI Responses gates latency/cost via `service_tier`. We want one switch in settings or model id, applied to every outgoing payload, without forcing every model definition to repeat the field. |
-| **tool-pair-guard** | Sanitizes Anthropic request payloads before provider calls by removing orphan `tool_result` blocks. | Provider-native tool calls and cross-provider replay can leave mismatched tool pairs. Keeping this as a builtin lets every Anthropic request share the same safety pass. |
-| **compaction** | Owns the entire compaction pipeline: speculative compaction, blocking compaction at the hard context limit, proactive compaction near the soft limit, degradation monitoring, circuit breaker, per-turn cap, todo bridging into compaction, checkpoint state, restoration tracker, and tool-result truncation. | Compaction in senpi diverged significantly from upstream pi: we run speculative compaction in parallel, restore todos and checkpoints, and integrate with the dynamic prompt. The seam needs typed access to settings, session manager, model registry, and event ordering, which only a builtin can get. |
-| **provider-native tools** | Adds native tool integrations for Anthropic (`anthropic-web-search`, `anthropic-tool-search`, `anthropic-code-execution`, `anthropic-bash`, `anthropic-text-editor`, `anthropic-computer-use`), OpenAI (`openai-web-search`, `openai-code-interpreter`), and Google (`google-google-search`, `google-code-execution`, `google-url-context`). | Native provider tools need request-payload rewrites, duplicate function-tool stripping, and system-prompt hints that must run at provider-request time for the active model API. |
+### Global default extensions
 
-#### Vendored builtins (synced from `pi-extensions`)
+Not loaded as builtins; written once into `~/.senpi/agent/extensions/` on first run so you can edit or remove them locally.
 
-These extensions live as their own public repos so that they are usable in any pi installation as plain `pi -e ./src/index.ts` extensions. Senpi vendors a snapshot via [`packages/coding-agent/scripts/sync-builtin-extensions.mjs`](packages/coding-agent/scripts/sync-builtin-extensions.mjs) at build time. The package name and version of each vendored snapshot are recorded in [`packages/coding-agent/src/core/extensions/builtin/external-versions.json`](packages/coding-agent/src/core/extensions/builtin/external-versions.json).
+| Extension | Source | What it does |
+|-----------|--------|--------------|
+| `diff` | [`diff.ts`](packages/coding-agent/src/core/extensions/builtin/diff.ts) | `/diff` command — picks modified / deleted / new files from `git status`, opens VS Code's diff view |
+| `files` | [`files.ts`](packages/coding-agent/src/core/extensions/builtin/files.ts) | `/files` command — lists files read / written / edited in the current session branch, opens selected in VS Code |
+| `prompt-url-widget` | [`prompt-url-widget.ts`](packages/coding-agent/src/core/extensions/builtin/prompt-url-widget.ts) | Detects GitHub PR / issue URLs in prompts, fetches title via `gh`, auto-sets the session name |
+| `tps` | [`tps.ts`](packages/coding-agent/src/core/extensions/builtin/tps.ts) | Tokens-per-second notification (input / output / cache r/w / total / elapsed) after each agent turn |
 
-| Extension | Repo | What it does | Why it ships by default |
-|-----------|------|--------------|-------------------------|
-| **bash-timeout** | [code-yeongyu/pi-bash-timeout](https://github.com/code-yeongyu/pi-bash-timeout) | Intercepts `bash` tool calls. Injects a default timeout when the model omits one, caps timeouts that exceed the configured max, and appends a system-prompt section explaining the policy. Tunable via `PI_BASH_DEFAULT_TIMEOUT_SECONDS` and `PI_BASH_MAX_TIMEOUT_SECONDS`. | Bash without a sane default timeout hangs sessions when the model picks the wrong command. We standardize the policy across every model and let other pi users adopt the same behavior outside senpi. |
-| **gpt-apply-patch** | [code-yeongyu/pi-apply-patch](https://github.com/code-yeongyu/pi-apply-patch) | When the active model is OpenAI GPT, swaps `write`/`edit` for a freeform Codex-style `apply_patch` tool with a Lark grammar and applies multi-file patches (add/update/delete/move). Falls back to standard edit tools for non-GPT models. | GPT-class models follow Codex `apply_patch` grammar reliably, but stumble on JSON-schema edits at scale. Switching tooling per-model gives noticeably better edit quality without affecting other providers. |
-| **openai-api-parallel-tool-calls** | [code-yeongyu/pi-openai-api-parallel-tool-calls](https://github.com/code-yeongyu/pi-openai-api-parallel-tool-calls) | Adds `parallel_tool_calls: true` to OpenAI-family payloads when the request has tools, covering `openai-completions`, `openai-responses`, `openai-codex-responses`, `azure-openai-responses`. Appends an Execution Strategy section to the system prompt that nudges the model to fan out independent calls. | OpenAI defaults to sequential tool calls, which is wasteful for parallel reads/searches. Combined with the prompt nudge, we measurably cut round-trips. Externalizing it makes the same gain available to non-senpi pi users. |
+### Modified upstream packages
 
-Builtin extensions are loaded by default. Set `enabledBuiltinExtensions` in `settings.json` to load only selected builtin ids, or `disabledBuiltinExtensions` to skip specific builtin ids. Vendored snapshots are refreshed during the coding-agent build when `../pi-extensions` or `SENPI_BUILTIN_EXTENSIONS_SOURCE` exists.
+| Package | What changed | Reference |
+|---------|--------------|-----------|
+| [`packages/ai`](packages/ai/AGENTS.md) | Senpi-branded Codex `originator` and User-Agent, shared tool-pair-repair utility, OpenAI Responses custom/freeform tool support for `apply_patch`, Claude Opus 4.7 + `"max"` thinking level, `extraBody` pass-through across every provider, [tool-call middleware rewrite](packages/ai/src/tool-call-middleware/AGENTS.md) | [`ai/src/changes.md`](packages/ai/src/changes.md) |
+| [`packages/agent`](packages/agent/AGENTS.md) | Parallel tool completion emission (concurrent finalization, source-order results), inline UUIDv7 replacing the `uuid` dep, ES2021-safe harness diagnostics | [`agent/src/changes.md`](packages/agent/src/changes.md) |
+| [`packages/tui`](packages/tui/AGENTS.md) | Differential rendering tightening: insert-scroll fast path, viewport remap repaint fix, flicker-budget regression tests (no post-init full clears, balanced DECSET 2026) | [`tui/src/changes.md`](packages/tui/src/changes.md) |
+| [`packages/coding-agent`](packages/coding-agent/AGENTS.md) | `senpi` branding, model config controls (`upstreamModelId`, `serviceTier`, favorite models, disable/whitelist/blacklist), non-blocking startup tool discovery, disabled startup update checks, [bash `promptSnippet` swap to `rg`](packages/coding-agent/src/core/tools/AGENTS.md), generated default extension fast-path, senpi-branded outbound identity | Multiple [`changes.md`](packages/coding-agent/src/) files |
 
-#### Global defaults (seeded to `~/.senpi/agent/extensions/` on first run)
-
-These are not loaded as builtins; they are written once into the user's extension dir so they can be edited or removed locally.
-
-| Extension | Description |
-|-----------|-------------|
-| **diff** | `/diff` command. Shows modified/deleted/new files from `git status` with colored status indicators. Selecting a file opens VS Code's diff view. |
-| **files** | `/files` command. Lists all files the model has read/written/edited in the current session branch, coalesced by path and sorted newest-first. Opens selected file in VS Code. |
-| **prompt-url-widget** | Detects GitHub PR/issue URLs in prompts, fetches metadata via `gh` CLI, and displays a title/author widget. Auto-sets the session name from the PR/issue. |
-| **tps** | Displays tokens-per-second stats (input, output, cache read/write) as a notification after each agent turn. |
-
-### Other Changes
+### Other branding / runtime changes
 
 | Change | Details |
 |--------|---------|
-| **`senpi` CLI branding** | The coding agent now identifies itself as `senpi`, uses `.senpi/agent` for config storage, and publishes as `@code-yeongyu/senpi`. |
+| **`senpi` CLI identity** | The coding agent identifies itself as `senpi`, uses `.senpi/agent` for config storage, publishes as `@code-yeongyu/senpi`. |
+| **Senpi-branded outbound identity** | Every outbound request emits `senpi` instead of `pi`: `User-Agent` (update check + Cloudflare + GitHub releases), `X-OpenRouter-Title`, OpenAI Codex `originator` + User-Agent, sub-agent spawn fallback command. |
 | **No startup update checks** | Removed npm registry version checking and package update prompts at launch. |
-| **Builtin extension UI grouping** | Builtin extensions render under a separate `builtin/` group in the startup header, visually distinct from user and project extensions. |
-| **Updated model registry** | Refreshed `models.generated.ts` with latest model additions and deprecations. |
+| **Builtin extension UI grouping** | Builtins render under a `builtin/` group in the startup header, visually distinct from user and project extensions. |
+| **Updated model registry** | `models.generated.ts` refreshed with latest model additions and deprecations. |
+| **Self-update target** | `senpi update senpi` queries [`code-yeongyu/senpi`](https://github.com/code-yeongyu/senpi) releases, not upstream. |
 
 ## Fork Strategy
 
@@ -99,13 +145,17 @@ This fork rebases periodically on `upstream/main`. To minimize merge conflicts:
 2. **Document core changes**: Every upstream file modification has a corresponding `changes.md` in the affected subdirectory, documenting what changed, why, and expected conflict zones.
 3. **Remotes**: `origin` = [code-yeongyu/senpi](https://github.com/code-yeongyu/senpi), `upstream` = [badlogic/pi-mono](https://github.com/badlogic/pi-mono).
 
-Modified upstream files:
+Modified upstream files (high-impact, see per-directory `changes.md` for the rest):
 
 | File | Change |
 |------|--------|
-| `agent-session.ts` | Calls `buildDynamicSystemPrompt()` instead of `buildSystemPrompt()` |
-| `resource-loader.ts` | Removed SYSTEM.md/APPEND_SYSTEM.md discovery; added builtin extension loading |
-| `interactive-mode.ts` | Builtin extension display formatting; disabled update checks |
+| `agent-session.ts` | Calls `buildDynamicSystemPrompt()` instead of `buildSystemPrompt()`; unified compaction pipeline; model-switch system-prompt change |
+| `resource-loader.ts` | Removed SYSTEM.md / APPEND_SYSTEM.md discovery; added builtin extension loading; generated-default extension fast-path |
+| `interactive-mode.ts` | Builtin extension display formatting; disabled update checks; non-blocking startup tools; favorite-model cycling |
+| `model-registry.ts` | Custom `upstreamModelId` and `serviceTier`; provider/model disable/whitelist/blacklist; `thinkingLevelMapMode` |
+| `settings-manager.ts` | `disabledBuiltinExtensions`; `favoriteModels`; `openai.serviceTier`; steering default `"all"` |
+| `agent-loop.ts` (`packages/agent`) | `executeToolCallsParallel()` |
+| `tui.ts` (`packages/tui`) | Differential rendering fast paths + flicker-budget enforcement |
 | `package.json` | Rebranded the coding agent package and runtime identity to `senpi` |
 
 ## Share your OSS coding agent sessions
