@@ -107,7 +107,7 @@ describe("Context overflow error handling", () => {
 	});
 
 	describe.skipIf(!process.env.ANTHROPIC_OAUTH_TOKEN)("Anthropic (OAuth)", () => {
-		it("claude-sonnet-4-6 - should detect overflow via isContextOverflow", async () => {
+		it("claude-sonnet-4 - should detect overflow via isContextOverflow", async () => {
 			const model = getModel("anthropic", "claude-sonnet-4-6");
 			const result = await testContextOverflow(model, process.env.ANTHROPIC_OAUTH_TOKEN!);
 			logResult(result);
@@ -141,9 +141,9 @@ describe("Context overflow error handling", () => {
 
 		// Anthropic model via Copilot
 		it.skipIf(!githubCopilotToken)(
-			"claude-sonnet-4.5 - should detect overflow via isContextOverflow",
+			"claude-sonnet-4 - should detect overflow via isContextOverflow",
 			async () => {
-				const model = getModel("github-copilot", "claude-sonnet-4.5");
+				const model = getModel("github-copilot", "claude-sonnet-4.6");
 				const result = await testContextOverflow(model, githubCopilotToken!);
 				logResult(result);
 
@@ -162,7 +162,10 @@ describe("Context overflow error handling", () => {
 
 	describe.skipIf(!process.env.OPENAI_API_KEY)("OpenAI Completions", () => {
 		it("gpt-4o-mini - should detect overflow via isContextOverflow", async () => {
-			const model = { ...getModel("openai", "gpt-4o-mini"), api: "openai-completions" as const };
+			const model: Model<"openai-completions"> = {
+				...getModel("openai", "gpt-4o-mini"),
+				api: "openai-completions",
+			};
 			const result = await testContextOverflow(model, process.env.OPENAI_API_KEY!);
 			logResult(result);
 
@@ -501,12 +504,6 @@ describe("Context overflow error handling", () => {
 			const result = await testContextOverflow(model, process.env.OPENROUTER_API_KEY!);
 			logResult(result);
 
-			if (result.stopReason === "stop") {
-				expect(result.hasUsageData).toBe(true);
-				expect(result.usage.input + result.usage.cacheRead).toBeGreaterThan(model.contextWindow);
-				return;
-			}
-
 			expect(result.stopReason).toBe("error");
 			expect(result.errorMessage).toMatch(/maximum context length is \d+ tokens/i);
 			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
@@ -657,7 +654,7 @@ describe("Context overflow error handling", () => {
 	// =============================================================================
 
 	let lmStudioRunning = false;
-	if (!process.env.PI_NO_LOCAL_LLM && process.env.PI_ENABLE_LOCAL_LLM === "1") {
+	if (!process.env.PI_NO_LOCAL_LLM) {
 		try {
 			execSync("curl -s --max-time 1 http://localhost:1234/v1/models > /dev/null", { stdio: "ignore" });
 			lmStudioRunning = true;

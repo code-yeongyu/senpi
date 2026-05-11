@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- Fixed GitHub Copilot Claude test coverage to use the current Claude Sonnet 4.6 model ID.
 - Fixed OpenAI Responses requests for models that support disabling reasoning to send `reasoning.effort: "none"` when thinking is off.
 
 ## [0.74.0] - 2026-05-07

@@ -1,4 +1,4 @@
-import type { ImageContent, Model, TextContent } from "@earendil-works/pi-ai";
+import type { ImageContent, Model, SimpleStreamOptions, TextContent, Transport } from "@earendil-works/pi-ai";
 import type { QueueMode } from "../agent.js";
 import type { AgentEvent, AgentMessage, AgentTool, ThinkingLevel } from "../index.js";
 import type { Session } from "./session/session.js";
@@ -41,6 +41,33 @@ export interface AgentHarnessResources<
 	promptTemplates?: TPromptTemplate[];
 	/** Skills available to the model and explicit skill invocation. */
 	skills?: TSkill[];
+}
+
+/** Curated provider request options owned by the harness and snapshotted per turn. */
+export interface AgentHarnessStreamOptions {
+	/** Preferred transport forwarded to the stream function. */
+	transport?: Transport;
+	/** Provider request timeout in milliseconds. */
+	timeoutMs?: number;
+	/** Maximum provider retry attempts. */
+	maxRetries?: number;
+	/** Optional cap for provider-requested retry delays. */
+	maxRetryDelayMs?: number;
+	/** Additional request headers merged with auth and lifecycle headers. */
+	headers?: Record<string, string>;
+	/** Provider metadata forwarded with requests. */
+	metadata?: SimpleStreamOptions["metadata"];
+	/** Provider cache retention hint. */
+	cacheRetention?: SimpleStreamOptions["cacheRetention"];
+}
+
+/** Per-request stream option patch returned by provider hooks. */
+export interface AgentHarnessStreamOptionsPatch
+	extends Omit<Partial<AgentHarnessStreamOptions>, "headers" | "metadata"> {
+	/** Header patch. `undefined` values delete keys; explicit `headers: undefined` clears all headers. */
+	headers?: Record<string, string | undefined>;
+	/** Metadata patch. `undefined` values delete keys; explicit `metadata: undefined` clears all metadata. */
+	metadata?: Record<string, unknown | undefined>;
 }
 
 /** Kind of filesystem object as addressed by an {@link ExecutionEnv}. Symlinks are not followed automatically. */
@@ -298,20 +325,6 @@ export type PendingSessionWrite = SessionTreeEntry extends infer TEntry
 		: never
 	: never;
 
-export interface AgentHarnessTurnState<
-	TSkill extends Skill = Skill,
-	TPromptTemplate extends PromptTemplate = PromptTemplate,
-	TTool extends AgentTool = AgentTool,
-> {
-	messages: AgentMessage[];
-	resources: AgentHarnessResources<TSkill, TPromptTemplate>;
-	systemPrompt: string;
-	model: Model<any>;
-	thinkingLevel: ThinkingLevel;
-	tools: TTool[];
-	activeTools: TTool[];
-}
-
 export interface QueueUpdateEvent {
 	type: "queue_update";
 	steer: AgentMessage[];
@@ -353,6 +366,14 @@ export interface ContextEvent {
 
 export interface BeforeProviderRequestEvent {
 	type: "before_provider_request";
+	model: Model<any>;
+	sessionId: string;
+	streamOptions: AgentHarnessStreamOptions;
+}
+
+export interface BeforeProviderPayloadEvent {
+	type: "before_provider_payload";
+	model: Model<any>;
 	payload: unknown;
 }
 
@@ -440,6 +461,7 @@ export type AgentHarnessOwnEvent<
 	| BeforeAgentStartEvent<TSkill, TPromptTemplate>
 	| ContextEvent
 	| BeforeProviderRequestEvent
+	| BeforeProviderPayloadEvent
 	| AfterProviderResponseEvent
 	| ToolCallEvent
 	| ToolResultEvent
@@ -465,6 +487,10 @@ export interface ContextResult {
 }
 
 export interface BeforeProviderRequestResult {
+	streamOptions?: AgentHarnessStreamOptionsPatch;
+}
+
+export interface BeforeProviderPayloadResult {
 	payload: unknown;
 }
 
@@ -497,6 +523,7 @@ export type AgentHarnessEventResultMap = {
 	before_agent_start: BeforeAgentStartResult | undefined;
 	context: ContextResult | undefined;
 	before_provider_request: BeforeProviderRequestResult | undefined;
+	before_provider_payload: BeforeProviderPayloadResult | undefined;
 	after_provider_response: undefined;
 	tool_call: ToolCallResult | undefined;
 	tool_result: ToolResultPatch | undefined;
@@ -613,6 +640,8 @@ export interface AgentHarnessOptions<
 	getApiKeyAndHeaders?: (
 		model: Model<any>,
 	) => Promise<{ apiKey: string; headers?: Record<string, string> } | undefined>;
+	/** Curated stream/provider request options. Snapshotted at turn start. */
+	streamOptions?: AgentHarnessStreamOptions;
 	model: Model<any>;
 	thinkingLevel?: ThinkingLevel;
 	activeToolNames?: string[];

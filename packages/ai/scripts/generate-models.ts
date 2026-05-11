@@ -764,6 +764,16 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					},
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
+					// Fireworks prompt caching uses automatic prefix matching + session affinity.
+					// x-session-affinity routes requests to the same replica for cache hits.
+					// cache_control on tools and eager_input_streaming are not supported.
+					// See: https://docs.fireworks.ai/tools-sdks/anthropic-compatibility
+					compat: {
+						sendSessionAffinityHeaders: true,
+						supportsEagerToolInputStreaming: false,
+						supportsCacheControlOnTools: false,
+						supportsLongCacheRetention: false,
+					},
 				});
 			}
 		}

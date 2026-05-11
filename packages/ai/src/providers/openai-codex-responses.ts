@@ -719,7 +719,35 @@ type WebSocketConstructor = new (
 	protocols?: string | string[] | { headers?: Record<string, string> },
 ) => WebSocketLike;
 
-function getWebSocketConstructor(): WebSocketConstructor | null {
+let _cachedWebsocket: WebSocketConstructor | null = null;
+async function getWebSocketConstructor(): Promise<WebSocketConstructor | null> {
+	if (_cachedWebsocket) return _cachedWebsocket;
+
+	// bun doesn't respect http proxy envs, ref: https://github.com/oven-sh/bun/issues/15489
+	// TODO: remove this when bun supports proxy envs in websocket.
+	if (
+		process?.versions?.bun &&
+		(process.env.HTTP_PROXY || process.env.HTTPS_PROXY || process.env.http_proxy || process.env.https_proxy)
+	) {
+		const m = await dynamicImport("proxy-from-env");
+		const getProxyForUrl = (m as { getProxyForUrl: (url: string | object | URL) => string }).getProxyForUrl;
+
+		_cachedWebsocket = class extends WebSocket {
+			constructor(url: string | URL, options?: string | string[] | Record<string, unknown>) {
+				let _opts: Record<string, unknown> = {};
+				if (Array.isArray(options) || typeof options === "string") {
+					_opts = { protocols: options };
+				} else {
+					_opts = { ...options };
+				}
+
+				const proxy = getProxyForUrl(url.toString().replace(/^wss:/, "https:").replace(/^ws:/, "http:"));
+				super(url, { ..._opts, ...(proxy ? { proxy } : {}) } as any);
+			}
+		};
+		return _cachedWebsocket;
+	}
+
 	const ctor = (globalThis as { WebSocket?: unknown }).WebSocket;
 	if (typeof ctor !== "function") return null;
 	return ctor as unknown as WebSocketConstructor;
@@ -768,7 +796,7 @@ function scheduleSessionWebSocketExpiry(sessionId: string, entry: CachedWebSocke
 }
 
 async function connectWebSocket(url: string, headers: Headers, signal?: AbortSignal): Promise<WebSocketLike> {
-	const WebSocketCtor = getWebSocketConstructor();
+	const WebSocketCtor = await getWebSocketConstructor();
 	if (!WebSocketCtor) {
 		throw new Error("WebSocket transport is not available in this runtime");
 	}

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { v7 as uuidv7 } from "uuid";
 import type { SessionMetadata, SessionStorage, SessionTreeEntry } from "../../types.js";
+import { createSessionId } from "../repo/shared.js";
 
 function updateLabelCache(labelsById: Map<string, string>, entry: SessionTreeEntry): void {
 	if (entry.type !== "label") return;
@@ -43,7 +43,7 @@ export class InMemorySessionStorage implements SessionStorage {
 		if (this.leafId !== null && !this.byId.has(this.leafId)) {
 			throw new Error(`Entry ${this.leafId} not found`);
 		}
-		this.metadata = options?.metadata ?? { id: uuidv7(), createdAt: new Date().toISOString() };
+		this.metadata = options?.metadata ?? { id: createSessionId(), createdAt: new Date().toISOString() };
 	}
 
 	async getMetadata(): Promise<SessionMetadata> {

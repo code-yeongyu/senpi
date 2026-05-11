@@ -465,6 +465,22 @@ export interface AnthropicMessagesCompat {
 	supportsEagerToolInputStreaming?: boolean;
 	/** Whether the provider supports Anthropic long cache retention (`cache_control.ttl: "1h"`). Default: true. */
 	supportsLongCacheRetention?: boolean;
+	/**
+	 * Whether to send the `x-session-affinity` header from `options.sessionId`
+	 * when caching is enabled. Required for providers like Fireworks that use
+	 * session affinity for prompt cache routing (requests to the same replica
+	 * maximize cache hits).
+	 * Default: false.
+	 */
+	sendSessionAffinityHeaders?: boolean;
+	/**
+	 * Whether the provider supports Anthropic-style `cache_control` markers on
+	 * tool definitions. When false, `cache_control` is omitted from tool params.
+	 * Some Anthropic-compatible providers (e.g., Fireworks) do not support this
+	 * field on tools and may reject or ignore it.
+	 * Default: true.
+	 */
+	supportsCacheControlOnTools?: boolean;
 }
 
 /**
