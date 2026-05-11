@@ -6,6 +6,7 @@ import { convertResponsesTools } from "../../../ai/src/providers/openai-response
 import gptApplyPatchExtension, {
 	APPLY_PATCH_FREEFORM_DESCRIPTION,
 	APPLY_PATCH_LARK_GRAMMAR,
+	applyPatchDetailed,
 	createApplyPatchTool,
 	isOpenAIGptModel,
 } from "../../src/core/extensions/builtin/gpt-apply-patch/index.js";
@@ -273,6 +274,32 @@ describe("gpt-apply-patch builtin extension", () => {
 		expect(updates[2]?.details?.progress).toEqual({ applied: 2, failed: 0, total: 2 });
 		expect(updates[1]?.content.find((block) => block.type === "text")?.text).toContain("Applying patch (1/2)...");
 		expect(updates[2]?.content.find((block) => block.type === "text")?.text).toContain("Applying patch (2/2)...");
+		expect(await readFile(path.join(harness.tempDir, "first.txt"), "utf-8")).toBe("ONE\n");
+		expect(await readFile(path.join(harness.tempDir, "second.txt"), "utf-8")).toBe("TWO\n");
+	});
+
+	it("continues applying operations when progress rendering throws", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		await writeFile(path.join(harness.tempDir, "first.txt"), "one\n", "utf-8");
+		await writeFile(path.join(harness.tempDir, "second.txt"), "two\n", "utf-8");
+		const patch = `*** Begin Patch
+*** Update File: first.txt
+@@
+-one
++ONE
+*** Update File: second.txt
+@@
+-two
++TWO
+*** End Patch`;
+
+		const result = await applyPatchDetailed(harness.tempDir, patch, () => {
+			throw new Error("render failed");
+		});
+
+		expect(result.failures).toEqual([]);
+		expect(result.appliedFiles).toEqual(["first.txt", "second.txt"]);
 		expect(await readFile(path.join(harness.tempDir, "first.txt"), "utf-8")).toBe("ONE\n");
 		expect(await readFile(path.join(harness.tempDir, "second.txt"), "utf-8")).toBe("TWO\n");
 	});

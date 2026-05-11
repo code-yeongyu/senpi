@@ -16,6 +16,17 @@ import { resolvePatchPath } from "./workspace.js";
 
 const ATOMIC_WRITE_OPERATIONS: AtomicWriteOperations = { writeFile, rename, unlink };
 
+async function notifyApplyPatchProgress(
+	onProgress: ApplyPatchProgressCallback | undefined,
+	progress: Parameters<ApplyPatchProgressCallback>[0],
+): Promise<void> {
+	try {
+		await onProgress?.(progress);
+	} catch {
+		// Rendering progress must not affect patch application or recovery details.
+	}
+}
+
 function hasErrorCode(error: unknown, code: string): boolean {
 	return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
 }
@@ -140,7 +151,11 @@ export async function applyPatchDetailed(
 			const message = error instanceof Error ? error.message : String(error);
 			failures.push({ filePath: hunk.filePath, operation: hunk.type, message });
 		}
-		await onProgress?.({ applied: appliedFiles.length, failed: failures.length, total: hunks.length });
+		await notifyApplyPatchProgress(onProgress, {
+			applied: appliedFiles.length,
+			failed: failures.length,
+			total: hunks.length,
+		});
 	}
 
 	const result: ApplyPatchResult = {
