@@ -157,6 +157,7 @@ const ModelDefinitionSchema = Type.Object({
 	name: Type.Optional(Type.String({ minLength: 1 })),
 	upstreamModelId: Type.Optional(Type.String({ minLength: 1 })),
 	serviceTier: Type.Optional(ServiceTierSchema),
+	promptPreset: Type.Optional(Type.String({ minLength: 1 })),
 	api: Type.Optional(Type.String({ minLength: 1 })),
 	baseUrl: Type.Optional(Type.String({ minLength: 1 })),
 	reasoning: Type.Optional(Type.Boolean()),
@@ -180,6 +181,7 @@ const ModelDefinitionSchema = Type.Object({
 // Schema for per-model overrides (all fields optional, merged with built-in model)
 const ModelOverrideSchema = Type.Object({
 	name: Type.Optional(Type.String({ minLength: 1 })),
+	promptPreset: Type.Optional(Type.String({ minLength: 1 })),
 	reasoning: Type.Optional(Type.Boolean()),
 	thinkingLevelMap: Type.Optional(ThinkingLevelMapSchema),
 	thinkingLevelMapMode: Type.Optional(Type.Union([Type.Literal("merge"), Type.Literal("replace")])),
@@ -201,7 +203,7 @@ const ModelOverrideSchema = Type.Object({
 
 type ModelOverride = Static<typeof ModelOverrideSchema>;
 type ThinkingLevelMap = Static<typeof ThinkingLevelMapSchema>;
-type ModelWithThinkingLevelMap = Model<Api> & { thinkingLevelMap?: ThinkingLevelMap };
+type ModelWithConfigMetadata = Model<Api> & { promptPreset?: string; thinkingLevelMap?: ThinkingLevelMap };
 
 const ProviderConfigSchema = Type.Object({
 	name: Type.Optional(Type.String({ minLength: 1 })),
@@ -336,17 +338,18 @@ function mergeCompat(
  * Handles nested objects (cost, compat) by merging rather than replacing.
  */
 function applyModelOverride(model: Model<Api>, override: ModelOverride): Model<Api> {
-	const modelWithThinkingLevelMap = model as ModelWithThinkingLevelMap;
-	const result: ModelWithThinkingLevelMap = { ...modelWithThinkingLevelMap };
+	const modelWithConfigMetadata = model as ModelWithConfigMetadata;
+	const result: ModelWithConfigMetadata = { ...modelWithConfigMetadata };
 
 	// Simple field overrides
 	if (override.name !== undefined) result.name = override.name;
+	if (override.promptPreset !== undefined) result.promptPreset = override.promptPreset;
 	if (override.reasoning !== undefined) result.reasoning = override.reasoning;
 	if (override.thinkingLevelMap !== undefined) {
 		result.thinkingLevelMap =
 			override.thinkingLevelMapMode === "replace"
 				? { ...override.thinkingLevelMap }
-				: { ...modelWithThinkingLevelMap.thinkingLevelMap, ...override.thinkingLevelMap };
+				: { ...modelWithConfigMetadata.thinkingLevelMap, ...override.thinkingLevelMap };
 	}
 	if (override.input !== undefined) result.input = override.input as Model<Api>["input"];
 	if (override.contextWindow !== undefined) result.contextWindow = override.contextWindow;
@@ -712,6 +715,7 @@ export class ModelRegistry {
 				models.push({
 					id: modelDef.id,
 					name: modelDef.name ?? modelDef.id,
+					promptPreset: modelDef.promptPreset,
 					api: api as Api,
 					provider: providerName,
 					baseUrl,

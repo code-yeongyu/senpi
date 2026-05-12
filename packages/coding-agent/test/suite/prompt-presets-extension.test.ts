@@ -1,7 +1,11 @@
-import type { Api, Model } from "@earendil-works/pi-ai";
+import { type Api, getModels, getProviders, type Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { buildDynamicSystemPrompt } from "../../src/core/dynamic-prompt/build.js";
-import { type PromptPresetSettings, resolvePreset } from "../../src/core/extensions/builtin/prompt-preset/presets.js";
+import {
+	type PromptPresetSettings,
+	resolvePreset,
+	resolvePresetName,
+} from "../../src/core/extensions/builtin/prompt-preset/presets.js";
 
 function createModel(id: string, provider: string, api: Api = "openai-responses"): Model<Api> {
 	return {
@@ -32,6 +36,15 @@ function fallbackPrompt(): string {
 		contextFiles: [{ path: "/repo/AGENTS.md", content: "Follow project conventions." }],
 		skills: [],
 	});
+}
+
+function hasKimiK26CatalogSignal(model: Model<Api>): boolean {
+	const searchable = `${model.id} ${model.name}`.toLowerCase().replace(/\s+/g, "-");
+	return /(?:^|[/@._-])kimi-k2(?:[._-]|p)6(?:$|[/@._-])/.test(searchable);
+}
+
+function getKimiK26CatalogModels(): Model<Api>[] {
+	return getProviders().flatMap((provider) => (getModels(provider) as Model<Api>[]).filter(hasKimiK26CatalogSignal));
 }
 
 describe("prompt preset resolver", () => {
@@ -128,24 +141,46 @@ describe("prompt preset resolver", () => {
 		expect(preset?.prompt.length).toBeGreaterThan(2_000);
 	});
 
-	it.each([{ id: "kimi-k2.6-0528", provider: "moonshot", api: "openai-responses" as const }])(
-		"returns kimi-k2-6 preset for $provider/$id",
-		({ id, provider, api }) => {
-			// given
-			const settings: PromptPresetSettings = { promptPreset: "auto" };
-			const model = createModel(id, provider, api);
+	it.each([
+		{ id: "kimi-k2.6-0528", provider: "moonshot", api: "openai-responses" as const },
+		{ id: "kimi-k2p6-turbo", provider: "moonshot", api: "openai-responses" as const },
+	])("returns kimi-k2-6 preset for $provider/$id", ({ id, provider, api }) => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel(id, provider, api);
 
-			// when
-			const preset = resolvePreset(model, settings);
+		// when
+		const preset = resolvePreset(model, settings);
 
-			// then
-			expect(preset?.name).toBe("kimi-k2-6");
-			expect(preset?.prompt).toContain("You are senpi");
-			expect(preset?.prompt).toContain("filler verification language");
-			expect(preset?.prompt).toContain("## Intent Gate");
-			expect(preset?.prompt.length).toBeGreaterThan(2_000);
-		},
-	);
+		// then
+		expect(preset?.name).toBe("kimi-k2-6");
+		expect(preset?.prompt).toContain("You are senpi");
+		expect(preset?.prompt).toContain("filler verification language");
+		expect(preset?.prompt).toContain("## Intent Gate");
+		expect(preset?.prompt.length).toBeGreaterThan(2_000);
+	});
+
+	it("returns kimi-k2-6 preset for every Kimi K2.6 built-in catalog model", () => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const catalogModels = getKimiK26CatalogModels();
+		const catalogModelIds = catalogModels.map((model) => `${model.provider}/${model.id}`);
+
+		// when
+		const misses = catalogModels
+			.filter((model) => resolvePresetName(model, settings) !== "kimi-k2-6")
+			.map((model) => `${model.provider}/${model.id}`);
+
+		// then
+		expect(catalogModelIds).toEqual(
+			expect.arrayContaining([
+				"fireworks/accounts/fireworks/models/kimi-k2p6",
+				"moonshotai/kimi-k2.6",
+				"openrouter/moonshotai/kimi-k2.6",
+			]),
+		);
+		expect(misses).toEqual([]);
+	});
 
 	it("returns undefined for unknown model", () => {
 		// given
@@ -207,6 +242,38 @@ describe("prompt preset resolver", () => {
 		// then
 		expect(preset?.name).toBe("kimi-k2-6");
 		expect(preset?.prompt).toContain("filler verification language");
+	});
+
+	it("uses model-level promptPreset metadata when settings are auto", () => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = {
+			...createModel("provider-specific-kimi-alias", "custom", "openai-responses"),
+			promptPreset: "kimi-k2-6",
+		};
+
+		// when
+		const preset = resolvePreset(model, settings);
+
+		// then
+		expect(preset?.name).toBe("kimi-k2-6");
+		expect(preset?.prompt).toContain("filler verification language");
+	});
+
+	it("keeps settings.json promptPreset as a hard override over model-level metadata", () => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "claude-opus-4-7" };
+		const model = {
+			...createModel("provider-specific-kimi-alias", "custom", "openai-responses"),
+			promptPreset: "kimi-k2-6",
+		};
+
+		// when
+		const preset = resolvePreset(model, settings);
+
+		// then
+		expect(preset?.name).toBe("claude-opus-4-7");
+		expect(preset?.prompt).toContain("full set rather than the first item");
 	});
 
 	it("does not include Kimi tuning in claude-opus-4-7 preset", () => {

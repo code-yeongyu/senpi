@@ -1,5 +1,24 @@
 # changes
 
+## models.json per-model prompt preset metadata (2026-05-12)
+
+### What changed
+
+- `src/core/model-registry.ts`: Custom `models.json` model entries and built-in `modelOverrides` can now carry a `promptPreset` string.
+- The registry preserves this value as model metadata for extensions instead of interpreting preset names in core code.
+
+### Why
+
+- Provider-specific model IDs can be too new or too aliased for automatic prompt-preset detection. Putting `promptPreset` next to the model definition keeps the routing metadata with the model catalog entry that needs it.
+
+### Why extension system couldn't handle this
+
+- The prompt-preset extension can consume model metadata, but `models.json` schema validation and model merging live in the core registry. Core needs to preserve the metadata before extensions see the selected model.
+
+### Expected merge conflict zones
+
+- LOW: `ModelDefinitionSchema`, `ModelOverrideSchema`, and `applyModelOverride()` in `src/core/model-registry.ts` if upstream adds more per-model metadata fields.
+
 ## Configured upstream model id and service tier (2026-05-09)
 
 ### What changed

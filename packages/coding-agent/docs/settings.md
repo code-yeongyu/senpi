@@ -18,8 +18,22 @@ Edit directly or use `/settings` for common options.
 | `defaultProvider` | string | - | Default provider (e.g., `"anthropic"`, `"openai"`) |
 | `defaultModel` | string | - | Default model ID |
 | `defaultThinkingLevel` | string | - | `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` |
+| `promptPreset` | string | `"auto"` | Force a system prompt preset: `"auto"`, `"kimi-k2-6"`, `"claude-opus-4-5"`, `"claude-opus-4-6"`, `"claude-opus-4-7"`, `"gpt-5"`, `"gpt-5.2"`, `"gpt-5.3-codex"`, `"gpt-5.4"`, or `"gpt-5.5"` |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in output |
 | `thinkingBudgets` | object | - | Custom token budgets per thinking level |
+
+#### promptPreset
+
+Use `promptPreset` when a provider's model ID does not auto-detect to the preset you want, or when you want to force one preset for a project.
+
+```json
+{
+  "promptPreset": "kimi-k2-6"
+}
+```
+
+Project settings in `.senpi/settings.json` override global settings in `~/.senpi/agent/settings.json`.
+When this value is anything other than `"auto"`, it overrides any model-level `promptPreset` configured in `models.json`.
 
 #### thinkingBudgets
 

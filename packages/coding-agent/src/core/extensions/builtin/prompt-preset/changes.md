@@ -11,6 +11,40 @@ Per-model prompt preset extension. Selects a tuned system prompt based on the ac
 - `claude-opus-4-{5,6,7}.ts` / `kimi-k2-6.ts` - Other family presets.
 - `file-operations.ts` - Shared codex-style "File operations" tuning block consumed by every GPT-5.x preset.
 
+## Model-level promptPreset metadata (2026-05-12)
+
+### What changed
+- `presets.ts` now reads `model.promptPreset` after the global/project `settings.json` hard override and before model-id auto detection.
+- `settings.ts` exports `parsePromptPreset()` so resolver paths use the same valid preset parser.
+- Added regression tests covering model-level preset resolution and settings precedence.
+
+### Why
+- `models.json` is the right place for per-model routing metadata such as “this provider-specific alias should use the Kimi preset.” The prompt-preset extension owns preset-name interpretation, while the model registry only preserves the string metadata.
+
+### Why extension system couldn't handle this differently
+- The extension system is the consumer, but it needs the selected model object to already carry metadata from `models.json`. The companion core change adds that metadata preservation without moving preset-name interpretation into core.
+
+### Expected merge conflict zones on next upstream sync
+- LOW: `presets.ts` precedence order and `settings.ts` parser export if upstream adds its own model-level preset routing.
+
+## Kimi K2.6 p6 model-id alias (2026-05-12)
+
+### What changed
+- Extended the Kimi K2.6 auto preset matcher so model IDs like `kimi-k2p6-turbo` resolve to the existing `kimi-k2-6` preset, alongside the previous dotted `kimi-k2.6-*` IDs.
+- The matcher now checks both model ID and catalog model name, so built-in catalog aliases such as Cloudflare, Fireworks `kimi-k2p6`, Moonshot, OpenRouter, Together, and Vercel Kimi K2.6 entries all resolve to `kimi-k2-6`.
+- Added a prompt-preset regression case for `kimi-k2p6-turbo`.
+- Added catalog-wide coverage that scans built-in Kimi K2.6/K2p6 models and verifies each one resolves to `kimi-k2-6`.
+- Documented the existing `promptPreset` setting in `docs/settings.md` so users can force `kimi-k2-6` through global or project settings when auto-detection is not desired.
+
+### Why
+- Some providers encode the K2.6 family with `p6` rather than `.6`. Without this alias, those models fell back to the default senpi dynamic prompt instead of the Kimi-specific tuning.
+
+### Why extension system couldn't handle this differently
+- This is implemented inside the builtin `prompt-preset` extension's model-family dispatch; no core prompt code needed to change.
+
+### Expected merge conflict zones on next upstream sync
+- LOW: `presets.ts` Kimi matcher and the Kimi case table in `prompt-presets-extension.test.ts` if upstream adds its own Kimi aliases.
+
 ## Codex-style File operations tuning (2026-05-07)
 
 ### What changed

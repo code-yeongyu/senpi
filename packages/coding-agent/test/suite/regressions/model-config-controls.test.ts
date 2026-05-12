@@ -136,6 +136,66 @@ describe("model configuration controls", () => {
 		expect(getSupportedThinkingLevels(model!)).toEqual(["low"]);
 	});
 
+	it("preserves prompt preset metadata on custom models from models.json", () => {
+		writeFileSync(
+			join(agentDir, "models.json"),
+			JSON.stringify(
+				{
+					providers: {
+						custom: {
+							baseUrl: "https://example.test/v1",
+							api: "openai-responses",
+							apiKey: "test-custom-key",
+							models: [
+								{
+									id: "kimi-k2p6-turbo",
+									promptPreset: "kimi-k2-6",
+								},
+							],
+						},
+					},
+				},
+				null,
+				2,
+			),
+			"utf-8",
+		);
+
+		const registry = ModelRegistry.create(AuthStorage.inMemory(), join(agentDir, "models.json"));
+		const model = registry.find("custom", "kimi-k2p6-turbo");
+
+		expect(model).toBeDefined();
+		expect((model as { promptPreset?: string }).promptPreset).toBe("kimi-k2-6");
+	});
+
+	it("preserves prompt preset metadata on built-in model overrides from models.json", () => {
+		writeFileSync(
+			join(agentDir, "models.json"),
+			JSON.stringify(
+				{
+					providers: {
+						openai: {
+							modelOverrides: {
+								"gpt-5.4": {
+									promptPreset: "kimi-k2-6",
+								},
+							},
+						},
+					},
+				},
+				null,
+				2,
+			),
+			"utf-8",
+		);
+
+		const registry = ModelRegistry.create(AuthStorage.inMemory(), join(agentDir, "models.json"));
+		const model = registry.find("openai", "gpt-5.4");
+
+		expect(model).toBeDefined();
+		expect((model as { promptPreset?: string }).promptPreset).toBe("kimi-k2-6");
+	});
+
 	it("cycles only favorite models and reloads favorite model settings", async () => {
 		const authStorage = AuthStorage.inMemory({
 			anthropic: { type: "api_key", key: "test-anthropic-key" },

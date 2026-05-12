@@ -190,6 +190,7 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
 |-------|----------|---------|-------------|
 | `id` | Yes | — | Model identifier (passed to the API) |
 | `name` | No | `id` | Human-readable model label. Used for matching (`--model` patterns) and shown in model details/status text. |
+| `promptPreset` | No | auto-detected | System prompt preset for this model. Use this when a provider-specific model ID should force a known preset, such as `"kimi-k2-6"`. |
 | `api` | No | provider's `api` | Override provider's API for this model |
 | `reasoning` | No | `false` | Supports extended thinking |
 | `thinkingLevelMap` | No | omitted | Maps pi thinking levels to provider values and marks unsupported levels (see below) |
@@ -202,6 +203,30 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
 Current behavior:
 - `/model` and `--list-models` list entries by model `id`.
 - The configured `name` is used for model matching and detail/status text.
+
+### Prompt Preset
+
+Use `promptPreset` on a model when auto-detection cannot infer the right system prompt preset from the provider's model ID.
+
+```json
+{
+  "providers": {
+    "moonshot": {
+      "baseUrl": "https://api.moonshot.ai/v1",
+      "api": "openai-responses",
+      "apiKey": "MOONSHOT_API_KEY",
+      "models": [
+        {
+          "id": "kimi-k2p6-turbo",
+          "promptPreset": "kimi-k2-6"
+        }
+      ]
+    }
+  }
+}
+```
+
+If `settings.json` sets `promptPreset` to anything other than `"auto"`, that settings override wins. Model-level `promptPreset` is used when settings remain on `"auto"`.
 
 ### Thinking Level Map
 
@@ -305,7 +330,7 @@ Use `modelOverrides` to customize specific built-in models without replacing the
 }
 ```
 
-`modelOverrides` supports these fields per model: `name`, `reasoning`, `input`, `cost` (partial), `contextWindow`, `maxTokens`, `headers`, `compat`.
+`modelOverrides` supports these fields per model: `name`, `promptPreset`, `reasoning`, `input`, `cost` (partial), `contextWindow`, `maxTokens`, `headers`, `compat`.
 
 Behavior notes:
 - `modelOverrides` are applied to built-in provider models.

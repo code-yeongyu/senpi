@@ -31,7 +31,7 @@ const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
 	"gpt-5.5",
 ]);
 
-function parsePromptPreset(value: string | undefined): PromptPresetName | undefined {
+export function parsePromptPreset(value: string | undefined): PromptPresetName | undefined {
 	if (value && VALID_PRESETS.has(value)) {
 		return value as PromptPresetName;
 	}

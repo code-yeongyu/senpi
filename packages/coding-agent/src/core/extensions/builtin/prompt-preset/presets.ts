@@ -9,11 +9,15 @@ import { buildGpt54Prompt } from "./gpt-5.4.js";
 import { buildGpt55Prompt } from "./gpt-5.5.js";
 import { buildGpt5Prompt } from "./gpt-5.js";
 import { buildKimiK26Prompt } from "./kimi-k2-6.js";
-import type { PromptPresetName, PromptPresetSettings } from "./settings.js";
+import { type PromptPresetName, type PromptPresetSettings, parsePromptPreset } from "./settings.js";
 
 export type { PromptPresetSettings } from "./settings.js";
 
 type ResolvedPresetName = Exclude<PromptPresetName, "auto">;
+type ModelWithPromptPresetMetadata = Pick<Model<Api>, "id" | "provider"> & {
+	name?: string;
+	promptPreset?: string;
+};
 
 export interface ResolvedPromptPreset {
 	name: ResolvedPresetName;
@@ -21,7 +25,7 @@ export interface ResolvedPromptPreset {
 }
 
 function normalizeModelId(modelId: string): string {
-	return modelId.toLowerCase();
+	return modelId.toLowerCase().replace(/\s+/g, "-");
 }
 
 type Gpt5Version = "gpt-5.2" | "gpt-5.3-codex" | "gpt-5.4" | "gpt-5.5";
@@ -43,8 +47,12 @@ function extractGpt5Version(modelId: string): Gpt5Version | undefined {
 	return undefined;
 }
 
-function isKimiK26Model(modelId: string): boolean {
-	return normalizeModelId(modelId).includes("kimi-k2.6");
+function hasKimiK26Signal(value: string): boolean {
+	return /(?:^|[/@._-])kimi-k2(?:[._-]|p)6(?:$|[/@._-])/.test(normalizeModelId(value));
+}
+
+function isKimiK26Model(model: ModelWithPromptPresetMetadata): boolean {
+	return hasKimiK26Signal(model.id) || (model.name !== undefined && hasKimiK26Signal(model.name));
 }
 
 type ClaudeOpusVersion = "claude-opus-4-7" | "claude-opus-4-6" | "claude-opus-4-5";
@@ -64,18 +72,23 @@ function extractClaudeOpusVersion(modelId: string): ClaudeOpusVersion | undefine
 }
 
 export function resolvePresetName(
-	model: Pick<Model<Api>, "id" | "provider">,
+	model: ModelWithPromptPresetMetadata,
 	settings: PromptPresetSettings,
 ): ResolvedPresetName | undefined {
 	if (settings.promptPreset !== "auto") {
 		return settings.promptPreset;
 	}
 
+	const modelPromptPreset = parsePromptPreset(model.promptPreset);
+	if (modelPromptPreset && modelPromptPreset !== "auto") {
+		return modelPromptPreset;
+	}
+
 	const gpt5Version = extractGpt5Version(model.id);
 	if (gpt5Version) {
 		return gpt5Version;
 	}
-	if (isKimiK26Model(model.id)) {
+	if (isKimiK26Model(model)) {
 		return "kimi-k2-6";
 	}
 	const claudeVersion = extractClaudeOpusVersion(model.id);
@@ -120,7 +133,7 @@ function withDefaults(options: Partial<BuildDynamicSystemPromptOptions> = {}): B
 }
 
 export function resolvePreset(
-	model: Pick<Model<Api>, "id" | "provider">,
+	model: ModelWithPromptPresetMetadata,
 	settings: PromptPresetSettings,
 	options?: Partial<BuildDynamicSystemPromptOptions>,
 ): ResolvedPromptPreset | undefined {
