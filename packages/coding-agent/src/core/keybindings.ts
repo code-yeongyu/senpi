@@ -272,6 +272,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function hasOwn(value: object, key: PropertyKey): boolean {
+	return Object.hasOwn(value, key);
+}
+
 function isLegacyKeybindingName(key: string): key is keyof typeof KEYBINDING_NAME_MIGRATIONS {
 	return key in KEYBINDING_NAME_MIGRATIONS;
 }
@@ -304,7 +308,7 @@ export function migrateKeybindingsConfig(rawConfig: Record<string, unknown>): {
 		if (nextKey !== key) {
 			migrated = true;
 		}
-		if (key !== nextKey && Object.hasOwn(rawConfig, nextKey)) {
+		if (key !== nextKey && hasOwn(rawConfig, nextKey)) {
 			migrated = true;
 			continue;
 		}
@@ -317,13 +321,13 @@ export function migrateKeybindingsConfig(rawConfig: Record<string, unknown>): {
 function orderKeybindingsConfig(config: Record<string, unknown>): Record<string, unknown> {
 	const ordered: Record<string, unknown> = {};
 	for (const keybinding of Object.keys(KEYBINDINGS)) {
-		if (Object.hasOwn(config, keybinding)) {
+		if (hasOwn(config, keybinding)) {
 			ordered[keybinding] = config[keybinding];
 		}
 	}
 
 	const extras = Object.keys(config)
-		.filter((key) => !Object.hasOwn(ordered, key))
+		.filter((key) => !hasOwn(ordered, key))
 		.sort();
 	for (const key of extras) {
 		ordered[key] = config[key];
