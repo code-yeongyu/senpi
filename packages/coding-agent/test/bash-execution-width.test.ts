@@ -5,7 +5,7 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, it } from "vitest";
 import { BashExecutionComponent } from "../src/modes/interactive/components/bash-execution.js";
-import { initTheme } from "../src/modes/interactive/theme/theme.js";
+import { initTheme, theme } from "../src/modes/interactive/theme/theme.js";
 
 /** Minimal TUI stub that only exposes terminal.columns */
 function createTuiStub(columns: number): { columns: number; stub: any } {
@@ -30,6 +30,16 @@ function createTuiStub(columns: number): { columns: number; stub: any } {
 describe("BashExecutionComponent width handling (#2569)", () => {
 	beforeAll(() => {
 		initTheme(undefined, false);
+	});
+
+	it("highlights bash command syntax in the command header", () => {
+		const { stub } = createTuiStub(120);
+		const component = new BashExecutionComponent('echo "hello" && false', stub);
+		component.setComplete(0, false);
+
+		const rendered = component.render(120).join("\n");
+		expect(rendered).toContain(theme.fg("syntaxString", '"hello"'));
+		expect(rendered).toContain(theme.fg("syntaxType", "echo"));
 	});
 
 	it("collapsed preview lines respect render-time width, not construction-time width", () => {

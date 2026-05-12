@@ -10,13 +10,23 @@ import {
 	type TruncationResult,
 	truncateTail,
 } from "../../../core/tools/truncate.js";
-import { theme } from "../theme/theme.js";
+import { highlightCode, theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { keyHint, keyText } from "./keybinding-hints.js";
 import { truncateToVisualLines } from "./visual-truncate.js";
 
 // Preview line limit when not expanded (matches tool execution behavior)
 const PREVIEW_LINES = 20;
+
+function highlightBashCommand(command: string): string {
+	return highlightCode(command.replace(/\r/g, "").replace(/\t/g, "   "), "bash").join("\n");
+}
+
+function formatCommandHeader(command: string, colorKey: "bashMode" | "dim"): string {
+	const prefix = theme.fg(colorKey, theme.bold("$ "));
+	const commandDisplay = colorKey === "dim" ? theme.fg("dim", command) : highlightBashCommand(command);
+	return prefix + commandDisplay;
+}
 
 export class BashExecutionComponent extends Container {
 	private command: string;
@@ -48,7 +58,7 @@ export class BashExecutionComponent extends Container {
 		this.addChild(this.contentContainer);
 
 		// Command header
-		const header = new Text(theme.fg(colorKey, theme.bold(`$ ${command}`)), 1, 0);
+		const header = new Text(formatCommandHeader(command, colorKey), 1, 0);
 		this.contentContainer.addChild(header);
 
 		// Loader
@@ -135,7 +145,7 @@ export class BashExecutionComponent extends Container {
 		this.contentContainer.clear();
 
 		// Command header
-		const header = new Text(theme.fg("bashMode", theme.bold(`$ ${this.command}`)), 1, 0);
+		const header = new Text(formatCommandHeader(this.command, "bashMode"), 1, 0);
 		this.contentContainer.addChild(header);
 
 		// Output
