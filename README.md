@@ -1,4 +1,4 @@
-# senpi-mono
+# senpi
 
 
 <p align="center">
@@ -23,28 +23,55 @@ Core source modifications are minimised and tracked in [`changes.md`](#fork-stra
 
 ## Want more? Try the pi-extensions ecosystem
 
-senpi ships a fixed set of builtin extensions and stops there. If you want **more capabilities** — LSP, AST-grep, sandboxing, goal tracking, web search/fetch, rule loading — the sibling **pi-extensions** repos cover the surface as standalone packages you can install on top:
+senpi ships a fixed set of builtin extensions and stops there. The sibling [`../pi-extensions`](../pi-extensions) checkout contains the full extension ecosystem: some packages are vendored into senpi as builtins, while the rest can be installed on top when you want extra capabilities like LSP, AST-grep, sandboxing, goal tracking, web search/fetch, or rule loading.
+
+### Installable sibling extensions
+
+These `../pi-extensions/*` packages are intended to be installed as standalone senpi/pi extensions:
 
 | Extension | What it adds |
 |---|---|
-| [`pi-ast-grep`](https://github.com/code-yeongyu/pi-ast-grep) | AST-aware code search/replace across 25 languages (ports OMO's AST-grep tool stack). Auto-downloads `sg` on first use. |
-| [`pi-lsp-client`](https://github.com/code-yeongyu/pi-lsp-client) | LSP integration: `lsp_rename`, `lsp_goto_definition`, `lsp_find_references`, `lsp_diagnostics`, plus a `/lsp` inspector (ports OMO's LSP stack). |
-| [`pi-rules`](https://github.com/code-yeongyu/pi-rules) | Auto-discovers rule files from `.sisyphus/rules/`, `.claude/rules/`, `.cursor/rules/`, `.github/instructions/`, AGENTS.md, CLAUDE.md and injects them into context. |
-| [`pi-sandbox`](https://github.com/code-yeongyu/pi-sandbox) | OS-level sandbox policy with native, Docker, justbash, and QEMU backends plus SSH transport facets. |
-| [`pi-nested-agents-md`](https://github.com/code-yeongyu/pi-nested-agents-md) | Auto-injects nearby `AGENTS.md` files when the agent reads from a nested directory (ports OMO behavior). |
-| [`pi-goal`](https://github.com/code-yeongyu/pi-goal) | Persistent goal tracking with Codex-style goal tools, TUI footer, and continuation prompts. |
-| [`pi-webfetch`](https://github.com/code-yeongyu/pi-webfetch) | `web_fetch` tool — URL content as markdown / plain text / HTML with bounded time and size. |
-| [`pi-websearch`](https://github.com/code-yeongyu/pi-websearch) | Provider-backed web search with config-gated activation, TUI status, and source-aware results. |
+| [`../pi-extensions/pi-agent-system`](../pi-extensions/pi-agent-system) | Agent profiles via `SANEPI_AGENT_TYPE` / `PI_AGENT_TYPE`, with profile markdown, tool filtering, and prompt fragments. |
+| [`../pi-extensions/pi-ast-grep`](../pi-extensions/pi-ast-grep) | AST-aware code search/replace across 25 languages. Auto-downloads `sg` on first use. |
+| [`../pi-extensions/pi-goal`](../pi-extensions/pi-goal) | Persistent goal tracking with Codex-style goal tools, TUI footer, and continuation prompts. |
+| [`../pi-extensions/pi-lsp-client`](../pi-extensions/pi-lsp-client) | LSP integration: `lsp_rename`, `lsp_goto_definition`, `lsp_find_references`, `lsp_diagnostics`, plus a `/lsp` inspector. |
+| [`../pi-extensions/pi-nested-agents-md`](../pi-extensions/pi-nested-agents-md) | Auto-injects nearby `AGENTS.md` files when the agent reads from a nested directory. |
+| [`../pi-extensions/pi-rules`](../pi-extensions/pi-rules) | Auto-discovers rule files from `.sisyphus/rules/`, `.claude/rules/`, `.cursor/rules/`, `.github/instructions/`, `AGENTS.md`, and `CLAUDE.md`. |
+| [`../pi-extensions/pi-sandbox`](../pi-extensions/pi-sandbox) | OS-level sandbox policy with native, Docker, justbash, and QEMU backends plus SSH transport facets. |
+| [`../pi-extensions/pi-webfetch`](../pi-extensions/pi-webfetch) | `web_fetch` tool: URL content as markdown, plain text, or HTML with bounded time and size. |
+| [`../pi-extensions/pi-websearch`](../pi-extensions/pi-websearch) | Provider-backed web search with config-gated activation, TUI status, and source-aware results. |
 
 Install any of them with:
 
 ```bash
-senpi install git:github.com/code-yeongyu/pi-ast-grep
-senpi install git:github.com/code-yeongyu/pi-lsp-client
-# … etc.
+senpi install ../pi-extensions/pi-ast-grep
+senpi install ../pi-extensions/pi-lsp-client
+# ...or use the matching git:github.com/code-yeongyu/<package> URL.
 ```
 
-See [Senpi Packages](packages/coding-agent/README.md#pi-packages) for the install / update / remove flow. The other pi-extensions packages (Anthropic / OpenAI / Google native tools, `pi-apply-patch`, `pi-bash-timeout`, `pi-openai-api-parallel-tool-calls`) are **already shipped as builtins inside senpi** — you don't need to install them.
+See [Senpi Packages](packages/coding-agent/README.md#pi-packages) for the install / update / remove flow.
+
+### `../pi-extensions` packages already shipped as senpi builtins
+
+You do **not** need to install these sibling packages for normal senpi use; their functionality is already included in the binary:
+
+| Sibling package | Builtin capability |
+|---|---|
+| [`../pi-extensions/pi-anthropic-bash`](../pi-extensions/pi-anthropic-bash) | Anthropic-native bash tool policy and prompt guidance. |
+| [`../pi-extensions/pi-anthropic-code-execution`](../pi-extensions/pi-anthropic-code-execution) | Anthropic-native code execution sandbox. |
+| [`../pi-extensions/pi-anthropic-computer-use`](../pi-extensions/pi-anthropic-computer-use) | Anthropic computer-use bindings. |
+| [`../pi-extensions/pi-anthropic-text-editor`](../pi-extensions/pi-anthropic-text-editor) | Anthropic-native text editor tool. |
+| [`../pi-extensions/pi-anthropic-tool-search`](../pi-extensions/pi-anthropic-tool-search) | Anthropic-native tool search. |
+| [`../pi-extensions/pi-anthropic-web-fetch`](../pi-extensions/pi-anthropic-web-fetch) | Anthropic-native web fetch support. |
+| [`../pi-extensions/pi-anthropic-web-search`](../pi-extensions/pi-anthropic-web-search) | Anthropic-native web search support. |
+| [`../pi-extensions/pi-apply-patch`](../pi-extensions/pi-apply-patch) | Codex-style `apply_patch` tool. |
+| [`../pi-extensions/pi-bash-timeout`](../pi-extensions/pi-bash-timeout) | Bash timeout handling and related tool handlers. |
+| [`../pi-extensions/pi-google-code-execution`](../pi-extensions/pi-google-code-execution) | Google native code execution. |
+| [`../pi-extensions/pi-google-google-search`](../pi-extensions/pi-google-google-search) | Google Search grounding. |
+| [`../pi-extensions/pi-google-url-context`](../pi-extensions/pi-google-url-context) | Google URL grounding. |
+| [`../pi-extensions/pi-openai-api-parallel-tool-calls`](../pi-extensions/pi-openai-api-parallel-tool-calls) | OpenAI `parallel_tool_calls` payload support. |
+| [`../pi-extensions/pi-openai-code-interpreter`](../pi-extensions/pi-openai-code-interpreter) | OpenAI Code Interpreter. |
+| [`../pi-extensions/pi-openai-web-search`](../pi-extensions/pi-openai-web-search) | OpenAI-native web search. |
 
 ## Why "senpi"
 
@@ -123,7 +150,7 @@ Not loaded as builtins; written once into `~/.senpi/agent/extensions/` on first 
 
 | Change | Details |
 |--------|---------|
-| **`senpi` CLI identity** | The coding agent identifies itself as `senpi`, uses `.senpi/agent` for config storage, publishes as `@code-yeongyu/senpi`. |
+| **`senpi` CLI identity** | The coding agent identifies itself as `senpi`, uses `.senpi/agent` for config storage, and publishes to npm as `@code-yeongyu/senpi`. The installed executable remains `senpi`. |
 | **Senpi-branded outbound identity** | Every outbound request emits `senpi` instead of `pi`: `User-Agent` (update check + Cloudflare + GitHub releases), `X-OpenRouter-Title`, OpenAI Codex `originator` + User-Agent, sub-agent spawn fallback command. |
 | **No startup update checks** | Removed npm registry version checking and package update prompts at launch. |
 | **Builtin extension UI grouping** | Builtins render under a `builtin/` group in the startup header, visually distinct from user and project extensions. |
@@ -173,7 +200,7 @@ I regularly publish my own `pi-mono` work sessions here:
 |---------|-------------|
 | **[@earendil-works/pi-ai](packages/ai)** | Unified multi-provider LLM API with text streaming, tool calling, OAuth helpers, and image generation |
 | **[@earendil-works/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
-| **[@code-yeongyu/senpi](packages/coding-agent)** | Interactive coding agent CLI, rebranded as senpi |
+| **[senpi](packages/coding-agent)** | Interactive coding agent CLI, rebranded as senpi |
 | **mom** | Slack bot runner for dispatching coding-agent work in a target workspace, with host or Docker sandbox modes |
 | **pods** | CLI utilities for managing vLLM models on GPU pods over SSH |
 | **[@earendil-works/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
@@ -189,6 +216,7 @@ npm run build        # Build all packages (dependency order)
 npm run check        # Lint, format, and type check
 npm test             # Run tests (skips LLM-dependent tests without API keys)
 ./pi-test.sh         # Live-API integration suite (env-gated; requires API keys)
+npm run publish      # Publish npm workspaces, including @code-yeongyu/senpi
 ```
 
 > `npm run check` requires `npm run build` first. The web-ui package uses `tsc` which needs compiled `.d.ts` files from dependencies.

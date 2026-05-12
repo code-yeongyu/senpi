@@ -1,4 +1,4 @@
-# senpi-mono
+# senpi
 
 **Generated:** 2026-05-11 · **Commit:** 4b3f407d · **Branch:** main
 
@@ -9,11 +9,11 @@ Opinionated fork of [badlogic/pi-mono](https://github.com/badlogic/pi-mono). Typ
 ## STRUCTURE
 
 ```
-senpi-mono/
+senpi/
 ├── packages/
 │   ├── ai/             # Multi-provider LLM API (@earendil-works/pi-ai)
 │   ├── agent/          # Agent runtime + harness (@earendil-works/pi-agent-core)
-│   ├── coding-agent/   # senpi CLI (@code-yeongyu/senpi) — primary fork target
+│   ├── coding-agent/   # senpi CLI (senpi) — primary fork target
 │   ├── tui/            # Differential renderer (@earendil-works/pi-tui)
 │   ├── web-ui/         # Lit chat components (@earendil-works/pi-web-ui)
 │   ├── mom/            # Empty stub (only dist/, tsconfig.json) — do not touch

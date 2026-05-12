@@ -70,6 +70,8 @@ I regularly publish my own `pi-mono` work sessions here:
 npm install -g @code-yeongyu/senpi
 ```
 
+`@code-yeongyu/senpi` is the npm package name. The installed executable is still `senpi`.
+
 Authenticate with an API key:
 
 ```bash
@@ -441,6 +443,8 @@ const { session } = await createAgentSession({
 
 await session.prompt("What files are in the current directory?");
 ```
+
+The package name is scoped, but runtime branding, config paths, and the CLI command stay `senpi`.
 
 For advanced multi-session runtime replacement, use `createAgentSessionRuntime()` and `AgentSessionRuntime`.
 
