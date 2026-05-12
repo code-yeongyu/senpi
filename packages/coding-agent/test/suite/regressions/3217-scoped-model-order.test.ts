@@ -57,6 +57,7 @@ describe("issue #3217 scoped model ordering", () => {
 					changes.push(favoriteModelIds);
 				},
 				onPersist: () => {},
+				onSelect: () => {},
 				onCancel: () => {},
 			},
 		);
@@ -85,6 +86,7 @@ describe("issue #3217 scoped model ordering", () => {
 			{
 				onChange: () => {},
 				onPersist: () => {},
+				onSelect: () => {},
 				onCancel: () => {},
 			},
 		);

@@ -72,7 +72,12 @@ import type {
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.js";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.js";
 import { createCompactionSummaryMessage } from "../../core/messages.js";
-import { defaultModelPerProvider, findExactModelReferenceMatch, resolveModelScope } from "../../core/model-resolver.js";
+import {
+	defaultModelPerProvider,
+	findExactModelReferenceMatch,
+	resolveModelScope,
+	type ScopedModel,
+} from "../../core/model-resolver.js";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "../../core/provider-display-names.js";
 import type { ResourceDiagnostic } from "../../core/resource-loader.js";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.js";
@@ -108,6 +113,7 @@ import { FavoriteModelsSelectorComponent } from "./components/favorite-models-se
 import { FooterComponent } from "./components/footer.js";
 import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.js";
 import { LoginDialogComponent } from "./components/login-dialog.js";
+import { type FavoriteModelIds, getModelFullId } from "./components/model-favorites.js";
 import { ModelSelectorComponent } from "./components/model-selector.js";
 import { type AuthSelectorProvider, OAuthSelectorComponent } from "./components/oauth-selector.js";
 import { SessionSelectorComponent } from "./components/session-selector.js";
@@ -3962,19 +3968,7 @@ export class InteractiveMode {
 
 		const model = await this.findExactModelMatch(searchTerm);
 		if (model) {
-			try {
-				const systemPromptChange = await this.session.setModel(model);
-				this.footer.invalidate();
-				this.updateEditorBorderColor();
-				const systemPromptStr = systemPromptChange?.systemPromptName
-					? ` (system prompt: ${systemPromptChange.systemPromptName})`
-					: "";
-				this.showStatus(`Model: ${model.id}${systemPromptStr}`);
-				void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
-				this.checkDaxnutsEasterEgg(model);
-			} catch (error) {
-				this.showError(error instanceof Error ? error.message : String(error));
-			}
+			await this.selectModelFromUi(model);
 			return;
 		}
 
@@ -4001,6 +3995,75 @@ export class InteractiveMode {
 		} catch {
 			return [];
 		}
+	}
+
+	private async selectModelFromUi(model: Model<any>, done?: () => void): Promise<void> {
+		try {
+			const systemPromptChange = await this.session.setModel(model);
+			this.footer.invalidate();
+			this.updateEditorBorderColor();
+			done?.();
+			const systemPromptStr = systemPromptChange?.systemPromptName
+				? ` (system prompt: ${systemPromptChange.systemPromptName})`
+				: "";
+			this.showStatus(`Model: ${model.id}${systemPromptStr}`);
+			void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
+			this.checkDaxnutsEasterEgg(model);
+		} catch (error) {
+			done?.();
+			this.showError(error instanceof Error ? error.message : String(error));
+		}
+	}
+
+	private async resolveFavoriteModelsForUi(
+		patterns: string[],
+		candidateModels: readonly Model<any>[],
+	): Promise<ScopedModel[]> {
+		const candidateIds = new Set(candidateModels.map(getModelFullId));
+		const warnings: string[] = [];
+		const resolvedModels = await resolveModelScope(patterns, this.session.modelRegistry, {
+			onWarning: (message) => warnings.push(message),
+		});
+		for (const warning of warnings) {
+			this.showWarning(warning);
+		}
+		return resolvedModels.filter((resolved) => candidateIds.has(getModelFullId(resolved.model)));
+	}
+
+	private async getFavoriteModelIdsForUi(candidateModels: readonly Model<any>[]): Promise<string[] | null> {
+		const candidateIds = new Set(candidateModels.map(getModelFullId));
+		const sessionFavoriteIds = this.session.favoriteModels
+			.map((favorite) => getModelFullId(favorite.model))
+			.filter((id) => candidateIds.has(id));
+		if (sessionFavoriteIds.length > 0) return sessionFavoriteIds;
+
+		const patterns = this.settingsManager.getFavoriteModels() ?? [];
+		if (patterns.length === 0) return [];
+
+		const favoriteModels = await this.resolveFavoriteModelsForUi(patterns, candidateModels);
+		return favoriteModels.map((favorite) => getModelFullId(favorite.model));
+	}
+
+	private async updateSessionFavoritesFromIds(
+		favoriteIds: FavoriteModelIds,
+		candidateModels: readonly Model<any>[],
+	): Promise<void> {
+		const nextIds = favoriteIds === null ? candidateModels.map(getModelFullId) : favoriteIds;
+		if (nextIds.length === 0) {
+			this.session.setFavoriteModels([]);
+			this.ui.requestRender();
+			return;
+		}
+
+		const newFavoriteModels = await this.resolveFavoriteModelsForUi(nextIds, candidateModels);
+		this.session.setFavoriteModels(
+			newFavoriteModels.map((favorite) => ({
+				model: favorite.model,
+				thinkingLevel: favorite.thinkingLevel,
+				serviceTier: favorite.serviceTier,
+			})),
+		);
+		this.ui.requestRender();
 	}
 
 	/** Update the footer's available provider count from current model candidates */
@@ -4044,34 +4107,29 @@ export class InteractiveMode {
 
 	private showModelSelector(initialSearchInput?: string): void {
 		this.showSelector((done) => {
+			const favoriteModelIds = this.session.favoriteModels.map((favorite) => getModelFullId(favorite.model));
 			const selector = new ModelSelectorComponent(
 				this.ui,
 				this.session.model,
 				this.settingsManager,
 				this.session.modelRegistry,
 				this.session.scopedModels,
-				async (model) => {
-					try {
-						const systemPromptChange = await this.session.setModel(model);
-						this.footer.invalidate();
-						this.updateEditorBorderColor();
-						done();
-						const systemPromptStr = systemPromptChange?.systemPromptName
-							? ` (system prompt: ${systemPromptChange.systemPromptName})`
-							: "";
-						this.showStatus(`Model: ${model.id}${systemPromptStr}`);
-						void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
-						this.checkDaxnutsEasterEgg(model);
-					} catch (error) {
-						done();
-						this.showError(error instanceof Error ? error.message : String(error));
-					}
+				(model) => {
+					void this.selectModelFromUi(model, done);
 				},
 				() => {
 					done();
 					this.ui.requestRender();
 				},
 				initialSearchInput,
+				{
+					favoriteModelIds,
+					onFavoriteChange: async (favoriteIds, allModels) => {
+						await this.updateSessionFavoritesFromIds(favoriteIds, allModels);
+						const newPatterns = favoriteIds === null ? allModels.map(getModelFullId) : favoriteIds;
+						this.settingsManager.setFavoriteModels(newPatterns.length > 0 ? [...newPatterns] : undefined);
+					},
+				},
 			);
 			return { component: selector, focus: selector };
 		});
@@ -4085,68 +4143,26 @@ export class InteractiveMode {
 			return;
 		}
 
-		// Build favorite model IDs from session state or settings
-		let currentFavoriteIds: string[] | null = [];
-		const candidateIds = new Set(allModels.map((model) => `${model.provider}/${model.id}`));
-		const resolveScopeForUi = async (patterns: string[]) => {
-			const warnings: string[] = [];
-			const resolvedModels = await resolveModelScope(patterns, this.session.modelRegistry, {
-				onWarning: (message) => warnings.push(message),
-			});
-			for (const warning of warnings) {
-				this.showWarning(warning);
-			}
-			return resolvedModels.filter((resolved) =>
-				candidateIds.has(`${resolved.model.provider}/${resolved.model.id}`),
-			);
-		};
-
-		if (this.session.favoriteModels.length > 0) {
-			currentFavoriteIds = this.session.favoriteModels
-				.map((favorite) => `${favorite.model.provider}/${favorite.model.id}`)
-				.filter((id) => candidateIds.has(id));
-		} else {
-			const patterns = this.settingsManager.getFavoriteModels() ?? [];
-			if (patterns.length > 0) {
-				const favoriteModels = await resolveScopeForUi(patterns);
-				currentFavoriteIds = favoriteModels.map((favorite) => `${favorite.model.provider}/${favorite.model.id}`);
-			}
-		}
-
-		// Helper to update session's favorite models (session-only, no persist)
-		const updateSessionFavorites = async (favoriteIds: string[] | null) => {
-			const nextIds = favoriteIds === null ? allModels.map((model) => `${model.provider}/${model.id}`) : favoriteIds;
-			currentFavoriteIds = favoriteIds === null ? null : [...favoriteIds];
-			if (nextIds.length > 0) {
-				const newFavoriteModels = await resolveScopeForUi(nextIds);
-				this.session.setFavoriteModels(
-					newFavoriteModels.map((sm) => ({
-						model: sm.model,
-						thinkingLevel: sm.thinkingLevel,
-						serviceTier: sm.serviceTier,
-					})),
-				);
-			} else {
-				this.session.setFavoriteModels([]);
-			}
-			this.ui.requestRender();
-		};
+		const currentFavoriteIds = await this.getFavoriteModelIdsForUi(allModels);
 
 		this.showSelector((done) => {
 			const selector = new FavoriteModelsSelectorComponent(
 				{
 					allModels,
 					favoriteModelIds: currentFavoriteIds,
+					currentModel: this.session.model,
 				},
 				{
 					onChange: async (favoriteIds) => {
-						await updateSessionFavorites(favoriteIds);
+						await this.updateSessionFavoritesFromIds(favoriteIds, allModels);
 					},
 					onPersist: (favoriteIds) => {
-						const newPatterns =
-							favoriteIds === null ? allModels.map((model) => `${model.provider}/${model.id}`) : favoriteIds;
+						const newPatterns = favoriteIds === null ? allModels.map(getModelFullId) : favoriteIds;
 						this.settingsManager.setFavoriteModels(newPatterns.length > 0 ? [...newPatterns] : undefined);
 						this.showStatus("Favorite models saved to settings");
+					},
+					onSelect: (model) => {
+						void this.selectModelFromUi(model, done);
 					},
 					onCancel: () => {
 						done();

@@ -101,6 +101,24 @@
 - `src/core/agent-session.ts` around favorite model getters and `cycleModel()`.
 - `src/core/model-resolver.ts` around glob pattern matching in `resolveModelScope()`.
 
+## Favorite model toggle keybinding (2026-05-12)
+
+### What changed
+
+- `src/core/keybindings.ts`: added configurable `app.models.toggleFavorite`, defaulting to `Ctrl+F`, for model selector favorite toggles.
+
+### Why
+
+- Users need the `/model` and `/favorite-models` selectors to select models normally while still being able to toggle favorite status for the highlighted row.
+
+### Why extension system couldn't handle this
+
+- Selector key handling uses the built-in keybinding registry before extension UI code can attach row-local actions, so the built-in selector action needs a first-class keybinding id.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `keybindings.ts` around model selector keybinding definitions.
+
 ## Git package dependency repair on update (2026-05-02)
 
 ### What changed

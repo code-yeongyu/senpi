@@ -14,15 +14,17 @@ import type { SettingsManager } from "../../../core/settings-manager.js";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { keyHint } from "./keybinding-hints.js";
+import { type FavoriteModelIds, getModelFullId, isFavoriteModel, toggleFavoriteModel } from "./model-favorites.js";
 
 interface ModelItem {
+	fullId: string;
 	provider: string;
 	id: string;
 	model: Model<any>;
 }
 
-function getModelSearchText({ id, provider, model }: ModelItem): string {
-	return `${provider}/${id} ${id} ${model.name} ${provider}`;
+function getModelSearchText({ fullId, id, provider, model }: ModelItem): string {
+	return `${fullId} ${provider}/${id} ${id} ${model.name} ${provider}`;
 }
 
 interface ScopedModelItem {
@@ -32,6 +34,15 @@ interface ScopedModelItem {
 
 type ModelScope = "all" | "narrowed";
 type ModelSelectorTui = Pick<TUI, "requestRender">;
+
+export interface ModelSelectorFavoriteOptions {
+	favoriteModelIds?: FavoriteModelIds;
+	onFavoriteChange?: (
+		favoriteModelIds: FavoriteModelIds,
+		allModels: Model<any>[],
+		toggledModel: Model<any>,
+	) => void | Promise<void>;
+}
 
 /**
  * Component that renders a model selector with search
@@ -59,6 +70,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private modelRegistry: ModelRegistry;
 	private onSelectCallback: (model: Model<any>) => void;
 	private onCancelCallback: () => void;
+	private favoriteIds: FavoriteModelIds = [];
+	private onFavoriteChangeCallback?: ModelSelectorFavoriteOptions["onFavoriteChange"];
 	private errorMessage?: string;
 	private tui: ModelSelectorTui;
 	private scopedModels: ReadonlyArray<ScopedModelItem>;
@@ -75,6 +88,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		onSelect: (model: Model<any>) => void,
 		onCancel: () => void,
 		initialSearchInput?: string,
+		favorites?: ModelSelectorFavoriteOptions,
 	) {
 		super();
 
@@ -86,6 +100,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.scope = scopedModels.length > 0 ? "narrowed" : "all";
 		this.onSelectCallback = onSelect;
 		this.onCancelCallback = onCancel;
+		this.favoriteIds = favorites?.favoriteModelIds === null ? null : [...(favorites?.favoriteModelIds ?? [])];
+		this.onFavoriteChangeCallback = favorites?.onFavoriteChange;
 
 		// Add top border
 		this.addChild(new DynamicBorder());
@@ -101,6 +117,14 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			const hintText = "Only showing models from configured providers. Use /login to add providers.";
 			this.addChild(new Text(theme.fg("warning", hintText), 0, 0));
 		}
+		this.addChild(new Spacer(1));
+		this.addChild(
+			new Text(
+				`${keyHint("tui.select.confirm", "select")} ${keyHint("app.models.toggleFavorite", "favorite")}`,
+				0,
+				0,
+			),
+		);
 		this.addChild(new Spacer(1));
 
 		// Create search input
@@ -155,6 +179,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		try {
 			const availableModels = await this.modelRegistry.getAvailable();
 			models = availableModels.map((model: Model<any>) => ({
+				fullId: getModelFullId(model),
 				provider: model.provider,
 				id: model.id,
 				model,
@@ -169,7 +194,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		}
 
 		this.allModels = this.sortModels(models);
-		const modelsById = new Map(models.map((model) => [`${model.provider}/${model.id}`, model]));
+		const modelsById = new Map(models.map((model) => [model.fullId, model]));
 		this.scopedModels = this.scopedModels.map((scoped) => {
 			const refreshed = this.modelRegistry.find(scoped.model.provider, scoped.model.id);
 			return refreshed ? { ...scoped, model: refreshed } : scoped;
@@ -187,13 +212,19 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 	private sortModels(models: ModelItem[]): ModelItem[] {
 		const sorted = [...models];
-		// Sort: current model first, then by provider
+		// Sort: current model first, then favorites, then by provider/model.
 		sorted.sort((a, b) => {
 			const aIsCurrent = modelsAreEqual(this.currentModel, a.model);
 			const bIsCurrent = modelsAreEqual(this.currentModel, b.model);
 			if (aIsCurrent && !bIsCurrent) return -1;
 			if (!aIsCurrent && bIsCurrent) return 1;
-			return a.provider.localeCompare(b.provider);
+			const aIsFavorite = isFavoriteModel(this.favoriteIds, a.fullId);
+			const bIsFavorite = isFavoriteModel(this.favoriteIds, b.fullId);
+			if (aIsFavorite && !bIsFavorite) return -1;
+			if (!aIsFavorite && bIsFavorite) return 1;
+			const providerCompare = a.provider.localeCompare(b.provider);
+			if (providerCompare !== 0) return providerCompare;
+			return a.id.localeCompare(b.id);
 		});
 		return sorted;
 	}
@@ -243,16 +274,19 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 			const isSelected = i === this.selectedIndex;
 			const isCurrent = modelsAreEqual(this.currentModel, item.model);
+			const favoriteMarker = isFavoriteModel(this.favoriteIds, item.fullId)
+				? theme.fg("success", "* ")
+				: theme.fg("dim", "  ");
 
 			let line = "";
 			if (isSelected) {
 				const prefix = theme.fg("accent", "→ ");
-				const modelText = `${item.id}`;
+				const modelText = `${favoriteMarker}${theme.fg("accent", item.id)}`;
 				const providerBadge = theme.fg("muted", `[${item.provider}]`);
 				const checkmark = isCurrent ? theme.fg("success", " ✓") : "";
-				line = `${prefix + theme.fg("accent", modelText)} ${providerBadge}${checkmark}`;
+				line = `${prefix}${modelText} ${providerBadge}${checkmark}`;
 			} else {
-				const modelText = `  ${item.id}`;
+				const modelText = `  ${favoriteMarker}${item.id}`;
 				const providerBadge = theme.fg("muted", `[${item.provider}]`);
 				const checkmark = isCurrent ? theme.fg("success", " ✓") : "";
 				line = `${modelText} ${providerBadge}${checkmark}`;
@@ -314,6 +348,10 @@ export class ModelSelectorComponent extends Container implements Focusable {
 				this.handleSelect(selectedModel.model);
 			}
 		}
+		// Toggle favorite for selected model
+		else if (kb.matches(keyData, "app.models.toggleFavorite")) {
+			this.handleToggleFavorite();
+		}
 		// Escape or Ctrl+C
 		else if (kb.matches(keyData, "tui.select.cancel")) {
 			this.onCancelCallback();
@@ -329,6 +367,29 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		// Save as new default
 		this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
 		this.onSelectCallback(model);
+	}
+
+	private handleToggleFavorite(): void {
+		const selectedModel = this.filteredModels[this.selectedIndex];
+		if (!selectedModel) return;
+
+		const allModelIds = this.allModels.map((model) => model.fullId);
+		this.favoriteIds = toggleFavoriteModel(this.favoriteIds, allModelIds, selectedModel.fullId);
+		this.allModels = this.sortModels(this.allModels);
+		this.activeModels = this.scope === "narrowed" ? this.scopedModelItems : this.allModels;
+		this.filterModels(this.searchInput.getValue());
+		const selectedIndex = this.filteredModels.findIndex((item) => item.fullId === selectedModel.fullId);
+		if (selectedIndex >= 0) {
+			this.selectedIndex = selectedIndex;
+			this.updateList();
+		}
+		const nextFavoriteIds = this.favoriteIds === null ? null : [...this.favoriteIds];
+		void this.onFavoriteChangeCallback?.(
+			nextFavoriteIds,
+			this.allModels.map((item) => item.model),
+			selectedModel.model,
+		);
+		this.tui.requestRender();
 	}
 
 	getSearchInput(): Input {

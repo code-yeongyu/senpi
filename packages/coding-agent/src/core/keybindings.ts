@@ -40,6 +40,7 @@ export interface AppKeybindings {
 	"app.session.delete": true;
 	"app.session.deleteNoninvasive": true;
 	"app.models.save": true;
+	"app.models.toggleFavorite": true;
 	"app.models.enableAll": true;
 	"app.models.clearAll": true;
 	"app.models.toggleProvider": true;
@@ -150,6 +151,10 @@ export const KEYBINDINGS = {
 	"app.models.save": {
 		defaultKeys: "ctrl+s",
 		description: "Save model selection",
+	},
+	"app.models.toggleFavorite": {
+		defaultKeys: "ctrl+f",
+		description: "Toggle favorite model",
 	},
 	"app.models.enableAll": {
 		defaultKeys: "ctrl+a",
@@ -330,7 +335,7 @@ function orderKeybindingsConfig(config: Record<string, unknown>): Record<string,
 function loadRawConfig(path: string): Record<string, unknown> | undefined {
 	if (!existsSync(path)) return undefined;
 	try {
-		const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
+		const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
 		return isRecord(parsed) ? parsed : undefined;
 	} catch {
 		return undefined;

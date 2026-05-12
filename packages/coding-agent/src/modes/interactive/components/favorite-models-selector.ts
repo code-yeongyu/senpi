@@ -1,4 +1,4 @@
-import type { Model } from "@earendil-works/pi-ai";
+import { type Model, modelsAreEqual } from "@earendil-works/pi-ai";
 import {
 	Container,
 	type Focusable,
@@ -13,56 +13,16 @@ import {
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { keyText } from "./keybinding-hints.js";
-
-// FavoriteIds: null = all favorite, string[] = explicit ordered list
-type FavoriteIds = string[] | null;
-
-function isFavorite(favoriteIds: FavoriteIds, id: string): boolean {
-	return favoriteIds === null || favoriteIds.includes(id);
-}
-
-function toggleFavorite(favoriteIds: FavoriteIds, id: string): FavoriteIds {
-	if (favoriteIds === null) return [id]; // First toggle: start with only this one
-	const index = favoriteIds.indexOf(id);
-	if (index >= 0) return [...favoriteIds.slice(0, index), ...favoriteIds.slice(index + 1)];
-	return [...favoriteIds, id];
-}
-
-function favoriteAll(favoriteIds: FavoriteIds, allIds: string[], targetIds?: string[]): FavoriteIds {
-	if (favoriteIds === null) return null; // Already all favorite
-	const targets = targetIds ?? allIds;
-	const result = [...favoriteIds];
-	for (const id of targets) {
-		if (!result.includes(id)) result.push(id);
-	}
-	return result.length === allIds.length ? null : result;
-}
-
-function clearAll(favoriteIds: FavoriteIds, allIds: string[], targetIds?: string[]): FavoriteIds {
-	if (favoriteIds === null) {
-		return targetIds ? allIds.filter((id) => !targetIds.includes(id)) : [];
-	}
-	const targets = new Set(targetIds ?? favoriteIds);
-	return favoriteIds.filter((id) => !targets.has(id));
-}
-
-function move(favoriteIds: FavoriteIds, id: string, delta: number): FavoriteIds {
-	if (favoriteIds === null) return null;
-	const list = [...favoriteIds];
-	const index = list.indexOf(id);
-	if (index < 0) return list;
-	const newIndex = index + delta;
-	if (newIndex < 0 || newIndex >= list.length) return list;
-	const result = [...list];
-	[result[index], result[newIndex]] = [result[newIndex], result[index]];
-	return result;
-}
-
-function getSortedIds(favoriteIds: FavoriteIds, allIds: string[]): string[] {
-	if (favoriteIds === null) return allIds;
-	const favoriteSet = new Set(favoriteIds);
-	return [...favoriteIds, ...allIds.filter((id) => !favoriteSet.has(id))];
-}
+import {
+	clearFavoriteModels,
+	type FavoriteModelIds,
+	favoriteModels,
+	getModelFullId,
+	getSortedFavoriteModelIds,
+	isFavoriteModel,
+	moveFavoriteModel,
+	toggleFavoriteModel,
+} from "./model-favorites.js";
 
 interface ModelItem {
 	fullId: string;
@@ -76,14 +36,16 @@ function getModelSearchText(item: ModelItem): string {
 
 export interface FavoriteModelsConfig {
 	allModels: Model<any>[];
-	favoriteModelIds: string[] | null;
+	favoriteModelIds: FavoriteModelIds;
+	currentModel?: Model<any>;
 }
 
 export interface FavoriteModelsCallbacks {
 	/** Called whenever the favorite model set or order changes (session-only, no persist) */
-	onChange: (favoriteModelIds: string[] | null) => void | Promise<void>;
+	onChange: (favoriteModelIds: FavoriteModelIds) => void | Promise<void>;
 	/** Called when user wants to persist current selection to settings */
-	onPersist: (favoriteModelIds: string[] | null) => void | Promise<void>;
+	onPersist: (favoriteModelIds: FavoriteModelIds) => void | Promise<void>;
+	onSelect: (model: Model<any>) => void | Promise<void>;
 	onCancel: () => void;
 }
 
@@ -94,10 +56,11 @@ export interface FavoriteModelsCallbacks {
 export class FavoriteModelsSelectorComponent extends Container implements Focusable {
 	private modelsById: Map<string, Model<any>> = new Map();
 	private allIds: string[] = [];
-	private favoriteIds: FavoriteIds = null;
+	private favoriteIds: FavoriteModelIds = null;
 	private filteredItems: ModelItem[] = [];
 	private selectedIndex = 0;
 	private searchInput: Input;
+	private currentModel?: Model<any>;
 
 	// Focusable implementation - propagate to searchInput for IME cursor positioning
 	private _focused = false;
@@ -110,6 +73,7 @@ export class FavoriteModelsSelectorComponent extends Container implements Focusa
 	}
 	private listContainer: Container;
 	private footerText: Text;
+	private secondaryFooterText: Text;
 	private callbacks: FavoriteModelsCallbacks;
 	private maxVisible = 8;
 	private isDirty = false;
@@ -117,9 +81,10 @@ export class FavoriteModelsSelectorComponent extends Container implements Focusa
 	constructor(config: FavoriteModelsConfig, callbacks: FavoriteModelsCallbacks) {
 		super();
 		this.callbacks = callbacks;
+		this.currentModel = config.currentModel;
 
 		for (const model of config.allModels) {
-			const fullId = `${model.provider}/${model.id}`;
+			const fullId = getModelFullId(model);
 			this.modelsById.set(fullId, model);
 			this.allIds.push(fullId);
 		}
@@ -132,7 +97,14 @@ export class FavoriteModelsSelectorComponent extends Container implements Focusa
 		this.addChild(new Spacer(1));
 		this.addChild(new Text(theme.fg("accent", theme.bold("Favorite Models")), 0, 0));
 		this.addChild(
-			new Text(theme.fg("muted", `Session-only. ${keyText("app.models.save")} to save to settings.`), 0, 0),
+			new Text(
+				theme.fg(
+					"muted",
+					`${keyText("tui.select.confirm")} selects. ${keyText("app.models.toggleFavorite")} toggles favorite. ${keyText("app.models.save")} saves.`,
+				),
+				0,
+				0,
+			),
 		);
 		this.addChild(new Spacer(1));
 
@@ -149,6 +121,8 @@ export class FavoriteModelsSelectorComponent extends Container implements Focusa
 		this.addChild(new Spacer(1));
 		this.footerText = new Text(this.getFooterText(), 0, 0);
 		this.addChild(this.footerText);
+		this.secondaryFooterText = new Text(this.getSecondaryFooterText(), 0, 0);
+		this.addChild(this.secondaryFooterText);
 
 		this.addChild(new DynamicBorder());
 		this.updateList();
@@ -157,13 +131,13 @@ export class FavoriteModelsSelectorComponent extends Container implements Focusa
 	private buildItems(): ModelItem[] {
 		// Filter out IDs that no longer have a corresponding model (e.g., after logout)
 		const items: ModelItem[] = [];
-		for (const id of getSortedIds(this.favoriteIds, this.allIds)) {
+		for (const id of getSortedFavoriteModelIds(this.favoriteIds, this.allIds)) {
 			const model = this.modelsById.get(id);
 			if (!model) continue;
 			items.push({
 				fullId: id,
 				model,
-				favorite: isFavorite(this.favoriteIds, id),
+				favorite: isFavoriteModel(this.favoriteIds, id),
 			});
 		}
 		return items;
@@ -174,26 +148,37 @@ export class FavoriteModelsSelectorComponent extends Container implements Focusa
 		const allFavorite = this.favoriteIds === null;
 		const countText = allFavorite ? "all favorites" : `${favoriteCount}/${this.allIds.length} favorites`;
 		const parts = [
-			`${keyText("tui.select.confirm")} toggle`,
-			`${keyText("app.models.enableAll")} favorite all`,
-			`${keyText("app.models.clearAll")} clear`,
-			`${keyText("app.models.toggleProvider")} provider`,
-			`${keyText("app.models.reorderUp")}/${keyText("app.models.reorderDown")} reorder`,
+			`${keyText("tui.select.confirm")} select`,
+			`${keyText("app.models.toggleFavorite")} favorite`,
 			`${keyText("app.models.save")} save`,
 			countText,
 		];
 		return this.isDirty
-			? theme.fg("dim", `  ${parts.join(" · ")} `) + theme.fg("warning", "(unsaved)")
+			? theme.fg("dim", `  ${parts.join(" · ")} `) + theme.fg("warning", "unsaved")
 			: theme.fg("dim", `  ${parts.join(" · ")}`);
 	}
 
-	private refresh(): void {
+	private getSecondaryFooterText(): string {
+		const parts = [
+			`${keyText("app.models.enableAll")} all`,
+			`${keyText("app.models.clearAll")} clear`,
+			`${keyText("app.models.toggleProvider")} provider`,
+			`${keyText("app.models.reorderUp")}/${keyText("app.models.reorderDown")} order`,
+		];
+		return theme.fg("dim", `  ${parts.join(" · ")}`);
+	}
+
+	private refresh(preferredSelectedId?: string): void {
 		const query = this.searchInput.getValue();
+		const selectedId = preferredSelectedId ?? this.filteredItems[this.selectedIndex]?.fullId;
 		const items = this.buildItems();
 		this.filteredItems = query ? fuzzyFilter(items, query, getModelSearchText) : items;
-		this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, this.filteredItems.length - 1));
+		const selectedIndex = selectedId ? this.filteredItems.findIndex((item) => item.fullId === selectedId) : -1;
+		this.selectedIndex =
+			selectedIndex >= 0 ? selectedIndex : Math.min(this.selectedIndex, Math.max(0, this.filteredItems.length - 1));
 		this.updateList();
 		this.footerText.setText(this.getFooterText());
+		this.secondaryFooterText.setText(this.getSecondaryFooterText());
 	}
 
 	private notifyChange(): void {
@@ -213,17 +198,19 @@ export class FavoriteModelsSelectorComponent extends Container implements Focusa
 			Math.min(this.selectedIndex - Math.floor(this.maxVisible / 2), this.filteredItems.length - this.maxVisible),
 		);
 		const endIndex = Math.min(startIndex + this.maxVisible, this.filteredItems.length);
-		const allFavorite = this.favoriteIds === null;
-
 		for (let i = startIndex; i < endIndex; i++) {
 			const item = this.filteredItems[i];
 			if (!item) continue;
 			const isSelected = i === this.selectedIndex;
 			const prefix = isSelected ? theme.fg("accent", "→ ") : "  ";
+			const favoriteMarker = item.favorite ? theme.fg("success", "*") : theme.fg("dim", "-");
 			const modelText = isSelected ? theme.fg("accent", item.model.id) : item.model.id;
 			const providerBadge = theme.fg("muted", ` [${item.model.provider}]`);
-			const status = allFavorite ? "" : item.favorite ? theme.fg("success", " ✓") : theme.fg("dim", " ✗");
-			this.listContainer.addChild(new Text(`${prefix}${modelText}${providerBadge}${status}`, 0, 0));
+			const currentMarker =
+				this.currentModel && modelsAreEqual(this.currentModel, item.model) ? theme.fg("success", " ✓") : "";
+			this.listContainer.addChild(
+				new Text(`${prefix}${favoriteMarker} ${modelText}${providerBadge}${currentMarker}`, 0, 0),
+			);
 		}
 
 		// Add scroll indicator if needed
@@ -265,29 +252,38 @@ export class FavoriteModelsSelectorComponent extends Container implements Focusa
 		if (reorderUp || reorderDown) {
 			if (this.favoriteIds === null) return;
 			const item = this.filteredItems[this.selectedIndex];
-			if (item && isFavorite(this.favoriteIds, item.fullId)) {
+			if (item && isFavoriteModel(this.favoriteIds, item.fullId)) {
 				const delta = reorderUp ? -1 : 1;
 				const currentIndex = this.favoriteIds.indexOf(item.fullId);
 				const newIndex = currentIndex + delta;
 				// Only move if within bounds
 				if (newIndex >= 0 && newIndex < this.favoriteIds.length) {
-					this.favoriteIds = move(this.favoriteIds, item.fullId, delta);
+					this.favoriteIds = moveFavoriteModel(this.favoriteIds, item.fullId, delta);
 					this.isDirty = true;
 					this.selectedIndex += delta;
-					this.refresh();
+					this.refresh(item.fullId);
 					this.notifyChange();
 				}
 			}
 			return;
 		}
 
-		// Toggle on Enter
+		// Select on Enter
 		if (kb.matches(data, "tui.select.confirm")) {
 			const item = this.filteredItems[this.selectedIndex];
 			if (item) {
-				this.favoriteIds = toggleFavorite(this.favoriteIds, item.fullId);
+				this.callbacks.onSelect(item.model);
+			}
+			return;
+		}
+
+		// Toggle favorite status for the selected model
+		if (kb.matches(data, "app.models.toggleFavorite")) {
+			const item = this.filteredItems[this.selectedIndex];
+			if (item) {
+				this.favoriteIds = toggleFavoriteModel(this.favoriteIds, this.allIds, item.fullId);
 				this.isDirty = true;
-				this.refresh();
+				this.refresh(item.fullId);
 				this.notifyChange();
 			}
 			return;
@@ -295,20 +291,22 @@ export class FavoriteModelsSelectorComponent extends Container implements Focusa
 
 		// Favorite all (filtered if search active, otherwise all)
 		if (kb.matches(data, "app.models.enableAll")) {
+			const item = this.filteredItems[this.selectedIndex];
 			const targetIds = this.searchInput.getValue() ? this.filteredItems.map((i) => i.fullId) : undefined;
-			this.favoriteIds = favoriteAll(this.favoriteIds, this.allIds, targetIds);
+			this.favoriteIds = favoriteModels(this.favoriteIds, this.allIds, targetIds);
 			this.isDirty = true;
-			this.refresh();
+			this.refresh(item?.fullId);
 			this.notifyChange();
 			return;
 		}
 
 		// Clear all (filtered if search active, otherwise all)
 		if (kb.matches(data, "app.models.clearAll")) {
+			const item = this.filteredItems[this.selectedIndex];
 			const targetIds = this.searchInput.getValue() ? this.filteredItems.map((i) => i.fullId) : undefined;
-			this.favoriteIds = clearAll(this.favoriteIds, this.allIds, targetIds);
+			this.favoriteIds = clearFavoriteModels(this.favoriteIds, this.allIds, targetIds);
 			this.isDirty = true;
-			this.refresh();
+			this.refresh(item?.fullId);
 			this.notifyChange();
 			return;
 		}
@@ -319,12 +317,12 @@ export class FavoriteModelsSelectorComponent extends Container implements Focusa
 			if (item) {
 				const provider = item.model.provider;
 				const providerIds = this.allIds.filter((id) => this.modelsById.get(id)?.provider === provider);
-				const allFavorite = providerIds.every((id) => isFavorite(this.favoriteIds, id));
+				const allFavorite = providerIds.every((id) => isFavoriteModel(this.favoriteIds, id));
 				this.favoriteIds = allFavorite
-					? clearAll(this.favoriteIds, this.allIds, providerIds)
-					: favoriteAll(this.favoriteIds, this.allIds, providerIds);
+					? clearFavoriteModels(this.favoriteIds, this.allIds, providerIds)
+					: favoriteModels(this.favoriteIds, this.allIds, providerIds);
 				this.isDirty = true;
-				this.refresh();
+				this.refresh(item.fullId);
 				this.notifyChange();
 			}
 			return;
