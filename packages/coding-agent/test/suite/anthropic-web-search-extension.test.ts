@@ -7,11 +7,13 @@ import anthropicWebSearchExtension, {
 import type { ExtensionAPI } from "../../src/core/extensions/types.js";
 
 const ENABLE_ENV = "PI_ANTHROPIC_WEB_SEARCH";
-const MAX_USES_ENV = "PI_ANTHROPIC_WEB_SEARCH_MAX_USES";
+const ALLOWED_DOMAINS_ENV = "PI_ANTHROPIC_WEB_SEARCH_ALLOWED_DOMAINS";
+const BLOCKED_DOMAINS_ENV = "PI_ANTHROPIC_WEB_SEARCH_BLOCKED_DOMAINS";
 
 afterEach(() => {
 	delete process.env[ENABLE_ENV];
-	delete process.env[MAX_USES_ENV];
+	delete process.env[ALLOWED_DOMAINS_ENV];
+	delete process.env[BLOCKED_DOMAINS_ENV];
 });
 
 describe("anthropic-web-search builtin extension", () => {
@@ -38,7 +40,7 @@ describe("anthropic-web-search builtin extension", () => {
 		expect(result.tools).toContainEqual({
 			type: "web_search_20250305",
 			name: "web_search",
-			max_uses: 5,
+			max_uses: 8,
 		});
 	});
 
@@ -67,7 +69,7 @@ describe("anthropic-web-search builtin extension", () => {
 
 		const webSearchTools = result.tools.filter((tool) => tool.name === "web_search");
 		expect(webSearchTools).toHaveLength(1);
-		expect(webSearchTools[0]).toEqual({ type: "web_search_20250305", name: "web_search", max_uses: 5 });
+		expect(webSearchTools[0]).toEqual({ type: "web_search_20250305", name: "web_search", max_uses: 8 });
 	});
 
 	it("does not strip function-tool web_search when api is non-anthropic", () => {
@@ -80,8 +82,9 @@ describe("anthropic-web-search builtin extension", () => {
 		expect(result).toBe(payload);
 	});
 
-	it("uses env override for max_uses", () => {
-		process.env[MAX_USES_ENV] = "10";
+	it("adds configured domain filters to the injected web_search tool", () => {
+		process.env[ALLOWED_DOMAINS_ENV] = "docs.anthropic.com, example.com";
+		process.env[BLOCKED_DOMAINS_ENV] = "spam.example, ads.example";
 		const payload = {
 			tools: [{ name: "other_tool" }],
 		};
@@ -93,7 +96,9 @@ describe("anthropic-web-search builtin extension", () => {
 		expect(result.tools).toContainEqual({
 			type: "web_search_20250305",
 			name: "web_search",
-			max_uses: 10,
+			allowed_domains: ["docs.anthropic.com", "example.com"],
+			blocked_domains: ["spam.example", "ads.example"],
+			max_uses: 8,
 		});
 	});
 
@@ -120,7 +125,7 @@ describe("anthropic-web-search builtin extension", () => {
 		expect(result.tools).toContainEqual({
 			type: "web_search_20250305",
 			name: "web_search",
-			max_uses: 5,
+			max_uses: 8,
 		});
 	});
 });

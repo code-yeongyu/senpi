@@ -3,9 +3,10 @@ import type { ExtensionAPI } from "../../types.js";
 
 type ToolDefinition = Record<string, unknown>;
 
-const DEFAULT_MAX_USES = 5;
+const WEB_SEARCH_MAX_USES = 8;
 const ENABLE_ENV = "PI_ANTHROPIC_WEB_SEARCH";
-const MAX_USES_ENV = "PI_ANTHROPIC_WEB_SEARCH_MAX_USES";
+const ALLOWED_DOMAINS_ENV = "PI_ANTHROPIC_WEB_SEARCH_ALLOWED_DOMAINS";
+const BLOCKED_DOMAINS_ENV = "PI_ANTHROPIC_WEB_SEARCH_BLOCKED_DOMAINS";
 
 function parseEnableEnv(envVar: string): boolean {
 	const envValue = process.env[envVar];
@@ -34,18 +35,35 @@ function isWebSearchType(value: unknown): value is string {
 	return typeof value === "string" && value.startsWith("web_search_");
 }
 
-function getMaxUses(): number {
-	const envValue = process.env[MAX_USES_ENV];
+function parseDomainListEnv(envVar: string): string[] | undefined {
+	const envValue = process.env[envVar];
 	if (!envValue) {
-		return DEFAULT_MAX_USES;
+		return undefined;
 	}
 
-	const parsed = Number.parseInt(envValue, 10);
-	if (Number.isNaN(parsed) || parsed <= 0) {
-		return DEFAULT_MAX_USES;
+	const domains = envValue
+		.split(",")
+		.map((domain) => domain.trim())
+		.filter((domain) => domain.length > 0);
+
+	if (domains.length === 0) {
+		return undefined;
 	}
 
-	return parsed;
+	return domains;
+}
+
+function makeWebSearchTool(): ToolDefinition {
+	const allowedDomains = parseDomainListEnv(ALLOWED_DOMAINS_ENV);
+	const blockedDomains = parseDomainListEnv(BLOCKED_DOMAINS_ENV);
+
+	return {
+		type: "web_search_20250305",
+		name: "web_search",
+		...(allowedDomains ? { allowed_domains: allowedDomains } : {}),
+		...(blockedDomains ? { blocked_domains: blockedDomains } : {}),
+		max_uses: WEB_SEARCH_MAX_USES,
+	};
 }
 
 function sanitizeTools(tools: unknown[]): ToolDefinition[] {
@@ -82,11 +100,7 @@ export function addAnthropicWebSearchToPayload(api: Api | undefined, payload: un
 	const sanitizedTools = sanitizeTools(tools);
 	const hasNativeWebSearch = sanitizedTools.some((tool) => isWebSearchType(tool.type));
 	if (!hasNativeWebSearch) {
-		sanitizedTools.push({
-			type: "web_search_20250305",
-			name: "web_search",
-			max_uses: getMaxUses(),
-		});
+		sanitizedTools.push(makeWebSearchTool());
 	}
 
 	return {
