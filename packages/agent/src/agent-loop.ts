@@ -5,6 +5,7 @@
 
 import {
 	type AssistantMessage,
+	type AssistantMessageEvent,
 	type Context,
 	EventStream,
 	streamSimple,
@@ -341,7 +342,7 @@ async function streamAssistantResponse(
 
 			case "done":
 			case "error": {
-				const finalMessage = await response.result();
+				const finalMessage = normalizeTerminalAssistantMessage(await response.result(), event);
 				if (addedPartial) {
 					context.messages[context.messages.length - 1] = finalMessage;
 				} else {
@@ -391,6 +392,25 @@ type ExecutedToolCallBatch = {
 	messages: ToolResultMessage[];
 	terminate: boolean;
 };
+
+type TerminalAssistantMessageEvent = Extract<AssistantMessageEvent, { type: "done" | "error" }>;
+
+function normalizeTerminalAssistantMessage(
+	message: AssistantMessage,
+	event: TerminalAssistantMessageEvent,
+): AssistantMessage {
+	if (message.stopReason === event.reason) {
+		return message;
+	}
+	return {
+		...message,
+		stopReason: event.reason,
+		errorMessage:
+			event.type === "error"
+				? (message.errorMessage ?? (event.reason === "aborted" ? "Request was aborted" : "Error"))
+				: message.errorMessage,
+	};
+}
 
 async function executeToolCallsSequential(
 	currentContext: AgentContext,

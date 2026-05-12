@@ -58,6 +58,31 @@ function createAssistantMessage(text: string): AssistantMessage {
 	};
 }
 
+type TestExtensionRunner = {
+	hasHandlers: (eventType: string) => boolean;
+	emit: (event: { type: string; message?: { role?: string } }) => Promise<void>;
+	emitMessageEnd: (event: { type: string; message?: { role?: string } }) => Promise<undefined>;
+	emitToolCall?: (event: { type: string; toolCallId: string }) => Promise<undefined>;
+	emitInput: (
+		text: string,
+		images: unknown,
+		source: "interactive" | "rpc" | "extension",
+	) => Promise<{ action: "continue" }>;
+	emitBeforeAgentStart: (
+		prompt: string,
+		images: unknown,
+		systemPrompt: string,
+		systemPromptOptions: BuildSystemPromptOptions,
+	) => Promise<undefined>;
+	invalidate: (message?: string) => void;
+};
+
+function installTestExtensionRunner(session: AgentSession, runner: TestExtensionRunner): void {
+	if (!Reflect.set(session, "_extensionRunner", runner)) {
+		throw new Error("Failed to install test extension runner");
+	}
+}
+
 describe("AgentSession concurrent prompt guard", () => {
 	let session: AgentSession;
 	let tempDir: string;
@@ -288,7 +313,8 @@ describe("AgentSession concurrent prompt guard", () => {
 		await session.abort();
 		await firstPrompt.catch(() => {});
 
-		expect(sawSteeringMessage).toBe(true);
+		expect(sawSteeringMessage).toBe(false);
+		expect(session.pendingMessageCount).toBe(1);
 	});
 
 	it("should allow prompt() after previous completes", async () => {
@@ -434,27 +460,7 @@ describe("AgentSession concurrent prompt guard", () => {
 		});
 
 		const snapshots: string[][] = [];
-		const sessionWithRunner = session as unknown as {
-			_extensionRunner?: {
-				hasHandlers: (eventType: string) => boolean;
-				emit: (event: { type: string; message?: { role?: string } }) => Promise<void>;
-				emitMessageEnd: (event: { type: string; message?: { role?: string } }) => Promise<undefined>;
-				emitToolCall: (event: { type: string; toolCallId: string }) => Promise<undefined>;
-				emitInput: (
-					text: string,
-					images: unknown,
-					source: "interactive" | "rpc" | "extension",
-				) => Promise<{ action: "continue" }>;
-				emitBeforeAgentStart: (
-					prompt: string,
-					images: unknown,
-					systemPrompt: string,
-					systemPromptOptions: BuildSystemPromptOptions,
-				) => Promise<undefined>;
-				invalidate: (message?: string) => void;
-			};
-		};
-		sessionWithRunner._extensionRunner = {
+		const testRunner: TestExtensionRunner = {
 			hasHandlers: (eventType) => eventType === "tool_call",
 			emit: async () => {},
 			emitMessageEnd: async () => undefined,
@@ -471,6 +477,7 @@ describe("AgentSession concurrent prompt guard", () => {
 			emitBeforeAgentStart: async () => undefined,
 			invalidate: () => {},
 		};
+		installTestExtensionRunner(session, testRunner);
 
 		await session.prompt("hi");
 		await session.agent.waitForIdle();
@@ -579,26 +586,7 @@ describe("AgentSession concurrent prompt guard", () => {
 			baseToolsOverride: { dummy: tool },
 		});
 
-		const sessionWithRunner = session as unknown as {
-			_extensionRunner?: {
-				hasHandlers: (eventType: string) => boolean;
-				emit: (event: { type: string; message?: { role?: string } }) => Promise<void>;
-				emitMessageEnd: (event: { type: string; message?: { role?: string } }) => Promise<undefined>;
-				emitInput: (
-					text: string,
-					images: unknown,
-					source: "interactive" | "rpc" | "extension",
-				) => Promise<{ action: "continue" }>;
-				emitBeforeAgentStart: (
-					prompt: string,
-					images: unknown,
-					systemPrompt: string,
-					systemPromptOptions: BuildSystemPromptOptions,
-				) => Promise<undefined>;
-				invalidate: (message?: string) => void;
-			};
-		};
-		sessionWithRunner._extensionRunner = {
+		const testRunner: TestExtensionRunner = {
 			hasHandlers: () => false,
 			emit: async () => {},
 			emitMessageEnd: async (event) => {
@@ -611,6 +599,7 @@ describe("AgentSession concurrent prompt guard", () => {
 			emitBeforeAgentStart: async () => undefined,
 			invalidate: () => {},
 		};
+		installTestExtensionRunner(session, testRunner);
 
 		await session.prompt("hi");
 		await session.agent.waitForIdle();

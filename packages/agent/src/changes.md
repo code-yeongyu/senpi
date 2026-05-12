@@ -1,5 +1,29 @@
 # Changes
 
+## 2026-05-12 - Abort terminal event normalization
+
+### What changed and why
+
+- Normalized terminal assistant stream messages in `agent-loop.ts` so the event-level `reason` is authoritative for
+  `done`/`error` events.
+- This prevents an abort event with a stale assistant `stopReason` from being treated as a normal stop and draining queued
+  steering/follow-up messages after the user interrupted the run.
+
+### Files modified
+
+- `packages/agent/src/agent-loop.ts`
+- `packages/agent/test/agent.test.ts`
+
+### Why the extension system could not handle this
+
+- The stale-stopReason decision happens inside the core agent loop before extensions see a completed turn.
+- Extensions can observe abort events after the fact, but they cannot prevent the loop from deciding to continue into
+  queued messages.
+
+### Expected merge conflict zones on next upstream sync
+
+- `packages/agent/src/agent-loop.ts` around terminal `done`/`error` stream handling.
+
 ## 2026-04-05 - Parallel tool completion emission
 
 ### What changed and why

@@ -1,6 +1,7 @@
 import { type AssistantMessage, type AssistantMessageEvent, EventStream, getModel } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { Agent } from "../src/index.js";
+import { Agent, type AgentMessage, type AgentTool } from "../src/index.js";
 
 // Mock stream that mimics AssistantMessageEventStream
 class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
@@ -45,6 +46,15 @@ function createDeferred(): {
 		resolve = resolvePromise;
 	});
 	return { promise, resolve };
+}
+
+function getUserMessageText(message: AgentMessage): string {
+	if (message.role !== "user") return "";
+	if (typeof message.content === "string") return message.content;
+	return message.content
+		.filter((part) => part.type === "text")
+		.map((part) => part.text)
+		.join("");
 }
 
 describe("Agent", () => {
@@ -242,6 +252,55 @@ describe("Agent", () => {
 		expect(receivedSignal?.aborted).toBe(true);
 	});
 
+	it("should not process queued steering after an aborted error event with stale message stopReason", async () => {
+		let streamCalls = 0;
+		let processedQueuedSteering = false;
+		const queuedText = "Queued after abort";
+		const agent = new Agent({
+			streamFn: (_model, context, options) => {
+				streamCalls++;
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					const userTexts = context.messages.map(getUserMessageText);
+					if (userTexts.includes(queuedText)) {
+						processedQueuedSteering = true;
+						stream.push({ type: "done", reason: "stop", message: createAssistantMessage("Processed queued") });
+						return;
+					}
+
+					stream.push({ type: "start", partial: createAssistantMessage("") });
+					const checkAbort = () => {
+						if (options?.signal?.aborted) {
+							stream.push({ type: "error", reason: "aborted", error: createAssistantMessage("Aborted") });
+						} else {
+							setTimeout(checkAbort, 5);
+						}
+					};
+					checkAbort();
+				});
+				return stream;
+			},
+		});
+
+		const promptPromise = agent.prompt("First message");
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		agent.steer({
+			role: "user",
+			content: [{ type: "text", text: queuedText }],
+			timestamp: Date.now(),
+		});
+
+		agent.abort();
+		await promptPromise;
+
+		expect(processedQueuedSteering).toBe(false);
+		expect(streamCalls).toBe(1);
+		const lastMessage = agent.state.messages[agent.state.messages.length - 1];
+		expect(lastMessage?.role).toBe("assistant");
+		if (lastMessage?.role !== "assistant") throw new Error("Expected assistant message");
+		expect(lastMessage.stopReason).toBe("aborted");
+	});
+
 	it("should update state with mutators", () => {
 		const agent = new Agent();
 
@@ -259,7 +318,18 @@ describe("Agent", () => {
 		expect(agent.state.thinkingLevel).toBe("high");
 
 		// Test setTools
-		const tools = [{ name: "test", description: "test tool" } as any];
+		const tools: AgentTool[] = [
+			{
+				name: "test",
+				label: "Test",
+				description: "test tool",
+				parameters: Type.Object({}),
+				execute: async () => ({
+					content: [{ type: "text", text: "ok" }],
+					details: undefined,
+				}),
+			},
+		];
 		agent.state.tools = tools;
 		expect(agent.state.tools).toEqual(tools);
 		expect(agent.state.tools).not.toBe(tools); // Should be a copy
@@ -271,8 +341,8 @@ describe("Agent", () => {
 		expect(agent.state.messages).not.toBe(messages); // Should be a copy
 
 		// Test appendMessage
-		const newMessage = { role: "assistant" as const, content: [{ type: "text" as const, text: "Hi" }] };
-		agent.state.messages.push(newMessage as any);
+		const newMessage = createAssistantMessage("Hi");
+		agent.state.messages.push(newMessage);
 		expect(agent.state.messages).toHaveLength(2);
 		expect(agent.state.messages[1]).toBe(newMessage);
 
