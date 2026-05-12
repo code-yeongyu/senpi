@@ -9,7 +9,7 @@ import { type BashOperations, createBashToolDefinition } from "../src/core/tools
 import { createReadTool, createReadToolDefinition } from "../src/core/tools/read.js";
 import { createWriteToolDefinition } from "../src/core/tools/write.js";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.js";
-import { initTheme } from "../src/modes/interactive/theme/theme.js";
+import { initTheme, theme } from "../src/modes/interactive/theme/theme.js";
 
 function createBaseToolDefinition(name = "custom_tool"): ToolDefinition {
 	return {
@@ -27,7 +27,7 @@ function createBaseToolDefinition(name = "custom_tool"): ToolDefinition {
 function createFakeTui(): TUI {
 	return {
 		requestRender: () => {},
-	} as unknown as TUI;
+	} as TUI;
 }
 
 describe("ToolExecutionComponent parity", () => {
@@ -121,6 +121,23 @@ describe("ToolExecutionComponent parity", () => {
 		);
 		expect(updates).toEqual([{ content: [], details: undefined }]);
 		await promise;
+	});
+
+	test("highlights bash command syntax in the tool call header", () => {
+		const component = new ToolExecutionComponent(
+			"bash",
+			"tool-bash-highlight",
+			{ command: 'echo "hello" && false' },
+			{},
+			createBashToolDefinition(process.cwd()),
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		const rendered = component.render(120).join("\n");
+		expect(rendered).toContain(theme.fg("syntaxString", '"hello"'));
+		expect(rendered).toContain(theme.fg("syntaxType", "echo"));
+		expect(stripAnsi(rendered)).toContain('$ echo "hello" && false');
 	});
 
 	test("does not duplicate built-in headers when passed the active built-in definition", () => {

@@ -1,5 +1,27 @@
 # core/tools changes
 
+## bash tool command syntax highlighting (2026-05-12)
+
+### What changed
+
+- `bash.ts`: The bash tool call header now renders the command body through the existing TUI `highlightCode(..., "bash")` path while keeping the `$ ` prompt in the tool title style.
+
+### Why
+
+- Codex highlights shell syntax in exec cells, which makes quoted strings, builtins, literals, and operators easier to scan during command-heavy turns. senpi already had syntax highlighting for read/write previews, but bash tool call headers were rendered as a single title-colored string.
+
+### Why extension system couldn't handle this
+
+- The bash tool call renderer is defined directly on `createBashToolDefinition`. Extensions can replace or wrap tools, but changing the built-in bash renderer for every default TUI session requires updating the core tool definition.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `formatBashCall()` and the bash tool renderer helpers near `createBashToolDefinition`. Re-apply the `highlightCode(..., "bash")` command rendering if upstream rewrites the bash render path.
+
+### Files modified
+
+- `bash.ts`
+
 ## bash promptSnippet codex-style command examples (2026-05-07)
 
 ### What changed
