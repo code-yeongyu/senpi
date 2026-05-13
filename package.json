@@ -25,8 +25,8 @@
 		"profile:rpc": "node scripts/profile-coding-agent-node.mjs --mode rpc",
 		"test": "npm run test --workspaces --if-present",
 		"prepublishOnly": "npm run clean && npm run build && npm run check",
-		"publish": "npm run prepublishOnly && npm publish -ws --access public --tag latest",
-		"publish:dry": "npm run prepublishOnly && npm publish -ws --access public --tag latest --dry-run",
+		"publish": "npm run prepublishOnly && npm publish -ws --access public --tag latest --provenance",
+		"publish:dry": "npm run prepublishOnly && npm publish -ws --access public --tag latest --provenance --dry-run",
 		"release": "node scripts/release.mjs",
 		"preinstall": "node scripts/create-bin-stubs.mjs",
 		"prepare": "husky"

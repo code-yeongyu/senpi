@@ -50,12 +50,14 @@ jobs:
         with:
           bun-version: 1.2.20
 
+      - name: Upgrade npm to ≥ 11.5 (Trusted Publisher requirement)
+        run: npm install -g npm@latest
+
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
       - name: Run release
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SENPI_SKIP_PM_VERIFY: '1'
         run: |
