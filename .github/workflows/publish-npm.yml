@@ -53,6 +53,9 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Build all workspaces (so husky pre-commit type check resolves)
+        run: npm run build
+
       - name: Run release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
