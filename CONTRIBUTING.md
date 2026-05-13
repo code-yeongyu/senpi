@@ -32,6 +32,56 @@ Do not edit `CHANGELOG.md`. Changelog entries are added by maintainers.
 
 If you are adding a new provider to `packages/ai`, see [`packages/ai/src/providers/AGENTS.md`](packages/ai/src/providers/AGENTS.md) for the 7-step checklist and required cross-provider tests.
 
+## Releasing
+
+senpi uses **CalVer** (Calendar Versioning), distinct from upstream `badlogic/pi-mono`'s semver line.
+
+### Cutting a release
+
+Locally:
+```bash
+npm run release             # uses today's UTC date
+npm run release -- --dry-run   # preview without committing
+```
+
+The release script (`scripts/release.mjs`) imports `scripts/calver.mjs` to compute the next version, then:
+1. Bumps all 5 workspace `package.json` files in lockstep.
+2. Updates each package's `CHANGELOG.md`: `## [Unreleased]` → `## [<version>] - YYYY-MM-DD`.
+3. Commits `release: v<version>`, tags `v<version>`, publishes to npm with `--tag latest`.
+4. Pushes `main` and the tag to `origin`.
+5. Re-inserts a fresh `## [Unreleased]` section to each changelog.
+
+### CalVer rules
+
+- First release of the day: `YYYY.MM.DD` (e.g. `2026.05.13`).
+- Same-day re-release: `YYYY.MM.DD-N` where N ≥ 2 (e.g. `2026.05.13-2`).
+- All 5 workspaces always share the version.
+- Tags are `v<version>` — `build-binaries.yml` triggers on these.
+
+### Upstream sync
+
+You do NOT manually merge upstream. `.github/workflows/sync-upstream.yml` runs every 6 hours and syncs `badlogic/pi-mono` automatically.
+
+- **Clean merge** → committed directly to `main` with `sync: merge upstream <short-sha> into main`.
+- **Conflicts** → a PR labeled `sync-conflict` is opened from a `sync/upstream-<short-sha>` branch with conflict markers intact. If another sync runs before the PR is resolved, the prior PR is closed (`Superseded by upcoming sync from <new>`) and a new PR opens.
+
+To resolve a conflict PR: follow the per-file resolution rules in `AGENTS.md` § `VERSIONING & UPSTREAM SYNC`. The `changes.md` files in fork-modified subdirectories tell you what the fork preserves and why.
+
+To trigger sync manually:
+```bash
+gh workflow run sync-upstream.yml
+```
+
+### CHANGELOG entries
+
+> Do not edit `CHANGELOG.md`. Changelog entries are added by maintainers.
+
+This still applies. The release script will surface `[Unreleased]` entries; maintainers curate them before cutting a release.
+
+### `verify:pms` and the first CalVer release
+
+`npm run verify:pms` may fail at the pnpm step until the first CalVer release is published to npm. This is documented in [AGENTS.md § VERSIONING & UPSTREAM SYNC](AGENTS.md#versioning--upstream-sync). Use `SENPI_SKIP_PM_VERIFY=1` to skip locally if needed; CI should skip the pnpm matrix entry until after the first publish.
+
 ## Quality Bar for Issues
 
 If you open an issue:

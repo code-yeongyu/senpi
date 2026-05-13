@@ -74,11 +74,98 @@ Three-layer decision hierarchy before touching any upstream file:
 - **Line width**: 120 (Biome).
 - **Compiler**: `tsgo` (Microsoft's Go-based TS compiler) for ai/agent/coding-agent/tui builds and root `npm run check`. `tsc` is used only by web-ui (Lit decorator metadata that tsgo doesn't yet emit).
 - **Workspaces**: `npm` is the source of truth (`package-lock.json` committed). `pnpm-workspace.yaml` and bun lockfiles also exist; `npm run verify:pms` exercises all three on PRs and on pre-commit when packaging files are staged.
+- **Versioning**: CalVer lockstep across all 5 workspace packages — see `## VERSIONING & UPSTREAM SYNC` for the full policy.
 - **Path aliases**: workspace internals use `@earendil-works/pi-*` (and `@code-yeongyu/senpi*` for the coding-agent). Defined in root `tsconfig.json`.
 - **Tests**: Vitest across packages (TUI uses `node --test --import tsx`). Live-provider tests use `describe.skipIf(!process.env.<KEY>)` + `{ retry: 3 }`. `npm test` MUST pass with zero credentials.
 - **Regression tests**: `packages/coding-agent/test/suite/regressions/<issue-number>-<slug>.test.ts`.
 - **Husky pre-commit**: runs `npm run check`. Set `SENPI_SKIP_PM_VERIFY=1` to skip the multi-PM verify locally; CI still enforces it.
 - **Biome excludes**: `models.generated.ts`, `test-sessions.ts`, `packages/web-ui/src/app.css`, `packages/mom/data/**`, `local-ignore/**`, `.worktrees/**` are NOT linted.
+
+## VERSIONING & UPSTREAM SYNC
+
+This fork uses **CalVer** (Calendar Versioning) with an explicit upstream sync pointer, distinct from the upstream `badlogic/pi-mono` semver line.
+
+### Version format
+
+- **First release of the day**: `YYYY.MM.DD` (e.g. `2026.05.13`).
+- **Same-day re-release**: `YYYY.MM.DD-N` where N ≥ 2 (e.g. `2026.05.13-2`, `2026.05.13-3`). Note: there is no `-1`; the bare date IS the first release.
+- All 5 workspace packages (`ai`, `agent`, `coding-agent`, `tui`, `web-ui`) are version-locked.
+- Root `package.json` is `"private": true` and has NO `version` field.
+
+### Version computation
+
+`scripts/calver.mjs` computes the next version by:
+1. Taking today's UTC date as `YYYY.MM.DD`.
+2. Querying npm registry for existing versions of each workspace package.
+3. Querying `git tag --list "v<today>*"`.
+4. Returning `today` if no match, else `today-(maxN+1)`.
+
+### Git tag and npm publish
+
+- Git tag format: `v<version>` (e.g. `v2026.05.13`, `v2026.05.13-2`).
+- `.github/workflows/build-binaries.yml` already triggers on `v*` — CalVer tags match.
+- `npm publish` uses `--tag latest` explicitly because the `-N` suffix looks like a prerelease tag to npm and would otherwise NOT be picked up by `@latest`.
+
+### Upstream pin
+
+`.github/upstream.json` records the upstream commit currently merged into senpi:
+
+```json
+{
+	"repo": "badlogic/pi-mono",
+	"tag": "v0.74.0",
+	"sha": "<full 40-char SHA>",
+	"synced_at": "<ISO 8601 UTC>"
+}
+```
+
+The `tag` is the most recent upstream `v*` tag reachable from `sha`. The pin is updated by both `scripts/sync-upstream.mjs` and the GitHub Action.
+
+### Sync workflow
+
+`.github/workflows/sync-upstream.yml`:
+- Triggers: `schedule: cron '0 */6 * * *'` and `workflow_dispatch`.
+- Compares `upstream/main` HEAD against `.github/upstream.json.sha`. Exits if equal.
+- Else creates branch `sync/upstream-<short-sha>` and runs `git merge upstream/main --no-ff --no-commit`.
+
+**Auto-resolution rules** (applied to conflicted files):
+
+| Path pattern | Resolution |
+|---|---|
+| `bun.lock` | regenerate via `bun install` (or `git checkout --theirs` if bun unavailable) |
+| `package-lock.json` | `git checkout --theirs` + `npm install` |
+| `*.md` NOT named `changes.md` | `git checkout --theirs` |
+| `changes.md` (any subdirectory) | `git checkout --ours` (preserve fork docs) |
+| anything else with markers | LEFT UNRESOLVED |
+
+**On clean merge**: commits `sync: merge upstream <short-sha> into main` + `sync: record upstream pin <short-sha>`, pushes directly to `main`.
+
+**On unresolved conflicts**: closes any existing open PR labeled `sync-conflict` with comment `Superseded by upcoming sync from <new short-sha>`, then opens a NEW PR labeled `sync-conflict` from the branch with markers intact. The PR body lists each conflicting file with a recommended resolution.
+
+### `changes.md` contract
+
+Every fork-modified subdirectory MUST have a `changes.md` documenting what changed, why, and the expected merge-conflict zones. The sync workflow ALWAYS preserves `changes.md` files (resolves against `ours`), so fork-strategy docs survive upstream merges.
+
+### Commit message conventions
+
+| Subject | Meaning |
+|---|---|
+| `release: v<version>` | New senpi release (CalVer bump) |
+| `sync: merge upstream <short-sha> into main` | Upstream merge (clean) |
+| `sync: record upstream pin <short-sha>` | `.github/upstream.json` pointer update |
+| `sync: WIP merge of upstream <short-sha> (conflicts)` | Branch commit before PR (conflict path) |
+
+### Known limitation: `verify:pms` pnpm step
+
+`npm run verify:pms` runs `pnpm install` in an isolated snapshot (lockfile-free) against the working tree. Until the current CalVer workspace version (e.g. `2026.05.13`) is **published to the npm registry**, pnpm fails with `ERR_PNPM_NO_MATCHING_VERSION` for the inter-workspace deps (`@earendil-works/pi-*@^<version>`).
+
+Root cause: pnpm hits the npm registry first for caret ranges. The `workspace:` protocol does not help — pnpm's strict SemVer 2.0.0 parser rejects `2026.05.13` because `05` is a leading-zero numeric component (§ 2). `workspace:^`, `workspace:*`, and even `workspace:<exact-version>` all fail with `ERR_PNPM_NO_MATCHING_VERSION_INSIDE_WORKSPACE`. npm 11 itself does NOT support the `workspace:` protocol in install resolution (`EUNSUPPORTEDPROTOCOL` from `npm-package-arg`).
+
+**Workaround during the pre-first-publish window:**
+- Local commits: `SENPI_SKIP_PM_VERIFY=1 git commit ...` (already supported by the husky pre-commit hook).
+- CI: keep `verify:pms` skipped (or `continue-on-error: true` for the pnpm matrix entry) until after the first CalVer release.
+
+After the first CalVer release is published to npm via `npm run release`, pnpm fetches `^<version>` directly from the registry and the issue resolves itself. No code fix is needed at that point.
 
 ## ANTI-PATTERNS (THIS FORK)
 
