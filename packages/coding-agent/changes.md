@@ -1,5 +1,12 @@
 # Local fork changes
 
+## 2026-05-13 — copy interactive theme JSON files in the coding-agent build
+
+- Changed: `packages/coding-agent/package.json`
+- Why: `tsgo` does not copy `.json` assets into `dist/`, but `scripts/build-binaries.sh` expects the interactive theme JSON files to exist there when packaging release binaries.
+- What changed: Updated the coding-agent `build` script to create `dist/modes/interactive/theme/` and copy `src/modes/interactive/theme/*.json` into it after the TypeScript build.
+- Merge-conflict risk: low. The expected conflict zone is the `build` script in `packages/coding-agent/package.json` if upstream changes packaging flow.
+
 ## 2026-05-12 — add pi-todotools to builtin sync
 
 - Changed:
