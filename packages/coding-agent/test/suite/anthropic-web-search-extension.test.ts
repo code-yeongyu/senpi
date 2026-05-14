@@ -185,7 +185,7 @@ describe("anthropic-web-search before_agent_start", () => {
 			},
 		);
 
-		expect(setStatus).toHaveBeenCalledWith("anthropic-web-search", "web_search native");
+		expect(setStatus).toHaveBeenCalledWith("anthropic-web-search", undefined);
 		expect(setWidget).toHaveBeenCalledWith(
 			"anthropic-web-search",
 			["Native Web Search", "Anthropic · web_search_20250305 · max_uses 8"],

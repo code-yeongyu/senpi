@@ -7,6 +7,7 @@
 - `builtin/anthropic-web-search/index.ts`: Added session/model UI status and prompt widget updates for Anthropic native `web_search`.
 - `builtin/openai-web-search/index.ts`: Added session/model UI status and prompt widget updates for OpenAI Responses native `web_search_preview`.
 - `test/suite/anthropic-web-search-extension.test.ts` and `test/suite/openai-web-search-extension.test.ts`: Added regression coverage for the native web tool widgets.
+- 2026-05-14 follow-up: The same UI hooks now clear footer status text instead of writing long web-tool labels into the footer.
 
 ### Why
 
