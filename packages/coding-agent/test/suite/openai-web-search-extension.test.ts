@@ -226,11 +226,7 @@ describe("openai-web-search before_agent_start", () => {
 		);
 
 		expect(setStatus).toHaveBeenCalledWith("openai-web-search", undefined);
-		expect(setWidget).toHaveBeenCalledWith(
-			"openai-web-search",
-			["Native Web Search", "OpenAI Responses · web_search_preview"],
-			{ placement: "belowEditor" },
-		);
+		expect(setWidget).toHaveBeenCalledWith("openai-web-search", undefined);
 	});
 
 	it("does not append system prompt when explicitly disabled", async () => {

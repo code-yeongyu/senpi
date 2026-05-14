@@ -115,17 +115,6 @@ export function isAnthropicWebSearchEnabled(): boolean {
 	return parseEnableEnv(ENABLE_ENV);
 }
 
-function widgetLines(): string[] {
-	const allowedDomains = parseDomainListEnv(ALLOWED_DOMAINS_ENV);
-	const blockedDomains = parseDomainListEnv(BLOCKED_DOMAINS_ENV);
-	const filters = [
-		allowedDomains ? `allowed ${allowedDomains.length}` : undefined,
-		blockedDomains ? `blocked ${blockedDomains.length}` : undefined,
-	].filter((value): value is string => value !== undefined);
-	const filterText = filters.length > 0 ? ` · ${filters.join(" · ")}` : "";
-	return ["Native Web Search", `Anthropic · web_search_20250305 · max_uses ${WEB_SEARCH_MAX_USES}${filterText}`];
-}
-
 function clearUi(ctx: ExtensionContext): void {
 	if (!ctx.hasUI) return;
 	ctx.ui.setStatus(STATUS_KEY, undefined);
@@ -133,14 +122,7 @@ function clearUi(ctx: ExtensionContext): void {
 }
 
 function syncUi(ctx: ExtensionContext): void {
-	if (!ctx.hasUI) return;
-	if (ctx.model?.api !== "anthropic-messages" || !isAnthropicWebSearchEnabled()) {
-		clearUi(ctx);
-		return;
-	}
-
-	ctx.ui.setStatus(STATUS_KEY, undefined);
-	ctx.ui.setWidget(WIDGET_KEY, widgetLines(), { placement: "belowEditor" });
+	clearUi(ctx);
 }
 
 export const ANTHROPIC_WEB_SEARCH_SECTION = `

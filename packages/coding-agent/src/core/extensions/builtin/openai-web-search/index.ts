@@ -8,7 +8,6 @@ const ENABLE_ENV = "PI_OPENAI_WEB_SEARCH";
 const NATIVE_OPENAI_WEB_SEARCH_TYPE = "web_search_preview";
 const STATUS_KEY = "openai-web-search";
 const WIDGET_KEY = "openai-web-search";
-const WIDGET_LINES = ["Native Web Search", `OpenAI Responses · ${NATIVE_OPENAI_WEB_SEARCH_TYPE}`];
 
 function parseEnableEnv(envVar: string): boolean {
 	const envValue = process.env[envVar];
@@ -132,14 +131,7 @@ function clearUi(ctx: ExtensionContext): void {
 }
 
 function syncUi(ctx: ExtensionContext): void {
-	if (!ctx.hasUI) return;
-	if (!isOpenAiResponsesApi(ctx.model?.api) || !isOpenaiWebSearchEnabled()) {
-		clearUi(ctx);
-		return;
-	}
-
-	ctx.ui.setStatus(STATUS_KEY, undefined);
-	ctx.ui.setWidget(WIDGET_KEY, WIDGET_LINES, { placement: "belowEditor" });
+	clearUi(ctx);
 }
 
 export const OPENAI_WEB_SEARCH_SECTION = `

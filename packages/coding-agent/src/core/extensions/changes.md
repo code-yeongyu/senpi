@@ -1,17 +1,16 @@
 # Core Extensions Changes
 
-## 2026-05-14 - Native Web Tool Startup Widgets
+## 2026-05-14 - Native Web Tool UI Cleanup Hooks
 
 ### What changed
 
-- `builtin/anthropic-web-search/index.ts`: Added session/model UI status and prompt widget updates for Anthropic native `web_search`.
-- `builtin/openai-web-search/index.ts`: Added session/model UI status and prompt widget updates for OpenAI Responses native `web_search_preview`.
-- `test/suite/anthropic-web-search-extension.test.ts` and `test/suite/openai-web-search-extension.test.ts`: Added regression coverage for the native web tool widgets.
-- 2026-05-14 follow-up: The same UI hooks now clear footer status text instead of writing long web-tool labels into the footer.
+- `builtin/anthropic-web-search/index.ts`: Added session/model UI cleanup for Anthropic native `web_search` so older startup widgets are cleared.
+- `builtin/openai-web-search/index.ts`: Added session/model UI cleanup for OpenAI Responses native `web_search_preview` so older startup widgets are cleared.
+- `test/suite/anthropic-web-search-extension.test.ts` and `test/suite/openai-web-search-extension.test.ts`: Added regression coverage that native web tool extensions do not leave startup/footer widgets behind.
 
 ### Why
 
-- Native provider web search is injected below the function-tool layer, so the TUI previously did not show users that search was available or which provider-native variant would handle current-information requests.
+- Native provider web search is injected below the function-tool layer, but always-on footer widgets for that availability are too noisy. The UI should stay quiet until an actual tool execution or provider response needs rendering.
 
 ### Why extension system couldn't handle this alone
 
