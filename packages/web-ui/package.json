@@ -1,7 +1,7 @@
 {
 	"name": "@earendil-works/pi-web-ui",
 	"private": true,
-	"version": "2026.5.13-4",
+	"version": "2026.5.14",
 	"description": "Reusable web UI components for AI chat interfaces powered by @earendil-works/pi-ai",
 	"type": "module",
 	"main": "dist/index.js",
@@ -21,9 +21,9 @@
 		"check": "biome check --write --error-on-warnings . && tsc --noEmit && cd example && biome check --write --error-on-warnings . && tsc --noEmit"
 	},
 	"dependencies": {
-		"@earendil-works/pi-agent-core": "^2026.5.13-4",
-		"@earendil-works/pi-ai": "^2026.5.13-4",
-		"@earendil-works/pi-tui": "^2026.5.13-4",
+		"@earendil-works/pi-agent-core": "^2026.5.14",
+		"@earendil-works/pi-ai": "^2026.5.14",
+		"@earendil-works/pi-tui": "^2026.5.14",
 		"@lmstudio/sdk": "^1.5.0",
 		"typebox": "^1.1.24",
 		"docx-preview": "^0.3.7",
