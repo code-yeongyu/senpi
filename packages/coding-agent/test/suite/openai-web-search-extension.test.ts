@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import openaiWebSearchExtension, {
 	addOpenAiWebSearchToPayload,
 	isOpenaiWebSearchEnabled,
@@ -6,6 +6,12 @@ import openaiWebSearchExtension, {
 import type { ExtensionAPI } from "../../src/core/extensions/types.js";
 
 const ENABLE_ENV = "PI_OPENAI_WEB_SEARCH";
+
+type TestUi = {
+	setStatus: (key: string, value: string | undefined) => void;
+	setWidget: (key: string, lines: string[] | undefined, options?: { placement: "belowEditor" }) => void;
+	theme: { fg: (key: string, value: string) => string };
+};
 
 afterEach(() => {
 	delete process.env[ENABLE_ENV];
@@ -192,6 +198,41 @@ describe("isOpenaiWebSearchEnabled", () => {
 });
 
 describe("openai-web-search before_agent_start", () => {
+	it("shows native web search widget for OpenAI Responses sessions", async () => {
+		type SessionStartHandler = (
+			event: object,
+			ctx: { model?: { api?: string }; hasUI?: boolean; ui: TestUi },
+		) => Promise<void> | void;
+
+		let sessionStartHandler: SessionStartHandler | undefined;
+		const setStatus = vi.fn();
+		const setWidget = vi.fn();
+		const pi = {
+			on(eventName: string, handler: unknown) {
+				if (eventName === "session_start") {
+					sessionStartHandler = handler as SessionStartHandler;
+				}
+			},
+		} satisfies Pick<ExtensionAPI, "on">;
+
+		openaiWebSearchExtension(pi as ExtensionAPI);
+		await sessionStartHandler?.(
+			{},
+			{
+				model: { api: "openai-responses" },
+				hasUI: true,
+				ui: { setStatus, setWidget, theme: { fg: (_key: string, value: string) => value } },
+			},
+		);
+
+		expect(setStatus).toHaveBeenCalledWith("openai-web-search", "web_search native");
+		expect(setWidget).toHaveBeenCalledWith(
+			"openai-web-search",
+			["Native Web Search", "OpenAI Responses · web_search_preview"],
+			{ placement: "belowEditor" },
+		);
+	});
+
 	it("does not append system prompt when explicitly disabled", async () => {
 		process.env[ENABLE_ENV] = "off";
 

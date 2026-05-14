@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import anthropicWebSearchExtension, {
 	ANTHROPIC_WEB_SEARCH_SECTION,
 	addAnthropicWebSearchToPayload,
@@ -9,6 +9,12 @@ import type { ExtensionAPI } from "../../src/core/extensions/types.js";
 const ENABLE_ENV = "PI_ANTHROPIC_WEB_SEARCH";
 const ALLOWED_DOMAINS_ENV = "PI_ANTHROPIC_WEB_SEARCH_ALLOWED_DOMAINS";
 const BLOCKED_DOMAINS_ENV = "PI_ANTHROPIC_WEB_SEARCH_BLOCKED_DOMAINS";
+
+type TestUi = {
+	setStatus: (key: string, value: string | undefined) => void;
+	setWidget: (key: string, lines: string[] | undefined, options?: { placement: "belowEditor" }) => void;
+	theme: { fg: (key: string, value: string) => string };
+};
 
 afterEach(() => {
 	delete process.env[ENABLE_ENV];
@@ -152,6 +158,41 @@ describe("isAnthropicWebSearchEnabled", () => {
 });
 
 describe("anthropic-web-search before_agent_start", () => {
+	it("shows native web search widget for Anthropic sessions", async () => {
+		type SessionStartHandler = (
+			event: object,
+			ctx: { model?: { api?: string }; hasUI?: boolean; ui: TestUi },
+		) => Promise<void> | void;
+
+		let sessionStartHandler: SessionStartHandler | undefined;
+		const setStatus = vi.fn();
+		const setWidget = vi.fn();
+		const pi = {
+			on(eventName: string, handler: unknown) {
+				if (eventName === "session_start") {
+					sessionStartHandler = handler as SessionStartHandler;
+				}
+			},
+		} satisfies Pick<ExtensionAPI, "on">;
+
+		anthropicWebSearchExtension(pi as ExtensionAPI);
+		await sessionStartHandler?.(
+			{},
+			{
+				model: { api: "anthropic-messages" },
+				hasUI: true,
+				ui: { setStatus, setWidget, theme: { fg: (_key: string, value: string) => value } },
+			},
+		);
+
+		expect(setStatus).toHaveBeenCalledWith("anthropic-web-search", "web_search native");
+		expect(setWidget).toHaveBeenCalledWith(
+			"anthropic-web-search",
+			["Native Web Search", "Anthropic · web_search_20250305 · max_uses 8"],
+			{ placement: "belowEditor" },
+		);
+	});
+
 	it("does not append system prompt when explicitly disabled", async () => {
 		process.env[ENABLE_ENV] = "off";
 

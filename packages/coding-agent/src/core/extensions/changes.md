@@ -1,5 +1,25 @@
 # Core Extensions Changes
 
+## 2026-05-14 - Native Web Tool Startup Widgets
+
+### What changed
+
+- `builtin/anthropic-web-search/index.ts`: Added session/model UI status and prompt widget updates for Anthropic native `web_search`.
+- `builtin/openai-web-search/index.ts`: Added session/model UI status and prompt widget updates for OpenAI Responses native `web_search_preview`.
+- `test/suite/anthropic-web-search-extension.test.ts` and `test/suite/openai-web-search-extension.test.ts`: Added regression coverage for the native web tool widgets.
+
+### Why
+
+- Native provider web search is injected below the function-tool layer, so the TUI previously did not show users that search was available or which provider-native variant would handle current-information requests.
+
+### Why extension system couldn't handle this alone
+
+- These are already builtin extensions responsible for native provider payload mutation; the useful UI state belongs beside that injection logic.
+
+### Expected merge conflict zones
+
+- LOW: `builtin/anthropic-web-search/index.ts` and `builtin/openai-web-search/index.ts` if native web tool payload handling changes upstream.
+
 ## 2026-05-13 - Rename injected system prefix to senpi
 
 ### What changed

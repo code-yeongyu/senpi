@@ -1,11 +1,14 @@
 import type { Api } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "../../types.js";
+import type { ExtensionAPI, ExtensionContext } from "../../types.js";
 
 type ToolDefinition = Record<string, unknown>;
 
 const OPENAI_RESPONSES_APIS: ReadonlySet<Api> = new Set(["openai-responses", "azure-openai-responses"]);
 const ENABLE_ENV = "PI_OPENAI_WEB_SEARCH";
 const NATIVE_OPENAI_WEB_SEARCH_TYPE = "web_search_preview";
+const STATUS_KEY = "openai-web-search";
+const WIDGET_KEY = "openai-web-search";
+const WIDGET_LINES = ["Native Web Search", `OpenAI Responses · ${NATIVE_OPENAI_WEB_SEARCH_TYPE}`];
 
 function parseEnableEnv(envVar: string): boolean {
 	const envValue = process.env[envVar];
@@ -122,6 +125,23 @@ export function isOpenaiWebSearchEnabled(): boolean {
 	return parseEnableEnv(ENABLE_ENV);
 }
 
+function clearUi(ctx: ExtensionContext): void {
+	if (!ctx.hasUI) return;
+	ctx.ui.setStatus(STATUS_KEY, undefined);
+	ctx.ui.setWidget(WIDGET_KEY, undefined);
+}
+
+function syncUi(ctx: ExtensionContext): void {
+	if (!ctx.hasUI) return;
+	if (!isOpenAiResponsesApi(ctx.model?.api) || !isOpenaiWebSearchEnabled()) {
+		clearUi(ctx);
+		return;
+	}
+
+	ctx.ui.setStatus(STATUS_KEY, "web_search native");
+	ctx.ui.setWidget(WIDGET_KEY, WIDGET_LINES, { placement: "belowEditor" });
+}
+
 export const OPENAI_WEB_SEARCH_SECTION = `
 ## Web Search
 
@@ -133,6 +153,18 @@ Prefer web search over guessing when freshness matters.
 export default function openaiWebSearchExtension(pi: ExtensionAPI): void {
 	pi.on("before_provider_request", (event, ctx) => {
 		return addOpenAiWebSearchToPayload(ctx.model?.api, event.payload);
+	});
+
+	pi.on("session_start", async (_event, ctx) => {
+		syncUi(ctx);
+	});
+
+	pi.on("model_select", async (_event, ctx) => {
+		syncUi(ctx);
+	});
+
+	pi.on("session_shutdown", async (_event, ctx) => {
+		clearUi(ctx);
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {

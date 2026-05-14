@@ -1,5 +1,5 @@
 import type { Api } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "../../types.js";
+import type { ExtensionAPI, ExtensionContext } from "../../types.js";
 
 type ToolDefinition = Record<string, unknown>;
 
@@ -7,6 +7,8 @@ const WEB_SEARCH_MAX_USES = 8;
 const ENABLE_ENV = "PI_ANTHROPIC_WEB_SEARCH";
 const ALLOWED_DOMAINS_ENV = "PI_ANTHROPIC_WEB_SEARCH_ALLOWED_DOMAINS";
 const BLOCKED_DOMAINS_ENV = "PI_ANTHROPIC_WEB_SEARCH_BLOCKED_DOMAINS";
+const STATUS_KEY = "anthropic-web-search";
+const WIDGET_KEY = "anthropic-web-search";
 
 function parseEnableEnv(envVar: string): boolean {
 	const envValue = process.env[envVar];
@@ -113,6 +115,34 @@ export function isAnthropicWebSearchEnabled(): boolean {
 	return parseEnableEnv(ENABLE_ENV);
 }
 
+function widgetLines(): string[] {
+	const allowedDomains = parseDomainListEnv(ALLOWED_DOMAINS_ENV);
+	const blockedDomains = parseDomainListEnv(BLOCKED_DOMAINS_ENV);
+	const filters = [
+		allowedDomains ? `allowed ${allowedDomains.length}` : undefined,
+		blockedDomains ? `blocked ${blockedDomains.length}` : undefined,
+	].filter((value): value is string => value !== undefined);
+	const filterText = filters.length > 0 ? ` · ${filters.join(" · ")}` : "";
+	return ["Native Web Search", `Anthropic · web_search_20250305 · max_uses ${WEB_SEARCH_MAX_USES}${filterText}`];
+}
+
+function clearUi(ctx: ExtensionContext): void {
+	if (!ctx.hasUI) return;
+	ctx.ui.setStatus(STATUS_KEY, undefined);
+	ctx.ui.setWidget(WIDGET_KEY, undefined);
+}
+
+function syncUi(ctx: ExtensionContext): void {
+	if (!ctx.hasUI) return;
+	if (ctx.model?.api !== "anthropic-messages" || !isAnthropicWebSearchEnabled()) {
+		clearUi(ctx);
+		return;
+	}
+
+	ctx.ui.setStatus(STATUS_KEY, "web_search native");
+	ctx.ui.setWidget(WIDGET_KEY, widgetLines(), { placement: "belowEditor" });
+}
+
 export const ANTHROPIC_WEB_SEARCH_SECTION = `
 ## Web Search
 
@@ -124,6 +154,18 @@ Prefer web_search over guessing when freshness matters.
 export default function anthropicWebSearchExtension(pi: ExtensionAPI): void {
 	pi.on("before_provider_request", (event, ctx) => {
 		return addAnthropicWebSearchToPayload(ctx.model?.api, event.payload);
+	});
+
+	pi.on("session_start", async (_event, ctx) => {
+		syncUi(ctx);
+	});
+
+	pi.on("model_select", async (_event, ctx) => {
+		syncUi(ctx);
+	});
+
+	pi.on("session_shutdown", async (_event, ctx) => {
+		clearUi(ctx);
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
