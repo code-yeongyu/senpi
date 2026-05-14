@@ -16,96 +16,29 @@ const FILES = [
 		target: "bash-timeout/index.ts",
 		transform: (content) =>
 			content.replace(
-				'import type { ExtensionAPI } from "@code-yeongyu/senpi";',
+				'import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";',
 				'import type { ExtensionAPI } from "../../types.js";',
 			),
 	},
 	{ source: "pi-bash-timeout/src/timeout.ts", target: "bash-timeout/timeout.ts" },
-	{
-		source: "pi-apply-patch/src/index.ts",
-		target: "gpt-apply-patch/index.ts",
-		transform: (content) =>
-			content
-				.replace(
-					'import type { AgentToolResult } from "@earendil-works/pi-agent-core";',
-					'import type { AgentToolResult } from "../../types.js";',
-				)
-				.replace(
-					'import { defineTool, type ExtensionAPI, type ToolDefinition } from "@code-yeongyu/senpi";',
-					'import { defineTool, type ExtensionAPI, type ToolDefinition } from "../../types.js";',
-				)
-				.replace(
-					'import type { AgentToolResult } from "../../types.js";\nimport type { Model } from "@earendil-works/pi-ai";\nimport { defineTool, type ExtensionAPI, type ToolDefinition } from "../../types.js";\nimport { Type } from "typebox";',
-					'import type { Model } from "@earendil-works/pi-ai";\nimport { Type } from "typebox";\nimport type { AgentToolResult } from "../../types.js";\nimport { defineTool, type ExtensionAPI, type ToolDefinition } from "../../types.js";',
-				),
-	},
-	{
-		source: "pi-todotools/src/index.ts",
-		target: "todotools/index.ts",
-		transform: (content) =>
-			content.replace(
-				'import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";',
-				'import type { ExtensionAPI, ExtensionContext } from "../../types.js";',
-			),
-	},
-	{ source: "pi-todotools/src/prompt.ts", target: "todotools/prompt.ts" },
-	{ source: "pi-todotools/src/settings.ts", target: "todotools/settings.ts" },
-	{ source: "pi-todotools/src/state.ts", target: "todotools/state.ts" },
-	{
-		source: "pi-todotools/src/system-messages.ts",
-		target: "todotools/system-messages.ts",
-		transform: (content) =>
-			content
-				.replace(
-					'import type { ImageContent, TextContent } from "@mariozechner/pi-ai";',
-					'import type { ImageContent, TextContent } from "@earendil-works/pi-ai";',
-				)
-				.replace(
-					'import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";',
-					'import type { ExtensionAPI } from "../../types.js";',
-				),
-	},
-	{ source: "pi-todotools/src/continuation/config.ts", target: "todotools/continuation/config.ts" },
-	{ source: "pi-todotools/src/continuation/index.ts", target: "todotools/continuation/index.ts" },
-	{ source: "pi-todotools/src/continuation/prompt.ts", target: "todotools/continuation/prompt.ts" },
-	{
-		source: "pi-todotools/src/continuation/runtime.ts",
-		target: "todotools/continuation/runtime.ts",
-		transform: (content) =>
-			content
-				.replace(
-					'import type { AssistantMessage } from "@mariozechner/pi-ai";',
-					'import type { AssistantMessage } from "@earendil-works/pi-ai";',
-				)
-				.replace(
-					'import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "@mariozechner/pi-coding-agent";',
-					'import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "../../../types.js";',
-				),
-	},
-	{
-		source: "pi-todotools/src/tools/todoread.ts",
-		target: "todotools/tools/todoread.ts",
-		transform: (content) =>
-			content
-				.replace(
-					'import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";',
-					'import type { ExtensionAPI } from "../../../types.js";',
-				)
-				.replace('import { Text } from "@mariozechner/pi-tui";', 'import { Text } from "@earendil-works/pi-tui";'),
-	},
-	{
-		source: "pi-todotools/src/tools/todowrite.ts",
-		target: "todotools/tools/todowrite.ts",
-		transform: (content) =>
-			content
-				.replace(
-					'import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";',
-					'import type { ExtensionAPI, ExtensionContext } from "../../../types.js";',
-				)
-				.replace('import { Text } from "@mariozechner/pi-tui";', 'import { Text } from "@earendil-works/pi-tui";'),
-	},
+	// pi-apply-patch has diverged: senpi maintains a refactored multi-file version under
+	// gpt-apply-patch/ (apply.ts, constants.ts, errors.ts, extension.ts, parser.ts, tool.ts, ...)
+	// while pi-apply-patch upstream is still a single src/index.ts monolith. Re-enabling the old
+	// monolithic sync would overwrite senpi's barrel index.ts and lose the refactor. Port
+	// behavior changes manually until the upstream package is restructured to match.
+	//
+	// pi-todotools has also diverged: senpi customizes SANEPI_SYSTEM_PREFIX to "[system:senpi]"
+	// (pi-todotools uses "[system:sanepi]") and `reportContinuationError` is wired into the
+	// unified `sanepi:conversation` event surface. Regular file-copy sync overwrites those
+	// customizations and breaks `test/suite/sanepi-conversation.test.ts`,
+	// `test/suite/todotools-continuation-runtime-unit.test.ts`, and
+	// `test/suite/todotools-continuation-chain-cap.test.ts`. Port improvements manually.
 ];
 
+// PACKAGES records upstream package versions in external-versions.json even when the FILES sync
+// is intentionally skipped for a package, so downstream consumers (and the
+// builtin-extension-sync test) still see the source-of-truth metadata for every vendored
+// builtin without us auto-overwriting the diverged files above.
 const PACKAGES = [
 	{ id: "bash-timeout", packageDir: "pi-bash-timeout" },
 	{ id: "gpt-apply-patch", packageDir: "pi-apply-patch" },
