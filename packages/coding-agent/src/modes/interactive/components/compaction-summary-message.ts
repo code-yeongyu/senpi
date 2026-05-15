@@ -14,7 +14,9 @@ function formatCompactionDetails(details: unknown): string | undefined {
 	const requested = typeof details.requestInputItemCount === "number" ? details.requestInputItemCount : undefined;
 	const retainedText = retained === undefined ? "native replay active" : `${retained.toLocaleString()} retained items`;
 	const requestedText = requested === undefined ? "" : ` from ${requested.toLocaleString()} OpenAI input items`;
-	return `OpenAI remote compact API: ${retainedText}${requestedText}`;
+	const route =
+		details.transport === "websocket" ? "OpenAI Responses WebSocket compaction" : "OpenAI remote compact API";
+	return `${route}: ${retainedText}${requestedText}`;
 }
 
 /**

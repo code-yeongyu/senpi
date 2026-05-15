@@ -112,6 +112,7 @@ describe("InteractiveMode compaction events", () => {
 				mode: "openai-remote",
 				provider: "openai",
 				api: "openai-responses",
+				transport: "websocket",
 				modelId: "gpt-5.4",
 				retainedInputItemCount: 2,
 				requestInputItemCount: 5,
@@ -119,7 +120,7 @@ describe("InteractiveMode compaction events", () => {
 		});
 
 		const rendered = stripAnsi(component.render(120).join("\n"));
-		expect(rendered).toContain("OpenAI remote compact API");
+		expect(rendered).toContain("OpenAI Responses WebSocket compaction");
 		expect(rendered).toContain("2 retained items");
 	});
 });

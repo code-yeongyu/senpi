@@ -6,7 +6,8 @@
 
 - `interactive-mode.ts`: synthetic post-compaction summary messages now preserve `CompactionResult.details`.
 - `components/compaction-summary-message.ts`: the compact summary card shows when OpenAI remote compaction was used,
-  including requested input count, retained item count, and original token pressure.
+  including requested input count, retained item count, original token pressure, and whether the route was Responses
+  WebSocket compaction or the compact endpoint.
 
 ### Why
 
