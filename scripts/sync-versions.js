@@ -46,11 +46,12 @@ if (versions.size > 1) {
 
 console.log('\n✅ All packages at same version (lockstep)');
 
-// Packages under this prefix are published by upstream and use their own versioning.
-// Only the published @code-yeongyu/senpi should skip them -- other workspace packages
-// (agent, web-ui) need internal deps to stay in sync during release.
-const SKIP_SYNC_PREFIX = "@earendil-works/";
-const PUBLISHED_PACKAGE = "@code-yeongyu/senpi";
+// @earendil-works/ packages exist as both local workspaces (CalVer) and upstream npm
+// packages (semver). The published @code-yeongyu/senpi pins its @earendil-works/ deps
+// to upstream versions so global installs resolve correctly. Other workspace packages
+// (agent, web-ui) still sync their internal deps to the local lockstep version during release.
+const SKIP_SYNC_PREFIX = '@earendil-works/';
+const PUBLISHED_PACKAGE = '@code-yeongyu/senpi';
 
 // Update all inter-package dependencies
 let totalUpdates = 0;
