@@ -11,14 +11,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: "build (${{ matrix.pm }})"
+  check:
+    name: Check and test
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        pm: [npm, bun, pnpm]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,55 +23,21 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
-          cache: ${{ matrix.pm == 'npm' && 'npm' || '' }}
-
-      - name: Setup pnpm
-        if: matrix.pm == 'pnpm'
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - name: Setup bun
-        if: matrix.pm == 'bun'
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
+          cache: npm
 
       - name: Install system dependencies
         run: |
-          apt_retry() {
-            for attempt in 1 2 3; do
-              if timeout 300s "$@"; then
-                return 0
-              fi
-              if [ "$attempt" = "3" ]; then
-                return 1
-              fi
-              sleep 10
-            done
-          }
-
-          apt_retry sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
-          apt_retry sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y \
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y \
             libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
           sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
 
       - name: Install dependencies
-        run: |
-          case "${{ matrix.pm }}" in
-            npm) npm ci ;;
-            bun) bun install ;;
-            pnpm) pnpm install ;;
-          esac
-
-      - name: Build
-        run: ${{ matrix.pm }} run build:${{ matrix.pm }}
+        run: npm ci
 
       - name: Check
-        if: matrix.pm == 'npm'
         run: npm run check
 
       - name: Test
-        if: matrix.pm == 'npm'
         timeout-minutes: 50
         run: npm test

@@ -33,15 +33,10 @@
 - Put issue-specific regressions under `packages/coding-agent/test/suite/regressions/` and name them `<issue-number>-<short-slug>.test.ts`.
 - NEVER commit unless user asks
 
-## Contribution Gate
+## Contribution Triage
 
-- New issues from new contributors are auto-closed by `.github/workflows/issue-gate.yml`
-- New PRs from new contributors without PR rights are auto-closed by `.github/workflows/pr-gate.yml`
-- Maintainer approval comments are handled by `.github/workflows/approve-contributor.yml`
-- Maintainers review auto-closed issues daily
-- Issues that do not meet the quality bar in `CONTRIBUTING.md` are not reopened and do not receive a reply
-- `lgtmi` approves future issues
-- `lgtm` approves future issues and rights to submit PRs
+- Issues and PRs stay open for maintainer review.
+- Issues and PRs that do not meet the quality bar in `CONTRIBUTING.md` may be closed without extended triage.
 
 When creating issues:
 

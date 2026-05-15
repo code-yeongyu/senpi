@@ -105,6 +105,17 @@ PRs that bloat the core or skip `changes.md` will be asked to convert to an exte
 - Match the style of the surrounding file. The codebase is largely consistent — Biome plus the existing patterns are the source of truth.
 - Use the path aliases defined in root `tsconfig.json` (`@earendil-works/pi-*`, `@code-yeongyu/senpi*`).
 
+## Trademark and Brand References
+
+Use third-party marks only to identify integrations, compatibility, providers, and required setup. Do not make senpi look endorsed by another project or vendor.
+
+- Anthropic and Claude: use referentially for Anthropic APIs, Claude models, and Anthropic-specific extensions. Follow Anthropic's legal terms: <https://www.anthropic.com/legal>.
+- OpenAI, ChatGPT, GPT, and GPT-4/GPT-5 model names: use referentially for OpenAI APIs and model compatibility. Follow OpenAI brand guidance: <https://openai.com/brand/>.
+- GitHub and GitHub Actions: use referentially for repository and workflow behavior. Follow GitHub logo and trademark guidance: <https://github.com/logos>.
+- Discord: use referentially for the upstream community link. Follow Discord branding guidance: <https://discord.com/branding>.
+
+Prefer product-neutral wording in user-facing copy unless a specific provider or integration is technically required.
+
 ## Communication
 
 - Issue and PR discussion happens on GitHub: <https://github.com/code-yeongyu/senpi>.
