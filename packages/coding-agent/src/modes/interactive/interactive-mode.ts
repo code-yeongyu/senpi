@@ -142,6 +142,14 @@ interface Expandable {
 	setExpanded(expanded: boolean): void;
 }
 
+type CustomEditorLike = EditorComponent & {
+	actionHandlers: Map<AppKeybinding, () => void>;
+	onEscape?: () => void;
+	onCtrlD?: () => void;
+	onPasteImage?: () => void;
+	onExtensionShortcut?: (data: string) => boolean;
+};
+
 function isExpandable(obj: unknown): obj is Expandable {
 	return typeof obj === "object" && obj !== null && "setExpanded" in obj && typeof obj.setExpanded === "function";
 }
@@ -2197,8 +2205,8 @@ export class InteractiveMode {
 
 			// If extending CustomEditor, copy app-level handlers
 			// Use duck typing since instanceof fails across jiti module boundaries
-			const customEditor = newEditor as unknown as Record<string, unknown>;
-			if ("actionHandlers" in customEditor && customEditor.actionHandlers instanceof Map) {
+			if ("actionHandlers" in newEditor && newEditor.actionHandlers instanceof Map) {
+				const customEditor = newEditor as CustomEditorLike;
 				if (!customEditor.onEscape) {
 					customEditor.onEscape = () => this.defaultEditor.onEscape?.();
 				}
@@ -2209,11 +2217,12 @@ export class InteractiveMode {
 					customEditor.onPasteImage = () => this.defaultEditor.onPasteImage?.();
 				}
 				if (!customEditor.onExtensionShortcut) {
-					customEditor.onExtensionShortcut = (data: string) => this.defaultEditor.onExtensionShortcut?.(data);
+					customEditor.onExtensionShortcut = (data: string) =>
+						this.defaultEditor.onExtensionShortcut?.(data) ?? false;
 				}
 				// Copy action handlers (clear, suspend, model switching, etc.)
 				for (const [action, handler] of this.defaultEditor.actionHandlers) {
-					(customEditor.actionHandlers as Map<string, () => void>).set(action, handler);
+					customEditor.actionHandlers.set(action, handler);
 				}
 			}
 
@@ -3653,7 +3662,7 @@ export class InteractiveMode {
 		if (allQueued.length === 0) {
 			this.updatePendingMessagesDisplay();
 			if (options?.abort) {
-				this.agent.abort();
+				void this.session.abort();
 			}
 			return 0;
 		}
@@ -3663,7 +3672,7 @@ export class InteractiveMode {
 		this.editor.setText(combinedText);
 		this.updatePendingMessagesDisplay();
 		if (options?.abort) {
-			this.agent.abort();
+			void this.session.abort();
 		}
 		return allQueued.length;
 	}
