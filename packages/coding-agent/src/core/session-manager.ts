@@ -410,7 +410,14 @@ export function buildSessionContext(
 
 	if (compaction) {
 		// Emit summary first
-		messages.push(createCompactionSummaryMessage(compaction.summary, compaction.tokensBefore, compaction.timestamp));
+		messages.push(
+			createCompactionSummaryMessage(
+				compaction.summary,
+				compaction.tokensBefore,
+				compaction.timestamp,
+				compaction.details,
+			),
+		);
 
 		// Find compaction index in path
 		const compactionIdx = path.findIndex((e) => e.type === "compaction" && e.id === compaction.id);

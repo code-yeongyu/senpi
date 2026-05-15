@@ -1,5 +1,28 @@
 # changes
 
+## Compaction detail propagation (2026-05-15)
+
+### What changed
+
+- `messages.ts`: `CompactionSummaryMessage` can now carry opaque `details` from the accepted compaction result.
+- `session-manager.ts`: reconstructed compaction summary messages preserve those details when rebuilding context from
+  session entries.
+
+### Why
+
+- The OpenAI remote compact API returns provider-native retained input, counts, and route metadata that should remain
+  visible after compaction and across context reconstruction without hard-coding provider behavior into core.
+
+### Why extension system couldn't handle this
+
+- Extensions can create the compaction result, but core owns conversion from persisted `compaction` entries into
+  `CompactionSummaryMessage` objects.
+
+### Expected merge conflict zones
+
+- LOW: `messages.ts` around `CompactionSummaryMessage` and `createCompactionSummaryMessage()`.
+- LOW: `session-manager.ts` around compaction-entry reconstruction.
+
 ## Export tilde paths (2026-05-13)
 
 ### What changed

@@ -2925,6 +2925,7 @@ export class InteractiveMode {
 							event.result.summary,
 							event.result.tokensBefore,
 							new Date().toISOString(),
+							event.result.details,
 						),
 					);
 					this.footer.invalidate();

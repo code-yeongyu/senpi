@@ -1,5 +1,6 @@
 import { Container } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, test, vi } from "vitest";
+import { CompactionSummaryMessageComponent } from "../src/modes/interactive/components/compaction-summary-message.js";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.js";
 import { initTheme } from "../src/modes/interactive/theme/theme.js";
 
@@ -98,5 +99,27 @@ describe("InteractiveMode compaction events", () => {
 			}),
 		);
 		expect(fakeThis.flushCompactionQueue).toHaveBeenCalledWith({ willRetry: false });
+	});
+
+	test("renders OpenAI remote compaction details in the summary card", () => {
+		const component = new CompactionSummaryMessageComponent({
+			role: "compactionSummary",
+			summary: "OpenAI remote compaction checkpoint.",
+			tokensBefore: 1234,
+			timestamp: Date.now(),
+			details: {
+				schema: "senpi.compaction.openai-remote.v1",
+				mode: "openai-remote",
+				provider: "openai",
+				api: "openai-responses",
+				modelId: "gpt-5.4",
+				retainedInputItemCount: 2,
+				requestInputItemCount: 5,
+			},
+		});
+
+		const rendered = stripAnsi(component.render(120).join("\n"));
+		expect(rendered).toContain("OpenAI remote compact API");
+		expect(rendered).toContain("2 retained items");
 	});
 });

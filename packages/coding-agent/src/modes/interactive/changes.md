@@ -1,5 +1,27 @@
 # changes
 
+## OpenAI remote compaction details (2026-05-15)
+
+### What changed
+
+- `interactive-mode.ts`: synthetic post-compaction summary messages now preserve `CompactionResult.details`.
+- `components/compaction-summary-message.ts`: the compact summary card shows when OpenAI remote compaction was used,
+  including requested input count, retained item count, and original token pressure.
+
+### Why
+
+- Users need to tell whether a turn used the extension fallback summary route or OpenAI's provider-native compact API.
+
+### Why extension system couldn't handle this
+
+- The visible summary card is built by the interactive renderer, and the synthetic message is created by the built-in
+  `compaction_end` event handler.
+
+### Expected merge conflict zones
+
+- LOW: `interactive-mode.ts` around the `compaction_end` handler.
+- LOW: `components/compaction-summary-message.ts` around collapsed and expanded summary rendering.
+
 ## compaction feedback labels (2026-05-15)
 
 ### What changed

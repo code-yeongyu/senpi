@@ -1,5 +1,26 @@
 # Changes
 
+## 2026-05-15 - Compaction summary metadata
+
+### What changed and why
+
+- Added optional `details` metadata to the harness `CompactionSummaryMessage` type.
+- This keeps the shared agent-core message augmentation compatible with coding-agent compaction summaries that carry
+  provider-native compaction route details for TUI rendering and replay.
+
+### Files modified
+
+- `packages/agent/src/harness/messages.ts`
+
+### Why the extension system could not handle this
+
+- This is exported type metadata in the shared harness message model. Extensions can populate compaction details, but they
+  cannot alter the core `CustomAgentMessages` declaration merge.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `packages/agent/src/harness/messages.ts` around `CompactionSummaryMessage`.
+
 ## 2026-05-12 - Abort terminal event normalization
 
 ### What changed and why
