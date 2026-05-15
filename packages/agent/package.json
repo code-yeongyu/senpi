@@ -6,6 +6,17 @@
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./node": {
+			"types": "./dist/node.d.ts",
+			"import": "./dist/node.js"
+		},
+		"./package.json": "./package.json"
+	},
 	"files": [
 		"dist",
 		"README.md"
@@ -15,6 +26,8 @@
 		"build": "tsgo -p tsconfig.build.json",
 		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
 		"test": "vitest --run",
+		"test:harness": "vitest --run --config vitest.harness.config.ts",
+		"coverage:harness": "vitest --run --config vitest.harness.config.ts --coverage",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
@@ -42,6 +55,7 @@
 	},
 	"devDependencies": {
 		"@types/node": "^24.3.0",
+		"@vitest/coverage-v8": "^3.2.4",
 		"typescript": "^5.7.3",
 		"vitest": "^3.2.4"
 	}

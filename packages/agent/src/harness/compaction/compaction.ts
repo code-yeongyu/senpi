@@ -15,7 +15,7 @@ import {
 	createCustomMessage,
 } from "../messages.js";
 import { buildSessionContext } from "../session/session.js";
-import type { CompactionEntry, SessionTreeEntry } from "../types.js";
+import { type CompactionEntry, CompactionError, err, ok, type Result, type SessionTreeEntry } from "../types.js";
 import {
 	computeFileLists,
 	createFileOps,
@@ -544,7 +544,7 @@ export async function generateSummary(
 	customInstructions?: string,
 	previousSummary?: string,
 	thinkingLevel?: ThinkingLevel,
-): Promise<string> {
+): Promise<Result<string, CompactionError>> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
@@ -581,14 +581,28 @@ export async function generateSummary(
 			? { maxTokens, signal, apiKey, headers, reasoning: thinkingLevel }
 			: { maxTokens, signal, apiKey, headers };
 
-	const response = await completeSimple(
+	const responseResult: Result<AssistantMessage, CompactionError> = await completeSimple(
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
 		completionOptions,
+	).then(
+		(response) => ok<AssistantMessage, CompactionError>(response),
+		(error: unknown) =>
+			err<AssistantMessage, CompactionError>(new CompactionError("unknown", "Summarization request failed", error)),
 	);
+	if (!responseResult.ok) return err(responseResult.error);
 
+	const response = responseResult.value;
+	if (response.stopReason === "aborted") {
+		return err(new CompactionError("aborted", response.errorMessage || "Summarization aborted"));
+	}
 	if (response.stopReason === "error") {
-		throw new Error(`Summarization failed: ${response.errorMessage || "Unknown error"}`);
+		return err(
+			new CompactionError(
+				"summarization_failed",
+				`Summarization failed: ${response.errorMessage || "Unknown error"}`,
+			),
+		);
 	}
 
 	const textContent = response.content
@@ -596,7 +610,7 @@ export async function generateSummary(
 		.map((c) => c.text)
 		.join("\n");
 
-	return textContent;
+	return ok(textContent);
 }
 
 // ============================================================================
@@ -734,7 +748,7 @@ export async function compact(
 	customInstructions?: string,
 	signal?: AbortSignal,
 	thinkingLevel?: ThinkingLevel,
-): Promise<CompactionResult> {
+): Promise<Result<CompactionResult, CompactionError>> {
 	const {
 		firstKeptEntryId,
 		messagesToSummarize,
@@ -746,11 +760,13 @@ export async function compact(
 		settings,
 	} = preparation;
 
-	// Generate summaries (can be parallel if both needed) and merge into one
+	if (!firstKeptEntryId) {
+		return err(new CompactionError("invalid_session", "First kept entry has no UUID - session may need migration"));
+	}
+
 	let summary: string;
 
 	if (isSplitTurn && turnPrefixMessages.length > 0) {
-		// Generate both summaries in parallel
 		const [historyResult, turnPrefixResult] = await Promise.all([
 			messagesToSummarize.length > 0
 				? generateSummary(
@@ -764,7 +780,7 @@ export async function compact(
 						previousSummary,
 						thinkingLevel,
 					)
-				: Promise.resolve("No prior history."),
+				: Promise.resolve(ok<string, CompactionError>("No prior history.")),
 			generateTurnPrefixSummary(
 				turnPrefixMessages,
 				model,
@@ -775,11 +791,11 @@ export async function compact(
 				thinkingLevel,
 			),
 		]);
-		// Merge into single summary
-		summary = `${historyResult}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult}`;
+		if (!historyResult.ok) return err(historyResult.error);
+		if (!turnPrefixResult.ok) return err(turnPrefixResult.error);
+		summary = `${historyResult.value}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.value}`;
 	} else {
-		// Just generate history summary
-		summary = await generateSummary(
+		const summaryResult = await generateSummary(
 			messagesToSummarize,
 			model,
 			settings.reserveTokens,
@@ -790,22 +806,19 @@ export async function compact(
 			previousSummary,
 			thinkingLevel,
 		);
+		if (!summaryResult.ok) return err(summaryResult.error);
+		summary = summaryResult.value;
 	}
 
-	// Compute file lists and append to summary
 	const { readFiles, modifiedFiles } = computeFileLists(fileOps);
 	summary += formatFileOperations(readFiles, modifiedFiles);
 
-	if (!firstKeptEntryId) {
-		throw new Error("First kept entry has no UUID - session may need migration");
-	}
-
-	return {
+	return ok({
 		summary,
 		firstKeptEntryId,
 		tokensBefore,
 		details: { readFiles, modifiedFiles } as CompactionDetails,
-	};
+	});
 }
 
 /**
@@ -819,7 +832,7 @@ async function generateTurnPrefixSummary(
 	headers?: Record<string, string>,
 	signal?: AbortSignal,
 	thinkingLevel?: ThinkingLevel,
-): Promise<string> {
+): Promise<Result<string, CompactionError>> {
 	const maxTokens = Math.min(
 		Math.floor(0.5 * reserveTokens),
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
@@ -835,20 +848,38 @@ async function generateTurnPrefixSummary(
 		},
 	];
 
-	const response = await completeSimple(
+	const responseResult: Result<AssistantMessage, CompactionError> = await completeSimple(
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
 		model.reasoning && thinkingLevel && thinkingLevel !== "off"
 			? { maxTokens, signal, apiKey, headers, reasoning: thinkingLevel }
 			: { maxTokens, signal, apiKey, headers },
+	).then(
+		(response) => ok<AssistantMessage, CompactionError>(response),
+		(error: unknown) =>
+			err<AssistantMessage, CompactionError>(
+				new CompactionError("unknown", "Turn prefix summarization request failed", error),
+			),
 	);
+	if (!responseResult.ok) return err(responseResult.error);
 
+	const response = responseResult.value;
+	if (response.stopReason === "aborted") {
+		return err(new CompactionError("aborted", response.errorMessage || "Turn prefix summarization aborted"));
+	}
 	if (response.stopReason === "error") {
-		throw new Error(`Turn prefix summarization failed: ${response.errorMessage || "Unknown error"}`);
+		return err(
+			new CompactionError(
+				"summarization_failed",
+				`Turn prefix summarization failed: ${response.errorMessage || "Unknown error"}`,
+			),
+		);
 	}
 
-	return response.content
-		.filter((c): c is { type: "text"; text: string } => c.type === "text")
-		.map((c) => c.text)
-		.join("\n");
+	return ok(
+		response.content
+			.filter((c): c is { type: "text"; text: string } => c.type === "text")
+			.map((c) => c.text)
+			.join("\n"),
+	);
 }

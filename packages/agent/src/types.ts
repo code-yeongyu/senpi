@@ -35,6 +35,14 @@ export type StreamFn = (
  */
 export type ToolExecutionMode = "sequential" | "parallel";
 
+/**
+ * Controls how many queued user messages are injected when the agent loop reaches a queue drain point.
+ *
+ * - "all": drain and inject every queued message at that point.
+ * - "one-at-a-time": drain and inject only the oldest queued message, leaving the rest queued for later drain points.
+ */
+export type QueueMode = "all" | "one-at-a-time";
+
 /** A single tool call content block emitted by an assistant message. */
 export type AgentToolCall = Extract<AssistantMessage["content"][number], { type: "toolCall" }>;
 

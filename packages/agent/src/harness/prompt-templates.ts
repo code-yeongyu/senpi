@@ -1,5 +1,5 @@
 import { parse } from "yaml";
-import type { ExecutionEnv, FileInfo, PromptTemplate } from "./types.js";
+import { type ExecutionEnv, type FileInfo, getOrUndefined, type PromptTemplate, type Result } from "./types.js";
 
 /** Warning produced while loading prompt templates. */
 export interface PromptTemplateDiagnostic {
@@ -30,7 +30,7 @@ export async function loadPromptTemplates(
 	const promptTemplates: PromptTemplate[] = [];
 	const diagnostics: PromptTemplateDiagnostic[] = [];
 	for (const path of Array.isArray(paths) ? paths : [paths]) {
-		const info = await safeFileInfo(env, path);
+		const info = getOrUndefined(await env.fileInfo(path));
 		if (!info) continue;
 		const kind = await resolveKind(env, info);
 		if (kind === "directory") {
@@ -83,17 +83,16 @@ async function loadTemplatesFromDir(
 ): Promise<{ promptTemplates: PromptTemplate[]; diagnostics: PromptTemplateDiagnostic[] }> {
 	const promptTemplates: PromptTemplate[] = [];
 	const diagnostics: PromptTemplateDiagnostic[] = [];
-	let entries: FileInfo[];
-	try {
-		entries = await env.listDir(dir);
-	} catch (error) {
+	const entriesResult = await env.listDir(dir);
+	if (!entriesResult.ok) {
 		diagnostics.push({
 			type: "warning",
-			message: errorMessage(error, "failed to list prompt template directory"),
+			message: entriesResult.error.message,
 			path: dir,
 		});
 		return { promptTemplates, diagnostics };
 	}
+	const entries = entriesResult.value;
 
 	for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
 		const kind = await resolveKind(env, entry);
@@ -110,70 +109,72 @@ async function loadTemplateFromFile(
 	filePath: string,
 ): Promise<{ promptTemplate: PromptTemplate | null; diagnostics: PromptTemplateDiagnostic[] }> {
 	const diagnostics: PromptTemplateDiagnostic[] = [];
-	try {
-		const rawContent = await env.readTextFile(filePath);
-		const { frontmatter, body } = parseFrontmatter<PromptTemplateFrontmatter>(rawContent);
-		const firstLine = body.split("\n").find((line) => line.trim());
-		let description = typeof frontmatter.description === "string" ? frontmatter.description : "";
-		if (!description && firstLine) {
-			description = firstLine.slice(0, 60);
-			if (firstLine.length > 60) description += "...";
-		}
-		return {
-			promptTemplate: {
-				name: basenameEnvPath(filePath).replace(/\.md$/i, ""),
-				description,
-				content: body,
-			},
-			diagnostics,
-		};
-	} catch (error) {
+	const rawContent = await env.readTextFile(filePath);
+	if (!rawContent.ok) {
 		diagnostics.push({
 			type: "warning",
-			message: errorMessage(error, "failed to load prompt template"),
+			message: rawContent.error.message,
 			path: filePath,
 		});
 		return { promptTemplate: null, diagnostics };
 	}
-}
 
-async function safeFileInfo(env: ExecutionEnv, path: string): Promise<FileInfo | undefined> {
-	try {
-		return await env.fileInfo(path);
-	} catch {
-		return undefined;
+	const parsed = parseFrontmatter<PromptTemplateFrontmatter>(rawContent.value);
+	if (!parsed.ok) {
+		diagnostics.push({
+			type: "warning",
+			message: parsed.error.message,
+			path: filePath,
+		});
+		return { promptTemplate: null, diagnostics };
 	}
+
+	const { frontmatter, body } = parsed.value;
+	const firstLine = body.split("\n").find((line) => line.trim());
+	let description = typeof frontmatter.description === "string" ? frontmatter.description : "";
+	if (!description && firstLine) {
+		description = firstLine.slice(0, 60);
+		if (firstLine.length > 60) description += "...";
+	}
+	return {
+		promptTemplate: {
+			name: basenameEnvPath(filePath).replace(/\.md$/i, ""),
+			description,
+			content: body,
+		},
+		diagnostics,
+	};
 }
 
 async function resolveKind(env: ExecutionEnv, info: FileInfo): Promise<"file" | "directory" | undefined> {
 	if (info.kind === "file" || info.kind === "directory") return info.kind;
-	try {
-		const realPath = await env.realPath(info.path);
-		const target = await env.fileInfo(realPath);
-		return target.kind === "file" || target.kind === "directory" ? target.kind : undefined;
-	} catch {
-		return undefined;
-	}
+	const canonicalPath = await env.canonicalPath(info.path);
+	if (!canonicalPath.ok) return undefined;
+	const target = getOrUndefined(await env.fileInfo(canonicalPath.value));
+	if (!target) return undefined;
+	return target.kind === "file" || target.kind === "directory" ? target.kind : undefined;
 }
 
-function parseFrontmatter<T extends Record<string, unknown>>(content: string): { frontmatter: T; body: string } {
-	const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-	if (!normalized.startsWith("---")) return { frontmatter: {} as T, body: normalized };
-	const endIndex = normalized.indexOf("\n---", 3);
-	if (endIndex === -1) return { frontmatter: {} as T, body: normalized };
-	const yamlString = normalized.slice(4, endIndex);
-	const body = normalized.slice(endIndex + 4).trim();
-	return { frontmatter: (parse(yamlString) ?? {}) as T, body };
+function parseFrontmatter<T extends Record<string, unknown>>(
+	content: string,
+): Result<{ frontmatter: T; body: string }, Error> {
+	try {
+		const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+		if (!normalized.startsWith("---")) return { ok: true, value: { frontmatter: {} as T, body: normalized } };
+		const endIndex = normalized.indexOf("\n---", 3);
+		if (endIndex === -1) return { ok: true, value: { frontmatter: {} as T, body: normalized } };
+		const yamlString = normalized.slice(4, endIndex);
+		const body = normalized.slice(endIndex + 4).trim();
+		return { ok: true, value: { frontmatter: (parse(yamlString) ?? {}) as T, body } };
+	} catch (error) {
+		return { ok: false, error: error instanceof Error ? error : new Error(String(error)) };
+	}
 }
 
 function basenameEnvPath(path: string): string {
 	const normalized = path.replace(/\/+$/, "");
 	const slashIndex = normalized.lastIndexOf("/");
 	return slashIndex === -1 ? normalized : normalized.slice(slashIndex + 1);
-}
-
-function errorMessage(error: unknown, fallback: string): string {
-	return error instanceof Error ? error.message : fallback;
 }
 
 /** Parse an argument string using simple shell-style single and double quotes. */

@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { JsonlSessionRepo } from "../../src/harness/session/repo/jsonl.js";
-import { InMemorySessionRepo } from "../../src/harness/session/repo/memory.js";
+import { NodeExecutionEnv } from "../../src/harness/env/nodejs.js";
+import { JsonlSessionRepo } from "../../src/harness/session/jsonl-repo.js";
+import { InMemorySessionRepo } from "../../src/harness/session/memory-repo.js";
 import { createAssistantMessage, createTempDir, createUserMessage } from "./session-test-utils.js";
 
 describe("InMemorySessionRepo", () => {
@@ -26,9 +27,10 @@ describe("InMemorySessionRepo", () => {
 describe("JsonlSessionRepo", () => {
 	it("stores sessions below encoded cwd directories and lists by cwd", async () => {
 		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
 		const cwd = "/tmp/my-project";
 		const otherCwd = "/tmp/other-project";
-		const repo = new JsonlSessionRepo({ sessionsRoot: root });
+		const repo = new JsonlSessionRepo({ fs: env, sessionsRoot: root });
 		const session = await repo.create({ cwd, id: "019de8c2-de29-73e9-ae0c-e134db34c447" });
 		const otherSession = await repo.create({ cwd: otherCwd, id: "other-session" });
 		const metadata = await session.getMetadata();
@@ -44,7 +46,8 @@ describe("JsonlSessionRepo", () => {
 
 	it("opens, deletes, and forks by metadata", async () => {
 		const root = createTempDir();
-		const repo = new JsonlSessionRepo({ sessionsRoot: root });
+		const env = new NodeExecutionEnv({ cwd: root });
+		const repo = new JsonlSessionRepo({ fs: env, sessionsRoot: root });
 		const source = await repo.create({ cwd: "/tmp/source", id: "source-session" });
 		const sourceMetadata = await source.getMetadata();
 		const user1 = await source.appendMessage(createUserMessage("one"));

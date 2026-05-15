@@ -1,6 +1,5 @@
-import { randomUUID } from "node:crypto";
-import type { SessionMetadata, SessionStorage, SessionTreeEntry } from "../../types.js";
-import { uuidv7 } from "../uuid.js";
+import type { SessionMetadata, SessionStorage, SessionTreeEntry } from "../types.js";
+import { uuidv7 } from "./uuid.js";
 
 function updateLabelCache(labelsById: Map<string, string>, entry: SessionTreeEntry): void {
 	if (entry.type !== "label") return;
@@ -22,10 +21,10 @@ function buildLabelsById(entries: SessionTreeEntry[]): Map<string, string> {
 
 function generateEntryId(byId: { has(id: string): boolean }): string {
 	for (let i = 0; i < 100; i++) {
-		const id = randomUUID().slice(0, 8);
+		const id = uuidv7().slice(0, 8);
 		if (!byId.has(id)) return id;
 	}
-	return randomUUID();
+	return uuidv7();
 }
 
 export class InMemorySessionStorage implements SessionStorage {

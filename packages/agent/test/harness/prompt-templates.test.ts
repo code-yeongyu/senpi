@@ -1,7 +1,7 @@
 import { symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { NodeExecutionEnv } from "../../src/harness/execution-env.js";
+import { NodeExecutionEnv } from "../../src/harness/env/nodejs.js";
 import {
 	formatPromptTemplateInvocation,
 	loadPromptTemplates,

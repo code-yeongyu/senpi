@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { NodeExecutionEnv } from "../../src/harness/env/nodejs.js";
+import { JsonlSessionStorage } from "../../src/harness/session/jsonl-storage.js";
+import { InMemorySessionStorage } from "../../src/harness/session/memory-storage.js";
 import { Session } from "../../src/harness/session/session.js";
-import { JsonlSessionStorage } from "../../src/harness/session/storage/jsonl.js";
-import { InMemorySessionStorage } from "../../src/harness/session/storage/memory.js";
 import type { SessionStorage } from "../../src/harness/types.js";
 import { createAssistantMessage, createTempDir, createUserMessage, getLatestTempDir } from "./session-test-utils.js";
 
@@ -128,7 +129,8 @@ runSessionSuite(
 	"Session with JSONL storage",
 	async () => {
 		const dir = createTempDir();
-		return await JsonlSessionStorage.create(join(dir, "session.jsonl"), { cwd: dir, sessionId: "session-1" });
+		const env = new NodeExecutionEnv({ cwd: dir });
+		return await JsonlSessionStorage.create(env, join(dir, "session.jsonl"), { cwd: dir, sessionId: "session-1" });
 	},
 	() => {
 		const dir = getLatestTempDir();

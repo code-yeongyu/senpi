@@ -1,6 +1,6 @@
 # AgentHarness lifecycle
 
-`AgentHarness` is the orchestration layer above the low-level `Agent`. It owns session persistence, runtime configuration, resource resolution, operation locking, and extension-facing mutation semantics.
+`AgentHarness` is the orchestration layer above the low-level agent loop. It owns session persistence, runtime configuration, resource resolution, operation locking, and extension-facing mutation semantics.
 
 This document describes the current direction and implemented behavior. Some extension/session-facade details are planned and called out explicitly.
 
@@ -15,8 +15,15 @@ The intended rule is:
 - runtime config setters update future snapshots without mutating the current provider request
 - session writes made while busy are durably queued and flushed in deterministic order
 - getters return latest harness config, not in-flight snapshots
+- listeners/hooks currently receive no facade; if they close over the raw harness and call settlement APIs such as `waitForIdle()` during the active run, they can deadlock. A future facade should expose `runWhenIdle()` instead.
 
 A final lifecycle hardening pass should prove these guarantees with a broad listener/hook reentrancy test suite.
+
+## Error handling
+
+The target error-handling model is `Result<TValue, TError>` for fallible harness operations instead of thrown exceptions. Implementations should catch backend/provider/filesystem exceptions at the boundary and normalize them into typed error results; callers should inspect returned results instead of relying on thrown exceptions.
+
+This is currently implemented for `ExecutionEnv`, `NodeExecutionEnv`, shell-output capture, and skill/prompt-template resource loading. Older harness/session/compaction APIs still throw in several paths; finishing that migration is tracked in the cleanup todo.
 
 ## State model
 
@@ -90,7 +97,7 @@ Structural operations require `phase === "idle"` and synchronously set the phase
 - `compact`
 - `navigateTree`
 
-Starting another structural operation while the harness is not idle throws.
+Starting another structural operation while the harness is not idle currently throws. This should become a typed result failure as part of the error-handling cleanup.
 
 The following operations are allowed during a turn where appropriate:
 
@@ -117,8 +124,8 @@ Phase/settlement semantics are still provisional and need a full lifecycle pass.
 
 Queue modes are live, not turn-snapshotted:
 
-- `steeringMode`
-- `followUpMode`
+- `getSteeringMode()` / `setSteeringMode()`
+- `getFollowUpMode()` / `setFollowUpMode()`
 
 Changing a queue mode during a run affects the next queue drain. Queue drains happen at safe points.
 
@@ -141,21 +148,21 @@ The low-level loop converts harness `ThinkingLevel` to provider `reasoning` at t
 
 No state refresh is needed on `agent_end` except flushing leftover pending session writes and clearing the operation phase. The exact `settled` event timing is still under review.
 
-If the system-prompt callback throws while starting `prompt`, `skill`, or `promptFromTemplate`, the operation throws and the harness returns to idle. If it throws from the save-point snapshot created by `prepareNextTurn`, the low-level agent run records an assistant error message.
+If the system-prompt callback throws while starting `prompt`, `skill`, or `promptFromTemplate`, the operation currently throws and the harness returns to idle. This should become a typed result failure as part of the error-handling cleanup. If it throws from the save-point snapshot created by `prepareNextTurn`, the low-level agent run records an assistant error message.
 
 ## Hooks and events
 
-Current hooks receive only the event payload. There is no extension context object yet.
+Current hooks and listeners receive only the event payload. There is no extension context object yet.
 
 Event payloads describe what is happening. Harness getters describe latest config for future snapshots.
 
 The split between harness-specific events (`AgentHarnessOwnEvent`) and the union of low-level plus harness events (`AgentHarnessEvent`) is provisional but useful for distinguishing hookable harness events from public subscription events.
 
-A future extension context may expose the harness and a queued-write session facade.
+A future extension context should expose a harness facade plus a queued-write session facade. The facade must not expose APIs that can deadlock the current event dispatch. In particular, listeners/hooks should not call `waitForIdle()` for the active run; expose a `runWhenIdle(() => Promise<void>)` scheduling API instead. This is future extension-context work; current listeners/hooks receive only payloads and no safe harness facade.
 
 ## Planned session facade
 
-Extensions should eventually interact with a harness-scoped session facade rather than the raw session.
+Extensions should eventually interact with a harness-scoped `HarnessSession` facade rather than the raw session. The facade should wrap the internal session and enforce harness pending-write ordering semantics. Once this exists, hooks and event listeners can receive a context that exposes the full `AgentHarness` plus the session facade without giving direct access to unordered raw session writes.
 
 Planned read semantics:
 
@@ -177,7 +184,9 @@ Agent-emitted messages are persisted on `message_end` to preserve transcript ord
 
 ## Abort
 
-Abort is allowed during a turn. It aborts the low-level run and clears low-level steering/follow-up queues.
+Abort is allowed during a turn. It aborts the low-level run and clears steering/follow-up queues.
+
+Abort does not clear `nextTurn` messages. Messages queued with `nextTurn()` survive abort and are inserted before the user message on the next user-initiated turn.
 
 Abort does not discard pending session writes. Pending writes flush at the next save point if reached, at `agent_end`, or in operation failure cleanup.
 
@@ -199,7 +208,7 @@ Harness tests should stay focused by area instead of growing one large catch-all
 
 Current structure:
 
-- `packages/agent/test/harness/agent-harness.test.ts`: basic construction/API smoke tests.
+- `packages/agent/test/harness/agent-harness.test.ts`: core lifecycle and public API behavior.
 - `packages/agent/test/harness/agent-harness-stream.test.ts`: stream options and provider hook semantics.
 
 Preferred future structure:
@@ -210,27 +219,40 @@ Preferred future structure:
 
 Use the `pi-ai` faux provider (`registerFauxProvider`, `fauxAssistantMessage`) for deterministic harness/provider tests. Faux response factories can inspect `StreamOptions`, invoke `options.onPayload`, and return scripted assistant messages without real provider APIs or network access.
 
+Harness coverage is configured separately from the default package test run:
+
+```bash
+npm run test:harness
+npm run coverage:harness
+```
+
+`coverage:harness` runs `test/harness/**/*.test.ts` and reports coverage for `src/harness/**/*.ts` plus the non-harness runtime files it directly exercises (`src/agent.ts` and `src/agent-loop.ts`) into `coverage/harness`. Type-only dependencies such as `src/types.ts` are not included because they have no meaningful runtime coverage.
+
 ## Implementation todo
 
 This list tracks the remaining work before treating `AgentHarness` as migration-ready.
 
 ### 1. Remove `Agent` dependency from `AgentHarness`
 
-New top priority.
+Implemented.
 
-`AgentHarness` should likely call `agentLoop` / `agentLoopContinue` directly instead of owning an internal `Agent` instance. The harness already owns session persistence, runtime config snapshots, queues, provider stream configuration, hooks/events, phase semantics, and abort semantics. Keeping `Agent` in the middle creates duplicated state and adapter seams.
+`AgentHarness` now calls `runAgentLoop()` directly instead of owning an internal `Agent` instance. The harness owns active run/abort-controller lifecycle, queue draining, provider stream configuration, event reduction, session persistence, pending write flushing, and save-point snapshot refresh.
 
-Still needed:
+Implemented validation:
 
-- Replace internal `new Agent(...)` with direct low-level loop calls.
-- Move active run/abort-controller lifecycle into `AgentHarness`.
-- Move queue draining into `AgentHarness` only, removing duplicated low-level `Agent` queues.
-- Reduce low-level `AgentEvent` state directly in the harness where needed.
-- Preserve current public behavior for `prompt`, `skill`, `promptFromTemplate`, `steer`, `followUp`, `nextTurn`, `abort`, and `waitForIdle`.
-- Preserve provider hook behavior implemented by the harness stream wrapper.
-- Preserve save-point snapshot refresh semantics without side-effecting through `Agent.prepareNextTurn`.
-- Decide whether `AgentHarness.agent` remains temporarily for compatibility or is removed before migration.
-- Add tests covering parity with the current harness behavior before and after the refactor.
+- prompt construction and public runtime config getters/mutators
+- steering queue draining and `queue_update` emission
+- follow-up queue draining and `queue_update` emission
+- `before_agent_start` message ordering and persistence
+- abort clearing steer/follow-up queues while preserving `nextTurn` messages
+- thrown hook failure cleanup with persisted assistant error messages and settlement
+- save-point refresh for model, thinking level, resources, system prompt, and active tools
+- pending listener session write ordering after agent-emitted messages
+- external `waitForIdle()` waiting for awaited listeners and run settlement
+- `tool_call` and `tool_result` hook behavior through the direct loop
+- provider stream wrapper behavior in `agent-harness-stream.test.ts`
+
+Remaining lifecycle hardening beyond this refactor is tracked in the final lifecycle hardening suite.
 
 ### 2. Finish curated provider/stream configuration
 
@@ -288,8 +310,10 @@ Current cleanup already done:
 
 Still needed:
 
-- Define extension context shape.
-- Likely expose a harness facade plus a session facade rather than raw internals.
+- Define extension/listener context shape.
+- Expose a harness facade plus a session facade rather than raw internals.
+- The harness facade should expose safe runtime APIs and `runWhenIdle(() => Promise<void>)`; it should not expose active-run `waitForIdle()` to listeners/hooks.
+- The session facade should wrap the internal session and participate in pending session write queue semantics so writes remain ordered with agent-emitted messages.
 - Decide which public harness APIs are allowed from each hook/event.
 - Decide whether hooks can mutate turn snapshots directly or only through explicit hook results/public APIs.
 - Clarify event payload semantics versus harness getter semantics.
@@ -307,11 +331,11 @@ Implemented so far:
 
 - `setTools(tools, activeToolNames?)`
 - `setActiveTools(toolNames)`
-- invalid active tool names throw
+- invalid active tool names currently throw; convert to result errors
 - generic common app tool shape via `AgentHarness<TSkill, TPromptTemplate, TTool>`
-- `QueueMode` exported from `Agent`
+- `QueueMode` exported from core types
 - `AgentHarnessOptions.steeringMode` / `followUpMode`
-- live `steeringMode` / `followUpMode` getters/setters
+- live `getSteeringMode()` / `setSteeringMode()` and `getFollowUpMode()` / `setFollowUpMode()` methods
 - queue modes are immediate/live, matching coding-agent behavior
 
 Still needed:
@@ -349,13 +373,41 @@ Still needed:
 - Implement retry handling.
 - Ensure structural operations use consistent `try/finally` phase cleanup.
 - Verify `before_agent_start` hook semantics against coding-agent:
-  - current behavior prepends returned messages.
+  - current behavior appends returned messages after the user/next-turn prompt messages.
   - decide whether replacement, prepend, append, or transform semantics are correct.
 - Decide if `before_agent_start` needs more turn info such as tools/tool snippets.
 - Document or change timing for model/thinking/stream-option events that may fire before queued session entries persist while busy.
 - Audit `abort()` barrier semantics.
 
-### 7. Later coding-agent migration plan
+### 7. Complete `Result`/non-throwing harness cleanup
+
+Started.
+
+Implemented so far:
+
+- Added generic `Result<TValue, TError>` plus helpers.
+- Updated `ExecutionEnv` and `NodeExecutionEnv` to return typed results for filesystem/process operations.
+- Split filesystem/shell capabilities and moved JSONL session storage/repo onto filesystem picks instead of direct Node imports.
+- Added `ExecutionEnv.appendFile()` for streaming append use cases.
+- Updated skill and prompt-template loaders to consume `ExecutionEnv` results.
+- Updated shell output capture to return a result and use `ExecutionEnv` instead of Node APIs directly, including full-output spill via `appendFile()`.
+- Removed `NodeExecutionEnv` from browser-safe root exports; Node-specific callers use the `node` entry point or `harness/env/nodejs.js`.
+- Replaced `Buffer` usage in generic truncation utilities with runtime-neutral UTF-8 handling.
+- Converted compaction summary helpers to typed result returns and added error-path coverage.
+- Expanded `NodeExecutionEnv` tests for file operations, exec errors, aborts, callbacks, timeouts, and shell-output full-output spill.
+
+Still needed:
+
+- Remove remaining throws from `src/harness` APIs and helpers, except explicit adapter/test helpers such as `getOrThrow()`.
+- Convert session storage/repo/session APIs to typed result returns.
+- Convert structural `AgentHarness` operations to typed result returns for busy, missing-resource, auth, compaction, and branch-summary failures.
+- Keep Node-specific APIs isolated under `src/harness/env/nodejs.ts` and Node-backed storage/session implementations, or move those implementations behind explicit Node-only entry points.
+- Audit remaining generic harness utilities for Node globals as new APIs are added.
+- Audit package exports so browser/generic-JS imports do not pull Node-only modules such as `NodeExecutionEnv`.
+- Keep expanding `ExecutionEnv` and shell-output contract tests as the API evolves, especially for non-Node implementations.
+- Add tests proving harness APIs return `ok: false` instead of throwing for expected failure paths.
+
+### 8. Later coding-agent migration plan
 
 Not started.
 
@@ -367,7 +419,7 @@ Still needed:
 - Preserve UI/session behavior outside core.
 - Move coding-agent stream/auth/retry/header behavior onto the harness stream configuration and provider hooks.
 
-### 8. Final lifecycle hardening suite
+### 9. Final lifecycle hardening suite
 
 Before treating `AgentHarness` as migration-ready, add a broad test suite that exercises listeners and hooks closing over the harness and calling public APIs during every relevant event.
 

@@ -1,6 +1,6 @@
-import type { Session, SessionMetadata, SessionRepo } from "../../types.js";
-import { InMemorySessionStorage } from "../storage/memory.js";
-import { createSessionId, createTimestamp, getEntriesToFork, toSession } from "./shared.js";
+import type { Session, SessionMetadata, SessionRepo } from "../types.js";
+import { InMemorySessionStorage } from "./memory-storage.js";
+import { createSessionId, createTimestamp, getEntriesToFork, toSession } from "./repo-utils.js";
 
 export class InMemorySessionRepo implements SessionRepo<SessionMetadata, { id?: string }, void> {
 	private sessions = new Map<string, Session<SessionMetadata>>();

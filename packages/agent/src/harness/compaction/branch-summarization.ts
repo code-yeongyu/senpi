@@ -5,7 +5,7 @@
  * a summary of the branch being left so context isn't lost.
  */
 
-import type { ImageContent, Model, TextContent } from "@earendil-works/pi-ai";
+import type { Model } from "@earendil-works/pi-ai";
 import { completeSimple } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "../../types.js";
 import {
@@ -148,16 +148,10 @@ function getMessageFromEntry(entry: SessionTreeEntry): AgentMessage | undefined 
 		case "message":
 			// Skip tool results - context is in assistant's tool call
 			if (entry.message.role === "toolResult") return undefined;
-			return entry.message as AgentMessage;
+			return entry.message;
 
 		case "custom_message":
-			return createCustomMessage(
-				entry.customType,
-				entry.content as string | (TextContent | ImageContent)[],
-				entry.display,
-				entry.details,
-				entry.timestamp,
-			);
+			return createCustomMessage(entry.customType, entry.content, entry.display, entry.details, entry.timestamp);
 
 		case "branch_summary":
 			return createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp);

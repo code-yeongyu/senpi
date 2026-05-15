@@ -10,19 +10,17 @@ import {
 } from "../src/providers/openai-codex-responses.js";
 import type { Context, Model } from "../src/types.js";
 
-const originalFetch = global.fetch;
-const originalWebSocket = globalThis.WebSocket;
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
 
 afterEach(() => {
-	global.fetch = originalFetch;
-	globalThis.WebSocket = originalWebSocket;
+	vi.unstubAllGlobals();
 	if (originalAgentDir === undefined) {
 		delete process.env.PI_CODING_AGENT_DIR;
 	} else {
 		process.env.PI_CODING_AGENT_DIR = originalAgentDir;
 	}
 	resetOpenAICodexWebSocketDebugStats();
+	vi.useRealTimers();
 	vi.restoreAllMocks();
 });
 
@@ -155,7 +153,7 @@ describe("openai-codex streaming", () => {
 			return new Response("not found", { status: 404 });
 		});
 
-		global.fetch = fetchMock as typeof fetch;
+		vi.stubGlobal("fetch", fetchMock);
 
 		const model: Model<"openai-codex-responses"> = {
 			id: "gpt-5.1-codex",
@@ -206,7 +204,7 @@ describe("openai-codex streaming", () => {
 			},
 		});
 
-		global.fetch = vi.fn(async (input: string | URL) => {
+		const fetchMock = vi.fn(async (input: string | URL) => {
 			const url = typeof input === "string" ? input : input.toString();
 			if (url === "https://api.github.com/repos/openai/codex/releases/latest") {
 				return new Response(JSON.stringify({ tag_name: "rust-v0.0.0" }), { status: 200 });
@@ -221,7 +219,8 @@ describe("openai-codex streaming", () => {
 				});
 			}
 			return new Response("not found", { status: 404 });
-		}) as typeof fetch;
+		});
+		vi.stubGlobal("fetch", fetchMock);
 
 		const model: Model<"openai-codex-responses"> = {
 			id: "gpt-5.1-codex",
@@ -265,7 +264,7 @@ describe("openai-codex streaming", () => {
 			},
 		});
 
-		global.fetch = vi.fn(async (input: string | URL) => {
+		const fetchMock = vi.fn(async (input: string | URL) => {
 			const url = typeof input === "string" ? input : input.toString();
 			if (url === "https://api.github.com/repos/openai/codex/releases/latest") {
 				return new Response(JSON.stringify({ tag_name: "rust-v0.0.0" }), { status: 200 });
@@ -280,7 +279,8 @@ describe("openai-codex streaming", () => {
 				});
 			}
 			return new Response("not found", { status: 404 });
-		}) as typeof fetch;
+		});
+		vi.stubGlobal("fetch", fetchMock);
 
 		const model: Model<"openai-codex-responses"> = {
 			id: "gpt-5.1-codex",
@@ -387,7 +387,7 @@ describe("openai-codex streaming", () => {
 			return new Response("not found", { status: 404 });
 		});
 
-		global.fetch = fetchMock as typeof fetch;
+		vi.stubGlobal("fetch", fetchMock);
 
 		const model: Model<"openai-codex-responses"> = {
 			id: "gpt-5.1-codex",
@@ -425,7 +425,7 @@ describe("openai-codex streaming", () => {
 		});
 		let requestedReasoning: unknown;
 
-		global.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
+		const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
 			const url = typeof input === "string" ? input : input.toString();
 			if (url === "https://api.github.com/repos/openai/codex/releases/latest") {
 				return new Response(JSON.stringify({ tag_name: "rust-v0.0.0" }), { status: 200 });
@@ -442,7 +442,8 @@ describe("openai-codex streaming", () => {
 				});
 			}
 			return new Response("not found", { status: 404 });
-		}) as typeof fetch;
+		});
+		vi.stubGlobal("fetch", fetchMock);
 
 		const model: Model<"openai-codex-responses"> = {
 			id: "gpt-5.5",
@@ -536,7 +537,7 @@ describe("openai-codex streaming", () => {
 			return new Response("not found", { status: 404 });
 		});
 
-		global.fetch = fetchMock as typeof fetch;
+		vi.stubGlobal("fetch", fetchMock);
 
 		const model: Model<"openai-codex-responses"> = {
 			id: modelId,
@@ -614,7 +615,7 @@ describe("openai-codex streaming", () => {
 				},
 			});
 
-			global.fetch = vi.fn(async (input: string | URL) => {
+			const fetchMock = vi.fn(async (input: string | URL) => {
 				const url = typeof input === "string" ? input : input.toString();
 				if (url === "https://api.github.com/repos/openai/codex/releases/latest") {
 					return new Response(JSON.stringify({ tag_name: "rust-v0.0.0" }), { status: 200 });
@@ -629,7 +630,8 @@ describe("openai-codex streaming", () => {
 					});
 				}
 				return new Response("not found", { status: 404 });
-			}) as typeof fetch;
+			});
+			vi.stubGlobal("fetch", fetchMock);
 
 			const model: Model<"openai-codex-responses"> = {
 				id: modelId,
@@ -728,7 +730,7 @@ describe("openai-codex streaming", () => {
 			return new Response("not found", { status: 404 });
 		});
 
-		global.fetch = fetchMock as typeof fetch;
+		vi.stubGlobal("fetch", fetchMock);
 
 		const model: Model<"openai-codex-responses"> = {
 			id: "gpt-5.1-codex",
@@ -756,7 +758,8 @@ describe("openai-codex streaming", () => {
 		const token = mockToken();
 		const sentBodies: unknown[] = [];
 
-		global.fetch = vi.fn(async () => new Response("unexpected fetch", { status: 500 })) as typeof fetch;
+		const fetchMock = vi.fn(async () => new Response("unexpected fetch", { status: 500 }));
+		vi.stubGlobal("fetch", fetchMock);
 
 		class MockWebSocket {
 			private listeners = new Map<string, Set<(event: unknown) => void>>();
@@ -826,7 +829,7 @@ describe("openai-codex streaming", () => {
 			}
 		}
 
-		globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket;
+		vi.stubGlobal("WebSocket", MockWebSocket);
 
 		const model: Model<"openai-codex-responses"> = {
 			id: "gpt-5.1-codex",
@@ -949,7 +952,7 @@ describe("openai-codex streaming", () => {
 			}
 		}
 
-		globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket;
+		vi.stubGlobal("WebSocket", MockWebSocket);
 
 		const model: Model<"openai-codex-responses"> = {
 			id: "gpt-5.1-codex",
@@ -1004,5 +1007,143 @@ describe("openai-codex streaming", () => {
 			lastDeltaInputItems: 1,
 			lastPreviousResponseId: "resp_1",
 		});
+	});
+
+	it.each([
+		["retry-after-ms", () => ({ "content-type": "application/json", "retry-after-ms": "1500" }), 1500],
+		["retry-after seconds", () => ({ "content-type": "application/json", "retry-after": "60" }), 60_000],
+		[
+			"retry-after HTTP date",
+			() => ({ "content-type": "application/json", "retry-after": new Date(Date.now() + 45_000).toUTCString() }),
+			45_000,
+		],
+	] as const)("uses %s for SSE retries", async (_name, makeHeaders, expectedDelay) => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-05-13T00:00:00Z"));
+		const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+		const token = mockToken();
+		const encoder = new TextEncoder();
+		const sse = buildSSEPayload({ status: "completed" });
+		let codexRequests = 0;
+
+		const fetchMock = vi.fn(async (input: string | URL) => {
+			const url = typeof input === "string" ? input : input.toString();
+			if (url !== "https://chatgpt.com/backend-api/codex/responses") {
+				throw new Error(`Unexpected URL: ${url}`);
+			}
+
+			codexRequests++;
+			if (codexRequests === 1) {
+				return new Response(JSON.stringify({ error: { code: "rate_limit_exceeded", message: "rate limited" } }), {
+					status: 429,
+					headers: makeHeaders(),
+				});
+			}
+
+			return new Response(
+				new ReadableStream<Uint8Array>({
+					start(controller) {
+						controller.enqueue(encoder.encode(sse));
+						controller.close();
+					},
+				}),
+				{ status: 200, headers: { "content-type": "text/event-stream" } },
+			);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.1-codex",
+			name: "GPT-5.1 Codex",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+		const context: Context = {
+			systemPrompt: "You are a helpful assistant.",
+			messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
+		};
+
+		const resultPromise = streamOpenAICodexResponses(model, context, { apiKey: token, transport: "sse" }).result();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), expectedDelay);
+
+		await vi.advanceTimersToNextTimerAsync();
+		const result = await resultPromise;
+		expect(result.content.find((content) => content.type === "text")?.text).toBe("Hello");
+		expect(codexRequests).toBe(2);
+	});
+
+	it("uses exponential backoff across repeated SSE retries without retry headers", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-05-13T00:00:00Z"));
+		const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+		const token = mockToken();
+		const encoder = new TextEncoder();
+		const sse = buildSSEPayload({ status: "completed" });
+		let codexRequests = 0;
+
+		const fetchMock = vi.fn(async (input: string | URL) => {
+			const url = typeof input === "string" ? input : input.toString();
+			if (url !== "https://chatgpt.com/backend-api/codex/responses") {
+				throw new Error(`Unexpected URL: ${url}`);
+			}
+
+			codexRequests++;
+			if (codexRequests <= 3) {
+				return new Response(JSON.stringify({ error: { code: "rate_limit_exceeded", message: "rate limited" } }), {
+					status: 429,
+					headers: { "content-type": "application/json" },
+				});
+			}
+
+			return new Response(
+				new ReadableStream<Uint8Array>({
+					start(controller) {
+						controller.enqueue(encoder.encode(sse));
+						controller.close();
+					},
+				}),
+				{ status: 200, headers: { "content-type": "text/event-stream" } },
+			);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.1-codex",
+			name: "GPT-5.1 Codex",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+		const context: Context = {
+			systemPrompt: "You are a helpful assistant.",
+			messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
+		};
+
+		const resultPromise = streamOpenAICodexResponses(model, context, { apiKey: token, transport: "sse" }).result();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(setTimeoutSpy).toHaveBeenNthCalledWith(1, expect.any(Function), 1000);
+
+		await vi.advanceTimersToNextTimerAsync();
+		expect(setTimeoutSpy).toHaveBeenNthCalledWith(2, expect.any(Function), 2000);
+
+		await vi.advanceTimersToNextTimerAsync();
+		expect(setTimeoutSpy).toHaveBeenNthCalledWith(3, expect.any(Function), 4000);
+
+		await vi.advanceTimersToNextTimerAsync();
+		const result = await resultPromise;
+		expect(result.content.find((content) => content.type === "text")?.text).toBe("Hello");
+		expect(codexRequests).toBe(4);
 	});
 });

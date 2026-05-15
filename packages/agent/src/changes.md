@@ -1,5 +1,28 @@
 # Changes
 
+## 2026-05-15 - Upstream harness refactor sync preservation
+
+### What changed and why
+
+- Preserved the fork's ES2021 diagnostic compatibility while accepting upstream's result-based harness/environment refactor.
+- Kept stream option patching on `Object.prototype.hasOwnProperty.call` instead of `Object.hasOwn`.
+- Kept harness error `cause` capture without relying on two-argument `Error` construction.
+
+### Files modified
+
+- `packages/agent/src/harness/agent-harness.ts`
+- `packages/agent/src/harness/types.ts`
+
+### Why the extension system could not handle this
+
+- These are exported harness primitives and internal option-merging helpers that are evaluated before coding-agent
+  extensions can participate.
+
+### Expected merge conflict zones on next upstream sync
+
+- `packages/agent/src/harness/agent-harness.ts` around `applyStreamOptionsPatch()`.
+- `packages/agent/src/harness/types.ts` around harness error constructors.
+
 ## 2026-05-15 - Compaction summary metadata
 
 ### What changed and why

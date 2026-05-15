@@ -1,11 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
-
-const randomBytesMock = vi.hoisted(() => vi.fn<(size: number) => Buffer>());
-
-vi.mock("node:crypto", () => ({
-	randomBytes: randomBytesMock,
-}));
-
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { uuidv7 } from "../../src/harness/session/uuid.js";
 
 const UUID_V7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -15,14 +8,22 @@ function parseTimestamp(uuid: string): number {
 	return Number.parseInt(uuid.split("-").join("").slice(0, 12), 16);
 }
 
+afterEach(() => {
+	vi.unstubAllGlobals();
+});
+
 describe("uuidv7", () => {
 	it("uses the RFC 9562 layout and preserves monotonic order", () => {
-		randomBytesMock
-			.mockReturnValueOnce(
-				Buffer.from([0, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xfe, 0x01, 0x11, 0x22, 0x33, 0x44, 0x55]),
-			)
-			.mockReturnValueOnce(Buffer.alloc(16))
-			.mockReturnValueOnce(Buffer.alloc(16));
+		const randomValues = [
+			new Uint8Array([0, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xfe, 0x01, 0x11, 0x22, 0x33, 0x44, 0x55]),
+			new Uint8Array(16),
+			new Uint8Array(16),
+		];
+		const getRandomValues = vi.fn((bytes: Uint8Array) => {
+			bytes.set(randomValues.shift() ?? new Uint8Array(bytes.length));
+			return bytes;
+		});
+		vi.stubGlobal("crypto", { getRandomValues });
 		const dateNow = vi.spyOn(Date, "now").mockReturnValue(TIMESTAMP);
 
 		try {
@@ -41,8 +42,7 @@ describe("uuidv7", () => {
 			expect(parseTimestamp(third)).toBe(TIMESTAMP + 1);
 			expect(first < second).toBe(true);
 			expect(second < third).toBe(true);
-			expect(randomBytesMock).toHaveBeenCalledTimes(3);
-			expect(randomBytesMock).toHaveBeenCalledWith(16);
+			expect(getRandomValues).toHaveBeenCalledTimes(3);
 		} finally {
 			dateNow.mockRestore();
 		}

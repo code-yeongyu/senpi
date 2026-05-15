@@ -1,9 +1,8 @@
-import { randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { createInterface } from "node:readline";
-import type { JsonlSessionMetadata, SessionStorage, SessionTreeEntry } from "../../types.js";
+import type { FileSystem, JsonlSessionMetadata, SessionStorage, SessionTreeEntry } from "../types.js";
+import { getOrThrow } from "../types.js";
+import { uuidv7 } from "./uuid.js";
+
+type JsonlSessionStorageFileSystem = Pick<FileSystem, "readTextFile" | "writeFile" | "appendFile">;
 
 interface SessionHeader {
 	type: "session";
@@ -34,10 +33,10 @@ function buildLabelsById(entries: SessionTreeEntry[]): Map<string, string> {
 
 function generateEntryId(byId: { has(id: string): boolean }): string {
 	for (let i = 0; i < 100; i++) {
-		const id = randomUUID().slice(0, 8);
+		const id = uuidv7().slice(0, 8);
 		if (!byId.has(id)) return id;
 	}
-	return randomUUID();
+	return uuidv7();
 }
 
 function headerToSessionMetadata(header: SessionHeader, path: string): JsonlSessionMetadata {
@@ -50,32 +49,32 @@ function headerToSessionMetadata(header: SessionHeader, path: string): JsonlSess
 	};
 }
 
-export async function loadJsonlSessionMetadata(filePath: string): Promise<JsonlSessionMetadata> {
-	const stream = createReadStream(filePath, { encoding: "utf8" });
-	const lines = createInterface({ input: stream, crlfDelay: Infinity });
-	try {
-		for await (const line of lines) {
-			if (!line.trim()) break;
-			try {
-				const header = JSON.parse(line) as SessionHeader;
-				return headerToSessionMetadata(header, resolve(filePath));
-			} catch {
-				throw new Error(`Invalid JSONL session file ${filePath}: first line is not a valid session header`);
-			}
+export async function loadJsonlSessionMetadata(
+	fs: JsonlSessionStorageFileSystem,
+	filePath: string,
+): Promise<JsonlSessionMetadata> {
+	const content = getOrThrow(await fs.readTextFile(filePath));
+	for (const line of content.split("\n")) {
+		if (!line.trim()) break;
+		try {
+			const header = JSON.parse(line) as SessionHeader;
+			return headerToSessionMetadata(header, filePath);
+		} catch {
+			throw new Error(`Invalid JSONL session file ${filePath}: first line is not a valid session header`);
 		}
-		throw new Error(`Invalid JSONL session file ${filePath}: missing session header`);
-	} finally {
-		lines.close();
-		stream.destroy();
 	}
+	throw new Error(`Invalid JSONL session file ${filePath}: missing session header`);
 }
 
-async function loadJsonlStorage(filePath: string): Promise<{
+async function loadJsonlStorage(
+	fs: JsonlSessionStorageFileSystem,
+	filePath: string,
+): Promise<{
 	header: SessionHeader;
 	entries: SessionTreeEntry[];
 	leafId: string | null;
 }> {
-	const content = await readFile(filePath, "utf8");
+	const content = getOrThrow(await fs.readTextFile(filePath));
 	const lines = content.split("\n").filter((line) => line.trim());
 	if (lines.length === 0) {
 		throw new Error(`Invalid JSONL session file ${filePath}: missing session header`);
@@ -103,6 +102,7 @@ async function loadJsonlStorage(filePath: string): Promise<{
 }
 
 export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata> {
+	private readonly fs: JsonlSessionStorageFileSystem;
 	private readonly filePath: string;
 	private readonly metadata: JsonlSessionMetadata;
 	private entries: SessionTreeEntry[];
@@ -110,8 +110,15 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 	private labelsById: Map<string, string>;
 	private currentLeafId: string | null;
 
-	private constructor(filePath: string, header: SessionHeader, entries: SessionTreeEntry[], leafId: string | null) {
-		this.filePath = resolve(filePath);
+	private constructor(
+		fs: JsonlSessionStorageFileSystem,
+		filePath: string,
+		header: SessionHeader,
+		entries: SessionTreeEntry[],
+		leafId: string | null,
+	) {
+		this.fs = fs;
+		this.filePath = filePath;
 		this.metadata = headerToSessionMetadata(header, this.filePath);
 		this.entries = entries;
 		this.byId = new Map(entries.map((entry) => [entry.id, entry]));
@@ -119,13 +126,13 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 		this.currentLeafId = leafId;
 	}
 
-	static async open(filePath: string): Promise<JsonlSessionStorage> {
-		const resolvedPath = resolve(filePath);
-		const loaded = await loadJsonlStorage(resolvedPath);
-		return new JsonlSessionStorage(resolvedPath, loaded.header, loaded.entries, loaded.leafId);
+	static async open(fs: JsonlSessionStorageFileSystem, filePath: string): Promise<JsonlSessionStorage> {
+		const loaded = await loadJsonlStorage(fs, filePath);
+		return new JsonlSessionStorage(fs, filePath, loaded.header, loaded.entries, loaded.leafId);
 	}
 
 	static async create(
+		fs: JsonlSessionStorageFileSystem,
 		filePath: string,
 		options: {
 			cwd: string;
@@ -133,7 +140,6 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 			parentSessionPath?: string;
 		},
 	): Promise<JsonlSessionStorage> {
-		const resolvedPath = resolve(filePath);
 		const header: SessionHeader = {
 			type: "session",
 			version: 3,
@@ -142,9 +148,8 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 			cwd: options.cwd,
 			parentSession: options.parentSessionPath,
 		};
-		await mkdir(dirname(resolvedPath), { recursive: true });
-		await writeFile(resolvedPath, `${JSON.stringify(header)}\n`);
-		return new JsonlSessionStorage(resolvedPath, header, [], null);
+		getOrThrow(await fs.writeFile(filePath, `${JSON.stringify(header)}\n`));
+		return new JsonlSessionStorage(fs, filePath, header, [], null);
 	}
 
 	async getMetadata(): Promise<JsonlSessionMetadata> {
@@ -167,7 +172,7 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 	}
 
 	async appendEntry(entry: SessionTreeEntry): Promise<void> {
-		await appendFile(this.filePath, `${JSON.stringify(entry)}\n`);
+		getOrThrow(await this.fs.appendFile(this.filePath, `${JSON.stringify(entry)}\n`));
 		this.entries.push(entry);
 		this.byId.set(entry.id, entry);
 		updateLabelCache(this.labelsById, entry);

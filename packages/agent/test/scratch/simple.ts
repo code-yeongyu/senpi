@@ -1,13 +1,13 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getModel } from "@earendil-works/pi-ai";
-import { InMemorySessionStorage } from "../../src/harness/session/storage/memory.js";
+import { NodeExecutionEnv } from "../../src/harness/env/nodejs.js";
+import { InMemorySessionStorage } from "../../src/harness/session/memory-storage.js";
 import {
 	AgentHarness,
 	formatSkillsForSystemPrompt,
 	loadSourcedPromptTemplates,
 	loadSourcedSkills,
-	NodeExecutionEnv,
 	type PromptTemplate,
 	Session,
 	type Skill,

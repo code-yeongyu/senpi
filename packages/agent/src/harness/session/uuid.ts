@@ -1,10 +1,20 @@
-import { randomBytes } from "node:crypto";
-
 let lastTimestamp = -Infinity;
 let sequence = 0;
 
+function fillRandomBytes(bytes: Uint8Array): void {
+	const crypto = globalThis.crypto;
+	if (crypto?.getRandomValues) {
+		crypto.getRandomValues(bytes);
+		return;
+	}
+	for (let i = 0; i < bytes.length; i++) {
+		bytes[i] = Math.floor(Math.random() * 256);
+	}
+}
+
 export function uuidv7(): string {
-	const random = randomBytes(16);
+	const random = new Uint8Array(16);
+	fillRandomBytes(random);
 	const timestamp = Date.now();
 
 	if (timestamp > lastTimestamp) {

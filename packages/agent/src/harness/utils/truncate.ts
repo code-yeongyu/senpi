@@ -44,6 +44,64 @@ export interface TruncationOptions {
 	maxBytes?: number;
 }
 
+interface RuntimeBuffer {
+	byteLength(content: string, encoding: "utf8"): number;
+}
+
+const runtimeBuffer = (globalThis as { Buffer?: RuntimeBuffer }).Buffer;
+const nonAsciiPattern = /[^\x00-\x7f]/;
+
+function utf8ByteLength(content: string): number {
+	if (runtimeBuffer) return runtimeBuffer.byteLength(content, "utf8");
+
+	const firstNonAscii = content.search(nonAsciiPattern);
+	if (firstNonAscii === -1) return content.length;
+
+	let bytes = firstNonAscii;
+	for (let i = firstNonAscii; i < content.length; i++) {
+		const code = content.charCodeAt(i);
+		if (code <= 0x7f) {
+			bytes += 1;
+		} else if (code <= 0x7ff) {
+			bytes += 2;
+		} else if (code >= 0xd800 && code <= 0xdbff && i + 1 < content.length) {
+			const next = content.charCodeAt(i + 1);
+			if (next >= 0xdc00 && next <= 0xdfff) {
+				bytes += 4;
+				i++;
+			} else {
+				bytes += 3;
+			}
+		} else {
+			bytes += 3;
+		}
+	}
+	return bytes;
+}
+
+function replaceUnpairedSurrogates(content: string): string {
+	let output = "";
+	for (let i = 0; i < content.length; i++) {
+		const code = content.charCodeAt(i);
+		if (code >= 0xd800 && code <= 0xdbff) {
+			if (i + 1 < content.length) {
+				const next = content.charCodeAt(i + 1);
+				if (next >= 0xdc00 && next <= 0xdfff) {
+					output += content[i] + content[i + 1];
+					i++;
+					continue;
+				}
+			}
+			output += "�";
+		} else if (code >= 0xdc00 && code <= 0xdfff) {
+			output += "�";
+		} else {
+			output += content[i];
+		}
+	}
+	return output;
+}
+
 /**
  * Format bytes as human-readable size.
  */
@@ -68,7 +126,7 @@ export function truncateHead(content: string, options: TruncationOptions = {}): 
 	const maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
 	const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
 
-	const totalBytes = Buffer.byteLength(content, "utf-8");
+	const totalBytes = utf8ByteLength(content);
 	const lines = content.split("\n");
 	const totalLines = lines.length;
 
@@ -90,7 +148,7 @@ export function truncateHead(content: string, options: TruncationOptions = {}): 
 	}
 
 	// Check if first line alone exceeds byte limit
-	const firstLineBytes = Buffer.byteLength(lines[0], "utf-8");
+	const firstLineBytes = utf8ByteLength(lines[0]);
 	if (firstLineBytes > maxBytes) {
 		return {
 			content: "",
@@ -114,7 +172,7 @@ export function truncateHead(content: string, options: TruncationOptions = {}): 
 
 	for (let i = 0; i < lines.length && i < maxLines; i++) {
 		const line = lines[i];
-		const lineBytes = Buffer.byteLength(line, "utf-8") + (i > 0 ? 1 : 0); // +1 for newline
+		const lineBytes = utf8ByteLength(line) + (i > 0 ? 1 : 0); // +1 for newline
 
 		if (outputBytesCount + lineBytes > maxBytes) {
 			truncatedBy = "bytes";
@@ -131,7 +189,7 @@ export function truncateHead(content: string, options: TruncationOptions = {}): 
 	}
 
 	const outputContent = outputLinesArr.join("\n");
-	const finalOutputBytes = Buffer.byteLength(outputContent, "utf-8");
+	const finalOutputBytes = utf8ByteLength(outputContent);
 
 	return {
 		content: outputContent,
@@ -158,7 +216,7 @@ export function truncateTail(content: string, options: TruncationOptions = {}): 
 	const maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
 	const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
 
-	const totalBytes = Buffer.byteLength(content, "utf-8");
+	const totalBytes = utf8ByteLength(content);
 	const lines = content.split("\n");
 	const totalLines = lines.length;
 
@@ -187,7 +245,7 @@ export function truncateTail(content: string, options: TruncationOptions = {}): 
 
 	for (let i = lines.length - 1; i >= 0 && outputLinesArr.length < maxLines; i--) {
 		const line = lines[i];
-		const lineBytes = Buffer.byteLength(line, "utf-8") + (outputLinesArr.length > 0 ? 1 : 0); // +1 for newline
+		const lineBytes = utf8ByteLength(line) + (outputLinesArr.length > 0 ? 1 : 0); // +1 for newline
 
 		if (outputBytesCount + lineBytes > maxBytes) {
 			truncatedBy = "bytes";
@@ -196,7 +254,7 @@ export function truncateTail(content: string, options: TruncationOptions = {}): 
 			if (outputLinesArr.length === 0) {
 				const truncatedLine = truncateStringToBytesFromEnd(line, maxBytes);
 				outputLinesArr.unshift(truncatedLine);
-				outputBytesCount = Buffer.byteLength(truncatedLine, "utf-8");
+				outputBytesCount = utf8ByteLength(truncatedLine);
 				lastLinePartial = true;
 			}
 			break;
@@ -212,7 +270,7 @@ export function truncateTail(content: string, options: TruncationOptions = {}): 
 	}
 
 	const outputContent = outputLinesArr.join("\n");
-	const finalOutputBytes = Buffer.byteLength(outputContent, "utf-8");
+	const finalOutputBytes = utf8ByteLength(outputContent);
 
 	return {
 		content: outputContent,
@@ -234,20 +292,40 @@ export function truncateTail(content: string, options: TruncationOptions = {}): 
  * Handles multi-byte UTF-8 characters correctly.
  */
 function truncateStringToBytesFromEnd(str: string, maxBytes: number): string {
-	const buf = Buffer.from(str, "utf-8");
-	if (buf.length <= maxBytes) {
-		return str;
+	if (maxBytes <= 0) return "";
+
+	let outputBytes = 0;
+	let start = str.length;
+	let needsReplacement = false;
+	for (let i = str.length; i > 0; ) {
+		let characterStart = i - 1;
+		const code = str.charCodeAt(characterStart);
+		let characterBytes: number;
+		let unpairedSurrogate = false;
+		if (code >= 0xdc00 && code <= 0xdfff && characterStart > 0) {
+			const previous = str.charCodeAt(characterStart - 1);
+			if (previous >= 0xd800 && previous <= 0xdbff) {
+				characterStart--;
+				characterBytes = 4;
+			} else {
+				characterBytes = 3;
+				unpairedSurrogate = true;
+			}
+		} else if (code >= 0xd800 && code <= 0xdfff) {
+			characterBytes = 3;
+			unpairedSurrogate = true;
+		} else {
+			characterBytes = code <= 0x7f ? 1 : code <= 0x7ff ? 2 : 3;
+		}
+		if (outputBytes + characterBytes > maxBytes) break;
+		outputBytes += characterBytes;
+		start = characterStart;
+		needsReplacement ||= unpairedSurrogate;
+		i = characterStart;
 	}
 
-	// Start from the end, skip maxBytes back
-	let start = buf.length - maxBytes;
-
-	// Find a valid UTF-8 boundary (start of a character)
-	while (start < buf.length && (buf[start] & 0xc0) === 0x80) {
-		start++;
-	}
-
-	return buf.slice(start).toString("utf-8");
+	const output = str.slice(start);
+	return needsReplacement ? replaceUnpairedSurrogates(output) : output;
 }
 
 /**

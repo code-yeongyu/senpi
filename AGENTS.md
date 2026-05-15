@@ -1,194 +1,248 @@
-# senpi
+# Development Rules
 
-**Generated:** 2026-05-11 · **Commit:** 4b3f407d · **Branch:** main
+## Conversational Style
 
-## OVERVIEW
+- Keep answers short and concise
+- No emojis in commits, issues, PR comments, or code
+- No fluff or cheerful filler text
+- Technical prose only, be kind but direct (e.g., "Thanks @user" not "Thanks so much @user!")
 
-Opinionated fork of [badlogic/pi-mono](https://github.com/badlogic/pi-mono). TypeScript monorepo (npm workspaces, also bun + pnpm verified). Coding agent CLI is rebranded **senpi**. Extension-first philosophy: prefer extension over core source change; when core change is unavoidable, document it in a `changes.md` next to the modified files.
+## Code Quality
 
-## STRUCTURE
+- Read files in full before making wide-ranging changes, before editing files you have not already fully inspected, and when the user asks you to investigate or audit something. Do not rely only on search snippets for broad changes.
+- No `any` types unless absolutely necessary
+- Single-line helper functions with a single call site are forbidden; inline them instead.
+- Check node_modules for external API type definitions instead of guessing
+- **NEVER use inline imports** - no `await import("./foo.js")`, no `import("pkg").Type` in type positions, no dynamic imports for types. Always use standard top-level imports.
+- NEVER remove or downgrade code to fix type errors from outdated dependencies; upgrade the dependency instead
+- Always ask before removing functionality or code that appears to be intentional
+- Do not preserve backward compatibility unless the user explicitly asks for it
+- Never hardcode key checks with, eg. `matchesKey(keyData, "ctrl+x")`. All keybindings must be configurable. Add default to matching object (`DEFAULT_EDITOR_KEYBINDINGS` or `DEFAULT_APP_KEYBINDINGS`)
+- NEVER modify `packages/ai/src/models.generated.ts` directly. Update `packages/ai/scripts/generate-models.ts` instead.
 
-```
-senpi/
-├── packages/
-│   ├── ai/             # Multi-provider LLM API (@earendil-works/pi-ai)
-│   ├── agent/          # Agent runtime + harness (@earendil-works/pi-agent-core)
-│   ├── coding-agent/   # senpi CLI (senpi) — primary fork target
-│   ├── tui/            # Differential renderer (@earendil-works/pi-tui)
-│   ├── web-ui/         # Lit chat components (@earendil-works/pi-web-ui)
-│   ├── mom/            # Empty stub (only dist/, tsconfig.json) — do not touch
-│   └── pods/           # Empty stub (only dist/) — do not touch
-├── scripts/            # build-all.mjs, release.mjs, verify-package-managers.mjs, etc.
-├── .github/workflows/  # ci.yml, build-binaries.yml, pr-gate.yml, openclaw-gate.yml, issue-gate.yml, approve-contributor.yml
-├── .husky/pre-commit   # npm run check (Biome+tsgo) + conditional verify:pms + browser-smoke
-├── biome.json          # TAB indent (width 3), 120 line width
-├── tsconfig.json       # noEmit root config + workspace path aliases
-├── tsconfig.base.json  # ES2022/Node16, strict, decorators on
-├── pi-test.sh          # Live-API integration runner (env-gated)
-└── local-ignore/       # gitignored — DO NOT regenerate AGENTS.md inside
-```
+## Commands
 
-## WHERE TO LOOK
+- After code changes (not documentation changes): `npm run check` (get full output, no tail). Fix all errors, warnings, and infos before committing.
+- Note: `npm run check` does not run tests.
+- NEVER run: `npm run dev`, `npm run build`, `npm test`
+- Only run specific tests if user instructs: `npx tsx ../../node_modules/vitest/dist/cli.js --run test/specific.test.ts`
+- Run tests from the package root, not the repo root.
+- If you create or modify a test file, you MUST run that test file and iterate until it passes.
+- When writing tests, run them, identify issues in either the test or implementation, and iterate until fixed.
+- For `packages/coding-agent/test/suite/`, use `test/suite/harness.ts` plus the faux provider. Do not use real provider APIs, real API keys, or paid tokens.
+- Put issue-specific regressions under `packages/coding-agent/test/suite/regressions/` and name them `<issue-number>-<short-slug>.test.ts`.
+- NEVER commit unless user asks
 
-| Task | Location |
-|------|----------|
-| Add LLM provider | [`packages/ai/src/providers/`](packages/ai/src/providers/AGENTS.md) — 7-step checklist |
-| Add text-format tool-call protocol (Hermes/XML/YAML) | [`packages/ai/src/tool-call-middleware/`](packages/ai/src/tool-call-middleware/AGENTS.md) |
-| Add senpi tool/command/flag | builtin extension in [`packages/coding-agent/src/core/extensions/builtin/`](packages/coding-agent/src/core/extensions/AGENTS.md) |
-| Add core senpi tool | [`packages/coding-agent/src/core/tools/`](packages/coding-agent/src/core/tools/AGENTS.md) — only if upstream parity required |
-| Change senpi system prompt | [`packages/coding-agent/src/core/dynamic-prompt/`](packages/coding-agent/src/core/dynamic-prompt/AGENTS.md) (or extensions/builtin/prompt-preset/ for per-model) |
-| Modify built-in extensions | [`packages/coding-agent/src/core/extensions/builtin/`](packages/coding-agent/src/core/extensions/builtin/AGENTS.md) — see per-extension AGENTS.md |
-| Sub-agent / background-task work | [`packages/coding-agent/src/core/extensions/builtin/background-task/`](packages/coding-agent/src/core/extensions/builtin/background-task/AGENTS.md) |
-| Permission system / external agent profiles | [`permission-system/`](packages/coding-agent/src/core/extensions/builtin/permission-system/AGENTS.md); agent profiles live in sibling repo `../pi-extensions/pi-agent-system` |
-| Compaction policy | [`compaction/`](packages/coding-agent/src/core/extensions/builtin/compaction/AGENTS.md) (builtin extension; `core/compaction/` only holds constants) |
-| Per-model prompt presets | [`prompt-preset/`](packages/coding-agent/src/core/extensions/builtin/prompt-preset/AGENTS.md) |
-| GPT `apply_patch` tool | [`gpt-apply-patch/`](packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/AGENTS.md) |
-| Add TUI component | [`packages/coding-agent/src/modes/interactive/`](packages/coding-agent/src/modes/interactive/AGENTS.md) |
-| Cross-cutting utility (git, shell, paths, image) | [`packages/coding-agent/src/utils/`](packages/coding-agent/src/utils/AGENTS.md) |
-| Modify agent loop semantics | `packages/agent/src/agent-loop.ts` — see [`packages/agent/AGENTS.md`](packages/agent/AGENTS.md) |
-| Modify renderer | `packages/tui/src/tui.ts` `doRender()` — see [`packages/tui/AGENTS.md`](packages/tui/AGENTS.md) |
-| Document fork mod | new section in nearest existing `changes.md` (or create one alongside the modified file) |
-| Run live-API tests | `./pi-test.sh` (gated by env vars; default `npm test` skips them) |
+## Contribution Gate
 
-## FORK STRATEGY (CRITICAL)
+- New issues from new contributors are auto-closed by `.github/workflows/issue-gate.yml`
+- New PRs from new contributors without PR rights are auto-closed by `.github/workflows/pr-gate.yml`
+- Maintainer approval comments are handled by `.github/workflows/approve-contributor.yml`
+- Maintainers review auto-closed issues daily
+- Issues that do not meet the quality bar in `CONTRIBUTING.md` are not reopened and do not receive a reply
+- `lgtmi` approves future issues
+- `lgtm` approves future issues and rights to submit PRs
 
-Three-layer decision hierarchy before touching any upstream file:
+When creating issues:
 
-1. **Can a builtin extension do it?** → add under `packages/coding-agent/src/core/extensions/builtin/<name>/` and register in `builtin/index.ts`.
-2. **Can an external/user extension do it?** → ship under `packages/coding-agent/examples/extensions/` instead.
-3. **Must modify upstream source?** → modify, then add a section to the nearest `changes.md` with: *what changed*, *why*, *why extension system couldn't handle it*, *expected merge-conflict zones*.
+- Add `pkg:*` labels to indicate which package(s) the issue affects
+  - Available labels: `pkg:agent`, `pkg:ai`, `pkg:coding-agent`, `pkg:tui`, `pkg:web-ui`
+- If an issue spans multiple packages, add all relevant labels
 
-**`changes.md` is the merge-rebase contract.** Every fork-modified subdirectory has one. Tracked locations (do NOT remove):
+When posting issue/PR comments:
 
-- `packages/ai/{,src/,src/tool-call-middleware/}changes.md`
-- `packages/agent/src/changes.md`
-- `packages/coding-agent/{,src/,src/cli/,src/utils/}changes.md`
-- `packages/coding-agent/src/core/{,compaction/,dynamic-prompt/,tools/}changes.md`
-- `packages/coding-agent/src/core/extensions/{,builtin/{agent-system,compaction,permission-system,prompt-preset}/}changes.md`
-- `packages/coding-agent/src/modes/interactive/changes.md`
-- `packages/tui/src/changes.md`
+- Write the full comment to a temp file and use `gh issue comment --body-file` or `gh pr comment --body-file`
+- Never pass multi-line markdown directly via `--body` in shell commands
+- Preview the exact comment text before posting
+- Post exactly one final comment unless the user explicitly asks for multiple comments
+- If a comment is malformed, delete it immediately, then post one corrected comment
+- Keep comments concise, technical, and in the user's tone
 
-## CONVENTIONS
+When closing issues via commit:
 
-- **Indent**: TAB character displayed at width 3 (Biome `indentStyle: "tab"`, `indentWidth: 3`). TS only — markdown is flexible.
-- **Line width**: 120 (Biome).
-- **Compiler**: `tsgo` (Microsoft's Go-based TS compiler) for ai/agent/coding-agent/tui builds and root `npm run check`. `tsc` is used only by web-ui (Lit decorator metadata that tsgo doesn't yet emit).
-- **Workspaces**: `npm` is the source of truth (`package-lock.json` committed). `pnpm-workspace.yaml` and bun lockfiles also exist; `npm run verify:pms` exercises all three on PRs and on pre-commit when packaging files are staged.
-- **Versioning**: CalVer lockstep across all 5 workspace packages — see `## VERSIONING & UPSTREAM SYNC` for the full policy.
-- **Path aliases**: workspace internals use `@earendil-works/pi-*` (and `@code-yeongyu/senpi*` for the coding-agent). Defined in root `tsconfig.json`.
-- **Tests**: Vitest across packages (TUI uses `node --test --import tsx`). Live-provider tests use `describe.skipIf(!process.env.<KEY>)` + `{ retry: 3 }`. `npm test` MUST pass with zero credentials.
-- **Regression tests**: `packages/coding-agent/test/suite/regressions/<issue-number>-<slug>.test.ts`.
-- **Husky pre-commit**: runs `npm run check`. Set `SENPI_SKIP_PM_VERIFY=1` to skip the multi-PM verify locally; CI still enforces it.
-- **Biome excludes**: `models.generated.ts`, `test-sessions.ts`, `packages/web-ui/src/app.css`, `packages/mom/data/**`, `local-ignore/**`, `.worktrees/**` are NOT linted.
+- Include `fixes #<number>` or `closes #<number>` in the commit message
+- This automatically closes the issue when the commit is merged
 
-## VERSIONING & UPSTREAM SYNC
+## PR Workflow
 
-This fork uses **CalVer** (Calendar Versioning) with an explicit upstream sync pointer, distinct from the upstream `badlogic/pi-mono` semver line.
+- Analyze PRs without pulling locally first
+- If the user approves: create a feature branch, pull PR, rebase on main, apply adjustments, commit, merge into main, push, close PR, and leave a comment in the user's tone
+- You never open PRs yourself. We work in feature branches until everything is according to the user's requirements, then merge into main, and push.
 
-### Version format
+## Testing pi Interactive Mode with tmux
 
-- **First release of the day**: `YYYY.M.D` (e.g. `2026.5.13`).
-- **Same-day re-release**: `YYYY.M.D-N` where N ≥ 2 (e.g. `2026.5.13-2`, `2026.5.13-3`). Note: there is no `-1`; the bare date IS the first release.
-- All 5 workspace packages (`ai`, `agent`, `coding-agent`, `tui`, `web-ui`) are version-locked.
-- Root `package.json` is `"private": true` and has NO `version` field.
-
-### Version computation
-
-`scripts/calver.mjs` computes the next version by:
-1. Taking today's UTC date as `YYYY.M.D`.
-2. Querying npm registry for existing versions of each workspace package.
-3. Querying `git tag --list "v<today>*"`.
-4. Returning `today` if no match, else `today-(maxN+1)`.
-
-### Git tag and npm publish
-
-- Git tag format: `v<version>` (e.g. `v2026.5.13`, `v2026.5.13-2`).
-- `.github/workflows/build-binaries.yml` already triggers on `v*` — CalVer tags match.
-- `npm publish` uses `--tag latest` explicitly because the `-N` suffix looks like a prerelease tag to npm and would otherwise NOT be picked up by `@latest`.
-
-### Upstream pin
-
-`.github/upstream.json` records the upstream commit currently merged into senpi:
-
-```json
-{
-	"repo": "badlogic/pi-mono",
-	"tag": "v0.74.0",
-	"sha": "<full 40-char SHA>",
-	"synced_at": "<ISO 8601 UTC>"
-}
-```
-
-The `tag` is the most recent upstream `v*` tag reachable from `sha`. The pin is updated by both `scripts/sync-upstream.mjs` and the GitHub Action.
-
-### Sync workflow
-
-`.github/workflows/sync-upstream.yml`:
-- Triggers: `schedule: cron '0 */6 * * *'` and `workflow_dispatch`.
-- Compares `upstream/main` HEAD against `.github/upstream.json.sha`. Exits if equal.
-- Else creates branch `sync/upstream-<short-sha>` and runs `git merge upstream/main --no-ff --no-commit`.
-
-**Auto-resolution rules** (applied to conflicted files):
-
-| Path pattern | Resolution |
-|---|---|
-| `bun.lock` | regenerate via `bun install` (or `git checkout --theirs` if bun unavailable) |
-| `package-lock.json` | `git checkout --theirs` + `npm install` |
-| `*.md` NOT named `changes.md` | `git checkout --theirs` |
-| `changes.md` (any subdirectory) | `git checkout --ours` (preserve fork docs) |
-| anything else with markers | LEFT UNRESOLVED |
-
-**On clean merge**: commits `sync: merge upstream <short-sha> into main` + `sync: record upstream pin <short-sha>`, pushes directly to `main`.
-
-**On unresolved conflicts**: closes any existing open PR labeled `sync-conflict` with comment `Superseded by upcoming sync from <new short-sha>`, then opens a NEW PR labeled `sync-conflict` from the branch with markers intact. The PR body lists each conflicting file with a recommended resolution.
-
-### `changes.md` contract
-
-Every fork-modified subdirectory MUST have a `changes.md` documenting what changed, why, and the expected merge-conflict zones. The sync workflow ALWAYS preserves `changes.md` files (resolves against `ours`), so fork-strategy docs survive upstream merges.
-
-### Commit message conventions
-
-| Subject | Meaning |
-|---|---|
-| `release: v<version>` | New senpi release (CalVer bump) |
-| `sync: merge upstream <short-sha> into main` | Upstream merge (clean) |
-| `sync: record upstream pin <short-sha>` | `.github/upstream.json` pointer update |
-| `sync: WIP merge of upstream <short-sha> (conflicts)` | Branch commit before PR (conflict path) |
-
-Unpadded CalVer components are SemVer-compatible, so npm, bun, and pnpm resolve inter-workspace `^<version>` ranges consistently during `npm run verify:pms`.
-
-## ANTI-PATTERNS (THIS FORK)
-
-- Modifying core source when an extension hook exists. Always check `packages/coding-agent/docs/extensions.md` capabilities first.
-- Modifying core source without updating the relevant `changes.md`.
-- Top-level imports in `packages/ai/src/env-api-keys.ts` or `src/utils/oauth/*` — breaks browser/Vite builds. The "NEVER convert to top-level imports" comment is load-bearing.
-- Static imports in `packages/ai/src/providers/register-builtins.ts` — defeats lazy loading.
-- Deleting failing tests to make CI green. Fix the code or, if upstream test is genuinely wrong for the fork, document the change in `changes.md`.
-- Removing `models.generated.ts` from Biome excludes — it is regenerated by `scripts/generate-models.ts` on `prebuild`.
-- Editing `local-ignore/` — gitignored, contains throwaway worktrees.
-- Re-adding `uuid` to `packages/coding-agent/dependencies` — explicitly removed; UUIDv7 inlined in `src/core/session-manager.ts`. See `packages/coding-agent/changes.md` 2026-04-17.
-- Touching `packages/{mom,pods}/dist/` stubs — committed solely to satisfy workspace bin-symlinking.
-- Editing `CHANGELOG.md` (per `CONTRIBUTING.md` — maintainers only).
-
-## COMMANDS
+To test pi's TUI in a controlled terminal environment:
 
 ```bash
-npm run dev              # Watch all packages concurrently
-npm run build            # node scripts/build-all.mjs (npm by default)
-npm run build:bun        # Force bun
-npm run build:pnpm       # Force pnpm
-npm run check            # Biome + tsgo + browser-smoke + web-ui check (pre-commit equivalent)
-npm test                 # Vitest across workspaces (skips live-API)
-./pi-test.sh             # Live-API integration suite (env-gated)
-npm run verify:pms       # Validate npm/bun/pnpm install + build in isolated dirs
-npm run profile:tui      # Profile TUI startup
-npm run release:patch    # node scripts/release.mjs patch
+# Create tmux session with specific dimensions
+tmux new-session -d -s pi-test -x 80 -y 24
+
+# Start pi from source
+tmux send-keys -t pi-test "cd /Users/badlogic/workspaces/pi-mono && ./pi-test.sh" Enter
+
+# Wait for startup, then capture output
+sleep 3 && tmux capture-pane -t pi-test -p
+
+# Send input
+tmux send-keys -t pi-test "your prompt here" Enter
+
+# Send special keys
+tmux send-keys -t pi-test Escape
+tmux send-keys -t pi-test C-o  # ctrl+o
+
+# Cleanup
+tmux kill-session -t pi-test
 ```
 
-## NOTES
+## Changelog
 
-- **CLI binaries**: build emits `senpi` and `pi` from `packages/coding-agent/dist/`. `scripts/create-root-senpi-wrapper.mjs` plants a callable `senpi` shim in npm's global `bin/` after a root build so `which senpi` resolves.
-- **Self-update**: `senpi update senpi` queries `code-yeongyu/senpi` releases (NOT upstream). See `packages/coding-agent/src/changes.md`.
-- **Empty packages**: `packages/mom/` and `packages/pods/` have no source — placeholders. The `.gitignore` keeps stub `dist/main.js` / `dist/cli.js` files committed so `npm install` does not warn about missing bin targets.
-- **Live test gating**: many `packages/ai/test/*.test.ts` are gated by env (`PI_ENABLE_*`, `OPENROUTER_API_KEY`, AWS creds, etc.). The default `npm test` MUST pass without any of them set; failures there are real bugs.
-- **TUI flicker budget**: `packages/tui/test/tui-render.test.ts` enforces "no full-clear after init" + "DECSET 2026 balanced" — see `packages/tui/AGENTS.md` before touching `doRender()`.
+Location: `packages/*/CHANGELOG.md` (each package has its own)
+
+### Format
+
+Use these sections under `## [Unreleased]`:
+
+- `### Breaking Changes` - API changes requiring migration
+- `### Added` - New features
+- `### Changed` - Changes to existing functionality
+- `### Fixed` - Bug fixes
+- `### Removed` - Removed features
+
+### Rules
+
+- Before adding entries, read the full `[Unreleased]` section to see which subsections already exist
+- New entries ALWAYS go under `## [Unreleased]` section
+- Append to existing subsections (e.g., `### Fixed`), do not create duplicates
+- NEVER modify already-released version sections (e.g., `## [0.12.2]`)
+- Each version section is immutable once released
+
+### Attribution
+
+- **Internal changes (from issues)**: `Fixed foo bar ([#123](https://github.com/earendil-works/pi-mono/issues/123))`
+- **External contributions**: `Added feature X ([#456](https://github.com/earendil-works/pi-mono/pull/456) by [@username](https://github.com/username))`
+
+## Adding a New LLM Provider (packages/ai)
+
+Adding a new provider requires changes across multiple files:
+
+### 1. Core Types (`packages/ai/src/types.ts`)
+
+- Add API identifier to `Api` type union (e.g., `"bedrock-converse-stream"`)
+- Create options interface extending `StreamOptions`
+- Add mapping to `ApiOptionsMap`
+- Add provider name to `KnownProvider` type union
+
+### 2. Provider Implementation (`packages/ai/src/providers/`)
+
+Create provider file exporting:
+
+- `stream<Provider>()` function returning `AssistantMessageEventStream`
+- `streamSimple<Provider>()` for `SimpleStreamOptions` mapping
+- Provider-specific options interface
+- Message/tool conversion functions
+- Response parsing emitting standardized events (`text`, `tool_call`, `thinking`, `usage`, `stop`)
+
+### 3. Provider Exports and Lazy Registration
+
+- Add a package subpath export in `packages/ai/package.json` pointing at `./dist/providers/<provider>.js`
+- Add `export type` re-exports in `packages/ai/src/index.ts` for provider option types that should remain available from the root entry
+- Register the provider in `packages/ai/src/providers/register-builtins.ts` via lazy loader wrappers, do not statically import provider implementation modules there
+- Add credential detection in `packages/ai/src/env-api-keys.ts`
+
+### 4. Model Generation (`packages/ai/scripts/generate-models.ts`)
+
+- Add logic to fetch/parse models from provider source
+- Map to standardized `Model` interface
+
+### 5. Tests (`packages/ai/test/`)
+
+- Always add the provider to `stream.test.ts` with at least one representative model, even if it reuses an existing API implementation such as `openai-completions`.
+- Add the provider to the broader provider matrix where applicable: `tokens.test.ts`, `abort.test.ts`, `empty.test.ts`, `context-overflow.test.ts`, `unicode-surrogate.test.ts`, `tool-call-without-result.test.ts`, `image-tool-result.test.ts`, `total-tokens.test.ts`, `cross-provider-handoff.test.ts`.
+- For `cross-provider-handoff.test.ts`, add at least one provider/model pair. If the provider exposes multiple model families (for example GPT and Claude), add at least one pair per family.
+- For non-standard auth, create utility (e.g., `bedrock-utils.ts`) with credential detection.
+
+### 6. Coding Agent (`packages/coding-agent/`)
+
+- `src/core/model-resolver.ts`: Add default model ID to `defaultModelPerProvider`
+- `src/core/provider-display-names.ts`: Add API-key login display name so `/login` and related UI show the provider for built-in API-key auth.
+- `src/cli/args.ts`: Add env var documentation
+- `README.md`: Add provider setup instructions
+- `docs/providers.md`: Add setup instructions, env var, and `auth.json` key
+
+### 7. Documentation
+
+- `packages/ai/README.md`: Add to providers table, document options/auth, add env vars
+- `packages/ai/CHANGELOG.md`: Add entry under `## [Unreleased]`
+
+## Releasing
+
+**Lockstep versioning**: All packages always share the same version number. Every release updates all packages together.
+
+**Version semantics** (no major releases):
+
+- `patch`: Bug fixes and new features
+- `minor`: API breaking changes
+
+### Steps
+
+1. **Update CHANGELOGs**: Ensure all changes since last release are documented in the `[Unreleased]` section of each affected package's CHANGELOG.md
+
+2. **Run release script**:
+   ```bash
+   npm run release:patch    # Fixes and additions
+   npm run release:minor    # API breaking changes
+   ```
+
+The script handles: version bump, CHANGELOG finalization, commit, tag, publish, and adding new `[Unreleased]` sections.
+
+## **CRITICAL** Git Rules for Parallel Agents **CRITICAL**
+
+Multiple agents may work on different files in the same worktree simultaneously. You MUST follow these rules:
+
+### Committing
+
+- **ONLY commit files YOU changed in THIS session**
+- ALWAYS include `fixes #<number>` or `closes #<number>` in the commit message when there is a related issue or PR
+- NEVER use `git add -A` or `git add .` - these sweep up changes from other agents
+- ALWAYS use `git add <specific-file-paths>` listing only files you modified
+- Before committing, run `git status` and verify you are only staging YOUR files
+- Track which files you created/modified/deleted during the session
+- It is always fine to include `packages/ai/src/models.generated.ts` in a commit alongside the actual files you want to commit
+
+### Forbidden Git Operations
+
+These commands can destroy other agents' work:
+
+- `git reset --hard` - destroys uncommitted changes
+- `git checkout .` - destroys uncommitted changes
+- `git clean -fd` - deletes untracked files
+- `git stash` - stashes ALL changes including other agents' work
+- `git add -A` / `git add .` - stages other agents' uncommitted work
+- `git commit --no-verify` - bypasses required checks and is never allowed
+
+### Safe Workflow
+
+```bash
+# 1. Check status first
+git status
+
+# 2. Add ONLY your specific files
+git add packages/ai/src/providers/transform-messages.ts
+git add packages/ai/CHANGELOG.md
+
+# 3. Commit
+git commit -m "fix(ai): description"
+
+# 4. Push (pull --rebase if needed, but NEVER reset/checkout)
+git pull --rebase && git push
+```
+
+### If Rebase Conflicts Occur
+
+- Resolve conflicts in YOUR files only
+- If conflict is in a file you didn't modify, abort and ask the user
+- NEVER force push
+
+### User override
+
+If the user instructions conflict with rules set out here, ask for confirmation that they want to override the rules. Only then execute their instructions.

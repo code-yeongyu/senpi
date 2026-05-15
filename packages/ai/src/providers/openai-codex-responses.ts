@@ -259,7 +259,29 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 
 					const errorText = await response.text();
 					if (attempt < MAX_RETRIES && isRetryableError(response.status, errorText)) {
-						const delayMs = BASE_DELAY_MS * 2 ** attempt;
+						let delayMs = BASE_DELAY_MS * 2 ** attempt;
+
+						const retryAfterMs = response.headers.get("retry-after-ms");
+						if (retryAfterMs !== null) {
+							const millis = Number(retryAfterMs);
+							if (Number.isFinite(millis)) {
+								delayMs = Math.max(0, millis);
+							}
+						} else {
+							const retryAfter = response.headers.get("retry-after");
+							if (retryAfter) {
+								const seconds = Number(retryAfter);
+								if (Number.isFinite(seconds)) {
+									delayMs = Math.max(0, seconds * 1000);
+								} else {
+									const date = Date.parse(retryAfter);
+									if (!Number.isNaN(date)) {
+										delayMs = Math.max(0, date - Date.now());
+									}
+								}
+							}
+						}
+
 						await sleep(delayMs, options?.signal);
 						continue;
 					}

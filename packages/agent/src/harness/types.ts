@@ -1,7 +1,30 @@
 import type { ImageContent, Model, SimpleStreamOptions, TextContent, Transport } from "@earendil-works/pi-ai";
-import type { QueueMode } from "../agent.js";
-import type { AgentEvent, AgentMessage, AgentTool, ThinkingLevel } from "../index.js";
+import type { AgentEvent, AgentMessage, AgentTool, QueueMode, ThinkingLevel } from "../index.js";
 import type { Session } from "./session/session.js";
+
+/** Result of a fallible operation. Expected failures are returned as `ok: false` instead of thrown. */
+export type Result<TValue, TError> = { ok: true; value: TValue } | { ok: false; error: TError };
+
+/** Create a successful {@link Result}. */
+export function ok<TValue, TError>(value: TValue): Result<TValue, TError> {
+	return { ok: true, value };
+}
+
+/** Create a failed {@link Result}. */
+export function err<TValue, TError>(error: TError): Result<TValue, TError> {
+	return { ok: false, error };
+}
+
+/** Return the success value or throw the failure error. Intended for tests and explicit adapter boundaries. */
+export function getOrThrow<TValue, TError>(result: Result<TValue, TError>): TValue {
+	if (!result.ok) throw result.error;
+	return result.value;
+}
+
+/** Return the success value or `undefined`. Only object values are allowed to avoid truthiness bugs with primitives. */
+export function getOrUndefined<TValue extends object, TError>(result: Result<TValue, TError>): TValue | undefined {
+	return result.ok ? result.value : undefined;
+}
 
 /**
  * Skill loaded from a `SKILL.md` file or provided by an application.
@@ -70,11 +93,12 @@ export interface AgentHarnessStreamOptionsPatch
 	metadata?: Record<string, unknown | undefined>;
 }
 
-/** Kind of filesystem object as addressed by an {@link ExecutionEnv}. Symlinks are not followed automatically. */
+/** Kind of filesystem object as addressed by a {@link FileSystem}. Symlinks are not followed automatically. */
 export type FileKind = "file" | "directory" | "symlink";
 
-/** Stable, backend-independent file error codes thrown by {@link ExecutionEnv} file operations. */
+/** Stable, backend-independent file error codes returned by {@link FileSystem} file operations. */
 export type FileErrorCode =
+	| "aborted"
 	| "not_found"
 	| "permission_denied"
 	| "not_directory"
@@ -83,7 +107,7 @@ export type FileErrorCode =
 	| "not_supported"
 	| "unknown";
 
-/** Error thrown by {@link ExecutionEnv} file operations. */
+/** Error returned by {@link FileSystem} file operations. */
 export class FileError extends Error {
 	readonly cause?: unknown;
 
@@ -93,21 +117,59 @@ export class FileError extends Error {
 		message: string,
 		/** Absolute addressed path associated with the failure, when available. */
 		public path?: string,
-		options?: { cause?: unknown },
+		cause?: unknown,
 	) {
 		super(message);
 		this.name = "FileError";
-		if (options && "cause" in options) this.cause = options.cause;
+		if (cause !== undefined) this.cause = cause;
 	}
 }
 
-/** Metadata for one filesystem object in an {@link ExecutionEnv}. */
+/** Stable, backend-independent execution error codes returned by {@link ExecutionEnv.exec}. */
+export type ExecutionErrorCode = "aborted" | "timeout" | "shell_unavailable" | "spawn_error" | "unknown";
+
+/** Error returned by {@link ExecutionEnv.exec}. */
+export class ExecutionError extends Error {
+	readonly cause?: unknown;
+
+	constructor(
+		/** Backend-independent error code. */
+		public code: ExecutionErrorCode,
+		message: string,
+		cause?: unknown,
+	) {
+		super(message);
+		this.name = "ExecutionError";
+		if (cause !== undefined) this.cause = cause;
+	}
+}
+
+/** Stable compaction error codes returned by compaction helpers. */
+export type CompactionErrorCode = "aborted" | "summarization_failed" | "invalid_session" | "unknown";
+
+/** Error returned by compaction helpers. */
+export class CompactionError extends Error {
+	readonly cause?: unknown;
+
+	constructor(
+		/** Backend-independent error code. */
+		public code: CompactionErrorCode,
+		message: string,
+		cause?: unknown,
+	) {
+		super(message);
+		this.name = "CompactionError";
+		if (cause !== undefined) this.cause = cause;
+	}
+}
+
+/** Metadata for one filesystem object in a {@link FileSystem}. */
 export interface FileInfo {
 	/** Basename of {@link path}. */
 	name: string;
 	/** Absolute, syntactically normalized addressed path in the execution environment. Symlinks are not followed. */
 	path: string;
-	/** Object kind. Symlink targets are not followed; use {@link ExecutionEnv.resolvePath} explicitly. */
+	/** Object kind. Symlink targets are not followed; use {@link FileSystem.canonicalPath} explicitly. */
 	kind: FileKind;
 	/** Size in bytes for the addressed filesystem object. */
 	size: number;
@@ -115,16 +177,16 @@ export interface FileInfo {
 	mtimeMs: number;
 }
 
-/** Options for {@link ExecutionEnv.exec}. */
+/** Options for {@link Shell.exec}. */
 export interface ExecutionEnvExecOptions {
-	/** Working directory for the command. Relative paths are resolved against {@link ExecutionEnv.cwd}. */
+	/** Working directory for the command. Relative paths are resolved against {@link ExecutionEnv.cwd}. Defaults to {@link ExecutionEnv.cwd}. */
 	cwd?: string;
-	/** Additional environment variables for the command. Values override the environment defaults. */
+	/** Additional environment variables for the command. Values override the environment defaults. Defaults to no overrides. */
 	env?: Record<string, string>;
-	/** Timeout in seconds. Implementations should reject when the command exceeds this duration. */
+	/** Timeout in seconds. Implementations should return a timeout error when the command exceeds this duration. Defaults to no timeout. */
 	timeout?: number;
-	/** Abort signal used to terminate the command. */
-	signal?: AbortSignal;
+	/** Abort signal used to terminate the command. Defaults to no abort signal. */
+	abortSignal?: AbortSignal;
 	/** Called with stdout chunks as they are produced. */
 	onStdout?: (chunk: string) => void;
 	/** Called with stderr chunks as they are produced. */
@@ -132,49 +194,74 @@ export interface ExecutionEnvExecOptions {
 }
 
 /**
- * Filesystem and process execution environment used by the harness.
+ * Filesystem capability used by the harness.
  *
- * Paths passed to methods may be absolute or relative to {@link cwd}. Paths returned by this interface are absolute
- * addressed paths in the environment, but are not canonicalized through symlinks unless returned by {@link resolvePath}.
+ * Paths passed to methods may be absolute or relative to {@link cwd}. Paths returned by file operations are addressed paths
+ * in the filesystem namespace, but are not canonicalized through symlinks unless returned by {@link canonicalPath}.
  *
- * File operations throw {@link FileError} for expected filesystem failures such as missing paths or permission errors.
+ * Operation methods must never throw or reject. All filesystem failures, including unexpected backend failures, must be
+ * encoded in the returned {@link Result}. Implementations must preserve this invariant.
  */
-export interface ExecutionEnv {
-	/** Current working directory for relative paths and command execution. */
+export interface FileSystem {
+	/** Current working directory for relative paths. */
 	cwd: string;
 
-	/** Execute a shell command in {@link cwd} unless `options.cwd` is provided. */
+	/** Return an absolute addressed path without requiring it to exist and without resolving symlinks. */
+	absolutePath(path: string, abortSignal?: AbortSignal): Promise<Result<string, FileError>>;
+	/** Join path segments in the filesystem namespace without requiring the result to exist. */
+	joinPath(parts: string[], abortSignal?: AbortSignal): Promise<Result<string, FileError>>;
+	/** Read a UTF-8 text file. */
+	readTextFile(path: string, abortSignal?: AbortSignal): Promise<Result<string, FileError>>;
+	/** Read a binary file. */
+	readBinaryFile(path: string, abortSignal?: AbortSignal): Promise<Result<Uint8Array, FileError>>;
+	/** Create or overwrite a file, creating parent directories when supported. */
+	writeFile(path: string, content: string | Uint8Array, abortSignal?: AbortSignal): Promise<Result<void, FileError>>;
+	/** Create or append to a file, creating parent directories when supported. */
+	appendFile(path: string, content: string | Uint8Array, abortSignal?: AbortSignal): Promise<Result<void, FileError>>;
+	/** Return metadata for the addressed path without following symlinks. */
+	fileInfo(path: string, abortSignal?: AbortSignal): Promise<Result<FileInfo, FileError>>;
+	/** List direct children of a directory without following symlinks. */
+	listDir(path: string, abortSignal?: AbortSignal): Promise<Result<FileInfo[], FileError>>;
+	/** Return the canonical path for an existing path, resolving symlinks where supported. */
+	canonicalPath(path: string, abortSignal?: AbortSignal): Promise<Result<string, FileError>>;
+	/** Return false for missing paths. Other errors, such as permission failures, return a {@link FileError}. */
+	exists(path: string, abortSignal?: AbortSignal): Promise<Result<boolean, FileError>>;
+	/** Create a directory. Defaults: `recursive: true`, no abort signal. */
+	createDir(
+		path: string,
+		options?: { recursive?: boolean; abortSignal?: AbortSignal },
+	): Promise<Result<void, FileError>>;
+	/** Remove a file or directory. Defaults: `recursive: false`, `force: false`, no abort signal. */
+	remove(
+		path: string,
+		options?: { recursive?: boolean; force?: boolean; abortSignal?: AbortSignal },
+	): Promise<Result<void, FileError>>;
+	/** Create a temporary directory and return its absolute path. Defaults: `prefix: "tmp-"`, no abort signal. */
+	createTempDir(prefix?: string, abortSignal?: AbortSignal): Promise<Result<string, FileError>>;
+	/** Create a temporary file and return its absolute path. Defaults: `prefix: ""`, `suffix: ""`, no abort signal. */
+	createTempFile(options?: {
+		prefix?: string;
+		suffix?: string;
+		abortSignal?: AbortSignal;
+	}): Promise<Result<string, FileError>>;
+
+	/** Release filesystem resources. Must be best-effort and must not throw or reject. */
+	cleanup(): Promise<void>;
+}
+
+/** Shell execution capability used by the harness. */
+export interface Shell {
+	/** Execute a shell command in {@link FileSystem.cwd} unless `options.cwd` is provided. */
 	exec(
 		command: string,
 		options?: ExecutionEnvExecOptions,
-	): Promise<{ stdout: string; stderr: string; exitCode: number }>;
-
-	/** Read a UTF-8 text file. Throws {@link FileError}. */
-	readTextFile(path: string): Promise<string>;
-	/** Read a binary file. Throws {@link FileError}. */
-	readBinaryFile(path: string): Promise<Uint8Array>;
-	/** Create or overwrite a file, creating parent directories when supported. Throws {@link FileError}. */
-	writeFile(path: string, content: string | Uint8Array): Promise<void>;
-	/** Return metadata for the addressed path without following symlinks. Throws {@link FileError}. */
-	fileInfo(path: string): Promise<FileInfo>;
-	/** List direct children of a directory without following symlinks. Throws {@link FileError}. */
-	listDir(path: string): Promise<FileInfo[]>;
-	/** Return the canonical path for a path, following symlinks. Throws {@link FileError}. */
-	realPath(path: string): Promise<string>;
-	/** Return false for missing paths. Other errors, such as permission failures, may throw {@link FileError}. */
-	exists(path: string): Promise<boolean>;
-	/** Create a directory. */
-	createDir(path: string, options?: { recursive?: boolean }): Promise<void>;
-	/** Remove a file or directory. */
-	remove(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>;
-	/** Create a temporary directory and return its absolute path. */
-	createTempDir(prefix?: string): Promise<string>;
-	/** Create a temporary file and return its absolute path. */
-	createTempFile(options?: { prefix?: string; suffix?: string }): Promise<string>;
-
-	/** Release resources owned by the environment. */
+	): Promise<Result<{ stdout: string; stderr: string; exitCode: number }, ExecutionError>>;
+	/** Release shell resources. Must be best-effort and must not throw or reject. */
 	cleanup(): Promise<void>;
 }
+
+/** Filesystem and process execution environment used by the harness. */
+export interface ExecutionEnv extends FileSystem, Shell {}
 
 export interface SessionTreeEntryBase {
 	type: string;
