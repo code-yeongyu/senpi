@@ -1,5 +1,19 @@
 # Builtin compaction extension changes
 
+## OpenAI remote compact API path (2026-05-15)
+
+- Added `openai-remote.ts` as a builtin-extension module that can call OpenAI's remote compact endpoint when the current
+  session branch is entirely representable as OpenAI Responses input.
+- The extension stores the returned native compacted input on `CompactionResult.details`, then rewrites later OpenAI
+  Responses provider payloads so the compacted session can continue from the provider-native history.
+- The extension emits `senpi:compaction` events for remote start, completion, fallback, and payload rewrite points so other
+  extensions can observe which compaction route was used.
+- This remains in the builtin extension because provider compatibility, endpoint selection, fallback, and provider-payload
+  rewriting are all extension-hookable. Core only needs to carry opaque compaction details to the renderer.
+
+Expected upstream conflict zones: `builtin/compaction/index.ts` around `session_before_compact` and
+`before_provider_request` hook wiring if upstream changes compaction extension policy or provider request events.
+
 ## Blocking compaction feedback scope
 
 - Changed `index.ts` so blocking extension compaction calls `ctx.beginCompaction()` before awaiting an in-flight speculative job or generating a fresh summary.

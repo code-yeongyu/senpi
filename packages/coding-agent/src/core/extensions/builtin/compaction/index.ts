@@ -13,6 +13,11 @@ import {
 	RECOVERY_INSTRUCTIONS,
 	resetOnSessionCompact,
 } from "./degradation-monitor.js";
+import {
+	rewriteOpenAiPayloadWithRemoteCompaction,
+	runOpenAiRemoteCompaction,
+	SENPI_COMPACTION_EVENT,
+} from "./openai-remote.js";
 import * as overflow from "./overflow-detection.js";
 import * as cap from "./per-turn-cap.js";
 import * as policy from "./policy.js";
@@ -178,6 +183,13 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 
 		const model = ctx.model;
 		if (!model) return undefined;
+		const remoteCompaction = await runOpenAiRemoteCompaction(ctx, event, (data) =>
+			pi.events.emit(SENPI_COMPACTION_EVENT, data),
+		);
+		if (remoteCompaction) {
+			return { compaction: remoteCompaction };
+		}
+
 		const snapshot = {
 			generation: ++speculativeGeneration,
 			expectedRevision: ctx.getMessageRevision(),
@@ -259,6 +271,14 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 		const contextWindow = ctx.getContextUsage()?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
 		const emergency = hardLimitEmergencyPrune(event.messages, contextWindow);
 		return { messages: repairOrphanedToolResults(convertToLlm(emergency.messages)) };
+	});
+
+	pi.on("before_provider_request", (event, ctx) => {
+		return rewriteOpenAiPayloadWithRemoteCompaction(
+			event.payload,
+			{ model: ctx.model, branchEntries: ctx.sessionManager.getBranch() },
+			(data) => pi.events.emit(SENPI_COMPACTION_EVENT, data),
+		);
 	});
 
 	pi.on("turn_end", async (_event, ctx) => {
