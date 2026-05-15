@@ -15,7 +15,11 @@ import { SessionManager } from "../../src/core/session-manager.js";
 
 const registrations: Array<{ unregister: () => void }> = [];
 
-type TestSpeculativeCompactionContext = SpeculativeCompactionContext & { sessionManager: SessionManager };
+type Registration = ReturnType<typeof registerFauxProvider>;
+type TestSpeculativeCompactionContext = SpeculativeCompactionContext & {
+	registration: Registration;
+	sessionManager: SessionManager;
+};
 
 afterEach(() => {
 	for (const registration of registrations.splice(0)) {
@@ -75,6 +79,7 @@ function createContext(options?: { revision?: number }): TestSpeculativeCompacti
 	return {
 		model,
 		modelRegistry,
+		registration,
 		sessionManager,
 		getContextUsage: () => ({ tokens: 50_000, contextWindow: model.contextWindow, percent: 25 }),
 		getMessageRevision: () => options?.revision ?? 1,
@@ -216,5 +221,45 @@ describe("speculative compaction", () => {
 
 		// Then
 		expect(result).toBeUndefined();
+	});
+
+	it("streams generated summary deltas to the compaction progress callback", async () => {
+		// Given
+		const context = createContext();
+		const snapshot = createSpeculativeCompactionSnapshot(context, { generation: 1 });
+		const deltas: string[] = [];
+		context.registration.setResponses([fauxAssistantMessage("live summary")]);
+
+		// When
+		const result = snapshot
+			? await runExtensionCompaction(context, snapshot, undefined, (delta) => {
+					deltas.push(delta);
+				})
+			: undefined;
+
+		// Then
+		expect(result?.summary).toBe("live summary");
+		expect(deltas.join("")).toBe("live summary");
+	});
+
+	it("retries a compaction summary request with a smaller input after a context-window failure", async () => {
+		// Given
+		const context = createContext();
+		const snapshot = createSpeculativeCompactionSnapshot(context, { generation: 1 });
+		context.registration.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage:
+					"Your input exceeds the context window of this model. Please adjust your input and try again.",
+			}),
+			fauxAssistantMessage("retry summary"),
+		]);
+
+		// When
+		const result = snapshot ? await runExtensionCompaction(context, snapshot) : undefined;
+
+		// Then
+		expect(result?.summary).toBe("retry summary");
+		expect(context.registration.getCallLog()).toHaveLength(2);
 	});
 });

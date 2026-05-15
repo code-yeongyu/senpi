@@ -47,6 +47,52 @@ describe("InteractiveMode compaction events", () => {
 		fakeThis.autoCompactionLoader?.stop();
 	});
 
+	test("renders streamed compaction progress below the active loader", async () => {
+		const statusContainer = new Container();
+		const fakeThis = {
+			isInitialized: true,
+			footer: { invalidate: vi.fn() },
+			autoCompactionEscapeHandler: undefined as (() => void) | undefined,
+			autoCompactionLoader: undefined as { stop(): void } | undefined,
+			autoCompactionProgressText: "",
+			defaultEditor: {} as { onEscape?: () => void },
+			session: { abortCompaction: vi.fn() },
+			statusContainer,
+			settingsManager: { getShowTerminalProgress: () => false },
+			ui: { requestRender: vi.fn(), terminal: { setProgress: vi.fn() } },
+		};
+
+		const handleEvent = Reflect.get(InteractiveMode.prototype, "handleEvent") as (
+			this: typeof fakeThis,
+			event:
+				| {
+						type: "compaction_start";
+						reason: "extension";
+				  }
+				| {
+						type: "compaction_progress";
+						reason: "extension";
+						delta: string;
+				  },
+		) => Promise<void>;
+
+		await handleEvent.call(fakeThis, {
+			type: "compaction_start",
+			reason: "extension",
+		});
+		await handleEvent.call(fakeThis, {
+			type: "compaction_progress",
+			reason: "extension",
+			delta: "live summary chunk",
+		});
+
+		const rendered = stripAnsi(statusContainer.children.flatMap((child) => child.render(120)).join("\n"));
+		expect(rendered).toContain("Compacting context");
+		expect(rendered).toContain("live summary chunk");
+
+		fakeThis.autoCompactionLoader?.stop();
+	});
+
 	test("rebuilds chat and appends a synthetic compaction summary at the bottom", async () => {
 		const fakeThis = {
 			isInitialized: true,

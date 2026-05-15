@@ -329,6 +329,7 @@ export class InteractiveMode {
 	// Auto-compaction state
 	private autoCompactionLoader: Loader | undefined = undefined;
 	private autoCompactionEscapeHandler?: () => void;
+	private autoCompactionProgressText = "";
 
 	// Auto-retry state
 	private retryLoader: Loader | undefined = undefined;
@@ -2951,6 +2952,22 @@ export class InteractiveMode {
 					label,
 				);
 				this.statusContainer.addChild(this.autoCompactionLoader);
+				this.autoCompactionProgressText = "";
+				this.ui.requestRender();
+				break;
+			}
+
+			case "compaction_progress": {
+				if (!this.autoCompactionLoader) break;
+				const nextText =
+					event.text !== undefined ? event.text : `${this.autoCompactionProgressText}${event.delta ?? ""}`;
+				if (!nextText) break;
+				this.autoCompactionProgressText = nextText;
+				const preview = nextText.length > 4_000 ? `...${nextText.slice(nextText.length - 4_000)}` : nextText;
+				this.statusContainer.clear();
+				this.statusContainer.addChild(this.autoCompactionLoader);
+				this.statusContainer.addChild(new Spacer(1));
+				this.statusContainer.addChild(new Text(theme.fg("muted", preview), 1, 0));
 				this.ui.requestRender();
 				break;
 			}
@@ -2966,6 +2983,7 @@ export class InteractiveMode {
 				if (this.autoCompactionLoader) {
 					this.autoCompactionLoader.stop();
 					this.autoCompactionLoader = undefined;
+					this.autoCompactionProgressText = "";
 					this.statusContainer.clear();
 				}
 				if (event.aborted) {

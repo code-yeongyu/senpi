@@ -309,6 +309,12 @@ export interface BeginCompactionOptions {
 	reason: CompactionReason;
 }
 
+export interface UpdateCompactionOptions {
+	reason: CompactionReason;
+	delta?: string;
+	text?: string;
+}
+
 export interface EndCompactionOptions {
 	reason: CompactionReason;
 	aborted?: boolean;
@@ -351,6 +357,8 @@ export interface ExtensionContext {
 	compact(options?: CompactOptions): void;
 	/** Start user-visible compaction feedback before an extension has a precomputed summary to apply. */
 	beginCompaction?(options: BeginCompactionOptions): AbortSignal | undefined;
+	/** Stream user-visible compaction content while an extension-generated summary is available. */
+	updateCompaction?(options: UpdateCompactionOptions): void;
 	/** End user-visible compaction feedback when no compaction entry was applied. */
 	endCompaction?(options: EndCompactionOptions): void;
 	/** Get the current monotonic revision for context-affecting message mutations. */
@@ -1581,6 +1589,7 @@ export interface ExtensionContextActions {
 	getCompactionSettings: () => CompactionPreparation["settings"];
 	compact: (options?: CompactOptions) => void;
 	beginCompaction?: (options: BeginCompactionOptions) => AbortSignal | undefined;
+	updateCompaction?: (options: UpdateCompactionOptions) => void;
 	endCompaction?: (options: EndCompactionOptions) => void;
 	getMessageRevision: () => number;
 	applyCompaction: (precomputed: CompactionResult, options: ApplyCompactionOptions) => Promise<ApplyCompactionResult>;

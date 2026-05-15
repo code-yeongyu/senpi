@@ -137,6 +137,7 @@ export type AgentSessionEvent =
 			followUp: readonly string[];
 	  }
 	| { type: "compaction_start"; reason: CompactionReason }
+	| { type: "compaction_progress"; reason: CompactionReason; delta?: string; text?: string }
 	| { type: "session_info_changed"; name: string | undefined }
 	| SystemPromptChangeEvent
 	| { type: "thinking_level_changed"; level: ThinkingLevel }
@@ -1847,6 +1848,20 @@ export class AgentSession {
 		return this._compactionAbortController.signal;
 	}
 
+	private _updateExtensionCompactionFeedback(options: {
+		reason: CompactionReason;
+		delta?: string;
+		text?: string;
+	}): void {
+		if (!this._compactionAbortController && !this._autoCompactionAbortController) return;
+		this._emit({
+			type: "compaction_progress",
+			reason: options.reason,
+			...(options.delta !== undefined ? { delta: options.delta } : {}),
+			...(options.text !== undefined ? { text: options.text } : {}),
+		});
+	}
+
 	private _endExtensionCompactionFeedback(options: {
 		reason: CompactionReason;
 		aborted?: boolean;
@@ -2159,13 +2174,19 @@ export class AgentSession {
 		this._compactionAbortController = new AbortController();
 
 		try {
-			await this._executeCompaction({
+			const execution = await this._executeCompaction({
 				reason: "pre_prompt",
 				willRetry: false,
 				lastAssistantMessage,
 				skipAbortedCheck,
 			});
+			if (!execution.accepted && isContextOverflow(lastAssistantMessage, this.model?.contextWindow ?? 0)) {
+				this._overflowRecoveryAttempted = false;
+			}
 		} catch (error) {
+			if (isContextOverflow(lastAssistantMessage, this.model?.contextWindow ?? 0)) {
+				this._overflowRecoveryAttempted = false;
+			}
 			const errorMessage = error instanceof Error ? error.message : "compaction failed";
 			const aborted =
 				errorMessage === "Compaction cancelled" || (error instanceof Error && error.name === "AbortError");
@@ -2191,6 +2212,7 @@ export class AgentSession {
 
 		try {
 			if (!this.model) {
+				if (reason === "overflow") this._overflowRecoveryAttempted = false;
 				this._emit({
 					type: "compaction_end",
 					reason,
@@ -2203,6 +2225,7 @@ export class AgentSession {
 
 			const authResult = await this._modelRegistry.getApiKeyAndHeaders(this.model);
 			if (!authResult.ok || !authResult.apiKey) {
+				if (reason === "overflow") this._overflowRecoveryAttempted = false;
 				this._emit({
 					type: "compaction_end",
 					reason,
@@ -2218,6 +2241,7 @@ export class AgentSession {
 				this.settingsManager.getCompactionSettings(),
 			);
 			if (!preparation) {
+				if (reason === "overflow") this._overflowRecoveryAttempted = false;
 				this._emit({
 					type: "compaction_end",
 					reason,
@@ -2230,6 +2254,7 @@ export class AgentSession {
 
 			const execution = await this._executeCompaction({ reason, willRetry });
 			if (!execution.accepted) {
+				if (reason === "overflow") this._overflowRecoveryAttempted = false;
 				return;
 			}
 
@@ -2252,6 +2277,7 @@ export class AgentSession {
 				}, 100);
 			}
 		} catch (error) {
+			if (reason === "overflow") this._overflowRecoveryAttempted = false;
 			const errorMessage = error instanceof Error ? error.message : "compaction failed";
 			const aborted =
 				errorMessage === "Compaction cancelled" || (error instanceof Error && error.name === "AbortError");
@@ -2502,6 +2528,7 @@ export class AgentSession {
 					})();
 				},
 				beginCompaction: (options) => this._beginExtensionCompactionFeedback(options.reason),
+				updateCompaction: (options) => this._updateExtensionCompactionFeedback(options),
 				endCompaction: (options) => this._endExtensionCompactionFeedback(options),
 				getMessageRevision: () => this.getMessageRevision(),
 				applyCompaction: (precomputed, options) => this.applyCompaction(precomputed, options),

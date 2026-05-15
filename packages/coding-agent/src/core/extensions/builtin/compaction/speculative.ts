@@ -1,5 +1,12 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { complete, type Message, type Model, type TextContent } from "@earendil-works/pi-ai";
+import {
+	type AssistantMessage,
+	isContextOverflow,
+	type Message,
+	type Model,
+	stream,
+	type TextContent,
+} from "@earendil-works/pi-ai";
 import {
 	type CompactionPreparation,
 	type CompactionResult,
@@ -19,9 +26,11 @@ import * as truncation from "./tool-truncation.js";
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 const COMPACTION_BUDGET_RATIO = 0.6;
+const COMPACTION_RETRY_BUDGET_RATIO = 0.4;
 const EMERGENCY_CONTEXT_TARGET_RATIO = 0.95;
 const MAX_SUMMARY_TOKENS = 8192;
 const SUMMARY_SCHEMA = "senpi.compaction.summary.v1";
+type CompactionProgressCallback = (delta: string) => void;
 
 export interface SpeculativeCompactionContext {
 	model: Model<any> | undefined;
@@ -67,6 +76,56 @@ function getSummaryText(message: Message): string {
 		.map((content) => content.text)
 		.join("\n")
 		.trim();
+}
+
+function isAssistantMessage(message: Message): message is AssistantMessage {
+	return message.role === "assistant" && "stopReason" in message;
+}
+
+async function generateSummaryMessage(options: {
+	messages: AgentMessage[];
+	onProgress?: CompactionProgressCallback;
+	prompt: ReturnType<typeof buildPrompt>;
+	signal?: AbortSignal;
+	snapshot: SpeculativeCompactionSnapshot;
+	auth: {
+		apiKey: string;
+		headers?: Record<string, string>;
+		extraBody?: Record<string, unknown>;
+	};
+}): Promise<Message | undefined> {
+	const conversationText = serializeConversation(convertToLlm(options.messages));
+	const responseStream = stream(
+		options.snapshot.model,
+		{
+			systemPrompt: options.prompt.system,
+			messages: [
+				{
+					role: "user",
+					content: [
+						{
+							type: "text",
+							text: `${options.prompt.user}\n\n<conversation>\n${conversationText}\n</conversation>`,
+						},
+					],
+					timestamp: Date.now(),
+				},
+			],
+		},
+		{
+			apiKey: options.auth.apiKey,
+			headers: options.auth.headers,
+			extraBody: options.auth.extraBody,
+			maxTokens: MAX_SUMMARY_TOKENS,
+			signal: options.signal,
+		},
+	);
+	for await (const event of responseStream) {
+		if (event.type === "text_delta" && event.delta) {
+			options.onProgress?.(event.delta);
+		}
+	}
+	return await responseStream.result();
 }
 
 function pruneToolResults(messages: AgentMessage[], contextWindow: number): AgentMessage[] {
@@ -159,6 +218,17 @@ function pruneOldMessagesToBudget(messages: AgentMessage[], targetTokens: number
 	return pruned;
 }
 
+function pruneMessagesForOverflowRetry(messages: AgentMessage[], targetTokens: number): AgentMessage[] | undefined {
+	const budgetPruned = pruneOldMessagesToBudget(messages, targetTokens);
+	if (budgetPruned.length < messages.length) return budgetPruned;
+	const boundaryIndex = findLastUserLikeIndex(messages);
+	return (
+		removeFirstOldToolPair(messages, boundaryIndex) ??
+		removeFirstOldMessage(messages, boundaryIndex) ??
+		(messages.length > 1 ? messages.slice(1) : undefined)
+	);
+}
+
 function estimateTotalTokens(messages: AgentMessage[]): number {
 	let total = 0;
 	for (const message of messages) total += estimateTokens(message);
@@ -226,11 +296,12 @@ export async function runExtensionCompaction(
 	context: SpeculativeCompactionContext,
 	snapshot: SpeculativeCompactionSnapshot,
 	signal?: AbortSignal,
+	onProgress?: CompactionProgressCallback,
 ): Promise<CompactionResult | undefined> {
 	const auth = await context.modelRegistry?.getApiKeyAndHeaders(snapshot.model);
 	if (!auth?.ok || !auth.apiKey) return undefined;
 
-	const messages = pruneToolResults(
+	let messages = pruneToolResults(
 		[...snapshot.preparation.messagesToSummarize, ...snapshot.preparation.turnPrefixMessages],
 		snapshot.contextWindow,
 	);
@@ -239,41 +310,49 @@ export async function runExtensionCompaction(
 		previousSummary: snapshot.preparation.previousSummary,
 		customInstructions: snapshot.customInstructions,
 	});
-	const conversationText = serializeConversation(convertToLlm(messages));
-	const response = await complete(
-		snapshot.model,
-		{
-			systemPrompt: prompt.system,
-			messages: [
-				{
-					role: "user",
-					content: [
-						{ type: "text", text: `${prompt.user}\n\n<conversation>\n${conversationText}\n</conversation>` },
-					],
-					timestamp: Date.now(),
-				},
-			],
-		},
-		{
-			apiKey: auth.apiKey,
-			headers: auth.headers,
-			extraBody: auth.extraBody,
-			maxTokens: MAX_SUMMARY_TOKENS,
+
+	for (let attempt = 0; attempt < 2; attempt++) {
+		const response = await generateSummaryMessage({
+			messages,
+			onProgress,
+			prompt,
 			signal,
-		},
-	);
-	const summary = getSummaryText(response);
-	if (!summary) return undefined;
+			snapshot,
+			auth: {
+				apiKey: auth.apiKey,
+				headers: auth.headers,
+				extraBody: auth.extraBody,
+			},
+		});
+		if (!response) return undefined;
 
-	const tokenEstimate = estimateContextTokens(convertToLlm(messages)).tokens + approxTokens(summary);
-	if (tokenEstimate > snapshot.contextWindow * COMPACTION_BUDGET_RATIO) return undefined;
+		if (isAssistantMessage(response) && isContextOverflow(response, snapshot.contextWindow)) {
+			const retryMessages = pruneMessagesForOverflowRetry(
+				messages,
+				Math.floor(snapshot.contextWindow * COMPACTION_RETRY_BUDGET_RATIO),
+			);
+			if (!retryMessages || retryMessages.length === messages.length) {
+				break;
+			}
+			messages = retryMessages;
+			continue;
+		}
 
-	return {
-		summary,
-		firstKeptEntryId: snapshot.preparation.firstKeptEntryId,
-		tokensBefore: snapshot.preparation.tokensBefore,
-		details: { schema: SUMMARY_SCHEMA, promptVariant: snapshot.promptVariant, tokenEstimate },
-	};
+		const summary = getSummaryText(response);
+		if (!summary) return undefined;
+
+		const tokenEstimate = estimateContextTokens(convertToLlm(messages)).tokens + approxTokens(summary);
+		if (tokenEstimate > snapshot.contextWindow * COMPACTION_BUDGET_RATIO) return undefined;
+
+		return {
+			summary,
+			firstKeptEntryId: snapshot.preparation.firstKeptEntryId,
+			tokensBefore: snapshot.preparation.tokensBefore,
+			details: { schema: SUMMARY_SCHEMA, promptVariant: snapshot.promptVariant, tokenEstimate },
+		};
+	}
+
+	throw new Error("Compaction summary request exceeded the context window after retrying with a smaller input");
 }
 
 export async function applyGeneratedCompaction(

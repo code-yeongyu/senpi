@@ -250,6 +250,40 @@ describe("AgentSession compaction characterization", () => {
 		);
 	});
 
+	it("does not consume the overflow compact-and-retry attempt when compaction fails before retrying", async () => {
+		const harness = await createHarness({ withConfiguredAuth: false });
+		harnesses.push(harness);
+		const firstOverflow = createAssistant(harness, {
+			stopReason: "error",
+			errorMessage: "prompt is too long",
+			timestamp: Date.now(),
+		});
+		const secondOverflow = createAssistant(harness, {
+			stopReason: "error",
+			errorMessage: "prompt is too long",
+			timestamp: Date.now() + 1,
+		});
+		const userMessage = {
+			role: "user" as const,
+			content: [{ type: "text" as const, text: "continue" }],
+			timestamp: Date.now() - 1,
+		};
+
+		harness.session.agent.state.messages = [userMessage, firstOverflow];
+		await checkCompaction(harness.session, firstOverflow);
+		harness.session.agent.state.messages = [userMessage, secondOverflow];
+		await checkCompaction(harness.session, secondOverflow);
+
+		const overflowStarts = harness.eventsOfType("compaction_start").filter((event) => event.reason === "overflow");
+		const terminalOverflowFailures = harness
+			.eventsOfType("compaction_end")
+			.filter((event) =>
+				event.errorMessage?.startsWith("Context overflow recovery failed after one compact-and-retry attempt"),
+			);
+		expect(overflowStarts).toHaveLength(2);
+		expect(terminalOverflowFailures).toHaveLength(0);
+	});
+
 	it("auto-retries overflow recovery when a provider alias differs but current context is still near the limit", async () => {
 		const harness = await createHarness({
 			api: "openai-codex-responses",
