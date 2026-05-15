@@ -142,6 +142,7 @@ import {
 	type ThemeColor,
 	theme,
 } from "./theme/theme.js";
+import { formatWorkingStatusMessage, formatWorkingStatusTextFrame } from "./working-status.js";
 
 /** Interface for components that can be expanded/collapsed */
 interface Expandable {
@@ -175,6 +176,7 @@ type CompactionQueuedMessage = {
 
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
 const DEFAULT_WORKING_STATUS_REFRESH_INTERVAL_MS = 600;
+const DEFAULT_WORKING_STATUS_MESSAGE_ANIMATION_INTERVAL_MS = 80;
 
 function isDeadTerminalError(error: unknown): boolean {
 	if (!error || typeof error !== "object" || !("code" in error)) {
@@ -182,25 +184,6 @@ function isDeadTerminalError(error: unknown): boolean {
 	}
 	const code = (error as NodeJS.ErrnoException).code;
 	return code !== undefined && DEAD_TERMINAL_ERROR_CODES.has(code);
-}
-
-export function formatWorkingElapsedSeconds(elapsedSeconds: number): string {
-	const totalSeconds = Math.max(0, Math.floor(elapsedSeconds));
-	const seconds = totalSeconds % 60;
-	const totalMinutes = Math.floor(totalSeconds / 60);
-	if (totalSeconds < 60) {
-		return `${totalSeconds}s`;
-	}
-	if (totalSeconds < 3600) {
-		return `${totalMinutes}m ${seconds.toString().padStart(2, "0")}s`;
-	}
-	const hours = Math.floor(totalMinutes / 60);
-	const minutes = totalMinutes % 60;
-	return `${hours}h ${minutes.toString().padStart(2, "0")}m ${seconds.toString().padStart(2, "0")}s`;
-}
-
-export function formatWorkingStatusMessage(message: string, elapsedSeconds: number, interruptKey: string): string {
-	return `${message} (${formatWorkingElapsedSeconds(elapsedSeconds)} • ${interruptKey} to interrupt)`;
 }
 
 const ANTHROPIC_SUBSCRIPTION_AUTH_WARNING =
@@ -1734,6 +1717,13 @@ export class InteractiveMode {
 			this.workingIndicatorOptions ?? {
 				frames: [theme.fg("accent", "•"), theme.fg("muted", "◦")],
 				intervalMs: DEFAULT_WORKING_STATUS_REFRESH_INTERVAL_MS,
+				messageFormatter: (message, frameIndex) =>
+					formatWorkingStatusTextFrame(message, frameIndex, {
+						base: (text) => theme.fg("muted", text),
+						glow: (text) => theme.fg("text", text),
+						highlight: (text) => theme.bold(theme.fg("accent", text)),
+					}),
+				messageIntervalMs: DEFAULT_WORKING_STATUS_MESSAGE_ANIMATION_INTERVAL_MS,
 			}
 		);
 	}
