@@ -1,5 +1,23 @@
 # changes
 
+## Provider-supplied retry delay handling (2026-05-15)
+
+### What changed
+
+- `src/core/agent-session.ts`: auto-retry now uses provider-supplied retry-after hints from assistant error messages when present, while refusing waits above `retry.provider.maxRetryDelayMs`.
+
+### Why
+
+- Rate-limit and overload responses can include an explicit wait period. Ignoring that hint caused senpi to retry too early with the local exponential base delay, often hitting the same provider throttle again.
+
+### Why extension system couldn't handle this
+
+- Retry scheduling is core `AgentSession` lifecycle behavior. Extensions can observe retry events, but they cannot replace the internal abortable sleep or resolve the prompt-level retry promise.
+
+### Expected merge conflict zones
+
+- MEDIUM: `AgentSession._handleRetryableError()` and retry event emission.
+
 ## Avoid duplicate compaction summary message augmentation (2026-05-15)
 
 ### What changed

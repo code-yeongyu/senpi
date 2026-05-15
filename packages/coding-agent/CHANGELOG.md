@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- Fixed auto-retry to respect provider-supplied retry-after wait hints for rate-limit and overload responses.
 - Fixed OpenAI Chat Completions-compatible provider requests to remove orphan tool outputs and synthesize missing tool results before submission.
 - Fixed interactive error messages to render with trailing spacing so reload errors do not run into resource listings ([#4510](https://github.com/earendil-works/pi/issues/4510)).
 - Fixed nested code fences in the Termux setup documentation so the example AGENTS.md renders correctly ([#4503](https://github.com/earendil-works/pi/issues/4503)).

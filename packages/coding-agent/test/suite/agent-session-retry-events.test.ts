@@ -51,6 +51,62 @@ describe("AgentSession retry and event characterization", () => {
 		expect(harness.session.isRetrying).toBe(false);
 	});
 
+	it("uses provider-supplied retry-after delay before retrying", async () => {
+		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } } });
+		harnesses.push(harness);
+		let retryStartDelayMs: number | undefined;
+		const sawRetryStart = new Promise<void>((resolve) => {
+			const unsubscribe = harness.session.subscribe((event) => {
+				if (event.type === "auto_retry_start") {
+					retryStartDelayMs = event.delayMs;
+					unsubscribe();
+					resolve();
+				}
+			});
+		});
+		harness.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "rate_limit_exceeded: retry-after-ms: 5",
+			}),
+			fauxAssistantMessage("recovered"),
+		]);
+
+		const promptPromise = harness.session.prompt("test");
+		await sawRetryStart;
+
+		expect(retryStartDelayMs).toBe(5);
+		expect(harness.faux.state.callCount).toBe(1);
+
+		await promptPromise;
+
+		expect(harness.faux.state.callCount).toBe(2);
+		expect(harness.session.isRetrying).toBe(false);
+	});
+
+	it("does not wait longer than the configured provider retry delay cap", async () => {
+		const harness = await createHarness({
+			settings: {
+				retry: { enabled: true, maxRetries: 3, baseDelayMs: 1, provider: { maxRetryDelayMs: 50 } },
+			},
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "rate_limit_exceeded: retry-after-ms: 75",
+			}),
+			fauxAssistantMessage("should not run"),
+		]);
+
+		await harness.session.prompt("test");
+
+		expect(harness.eventsOfType("auto_retry_start")).toEqual([]);
+		expect(harness.eventsOfType("auto_retry_end").map((event) => event.success)).toEqual([false]);
+		expect(harness.faux.state.callCount).toBe(1);
+		expect(harness.session.isRetrying).toBe(false);
+	});
+
 	it("retries multiple transient failures and succeeds on the final attempt", async () => {
 		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } } });
 		harnesses.push(harness);

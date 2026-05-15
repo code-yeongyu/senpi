@@ -2754,6 +2754,41 @@ export class AgentSession {
 		);
 	}
 
+	private _getProviderRetryDelayMs(errorMessage: string): number | undefined {
+		const retryAfterMsMatch = errorMessage.match(/\bretry[-_ ]?after[-_ ]?ms\s*[:=]\s*(\d+(?:\.\d+)?)/i);
+		if (retryAfterMsMatch) {
+			const delayMs = Math.ceil(Number(retryAfterMsMatch[1]));
+			return Number.isFinite(delayMs) && delayMs > 0 ? delayMs : undefined;
+		}
+
+		const retryAfterSecondsMatch = errorMessage.match(/\bretry[-_ ]?after\s*[:=]\s*(\d+(?:\.\d+)?)/i);
+		if (retryAfterSecondsMatch) {
+			const delayMs = Math.ceil(Number(retryAfterSecondsMatch[1]) * 1000);
+			return Number.isFinite(delayMs) && delayMs > 0 ? delayMs : undefined;
+		}
+
+		const retryInMatch = errorMessage.match(
+			/\b(?:retry|try again|wait)\s+(?:after|in)\s*(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m)\b/i,
+		);
+		if (!retryInMatch) {
+			return undefined;
+		}
+
+		const value = Number(retryInMatch[1]);
+		if (!Number.isFinite(value) || value <= 0) {
+			return undefined;
+		}
+
+		const unit = retryInMatch[2].toLowerCase();
+		if (unit === "m" || unit.startsWith("min")) {
+			return Math.ceil(value * 60_000);
+		}
+		if (unit.startsWith("s")) {
+			return Math.ceil(value * 1000);
+		}
+		return Math.ceil(value);
+	}
+
 	/**
 	 * Handle retryable errors with exponential backoff.
 	 * @returns true if retry was initiated, false if max retries exceeded or disabled
@@ -2788,14 +2823,29 @@ export class AgentSession {
 			return false;
 		}
 
-		const delayMs = settings.baseDelayMs * 2 ** (this._retryAttempt - 1);
+		const errorMessage = message.errorMessage || "Unknown error";
+		const providerDelayMs = this._getProviderRetryDelayMs(errorMessage);
+		const maxRetryDelayMs = this.settingsManager.getProviderRetrySettings().maxRetryDelayMs;
+		if (providerDelayMs !== undefined && providerDelayMs > maxRetryDelayMs) {
+			this._emit({
+				type: "auto_retry_end",
+				success: false,
+				attempt: this._retryAttempt,
+				finalError: `Provider requested retry delay ${providerDelayMs}ms, exceeding configured maximum ${maxRetryDelayMs}ms`,
+			});
+			this._retryAttempt = 0;
+			this._resolveRetry();
+			return false;
+		}
+
+		const delayMs = providerDelayMs ?? settings.baseDelayMs * 2 ** (this._retryAttempt - 1);
 
 		this._emit({
 			type: "auto_retry_start",
 			attempt: this._retryAttempt,
 			maxAttempts: settings.maxRetries,
 			delayMs,
-			errorMessage: message.errorMessage || "Unknown error",
+			errorMessage,
 		});
 
 		// Remove error message from agent state (keep in session for history)
