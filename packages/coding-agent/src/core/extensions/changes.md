@@ -103,8 +103,105 @@
 ### Expected merge conflict zones
 
 - LOW: `builtin/system-messages.ts`, `builtin/todotools/system-messages.ts`, and `builtin/todotools/state.ts` if upstream or vendored builtins rename these helper surfaces.
+||||||| parent of 60039d29 (docs: document kimi-web-search builtin extension)
+## 2026-05-14 - Add kimi-web-search builtin extension
+
+### What changed
+
+- Added `builtin/kimi-web-search/index.ts`: New builtin extension that registers `SearchWeb` and `FetchURL` tools for Kimi Code platform.
+- Registers tools via `pi.registerTool()` (not provider-native injection like anthropic-web-search/openai-web-search).
+- Calls Kimi Code service endpoints:
+  - Search: `POST https://api.kimi.com/coding/v1/search` with `{text_query, limit, enable_page_crawling, timeout_seconds}`
+  - Fetch: `POST https://api.kimi.com/coding/v1/fetch` with `{url}`
+- Passes `Authorization: Bearer <api_key>` and `X-Msh-Tool-Call-Id` headers matching Kimi CLI behavior.
+- Fallback to local HTTP fetch when Kimi fetch service returns error.
+- Configurable via env vars: `PI_KIMI_WEB_SEARCH`, `PI_KIMI_SEARCH_BASE_URL`, `PI_KIMI_FETCH_BASE_URL`.
+- Registered in `builtin/index.ts` as builtin extension id `kimi-web-search`.
+
+### Why
+
+- Kimi Code platform provides official SearchWeb/FetchURL services (`moonshot_search`/`moonshot_fetch`), but senpi had no integration.
+- The existing `anthropic-web-search` extension incorrectly injected Anthropic-native `web_search_20250305` into kimi-coding requests (because both use `api: "anthropic-messages"`), which Kimi API does not support.
+
+### Why extension system couldn't handle this alone
+
+- While this *could* be a user extension, it requires deep integration with:
+  - `ctx.modelRegistry.getApiKeyAndHeaders()` for auth resolution
+  - Knowledge of Kimi Code service URL conventions
+  - Proper `X-Msh-Tool-Call-Id` header passing
+- As a builtin, it stays consistent with anthropic-web-search/openai-web-search and can be maintained alongside provider updates.
+
+### Expected merge conflict zones
+
+- LOW: `builtin/index.ts` extension registration list.
+- LOW: `builtin/kimi-web-search/index.ts` if Kimi Code service API changes.
 
 ## 2026-05-14 - Native Web Tool UI Cleanup Hooks
+## 2026-05-14 - Add kimi-web-search builtin extension
+
+
+
+### What changed
+
+
+
+- Added `builtin/kimi-web-search/index.ts`: New builtin extension that registers `SearchWeb` and `FetchURL` tools for Kimi Code platform.
+
+- Registers tools via `pi.registerTool()` (not provider-native injection like anthropic-web-search/openai-web-search).
+
+- Calls Kimi Code service endpoints:
+
+  - Search: `POST https://api.kimi.com/coding/v1/search` with `{text_query, limit, enable_page_crawling, timeout_seconds}`
+
+  - Fetch: `POST https://api.kimi.com/coding/v1/fetch` with `{url}`
+
+- Passes `Authorization: Bearer <api_key>` and `X-Msh-Tool-Call-Id` headers matching Kimi CLI behavior.
+
+- Fallback to local HTTP fetch when Kimi fetch service returns error.
+
+- Configurable via env vars: `PI_KIMI_WEB_SEARCH`, `PI_KIMI_SEARCH_BASE_URL`, `PI_KIMI_FETCH_BASE_URL`.
+
+- Registered in `builtin/index.ts` as builtin extension id `kimi-web-search`.
+
+
+
+### Why
+
+
+
+- Kimi Code platform provides official SearchWeb/FetchURL services (`moonshot_search`/`moonshot_fetch`), but senpi had no integration.
+
+- The existing `anthropic-web-search` extension incorrectly injected Anthropic-native `web_search_20250305` into kimi-coding requests (because both use `api: "anthropic-messages"`), which Kimi API does not support.
+
+
+
+### Why extension system couldn't handle this alone
+
+
+
+- While this *could* be a user extension, it requires deep integration with:
+
+  - `ctx.modelRegistry.getApiKeyAndHeaders()` for auth resolution
+
+  - Knowledge of Kimi Code service URL conventions
+
+  - Proper `X-Msh-Tool-Call-Id` header passing
+
+- As a builtin, it stays consistent with anthropic-web-search/openai-web-search and can be maintained alongside provider updates.
+
+
+
+### Expected merge conflict zones
+
+
+
+- LOW: `builtin/index.ts` extension registration list.
+
+- LOW: `builtin/kimi-web-search/index.ts` if Kimi Code service API changes.
+
+
+
+
 
 ### What changed
 
