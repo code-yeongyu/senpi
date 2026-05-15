@@ -86,6 +86,28 @@ describe("upstream package name alias for extension loader", () => {
 		expect(result.extensions[0]?.tools.has("mario_aliased_tool")).toBe(true);
 	});
 
+	it("resolves runtime imports from the upstream @earendil-works coding agent package", async () => {
+		// given a project extension migrated from .pi to .senpi still imports
+		// the upstream coding-agent package name used by pi-mono
+		const extCode = `
+			import { DynamicBorder, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+			export default function (pi: ExtensionAPI) {
+				pi.registerMessageRenderer("earendil_alias_renderer", () => new DynamicBorder((value) => value));
+			}
+		`;
+		fs.writeFileSync(path.join(extensionsDir, "earendil-coding-agent-import.ts"), extCode);
+
+		// when the extension is discovered and loaded
+		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+
+		// then it must load without "Cannot find module" errors and register
+		// the renderer from the aliased runtime package
+		expect(result.errors, JSON.stringify(result.errors, null, 2)).toHaveLength(0);
+		expect(result.extensions).toHaveLength(1);
+		expect(result.extensions[0]?.messageRenderers.has("earendil_alias_renderer")).toBe(true);
+	});
+
 	it("resolves type-only imports from @code-yeongyu/senpi", async () => {
 		// given a third-party extension that uses a type-only import
 		// (the most common shape for upstream-named imports). Type-only
