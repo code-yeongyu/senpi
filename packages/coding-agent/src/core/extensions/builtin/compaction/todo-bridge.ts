@@ -11,7 +11,7 @@ export interface TodoEntry {
 	status?: "pending" | "in_progress" | "completed" | "cancelled";
 }
 
-interface TodoSnapshotPayload {
+export interface TodoSnapshotPayload {
 	schema: typeof TODO_SNAPSHOT_SCHEMA;
 	todos: TodoEntry[] | SessionEntry[];
 	capturedAt: number;
@@ -80,6 +80,18 @@ export function findTodoEntries(
 	return ctxOrEntries.sessionManager.getEntries().filter(isCustomTodoEntry);
 }
 
+export function createTodoSnapshot(ctx: ExtensionContext): TodoSnapshotPayload {
+	return {
+		schema: TODO_SNAPSHOT_SCHEMA,
+		todos: findTodoEntries(ctx),
+		capturedAt: Date.now(),
+	};
+}
+
+export function persistTodoSnapshot(pi: AppendEntryTarget, snapshot: TodoSnapshotPayload): void {
+	pi.appendEntry(TODO_SNAPSHOT_CUSTOM_TYPE, snapshot);
+}
+
 export function captureTodoSnapshot(pi: ExtensionAPI, ctx: ExtensionContext): void;
 export function captureTodoSnapshot(currentTodos: TodoEntry[], pi: AppendEntryTarget, branchId?: string): void;
 export function captureTodoSnapshot(
@@ -89,7 +101,7 @@ export function captureTodoSnapshot(
 ): void {
 	if (Array.isArray(piOrTodos)) {
 		const pi = ctxOrPi as AppendEntryTarget;
-		pi.appendEntry(TODO_SNAPSHOT_CUSTOM_TYPE, {
+		persistTodoSnapshot(pi, {
 			schema: TODO_SNAPSHOT_SCHEMA,
 			todos: piOrTodos,
 			capturedAt: Date.now(),
@@ -97,11 +109,7 @@ export function captureTodoSnapshot(
 		return;
 	}
 
-	piOrTodos.appendEntry(TODO_SNAPSHOT_CUSTOM_TYPE, {
-		schema: TODO_SNAPSHOT_SCHEMA,
-		todos: findTodoEntries(ctxOrPi as ExtensionContext),
-		capturedAt: Date.now(),
-	});
+	persistTodoSnapshot(piOrTodos, createTodoSnapshot(ctxOrPi as ExtensionContext));
 }
 
 export function restoreTodosIfMissing(pi: ExtensionAPI, ctx: ExtensionContext): void;

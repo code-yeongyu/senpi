@@ -39,6 +39,12 @@ const DEFAULT_CONTEXT_WINDOW = 200_000;
 const EMERGENCY_COMPACTION_INSTRUCTIONS =
 	"EMERGENCY: hard context limit reached. Produce an aggressive recovery summary that preserves current goal, constraints, files touched, tool outcomes, and exact next steps. Prefer concise factual state over transcript detail.";
 const PROACTIVE_COMPACTION_INSTRUCTIONS = "Proactively compact before the next agent turn.";
+const MAX_PENDING_METADATA = 8;
+
+interface PendingCompactionMetadata {
+	checkpoint: checkpointState.AgentCheckpoint;
+	todoSnapshot: todoBridge.TodoSnapshotPayload;
+}
 
 function approxTokens(text: string): number {
 	return Math.ceil(text.length / 4);
@@ -100,6 +106,7 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 				promise: Promise<CompactionResult | undefined>;
 		  }
 		| undefined;
+	const pendingMetadata = new Map<string, PendingCompactionMetadata>();
 
 	function invalidateSpeculativeCompaction(): void {
 		speculativeGeneration++;
@@ -116,6 +123,26 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 		const controller = new AbortController();
 		const promise = runExtensionCompaction(ctx, snapshot, controller.signal).catch(() => undefined);
 		speculativeJob = { generation, snapshot, controller, promise };
+	}
+
+	function capturePendingMetadata(requestId: string, ctx: ExtensionContext): void {
+		pendingMetadata.set(requestId, {
+			checkpoint: checkpointState.captureAgentCheckpoint(pi, ctx),
+			todoSnapshot: todoBridge.createTodoSnapshot(ctx),
+		});
+		while (pendingMetadata.size > MAX_PENDING_METADATA) {
+			const oldestRequestId = pendingMetadata.keys().next().value;
+			if (oldestRequestId === undefined) break;
+			pendingMetadata.delete(oldestRequestId);
+		}
+	}
+
+	function persistAcceptedMetadata(requestId: string): void {
+		const metadata = pendingMetadata.get(requestId);
+		if (!metadata) return;
+		pendingMetadata.delete(requestId);
+		checkpointState.persistCheckpoint(pi, metadata.checkpoint);
+		todoBridge.persistTodoSnapshot(pi, metadata.todoSnapshot);
 	}
 
 	async function applyBlockingCompaction(
@@ -178,8 +205,7 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 		if (breaker.isTripped(state, Date.now()) && !breaker.shouldBypass(state, { reason: event.reason }))
 			return { cancel: true };
 
-		checkpointState.persistCheckpoint(pi, checkpointState.captureAgentCheckpoint(pi, ctx));
-		todoBridge.captureTodoSnapshot(pi, ctx);
+		capturePendingMetadata(event.requestId, ctx);
 
 		const model = ctx.model;
 		if (!model) return undefined;
@@ -200,7 +226,10 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 			customInstructions: event.customInstructions,
 		};
 		const compaction = await runExtensionCompaction(ctx, snapshot, event.signal);
-		if (!compaction) return { cancel: true };
+		if (!compaction) {
+			pendingMetadata.delete(event.requestId);
+			return { cancel: true };
+		}
 
 		return {
 			compaction,
@@ -210,6 +239,7 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 	pi.on("session_compact", async (event, ctx) => {
 		invalidateSpeculativeCompaction();
 		if (event.accepted) {
+			persistAcceptedMetadata(event.requestId);
 			const branchEntries = ctx.sessionManager.getBranch();
 			const firstKeptIndex = branchEntries.findIndex((entry) => entry.id === event.compactionEntry.firstKeptEntryId);
 			const keptEntries = firstKeptIndex === -1 ? [] : branchEntries.slice(firstKeptIndex);
