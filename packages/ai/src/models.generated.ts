@@ -9499,9 +9499,9 @@ export const MODELS = {
 			reasoning: false,
 			input: ["text"],
 			cost: {
-				input: 0.08,
-				output: 0.24,
-				cacheRead: 0.016,
+				input: 0.01,
+				output: 0.03,
+				cacheRead: 0.002,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
@@ -9720,13 +9720,13 @@ export const MODELS = {
 			reasoning: true,
 			input: ["text"],
 			cost: {
-				input: 0.26,
+				input: 0.27899999999999997,
 				output: 1.2,
 				cacheRead: 0,
 				cacheWrite: 0,
 			},
 			contextWindow: 196608,
-			maxTokens: 4096,
+			maxTokens: 131072,
 		} satisfies Model<"openai-completions">,
 		"mistralai/codestral-2508": {
 			id: "mistralai/codestral-2508",
