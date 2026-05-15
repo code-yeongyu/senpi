@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed provider stream creation and mid-stream failures to end the agent loop with terminal assistant error messages that preserve partial content.
+
 ## [2026.5.15] - 2026-05-15
 
 ## [2026.5.14] - 2026-05-14

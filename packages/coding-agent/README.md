@@ -353,7 +353,7 @@ The default export can also be `async`. pi waits for async extension factories b
 
 **What's possible:**
 - Custom tools (or replace built-in tools entirely)
-- Sub-agents and plan mode
+- Plan mode
 - Custom compaction and summarization
 - Permission gates and path protection
 - Custom editors and UI components
@@ -470,7 +470,6 @@ Senpi inherits upstream pi's extension-first design — the **core stays minimal
 
 Upstream pi-mono explicitly omits these features. Senpi ships them as builtins (see the root [README](../../README.md#what-this-fork-adds) for the full list):
 
-- **Sub-agents** — `task`, `background_output`, `background_cancel` tools via [`background-task`](src/core/extensions/builtin/background-task/AGENTS.md). Used for parallel exploration and long-running QA.
 - **Permission popups** — full opencode-style permission flow via [`permission-system`](src/core/extensions/builtin/permission-system/AGENTS.md). Opt-in per tool/rule; non-interactive modes auto-deny unknown calls.
 - **Built-in to-dos** — `todowrite` / `todoread` tools with branch-aware persistence and a continuation loop. Required by senpi's dynamic prompt; remove the builtin id to opt out.
 - **Dynamic system prompt** — intent gate + tool categorization + policy enforcement via [`dynamic-prompt/`](src/core/dynamic-prompt/AGENTS.md). Replaces upstream's static prompt.

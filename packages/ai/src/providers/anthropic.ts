@@ -329,7 +329,7 @@ function sanitizeUnsupportedNativeTools(
 	model: Model<"anthropic-messages">,
 	params: MessageCreateParamsStreaming,
 ): MessageCreateParamsStreaming {
-	if (!isOpus47(model.id)) {
+	if (!isOpus46(model.id) && !isOpus47(model.id)) {
 		return params;
 	}
 

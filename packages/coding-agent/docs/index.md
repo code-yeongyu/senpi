@@ -51,7 +51,6 @@ For the full first-run flow, see [Quickstart](quickstart.md).
 ## Reference
 
 - [Session format](session-format.md) - JSONL session file format, entry types, and SessionManager API.
-- [Agents](agents.md) - subagent profiles, custom agent definitions, and permission rules.
 
 ## Platform setup
 

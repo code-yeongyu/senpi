@@ -22,15 +22,10 @@ Full port of opencode's permission system to senpi-mono as a builtin extension.
 ## Why Builtin Extension?
 Following pi-mono's extension-first philosophy. All permission logic is in the extension, zero core tool modifications.
 
-## Relationship to external agent-profile extensions
-- Agent definition and agent-level tool filtering moved out of this monorepo into the sibling `pi-agent-system` repository.
-- permission-system handles user permission prompts and per-tool access control.
-- Clean separation of concerns remains: external agent-profile filtering and permission prompts do not share approval state.
-
-## 2026-05-11 - Local wildcard matcher after agent-system extraction
+## 2026-05-11 - Local wildcard matcher
 
 ### What changed and why
-- Moved the wildcard matcher into `permission-system/wildcard.ts` so permission evaluation no longer imports from the removed builtin `agent-system` extension.
+- Moved the wildcard matcher into `permission-system/wildcard.ts` so permission evaluation owns its matching logic locally.
 - Added focused wildcard regression coverage under `test/suite/permission-system-wildcard.test.ts`.
 
 ### Files modified

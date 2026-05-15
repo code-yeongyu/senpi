@@ -67,18 +67,6 @@ Create a structured handoff summary of this conversation for seamless continuati
 - Include verbatim quotes from the conversation showing exactly where work was left off when helpful.
 - Do not suggest tangential tasks.
 
-## 8. Delegated Agent Sessions
-- List ALL background agent tasks spawned during this session.
-- For each: agent name, category, status, description, and session_id.
-- RESUME, DON'T RESTART — session_ids must be preserved byte-for-byte.
-- Each listed session retains full context. After compaction, use session_id to continue existing agent sessions instead of spawning new ones.
-
-## 9. Agent Verification State (CONDITIONAL — emit only for reviewer agents)
-- **Current Agent**: What agent is running.
-- **Verification Progress**: Files already verified or validated.
-- **Pending Verifications**: Files still needing verification.
-- **Previous Rejections**: If reviewer agent, what was rejected and why.
-- **Acceptance Status**: Current state of review process.
 </summary>
 
 Verification: Before finalizing, confirm the summary clearly states the user's original request. If not, restate it verbatim.
@@ -131,12 +119,6 @@ Update the structured handoff summary. The structured output portion MUST be wra
 - Update based on current state and the user's most recent request.
 - Keep this direct and immediately actionable.
 
-## 8. Delegated Agent Sessions
-- Preserve every existing agent name, status, description, and session_id byte-for-byte unless updated by new messages.
-- RESUME, DON'T RESTART — session_ids must be preserved byte-for-byte.
-
-## 9. Agent Verification State (CONDITIONAL — emit only for reviewer agents)
-- Preserve reviewer context and update verification progress, pending verifications, previous rejections, and acceptance status.
 </summary>
 
 IMPORTANT: Respond with ONLY the <summary>...</summary> block as your text output.`;
@@ -184,10 +166,6 @@ Create a structured branch handoff summary. The structured output portion MUST b
 - State the precise next action for returning to this branch.
 - Do not suggest tangential tasks.
 
-## 8. Delegated Agent Sessions
-- List branch-relevant background agent tasks.
-- For each: agent name, category, status, description, and session_id.
-- RESUME, DON'T RESTART — session_ids must be preserved byte-for-byte.
 </summary>
 
 IMPORTANT: Respond with ONLY the <summary>...</summary> block as your text output.`;

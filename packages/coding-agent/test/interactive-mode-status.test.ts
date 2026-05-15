@@ -374,26 +374,26 @@ describe("InteractiveMode.showLoadedResources", () => {
 				}),
 			},
 			{
-				path: "/tmp/project/.pi/git/github.com/HazAT/pi-interactive-subagents/extensions/index.ts",
+				path: "/tmp/project/.pi/git/github.com/HazAT/pi-interactive-tools/extensions/index.ts",
 				sourceInfo: createSourceInfo(
-					"/tmp/project/.pi/git/github.com/HazAT/pi-interactive-subagents/extensions/index.ts",
+					"/tmp/project/.pi/git/github.com/HazAT/pi-interactive-tools/extensions/index.ts",
 					{
-						source: "git:github.com/HazAT/pi-interactive-subagents",
+						source: "git:github.com/HazAT/pi-interactive-tools",
 						scope: "project",
 						origin: "package",
-						baseDir: "/tmp/project/.pi/git/github.com/HazAT/pi-interactive-subagents",
+						baseDir: "/tmp/project/.pi/git/github.com/HazAT/pi-interactive-tools",
 					},
 				),
 			},
 			{
-				path: "/tmp/project/.pi/git/github.com/HazAT/pi-interactive-subagents/extensions/subagents/index.ts",
+				path: "/tmp/project/.pi/git/github.com/HazAT/pi-interactive-tools/extensions/workflows/index.ts",
 				sourceInfo: createSourceInfo(
-					"/tmp/project/.pi/git/github.com/HazAT/pi-interactive-subagents/extensions/subagents/index.ts",
+					"/tmp/project/.pi/git/github.com/HazAT/pi-interactive-tools/extensions/workflows/index.ts",
 					{
-						source: "git:github.com/HazAT/pi-interactive-subagents",
+						source: "git:github.com/HazAT/pi-interactive-tools",
 						scope: "project",
 						origin: "package",
-						baseDir: "/tmp/project/.pi/git/github.com/HazAT/pi-interactive-subagents",
+						baseDir: "/tmp/project/.pi/git/github.com/HazAT/pi-interactive-tools",
 					},
 				),
 			},
@@ -489,7 +489,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 
 		expect(normalizeRenderedOutput(fakeThis.chatContainer)).toMatchInlineSnapshot(`
 "[Extensions]
-  @scope/pi-scoped, answer.ts, cli-extension.ts, HazAT/pi-interactive-subagents, HazAT/pi-interactive-subagents:subagents, local-index, pi-markdown-preview, user-index"`);
+  @scope/pi-scoped, answer.ts, cli-extension.ts, HazAT/pi-interactive-tools, HazAT/pi-interactive-tools:workflows, local-index, pi-markdown-preview, user-index"`);
 	});
 
 	test("adds more parent folders until local extension labels are unique", () => {
@@ -777,9 +777,9 @@ describe("InteractiveMode.showLoadedResources", () => {
   project
     /tmp/project/.pi/extensions/answer.ts
     /tmp/project/.pi/extensions/local-index
-    git:github.com/HazAT/pi-interactive-subagents
+    git:github.com/HazAT/pi-interactive-tools
       extensions
-      extensions/subagents
+      extensions/workflows
     npm:@scope/pi-scoped
       extensions
     npm:pi-markdown-preview

@@ -9,7 +9,7 @@ permission-system/
 ├── index.ts            # Extension entry — wires beforeToolCall + UI prompt
 ├── service.ts          # Permission service core (ask/reply/list)
 ├── evaluate.ts         # Rule evaluator with wildcard matching
-├── wildcard.ts         # Wildcard matcher formerly shared with builtin agent-system
+├── wildcard.ts         # Wildcard matcher
 ├── types.ts            # Action ("ask"|"allow"|"deny"), Rule, Request, Reply
 ├── settings.ts         # settings.json integration (always_allow, deny)
 ├── cli.ts              # `--permission tool=action` flag parser
@@ -49,12 +49,10 @@ Pattern syntax: tool name + optional arg pattern, e.g. `bash:rm *`, `write:/etc/
 
 - **JSONL storage is the contract**: `storage.ts` writes append-only newline-delimited JSON. Schema changes require a migration. Other tools (audit, replay) parse this format.
 - **Parsers are tool-aware**: `parsers.ts` extracts the *meaningful* arg per tool — file path for read/write/edit, command prefix for bash, file paths for `apply_patch` body (2026-04-13).
-- External agent-profile extensions do NOT call into permission-system; both gates can independently deny when such an extension is installed.
 - **`external-dir.ts` forces ask** when target path is outside repo root, regardless of allow-rules — explicit user consent required.
 
 ## ANTI-PATTERNS
 
-- Sharing state with external agent-profile extensions (e.g. a global `sessionAllowed` Set) — kept separate by design.
 - Changing the JSONL line shape without a migration script — breaks existing approval files.
 - Adding a new tool that mutates files without registering a parser in `parsers.ts` — falls back to wildcard, loses per-path granularity.
 - Bypassing the parser registry from a builtin tool's render path — render and approval must agree on the displayed action.

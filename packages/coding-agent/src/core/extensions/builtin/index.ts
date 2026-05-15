@@ -1,7 +1,6 @@
 import type { ExtensionFactory } from "../types.js";
 import anthropicBashExtension from "./anthropic-bash/index.js";
 import anthropicWebSearchExtension from "./anthropic-web-search/index.js";
-import backgroundTaskExtension from "./background-task/index.js";
 import bashTimeoutExtension from "./bash-timeout/index.js";
 import compactionExtension from "./compaction/index.js";
 import diffExtension from "./diff.js";
@@ -32,7 +31,6 @@ export const globalDefaultExtensionFactories = {
 } satisfies Record<(typeof globalDefaultExtensionIds)[number], ExtensionFactory>;
 
 export const builtinExtensions: BuiltinExtensionFactory[] = [
-	{ id: "background-task", factory: backgroundTaskExtension },
 	{ id: "permission-system", factory: permissionSystemExtension },
 	{ id: "gpt-apply-patch", factory: gptApplyPatchExtension },
 	{ id: "prompt-preset", factory: promptPresetExtension },

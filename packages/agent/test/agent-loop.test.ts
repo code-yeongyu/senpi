@@ -25,6 +25,54 @@ class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMe
 	}
 }
 
+class ThrowingAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
+	constructor(private readonly thrownError: Error) {
+		super(
+			(event) => event.type === "done" || event.type === "error",
+			(event) => {
+				if (event.type === "done") return event.message;
+				if (event.type === "error") return event.error;
+				throw new Error("Unexpected event type");
+			},
+		);
+	}
+
+	override async *[Symbol.asyncIterator](): AsyncIterator<AssistantMessageEvent> {
+		const partial = createAssistantMessage([{ type: "text", text: "partial answer" }]);
+		yield { type: "start", partial };
+		yield { type: "text_delta", contentIndex: 0, delta: "partial answer", partial };
+		throw this.thrownError;
+	}
+
+	override result(): Promise<AssistantMessage> {
+		return Promise.reject(this.thrownError);
+	}
+}
+
+async function collectAgentEvents(
+	stream: AsyncIterable<AgentEvent> & { result(): Promise<AgentMessage[]> },
+): Promise<{ events: AgentEvent[]; messages: AgentMessage[] }> {
+	const events: AgentEvent[] = [];
+	let timeout: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			(async () => {
+				for await (const event of stream) {
+					events.push(event);
+				}
+				return { events, messages: await stream.result() };
+			})(),
+			new Promise<never>((_resolve, reject) => {
+				timeout = setTimeout(() => reject(new Error("agentLoop stream did not terminate")), 100);
+			}),
+		]);
+	} finally {
+		if (timeout) {
+			clearTimeout(timeout);
+		}
+	}
+}
+
 function createUsage() {
 	return {
 		input: 0,
@@ -77,7 +125,11 @@ function createUserMessage(text: string): UserMessage {
 
 // Simple identity converter for tests - just passes through standard messages
 function identityConverter(messages: AgentMessage[]): Message[] {
-	return messages.filter((m) => m.role === "user" || m.role === "assistant" || m.role === "toolResult") as Message[];
+	return messages.filter(isLlmMessage);
+}
+
+function isLlmMessage(message: AgentMessage): message is Message {
+	return message.role === "user" || message.role === "assistant" || message.role === "toolResult";
 }
 
 describe("agentLoop with AgentMessage", () => {
@@ -128,23 +180,114 @@ describe("agentLoop with AgentMessage", () => {
 		expect(eventTypes).toContain("agent_end");
 	});
 
-	it("should handle custom message types via convertToLlm", async () => {
-		// Create a custom message type
-		interface CustomNotification {
-			role: "notification";
-			text: string;
-			timestamp: number;
-		}
+	it("should emit a terminal assistant error when stream creation throws", async () => {
+		const context: AgentContext = {
+			systemPrompt: "You are helpful.",
+			messages: [],
+			tools: [],
+		};
+		const userPrompt: AgentMessage = createUserMessage("Hello");
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
 
-		const notification: CustomNotification = {
-			role: "notification",
-			text: "This is a notification",
+		const stream = agentLoop([userPrompt], context, config, undefined, () => {
+			throw new Error("provider exploded before stream");
+		});
+
+		const { events, messages } = await collectAgentEvents(stream);
+		const assistantMessage = messages.find((message): message is AssistantMessage => message.role === "assistant");
+		expect(assistantMessage?.stopReason).toBe("error");
+		expect(assistantMessage?.errorMessage).toBe("provider exploded before stream");
+		expect(events.map((event) => event.type)).toEqual([
+			"agent_start",
+			"turn_start",
+			"message_start",
+			"message_end",
+			"message_start",
+			"message_end",
+			"turn_end",
+			"agent_end",
+		]);
+	});
+
+	it("should preserve partial content when provider iteration throws mid-stream", async () => {
+		const context: AgentContext = {
+			systemPrompt: "You are helpful.",
+			messages: [],
+			tools: [],
+		};
+		const userPrompt: AgentMessage = createUserMessage("Hello");
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		const stream = agentLoop([userPrompt], context, config, undefined, () => {
+			return new ThrowingAssistantStream(new Error("network disconnected"));
+		});
+
+		const { events, messages } = await collectAgentEvents(stream);
+		const assistantMessage = messages.find((message): message is AssistantMessage => message.role === "assistant");
+		expect(assistantMessage?.stopReason).toBe("error");
+		expect(assistantMessage?.errorMessage).toBe("network disconnected");
+		expect(assistantMessage?.content).toEqual([{ type: "text", text: "partial answer" }]);
+		expect(events.map((event) => event.type)).toEqual([
+			"agent_start",
+			"turn_start",
+			"message_start",
+			"message_end",
+			"message_start",
+			"message_update",
+			"message_end",
+			"turn_end",
+			"agent_end",
+		]);
+	});
+
+	it("should attach fallback error details when a terminal error event omits them", async () => {
+		const context: AgentContext = {
+			systemPrompt: "You are helpful.",
+			messages: [],
+			tools: [],
+		};
+		const userPrompt: AgentMessage = createUserMessage("Hello");
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		const stream = agentLoop([userPrompt], context, config, undefined, () => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				mockStream.push({
+					type: "error",
+					reason: "error",
+					error: createAssistantMessage([{ type: "text", text: "" }], "error"),
+				});
+			});
+			return mockStream;
+		});
+
+		const { messages } = await collectAgentEvents(stream);
+		const assistantMessage = messages.find((message): message is AssistantMessage => message.role === "assistant");
+		expect(assistantMessage?.stopReason).toBe("error");
+		expect(assistantMessage?.errorMessage).toBe("Error");
+	});
+
+	it("should handle custom message types via convertToLlm", async () => {
+		const notification: AgentMessage = {
+			role: "custom",
+			customType: "notification",
+			content: "This is a notification",
+			display: false,
 			timestamp: Date.now(),
 		};
 
 		const context: AgentContext = {
 			systemPrompt: "You are helpful.",
-			messages: [notification as unknown as AgentMessage], // Custom message in context
+			messages: [notification],
 			tools: [],
 		};
 
@@ -154,10 +297,10 @@ describe("agentLoop with AgentMessage", () => {
 		const config: AgentLoopConfig = {
 			model: createModel(),
 			convertToLlm: (messages) => {
-				// Filter out notifications, convert rest
+				// Filter out custom notifications, convert rest
 				convertedMessages = messages
-					.filter((m) => (m as { role: string }).role !== "notification")
-					.filter((m) => m.role === "user" || m.role === "assistant" || m.role === "toolResult") as Message[];
+					.filter((message) => message.role !== "custom" || message.customType !== "notification")
+					.filter(isLlmMessage);
 				return convertedMessages;
 			},
 		};
@@ -1285,26 +1428,22 @@ describe("agentLoopContinue with AgentMessage", () => {
 		// Should NOT have user message events (that's the key difference from agentLoop)
 		const messageEndEvents = events.filter((e) => e.type === "message_end");
 		expect(messageEndEvents.length).toBe(1);
-		expect((messageEndEvents[0] as any).message.role).toBe("assistant");
+		expect(messageEndEvents[0]?.type).toBe("message_end");
+		expect(messageEndEvents[0]?.message.role).toBe("assistant");
 	});
 
 	it("should allow custom message types as last message (caller responsibility)", async () => {
-		// Custom message that will be converted to user message by convertToLlm
-		interface CustomMessage {
-			role: "custom";
-			text: string;
-			timestamp: number;
-		}
-
-		const customMessage: CustomMessage = {
+		const customMessage: AgentMessage = {
 			role: "custom",
-			text: "Hook content",
+			customType: "hook",
+			content: "Hook content",
+			display: true,
 			timestamp: Date.now(),
 		};
 
 		const context: AgentContext = {
 			systemPrompt: "You are helpful.",
-			messages: [customMessage as unknown as AgentMessage],
+			messages: [customMessage],
 			tools: [],
 		};
 
@@ -1313,17 +1452,17 @@ describe("agentLoopContinue with AgentMessage", () => {
 			convertToLlm: (messages) => {
 				// Convert custom to user message
 				return messages
-					.map((m) => {
-						if ((m as any).role === "custom") {
+					.map((message): AgentMessage => {
+						if (message.role === "custom") {
 							return {
 								role: "user" as const,
-								content: (m as any).text,
-								timestamp: m.timestamp,
+								content: message.content,
+								timestamp: message.timestamp,
 							};
 						}
-						return m;
+						return message;
 					})
-					.filter((m) => m.role === "user" || m.role === "assistant" || m.role === "toolResult") as Message[];
+					.filter(isLlmMessage);
 			},
 		};
 

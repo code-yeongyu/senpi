@@ -150,6 +150,15 @@ function createAgentStream(): EventStream<AgentEvent, AgentMessage[]> {
 	);
 }
 
+const EMPTY_USAGE = {
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 0,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+} satisfies AssistantMessage["usage"];
+
 /**
  * Main loop logic shared by agentLoop and agentLoopContinue.
  */
@@ -280,92 +289,109 @@ async function streamAssistantResponse(
 	emit: AgentEventSink,
 	streamFn?: StreamFn,
 ): Promise<AssistantMessage> {
-	// Apply context transform if configured (AgentMessage[] → AgentMessage[])
-	let messages = context.messages;
-	if (config.transformContext) {
-		messages = await config.transformContext(messages, signal);
-	}
-
-	// Convert to LLM-compatible messages (AgentMessage[] → Message[])
-	const llmMessages = await config.convertToLlm(messages);
-
-	// Build LLM context
-	const llmContext: Context = {
-		systemPrompt: context.systemPrompt,
-		messages: llmMessages,
-		tools: context.tools,
-	};
-
-	const streamFunction = streamFn || streamSimple;
-
-	// Resolve API key (important for expiring tokens)
-	const resolvedApiKey =
-		(config.getApiKey ? await config.getApiKey(config.model.provider) : undefined) || config.apiKey;
-
-	const response = await streamFunction(config.model, llmContext, {
-		...config,
-		apiKey: resolvedApiKey,
-		signal,
-	});
-
 	let partialMessage: AssistantMessage | null = null;
 	let addedPartial = false;
 
-	for await (const event of response) {
-		switch (event.type) {
-			case "start":
-				partialMessage = event.partial;
-				context.messages.push(partialMessage);
-				addedPartial = true;
-				await emit({ type: "message_start", message: { ...partialMessage } });
-				break;
+	try {
+		// Apply context transform if configured (AgentMessage[] → AgentMessage[])
+		let messages = context.messages;
+		if (config.transformContext) {
+			messages = await config.transformContext(messages, signal);
+		}
 
-			case "text_start":
-			case "text_delta":
-			case "text_end":
-			case "thinking_start":
-			case "thinking_delta":
-			case "thinking_end":
-			case "toolcall_start":
-			case "toolcall_delta":
-			case "toolcall_end":
-				if (partialMessage) {
+		// Convert to LLM-compatible messages (AgentMessage[] → Message[])
+		const llmMessages = await config.convertToLlm(messages);
+
+		// Build LLM context
+		const llmContext: Context = {
+			systemPrompt: context.systemPrompt,
+			messages: llmMessages,
+			tools: context.tools,
+		};
+
+		const streamFunction = streamFn || streamSimple;
+
+		// Resolve API key (important for expiring tokens)
+		const resolvedApiKey =
+			(config.getApiKey ? await config.getApiKey(config.model.provider) : undefined) || config.apiKey;
+
+		const response = await streamFunction(config.model, llmContext, {
+			...config,
+			apiKey: resolvedApiKey,
+			signal,
+		});
+
+		for await (const event of response) {
+			switch (event.type) {
+				case "start":
 					partialMessage = event.partial;
-					context.messages[context.messages.length - 1] = partialMessage;
-					await emit({
-						type: "message_update",
-						assistantMessageEvent: event,
-						message: { ...partialMessage },
-					});
-				}
-				break;
+					context.messages.push(partialMessage);
+					addedPartial = true;
+					await emit({ type: "message_start", message: { ...partialMessage } });
+					break;
 
-			case "done":
-			case "error": {
-				const finalMessage = normalizeTerminalAssistantMessage(await response.result(), event);
-				if (addedPartial) {
-					context.messages[context.messages.length - 1] = finalMessage;
-				} else {
-					context.messages.push(finalMessage);
+				case "text_start":
+				case "text_delta":
+				case "text_end":
+				case "thinking_start":
+				case "thinking_delta":
+				case "thinking_end":
+				case "toolcall_start":
+				case "toolcall_delta":
+				case "toolcall_end":
+					if (partialMessage) {
+						partialMessage = event.partial;
+						context.messages[context.messages.length - 1] = partialMessage;
+						await emit({
+							type: "message_update",
+							assistantMessageEvent: event,
+							message: { ...partialMessage },
+						});
+					}
+					break;
+
+				case "done":
+				case "error": {
+					const finalMessage = normalizeTerminalAssistantMessage(await response.result(), event);
+					if (addedPartial) {
+						context.messages[context.messages.length - 1] = finalMessage;
+					} else {
+						context.messages.push(finalMessage);
+					}
+					if (!addedPartial) {
+						await emit({ type: "message_start", message: { ...finalMessage } });
+					}
+					await emit({ type: "message_end", message: finalMessage });
+					return finalMessage;
 				}
-				if (!addedPartial) {
-					await emit({ type: "message_start", message: { ...finalMessage } });
-				}
-				await emit({ type: "message_end", message: finalMessage });
-				return finalMessage;
 			}
 		}
-	}
 
-	const finalMessage = await response.result();
-	if (addedPartial) {
-		context.messages[context.messages.length - 1] = finalMessage;
-	} else {
-		context.messages.push(finalMessage);
-		await emit({ type: "message_start", message: { ...finalMessage } });
+		const finalMessage = await response.result();
+		if (addedPartial) {
+			context.messages[context.messages.length - 1] = finalMessage;
+		} else {
+			context.messages.push(finalMessage);
+			await emit({ type: "message_start", message: { ...finalMessage } });
+		}
+		await emit({ type: "message_end", message: finalMessage });
+		return finalMessage;
+	} catch (error) {
+		const finalMessage = createTerminalFailureAssistantMessage(
+			config.model,
+			signal?.aborted ? "aborted" : "error",
+			error,
+			partialMessage,
+		);
+		if (addedPartial) {
+			context.messages[context.messages.length - 1] = finalMessage;
+		} else {
+			context.messages.push(finalMessage);
+			await emit({ type: "message_start", message: { ...finalMessage } });
+		}
+		await emit({ type: "message_end", message: finalMessage });
+		return finalMessage;
 	}
-	await emit({ type: "message_end", message: finalMessage });
-	return finalMessage;
 }
 
 /**
@@ -395,20 +421,44 @@ type ExecutedToolCallBatch = {
 
 type TerminalAssistantMessageEvent = Extract<AssistantMessageEvent, { type: "done" | "error" }>;
 
+function createTerminalFailureAssistantMessage(
+	model: AgentLoopConfig["model"],
+	reason: Extract<AssistantMessage["stopReason"], "aborted" | "error">,
+	error: unknown,
+	partialMessage: AssistantMessage | null,
+): AssistantMessage {
+	const errorMessage = error instanceof Error ? error.message : String(error);
+	return {
+		role: "assistant",
+		content: partialMessage?.content ?? [{ type: "text", text: "" }],
+		api: partialMessage?.api ?? model.api,
+		provider: partialMessage?.provider ?? model.provider,
+		model: partialMessage?.model ?? model.id,
+		responseModel: partialMessage?.responseModel,
+		responseId: partialMessage?.responseId,
+		diagnostics: partialMessage?.diagnostics,
+		usage: partialMessage?.usage ?? EMPTY_USAGE,
+		stopReason: reason,
+		errorMessage: errorMessage || (reason === "aborted" ? "Request was aborted" : "Error"),
+		timestamp: partialMessage?.timestamp ?? Date.now(),
+	};
+}
+
 function normalizeTerminalAssistantMessage(
 	message: AssistantMessage,
 	event: TerminalAssistantMessageEvent,
 ): AssistantMessage {
-	if (message.stopReason === event.reason) {
+	if (event.type === "done") {
+		return message;
+	}
+	const errorMessage = message.errorMessage ?? (event.reason === "aborted" ? "Request was aborted" : "Error");
+	if (message.stopReason === event.reason && message.errorMessage === errorMessage) {
 		return message;
 	}
 	return {
 		...message,
 		stopReason: event.reason,
-		errorMessage:
-			event.type === "error"
-				? (message.errorMessage ?? (event.reason === "aborted" ? "Request was aborted" : "Error"))
-				: message.errorMessage,
+		errorMessage,
 	};
 }
 

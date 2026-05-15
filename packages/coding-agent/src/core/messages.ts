@@ -23,20 +23,12 @@ export const BRANCH_SUMMARY_PREFIX = `The following is a summary of a branch tha
 
 export const BRANCH_SUMMARY_SUFFIX = `</summary>`;
 
-const CONTEXT_EXCLUDED_CUSTOM_TYPES = new Set(["background-task.complete"]);
-
-export function isContextExcludedCustomMessage(customType: string): boolean {
-	return CONTEXT_EXCLUDED_CUSTOM_TYPES.has(customType);
+export function isContextExcludedCustomMessage(_customType: string): boolean {
+	return false;
 }
 
 export function filterContextExcludedMessages(messages: AgentMessage[]): AgentMessage[] {
-	return messages.filter((message) => {
-		if (message.role !== "custom") {
-			return true;
-		}
-
-		return !isContextExcludedCustomMessage(message.customType);
-	});
+	return messages;
 }
 
 /**

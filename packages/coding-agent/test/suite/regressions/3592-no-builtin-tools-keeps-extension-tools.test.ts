@@ -80,8 +80,6 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 				.sort(),
 		).toEqual([
 			"apply_patch",
-			"background_cancel",
-			"background_output",
 			"bash",
 			"dynamic_tool",
 			"edit",
@@ -89,19 +87,11 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 			"grep",
 			"ls",
 			"read",
-			"task",
 			"todoread",
 			"todowrite",
 			"write",
 		]);
-		expect(session.getActiveToolNames()).toEqual([
-			"task",
-			"background_output",
-			"background_cancel",
-			"todowrite",
-			"todoread",
-			"dynamic_tool",
-		]);
+		expect(session.getActiveToolNames()).toEqual(["todowrite", "todoread", "dynamic_tool"]);
 		expect(session.systemPrompt).toContain("- dynamic_tool: Run dynamic test behavior");
 		expect(session.systemPrompt).not.toContain("- read:");
 		expect(session.systemPrompt).not.toContain("- bash:");
@@ -133,15 +123,8 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 			noTools: "builtin",
 		});
 
-		expect(session.getActiveToolNames()).toEqual([
-			"task",
-			"background_output",
-			"background_cancel",
-			"apply_patch",
-			"todowrite",
-			"todoread",
-		]);
-		expect(session.systemPrompt).toContain("- task:");
+		expect(session.getActiveToolNames()).toEqual(["apply_patch", "todowrite", "todoread"]);
+		expect(session.systemPrompt).toContain("- todowrite:");
 		expect(session.systemPrompt).not.toContain("- read:");
 		session.dispose();
 	});

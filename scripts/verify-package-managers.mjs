@@ -107,7 +107,8 @@ async function verify(pm, parentTmp) {
 	}
 
 	header(`[${pm}] install`);
-	const inst = await runPM(pm, ["install"], tmp);
+	const installArgs = pm === "pnpm" ? ["install", "--ignore-scripts"] : ["install"];
+	const inst = await runPM(pm, installArgs, tmp);
 	if (inst !== 0) return { pm, ok: false, stage: "install", tmp };
 
 	header(`[${pm}] run build:${pm}`);

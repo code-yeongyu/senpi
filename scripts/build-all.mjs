@@ -13,6 +13,7 @@
 // Usage: node scripts/build-all.mjs [--pm npm|bun|pnpm]
 
 import { spawn, spawnSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -119,6 +120,25 @@ async function runBuild(pm, cwd) {
 	return { rel, status };
 }
 
+function currentGitHead() {
+	const result = spawnSync("git", ["rev-parse", "HEAD"], {
+		cwd: root,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "ignore"],
+		shell: false,
+	});
+	if (result.status !== 0) return undefined;
+	return result.stdout.trim() || undefined;
+}
+
+function writeBuildStamp() {
+	const head = currentGitHead();
+	if (!head) return;
+	const distDir = join(root, "dist");
+	mkdirSync(distDir, { recursive: true });
+	writeFileSync(join(distDir, ".senpi-build-head"), `${head}\n`, "utf8");
+}
+
 async function main() {
 	const args = parseArgs(process.argv.slice(2));
 	const pm = detectPackageManager(process.env, args.pm);
@@ -140,6 +160,7 @@ async function main() {
 		{ cwd: root, stdio: "inherit", env: cleanEnv(), shell: false },
 	);
 	if (wrapperResult.status !== 0) process.exit(wrapperResult.status ?? 1);
+	writeBuildStamp();
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

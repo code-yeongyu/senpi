@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { type Api, type Message, type Model, streamSimple, supportsMax, supportsXhigh } from "@earendil-works/pi-ai";
+import { type Api, type Message, type Model, streamSimple } from "@earendil-works/pi-ai";
 import { APP_NAME, getAgentDir } from "../config.js";
 import { AgentSession } from "./agent-session.js";
 import { formatNoModelsAvailableMessage } from "./auth-guidance.js";
@@ -16,6 +16,7 @@ import { DefaultResourceLoader } from "./resource-loader.js";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.js";
 import { SettingsManager } from "./settings-manager.js";
 import { isInstallTelemetryEnabled } from "./telemetry.js";
+import { getSupportedThinkingLevels } from "./thinking-levels.js";
 import { time } from "./timings.js";
 import {
 	createBashTool,
@@ -30,10 +31,6 @@ import {
 	type ToolName,
 	withFileMutationQueue,
 } from "./tools/index.js";
-
-type ModelWithThinkingLevelMap = Model<Api> & {
-	thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
-};
 
 export interface CreateAgentSessionOptions {
 	/** Working directory for project-local discovery. Default: process.cwd() */
@@ -113,17 +110,17 @@ export type { Skill } from "./skills.js";
 export type { Tool } from "./tools/index.js";
 
 export {
-	withFileMutationQueue,
 	// Tool factories (for custom cwd)
+	createBashTool,
 	createCodingTools,
+	createEditTool,
+	createFindTool,
+	createGrepTool,
+	createLsTool,
 	createReadOnlyTools,
 	createReadTool,
-	createBashTool,
-	createEditTool,
 	createWriteTool,
-	createGrepTool,
-	createFindTool,
-	createLsTool,
+	withFileMutationQueue,
 };
 
 // Helper Functions
@@ -447,7 +444,7 @@ export function clampThinkingLevelToModel(
 	level: ThinkingLevel | undefined,
 	model: Model<Api> | undefined,
 ): ThinkingLevel {
-	if (!model || !model.reasoning) return "off";
+	if (!model?.reasoning) return "off";
 
 	const requestedLevel = level ?? "off";
 	const availableLevels = getSupportedThinkingLevels(model);
@@ -459,28 +456,11 @@ export function clampThinkingLevelToModel(
 
 	for (let index = requestedIndex; index < clampedLevels.length; index++) {
 		const candidate = clampedLevels[index];
-		if (candidate && availableLevels.includes(candidate)) return candidate;
+		if (candidate !== undefined && availableLevels.includes(candidate)) return candidate;
 	}
 	for (let index = requestedIndex - 1; index >= 0; index--) {
 		const candidate = clampedLevels[index];
-		if (candidate && availableLevels.includes(candidate)) return candidate;
+		if (candidate !== undefined && availableLevels.includes(candidate)) return candidate;
 	}
 	return availableLevels[0] ?? "off";
-}
-
-function getSupportedThinkingLevels(model: Model<Api>): ThinkingLevel[] {
-	const modelWithThinkingLevelMap = model as ModelWithThinkingLevelMap;
-	const levels: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
-	const supportedLevels = levels.filter((level) => {
-		const mappedLevel = modelWithThinkingLevelMap.thinkingLevelMap?.[level];
-		if (mappedLevel === null) return false;
-		if (level === "xhigh") return mappedLevel !== undefined || supportsXhigh(model);
-		return true;
-	});
-
-	if (supportsMax(model)) {
-		supportedLevels.push("max");
-	}
-
-	return supportedLevels;
 }

@@ -2,8 +2,12 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AssistantMessage, Context, Message, TextContent, ToolResultMessage } from "@earendil-works/pi-ai";
-import { complete, fauxAssistantMessage, registerFauxProvider, repairOrphanedToolResults } from "@earendil-works/pi-ai";
+import { complete, fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+	repairOrphanedToolResults,
+	TOOL_RESULT_PLACEHOLDER,
+} from "../../src/core/extensions/builtin/compaction/repair-tool-pairs.js";
 import {
 	type FileEntry,
 	migrateSessionEntries,
@@ -11,7 +15,6 @@ import {
 	type SessionMessageEntry,
 } from "../../src/core/session-manager.js";
 
-const TOOL_RESULT_PLACEHOLDER = "Tool output unavailable (context compacted)";
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 
 const registrations: Array<{ unregister: () => void }> = [];

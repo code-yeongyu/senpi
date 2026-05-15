@@ -54,10 +54,6 @@ function formatRequestForDisplay(request: Request): string {
 			if (meta.description) parts.push(`Description: ${meta.description}`);
 			parts.push(`Command: $ ${meta.command || "Unknown"}`);
 			break;
-		case "task":
-			parts.push(`Type: ${meta.subagent_type || "Unknown"}`);
-			if (meta.description) parts.push(`Description: ${meta.description}`);
-			break;
 		case "websearch":
 		case "codesearch":
 			parts.push(`Query: ${meta.query || "Unknown"}`);

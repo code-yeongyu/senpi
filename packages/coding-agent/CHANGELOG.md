@@ -581,7 +581,7 @@
 - Fixed direct OpenAI Responses and Codex SSE requests to align `prompt_cache_key`, `session_id`, and `x-client-request-id` values with the same session-derived identifier, improving prompt cache affinity for append-only sessions ([#3018](https://github.com/badlogic/pi-mono/pull/3018) by [@steipete](https://github.com/steipete))
 - Fixed streaming-only `partialJson` scratch buffers leaking into persisted OpenAI Responses tool calls, which could corrupt follow-up payloads on resumed conversations.
 - Fixed Ctrl+Alt letter key matching in tmux by falling through from legacy ESC-prefixed handling to CSI-u and xterm `modifyOtherKeys` parsing when the legacy form does not match ([#2989](https://github.com/badlogic/pi-mono/pull/2989) by [@kaofelix](https://github.com/kaofelix))
-- Fixed the shipped `subagent` example to avoid leaking Bun virtual filesystem script paths into subagent prompts ([#3002](https://github.com/badlogic/pi-mono/pull/3002) by [@nathyong](https://github.com/nathyong))
+- Fixed the shipped orchestration example to avoid leaking Bun virtual filesystem script paths into generated prompts ([#3002](https://github.com/badlogic/pi-mono/pull/3002) by [@nathyong](https://github.com/nathyong))
 - Fixed bordered loaders to stop their animation timer when disposed, preventing stale loader updates after teardown.
 
 ## [0.67.1] - 2026-04-13
@@ -1132,7 +1132,7 @@ Examples:
 - Fixed interactive input fields backed by the TUI `Input` component to scroll by visual column width for wide Unicode text (CJK, fullwidth characters), preventing rendered line overflow and TUI crashes in places like search and filter inputs ([#1982](https://github.com/badlogic/pi-mono/issues/1982))
 - Fixed `shift+tab` and other modified Tab bindings in tmux when `extended-keys-format` is left at the default `xterm`
 - Fixed EXIF orientation not being applied during image convert and resize, causing JPEG and WebP images from phone cameras to display rotated or mirrored ([#2105](https://github.com/badlogic/pi-mono/pull/2105) by [@melihmucuk](https://github.com/melihmucuk))
-- Fixed the default coding-agent system prompt to include only the current date in ISO format, not the current time, so prompt prefixes stay cacheable across reloads and resumed sessions ([#2131](https://github.com/badlogic/pi-mono/issues/2131))
+- Fixed the default coding-agent prompt to include only the current date in ISO format, not the current time, so prompt prefixes stay cacheable across reloads and resumed sessions ([#2131](https://github.com/badlogic/pi-mono/issues/2131))
 - Fixed retry regex to match `server_error` and `internal_error` error types from providers, improving automatic retry coverage ([#2117](https://github.com/badlogic/pi-mono/pull/2117) by [@MadKangYu](https://github.com/MadKangYu))
 - Fixed example extensions to support `PI_CODING_AGENT_DIR` environment variable for custom agent directory paths ([#2009](https://github.com/badlogic/pi-mono/pull/2009) by [@smithbm2316](https://github.com/smithbm2316))
 - Fixed tool result images not being sent in `function_call_output` items for OpenAI Responses API providers, causing image data to be silently dropped in tool results ([#2104](https://github.com/badlogic/pi-mono/issues/2104))
@@ -1362,7 +1362,7 @@ Examples:
 - Fixed extension loading on Windows when resolving `@sinclair/typebox` aliases so subpath imports like `@sinclair/typebox/compiler` resolve correctly.
 - Fixed adaptive thinking for Claude Sonnet 4.6 in Anthropic and Bedrock providers, and clamped unsupported `xhigh` effort values to supported levels ([#1548](https://github.com/badlogic/pi-mono/pull/1548) by [@tctev](https://github.com/tctev))
 - Fixed Vertex ADC credential detection race by avoiding caching a false negative during async import initialization ([#1550](https://github.com/badlogic/pi-mono/pull/1550) by [@jeremiahgaylord-web](https://github.com/jeremiahgaylord-web))
-- Fixed subagent extension example to resolve user agents from the configured agent directory instead of hardcoded paths ([#1559](https://github.com/badlogic/pi-mono/pull/1559) by [@tianshuwang](https://github.com/tianshuwang))
+- Fixed the orchestration example to resolve user profiles from the configured directory instead of hardcoded paths ([#1559](https://github.com/badlogic/pi-mono/pull/1559) by [@tianshuwang](https://github.com/tianshuwang))
 
 ## [0.55.0] - 2026-02-24
 
@@ -1502,7 +1502,7 @@ Examples:
 - Reverted incorrect Antigravity model change: `claude-opus-4-6-thinking` back to `claude-opus-4-5-thinking` (model does not exist on Antigravity endpoint)
 - Updated the Antigravity system instruction to a more compact version for Google Gemini CLI compatibility
 - Corrected opencode context windows for Claude Sonnet 4 and 4.5 ([#1383](https://github.com/badlogic/pi-mono/issues/1383))
-- Fixed subagent example unknown-agent errors to include available agent names ([#1414](https://github.com/badlogic/pi-mono/pull/1414) by [@dnouri](https://github.com/dnouri))
+- Fixed orchestration example unknown-profile errors to include available profile names ([#1414](https://github.com/badlogic/pi-mono/pull/1414) by [@dnouri](https://github.com/dnouri))
 
 ## [0.52.8] - 2026-02-07
 
@@ -2870,7 +2870,7 @@ pi --extension ./safety.ts -e ./todo.ts
 
 ### Fixed
 
-- Subagent example README referenced incorrect filename `subagent.ts` instead of `index.ts` ([#427](https://github.com/badlogic/pi-mono/pull/427) by [@Whamp](https://github.com/Whamp))
+- Orchestration example README referenced an incorrect filename instead of `index.ts` ([#427](https://github.com/badlogic/pi-mono/pull/427) by [@Whamp](https://github.com/Whamp))
 
 ## [0.32.3] - 2026-01-03
 
@@ -3527,7 +3527,7 @@ Total color count increased from 46 to 50. See [docs/themes.md](docs/themes.md) 
 
 ### Added
 
-- **Subagent orchestration example**: Added comprehensive custom tool example for spawning and orchestrating sub-agents with isolated context windows. Includes scout/planner/reviewer/worker agents and workflow commands for multi-agent pipelines. ([#215](https://github.com/badlogic/pi-mono/pull/215) by [@nicobailon](https://github.com/nicobailon))
+- **Orchestration example**: Added comprehensive custom tool example for coordinating isolated context windows. Includes scout/planner/reviewer/worker profiles and workflow commands for multi-step pipelines. ([#215](https://github.com/badlogic/pi-mono/pull/215) by [@nicobailon](https://github.com/nicobailon))
 
 - **`getMarkdownTheme()` export**: Custom tools can now import `getMarkdownTheme()` from `@mariozechner/pi-coding-agent` to use the same markdown styling as the main UI.
 
@@ -3543,7 +3543,7 @@ Total color count increased from 46 to 50. See [docs/themes.md](docs/themes.md) 
 
 ### Changed
 
-- **Subagent example improvements**: Parallel mode now streams updates from all tasks. Chain mode shows all completed steps during streaming. Expanded view uses proper markdown rendering with syntax highlighting. Usage footer shows turn count.
+- **Orchestration example improvements**: Parallel mode now streams updates from all tasks. Chain mode shows all completed steps during streaming. Expanded view uses proper markdown rendering with syntax highlighting. Usage footer shows turn count.
 
 - **Skills standard compliance**: Skills now adhere to the [Agent Skills standard](https://agentskills.io/specification). Validates name (must match parent directory, lowercase, max 64 chars), description (required, max 1024 chars), and frontmatter fields. Warns on violations but remains lenient. Prompt format changed to XML structure. Removed `{baseDir}` placeholder in favor of relative paths. ([#231](https://github.com/badlogic/pi-mono/issues/231))
 

@@ -54,9 +54,9 @@ describe("senpi conversation helpers", () => {
 
 		sendBuiltinCustomMessage(
 			pi as never,
-			"background-task.notification",
+			"todotools.continuation",
 			{
-				customType: "background-task.complete",
+				customType: "senpi.test",
 				display: true,
 				content: [{ type: "text", text: "<system-reminder>\nDone\n</system-reminder>" }],
 			},
@@ -65,7 +65,7 @@ describe("senpi conversation helpers", () => {
 
 		expect(pi.sendMessage).toHaveBeenCalledWith(
 			expect.objectContaining({
-				customType: "background-task.complete",
+				customType: "senpi.test",
 				content: [
 					expect.objectContaining({
 						type: "text",
@@ -81,11 +81,11 @@ describe("senpi conversation helpers", () => {
 				version: 1,
 				source: "builtin",
 				action: "injected",
-				route: "background-task.notification",
+				route: "todotools.continuation",
 				sessionId: "session-2",
 				conversation: expect.objectContaining({
 					kind: "custom_message",
-					customType: "background-task.complete",
+					customType: "senpi.test",
 					prefix: SENPI_SYSTEM_PREFIX,
 					triggerTurn: true,
 					deliverAs: "followUp",

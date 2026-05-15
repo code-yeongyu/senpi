@@ -9,8 +9,10 @@ packages:
 nodeLinker: hoisted
 linkWorkspacePackages: deep
 preferWorkspacePackages: true
+blockExoticSubdeps: false
 
 onlyBuiltDependencies:
+  - "@google/genai"
   - "@parcel/watcher"
   - canvas
   - esbuild

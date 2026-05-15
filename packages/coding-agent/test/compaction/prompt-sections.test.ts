@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
 	buildPrompt,
-	MERGED_COMPACTION_PROMPT_BRANCH,
 	MERGED_COMPACTION_PROMPT_SYSTEM,
 	MERGED_COMPACTION_PROMPT_TURN_PREFIX,
 	MERGED_COMPACTION_PROMPT_UPDATE,
@@ -9,7 +8,7 @@ import {
 } from "../../src/core/extensions/builtin/compaction/prompts.js";
 
 // ============================================================================
-// Per-section presence (14 tests, one per landmark)
+// Per-section presence
 // ============================================================================
 
 describe("DEFAULT variant — per-section landmarks", () => {
@@ -45,28 +44,12 @@ describe("DEFAULT variant — per-section landmarks", () => {
 		expect(MERGED_COMPACTION_PROMPT_USER).toContain("## 7. Exact Next Steps");
 	});
 
-	it("contains section 8: Delegated Agent Sessions", () => {
-		expect(MERGED_COMPACTION_PROMPT_USER).toContain("## 8. Delegated Agent Sessions");
-	});
-
-	it("contains section 9: Agent Verification State", () => {
-		expect(MERGED_COMPACTION_PROMPT_USER).toContain("## 9. Agent Verification State");
-	});
-
 	it("contains the 'Quote constraints verbatim' instruction", () => {
 		expect(MERGED_COMPACTION_PROMPT_USER).toContain("Quote constraints verbatim");
 	});
 
 	it("contains the 'Do NOT invent' instruction", () => {
 		expect(MERGED_COMPACTION_PROMPT_USER).toContain("Do NOT invent");
-	});
-
-	it("contains the 'RESUME, DON'T RESTART' instruction", () => {
-		expect(MERGED_COMPACTION_PROMPT_USER).toContain("RESUME, DON'T RESTART");
-	});
-
-	it("contains the session_id reference", () => {
-		expect(MERGED_COMPACTION_PROMPT_USER).toContain("session_id");
 	});
 });
 
@@ -105,7 +88,7 @@ describe("SYSTEM block — cardinal rules", () => {
 // ============================================================================
 
 describe("DEFAULT variant — canonical section order", () => {
-	it("has sections 1-9 in strict sequential order", () => {
+	it("has sections 1-7 in strict sequential order", () => {
 		const s1 = MERGED_COMPACTION_PROMPT_USER.indexOf("## 1. User Requests (Verbatim)");
 		const s2 = MERGED_COMPACTION_PROMPT_USER.indexOf("## 2. Final Goal");
 		const s3 = MERGED_COMPACTION_PROMPT_USER.indexOf("## 3. Constraints & Preferences (Verbatim Only)");
@@ -113,8 +96,6 @@ describe("DEFAULT variant — canonical section order", () => {
 		const s5 = MERGED_COMPACTION_PROMPT_USER.indexOf("## 5. Active Working Context");
 		const s6 = MERGED_COMPACTION_PROMPT_USER.indexOf("## 6. Remaining Tasks");
 		const s7 = MERGED_COMPACTION_PROMPT_USER.indexOf("## 7. Exact Next Steps");
-		const s8 = MERGED_COMPACTION_PROMPT_USER.indexOf("## 8. Delegated Agent Sessions");
-		const s9 = MERGED_COMPACTION_PROMPT_USER.indexOf("## 9. Agent Verification State");
 
 		expect(s1).toBeGreaterThanOrEqual(0);
 		expect(s2).toBeGreaterThan(s1);
@@ -123,8 +104,6 @@ describe("DEFAULT variant — canonical section order", () => {
 		expect(s5).toBeGreaterThan(s4);
 		expect(s6).toBeGreaterThan(s5);
 		expect(s7).toBeGreaterThan(s6);
-		expect(s8).toBeGreaterThan(s7);
-		expect(s9).toBeGreaterThan(s8);
 	});
 });
 
@@ -161,14 +140,8 @@ describe("DEFAULT variant — XML wrapping", () => {
 });
 
 // ============================================================================
-// Variants (4 tests)
+// Variants (3 tests)
 // ============================================================================
-
-describe("BRANCH variant", () => {
-	it("drops section 9 (Agent Verification State)", () => {
-		expect(MERGED_COMPACTION_PROMPT_BRANCH).not.toContain("## 9. Agent Verification State");
-	});
-});
 
 describe("TURN_PREFIX variant", () => {
 	it("emits only sections 1, 2, 3, 5", () => {
@@ -178,12 +151,10 @@ describe("TURN_PREFIX variant", () => {
 		expect(MERGED_COMPACTION_PROMPT_TURN_PREFIX).toContain("## 5. Active Working Context");
 	});
 
-	it("does NOT contain sections 4, 6, 7, 8, 9", () => {
+	it("does NOT contain sections 4, 6, or 7", () => {
 		expect(MERGED_COMPACTION_PROMPT_TURN_PREFIX).not.toContain("## 4. Work Completed");
 		expect(MERGED_COMPACTION_PROMPT_TURN_PREFIX).not.toContain("## 6. Remaining Tasks");
 		expect(MERGED_COMPACTION_PROMPT_TURN_PREFIX).not.toContain("## 7. Exact Next Steps");
-		expect(MERGED_COMPACTION_PROMPT_TURN_PREFIX).not.toContain("## 8. Delegated Agent Sessions");
-		expect(MERGED_COMPACTION_PROMPT_TURN_PREFIX).not.toContain("## 9. Agent Verification State");
 	});
 });
 

@@ -1,7 +1,6 @@
 import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { generateBranchSummary, prepareBranchEntries } from "../src/core/compaction/index.js";
-import { SENPI_SYSTEM_PREFIX } from "../src/core/extensions/builtin/system-messages.js";
 import type { SessionEntry } from "../src/core/session-manager.js";
 
 const { completeSimpleMock } = vi.hoisted(() => ({
@@ -76,20 +75,20 @@ function createEntries(): SessionEntry[] {
 			id: "entry-3",
 			parentId: "entry-2",
 			timestamp: new Date().toISOString(),
-			customType: "background-task.complete",
+			customType: "test.note",
 			display: true,
-			content: `${SENPI_SYSTEM_PREFIX}\n<system-reminder>\nUse background_output(task_id="bg_123")\n</system-reminder>`,
+			content: "Remember the branch-specific observation.",
 		},
 	];
 }
 
-describe("branch summarization exclusions", () => {
+describe("branch summarization custom messages", () => {
 	beforeEach(() => {
 		completeSimpleMock.mockReset();
 		completeSimpleMock.mockResolvedValue(createAssistantResponse("## Goal\nKeep branch context"));
 	});
 
-	it("filters background task reminders from prepareBranchEntries", () => {
+	it("keeps custom messages in prepareBranchEntries", () => {
 		// given
 		const entries = createEntries();
 
@@ -97,11 +96,11 @@ describe("branch summarization exclusions", () => {
 		const result = prepareBranchEntries(entries);
 
 		// then
-		expect(result.messages).toHaveLength(2);
-		expect(result.messages.some((message) => message.role === "custom")).toBe(false);
+		expect(result.messages).toHaveLength(3);
+		expect(result.messages.some((message) => message.role === "custom")).toBe(true);
 	});
 
-	it("excludes background task reminders from branch summary prompts", async () => {
+	it("includes custom messages in branch summary prompts", async () => {
 		// given
 		const entries = createEntries();
 
@@ -116,8 +115,6 @@ describe("branch summarization exclusions", () => {
 		const promptText = completeSimpleMock.mock.calls[0][1].messages[0].content[0].text;
 		expect(promptText).toContain("Investigate compaction regression.");
 		expect(promptText).toContain("I am checking branch summarization.");
-		expect(promptText).not.toContain("background_output(task_id");
-		expect(promptText).not.toContain("<system-reminder>");
-		expect(promptText).not.toContain(SENPI_SYSTEM_PREFIX);
+		expect(promptText).toContain("Remember the branch-specific observation.");
 	});
 });

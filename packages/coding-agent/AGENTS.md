@@ -34,8 +34,7 @@ src/
 test/
 ├── suite/
 │   ├── harness.ts             # MODERN test harness — use this
-│   ├── regressions/           # `<issue-number>-<slug>.test.ts` for upstream issues
-│   └── agent-system/          # Agent-system extension tests (loader, resolver, permission)
+│   └── regressions/           # `<issue-number>-<slug>.test.ts` for upstream issues
 ├── test-harness.ts            # Legacy harness
 └── (~120 standalone .test.ts files)
 ```
@@ -65,7 +64,7 @@ test/
 ## CONVENTIONS
 
 - **Tool shape**: TypeBox schema + `execute(input, ctx)` + `renderCall` + `renderResult`. Match `core/tools/` patterns; see `core/tools/AGENTS.md`.
-- **No built-in MCP / sub-agents / permission popups / plan mode / todos in core** — pi philosophy. The fork's `agent-system`, `permission-system`, `compaction`, `prompt-preset`, `todowrite` features all live as **builtin extensions**, not core.
+- **No built-in MCP / permission popups / plan mode / todos in core** — pi philosophy. The fork's `permission-system`, `compaction`, `prompt-preset`, and `todowrite` features live as **builtin extensions**, not core.
 - **Keybindings always configurable** — `DEFAULT_EDITOR_KEYBINDINGS` / `DEFAULT_APP_KEYBINDINGS` are the source of truth.
 - **Faux provider for tests** — never spend a real token in `npm test`. Use `harness.ts` + `pi-ai/faux`.
 - **Inlined UUIDv7 in `core/session-manager.ts`** — do NOT re-add the `uuid` package. Documented in `changes.md` 2026-04-17.

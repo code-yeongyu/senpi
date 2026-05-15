@@ -7,7 +7,10 @@ const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
-function createAssistantMessage(content: AssistantMessage["content"]): AssistantMessage {
+function createAssistantMessage(
+	content: AssistantMessage["content"],
+	overrides: Partial<Pick<AssistantMessage, "errorMessage" | "stopReason">> = {},
+): AssistantMessage {
 	return {
 		role: "assistant",
 		content,
@@ -22,7 +25,8 @@ function createAssistantMessage(content: AssistantMessage["content"]): Assistant
 			totalTokens: 0,
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		},
-		stopReason: "stop",
+		stopReason: overrides.stopReason ?? "stop",
+		errorMessage: overrides.errorMessage,
 		timestamp: Date.now(),
 	};
 }
@@ -81,6 +85,34 @@ describe("AssistantMessageComponent", () => {
 		const expanded = component.render(120).join("\n");
 		expect(expanded).toContain("▾ openai · providerNative · web_search");
 		expect(expanded).toContain('"title": "Result 59"');
+	});
+
+	test("renders resumed assistant error messages with no text content", () => {
+		initTheme("dark");
+
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([{ type: "text", text: "" }], {
+				stopReason: "error",
+				errorMessage: "network disconnected",
+			}),
+		);
+
+		const rendered = component.render(80).join("\n");
+		expect(rendered).toContain("Error: network disconnected");
+	});
+
+	test("renders resumed aborted assistant messages with a stable user-facing label", () => {
+		initTheme("dark");
+
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([], {
+				stopReason: "aborted",
+				errorMessage: "Request was aborted",
+			}),
+		);
+
+		const rendered = component.render(80).join("\n");
+		expect(rendered).toContain("Operation aborted");
 	});
 
 	test("renders Anthropic server web search calls as compact providerNative summaries", () => {

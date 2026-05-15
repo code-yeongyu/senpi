@@ -60,11 +60,6 @@ export interface MarkdownSettings {
 	codeBlockIndent?: string; // default: "  "
 }
 
-export interface AgentDefaultsSettings {
-	permission?: Record<string, "allow" | "deny" | "ask">;
-	model?: string;
-}
-
 export interface OpenAISettings {
 	serviceTier?: "auto" | "flex" | "priority";
 }
@@ -111,7 +106,7 @@ export interface Settings {
 	enableInstallTelemetry?: boolean; // default: true - anonymous version/update ping after changelog-detected updates
 	packages?: PackageSource[]; // Array of npm/git package sources (string or object with filtering)
 	enabledBuiltinExtensions?: string[]; // Optional allowlist of builtin extension ids to load (default: all)
-	disabledBuiltinExtensions?: string[]; // Builtin extension ids to skip loading (e.g. ["background-task"])
+	disabledBuiltinExtensions?: string[]; // Builtin extension ids to skip loading
 	extensions?: string[]; // Array of local extension file paths or directories
 	skills?: string[]; // Array of local skill file paths or directories
 	prompts?: string[]; // Array of local prompt template paths or directories
@@ -130,7 +125,6 @@ export interface Settings {
 	markdown?: MarkdownSettings;
 	warnings?: WarningSettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
-	agentDefaults?: AgentDefaultsSettings;
 	openai?: OpenAISettings;
 }
 

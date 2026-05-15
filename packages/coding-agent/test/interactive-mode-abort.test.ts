@@ -27,10 +27,12 @@ function restoreQueuedMessagesToEditor(
 	fakeThis: RestoreQueuedMessagesToEditorThis,
 	options?: { abort?: boolean; currentText?: string },
 ): number {
-	const prototype = InteractiveMode.prototype as unknown as {
-		restoreQueuedMessagesToEditor: RestoreQueuedMessagesToEditor;
-	};
-	return prototype.restoreQueuedMessagesToEditor.call(fakeThis, options);
+	const descriptor = Object.getOwnPropertyDescriptor(InteractiveMode.prototype, "restoreQueuedMessagesToEditor");
+	const restore = descriptor?.value as RestoreQueuedMessagesToEditor | undefined;
+	if (!restore) {
+		throw new Error("restoreQueuedMessagesToEditor is missing");
+	}
+	return restore.call(fakeThis, options);
 }
 
 describe("InteractiveMode.restoreQueuedMessagesToEditor", () => {

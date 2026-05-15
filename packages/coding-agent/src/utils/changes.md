@@ -5,19 +5,18 @@
 ### What changed
 
 - `core/sdk.ts`: `getProviderHeaders()` no longer hardcodes `"pi"` / `"pi-coding-agent"`. The OpenRouter `X-OpenRouter-Title` and the Cloudflare `User-Agent` now interpolate the runtime `APP_NAME` from `config.ts` (`"senpi"` in this fork).
-- `core/extensions/builtin/background-task/spawner.ts`: When the parent process is launched through a generic Node/Bun runtime, the fallback sub-agent invocation now spawns `APP_NAME` (`senpi`) instead of the hardcoded `pi` binary.
 
 ### Why
 
-- Every outbound request and every sub-agent invocation should identify as senpi, not pi. Hardcoded `"pi"` strings broke that contract.
+- Every outbound request should identify as senpi, not pi. Hardcoded `"pi"` strings broke that contract.
 
 ### Why extension system couldn't handle this
 
-- These are core SDK and spawner internals; an extension cannot rewrite headers built by `core/sdk.ts` or change the spawner's fallback executable.
+- These are core SDK internals; an extension cannot rewrite headers built by `core/sdk.ts`.
 
 ### Expected merge conflict zones on next upstream sync
 
-- LOW: provider-header builder and sub-agent spawn fallback strings.
+- LOW: provider-header builder.
 
 ## Senpi version metadata lookup (2026-05-02)
 

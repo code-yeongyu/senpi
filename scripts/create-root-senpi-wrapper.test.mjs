@@ -14,11 +14,15 @@ describe("create-root-senpi-wrapper", () => {
 
 		// When
 		const result = createRootSenpiWrapper({ root, globalPrefix });
+		const wrapper = readFileSync(result.wrapperPath, "utf8");
 
 		// Then
 		assert.equal(shouldWriteGlobalShim(root), false);
 		assert.equal(result.globalShimWritten, false);
-		assert.equal(readFileSync(result.wrapperPath, "utf8").includes("packages/coding-agent/dist/senpi"), true);
+		assert.equal(wrapper.includes("packages/coding-agent/dist/senpi"), true);
+		assert.equal(wrapper.includes("scripts/build-all.mjs"), true);
+		assert.equal(wrapper.includes("packages/ai/src"), true);
+		assert.equal(wrapper.includes(".senpi-build-head"), true);
 	});
 
 	it("replaces an existing global symlink instead of following it", () => {
@@ -33,7 +37,7 @@ describe("create-root-senpi-wrapper", () => {
 		symlinkSync(linkedTarget, join(globalBin, "senpi"));
 
 		// When
-		const result = createRootSenpiWrapper({ root, globalPrefix });
+		const result = createRootSenpiWrapper({ root, globalPrefix, writeGlobalShim: true });
 
 		// Then
 		assert.equal(readFileSync(linkedTarget, "utf8"), "original");

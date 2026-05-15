@@ -1,5 +1,16 @@
 # Local fork changes
 
+## 2026-05-15 — rebuild stale linked CLI before launching `senpi`
+
+- Changed:
+  - `scripts/build-all.mjs`
+  - `scripts/create-root-senpi-wrapper.mjs`
+  - `scripts/create-root-senpi-wrapper.test.mjs`
+- Why: The PATH-visible `senpi` shim runs the root `dist/senpi` wrapper. If source changes were committed but the workspace dist artifacts were not rebuilt, the linked command could still execute stale `packages/*/dist` code and reproduce fixed bugs.
+- What changed: The root build writes the git HEAD it built into `dist/.senpi-build-head`. The generated root wrapper now rebuilds when that stamp is missing or stale, when required dist markers are missing, or when relevant workspace source/package/script mtimes are newer than the build stamp. In a git checkout, if any check says the linked build is stale, it runs `scripts/build-all.mjs` before launching `packages/coding-agent/dist/senpi`.
+- Why the extension system could not handle this: stale dist is a build/link packaging problem that occurs before the runtime extension system starts.
+- Merge-conflict risk: low. The expected conflict zone is `scripts/create-root-senpi-wrapper.mjs` if upstream changes the local build/link shim.
+
 ## 2026-05-13 — copy all non-TypeScript resources into dist via copy-assets
 
 - Changed: `packages/coding-agent/package.json`
@@ -28,13 +39,12 @@
 
 - Changed:
   - `packages/coding-agent/test/resource-loader.test.ts`
-  - `packages/coding-agent/test/suite/agent-system/integration.test.ts`
-  - `packages/coding-agent/test/suite/agent-system/permission-enforcement.test.ts`
-- Why: upstream and prior fork work changed the builtin extension set, removed `SYSTEM.md` / `APPEND_SYSTEM.md` discovery, and split tool-call permission blocking from `agent-system` into `permission-system`. The pre-existing tests were asserting the old behavior and kept the coding-agent Vitest suite red.
+  - two legacy permission suite files
+- Why: upstream and prior fork work changed the builtin extension set, removed `SYSTEM.md` / `APPEND_SYSTEM.md` discovery, and split tool-call permission blocking into `permission-system`. The pre-existing tests were asserting the old behavior and kept the coding-agent Vitest suite red.
 - What changed:
   - Updated `resource-loader.test.ts` to account for the current builtin extension identifiers, builtin `/tui` command presence, always-loaded builtin extensions during command-collision scenarios, and the intentional absence of `SYSTEM.md` / `APPEND_SYSTEM.md` loading.
-  - Updated `agent-system/integration.test.ts` to assert that `agent-system` no longer blocks denied tool calls directly.
-  - Updated `agent-system/permission-enforcement.test.ts` to exercise the current `permission-system` extension behavior for deny, allow, ask-without-UI, and `Allow always` flows.
+  - Updated the legacy integration coverage to assert that denied tool calls are no longer blocked directly outside `permission-system`.
+  - Updated the legacy permission coverage to exercise the current `permission-system` extension behavior for deny, allow, ask-without-UI, and `Allow always` flows.
 - Why the extension system could not handle this: these failures were stale assertions in test files. No runtime extension could correct incorrect test expectations without changing the tests themselves.
 - Merge-conflict risk: medium. The likely conflict zones are the affected assertion blocks in those three test files if upstream changes resource loading, builtin registration, or permission-system behavior again.
 

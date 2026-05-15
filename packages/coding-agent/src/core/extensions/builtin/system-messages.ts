@@ -5,7 +5,7 @@ import type { ExtensionAPI } from "../types.js";
 export const SENPI_SYSTEM_PREFIX = "[system:senpi]";
 export const SENPI_CONVERSATION_EVENT = "senpi:conversation";
 
-export type BuiltinSystemMessageRoute = "background-task.notification" | "todotools.continuation";
+export type BuiltinSystemMessageRoute = "todotools.continuation";
 export type SenpiConversationAction = "injected" | "failed";
 
 export interface SenpiConversationEvent {

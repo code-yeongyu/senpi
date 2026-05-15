@@ -49,7 +49,6 @@
 - `builtin/system-messages.ts`: Renamed the exported conversation constants, event type names, and helper function names to the `SENPI_*` / `Senpi*` spelling, and changed the emitted conversation event name to `senpi:conversation`.
 - `builtin/todotools/system-messages.ts`: Applied the same event-name and constant-name cleanup to the vendored todotools helper.
 - `builtin/todotools/state.ts`: Changed the todo state custom entry type to `senpi.todo-state`.
-- `builtin/background-task/types.ts`: Changed background-agent environment variables to `SENPI_SUBAGENT_DEPTH` and `SENPI_AGENT_TYPE`.
 - `test/suite/senpi-conversation.test.ts`: Renamed the regression test file and assertions to match the senpi runtime naming.
 
 ### Why
@@ -58,11 +57,11 @@
 
 ### Why extension system couldn't handle this alone
 
-- These names are builtin extension wire constants, session custom-entry identifiers, and subprocess environment variables. They must be emitted correctly by the bundled implementation before user or external extensions can observe them.
+- These names are builtin extension wire constants and session custom-entry identifiers. They must be emitted correctly by the bundled implementation before user or external extensions can observe them.
 
 ### Expected merge conflict zones
 
-- LOW: `builtin/system-messages.ts`, `builtin/todotools/system-messages.ts`, `builtin/todotools/state.ts`, and `builtin/background-task/types.ts` if upstream or vendored builtins rename these helper surfaces.
+- LOW: `builtin/system-messages.ts`, `builtin/todotools/system-messages.ts`, and `builtin/todotools/state.ts` if upstream or vendored builtins rename these helper surfaces.
 
 ## 2026-05-14 - Native Web Tool UI Cleanup Hooks
 

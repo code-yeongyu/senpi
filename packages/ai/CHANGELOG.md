@@ -6,7 +6,7 @@
 
 ### Fixed
 
-- Fixed Anthropic Opus 4.7 requests to strip hook-injected native `computer_20250124` tools before the SDK call.
+- Fixed Anthropic Opus 4.6 and 4.7 requests to strip hook-injected native `computer_20250124` tools before the SDK call.
 
 ## [2026.5.15] - 2026-05-15
 

@@ -143,7 +143,7 @@ The builder takes a `TodoItem[]`, counts completed items plus remaining non-term
 - `packages/ai`, `packages/agent`, `packages/tui`, `packages/web-ui`, `packages/mom`, `packages/pods` — cannot be modified.
 - `packages/coding-agent/src/core/settings-manager.ts` — cannot be modified.
 - `packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/extensions/types.ts`, `packages/coding-agent/src/core/extensions/runner.ts`, `packages/coding-agent/src/core/extensions/loader.ts` — not modified. All capabilities consumed via the public extension API.
-- Other builtin extensions under `builtin/` (permission-system, agent-system, etc.) — not modified.
+- Other builtin extensions under `builtin/` (permission-system, etc.) — not modified.
 
 ## Allowed changes
 

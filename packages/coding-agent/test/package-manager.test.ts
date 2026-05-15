@@ -1593,19 +1593,19 @@ Content`,
 	describe("multi-file extension discovery (issue #1102)", () => {
 		it("should only load index.ts from subdirectories, not helper modules", async () => {
 			// Regression test: packages with multi-file extensions in subdirectories
-			// should only load the index.ts entry point, not helper modules like agents.ts
+			// should only load the index.ts entry point, not helper modules like helpers.ts
 			const pkgDir = join(tempDir, "multifile-pkg");
-			mkdirSync(join(pkgDir, "extensions", "subagent"), { recursive: true });
+			mkdirSync(join(pkgDir, "extensions", "workflow"), { recursive: true });
 
 			// Main entry point
 			writeFileSync(
-				join(pkgDir, "extensions", "subagent", "index.ts"),
-				`import { helper } from "./agents.js";
+				join(pkgDir, "extensions", "workflow", "index.ts"),
+				`import { helper } from "./helpers.js";
 export default function(api) { api.registerTool({ name: "test", description: "test", execute: async () => helper() }); }`,
 			);
 			// Helper module (should NOT be loaded as standalone extension)
 			writeFileSync(
-				join(pkgDir, "extensions", "subagent", "agents.ts"),
+				join(pkgDir, "extensions", "workflow", "helpers.ts"),
 				`export function helper() { return "helper"; }`,
 			);
 			// Top-level extension file (should be loaded)
@@ -1614,11 +1614,11 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			const result = await packageManager.resolveExtensionSources([pkgDir]);
 
 			// Should find the index.ts and standalone.ts
-			expect(result.extensions.some((r) => pathEndsWith(r.path, "subagent/index.ts") && r.enabled)).toBe(true);
+			expect(result.extensions.some((r) => pathEndsWith(r.path, "workflow/index.ts") && r.enabled)).toBe(true);
 			expect(result.extensions.some((r) => pathEndsWith(r.path, "standalone.ts") && r.enabled)).toBe(true);
 
-			// Should NOT find agents.ts as a standalone extension
-			expect(result.extensions.some((r) => pathEndsWith(r.path, "agents.ts"))).toBe(false);
+			// Should NOT find helpers.ts as a standalone extension
+			expect(result.extensions.some((r) => pathEndsWith(r.path, "helpers.ts"))).toBe(false);
 		});
 
 		it("should respect package.json pi.extensions manifest in subdirectories", async () => {

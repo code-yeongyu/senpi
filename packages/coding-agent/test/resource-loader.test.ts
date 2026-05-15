@@ -353,7 +353,6 @@ Content`,
 
 			// then
 			expect(builtinPaths).toEqual([
-				"<builtin:background-task>",
 				"<builtin:permission-system>",
 				"<builtin:gpt-apply-patch>",
 				"<builtin:prompt-preset>",
@@ -407,7 +406,7 @@ Content`,
 			mkdirSync(projectConfigDir, { recursive: true });
 			writeFileSync(
 				join(projectConfigDir, "settings.json"),
-				JSON.stringify({ disabledBuiltinExtensions: ["background-task", "redraws"] }, null, 2),
+				JSON.stringify({ disabledBuiltinExtensions: ["service-tier", "redraws"] }, null, 2),
 			);
 			const loader = new DefaultResourceLoader({ cwd, agentDir });
 
@@ -416,7 +415,7 @@ Content`,
 			const builtinPaths = loader.getExtensions().extensions.map((extension) => extension.path);
 
 			// then
-			expect(builtinPaths).not.toContain("<builtin:background-task>");
+			expect(builtinPaths).not.toContain("<builtin:service-tier>");
 			expect(builtinPaths).not.toContain("<builtin:redraws>");
 			expect(builtinPaths).toContain("<builtin:permission-system>");
 			expect(builtinPaths).toContain("<builtin:todowrite>");
@@ -425,7 +424,7 @@ Content`,
 		it("should allow SettingsManager.inMemory() to disable selected builtin extensions", async () => {
 			// given
 			const settingsManager = SettingsManager.inMemory({
-				disabledBuiltinExtensions: ["background-task", "redraws"],
+				disabledBuiltinExtensions: ["service-tier", "redraws"],
 			});
 			const loader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
 
@@ -434,7 +433,7 @@ Content`,
 			const builtinPaths = loader.getExtensions().extensions.map((extension) => extension.path);
 
 			// then
-			expect(builtinPaths).not.toContain("<builtin:background-task>");
+			expect(builtinPaths).not.toContain("<builtin:service-tier>");
 			expect(builtinPaths).not.toContain("<builtin:redraws>");
 			expect(builtinPaths).toContain("<builtin:permission-system>");
 			expect(builtinPaths).toContain("<builtin:todowrite>");

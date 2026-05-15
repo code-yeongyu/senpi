@@ -1,24 +1,23 @@
 # packages/coding-agent/src/core/extensions/builtin
 
-13 in-tree extensions. Each is the canonical answer to "can senpi do X without core changes?". Registration order matters.
+12 in-tree extensions. Each is the canonical answer to "can senpi do X without core changes?". Registration order matters.
 
 ## INVENTORY (registration order from `builtin/index.ts`)
 
 | # | ID | Path | Role |
 |---|-----|------|------|
-| 1 | `background-task` | `background-task/` | Run / monitor long-lived background work |
-| 2 | `permission-system` | `permission-system/` | Full opencode-style permission port: rules, JSONL storage, prompts |
-| 3 | `gpt-apply-patch` | `gpt-apply-patch/` | Codex-style `apply_patch` tool with rich render + freeform grammar |
-| 4 | `prompt-preset` | `prompt-preset/` | Per-model system prompts (gpt-5.x, claude-opus-4-{5,6,7}, kimi-k2-6) |
-| 5 | `todowrite` | `todotools/` | Plan/task tools + continuation chain; synced from `../pi-extensions/pi-todotools` |
-| 6 | `redraws` | `redraws.ts` | Force-redraw event hooks for stable streaming visuals |
-| 7 | `anthropic-web-search` | `anthropic-web-search/` | Anthropic-native web search tool |
-| 8 | `anthropic-bash` | `anthropic-bash/` | Anthropic-native bash tool variant |
-| 9 | `openai-web-search` | `openai-web-search/` | OpenAI-native web search |
-| 10 | `service-tier` | `service-tier.ts` | Per-model service-tier (e.g., priority-tier mapping) |
-| 11 | `bash-timeout` | `bash-timeout/` | Bash tool timeout + handlers |
-| 12 | `tool-pair-guard` | `tool-pair-guard/` | Repairs orphaned tool_use/tool_result pairs (compaction safety) |
-| 13 | `compaction` | `compaction/` | Plugsuit-style speculative + emergency compaction with restoration |
+| 1 | `permission-system` | `permission-system/` | Full opencode-style permission port: rules, JSONL storage, prompts |
+| 2 | `gpt-apply-patch` | `gpt-apply-patch/` | Codex-style `apply_patch` tool with rich render + freeform grammar |
+| 3 | `prompt-preset` | `prompt-preset/` | Per-model system prompts (gpt-5.x, claude-opus-4-{5,6,7}, kimi-k2-6) |
+| 4 | `todowrite` | `todotools/` | Plan/task tools + continuation chain; synced from `../pi-extensions/pi-todotools` |
+| 5 | `redraws` | `redraws.ts` | Force-redraw event hooks for stable streaming visuals |
+| 6 | `anthropic-web-search` | `anthropic-web-search/` | Anthropic-native web search tool |
+| 7 | `anthropic-bash` | `anthropic-bash/` | Anthropic-native bash tool variant |
+| 8 | `openai-web-search` | `openai-web-search/` | OpenAI-native web search |
+| 9 | `service-tier` | `service-tier.ts` | Per-model service-tier (e.g., priority-tier mapping) |
+| 10 | `bash-timeout` | `bash-timeout/` | Bash tool timeout + handlers |
+| 11 | `tool-pair-guard` | `tool-pair-guard/` | Repairs orphaned tool_use/tool_result pairs (compaction safety) |
+| 12 | `compaction` | `compaction/` | Plugsuit-style speculative + emergency compaction with restoration |
 
 Plus 4 **global default extensions** (resolved fast-path): `diff`, `files`, `prompt-url-widget`, `tps` (in `globalDefaultExtensionFactories`).
 
@@ -35,7 +34,7 @@ Plus 4 **global default extensions** (resolved fast-path): `diff`, `files`, `pro
 - **Subdirectory extensions** ship multi-file: `index.ts` + supporting `.ts` (`registry.ts`, `types.ts`, `parsers.ts`, etc.).
 - **Single-file extensions** are kept flat (`diff.ts`, `files.ts`, `redraws.ts`, `service-tier.ts`, `tps.ts`, `prompt-url-widget.ts`).
 - **`prompt-preset/`** has per-model files (`gpt-5.5.ts`, `claude-opus-4-7.ts`, …) and a shared `file-operations.ts` tuning block. New model = new preset file + entry in `presets.ts`.
-- **`permission-system/` is a full port** of opencode's permission flow. Agent-profile filtering now lives in the external `pi-agent-system` repository.
+- **`permission-system/` is a full port** of opencode's permission flow.
 - **`compaction/`** is policy-rich (`policy.ts`, `speculative.ts`, `restoration-tracker.ts`, `circuit-breaker.ts`, `degradation-monitor.ts`, `per-turn-cap.ts`, `tool-truncation.ts`, `checkpoint-state.ts`, `overflow-detection.ts`, `state.ts`, `todo-bridge.ts`). Touch only with policy tests in lock-step.
 - **External versions**: `external-versions.json` pins versions of sibling `../pi-extensions` packages used as vendored builtins; refresh with `packages/coding-agent/scripts/sync-builtin-extensions.mjs`.
 

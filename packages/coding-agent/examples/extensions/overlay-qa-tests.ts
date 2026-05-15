@@ -469,7 +469,7 @@ class StreamingOverflowComponent extends BaseOverlay {
 			"-c",
 			`
 			echo "Starting streaming overflow test (30+ seconds)..."
-			echo "This simulates subagent output with colors, hyperlinks, and long paths"
+			echo "This simulates streaming output with colors, hyperlinks, and long paths"
 			echo ""
 			for i in $(seq 1 100); do
 				# Simulate long file paths with OSC 8 hyperlinks (clickable) - tests width overflow

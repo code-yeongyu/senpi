@@ -266,28 +266,6 @@ Object form filters which resources to load:
 
 See [packages.md](packages.md) for package management details.
 
-### Agent Defaults
-
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `agentDefaults.permission` | object | `{}` | Default tool permissions applied to all agents (lowest priority) |
-| `agentDefaults.model` | string | - | Default model ID for agents spawned via `task()` |
-
-Permission values: `"allow"`, `"deny"`, `"ask"`. See [agents.md](agents.md) for details.
-
-```json
-{
-   "agentDefaults": {
-      "permission": {
-         "edit": "ask",
-         "write": "ask",
-         "bash": "allow"
-      },
-      "model": "anthropic/claude-haiku-4-5"
-   }
-}
-```
-
 ## Example
 
 ```json
@@ -310,13 +288,7 @@ Permission values: `"allow"`, `"deny"`, `"ask"`. See [agents.md](agents.md) for 
   "warnings": {
     "anthropicExtraUsage": true
   },
-  "packages": ["pi-skills"],
-  "agentDefaults": {
-    "permission": {
-      "edit": "ask",
-      "write": "ask"
-    }
-  }
+  "packages": ["pi-skills"]
 }
 ```
 

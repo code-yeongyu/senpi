@@ -1,5 +1,4 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { repairOrphanedToolResults } from "@earendil-works/pi-ai";
 import { type CompactionResult, DEFAULT_COMPACTION_SETTINGS } from "../../../compaction/index.js";
 import { convertToLlm } from "../../../messages.js";
 import type { CompactionEntry } from "../../../session-manager.js";
@@ -21,6 +20,7 @@ import {
 import * as overflow from "./overflow-detection.js";
 import * as cap from "./per-turn-cap.js";
 import * as policy from "./policy.js";
+import { repairOrphanedToolResults } from "./repair-tool-pairs.js";
 import * as restoration from "./restoration-tracker.js";
 import {
 	applyGeneratedCompaction,
