@@ -33,18 +33,58 @@ describe("formatWorkingStatusMessage", () => {
 });
 
 describe("formatWorkingStatusMessageFrame", () => {
-	test("animates the status text without changing its plain text", () => {
+	test("animates only the working text without changing its plain text", () => {
 		const style = {
 			base: (text: string) => `\x1b[2m${text}\x1b[22m`,
 			glow: (text: string) => `\x1b[37m${text}\x1b[39m`,
 			highlight: (text: string) => `\x1b[1m${text}\x1b[22m`,
+			suffix: (text: string) => `\x1b[90m${text}\x1b[39m`,
 		};
 
-		const firstFrame = formatWorkingStatusMessageFrame("Working", 427, "esc", 8, style);
-		const nextFrame = formatWorkingStatusMessageFrame("Working", 427, "esc", 12, style);
+		const firstFrame = formatWorkingStatusMessageFrame("Working", 427, "esc", 0, style);
+		const nextFrame = formatWorkingStatusMessageFrame("Working", 427, "esc", 1_000, style);
+		const fixedSuffix = "\x1b[90m (7m 07s • esc to interrupt)\x1b[39m";
 
 		expect(stripAnsi(firstFrame)).toBe("Working (7m 07s • esc to interrupt)");
 		expect(stripAnsi(nextFrame)).toBe("Working (7m 07s • esc to interrupt)");
-		expect(firstFrame).not.toBe(nextFrame);
+		expect(firstFrame.endsWith(fixedSuffix)).toBe(true);
+		expect(nextFrame.endsWith(fixedSuffix)).toBe(true);
+		expect(firstFrame.slice(0, -fixedSuffix.length)).not.toBe(nextFrame.slice(0, -fixedSuffix.length));
+	});
+
+	test("uses a two second shimmer sweep", () => {
+		const style = {
+			base: (text: string) => `base(${text})`,
+			glow: (text: string) => `glow(${text})`,
+			highlight: (text: string) => `highlight(${text})`,
+			suffix: (text: string) => `suffix(${text})`,
+		};
+
+		const firstFrame = formatWorkingStatusMessageFrame("Working", 0, "esc", 0, style);
+		const halfwayFrame = formatWorkingStatusMessageFrame("Working", 0, "esc", 1_000, style);
+		const nextSweepFrame = formatWorkingStatusMessageFrame("Working", 0, "esc", 2_000, style);
+
+		expect(halfwayFrame).not.toBe(firstFrame);
+		expect(nextSweepFrame).toBe(firstFrame);
+	});
+
+	test("allows continuous shimmer styling for smooth fade bands", () => {
+		const intensities: number[] = [];
+		const style = {
+			base: (text: string) => `base(${text})`,
+			glow: (text: string) => `glow(${text})`,
+			highlight: (text: string) => `highlight(${text})`,
+			shimmer: (text: string, intensity: number) => {
+				intensities.push(intensity);
+				return `${text}:${intensity.toFixed(3)}`;
+			},
+			suffix: (text: string) => `suffix(${text})`,
+		};
+
+		const frame = formatWorkingStatusMessageFrame("Working", 0, "esc", 1_000, style);
+
+		expect(stripAnsi(frame)).toContain("suffix( (0s • esc to interrupt))");
+		expect(intensities.length).toBe("Working".length);
+		expect(intensities.some((intensity) => intensity > 0 && intensity < 1)).toBe(true);
 	});
 });

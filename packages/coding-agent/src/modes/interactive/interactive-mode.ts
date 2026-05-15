@@ -142,7 +142,7 @@ import {
 	type ThemeColor,
 	theme,
 } from "./theme/theme.js";
-import { formatWorkingStatusMessage, formatWorkingStatusTextFrame } from "./working-status.js";
+import { formatWorkingStatusMessageFrame } from "./working-status.js";
 
 /** Interface for components that can be expanded/collapsed */
 interface Expandable {
@@ -176,7 +176,73 @@ type CompactionQueuedMessage = {
 
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
 const DEFAULT_WORKING_STATUS_REFRESH_INTERVAL_MS = 600;
-const DEFAULT_WORKING_STATUS_MESSAGE_ANIMATION_INTERVAL_MS = 80;
+const DEFAULT_WORKING_STATUS_MESSAGE_ANIMATION_INTERVAL_MS = 32;
+const RGB_FOREGROUND_PATTERN = /\x1b\[38;2;(\d+);(\d+);(\d+)m/;
+
+type RgbColor = {
+	r: number;
+	g: number;
+	b: number;
+};
+
+const DARK_DEFAULT_WORKING_TEXT_RGB: RgbColor = { r: 229, g: 229, b: 231 };
+const LIGHT_DEFAULT_WORKING_TEXT_RGB: RgbColor = { r: 17, g: 17, b: 17 };
+const DARK_DEFAULT_WORKING_BASE_RGB: RgbColor = { r: 102, g: 102, b: 102 };
+const LIGHT_DEFAULT_WORKING_BASE_RGB: RgbColor = { r: 118, g: 118, b: 118 };
+
+function parseAnsiRgbForeground(ansi: string): RgbColor | undefined {
+	const match = RGB_FOREGROUND_PATTERN.exec(ansi);
+	const red = match?.[1];
+	const green = match?.[2];
+	const blue = match?.[3];
+	if (red === undefined || green === undefined || blue === undefined) {
+		return undefined;
+	}
+	return {
+		r: Number.parseInt(red, 10),
+		g: Number.parseInt(green, 10),
+		b: Number.parseInt(blue, 10),
+	};
+}
+
+function isWorkingLightTheme(): boolean {
+	return theme.name?.toLowerCase().includes("light") ?? false;
+}
+
+function clampColorChannel(value: number): number {
+	return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function mixRgbColor(base: RgbColor, highlight: RgbColor, amount: number): RgbColor {
+	const clampedAmount = Math.max(0, Math.min(1, amount));
+	return {
+		r: clampColorChannel(base.r + (highlight.r - base.r) * clampedAmount),
+		g: clampColorChannel(base.g + (highlight.g - base.g) * clampedAmount),
+		b: clampColorChannel(base.b + (highlight.b - base.b) * clampedAmount),
+	};
+}
+
+function formatWorkingStatusShimmerText(text: string, intensity: number): string {
+	if (theme.getColorMode() !== "truecolor") {
+		if (intensity < 0.2) {
+			return theme.fg("dim", text);
+		}
+		if (intensity < 0.6) {
+			return theme.fg("text", text);
+		}
+		return theme.bold(theme.fg("text", text));
+	}
+
+	const lightTheme = isWorkingLightTheme();
+	const base =
+		parseAnsiRgbForeground(theme.getFgAnsi("dim")) ??
+		(lightTheme ? LIGHT_DEFAULT_WORKING_BASE_RGB : DARK_DEFAULT_WORKING_BASE_RGB);
+	const highlight =
+		parseAnsiRgbForeground(theme.getFgAnsi("text")) ??
+		(lightTheme ? LIGHT_DEFAULT_WORKING_TEXT_RGB : DARK_DEFAULT_WORKING_TEXT_RGB);
+	const color = mixRgbColor(base, highlight, intensity * 0.9);
+	return `\x1b[1m\x1b[38;2;${color.r};${color.g};${color.b}m${text}\x1b[39m\x1b[22m`;
+}
 
 function isDeadTerminalError(error: unknown): boolean {
 	if (!error || typeof error !== "object" || !("code" in error)) {
@@ -1685,16 +1751,8 @@ export class InteractiveMode {
 		return Math.max(0, Math.floor((Date.now() - this.workingStartedAt) / 1000));
 	}
 
-	private getWorkingStatusMessage(): string {
-		return formatWorkingStatusMessage(
-			this.getWorkingLoaderMessage(),
-			this.getWorkingElapsedSeconds(),
-			keyText("app.interrupt"),
-		);
-	}
-
 	private refreshWorkingLoaderMessage(): void {
-		this.loadingAnimation?.setMessage(this.getWorkingStatusMessage());
+		this.loadingAnimation?.setMessage(this.getWorkingLoaderMessage());
 	}
 
 	private startWorkingElapsedTimer(): void {
@@ -1715,14 +1773,22 @@ export class InteractiveMode {
 	private getWorkingIndicatorOptions(): LoaderIndicatorOptions {
 		return (
 			this.workingIndicatorOptions ?? {
-				frames: [theme.fg("accent", "•"), theme.fg("muted", "◦")],
+				frames: [theme.fg("accent", "•")],
 				intervalMs: DEFAULT_WORKING_STATUS_REFRESH_INTERVAL_MS,
-				messageFormatter: (message, frameIndex) =>
-					formatWorkingStatusTextFrame(message, frameIndex, {
-						base: (text) => theme.fg("muted", text),
-						glow: (text) => theme.fg("text", text),
-						highlight: (text) => theme.bold(theme.fg("accent", text)),
-					}),
+				messageFormatter: (message, animationElapsedMs) =>
+					formatWorkingStatusMessageFrame(
+						message,
+						this.getWorkingElapsedSeconds(),
+						keyText("app.interrupt"),
+						animationElapsedMs,
+						{
+							base: (text) => theme.fg("dim", text),
+							glow: (text) => theme.fg("text", text),
+							highlight: (text) => theme.bold(theme.fg("text", text)),
+							shimmer: formatWorkingStatusShimmerText,
+							suffix: (text) => theme.fg("dim", text),
+						},
+					),
 				messageIntervalMs: DEFAULT_WORKING_STATUS_MESSAGE_ANIMATION_INTERVAL_MS,
 			}
 		);
@@ -1733,7 +1799,7 @@ export class InteractiveMode {
 			this.ui,
 			(spinner) => theme.fg("accent", spinner),
 			(text) => theme.fg("muted", text),
-			this.getWorkingStatusMessage(),
+			this.getWorkingLoaderMessage(),
 			this.getWorkingIndicatorOptions(),
 		);
 	}

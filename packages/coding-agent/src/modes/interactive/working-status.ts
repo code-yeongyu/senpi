@@ -1,10 +1,16 @@
-const WORKING_STATUS_MESSAGE_SHIMMER_PADDING = 8;
+const WORKING_STATUS_MESSAGE_SHIMMER_PADDING = 10;
 const WORKING_STATUS_MESSAGE_SHIMMER_BAND_HALF_WIDTH = 5;
+const WORKING_STATUS_MESSAGE_SHIMMER_SWEEP_MS = 2_000;
 
-type WorkingStatusMessageFrameStyle = {
+type WorkingStatusTextFrameStyle = {
 	base: (text: string) => string;
 	glow: (text: string) => string;
 	highlight: (text: string) => string;
+	shimmer?: (text: string, intensity: number) => string;
+};
+
+type WorkingStatusMessageFrameStyle = WorkingStatusTextFrameStyle & {
+	suffix: (text: string) => string;
 };
 
 export function formatWorkingElapsedSeconds(elapsedSeconds: number): string {
@@ -28,8 +34,8 @@ export function formatWorkingStatusMessage(message: string, elapsedSeconds: numb
 
 export function formatWorkingStatusTextFrame(
 	statusMessage: string,
-	frameIndex: number,
-	style: WorkingStatusMessageFrameStyle,
+	animationElapsedMs: number,
+	style: WorkingStatusTextFrameStyle,
 ): string {
 	const chars = Array.from(statusMessage);
 	if (chars.length === 0) {
@@ -37,26 +43,35 @@ export function formatWorkingStatusTextFrame(
 	}
 
 	const period = chars.length + WORKING_STATUS_MESSAGE_SHIMMER_PADDING * 2;
-	const position = ((frameIndex % period) + period) % period;
+	const sweepProgress =
+		((Math.max(0, animationElapsedMs) % WORKING_STATUS_MESSAGE_SHIMMER_SWEEP_MS) /
+			WORKING_STATUS_MESSAGE_SHIMMER_SWEEP_MS) *
+		period;
 
 	return chars
 		.map((char, index) => {
 			if (char === " ") {
 				return char;
 			}
-			const distance = Math.abs(index + WORKING_STATUS_MESSAGE_SHIMMER_PADDING - position);
+			const distance = Math.abs(index + WORKING_STATUS_MESSAGE_SHIMMER_PADDING - sweepProgress);
 			if (distance > WORKING_STATUS_MESSAGE_SHIMMER_BAND_HALF_WIDTH) {
+				if (style.shimmer) {
+					return style.shimmer(char, 0);
+				}
 				return style.base(char);
 			}
 
 			const intensity = 0.5 * (1 + Math.cos(Math.PI * (distance / WORKING_STATUS_MESSAGE_SHIMMER_BAND_HALF_WIDTH)));
-			if (intensity >= 0.7) {
-				return style.highlight(char);
+			if (style.shimmer) {
+				return style.shimmer(char, intensity);
 			}
-			if (intensity >= 0.25) {
+			if (intensity < 0.2) {
+				return style.base(char);
+			}
+			if (intensity < 0.6) {
 				return style.glow(char);
 			}
-			return style.base(char);
+			return style.highlight(char);
 		})
 		.join("");
 }
@@ -65,12 +80,9 @@ export function formatWorkingStatusMessageFrame(
 	message: string,
 	elapsedSeconds: number,
 	interruptKey: string,
-	frameIndex: number,
+	animationElapsedMs: number,
 	style: WorkingStatusMessageFrameStyle,
 ): string {
-	return formatWorkingStatusTextFrame(
-		formatWorkingStatusMessage(message, elapsedSeconds, interruptKey),
-		frameIndex,
-		style,
-	);
+	const suffix = ` (${formatWorkingElapsedSeconds(elapsedSeconds)} • ${interruptKey} to interrupt)`;
+	return `${formatWorkingStatusTextFrame(message, animationElapsedMs, style)}${style.suffix(suffix)}`;
 }
