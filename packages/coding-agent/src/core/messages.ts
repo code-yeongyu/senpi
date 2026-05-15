@@ -89,7 +89,6 @@ declare module "@earendil-works/pi-agent-core" {
 		bashExecution: BashExecutionMessage;
 		custom: CustomMessage;
 		branchSummary: BranchSummaryMessage;
-		compactionSummary: CompactionSummaryMessage;
 	}
 }
 

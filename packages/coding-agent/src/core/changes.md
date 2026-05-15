@@ -1,5 +1,25 @@
 # changes
 
+## Avoid duplicate compaction summary message augmentation (2026-05-15)
+
+### What changed
+
+- `messages.ts`: removed the coding-agent-side `CustomAgentMessages.compactionSummary` declaration merge entry.
+
+### Why
+
+- `@earendil-works/pi-agent-core` now declares the shared harness compaction summary message type. Keeping a second
+  coding-agent declaration for the same `compactionSummary` slot made `tsgo` reject the package build because the two
+  declarations used distinct local interface symbols.
+
+### Why extension system couldn't handle this
+
+- This is TypeScript declaration metadata for core message unions, evaluated at package build time before extensions run.
+
+### Expected merge conflict zones
+
+- LOW: `messages.ts` around the `CustomAgentMessages` declaration merge block.
+
 ## Compaction detail propagation (2026-05-15)
 
 ### What changed
