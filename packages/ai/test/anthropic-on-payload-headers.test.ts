@@ -7,6 +7,7 @@ const mockState = vi.hoisted(() => ({
 	createParams: undefined as Record<string, unknown> | undefined,
 	requestOptions: undefined as Record<string, unknown> | undefined,
 }));
+const unsupportedNativeComputerToolModels = [["claude-opus-4-6"], ["claude-opus-4-7"]] as const;
 
 vi.mock("@anthropic-ai/sdk", () => {
 	function createSseResponse(): Response {
@@ -76,36 +77,39 @@ describe("Anthropic onPayload request metadata", () => {
 		expect(mockState.createParams).not.toHaveProperty("extra_body");
 	});
 
-	it("strips native computer-use tools that Opus 4.7 rejects after payload hooks run", async () => {
-		const model = getModel("anthropic", "claude-opus-4-7");
+	it.each(unsupportedNativeComputerToolModels)(
+		"strips native computer-use tools that %s rejects after payload hooks run",
+		async (modelId) => {
+			const model = getModel("anthropic", modelId);
 
-		const stream = streamAnthropic(model, context, {
-			apiKey: "fake-key",
-			onPayload: (payload) => ({
-				...(payload as Record<string, unknown>),
-				tools: [
-					{
-						type: "computer_20250124",
-						name: "computer",
-						display_width_px: 1024,
-						display_height_px: 768,
-						display_number: 1,
+			const stream = streamAnthropic(model, context, {
+				apiKey: "fake-key",
+				onPayload: (payload) => ({
+					...(payload as Record<string, unknown>),
+					tools: [
+						{
+							type: "computer_20250124",
+							name: "computer",
+							display_width_px: 1024,
+							display_height_px: 768,
+							display_number: 1,
+						},
+						{ type: "bash_20250124", name: "bash" },
+					],
+					headers: {
+						"anthropic-beta": "computer-use-2025-01-24, fine-grained-tool-streaming-2025-05-14",
 					},
-					{ type: "bash_20250124", name: "bash" },
-				],
-				headers: {
-					"anthropic-beta": "computer-use-2025-01-24, fine-grained-tool-streaming-2025-05-14",
-				},
-			}),
-		});
+				}),
+			});
 
-		await stream.result();
+			await stream.result();
 
-		const tools = mockState.createParams?.tools as Array<Record<string, unknown>>;
-		expect(tools.some((tool) => tool.type === "computer_20250124")).toBe(false);
-		expect(tools).toContainEqual({ type: "bash_20250124", name: "bash" });
-		expect(mockState.requestOptions?.headers).toEqual({
-			"anthropic-beta": "fine-grained-tool-streaming-2025-05-14",
-		});
-	});
+			const tools = mockState.createParams?.tools as Array<Record<string, unknown>>;
+			expect(tools.some((tool) => tool.type === "computer_20250124")).toBe(false);
+			expect(tools).toContainEqual({ type: "bash_20250124", name: "bash" });
+			expect(mockState.requestOptions?.headers).toEqual({
+				"anthropic-beta": "fine-grained-tool-streaming-2025-05-14",
+			});
+		},
+	);
 });

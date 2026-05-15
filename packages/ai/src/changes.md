@@ -1,10 +1,10 @@
 # AI Source Changes
 
-## 2026-05-15 - Opus 4.7 unsupported native computer tool guard
+## 2026-05-15 - Opus 4.6/4.7 unsupported native computer tool guard
 
 ### What changed and why
-- `providers/anthropic.ts`: after `onPayload` hooks run, Opus 4.7 requests now strip Anthropic's legacy native `computer_20250124` tool and remove `computer-use-2025-01-24` from hook-added `anthropic-beta` request headers.
-- Added a regression to cover extension-style payload mutation where a native computer tool is injected alongside another supported native tool. The supported tool and remaining beta header survive; the Opus 4.7-rejected computer tool does not reach the SDK request body.
+- `providers/anthropic.ts`: after `onPayload` hooks run, Opus 4.6 and 4.7 requests now strip Anthropic's legacy native `computer_20250124` tool and remove `computer-use-2025-01-24` from hook-added `anthropic-beta` request headers.
+- Added a regression to cover extension-style payload mutation where a native computer tool is injected alongside another supported native tool. The supported tool and remaining beta header survive; the Opus-rejected computer tool does not reach the SDK request body.
 
 ### Files modified
 - `providers/anthropic.ts`
