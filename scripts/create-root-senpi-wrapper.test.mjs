@@ -7,7 +7,7 @@ import { describe, it } from "node:test";
 import { createRootSenpiWrapper, shouldWriteGlobalShim } from "./create-root-senpi-wrapper.mjs";
 
 describe("create-root-senpi-wrapper", () => {
-	it("does not write a global shim when the root is a gitless snapshot", () => {
+	it("writes a launch-only wrapper when the root is a gitless snapshot", () => {
 		// Given
 		const root = mkdtempSync(join(tmpdir(), "senpi-wrapper-snapshot-"));
 		const globalPrefix = mkdtempSync(join(tmpdir(), "senpi-wrapper-global-"));
@@ -20,9 +20,10 @@ describe("create-root-senpi-wrapper", () => {
 		assert.equal(shouldWriteGlobalShim(root, {}), false);
 		assert.equal(result.globalShimWritten, false);
 		assert.equal(wrapper.includes("packages/coding-agent/dist/senpi"), true);
-		assert.equal(wrapper.includes("scripts/build-all.mjs"), true);
-		assert.equal(wrapper.includes("packages/ai/src"), true);
-		assert.equal(wrapper.includes(".senpi-build-head"), true);
+		assert.equal(wrapper.includes("scripts/build-all.mjs"), false);
+		assert.equal(wrapper.includes("packages/ai/src"), false);
+		assert.equal(wrapper.includes(".senpi-build-head"), false);
+		assert.equal(wrapper.includes("linkedBuildIsStale"), false);
 	});
 
 	it("does NOT write a global shim by default in a git checkout (opt-in only)", () => {

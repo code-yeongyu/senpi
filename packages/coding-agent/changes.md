@@ -1,5 +1,16 @@
 # Local fork changes
 
+## 2026-05-15 — stop rebuilding linked `senpi` on launch
+
+- Changed:
+  - `scripts/build-all.mjs`
+  - `scripts/create-root-senpi-wrapper.mjs`
+  - `scripts/create-root-senpi-wrapper.test.mjs`
+- Why: The PATH-visible `senpi` command should not pay a build cost every time it starts. Build/link should create or refresh the shim, and regular launches should only execute the already-built CLI.
+- What changed: Removed the git HEAD stamp, source mtime scan, dist marker check, and launch-time `scripts/build-all.mjs` call from the generated root wrapper. The build helper now also deletes the legacy `.senpi-build-head` marker when refreshing `dist/senpi`.
+- Why the extension system could not handle this: this happens in the PATH shim before the coding-agent runtime or extension loader starts.
+- Merge-conflict risk: low. The expected conflict zone is `scripts/create-root-senpi-wrapper.mjs` if upstream changes local build/link behavior.
+
 ## 2026-05-15 — rebuild stale linked CLI before launching `senpi`
 
 - Changed:
