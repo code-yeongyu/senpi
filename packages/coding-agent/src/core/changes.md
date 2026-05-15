@@ -119,6 +119,22 @@
 
 - LOW: `ModelDefinitionSchema`, `ModelOverrideSchema`, and `applyModelOverride()` in `src/core/model-registry.ts` if upstream adds more per-model metadata fields.
 
+## Packaged thinking-tier helpers stay local (2026-05-12)
+
+### What changed
+- Added `src/core/thinking-levels.ts` so coding-agent owns the senpi-specific `xhigh` / `max` tier detection and supported-level expansion.
+- Updated `src/core/agent-session.ts` and `src/core/sdk.ts` to import these helpers locally instead of from `@earendil-works/pi-ai`.
+
+### Why
+- The published `@code-yeongyu/senpi` package currently installs the registry `@earendil-works/pi-ai@0.74.0`, whose public exports do not include the fork-only `supportsXhigh` / `supportsMax` helpers.
+- Importing those names directly from `pi-ai` makes packaged senpi fail during module loading before any CLI command runs.
+
+### Why extension system couldn't handle this
+- Thinking-tier availability is consumed by core session/model logic (`AgentSession`, SDK helpers) during startup and model switching, before extensions can replace those imports.
+
+### Expected merge conflict zones on next upstream sync
+- LOW: `agent-session.ts` / `sdk.ts` import blocks and any future upstream move of thinking-level helpers.
+
 ## Configured upstream model id and service tier (2026-05-09)
 
 ### What changed
