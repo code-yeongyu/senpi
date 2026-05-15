@@ -32,10 +32,22 @@ These `../pi-extensions/*` packages are intended to be installed as standalone s
 | Extension | What it adds |
 |---|---|
 | [`../pi-extensions/pi-agent-system`](../pi-extensions/pi-agent-system) | Agent profiles via `SENPI_AGENT_TYPE` / `PI_AGENT_TYPE`, with profile markdown, tool filtering, and prompt fragments. |
+| [`../pi-extensions/pi-anthropic-code-execution`](../pi-extensions/pi-anthropic-code-execution) | Anthropic-native code execution sandbox. |
+| [`../pi-extensions/pi-anthropic-computer-use`](../pi-extensions/pi-anthropic-computer-use) | Anthropic computer-use bindings. |
+| [`../pi-extensions/pi-anthropic-text-editor`](../pi-extensions/pi-anthropic-text-editor) | Anthropic-native text editor tool. |
+| [`../pi-extensions/pi-anthropic-tool-search`](../pi-extensions/pi-anthropic-tool-search) | Anthropic-native tool search. |
+| [`../pi-extensions/pi-anthropic-web-fetch`](../pi-extensions/pi-anthropic-web-fetch) | Anthropic-native web fetch support. |
 | [`../pi-extensions/pi-ast-grep`](../pi-extensions/pi-ast-grep) | AST-aware code search/replace across 25 languages. Auto-downloads `sg` on first use. |
+| [`../pi-extensions/pi-comment-checker`](../pi-extensions/pi-comment-checker) | Runs comment-quality checks after file-editing tools and shows warnings in the TUI. |
+| [`../pi-extensions/pi-cua-integration`](../pi-extensions/pi-cua-integration) | Computer-use action wiring for desktop/browser interaction surfaces. |
 | [`../pi-extensions/pi-goal`](../pi-extensions/pi-goal) | Persistent goal tracking with Codex-style goal tools, TUI footer, and continuation prompts. |
+| [`../pi-extensions/pi-google-code-execution`](../pi-extensions/pi-google-code-execution) | Google native code execution. |
+| [`../pi-extensions/pi-google-google-search`](../pi-extensions/pi-google-google-search) | Google Search grounding. |
+| [`../pi-extensions/pi-google-url-context`](../pi-extensions/pi-google-url-context) | Google URL grounding. |
 | [`../pi-extensions/pi-lsp-client`](../pi-extensions/pi-lsp-client) | LSP integration: `lsp_rename`, `lsp_goto_definition`, `lsp_find_references`, `lsp_diagnostics`, plus a `/lsp` inspector. |
 | [`../pi-extensions/pi-nested-agents-md`](../pi-extensions/pi-nested-agents-md) | Auto-injects nearby `AGENTS.md` files when the agent reads from a nested directory. |
+| [`../pi-extensions/pi-openai-api-parallel-tool-calls`](../pi-extensions/pi-openai-api-parallel-tool-calls) | OpenAI `parallel_tool_calls` payload support. |
+| [`../pi-extensions/pi-openai-code-interpreter`](../pi-extensions/pi-openai-code-interpreter) | OpenAI Code Interpreter. |
 | [`../pi-extensions/pi-rules`](../pi-extensions/pi-rules) | Auto-discovers rule files from `.sisyphus/rules/`, `.claude/rules/`, `.cursor/rules/`, `.github/instructions/`, `AGENTS.md`, and `CLAUDE.md`. |
 | [`../pi-extensions/pi-sandbox`](../pi-extensions/pi-sandbox) | OS-level sandbox policy with native, Docker, justbash, and QEMU backends plus SSH transport facets. |
 | [`../pi-extensions/pi-webfetch`](../pi-extensions/pi-webfetch) | `web_fetch` tool: URL content as markdown, plain text, or HTML with bounded time and size. |
@@ -53,26 +65,17 @@ See [Senpi Packages](packages/coding-agent/README.md#pi-packages) for the instal
 
 ### `../pi-extensions` packages already shipped as senpi builtins
 
-You do **not** need to install these sibling packages for normal senpi use; their functionality is already included in the binary:
+You do **not** need to install these sibling packages for normal senpi use; their functionality is already included in the binary. This table is intentionally limited to packages that map to the currently registered `builtinExtensions` list:
 
-| Sibling package | Builtin capability |
-|---|---|
-| [`../pi-extensions/pi-anthropic-bash`](../pi-extensions/pi-anthropic-bash) | Anthropic-native bash tool policy and prompt guidance. |
-| [`../pi-extensions/pi-anthropic-code-execution`](../pi-extensions/pi-anthropic-code-execution) | Anthropic-native code execution sandbox. |
-| [`../pi-extensions/pi-anthropic-computer-use`](../pi-extensions/pi-anthropic-computer-use) | Anthropic computer-use bindings. |
-| [`../pi-extensions/pi-anthropic-text-editor`](../pi-extensions/pi-anthropic-text-editor) | Anthropic-native text editor tool. |
-| [`../pi-extensions/pi-anthropic-tool-search`](../pi-extensions/pi-anthropic-tool-search) | Anthropic-native tool search. |
-| [`../pi-extensions/pi-anthropic-web-fetch`](../pi-extensions/pi-anthropic-web-fetch) | Anthropic-native web fetch support. |
-| [`../pi-extensions/pi-anthropic-web-search`](../pi-extensions/pi-anthropic-web-search) | Anthropic-native web search support. |
-| [`../pi-extensions/pi-apply-patch`](../pi-extensions/pi-apply-patch) | Codex-style `apply_patch` tool. |
-| [`../pi-extensions/pi-bash-timeout`](../pi-extensions/pi-bash-timeout) | Bash timeout handling and related tool handlers. |
-| [`../pi-extensions/pi-google-code-execution`](../pi-extensions/pi-google-code-execution) | Google native code execution. |
-| [`../pi-extensions/pi-google-google-search`](../pi-extensions/pi-google-google-search) | Google Search grounding. |
-| [`../pi-extensions/pi-google-url-context`](../pi-extensions/pi-google-url-context) | Google URL grounding. |
-| [`../pi-extensions/pi-openai-api-parallel-tool-calls`](../pi-extensions/pi-openai-api-parallel-tool-calls) | OpenAI `parallel_tool_calls` payload support. |
-| [`../pi-extensions/pi-openai-code-interpreter`](../pi-extensions/pi-openai-code-interpreter) | OpenAI Code Interpreter. |
-| [`../pi-extensions/pi-openai-web-search`](../pi-extensions/pi-openai-web-search) | OpenAI-native web search. |
-| [`../pi-extensions/pi-todotools`](../pi-extensions/pi-todotools) | `todowrite` / `todoread`, todo sidebar state, workflow prompt guidance, and continuation follow-ups. |
+| Sibling package | Included as | Builtin capability |
+|---|---|---|
+| [`../pi-extensions/pi-anthropic-web-search`](../pi-extensions/pi-anthropic-web-search) | `anthropic-web-search` | Anthropic-native web search support. |
+| [`../pi-extensions/pi-apply-patch`](../pi-extensions/pi-apply-patch) | `gpt-apply-patch` | Codex-style `apply_patch` tool for GPT-family runs. |
+| [`../pi-extensions/pi-bash-timeout`](../pi-extensions/pi-bash-timeout) | `bash-timeout` | Bash timeout defaults, max timeout enforcement, and prompt policy. |
+| [`../pi-extensions/pi-openai-web-search`](../pi-extensions/pi-openai-web-search) | `openai-web-search` | OpenAI Responses native web search. |
+| [`../pi-extensions/pi-todotools`](../pi-extensions/pi-todotools) | `todowrite` | `todowrite` / `todoread`, todo sidebar state, workflow prompt guidance, and continuation follow-ups. |
+
+Other builtins such as `background-task`, `permission-system`, `prompt-preset`, `anthropic-bash`, `service-tier`, `tool-pair-guard`, and `compaction` are senpi-owned builtin extensions, not installable sibling packages.
 
 ## Why "senpi"
 
@@ -107,21 +110,12 @@ In-tree, tightly coupled to senpi internals. Loaded in this exact registration o
 | 5 | [`todowrite`](packages/coding-agent/src/core/extensions/builtin/todotools/) *(vendored)* | `todowrite` / `todoread` tools with branch-aware persistence, sidebar widget, workflow prompt guidance, and a continuation loop. Synced from [`code-yeongyu/pi-todotools`](https://github.com/code-yeongyu/pi-todotools). | — |
 | 6 | [`redraws`](packages/coding-agent/src/core/extensions/builtin/redraws.ts) | `/tui` command reporting cumulative TUI full-redraw count. Used for differential-rendering debugging. | — |
 | 7 | [`anthropic-web-search`](packages/coding-agent/src/core/extensions/builtin/anthropic-web-search/) | Anthropic native `web_search` tool | — |
-| 8 | [`anthropic-tool-search`](packages/coding-agent/src/core/extensions/builtin/anthropic-tool-search/) | Anthropic native `tool_search` tool | — |
-| 9 | [`anthropic-code-execution`](packages/coding-agent/src/core/extensions/builtin/anthropic-code-execution/) | Anthropic native code-execution sandbox | — |
-| 10 | [`anthropic-bash`](packages/coding-agent/src/core/extensions/builtin/anthropic-bash/) | Anthropic native bash tool variant | — |
-| 11 | [`anthropic-text-editor`](packages/coding-agent/src/core/extensions/builtin/anthropic-text-editor/) | Anthropic native `str_replace_based_edit_tool` | — |
-| 12 | [`anthropic-computer-use`](packages/coding-agent/src/core/extensions/builtin/anthropic-computer-use/) | Anthropic native computer-use bindings | — |
-| 13 | [`openai-web-search`](packages/coding-agent/src/core/extensions/builtin/openai-web-search/) | OpenAI Responses native `web_search` | — |
-| 14 | [`openai-code-interpreter`](packages/coding-agent/src/core/extensions/builtin/openai-code-interpreter/) | OpenAI Responses native `code_interpreter` | — |
-| 15 | [`google-google-search`](packages/coding-agent/src/core/extensions/builtin/google-google-search/) | Google `googleSearch` grounding tool | — |
-| 16 | [`google-code-execution`](packages/coding-agent/src/core/extensions/builtin/google-code-execution/) | Google `codeExecution` native tool | — |
-| 17 | [`google-url-context`](packages/coding-agent/src/core/extensions/builtin/google-url-context/) | Google `urlContext` grounding tool | — |
-| 18 | [`openai-api-parallel-tool-calls`](packages/coding-agent/src/core/extensions/builtin/openai-api-parallel-tool-calls/) *(vendored)* | Adds `parallel_tool_calls: true` to OpenAI-family payloads + nudges the system prompt to fan out. Synced from [`code-yeongyu/pi-openai-api-parallel-tool-calls`](https://github.com/code-yeongyu/pi-openai-api-parallel-tool-calls). | — |
-| 19 | [`service-tier`](packages/coding-agent/src/core/extensions/builtin/service-tier.ts) | Injects `service_tier` (`auto` / `flex` / `priority`) into OpenAI Responses payloads using per-model service tier or `openai.serviceTier` setting | — |
-| 20 | [`bash-timeout`](packages/coding-agent/src/core/extensions/builtin/bash-timeout/) *(vendored)* | Injects default + max bash timeouts, appends policy to system prompt. Synced from [`code-yeongyu/pi-bash-timeout`](https://github.com/code-yeongyu/pi-bash-timeout). | — |
-| 21 | [`tool-pair-guard`](packages/coding-agent/src/core/extensions/builtin/tool-pair-guard/) | Sanitizes Anthropic request payloads by removing orphan `tool_result` blocks — compaction safety | — |
-| 22 | [`compaction`](packages/coding-agent/src/core/extensions/builtin/compaction/) | Speculative + emergency compaction policy: degradation monitor, circuit breaker, per-turn cap, todo bridging, checkpoint state, restoration tracker, tool-result truncation | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/compaction/AGENTS.md) · [changes.md](packages/coding-agent/src/core/extensions/builtin/compaction/changes.md) |
+| 8 | [`anthropic-bash`](packages/coding-agent/src/core/extensions/builtin/anthropic-bash/) | Anthropic native bash tool variant | — |
+| 9 | [`openai-web-search`](packages/coding-agent/src/core/extensions/builtin/openai-web-search/) | OpenAI Responses native `web_search` | — |
+| 10 | [`service-tier`](packages/coding-agent/src/core/extensions/builtin/service-tier.ts) | Injects `service_tier` (`auto` / `flex` / `priority`) into OpenAI Responses payloads using per-model service tier or `openai.serviceTier` setting | — |
+| 11 | [`bash-timeout`](packages/coding-agent/src/core/extensions/builtin/bash-timeout/) *(vendored)* | Injects default + max bash timeouts, appends policy to system prompt. Synced from [`code-yeongyu/pi-bash-timeout`](https://github.com/code-yeongyu/pi-bash-timeout). | — |
+| 12 | [`tool-pair-guard`](packages/coding-agent/src/core/extensions/builtin/tool-pair-guard/) | Sanitizes Anthropic request payloads by removing orphan `tool_result` blocks — compaction safety | — |
+| 13 | [`compaction`](packages/coding-agent/src/core/extensions/builtin/compaction/) | Speculative + emergency compaction policy: degradation monitor, circuit breaker, per-turn cap, todo bridging, checkpoint state, restoration tracker, tool-result truncation | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/compaction/AGENTS.md) · [changes.md](packages/coding-agent/src/core/extensions/builtin/compaction/changes.md) |
 
 > The builtin directories above are new vs upstream `pi-mono` — none exist in `badlogic/pi-mono`. Vendored versions are pinned in [`external-versions.json`](packages/coding-agent/src/core/extensions/builtin/external-versions.json) and synced from the sibling `pi-extensions` checkout with [`sync-builtin-extensions.mjs`](packages/coding-agent/scripts/sync-builtin-extensions.mjs).
 
