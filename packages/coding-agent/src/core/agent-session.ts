@@ -2106,15 +2106,19 @@ export class AgentSession {
 			shouldCompact(contextUsage.tokens, contextUsage.contextWindow, settings);
 		if (isContextOverflow(assistantMessage, contextWindow) && (sameModel || currentContextNeedsCompaction)) {
 			if (this._overflowRecoveryAttempted) {
+				const errorMessage =
+					"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.";
 				this._emit({
 					type: "compaction_end",
 					reason: "overflow",
 					result: undefined,
 					aborted: false,
 					willRetry: false,
-					errorMessage:
-						"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
+					errorMessage,
 				});
+				if (requestReason === "pre_prompt") {
+					throw new Error(errorMessage);
+				}
 				return;
 			}
 

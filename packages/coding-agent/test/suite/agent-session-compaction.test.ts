@@ -2,7 +2,11 @@ import { type AssistantMessage, fauxAssistantMessage } from "@earendil-works/pi-
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHarness, type Harness } from "./harness.js";
 
-type CheckCompaction = (assistantMessage: AssistantMessage, skipAbortedCheck?: boolean) => Promise<void>;
+type CheckCompaction = (
+	assistantMessage: AssistantMessage,
+	skipAbortedCheck?: boolean,
+	requestReason?: "pre_prompt",
+) => Promise<void>;
 type RunAutoCompaction = (reason: "overflow" | "threshold", willRetry: boolean) => Promise<void>;
 
 function getCheckCompaction(session: Harness["session"]): CheckCompaction {
@@ -25,8 +29,9 @@ async function checkCompaction(
 	session: Harness["session"],
 	assistantMessage: AssistantMessage,
 	skipAbortedCheck?: boolean,
+	requestReason?: "pre_prompt",
 ): Promise<void> {
-	await getCheckCompaction(session).call(session, assistantMessage, skipAbortedCheck);
+	await getCheckCompaction(session).call(session, assistantMessage, skipAbortedCheck, requestReason);
 }
 
 async function runAutoCompaction(
@@ -248,6 +253,40 @@ describe("AgentSession compaction characterization", () => {
 		expect(compactionErrors).toContain(
 			"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
 		);
+	});
+
+	it("blocks pre-prompt continuation after overflow recovery already failed", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		const firstOverflow = createAssistant(harness, {
+			stopReason: "error",
+			errorMessage: "prompt is too long",
+			timestamp: Date.now(),
+		});
+		const secondOverflow = createAssistant(harness, {
+			stopReason: "error",
+			errorMessage: "prompt is too long",
+			timestamp: Date.now() + 1,
+		});
+		const userMessage = {
+			role: "user" as const,
+			content: [{ type: "text" as const, text: "continue" }],
+			timestamp: Date.now() - 1,
+		};
+		const runAutoCompactionSpy = stubRunAutoCompaction(harness.session);
+
+		//#given - overflow recovery already used its compact-and-retry attempt
+		await checkCompaction(harness.session, firstOverflow);
+		harness.session.agent.state.messages = [userMessage, secondOverflow];
+
+		//#when - a continuation tries to start another turn while the latest assistant is still overflowed
+		const prompt = harness.session.prompt("continue goal");
+
+		//#then - the prompt is blocked before another doomed provider request can be sent
+		await expect(prompt).rejects.toThrow(
+			"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
+		);
+		expect(runAutoCompactionSpy).toHaveBeenCalledTimes(1);
 	});
 
 	it("does not consume the overflow compact-and-retry attempt when compaction fails before retrying", async () => {
