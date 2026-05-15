@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { convertMessages } from "../src/providers/google-shared.js";
-import type { Context, Model } from "../src/types.js";
+import type { AssistantMessage, Context, Model } from "../src/types.js";
 
 function makeGemini3Model<TApi extends "google-generative-ai" | "google-vertex">(
 	api: TApi,
@@ -102,6 +102,48 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 		expect(functionCallParts).toHaveLength(2);
 		expect(functionCallParts[0]?.thoughtSignature).toBe(validSig);
 		expect(functionCallParts[1]?.thoughtSignature).toBeUndefined();
+	});
+
+	it("omits standalone same-model thinking replay when thinking is off", () => {
+		const model = makeGemini3Model("google-generative-ai", "google");
+		const previousAssistant: AssistantMessage = {
+			role: "assistant",
+			api: "google-generative-ai",
+			provider: "google",
+			model: model.id,
+			content: [
+				{
+					type: "thinking",
+					thinking: "prior Google thinking",
+					thinkingSignature: "AAAAAAAAAAAAAAAAAAAAAA==",
+				},
+				{ type: "text", text: "previous answer", textSignature: "BBBBBBBBBBBBBBBBBBBBBB==" },
+			],
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: Date.now(),
+		};
+		const contents = convertMessages(
+			model,
+			{
+				messages: [
+					{ role: "user", content: "first turn", timestamp: Date.now() },
+					previousAssistant,
+					{ role: "user", content: "follow-up", timestamp: Date.now() },
+				],
+			},
+			{ preserveThinking: false },
+		);
+		const modelTurn = contents.find((content) => content.role === "model");
+
+		expect(modelTurn?.parts).toEqual([{ text: "previous answer" }]);
 	});
 
 	it("does not add a thoughtSignature for non-Gemini-3 models", () => {

@@ -88,14 +88,20 @@ function supportsMultimodalFunctionResponse(modelId: string): boolean {
 /**
  * Convert internal messages to Gemini Content[] format.
  */
-export function convertMessages<T extends GoogleApiType>(model: Model<T>, context: Context): Content[] {
+export function convertMessages<T extends GoogleApiType>(
+	model: Model<T>,
+	context: Context,
+	options: { preserveThinking?: boolean } = {},
+): Content[] {
 	const contents: Content[] = [];
 	const normalizeToolCallId = (id: string): string => {
 		if (!requiresToolCallId(model.id)) return id;
 		return id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
 	};
 
-	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
+	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId, {
+		preserveThinking: options.preserveThinking,
+	});
 
 	for (const msg of transformedMessages) {
 		if (msg.role === "user") {
@@ -311,7 +317,7 @@ export function convertTools(
 				name: tool.name,
 				description: tool.description,
 				...(useParameters
-					? { parameters: sanitizeForOpenApi(tool.parameters as unknown) }
+					? { parameters: sanitizeForOpenApi(tool.parameters) }
 					: { parametersJsonSchema: tool.parameters }),
 			})),
 		},

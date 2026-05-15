@@ -192,7 +192,9 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 			const cacheRetention = resolveCacheRetention(options.cacheRetention);
 			let commandInput: ConverseStreamCommandInput & Record<string, unknown> = {
 				modelId: model.id,
-				messages: convertMessages(context, model, cacheRetention),
+				messages: convertMessages(context, model, cacheRetention, {
+					preserveThinking: options.reasoning !== undefined,
+				}),
 				system: buildSystemPrompt(context.systemPrompt, model, cacheRetention),
 				inferenceConfig: {
 					...(options.maxTokens !== undefined && { maxTokens: options.maxTokens }),
@@ -628,9 +630,12 @@ function convertMessages(
 	context: Context,
 	model: Model<"bedrock-converse-stream">,
 	cacheRetention: CacheRetention,
+	options: { preserveThinking?: boolean } = {},
 ): Message[] {
 	const result: Message[] = [];
-	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
+	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId, {
+		preserveThinking: options.preserveThinking,
+	});
 
 	for (let i = 0; i < transformedMessages.length; i++) {
 		const m = transformedMessages[i];

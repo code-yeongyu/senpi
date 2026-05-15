@@ -1,14 +1,39 @@
 import { describe, expect, it } from "vitest";
 import { getModel } from "../src/models.js";
 import { type BedrockOptions, streamBedrock } from "../src/providers/amazon-bedrock.js";
-import type { Context, Model } from "../src/types.js";
+import type { AssistantMessage, Context, Model } from "../src/types.js";
 
 interface BedrockThinkingPayload {
+	messages?: Array<{ role?: string; content?: Array<Record<string, unknown>> }>;
 	additionalModelRequestFields?: {
 		thinking?: { type: string; budget_tokens?: number; display?: string };
 		output_config?: { effort?: string };
 		anthropic_beta?: string[];
 	};
+}
+
+async function capturePayloadWithoutReasoning(
+	model: Model<"bedrock-converse-stream">,
+	context: Context,
+): Promise<BedrockThinkingPayload> {
+	let capturedPayload: BedrockThinkingPayload | undefined;
+	const s = streamBedrock(model, context, {
+		signal: AbortSignal.abort(),
+		onPayload: (payload) => {
+			capturedPayload = payload as BedrockThinkingPayload;
+			return payload;
+		},
+	});
+
+	for await (const event of s) {
+		if (event.type === "error") break;
+	}
+
+	if (!capturedPayload) {
+		throw new Error("Expected Bedrock payload to be captured before request abort");
+	}
+
+	return capturedPayload;
 }
 
 function makeContext(): Context {
@@ -103,6 +128,44 @@ describe("Bedrock thinking payload", () => {
 		expect(payload.additionalModelRequestFields?.thinking).toEqual({ type: "adaptive" });
 		expect(payload.additionalModelRequestFields?.output_config).toEqual({ effort: "high" });
 		expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
+	});
+
+	it("omits standalone same-model reasoning replay when thinking is off", async () => {
+		const model = getModel("amazon-bedrock", "global.anthropic.claude-opus-4-6-v1");
+		const previousAssistant: AssistantMessage = {
+			role: "assistant",
+			api: "bedrock-converse-stream",
+			provider: "amazon-bedrock",
+			model: model.id,
+			content: [
+				{
+					type: "thinking",
+					thinking: "prior Bedrock reasoning",
+					thinkingSignature: "opaque-signature",
+				},
+				{ type: "text", text: "previous answer" },
+			],
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: Date.now(),
+		};
+		const payload = await capturePayloadWithoutReasoning(model, {
+			messages: [
+				{ role: "user", content: "first turn", timestamp: Date.now() },
+				previousAssistant,
+				{ role: "user", content: "follow-up", timestamp: Date.now() },
+			],
+		});
+
+		const assistantMessage = payload.messages?.find((message) => message.role === "assistant");
+		expect(JSON.stringify(assistantMessage?.content)).not.toContain("reasoningContent");
 	});
 });
 

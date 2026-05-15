@@ -335,14 +335,13 @@ export const streamSimpleGoogleVertex: StreamFunction<"google-vertex", SimpleStr
 
 	const clampedReasoning = clampThinkingLevel(model, options.reasoning);
 	const effort = (clampedReasoning === "off" ? "high" : clampedReasoning) as ClampedThinkingLevel;
-	const geminiModel = model as unknown as Model<"google-generative-ai">;
 
-	if (isGemini3ProModel(geminiModel) || isGemini3FlashModel(geminiModel)) {
+	if (isGemini3ProModel(model) || isGemini3FlashModel(model)) {
 		return streamGoogleVertex(model, context, {
 			...base,
 			thinking: {
 				enabled: true,
-				level: getGemini3ThinkingLevel(effort, geminiModel),
+				level: getGemini3ThinkingLevel(effort, model),
 			},
 		} satisfies GoogleVertexOptions);
 	}
@@ -351,7 +350,7 @@ export const streamSimpleGoogleVertex: StreamFunction<"google-vertex", SimpleStr
 		...base,
 		thinking: {
 			enabled: true,
-			budgetTokens: getGoogleBudget(geminiModel, effort, options.thinkingBudgets),
+			budgetTokens: getGoogleBudget(model, effort, options.thinkingBudgets),
 		},
 	} satisfies GoogleVertexOptions);
 };
@@ -457,7 +456,7 @@ function buildParams(
 	context: Context,
 	options: GoogleVertexOptions = {},
 ): GenerateContentParameters {
-	const contents = convertMessages(model, context);
+	const contents = convertMessages(model, context, { preserveThinking: options.thinking?.enabled === true });
 
 	const generationConfig: GenerateContentConfig = {};
 	if (options.temperature !== undefined) {
@@ -502,7 +501,7 @@ function buildParams(
 		config.abortSignal = options.signal;
 	}
 
-	applyExtraBody(config as unknown as Record<string, unknown>, options?.extraBody, GOOGLE_RESERVED_BODY_KEYS);
+	applyExtraBody(config, options?.extraBody, GOOGLE_RESERVED_BODY_KEYS);
 
 	const params: GenerateContentParameters = {
 		model: model.id,
@@ -515,11 +514,11 @@ function buildParams(
 
 type ClampedThinkingLevel = Exclude<PiThinkingLevel, "xhigh" | "max">;
 
-function isGemini3ProModel(model: Model<"google-generative-ai">): boolean {
+function isGemini3ProModel(model: Pick<Model<Api>, "id">): boolean {
 	return /gemini-3(?:\.\d+)?-pro/.test(model.id.toLowerCase());
 }
 
-function isGemini3FlashModel(model: Model<"google-generative-ai">): boolean {
+function isGemini3FlashModel(model: Pick<Model<Api>, "id">): boolean {
 	return /gemini-3(?:\.\d+)?-flash/.test(model.id.toLowerCase());
 }
 
@@ -527,11 +526,10 @@ function getDisabledThinkingConfig(model: Model<"google-vertex">): ThinkingConfi
 	// Google docs: Gemini 3.1 Pro cannot disable thinking, and Gemini 3 Flash / Flash-Lite
 	// do not support full thinking-off either. For Gemini 3 models, use the lowest supported
 	// thinkingLevel without includeThoughts so hidden thinking remains invisible to pi.
-	const geminiModel = model as unknown as Model<"google-generative-ai">;
-	if (isGemini3ProModel(geminiModel)) {
+	if (isGemini3ProModel(model)) {
 		return { thinkingLevel: ThinkingLevel.LOW };
 	}
-	if (isGemini3FlashModel(geminiModel)) {
+	if (isGemini3FlashModel(model)) {
 		return { thinkingLevel: ThinkingLevel.MINIMAL };
 	}
 
@@ -539,10 +537,7 @@ function getDisabledThinkingConfig(model: Model<"google-vertex">): ThinkingConfi
 	return { thinkingBudget: 0 };
 }
 
-function getGemini3ThinkingLevel(
-	effort: ClampedThinkingLevel,
-	model: Model<"google-generative-ai">,
-): GoogleThinkingLevel {
+function getGemini3ThinkingLevel(effort: ClampedThinkingLevel, model: Pick<Model<Api>, "id">): GoogleThinkingLevel {
 	if (isGemini3ProModel(model)) {
 		switch (effort) {
 			case "minimal":
@@ -566,7 +561,7 @@ function getGemini3ThinkingLevel(
 }
 
 function getGoogleBudget(
-	model: Model<"google-generative-ai">,
+	model: Pick<Model<Api>, "id">,
 	effort: ClampedThinkingLevel,
 	customBudgets?: ThinkingBudgets,
 ): number {

@@ -2,6 +2,7 @@ import {
 	type GenerateContentConfig,
 	type GenerateContentParameters,
 	GoogleGenAI,
+	ThinkingLevel as GoogleGenAIThinkingLevel,
 	type ThinkingConfig,
 } from "@google/genai";
 import { getEnvApiKey } from "../env-api-keys.js";
@@ -33,6 +34,14 @@ import {
 	toProviderNativeContent,
 } from "./google-shared.js";
 import { applyExtraBody, buildBaseOptions, GOOGLE_RESERVED_BODY_KEYS } from "./simple-options.js";
+
+const THINKING_LEVEL_MAP: Record<GoogleThinkingLevel, GoogleGenAIThinkingLevel> = {
+	THINKING_LEVEL_UNSPECIFIED: GoogleGenAIThinkingLevel.THINKING_LEVEL_UNSPECIFIED,
+	MINIMAL: GoogleGenAIThinkingLevel.MINIMAL,
+	LOW: GoogleGenAIThinkingLevel.LOW,
+	MEDIUM: GoogleGenAIThinkingLevel.MEDIUM,
+	HIGH: GoogleGenAIThinkingLevel.HIGH,
+};
 
 export interface GoogleOptions extends StreamOptions {
 	toolChoice?: "auto" | "none" | "any";
@@ -366,7 +375,7 @@ function buildParams(
 	context: Context,
 	options: GoogleOptions = {},
 ): GenerateContentParameters {
-	const contents = convertMessages(model, context);
+	const contents = convertMessages(model, context, { preserveThinking: options.thinking?.enabled === true });
 
 	const generationConfig: GenerateContentConfig = {};
 	if (options.temperature !== undefined) {
@@ -395,8 +404,7 @@ function buildParams(
 	if (options.thinking?.enabled && model.reasoning) {
 		const thinkingConfig: ThinkingConfig = { includeThoughts: true };
 		if (options.thinking.level !== undefined) {
-			// Cast to any since our GoogleThinkingLevel mirrors Google's ThinkingLevel enum values
-			thinkingConfig.thinkingLevel = options.thinking.level as any;
+			thinkingConfig.thinkingLevel = THINKING_LEVEL_MAP[options.thinking.level];
 		} else if (options.thinking.budgetTokens !== undefined) {
 			thinkingConfig.thinkingBudget = options.thinking.budgetTokens;
 		}
@@ -412,7 +420,7 @@ function buildParams(
 		config.abortSignal = options.signal;
 	}
 
-	applyExtraBody(config as unknown as Record<string, unknown>, options?.extraBody, GOOGLE_RESERVED_BODY_KEYS);
+	applyExtraBody(config, options?.extraBody, GOOGLE_RESERVED_BODY_KEYS);
 
 	const params: GenerateContentParameters = {
 		model: model.id,
@@ -442,13 +450,13 @@ function getDisabledThinkingConfig(model: Model<"google-generative-ai">): Thinki
 	// do not support full thinking-off either. For Gemini 3 models, use the lowest supported
 	// thinkingLevel without includeThoughts so hidden thinking remains invisible to pi.
 	if (isGemini3ProModel(model)) {
-		return { thinkingLevel: "LOW" as any };
+		return { thinkingLevel: GoogleGenAIThinkingLevel.LOW };
 	}
 	if (isGemini3FlashModel(model)) {
-		return { thinkingLevel: "MINIMAL" as any };
+		return { thinkingLevel: GoogleGenAIThinkingLevel.MINIMAL };
 	}
 	if (isGemma4Model(model)) {
-		return { thinkingLevel: "MINIMAL" as any };
+		return { thinkingLevel: GoogleGenAIThinkingLevel.MINIMAL };
 	}
 
 	// Gemini 2.x supports disabling via thinkingBudget = 0.
