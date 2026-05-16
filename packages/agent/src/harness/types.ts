@@ -26,6 +26,17 @@ export function getOrUndefined<TValue extends object, TError>(result: Result<TVa
 	return result.ok ? result.value : undefined;
 }
 
+/** Normalize unknown thrown values into Error instances before using them as typed error causes. */
+export function toError(error: unknown): Error {
+	if (error instanceof Error) return error;
+	if (typeof error === "string") return new Error(error);
+	try {
+		return new Error(JSON.stringify(error));
+	} catch {
+		return new Error(String(error));
+	}
+}
+
 /**
  * Skill loaded from a `SKILL.md` file or provided by an application.
  *
@@ -117,7 +128,7 @@ export class FileError extends Error {
 		message: string,
 		/** Absolute addressed path associated with the failure, when available. */
 		public path?: string,
-		cause?: unknown,
+		cause?: Error,
 	) {
 		super(message);
 		this.name = "FileError";
@@ -126,7 +137,13 @@ export class FileError extends Error {
 }
 
 /** Stable, backend-independent execution error codes returned by {@link ExecutionEnv.exec}. */
-export type ExecutionErrorCode = "aborted" | "timeout" | "shell_unavailable" | "spawn_error" | "unknown";
+export type ExecutionErrorCode =
+	| "aborted"
+	| "timeout"
+	| "shell_unavailable"
+	| "spawn_error"
+	| "callback_error"
+	| "unknown";
 
 /** Error returned by {@link ExecutionEnv.exec}. */
 export class ExecutionError extends Error {
@@ -136,7 +153,7 @@ export class ExecutionError extends Error {
 		/** Backend-independent error code. */
 		public code: ExecutionErrorCode,
 		message: string,
-		cause?: unknown,
+		cause?: Error,
 	) {
 		super(message);
 		this.name = "ExecutionError";
@@ -155,11 +172,71 @@ export class CompactionError extends Error {
 		/** Backend-independent error code. */
 		public code: CompactionErrorCode,
 		message: string,
-		cause?: unknown,
+		cause?: Error,
 	) {
 		super(message);
 		this.name = "CompactionError";
 		if (cause !== undefined) this.cause = cause;
+	}
+}
+
+/** Stable branch-summary error codes returned by branch summarization helpers. */
+export type BranchSummaryErrorCode = "aborted" | "summarization_failed" | "invalid_session";
+
+/** Error returned by branch summarization helpers. */
+export class BranchSummaryError extends Error {
+	constructor(
+		/** Backend-independent error code. */
+		public code: BranchSummaryErrorCode,
+		message: string,
+		cause?: Error,
+	) {
+		super(message, cause === undefined ? undefined : { cause });
+		this.name = "BranchSummaryError";
+	}
+}
+
+export type SessionErrorCode =
+	| "not_found"
+	| "invalid_session"
+	| "invalid_entry"
+	| "invalid_fork_target"
+	| "storage"
+	| "unknown";
+
+/** Error thrown by session storage, repositories, and session tree operations. */
+export class SessionError extends Error {
+	constructor(
+		/** Session subsystem error code. */
+		public code: SessionErrorCode,
+		message: string,
+		cause?: Error,
+	) {
+		super(message, cause === undefined ? undefined : { cause });
+		this.name = "SessionError";
+	}
+}
+
+export type AgentHarnessErrorCode =
+	| "busy"
+	| "invalid_state"
+	| "invalid_argument"
+	| "session"
+	| "hook"
+	| "auth"
+	| "compaction"
+	| "branch_summary"
+	| "unknown";
+
+/** Public AgentHarness failure with a stable top-level classification. */
+export class AgentHarnessError extends Error {
+	constructor(
+		public code: AgentHarnessErrorCode,
+		message: string,
+		cause?: Error,
+	) {
+		super(message, cause === undefined ? undefined : { cause });
+		this.name = "AgentHarnessError";
 	}
 }
 
@@ -212,6 +289,11 @@ export interface FileSystem {
 	joinPath(parts: string[], abortSignal?: AbortSignal): Promise<Result<string, FileError>>;
 	/** Read a UTF-8 text file. */
 	readTextFile(path: string, abortSignal?: AbortSignal): Promise<Result<string, FileError>>;
+	/** Read UTF-8 text lines. Implementations should stop once `maxLines` lines have been read. */
+	readTextLines(
+		path: string,
+		options?: { maxLines?: number; abortSignal?: AbortSignal },
+	): Promise<Result<string[], FileError>>;
 	/** Read a binary file. */
 	readBinaryFile(path: string, abortSignal?: AbortSignal): Promise<Result<Uint8Array, FileError>>;
 	/** Create or overwrite a file, creating parent directories when supported. */
@@ -328,6 +410,11 @@ export interface SessionInfoEntry extends SessionTreeEntryBase {
 	name?: string;
 }
 
+export interface LeafEntry extends SessionTreeEntryBase {
+	type: "leaf";
+	targetId: string | null;
+}
+
 export type SessionTreeEntry =
 	| MessageEntry
 	| ThinkingLevelChangeEntry
@@ -337,7 +424,8 @@ export type SessionTreeEntry =
 	| CustomEntry
 	| CustomMessageEntry
 	| LabelEntry
-	| SessionInfoEntry;
+	| SessionInfoEntry
+	| LeafEntry;
 
 export interface SessionContext {
 	messages: AgentMessage[];
@@ -359,6 +447,7 @@ export interface JsonlSessionMetadata extends SessionMetadata {
 export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetadata> {
 	getMetadata(): Promise<TMetadata>;
 	getLeafId(): Promise<string | null>;
+	/** Persist a leaf entry that records the active session-tree leaf. */
 	setLeafId(leafId: string | null): Promise<void>;
 	createEntryId(): Promise<string>;
 	appendEntry(entry: SessionTreeEntry): Promise<void>;
@@ -697,11 +786,9 @@ export interface GenerateBranchSummaryOptions {
 }
 
 export interface BranchSummaryResult {
-	summary?: string;
-	readFiles?: string[];
-	modifiedFiles?: string[];
-	aborted?: boolean;
-	error?: string;
+	summary: string;
+	readFiles: string[];
+	modifiedFiles: string[];
 }
 
 export interface AgentHarnessOptions<

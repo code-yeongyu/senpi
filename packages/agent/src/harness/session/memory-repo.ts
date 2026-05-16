@@ -1,4 +1,4 @@
-import type { Session, SessionMetadata, SessionRepo } from "../types.js";
+import { type Session, SessionError, type SessionMetadata, type SessionRepo } from "../types.js";
 import { InMemorySessionStorage } from "./memory-storage.js";
 import { createSessionId, createTimestamp, getEntriesToFork, toSession } from "./repo-utils.js";
 
@@ -19,7 +19,7 @@ export class InMemorySessionRepo implements SessionRepo<SessionMetadata, { id?: 
 	async open(metadata: SessionMetadata): Promise<Session<SessionMetadata>> {
 		const session = this.sessions.get(metadata.id);
 		if (!session) {
-			throw new Error(`Session not found: ${metadata.id}`);
+			throw new SessionError("not_found", `Session not found: ${metadata.id}`);
 		}
 		return session;
 	}
@@ -42,8 +42,7 @@ export class InMemorySessionRepo implements SessionRepo<SessionMetadata, { id?: 
 			id: options.id ?? createSessionId(),
 			createdAt: createTimestamp(),
 		};
-		const leafId = forkedEntries[forkedEntries.length - 1]?.id ?? null;
-		const storage = new InMemorySessionStorage({ metadata, entries: forkedEntries, leafId });
+		const storage = new InMemorySessionStorage({ metadata, entries: forkedEntries });
 		const session = toSession(storage);
 		this.sessions.set(metadata.id, session);
 		return session;

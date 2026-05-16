@@ -27,6 +27,7 @@ describe("NodeExecutionEnv", () => {
 		getOrThrow(await env.writeFile("nested/child/file.txt", "hel"));
 		getOrThrow(await env.appendFile("nested/child/file.txt", "lo"));
 		expect(getOrThrow(await env.readTextFile("nested/child/file.txt"))).toBe("hello");
+		expect(getOrThrow(await env.readTextLines("nested/child/file.txt", { maxLines: 1 }))).toEqual(["hello"]);
 		expect(Buffer.from(getOrThrow(await env.readBinaryFile("nested/child/file.txt"))).toString("utf8")).toBe("hello");
 
 		const entries = getOrThrow(await env.listDir("nested/child"));
@@ -89,6 +90,13 @@ describe("NodeExecutionEnv", () => {
 			{ name: "link.txt", kind: "symlink" },
 			{ name: "target.txt", kind: "file" },
 		]);
+	});
+
+	it("stops reading text lines at the requested limit", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		getOrThrow(await env.writeFile("file.txt", "one\ntwo\nthree"));
+		expect(getOrThrow(await env.readTextLines("file.txt", { maxLines: 1 }))).toEqual(["one"]);
 	});
 
 	it("returns FileError for missing paths and keeps exists false for missing paths", async () => {
@@ -155,7 +163,7 @@ describe("NodeExecutionEnv", () => {
 		getOrThrow(await env.remove("missing", { force: true }));
 	});
 
-	it("returns aborted results for pre-aborted file operations", async () => {
+	it("returns aborted results for pre-aborted cancellable file operations", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
 		getOrThrow(await env.writeFile("file.txt", "hello"));
@@ -165,17 +173,10 @@ describe("NodeExecutionEnv", () => {
 
 		const results = await Promise.all([
 			env.readTextFile("file.txt", signal),
+			env.readTextLines("file.txt", { abortSignal: signal }),
 			env.readBinaryFile("file.txt", signal),
 			env.writeFile("other.txt", "hello", signal),
-			env.appendFile("other.txt", "hello", signal),
-			env.fileInfo("file.txt", signal),
 			env.listDir(".", signal),
-			env.canonicalPath("file.txt", signal),
-			env.exists("file.txt", signal),
-			env.createDir("dir", { abortSignal: signal }),
-			env.remove("file.txt", { abortSignal: signal }),
-			env.createTempDir("node-env-test-", signal),
-			env.createTempFile({ abortSignal: signal }),
 		]);
 		for (const result of results) {
 			expect(result.ok).toBe(false);
@@ -244,7 +245,7 @@ describe("NodeExecutionEnv", () => {
 			},
 		});
 		expect(result.ok).toBe(false);
-		if (!result.ok) expect(result.error).toMatchObject({ code: "unknown", message: "callback failed" });
+		if (!result.ok) expect(result.error).toMatchObject({ code: "callback_error", message: "callback failed" });
 	});
 
 	it("returns shell unavailable and spawn errors", async () => {

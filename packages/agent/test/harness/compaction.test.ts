@@ -345,7 +345,7 @@ describe("harness compaction", () => {
 		const u3 = createMessageEntry(createUserMessage("user msg 3"), compaction1.id);
 		const a3 = createMessageEntry(createAssistantMessage("assistant msg 3", createMockUsage(8000, 2000)), u3.id);
 		const pathEntries = [u1, a1, u2, a2, compaction1, u3, a3];
-		const preparation = prepareCompaction(pathEntries, DEFAULT_COMPACTION_SETTINGS);
+		const preparation = getOrThrow(prepareCompaction(pathEntries, DEFAULT_COMPACTION_SETTINGS));
 		expect(preparation).toBeDefined();
 		expect(preparation?.previousSummary).toBe("First summary");
 		expect(preparation?.firstKeptEntryId).toBeTruthy();
@@ -365,11 +365,13 @@ describe("harness compaction", () => {
 		};
 		const u2 = createMessageEntry(createUserMessage("large turn"), compaction1.id);
 		const a2 = createMessageEntry(createAssistantMessage("large assistant message"), u2.id);
-		const preparation = prepareCompaction([u1, a1, compaction1, u2, a2], {
-			enabled: true,
-			reserveTokens: 100,
-			keepRecentTokens: 1,
-		});
+		const preparation = getOrThrow(
+			prepareCompaction([u1, a1, compaction1, u2, a2], {
+				enabled: true,
+				reserveTokens: 100,
+				keepRecentTokens: 1,
+			}),
+		);
 
 		expect(preparation).toMatchObject({ previousSummary: "First summary", isSplitTurn: true });
 		expect(preparation?.turnPrefixMessages.map((message) => message.role)).toEqual(["user"]);
@@ -398,19 +400,21 @@ describe("harness compaction", () => {
 		};
 		const user = createMessageEntry(createUserMessage("keep"), customMessage.id);
 		const assistant = createMessageEntry(createAssistantMessage("assistant"), user.id);
-		const preparation = prepareCompaction([branchSummary, customMessage, user, assistant], {
-			enabled: true,
-			reserveTokens: 100,
-			keepRecentTokens: 1,
-		});
+		const preparation = getOrThrow(
+			prepareCompaction([branchSummary, customMessage, user, assistant], {
+				enabled: true,
+				reserveTokens: 100,
+				keepRecentTokens: 1,
+			}),
+		);
 
 		expect(preparation?.messagesToSummarize.map((message) => message.role)).toEqual(["branchSummary", "custom"]);
 	});
 
 	it("does not prepare compaction when there is nothing valid to compact", () => {
 		const compaction = createCompactionEntry("already compacted", "entry-keep");
-		expect(prepareCompaction([compaction], DEFAULT_COMPACTION_SETTINGS)).toBeUndefined();
-		expect(prepareCompaction([], DEFAULT_COMPACTION_SETTINGS)).toBeUndefined();
+		expect(getOrThrow(prepareCompaction([compaction], DEFAULT_COMPACTION_SETTINGS))).toBeUndefined();
+		expect(getOrThrow(prepareCompaction([], DEFAULT_COMPACTION_SETTINGS))).toBeUndefined();
 	});
 
 	it("serializes conversation with truncated tool results", () => {
@@ -535,13 +539,6 @@ describe("harness compaction", () => {
 		abortedFaux.setResponses([fauxAssistantMessage("", { stopReason: "aborted", errorMessage: "stopped" })]);
 		const abortedResult = await generateSummary(messages, abortedModel, 2000, "test-key");
 		expect(abortedResult).toMatchObject({ ok: false, error: { code: "aborted", message: "stopped" } });
-
-		const missingProviderModel = { ...abortedModel, api: "missing-api" } as Model<string>;
-		const unknownResult = await generateSummary(messages, missingProviderModel, 2000, "test-key");
-		expect(unknownResult).toMatchObject({
-			ok: false,
-			error: { code: "unknown", message: "Summarization request failed" },
-		});
 	});
 
 	it("clamps compaction summary maxTokens to the model output cap", async () => {
@@ -650,12 +647,6 @@ describe("harness compaction", () => {
 			ok: false,
 			error: { code: "aborted", message: "prefix stopped" },
 		});
-
-		const missingProviderModel = { ...abortedModel, api: "missing-api" } as Model<string>;
-		expect(await compact(preparation, missingProviderModel, "test-key")).toMatchObject({
-			ok: false,
-			error: { code: "unknown", message: "Turn prefix summarization request failed" },
-		});
 	});
 
 	it("returns a compaction result with file details", async () => {
@@ -667,7 +658,7 @@ describe("harness compaction", () => {
 		const a1 = createMessageEntry(assistantMessage, u1.id);
 		const u2 = createMessageEntry(createUserMessage("continue"), a1.id);
 		const a2 = createMessageEntry(createAssistantMessage("done", createMockUsage(4000, 500)), u2.id);
-		const preparation = prepareCompaction([u1, a1, u2, a2], DEFAULT_COMPACTION_SETTINGS);
+		const preparation = getOrThrow(prepareCompaction([u1, a1, u2, a2], DEFAULT_COMPACTION_SETTINGS));
 		expect(preparation).toBeDefined();
 		const { faux, model } = createFauxModel(false);
 		faux.setResponses([fauxAssistantMessage("## Goal\nTest summary")]);

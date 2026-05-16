@@ -93,6 +93,7 @@ Use this skill.
 		expect(diagnostics).toEqual([
 			{
 				type: "warning",
+				code: "invalid_metadata",
 				message: "description is required",
 				path: join(root, "user/broken/SKILL.md"),
 				source: { type: "user" },

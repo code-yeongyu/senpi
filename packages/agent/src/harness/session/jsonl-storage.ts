@@ -1,8 +1,9 @@
-import type { FileSystem, JsonlSessionMetadata, SessionStorage, SessionTreeEntry } from "../types.js";
-import { getOrThrow } from "../types.js";
+import type { FileSystem, JsonlSessionMetadata, LeafEntry, SessionStorage, SessionTreeEntry } from "../types.js";
+import { SessionError, toError } from "../types.js";
+import { getFileSystemResultOrThrow } from "./repo-utils.js";
 import { uuidv7 } from "./uuid.js";
 
-type JsonlSessionStorageFileSystem = Pick<FileSystem, "readTextFile" | "writeFile" | "appendFile">;
+type JsonlSessionStorageFileSystem = Pick<FileSystem, "readTextFile" | "readTextLines" | "writeFile" | "appendFile">;
 
 interface SessionHeader {
 	type: "session";
@@ -39,6 +40,76 @@ function generateEntryId(byId: { has(id: string): boolean }): string {
 	return uuidv7();
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function invalidSession(filePath: string, message: string, cause?: Error): SessionError {
+	return new SessionError("invalid_session", `Invalid JSONL session file ${filePath}: ${message}`, cause);
+}
+
+function invalidEntry(filePath: string, lineNumber: number, message: string, cause?: Error): SessionError {
+	return new SessionError(
+		"invalid_entry",
+		`Invalid JSONL session file ${filePath}: line ${lineNumber} ${message}`,
+		cause,
+	);
+}
+
+function parseHeaderLine(line: string, filePath: string): SessionHeader {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(line);
+	} catch (error) {
+		throw invalidSession(filePath, "first line is not a valid session header", toError(error));
+	}
+	if (!isRecord(parsed)) throw invalidSession(filePath, "first line is not a valid session header");
+	if (parsed.type !== "session") throw invalidSession(filePath, "first line is not a valid session header");
+	if (parsed.version !== 3) throw invalidSession(filePath, "unsupported session version");
+	if (typeof parsed.id !== "string" || !parsed.id) throw invalidSession(filePath, "session header is missing id");
+	if (typeof parsed.timestamp !== "string" || !parsed.timestamp) {
+		throw invalidSession(filePath, "session header is missing timestamp");
+	}
+	if (typeof parsed.cwd !== "string" || !parsed.cwd) throw invalidSession(filePath, "session header is missing cwd");
+	if (parsed.parentSession !== undefined && typeof parsed.parentSession !== "string") {
+		throw invalidSession(filePath, "session header parentSession must be a string");
+	}
+	return {
+		type: "session",
+		version: 3,
+		id: parsed.id,
+		timestamp: parsed.timestamp,
+		cwd: parsed.cwd,
+		parentSession: parsed.parentSession,
+	};
+}
+
+function parseEntryLine(line: string, filePath: string, lineNumber: number): SessionTreeEntry {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(line);
+	} catch (error) {
+		throw invalidEntry(filePath, lineNumber, "is not valid JSON", toError(error));
+	}
+	if (!isRecord(parsed)) throw invalidEntry(filePath, lineNumber, "is not a valid session entry");
+	if (typeof parsed.type !== "string") throw invalidEntry(filePath, lineNumber, "is missing entry type");
+	if (typeof parsed.id !== "string" || !parsed.id) throw invalidEntry(filePath, lineNumber, "is missing entry id");
+	if (parsed.parentId !== null && typeof parsed.parentId !== "string") {
+		throw invalidEntry(filePath, lineNumber, "has invalid parentId");
+	}
+	if (typeof parsed.timestamp !== "string" || !parsed.timestamp) {
+		throw invalidEntry(filePath, lineNumber, "is missing timestamp");
+	}
+	if (parsed.type === "leaf" && parsed.targetId !== null && typeof parsed.targetId !== "string") {
+		throw invalidEntry(filePath, lineNumber, "has invalid targetId");
+	}
+	return parsed as unknown as SessionTreeEntry;
+}
+
+function leafIdAfterEntry(entry: SessionTreeEntry): string | null {
+	return entry.type === "leaf" ? entry.targetId : entry.id;
+}
+
 function headerToSessionMetadata(header: SessionHeader, path: string): JsonlSessionMetadata {
 	return {
 		id: header.id,
@@ -53,17 +124,13 @@ export async function loadJsonlSessionMetadata(
 	fs: JsonlSessionStorageFileSystem,
 	filePath: string,
 ): Promise<JsonlSessionMetadata> {
-	const content = getOrThrow(await fs.readTextFile(filePath));
-	for (const line of content.split("\n")) {
-		if (!line.trim()) break;
-		try {
-			const header = JSON.parse(line) as SessionHeader;
-			return headerToSessionMetadata(header, filePath);
-		} catch {
-			throw new Error(`Invalid JSONL session file ${filePath}: first line is not a valid session header`);
-		}
-	}
-	throw new Error(`Invalid JSONL session file ${filePath}: missing session header`);
+	const lines = getFileSystemResultOrThrow(
+		await fs.readTextLines(filePath, { maxLines: 1 }),
+		`Failed to read session header ${filePath}`,
+	);
+	const line = lines[0];
+	if (line?.trim()) return headerToSessionMetadata(parseHeaderLine(line, filePath), filePath);
+	throw invalidSession(filePath, "missing session header");
 }
 
 async function loadJsonlStorage(
@@ -74,29 +141,19 @@ async function loadJsonlStorage(
 	entries: SessionTreeEntry[];
 	leafId: string | null;
 }> {
-	const content = getOrThrow(await fs.readTextFile(filePath));
+	const content = getFileSystemResultOrThrow(await fs.readTextFile(filePath), `Failed to read session ${filePath}`);
 	const lines = content.split("\n").filter((line) => line.trim());
 	if (lines.length === 0) {
-		throw new Error(`Invalid JSONL session file ${filePath}: missing session header`);
+		throw invalidSession(filePath, "missing session header");
 	}
 
-	let header: SessionHeader;
-	try {
-		header = JSON.parse(lines[0]!) as SessionHeader;
-	} catch {
-		throw new Error(`Invalid JSONL session file ${filePath}: first line is not a valid session header`);
-	}
-
+	const header = parseHeaderLine(lines[0]!, filePath);
 	const entries: SessionTreeEntry[] = [];
 	let leafId: string | null = null;
-	for (const line of lines.slice(1)) {
-		try {
-			const entry = JSON.parse(line) as SessionTreeEntry;
-			entries.push(entry);
-			leafId = entry.id;
-		} catch {
-			// ignore malformed entry lines
-		}
+	for (let i = 1; i < lines.length; i++) {
+		const entry = parseEntryLine(lines[i]!, filePath, i + 1);
+		entries.push(entry);
+		leafId = leafIdAfterEntry(entry);
 	}
 	return { header, entries, leafId };
 }
@@ -148,7 +205,10 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 			cwd: options.cwd,
 			parentSession: options.parentSessionPath,
 		};
-		getOrThrow(await fs.writeFile(filePath, `${JSON.stringify(header)}\n`));
+		getFileSystemResultOrThrow(
+			await fs.writeFile(filePath, `${JSON.stringify(header)}\n`),
+			`Failed to create session ${filePath}`,
+		);
 		return new JsonlSessionStorage(fs, filePath, header, [], null);
 	}
 
@@ -157,13 +217,29 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 	}
 
 	async getLeafId(): Promise<string | null> {
+		if (this.currentLeafId !== null && !this.byId.has(this.currentLeafId)) {
+			throw new SessionError("invalid_session", `Entry ${this.currentLeafId} not found`);
+		}
 		return this.currentLeafId;
 	}
 
 	async setLeafId(leafId: string | null): Promise<void> {
 		if (leafId !== null && !this.byId.has(leafId)) {
-			throw new Error(`Entry ${leafId} not found`);
+			throw new SessionError("not_found", `Entry ${leafId} not found`);
 		}
+		const entry: LeafEntry = {
+			type: "leaf",
+			id: generateEntryId(this.byId),
+			parentId: this.currentLeafId,
+			timestamp: new Date().toISOString(),
+			targetId: leafId,
+		};
+		getFileSystemResultOrThrow(
+			await this.fs.appendFile(this.filePath, `${JSON.stringify(entry)}\n`),
+			`Failed to append session leaf ${entry.id}`,
+		);
+		this.entries.push(entry);
+		this.byId.set(entry.id, entry);
 		this.currentLeafId = leafId;
 	}
 
@@ -172,11 +248,14 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 	}
 
 	async appendEntry(entry: SessionTreeEntry): Promise<void> {
-		getOrThrow(await this.fs.appendFile(this.filePath, `${JSON.stringify(entry)}\n`));
+		getFileSystemResultOrThrow(
+			await this.fs.appendFile(this.filePath, `${JSON.stringify(entry)}\n`),
+			`Failed to append session entry ${entry.id}`,
+		);
 		this.entries.push(entry);
 		this.byId.set(entry.id, entry);
 		updateLabelCache(this.labelsById, entry);
-		this.currentLeafId = entry.id;
+		this.currentLeafId = leafIdAfterEntry(entry);
 	}
 
 	async getEntry(id: string): Promise<SessionTreeEntry | undefined> {
@@ -197,9 +276,13 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 		if (leafId === null) return [];
 		const path: SessionTreeEntry[] = [];
 		let current = this.byId.get(leafId);
+		if (!current) throw new SessionError("not_found", `Entry ${leafId} not found`);
 		while (current) {
 			path.unshift(current);
-			current = current.parentId ? this.byId.get(current.parentId) : undefined;
+			if (!current.parentId) break;
+			const parent = this.byId.get(current.parentId);
+			if (!parent) throw new SessionError("invalid_session", `Entry ${current.parentId} not found`);
+			current = parent;
 		}
 		return path;
 	}

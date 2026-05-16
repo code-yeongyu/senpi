@@ -1,20 +1,17 @@
-/**
- * Shared utilities for compaction and branch summarization.
- */
-
 import type { Message } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "../../types.js";
 
-// ============================================================================
-// File Operation Tracking
-// ============================================================================
-
+/** File paths touched by a session branch or compaction range. */
 export interface FileOperations {
+	/** Files read but not necessarily modified. */
 	read: Set<string>;
+	/** Files written by full-file write operations. */
 	written: Set<string>;
+	/** Files modified by edit operations. */
 	edited: Set<string>;
 }
 
+/** Create an empty file-operation accumulator. */
 export function createFileOps(): FileOperations {
 	return {
 		read: new Set(),
@@ -23,9 +20,7 @@ export function createFileOps(): FileOperations {
 	};
 }
 
-/**
- * Extract file operations from tool calls in an assistant message.
- */
+/** Add file operations from assistant tool calls to an accumulator. */
 export function extractFileOpsFromMessage(message: AgentMessage, fileOps: FileOperations): void {
 	if (message.role !== "assistant") return;
 	if (!("content" in message) || !Array.isArray(message.content)) return;
@@ -55,10 +50,7 @@ export function extractFileOpsFromMessage(message: AgentMessage, fileOps: FileOp
 	}
 }
 
-/**
- * Compute final file lists from file operations.
- * Returns readFiles (files only read, not modified) and modifiedFiles.
- */
+/** Compute sorted read-only and modified file lists from accumulated operations. */
 export function computeFileLists(fileOps: FileOperations): { readFiles: string[]; modifiedFiles: string[] } {
 	const modified = new Set([...fileOps.edited, ...fileOps.written]);
 	const readOnly = [...fileOps.read].filter((f) => !modified.has(f)).sort();
@@ -66,9 +58,7 @@ export function computeFileLists(fileOps: FileOperations): { readFiles: string[]
 	return { readFiles: readOnly, modifiedFiles };
 }
 
-/**
- * Format file operations as XML tags for summary.
- */
+/** Format file lists as summary metadata tags. */
 export function formatFileOperations(readFiles: string[], modifiedFiles: string[]): string {
 	const sections: string[] = [];
 	if (readFiles.length > 0) {
@@ -81,31 +71,23 @@ export function formatFileOperations(readFiles: string[], modifiedFiles: string[
 	return `\n\n${sections.join("\n\n")}`;
 }
 
-// ============================================================================
-// Message Serialization
-// ============================================================================
-
-/** Maximum characters for a tool result in serialized summaries. */
 const TOOL_RESULT_MAX_CHARS = 2000;
 
-/**
- * Truncate text to a maximum character length for summarization.
- * Keeps the beginning and appends a truncation marker.
- */
+function safeJsonStringify(value: unknown): string {
+	try {
+		return JSON.stringify(value) ?? "undefined";
+	} catch {
+		return "[unserializable]";
+	}
+}
+
 function truncateForSummary(text: string, maxChars: number): string {
 	if (text.length <= maxChars) return text;
 	const truncatedChars = text.length - maxChars;
 	return `${text.slice(0, maxChars)}\n\n[... ${truncatedChars} more characters truncated]`;
 }
 
-/**
- * Serialize LLM messages to text for summarization.
- * This prevents the model from treating it as a conversation to continue.
- * Call convertToLlm() first to handle custom message types.
- *
- * Tool results are truncated to keep the summarization request within
- * reasonable token budgets. Full content is not needed for summarization.
- */
+/** Serialize LLM messages to plain text for summarization prompts. */
 export function serializeConversation(messages: Message[]): string {
 	const parts: string[] = [];
 
@@ -132,7 +114,7 @@ export function serializeConversation(messages: Message[]): string {
 				} else if (block.type === "toolCall") {
 					const args = block.arguments as Record<string, unknown>;
 					const argsStr = Object.entries(args)
-						.map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+						.map(([k, v]) => `${k}=${safeJsonStringify(v)}`)
 						.join(", ");
 					toolCalls.push(`${block.name}(${argsStr})`);
 				}
@@ -160,11 +142,3 @@ export function serializeConversation(messages: Message[]): string {
 
 	return parts.join("\n\n");
 }
-
-// ============================================================================
-// Summarization System Prompt
-// ============================================================================
-
-export const SUMMARIZATION_SYSTEM_PROMPT = `You are a context summarization assistant. Your task is to read a conversation between a user and an AI coding assistant, then produce a structured summary following the exact format specified.
-
-Do NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.`;

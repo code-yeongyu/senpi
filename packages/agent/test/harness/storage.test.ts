@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.js";
 import { JsonlSessionStorage, loadJsonlSessionMetadata } from "../../src/harness/session/jsonl-storage.js";
 import { InMemorySessionStorage } from "../../src/harness/session/memory-storage.js";
-import type { MessageEntry, SessionMetadata } from "../../src/harness/types.js";
+import { type MessageEntry, ok, type SessionMetadata } from "../../src/harness/types.js";
 import { createAssistantMessage, createTempDir, createUserMessage } from "./session-test-utils.js";
 
 describe("InMemorySessionStorage", () => {
@@ -14,7 +14,7 @@ describe("InMemorySessionStorage", () => {
 		expect(await storage.getMetadata()).toEqual(metadata);
 	});
 
-	it("copies initial entries and tracks leaf independently", async () => {
+	it("copies initial entries and persists leaf changes", async () => {
 		const entry: MessageEntry = {
 			type: "message",
 			id: "entry-1",
@@ -29,12 +29,12 @@ describe("InMemorySessionStorage", () => {
 		expect(await storage.getLeafId()).toBe("entry-1");
 		await storage.setLeafId(null);
 		expect(await storage.getLeafId()).toBeNull();
+		expect((await storage.getEntries()).at(-1)).toMatchObject({ type: "leaf", targetId: null });
 	});
 
 	it("rejects invalid leaf ids", async () => {
 		const storage = new InMemorySessionStorage();
 		await expect(storage.setLeafId("missing")).rejects.toThrow("Entry missing not found");
-		expect(() => new InMemorySessionStorage({ leafId: "missing" })).toThrow("Entry missing not found");
 	});
 
 	it("finds entries by type", async () => {
@@ -138,7 +138,7 @@ describe("JsonlSessionStorage", () => {
 		await expect(JsonlSessionStorage.open(env, filePath)).rejects.toThrow("first line is not a valid session header");
 	});
 
-	it("ignores malformed entry lines", async () => {
+	it("throws for malformed entry lines", async () => {
 		const dir = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: dir });
 		const filePath = join(dir, "session.jsonl");
@@ -157,9 +157,7 @@ describe("JsonlSessionStorage", () => {
 			message: createUserMessage("one"),
 		};
 		writeFileSync(filePath, `${JSON.stringify(header)}\nnot json\n${JSON.stringify(entry)}\n`);
-		const storage = await JsonlSessionStorage.open(env, filePath);
-		expect((await storage.getEntries()).map((loadedEntry) => loadedEntry.id)).toEqual(["entry-1"]);
-		expect(await storage.getLeafId()).toBe("entry-1");
+		await expect(JsonlSessionStorage.open(env, filePath)).rejects.toMatchObject({ code: "invalid_entry" });
 	});
 
 	it("creates and reads session metadata from the header", async () => {
@@ -211,6 +209,10 @@ describe("JsonlSessionStorage", () => {
 		const loaded = await JsonlSessionStorage.open(env, filePath);
 		expect(await loaded.getLeafId()).toBe("child");
 		expect((await loaded.getEntries()).map((entry) => entry.id)).toEqual(["root", "child"]);
+		await loaded.setLeafId("root");
+		const reloaded = await JsonlSessionStorage.open(env, filePath);
+		expect(await reloaded.getLeafId()).toBe("root");
+		expect((await reloaded.getEntries()).at(-1)).toMatchObject({ type: "leaf", targetId: "root" });
 		expect((await loaded.getPathToRoot("child")).map((entry) => entry.id)).toEqual(["root", "child"]);
 	});
 
@@ -265,9 +267,8 @@ describe("JsonlSessionStorage", () => {
 		expect(await loaded.getLabel("entry-1")).toBeUndefined();
 	});
 
-	it("reads session metadata from only the first JSONL line", async () => {
+	it("reads session metadata through the line-reading filesystem operation", async () => {
 		const dir = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: dir });
 		const filePath = join(dir, "session.jsonl");
 		const header = {
 			type: "session",
@@ -276,9 +277,18 @@ describe("JsonlSessionStorage", () => {
 			timestamp: "2026-01-01T00:00:00.000Z",
 			cwd: dir,
 		};
-		const malformedSecondLine = "{".repeat(10000);
-		writeFileSync(filePath, `${JSON.stringify(header)}\n${malformedSecondLine}\n`);
-		expect(await loadJsonlSessionMetadata(env, filePath)).toEqual({
+		const metadata = await loadJsonlSessionMetadata(
+			{
+				readTextLines: async () => ok([JSON.stringify(header)]),
+				readTextFile: async () => {
+					throw new Error("readTextFile should not be called for metadata");
+				},
+				writeFile: async () => ok(undefined),
+				appendFile: async () => ok(undefined),
+			},
+			filePath,
+		);
+		expect(metadata).toEqual({
 			id: "session-1",
 			createdAt: "2026-01-01T00:00:00.000Z",
 			cwd: dir,

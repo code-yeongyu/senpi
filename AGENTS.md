@@ -6,6 +6,7 @@
 - No emojis in commits, issues, PR comments, or code
 - No fluff or cheerful filler text
 - Technical prose only, be kind but direct (e.g., "Thanks @user" not "Thanks so much @user!")
+- When the user asks a question, answer it first before making edits or running implementation commands.
 
 ## Code Quality
 

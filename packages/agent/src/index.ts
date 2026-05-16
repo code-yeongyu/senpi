@@ -4,6 +4,9 @@ export * from "./agent.js";
 export * from "./agent-loop.js";
 export * from "./harness/agent-harness.js";
 export {
+	type BranchPreparation,
+	type BranchSummaryDetails,
+	type CollectEntriesResult,
 	collectEntriesForBranchSummary,
 	generateBranchSummary,
 	prepareBranchEntries,

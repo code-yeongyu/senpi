@@ -1,10 +1,14 @@
 import { parse } from "yaml";
-import { type ExecutionEnv, type FileInfo, getOrUndefined, type PromptTemplate, type Result } from "./types.js";
+import { type ExecutionEnv, type FileInfo, type PromptTemplate, type Result, toError } from "./types.js";
+
+export type PromptTemplateDiagnosticCode = "file_info_failed" | "list_failed" | "read_failed" | "parse_failed";
 
 /** Warning produced while loading prompt templates. */
 export interface PromptTemplateDiagnostic {
 	/** Diagnostic severity. Currently only warnings are emitted. */
 	type: "warning";
+	/** Stable diagnostic code. */
+	code: PromptTemplateDiagnosticCode;
 	/** Human-readable diagnostic message. */
 	message: string;
 	/** Path associated with the diagnostic. */
@@ -30,9 +34,20 @@ export async function loadPromptTemplates(
 	const promptTemplates: PromptTemplate[] = [];
 	const diagnostics: PromptTemplateDiagnostic[] = [];
 	for (const path of Array.isArray(paths) ? paths : [paths]) {
-		const info = getOrUndefined(await env.fileInfo(path));
-		if (!info) continue;
-		const kind = await resolveKind(env, info);
+		const infoResult = await env.fileInfo(path);
+		if (!infoResult.ok) {
+			if (infoResult.error.code !== "not_found") {
+				diagnostics.push({
+					type: "warning",
+					code: "file_info_failed",
+					message: infoResult.error.message,
+					path,
+				});
+			}
+			continue;
+		}
+		const info = infoResult.value;
+		const kind = await resolveKind(env, info, diagnostics);
 		if (kind === "directory") {
 			const result = await loadTemplatesFromDir(env, info.path);
 			promptTemplates.push(...result.promptTemplates);
@@ -87,6 +102,7 @@ async function loadTemplatesFromDir(
 	if (!entriesResult.ok) {
 		diagnostics.push({
 			type: "warning",
+			code: "list_failed",
 			message: entriesResult.error.message,
 			path: dir,
 		});
@@ -95,7 +111,7 @@ async function loadTemplatesFromDir(
 	const entries = entriesResult.value;
 
 	for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-		const kind = await resolveKind(env, entry);
+		const kind = await resolveKind(env, entry, diagnostics);
 		if (kind !== "file" || !entry.name.endsWith(".md")) continue;
 		const result = await loadTemplateFromFile(env, entry.path);
 		if (result.promptTemplate) promptTemplates.push(result.promptTemplate);
@@ -113,6 +129,7 @@ async function loadTemplateFromFile(
 	if (!rawContent.ok) {
 		diagnostics.push({
 			type: "warning",
+			code: "read_failed",
 			message: rawContent.error.message,
 			path: filePath,
 		});
@@ -123,6 +140,7 @@ async function loadTemplateFromFile(
 	if (!parsed.ok) {
 		diagnostics.push({
 			type: "warning",
+			code: "parse_failed",
 			message: parsed.error.message,
 			path: filePath,
 		});
@@ -146,13 +164,37 @@ async function loadTemplateFromFile(
 	};
 }
 
-async function resolveKind(env: ExecutionEnv, info: FileInfo): Promise<"file" | "directory" | undefined> {
+async function resolveKind(
+	env: ExecutionEnv,
+	info: FileInfo,
+	diagnostics: PromptTemplateDiagnostic[],
+): Promise<"file" | "directory" | undefined> {
 	if (info.kind === "file" || info.kind === "directory") return info.kind;
 	const canonicalPath = await env.canonicalPath(info.path);
-	if (!canonicalPath.ok) return undefined;
-	const target = getOrUndefined(await env.fileInfo(canonicalPath.value));
-	if (!target) return undefined;
-	return target.kind === "file" || target.kind === "directory" ? target.kind : undefined;
+	if (!canonicalPath.ok) {
+		if (canonicalPath.error.code !== "not_found") {
+			diagnostics.push({
+				type: "warning",
+				code: "file_info_failed",
+				message: canonicalPath.error.message,
+				path: info.path,
+			});
+		}
+		return undefined;
+	}
+	const target = await env.fileInfo(canonicalPath.value);
+	if (!target.ok) {
+		if (target.error.code !== "not_found") {
+			diagnostics.push({
+				type: "warning",
+				code: "file_info_failed",
+				message: target.error.message,
+				path: info.path,
+			});
+		}
+		return undefined;
+	}
+	return target.value.kind === "file" || target.value.kind === "directory" ? target.value.kind : undefined;
 }
 
 function parseFrontmatter<T extends Record<string, unknown>>(
@@ -167,7 +209,7 @@ function parseFrontmatter<T extends Record<string, unknown>>(
 		const body = normalized.slice(endIndex + 4).trim();
 		return { ok: true, value: { frontmatter: (parse(yamlString) ?? {}) as T, body } };
 	} catch (error) {
-		return { ok: false, error: error instanceof Error ? error : new Error(String(error)) };
+		return { ok: false, error: toError(error) };
 	}
 }
 

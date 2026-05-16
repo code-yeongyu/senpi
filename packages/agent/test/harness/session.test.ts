@@ -140,10 +140,10 @@ runSessionSuite(
 		const header = JSON.parse(lines[0]!);
 		expect(header.type).toBe("session");
 		expect(header.version).toBe(3);
-		for (const line of lines.slice(1)) {
-			const entry = JSON.parse(line);
+		const entries = lines.slice(1).map((line) => JSON.parse(line));
+		expect(entries.some((entry) => entry.type === "leaf")).toBe(true);
+		for (const entry of entries) {
 			expect(entry.type).not.toBe("entry");
-			expect(entry.type).not.toBe("leaf");
 			expect(typeof entry.id).toBe("string");
 		}
 	},

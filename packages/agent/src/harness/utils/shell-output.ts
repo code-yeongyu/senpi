@@ -1,4 +1,12 @@
-import { type ExecutionEnv, type ExecutionEnvExecOptions, ExecutionError, err, ok, type Result } from "../types.js";
+import {
+	type ExecutionEnv,
+	type ExecutionEnvExecOptions,
+	ExecutionError,
+	err,
+	ok,
+	type Result,
+	toError,
+} from "../types.js";
 import { DEFAULT_MAX_BYTES, truncateTail } from "./truncate.js";
 
 export interface ShellCaptureOptions extends Omit<ExecutionEnvExecOptions, "onStdout" | "onStderr"> {
@@ -14,9 +22,9 @@ export interface ShellCaptureResult {
 }
 
 function toExecutionError(error: unknown): ExecutionError {
-	return error instanceof ExecutionError
-		? error
-		: new ExecutionError("unknown", error instanceof Error ? error.message : String(error), error);
+	if (error instanceof ExecutionError) return error;
+	const cause = toError(error);
+	return new ExecutionError("unknown", cause.message, cause);
 }
 
 export function sanitizeBinaryOutput(str: string): string {

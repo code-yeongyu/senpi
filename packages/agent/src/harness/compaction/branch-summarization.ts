@@ -1,10 +1,3 @@
-/**
- * Branch summarization for tree navigation.
- *
- * When navigating to a different point in the session tree, this generates
- * a summary of the branch being left so context isn't lost.
- */
-
 import type { Model } from "@earendil-works/pi-ai";
 import { completeSimple } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "../../types.js";
@@ -14,102 +7,75 @@ import {
 	createCompactionSummaryMessage,
 	createCustomMessage,
 } from "../messages.js";
-import type { Session, SessionTreeEntry } from "../types.js";
-import { estimateTokens } from "./compaction.js";
+import type { BranchSummaryResult, Session, SessionTreeEntry } from "../types.js";
+import { BranchSummaryError, err, ok, type Result, SessionError } from "../types.js";
+import { estimateTokens, SUMMARIZATION_SYSTEM_PROMPT } from "./compaction.js";
 import {
 	computeFileLists,
 	createFileOps,
 	extractFileOpsFromMessage,
 	type FileOperations,
 	formatFileOperations,
-	SUMMARIZATION_SYSTEM_PROMPT,
 	serializeConversation,
 } from "./utils.js";
 
-// ============================================================================
-// Types
-// ============================================================================
-
-export interface BranchSummaryResult {
-	summary?: string;
-	readFiles?: string[];
-	modifiedFiles?: string[];
-	aborted?: boolean;
-	error?: string;
-}
-
-/** Details stored in BranchSummaryEntry.details for file tracking */
+/** File-operation details stored on generated branch summary entries. */
 export interface BranchSummaryDetails {
+	/** Files read while exploring the summarized branch. */
 	readFiles: string[];
+	/** Files modified while exploring the summarized branch. */
 	modifiedFiles: string[];
 }
 
 export type { FileOperations } from "./utils.js";
 
+/** Prepared branch content for summarization. */
 export interface BranchPreparation {
-	/** Messages extracted for summarization, in chronological order */
+	/** Messages selected for the branch summary. */
 	messages: AgentMessage[];
-	/** File operations extracted from tool calls */
+	/** File operations extracted from the branch. */
 	fileOps: FileOperations;
-	/** Total estimated tokens in messages */
+	/** Estimated token count for selected messages. */
 	totalTokens: number;
 }
 
+/** Entries selected for branch summarization. */
 export interface CollectEntriesResult {
-	/** Entries to summarize, in chronological order */
+	/** Entries to summarize in chronological order. */
 	entries: SessionTreeEntry[];
-	/** Common ancestor between old and new position, if any */
+	/** Deepest common ancestor between the previous leaf and target entry. */
 	commonAncestorId: string | null;
 }
 
+/** Options for generating a branch summary. */
 export interface GenerateBranchSummaryOptions {
-	/** Model to use for summarization */
+	/** Model used for summarization. */
 	model: Model<any>;
-	/** API key for the model */
+	/** API key forwarded to the provider. */
 	apiKey: string;
-	/** Request headers for the model */
+	/** Optional request headers forwarded to the provider. */
 	headers?: Record<string, string>;
-	/** Abort signal for cancellation */
+	/** Abort signal for the summarization request. */
 	signal: AbortSignal;
-	/** Optional custom instructions for summarization */
+	/** Optional instructions appended to or replacing the default prompt. */
 	customInstructions?: string;
-	/** If true, customInstructions replaces the default prompt instead of being appended */
+	/** Replace the default prompt with custom instructions instead of appending them. */
 	replaceInstructions?: boolean;
-	/** Tokens reserved for prompt + LLM response (default 16384) */
+	/** Tokens reserved for prompt and model output. Defaults to 16384. */
 	reserveTokens?: number;
 }
 
-// ============================================================================
-// Entry Collection
-// ============================================================================
-
-/**
- * Collect entries that should be summarized when navigating from one position to another.
- *
- * Walks from oldLeafId back to the common ancestor with targetId, collecting entries
- * along the way. Does NOT stop at compaction boundaries - those are included and their
- * summaries become context.
- *
- * @param session - Session manager (read-only access)
- * @param oldLeafId - Current position (where we're navigating from)
- * @param targetId - Target position (where we're navigating to)
- * @returns Entries to summarize and the common ancestor
- */
+/** Collect entries that should be summarized before navigating to a different session tree entry. */
 export async function collectEntriesForBranchSummary(
 	session: Session,
 	oldLeafId: string | null,
 	targetId: string,
 ): Promise<CollectEntriesResult> {
-	// If no old position, nothing to summarize
 	if (!oldLeafId) {
 		return { entries: [], commonAncestorId: null };
 	}
-
-	// Find common ancestor (deepest node that's on both paths)
 	const oldPath = new Set((await session.getBranch(oldLeafId)).map((e) => e.id));
 	const targetPath = await session.getBranch(targetId);
-
-	// targetPath is root-first, so iterate backwards to find deepest common ancestor
 	let commonAncestorId: string | null = null;
 	for (let i = targetPath.length - 1; i >= 0; i--) {
 		if (oldPath.has(targetPath[i].id)) {
@@ -117,36 +83,22 @@ export async function collectEntriesForBranchSummary(
 			break;
 		}
 	}
-
-	// Collect entries from old leaf back to common ancestor
 	const entries: SessionTreeEntry[] = [];
 	let current: string | null = oldLeafId;
 
 	while (current && current !== commonAncestorId) {
 		const entry = await session.getEntry(current);
-		if (!entry) break;
+		if (!entry) throw new SessionError("invalid_session", `Entry ${current} not found`);
 		entries.push(entry as SessionTreeEntry);
 		current = entry.parentId;
 	}
-
-	// Reverse to get chronological order
 	entries.reverse();
 
 	return { entries, commonAncestorId };
 }
-
-// ============================================================================
-// Entry to Message Conversion
-// ============================================================================
-
-/**
- * Extract AgentMessage from a session entry.
- * Similar to getMessageFromEntry in compaction.ts but also handles compaction entries.
- */
 function getMessageFromEntry(entry: SessionTreeEntry): AgentMessage | undefined {
 	switch (entry.type) {
 		case "message":
-			// Skip tool results - context is in assistant's tool call
 			if (entry.message.role === "toolResult") return undefined;
 			return entry.message;
 
@@ -158,38 +110,21 @@ function getMessageFromEntry(entry: SessionTreeEntry): AgentMessage | undefined 
 
 		case "compaction":
 			return createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp);
-
-		// These don't contribute to conversation content
 		case "thinking_level_change":
 		case "model_change":
 		case "custom":
 		case "label":
 		case "session_info":
+		case "leaf":
 			return undefined;
 	}
 }
 
-/**
- * Prepare entries for summarization with token budget.
- *
- * Walks entries from NEWEST to OLDEST, adding messages until we hit the token budget.
- * This ensures we keep the most recent context when the branch is too long.
- *
- * Also collects file operations from:
- * - Tool calls in assistant messages
- * - Existing branch_summary entries' details (for cumulative tracking)
- *
- * @param entries - Entries in chronological order
- * @param tokenBudget - Maximum tokens to include (0 = no limit)
- */
+/** Prepare branch entries for summarization within an optional token budget. */
 export function prepareBranchEntries(entries: SessionTreeEntry[], tokenBudget: number = 0): BranchPreparation {
 	const messages: AgentMessage[] = [];
 	const fileOps = createFileOps();
 	let totalTokens = 0;
-
-	// First pass: collect file ops from ALL entries (even if they don't fit in token budget)
-	// This ensures we capture cumulative file tracking from nested branch summaries
-	// Only extract from pi-generated summaries (fromHook !== true), not extension-generated ones
 	for (const entry of entries) {
 		if (entry.type === "branch_summary" && !entry.fromHook && entry.details) {
 			const details = entry.details as BranchSummaryDetails;
@@ -197,35 +132,26 @@ export function prepareBranchEntries(entries: SessionTreeEntry[], tokenBudget: n
 				for (const f of details.readFiles) fileOps.read.add(f);
 			}
 			if (Array.isArray(details.modifiedFiles)) {
-				// Modified files go into both edited and written for proper deduplication
 				for (const f of details.modifiedFiles) {
 					fileOps.edited.add(f);
 				}
 			}
 		}
 	}
-
-	// Second pass: walk from newest to oldest, adding messages until token budget
 	for (let i = entries.length - 1; i >= 0; i--) {
 		const entry = entries[i];
 		const message = getMessageFromEntry(entry);
 		if (!message) continue;
-
-		// Extract file ops from assistant messages (tool calls)
 		extractFileOpsFromMessage(message, fileOps);
 
 		const tokens = estimateTokens(message);
-
-		// Check budget before adding
 		if (tokenBudget > 0 && totalTokens + tokens > tokenBudget) {
-			// If this is a summary entry, try to fit it anyway as it's important context
 			if (entry.type === "compaction" || entry.type === "branch_summary") {
 				if (totalTokens < tokenBudget * 0.9) {
 					messages.unshift(message);
 					totalTokens += tokens;
 				}
 			}
-			// Stop - we've hit the budget
 			break;
 		}
 
@@ -235,10 +161,6 @@ export function prepareBranchEntries(entries: SessionTreeEntry[], tokenBudget: n
 
 	return { messages, fileOps, totalTokens };
 }
-
-// ============================================================================
-// Summary Generation
-// ============================================================================
 
 const BRANCH_SUMMARY_PREAMBLE = `The user explored a different conversation branch before returning here.
 Summary of that exploration:
@@ -274,34 +196,22 @@ Use this EXACT format:
 
 Keep each section concise. Preserve exact file paths, function names, and error messages.`;
 
-/**
- * Generate a summary of abandoned branch entries.
- *
- * @param entries - Session entries to summarize (chronological order)
- * @param options - Generation options
- */
+/** Generate a summary for abandoned branch entries. */
 export async function generateBranchSummary(
 	entries: SessionTreeEntry[],
 	options: GenerateBranchSummaryOptions,
-): Promise<BranchSummaryResult> {
+): Promise<Result<BranchSummaryResult, BranchSummaryError>> {
 	const { model, apiKey, headers, signal, customInstructions, replaceInstructions, reserveTokens = 16384 } = options;
-
-	// Token budget = context window minus reserved space for prompt + response
 	const contextWindow = model.contextWindow || 128000;
 	const tokenBudget = contextWindow - reserveTokens;
 
 	const { messages, fileOps } = prepareBranchEntries(entries, tokenBudget);
 
 	if (messages.length === 0) {
-		return { summary: "No content to summarize" };
+		return ok({ summary: "No content to summarize", readFiles: [], modifiedFiles: [] });
 	}
-
-	// Transform to LLM-compatible messages, then serialize to text
-	// Serialization prevents the model from treating it as a conversation to continue
 	const llmMessages = convertToLlm(messages);
 	const conversationText = serializeConversation(llmMessages);
-
-	// Build prompt
 	let instructions: string;
 	if (replaceInstructions && customInstructions) {
 		instructions = customInstructions;
@@ -319,37 +229,34 @@ export async function generateBranchSummary(
 			timestamp: Date.now(),
 		},
 	];
-
-	// Call LLM for summarization
 	const response = await completeSimple(
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
 		{ apiKey, headers, signal, maxTokens: 2048 },
 	);
-
-	// Check if aborted or errored
 	if (response.stopReason === "aborted") {
-		return { aborted: true };
+		return err(new BranchSummaryError("aborted", response.errorMessage || "Branch summary aborted"));
 	}
 	if (response.stopReason === "error") {
-		return { error: response.errorMessage || "Summarization failed" };
+		return err(
+			new BranchSummaryError(
+				"summarization_failed",
+				`Branch summary failed: ${response.errorMessage || "Unknown error"}`,
+			),
+		);
 	}
 
 	let summary = response.content
 		.filter((c): c is { type: "text"; text: string } => c.type === "text")
 		.map((c) => c.text)
 		.join("\n");
-
-	// Prepend preamble to provide context about the branch summary
 	summary = BRANCH_SUMMARY_PREAMBLE + summary;
-
-	// Compute file lists and append to summary
 	const { readFiles, modifiedFiles } = computeFileLists(fileOps);
 	summary += formatFileOperations(readFiles, modifiedFiles);
 
-	return {
+	return ok({
 		summary: summary || "No summary generated",
 		readFiles,
 		modifiedFiles,
-	};
+	});
 }
