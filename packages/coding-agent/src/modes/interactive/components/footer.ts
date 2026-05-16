@@ -15,10 +15,18 @@ function sanitizeStatusText(text: string): string {
 		.trim();
 }
 
-/**
- * Format token counts exactly; the footer should not abbreviate large values.
- */
-function formatTokens(count: number): string {
+const money = new Intl.NumberFormat("en-US", {
+	style: "currency",
+	currency: "USD",
+});
+
+function formatUsageCount(count: number): string {
+	if (count >= 1_000_000) {
+		return `${(count / 1_000_000).toFixed(1)}M`;
+	}
+	if (count >= 1_000) {
+		return `${(count / 1_000).toFixed(1)}K`;
+	}
 	return count.toString();
 }
 
@@ -27,8 +35,6 @@ function formatTokens(count: number): string {
  * Computes token/context stats from session, gets git branch and extension statuses from provider.
  */
 export class FooterComponent implements Component {
-	private autoCompactEnabled = true;
-
 	constructor(
 		private session: AgentSession,
 		private footerData: ReadonlyFooterDataProvider,
@@ -39,7 +45,7 @@ export class FooterComponent implements Component {
 	}
 
 	setAutoCompactEnabled(enabled: boolean): void {
-		this.autoCompactEnabled = enabled;
+		void enabled;
 	}
 
 	/**
@@ -61,19 +67,16 @@ export class FooterComponent implements Component {
 	render(width: number): string[] {
 		const state = this.session.state;
 
-		// Calculate cumulative usage from ALL session entries (not just post-compaction messages)
-		let totalInput = 0;
-		let totalOutput = 0;
-		let totalCacheRead = 0;
-		let totalCacheWrite = 0;
+		let totalTokens = 0;
 		let totalCost = 0;
 
 		for (const entry of this.session.sessionManager.getEntries()) {
 			if (entry.type === "message" && entry.message.role === "assistant") {
-				totalInput += entry.message.usage.input;
-				totalOutput += entry.message.usage.output;
-				totalCacheRead += entry.message.usage.cacheRead;
-				totalCacheWrite += entry.message.usage.cacheWrite;
+				totalTokens +=
+					entry.message.usage.input +
+					entry.message.usage.output +
+					entry.message.usage.cacheRead +
+					entry.message.usage.cacheWrite;
 				totalCost += entry.message.usage.cost.total;
 			}
 		}
@@ -81,9 +84,7 @@ export class FooterComponent implements Component {
 		// Calculate context usage from session (handles compaction correctly).
 		// After compaction, tokens are unknown until the next LLM response.
 		const contextUsage = this.session.getContextUsage();
-		const contextWindow = contextUsage?.contextWindow ?? state.model?.contextWindow ?? 0;
-		const contextPercentValue = contextUsage?.percent ?? 0;
-		const contextPercent = contextUsage?.percent !== null ? contextPercentValue.toFixed(1) : "?";
+		const contextPercentValue = contextUsage?.percent;
 
 		// Replace home directory with ~
 		let pwd = this.session.sessionManager.getCwd();
@@ -104,35 +105,35 @@ export class FooterComponent implements Component {
 			pwd = `${pwd} • ${sessionName}`;
 		}
 
-		// Build stats line
-		const statsParts = [];
-		if (totalInput) statsParts.push(`↑${formatTokens(totalInput)}`);
-		if (totalOutput) statsParts.push(`↓${formatTokens(totalOutput)}`);
-		if (totalCacheRead) statsParts.push(`R${formatTokens(totalCacheRead)}`);
-		if (totalCacheWrite) statsParts.push(`W${formatTokens(totalCacheWrite)}`);
+		const statsParts: string[] = [];
+		let usageDisplay: string | undefined;
+		const displayTokens = typeof contextUsage?.tokens === "number" ? contextUsage.tokens : totalTokens;
+		if (displayTokens > 0) {
+			const percentDisplay = typeof contextPercentValue === "number" ? ` (${Math.round(contextPercentValue)}%)` : "";
+			usageDisplay = `${formatUsageCount(displayTokens)}${percentDisplay}`;
+		}
+
+		if (usageDisplay && typeof contextPercentValue === "number") {
+			if (contextPercentValue > 90) {
+				usageDisplay = theme.fg("error", usageDisplay);
+			} else if (contextPercentValue > 70) {
+				usageDisplay = theme.fg("warning", usageDisplay);
+			}
+		}
 
 		// Show cost with "(sub)" indicator if using OAuth subscription
 		const usingSubscription = state.model ? this.session.modelRegistry.isUsingOAuth(state.model) : false;
-		if (totalCost || usingSubscription) {
-			const costStr = `$${totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
-			statsParts.push(costStr);
+		const costDisplay =
+			totalCost > 0 || usingSubscription
+				? `${money.format(totalCost)}${usingSubscription ? " (sub)" : ""}`
+				: undefined;
+		if (usageDisplay && costDisplay) {
+			statsParts.push(`${usageDisplay} · ${costDisplay}`);
+		} else if (usageDisplay) {
+			statsParts.push(usageDisplay);
+		} else if (costDisplay) {
+			statsParts.push(costDisplay);
 		}
-
-		// Colorize context percentage based on usage
-		let contextPercentStr: string;
-		const autoIndicator = this.autoCompactEnabled ? " (auto)" : "";
-		const contextPercentDisplay =
-			contextPercent === "?"
-				? `?/${formatTokens(contextWindow)}${autoIndicator}`
-				: `${contextPercent}%/${formatTokens(contextWindow)}${autoIndicator}`;
-		if (contextPercentValue > 90) {
-			contextPercentStr = theme.fg("error", contextPercentDisplay);
-		} else if (contextPercentValue > 70) {
-			contextPercentStr = theme.fg("warning", contextPercentDisplay);
-		} else {
-			contextPercentStr = contextPercentDisplay;
-		}
-		statsParts.push(contextPercentStr);
 
 		let statsLeft = statsParts.join(" ");
 
