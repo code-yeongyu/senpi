@@ -630,3 +630,41 @@ fn question_mark_in_nonempty_buffer_inserts_literal() {
     assert_eq!(app.input_buffer(), "why?");
     assert!(app.overlay.is_none());
 }
+
+#[test]
+fn cursor_up_traverses_lines_with_preferred_column() {
+    let mut app = fresh_app();
+    for ch in "hello".chars() {
+        app.handle_key(ev(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    app.handle_key(ev(KeyCode::Enter, KeyModifiers::SHIFT));
+    for ch in "hi".chars() {
+        app.handle_key(ev(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    assert_eq!(app.input_buffer(), "hello\nhi");
+    app.handle_key(ev(KeyCode::Up, KeyModifiers::NONE));
+    app.handle_key(ev(KeyCode::Char('X'), KeyModifiers::NONE));
+    assert_eq!(app.input_buffer(), "heXllo\nhi");
+}
+
+#[test]
+fn ctrl_y_yanks_last_killed_word() {
+    let mut app = fresh_app();
+    for ch in "foo bar".chars() {
+        app.handle_key(ev(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    app.handle_key(ev(KeyCode::Char('w'), KeyModifiers::CONTROL));
+    assert_eq!(app.input_buffer(), "foo ");
+    app.handle_key(ev(KeyCode::Char('y'), KeyModifiers::CONTROL));
+    assert_eq!(app.input_buffer(), "foo bar");
+}
+
+#[test]
+fn ctrl_minus_undoes_last_edit() {
+    let mut app = fresh_app();
+    app.handle_key(ev(KeyCode::Char('a'), KeyModifiers::NONE));
+    app.handle_key(ev(KeyCode::Char('b'), KeyModifiers::NONE));
+    assert_eq!(app.input_buffer(), "ab");
+    app.handle_key(ev(KeyCode::Char('-'), KeyModifiers::CONTROL));
+    assert_eq!(app.input_buffer(), "a");
+}

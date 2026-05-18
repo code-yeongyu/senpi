@@ -132,6 +132,9 @@ impl App {
                 mode_label: "INPUT".into(),
                 focus_pulse: 0,
                 cursor: 0,
+                preferred_column: None,
+                kill_ring: Vec::new(),
+                undo_stack: Vec::new(),
             },
             footer: FooterState {
                 status: Status::Idle,
@@ -174,12 +177,24 @@ impl App {
         // with `Dialog` focus first so users can rebind
         // `tui.select.up`, `tui.select.confirm`, `tui.select.cancel`,
         // etc. and have those rebindings apply uniformly to every
-        // overlay. Filter typing (chars / backspace) falls through to
-        // the overlay's raw handler.
+        // overlay. When the chord resolves to a recognised overlay
+        // action (`tui.select.*` plus the filter-delete binding)
+        // synthesise the canonical `KeyEvent` for the existing raw
+        // overlay handlers. When the chord resolves to anything else,
+        // swallow the keystroke so the overlay does not fall through
+        // to its hardcoded raw handler (which would otherwise bypass
+        // a user's rebinding). Unresolved chords (plain printable
+        // chars that the keymap does not bind) reach the overlay raw
+        // for filter typing.
         if let Some(overlay) = self.overlay.as_mut() {
             let resolved = self.keymap.dispatch(FocusMode::Dialog, &event);
-            let synthetic = resolved.and_then(synthesise_select_event);
-            let dispatched_event = synthetic.unwrap_or(event);
+            let dispatched_event = match resolved {
+                Some(id) => match synthesise_select_event(id) {
+                    Some(synth) => synth,
+                    None => return AppAction::Consumed("(overlay-blocked)".into()),
+                },
+                None => event,
+            };
             match overlay.handle_key(dispatched_event) {
                 OverlayResult::Close => {
                     self.overlay = None;
@@ -244,15 +259,22 @@ impl App {
         match id {
             "tui.editor.cursorLeft" => self.input.cursor_left(),
             "tui.editor.cursorRight" => self.input.cursor_right(),
+            "tui.editor.cursorUp" | "tui.editor.jumpBackward" => self.input.cursor_up(),
+            "tui.editor.cursorDown" | "tui.editor.jumpForward" => self.input.cursor_down(),
             "tui.editor.cursorWordLeft" => self.input.cursor_word_left(),
             "tui.editor.cursorWordRight" => self.input.cursor_word_right(),
             "tui.editor.cursorLineStart" => self.input.cursor_line_start(),
             "tui.editor.cursorLineEnd" => self.input.cursor_line_end(),
+            "tui.editor.pageUp" => self.input.page_up(),
+            "tui.editor.pageDown" => self.input.page_down(),
             "tui.editor.deleteCharBackward" => self.input.delete_char_backward(),
             "tui.editor.deleteWordBackward" => self.input.delete_word_backward(),
             "tui.editor.deleteWordForward" => self.input.delete_word_forward(),
             "tui.editor.deleteToLineStart" => self.input.delete_to_line_start(),
             "tui.editor.deleteToLineEnd" => self.input.delete_to_line_end(),
+            "tui.editor.yank" => self.input.yank(),
+            "tui.editor.yankPop" => self.input.yank_pop(),
+            "tui.editor.undo" => self.input.undo(),
             _ => return None,
         }
         Some(AppAction::Consumed(id.to_owned()))
@@ -532,6 +554,9 @@ impl App {
                 mode_label: "INPUT".into(),
                 focus_pulse: 0,
                 cursor: 0,
+                preferred_column: None,
+                kill_ring: Vec::new(),
+                undo_stack: Vec::new(),
             },
             footer: config.footer,
             thinking_visible: true,
@@ -550,10 +575,13 @@ pub async fn run(config: AppConfig) -> Result<()> {
     result
 }
 
-/// Translate a resolved `tui.select.*` action ID into the canonical
-/// `KeyEvent` shape the per-overlay raw handlers already understand
-/// (arrows, page keys, enter, esc). Returns `None` for everything
-/// else so filter typing (chars / backspace) passes through unchanged.
+/// Translate a resolved action ID into the canonical `KeyEvent` shape
+/// the per-overlay raw handlers already understand. Covers the
+/// `tui.select.*` family plus the `tui.editor.deleteCharBackward`
+/// chord because the latter doubles as the overlay's filter-delete
+/// gesture when an overlay is open. Returns `None` for any other
+/// action so unresolved keystrokes do not silently steer overlay
+/// behaviour past a user's explicit rebinding.
 fn synthesise_select_event(action_id: &str) -> Option<KeyEvent> {
     let code = match action_id {
         "tui.select.up" => KeyCode::Up,
@@ -562,6 +590,7 @@ fn synthesise_select_event(action_id: &str) -> Option<KeyEvent> {
         "tui.select.pageDown" => KeyCode::PageDown,
         "tui.select.confirm" => KeyCode::Enter,
         "tui.select.cancel" => KeyCode::Esc,
+        "tui.editor.deleteCharBackward" => KeyCode::Backspace,
         _ => return None,
     };
     Some(KeyEvent {
