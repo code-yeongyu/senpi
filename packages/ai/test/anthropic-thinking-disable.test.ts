@@ -263,6 +263,154 @@ describe("Anthropic thinking disable payload", () => {
 			{ type: "tool_use", id: "toolu_123", name: "read", input: { path: "README.md" } },
 		]);
 	});
+
+	it("replays signed Anthropic thinking text without rewriting protected content", async () => {
+		// given a signed thinking block whose text must stay byte-for-byte tied to its signature
+		let capturedPayload: { messages?: Array<{ role: string; content: unknown }> } | undefined;
+		const model = {
+			...getModel("anthropic", "claude-opus-4-6"),
+			baseUrl: "http://127.0.0.1:9",
+		};
+		const protectedThinking = `tool-use thinking ${String.fromCharCode(0xd83d)}`;
+		const previousAssistant: AssistantMessage = {
+			role: "assistant",
+			api: "anthropic-messages",
+			provider: "anthropic",
+			model: "claude-opus-4-6",
+			content: [
+				{
+					type: "thinking",
+					thinking: protectedThinking,
+					thinkingSignature: "tool-signature",
+				},
+				{
+					type: "toolCall",
+					id: "toolu_123",
+					name: "read",
+					arguments: { path: "README.md" },
+				},
+			],
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "toolUse",
+			timestamp: Date.now(),
+		};
+
+		// when the tool-result follow-up is serialized for Anthropic replay
+		const s = streamSimple(
+			model,
+			{
+				messages: [
+					{ role: "user", content: "read a file", timestamp: Date.now() },
+					previousAssistant,
+					{
+						role: "toolResult",
+						toolCallId: "toolu_123",
+						toolName: "read",
+						content: [{ type: "text", text: "file contents" }],
+						isError: false,
+						timestamp: Date.now(),
+					},
+				],
+			},
+			{
+				apiKey: "fake-key",
+				onPayload: (payload) => {
+					capturedPayload = payload as { messages?: Array<{ role: string; content: unknown }> };
+					return payload;
+				},
+			},
+		);
+
+		await s.result();
+
+		// then the protected thinking payload is not normalized, trimmed, or otherwise rewritten
+		const assistantMessage = capturedPayload?.messages?.find((message) => message.role === "assistant");
+		expect(assistantMessage?.content).toEqual([
+			{ type: "thinking", thinking: protectedThinking, signature: "tool-signature" },
+			{ type: "tool_use", id: "toolu_123", name: "read", input: { path: "README.md" } },
+		]);
+	});
+
+	it("preserves previous assistant redacted thinking blocks for tool result follow-ups when thinking is off", async () => {
+		// given an opaque redacted thinking block from the same Anthropic model
+		let capturedPayload: { messages?: Array<{ role: string; content: unknown }> } | undefined;
+		const model = {
+			...getModel("anthropic", "claude-opus-4-6"),
+			baseUrl: "http://127.0.0.1:9",
+		};
+		const previousAssistant: AssistantMessage = {
+			role: "assistant",
+			api: "anthropic-messages",
+			provider: "anthropic",
+			model: "claude-opus-4-6",
+			content: [
+				{
+					type: "thinking",
+					thinking: "[Reasoning redacted]",
+					thinkingSignature: "opaque-redacted-payload",
+					redacted: true,
+				},
+				{
+					type: "toolCall",
+					id: "toolu_123",
+					name: "read",
+					arguments: { path: "README.md" },
+				},
+			],
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "toolUse",
+			timestamp: Date.now(),
+		};
+
+		// when the tool-result follow-up is serialized
+		const s = streamSimple(
+			model,
+			{
+				messages: [
+					{ role: "user", content: "read a file", timestamp: Date.now() },
+					previousAssistant,
+					{
+						role: "toolResult",
+						toolCallId: "toolu_123",
+						toolName: "read",
+						content: [{ type: "text", text: "file contents" }],
+						isError: false,
+						timestamp: Date.now(),
+					},
+				],
+			},
+			{
+				apiKey: "fake-key",
+				onPayload: (payload) => {
+					capturedPayload = payload as { messages?: Array<{ role: string; content: unknown }> };
+					return payload;
+				},
+			},
+		);
+
+		await s.result();
+
+		// then the opaque redacted payload is replayed before its matching tool_use without cache metadata
+		const assistantMessage = capturedPayload?.messages?.find((message) => message.role === "assistant");
+		expect(assistantMessage?.content).toEqual([
+			{ type: "redacted_thinking", data: "opaque-redacted-payload" },
+			{ type: "tool_use", id: "toolu_123", name: "read", input: { path: "README.md" } },
+		]);
+	});
 });
 
 describe.skipIf(!process.env.ANTHROPIC_API_KEY)("Anthropic thinking disable E2E", () => {

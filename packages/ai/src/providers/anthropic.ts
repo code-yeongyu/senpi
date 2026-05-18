@@ -1270,7 +1270,7 @@ function convertMessages(
 					} else {
 						blocks.push({
 							type: "thinking",
-							thinking: sanitizeSurrogates(block.thinking),
+							thinking: block.thinking,
 							signature: block.thinkingSignature,
 						});
 					}

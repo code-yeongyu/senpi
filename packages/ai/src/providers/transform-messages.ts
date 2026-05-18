@@ -112,14 +112,14 @@ export function transformMessages<TApi extends Api>(
 					// Redacted thinking is opaque encrypted content, only valid for the same model.
 					// Drop it for cross-model to avoid API errors.
 					if (block.redacted) {
-						return isSameModel && preserveProviderState ? block : [];
+						return isSameModel && preserveProviderState ? { ...block } : [];
 					}
 					// For same model: keep thinking blocks with signatures (needed for replay)
 					// even if the thinking text is empty (OpenAI encrypted reasoning)
-					if (isSameModel && preserveProviderState && block.thinkingSignature) return block;
+					if (isSameModel && preserveProviderState && block.thinkingSignature) return { ...block };
 					// Skip empty thinking blocks, convert others to plain text
 					if (!block.thinking || block.thinking.trim() === "") return [];
-					if (isSameModel) return preserveProviderState ? block : [];
+					if (isSameModel) return preserveProviderState ? { ...block } : [];
 					return {
 						type: "text" as const,
 						text: block.thinking,
@@ -127,7 +127,7 @@ export function transformMessages<TApi extends Api>(
 				}
 
 				if (block.type === "text") {
-					if (isSameModel && preserveProviderState) return block;
+					if (isSameModel && preserveProviderState) return { ...block };
 					return {
 						type: "text" as const,
 						text: block.text,
@@ -136,10 +136,9 @@ export function transformMessages<TApi extends Api>(
 
 				if (block.type === "toolCall") {
 					const toolCall = block as ToolCall;
-					let normalizedToolCall: ToolCall = toolCall;
+					let normalizedToolCall: ToolCall = { ...toolCall };
 
 					if ((!isSameModel || !preserveProviderState) && toolCall.thoughtSignature) {
-						normalizedToolCall = { ...toolCall };
 						delete (normalizedToolCall as { thoughtSignature?: string }).thoughtSignature;
 					}
 

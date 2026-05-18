@@ -1,5 +1,26 @@
 # AI Source Changes
 
+## 2026-05-18 - Anthropic protected thinking replay
+
+### What changed and why
+- `providers/anthropic.ts`: signed Anthropic `thinking` replay now forwards the stored text exactly as-is instead of running it through local surrogate sanitization. Anthropic treats signed and redacted thinking blocks as protected replay state; rewriting them can make the next tool-result request fail with `thinking` / `redacted_thinking` modification errors.
+- `providers/transform-messages.ts`: same-model preserved provider-state blocks are now copied rather than shared, and redacted thinking remains same-model only. Cross-model transforms still drop opaque redacted thinking state.
+- Added regressions for signed thinking replay, redacted thinking replay, immutable same-model transforms, cross-model redacted thinking dropping, and retry context behavior after a failed assistant turn.
+
+### Files modified
+- `providers/anthropic.ts`
+- `providers/transform-messages.ts`
+- `../test/anthropic-thinking-disable.test.ts`
+- `../test/transform-messages-copilot-openai-to-anthropic.test.ts`
+- `../../coding-agent/test/suite/regressions/0000-anthropic-partial-thinking-replay.test.ts`
+
+### Why the higher-level extension system couldn't handle this alone
+- Anthropic protected thinking is serialized inside `pi-ai`'s provider adapter after history transformation. Extensions and coding-agent retry logic cannot safely repair a signed block once the provider has normalized or shared it.
+
+### Expected merge conflict zones
+- LOW: `convertMessages()` signed/redacted thinking block serialization in `providers/anthropic.ts`.
+- LOW: same-model `preserveProviderState` branches in `providers/transform-messages.ts`.
+
 ## 2026-05-15 - OpenAI Responses `web_search_preview` compat guard
 
 ### What changed and why

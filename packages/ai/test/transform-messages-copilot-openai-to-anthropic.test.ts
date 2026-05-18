@@ -133,6 +133,91 @@ describe("OpenAI to Anthropic session migration for Copilot Claude", () => {
 		expect(toolCall.thoughtSignature).toBeUndefined();
 	});
 
+	it("preserves same-model redacted thinking and does not share transformed assistant content objects", () => {
+		const model = makeCopilotClaudeModel();
+		const redactedBlock = {
+			type: "thinking" as const,
+			thinking: "[Reasoning redacted]",
+			thinkingSignature: "opaque-redacted-payload",
+			redacted: true,
+		};
+		const textBlock = { type: "text" as const, text: "I need a tool." };
+		const toolCallBlock = {
+			type: "toolCall" as const,
+			id: "call_123",
+			name: "read",
+			arguments: { path: "README.md" },
+			thoughtSignature: "same-model-thought",
+		};
+		const assistant: AssistantMessage = {
+			role: "assistant",
+			content: [redactedBlock, textBlock, toolCallBlock],
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "toolUse",
+			timestamp: Date.now(),
+		};
+		const messages: Message[] = [{ role: "user", content: "read", timestamp: Date.now() }, assistant];
+		const before = structuredClone(messages);
+
+		const result = transformMessages(messages, model, anthropicNormalizeToolCallId);
+		const transformedAssistant = result.find((message) => message.role === "assistant") as AssistantMessage;
+
+		expect(messages).toEqual(before);
+		expect(transformedAssistant).not.toBe(assistant);
+		expect(transformedAssistant.content).not.toBe(assistant.content);
+		expect(transformedAssistant.content).toEqual([redactedBlock, textBlock, toolCallBlock]);
+		expect(transformedAssistant.content[0]).not.toBe(redactedBlock);
+		expect(transformedAssistant.content[1]).not.toBe(textBlock);
+		expect(transformedAssistant.content[2]).not.toBe(toolCallBlock);
+	});
+
+	it("drops cross-model redacted thinking instead of replaying opaque provider state", () => {
+		const model = makeCopilotClaudeModel();
+		const messages: Message[] = [
+			{ role: "user", content: "hello", timestamp: Date.now() },
+			{
+				role: "assistant",
+				content: [
+					{
+						type: "thinking",
+						thinking: "[Reasoning redacted]",
+						thinkingSignature: "opaque-redacted-payload",
+						redacted: true,
+					},
+					{ type: "text", text: "previous answer" },
+				],
+				api: "openai-responses",
+				provider: "github-copilot",
+				model: "gpt-5",
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "stop",
+				timestamp: Date.now(),
+			},
+		];
+
+		const result = transformMessages(messages, model, anthropicNormalizeToolCallId);
+		const assistantMsg = result.find((message) => message.role === "assistant") as AssistantMessage;
+
+		expect(assistantMsg.content).toEqual([{ type: "text", text: "previous answer" }]);
+	});
+
 	it("adds synthetic tool results for trailing orphaned tool calls", () => {
 		const model = makeCopilotClaudeModel();
 		const messages: Message[] = [
