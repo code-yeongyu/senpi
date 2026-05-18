@@ -436,16 +436,37 @@ fn apply_inbound_agent_start_marks_footer_busy() {
 }
 
 #[test]
-fn apply_inbound_message_start_pushes_assistant_placeholder() {
+fn apply_inbound_message_start_updates_footer_only() {
+    let mut app = fresh_app();
+    let before = app.chat_snapshot().messages.len();
+    app.apply_inbound(Inbound::Event(RpcEvent::MessageStart {
+        message: serde_json::json!({"role": "assistant"}),
+    }));
+    let after = app.chat_snapshot().messages.len();
+    assert_eq!(
+        after, before,
+        "MessageStart must not push a placeholder bubble; the bubble appears lazily on the first text_delta in MessageUpdate"
+    );
+    assert_eq!(app.footer.status, Status::Streaming);
+    assert_eq!(app.footer.status_label, "streaming");
+}
+
+#[test]
+fn apply_inbound_message_end_drops_empty_assistant_bubble() {
     let mut app = fresh_app();
     app.apply_inbound(Inbound::Event(RpcEvent::MessageStart {
         message: serde_json::json!({"role": "assistant"}),
     }));
-    let last = app.chat_snapshot().messages.last().expect("must have a message");
-    assert_eq!(last.role, Role::Assistant);
-    assert!(last.body.is_empty());
-    assert!(last.tool.is_none());
-    assert_eq!(app.footer.status, Status::Streaming);
+    let after_start = app.chat_snapshot().messages.len();
+    app.apply_inbound(Inbound::Event(RpcEvent::MessageEnd {
+        message: serde_json::json!({"role": "assistant"}),
+    }));
+    let after_end = app.chat_snapshot().messages.len();
+    assert_eq!(
+        after_end, after_start,
+        "MessageEnd with no text_delta in between must leave the chat untouched (no phantom empty senpi bubble)"
+    );
+    assert_eq!(app.footer.status, Status::Idle);
 }
 
 #[test]
@@ -465,14 +486,6 @@ fn apply_inbound_message_update_text_delta_appends_to_last_assistant_body() {
     }
     let last = app.chat_snapshot().messages.last().expect("must have a message");
     assert_eq!(last.body, "hello world");
-}
-
-#[test]
-fn apply_inbound_agent_end_marks_footer_idle() {
-    let mut app = fresh_app();
-    app.apply_inbound(Inbound::Event(RpcEvent::AgentStart));
-    app.apply_inbound(Inbound::Event(RpcEvent::AgentEnd { messages: vec![] }));
-    assert_eq!(app.footer.status, Status::Idle);
 }
 
 #[test]

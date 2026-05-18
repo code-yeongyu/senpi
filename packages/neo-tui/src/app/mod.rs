@@ -340,16 +340,33 @@ impl App {
                 self.footer.status = Status::Busy;
                 self.footer.status_label = "thinking".into();
             }
-            RpcEvent::AgentEnd { .. } | RpcEvent::MessageEnd { .. } => {
+            RpcEvent::AgentEnd { .. } => {
+                self.footer.status = Status::Idle;
+                self.footer.status_label = "idle".into();
+            }
+            RpcEvent::MessageEnd { .. } => {
+                // Drop the assistant bubble entirely when the backend
+                // produced only thinking deltas (or nothing) for this
+                // message - otherwise an empty `senpi` block sits in
+                // the chat in front of the real response.
+                if let Some(last) = self.chat.messages.last()
+                    && matches!(last.role, Role::Assistant)
+                    && last.body.is_empty()
+                    && last.tool.is_none()
+                {
+                    self.chat.messages.pop();
+                }
                 self.footer.status = Status::Idle;
                 self.footer.status_label = "idle".into();
             }
             RpcEvent::MessageStart { .. } => {
-                self.chat.messages.push(Message {
-                    role: Role::Assistant,
-                    body: String::new(),
-                    tool: None,
-                });
+                // Do NOT push an empty assistant bubble here. The backend
+                // emits one `message_start` per content block (e.g.
+                // thinking, response), and only some carry visible
+                // text. Pushing on every start produced a phantom empty
+                // `senpi` row before the real reply. We now create the
+                // bubble lazily on the first text_delta in
+                // `MessageUpdate`.
                 self.footer.status = Status::Streaming;
                 self.footer.status_label = "streaming".into();
             }
@@ -366,10 +383,20 @@ impl App {
                     }
                 });
                 if let Some(text) = delta {
+                    let needs_new_bubble = self
+                        .chat
+                        .messages
+                        .last()
+                        .is_none_or(|m| !matches!(m.role, Role::Assistant) || m.tool.is_some());
+                    if needs_new_bubble {
+                        self.chat.messages.push(Message {
+                            role: Role::Assistant,
+                            body: String::new(),
+                            tool: None,
+                        });
+                    }
                     if let Some(last) = self.chat.messages.last_mut() {
-                        if matches!(last.role, Role::Assistant) && last.tool.is_none() {
-                            last.body.push_str(text);
-                        }
+                        last.body.push_str(text);
                     }
                 }
             }
