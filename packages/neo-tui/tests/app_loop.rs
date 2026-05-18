@@ -181,7 +181,7 @@ fn slash_on_empty_input_opens_slash_overlay() {
     let mut app = fresh_app();
     assert!(app.overlay.is_none(), "no overlay open at start");
     let action = app.handle_key(ev(KeyCode::Char('/'), KeyModifiers::NONE));
-    assert_eq!(action, AppAction::Consumed("(slash-opened)".into()));
+    assert_eq!(action, AppAction::Consumed("neo.slash.open".into()));
     assert!(
         matches!(app.overlay, Some(Overlay::Slash(_))),
         "slash overlay must be open, got {:?}",
@@ -289,9 +289,9 @@ fn slash_typed_in_empty_buffer_opens_slash_overlay() {
     let mut app = fresh_app();
     let action = app.handle_key(ev(KeyCode::Char('/'), KeyModifiers::NONE));
     let AppAction::Consumed(label) = action else {
-        panic!("expected Consumed(slash-opened), got {action:?}");
+        panic!("expected Consumed(neo.slash.open), got {action:?}");
     };
-    assert_eq!(label, "(slash-opened)");
+    assert_eq!(label, "neo.slash.open");
     assert!(matches!(app.overlay, Some(Overlay::Slash(_))));
 }
 

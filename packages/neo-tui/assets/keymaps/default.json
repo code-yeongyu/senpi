@@ -86,6 +86,7 @@
     "app.models.reorderDown": ["alt+down"],
 
     "neo.palette.open": ["alt+p"],
+    "neo.slash.open": ["/"],
     "neo.help": ["?"],
     "neo.sidebar.toggle": ["alt+s"],
     "neo.theme.picker": ["alt+t"],

@@ -185,19 +185,21 @@ impl App {
                 }
             }
         }
-        // Grok-CLI-style: `/` on an empty buffer opens the slash menu;
-        // `/` mid-prompt still inserts as a literal char.
-        if matches!(self.focus, FocusMode::Input)
-            && self.input.buffer.is_empty()
-            && matches!(event.code, KeyCode::Char('/'))
-            && !event
-                .modifiers
-                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
-        {
-            self.overlay = Some(Overlay::Slash(SlashOverlay::new()));
-            return AppAction::Consumed("(slash-opened)".into());
-        }
-        let id = self.keymap.dispatch(self.focus, &event);
+        let resolved = self.keymap.dispatch(self.focus, &event);
+        // `neo.slash.open` carries a buffer-empty + Input-focus precondition
+        // that the keymap layer cannot express. If the chord resolves but
+        // the precondition fails (e.g. mid-prompt `/`), drop the action so
+        // the literal-character fallback below inserts the keystroke as-is.
+        let id = match resolved {
+            Some("neo.slash.open") => {
+                if matches!(self.focus, FocusMode::Input) && self.input.buffer.is_empty() {
+                    self.overlay = Some(Overlay::Slash(SlashOverlay::new()));
+                    return AppAction::Consumed("neo.slash.open".into());
+                }
+                None
+            }
+            other => other,
+        };
         let Some(id) = id else {
             if matches!(self.focus, FocusMode::Input) {
                 if let KeyCode::Char(ch) = event.code {
