@@ -3,9 +3,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, extname, join, resolve, sep } from "node:path";
 
 const EXIT_STDIO_GRACE_MS = 100;
-const WINDOWS_COMMAND_EXTENSIONS = ["", ".exe", ".cmd", ".bat"];
+const WINDOWS_COMMAND_EXTENSIONS = [".exe", ".cmd", ".bat", ""];
 const WINDOWS_COMMAND_SHIM_RE = /\.(?:cmd|bat)$/i;
-const NODE_SHIM_SCRIPT_RE = /(?:%~dp0|%dp0%|%basedir%)[^"'\r\n<>|&]*?\.(?:cjs|mjs|js)/i;
+const NODE_SHIM_SCRIPT_RE = /(?:%~dp0|%dp0%|%basedir%)[^"'\r\n<>|&]*?\.(?:cjs|mjs|js)/gi;
 
 export interface ResolvedSpawnCommand {
 	command: string;
@@ -45,10 +45,12 @@ function expandShimPath(path: string, shimPath: string): string {
 }
 
 function findNodeShimScript(shimPath: string): string | undefined {
-	const match = readFileSync(shimPath, "utf-8").match(NODE_SHIM_SCRIPT_RE);
-	if (!match) return undefined;
-	const scriptPath = expandShimPath(match[0], shimPath);
-	return existsSync(scriptPath) ? scriptPath : undefined;
+	const matches = [...readFileSync(shimPath, "utf-8").matchAll(NODE_SHIM_SCRIPT_RE)];
+	for (const match of matches.reverse()) {
+		const scriptPath = expandShimPath(match[0], shimPath);
+		if (existsSync(scriptPath)) return scriptPath;
+	}
+	return undefined;
 }
 
 export function resolveSpawnCommand(

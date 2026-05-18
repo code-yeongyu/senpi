@@ -2,9 +2,11 @@
 
 ## [Unreleased]
 
-## [2026.5.18-2] - 2026-05-18
+### Fixed
 
-## [2026.5.18] - 2026-05-18
+- Fixed Windows npm self-updates to move loaded native dependency packages out of the active install before reinstalling pi ([#4157](https://github.com/earendil-works/pi/issues/4157)).
+- Fixed `pi update --self` detection for pnpm v11 global installs whose package path resolves through the pnpm store ([#4647](https://github.com/earendil-works/pi/issues/4647)).
+- Fixed Windows pnpm self-updates to resolve pnpm command shims and run through pnpm instead of requiring manual updates ([#4157](https://github.com/earendil-works/pi/issues/4157)).
 
 ## [0.75.1] - 2026-05-18
 
@@ -50,16 +52,12 @@
 
 ### Added
 
-- Added a Context Window section to the `/session` output that shows `Used: <tokens> / <contextWindow> (<percent>%)` in opencode-style intuitive notation, with em-dashes for unknown tokens or percent after a pending compaction.
 - Added image generation support from `@earendil-works/pi-ai`, including image generation APIs, image model metadata, and built-in OpenRouter image generation support ([#3887](https://github.com/earendil-works/pi-mono/pull/3887) by [@cristinaponcela](https://github.com/cristinaponcela)).
 - Added Together AI to built-in provider setup, `/login` API-key auth, and default model resolution ([#3624](https://github.com/earendil-works/pi-mono/pull/3624) by [@Nutlope](https://github.com/Nutlope)).
 - Added Windows ARM64 standalone binary release artifacts ([#4458](https://github.com/earendil-works/pi/pull/4458) by [@brianmichel](https://github.com/brianmichel)).
 
 ### Fixed
 
-- Fixed interactive abort settling so messages submitted immediately after Esc start a fresh turn instead of staying queued behind the aborted run.
-- Fixed Esc during streaming or retry waits to auto-fire queued steering/follow-up messages as a fresh prompt after the abort settles, instead of leaving them stranded behind the aborted run or restoring them to the editor for manual re-submission.
-- Fixed `/session` cost to render through `Intl.NumberFormat` USD (e.g. `$0.12`) instead of the raw four-decimal number (`0.1234`).
 - Fixed Node 26 OpenAI-compatible streams timing out after five idle minutes by routing global fetch through pi's undici dispatcher ([#4519](https://github.com/earendil-works/pi/issues/4519)).
 - Fixed pnpm global package installs by resolving the global package root from pnpm's layout.
 - Fixed macOS clipboard access errors under sandboxed pasteboard denial so they do not abort the process ([#4492](https://github.com/earendil-works/pi/issues/4492)).
@@ -69,38 +67,6 @@
 - Fixed skill diagnostics to stop warning when a skill name differs from its parent directory ([#4534](https://github.com/earendil-works/pi/issues/4534)).
 - Fixed prompt template argument parsing to split unquoted multiline input on newlines ([#4553](https://github.com/earendil-works/pi/issues/4553)).
 - Fixed `--resume` session listing to cap in-flight session metadata loads and avoid OOM on large session histories ([#4583](https://github.com/earendil-works/pi/issues/4583)).
-
-## [2026.5.16] - 2026-05-16
-
-### Added
-
-### Fixed
-
-- Fixed OpenAI native web search injection to require an official or explicitly opted-in OpenAI Responses endpoint, preventing custom Responses proxies from receiving unsupported `web_search_preview` tools.
-- Fixed release check warnings in `/diff` and native clipboard image handling.
-
-## [2026.5.15-3] - 2026-05-15
-
-### Added
-
-- Added plugsuits-inspired deterministic context reduction module `builtin/compaction/context-reduction.ts` exporting `collapseConsecutiveToolResults`, `microCompactAssistantText`, `clearOldToolResults`, `reduceContextMessages`, `shouldApplyContextReduction`, and `BUILTIN_CONTEXT_REDUCTION_OPTIONS`. The builtin compaction `context` hook now runs the full reduction pipeline — collapse consecutive read/grep/shell tool result payloads into a single-line label, shrink older long assistant text answers, and clear older clearable tool result content — above the 50% context-window usage threshold (skipped on OpenAI Responses provider-native compaction paths) with conservative defaults that protect more of the recent tail than the upstream plugsuits values.
-
-### Fixed
-
-- Fixed Anthropic 400 `tools.N: Input tag 'web_search_preview'` when an `openai-responses` request is translated to `anthropic-messages` by an upstream proxy by stripping OpenAI native `web_search_preview` / `web_search_preview_*` tool entries from non-OpenAI-Responses provider payloads.
-
-## [2026.5.15-2] - 2026-05-15
-
-### Added
-
-- Added Together AI to built-in provider setup, `/login` API-key auth, and default model resolution ([#3624](https://github.com/earendil-works/pi-mono/pull/3624) by [@Nutlope](https://github.com/Nutlope)).
-- Added Windows ARM64 standalone binary release artifacts ([#4458](https://github.com/earendil-works/pi/pull/4458) by [@brianmichel](https://github.com/brianmichel)).
-- Added shared verification guidance for deterministic tests, event-driven async assertions, mock contract integrity, and behavior-focused prompt tests.
-
-### Fixed
-
-- Fixed auto-retry to respect provider-supplied retry-after wait hints for rate-limit and overload responses.
-- Fixed OpenAI Chat Completions-compatible provider requests to remove orphan tool outputs and synthesize missing tool results before submission.
 - Fixed interactive error messages to render with trailing spacing so reload errors do not run into resource listings ([#4510](https://github.com/earendil-works/pi/issues/4510)).
 - Fixed `.agents` package provenance metadata to survive package-manager scans.
 - Fixed nested code fences in the Termux setup documentation so the example AGENTS.md renders correctly ([#4503](https://github.com/earendil-works/pi/issues/4503)).
@@ -677,7 +643,7 @@
 - Fixed direct OpenAI Responses and Codex SSE requests to align `prompt_cache_key`, `session_id`, and `x-client-request-id` values with the same session-derived identifier, improving prompt cache affinity for append-only sessions ([#3018](https://github.com/badlogic/pi-mono/pull/3018) by [@steipete](https://github.com/steipete))
 - Fixed streaming-only `partialJson` scratch buffers leaking into persisted OpenAI Responses tool calls, which could corrupt follow-up payloads on resumed conversations.
 - Fixed Ctrl+Alt letter key matching in tmux by falling through from legacy ESC-prefixed handling to CSI-u and xterm `modifyOtherKeys` parsing when the legacy form does not match ([#2989](https://github.com/badlogic/pi-mono/pull/2989) by [@kaofelix](https://github.com/kaofelix))
-- Fixed the shipped orchestration example to avoid leaking Bun virtual filesystem script paths into generated prompts ([#3002](https://github.com/badlogic/pi-mono/pull/3002) by [@nathyong](https://github.com/nathyong))
+- Fixed the shipped `subagent` example to avoid leaking Bun virtual filesystem script paths into subagent prompts ([#3002](https://github.com/badlogic/pi-mono/pull/3002) by [@nathyong](https://github.com/nathyong))
 - Fixed bordered loaders to stop their animation timer when disposed, preventing stale loader updates after teardown.
 
 ## [0.67.1] - 2026-04-13
@@ -1228,7 +1194,7 @@ Examples:
 - Fixed interactive input fields backed by the TUI `Input` component to scroll by visual column width for wide Unicode text (CJK, fullwidth characters), preventing rendered line overflow and TUI crashes in places like search and filter inputs ([#1982](https://github.com/badlogic/pi-mono/issues/1982))
 - Fixed `shift+tab` and other modified Tab bindings in tmux when `extended-keys-format` is left at the default `xterm`
 - Fixed EXIF orientation not being applied during image convert and resize, causing JPEG and WebP images from phone cameras to display rotated or mirrored ([#2105](https://github.com/badlogic/pi-mono/pull/2105) by [@melihmucuk](https://github.com/melihmucuk))
-- Fixed the default coding-agent prompt to include only the current date in ISO format, not the current time, so prompt prefixes stay cacheable across reloads and resumed sessions ([#2131](https://github.com/badlogic/pi-mono/issues/2131))
+- Fixed the default coding-agent system prompt to include only the current date in ISO format, not the current time, so prompt prefixes stay cacheable across reloads and resumed sessions ([#2131](https://github.com/badlogic/pi-mono/issues/2131))
 - Fixed retry regex to match `server_error` and `internal_error` error types from providers, improving automatic retry coverage ([#2117](https://github.com/badlogic/pi-mono/pull/2117) by [@MadKangYu](https://github.com/MadKangYu))
 - Fixed example extensions to support `PI_CODING_AGENT_DIR` environment variable for custom agent directory paths ([#2009](https://github.com/badlogic/pi-mono/pull/2009) by [@smithbm2316](https://github.com/smithbm2316))
 - Fixed tool result images not being sent in `function_call_output` items for OpenAI Responses API providers, causing image data to be silently dropped in tool results ([#2104](https://github.com/badlogic/pi-mono/issues/2104))
@@ -1458,7 +1424,7 @@ Examples:
 - Fixed extension loading on Windows when resolving `@sinclair/typebox` aliases so subpath imports like `@sinclair/typebox/compiler` resolve correctly.
 - Fixed adaptive thinking for Claude Sonnet 4.6 in Anthropic and Bedrock providers, and clamped unsupported `xhigh` effort values to supported levels ([#1548](https://github.com/badlogic/pi-mono/pull/1548) by [@tctev](https://github.com/tctev))
 - Fixed Vertex ADC credential detection race by avoiding caching a false negative during async import initialization ([#1550](https://github.com/badlogic/pi-mono/pull/1550) by [@jeremiahgaylord-web](https://github.com/jeremiahgaylord-web))
-- Fixed the orchestration example to resolve user profiles from the configured directory instead of hardcoded paths ([#1559](https://github.com/badlogic/pi-mono/pull/1559) by [@tianshuwang](https://github.com/tianshuwang))
+- Fixed subagent extension example to resolve user agents from the configured agent directory instead of hardcoded paths ([#1559](https://github.com/badlogic/pi-mono/pull/1559) by [@tianshuwang](https://github.com/tianshuwang))
 
 ## [0.55.0] - 2026-02-24
 
@@ -1598,7 +1564,7 @@ Examples:
 - Reverted incorrect Antigravity model change: `claude-opus-4-6-thinking` back to `claude-opus-4-5-thinking` (model does not exist on Antigravity endpoint)
 - Updated the Antigravity system instruction to a more compact version for Google Gemini CLI compatibility
 - Corrected opencode context windows for Claude Sonnet 4 and 4.5 ([#1383](https://github.com/badlogic/pi-mono/issues/1383))
-- Fixed orchestration example unknown-profile errors to include available profile names ([#1414](https://github.com/badlogic/pi-mono/pull/1414) by [@dnouri](https://github.com/dnouri))
+- Fixed subagent example unknown-agent errors to include available agent names ([#1414](https://github.com/badlogic/pi-mono/pull/1414) by [@dnouri](https://github.com/dnouri))
 
 ## [0.52.8] - 2026-02-07
 
@@ -2966,7 +2932,7 @@ pi --extension ./safety.ts -e ./todo.ts
 
 ### Fixed
 
-- Orchestration example README referenced an incorrect filename instead of `index.ts` ([#427](https://github.com/badlogic/pi-mono/pull/427) by [@Whamp](https://github.com/Whamp))
+- Subagent example README referenced incorrect filename `subagent.ts` instead of `index.ts` ([#427](https://github.com/badlogic/pi-mono/pull/427) by [@Whamp](https://github.com/Whamp))
 
 ## [0.32.3] - 2026-01-03
 
@@ -3623,7 +3589,7 @@ Total color count increased from 46 to 50. See [docs/themes.md](docs/themes.md) 
 
 ### Added
 
-- **Orchestration example**: Added comprehensive custom tool example for coordinating isolated context windows. Includes scout/planner/reviewer/worker profiles and workflow commands for multi-step pipelines. ([#215](https://github.com/badlogic/pi-mono/pull/215) by [@nicobailon](https://github.com/nicobailon))
+- **Subagent orchestration example**: Added comprehensive custom tool example for spawning and orchestrating sub-agents with isolated context windows. Includes scout/planner/reviewer/worker agents and workflow commands for multi-agent pipelines. ([#215](https://github.com/badlogic/pi-mono/pull/215) by [@nicobailon](https://github.com/nicobailon))
 
 - **`getMarkdownTheme()` export**: Custom tools can now import `getMarkdownTheme()` from `@mariozechner/pi-coding-agent` to use the same markdown styling as the main UI.
 
@@ -3639,7 +3605,7 @@ Total color count increased from 46 to 50. See [docs/themes.md](docs/themes.md) 
 
 ### Changed
 
-- **Orchestration example improvements**: Parallel mode now streams updates from all tasks. Chain mode shows all completed steps during streaming. Expanded view uses proper markdown rendering with syntax highlighting. Usage footer shows turn count.
+- **Subagent example improvements**: Parallel mode now streams updates from all tasks. Chain mode shows all completed steps during streaming. Expanded view uses proper markdown rendering with syntax highlighting. Usage footer shows turn count.
 
 - **Skills standard compliance**: Skills now adhere to the [Agent Skills standard](https://agentskills.io/specification). Validates name (must match parent directory, lowercase, max 64 chars), description (required, max 1024 chars), and frontmatter fields. Warns on violations but remains lenient. Prompt format changed to XML structure. Removed `{baseDir}` placeholder in favor of relative paths. ([#231](https://github.com/badlogic/pi-mono/issues/231))
 

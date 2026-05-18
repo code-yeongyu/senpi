@@ -12,6 +12,7 @@ import {
 const execPathDescriptor = Object.getOwnPropertyDescriptor(process, "execPath");
 const originalPath = process.env.PATH;
 const originalPiPackageDir = process.env.PI_PACKAGE_DIR;
+const originalArgv1 = process.argv[1];
 let tempDir: string | undefined;
 
 function setExecPath(value: string): void {
@@ -34,6 +35,11 @@ afterEach(() => {
 		delete process.env.PI_PACKAGE_DIR;
 	} else {
 		process.env.PI_PACKAGE_DIR = originalPiPackageDir;
+	}
+	if (originalArgv1 === undefined) {
+		process.argv.splice(1, 1);
+	} else {
+		process.argv[1] = originalArgv1;
 	}
 	if (tempDir) {
 		chmodSync(tempDir, 0o700);
@@ -272,6 +278,49 @@ describe("detectInstallMethod", () => {
 					display: "pnpm install -g @new-scope/pi",
 				},
 			],
+		});
+	});
+
+	test("self-updates pnpm v11 global installs resolved through the store", () => {
+		const temp = mkdtempSync(join(tmpdir(), "pi-pnpm11-"));
+		const binDir = join(temp, "bin");
+		const root = join(temp, "Library", "pnpm", "global", "v11");
+		const packageName = "@earendil-works/pi-coding-agent";
+		const globalPackageDir = join(root, "11e9a", "node_modules", "@earendil-works", "pi-coding-agent");
+		const storePackageDir = join(
+			temp,
+			"Library",
+			"pnpm",
+			"store",
+			"v11",
+			"links",
+			"@earendil-works",
+			"pi-coding-agent",
+			"0.75.0",
+			"hash",
+			"node_modules",
+			"@earendil-works",
+			"pi-coding-agent",
+		);
+		mkdirSync(globalPackageDir, { recursive: true });
+		mkdirSync(storePackageDir, { recursive: true });
+		mkdirSync(binDir, { recursive: true });
+		writeFileSync(join(globalPackageDir, "package.json"), "{}");
+		writeFileSync(join(binDir, process.platform === "win32" ? "pnpm.cmd" : "pnpm"), createFakePnpmScript(root));
+		chmodSync(join(binDir, process.platform === "win32" ? "pnpm.cmd" : "pnpm"), 0o755);
+		tempDir = temp;
+		process.env.PATH = `${binDir}${delimiter}${originalPath ?? ""}`;
+		process.env.PI_PACKAGE_DIR = storePackageDir;
+		process.argv[1] = join(globalPackageDir, "dist", "cli.js");
+		setExecPath(join(storePackageDir, "dist", "cli.js"));
+
+		const command = getSelfUpdateCommand(packageName);
+
+		expect(detectInstallMethod()).toBe("pnpm");
+		expect(command).toEqual({
+			command: "pnpm",
+			args: ["install", "-g", packageName],
+			display: `pnpm install -g ${packageName}`,
 		});
 	});
 

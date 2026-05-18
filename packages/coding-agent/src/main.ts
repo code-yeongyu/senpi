@@ -15,7 +15,7 @@ import { processFileArguments } from "./cli/file-processor.js";
 import { buildInitialMessage } from "./cli/initial-message.js";
 import { listModels } from "./cli/list-models.js";
 import { selectSession } from "./cli/session-picker.js";
-import { ENV_SESSION_DIR, expandTildePath, getAgentDir, VERSION } from "./config.js";
+import { ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir, VERSION } from "./config.js";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.js";
 import {
 	type AgentSessionRuntimeDiagnostic,
@@ -52,6 +52,7 @@ import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.js"
 import { runNeoMode } from "./modes/neo-mode.js";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.js";
 import { isLocalPath } from "./utils/paths.js";
+import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.js";
 
 /**
  * Read all content from piped stdin.
@@ -433,6 +434,10 @@ export async function main(args: string[], options?: MainOptions) {
 	if (offlineMode) {
 		process.env.PI_OFFLINE = "1";
 		process.env.PI_SKIP_VERSION_CHECK = "1";
+	}
+
+	if (process.platform === "win32") {
+		cleanupWindowsSelfUpdateQuarantine(getPackageDir());
 	}
 
 	if (await handlePackageCommand(args)) {
