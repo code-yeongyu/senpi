@@ -965,6 +965,43 @@ export class TUI extends Container {
 		this.previousHeight = height;
 	}
 
+	private renderScrollbackReplay(
+		newLines: string[],
+		cursorPos: { row: number; col: number } | null,
+		width: number,
+		height: number,
+		prevViewportTop: number,
+		hardwareCursorRow: number,
+	): void {
+		let buffer = "\x1b[?2026h";
+		buffer += this.deleteKittyImages(this.previousKittyImageIds);
+
+		const currentScreenRow = Math.max(0, Math.min(height - 1, hardwareCursorRow - prevViewportTop));
+		if (currentScreenRow > 0) {
+			buffer += `\x1b[${currentScreenRow}A`;
+		}
+
+		const bufferLength = Math.max(height, newLines.length);
+		for (let row = 0; row < bufferLength; row++) {
+			if (row > 0) buffer += "\r\n";
+			buffer += "\r\x1b[2K";
+			buffer += newLines[row] ?? "";
+		}
+
+		buffer += "\x1b[?2026l";
+		this.terminal.write(buffer);
+
+		this.cursorRow = Math.max(0, newLines.length - 1);
+		this.hardwareCursorRow = bufferLength - 1;
+		this.maxLinesRendered = newLines.length;
+		this.previousViewportTop = Math.max(0, bufferLength - height);
+		this.positionHardwareCursor(cursorPos, newLines.length);
+		this.previousLines = newLines;
+		this.previousKittyImageIds = this.collectKittyImageIds(newLines);
+		this.previousWidth = width;
+		this.previousHeight = height;
+	}
+
 	/** Splice overlay content into a base line at a specific column. Single-pass optimized. */
 	private compositeLineAt(
 		baseLine: string,
@@ -1259,8 +1296,7 @@ export class TUI extends Container {
 
 			if (firstVisibleChanged === -1) {
 				if (lineCountDelta !== 0) {
-					logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
-					fullRender(true);
+					this.renderScrollbackReplay(newLines, cursorPos, width, height, prevViewportTop, hardwareCursorRow);
 					return;
 				}
 

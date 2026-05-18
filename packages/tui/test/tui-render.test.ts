@@ -48,7 +48,7 @@ class ExpandableTranscriptComponent implements Component {
 	invalidate(): void {}
 }
 
-class MultipleExpandableTranscriptComponent implements Component {
+class MultipleExpandableToolTranscriptComponent implements Component {
 	private expanded = false;
 	readonly tail = Array.from({ length: 8 }, (_, index) => `tail row ${index}`);
 
@@ -57,13 +57,20 @@ class MultipleExpandableTranscriptComponent implements Component {
 	}
 
 	render(_width: number): string[] {
-		const upper = this.expanded
-			? Array.from({ length: 6 }, (_, index) => `upper expanded ${index}`)
-			: ["upper collapsed"];
-		const lower = this.expanded
-			? Array.from({ length: 6 }, (_, index) => `lower expanded ${index}`)
-			: ["lower collapsed"];
-		return [...upper, ...lower, ...this.tail];
+		const readBlock = this.expanded
+			? [
+					"read expanded lib.rs:210",
+					"pub until: Option<String>,",
+					"pub year: Option<String>,",
+					"pub scanner_settings: scanner::ScannerSettings,",
+					"pub struct DailyTotals {",
+					"pub tokens: i64,",
+				]
+			: ["read collapsed lib.rs:210-329"];
+		const toolBlock = this.expanded
+			? ["tool expanded bash", "stdout line 0", "stdout line 1", "stdout line 2", "stdout line 3", "stdout line 4"]
+			: ["tool collapsed bash output"];
+		return [...readBlock, ...toolBlock, ...this.tail];
 	}
 
 	invalidate(): void {}
@@ -122,6 +129,10 @@ function countOccurrences(text: string, needle: string): number {
 function countEscapeBytes(text: string): number {
 	const matches = text.match(/\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)|_[^\x07]*(?:\x07|\x1b\\)|[@-_])/g);
 	return matches?.reduce((total, match) => total + Buffer.byteLength(match), 0) ?? 0;
+}
+
+function getScrollbackSuffix(scrollback: string[], lineCount: number): string[] {
+	return scrollback.slice(Math.max(0, scrollback.length - lineCount));
 }
 
 function logFlickerBudgetMetrics(testName: string, metrics: FlickerBudgetMetrics): void {
@@ -462,7 +473,7 @@ describe("TUI viewport remap for above-viewport growth", () => {
 		tui.stop();
 	});
 
-	it("full-redraws when collapse changes scrollback above viewport", async () => {
+	it("replays scrollback without viewport clear when collapse changes hidden rows", async () => {
 		const terminal = new LoggingVirtualTerminal(72, 6);
 		const tui = new TUI(terminal);
 		const component = new ExpandableTranscriptComponent();
@@ -483,13 +494,18 @@ describe("TUI viewport remap for above-viewport growth", () => {
 
 		// then
 		const writes = terminal.getWrites();
-		assert.ok(tui.fullRedraws > initialFullRedraws, "Collapse should replay scrollback like upstream");
-		assert.ok(writes.includes("\x1b[2J"), "Collapse should clear the viewport");
-		assert.ok(writes.includes("\x1b[3J"), "Collapse should clear stale scrollback");
+		assert.strictEqual(tui.fullRedraws, initialFullRedraws, "Collapse should not full-redraw the viewport");
+		assert.ok(!writes.includes("\x1b[2J"), "Collapse should not clear the viewport");
+		assert.ok(!writes.includes("\x1b[3J"), "Collapse should not clear scrollback");
 		assert.strictEqual(
 			countOccurrences(writes, "\x1b[?2026h"),
 			countOccurrences(writes, "\x1b[?2026l"),
 			"Collapse should keep DECSET 2026 begin/end balanced",
+		);
+		assert.deepStrictEqual(
+			getScrollbackSuffix(terminal.getScrollBuffer(), 8),
+			["session title", "tools", "tail row 0", "tail row 1", "tail row 2", "tail row 3", "tail row 4", "tail row 5"],
+			"Latest canonical scrollback segment should be collapsed",
 		);
 		assert.deepStrictEqual(terminal.getViewport(), [
 			"tail row 0",
@@ -503,7 +519,7 @@ describe("TUI viewport remap for above-viewport growth", () => {
 		tui.stop();
 	});
 
-	it("keeps viewport stable across upstream-style Ctrl+O redraw toggles", async () => {
+	it("keeps viewport stable across flicker-free Ctrl+O replay toggles", async () => {
 		const terminal = new LoggingVirtualTerminal(72, 6);
 		const tui = new TUI(terminal);
 		const component = new ExpandableTranscriptComponent();
@@ -528,9 +544,9 @@ describe("TUI viewport remap for above-viewport growth", () => {
 
 		// then
 		const writes = terminal.getWrites();
-		assert.ok(tui.fullRedraws > initialFullRedraws, "Ctrl+O toggles should replay scrollback like upstream");
-		assert.ok(writes.includes("\x1b[2J"), "Ctrl+O toggles should clear the viewport");
-		assert.ok(writes.includes("\x1b[3J"), "Ctrl+O toggles should clear stale scrollback");
+		assert.strictEqual(tui.fullRedraws, initialFullRedraws, "Ctrl+O toggles should not full-redraw the viewport");
+		assert.ok(!writes.includes("\x1b[2J"), "Ctrl+O toggles should not clear the viewport");
+		assert.ok(!writes.includes("\x1b[3J"), "Ctrl+O toggles should not clear scrollback");
 		assert.strictEqual(
 			countOccurrences(writes, "\x1b[?2026h"),
 			countOccurrences(writes, "\x1b[?2026l"),
@@ -543,7 +559,7 @@ describe("TUI viewport remap for above-viewport growth", () => {
 	it("updates scrollback for every offscreen Ctrl+O-expanded block", async () => {
 		const terminal = new LoggingVirtualTerminal(72, 5);
 		const tui = new TUI(terminal);
-		const component = new MultipleExpandableTranscriptComponent();
+		const component = new MultipleExpandableToolTranscriptComponent();
 		tui.addChild(component);
 
 		component.setExpanded(false);
@@ -551,12 +567,12 @@ describe("TUI viewport remap for above-viewport growth", () => {
 		await terminal.waitForRender();
 
 		assert.ok(
-			terminal.getScrollBuffer().includes("upper collapsed"),
-			"Initial scrollback should contain upper block",
+			terminal.getScrollBuffer().includes("read collapsed lib.rs:210-329"),
+			"Initial scrollback should contain read block",
 		);
 		assert.ok(
-			terminal.getScrollBuffer().includes("lower collapsed"),
-			"Initial scrollback should contain lower block",
+			terminal.getScrollBuffer().includes("tool collapsed bash output"),
+			"Initial scrollback should contain tool block",
 		);
 		terminal.clearWrites();
 
@@ -567,13 +583,39 @@ describe("TUI viewport remap for above-viewport growth", () => {
 		await terminal.waitForRender();
 
 		const scrollback = terminal.getScrollBuffer();
-		assert.ok(tui.fullRedraws > initialFullRedraws, "Offscreen expansion should replay scrollback like upstream");
-		assert.ok(terminal.getWrites().includes("\x1b[2J"), "Offscreen expansion should clear the viewport");
-		assert.ok(terminal.getWrites().includes("\x1b[3J"), "Offscreen expansion should clear stale scrollback");
-		assert.ok(scrollback.includes("upper expanded 0"), "Upper offscreen block should expand in scrollback");
-		assert.ok(scrollback.includes("lower expanded 0"), "Lower offscreen block should expand in scrollback");
-		assert.ok(!scrollback.includes("upper collapsed"), "Upper collapsed row should not remain stale in scrollback");
-		assert.ok(!scrollback.includes("lower collapsed"), "Lower collapsed row should not remain stale in scrollback");
+		assert.strictEqual(
+			tui.fullRedraws,
+			initialFullRedraws,
+			"Offscreen expansion should not full-redraw the viewport",
+		);
+		assert.ok(!terminal.getWrites().includes("\x1b[2J"), "Offscreen expansion should not clear the viewport");
+		assert.ok(!terminal.getWrites().includes("\x1b[3J"), "Offscreen expansion should not clear scrollback");
+		assert.deepStrictEqual(
+			getScrollbackSuffix(scrollback, 20),
+			[
+				"read expanded lib.rs:210",
+				"pub until: Option<String>,",
+				"pub year: Option<String>,",
+				"pub scanner_settings: scanner::ScannerSettings,",
+				"pub struct DailyTotals {",
+				"pub tokens: i64,",
+				"tool expanded bash",
+				"stdout line 0",
+				"stdout line 1",
+				"stdout line 2",
+				"stdout line 3",
+				"stdout line 4",
+				"tail row 0",
+				"tail row 1",
+				"tail row 2",
+				"tail row 3",
+				"tail row 4",
+				"tail row 5",
+				"tail row 6",
+				"tail row 7",
+			],
+			"Latest canonical scrollback segment should include expanded read and tool blocks",
+		);
 		assert.deepStrictEqual(terminal.getViewport(), [
 			"tail row 3",
 			"tail row 4",

@@ -1,19 +1,19 @@
 # TUI delta rendering fork changes
 
-## 2026-05-18: upstream-style scrollback replay for offscreen expansion
+## 2026-05-18: flicker-free scrollback replay for offscreen expansion
 
 ### What changed
 
-- In `packages/tui/src/tui.ts` `TUI.doRender()`, structural changes that begin above the previous viewport now fall back to the upstream `fullRender(true)` replay path when the visible viewport would otherwise be unchanged.
-- In `packages/tui/test/tui-render.test.ts`, the Ctrl+O regression now checks xterm scrollback for multiple offscreen expanded blocks, not only the visible tail viewport.
+- In `packages/tui/src/tui.ts` `TUI.doRender()`, structural changes that begin above the previous viewport now replay the latest canonical transcript from the top of the visible viewport when the visible rows would otherwise be unchanged.
+- In `packages/tui/test/tui-render.test.ts`, the Ctrl+O regression now checks the latest xterm scrollback suffix for multiple offscreen expanded blocks, not only the visible tail viewport.
 
 ### Why
 
-- Terminal scrollback rows above the visible viewport cannot be rewritten in place. The earlier fork-only differential remap updated `previousLines` without rewriting hidden scrollback, so older collapsed tool/read blocks stayed visually collapsed while the bottom block appeared updated. Same-length hidden streaming churn and visible-row changes still use the differential path.
+- Terminal scrollback rows above the visible viewport cannot be rewritten in place. The earlier fork-only differential remap updated `previousLines` without writing a new canonical transcript, so older collapsed tool/read blocks stayed visually collapsed while the bottom block appeared updated. A full screen clear fixed the stale scrollback but reintroduced visible flicker, so the replay now avoids both `ESC[2J` and `ESC[3J` and validates the newest canonical suffix instead of trying to delete historical rows.
 
 ### Expected merge conflict zones
 
-- HIGH: `TUI.doRender()` around the `firstChanged < prevViewportTop` branch, because this intentionally restores upstream behavior after the fork's no-clear remap path.
+- HIGH: `TUI.doRender()` around the `firstChanged < prevViewportTop` branch, because this preserves the fork's no-viewport-clear behavior while adding a scrollback-only replay path.
 - LOW: `packages/tui/test/tui-render.test.ts` under `TUI viewport remap for above-viewport growth`.
 
 ## 2026-05-15: in-place repaint for above-viewport collapse
