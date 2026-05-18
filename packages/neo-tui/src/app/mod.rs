@@ -1,29 +1,30 @@
 //! Application loop and state container.
 //!
 //! Owns the terminal, drives a single `tokio::select!` loop multiplexing
-//! crossterm events + render ticks, dispatches incoming keys through
-//! the keymap, mutates per-component state, and (in a follow-up commit)
-//! forwards user intents to the RPC client.
+//! crossterm events + render ticks + inbound RPC frames, dispatches
+//! incoming keys through the keymap, mutates per-component state, and
+//! forwards user intents to the RPC backend.
 
 use std::{io::Stdout, time::Duration};
 
 use color_eyre::eyre::Result;
 use crossterm::{
     event::{
-        DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyEvent,
-        KeyEventKind, KeyModifiers,
+        DisableMouseCapture, EnableMouseCapture, Event as CrosstermEvent, EventStream, KeyCode,
+        KeyEvent, KeyEventKind, KeyModifiers,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures::StreamExt;
 use ratatui::{Frame, Terminal, backend::CrosstermBackend};
+use tokio::sync::mpsc;
 use tokio::time::{Instant, MissedTickBehavior, interval};
 
 use crate::{
     DEFAULT_DARK_THEME_JSON, DEFAULT_KEYMAP_JSON,
     components::{
-        chat::{self, ChatState, Message, Role},
+        chat::{self, ChatState, Message, Role, ToolCard, ToolStatus},
         footer::{self, FooterState, Status},
         header::{self, HeaderState},
         input::{self, InputState},
@@ -31,6 +32,11 @@ use crate::{
     keymap::{self, FocusMode, ResolvedKeymap},
     layout::{self, LayoutState},
     overlay::{HelpOverlay, Overlay, OverlayResult, PaletteOverlay, SlashOverlay},
+    rpc::{
+        client::{Inbound, RpcClient},
+        command::Command,
+        event::Event as RpcEvent,
+    },
     theme::{self, ResolvedTheme},
 };
 
@@ -62,7 +68,7 @@ pub enum AppAction {
     OpenModelPicker,
     /// Open the help overlay (?).
     OpenHelp,
-    /// Open the command palette (Ctrl+Shift+P).
+    /// Open the command palette (Alt+P).
     OpenPalette,
     /// Cycle the active model forward (true) or backward (false).
     CycleModel { forward: bool },
@@ -92,8 +98,8 @@ pub struct App {
     pub footer: FooterState,
     pub thinking_visible: bool,
     pub tools_expanded: bool,
-    /// Active overlay (Help / `ModelPicker` / Palette) drawn on top of
-    /// the chat view. `None` = no overlay.
+    /// Active overlay (Help / Slash / Palette) drawn on top of the
+    /// chat view. `None` = no overlay.
     pub overlay: Option<Overlay>,
 }
 
@@ -159,9 +165,7 @@ impl App {
         if event.kind != KeyEventKind::Press {
             return AppAction::Ignored;
         }
-        // If an overlay is open, it gets the key first. Mirrors the
-        // DeepSeek-TUI ViewStack pattern: modal overlays are exclusive,
-        // the chat view does not receive keystrokes while one is up.
+        // Modal overlays take the key first.
         if let Some(overlay) = self.overlay.as_mut() {
             match overlay.handle_key(event) {
                 OverlayResult::Close => {
@@ -177,6 +181,8 @@ impl App {
                 }
             }
         }
+        // Grok-CLI-style: `/` on an empty buffer opens the slash menu;
+        // `/` mid-prompt still inserts as a literal char.
         if matches!(self.focus, FocusMode::Input)
             && self.input.buffer.is_empty()
             && matches!(event.code, KeyCode::Char('/'))
@@ -189,9 +195,6 @@ impl App {
         }
         let id = self.keymap.dispatch(self.focus, &event);
         let Some(id) = id else {
-            // Unbound key in Input focus -> insert literal character.
-            // Skip when CTRL/ALT/SUPER held: those are dead chords the
-            // user did not intend as text.
             if matches!(self.focus, FocusMode::Input) {
                 if let KeyCode::Char(ch) = event.code {
                     let has_meta = event
@@ -205,23 +208,19 @@ impl App {
             }
             return AppAction::Ignored;
         };
-        // Borrow checker: keymap returns a &str into our own field, but
-        // execute_action mutates self. Clone the ID up-front.
         let id_owned = id.to_owned();
         self.execute_action(&id_owned)
     }
 
     fn execute_action(&mut self, id: &str) -> AppAction {
         match id {
-            // -- TUI-local app actions -------------------------------
             "app.exit" => {
                 if self.input.buffer.is_empty() {
                     AppAction::Quit
                 } else {
                     // Legacy senpi: Ctrl+D on a non-empty buffer falls
-                    // through to delete-char-forward. With cursor-at-end
-                    // there is nothing forward to delete, so this is a
-                    // no-op rather than a quit.
+                    // through to delete-char-forward, which is a no-op
+                    // at end-of-line.
                     AppAction::Consumed("tui.editor.deleteCharForward".into())
                 }
             }
@@ -230,7 +229,6 @@ impl App {
                 AppAction::Consumed(id.to_owned())
             }
             "app.interrupt" => AppAction::Interrupt,
-            // -- Model + thinking ------------------------------------
             "app.model.cycleForward" => AppAction::CycleModel { forward: true },
             "app.model.cycleBackward" => AppAction::CycleModel { forward: false },
             "app.model.select" => AppAction::OpenModelPicker,
@@ -248,7 +246,6 @@ impl App {
                 let text = std::mem::take(&mut self.input.buffer);
                 AppAction::FollowUp(text)
             }
-            // -- Editor primitives ------------------------------------
             "tui.input.submit" => {
                 let text = std::mem::take(&mut self.input.buffer);
                 if !text.is_empty() {
@@ -275,7 +272,6 @@ impl App {
                     AppAction::Consumed(id.to_owned())
                 }
             }
-            // -- neo-* additions --------------------------------------
             "neo.help" | "neo.help.open" => {
                 self.overlay = Some(Overlay::Help(HelpOverlay::from_keymap(&self.keymap)));
                 AppAction::OpenHelp
@@ -284,8 +280,133 @@ impl App {
                 self.overlay = Some(Overlay::Palette(PaletteOverlay::from_keymap(&self.keymap)));
                 AppAction::OpenPalette
             }
-            // -- Everything else is recognized but not yet acted on. --
             _ => AppAction::Consumed(id.to_owned()),
+        }
+    }
+
+    /// Translate a finished [`AppAction`] into the RPC [`Command`] the
+    /// backend should receive (if any). Returns `None` for actions
+    /// that stay purely TUI-local (overlay open/close, focus toggles,
+    /// quit, literal-char insertion, ...).
+    ///
+    /// `CycleModel { forward }` maps to `Command::CycleModel`
+    /// unconditionally because the wire protocol only supports forward
+    /// cycling today; the `forward` discriminator survives on
+    /// [`AppAction`] for future UI use.
+    #[must_use]
+    pub fn action_to_command(action: &AppAction) -> Option<Command> {
+        match action {
+            AppAction::SubmitPrompt(text) if !text.is_empty() => Some(Command::Prompt {
+                id: None,
+                message: text.clone(),
+                streaming_behavior: None,
+            }),
+            AppAction::FollowUp(text) if !text.is_empty() => Some(Command::FollowUp {
+                id: None,
+                message: text.clone(),
+            }),
+            AppAction::Interrupt => Some(Command::Abort { id: None }),
+            AppAction::CycleModel { .. } => Some(Command::CycleModel { id: None }),
+            AppAction::CycleThinkingLevel => Some(Command::CycleThinkingLevel { id: None }),
+            AppAction::OpenModelPicker => Some(Command::GetAvailableModels { id: None }),
+            _ => None,
+        }
+    }
+
+    /// Apply a single inbound RPC frame to the app's renderable state.
+    /// Streaming text accumulates in the last assistant message, tool
+    /// cards land as their own messages, and footer status tracks the
+    /// agent/turn lifecycle.
+    pub fn apply_inbound(&mut self, msg: Inbound) {
+        match msg {
+            Inbound::Event(event) => self.apply_event(event),
+            Inbound::Response(_) => {}
+        }
+    }
+
+    fn apply_event(&mut self, event: RpcEvent) {
+        match event {
+            RpcEvent::AgentStart => {
+                self.footer.status = Status::Busy;
+                self.footer.status_label = "thinking".into();
+            }
+            RpcEvent::AgentEnd { .. } | RpcEvent::MessageEnd { .. } => {
+                self.footer.status = Status::Idle;
+                self.footer.status_label = "idle".into();
+            }
+            RpcEvent::MessageStart { .. } => {
+                self.chat.messages.push(Message {
+                    role: Role::Assistant,
+                    body: String::new(),
+                    tool: None,
+                });
+                self.footer.status = Status::Streaming;
+                self.footer.status_label = "streaming".into();
+            }
+            RpcEvent::MessageUpdate {
+                assistant_message_event,
+                ..
+            } => {
+                let delta = assistant_message_event.as_ref().and_then(|v| {
+                    let kind = v.get("type").and_then(serde_json::Value::as_str)?;
+                    if kind == "text_delta" {
+                        v.get("delta").and_then(serde_json::Value::as_str)
+                    } else {
+                        None
+                    }
+                });
+                if let Some(text) = delta {
+                    if let Some(last) = self.chat.messages.last_mut() {
+                        if matches!(last.role, Role::Assistant) && last.tool.is_none() {
+                            last.body.push_str(text);
+                        }
+                    }
+                }
+            }
+            RpcEvent::ToolExecutionStart {
+                tool_name, args, ..
+            } => {
+                self.chat.messages.push(Message {
+                    role: Role::Assistant,
+                    body: String::new(),
+                    tool: Some(ToolCard {
+                        name: tool_name,
+                        status: ToolStatus::Running,
+                        summary: args.to_string(),
+                    }),
+                });
+                self.footer.status = Status::ToolRunning;
+                self.footer.status_label = "tool".into();
+            }
+            RpcEvent::ToolExecutionEnd {
+                tool_name, is_error, ..
+            } => {
+                for msg in self.chat.messages.iter_mut().rev() {
+                    if let Some(tool) = msg.tool.as_mut()
+                        && tool.name == tool_name
+                        && matches!(tool.status, ToolStatus::Running)
+                    {
+                        tool.status = if is_error {
+                            ToolStatus::Failed
+                        } else {
+                            ToolStatus::Success
+                        };
+                        break;
+                    }
+                }
+                self.footer.status = Status::Streaming;
+                self.footer.status_label = "streaming".into();
+            }
+            RpcEvent::ExtensionError { error, .. } => {
+                self.chat.messages.push(Message {
+                    role: Role::Error,
+                    body: error,
+                    tool: None,
+                });
+                self.footer.status = Status::Error;
+                self.footer.status_label = "error".into();
+            }
+            _ => {}
         }
     }
 }
@@ -371,6 +492,18 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result
     Ok(())
 }
 
+/// Spawn the RPC backend if `SENPI_NEO_BACKEND_BIN` is set in the
+/// environment. `SENPI_NEO_BACKEND_ARGS` carries any extra args as
+/// a whitespace-separated string. Returns `None` when env is unset or
+/// the spawn fails; the TUI falls back to render-only so demos,
+/// screenshots, and unit tests run with no backend present.
+fn maybe_spawn_backend() -> Option<RpcClient> {
+    let bin = std::env::var_os("SENPI_NEO_BACKEND_BIN")?;
+    let args_env = std::env::var("SENPI_NEO_BACKEND_ARGS").unwrap_or_default();
+    let args: Vec<String> = args_env.split_whitespace().map(str::to_owned).collect();
+    RpcClient::spawn(&bin, &args).ok()
+}
+
 async fn drive(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     config: AppConfig,
@@ -378,6 +511,20 @@ async fn drive(
     let demo_mode = config.demo_mode;
     let demo_seconds = config.demo_seconds;
     let mut app = App::from_config(config)?;
+
+    // Demo mode keeps the loop pure-render so screenshots and tests
+    // do not require a backend on the host. Production paths set
+    // SENPI_NEO_BACKEND_BIN to either senpi --mode rpc or the QA
+    // harness's senpi-neo-faux binary.
+    let mut backend: Option<RpcClient> = if demo_mode {
+        None
+    } else {
+        maybe_spawn_backend()
+    };
+    let mut inbound: Option<mpsc::Receiver<Inbound>> =
+        backend.as_mut().and_then(RpcClient::take_inbound);
+    let cmd_tx: Option<mpsc::Sender<Command>> =
+        backend.as_ref().map(RpcClient::command_sender);
 
     let mut events = EventStream::new();
     let mut render_tick = interval(Duration::from_millis(RENDER_INTERVAL_MS));
@@ -410,21 +557,47 @@ async fn drive(
                 app.input.focus_pulse = app.input.focus_pulse.wrapping_add(8);
             }
             ev = events.next() => {
-                if let Some(Ok(Event::Key(key))) = ev {
+                if let Some(Ok(CrosstermEvent::Key(key))) = ev {
                     if demo_mode
                         && matches!(key.code, KeyCode::Char('c'))
                         && key.modifiers.contains(KeyModifiers::CONTROL)
                     {
                         break;
                     }
-                    if !demo_mode && matches!(app.handle_key(key), AppAction::Quit) {
-                        break;
+                    if !demo_mode {
+                        let action = app.handle_key(key);
+                        if matches!(action, AppAction::Quit) {
+                            break;
+                        }
+                        if let (Some(tx), Some(cmd)) =
+                            (cmd_tx.as_ref(), App::action_to_command(&action))
+                        {
+                            let _ = tx.send(cmd).await;
+                        }
                     }
+                }
+            }
+            // 4th arm: drain inbound RPC frames when a backend is up.
+            // The async block stays Pending forever when `inbound` is
+            // None, so this arm never fires in render-only / demo mode.
+            inbound_msg = async {
+                match inbound.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending::<Option<Inbound>>().await,
+                }
+            } => {
+                match inbound_msg {
+                    Some(msg) => app.apply_inbound(msg),
+                    // Channel closed: null out the receiver so future
+                    // iterations skip this arm via the pending future.
+                    None => inbound = None,
                 }
             }
         }
     }
 
+    // RpcClient drops here; kill_on_drop reaps the child process.
+    drop(backend);
     Ok(())
 }
 
