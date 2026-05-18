@@ -118,6 +118,19 @@ send_keys() {
 
 # ----- Scenarios -----
 
+shot_baseline() {
+  local label="$1"
+  local w="$2"
+  local h="$3"
+  local out="$4"
+  local name="senpi-neo-shot-${label}"
+  new_session "$name" "$w" "$h"
+  send_keys "$name" "$TUI_BIN --demo --demo-seconds 600" Enter
+  sleep 1.4
+  render_pane "$name" "$w" "$h" "${OUT_DIR}/${out}"
+  tmux kill-session -t "$name" 2>/dev/null || true
+}
+
 shot_help() {
   local name="senpi-neo-shot-help"
   local w=140
@@ -142,7 +155,7 @@ shot_slash() {
   # leading slash on empty buffer -> SlashOverlay
   tmux send-keys -t "$name" "/"
   sleep 0.4
-  render_pane "$name" "$w" "$h" "${OUT_DIR}/07-slash-overlay-140x40.png"
+  render_pane "$name" "$w" "$h" "${OUT_DIR}/07-slash-menu-140x40.png"
   tmux kill-session -t "$name" 2>/dev/null || true
 }
 
@@ -192,13 +205,18 @@ shot_slash_filter() {
 
 main() {
   mkdir -p "$OUT_DIR"
+  shot_baseline narrow   80  24 01-narrow-80x24.png
+  shot_baseline mid120  120  40 02-mid-120x40.png
+  shot_baseline mid140  140  40 03-mid-140x40.png
+  shot_baseline wide    160  50 04-wide-160x50.png
+  shot_baseline e2e     140  40 05-senpi-neo-e2e-140x40.png
   shot_help
   shot_slash
   shot_palette
   shot_palette_filter
   shot_slash_filter
   echo "Captured PNGs under ${OUT_DIR}"
-  ls -1 "${OUT_DIR}" | grep -E '^(06|07|08|09|10)-'
+  ls -1 "${OUT_DIR}" | grep -E '^(0[1-9]|10)-'
 }
 
 main "$@"
