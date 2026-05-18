@@ -285,6 +285,33 @@ pub struct AppConfig {
     pub demo_seconds: Option<u64>,
 }
 
+impl App {
+    /// Build an [`App`] from an [`AppConfig`]. Uses the bundled keymap;
+    /// future iterations will load a user-override keymap from
+    /// `~/.senpi/agent/neo-keymap.json` if present.
+    pub fn from_config(config: AppConfig) -> Result<Self> {
+        let spec = keymap::parse(DEFAULT_KEYMAP_JSON)?;
+        let resolved = ResolvedKeymap::compile(&spec)?;
+        Ok(Self {
+            keymap: resolved,
+            focus: FocusMode::Input,
+            theme: config.theme,
+            header: config.header,
+            chat: config.initial_chat,
+            input: InputState {
+                buffer: String::new(),
+                placeholder: config.input_placeholder,
+                mode_label: "INPUT".into(),
+                focus_pulse: 0,
+            },
+            footer: config.footer,
+            thinking_visible: true,
+            tools_expanded: true,
+            overlay: None,
+        })
+    }
+}
+
 /// Run the TUI to completion. Restores the terminal on exit.
 pub async fn run(config: AppConfig) -> Result<()> {
     let mut terminal = init_terminal()?;
@@ -331,23 +358,9 @@ async fn drive(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     config: AppConfig,
 ) -> Result<()> {
-    let AppConfig {
-        theme,
-        initial_chat,
-        header,
-        mut footer,
-        input_placeholder,
-        demo_mode,
-        demo_seconds,
-    } = config;
-
-    let mut chat = initial_chat;
-    let mut input_state = InputState {
-        buffer: String::new(),
-        placeholder: input_placeholder,
-        mode_label: "INPUT".to_string(),
-        focus_pulse: 0,
-    };
+    let demo_mode = config.demo_mode;
+    let demo_seconds = config.demo_seconds;
+    let mut app = App::from_config(config)?;
 
     let mut events = EventStream::new();
     let mut render_tick = interval(Duration::from_millis(RENDER_INTERVAL_MS));
@@ -369,25 +382,25 @@ async fn drive(
         tokio::select! {
             biased;
             _ = render_tick.tick() => {
-                footer.spinner_glyph = SPINNER_FRAMES[spinner_idx];
-                footer.elapsed_secs = start.elapsed().as_secs();
+                app.footer.spinner_glyph = SPINNER_FRAMES[spinner_idx];
+                app.footer.elapsed_secs = start.elapsed().as_secs();
                 terminal.draw(|frame| {
-                    draw(frame, &theme, &header, &chat, &input_state, &footer);
+                    draw_app(frame, &app);
                 })?;
             }
             _ = spinner_tick.tick() => {
                 spinner_idx = (spinner_idx + 1) % SPINNER_FRAMES.len();
-                input_state.focus_pulse = input_state.focus_pulse.wrapping_add(8);
+                app.input.focus_pulse = app.input.focus_pulse.wrapping_add(8);
             }
             ev = events.next() => {
-                if let Some(Ok(event)) = ev {
-                    if handle_event(
-                        &event,
-                        &mut chat,
-                        &mut input_state,
-                        &mut footer,
-                        demo_mode,
-                    ) {
+                if let Some(Ok(Event::Key(key))) = ev {
+                    if demo_mode
+                        && matches!(key.code, KeyCode::Char('c'))
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        break;
+                    }
+                    if !demo_mode && matches!(app.handle_key(key), AppAction::Quit) {
                         break;
                     }
                 }
@@ -398,16 +411,9 @@ async fn drive(
     Ok(())
 }
 
-fn draw(
-    frame: &mut Frame<'_>,
-    theme: &ResolvedTheme,
-    header_state: &HeaderState,
-    chat_state: &ChatState,
-    input_state: &InputState,
-    footer_state: &FooterState,
-) {
+fn draw_app(frame: &mut Frame<'_>, app: &App) {
     let area = frame.area();
-    let line_count = input_state.buffer.lines().count().max(1);
+    let line_count = app.input.buffer.lines().count().max(1);
     let computed = layout::compute(
         area,
         LayoutState {
@@ -416,47 +422,12 @@ fn draw(
         },
     );
 
-    header::render(frame, computed.header, theme, header_state);
-    chat::render(frame, computed.chat, theme, chat_state);
-    input::render(frame, computed.input, theme, input_state);
-    footer::render(frame, computed.footer, theme, footer_state);
-}
+    header::render(frame, computed.header, &app.theme, &app.header);
+    chat::render(frame, computed.chat, &app.theme, &app.chat);
+    input::render(frame, computed.input, &app.theme, &app.input);
+    footer::render(frame, computed.footer, &app.theme, &app.footer);
 
-fn handle_event(
-    event: &Event,
-    _chat: &mut ChatState,
-    input_state: &mut InputState,
-    _footer: &mut FooterState,
-    demo_mode: bool,
-) -> bool {
-    let Event::Key(KeyEvent {
-        code,
-        modifiers,
-        kind,
-        ..
-    }) = event
-    else {
-        return false;
-    };
-    if *kind != KeyEventKind::Press {
-        return false;
-    }
-    if demo_mode {
-        if matches!(code, KeyCode::Char('c')) && modifiers.contains(KeyModifiers::CONTROL) {
-            return true;
-        }
-        return false;
-    }
-    match code {
-        KeyCode::Char('c' | 'd') if modifiers.contains(KeyModifiers::CONTROL) => true,
-        KeyCode::Backspace => {
-            input_state.buffer.pop();
-            false
-        }
-        KeyCode::Char(ch) => {
-            input_state.buffer.push(*ch);
-            false
-        }
-        _ => false,
+    if let Some(overlay) = app.overlay.as_ref() {
+        overlay.render(frame, area, &app.theme);
     }
 }
