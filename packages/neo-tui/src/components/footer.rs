@@ -56,7 +56,10 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &
 
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(20), Constraint::Length(right_width(area.width))])
+        .constraints([
+            Constraint::Min(20),
+            Constraint::Length(right_width(area.width, state.status)),
+        ])
         .split(area);
 
     let left = chunks[0];
@@ -96,31 +99,40 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &
     let right_line = if state.status == Status::Idle {
         Line::from(Span::raw(""))
     } else {
-        Line::from(vec![
-            Span::styled(
-                format!("ctx {:>3}% ", state.ctx_used_pct),
-                Style::default().fg(muted),
-            ),
-            Span::raw("│ "),
-            Span::styled(
+        let mut spans: Vec<Span<'_>> = Vec::new();
+        spans.push(Span::styled(
+            format!("ctx {:>3}% ", state.ctx_used_pct),
+            Style::default().fg(muted),
+        ));
+        if area.width >= 80 {
+            spans.push(Span::raw("│ "));
+            spans.push(Span::styled(
                 format!(
                     "{}↓ {}↑ ",
                     short_count(state.tokens_in),
                     short_count(state.tokens_out)
                 ),
                 Style::default().fg(text),
-            ),
-            Span::raw("│ "),
-            Span::styled(
+            ));
+        }
+        if area.width >= 110 {
+            spans.push(Span::raw("│ "));
+            spans.push(Span::styled(
                 state
                     .tps
                     .map_or_else(|| "  --t/s ".to_string(), |t| format!("{t:>3}t/s ")),
                 Style::default().fg(theme.token(Token::Info)),
-            ),
-            Span::raw("│ "),
-            Span::styled(format_elapsed(state.elapsed_secs), Style::default().fg(muted)),
-            Span::raw(" "),
-        ])
+            ));
+        }
+        if area.width >= 130 {
+            spans.push(Span::raw("│ "));
+            spans.push(Span::styled(
+                format_elapsed(state.elapsed_secs),
+                Style::default().fg(muted),
+            ));
+            spans.push(Span::raw(" "));
+        }
+        Line::from(spans)
     };
     let right_p = Paragraph::new(right_line)
         .alignment(Alignment::Right)
@@ -140,8 +152,19 @@ fn thinking_span(state: &FooterState, text: ratatui::style::Color) -> Span<'_> {
     )
 }
 
-const fn right_width(area_width: u16) -> u16 {
-    if area_width >= 100 { 56 } else { area_width / 2 }
+const fn right_width(area_width: u16, status: Status) -> u16 {
+    if matches!(status, Status::Idle) {
+        return 0;
+    }
+    if area_width >= 130 {
+        56
+    } else if area_width >= 110 {
+        44
+    } else if area_width >= 80 {
+        28
+    } else {
+        12
+    }
 }
 
 fn short_count(value: u64) -> String {
