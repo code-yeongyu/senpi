@@ -192,6 +192,19 @@ impl KeyChord {
                 }
             }
         }
+        // `shift+tab` ≡ `KeyCode::BackTab` on terminals that report the
+        // key that way (crossterm basic mode does this). Accept either
+        // `BackTab + NONE` or `BackTab + SHIFT` for a `shift+tab` chord.
+        if self.code == KeyCode::Tab
+            && self.mods.contains(KeyModifiers::SHIFT)
+            && event.code == KeyCode::BackTab
+        {
+            let event_extra = event.modifiers - KeyModifiers::SHIFT;
+            let chord_extra = self.mods - KeyModifiers::SHIFT;
+            if chord_extra == event_extra {
+                return true;
+            }
+        }
         false
     }
 }
