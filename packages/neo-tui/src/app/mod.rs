@@ -101,6 +101,10 @@ pub struct App {
     /// Active overlay (Help / Slash / Palette) drawn on top of the
     /// chat view. `None` = no overlay.
     pub overlay: Option<Overlay>,
+    /// `true` when the binary was launched with `--demo`. Drives the
+    /// sidebar visibility and other demo-only render switches so real
+    /// `senpi --neo` runs do not look like a fake streaming session.
+    pub demo_mode: bool,
 }
 
 impl App {
@@ -142,11 +146,10 @@ impl App {
             thinking_visible: true,
             tools_expanded: true,
             overlay: None,
+            demo_mode: false,
         })
     }
 
-    /// Read-only accessor used by tests and the renderer.
-    #[must_use]
     pub fn input_buffer(&self) -> &str {
         &self.input.buffer
     }
@@ -446,6 +449,7 @@ impl App {
             thinking_visible: true,
             tools_expanded: true,
             overlay: None,
+            demo_mode: config.demo_mode,
         })
     }
 }
@@ -616,11 +620,17 @@ async fn drive(
 fn draw_app(frame: &mut Frame<'_>, app: &App) {
     let area = frame.area();
     let line_count = app.input.buffer.lines().count().max(1);
+    // The sidebar shows demo metadata (todo list, file picker, etc.) and
+    // is only wired in demo mode for now. In real `senpi --neo` runs we
+    // keep the layout single-column so the chat reclaims the right edge
+    // instead of leaving a blank gutter.
+    let sidebar_visible =
+        app.demo_mode && area.width >= layout::SIDEBAR_MIN_TERMINAL_WIDTH;
     let computed = layout::compute(
         area,
         LayoutState {
             input_lines: u16::try_from(line_count).unwrap_or(1),
-            sidebar_visible: area.width >= layout::SIDEBAR_MIN_TERMINAL_WIDTH,
+            sidebar_visible,
         },
     );
 

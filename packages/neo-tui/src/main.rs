@@ -63,32 +63,67 @@ fn real_main() -> Result<()> {
     };
     let theme = theme::resolve(&theme::parse(&theme_json)?)?;
 
+    let cwd_display = std::env::current_dir().map_or_else(
+        |_| "?".into(),
+        |p| {
+            p.file_name()
+                .map_or_else(|| "/".into(), |s| s.to_string_lossy().into_owned())
+        },
+    );
+
+    // Demo mode keeps the fully-populated scene used for screenshots
+    // and tests. Real `senpi --neo` boots into an empty session with an
+    // idle footer so the user does not stare at a fake streaming run
+    // until a real RPC frame arrives.
+    let (initial_chat, header_state, footer_state) = if cli.demo {
+        (
+            chat::sample(),
+            HeaderState {
+                cwd: cwd_display,
+                session: "session: feat/neo-tui".into(),
+                branch: Some("feat/neo-tui".into()),
+            },
+            FooterState {
+                status: Status::Streaming,
+                status_label: "streaming response".into(),
+                model: "claude-opus-4-7".into(),
+                thinking: Some("max".into()),
+                tps: Some(84),
+                ctx_used_pct: 42,
+                tokens_in: 12_400,
+                tokens_out: 3_120,
+                elapsed_secs: 0,
+                spinner_glyph: '⠂',
+            },
+        )
+    } else {
+        (
+            chat::ChatState::default(),
+            HeaderState {
+                cwd: cwd_display,
+                session: String::new(),
+                branch: None,
+            },
+            FooterState {
+                status: Status::Idle,
+                status_label: "ready".into(),
+                model: String::new(),
+                thinking: None,
+                tps: None,
+                ctx_used_pct: 0,
+                tokens_in: 0,
+                tokens_out: 0,
+                elapsed_secs: 0,
+                spinner_glyph: '⠂',
+            },
+        )
+    };
+
     let config = AppConfig {
         theme,
-        initial_chat: chat::sample(),
-        header: HeaderState {
-            cwd: std::env::current_dir().map_or_else(
-                |_| "?".into(),
-                |p| {
-                    p.file_name()
-                        .map_or_else(|| "/".into(), |s| s.to_string_lossy().into_owned())
-                },
-            ),
-            session: "session: feat/neo-tui".into(),
-            branch: Some("feat/neo-tui".into()),
-        },
-        footer: FooterState {
-            status: Status::Streaming,
-            status_label: "streaming response".into(),
-            model: "claude-opus-4-7".into(),
-            thinking: Some("max".into()),
-            tps: Some(84),
-            ctx_used_pct: 42,
-            tokens_in: 12_400,
-            tokens_out: 3_120,
-            elapsed_secs: 0,
-            spinner_glyph: '⠂',
-        },
+        initial_chat,
+        header: header_state,
+        footer: footer_state,
         input_placeholder: "type your prompt here ".into(),
         demo_mode: cli.demo,
         // demo_seconds is a demo-mode option; outside demo mode we ignore

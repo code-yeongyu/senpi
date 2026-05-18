@@ -64,9 +64,16 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &
     let left = chunks[0];
     let right = chunks[1];
 
+    // Idle should not animate — render a static dot instead of the
+    // braille spinner that the run loop keeps advancing every 80ms.
+    let glyph_char = if state.status == Status::Idle {
+        '·'
+    } else {
+        state.spinner_glyph
+    };
     let left_line = Line::from(vec![
         Span::styled(
-            format!(" {} ", state.spinner_glyph),
+            format!(" {glyph_char} "),
             Style::default().fg(status_color).add_modifier(Modifier::BOLD),
         ),
         Span::styled(state.status_label.clone(), Style::default().fg(status_color)),
@@ -78,22 +85,30 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &
     let left_p = Paragraph::new(left_line).style(Style::default().bg(bg));
     frame.render_widget(left_p, left);
 
-    let right_line = Line::from(vec![
-        Span::styled(format!("ctx {:>3}% ", state.ctx_used_pct), Style::default().fg(muted)),
-        Span::raw("│ "),
-        Span::styled(
-            format!("{}↓ {}↑ ", short_count(state.tokens_in), short_count(state.tokens_out)),
-            Style::default().fg(text),
-        ),
-        Span::raw("│ "),
-        Span::styled(
-            state.tps.map_or_else(|| "  --t/s ".to_string(), |t| format!("{t:>3}t/s ")),
-            Style::default().fg(theme.token(Token::Info)),
-        ),
-        Span::raw("│ "),
-        Span::styled(format_elapsed(state.elapsed_secs), Style::default().fg(muted)),
-        Span::raw(" "),
-    ]);
+    // The right cluster (ctx % / tokens / tps / elapsed) only makes
+    // sense while a turn is actively running. In Idle we leave it blank
+    // so a fresh `senpi --neo` does not look like a fake in-flight
+    // session.
+    let right_line = if state.status == Status::Idle {
+        Line::from(Span::raw(""))
+    } else {
+        Line::from(vec![
+            Span::styled(format!("ctx {:>3}% ", state.ctx_used_pct), Style::default().fg(muted)),
+            Span::raw("│ "),
+            Span::styled(
+                format!("{}↓ {}↑ ", short_count(state.tokens_in), short_count(state.tokens_out)),
+                Style::default().fg(text),
+            ),
+            Span::raw("│ "),
+            Span::styled(
+                state.tps.map_or_else(|| "  --t/s ".to_string(), |t| format!("{t:>3}t/s ")),
+                Style::default().fg(theme.token(Token::Info)),
+            ),
+            Span::raw("│ "),
+            Span::styled(format_elapsed(state.elapsed_secs), Style::default().fg(muted)),
+            Span::raw(" "),
+        ])
+    };
     let right_p = Paragraph::new(right_line)
         .alignment(Alignment::Right)
         .style(Style::default().bg(bg));
