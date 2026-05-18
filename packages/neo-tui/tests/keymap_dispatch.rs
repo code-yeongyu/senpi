@@ -7,10 +7,11 @@
 //! the exact legacy binding ID, in the focus mode where that binding
 //! is meant to win.
 //!
-//! Together with the JSON parity test, this guarantees the Korean spec
-//! "단축키도 기존 tui 꺼랑 완전 다 호환되어야함" / "tui 에서의 단축키
-//! 동일성도 tdd 로 보장되어야한다": the user can press any legacy chord
-//! and get the legacy semantic, not just JSON that looks legacy.
+//! Together with the JSON parity test, this guarantees the user spec
+//! of "keybindings must be 100% compatible with the legacy TUI" AND
+//! "that compatibility must be guaranteed by TDD": the user can press
+//! any legacy chord and get the legacy semantic, not just JSON that
+//! looks legacy.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use senpi_neo_tui::keymap::{self, FocusMode, KeyChord, ResolvedKeymap};

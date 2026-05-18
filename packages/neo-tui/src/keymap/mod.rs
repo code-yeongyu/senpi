@@ -8,8 +8,8 @@
 //! The string vocabulary is the same one the legacy TS TUI uses, parsed
 //! by `packages/tui/src/keys.ts::matchesKey`. We mirror it here so the
 //! bundled `assets/keymaps/default.json` survives a verbatim round-trip
-//! and the Korean "단축키도 기존 tui 꺼랑 완전 다 호환되어야함" contract
-//! holds at runtime, not just on paper.
+//! and the "keymap fully compatible with the legacy TUI" contract holds
+//! at runtime, not just on paper.
 
 use std::collections::BTreeMap;
 

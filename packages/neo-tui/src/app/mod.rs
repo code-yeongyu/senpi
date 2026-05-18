@@ -30,6 +30,7 @@ use crate::{
     },
     keymap::{self, FocusMode, ResolvedKeymap},
     layout::{self, LayoutState},
+    overlay::{HelpOverlay, Overlay, OverlayResult},
     theme::{self, ResolvedTheme},
 };
 
@@ -91,6 +92,9 @@ pub struct App {
     pub footer: FooterState,
     pub thinking_visible: bool,
     pub tools_expanded: bool,
+    /// Active overlay (Help / `ModelPicker` / Palette) drawn on top of
+    /// the chat view. `None` = no overlay.
+    pub overlay: Option<Overlay>,
 }
 
 impl App {
@@ -131,6 +135,7 @@ impl App {
             },
             thinking_visible: true,
             tools_expanded: true,
+            overlay: None,
         })
     }
 
@@ -153,6 +158,20 @@ impl App {
     pub fn handle_key(&mut self, event: KeyEvent) -> AppAction {
         if event.kind != KeyEventKind::Press {
             return AppAction::Ignored;
+        }
+        // If an overlay is open, it gets the key first. Mirrors the
+        // DeepSeek-TUI ViewStack pattern: modal overlays are exclusive,
+        // the chat view does not receive keystrokes while one is up.
+        if let Some(overlay) = self.overlay.as_mut() {
+            match overlay.handle_key(event) {
+                OverlayResult::Close => {
+                    self.overlay = None;
+                    return AppAction::Consumed("(overlay-closed)".into());
+                }
+                OverlayResult::Continue => {
+                    return AppAction::Consumed("(overlay)".into());
+                }
+            }
         }
         let id = self.keymap.dispatch(self.focus, &event);
         let Some(id) = id else {
@@ -243,7 +262,10 @@ impl App {
                 }
             }
             // -- neo-* additions --------------------------------------
-            "neo.help" | "neo.help.open" => AppAction::OpenHelp,
+            "neo.help" | "neo.help.open" => {
+                self.overlay = Some(Overlay::Help(HelpOverlay::from_keymap(&self.keymap)));
+                AppAction::OpenHelp
+            }
             "neo.palette.open" => AppAction::OpenPalette,
             // -- Everything else is recognized but not yet acted on. --
             _ => AppAction::Consumed(id.to_owned()),

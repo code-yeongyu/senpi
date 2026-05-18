@@ -15,6 +15,7 @@ pub mod components;
 pub mod compositor;
 pub mod keymap;
 pub mod layout;
+pub mod overlay;
 pub mod rpc;
 pub mod term;
 pub mod theme;

@@ -5,8 +5,8 @@
 //! Locks the runtime parity contract between the new Rust TUI and the
 //! legacy TypeScript senpi TUI: every legacy chord produces the
 //! semantically equivalent app behavior, not just the same JSON
-//! binding entry. This is the test the user explicitly asked for in
-//! "tui 단축키 동일성도 tdd 로 보장되어야한다".
+//! binding entry. The user explicitly required this kind of TDD
+//! coverage on keybinding equivalence.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use senpi_neo_tui::app::{App, AppAction};
