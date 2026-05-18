@@ -214,8 +214,11 @@ impl InputState {
     }
 
     pub fn clear(&mut self) {
+        if self.buffer.is_empty() {
+            return;
+        }
         self.snapshot();
-        self.buffer.clear();
+        self.kill_ring.push(std::mem::take(&mut self.buffer));
         self.cursor = 0;
         self.preferred_column = None;
     }

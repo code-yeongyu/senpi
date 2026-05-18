@@ -668,3 +668,15 @@ fn ctrl_minus_undoes_last_edit() {
     app.handle_key(ev(KeyCode::Char('-'), KeyModifiers::CONTROL));
     assert_eq!(app.input_buffer(), "a");
 }
+
+#[test]
+fn ctrl_c_clear_pushes_buffer_to_kill_ring_for_yank() {
+    let mut app = fresh_app();
+    for ch in "hello".chars() {
+        app.handle_key(ev(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    app.handle_key(ev(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert!(app.input_buffer().is_empty());
+    app.handle_key(ev(KeyCode::Char('y'), KeyModifiers::CONTROL));
+    assert_eq!(app.input_buffer(), "hello");
+}
