@@ -47,6 +47,12 @@ const CHANGELOGS = [
 	"packages/web-ui/CHANGELOG.md",
 ];
 
+const PUBLIC_PACKAGE_DEPENDENCY_PINS = [
+	"@earendil-works/pi-agent-core",
+	"@earendil-works/pi-ai",
+	"@earendil-works/pi-tui",
+];
+
 function printUsage() {
 	const text = [
 		"Usage: node scripts/release.mjs [options]",
@@ -281,6 +287,49 @@ function runSyncVersions(dryRun) {
 	runCommand("node", ["scripts/sync-versions.js"]);
 }
 
+function getPublishedVersion(packageName) {
+	return captureCommand("npm", ["view", packageName, "version"]).trim();
+}
+
+function pinPublicPackageDependencies(dryRun) {
+	const file = "packages/coding-agent/package.json";
+	const raw = readFileSync(file, "utf-8");
+	const pkg = JSON.parse(raw);
+	const updates = [];
+
+	for (const depName of PUBLIC_PACKAGE_DEPENDENCY_PINS) {
+		const publishedVersion = getPublishedVersion(depName);
+		const newRange = `^${publishedVersion}`;
+		const currentRange = pkg.dependencies?.[depName];
+		if (currentRange !== newRange) {
+			updates.push({ depName, currentRange, newRange });
+			if (!dryRun) {
+				pkg.dependencies[depName] = newRange;
+			}
+		}
+	}
+
+	if (updates.length === 0) {
+		log("public package dependencies already point at published npm versions");
+		return;
+	}
+
+	log("pinning public package dependencies to published npm versions");
+	for (const update of updates) {
+		const previous = update.currentRange ?? "<missing>";
+		const message = `  ${update.depName}: ${previous} -> ${update.newRange}`;
+		if (dryRun) {
+			dryRunLog(message);
+		} else {
+			log(message);
+		}
+	}
+
+	if (!dryRun) {
+		writeFileSync(file, `${JSON.stringify(pkg, null, "\t")}\n`);
+	}
+}
+
 function gitAddAll(dryRun) {
 	if (dryRun) {
 		dryRunLog("git add -A");
@@ -346,6 +395,7 @@ function main() {
 
 	applyWorkspaceVersions(version, args.dryRun);
 	runSyncVersions(args.dryRun);
+	pinPublicPackageDependencies(args.dryRun);
 	stampChangelogs(version, date, args.dryRun);
 
 	gitAddAll(args.dryRun);
