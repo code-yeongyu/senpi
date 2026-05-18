@@ -493,15 +493,31 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result
 }
 
 /// Spawn the RPC backend if `SENPI_NEO_BACKEND_BIN` is set in the
-/// environment. `SENPI_NEO_BACKEND_ARGS` carries any extra args as
-/// a whitespace-separated string. Returns `None` when env is unset or
-/// the spawn fails; the TUI falls back to render-only so demos,
-/// screenshots, and unit tests run with no backend present.
+/// environment. `SENPI_NEO_BACKEND_ARGS` carries the extra args as a
+/// JSON-encoded string array so arguments with embedded whitespace
+/// (e.g. `--system-prompt "..."`) survive intact. Returns `None`
+/// when env is unset or the spawn fails; the TUI then falls back to
+/// render-only so demos, screenshots, and unit tests run with no
+/// backend present.
 fn maybe_spawn_backend() -> Option<RpcClient> {
     let bin = std::env::var_os("SENPI_NEO_BACKEND_BIN")?;
-    let args_env = std::env::var("SENPI_NEO_BACKEND_ARGS").unwrap_or_default();
-    let args: Vec<String> = args_env.split_whitespace().map(str::to_owned).collect();
+    let args = parse_backend_args(&std::env::var("SENPI_NEO_BACKEND_ARGS").unwrap_or_default());
     RpcClient::spawn(&bin, &args).ok()
+}
+
+/// Decode the `SENPI_NEO_BACKEND_ARGS` env value into a runnable arg
+/// vector. The Node-side dispatcher writes a JSON-encoded array; older
+/// callers may still pass a whitespace-separated string. Honors both
+/// to keep the contract forgiving while we transition.
+fn parse_backend_args(raw: &str) -> Vec<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    if let Ok(parsed) = serde_json::from_str::<Vec<String>>(trimmed) {
+        return parsed;
+    }
+    trimmed.split_whitespace().map(str::to_owned).collect()
 }
 
 async fn drive(
@@ -619,5 +635,43 @@ fn draw_app(frame: &mut Frame<'_>, app: &App) {
 
     if let Some(overlay) = app.overlay.as_ref() {
         overlay.render(frame, area, &app.theme);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_backend_args;
+
+    #[test]
+    fn parse_backend_args_decodes_json_array() {
+        let args = parse_backend_args(r#"["/path/to/cli.js","--mode","rpc"]"#);
+        assert_eq!(args, vec!["/path/to/cli.js", "--mode", "rpc"]);
+    }
+
+    #[test]
+    fn parse_backend_args_preserves_whitespace_in_json_values() {
+        let args = parse_backend_args(r#"["--system-prompt","be terse and direct","--mode","rpc"]"#);
+        assert_eq!(
+            args,
+            vec!["--system-prompt", "be terse and direct", "--mode", "rpc"],
+        );
+    }
+
+    #[test]
+    fn parse_backend_args_falls_back_to_whitespace_split() {
+        let args = parse_backend_args("--mode rpc --foo bar");
+        assert_eq!(args, vec!["--mode", "rpc", "--foo", "bar"]);
+    }
+
+    #[test]
+    fn parse_backend_args_empty_returns_empty_vec() {
+        assert!(parse_backend_args("").is_empty());
+        assert!(parse_backend_args("   ").is_empty());
+    }
+
+    #[test]
+    fn parse_backend_args_malformed_json_falls_back_to_whitespace() {
+        let args = parse_backend_args("[\"unterminated");
+        assert_eq!(args, vec!["[\"unterminated"]);
     }
 }

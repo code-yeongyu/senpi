@@ -475,6 +475,7 @@ export async function main(args: string[], options?: MainOptions) {
 			parsed,
 			originalArgv: args,
 			senpiBin: process.execPath,
+			senpiScript: process.argv[1] ?? "",
 		});
 		process.exit(code);
 	}

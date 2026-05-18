@@ -78,7 +78,15 @@ function resolveBinaryPath(): { path: string; source: string } | undefined {
 export interface RunNeoModeOptions {
 	parsed: Args;
 	originalArgv: readonly string[];
+	/**
+	 * Binary the Rust TUI spawns to talk to the senpi backend. In practice
+	 * this is `process.execPath` (Node) and `senpiScript` carries the path
+	 * to the senpi CLI script. Spawning Node directly avoids the
+	 * `senpi` shell-shim layer and works the same on every platform.
+	 */
 	senpiBin: string;
+	/** Absolute path to the senpi CLI JS entry, prepended to backend args. */
+	senpiScript: string;
 }
 
 /**
@@ -108,7 +116,10 @@ export async function runNeoMode(options: RunNeoModeOptions): Promise<number> {
 		console.log(chalk.dim(`neo-tui: launching ${located.path} (source: ${located.source})`));
 	}
 
-	const backendArgs = options.originalArgv.filter((arg) => arg !== "--neo").concat(["--mode", "rpc"]);
+	// senpi runs as `node <senpiScript> <args>` so prepend the script to
+	// the arg vector; `--mode rpc` switches the child into the JSONL RPC
+	// server that the Rust TUI talks to.
+	const backendArgs = [options.senpiScript, ...options.originalArgv.filter((arg) => arg !== "--neo"), "--mode", "rpc"];
 
 	const env = {
 		...process.env,
