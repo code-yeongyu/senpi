@@ -25,6 +25,11 @@ jobs:
           node-version: '24'
           cache: npm
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
       - name: Install system dependencies
         run: |
           sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
