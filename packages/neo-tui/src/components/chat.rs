@@ -95,29 +95,40 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &
 }
 
 fn render_message<'a>(theme: &ResolvedTheme, msg: &'a Message) -> Vec<Line<'a>> {
-    let bar_token = match msg.role {
+    let accent_token = match msg.role {
         Role::User => Token::UserMessageBar,
         Role::Assistant => Token::AssistantMessageBar,
         Role::System => Token::SystemMessageBar,
         Role::Error => Token::ErrorMessageBar,
     };
-    let label = match msg.role {
-        Role::User => "you",
-        Role::Assistant => "senpi",
-        Role::System => "system",
-        Role::Error => "error",
+    let (glyph, label) = match msg.role {
+        Role::User => ("›", "you"),
+        Role::Assistant => ("•", "senpi"),
+        Role::System => ("·", "system"),
+        Role::Error => ("!", "error"),
     };
-    let bar = theme.token(bar_token);
+    let accent = theme.token(accent_token);
     let text = theme.token(Token::Text);
+    let muted = theme.token(Token::TextMuted);
 
     let mut out: Vec<Line<'a>> = Vec::new();
-    out.push(Line::from(vec![
-        Span::styled("▌ ", Style::default().fg(bar).add_modifier(Modifier::BOLD)),
-        Span::styled(label, Style::default().fg(bar).add_modifier(Modifier::BOLD)),
-    ]));
-    for body_line in msg.body.lines() {
+    let header_style = Style::default().fg(accent).add_modifier(Modifier::BOLD);
+    let mut body_iter = msg.body.lines();
+    let first_body = body_iter.next();
+    let mut header_spans: Vec<Span<'a>> = vec![
+        Span::styled(format!("{glyph} "), header_style),
+        Span::styled(label, header_style),
+    ];
+    if let Some(first) = first_body {
+        if !first.is_empty() {
+            header_spans.push(Span::styled("  ", Style::default().fg(muted)));
+            header_spans.push(Span::styled(first, Style::default().fg(text)));
+        }
+    }
+    out.push(Line::from(header_spans));
+    for body_line in body_iter {
         out.push(Line::from(vec![
-            Span::styled("▌ ", Style::default().fg(bar)),
+            Span::raw("  "),
             Span::styled(body_line, Style::default().fg(text)),
         ]));
     }

@@ -41,14 +41,13 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &
         Line::from(""),
         Line::from(vec![
             Span::styled(
-                "▓▓ senpi",
+                "senpi",
                 Style::default().fg(primary).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                " neo ",
+                " neo",
                 Style::default().fg(secondary).add_modifier(Modifier::BOLD),
             ),
-            Span::styled("// ratatui · crossterm · tokio", Style::default().fg(muted)),
         ]),
         Line::from(""),
     ]);
