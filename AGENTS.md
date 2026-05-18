@@ -25,9 +25,10 @@
 
 - After code changes (not documentation changes): `npm run check` (get full output, no tail). Fix all errors, warnings, and infos before committing.
 - Note: `npm run check` does not run tests.
-- NEVER run: `npm run dev`, `npm test`
-- Only run specific tests if user instructs: `npx tsx ../../node_modules/vitest/dist/cli.js --run test/specific.test.ts`
-- Run tests from the package root, not the repo root.
+- NEVER run: `npm run dev`
+- `npm test` is allowed when the user asks for a full test run or when broad validation is needed.
+- For narrow changes, prefer specific tests: `npx tsx ../../node_modules/vitest/dist/cli.js --run test/specific.test.ts`
+- Run package-specific tests from the package root. Run `npm test` from the repo root when doing the full workspace test run.
 - If you create or modify a test file, you MUST run that test file and iterate until it passes.
 - When writing tests, run them, identify issues in either the test or implementation, and iterate until fixed.
 - For `packages/coding-agent/test/suite/`, use `test/suite/harness.ts` plus the faux provider. Do not use real provider APIs, real API keys, or paid tokens.
