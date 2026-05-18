@@ -10,8 +10,9 @@ use std::{io::Stdout, time::Duration};
 use color_eyre::eyre::Result;
 use crossterm::{
     event::{
-        DisableMouseCapture, EnableMouseCapture, Event as CrosstermEvent, EventStream, KeyCode,
-        KeyEvent, KeyEventKind, KeyModifiers,
+        DisableMouseCapture, EnableMouseCapture, Event as CrosstermEvent, EventStream, KeyCode, KeyEvent,
+        KeyEventKind, KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+        PushKeyboardEnhancementFlags,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -257,6 +258,12 @@ impl App {
                         body: text.clone(),
                         tool: None,
                     });
+                    // Reflect the submit immediately so the UI doesn't
+                    // sit at `idle` for the round-trip window before the
+                    // first AgentStart event arrives. apply_event will
+                    // overwrite the label as soon as real events flow.
+                    self.footer.status = Status::Busy;
+                    self.footer.status_label = "waiting".into();
                 }
                 AppAction::SubmitPrompt(text)
             }
@@ -366,9 +373,7 @@ impl App {
                     }
                 }
             }
-            RpcEvent::ToolExecutionStart {
-                tool_name, args, ..
-            } => {
+            RpcEvent::ToolExecutionStart { tool_name, args, .. } => {
                 self.chat.messages.push(Message {
                     role: Role::Assistant,
                     body: String::new(),
@@ -474,12 +479,22 @@ fn init_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
         let _ = disable_raw_mode();
         return Err(err.into());
     }
+    // Best-effort: enable Kitty keyboard protocol so the run loop can
+    // see `shift+enter` distinct from `enter` (and ctrl-letters with
+    // their original case). Terminals that ignore the escape silently
+    // fall back to legacy key reporting, so we deliberately do not fail
+    // the boot when this errors.
+    let _ = execute!(
+        stdout,
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
+    );
     let backend = CrosstermBackend::new(stdout);
     match Terminal::new(backend) {
         Ok(term) => Ok(term),
         Err(err) => {
             let _ = execute!(
                 std::io::stdout(),
+                PopKeyboardEnhancementFlags,
                 LeaveAlternateScreen,
                 DisableMouseCapture
             );
@@ -491,6 +506,7 @@ fn init_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
 
 fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     disable_raw_mode()?;
+    let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
     execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
     Ok(())
@@ -524,10 +540,7 @@ fn parse_backend_args(raw: &str) -> Vec<String> {
     trimmed.split_whitespace().map(str::to_owned).collect()
 }
 
-async fn drive(
-    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
-    config: AppConfig,
-) -> Result<()> {
+async fn drive(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: AppConfig) -> Result<()> {
     let demo_mode = config.demo_mode;
     let demo_seconds = config.demo_seconds;
     let mut app = App::from_config(config)?;
@@ -536,15 +549,9 @@ async fn drive(
     // do not require a backend on the host. Production paths set
     // SENPI_NEO_BACKEND_BIN to either senpi --mode rpc or the QA
     // harness's senpi-neo-faux binary.
-    let mut backend: Option<RpcClient> = if demo_mode {
-        None
-    } else {
-        maybe_spawn_backend()
-    };
-    let mut inbound: Option<mpsc::Receiver<Inbound>> =
-        backend.as_mut().and_then(RpcClient::take_inbound);
-    let cmd_tx: Option<mpsc::Sender<Command>> =
-        backend.as_ref().map(RpcClient::command_sender);
+    let mut backend: Option<RpcClient> = if demo_mode { None } else { maybe_spawn_backend() };
+    let mut inbound: Option<mpsc::Receiver<Inbound>> = backend.as_mut().and_then(RpcClient::take_inbound);
+    let cmd_tx: Option<mpsc::Sender<Command>> = backend.as_ref().map(RpcClient::command_sender);
 
     let mut events = EventStream::new();
     let mut render_tick = interval(Duration::from_millis(RENDER_INTERVAL_MS));
@@ -624,8 +631,7 @@ fn draw_app(frame: &mut Frame<'_>, app: &App) {
     // is only wired in demo mode for now. In real `senpi --neo` runs we
     // keep the layout single-column so the chat reclaims the right edge
     // instead of leaving a blank gutter.
-    let sidebar_visible =
-        app.demo_mode && area.width >= layout::SIDEBAR_MIN_TERMINAL_WIDTH;
+    let sidebar_visible = app.demo_mode && area.width >= layout::SIDEBAR_MIN_TERMINAL_WIDTH;
     let computed = layout::compute(
         area,
         LayoutState {

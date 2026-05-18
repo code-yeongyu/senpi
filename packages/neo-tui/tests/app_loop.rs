@@ -72,7 +72,9 @@ fn enter_in_input_focus_submits_prompt_and_clears_buffer() {
     // The submitted prompt appears as a user message in chat.
     let chat = app.chat_snapshot();
     assert!(
-        chat.messages.iter().any(|m| m.role == Role::User && m.body == "hi"),
+        chat.messages
+            .iter()
+            .any(|m| m.role == Role::User && m.body == "hi"),
         "user message should be appended to chat history",
     );
 }
@@ -384,10 +386,9 @@ fn action_to_command_maps_interrupt_to_abort() {
 
 #[test]
 fn action_to_command_maps_cycle_model_regardless_of_direction() {
-    let forward = App::action_to_command(&AppAction::CycleModel { forward: true })
-        .expect("forward must map");
-    let backward = App::action_to_command(&AppAction::CycleModel { forward: false })
-        .expect("backward must map");
+    let forward = App::action_to_command(&AppAction::CycleModel { forward: true }).expect("forward must map");
+    let backward =
+        App::action_to_command(&AppAction::CycleModel { forward: false }).expect("backward must map");
     // The wire protocol only carries forward cycling today; both
     // directions reduce to the same Command. The forward flag is
     // preserved on AppAction for future UI use.
@@ -397,15 +398,13 @@ fn action_to_command_maps_cycle_model_regardless_of_direction() {
 
 #[test]
 fn action_to_command_maps_cycle_thinking_level() {
-    let cmd =
-        App::action_to_command(&AppAction::CycleThinkingLevel).expect("thinking cycle must map");
+    let cmd = App::action_to_command(&AppAction::CycleThinkingLevel).expect("thinking cycle must map");
     assert!(matches!(cmd, Command::CycleThinkingLevel { .. }));
 }
 
 #[test]
 fn action_to_command_maps_open_model_picker_to_get_available_models() {
-    let cmd =
-        App::action_to_command(&AppAction::OpenModelPicker).expect("model picker must map");
+    let cmd = App::action_to_command(&AppAction::OpenModelPicker).expect("model picker must map");
     assert!(matches!(cmd, Command::GetAvailableModels { .. }));
 }
 

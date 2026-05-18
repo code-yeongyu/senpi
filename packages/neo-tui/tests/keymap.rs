@@ -30,10 +30,7 @@ const LEGACY_REGISTRY: &[(&str, &[&str])] = &[
     ("tui.editor.cursorDown", &["down"]),
     ("tui.editor.cursorLeft", &["left", "ctrl+b"]),
     ("tui.editor.cursorRight", &["right", "ctrl+f"]),
-    (
-        "tui.editor.cursorWordLeft",
-        &["alt+left", "ctrl+left", "alt+b"],
-    ),
+    ("tui.editor.cursorWordLeft", &["alt+left", "ctrl+left", "alt+b"]),
     (
         "tui.editor.cursorWordRight",
         &["alt+right", "ctrl+right", "alt+f"],
@@ -136,9 +133,7 @@ fn bundled_default_keymap_matches_legacy_senpi_registry_one_to_one() {
             Some(actual_keys) => {
                 let actual: Vec<&str> = actual_keys.iter().map(String::as_str).collect();
                 if actual.as_slice() != *expected_keys {
-                    drift.push(format!(
-                        "  - `{id}` legacy={expected_keys:?} neo={actual:?}"
-                    ));
+                    drift.push(format!("  - `{id}` legacy={expected_keys:?} neo={actual:?}"));
                 }
             }
         }
@@ -159,8 +154,7 @@ fn bundled_default_keymap_matches_legacy_senpi_registry_one_to_one() {
 #[test]
 fn extra_bindings_are_neo_namespaced() {
     let spec = keymap::parse(DEFAULT_JSON).expect("default keymap must parse");
-    let legacy_ids: std::collections::HashSet<&str> =
-        LEGACY_REGISTRY.iter().map(|(id, _)| *id).collect();
+    let legacy_ids: std::collections::HashSet<&str> = LEGACY_REGISTRY.iter().map(|(id, _)| *id).collect();
     let mut offenders: Vec<String> = Vec::new();
     for id in spec.bindings.keys() {
         if legacy_ids.contains(id.as_str()) {

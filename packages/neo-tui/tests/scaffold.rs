@@ -15,8 +15,8 @@ fn version_is_non_empty() {
 
 #[test]
 fn bundled_keymap_json_is_valid_json() {
-    let value: serde_json::Value = serde_json::from_str(DEFAULT_KEYMAP_JSON)
-        .expect("bundled default keymap must parse as JSON");
+    let value: serde_json::Value =
+        serde_json::from_str(DEFAULT_KEYMAP_JSON).expect("bundled default keymap must parse as JSON");
     assert!(
         value.get("bindings").is_some(),
         "keymap must have a bindings field"
@@ -27,8 +27,8 @@ fn bundled_keymap_json_is_valid_json() {
 
 #[test]
 fn bundled_dark_theme_json_is_valid_json() {
-    let value: serde_json::Value = serde_json::from_str(DEFAULT_DARK_THEME_JSON)
-        .expect("bundled dark theme must parse as JSON");
+    let value: serde_json::Value =
+        serde_json::from_str(DEFAULT_DARK_THEME_JSON).expect("bundled dark theme must parse as JSON");
     assert_eq!(
         value.get("name").and_then(serde_json::Value::as_str),
         Some("senpi-neo-dark"),

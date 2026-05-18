@@ -51,10 +51,7 @@ impl FromStr for Scenario {
 
 fn main() -> ExitCode {
     let scenario = parse_scenario().unwrap_or_default();
-    let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
+    let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
         Ok(rt) => rt,
         Err(err) => {
             eprintln!("senpi-neo-faux: failed to build tokio runtime: {err}");
@@ -76,9 +73,7 @@ fn parse_scenario() -> Result<Scenario> {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--scenario" => {
-                let value = args
-                    .next()
-                    .context("--scenario expects a value")?;
+                let value = args.next().context("--scenario expects a value")?;
                 scenario = Scenario::from_str(&value)?;
             }
             other if other.starts_with("--scenario=") => {
@@ -140,15 +135,8 @@ async fn handle_command(
     }
 }
 
-async fn handle_prompt(
-    scenario: Scenario,
-    id: Option<&Value>,
-    payload: &Value,
-) -> Result<()> {
-    let message = payload
-        .get("message")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+async fn handle_prompt(scenario: Scenario, id: Option<&Value>, payload: &Value) -> Result<()> {
+    let message = payload.get("message").and_then(|v| v.as_str()).unwrap_or("");
 
     match scenario {
         Scenario::Echo => {
@@ -195,7 +183,11 @@ async fn handle_prompt(
                 "toolName": "bash",
                 "args": {"command": "ls -la"},
             }))?;
-            for chunk in ["total 48\n", "drwxr-xr-x  Cargo.toml\n", "-rw-r--r--  README.md\n"] {
+            for chunk in [
+                "total 48\n",
+                "drwxr-xr-x  Cargo.toml\n",
+                "-rw-r--r--  README.md\n",
+            ] {
                 emit(&json!({
                     "type": "tool_execution_update",
                     "toolCallId": "call_demo",

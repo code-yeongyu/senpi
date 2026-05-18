@@ -26,7 +26,10 @@ pub struct LayoutState {
 
 impl Default for LayoutState {
     fn default() -> Self {
-        Self { input_lines: 1, sidebar_visible: false }
+        Self {
+            input_lines: 1,
+            sidebar_visible: false,
+        }
     }
 }
 
@@ -45,7 +48,10 @@ const MAX_INPUT_HEIGHT: u16 = 7 + INPUT_FRAME_OVERHEAD;
 #[must_use]
 pub fn compute(area: Rect, state: LayoutState) -> ComputedLayout {
     if area.width < 10 || area.height < 6 {
-        return ComputedLayout { header: area, ..ComputedLayout::default() };
+        return ComputedLayout {
+            header: area,
+            ..ComputedLayout::default()
+        };
     }
 
     let body_height = area.height.saturating_sub(HEADER_HEIGHT + FOOTER_HEIGHT);
@@ -79,7 +85,13 @@ pub fn compute(area: Rect, state: LayoutState) -> ComputedLayout {
         (body, None)
     };
 
-    ComputedLayout { header, chat, sidebar, input, footer }
+    ComputedLayout {
+        header,
+        chat,
+        sidebar,
+        input,
+        footer,
+    }
 }
 
 #[cfg(test)]
@@ -89,8 +101,16 @@ mod tests {
     #[test]
     fn compute_at_120_40_shows_sidebar() {
         let layout = compute(
-            Rect { x: 0, y: 0, width: 120, height: 40 },
-            LayoutState { input_lines: 1, sidebar_visible: true },
+            Rect {
+                x: 0,
+                y: 0,
+                width: 120,
+                height: 40,
+            },
+            LayoutState {
+                input_lines: 1,
+                sidebar_visible: true,
+            },
         );
         assert!(layout.sidebar.is_some(), "sidebar should appear at >=120 wide");
         assert_eq!(layout.header.height, 3);
@@ -100,8 +120,16 @@ mod tests {
     #[test]
     fn compute_at_80_24_no_sidebar() {
         let layout = compute(
-            Rect { x: 0, y: 0, width: 80, height: 24 },
-            LayoutState { input_lines: 1, sidebar_visible: true },
+            Rect {
+                x: 0,
+                y: 0,
+                width: 80,
+                height: 24,
+            },
+            LayoutState {
+                input_lines: 1,
+                sidebar_visible: true,
+            },
         );
         assert!(layout.sidebar.is_none(), "sidebar must hide at <120 wide");
         assert_eq!(layout.chat.x, 0);
@@ -111,12 +139,28 @@ mod tests {
     #[test]
     fn compute_clamps_input_lines() {
         let l1 = compute(
-            Rect { x: 0, y: 0, width: 100, height: 30 },
-            LayoutState { input_lines: 1, sidebar_visible: false },
+            Rect {
+                x: 0,
+                y: 0,
+                width: 100,
+                height: 30,
+            },
+            LayoutState {
+                input_lines: 1,
+                sidebar_visible: false,
+            },
         );
         let l9 = compute(
-            Rect { x: 0, y: 0, width: 100, height: 30 },
-            LayoutState { input_lines: 9, sidebar_visible: false },
+            Rect {
+                x: 0,
+                y: 0,
+                width: 100,
+                height: 30,
+            },
+            LayoutState {
+                input_lines: 9,
+                sidebar_visible: false,
+            },
         );
         assert!(l9.input.height > l1.input.height);
         assert!(l9.input.height <= MAX_INPUT_HEIGHT);
@@ -125,7 +169,12 @@ mod tests {
     #[test]
     fn compute_handles_tiny_terminal() {
         let layout = compute(
-            Rect { x: 0, y: 0, width: 5, height: 3 },
+            Rect {
+                x: 0,
+                y: 0,
+                width: 5,
+                height: 3,
+            },
             LayoutState::default(),
         );
         assert_eq!(layout.header.width, 5);

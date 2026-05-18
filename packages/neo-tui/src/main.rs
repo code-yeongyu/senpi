@@ -57,8 +57,9 @@ fn main() -> ExitCode {
 fn real_main() -> Result<()> {
     let cli = Cli::parse();
     let theme_json = match cli.theme.as_deref() {
-        Some(path) => std::fs::read_to_string(path)
-            .with_context(|| format!("reading theme json {}", path.display()))?,
+        Some(path) => {
+            std::fs::read_to_string(path).with_context(|| format!("reading theme json {}", path.display()))?
+        }
         None => DEFAULT_DARK_THEME_JSON.to_string(),
     };
     let theme = theme::resolve(&theme::parse(&theme_json)?)?;

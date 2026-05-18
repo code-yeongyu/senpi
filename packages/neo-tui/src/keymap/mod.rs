@@ -98,10 +98,7 @@ impl KeyChord {
                 "shift" => mods |= KeyModifiers::SHIFT,
                 "super" | "cmd" | "command" | "win" => mods |= KeyModifiers::SUPER,
                 _ => {
-                    return Err(KeymapError::InvalidChord(
-                        raw.to_owned(),
-                        "unknown modifier",
-                    ));
+                    return Err(KeymapError::InvalidChord(raw.to_owned(), "unknown modifier"));
                 }
             }
         }
@@ -132,18 +129,15 @@ impl KeyChord {
                     .parse()
                     .map_err(|_| KeymapError::InvalidChord(raw.to_owned(), "bad F-key"))?;
                 if !(1..=12).contains(&n) {
-                    return Err(KeymapError::InvalidChord(
-                        raw.to_owned(),
-                        "F-key out of range",
-                    ));
+                    return Err(KeymapError::InvalidChord(raw.to_owned(), "F-key out of range"));
                 }
                 KeyCode::F(n)
             }
             other => {
                 let mut chars = other.chars();
-                let first = chars.next().ok_or_else(|| {
-                    KeymapError::InvalidChord(raw.to_owned(), "empty key token")
-                })?;
+                let first = chars
+                    .next()
+                    .ok_or_else(|| KeymapError::InvalidChord(raw.to_owned(), "empty key token"))?;
                 if chars.next().is_some() {
                     return Err(KeymapError::InvalidChord(
                         raw.to_owned(),

@@ -44,7 +44,10 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &
                 "▓▓ senpi",
                 Style::default().fg(primary).add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" neo ", Style::default().fg(secondary).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                " neo ",
+                Style::default().fg(secondary).add_modifier(Modifier::BOLD),
+            ),
             Span::styled("// ratatui · crossterm · tokio", Style::default().fg(muted)),
         ]),
         Line::from(""),

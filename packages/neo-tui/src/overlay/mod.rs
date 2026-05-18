@@ -113,9 +113,7 @@ impl HelpOverlay {
             return OverlayResult::Continue;
         }
         match (event.code, event.modifiers) {
-            (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                OverlayResult::Close
-            }
+            (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => OverlayResult::Close,
             (KeyCode::Up, _) => {
                 if self.selected > 0 {
                     self.selected -= 1;
@@ -170,9 +168,7 @@ impl HelpOverlay {
             .iter()
             .filter(|e| {
                 e.action_id.to_ascii_lowercase().contains(&needle)
-                    || e.chords
-                        .iter()
-                        .any(|c| c.to_ascii_lowercase().contains(&needle))
+                    || e.chords.iter().any(|c| c.to_ascii_lowercase().contains(&needle))
             })
             .collect()
     }
@@ -208,10 +204,7 @@ impl HelpOverlay {
 
         let filter_line = if self.filter.is_empty() {
             Line::from(vec![
-                Span::styled(
-                    "filter: ",
-                    Style::default().fg(theme.token(Token::TextMuted)),
-                ),
+                Span::styled("filter: ", Style::default().fg(theme.token(Token::TextMuted))),
                 Span::styled(
                     "(type to filter, esc to close)",
                     Style::default().fg(theme.token(Token::TextMuted)),
@@ -219,10 +212,7 @@ impl HelpOverlay {
             ])
         } else {
             Line::from(vec![
-                Span::styled(
-                    "filter: ",
-                    Style::default().fg(theme.token(Token::TextMuted)),
-                ),
+                Span::styled("filter: ", Style::default().fg(theme.token(Token::TextMuted))),
                 Span::styled(
                     self.filter.clone(),
                     Style::default()
@@ -245,10 +235,7 @@ impl HelpOverlay {
                             .fg(theme.token(Token::Accent))
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(
-                        e.action_id.clone(),
-                        Style::default().fg(theme.token(Token::Text)),
-                    ),
+                    Span::styled(e.action_id.clone(), Style::default().fg(theme.token(Token::Text))),
                 ]))
             })
             .collect();
@@ -359,9 +346,7 @@ impl SlashOverlay {
             return OverlayResult::Continue;
         }
         match (event.code, event.modifiers) {
-            (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                OverlayResult::Close
-            }
+            (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => OverlayResult::Close,
             (KeyCode::Enter, _) => {
                 let filtered = self.filtered();
                 if filtered.is_empty() {
@@ -386,9 +371,7 @@ impl SlashOverlay {
                 self.selected = 0;
                 OverlayResult::Continue
             }
-            (KeyCode::Char(ch), mods)
-                if !mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-            {
+            (KeyCode::Char(ch), mods) if !mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {
                 self.filter.push(ch);
                 self.selected = 0;
                 OverlayResult::Continue
@@ -475,10 +458,7 @@ impl SlashOverlay {
                             .fg(theme.token(Token::Accent))
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(
-                        c.description,
-                        Style::default().fg(theme.token(Token::Text)),
-                    ),
+                    Span::styled(c.description, Style::default().fg(theme.token(Token::Text))),
                 ]))
             })
             .collect();
@@ -553,9 +533,7 @@ impl PaletteOverlay {
             return OverlayResult::Continue;
         }
         match (event.code, event.modifiers) {
-            (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                OverlayResult::Close
-            }
+            (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => OverlayResult::Close,
             (KeyCode::Enter, _) => {
                 let filtered = self.filtered();
                 if filtered.is_empty() {
@@ -580,9 +558,7 @@ impl PaletteOverlay {
                 self.selected = 0;
                 OverlayResult::Continue
             }
-            (KeyCode::Char(ch), mods)
-                if !mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-            {
+            (KeyCode::Char(ch), mods) if !mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {
                 self.query.push(ch);
                 self.selected = 0;
                 OverlayResult::Continue

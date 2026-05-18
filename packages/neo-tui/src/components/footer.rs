@@ -39,9 +39,7 @@ impl Status {
     const fn token(self) -> Token {
         match self {
             Self::Idle => Token::StatusIdle,
-            Self::Busy | Self::Streaming | Self::ToolRunning | Self::Compacting => {
-                Token::StatusBusy
-            }
+            Self::Busy | Self::Streaming | Self::ToolRunning | Self::Compacting => Token::StatusBusy,
             Self::Error => Token::StatusError,
         }
     }
@@ -71,17 +69,23 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &
     } else {
         state.spinner_glyph
     };
-    let left_line = Line::from(vec![
+    // Only render `model:<name>` when an actual model name is known
+    // so an empty production startup does not show a dangling `model:`
+    // label with nothing after the colon.
+    let mut left_spans = vec![
         Span::styled(
             format!(" {glyph_char} "),
             Style::default().fg(status_color).add_modifier(Modifier::BOLD),
         ),
         Span::styled(state.status_label.clone(), Style::default().fg(status_color)),
-        Span::raw("  "),
-        Span::styled("model:", Style::default().fg(muted)),
-        Span::styled(state.model.clone(), Style::default().fg(text)),
-        thinking_span(state, text),
-    ]);
+    ];
+    if !state.model.is_empty() {
+        left_spans.push(Span::raw("  "));
+        left_spans.push(Span::styled("model:", Style::default().fg(muted)));
+        left_spans.push(Span::styled(state.model.clone(), Style::default().fg(text)));
+        left_spans.push(thinking_span(state, text));
+    }
+    let left_line = Line::from(left_spans);
     let left_p = Paragraph::new(left_line).style(Style::default().bg(bg));
     frame.render_widget(left_p, left);
 
@@ -93,15 +97,24 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &
         Line::from(Span::raw(""))
     } else {
         Line::from(vec![
-            Span::styled(format!("ctx {:>3}% ", state.ctx_used_pct), Style::default().fg(muted)),
+            Span::styled(
+                format!("ctx {:>3}% ", state.ctx_used_pct),
+                Style::default().fg(muted),
+            ),
             Span::raw("│ "),
             Span::styled(
-                format!("{}↓ {}↑ ", short_count(state.tokens_in), short_count(state.tokens_out)),
+                format!(
+                    "{}↓ {}↑ ",
+                    short_count(state.tokens_in),
+                    short_count(state.tokens_out)
+                ),
                 Style::default().fg(text),
             ),
             Span::raw("│ "),
             Span::styled(
-                state.tps.map_or_else(|| "  --t/s ".to_string(), |t| format!("{t:>3}t/s ")),
+                state
+                    .tps
+                    .map_or_else(|| "  --t/s ".to_string(), |t| format!("{t:>3}t/s ")),
                 Style::default().fg(theme.token(Token::Info)),
             ),
             Span::raw("│ "),
@@ -115,16 +128,15 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &
     frame.render_widget(right_p, right);
 }
 
-fn thinking_span(
-    state: &FooterState,
-    text: ratatui::style::Color,
-) -> Span<'_> {
+fn thinking_span(state: &FooterState, text: ratatui::style::Color) -> Span<'_> {
     state.thinking.as_ref().map_or_else(
         || Span::raw(""),
-        |level| Span::styled(
-            format!(":{level}"),
-            Style::default().fg(text).add_modifier(Modifier::DIM),
-        ),
+        |level| {
+            Span::styled(
+                format!(":{level}"),
+                Style::default().fg(text).add_modifier(Modifier::DIM),
+            )
+        },
     )
 }
 

@@ -53,7 +53,10 @@ const DISPATCH_CASES: &[(&str, &[&str])] = &[
     ("tui.editor.cursorLeft", &["left", "ctrl+b"]),
     ("tui.editor.cursorRight", &["right", "ctrl+f"]),
     ("tui.editor.cursorWordLeft", &["alt+left", "ctrl+left", "alt+b"]),
-    ("tui.editor.cursorWordRight", &["alt+right", "ctrl+right", "alt+f"]),
+    (
+        "tui.editor.cursorWordRight",
+        &["alt+right", "ctrl+right", "alt+f"],
+    ),
     ("tui.editor.cursorLineStart", &["home", "ctrl+a"]),
     ("tui.editor.cursorLineEnd", &["end", "ctrl+e"]),
     ("tui.editor.jumpForward", &["ctrl+]"]),
@@ -138,9 +141,7 @@ fn every_declared_chord_dispatches_under_preferred_focus_mode() {
                         || winning.starts_with("tui.input.")
                         || winning.starts_with("app.")
                 }
-                FocusMode::Dialog => {
-                    winning.starts_with("tui.select.") || winning.starts_with("app.")
-                }
+                FocusMode::Dialog => winning.starts_with("tui.select.") || winning.starts_with("app."),
                 FocusMode::Normal => {
                     winning.starts_with("app.")
                         || winning.starts_with("tui.input.")
@@ -190,10 +191,7 @@ fn escape_resolves_to_app_interrupt_in_normal_and_select_cancel_in_dialog() {
     let rk = build_resolved();
     let esc = ev(KeyCode::Esc, KeyModifiers::NONE);
     assert_eq!(rk.dispatch(FocusMode::Normal, &esc), Some("app.interrupt"));
-    assert_eq!(
-        rk.dispatch(FocusMode::Dialog, &esc),
-        Some("tui.select.cancel"),
-    );
+    assert_eq!(rk.dispatch(FocusMode::Dialog, &esc), Some("tui.select.cancel"),);
 }
 
 /// `neo.*` bindings must never win over a legacy `app.*` binding for
@@ -226,10 +224,7 @@ fn unknown_chord_returns_none() {
 #[test]
 fn ctrl_letter_dispatch_accepts_shifted_event_form() {
     let rk = build_resolved();
-    let shifted_form = ev(
-        KeyCode::Char('A'),
-        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-    );
+    let shifted_form = ev(KeyCode::Char('A'), KeyModifiers::CONTROL | KeyModifiers::SHIFT);
     // The `ctrl+a` chord is bound to BOTH `tui.editor.cursorLineStart`
     // (editor focus) and `app.tree.filter.all` / `app.models.enableAll`
     // (other focuses). In Input focus, the editor binding must win.

@@ -8,11 +8,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use senpi_neo_tui::rpc::{
-    Inbound, RpcClient,
-    command::Command,
-    event::Event,
-};
+use senpi_neo_tui::rpc::{Inbound, RpcClient, command::Command, event::Event};
 use tokio::time::timeout;
 
 const T: Duration = Duration::from_secs(5);
@@ -57,8 +53,10 @@ async fn echo_scenario_roundtrip_response_then_stream() {
     assert!(matches!(ev, Event::AgentStart));
 
     // 3. Streaming text delta with our prompt echoed.
-    let Inbound::Event(Event::MessageUpdate { assistant_message_event, .. }) =
-        recv(&mut rx).await
+    let Inbound::Event(Event::MessageUpdate {
+        assistant_message_event,
+        ..
+    }) = recv(&mut rx).await
     else {
         panic!("expected MessageUpdate text_delta");
     };
@@ -67,7 +65,10 @@ async fn echo_scenario_roundtrip_response_then_stream() {
         .and_then(|v| v.get("delta"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    assert!(delta.contains("hello"), "delta should contain prompt text, got: {delta}");
+    assert!(
+        delta.contains("hello"),
+        "delta should contain prompt text, got: {delta}"
+    );
 
     // 4. Drain until agent_end. Tolerate intermediate frames.
     let mut saw_agent_end = false;
@@ -87,7 +88,9 @@ async fn abort_scenario_acknowledges_command() {
     let mut rx = client.take_inbound().expect("inbound channel");
 
     client
-        .send(Command::Abort { id: Some("ab-1".into()) })
+        .send(Command::Abort {
+            id: Some("ab-1".into()),
+        })
         .await
         .expect("send abort");
 
@@ -105,7 +108,9 @@ async fn cycle_model_scenario_returns_alt_model() {
     let mut rx = client.take_inbound().expect("inbound channel");
 
     client
-        .send(Command::CycleModel { id: Some("cm-1".into()) })
+        .send(Command::CycleModel {
+            id: Some("cm-1".into()),
+        })
         .await
         .expect("send cycle_model");
 
@@ -174,9 +179,5 @@ async fn error_scenario_returns_failed_response() {
     };
     assert_eq!(resp.command, "prompt");
     assert!(!resp.success);
-    assert!(
-        resp.error
-            .as_deref()
-            .is_some_and(|s| s.contains("simulated")),
-    );
+    assert!(resp.error.as_deref().is_some_and(|s| s.contains("simulated")),);
 }

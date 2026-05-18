@@ -32,7 +32,9 @@ fn parses_event_envelope() {
 fn tolerates_crlf_line_endings() {
     let line = "{\"type\":\"event\",\"event\":\"tick\"}\r\n";
     let parsed = envelope::parse_line(line).expect("must accept crlf-terminated line");
-    matches!(parsed, Envelope::Event(_)).then_some(()).expect("envelope is an event");
+    matches!(parsed, Envelope::Event(_))
+        .then_some(())
+        .expect("envelope is an event");
 }
 
 #[test]

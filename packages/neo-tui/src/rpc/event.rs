@@ -164,7 +164,11 @@ mod tests {
             "assistantMessageEvent": {"type": "text_delta", "delta": "hi"}
         }"#;
         let ev: Event = serde_json::from_str(payload).unwrap();
-        let Event::MessageUpdate { assistant_message_event, .. } = ev else {
+        let Event::MessageUpdate {
+            assistant_message_event,
+            ..
+        } = ev
+        else {
             panic!("expected MessageUpdate, got {ev:?}");
         };
         assert_eq!(
@@ -182,7 +186,12 @@ mod tests {
             "args": {"command": "ls"}
         }"#;
         let ev = parse_line(payload).unwrap();
-        let Event::ToolExecutionStart { tool_call_id, tool_name, args } = ev else {
+        let Event::ToolExecutionStart {
+            tool_call_id,
+            tool_name,
+            args,
+        } = ev
+        else {
             panic!("expected ToolExecutionStart");
         };
         assert_eq!(tool_call_id, "call_1");
@@ -231,7 +240,13 @@ mod tests {
             "errorMessage": "overloaded"
         }"#;
         let ev = parse_line(payload).unwrap();
-        let Event::AutoRetryStart { attempt, max_attempts, delay_ms, error_message } = ev else {
+        let Event::AutoRetryStart {
+            attempt,
+            max_attempts,
+            delay_ms,
+            error_message,
+        } = ev
+        else {
             panic!("expected AutoRetryStart");
         };
         assert_eq!(attempt, 1);
