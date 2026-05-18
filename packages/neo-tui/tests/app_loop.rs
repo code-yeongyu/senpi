@@ -680,3 +680,42 @@ fn ctrl_c_clear_pushes_buffer_to_kill_ring_for_yank() {
     app.handle_key(ev(KeyCode::Char('y'), KeyModifiers::CONTROL));
     assert_eq!(app.input_buffer(), "hello");
 }
+
+#[test]
+fn korean_hangul_inserts_at_cursor_and_backspace_deletes_one_grapheme() {
+    let mut app = fresh_app();
+    for ch in "한글".chars() {
+        app.handle_key(ev(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    assert_eq!(app.input_buffer(), "한글");
+    app.handle_key(ev(KeyCode::Backspace, KeyModifiers::NONE));
+    assert_eq!(app.input_buffer(), "한");
+    app.handle_key(ev(KeyCode::Backspace, KeyModifiers::NONE));
+    assert!(app.input_buffer().is_empty());
+}
+
+#[test]
+fn cursor_left_steps_one_grapheme_through_cjk() {
+    let mut app = fresh_app();
+    for ch in "abc한국".chars() {
+        app.handle_key(ev(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    app.handle_key(ev(KeyCode::Left, KeyModifiers::NONE));
+    app.handle_key(ev(KeyCode::Char('X'), KeyModifiers::NONE));
+    assert_eq!(app.input_buffer(), "abc한X국");
+}
+
+#[test]
+fn emoji_zwj_sequence_treated_as_one_grapheme() {
+    let mut app = fresh_app();
+    let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F466}";
+    for ch in family.chars() {
+        app.handle_key(ev(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    assert_eq!(app.input_buffer(), family);
+    app.handle_key(ev(KeyCode::Backspace, KeyModifiers::NONE));
+    assert!(
+        app.input_buffer().is_empty(),
+        "ZWJ family emoji must collapse in one backspace"
+    );
+}

@@ -10,9 +10,9 @@ use std::{io::Stdout, time::Duration};
 use color_eyre::eyre::Result;
 use crossterm::{
     event::{
-        DisableMouseCapture, EnableMouseCapture, Event as CrosstermEvent, EventStream, KeyCode, KeyEvent,
-        KeyEventKind, KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-        PushKeyboardEnhancementFlags,
+        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        Event as CrosstermEvent, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -128,7 +128,7 @@ impl App {
             chat: ChatState::default(),
             input: InputState {
                 buffer: String::new(),
-                placeholder: "type your prompt".into(),
+                placeholder: "Ask senpi anything…".into(),
                 mode_label: "INPUT".into(),
                 focus_pulse: 0,
                 cursor: 0,
@@ -613,6 +613,12 @@ fn init_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
         let _ = disable_raw_mode();
         return Err(err.into());
     }
+    // Bracketed paste lets the terminal deliver clipboard pastes as a
+    // single `CrosstermEvent::Paste(String)` instead of a flood of
+    // synthetic keypress events. Critical for CJK / IME paste which
+    // would otherwise stream through one composing char at a time and
+    // mangle the cursor.
+    let _ = execute!(stdout, EnableBracketedPaste);
     // Best-effort: enable Kitty keyboard protocol so the run loop can
     // see `shift+enter` distinct from `enter` (and ctrl-letters with
     // their original case). Terminals that ignore the escape silently
@@ -641,6 +647,7 @@ fn init_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
 fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     disable_raw_mode()?;
     let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+    let _ = execute!(std::io::stdout(), DisableBracketedPaste);
     execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
     Ok(())
@@ -718,20 +725,33 @@ async fn drive(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: AppCon
                 app.input.focus_pulse = app.input.focus_pulse.wrapping_add(8);
             }
             ev = events.next() => {
-                if let Some(Ok(CrosstermEvent::Key(key))) = ev {
-                    let action = app.handle_key(key);
-                    if matches!(action, AppAction::Quit) {
-                        break;
+                match ev {
+                    Some(Ok(CrosstermEvent::Key(key))) => {
+                        let action = app.handle_key(key);
+                        if matches!(action, AppAction::Quit) {
+                            break;
+                        }
+                        // RPC commands only fire when a backend is attached.
+                        // In demo mode `cmd_tx` is `None`, so AppActions that
+                        // would have produced a Command silently degrade to
+                        // local-only UI state changes (overlays, focus, etc.).
+                        if let (Some(tx), Some(cmd)) =
+                            (cmd_tx.as_ref(), App::action_to_command(&action))
+                        {
+                            let _ = tx.send(cmd).await;
+                        }
                     }
-                    // RPC commands only fire when a backend is attached.
-                    // In demo mode `cmd_tx` is `None`, so AppActions that
-                    // would have produced a Command silently degrade to
-                    // local-only UI state changes (overlays, focus, etc.).
-                    if let (Some(tx), Some(cmd)) =
-                        (cmd_tx.as_ref(), App::action_to_command(&action))
-                    {
-                        let _ = tx.send(cmd).await;
+                    Some(Ok(CrosstermEvent::Paste(text))) => {
+                        // Bracketed paste: the terminal hands us the
+                        // whole clipboard payload atomically. Splice
+                        // it into the input buffer at the cursor as
+                        // one undo-able operation; IME pastes of
+                        // multi-grapheme CJK strings stay intact.
+                        if matches!(app.focus, FocusMode::Input) {
+                            app.input.insert_str(&text);
+                        }
                     }
+                    _ => {}
                 }
             }
             // 4th arm: drain inbound RPC frames when a backend is up.

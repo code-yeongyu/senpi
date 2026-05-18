@@ -1,6 +1,6 @@
-//! Input editor frame. Real `tui-textarea` integration lands later;
-//! today this draws a bordered Paragraph with the typed buffer + a
-//! breathing accent border.
+//! Input editor frame. Grapheme-aware cursor model + unicode-width based
+//! render column so CJK / emoji / combining marks behave the way users
+//! expect.
 
 use ratatui::{
     Frame,
@@ -9,6 +9,8 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Padding, Paragraph},
 };
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::theme::{ResolvedTheme, Token};
 
@@ -20,18 +22,17 @@ pub struct InputState {
     pub mode_label: String,
     /// 0..=255 - drives the breathing border accent (T15).
     pub focus_pulse: u8,
-    /// Byte offset of the insertion caret into `buffer`. Always at a
-    /// UTF-8 char boundary; methods on `InputState` maintain that
-    /// invariant.
+    /// Byte offset of the insertion caret into `buffer`. Always on a
+    /// grapheme cluster boundary; the methods on `InputState` are
+    /// responsible for keeping it there so callers can splice text in
+    /// without splitting CJK / emoji / combining-mark sequences.
     pub cursor: usize,
-    /// Sticky preferred column for vertical cursor moves. Set by
-    /// horizontal moves; honoured by `cursor_up` / `cursor_down` so a
-    /// short line in the middle of a wider buffer doesn't permanently
-    /// clamp the column.
+    /// Sticky preferred display column for vertical cursor moves. Set
+    /// by horizontal moves; honoured by `cursor_up` / `cursor_down` so
+    /// a short line in the middle of a wider buffer does not
+    /// permanently clamp the column.
     pub preferred_column: Option<usize>,
-    /// Single-entry kill ring used by `yank` / `yank_pop`. Populated by
-    /// `delete_word_backward/forward`, `delete_to_line_start/end`, and
-    /// the legacy `tui.input.copy` "clear" gesture.
+    /// Single-entry kill ring used by `yank` / `yank_pop`.
     pub kill_ring: Vec<String>,
     /// Snapshot history for `undo`. Pushed on every mutation that
     /// produces a user-visible change; popped by `tui.editor.undo`.
@@ -39,7 +40,11 @@ pub struct InputState {
 }
 
 impl InputState {
-    /// Insert a single character at the cursor and advance.
+    /// Insert a single character at the cursor and advance by its
+    /// UTF-8 byte length. CJK / emoji that arrive as a single `char`
+    /// land cleanly because each grapheme is a single character; IMEs
+    /// that deliver pre-composition chars are still rendered as the
+    /// user types and resolved when the IME commits.
     pub fn insert_char(&mut self, ch: char) {
         self.snapshot();
         self.buffer.insert(self.cursor, ch);
@@ -47,62 +52,53 @@ impl InputState {
         self.preferred_column = None;
     }
 
-    /// Insert a literal newline at the cursor (shift+enter).
     pub fn insert_newline(&mut self) {
         self.insert_char('\n');
     }
 
-    /// Delete the char before the cursor, if any.
-    pub fn delete_char_backward(&mut self) {
-        if self.cursor == 0 {
+    /// Insert a complete string (typically a paste-burst or a yank).
+    pub fn insert_str(&mut self, text: &str) {
+        if text.is_empty() {
             return;
         }
         self.snapshot();
-        let prev = self.buffer[..self.cursor]
-            .chars()
-            .next_back()
-            .map_or(0, char::len_utf8);
-        let start = self.cursor - prev;
+        self.buffer.insert_str(self.cursor, text);
+        self.cursor += text.len();
+        self.preferred_column = None;
+    }
+
+    pub fn delete_char_backward(&mut self) {
+        let Some(start) = self.prev_grapheme_boundary() else {
+            return;
+        };
+        self.snapshot();
         self.buffer.replace_range(start..self.cursor, "");
         self.cursor = start;
         self.preferred_column = None;
     }
 
-    /// Delete the char at the cursor, if any.
     pub fn delete_char_forward(&mut self) {
-        if self.cursor >= self.buffer.len() {
+        let Some(end) = self.next_grapheme_boundary() else {
             return;
-        }
+        };
         self.snapshot();
-        let len = self.buffer[self.cursor..]
-            .chars()
-            .next()
-            .map_or(0, char::len_utf8);
-        self.buffer.replace_range(self.cursor..self.cursor + len, "");
+        self.buffer.replace_range(self.cursor..end, "");
         self.preferred_column = None;
     }
 
     pub fn cursor_left(&mut self) {
-        if self.cursor == 0 {
+        let Some(start) = self.prev_grapheme_boundary() else {
             return;
-        }
-        let prev = self.buffer[..self.cursor]
-            .chars()
-            .next_back()
-            .map_or(0, char::len_utf8);
-        self.cursor -= prev;
+        };
+        self.cursor = start;
         self.preferred_column = None;
     }
 
     pub fn cursor_right(&mut self) {
-        if self.cursor >= self.buffer.len() {
+        let Some(end) = self.next_grapheme_boundary() else {
             return;
-        }
-        let next = self.buffer[self.cursor..]
-            .chars()
-            .next()
-            .map_or(0, char::len_utf8);
-        self.cursor += next;
+        };
+        self.cursor = end;
         self.preferred_column = None;
     }
 
@@ -121,42 +117,29 @@ impl InputState {
         self.preferred_column = None;
     }
 
+    /// Move the cursor one Unicode word boundary to the left. Falls
+    /// back to a single grapheme step if the search has nowhere to go,
+    /// keeping the cursor responsive on buffers made entirely of
+    /// punctuation or symbols.
     pub fn cursor_word_left(&mut self) {
-        let mut idx = self.cursor;
-        let bytes = self.buffer.as_bytes();
-        while idx > 0
-            && let Some(b) = bytes.get(idx - 1)
-            && !b.is_ascii_alphanumeric()
-        {
-            idx -= 1;
-        }
-        while idx > 0
-            && let Some(b) = bytes.get(idx - 1)
-            && b.is_ascii_alphanumeric()
-        {
-            idx -= 1;
-        }
-        self.cursor = idx;
+        let prefix = &self.buffer[..self.cursor];
+        let target = prefix
+            .split_word_bound_indices()
+            .rev()
+            .find(|(_, w)| w.chars().any(char::is_alphanumeric))
+            .map(|(i, _)| i);
+        self.cursor = target.unwrap_or_else(|| self.prev_grapheme_boundary().unwrap_or(0));
         self.preferred_column = None;
     }
 
+    /// Move the cursor one Unicode word boundary to the right.
     pub fn cursor_word_right(&mut self) {
-        let len = self.buffer.len();
-        let mut idx = self.cursor;
-        let bytes = self.buffer.as_bytes();
-        while idx < len
-            && let Some(b) = bytes.get(idx)
-            && b.is_ascii_alphanumeric()
-        {
-            idx += 1;
-        }
-        while idx < len
-            && let Some(b) = bytes.get(idx)
-            && !b.is_ascii_alphanumeric()
-        {
-            idx += 1;
-        }
-        self.cursor = idx;
+        let suffix = &self.buffer[self.cursor..];
+        let target = suffix
+            .split_word_bound_indices()
+            .find(|(_, w)| w.chars().any(char::is_alphanumeric))
+            .map(|(i, w)| self.cursor + i + w.len());
+        self.cursor = target.unwrap_or_else(|| self.next_grapheme_boundary().unwrap_or(self.buffer.len()));
         self.preferred_column = None;
     }
 
@@ -223,8 +206,6 @@ impl InputState {
         self.preferred_column = None;
     }
 
-    /// Move the buffer out of the input and reset state for the next
-    /// prompt. Used by submit / follow-up.
     pub fn take_buffer(&mut self) -> String {
         self.cursor = 0;
         self.preferred_column = None;
@@ -239,9 +220,33 @@ impl InputState {
         }
     }
 
-    fn column_of_cursor(&self) -> usize {
+    fn prev_grapheme_boundary(&self) -> Option<usize> {
+        if self.cursor == 0 {
+            return None;
+        }
+        self.buffer[..self.cursor]
+            .grapheme_indices(true)
+            .next_back()
+            .map(|(i, _)| i)
+    }
+
+    fn next_grapheme_boundary(&self) -> Option<usize> {
+        if self.cursor >= self.buffer.len() {
+            return None;
+        }
+        self.buffer[self.cursor..]
+            .grapheme_indices(true)
+            .nth(1)
+            .map(|(i, _)| self.cursor + i)
+            .or(Some(self.buffer.len()))
+    }
+
+    /// Display column of the cursor within its current line, in
+    /// terminal cells. CJK / emoji contribute 2 cells each so the
+    /// caret lands on the same column the user can see.
+    fn display_column(&self) -> usize {
         let line_start = self.buffer[..self.cursor].rfind('\n').map_or(0, |i| i + 1);
-        self.buffer[line_start..self.cursor].chars().count()
+        UnicodeWidthStr::width(&self.buffer[line_start..self.cursor])
     }
 
     fn nth_line_start(&self, target_line: usize) -> Option<usize> {
@@ -264,7 +269,7 @@ impl InputState {
         self.buffer[..self.cursor].bytes().filter(|&b| b == b'\n').count()
     }
 
-    fn move_to_line(&mut self, target_line: usize, desired_column: usize) {
+    fn move_to_display_column(&mut self, target_line: usize, desired_column: usize) {
         let Some(line_start) = self.nth_line_start(target_line) else {
             return;
         };
@@ -272,18 +277,17 @@ impl InputState {
         let line_end = next_nl.map_or(self.buffer.len(), |off| line_start + off);
         let mut col = 0usize;
         let mut byte = line_start;
-        for (idx, ch) in self.buffer[line_start..line_end].char_indices() {
-            if col == desired_column {
-                byte = line_start + idx;
-                break;
+        for (offset, grapheme) in self.buffer[line_start..line_end].grapheme_indices(true) {
+            let grapheme_width = UnicodeWidthStr::width(grapheme);
+            if col + grapheme_width > desired_column {
+                byte = line_start + offset;
+                self.cursor = byte;
+                return;
             }
-            col += 1;
-            byte = line_start + idx + ch.len_utf8();
+            col += grapheme_width;
+            byte = line_start + offset + grapheme.len();
         }
-        if col < desired_column {
-            byte = line_end;
-        }
-        self.cursor = byte;
+        self.cursor = byte.min(line_end);
     }
 
     pub fn cursor_up(&mut self) {
@@ -292,9 +296,9 @@ impl InputState {
             self.cursor = 0;
             return;
         }
-        let desired = self.preferred_column.unwrap_or_else(|| self.column_of_cursor());
+        let desired = self.preferred_column.unwrap_or_else(|| self.display_column());
         self.preferred_column = Some(desired);
-        self.move_to_line(line - 1, desired);
+        self.move_to_display_column(line - 1, desired);
     }
 
     pub fn cursor_down(&mut self) {
@@ -304,9 +308,9 @@ impl InputState {
             self.cursor = self.buffer.len();
             return;
         }
-        let desired = self.preferred_column.unwrap_or_else(|| self.column_of_cursor());
+        let desired = self.preferred_column.unwrap_or_else(|| self.display_column());
         self.preferred_column = Some(desired);
-        self.move_to_line(line + 1, desired);
+        self.move_to_display_column(line + 1, desired);
     }
 
     pub fn page_up(&mut self) {
@@ -321,10 +325,6 @@ impl InputState {
         }
     }
 
-    /// Paste the most recently killed text at the cursor. Legacy
-    /// senpi treats `Ctrl+Y` as "yank latest kill", so we read the
-    /// front of the ring without rotating it; `yank_pop` walks back
-    /// in time.
     pub fn yank(&mut self) {
         if let Some(text) = self.kill_ring.last().cloned() {
             self.snapshot();
@@ -333,9 +333,6 @@ impl InputState {
         }
     }
 
-    /// Replace the most recently yanked text with the previous kill
-    /// ring entry. Matches the emacs `M-y` (yank-pop) gesture the
-    /// legacy TUI binds via `alt+y`.
     pub fn yank_pop(&mut self) {
         if self.kill_ring.len() < 2 {
             return;
@@ -363,6 +360,10 @@ impl InputState {
 }
 
 /// Render the input frame into the given rect.
+///
+/// Codex-inspired styling: flush left chevron prompt prefix, dim
+/// placeholder hint that stays after the caret on empty input, and a
+/// thin rounded border that becomes a breathing accent on focus.
 pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &InputState) {
     if area.height < 3 || area.width < 4 {
         return;
@@ -370,22 +371,17 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &
     let border = theme.token(Token::BorderActive);
     let muted = theme.token(Token::TextMuted);
     let text = theme.token(Token::Text);
+    let accent = theme.token(Token::Primary);
     let element_bg = theme.token(Token::BackgroundElement);
     let bg = theme.token(Token::Background);
 
-    let title = Line::from(vec![
-        Span::styled(
-            format!(" {} ", state.mode_label),
-            Style::default().fg(text).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "│ ↵ submit · ⇧↵ newline · @ files · / commands · ^P palette",
-            Style::default().fg(muted),
-        ),
-    ]);
+    let title = Line::from(vec![Span::styled(
+        "  shift+enter  newline · enter  send · /  commands · ctrl+p  palette · ?  help",
+        Style::default().fg(muted),
+    )]);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Plain)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border))
         .style(Style::default().bg(bg))
         .padding(Padding::horizontal(1))
@@ -394,21 +390,37 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    let prompt = Span::styled("› ", Style::default().fg(accent).add_modifier(Modifier::BOLD));
     let body_style = Style::default().bg(element_bg);
-    let cursor_glyph = Span::styled("█", Style::default().fg(border).add_modifier(Modifier::BOLD));
+    let cursor_glyph = Span::styled(
+        "▏",
+        Style::default()
+            .fg(accent)
+            .add_modifier(Modifier::BOLD | Modifier::RAPID_BLINK),
+    );
+
     let content: Vec<Line<'_>> = if state.buffer.is_empty() {
         vec![Line::from(vec![
-            Span::styled(state.placeholder.clone(), Style::default().fg(muted)),
-            cursor_glyph,
+            prompt.clone(),
+            cursor_glyph.clone(),
+            Span::styled(
+                state.placeholder.clone(),
+                Style::default().fg(muted).add_modifier(Modifier::ITALIC),
+            ),
         ])]
     } else {
         let cursor = state.cursor.min(state.buffer.len());
         let mut byte_offset = 0usize;
         let mut lines: Vec<Line<'_>> = Vec::new();
-        for raw in state.buffer.split('\n') {
+        for (line_idx, raw) in state.buffer.split('\n').enumerate() {
             let line_start = byte_offset;
             let line_end = byte_offset + raw.len();
             let mut spans: Vec<Span<'_>> = Vec::new();
+            if line_idx == 0 {
+                spans.push(prompt.clone());
+            } else {
+                spans.push(Span::raw("  "));
+            }
             if cursor >= line_start && cursor <= line_end {
                 let split = cursor - line_start;
                 if split > 0 {

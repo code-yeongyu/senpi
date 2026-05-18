@@ -127,7 +127,7 @@ fn real_main() -> Result<()> {
         initial_chat,
         header: header_state,
         footer: footer_state,
-        input_placeholder: "type your prompt here ".into(),
+        input_placeholder: "Ask senpi anything, or paste / drop / type · / for commands".into(),
         demo_mode: cli.demo,
         // demo_seconds is a demo-mode option; outside demo mode we ignore
         // it so a stray `--demo-seconds 5` does not auto-exit a real
