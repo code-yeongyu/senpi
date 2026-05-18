@@ -198,9 +198,9 @@ fn escape_resolves_to_app_interrupt_in_normal_and_select_cancel_in_dialog() {
 
 /// `neo.*` bindings must never win over a legacy `app.*` binding for
 /// the same chord. The bundled JSON does NOT currently share chords
-/// between namespaces (neo uses ctrl+shift+p, app uses ctrl+p), but
-/// this test pins the precedence so a future neo binding addition
-/// cannot silently regress legacy behavior.
+/// between namespaces (neo uses alt+p for the palette, app uses ctrl+p
+/// for model cycle), but this test pins the precedence so a future neo
+/// binding addition cannot silently regress legacy behavior.
 #[test]
 fn neo_namespace_never_shadows_app_namespace_in_normal_mode() {
     let rk = build_resolved();
