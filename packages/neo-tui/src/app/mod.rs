@@ -30,7 +30,7 @@ use crate::{
     },
     keymap::{self, FocusMode, ResolvedKeymap},
     layout::{self, LayoutState},
-    overlay::{HelpOverlay, Overlay, OverlayResult},
+    overlay::{HelpOverlay, Overlay, OverlayResult, PaletteOverlay, SlashOverlay},
     theme::{self, ResolvedTheme},
 };
 
@@ -171,7 +171,21 @@ impl App {
                 OverlayResult::Continue => {
                     return AppAction::Consumed("(overlay)".into());
                 }
+                OverlayResult::Selected(picked) => {
+                    self.overlay = None;
+                    return self.execute_action(&picked);
+                }
             }
+        }
+        if matches!(self.focus, FocusMode::Input)
+            && self.input.buffer.is_empty()
+            && matches!(event.code, KeyCode::Char('/'))
+            && !event
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+        {
+            self.overlay = Some(Overlay::Slash(SlashOverlay::new()));
+            return AppAction::Consumed("(slash-opened)".into());
         }
         let id = self.keymap.dispatch(self.focus, &event);
         let Some(id) = id else {
@@ -266,7 +280,10 @@ impl App {
                 self.overlay = Some(Overlay::Help(HelpOverlay::from_keymap(&self.keymap)));
                 AppAction::OpenHelp
             }
-            "neo.palette.open" => AppAction::OpenPalette,
+            "neo.palette.open" => {
+                self.overlay = Some(Overlay::Palette(PaletteOverlay::from_keymap(&self.keymap)));
+                AppAction::OpenPalette
+            }
             // -- Everything else is recognized but not yet acted on. --
             _ => AppAction::Consumed(id.to_owned()),
         }

@@ -11,6 +11,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use senpi_neo_tui::app::{App, AppAction};
 use senpi_neo_tui::components::chat::Role;
+use senpi_neo_tui::overlay::Overlay;
 
 const fn ev(code: KeyCode, mods: KeyModifiers) -> KeyEvent {
     KeyEvent {
@@ -167,4 +168,180 @@ fn neo_question_mark_opens_help_overlay() {
         matches!(action, AppAction::OpenHelp | AppAction::Consumed(_)),
         "got {action:?}",
     );
+}
+
+#[test]
+fn slash_on_empty_input_opens_slash_overlay() {
+    let mut app = fresh_app();
+    assert!(app.overlay.is_none(), "no overlay open at start");
+    let action = app.handle_key(ev(KeyCode::Char('/'), KeyModifiers::NONE));
+    assert_eq!(action, AppAction::Consumed("(slash-opened)".into()));
+    assert!(
+        matches!(app.overlay, Some(Overlay::Slash(_))),
+        "slash overlay must be open, got {:?}",
+        app.overlay.is_some(),
+    );
+    assert_eq!(
+        app.input_buffer(),
+        "",
+        "`/` must not leak into the input buffer when it opens the menu",
+    );
+}
+
+#[test]
+fn slash_in_nonempty_input_inserts_literal_character() {
+    let mut app = fresh_app();
+    app.handle_key(ev(KeyCode::Char('h'), KeyModifiers::NONE));
+    app.handle_key(ev(KeyCode::Char('i'), KeyModifiers::NONE));
+    let action = app.handle_key(ev(KeyCode::Char('/'), KeyModifiers::NONE));
+    assert_eq!(action, AppAction::Consumed("(literal)".into()));
+    assert!(app.overlay.is_none(), "must not open slash overlay mid-prompt");
+    assert_eq!(app.input_buffer(), "hi/");
+}
+
+#[test]
+fn slash_overlay_enter_dispatches_selected_action() {
+    let mut app = fresh_app();
+    app.handle_key(ev(KeyCode::Char('/'), KeyModifiers::NONE));
+    // First slash entry is `/help` -> action_id `neo.help`, which
+    // opens the help overlay (replacing the slash one).
+    let action = app.handle_key(ev(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(action, AppAction::OpenHelp);
+    assert!(
+        matches!(app.overlay, Some(Overlay::Help(_))),
+        "selecting /help must swap the slash overlay for the help overlay",
+    );
+}
+
+#[test]
+fn slash_overlay_filter_then_enter_dispatches_app_exit() {
+    let mut app = fresh_app();
+    app.handle_key(ev(KeyCode::Char('/'), KeyModifiers::NONE));
+    for ch in "quit".chars() {
+        app.handle_key(ev(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    let action = app.handle_key(ev(KeyCode::Enter, KeyModifiers::NONE));
+    // `/quit` maps to `app.exit`; with an empty buffer this resolves
+    // to AppAction::Quit per the legacy Ctrl+D semantics.
+    assert_eq!(action, AppAction::Quit);
+}
+
+#[test]
+fn slash_overlay_esc_closes_and_releases_input() {
+    let mut app = fresh_app();
+    app.handle_key(ev(KeyCode::Char('/'), KeyModifiers::NONE));
+    let action = app.handle_key(ev(KeyCode::Esc, KeyModifiers::NONE));
+    assert_eq!(action, AppAction::Consumed("(overlay-closed)".into()));
+    assert!(app.overlay.is_none());
+    // The next keystroke should land in the input buffer, not in any
+    // stale overlay state.
+    app.handle_key(ev(KeyCode::Char('a'), KeyModifiers::NONE));
+    assert_eq!(app.input_buffer(), "a");
+}
+
+#[test]
+fn alt_p_opens_palette_overlay() {
+    let mut app = fresh_app();
+    let action = app.handle_key(ev(KeyCode::Char('p'), KeyModifiers::ALT));
+    assert_eq!(action, AppAction::OpenPalette);
+    assert!(
+        matches!(app.overlay, Some(Overlay::Palette(_))),
+        "Alt+P must open the command palette overlay",
+    );
+}
+
+#[test]
+fn shift_ctrl_p_does_not_open_palette_after_rebind() {
+    let mut app = fresh_app();
+    // After the chord rebind, shift+ctrl+p hits the legacy
+    // app.model.cycleBackward binding and must NOT open the palette.
+    let action = app.handle_key(ev(
+        KeyCode::Char('p'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(action, AppAction::CycleModel { forward: false });
+    assert!(app.overlay.is_none());
+}
+
+#[test]
+fn palette_filter_then_enter_dispatches_interrupt_action() {
+    let mut app = fresh_app();
+    app.handle_key(ev(KeyCode::Char('p'), KeyModifiers::ALT));
+    for ch in "app.interrupt".chars() {
+        app.handle_key(ev(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    let action = app.handle_key(ev(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(action, AppAction::Interrupt);
+    assert!(
+        app.overlay.is_none(),
+        "palette overlay must close after dispatching the selected action",
+    );
+}
+
+#[test]
+fn slash_typed_in_empty_buffer_opens_slash_overlay() {
+    let mut app = fresh_app();
+    let action = app.handle_key(ev(KeyCode::Char('/'), KeyModifiers::NONE));
+    let AppAction::Consumed(label) = action else {
+        panic!("expected Consumed(slash-opened), got {action:?}");
+    };
+    assert_eq!(label, "(slash-opened)");
+    assert!(matches!(app.overlay, Some(Overlay::Slash(_))));
+}
+
+#[test]
+fn slash_typed_in_nonempty_buffer_inserts_literally() {
+    let mut app = fresh_app();
+    app.handle_key(ev(KeyCode::Char('h'), KeyModifiers::NONE));
+    app.handle_key(ev(KeyCode::Char('i'), KeyModifiers::NONE));
+    let action = app.handle_key(ev(KeyCode::Char('/'), KeyModifiers::NONE));
+    let AppAction::Consumed(label) = action else {
+        panic!("expected literal Consumed, got {action:?}");
+    };
+    assert_eq!(label, "(literal)");
+    assert!(app.overlay.is_none(), "must not open slash menu mid-prompt");
+    assert_eq!(app.input_buffer(), "hi/");
+}
+
+#[test]
+fn slash_overlay_enter_dispatches_first_command_via_selected() {
+    let mut app = fresh_app();
+    app.handle_key(ev(KeyCode::Char('/'), KeyModifiers::NONE));
+    assert!(matches!(app.overlay, Some(Overlay::Slash(_))));
+    // First slash command is `/help` -> `neo.help` -> opens the help overlay.
+    let action = app.handle_key(ev(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(action, AppAction::OpenHelp);
+    assert!(matches!(app.overlay, Some(Overlay::Help(_))));
+}
+
+#[test]
+fn alt_p_opens_command_palette() {
+    let mut app = fresh_app();
+    let action = app.handle_key(ev(KeyCode::Char('p'), KeyModifiers::ALT));
+    assert_eq!(action, AppAction::OpenPalette);
+    assert!(matches!(app.overlay, Some(Overlay::Palette(_))));
+}
+
+#[test]
+fn ctrl_shift_p_no_longer_opens_palette_after_rebind() {
+    let mut app = fresh_app();
+    let action = app.handle_key(ev(
+        KeyCode::Char('p'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(action, AppAction::CycleModel { forward: false });
+    assert!(
+        app.overlay.is_none(),
+        "ctrl+shift+p must NOT open the palette after the rebind to alt+p",
+    );
+}
+
+#[test]
+fn esc_closes_open_overlay() {
+    let mut app = fresh_app();
+    app.handle_key(ev(KeyCode::Char('p'), KeyModifiers::ALT));
+    assert!(matches!(app.overlay, Some(Overlay::Palette(_))));
+    let action = app.handle_key(ev(KeyCode::Esc, KeyModifiers::NONE));
+    assert_eq!(action, AppAction::Consumed("(overlay-closed)".into()));
+    assert!(app.overlay.is_none());
 }
