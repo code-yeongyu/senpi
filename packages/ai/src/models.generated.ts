@@ -7340,9 +7340,9 @@ export const MODELS = {
 		"big-pickle": {
 			id: "big-pickle",
 			name: "Big Pickle",
-			api: "openai-completions",
+			api: "anthropic-messages",
 			provider: "opencode",
-			baseUrl: "https://opencode.ai/zen/v1",
+			baseUrl: "https://opencode.ai/zen",
 			reasoning: true,
 			input: ["text"],
 			cost: {
@@ -7353,7 +7353,7 @@ export const MODELS = {
 			},
 			contextWindow: 200000,
 			maxTokens: 128000,
-		} satisfies Model<"openai-completions">,
+		} satisfies Model<"anthropic-messages">,
 		"claude-haiku-4-5": {
 			id: "claude-haiku-4-5",
 			name: "Claude Haiku 4.5",
