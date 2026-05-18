@@ -574,22 +574,18 @@ async fn drive(
             }
             ev = events.next() => {
                 if let Some(Ok(CrosstermEvent::Key(key))) = ev {
-                    if demo_mode
-                        && matches!(key.code, KeyCode::Char('c'))
-                        && key.modifiers.contains(KeyModifiers::CONTROL)
-                    {
+                    let action = app.handle_key(key);
+                    if matches!(action, AppAction::Quit) {
                         break;
                     }
-                    if !demo_mode {
-                        let action = app.handle_key(key);
-                        if matches!(action, AppAction::Quit) {
-                            break;
-                        }
-                        if let (Some(tx), Some(cmd)) =
-                            (cmd_tx.as_ref(), App::action_to_command(&action))
-                        {
-                            let _ = tx.send(cmd).await;
-                        }
+                    // RPC commands only fire when a backend is attached.
+                    // In demo mode `cmd_tx` is `None`, so AppActions that
+                    // would have produced a Command silently degrade to
+                    // local-only UI state changes (overlays, focus, etc.).
+                    if let (Some(tx), Some(cmd)) =
+                        (cmd_tx.as_ref(), App::action_to_command(&action))
+                    {
+                        let _ = tx.send(cmd).await;
                     }
                 }
             }
