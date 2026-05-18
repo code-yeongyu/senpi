@@ -1,7 +1,13 @@
 //! RPC client: subprocess `senpi --mode rpc` + JSONL line codec.
 //!
-//! Real client lands in T6 (Wave 2). The envelope module declares the
-//! wire-level types so other modules and the RED tests in T2 can reference
-//! them now.
+//! - [`envelope`] - wire-level `type: response` / `type: event` discriminator
+//! - [`command`]  - typed commands sent on the child's stdin
+//! - [`event`]    - typed events parsed from the child's stdout
+//! - [`client`]   - tokio subprocess wrapper with bidirectional channels
 
+pub mod client;
+pub mod command;
 pub mod envelope;
+pub mod event;
+
+pub use client::{ClientError, Inbound, RpcClient};

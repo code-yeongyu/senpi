@@ -37,6 +37,7 @@ tokio = { version = "1", features = [
     "time",
     "process",
     "io-util",
+    "io-std",
     "fs",
     "signal",
 ] }
