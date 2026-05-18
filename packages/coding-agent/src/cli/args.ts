@@ -43,6 +43,12 @@ export interface Args {
 	listModels?: string | true;
 	offline?: boolean;
 	verbose?: boolean;
+	/**
+	 * Launch the experimental native Rust + ratatui TUI (`senpi-neo-tui`)
+	 * instead of the default interactive TUI. Only honored when the app
+	 * mode resolves to `interactive`.
+	 */
+	neo?: boolean;
 	messages: string[];
 	fileArgs: string[];
 	/** Unknown flags (potentially extension flags) - map of flag name to value */
@@ -162,6 +168,8 @@ export function parseArgs(args: string[]): Args {
 			result.verbose = true;
 		} else if (arg === "--offline") {
 			result.offline = true;
+		} else if (arg === "--neo") {
+			result.neo = true;
 		} else if (arg.startsWith("@")) {
 			result.fileArgs.push(arg.slice(1)); // Remove @ prefix
 		} else if (arg.startsWith("--")) {
@@ -248,6 +256,7 @@ ${chalk.bold("Options:")}
   --list-models [search]         List available models (with optional fuzzy search)
   --verbose                      Force verbose startup (overrides quietStartup setting)
   --offline                      Disable startup network operations (same as PI_OFFLINE=1)
+  --neo                          Launch experimental Rust + ratatui TUI (senpi-neo-tui) instead of the default TUI
   --help, -h                     Show this help
   --version, -v                  Show version number
 
