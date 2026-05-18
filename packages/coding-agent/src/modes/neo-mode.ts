@@ -103,14 +103,10 @@ export async function runNeoMode(options: RunNeoModeOptions): Promise<number> {
 	}
 
 	if (options.parsed.verbose) {
-		console.log(
-			chalk.dim(`neo-tui: launching ${located.path} (source: ${located.source})`),
-		);
+		console.log(chalk.dim(`neo-tui: launching ${located.path} (source: ${located.source})`));
 	}
 
-	const backendArgs = options.originalArgv
-		.filter((arg) => arg !== "--neo")
-		.concat(["--mode", "rpc"]);
+	const backendArgs = options.originalArgv.filter((arg) => arg !== "--neo").concat(["--mode", "rpc"]);
 
 	const env = {
 		...process.env,
