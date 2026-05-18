@@ -131,6 +131,7 @@ impl App {
                 placeholder: "type your prompt".into(),
                 mode_label: "INPUT".into(),
                 focus_pulse: 0,
+                cursor: 0,
             },
             footer: FooterState {
                 status: Status::Idle,
@@ -169,9 +170,17 @@ impl App {
         if event.kind != KeyEventKind::Press {
             return AppAction::Ignored;
         }
-        // Modal overlays take the key first.
+        // Modal overlays consume the key. Dispatch through the keymap
+        // with `Dialog` focus first so users can rebind
+        // `tui.select.up`, `tui.select.confirm`, `tui.select.cancel`,
+        // etc. and have those rebindings apply uniformly to every
+        // overlay. Filter typing (chars / backspace) falls through to
+        // the overlay's raw handler.
         if let Some(overlay) = self.overlay.as_mut() {
-            match overlay.handle_key(event) {
+            let resolved = self.keymap.dispatch(FocusMode::Dialog, &event);
+            let synthetic = resolved.and_then(synthesise_select_event);
+            let dispatched_event = synthetic.unwrap_or(event);
+            match overlay.handle_key(dispatched_event) {
                 OverlayResult::Close => {
                     self.overlay = None;
                     return AppAction::Consumed("(overlay-closed)".into());
@@ -186,10 +195,12 @@ impl App {
             }
         }
         let resolved = self.keymap.dispatch(self.focus, &event);
-        // `neo.slash.open` carries a buffer-empty + Input-focus precondition
-        // that the keymap layer cannot express. If the chord resolves but
-        // the precondition fails (e.g. mid-prompt `/`), drop the action so
-        // the literal-character fallback below inserts the keystroke as-is.
+        // Some overlay-opener bindings (`neo.slash.open`, `neo.help`)
+        // carry a buffer-empty + Input-focus precondition that the
+        // keymap cannot encode. When the chord resolves but the
+        // precondition fails (mid-prompt `/` or `?`), drop the action
+        // so the literal-character fallback inserts the keystroke
+        // as-is.
         let id = match resolved {
             Some("neo.slash.open") => {
                 if matches!(self.focus, FocusMode::Input) && self.input.buffer.is_empty() {
@@ -197,6 +208,14 @@ impl App {
                     return AppAction::Consumed("neo.slash.open".into());
                 }
                 None
+            }
+            Some("neo.help" | "neo.help.open") => {
+                if matches!(self.focus, FocusMode::Input) && !self.input.buffer.is_empty() {
+                    None
+                } else {
+                    self.overlay = Some(Overlay::Help(HelpOverlay::from_keymap(&self.keymap)));
+                    return AppAction::OpenHelp;
+                }
             }
             other => other,
         };
@@ -207,7 +226,7 @@ impl App {
                         .modifiers
                         .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
                     if !has_meta {
-                        self.input.buffer.push(ch);
+                        self.input.insert_char(ch);
                         return AppAction::Consumed("(literal)".into());
                     }
                 }
@@ -218,7 +237,31 @@ impl App {
         self.execute_action(&id_owned)
     }
 
+    /// Apply a `tui.editor.*` cursor/delete action against `InputState`.
+    /// Returns `None` for actions that are not editor cursor or delete
+    /// operations so the main dispatcher can handle them.
+    fn try_editor_action(&mut self, id: &str) -> Option<AppAction> {
+        match id {
+            "tui.editor.cursorLeft" => self.input.cursor_left(),
+            "tui.editor.cursorRight" => self.input.cursor_right(),
+            "tui.editor.cursorWordLeft" => self.input.cursor_word_left(),
+            "tui.editor.cursorWordRight" => self.input.cursor_word_right(),
+            "tui.editor.cursorLineStart" => self.input.cursor_line_start(),
+            "tui.editor.cursorLineEnd" => self.input.cursor_line_end(),
+            "tui.editor.deleteCharBackward" => self.input.delete_char_backward(),
+            "tui.editor.deleteWordBackward" => self.input.delete_word_backward(),
+            "tui.editor.deleteWordForward" => self.input.delete_word_forward(),
+            "tui.editor.deleteToLineStart" => self.input.delete_to_line_start(),
+            "tui.editor.deleteToLineEnd" => self.input.delete_to_line_end(),
+            _ => return None,
+        }
+        Some(AppAction::Consumed(id.to_owned()))
+    }
+
     fn execute_action(&mut self, id: &str) -> AppAction {
+        if let Some(action) = self.try_editor_action(id) {
+            return action;
+        }
         match id {
             "app.exit" => {
                 if self.input.buffer.is_empty() {
@@ -231,8 +274,21 @@ impl App {
                 }
             }
             "app.clear" => {
-                self.input.buffer.clear();
+                self.input.clear();
                 AppAction::Consumed(id.to_owned())
+            }
+            "tui.input.copy" => {
+                // Legacy senpi: Ctrl+C with a non-empty buffer clears
+                // the input (a quick "discard this prompt" gesture).
+                // With an empty buffer it interrupts the current turn
+                // instead. Without that branch the chord matched in
+                // Input focus but did nothing visible.
+                if self.input.buffer.is_empty() {
+                    AppAction::Interrupt
+                } else {
+                    self.input.clear();
+                    AppAction::Consumed(id.to_owned())
+                }
             }
             "app.interrupt" => AppAction::Interrupt,
             "app.model.cycleForward" => AppAction::CycleModel { forward: true },
@@ -249,11 +305,11 @@ impl App {
             }
             "app.editor.external" => AppAction::ExternalEditor,
             "app.message.followUp" => {
-                let text = std::mem::take(&mut self.input.buffer);
+                let text = self.input.take_buffer();
                 AppAction::FollowUp(text)
             }
             "tui.input.submit" => {
-                let text = std::mem::take(&mut self.input.buffer);
+                let text = self.input.take_buffer();
                 if !text.is_empty() {
                     self.chat.messages.push(Message {
                         role: Role::User,
@@ -270,17 +326,14 @@ impl App {
                 AppAction::SubmitPrompt(text)
             }
             "tui.input.newLine" => {
-                self.input.buffer.push('\n');
-                AppAction::Consumed(id.to_owned())
-            }
-            "tui.editor.deleteCharBackward" => {
-                self.input.buffer.pop();
+                self.input.insert_newline();
                 AppAction::Consumed(id.to_owned())
             }
             "tui.editor.deleteCharForward" => {
                 if self.input.buffer.is_empty() {
                     AppAction::Quit
                 } else {
+                    self.input.delete_char_forward();
                     AppAction::Consumed(id.to_owned())
                 }
             }
@@ -478,6 +531,7 @@ impl App {
                 placeholder: config.input_placeholder,
                 mode_label: "INPUT".into(),
                 focus_pulse: 0,
+                cursor: 0,
             },
             footer: config.footer,
             thinking_visible: true,
@@ -494,6 +548,28 @@ pub async fn run(config: AppConfig) -> Result<()> {
     let result = drive(&mut terminal, config).await;
     restore_terminal(&mut terminal)?;
     result
+}
+
+/// Translate a resolved `tui.select.*` action ID into the canonical
+/// `KeyEvent` shape the per-overlay raw handlers already understand
+/// (arrows, page keys, enter, esc). Returns `None` for everything
+/// else so filter typing (chars / backspace) passes through unchanged.
+fn synthesise_select_event(action_id: &str) -> Option<KeyEvent> {
+    let code = match action_id {
+        "tui.select.up" => KeyCode::Up,
+        "tui.select.down" => KeyCode::Down,
+        "tui.select.pageUp" => KeyCode::PageUp,
+        "tui.select.pageDown" => KeyCode::PageDown,
+        "tui.select.confirm" => KeyCode::Enter,
+        "tui.select.cancel" => KeyCode::Esc,
+        _ => return None,
+    };
+    Some(KeyEvent {
+        code,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: crossterm::event::KeyEventState::NONE,
+    })
 }
 
 fn init_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {

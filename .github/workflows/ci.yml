@@ -43,6 +43,15 @@ jobs:
       - name: Check
         run: npm run check
 
+      - name: cargo fmt (senpi-neo-tui)
+        run: cargo fmt --package senpi-neo-tui -- --check
+
+      - name: cargo clippy (senpi-neo-tui)
+        run: cargo clippy --package senpi-neo-tui --all-targets -- -D warnings
+
+      - name: cargo test (senpi-neo-tui)
+        run: cargo test --package senpi-neo-tui
+
       - name: Build workspace package entries
         run: npm run build
 

@@ -23,12 +23,14 @@ use senpi_neo_tui::{
     about = "Native Rust + ratatui TUI for senpi (launched via `senpi --neo`)."
 )]
 struct Cli {
-    /// Path to senpi backend binary for `--mode rpc`. Currently unused;
-    /// the demo render does not spawn a backend.
+    /// Path to senpi backend binary for `--mode rpc`. When set, the
+    /// TUI spawns the backend on startup; otherwise the run is offline
+    /// (demo mode or no agent activity).
     #[arg(long, env = "SENPI_NEO_BACKEND_BIN")]
     backend_bin: Option<PathBuf>,
 
-    /// JSON array of args to forward to the backend. Currently unused.
+    /// JSON array of args to forward to the backend, e.g.
+    /// `["--mode","rpc"]`. Ignored when `--backend-bin` is unset.
     #[arg(long, env = "SENPI_NEO_BACKEND_ARGS", default_value = "[]")]
     backend_args: String,
 
@@ -133,11 +135,27 @@ fn real_main() -> Result<()> {
         demo_seconds: (cli.demo && cli.demo_seconds > 0).then_some(cli.demo_seconds),
     };
 
+    // `maybe_spawn_backend()` in app::run reads SENPI_NEO_BACKEND_BIN
+    // and SENPI_NEO_BACKEND_ARGS from the environment. Forward the
+    // parsed CLI flags into the env so a direct binary invocation like
+    // `senpi-neo-tui --backend-bin senpi --backend-args '["--mode","rpc"]'`
+    // works without the caller needing to set the env vars manually.
+    // SAFETY-NOTE: `std::env::set_var` is unsafe on multi-thread Linux
+    // when other threads call `getenv` concurrently, but we mutate the
+    // env BEFORE building the tokio runtime so the spawn is sequenced
+    // before any concurrent reader.
+    if let Some(bin) = cli.backend_bin.as_ref() {
+        // SAFETY: single-threaded context at this point in main().
+        unsafe { std::env::set_var("SENPI_NEO_BACKEND_BIN", bin) };
+    }
+    if cli.backend_args != "[]" {
+        // SAFETY: single-threaded context at this point in main().
+        unsafe { std::env::set_var("SENPI_NEO_BACKEND_ARGS", &cli.backend_args) };
+    }
+
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
     runtime.block_on(app::run(config))?;
-    let _ = cli.backend_bin;
-    let _ = cli.backend_args;
     Ok(())
 }

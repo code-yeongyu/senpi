@@ -562,3 +562,71 @@ fn apply_inbound_extension_error_pushes_error_message() {
     assert_eq!(last.body, "boom");
     assert_eq!(app.footer.status, Status::Error);
 }
+
+#[test]
+fn cursor_left_then_insert_lands_mid_buffer() {
+    let mut app = fresh_app();
+    app.handle_key(ev(KeyCode::Char('a'), KeyModifiers::NONE));
+    app.handle_key(ev(KeyCode::Char('c'), KeyModifiers::NONE));
+    app.handle_key(ev(KeyCode::Left, KeyModifiers::NONE));
+    app.handle_key(ev(KeyCode::Char('b'), KeyModifiers::NONE));
+    assert_eq!(app.input_buffer(), "abc");
+}
+
+#[test]
+fn home_jumps_to_line_start() {
+    let mut app = fresh_app();
+    for ch in "hello".chars() {
+        app.handle_key(ev(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    app.handle_key(ev(KeyCode::Home, KeyModifiers::NONE));
+    app.handle_key(ev(KeyCode::Char('x'), KeyModifiers::NONE));
+    assert_eq!(app.input_buffer(), "xhello");
+}
+
+#[test]
+fn ctrl_w_deletes_previous_word() {
+    let mut app = fresh_app();
+    for ch in "foo bar baz".chars() {
+        app.handle_key(ev(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    app.handle_key(ev(KeyCode::Char('w'), KeyModifiers::CONTROL));
+    assert_eq!(app.input_buffer(), "foo bar ");
+}
+
+#[test]
+fn ctrl_c_in_input_focus_clears_buffer_when_nonempty() {
+    let mut app = fresh_app();
+    for ch in "hi".chars() {
+        app.handle_key(ev(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    let action = app.handle_key(ev(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert!(app.input_buffer().is_empty());
+    assert!(matches!(action, AppAction::Consumed(_)));
+}
+
+#[test]
+fn ctrl_c_in_input_focus_interrupts_when_empty() {
+    let mut app = fresh_app();
+    let action = app.handle_key(ev(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert_eq!(action, AppAction::Interrupt);
+}
+
+#[test]
+fn question_mark_in_empty_buffer_opens_help_overlay() {
+    let mut app = fresh_app();
+    let action = app.handle_key(ev(KeyCode::Char('?'), KeyModifiers::NONE));
+    assert_eq!(action, AppAction::OpenHelp);
+}
+
+#[test]
+fn question_mark_in_nonempty_buffer_inserts_literal() {
+    let mut app = fresh_app();
+    for ch in "why".chars() {
+        app.handle_key(ev(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    let action = app.handle_key(ev(KeyCode::Char('?'), KeyModifiers::NONE));
+    assert!(matches!(action, AppAction::Consumed(_)));
+    assert_eq!(app.input_buffer(), "why?");
+    assert!(app.overlay.is_none());
+}
