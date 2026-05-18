@@ -85,6 +85,22 @@ async function main() {
 	mkdirSync(OUT_DIR, { recursive: true });
 	copyFileSync(sourcePath, outPath);
 	chmodSync(outPath, 0o755);
+
+	// On macOS `cp` attaches `com.apple.provenance` to the destination.
+	// Combined with the adhoc-signed Rust binary, the Gatekeeper kills
+	// the process at exec with SIGKILL (exit 137) and no stderr - which
+	// is exactly the failure mode where `senpi --neo` shows a blank
+	// screen and immediately quits. Clear the xattrs and re-sign so the
+	// binary stays runnable regardless of where it was copied from.
+	if (process.platform === "darwin") {
+		await run("xattr", ["-cr", outPath]).catch((err) => {
+			console.warn(`[neo-tui] xattr -cr failed (continuing): ${err.message}`);
+		});
+		await run("codesign", ["--force", "--sign", "-", outPath]).catch((err) => {
+			console.warn(`[neo-tui] codesign failed (continuing): ${err.message}`);
+		});
+	}
+
 	console.log(`[neo-tui] staged ${outPath} (${stat.size} bytes)`);
 }
 
