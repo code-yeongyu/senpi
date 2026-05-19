@@ -7,6 +7,7 @@ const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10000;
 export interface LatestPiRelease {
 	version: string;
 	packageName?: string;
+	note?: string;
 }
 
 interface ParsedVersion {
@@ -68,13 +69,22 @@ export async function getLatestPiRelease(
 	});
 	if (!response.ok) return undefined;
 
-	const data = (await response.json()) as { packageName?: unknown; version?: unknown };
+	const data = (await response.json()) as {
+		packageName?: unknown;
+		version?: unknown;
+		note?: unknown;
+	};
 	if (typeof data.version !== "string" || !data.version.trim()) {
 		return undefined;
 	}
 	const packageName =
 		typeof data.packageName === "string" && data.packageName.trim() ? data.packageName.trim() : undefined;
-	return { version: data.version.trim(), packageName };
+	const note = typeof data.note === "string" && data.note.trim() ? data.note.trim() : undefined;
+	return {
+		version: data.version.trim(),
+		packageName,
+		...(note ? { note } : {}),
+	};
 }
 
 export async function getLatestPiVersion(
@@ -84,11 +94,11 @@ export async function getLatestPiVersion(
 	return (await getLatestPiRelease(currentVersion, options))?.version;
 }
 
-export async function checkForNewPiVersion(currentVersion: string): Promise<string | undefined> {
+export async function checkForNewPiVersion(currentVersion: string): Promise<LatestPiRelease | undefined> {
 	try {
-		const latestVersion = await getLatestPiVersion(currentVersion);
-		if (latestVersion && isNewerPackageVersion(latestVersion, currentVersion)) {
-			return latestVersion;
+		const latestRelease = await getLatestPiRelease(currentVersion);
+		if (latestRelease && isNewerPackageVersion(latestRelease.version, currentVersion)) {
+			return latestRelease;
 		}
 		return undefined;
 	} catch {

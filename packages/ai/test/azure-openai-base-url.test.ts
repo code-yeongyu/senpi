@@ -11,14 +11,20 @@ interface CapturedAzureClientOptions {
 	baseURL: string;
 }
 
+interface CapturedAzureResponsesPayload {
+	prompt_cache_key?: string;
+}
+
 const azureMock = vi.hoisted(() => ({
 	constructorCalls: [] as CapturedAzureClientOptions[],
+	lastParams: undefined as CapturedAzureResponsesPayload | undefined,
 }));
 
 vi.mock("openai", () => {
 	class AzureOpenAI {
 		responses = {
-			create: () => {
+			create: (params: CapturedAzureResponsesPayload) => {
+				azureMock.lastParams = params;
 				throw new Error("mock create");
 			},
 		};
@@ -42,6 +48,7 @@ const originalAzureOpenAIApiKey = process.env.AZURE_OPENAI_API_KEY;
 
 beforeEach(() => {
 	azureMock.constructorCalls.length = 0;
+	azureMock.lastParams = undefined;
 	delete process.env.AZURE_OPENAI_BASE_URL;
 	delete process.env.AZURE_OPENAI_RESOURCE_NAME;
 	delete process.env.AZURE_OPENAI_API_VERSION;
@@ -124,6 +131,17 @@ describe("azure-openai-responses base URL normalization", () => {
 		const result = await streamAzureOpenAIResponses(model, context, { apiKey: "test-api-key" }).result();
 		expect(result.stopReason).toBe("error");
 		expect(result.errorMessage).toContain("Invalid Azure OpenAI base URL");
+	});
+
+	it("clamps prompt_cache_key to OpenAI's 64-character limit", async () => {
+		const model = getModel("azure-openai-responses", "gpt-4o-mini");
+		await streamAzureOpenAIResponses(model, context, {
+			apiKey: "test-api-key",
+			azureBaseUrl: "https://my-resource.openai.azure.com",
+			sessionId: "x".repeat(67),
+		}).result();
+
+		expect(azureMock.lastParams?.prompt_cache_key).toBe("x".repeat(64));
 	});
 
 	it("builds correct default URL from AZURE_OPENAI_RESOURCE_NAME", async () => {

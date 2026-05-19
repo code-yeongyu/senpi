@@ -87,7 +87,7 @@ describe("Copilot Claude via Anthropic Messages", () => {
 		const params = mockState.createParams!;
 		expect(params.model).toBe("claude-sonnet-4.6");
 		expect(params.stream).toBe(true);
-		expect(params.max_tokens).toBeGreaterThan(0);
+		expect(params.max_tokens).toBe(model.maxTokens);
 		expect(Array.isArray(params.messages)).toBe(true);
 	});
 

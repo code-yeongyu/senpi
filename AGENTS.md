@@ -25,20 +25,25 @@
 
 - After code changes (not documentation changes): `npm run check` (get full output, no tail). Fix all errors, warnings, and infos before committing.
 - Note: `npm run check` does not run tests.
-- NEVER run: `npm run dev`
-- `npm test` is allowed when the user asks for a full test run or when broad validation is needed.
-- For narrow changes, prefer specific tests: `npx tsx ../../node_modules/vitest/dist/cli.js --run test/specific.test.ts`
-- Run package-specific tests from the package root. Run `npm test` from the repo root when doing the full workspace test run.
+- NEVER run: `npm run dev`, `npm run build`, `npm test`
+- Only run specific tests if user instructs: `npx tsx ../../node_modules/vitest/dist/cli.js --run test/specific.test.ts`
+- Run tests from the package root, not the repo root.
 - If you create or modify a test file, you MUST run that test file and iterate until it passes.
 - When writing tests, run them, identify issues in either the test or implementation, and iterate until fixed.
 - For `packages/coding-agent/test/suite/`, use `test/suite/harness.ts` plus the faux provider. Do not use real provider APIs, real API keys, or paid tokens.
 - Put issue-specific regressions under `packages/coding-agent/test/suite/regressions/` and name them `<issue-number>-<short-slug>.test.ts`.
-- Don't commit speculatively. Commit when the user asks, or when their task delegation continues a plan whose terminal step is commit/push (e.g. "마저진행해줘", "finish this", "계속해줘"). Treat such delegation as the ask — don't stall mid-plan to demand a literal "commit" keyword.
+- For ad-hoc scripts, write the script to a temporary file (for example under `/tmp`) using `write`, run that file, edit it if needed, and remove it when it is no longer needed. Do not embed multi-line scripts directly in `bash` commands.
+- NEVER commit unless user asks
 
-## Contribution Triage
+## Contribution Gate
 
-- Issues and PRs stay open for maintainer review.
-- Issues and PRs that do not meet the quality bar in `CONTRIBUTING.md` may be closed without extended triage.
+- New issues from new contributors are auto-closed by `.github/workflows/issue-gate.yml`
+- New PRs from new contributors without PR rights are auto-closed by `.github/workflows/pr-gate.yml`
+- Maintainer approval comments are handled by `.github/workflows/approve-contributor.yml`
+- Maintainers review auto-closed issues daily
+- Issues that do not meet the quality bar in `CONTRIBUTING.md` are not reopened and do not receive a reply
+- `lgtmi` approves future issues
+- `lgtm` approves future issues and rights to submit PRs
 
 When creating issues:
 

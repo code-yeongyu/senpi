@@ -17,6 +17,8 @@ The intended rule is:
 - getters return latest harness config, not in-flight snapshots
 - listeners/hooks currently receive no facade; if they close over the raw harness and call settlement APIs such as `waitForIdle()` during the active run, they can deadlock. A future facade should expose `runWhenIdle()` instead.
 
+`AssistantMessageStream` already decouples provider transport streaming, such as SSE or websocket reads, from downstream event consumption. The harness can therefore await listeners, extension hooks, persistence, and save-point work without blocking the provider transport reader or reintroducing ad hoc event queues. Lifecycle code should prefer explicit awaited sequencing at harness boundaries over fire-and-forget hook/event settlement.
+
 A final lifecycle hardening pass should prove these guarantees with a broad listener/hook reentrancy test suite.
 
 ## Error handling
@@ -145,7 +147,7 @@ At a save point the harness:
 2. creates a fresh turn snapshot if the low-level loop may continue
 3. applies the fresh context/model/thinking-level/stream-options/session-id state before the next provider request
 
-This lets model, thinking level, tool, resource, stream option, and system prompt changes made during a turn affect the next turn in the same run, while never mutating an in-flight provider request. The loop callbacks are not recreated at save points.
+This lets model, thinking level, tool, resource, stream option, and system prompt changes made during a turn affect the next turn in the same run, while never mutating an in-flight provider request. Because provider transport reading is already decoupled by `AssistantMessageStream`, save-point work and hook settlement can be awaited directly to keep transcript/session ordering deterministic. The loop callbacks are not recreated at save points.
 
 The low-level loop converts harness `ThinkingLevel` to provider `reasoning` at the provider boundary:
 
@@ -169,7 +171,7 @@ Summary:
 - Hook registration provenance is sidecar metadata on the registration. Resource and tool provenance belongs on app-specific concrete value types.
 - Hook context should be a plain object of facades, not raw internals or late-bound getter mazes.
 
-Event payloads describe what is happening. Harness getters describe latest config for future snapshots.
+Event payloads describe what is happening. Harness getters describe latest config for future snapshots. Hook and listener settlement should be awaited in lifecycle order where possible; transport backpressure is handled below the harness by `AssistantMessageStream`, so the harness does not need a separate async event queue merely to keep SSE or websocket reads flowing.
 
 ## Planned session facade
 

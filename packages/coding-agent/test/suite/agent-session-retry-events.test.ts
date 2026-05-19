@@ -47,6 +47,7 @@ describe("AgentSession retry and event characterization", () => {
 		await harness.session.prompt("test");
 
 		expect(retryEvents).toEqual(["start:1", "end:true"]);
+		expect(harness.eventsOfType("agent_end").map((event) => event.willRetry)).toEqual([true, false]);
 		expect(harness.faux.state.callCount).toBe(2);
 		expect(harness.session.isRetrying).toBe(false);
 	});
@@ -194,6 +195,7 @@ describe("AgentSession retry and event characterization", () => {
 		await harness.session.prompt("test");
 
 		expect(retryEvents).toEqual(["start:1", "start:2", "end:false"]);
+		expect(harness.eventsOfType("agent_end").map((event) => event.willRetry)).toEqual([true, true, false]);
 		expect(harness.faux.state.callCount).toBe(3);
 		expect(harness.session.isRetrying).toBe(false);
 	});

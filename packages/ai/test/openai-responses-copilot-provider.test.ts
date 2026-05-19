@@ -233,6 +233,38 @@ describe("openai-responses provider defaults", () => {
 		expect(captured).toEqual({ sessionId: "session-123", clientRequestId: "session-123" });
 	});
 
+	it("clamps prompt_cache_key to OpenAI's 64-character limit", async () => {
+		const sessionId = "x".repeat(67);
+		let capturedPayload: { prompt_cache_key?: string } | undefined;
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response("data: [DONE]\n\n", {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+		);
+
+		const stream = streamOpenAIResponses(
+			getModel("openai", "gpt-5.4"),
+			{
+				systemPrompt: "sys",
+				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+			},
+			{
+				apiKey: "test-key",
+				sessionId,
+				onPayload: (payload) => {
+					capturedPayload = payload as { prompt_cache_key?: string };
+				},
+			},
+		);
+
+		for await (const event of stream) {
+			if (event.type === "done" || event.type === "error") break;
+		}
+
+		expect(capturedPayload?.prompt_cache_key).toBe("x".repeat(64));
+	});
+
 	it("sets cache-affinity headers for proxy OpenAI Responses requests with a sessionId", async () => {
 		const proxyModel: Model<"openai-responses"> = {
 			...getModel("openai", "gpt-5.4"),

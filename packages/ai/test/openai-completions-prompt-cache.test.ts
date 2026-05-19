@@ -125,6 +125,13 @@ describe("openai-completions prompt caching", () => {
 		expect(payload?.prompt_cache_retention).toBe("24h");
 	});
 
+	it("clamps prompt_cache_key to OpenAI's 64-character limit", async () => {
+		const sessionId = "x".repeat(67);
+		const { payload } = await captureRequest({ sessionId });
+
+		expect(payload?.prompt_cache_key).toBe("x".repeat(64));
+	});
+
 	it("omits prompt cache fields when cacheRetention is none", async () => {
 		const { payload } = await captureRequest({ cacheRetention: "none", sessionId: "session-789" });
 
