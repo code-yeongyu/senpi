@@ -107,6 +107,10 @@ fn real_main() -> Result<()> {
                 cwd: cwd_display,
                 session: "session: feat/neo-tui".into(),
                 branch: Some("feat/neo-tui".into()),
+                branch_dirty: false,
+                model: "claude-opus-4-7".into(),
+                thinking_level: Some("max".into()),
+                connected: true,
             },
             FooterState {
                 status: Status::Streaming,
@@ -128,6 +132,10 @@ fn real_main() -> Result<()> {
                 cwd: cwd_display,
                 session: String::new(),
                 branch: None,
+                branch_dirty: false,
+                model: String::new(),
+                thinking_level: None,
+                connected: false,
             },
             FooterState {
                 status: Status::Idle,

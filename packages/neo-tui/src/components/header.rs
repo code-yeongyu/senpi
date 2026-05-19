@@ -15,6 +15,10 @@ pub struct HeaderState {
     pub cwd: String,
     pub session: String,
     pub branch: Option<String>,
+    pub branch_dirty: bool,
+    pub model: String,
+    pub thinking_level: Option<String>,
+    pub connected: bool,
 }
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &HeaderState) {
