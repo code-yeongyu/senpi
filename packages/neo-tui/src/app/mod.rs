@@ -594,41 +594,38 @@ impl App {
     /// agent/turn lifecycle.
     pub fn apply_inbound(&mut self, msg: Inbound) {
         match msg {
-            Inbound::Event(event) => self.apply_event(event),
+            Inbound::Event(event) => {
+                self.footer.connected = true;
+                self.apply_event(event);
+            }
             Inbound::Response(_) => {}
             Inbound::Error {
                 exit_code,
                 stderr_tail,
             } => {
-                let detail = exit_code.map_or_else(
-                    || "backend exited before reporting a status".to_string(),
-                    |code| format!("backend exited with status {code}"),
-                );
-                let body = if stderr_tail.trim().is_empty() {
-                    detail
+                let detail = if stderr_tail.is_empty() {
+                    String::new()
                 } else {
-                    format!("{detail}\n{stderr_tail}")
+                    format!("\n\n{stderr_tail}")
                 };
-                self.chat.messages.push(Message {
-                    role: Role::Error,
-                    body,
-                    tool: None,
-                });
+                let body = exit_code.map_or_else(
+                    || format!("Backend exited unexpectedly.{detail}"),
+                    |code| format!("Backend exited with code {code}.{detail}"),
+                );
+                self.chat.push_error(body);
                 self.footer.status = Status::Error;
-                self.footer.status_label = "error".into();
+                self.footer.status_label = "backend error".into();
+                self.footer.connected = false;
+                self.footer.spinner_glyph = '\u{00d7}';
             }
             Inbound::Disconnected => {
-                self.footer.status = Status::Idle;
+                self.chat.push_system("Backend disconnected.".into());
+                self.footer.status = Status::Error;
                 self.footer.status_label = "disconnected".into();
+                self.footer.connected = false;
             }
             Inbound::ParseError { line, source } => {
-                self.chat.messages.push(Message {
-                    role: Role::Error,
-                    body: format!("failed to parse backend output: {source}\n{line}"),
-                    tool: None,
-                });
-                self.footer.status = Status::Error;
-                self.footer.status_label = "error".into();
+                tracing::warn!(line = %line, source = %source, "rpc parse error");
             }
         }
     }
