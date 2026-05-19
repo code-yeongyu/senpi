@@ -63,6 +63,7 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+#[allow(clippy::too_many_lines)]
 fn real_main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -107,6 +108,10 @@ fn real_main() -> Result<()> {
                 cwd: cwd_display,
                 session: "session: feat/neo-tui".into(),
                 branch: Some("feat/neo-tui".into()),
+                branch_dirty: false,
+                model: "claude-opus-4-7".into(),
+                thinking_level: Some("max".into()),
+                connected: true,
             },
             FooterState {
                 status: Status::Streaming,
@@ -118,7 +123,9 @@ fn real_main() -> Result<()> {
                 tokens_in: 12_400,
                 tokens_out: 3_120,
                 elapsed_secs: 0,
-                spinner_glyph: '⠂',
+                spinner_glyph: '\u{2802}',
+                connected: true,
+                busy_label: None,
             },
         )
     } else {
@@ -128,6 +135,10 @@ fn real_main() -> Result<()> {
                 cwd: cwd_display,
                 session: String::new(),
                 branch: None,
+                branch_dirty: false,
+                model: String::new(),
+                thinking_level: None,
+                connected: false,
             },
             FooterState {
                 status: Status::Idle,
@@ -139,7 +150,9 @@ fn real_main() -> Result<()> {
                 tokens_in: 0,
                 tokens_out: 0,
                 elapsed_secs: 0,
-                spinner_glyph: '⠂',
+                spinner_glyph: '\u{00b7}',
+                connected: true,
+                busy_label: None,
             },
         )
     };

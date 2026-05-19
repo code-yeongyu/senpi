@@ -5,26 +5,38 @@
 //! incoming keys through the keymap, mutates per-component state, and
 //! forwards user intents to the RPC backend.
 
-use std::{io::Stdout, time::Duration};
+use std::{
+    io::{Stdout, Write},
+    path::PathBuf,
+    time::Duration,
+};
 
 use color_eyre::eyre::Result;
 use crossterm::{
     event::{
         DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-        Event as CrosstermEvent, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
-        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        Event as CrosstermEvent, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent,
+        MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures::StreamExt;
-use ratatui::{Frame, Terminal, backend::CrosstermBackend};
+use ratatui::{
+    Frame, Terminal,
+    backend::CrosstermBackend,
+    layout::Rect,
+    style::{Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState},
+};
 use tokio::sync::mpsc;
 use tokio::time::{Instant, MissedTickBehavior, interval};
 
 use crate::{
     DEFAULT_DARK_THEME_JSON, DEFAULT_KEYMAP_JSON,
     components::{
+        autocomplete::{Autocomplete, AutocompleteResult, CompletionItem},
         chat::{self, ChatState, Message, Role, ToolCard, ToolStatus},
         footer::{self, FooterState, Status},
         header::{self, HeaderState},
@@ -38,6 +50,7 @@ use crate::{
         command::Command,
         event::Event as RpcEvent,
     },
+    term::TerminalCaps,
     theme::{self, ResolvedTheme},
 };
 
@@ -96,6 +109,9 @@ pub struct App {
     pub header: HeaderState,
     pub chat: ChatState,
     pub input: InputState,
+    pub autocomplete: Autocomplete,
+    pub autocomplete_popup: Option<Vec<CompletionItem>>,
+    pub autocomplete_index: usize,
     pub footer: FooterState,
     pub thinking_visible: bool,
     pub tools_expanded: bool,
@@ -124,18 +140,16 @@ impl App {
                 cwd: ".".into(),
                 session: "test".into(),
                 branch: None,
+                branch_dirty: false,
+                model: String::new(),
+                thinking_level: None,
+                connected: false,
             },
             chat: ChatState::default(),
-            input: InputState {
-                buffer: String::new(),
-                placeholder: "Ask senpi anything…".into(),
-                mode_label: "INPUT".into(),
-                focus_pulse: 0,
-                cursor: 0,
-                preferred_column: None,
-                kill_ring: Vec::new(),
-                undo_stack: Vec::new(),
-            },
+            input: InputState::new("Ask senpi anything…", "INPUT"),
+            autocomplete: Autocomplete::new(),
+            autocomplete_popup: None,
+            autocomplete_index: 0,
             footer: FooterState {
                 status: Status::Idle,
                 status_label: "idle".into(),
@@ -146,7 +160,9 @@ impl App {
                 tokens_in: 0,
                 tokens_out: 0,
                 elapsed_secs: 0,
-                spinner_glyph: '⠂',
+                spinner_glyph: '\u{2802}',
+                connected: true,
+                busy_label: None,
             },
             thinking_visible: true,
             tools_expanded: true,
@@ -163,6 +179,127 @@ impl App {
     #[must_use]
     pub const fn chat_snapshot(&self) -> &ChatState {
         &self.chat
+    }
+
+    pub fn init_terminal_writes() -> Vec<u8> {
+        TerminalCaps::detect().init_writes()
+    }
+
+    pub fn cleanup_terminal_writes() -> Vec<u8> {
+        TerminalCaps::detect().cleanup_writes()
+    }
+
+    pub fn compute_autocomplete(&mut self) -> AutocompleteResult {
+        let cwd = self.autocomplete_cwd();
+        let result = self.autocomplete.trigger(&self.input.buffer, &cwd);
+        self.store_autocomplete_result(&result);
+        result
+    }
+
+    pub fn handle_mouse(&mut self, event: MouseEvent) -> AppAction {
+        match event.kind {
+            MouseEventKind::ScrollUp => {
+                self.chat.scroll_up(3);
+                AppAction::Consumed("tui.chat.scrollUp".into())
+            }
+            MouseEventKind::ScrollDown => {
+                self.chat.scroll_down(3);
+                AppAction::Consumed("tui.chat.scrollDown".into())
+            }
+            _ => AppAction::Ignored,
+        }
+    }
+
+    fn autocomplete_cwd(&self) -> PathBuf {
+        let header_cwd = PathBuf::from(&self.header.cwd);
+        if header_cwd.is_absolute() {
+            header_cwd
+        } else {
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+        }
+    }
+
+    fn store_autocomplete_result(&mut self, result: &AutocompleteResult) {
+        let items = match result {
+            AutocompleteResult::Slash(items) | AutocompleteResult::Path(items) if !items.is_empty() => {
+                Some(items.clone())
+            }
+            AutocompleteResult::None | AutocompleteResult::Slash(_) | AutocompleteResult::Path(_) => None,
+        };
+        self.autocomplete_popup = items;
+        if let Some(items) = self.autocomplete_popup.as_ref() {
+            self.autocomplete_index = self.autocomplete_index.min(items.len().saturating_sub(1));
+        } else {
+            self.autocomplete_index = 0;
+        }
+    }
+
+    fn refresh_autocomplete(&mut self) {
+        let _ = self.compute_autocomplete();
+    }
+
+    fn clear_autocomplete(&mut self) {
+        self.autocomplete_popup = None;
+        self.autocomplete_index = 0;
+    }
+
+    fn select_previous_autocomplete(&mut self) {
+        let Some(items) = self.autocomplete_popup.as_ref() else {
+            return;
+        };
+        if items.is_empty() {
+            self.autocomplete_index = 0;
+        } else if self.autocomplete_index == 0 {
+            self.autocomplete_index = items.len() - 1;
+        } else {
+            self.autocomplete_index -= 1;
+        }
+    }
+
+    fn select_next_autocomplete(&mut self) {
+        let Some(items) = self.autocomplete_popup.as_ref() else {
+            return;
+        };
+        if items.is_empty() {
+            self.autocomplete_index = 0;
+        } else {
+            self.autocomplete_index = (self.autocomplete_index + 1) % items.len();
+        }
+    }
+
+    fn apply_selected_autocomplete(&mut self) -> bool {
+        let Some(item) = self
+            .autocomplete_popup
+            .as_ref()
+            .and_then(|items| items.get(self.autocomplete_index))
+            .cloned()
+        else {
+            return false;
+        };
+        let Some(range) = self.autocomplete_replacement_range() else {
+            return false;
+        };
+        self.input.buffer.replace_range(range.clone(), &item.insert);
+        self.input.cursor = range.start + item.insert.len();
+        self.input.preferred_column = None;
+        self.refresh_autocomplete();
+        true
+    }
+
+    fn autocomplete_replacement_range(&self) -> Option<std::ops::Range<usize>> {
+        let cursor = self.input.cursor.min(self.input.buffer.len());
+        let prefix = &self.input.buffer[..cursor];
+        if prefix.starts_with('/') {
+            return Some(0..cursor);
+        }
+        let token_start = prefix
+            .char_indices()
+            .rev()
+            .find_map(|(idx, ch)| ch.is_whitespace().then_some(idx + ch.len_utf8()))
+            .unwrap_or(0);
+        prefix[token_start..]
+            .starts_with('@')
+            .then_some(token_start..cursor)
     }
 
     /// Drive one [`KeyEvent`] through the keymap and the action handler.
@@ -242,6 +379,7 @@ impl App {
                         .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
                     if !has_meta {
                         self.input.insert_char(ch);
+                        self.refresh_autocomplete();
                         return AppAction::Consumed("(literal)".into());
                     }
                 }
@@ -259,8 +397,22 @@ impl App {
         match id {
             "tui.editor.cursorLeft" => self.input.cursor_left(),
             "tui.editor.cursorRight" => self.input.cursor_right(),
-            "tui.editor.cursorUp" | "tui.editor.jumpBackward" => self.input.cursor_up(),
-            "tui.editor.cursorDown" | "tui.editor.jumpForward" => self.input.cursor_down(),
+            "tui.editor.cursorUp" | "neo.input.historyPrev" => {
+                if self.input.recall_prev_history().is_some() {
+                    self.refresh_autocomplete();
+                    return Some(AppAction::Consumed("neo.input.historyPrev".into()));
+                }
+                self.input.cursor_up();
+            }
+            "tui.editor.cursorDown" | "neo.input.historyNext" => {
+                if self.input.recall_next_history().is_some() {
+                    self.refresh_autocomplete();
+                    return Some(AppAction::Consumed("neo.input.historyNext".into()));
+                }
+                self.input.cursor_down();
+            }
+            "tui.editor.jumpBackward" => self.input.cursor_up(),
+            "tui.editor.jumpForward" => self.input.cursor_down(),
             "tui.editor.cursorWordLeft" => self.input.cursor_word_left(),
             "tui.editor.cursorWordRight" => self.input.cursor_word_right(),
             "tui.editor.cursorLineStart" => self.input.cursor_line_start(),
@@ -277,10 +429,35 @@ impl App {
             "tui.editor.undo" => self.input.undo(),
             _ => return None,
         }
+        self.refresh_autocomplete();
         Some(AppAction::Consumed(id.to_owned()))
     }
 
+    fn try_autocomplete_action(&mut self, id: &str) -> Option<AppAction> {
+        if self.autocomplete_popup.as_ref().is_none_or(Vec::is_empty) {
+            return None;
+        }
+        match id {
+            "tui.editor.cursorUp" | "neo.input.historyPrev" => {
+                self.select_previous_autocomplete();
+                Some(AppAction::Consumed("tui.autocomplete.previous".into()))
+            }
+            "tui.editor.cursorDown" | "neo.input.historyNext" => {
+                self.select_next_autocomplete();
+                Some(AppAction::Consumed("tui.autocomplete.next".into()))
+            }
+            "tui.input.tab" => {
+                self.apply_selected_autocomplete();
+                Some(AppAction::Consumed("tui.input.tab".into()))
+            }
+            _ => None,
+        }
+    }
+
     fn execute_action(&mut self, id: &str) -> AppAction {
+        if let Some(action) = self.try_autocomplete_action(id) {
+            return action;
+        }
         if let Some(action) = self.try_editor_action(id) {
             return action;
         }
@@ -297,6 +474,7 @@ impl App {
             }
             "app.clear" => {
                 self.input.clear();
+                self.clear_autocomplete();
                 AppAction::Consumed(id.to_owned())
             }
             "tui.input.copy" => {
@@ -309,6 +487,7 @@ impl App {
                     AppAction::Interrupt
                 } else {
                     self.input.clear();
+                    self.clear_autocomplete();
                     AppAction::Consumed(id.to_owned())
                 }
             }
@@ -328,11 +507,16 @@ impl App {
             "app.editor.external" => AppAction::ExternalEditor,
             "app.message.followUp" => {
                 let text = self.input.take_buffer();
+                if !text.is_empty() {
+                    self.input.push_history(&text);
+                }
+                self.clear_autocomplete();
                 AppAction::FollowUp(text)
             }
             "tui.input.submit" => {
                 let text = self.input.take_buffer();
                 if !text.is_empty() {
+                    self.input.push_history(&text);
                     self.chat.messages.push(Message {
                         role: Role::User,
                         body: text.clone(),
@@ -345,10 +529,12 @@ impl App {
                     self.footer.status = Status::Busy;
                     self.footer.status_label = "waiting".into();
                 }
+                self.clear_autocomplete();
                 AppAction::SubmitPrompt(text)
             }
             "tui.input.newLine" => {
                 self.input.insert_newline();
+                self.refresh_autocomplete();
                 AppAction::Consumed(id.to_owned())
             }
             "tui.editor.deleteCharForward" => {
@@ -356,6 +542,7 @@ impl App {
                     AppAction::Quit
                 } else {
                     self.input.delete_char_forward();
+                    self.refresh_autocomplete();
                     AppAction::Consumed(id.to_owned())
                 }
             }
@@ -406,8 +593,39 @@ impl App {
     /// agent/turn lifecycle.
     pub fn apply_inbound(&mut self, msg: Inbound) {
         match msg {
-            Inbound::Event(event) => self.apply_event(event),
+            Inbound::Event(event) => {
+                self.footer.connected = true;
+                self.apply_event(event);
+            }
             Inbound::Response(_) => {}
+            Inbound::Error {
+                exit_code,
+                stderr_tail,
+            } => {
+                let detail = if stderr_tail.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n\n{stderr_tail}")
+                };
+                let body = exit_code.map_or_else(
+                    || format!("Backend exited unexpectedly.{detail}"),
+                    |code| format!("Backend exited with code {code}.{detail}"),
+                );
+                self.chat.push_error(body);
+                self.footer.status = Status::Error;
+                self.footer.status_label = "backend error".into();
+                self.footer.connected = false;
+                self.footer.spinner_glyph = '\u{00d7}';
+            }
+            Inbound::Disconnected => {
+                self.chat.push_system("Backend disconnected.".into());
+                self.footer.status = Status::Error;
+                self.footer.status_label = "disconnected".into();
+                self.footer.connected = false;
+            }
+            Inbound::ParseError { line, source } => {
+                tracing::warn!(line = %line, source = %source, "rpc parse error");
+            }
         }
     }
 
@@ -548,16 +766,10 @@ impl App {
             theme: config.theme,
             header: config.header,
             chat: config.initial_chat,
-            input: InputState {
-                buffer: String::new(),
-                placeholder: config.input_placeholder,
-                mode_label: "INPUT".into(),
-                focus_pulse: 0,
-                cursor: 0,
-                preferred_column: None,
-                kill_ring: Vec::new(),
-                undo_stack: Vec::new(),
-            },
+            input: InputState::new(config.input_placeholder, "INPUT"),
+            autocomplete: Autocomplete::new(),
+            autocomplete_popup: None,
+            autocomplete_index: 0,
             footer: config.footer,
             thinking_visible: true,
             tools_expanded: true,
@@ -602,7 +814,12 @@ fn synthesise_select_event(action_id: &str) -> Option<KeyEvent> {
 }
 
 fn init_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
-    enable_raw_mode()?;
+    let caps = TerminalCaps::detect();
+    write_terminal_bytes(&caps.init_writes())?;
+    if let Err(err) = enable_raw_mode() {
+        let _ = write_terminal_bytes(&caps.cleanup_writes());
+        return Err(err.into());
+    }
     let mut stdout = std::io::stdout();
     if let Err(err) = execute!(stdout, EnterAlternateScreen) {
         let _ = disable_raw_mode();
@@ -624,10 +841,7 @@ fn init_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     // their original case). Terminals that ignore the escape silently
     // fall back to legacy key reporting, so we deliberately do not fail
     // the boot when this errors.
-    let _ = execute!(
-        stdout,
-        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
-    );
+    let _ = execute!(stdout, PushKeyboardEnhancementFlags(caps.kitty_keyboard_flags),);
     let backend = CrosstermBackend::new(stdout);
     match Terminal::new(backend) {
         Ok(term) => Ok(term),
@@ -645,12 +859,20 @@ fn init_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
 }
 
 fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+    let caps = TerminalCaps::detect();
     disable_raw_mode()?;
+    let _ = write_terminal_bytes(&caps.cleanup_writes());
     let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
     let _ = execute!(std::io::stdout(), DisableBracketedPaste);
     execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
     Ok(())
+}
+
+fn write_terminal_bytes(bytes: &[u8]) -> std::io::Result<()> {
+    let mut stdout = std::io::stdout();
+    stdout.write_all(bytes)?;
+    stdout.flush()
 }
 
 /// Spawn the RPC backend if `SENPI_NEO_BACKEND_BIN` is set in the
@@ -735,10 +957,18 @@ async fn drive(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: AppCon
                         // In demo mode `cmd_tx` is `None`, so AppActions that
                         // would have produced a Command silently degrade to
                         // local-only UI state changes (overlays, focus, etc.).
-                        if let (Some(tx), Some(cmd)) =
-                            (cmd_tx.as_ref(), App::action_to_command(&action))
-                        {
-                            let _ = tx.send(cmd).await;
+                        if let Some(cmd) = App::action_to_command(&action) {
+                            if let Some(tx) = cmd_tx.as_ref() {
+                                if tx.send(cmd).await.is_err() {
+                                    app.apply_inbound(Inbound::Disconnected);
+                                    inbound = None;
+                                }
+                            } else if !demo_mode {
+                                app.apply_inbound(Inbound::Error {
+                                    exit_code: None,
+                                    stderr_tail: "No backend process is connected.".into(),
+                                });
+                            }
                         }
                     }
                     Some(Ok(CrosstermEvent::Paste(text))) => {
@@ -748,8 +978,12 @@ async fn drive(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: AppCon
                         // one undo-able operation; IME pastes of
                         // multi-grapheme CJK strings stay intact.
                         if matches!(app.focus, FocusMode::Input) {
-                            app.input.insert_str(&text);
+                            app.input.handle_paste(&text);
+                            app.refresh_autocomplete();
                         }
+                    }
+                    Some(Ok(CrosstermEvent::Mouse(mouse))) => {
+                        app.handle_mouse(mouse);
                     }
                     _ => {}
                 }
@@ -780,7 +1014,8 @@ async fn drive(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: AppCon
 
 fn draw_app(frame: &mut Frame<'_>, app: &App) {
     let area = frame.area();
-    let line_count = app.input.buffer.lines().count().max(1);
+    let input_wrap_width = usize::from(area.width.saturating_sub(6).max(1));
+    let line_count = app.input.display_lines(input_wrap_width).len();
     // The sidebar shows demo metadata (todo list, file picker, etc.) and
     // is only wired in demo mode for now. In real `senpi --neo` runs we
     // keep the layout single-column so the chat reclaims the right edge
@@ -801,7 +1036,54 @@ fn draw_app(frame: &mut Frame<'_>, app: &App) {
 
     if let Some(overlay) = app.overlay.as_ref() {
         overlay.render(frame, area, &app.theme);
+    } else {
+        render_autocomplete_popup(frame, area, computed.input, app);
     }
+}
+
+fn render_autocomplete_popup(frame: &mut Frame<'_>, area: Rect, input_area: Rect, app: &App) {
+    let Some(items) = app.autocomplete_popup.as_ref().filter(|items| !items.is_empty()) else {
+        return;
+    };
+    let max_items = items.len().min(6);
+    let height = u16::try_from(max_items).unwrap_or(6).saturating_add(2);
+    let width = input_area.width.saturating_sub(4).clamp(24, 64).min(area.width);
+    let x = input_area
+        .x
+        .saturating_add(2)
+        .min(area.right().saturating_sub(width));
+    let y = input_area.y.saturating_sub(height);
+    let popup_area = Rect::new(x, y, width, height.min(area.height));
+    let popup_items = items.iter().take(max_items).map(|item| {
+        let mut spans = vec![Span::styled(
+            item.label.clone(),
+            Style::default().fg(app.theme.token(theme::Token::Text)),
+        )];
+        if let Some(description) = item.description.as_ref() {
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(
+                description.clone(),
+                Style::default().fg(app.theme.token(theme::Token::TextMuted)),
+            ));
+        }
+        ListItem::new(Line::from(spans))
+    });
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(app.theme.token(theme::Token::BorderActive)))
+        .style(Style::default().bg(app.theme.token(theme::Token::BackgroundMenu)));
+    let list = List::new(popup_items).block(block).highlight_style(
+        Style::default()
+            .fg(app.theme.token(theme::Token::SelectionFg))
+            .bg(app.theme.token(theme::Token::SelectionBg))
+            .add_modifier(Modifier::BOLD),
+    );
+    let mut state = ListState::default();
+    state.select(Some(app.autocomplete_index.min(max_items.saturating_sub(1))));
+
+    frame.render_widget(Clear, popup_area);
+    frame.render_stateful_widget(list, popup_area, &mut state);
 }
 
 #[cfg(test)]

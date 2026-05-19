@@ -85,6 +85,9 @@
     "app.models.reorderUp": ["alt+up"],
     "app.models.reorderDown": ["alt+down"],
 
+    "neo.input.historyPrev": ["up"],
+    "neo.input.historyNext": ["down"],
+
     "neo.palette.open": ["alt+p"],
     "neo.slash.open": ["/"],
     "neo.help": ["?"],

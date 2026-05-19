@@ -8,8 +8,13 @@
 //! binding entry. The user explicitly required this kind of TDD
 //! coverage on keybinding equivalence.
 
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+use std::sync::Mutex;
+
+use crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseEvent, MouseEventKind,
+};
 use senpi_neo_tui::app::{App, AppAction};
+use senpi_neo_tui::components::autocomplete::AutocompleteResult;
 use senpi_neo_tui::components::chat::{Role, ToolStatus};
 use senpi_neo_tui::components::footer::Status;
 use senpi_neo_tui::overlay::Overlay;
@@ -28,6 +33,29 @@ const fn ev(code: KeyCode, mods: KeyModifiers) -> KeyEvent {
 
 fn fresh_app() -> App {
     App::for_tests().expect("test fixture builds")
+}
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+fn with_tmux_env(run: impl FnOnce()) {
+    let _guard = ENV_LOCK.lock().expect("env test lock must not be poisoned");
+    let previous = std::env::var_os("TMUX");
+    // SAFETY: this test serializes process-env mutation through ENV_LOCK and
+    // restores TMUX before releasing the lock.
+    unsafe { std::env::set_var("TMUX", "/tmp/senpi-neo-test-tmux") };
+    run();
+    match previous {
+        Some(value) => {
+            // SAFETY: this test serializes process-env mutation through ENV_LOCK
+            // and is restoring the exact value captured before the test body.
+            unsafe { std::env::set_var("TMUX", value) };
+        }
+        None => {
+            // SAFETY: this test serializes process-env mutation through ENV_LOCK
+            // and is restoring TMUX to its previously absent state.
+            unsafe { std::env::remove_var("TMUX") };
+        }
+    }
 }
 
 #[test]
@@ -80,7 +108,7 @@ fn enter_in_input_focus_submits_prompt_and_clears_buffer() {
 }
 
 #[test]
-fn shift_enter_inserts_newline_instead_of_submitting() {
+fn editor_shift_enter_inserts_newline() {
     let mut app = fresh_app();
     app.handle_key(ev(KeyCode::Char('a'), KeyModifiers::NONE));
     let action = app.handle_key(ev(KeyCode::Enter, KeyModifiers::SHIFT));
@@ -564,6 +592,76 @@ fn apply_inbound_extension_error_pushes_error_message() {
 }
 
 #[test]
+fn app_inbound_error_shows_error_message_in_chat() {
+    let mut app = fresh_app();
+    app.apply_inbound(Inbound::Error {
+        exit_code: Some(2),
+        stderr_tail: "panic: thing".into(),
+    });
+
+    let last = app.chat.messages.last().expect("must push error message");
+    assert_eq!(last.role, Role::Error);
+    assert!(last.body.contains("panic: thing"));
+}
+
+#[test]
+fn app_inbound_error_sets_footer_error_state() {
+    let mut app = fresh_app();
+    app.apply_inbound(Inbound::Error {
+        exit_code: Some(2),
+        stderr_tail: "panic: thing".into(),
+    });
+
+    assert_eq!(app.footer.status, Status::Error);
+    assert!(!app.footer.connected);
+    assert!(app.footer.status_label.contains("backend") || app.footer.status_label.contains("error"));
+}
+
+#[test]
+fn app_inbound_disconnected_pushes_system_message() {
+    let mut app = fresh_app();
+    app.apply_inbound(Inbound::Disconnected);
+
+    let last = app.chat.messages.last().expect("must push system message");
+    assert_eq!(last.role, Role::System);
+    assert!(last.body.contains("disconnected"));
+    assert!(!app.footer.connected);
+}
+
+#[test]
+fn app_inbound_parse_error_does_not_disrupt_ui() {
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+    let status_before = app.footer.status;
+    let status_label_before = app.footer.status_label.clone();
+    let connected_before = app.footer.connected;
+
+    app.apply_inbound(Inbound::ParseError {
+        line: "garbage".into(),
+        source: "expected `:`".into(),
+    });
+
+    assert_eq!(app.chat.messages.len(), messages_before);
+    assert_eq!(app.footer.status, status_before);
+    assert_eq!(app.footer.status_label, status_label_before);
+    assert_eq!(app.footer.connected, connected_before);
+}
+
+#[test]
+fn app_recovers_from_error_on_next_message() {
+    let mut app = fresh_app();
+    app.apply_inbound(Inbound::Error {
+        exit_code: Some(2),
+        stderr_tail: "panic: thing".into(),
+    });
+    app.apply_inbound(Inbound::Event(RpcEvent::AgentStart));
+
+    assert!(matches!(app.footer.status, Status::Busy | Status::Streaming));
+    assert!(app.footer.connected);
+    assert_ne!(app.footer.status_label, "backend error");
+}
+
+#[test]
 fn cursor_left_then_insert_lands_mid_buffer() {
     let mut app = fresh_app();
     app.handle_key(ev(KeyCode::Char('a'), KeyModifiers::NONE));
@@ -718,4 +816,105 @@ fn emoji_zwj_sequence_treated_as_one_grapheme() {
         app.input_buffer().is_empty(),
         "ZWJ family emoji must collapse in one backspace"
     );
+}
+
+#[test]
+fn app_init_writes_modify_other_keys_when_tmux() {
+    with_tmux_env(|| {
+        let bytes = App::init_terminal_writes();
+
+        assert!(
+            bytes
+                .windows(b"\x1b[>4;2m".len())
+                .any(|window| window == b"\x1b[>4;2m"),
+            "tmux init writes must enable modifyOtherKeys mode 2: {bytes:?}",
+        );
+    });
+}
+
+#[test]
+fn app_cleanup_writes_disable_modify_other_keys() {
+    with_tmux_env(|| {
+        let bytes = App::cleanup_terminal_writes();
+
+        assert!(
+            bytes
+                .windows(b"\x1b[>4;0m".len())
+                .any(|window| window == b"\x1b[>4;0m"),
+            "tmux cleanup writes must disable modifyOtherKeys: {bytes:?}",
+        );
+    });
+}
+
+#[test]
+fn app_arrow_up_with_empty_buffer_recalls_history() {
+    let mut app = fresh_app();
+    for prompt in ["first prompt", "second prompt"] {
+        for ch in prompt.chars() {
+            app.handle_key(ev(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+        app.handle_key(ev(KeyCode::Enter, KeyModifiers::NONE));
+    }
+
+    assert!(app.input_buffer().is_empty());
+    app.handle_key(ev(KeyCode::Up, KeyModifiers::NONE));
+
+    assert_eq!(app.input_buffer(), "second prompt");
+}
+
+#[test]
+fn app_arrow_up_with_nonempty_buffer_moves_cursor() {
+    let mut app = fresh_app();
+    app.input.push_history("history entry");
+    app.input.insert_str("hello\nhi");
+
+    app.handle_key(ev(KeyCode::Up, KeyModifiers::NONE));
+    app.handle_key(ev(KeyCode::Char('X'), KeyModifiers::NONE));
+
+    assert_eq!(app.input_buffer(), "heXllo\nhi");
+}
+
+#[test]
+fn app_autocomplete_triggers_on_at_for_path_completion() {
+    let mut app = fresh_app();
+    app.header.cwd = env!("CARGO_MANIFEST_DIR").into();
+    app.input.insert_str("@./Carg");
+
+    let AutocompleteResult::Path(items) = app.compute_autocomplete() else {
+        panic!("expected path autocomplete result");
+    };
+
+    assert!(
+        items.iter().any(|item| item.label == "Cargo.toml"),
+        "expected Cargo.toml in path autocomplete items: {items:?}",
+    );
+}
+
+#[test]
+fn app_mouse_wheel_scrolls_chat() {
+    let mut app = fresh_app();
+
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::ScrollUp,
+        column: 0,
+        row: 0,
+        modifiers: KeyModifiers::NONE,
+    });
+
+    assert!(app.chat.scroll_offset > 0);
+}
+
+#[test]
+fn app_mouse_wheel_at_bottom_does_nothing() {
+    let mut app = fresh_app();
+    assert_eq!(app.chat.scroll_offset, 0);
+
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::ScrollDown,
+        column: 0,
+        row: 0,
+        modifiers: KeyModifiers::NONE,
+    });
+
+    assert_eq!(app.chat.scroll_offset, 0);
 }

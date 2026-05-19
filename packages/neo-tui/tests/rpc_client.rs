@@ -181,3 +181,55 @@ async fn error_scenario_returns_failed_response() {
     assert!(!resp.success);
     assert!(resp.error.as_deref().is_some_and(|s| s.contains("simulated")),);
 }
+
+#[tokio::test]
+async fn rpc_child_exit_emits_error_event() {
+    let mut client = RpcClient::spawn("/bin/sh", &["-c", "exit 1"]).expect("spawn shell");
+    let mut rx = client.take_inbound().expect("inbound channel");
+
+    let Inbound::Error { exit_code, .. } = recv(&mut rx).await else {
+        panic!("expected child exit error event");
+    };
+    assert_eq!(exit_code, Some(1));
+}
+
+#[tokio::test]
+async fn rpc_child_stdout_eof_emits_disconnected() {
+    let script = r#"printf '%s\n' '{"type":"agent_start"}'; exit 0"#;
+    let mut client = RpcClient::spawn("/bin/sh", &["-c", script]).expect("spawn shell");
+    let mut rx = client.take_inbound().expect("inbound channel");
+
+    assert!(matches!(recv(&mut rx).await, Inbound::Event(Event::AgentStart)));
+    assert!(matches!(recv(&mut rx).await, Inbound::Disconnected));
+}
+
+#[tokio::test]
+async fn rpc_malformed_json_emits_parse_warning() {
+    let script = r#"printf '%s\n' 'not json' '{"type":"agent_start"}'"#;
+    let mut client = RpcClient::spawn("/bin/sh", &["-c", script]).expect("spawn shell");
+    let mut rx = client.take_inbound().expect("inbound channel");
+
+    let Inbound::ParseError { line, source } = recv(&mut rx).await else {
+        panic!("expected parse error event");
+    };
+    assert_eq!(line, "not json");
+    assert!(!source.is_empty());
+    assert!(matches!(recv(&mut rx).await, Inbound::Event(Event::AgentStart)));
+}
+
+#[tokio::test]
+async fn rpc_inbound_error_carries_stderr_tail() {
+    let script = "printf '%s\\n' 'fail message' >&2; exit 2";
+    let mut client = RpcClient::spawn("/bin/sh", &["-c", script]).expect("spawn shell");
+    let mut rx = client.take_inbound().expect("inbound channel");
+
+    let Inbound::Error {
+        exit_code,
+        stderr_tail,
+    } = recv(&mut rx).await
+    else {
+        panic!("expected child exit error event");
+    };
+    assert_eq!(exit_code, Some(2));
+    assert!(stderr_tail.contains("fail message"));
+}

@@ -164,7 +164,7 @@ export type AnthropicThinkingDisplay = "summarized" | "omitted";
 
 const FINE_GRAINED_TOOL_STREAMING_BETA = "fine-grained-tool-streaming-2025-05-14";
 const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
-const COMPUTER_USE_BETA = "computer-use-2025-01-24";
+const COMPUTER_USE_BETA_PREFIX = "computer-use-";
 const NATIVE_COMPUTER_TOOL_TYPE = "computer_20250124";
 
 function getAnthropicCompat(model: Model<"anthropic-messages">): Required<AnthropicMessagesCompat> {
@@ -309,7 +309,7 @@ function removeComputerUseBetaHeader(headers: Record<string, string> | undefined
 			.split(",")
 			.map((beta) => beta.trim())
 			.filter((beta) => beta.length > 0);
-		const supportedBetas = betas.filter((beta) => beta !== COMPUTER_USE_BETA);
+		const supportedBetas = betas.filter((beta) => !beta.startsWith(COMPUTER_USE_BETA_PREFIX));
 		changed = changed || supportedBetas.length !== betas.length;
 
 		if (supportedBetas.length > 0) {
@@ -327,17 +327,30 @@ function removeComputerUseBetaHeader(headers: Record<string, string> | undefined
 	};
 }
 
+function rejectsNativeComputerTool(model: Model<"anthropic-messages">, toolType: string): boolean {
+	if (model.provider === "cloudflare-ai-gateway" && model.baseUrl.includes("anthropic")) {
+		return toolType.startsWith("computer_");
+	}
+	return (isOpus46(model.id) || isOpus47(model.id)) && toolType === NATIVE_COMPUTER_TOOL_TYPE;
+}
+
+function rejectsComputerUseBeta(model: Model<"anthropic-messages">): boolean {
+	return (
+		(model.provider === "cloudflare-ai-gateway" && model.baseUrl.includes("anthropic")) ||
+		isOpus46(model.id) ||
+		isOpus47(model.id)
+	);
+}
+
 function sanitizeUnsupportedNativeTools(
 	model: Model<"anthropic-messages">,
 	params: MessageCreateParamsStreaming,
 ): MessageCreateParamsStreaming {
-	if (!isOpus46(model.id) && !isOpus47(model.id)) {
-		return params;
-	}
-
 	const payload = params as AnthropicPayloadWithRequestMetadata;
 	const headers = stringRecord(payload.headers);
-	const headerSanitization = removeComputerUseBetaHeader(headers);
+	const headerSanitization = rejectsComputerUseBeta(model)
+		? removeComputerUseBetaHeader(headers)
+		: ({ changed: false } as const);
 	const tools = payload.tools;
 	const sanitized: AnthropicPayloadWithRequestMetadata = { ...payload };
 	let changed = false;
@@ -348,7 +361,11 @@ function sanitizeUnsupportedNativeTools(
 
 		for (const tool of tools) {
 			const hookTool: unknown = tool;
-			if (isRecord(hookTool) && hookTool.type === NATIVE_COMPUTER_TOOL_TYPE) {
+			if (
+				isRecord(hookTool) &&
+				typeof hookTool.type === "string" &&
+				rejectsNativeComputerTool(model, hookTool.type)
+			) {
 				changed = true;
 				if (typeof hookTool.name === "string") {
 					removedToolNames.add(hookTool.name);

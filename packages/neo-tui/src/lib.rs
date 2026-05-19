@@ -18,6 +18,7 @@ pub mod layout;
 pub mod overlay;
 pub mod rpc;
 pub mod term;
+pub mod text;
 /// Theme loading, bundled theme registry, and semantic color token resolution.
 pub mod theme;
 

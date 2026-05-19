@@ -77,8 +77,15 @@
     "spinnerScannerTrail": "cardCharcoal",
     "statusIdle": "textGraphite",
     "statusBusy": "amberLed",
+    "statusStreaming": "green",
+    "statusTool": "blue",
     "statusError": "red",
     "statusSuccess": "green",
+    "statusIdleBg": "espresso",
+    "statusBusyBg": "#3C2E2F",
+    "statusStreamingBg": "#2D3530",
+    "statusToolBg": "#282F45",
+    "statusErrorBg": "#3B2835",
     "toolBorderRunning": "blue",
     "toolBorderSuccess": "borderSlate",
     "toolBorderError": "red",
@@ -87,7 +94,9 @@
     "userMessageBar": "amberLed",
     "assistantMessageBar": "cyanLed",
     "systemMessageBar": "textGraphite",
-    "errorMessageBar": "red"
+    "errorMessageBar": "red",
+    "diffAddedText": "green",
+    "diffRemovedText": "red"
   },
   "options": {
     "thinkingOpacityPercent": 60,

@@ -172,6 +172,42 @@ fn extra_bindings_are_neo_namespaced() {
 }
 
 #[test]
+fn default_keymap_binds_input_history_navigation() {
+    let spec = keymap::parse(DEFAULT_JSON).expect("default keymap must parse");
+    let prev = spec
+        .bindings
+        .get("neo.input.historyPrev")
+        .expect("history previous binding must exist");
+    let next = spec
+        .bindings
+        .get("neo.input.historyNext")
+        .expect("history next binding must exist");
+    let prev_keys: Vec<&str> = prev.iter().map(String::as_str).collect();
+    let next_keys: Vec<&str> = next.iter().map(String::as_str).collect();
+
+    assert_eq!(prev_keys.as_slice(), ["up"]);
+    assert_eq!(next_keys.as_slice(), ["down"]);
+}
+
+#[test]
+fn default_keymap_binds_shift_enter_to_legacy_input_newline() {
+    // Bug 1 regression: tmux + xterm modifyOtherKeys mode 2 lets the
+    // composer receive `shift+enter` as a distinct key (vs upstream's
+    // legacy `Enter` collision). The dispatch path uses the LEGACY
+    // `tui.input.newLine` binding from `TUI_KEYBINDINGS` (`pi-tui`), so
+    // we don't add a redundant `neo.editor.newLine`. Lock the legacy
+    // mapping here so a future drift in the bundled JSON fails the
+    // parity test on this side too.
+    let spec = keymap::parse(DEFAULT_JSON).expect("default keymap must parse");
+    let keys = spec
+        .bindings
+        .get("tui.input.newLine")
+        .expect("shift+enter newline must stay on the legacy tui.input.newLine binding");
+    let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+    assert_eq!(keys.as_slice(), ["shift+enter"]);
+}
+
+#[test]
 fn accepts_arbitrary_keys_until_t8_strictens() {
     // Today the parser round-trips arbitrary string keys. T8 will reject
     // unknown actions at merge time; that test lives alongside T8.

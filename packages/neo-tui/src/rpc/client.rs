@@ -13,7 +13,7 @@
 //!                 │   inbound_rx ← inbound_tx  ←   │── child stdout
 //!                 │                                │   (reader task)
 //!                 └──                              │── child stderr
-//!                                                  │   (inherited)
+//!                                                  │   (tail-buffered)
 //! ```
 //!
 //! - Writer task: drains `command_rx`, serializes each [`Command`] as
@@ -25,18 +25,24 @@
 //!   when the client is dropped. The reader task ends on EOF; the
 //!   writer task ends when `command_tx` is dropped.
 
+use std::collections::VecDeque;
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::Arc;
 
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, Command as ProcCommand};
-use tokio::sync::mpsc;
+use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command as ProcCommand};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
+use tokio::time::{Duration, timeout};
 
 use crate::rpc::command::Command;
 use crate::rpc::envelope::Response;
 use crate::rpc::event::Event;
+
+const CHANNEL_CAPACITY: usize = 64;
+const STDERR_TAIL_LINES: usize = 32;
 
 /// Errors surfaced by [`RpcClient`].
 #[derive(Debug, Error)]
@@ -58,6 +64,15 @@ pub enum ClientError {
 pub enum Inbound {
     Response(Response),
     Event(Event),
+    Error {
+        exit_code: Option<i32>,
+        stderr_tail: String,
+    },
+    Disconnected,
+    ParseError {
+        line: String,
+        source: String,
+    },
 }
 
 impl Inbound {
@@ -81,10 +96,19 @@ impl Inbound {
 pub struct RpcClient {
     command_tx: mpsc::Sender<Command>,
     inbound_rx: Option<mpsc::Receiver<Inbound>>,
-    _writer: JoinHandle<()>,
-    _reader: JoinHandle<()>,
-    // Kept alive so kill_on_drop can reap the backend cleanly.
-    _child: Child,
+    writer: JoinHandle<()>,
+    reader: JoinHandle<()>,
+    stderr_reader: JoinHandle<()>,
+    child_watcher: JoinHandle<()>,
+}
+
+impl Drop for RpcClient {
+    fn drop(&mut self) {
+        self.writer.abort();
+        self.reader.abort();
+        self.stderr_reader.abort();
+        self.child_watcher.abort();
+    }
 }
 
 impl RpcClient {
@@ -92,9 +116,8 @@ impl RpcClient {
     /// tasks for both directions of JSONL traffic, and return a
     /// connected client.
     ///
-    /// `stderr` is inherited so backend panic traces reach the user
-    /// console - useful in dev and harmless in production where the
-    /// real senpi backend logs to its own files.
+    /// The tail of `stderr` is buffered so child-exit events can carry
+    /// actionable diagnostics without flooding the TUI.
     pub fn spawn<P, S>(bin: P, args: &[S]) -> Result<Self, ClientError>
     where
         P: AsRef<Path>,
@@ -104,61 +127,32 @@ impl RpcClient {
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()?;
 
-        let mut stdin = child.stdin.take().ok_or(ClientError::NoStdin)?;
+        let stdin = child.stdin.take().ok_or(ClientError::NoStdin)?;
         let stdout = child.stdout.take().ok_or(ClientError::NoStdout)?;
+        let stderr = child.stderr.take();
 
-        let (command_tx, mut command_rx) = mpsc::channel::<Command>(64);
-        let (inbound_tx, inbound_rx) = mpsc::channel::<Inbound>(256);
+        let (command_tx, command_rx) = mpsc::channel::<Command>(CHANNEL_CAPACITY);
+        let (inbound_tx, inbound_rx) = mpsc::channel::<Inbound>(CHANNEL_CAPACITY);
 
-        // Writer task. One JSONL frame per command. On any write
-        // failure (child died), drain the channel without writing so
-        // upstream awaits do not hang.
-        let writer = tokio::spawn(async move {
-            while let Some(cmd) = command_rx.recv().await {
-                let Ok(line) = serde_json::to_string(&cmd) else {
-                    continue;
-                };
-                if stdin.write_all(line.as_bytes()).await.is_err() {
-                    break;
-                }
-                if stdin.write_all(b"\n").await.is_err() {
-                    break;
-                }
-                if stdin.flush().await.is_err() {
-                    break;
-                }
-            }
-            // Best-effort close; ignored if already dead.
-            let _ = stdin.shutdown().await;
-        });
+        let writer = spawn_writer(stdin, command_rx);
+        let reader = spawn_stdout_reader(stdout, inbound_tx.clone());
 
-        // Reader task. Line-buffered stdout → typed Inbound. Lines that
-        // fail to parse are dropped silently (the backend should never
-        // emit them; if it does, that is a backend bug, not a client
-        // bug). We keep going to remain resilient to garbage from
-        // misbehaving extensions.
-        let reader = tokio::spawn(async move {
-            let mut lines = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                let Ok(inbound) = Inbound::parse_line(&line) else {
-                    continue;
-                };
-                if inbound_tx.send(inbound).await.is_err() {
-                    break;
-                }
-            }
-        });
+        let stderr_tail = Arc::new(Mutex::new(VecDeque::with_capacity(STDERR_TAIL_LINES)));
+        let (stderr_done_tx, stderr_done_rx) = oneshot::channel::<()>();
+        let stderr_reader = spawn_stderr_reader(stderr, Arc::clone(&stderr_tail), stderr_done_tx);
+        let child_watcher = spawn_child_watcher(child, inbound_tx, stderr_tail, stderr_done_rx);
 
         Ok(Self {
             command_tx,
             inbound_rx: Some(inbound_rx),
-            _writer: writer,
-            _reader: reader,
-            _child: child,
+            writer,
+            reader,
+            stderr_reader,
+            child_watcher,
         })
     }
 
@@ -182,6 +176,128 @@ impl RpcClient {
     /// app loops or tests.
     pub fn command_sender(&self) -> mpsc::Sender<Command> {
         self.command_tx.clone()
+    }
+}
+
+fn spawn_writer(mut stdin: ChildStdin, mut command_rx: mpsc::Receiver<Command>) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        while let Some(cmd) = command_rx.recv().await {
+            let Ok(line) = serde_json::to_string(&cmd) else {
+                continue;
+            };
+            if stdin.write_all(line.as_bytes()).await.is_err() {
+                break;
+            }
+            if stdin.write_all(b"\n").await.is_err() {
+                break;
+            }
+            if stdin.flush().await.is_err() {
+                break;
+            }
+        }
+
+        let _ = stdin.shutdown().await;
+    })
+}
+
+fn spawn_stdout_reader(stdout: ChildStdout, inbound_tx: mpsc::Sender<Inbound>) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(stdout).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            let inbound = match Inbound::parse_line(&line) {
+                Ok(inbound) => inbound,
+                Err(error) => {
+                    tracing::warn!(line = %line, source = %error, "failed to parse RPC stdout line");
+                    Inbound::ParseError {
+                        line,
+                        source: error.to_string(),
+                    }
+                }
+            };
+            if send_inbound(&inbound_tx, inbound).await.is_err() {
+                break;
+            }
+        }
+    })
+}
+
+fn spawn_stderr_reader(
+    stderr: Option<ChildStderr>,
+    stderr_tail: Arc<Mutex<VecDeque<String>>>,
+    stderr_done_tx: oneshot::Sender<()>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let Some(stderr) = stderr else {
+            return;
+        };
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            let mut tail = stderr_tail.lock().await;
+            if tail.len() == STDERR_TAIL_LINES {
+                tail.pop_front();
+            }
+            tail.push_back(line);
+        }
+        let _ = stderr_done_tx.send(());
+    })
+}
+
+fn spawn_child_watcher(
+    mut child: Child,
+    inbound_tx: mpsc::Sender<Inbound>,
+    stderr_tail: Arc<Mutex<VecDeque<String>>>,
+    stderr_done_rx: oneshot::Receiver<()>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let status = child.wait().await;
+        let _ = timeout(Duration::from_millis(50), stderr_done_rx).await;
+        let stderr_tail = stderr_tail
+            .lock()
+            .await
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        match status {
+            Ok(status) if status.success() => {
+                let _ = send_inbound(&inbound_tx, Inbound::Disconnected).await;
+            }
+            Ok(status) => {
+                let _ = send_inbound(
+                    &inbound_tx,
+                    Inbound::Error {
+                        exit_code: status.code(),
+                        stderr_tail,
+                    },
+                )
+                .await;
+            }
+            Err(_) => {
+                let _ = send_inbound(
+                    &inbound_tx,
+                    Inbound::Error {
+                        exit_code: None,
+                        stderr_tail,
+                    },
+                )
+                .await;
+            }
+        }
+    })
+}
+
+async fn send_inbound(
+    tx: &mpsc::Sender<Inbound>,
+    inbound: Inbound,
+) -> Result<(), mpsc::error::SendError<Inbound>> {
+    match tx.try_send(inbound) {
+        Ok(()) => Ok(()),
+        Err(mpsc::error::TrySendError::Closed(inbound)) => Err(mpsc::error::SendError(inbound)),
+        Err(mpsc::error::TrySendError::Full(inbound)) => {
+            tracing::warn!("RPC inbound channel full; waiting to send frame");
+            tx.send(inbound).await
+        }
     }
 }
 
