@@ -192,6 +192,10 @@ export class ProcessTerminal implements Terminal {
 	private queryAndEnableKittyProtocol(): void {
 		this.setupStdinBuffer();
 		process.stdin.on("data", this.stdinDataHandler!);
+		if (process.env.TMUX !== undefined || process.env.TMUX_PANE !== undefined) {
+			process.stdout.write("\x1b[>4;2m");
+			this._modifyOtherKeysActive = true;
+		}
 		process.stdout.write("\x1b[?u");
 		setTimeout(() => {
 			if (!this._kittyProtocolActive && !this._modifyOtherKeysActive) {

@@ -198,6 +198,21 @@ describe("StdinBuffer", () => {
 			assert.deepStrictEqual(emittedSequences, ["\x1b[3;1:3~"]);
 		});
 
+		it("should keep split tmux CSI-u Shift+Enter as one sequence", () => {
+			const givenFirstChunk = "\x1b[13";
+			const givenSecondChunk = ";2u";
+			const thenCompleteSequence = "\x1b[13;2u";
+
+			processInput(givenFirstChunk);
+			assert.deepStrictEqual(emittedSequences, []);
+			assert.strictEqual(buffer.getBuffer(), givenFirstChunk);
+
+			processInput(givenSecondChunk);
+
+			assert.deepStrictEqual(emittedSequences, [thenCompleteSequence]);
+			assert.strictEqual(buffer.getBuffer(), "");
+		});
+
 		it("should split ESC+ESC+CSI into standalone ESC and the CSI sequence (WezTerm Escape key regression)", () => {
 			// WezTerm with enable_kitty_keyboard sends Escape key press as raw \x1b
 			// and the release as a full Kitty CSI-u sequence, concatenated.

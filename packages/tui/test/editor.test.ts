@@ -367,6 +367,22 @@ describe("Editor component", () => {
 	});
 
 	describe("Kitty CSI-u handling", () => {
+		it("inserts a newline for tmux CSI-u Shift+Enter without submitting", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const givenInput = "hello";
+			const givenShiftEnter = "\x1b[13;2u";
+			let submitted = false;
+			editor.onSubmit = () => {
+				submitted = true;
+			};
+
+			editor.setText(givenInput);
+			editor.handleInput(givenShiftEnter);
+
+			assert.strictEqual(editor.getText(), "hello\n");
+			assert.strictEqual(submitted, false);
+		});
+
 		it("ignores printable CSI-u sequences with unsupported modifiers", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 

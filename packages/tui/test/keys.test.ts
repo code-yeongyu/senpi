@@ -111,6 +111,26 @@ describe("matchesKey", () => {
 			setKittyProtocolActive(false);
 		});
 
+		it("should match modified Enter bindings via Kitty CSI-u", () => {
+			const givenShiftEnter = "\x1b[13;2u";
+			const givenCtrlEnter = "\x1b[13;5u";
+			const givenAltEnter = "\x1b[13;3u";
+
+			setKittyProtocolActive(false);
+			const whenShiftEnterMatches = matchesKey(givenShiftEnter, "shift+enter");
+			const whenCtrlEnterMatches = matchesKey(givenCtrlEnter, "ctrl+enter");
+			const whenAltEnterMatches = matchesKey(givenAltEnter, "alt+enter");
+			const whenPlainEnterMatches = matchesKey(givenShiftEnter, "enter");
+
+			assert.strictEqual(whenShiftEnterMatches, true);
+			assert.strictEqual(whenCtrlEnterMatches, true);
+			assert.strictEqual(whenAltEnterMatches, true);
+			assert.strictEqual(whenPlainEnterMatches, false);
+			assert.strictEqual(parseKey(givenShiftEnter), "shift+enter");
+			assert.strictEqual(parseKey(givenCtrlEnter), "ctrl+enter");
+			assert.strictEqual(parseKey(givenAltEnter), "alt+enter");
+		});
+
 		it("should normalize Kitty keypad functional keys to logical digits, symbols, and navigation", () => {
 			setKittyProtocolActive(true);
 			assert.strictEqual(matchesKey("\x1b[57400u", "1"), true);
