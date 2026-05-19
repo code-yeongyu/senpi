@@ -77,7 +77,7 @@ fn term_caps_detects_tmux_from_env() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "runs as a child process spawned with TMUX env set; see term_emits_modify_other_keys_when_tmux_env_set"]
 fn term_caps_detects_tmux_from_env_child() {
     assert!(TerminalCaps::detect().in_tmux);
 }
