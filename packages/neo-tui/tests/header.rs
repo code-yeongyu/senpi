@@ -3,12 +3,7 @@
 //! Locks the connection dot, model display, thinking pill, branch dirty
 //! marker, and responsive width dropping.
 
-use ratatui::{
-    Terminal,
-    backend::TestBackend,
-    layout::Rect,
-    style::Color,
-};
+use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Color};
 use senpi_neo_tui::{
     components::header::{self, HeaderState},
     load_bundled_dark_theme,
@@ -38,17 +33,27 @@ fn find_symbol(buffer: &ratatui::buffer::Buffer, symbol: &str) -> Vec<(u16, u16,
 
 fn find_text(buffer: &ratatui::buffer::Buffer, text: &str) -> Option<(u16, u16)> {
     for y in 0..buffer.area.height {
-        let mut line = String::new();
         for x in 0..buffer.area.width {
-            line.push_str(
-                buffer
-                    .cell(ratatui::layout::Position { x, y })
-                    .map(|c| c.symbol())
-                    .unwrap_or(" "),
-            );
-        }
-        if let Some(pos) = line.find(text) {
-            return Some((pos as u16, y));
+            let mut matched = true;
+            for (i, ch) in text.chars().enumerate() {
+                let cx = x + u16::try_from(i).ok()?;
+                if cx >= buffer.area.width {
+                    matched = false;
+                    break;
+                }
+                let expected = ch.to_string();
+                let actual = buffer
+                    .cell(ratatui::layout::Position { x: cx, y })
+                    .map(|c| c.symbol().to_string())
+                    .unwrap_or_default();
+                if actual != expected {
+                    matched = false;
+                    break;
+                }
+            }
+            if matched {
+                return Some((x, y));
+            }
         }
     }
     None
@@ -176,7 +181,8 @@ fn header_thinking_level_pill() {
     let emphasis_color = theme.token(Token::MarkdownEmphasis);
     let actual = color_at(buffer, pos.0, pos.1);
     assert_eq!(
-        actual, Some(emphasis_color),
+        actual,
+        Some(emphasis_color),
         "expected thinking pill to use MarkdownEmphasis color"
     );
 }

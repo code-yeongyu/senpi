@@ -122,7 +122,9 @@ fn real_main() -> Result<()> {
                 tokens_in: 12_400,
                 tokens_out: 3_120,
                 elapsed_secs: 0,
-                spinner_glyph: '⠂',
+                spinner_glyph: '\u{2802}',
+                connected: true,
+                busy_label: None,
             },
         )
     } else {
@@ -147,7 +149,9 @@ fn real_main() -> Result<()> {
                 tokens_in: 0,
                 tokens_out: 0,
                 elapsed_secs: 0,
-                spinner_glyph: '⠂',
+                spinner_glyph: '\u{00b7}',
+                connected: true,
+                busy_label: None,
             },
         )
     };

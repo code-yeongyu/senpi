@@ -40,10 +40,16 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &
     let primary = theme.token(Token::Primary);
     let secondary = theme.token(Token::Secondary);
     let muted = theme.token(Token::TextMuted);
+    let success = theme.token(Token::Success);
+    let error = theme.token(Token::Error);
+    let warning = theme.token(Token::Warning);
+    let emphasis = theme.token(Token::MarkdownEmphasis);
 
+    let dot_color = if state.connected { success } else { error };
     let banner = Paragraph::new(vec![
         Line::from(""),
         Line::from(vec![
+            Span::styled("● ", Style::default().fg(dot_color)),
             Span::styled("senpi", Style::default().fg(primary).add_modifier(Modifier::BOLD)),
             Span::styled(
                 " neo",
@@ -54,23 +60,50 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &
     ]);
     frame.render_widget(banner, brand_area);
 
-    let branch_label = state
-        .branch
-        .as_deref()
-        .map(|b| format!(" git:{b}"))
-        .unwrap_or_default();
-    let meta = Paragraph::new(vec![
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(state.cwd.clone(), Style::default().fg(muted)),
-            Span::raw(" "),
-            Span::styled(state.session.clone(), Style::default().fg(primary)),
-            Span::styled(branch_label, Style::default().fg(secondary)),
-            Span::raw(" "),
-        ]),
-        Line::from(""),
-    ])
-    .alignment(Alignment::Right);
+    let width = area.width;
+    let mut meta_spans: Vec<Span> = Vec::new();
+
+    meta_spans.push(Span::styled(state.cwd.clone(), Style::default().fg(muted)));
+    meta_spans.push(Span::raw(" "));
+
+    if width >= 100 {
+        if let Some(ref level) = state.thinking_level {
+            meta_spans.push(Span::styled(
+                format!("[ think: {level} ]"),
+                Style::default().fg(emphasis),
+            ));
+            meta_spans.push(Span::raw(" "));
+        }
+    }
+
+    if width >= 80 && !state.model.is_empty() {
+        meta_spans.push(Span::styled(
+            format!("model: {}", state.model),
+            Style::default().fg(primary),
+        ));
+        meta_spans.push(Span::raw(" "));
+    }
+
+    if width >= 100 && !state.session.is_empty() {
+        meta_spans.push(Span::styled(state.session.clone(), Style::default().fg(primary)));
+        meta_spans.push(Span::raw(" "));
+    }
+
+    if width >= 60 {
+        if let Some(ref branch) = state.branch {
+            meta_spans.push(Span::styled(
+                format!("git:{branch}"),
+                Style::default().fg(secondary),
+            ));
+            if state.branch_dirty {
+                meta_spans.push(Span::styled("*", Style::default().fg(warning)));
+            }
+            meta_spans.push(Span::raw(" "));
+        }
+    }
+
+    let meta = Paragraph::new(vec![Line::from(""), Line::from(meta_spans), Line::from("")])
+        .alignment(Alignment::Right);
     frame.render_widget(meta, meta_area);
 }
 
