@@ -30,6 +30,8 @@
 
     "tui.input.newLine": ["shift+enter"],
     "tui.input.submit": ["enter"],
+    "tui.input.historyPrev": ["up"],
+    "tui.input.historyNext": ["down"],
     "tui.input.tab": ["tab"],
     "tui.input.copy": ["ctrl+c"],
 

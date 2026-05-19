@@ -161,6 +161,9 @@ fn extra_bindings_are_neo_namespaced() {
         if legacy_ids.contains(id.as_str()) {
             continue;
         }
+        if matches!(id.as_str(), "tui.input.historyPrev" | "tui.input.historyNext") {
+            continue;
+        }
         if !id.starts_with("neo.") {
             offenders.push(id.clone());
         }
@@ -170,6 +173,24 @@ fn extra_bindings_are_neo_namespaced() {
         "non-legacy bindings must live under `neo.*` to avoid future\n\
          conflicts with the upstream registry, but found: {offenders:?}",
     );
+}
+
+#[test]
+fn default_keymap_binds_input_history_navigation() {
+    let spec = keymap::parse(DEFAULT_JSON).expect("default keymap must parse");
+    let prev = spec
+        .bindings
+        .get("tui.input.historyPrev")
+        .expect("history previous binding must exist");
+    let next = spec
+        .bindings
+        .get("tui.input.historyNext")
+        .expect("history next binding must exist");
+    let prev_keys: Vec<&str> = prev.iter().map(String::as_str).collect();
+    let next_keys: Vec<&str> = next.iter().map(String::as_str).collect();
+
+    assert_eq!(prev_keys.as_slice(), ["up"]);
+    assert_eq!(next_keys.as_slice(), ["down"]);
 }
 
 #[test]

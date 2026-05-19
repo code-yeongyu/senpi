@@ -754,7 +754,9 @@ fn app_init_writes_modify_other_keys_when_tmux() {
         let bytes = App::init_terminal_writes();
 
         assert!(
-            bytes.windows(b"\x1b[>4;2m".len()).any(|window| window == b"\x1b[>4;2m"),
+            bytes
+                .windows(b"\x1b[>4;2m".len())
+                .any(|window| window == b"\x1b[>4;2m"),
             "tmux init writes must enable modifyOtherKeys mode 2: {bytes:?}",
         );
     });
@@ -766,7 +768,9 @@ fn app_cleanup_writes_disable_modify_other_keys() {
         let bytes = App::cleanup_terminal_writes();
 
         assert!(
-            bytes.windows(b"\x1b[>4;0m".len()).any(|window| window == b"\x1b[>4;0m"),
+            bytes
+                .windows(b"\x1b[>4;0m".len())
+                .any(|window| window == b"\x1b[>4;0m"),
             "tmux cleanup writes must disable modifyOtherKeys: {bytes:?}",
         );
     });
