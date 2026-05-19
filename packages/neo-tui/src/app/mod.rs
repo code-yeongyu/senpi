@@ -958,10 +958,18 @@ async fn drive(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: AppCon
                         // In demo mode `cmd_tx` is `None`, so AppActions that
                         // would have produced a Command silently degrade to
                         // local-only UI state changes (overlays, focus, etc.).
-                        if let (Some(tx), Some(cmd)) =
-                            (cmd_tx.as_ref(), App::action_to_command(&action))
-                        {
-                            let _ = tx.send(cmd).await;
+                        if let Some(cmd) = App::action_to_command(&action) {
+                            if let Some(tx) = cmd_tx.as_ref() {
+                                if tx.send(cmd).await.is_err() {
+                                    app.apply_inbound(Inbound::Disconnected);
+                                    inbound = None;
+                                }
+                            } else if !demo_mode {
+                                app.apply_inbound(Inbound::Error {
+                                    exit_code: None,
+                                    stderr_tail: "No backend process is connected.".into(),
+                                });
+                            }
                         }
                     }
                     Some(Ok(CrosstermEvent::Paste(text))) => {
