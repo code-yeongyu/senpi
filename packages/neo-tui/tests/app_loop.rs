@@ -592,6 +592,76 @@ fn apply_inbound_extension_error_pushes_error_message() {
 }
 
 #[test]
+fn app_inbound_error_shows_error_message_in_chat() {
+    let mut app = fresh_app();
+    app.apply_inbound(Inbound::Error {
+        exit_code: Some(2),
+        stderr_tail: "panic: thing".into(),
+    });
+
+    let last = app.chat.messages.last().expect("must push error message");
+    assert_eq!(last.role, Role::Error);
+    assert!(last.body.contains("panic: thing"));
+}
+
+#[test]
+fn app_inbound_error_sets_footer_error_state() {
+    let mut app = fresh_app();
+    app.apply_inbound(Inbound::Error {
+        exit_code: Some(2),
+        stderr_tail: "panic: thing".into(),
+    });
+
+    assert_eq!(app.footer.status, Status::Error);
+    assert!(!app.footer.connected);
+    assert!(app.footer.status_label.contains("backend") || app.footer.status_label.contains("error"));
+}
+
+#[test]
+fn app_inbound_disconnected_pushes_system_message() {
+    let mut app = fresh_app();
+    app.apply_inbound(Inbound::Disconnected);
+
+    let last = app.chat.messages.last().expect("must push system message");
+    assert_eq!(last.role, Role::System);
+    assert!(last.body.contains("disconnected"));
+    assert!(!app.footer.connected);
+}
+
+#[test]
+fn app_inbound_parse_error_does_not_disrupt_ui() {
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+    let status_before = app.footer.status;
+    let status_label_before = app.footer.status_label.clone();
+    let connected_before = app.footer.connected;
+
+    app.apply_inbound(Inbound::ParseError {
+        line: "garbage".into(),
+        source: "expected `:`".into(),
+    });
+
+    assert_eq!(app.chat.messages.len(), messages_before);
+    assert_eq!(app.footer.status, status_before);
+    assert_eq!(app.footer.status_label, status_label_before);
+    assert_eq!(app.footer.connected, connected_before);
+}
+
+#[test]
+fn app_recovers_from_error_on_next_message() {
+    let mut app = fresh_app();
+    app.apply_inbound(Inbound::Error {
+        exit_code: Some(2),
+        stderr_tail: "panic: thing".into(),
+    });
+    app.apply_inbound(Inbound::Event(RpcEvent::AgentStart));
+
+    assert!(matches!(app.footer.status, Status::Busy | Status::Streaming));
+    assert!(app.footer.connected);
+    assert_ne!(app.footer.status_label, "backend error");
+}
+
+#[test]
 fn cursor_left_then_insert_lands_mid_buffer() {
     let mut app = fresh_app();
     app.handle_key(ev(KeyCode::Char('a'), KeyModifiers::NONE));
