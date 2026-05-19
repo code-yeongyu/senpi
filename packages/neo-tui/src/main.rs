@@ -54,6 +54,23 @@ struct Cli {
     list_themes: bool,
 }
 
+/// Decide whether a `--theme` argument is a file path vs a bundled id.
+///
+/// The previous heuristic (`value.contains('/')`) was too aggressive:
+/// it treated `opencode/dracula` as a path and tried to `read_to_string`
+/// it, even though that's a valid bundled id once the registry strips
+/// the `opencode/` prefix. The new rule only triggers for explicit
+/// filesystem indicators: an existing file, a `~/...` home expansion,
+/// an absolute path, or a `./` / `../` relative path. Bundled ids
+/// (`dracula`, `opencode/dracula`, ...) take the registry branch.
+fn looks_like_theme_path(value: &str) -> bool {
+    Path::new(value).is_file()
+        || value.starts_with("~/")
+        || value.starts_with("./")
+        || value.starts_with("../")
+        || value.starts_with('/')
+}
+
 fn main() -> ExitCode {
     color_eyre::install().ok();
     if let Err(err) = real_main() {
@@ -76,7 +93,7 @@ fn real_main() -> Result<()> {
     }
 
     let theme = match cli.theme.as_deref() {
-        Some(value) if Path::new(value).is_file() || value.contains('/') || value.starts_with('~') => {
+        Some(value) if looks_like_theme_path(value) => {
             let path = value.strip_prefix("~/").map_or_else(
                 || PathBuf::from(value),
                 |rest| dirs::home_dir().map_or_else(|| PathBuf::from(value), |home| home.join(rest)),

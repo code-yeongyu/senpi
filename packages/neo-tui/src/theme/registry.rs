@@ -67,7 +67,17 @@ pub fn load_by_id(id: &str, mode: ThemeMode) -> Result<ResolvedTheme, ThemeError
         return load(include_str!("../../assets/themes/senpi-neo-dark.json"));
     }
 
-    let Some((_, source)) = OPENCODE_THEMES.iter().find(|(theme_id, _)| *theme_id == id) else {
+    // Accept both `dracula` and `opencode/dracula` for ergonomics: the
+    // README + `--theme` CLI documentation lean on the namespaced form,
+    // but the underlying registry uses flat keys keyed off the JSON
+    // file basename. Stripping the prefix here keeps both spellings
+    // working without duplicating the table.
+    let lookup_id = id.strip_prefix("opencode/").unwrap_or(id);
+
+    let Some((_, source)) = OPENCODE_THEMES
+        .iter()
+        .find(|(theme_id, _)| *theme_id == lookup_id)
+    else {
         return Err(ThemeError::UnknownTheme(id.to_string()));
     };
 

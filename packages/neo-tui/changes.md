@@ -38,3 +38,14 @@ Test count: 298 passing (was 156 at branch start). `cargo fmt --check`, `cargo c
 - Added `diffAddedText` and `diffRemovedText` to `assets/themes/senpi-neo-dark.json` so the bundled dark theme defines every variant in `Token::ALL` (72/72). Locked by a new `bundled_dark_theme_resolves_every_token_in_token_all` assertion that scans the resolved theme for `Color::Reset` (the lenient fallback) and fails if any `Token::ALL` member is missing.
 - Dropped the redundant `tui.editor.newLine` binding from `assets/keymaps/default.json`. The legacy `tui.input.newLine` (`shift+enter`) from `TUI_KEYBINDINGS` was already wired into the main key dispatcher, so the extra ID only existed to satisfy a shadow code path. Removing it kills the dispatch ambiguity and lets the keymap parity test stay green on both sides of the fence.
 - Moved the neo-only `tui.input.historyPrev` / `tui.input.historyNext` bindings into the `neo.*` namespace (`neo.input.historyPrev` / `neo.input.historyNext`). The legacy senpi TUI does not have these bindings, so keeping them on `tui.*` was a future-conflict hazard; the parity tests on both sides now enforce the `neo.*` rule with zero exceptions.
+
+## 2026-05-19 — Oracle round 3: kill four more silent-failure paths
+
+Oracle's second sweep over the merged `45dbb577` snapshot found that the Bug 3 "if there's an error, say so" contract still had four leaks:
+
+1. `rpc::Inbound::Response { success: false }` was matched to `Inbound::Response(_) => {}` in `App::apply_inbound`, dropping every backend-side command failure (including the explicit `error: Some(_)` field). Now surfaces as a chat error bubble + footer `Status::Error` with the failing command name.
+2. `rpc::Inbound::ParseError { line, source }` only emitted `tracing::warn!` and the existing app-loop test actively asserted that protocol corruption leaves the UI untouched. Both the runtime path and the regression assertion now require a visible chat error + footer `protocol error` status.
+3. `--theme opencode/dracula` (the README-documented form) failed because the registry only stored flat keys (`dracula`, `nord`, ...) and the main.rs path heuristic treated any `/` in the value as a file path. The registry now strips the `opencode/` prefix on lookup, and the CLI heuristic only triggers on explicit filesystem indicators (`./`, `../`, `~/`, absolute, or an existing file).
+4. `Alt+T` (`neo.theme.picker`) was bound in the JSON keymap but had no `execute_action` arm, so the dispatcher dropped it into the catch-all `Consumed` no-op. Added `AppAction::OpenThemePicker` plus the dispatch path that opens the existing `ThemePickerOverlay::new(&self.theme.name)` overlay.
+
+Total Rust test count is now 305 passing (was 298 after PR #14 squash); five new tests cover the four arms and the prefix-strip behavior. `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `npm run check`, and the two coding-agent regression suites all green.

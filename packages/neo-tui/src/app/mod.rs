@@ -44,7 +44,7 @@ use crate::{
     },
     keymap::{self, FocusMode, ResolvedKeymap},
     layout::{self, LayoutState},
-    overlay::{HelpOverlay, Overlay, OverlayResult, PaletteOverlay, SlashOverlay},
+    overlay::{HelpOverlay, Overlay, OverlayResult, PaletteOverlay, SlashOverlay, ThemePickerOverlay},
     rpc::{
         client::{Inbound, RpcClient},
         command::Command,
@@ -80,6 +80,8 @@ pub enum AppAction {
     FollowUp(String),
     /// Open the model picker overlay (Ctrl+L).
     OpenModelPicker,
+    /// Open the theme picker overlay (Alt+T).
+    OpenThemePicker,
     /// Open the help overlay (?).
     OpenHelp,
     /// Open the command palette (Alt+P).
@@ -554,6 +556,10 @@ impl App {
                 self.overlay = Some(Overlay::Palette(PaletteOverlay::from_keymap(&self.keymap)));
                 AppAction::OpenPalette
             }
+            "neo.theme.picker" => {
+                self.overlay = Some(Overlay::ThemePicker(ThemePickerOverlay::new(&self.theme.name)));
+                AppAction::OpenThemePicker
+            }
             _ => AppAction::Consumed(id.to_owned()),
         }
     }
@@ -591,13 +597,30 @@ impl App {
     /// Streaming text accumulates in the last assistant message, tool
     /// cards land as their own messages, and footer status tracks the
     /// agent/turn lifecycle.
+    ///
+    /// Bug 3 contract ("if there's an error, say so"): every failure
+    /// path - subprocess exit, EOF, JSON decode error, AND
+    /// `Response { success: false }` - MUST surface to the chat and
+    /// footer. Silent error swallowing is the original user complaint
+    /// and the loudest regression vector here, so each arm below
+    /// renders something.
     pub fn apply_inbound(&mut self, msg: Inbound) {
         match msg {
             Inbound::Event(event) => {
                 self.footer.connected = true;
                 self.apply_event(event);
             }
-            Inbound::Response(_) => {}
+            Inbound::Response(response) => {
+                if !response.success {
+                    let body = response.error.as_deref().map_or_else(
+                        || format!("Backend reported `{}` failed.", response.command),
+                        |err| format!("`{}` failed: {err}", response.command),
+                    );
+                    self.chat.push_error(body);
+                    self.footer.status = Status::Error;
+                    self.footer.status_label = "command failed".into();
+                }
+            }
             Inbound::Error {
                 exit_code,
                 stderr_tail,
@@ -624,7 +647,20 @@ impl App {
                 self.footer.connected = false;
             }
             Inbound::ParseError { line, source } => {
+                // Protocol corruption is invisible to the user if we
+                // only log to tracing - they see a stuck spinner and
+                // no clue why. Push a chat error so it shows up in the
+                // running terminal, and flip the footer so the status
+                // glyph reflects the broken state. Also keep the
+                // tracing line for stderr / log aggregation.
                 tracing::warn!(line = %line, source = %source, "rpc parse error");
+                let preview = line.chars().take(80).collect::<String>();
+                let suffix = if line.chars().count() > 80 { "..." } else { "" };
+                self.chat.push_error(format!(
+                    "Backend sent unparseable JSON: {source}\n\n{preview}{suffix}"
+                ));
+                self.footer.status = Status::Error;
+                self.footer.status_label = "protocol error".into();
             }
         }
     }

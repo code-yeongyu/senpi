@@ -124,6 +124,23 @@ fn ctrl_l_dispatches_app_model_select_action() {
 }
 
 #[test]
+fn alt_t_dispatches_open_theme_picker_and_opens_overlay() {
+    // Bug-3 followup: the keymap defines `neo.theme.picker -> alt+t` and
+    // the docs (README + help overlay) advertise Alt+T as the theme
+    // picker shortcut, but the dispatcher previously fell into the
+    // catch-all `Consumed` arm and the overlay never opened. Lock the
+    // contract on the App side so it cannot silently regress to a no-op.
+    let mut app = fresh_app();
+    let action = app.handle_key(ev(KeyCode::Char('t'), KeyModifiers::ALT));
+    assert_eq!(action, AppAction::OpenThemePicker);
+    assert!(
+        matches!(app.overlay, Some(Overlay::ThemePicker(_))),
+        "expected the theme picker overlay to be open after Alt+T, got {:?}",
+        app.overlay,
+    );
+}
+
+#[test]
 fn ctrl_p_dispatches_cycle_model_forward() {
     let mut app = fresh_app();
     let action = app.handle_key(ev(KeyCode::Char('p'), KeyModifiers::CONTROL));
@@ -629,22 +646,122 @@ fn app_inbound_disconnected_pushes_system_message() {
 }
 
 #[test]
-fn app_inbound_parse_error_does_not_disrupt_ui() {
+fn app_inbound_parse_error_surfaces_to_chat_and_footer() {
+    // Bug 3 regression: protocol-level failures must NEVER be silent.
+    // The user's exact complaint was "에러가났으면 났다 안났으면 안났다 전혀안되노"
+    // ("if there's an error, say so; if there isn't, say so - it doesn't
+    // work at all"). A `ParseError` means the backend sent something the
+    // TUI cannot decode; that is an error condition and must show up in
+    // chat + footer just like an `Inbound::Error`. The previous version
+    // logged this to `tracing::warn!` only, which is invisible to a
+    // user running `senpi --neo` in a terminal.
+    let mut app = fresh_app();
+    app.apply_inbound(Inbound::ParseError {
+        line: "garbage{".into(),
+        source: "expected `,` or `}` at line 1 column 8".into(),
+    });
+
+    let last = app
+        .chat
+        .messages
+        .last()
+        .expect("parse error must push a chat message");
+    assert_eq!(last.role, Role::Error);
+    assert!(
+        last.body.contains("expected `,` or `}`"),
+        "chat error body must surface the decoder error, got {:?}",
+        last.body,
+    );
+    assert_eq!(app.footer.status, Status::Error);
+    assert!(
+        app.footer.status_label.contains("protocol") || app.footer.status_label.contains("parse"),
+        "footer must label this as a protocol/parse error, got {:?}",
+        app.footer.status_label,
+    );
+}
+
+#[test]
+fn app_inbound_failed_response_surfaces_to_chat_and_footer() {
+    // Bug 3 regression: a `Response { success: false, error: Some(_) }`
+    // is the backend explicitly telling the TUI "your command failed".
+    // Previously `apply_inbound` matched `Inbound::Response(_)` to `{}`
+    // and silently dropped it - so the user got no signal that, e.g.,
+    // `Submit` or `GetAvailableModels` failed on the agent side.
+    use senpi_neo_tui::rpc::envelope::Response;
+
+    let mut app = fresh_app();
+    app.apply_inbound(Inbound::Response(Response {
+        id: Some("cmd-7".into()),
+        command: "submit".into(),
+        success: false,
+        data: None,
+        error: Some("model unavailable".into()),
+    }));
+
+    let last = app
+        .chat
+        .messages
+        .last()
+        .expect("failed response must push a chat message");
+    assert_eq!(last.role, Role::Error);
+    assert!(
+        last.body.contains("model unavailable"),
+        "chat error body must include the backend error string, got {:?}",
+        last.body,
+    );
+    assert_eq!(app.footer.status, Status::Error);
+}
+
+#[test]
+fn app_inbound_failed_response_without_error_message_still_surfaces() {
+    // Same as above but the backend omitted the human-readable error
+    // string. The TUI must STILL surface this as a failure - silently
+    // dropping a `success: false` frame is the original Bug 3.
+    use senpi_neo_tui::rpc::envelope::Response;
+
+    let mut app = fresh_app();
+    app.apply_inbound(Inbound::Response(Response {
+        id: None,
+        command: "cycle_model".into(),
+        success: false,
+        data: None,
+        error: None,
+    }));
+
+    let last = app
+        .chat
+        .messages
+        .last()
+        .expect("failed response with no error message must still push a chat message");
+    assert_eq!(last.role, Role::Error);
+    assert!(
+        last.body.contains("cycle_model") || last.body.to_lowercase().contains("failed"),
+        "chat error must mention the failing command or that it failed, got {:?}",
+        last.body,
+    );
+    assert_eq!(app.footer.status, Status::Error);
+}
+
+#[test]
+fn app_inbound_successful_response_does_not_disturb_chat_or_footer() {
+    // Successful responses are protocol acks (e.g. ID echo, no data).
+    // They must NOT push noise into chat or flip the footer status.
+    use senpi_neo_tui::rpc::envelope::Response;
+
     let mut app = fresh_app();
     let messages_before = app.chat.messages.len();
     let status_before = app.footer.status;
-    let status_label_before = app.footer.status_label.clone();
-    let connected_before = app.footer.connected;
 
-    app.apply_inbound(Inbound::ParseError {
-        line: "garbage".into(),
-        source: "expected `:`".into(),
-    });
+    app.apply_inbound(Inbound::Response(Response {
+        id: Some("cmd-1".into()),
+        command: "abort".into(),
+        success: true,
+        data: None,
+        error: None,
+    }));
 
     assert_eq!(app.chat.messages.len(), messages_before);
     assert_eq!(app.footer.status, status_before);
-    assert_eq!(app.footer.status_label, status_label_before);
-    assert_eq!(app.footer.connected, connected_before);
 }
 
 #[test]

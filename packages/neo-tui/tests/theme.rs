@@ -41,6 +41,20 @@ fn parses_bundled_dark_theme() {
 }
 
 #[test]
+fn opencode_themes_are_resolvable_by_both_flat_id_and_opencode_prefix() {
+    // Bug-3 followup: the README and `senpi --neo -- --theme <id>`
+    // documentation both invite `opencode/dracula`-style ids, but the
+    // bundled registry stores flat keys (`dracula`, `nord`, ...). Strip
+    // the `opencode/` prefix on lookup so users can type either form
+    // without hitting `UnknownTheme`.
+    let flat = theme::load_by_id("dracula", theme::ThemeMode::Dark).expect("flat id must resolve");
+    let prefixed = theme::load_by_id("opencode/dracula", theme::ThemeMode::Dark)
+        .expect("`opencode/` prefix must resolve to the same theme");
+    assert_eq!(flat.name, prefixed.name);
+    assert_eq!(flat.colors(), prefixed.colors());
+}
+
+#[test]
 fn bundled_dark_theme_resolves_every_token_in_token_all() {
     // Regression: the bundled `senpi-neo-dark` theme MUST define every
     // semantic token the renderer consumes. `Token::ALL` is the source of
