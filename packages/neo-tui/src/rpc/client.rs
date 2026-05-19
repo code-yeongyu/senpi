@@ -138,7 +138,7 @@ impl RpcClient {
         let (command_tx, command_rx) = mpsc::channel::<Command>(CHANNEL_CAPACITY);
         let (inbound_tx, inbound_rx) = mpsc::channel::<Inbound>(CHANNEL_CAPACITY);
 
-        let writer = spawn_writer(stdin, command_rx);
+        let writer = spawn_writer(stdin, command_rx, inbound_tx.clone());
         let reader = spawn_stdout_reader(stdout, inbound_tx.clone());
 
         let stderr_tail = Arc::new(Mutex::new(VecDeque::with_capacity(STDERR_TAIL_LINES)));
@@ -179,19 +179,47 @@ impl RpcClient {
     }
 }
 
-fn spawn_writer(mut stdin: ChildStdin, mut command_rx: mpsc::Receiver<Command>) -> JoinHandle<()> {
+fn spawn_writer(
+    mut stdin: ChildStdin,
+    mut command_rx: mpsc::Receiver<Command>,
+    inbound_tx: mpsc::Sender<Inbound>,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
         while let Some(cmd) = command_rx.recv().await {
-            let Ok(line) = serde_json::to_string(&cmd) else {
-                continue;
+            // Serialization is a logic bug, not a transport failure;
+            // surface it as a `ParseError`-style inbound and skip the
+            // command. Without this the command was previously dropped
+            // with no feedback, violating Bug 3.
+            let line = match serde_json::to_string(&cmd) {
+                Ok(line) => line,
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed to serialize outbound RPC command");
+                    let _ = send_inbound(
+                        &inbound_tx,
+                        Inbound::Error {
+                            exit_code: None,
+                            stderr_tail: format!("outbound command serialization failed: {err}"),
+                        },
+                    )
+                    .await;
+                    continue;
+                }
             };
-            if stdin.write_all(line.as_bytes()).await.is_err() {
-                break;
-            }
-            if stdin.write_all(b"\n").await.is_err() {
-                break;
-            }
-            if stdin.flush().await.is_err() {
+            if let Err(err) = write_command_line(&mut stdin, &line).await {
+                // Pipe is broken (child died or closed stdin). Bug 3:
+                // surface to the UI. The child watcher will follow up
+                // with its own `Disconnected` / `Error` event once the
+                // process is reaped, but the user gets immediate
+                // feedback that THIS command did not land.
+                tracing::warn!(error = %err, "failed to write outbound RPC command");
+                let _ = send_inbound(
+                    &inbound_tx,
+                    Inbound::Error {
+                        exit_code: None,
+                        stderr_tail: format!("backend stdin write failed: {err}"),
+                    },
+                )
+                .await;
                 break;
             }
         }
@@ -200,22 +228,50 @@ fn spawn_writer(mut stdin: ChildStdin, mut command_rx: mpsc::Receiver<Command>) 
     })
 }
 
+async fn write_command_line(stdin: &mut ChildStdin, line: &str) -> std::io::Result<()> {
+    stdin.write_all(line.as_bytes()).await?;
+    stdin.write_all(b"\n").await?;
+    stdin.flush().await
+}
+
 fn spawn_stdout_reader(stdout: ChildStdout, inbound_tx: mpsc::Sender<Inbound>) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut lines = BufReader::new(stdout).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            let inbound = match Inbound::parse_line(&line) {
-                Ok(inbound) => inbound,
-                Err(error) => {
-                    tracing::warn!(line = %line, source = %error, "failed to parse RPC stdout line");
-                    Inbound::ParseError {
-                        line,
-                        source: error.to_string(),
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => {
+                    let inbound = match Inbound::parse_line(&line) {
+                        Ok(inbound) => inbound,
+                        Err(error) => {
+                            tracing::warn!(line = %line, source = %error, "failed to parse RPC stdout line");
+                            Inbound::ParseError {
+                                line,
+                                source: error.to_string(),
+                            }
+                        }
+                    };
+                    if send_inbound(&inbound_tx, inbound).await.is_err() {
+                        break;
                     }
                 }
-            };
-            if send_inbound(&inbound_tx, inbound).await.is_err() {
-                break;
+                Ok(None) => break,
+                Err(err) => {
+                    // Bug 3: transport-level read failure (invalid
+                    // UTF-8, pipe error, ...) was previously silently
+                    // dropped here. The child watcher will report the
+                    // eventual exit, but the user has no idea WHY the
+                    // stream went quiet. Surface it.
+                    tracing::warn!(error = %err, "RPC stdout reader hit io error");
+                    let _ = send_inbound(
+                        &inbound_tx,
+                        Inbound::Error {
+                            exit_code: None,
+                            stderr_tail: format!("backend stdout read failed: {err}"),
+                        },
+                    )
+                    .await;
+                    break;
+                }
             }
         }
     })

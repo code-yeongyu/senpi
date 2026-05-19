@@ -212,6 +212,58 @@ fn theme_picker_selection_with_unknown_id_pushes_a_chat_error() {
 }
 
 #[test]
+fn model_picker_selection_pushes_visible_feedback() {
+    // Oracle round 5: the model picker emits
+    // `OverlayResult::Selected("neo.model.set:<id>")`. Previously the
+    // dispatcher had no arm for that prefix and silently consumed it -
+    // the overlay closed, no model changed on the backend, and the
+    // user saw nothing happen. Until provider plumbing lands, surface
+    // a chat-system note so the chord is visibly accounted for.
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+    let action = app.execute_action_for_tests("neo.model.set:claude-opus-4-7");
+    assert!(matches!(action, AppAction::Consumed(_)));
+    assert!(
+        app.chat.messages.len() > messages_before,
+        "model selection must push a chat message",
+    );
+    let last = app.chat.messages.last().expect("message exists");
+    assert_eq!(last.role, Role::System);
+    assert!(
+        last.body.contains("claude-opus-4-7"),
+        "chat body must name the picked model, got {:?}",
+        last.body,
+    );
+}
+
+#[test]
+fn unimplemented_slash_command_visibly_notifies_user() {
+    // Oracle round 5: the slash menu and command palette advertise
+    // `app.session.new`, `app.session.tree`, `app.tree.filter.*`,
+    // `app.models.save`, `neo.compact`, etc., but the neo TUI has
+    // no execute_action arm for them. Previously selecting one
+    // silently closed the overlay with no feedback (Bug 3 leak).
+    // Now the dispatcher detects the advertised-but-unimplemented
+    // ids and pushes a chat note so the user knows the chord was
+    // received AND that the feature is not yet wired in --neo.
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+    let action = app.execute_action_for_tests("app.session.new");
+    assert!(matches!(action, AppAction::Consumed(_)));
+    assert!(
+        app.chat.messages.len() > messages_before,
+        "unimplemented action must push a chat message",
+    );
+    let last = app.chat.messages.last().expect("message exists");
+    assert_eq!(last.role, Role::System);
+    assert!(
+        last.body.contains("app.session.new") && last.body.to_lowercase().contains("not yet"),
+        "chat body must name the action and mark it as not yet wired, got {:?}",
+        last.body,
+    );
+}
+
+#[test]
 fn alt_t_dispatches_open_theme_picker_and_opens_overlay() {
     // Bug-3 followup: the keymap defines `neo.theme.picker -> alt+t` and
     // the docs (README + help overlay) advertise Alt+T as the theme

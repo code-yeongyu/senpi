@@ -472,7 +472,7 @@ impl App {
     }
 
     /// Apply a `neo.theme.set:<id>` selection emitted by the theme
-    /// picker overlay. Loads the registry entry, swaps `self.theme` on
+    /// picker overlay. Loads the registry entry, flips `self.theme` on
     /// success, or pushes a chat error + footer error state on failure.
     /// Bug 3 contract: never let a failed theme load fall through to
     /// the catch-all silent consumer.
@@ -489,6 +489,34 @@ impl App {
                 self.footer.status_label = "theme load failed".into();
             }
         }
+        AppAction::Consumed(action_id.to_owned())
+    }
+
+    /// Apply a `neo.model.set:<id>` selection emitted by the model
+    /// picker overlay. Push a chat-system note so the user sees that
+    /// the selection landed even though the backend `SetModel` wiring
+    /// (provider lookup) is not yet plumbed in `senpi --neo`. The
+    /// alternative (silent consume) was a Bug 3 violation flagged by
+    /// Oracle round 5.
+    fn apply_model_selection(&mut self, action_id: &str) -> AppAction {
+        let new_id = action_id.strip_prefix("neo.model.set:").unwrap_or_default();
+        self.chat.push_system(format!(
+            "Model selection (`{new_id}`) is not yet wired to the backend in `senpi --neo`. Use legacy `senpi` for runtime model switching.",
+        ));
+        AppAction::Consumed(action_id.to_owned())
+    }
+
+    /// Surface an advertised-but-unimplemented action to chat so the
+    /// user sees that the chord landed. Bug 3 contract: silent no-ops
+    /// on slash-menu / palette / hotkey-advertised actions violate the
+    /// "if there is an error, say so" promise. Until the neo TUI grows
+    /// real implementations for the session / tree / models actions,
+    /// the explicit "not yet wired" note tells the user where to fall
+    /// back.
+    fn note_unimplemented_action(&mut self, action_id: &str) -> AppAction {
+        self.chat.push_system(format!(
+            "`{action_id}` is not yet wired in `senpi --neo`. Run `senpi` (without `--neo`) for this command.",
+        ));
         AppAction::Consumed(action_id.to_owned())
     }
 
@@ -609,6 +637,8 @@ impl App {
                 AppAction::OpenThemePicker
             }
             other if other.starts_with("neo.theme.set:") => self.apply_theme_selection(other),
+            other if other.starts_with("neo.model.set:") => self.apply_model_selection(other),
+            other if is_advertised_unimplemented_action(other) => self.note_unimplemented_action(other),
             _ => AppAction::Consumed(id.to_owned()),
         }
     }
@@ -943,6 +973,56 @@ fn init_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     }
 }
 
+/// Action ids that the bundled keymap + slash menu + command palette
+/// advertise but the neo TUI does not yet implement end-to-end. The
+/// legacy senpi TUI implements all of these; the rewrite has not
+/// caught up yet. Without an explicit list the catch-all in
+/// `execute_action` silently consumed them, which violates Bug 3.
+/// Listing them here lets the dispatcher show a one-line chat
+/// notification ("not yet wired") so the user sees that the chord
+/// landed and knows where to fall back.
+const ADVERTISED_BUT_UNIMPLEMENTED_ACTIONS: &[&str] = &[
+    "app.session.toggleNamedFilter",
+    "app.session.new",
+    "app.session.tree",
+    "app.session.fork",
+    "app.session.resume",
+    "app.session.rename",
+    "app.session.delete",
+    "app.session.deleteNoninvasive",
+    "app.session.togglePath",
+    "app.session.toggleSort",
+    "app.tree.foldOrUp",
+    "app.tree.unfoldOrDown",
+    "app.tree.editLabel",
+    "app.tree.toggleLabelTimestamp",
+    "app.tree.filter.default",
+    "app.tree.filter.noTools",
+    "app.tree.filter.userOnly",
+    "app.tree.filter.labeledOnly",
+    "app.tree.filter.all",
+    "app.tree.filter.cycleForward",
+    "app.tree.filter.cycleBackward",
+    "app.models.save",
+    "app.models.toggleFavorite",
+    "app.models.enableAll",
+    "app.models.clearAll",
+    "app.models.toggleProvider",
+    "app.models.reorderUp",
+    "app.models.reorderDown",
+    "app.editor.external",
+    "app.message.followUp",
+    "app.message.dequeue",
+    "app.clipboard.pasteImage",
+    "neo.sidebar.toggle",
+    "neo.compact",
+    "neo.toggle_animations",
+];
+
+fn is_advertised_unimplemented_action(id: &str) -> bool {
+    ADVERTISED_BUT_UNIMPLEMENTED_ACTIONS.contains(&id)
+}
+
 fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     let caps = TerminalCaps::detect();
     disable_raw_mode()?;
@@ -963,14 +1043,28 @@ fn write_terminal_bytes(bytes: &[u8]) -> std::io::Result<()> {
 /// Spawn the RPC backend if `SENPI_NEO_BACKEND_BIN` is set in the
 /// environment. `SENPI_NEO_BACKEND_ARGS` carries the extra args as a
 /// JSON-encoded string array so arguments with embedded whitespace
-/// (e.g. `--system-prompt "..."`) survive intact. Returns `None`
-/// when env is unset or the spawn fails; the TUI then falls back to
-/// render-only so demos, screenshots, and unit tests run with no
-/// backend present.
-fn maybe_spawn_backend() -> Option<RpcClient> {
-    let bin = std::env::var_os("SENPI_NEO_BACKEND_BIN")?;
+/// (e.g. `--system-prompt "..."`) survive intact.
+///
+/// Returns one of:
+/// - `Ok(None)`: env unset; the TUI runs in render-only mode (demos,
+///   screenshots, unit tests).
+/// - `Ok(Some(client))`: backend booted successfully.
+/// - `Err(message)`: env was set but the spawn failed. The caller MUST
+///   surface this to the user; previously the failure was silently
+///   collapsed to `None` and the user saw the same UI as a demo run
+///   (Bug 3 leak flagged by Oracle round 2 + 4).
+fn maybe_spawn_backend() -> Result<Option<RpcClient>, String> {
+    let Some(bin) = std::env::var_os("SENPI_NEO_BACKEND_BIN") else {
+        return Ok(None);
+    };
     let args = parse_backend_args(&std::env::var("SENPI_NEO_BACKEND_ARGS").unwrap_or_default());
-    RpcClient::spawn(&bin, &args).ok()
+    match RpcClient::spawn(&bin, &args) {
+        Ok(client) => Ok(Some(client)),
+        Err(err) => Err(format!(
+            "failed to launch senpi backend binary `{}`: {err}",
+            std::path::Path::new(&bin).display(),
+        )),
+    }
 }
 
 /// Decode the `SENPI_NEO_BACKEND_ARGS` env value into a runnable arg
@@ -997,7 +1091,22 @@ async fn drive(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: AppCon
     // do not require a backend on the host. Production paths set
     // SENPI_NEO_BACKEND_BIN to either senpi --mode rpc or the QA
     // harness's senpi-neo-faux binary.
-    let mut backend: Option<RpcClient> = if demo_mode { None } else { maybe_spawn_backend() };
+    let mut backend: Option<RpcClient> = None;
+    if !demo_mode {
+        match maybe_spawn_backend() {
+            Ok(client) => backend = client,
+            Err(message) => {
+                // Bug 3 contract: an env-configured-but-unspawnable
+                // backend used to boot identically to demo mode. Now
+                // the user sees the actual spawn failure as soon as the
+                // first frame renders.
+                app.apply_inbound(Inbound::Error {
+                    exit_code: None,
+                    stderr_tail: message,
+                });
+            }
+        }
+    }
     let mut inbound: Option<mpsc::Receiver<Inbound>> = backend.as_mut().and_then(RpcClient::take_inbound);
     let cmd_tx: Option<mpsc::Sender<Command>> = backend.as_ref().map(RpcClient::command_sender);
 
