@@ -41,6 +41,28 @@ fn parses_bundled_dark_theme() {
 }
 
 #[test]
+fn bundled_dark_theme_resolves_every_token_in_token_all() {
+    // Regression: the bundled `senpi-neo-dark` theme MUST define every
+    // semantic token the renderer consumes. `Token::ALL` is the source of
+    // truth; if a future Token variant is added without updating the
+    // bundled JSON, this test fails loudly instead of silently rendering
+    // with `Color::Reset` for the missing token.
+    let spec = theme::parse(DARK_JSON).expect("dark theme must parse");
+    let resolved = theme::resolve(&spec).expect("dark theme must resolve");
+
+    let missing: Vec<Token> = Token::ALL
+        .iter()
+        .copied()
+        .filter(|tok| resolved.token(*tok) == Color::Reset)
+        .collect();
+
+    assert!(
+        missing.is_empty(),
+        "bundled senpi-neo-dark theme is missing concrete colors for tokens: {missing:?}"
+    );
+}
+
+#[test]
 fn resolves_core_tokens_in_dark_theme() {
     let spec = theme::parse(DARK_JSON).expect("parse");
     let resolved = theme::resolve(&spec).expect("resolve");

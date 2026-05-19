@@ -50,7 +50,6 @@ const LEGACY_REGISTRY: &[(&str, &[&str])] = &[
     ("tui.editor.yank", &["ctrl+y"]),
     ("tui.editor.yankPop", &["alt+y"]),
     ("tui.editor.undo", &["ctrl+-"]),
-    ("tui.editor.newLine", &["shift+enter"]),
     ("tui.input.newLine", &["shift+enter"]),
     ("tui.input.submit", &["enter"]),
     ("tui.input.tab", &["tab"]),
@@ -161,9 +160,6 @@ fn extra_bindings_are_neo_namespaced() {
         if legacy_ids.contains(id.as_str()) {
             continue;
         }
-        if matches!(id.as_str(), "tui.input.historyPrev" | "tui.input.historyNext") {
-            continue;
-        }
         if !id.starts_with("neo.") {
             offenders.push(id.clone());
         }
@@ -180,17 +176,35 @@ fn default_keymap_binds_input_history_navigation() {
     let spec = keymap::parse(DEFAULT_JSON).expect("default keymap must parse");
     let prev = spec
         .bindings
-        .get("tui.input.historyPrev")
+        .get("neo.input.historyPrev")
         .expect("history previous binding must exist");
     let next = spec
         .bindings
-        .get("tui.input.historyNext")
+        .get("neo.input.historyNext")
         .expect("history next binding must exist");
     let prev_keys: Vec<&str> = prev.iter().map(String::as_str).collect();
     let next_keys: Vec<&str> = next.iter().map(String::as_str).collect();
 
     assert_eq!(prev_keys.as_slice(), ["up"]);
     assert_eq!(next_keys.as_slice(), ["down"]);
+}
+
+#[test]
+fn default_keymap_binds_shift_enter_to_legacy_input_newline() {
+    // Bug 1 regression: tmux + xterm modifyOtherKeys mode 2 lets the
+    // composer receive `shift+enter` as a distinct key (vs upstream's
+    // legacy `Enter` collision). The dispatch path uses the LEGACY
+    // `tui.input.newLine` binding from `TUI_KEYBINDINGS` (`pi-tui`), so
+    // we don't add a redundant `neo.editor.newLine`. Lock the legacy
+    // mapping here so a future drift in the bundled JSON fails the
+    // parity test on this side too.
+    let spec = keymap::parse(DEFAULT_JSON).expect("default keymap must parse");
+    let keys = spec
+        .bindings
+        .get("tui.input.newLine")
+        .expect("shift+enter newline must stay on the legacy tui.input.newLine binding");
+    let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+    assert_eq!(keys.as_slice(), ["shift+enter"]);
 }
 
 #[test]

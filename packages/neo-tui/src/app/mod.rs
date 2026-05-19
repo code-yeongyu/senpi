@@ -397,17 +397,17 @@ impl App {
         match id {
             "tui.editor.cursorLeft" => self.input.cursor_left(),
             "tui.editor.cursorRight" => self.input.cursor_right(),
-            "tui.editor.cursorUp" | "tui.input.historyPrev" => {
+            "tui.editor.cursorUp" | "neo.input.historyPrev" => {
                 if self.input.recall_prev_history().is_some() {
                     self.refresh_autocomplete();
-                    return Some(AppAction::Consumed("tui.input.historyPrev".into()));
+                    return Some(AppAction::Consumed("neo.input.historyPrev".into()));
                 }
                 self.input.cursor_up();
             }
-            "tui.editor.cursorDown" | "tui.input.historyNext" => {
+            "tui.editor.cursorDown" | "neo.input.historyNext" => {
                 if self.input.recall_next_history().is_some() {
                     self.refresh_autocomplete();
-                    return Some(AppAction::Consumed("tui.input.historyNext".into()));
+                    return Some(AppAction::Consumed("neo.input.historyNext".into()));
                 }
                 self.input.cursor_down();
             }
@@ -427,7 +427,6 @@ impl App {
             "tui.editor.yank" => self.input.yank(),
             "tui.editor.yankPop" => self.input.yank_pop(),
             "tui.editor.undo" => self.input.undo(),
-            "tui.editor.newLine" => self.input.insert_newline(),
             _ => return None,
         }
         self.refresh_autocomplete();
@@ -439,11 +438,11 @@ impl App {
             return None;
         }
         match id {
-            "tui.editor.cursorUp" | "tui.input.historyPrev" => {
+            "tui.editor.cursorUp" | "neo.input.historyPrev" => {
                 self.select_previous_autocomplete();
                 Some(AppAction::Consumed("tui.autocomplete.previous".into()))
             }
-            "tui.editor.cursorDown" | "tui.input.historyNext" => {
+            "tui.editor.cursorDown" | "neo.input.historyNext" => {
                 self.select_next_autocomplete();
                 Some(AppAction::Consumed("tui.autocomplete.next".into()))
             }

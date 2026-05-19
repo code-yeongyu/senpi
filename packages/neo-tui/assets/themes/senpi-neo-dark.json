@@ -94,7 +94,9 @@
     "userMessageBar": "amberLed",
     "assistantMessageBar": "cyanLed",
     "systemMessageBar": "textGraphite",
-    "errorMessageBar": "red"
+    "errorMessageBar": "red",
+    "diffAddedText": "green",
+    "diffRemovedText": "red"
   },
   "options": {
     "thinkingOpacityPercent": 60,

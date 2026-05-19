@@ -32,3 +32,9 @@ New features bundled with the rewrite:
 - Settings list component (toggle / cycle / submenu / static).
 
 Test count: 298 passing (was 156 at branch start). `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test -j 1` all green. Theme audit confirms zero hardcoded `Color::Rgb` in render code.
+
+## 2026-05-19 — Oracle blockers cleared (PR #14 follow-up)
+
+- Added `diffAddedText` and `diffRemovedText` to `assets/themes/senpi-neo-dark.json` so the bundled dark theme defines every variant in `Token::ALL` (72/72). Locked by a new `bundled_dark_theme_resolves_every_token_in_token_all` assertion that scans the resolved theme for `Color::Reset` (the lenient fallback) and fails if any `Token::ALL` member is missing.
+- Dropped the redundant `tui.editor.newLine` binding from `assets/keymaps/default.json`. The legacy `tui.input.newLine` (`shift+enter`) from `TUI_KEYBINDINGS` was already wired into the main key dispatcher, so the extra ID only existed to satisfy a shadow code path. Removing it kills the dispatch ambiguity and lets the keymap parity test stay green on both sides of the fence.
+- Moved the neo-only `tui.input.historyPrev` / `tui.input.historyNext` bindings into the `neo.*` namespace (`neo.input.historyPrev` / `neo.input.historyNext`). The legacy senpi TUI does not have these bindings, so keeping them on `tui.*` was a future-conflict hazard; the parity tests on both sides now enforce the `neo.*` rule with zero exceptions.

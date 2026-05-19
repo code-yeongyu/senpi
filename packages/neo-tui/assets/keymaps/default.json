@@ -26,12 +26,9 @@
     "tui.editor.yank": ["ctrl+y"],
     "tui.editor.yankPop": ["alt+y"],
     "tui.editor.undo": ["ctrl+-"],
-    "tui.editor.newLine": ["shift+enter"],
 
     "tui.input.newLine": ["shift+enter"],
     "tui.input.submit": ["enter"],
-    "tui.input.historyPrev": ["up"],
-    "tui.input.historyNext": ["down"],
     "tui.input.tab": ["tab"],
     "tui.input.copy": ["ctrl+c"],
 
@@ -87,6 +84,9 @@
     "app.models.toggleProvider": ["ctrl+p"],
     "app.models.reorderUp": ["alt+up"],
     "app.models.reorderDown": ["alt+down"],
+
+    "neo.input.historyPrev": ["up"],
+    "neo.input.historyNext": ["down"],
 
     "neo.palette.open": ["alt+p"],
     "neo.slash.open": ["/"],

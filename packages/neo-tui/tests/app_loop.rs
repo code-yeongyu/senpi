@@ -112,7 +112,7 @@ fn editor_shift_enter_inserts_newline() {
     let mut app = fresh_app();
     app.handle_key(ev(KeyCode::Char('a'), KeyModifiers::NONE));
     let action = app.handle_key(ev(KeyCode::Enter, KeyModifiers::SHIFT));
-    assert_eq!(action, AppAction::Consumed("tui.editor.newLine".into()));
+    assert_eq!(action, AppAction::Consumed("tui.input.newLine".into()));
     assert_eq!(app.input_buffer(), "a\n");
 }
 
