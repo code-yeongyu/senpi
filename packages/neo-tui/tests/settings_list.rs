@@ -50,9 +50,8 @@ fn settings_list_arrow_down_navigates() {
 
 #[test]
 fn settings_list_space_cycles_value() {
-    let mut list = SettingsList::from_items(vec![
-        SettingsItem::cycle("Theme", &["dark", "light", "auto"], 0),
-    ]);
+    let mut list =
+        SettingsList::from_items(vec![SettingsItem::cycle("Theme", &["dark", "light", "auto"], 0)]);
     let result = list.handle_event(&key_event(KeyCode::Char(' ')));
     assert_eq!(result, EventResult::Consumed);
     let changes = list.take_changes();
@@ -77,9 +76,8 @@ fn settings_list_enter_toggles_boolean() {
 
 #[test]
 fn settings_list_left_arrow_decrements_cycle() {
-    let mut list = SettingsList::from_items(vec![
-        SettingsItem::cycle("Theme", &["dark", "light", "auto"], 1),
-    ]);
+    let mut list =
+        SettingsList::from_items(vec![SettingsItem::cycle("Theme", &["dark", "light", "auto"], 1)]);
     let result = list.handle_event(&key_event(KeyCode::Left));
     assert_eq!(result, EventResult::Consumed);
     let changes = list.take_changes();
@@ -92,9 +90,8 @@ fn settings_list_left_arrow_decrements_cycle() {
 
 #[test]
 fn settings_list_right_arrow_increments_cycle() {
-    let mut list = SettingsList::from_items(vec![
-        SettingsItem::cycle("Theme", &["dark", "light", "auto"], 0),
-    ]);
+    let mut list =
+        SettingsList::from_items(vec![SettingsItem::cycle("Theme", &["dark", "light", "auto"], 0)]);
     let result = list.handle_event(&key_event(KeyCode::Right));
     assert_eq!(result, EventResult::Consumed);
     let changes = list.take_changes();
@@ -127,10 +124,7 @@ fn settings_list_take_changes_returns_modified_items() {
 
 #[test]
 fn settings_list_submenu_item_returns_consumed_with_submenu_id() {
-    let mut list = SettingsList::from_items(vec![SettingsItem::submenu(
-        "Advanced",
-        "advanced_submenu"
-    )]);
+    let mut list = SettingsList::from_items(vec![SettingsItem::submenu("Advanced", "advanced_submenu")]);
     let result = list.handle_event(&key_event(KeyCode::Enter));
     assert_eq!(result, EventResult::Consumed);
     assert_eq!(list.take_submenu_request(), Some("advanced_submenu".to_string()));
