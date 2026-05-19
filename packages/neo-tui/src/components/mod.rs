@@ -4,7 +4,9 @@
 //! and a piece of typed application state. All components are pure
 //! widgets - no terminal I/O, no async - so they snapshot-test cleanly.
 
+pub mod autocomplete;
 pub mod chat;
 pub mod footer;
 pub mod header;
 pub mod input;
+pub mod select_list;
