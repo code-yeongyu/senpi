@@ -1,5 +1,22 @@
 # AI Source Changes
 
+## 2026-05-19 - Cloudflare Anthropic computer tool guard
+
+### What changed and why
+- `providers/anthropic.ts`: Cloudflare Anthropic routes now strip hook-injected native `computer_*` tools after `onPayload`, while preserving supported native tools such as `bash_20250124` and `text_editor_20250124`.
+- Computer-use beta request headers are removed only for routes/models that reject the native computer tool.
+- Added a regression matching the CF runtime error where `computer_20250124` is not one of the accepted tool tags.
+
+### Files modified
+- `providers/anthropic.ts`
+- `../test/anthropic-on-payload-headers.test.ts`
+
+### Why the higher-level extension system couldn't handle this alone
+- The failing payload can be introduced by `before_provider_request`; the provider adapter is the final point that sees the complete Anthropic request before SDK submission.
+
+### Expected merge conflict zones
+- LOW: native-tool sanitization helpers near request metadata extraction.
+
 ## 2026-05-18 - Anthropic protected thinking replay
 
 ### What changed and why

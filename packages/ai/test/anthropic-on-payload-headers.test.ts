@@ -8,6 +8,11 @@ const mockState = vi.hoisted(() => ({
 	requestOptions: undefined as Record<string, unknown> | undefined,
 }));
 const unsupportedNativeComputerToolModels = [["claude-opus-4-6"], ["claude-opus-4-7"]] as const;
+const cloudflareAnthropicModel = {
+	...getModel("anthropic", "claude-sonnet-4-5"),
+	provider: "cloudflare-ai-gateway",
+	baseUrl: "https://gateway.ai.cloudflare.com/v1/account/gateway/anthropic",
+} as const;
 
 vi.mock("@anthropic-ai/sdk", () => {
 	function createSseResponse(): Response {
@@ -112,4 +117,47 @@ describe("Anthropic onPayload request metadata", () => {
 			});
 		},
 	);
+
+	it("strips native computer-use tools from Cloudflare Anthropic routes after payload hooks run", async () => {
+		const stream = streamAnthropic(cloudflareAnthropicModel, context, {
+			apiKey: "fake-key",
+			onPayload: (payload) => ({
+				...(payload as Record<string, unknown>),
+				tools: [
+					{
+						type: "computer_20250124",
+						name: "computer",
+						display_width_px: 1024,
+						display_height_px: 768,
+						display_number: 1,
+					},
+					{
+						type: "computer_20251124",
+						name: "computer",
+						display_width_px: 1024,
+						display_height_px: 768,
+						display_number: 1,
+					},
+					{ type: "bash_20250124", name: "bash" },
+					{ type: "text_editor_20250124", name: "str_replace_editor" },
+				],
+				tool_choice: { type: "tool", name: "computer" },
+				headers: {
+					"anthropic-beta":
+						"computer-use-2025-01-24, computer-use-2025-11-24, fine-grained-tool-streaming-2025-05-14",
+				},
+			}),
+		});
+
+		await stream.result();
+
+		const tools = mockState.createParams?.tools as Array<Record<string, unknown>>;
+		expect(tools.some((tool) => typeof tool.type === "string" && tool.type.startsWith("computer_"))).toBe(false);
+		expect(tools).toContainEqual({ type: "bash_20250124", name: "bash" });
+		expect(tools).toContainEqual({ type: "text_editor_20250124", name: "str_replace_editor" });
+		expect(mockState.createParams?.tool_choice).toBeUndefined();
+		expect(mockState.requestOptions?.headers).toEqual({
+			"anthropic-beta": "fine-grained-tool-streaming-2025-05-14",
+		});
+	});
 });

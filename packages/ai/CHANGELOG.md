@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed Cloudflare Anthropic routes to strip hook-injected native `computer_*` tools before the SDK call.
+
 ## [2026.5.19] - 2026-05-19
 
 ## [2026.5.18-2] - 2026-05-18
