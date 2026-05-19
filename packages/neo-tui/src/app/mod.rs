@@ -211,10 +211,11 @@ impl App {
     }
 
     fn autocomplete_cwd(&self) -> PathBuf {
-        if self.header.cwd.is_empty() {
-            PathBuf::from(".")
+        let header_cwd = PathBuf::from(&self.header.cwd);
+        if header_cwd.is_absolute() {
+            header_cwd
         } else {
-            PathBuf::from(&self.header.cwd)
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
         }
     }
 
