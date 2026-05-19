@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Fixed idle provider streams to fail the current turn instead of leaving the agent loop running indefinitely.
+
 ## [2026.5.19] - 2026-05-19
 
 ### Fixed

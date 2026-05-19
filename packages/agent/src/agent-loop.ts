@@ -159,6 +159,13 @@ const EMPTY_USAGE = {
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 } satisfies AssistantMessage["usage"];
 
+class StreamIdleTimeoutError extends Error {
+	constructor(timeoutMs: number) {
+		super(`Idle timeout waiting for provider stream after ${timeoutMs}ms`);
+		this.name = "StreamIdleTimeoutError";
+	}
+}
+
 /**
  * Main loop logic shared by agentLoop and agentLoopContinue.
  */
@@ -325,7 +332,11 @@ async function streamAssistantResponse(
 			signal,
 		});
 
-		for await (const event of response) {
+		const iterator = response[Symbol.asyncIterator]();
+		while (true) {
+			const next = await readNextAssistantEvent(iterator, config.timeoutMs, signal);
+			if (next.done) break;
+			const event = next.value;
 			switch (event.type) {
 				case "start":
 					partialMessage = event.partial;
@@ -396,6 +407,59 @@ async function streamAssistantResponse(
 		await emit({ type: "message_end", message: finalMessage });
 		return finalMessage;
 	}
+}
+
+async function readNextAssistantEvent(
+	iterator: AsyncIterator<AssistantMessageEvent>,
+	timeoutMs: number | undefined,
+	signal: AbortSignal | undefined,
+): Promise<IteratorResult<AssistantMessageEvent>> {
+	const idleTimeoutMs =
+		typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : undefined;
+	if (idleTimeoutMs === undefined && signal === undefined) {
+		return iterator.next();
+	}
+	if (signal?.aborted) {
+		throw new Error("Request was aborted");
+	}
+
+	let timeout: ReturnType<typeof setTimeout> | undefined;
+	let abortHandler: (() => void) | undefined;
+	let settled = false;
+
+	return new Promise<IteratorResult<AssistantMessageEvent>>((resolve, reject) => {
+		const settle = (complete: () => void): void => {
+			if (settled) return;
+			settled = true;
+			if (timeout !== undefined) {
+				clearTimeout(timeout);
+			}
+			if (abortHandler !== undefined) {
+				signal?.removeEventListener("abort", abortHandler);
+			}
+			complete();
+		};
+
+		if (idleTimeoutMs !== undefined) {
+			timeout = setTimeout(() => {
+				void iterator.return?.();
+				settle(() => reject(new StreamIdleTimeoutError(idleTimeoutMs)));
+			}, idleTimeoutMs);
+		}
+
+		if (signal !== undefined) {
+			abortHandler = () => {
+				void iterator.return?.();
+				settle(() => reject(new Error("Request was aborted")));
+			};
+			signal.addEventListener("abort", abortHandler, { once: true });
+		}
+
+		void iterator.next().then(
+			(result) => settle(() => resolve(result)),
+			(error: unknown) => settle(() => reject(error)),
+		);
+	});
 }
 
 /**
