@@ -1,8 +1,6 @@
 //! Contract tests for ANSI-aware text utilities.
 
-use senpi_neo_tui::text::{
-    slice_by_column, truncate_to_width, visible_width, wrap_text_with_ansi,
-};
+use senpi_neo_tui::text::{slice_by_column, truncate_to_width, visible_width, wrap_text_with_ansi};
 
 #[test]
 fn visible_width_plain_ascii() {
