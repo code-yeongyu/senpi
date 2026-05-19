@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { FooterComponent } from "../src/modes/interactive/components/footer.js";
 import { stripAnsi } from "../src/utils/ansi.js";
 
+vi.mock("@earendil-works/pi-tui", async () => import("@earendil-works/pi-tui"));
 vi.mock("../src/modes/interactive/theme/theme.js", () => ({
 	theme: {
 		fg: (_color: string, text: string) => text,
@@ -26,10 +26,10 @@ function createSession(): unknown {
 					message: {
 						role: "assistant",
 						usage: {
-							input: 3,
-							output: 101,
-							cacheRead: 6_982,
-							cacheWrite: 16_356,
+							input: 49,
+							output: 6_800,
+							cacheRead: 1_500_000,
+							cacheWrite: 44_000,
 							cost: { total: 0 },
 						},
 					},
@@ -38,7 +38,7 @@ function createSession(): unknown {
 			getSessionName: () => "",
 			getCwd: () => "/tmp/project",
 		},
-		getContextUsage: () => ({ tokens: 23_442, contextWindow: 800_000, percent: 2.93025 }),
+		getContextUsage: () => ({ contextWindow: 800_000, percent: 5.5 }),
 		modelRegistry: {
 			isUsingOAuth: () => false,
 		},
@@ -57,8 +57,9 @@ function createFooterData(): unknown {
 }
 
 describe("FooterComponent token formatting", () => {
-	it("renders opencode-style aggregate context usage instead of compact counters", () => {
+	it("renders comma-formatted token counters and context window usage", async () => {
 		// given
+		const { FooterComponent } = await import("../src/modes/interactive/components/footer.js");
 		const Footer = FooterComponent as new (
 			session: unknown,
 			footerData: unknown,
@@ -69,12 +70,16 @@ describe("FooterComponent token formatting", () => {
 		const rendered = stripAnsi(footer.render(160).join("\n"));
 
 		// then
-		expect(rendered).toContain("23.4K (3%)");
-		expect(rendered).not.toContain("↑3");
-		expect(rendered).not.toContain("↓101");
-		expect(rendered).not.toContain("R6982");
-		expect(rendered).not.toContain("W16356");
-		expect(rendered).not.toContain("2.9%/800000");
-		expect(rendered).not.toContain("(auto)");
+		expect(rendered).toContain("↑49");
+		expect(rendered).toContain("↓6,800");
+		expect(rendered).toContain("cache 1,500,000/44,000");
+		expect(rendered).toContain("5.5%/800,000 (auto)");
+		expect(rendered).not.toContain("23.4K (3%)");
+		expect(rendered).not.toContain("↓6.8k");
+		expect(rendered).not.toContain("R1,500,000");
+		expect(rendered).not.toContain("W44,000");
+		expect(rendered).not.toContain("R1.5M");
+		expect(rendered).not.toContain("W44k");
+		expect(rendered).not.toContain("5.5%/800k (auto)");
 	});
 });

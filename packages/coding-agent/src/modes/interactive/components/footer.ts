@@ -15,19 +15,8 @@ function sanitizeStatusText(text: string): string {
 		.trim();
 }
 
-const money = new Intl.NumberFormat("en-US", {
-	style: "currency",
-	currency: "USD",
-});
-
-function formatUsageCount(count: number): string {
-	if (count >= 1_000_000) {
-		return `${(count / 1_000_000).toFixed(1)}M`;
-	}
-	if (count >= 1_000) {
-		return `${(count / 1_000).toFixed(1)}K`;
-	}
-	return count.toString();
+function formatTokens(count: number): string {
+	return count.toLocaleString("en-US");
 }
 
 /**
@@ -35,6 +24,8 @@ function formatUsageCount(count: number): string {
  * Computes token/context stats from session, gets git branch and extension statuses from provider.
  */
 export class FooterComponent implements Component {
+	private autoCompactEnabled = true;
+
 	constructor(
 		private session: AgentSession,
 		private footerData: ReadonlyFooterDataProvider,
@@ -45,7 +36,7 @@ export class FooterComponent implements Component {
 	}
 
 	setAutoCompactEnabled(enabled: boolean): void {
-		void enabled;
+		this.autoCompactEnabled = enabled;
 	}
 
 	/**
@@ -67,16 +58,18 @@ export class FooterComponent implements Component {
 	render(width: number): string[] {
 		const state = this.session.state;
 
-		let totalTokens = 0;
+		let totalInput = 0;
+		let totalOutput = 0;
+		let totalCacheRead = 0;
+		let totalCacheWrite = 0;
 		let totalCost = 0;
 
 		for (const entry of this.session.sessionManager.getEntries()) {
 			if (entry.type === "message" && entry.message.role === "assistant") {
-				totalTokens +=
-					entry.message.usage.input +
-					entry.message.usage.output +
-					entry.message.usage.cacheRead +
-					entry.message.usage.cacheWrite;
+				totalInput += entry.message.usage.input;
+				totalOutput += entry.message.usage.output;
+				totalCacheRead += entry.message.usage.cacheRead;
+				totalCacheWrite += entry.message.usage.cacheWrite;
 				totalCost += entry.message.usage.cost.total;
 			}
 		}
@@ -84,7 +77,9 @@ export class FooterComponent implements Component {
 		// Calculate context usage from session (handles compaction correctly).
 		// After compaction, tokens are unknown until the next LLM response.
 		const contextUsage = this.session.getContextUsage();
-		const contextPercentValue = contextUsage?.percent;
+		const contextWindow = contextUsage?.contextWindow ?? state.model?.contextWindow ?? 0;
+		const contextPercentValue = contextUsage?.percent ?? 0;
+		const contextPercent = contextUsage?.percent !== null ? contextPercentValue.toFixed(1) : "?";
 
 		// Replace home directory with ~
 		let pwd = this.session.sessionManager.getCwd();
@@ -106,34 +101,33 @@ export class FooterComponent implements Component {
 		}
 
 		const statsParts: string[] = [];
-		let usageDisplay: string | undefined;
-		const displayTokens = typeof contextUsage?.tokens === "number" ? contextUsage.tokens : totalTokens;
-		if (displayTokens > 0) {
-			const percentDisplay = typeof contextPercentValue === "number" ? ` (${Math.round(contextPercentValue)}%)` : "";
-			usageDisplay = `${formatUsageCount(displayTokens)}${percentDisplay}`;
-		}
-
-		if (usageDisplay && typeof contextPercentValue === "number") {
-			if (contextPercentValue > 90) {
-				usageDisplay = theme.fg("error", usageDisplay);
-			} else if (contextPercentValue > 70) {
-				usageDisplay = theme.fg("warning", usageDisplay);
-			}
+		if (totalInput) statsParts.push(`↑${formatTokens(totalInput)}`);
+		if (totalOutput) statsParts.push(`↓${formatTokens(totalOutput)}`);
+		if (totalCacheRead || totalCacheWrite) {
+			statsParts.push(`cache ${formatTokens(totalCacheRead)}/${formatTokens(totalCacheWrite)}`);
 		}
 
 		// Show cost with "(sub)" indicator if using OAuth subscription
 		const usingSubscription = state.model ? this.session.modelRegistry.isUsingOAuth(state.model) : false;
-		const costDisplay =
-			totalCost > 0 || usingSubscription
-				? `${money.format(totalCost)}${usingSubscription ? " (sub)" : ""}`
-				: undefined;
-		if (usageDisplay && costDisplay) {
-			statsParts.push(`${usageDisplay} · ${costDisplay}`);
-		} else if (usageDisplay) {
-			statsParts.push(usageDisplay);
-		} else if (costDisplay) {
-			statsParts.push(costDisplay);
+		if (totalCost || usingSubscription) {
+			const costStr = `$${totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
+			statsParts.push(costStr);
 		}
+
+		let contextPercentStr: string;
+		const autoIndicator = this.autoCompactEnabled ? " (auto)" : "";
+		const contextPercentDisplay =
+			contextPercent === "?"
+				? `?/${formatTokens(contextWindow)}${autoIndicator}`
+				: `${contextPercent}%/${formatTokens(contextWindow)}${autoIndicator}`;
+		if (contextPercentValue > 90) {
+			contextPercentStr = theme.fg("error", contextPercentDisplay);
+		} else if (contextPercentValue > 70) {
+			contextPercentStr = theme.fg("warning", contextPercentDisplay);
+		} else {
+			contextPercentStr = contextPercentDisplay;
+		}
+		statsParts.push(contextPercentStr);
 
 		let statsLeft = statsParts.join(" ");
 
