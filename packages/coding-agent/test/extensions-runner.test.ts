@@ -8,8 +8,13 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.js";
 import { DEFAULT_COMPACTION_SETTINGS } from "../src/core/compaction/index.js";
-import { createExtensionRuntime, discoverAndLoadExtensions } from "../src/core/extensions/loader.js";
-import { ExtensionRunner } from "../src/core/extensions/runner.js";
+import { createEventBus } from "../src/core/event-bus.js";
+import {
+	createExtensionRuntime,
+	discoverAndLoadExtensions,
+	loadExtensionFromFactory,
+} from "../src/core/extensions/loader.js";
+import { ExtensionRunner, type ExtensionToolHookLifecycleEvent } from "../src/core/extensions/runner.js";
 import type { ExtensionActions, ExtensionContextActions, ProviderConfig } from "../src/core/extensions/types.js";
 import { KeybindingsManager, type KeyId } from "../src/core/keybindings.js";
 import { ModelRegistry } from "../src/core/model-registry.js";
@@ -700,6 +705,187 @@ describe("ExtensionRunner", () => {
 				details: { source: "ext1" },
 				isError: true,
 			});
+		});
+	});
+
+	describe("tool hook lifecycle observer", () => {
+		it("reports completed PreToolUse and PostToolUse handler runs", async () => {
+			const runtime = createExtensionRuntime();
+			const handlerEvents: string[] = [];
+			const extension = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("tool_call", async () => {
+						handlerEvents.push("handler:PreToolUse");
+					});
+					pi.on("tool_result", async () => {
+						handlerEvents.push("handler:PostToolUse");
+					});
+				},
+				tempDir,
+				createEventBus(),
+				runtime,
+				"<builtin:permission-system>",
+			);
+			const runner = new ExtensionRunner([extension], runtime, tempDir, sessionManager, modelRegistry);
+			const lifecycleEvents: ExtensionToolHookLifecycleEvent[] = [];
+			runner.setToolHookLifecycleObserver((event) => lifecycleEvents.push(event));
+
+			await runner.emitToolCall({
+				type: "tool_call",
+				toolName: "bash",
+				toolCallId: "call-1",
+				input: {},
+			});
+			await runner.emitToolResult({
+				type: "tool_result",
+				toolName: "bash",
+				toolCallId: "call-1",
+				input: {},
+				content: [{ type: "text", text: "ok" }],
+				details: {},
+				isError: false,
+			});
+
+			expect(lifecycleEvents.map((event) => `${event.phase}:${event.hookName}`)).toEqual([
+				"start:PreToolUse",
+				"end:PreToolUse",
+				"start:PostToolUse",
+				"end:PostToolUse",
+			]);
+			expect(lifecycleEvents[0]).toMatchObject({
+				phase: "start",
+				hookName: "PreToolUse",
+				statusMessage: "matching project rules",
+				extensionPath: "<builtin:permission-system>",
+			});
+			expect(lifecycleEvents[1]).toMatchObject({
+				phase: "end",
+				hookName: "PreToolUse",
+				status: "completed",
+			});
+			expect(handlerEvents).toEqual(["handler:PreToolUse", "handler:PostToolUse"]);
+		});
+
+		it("reports blocked PreToolUse handler runs", async () => {
+			const runtime = createExtensionRuntime();
+			const extension = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("tool_call", async () => ({ block: true, reason: "no" }));
+				},
+				tempDir,
+				createEventBus(),
+				runtime,
+				"<builtin:permission-system>",
+			);
+			const runner = new ExtensionRunner([extension], runtime, tempDir, sessionManager, modelRegistry);
+			const lifecycleEvents: ExtensionToolHookLifecycleEvent[] = [];
+			runner.setToolHookLifecycleObserver((event) => lifecycleEvents.push(event));
+
+			const result = await runner.emitToolCall({
+				type: "tool_call",
+				toolName: "bash",
+				toolCallId: "call-blocked",
+				input: {},
+			});
+
+			expect(result).toEqual({ block: true, reason: "no" });
+			expect(lifecycleEvents.map((event) => `${event.phase}:${event.hookName}`)).toEqual([
+				"start:PreToolUse",
+				"end:PreToolUse",
+			]);
+			expect(lifecycleEvents[1]).toMatchObject({ phase: "end", status: "blocked" });
+		});
+
+		it("reports failed PostToolUse handlers and continues chaining later handlers", async () => {
+			const runtime = createExtensionRuntime();
+			const firstExtension = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("tool_result", async () => {
+						throw new Error("boom");
+					});
+				},
+				tempDir,
+				createEventBus(),
+				runtime,
+				"<inline:failing>",
+			);
+			const secondExtension = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("tool_result", async () => ({
+						content: [{ type: "text", text: "patched" }],
+					}));
+				},
+				tempDir,
+				createEventBus(),
+				runtime,
+				"<inline:patching>",
+			);
+			const runner = new ExtensionRunner(
+				[firstExtension, secondExtension],
+				runtime,
+				tempDir,
+				sessionManager,
+				modelRegistry,
+			);
+			const lifecycleEvents: ExtensionToolHookLifecycleEvent[] = [];
+			runner.setToolHookLifecycleObserver((event) => lifecycleEvents.push(event));
+
+			const result = await runner.emitToolResult({
+				type: "tool_result",
+				toolName: "bash",
+				toolCallId: "call-result",
+				input: {},
+				content: [{ type: "text", text: "base" }],
+				details: {},
+				isError: false,
+			});
+
+			expect(result?.content).toEqual([{ type: "text", text: "patched" }]);
+			expect(lifecycleEvents.map((event) => `${event.phase}:${event.hookName}`)).toEqual([
+				"start:PostToolUse",
+				"end:PostToolUse",
+				"start:PostToolUse",
+				"end:PostToolUse",
+			]);
+			expect(lifecycleEvents[1]).toMatchObject({
+				phase: "end",
+				status: "failed",
+				errorMessage: "boom",
+			});
+			expect(lifecycleEvents[3]).toMatchObject({
+				phase: "end",
+				status: "completed",
+			});
+		});
+
+		it("uses bounded custom hook status labels", async () => {
+			const runtime = createExtensionRuntime();
+			const extensionPath = path.join(tempDir, ".senpi", "extensions", "check-output.ts");
+			const extension = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("tool_result", async () => undefined);
+				},
+				tempDir,
+				createEventBus(),
+				runtime,
+				extensionPath,
+			);
+			const runner = new ExtensionRunner([extension], runtime, tempDir, sessionManager, modelRegistry);
+			const lifecycleEvents: ExtensionToolHookLifecycleEvent[] = [];
+			runner.setToolHookLifecycleObserver((event) => lifecycleEvents.push(event));
+
+			await runner.emitToolResult({
+				type: "tool_result",
+				toolName: "bash",
+				toolCallId: "call-label",
+				input: {},
+				content: [{ type: "text", text: "ok" }],
+				details: {},
+				isError: false,
+			});
+
+			expect(lifecycleEvents[0]?.statusMessage).toBe("running check-output");
+			expect(lifecycleEvents[0]?.statusMessage.length).toBeLessThan(80);
 		});
 	});
 

@@ -145,6 +145,7 @@ import {
 } from "./theme/theme.js";
 import {
 	blendWorkingStatusShimmerRgbColor,
+	formatToolHookStatusMessageFrame,
 	formatWorkingStatusMessageFrame,
 	type WorkingStatusRgbColor,
 } from "./working-status.js";
@@ -178,6 +179,9 @@ type CompactionQueuedMessage = {
 	text: string;
 	mode: "steer" | "followUp";
 };
+
+type ToolHookStatusStartEvent = Extract<AgentSessionEvent, { type: "tool_hook_status"; phase: "start" }>;
+type ToolHookStatusEvent = Extract<AgentSessionEvent, { type: "tool_hook_status" }>;
 
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
 const DEFAULT_WORKING_STATUS_REFRESH_INTERVAL_MS = 600;
@@ -295,6 +299,7 @@ export class InteractiveMode {
 	private chatContainer: Container;
 	private pendingMessagesContainer: Container;
 	private statusContainer: Container;
+	private hookStatusContainer: Container;
 	private defaultEditor: CustomEditor;
 	private editor: EditorComponent;
 	private editorComponentFactory: EditorFactory | undefined;
@@ -318,6 +323,8 @@ export class InteractiveMode {
 	private readonly defaultWorkingMessage = "Working";
 	private readonly defaultHiddenThinkingLabel = "Thinking...";
 	private hiddenThinkingLabel = this.defaultHiddenThinkingLabel;
+	private activeToolHooks = new Map<string, ToolHookStatusStartEvent>();
+	private hookStatusIntervalId: NodeJS.Timeout | undefined = undefined;
 
 	private lastSigintTime = 0;
 	private lastEscapeTime = 0;
@@ -433,6 +440,7 @@ export class InteractiveMode {
 		this.chatContainer = new Container();
 		this.pendingMessagesContainer = new Container();
 		this.statusContainer = new Container();
+		this.hookStatusContainer = new Container();
 		this.widgetContainerAbove = new Container();
 		this.widgetContainerBelow = new Container();
 		this.keybindings = KeybindingsManager.create();
@@ -720,6 +728,7 @@ export class InteractiveMode {
 		this.ui.addChild(this.chatContainer);
 		this.ui.addChild(this.pendingMessagesContainer);
 		this.ui.addChild(this.statusContainer);
+		this.ui.addChild(this.hookStatusContainer);
 		this.renderWidgets(); // Initialize with default spacer
 		this.ui.addChild(this.widgetContainerAbove);
 		this.ui.addChild(this.editorContainer);
@@ -1666,6 +1675,7 @@ export class InteractiveMode {
 		this.streamingComponent = undefined;
 		this.streamingMessage = undefined;
 		this.pendingTools.clear();
+		this.clearToolHookStatuses();
 		this.renderInitialMessages();
 	}
 
@@ -1769,6 +1779,68 @@ export class InteractiveMode {
 			clearInterval(this.workingElapsedIntervalId);
 			this.workingElapsedIntervalId = undefined;
 		}
+	}
+
+	private startToolHookStatusTimer(): void {
+		if (this.hookStatusIntervalId) {
+			return;
+		}
+		this.hookStatusIntervalId = setInterval(() => {
+			this.refreshToolHookStatuses();
+		}, DEFAULT_WORKING_STATUS_MESSAGE_ANIMATION_INTERVAL_MS);
+	}
+
+	private stopToolHookStatusTimer(): void {
+		if (this.hookStatusIntervalId) {
+			clearInterval(this.hookStatusIntervalId);
+			this.hookStatusIntervalId = undefined;
+		}
+	}
+
+	private refreshToolHookStatuses(): void {
+		this.hookStatusContainer.clear();
+		if (this.activeToolHooks.size === 0) {
+			this.stopToolHookStatusTimer();
+			this.ui.requestRender();
+			return;
+		}
+
+		const now = Date.now();
+		for (const hook of this.activeToolHooks.values()) {
+			const elapsedMs = Math.max(0, now - hook.startedAt);
+			const elapsedSeconds = Math.floor(elapsedMs / 1000);
+			this.hookStatusContainer.addChild(
+				new Text(
+					formatToolHookStatusMessageFrame(hook.hookName, hook.statusMessage, elapsedSeconds, elapsedMs, {
+						base: (text) => theme.fg("dim", text),
+						glow: (text) => theme.fg("text", text),
+						highlight: (text) => theme.bold(theme.fg("text", text)),
+						shimmer: formatWorkingStatusShimmerText,
+						suffix: (text) => theme.fg("dim", text),
+					}),
+					1,
+					0,
+				),
+			);
+		}
+		this.ui.requestRender();
+	}
+
+	private handleToolHookStatusEvent(event: ToolHookStatusEvent): void {
+		if (event.phase === "start") {
+			this.activeToolHooks.set(event.hookRunId, event);
+			this.startToolHookStatusTimer();
+			this.refreshToolHookStatuses();
+			return;
+		}
+		this.activeToolHooks.delete(event.hookRunId);
+		this.refreshToolHookStatuses();
+	}
+
+	private clearToolHookStatuses(): void {
+		this.activeToolHooks.clear();
+		this.hookStatusContainer.clear();
+		this.stopToolHookStatusTimer();
 	}
 
 	private getWorkingIndicatorOptions(): LoaderIndicatorOptions {
@@ -1934,6 +2006,7 @@ export class InteractiveMode {
 		this.setWorkingIndicator();
 		this.refreshWorkingLoaderMessage();
 		this.setHiddenThinkingLabel();
+		this.clearToolHookStatuses();
 	}
 
 	// Maximum total widget lines to prevent viewport overflow
@@ -2778,6 +2851,7 @@ export class InteractiveMode {
 		switch (event.type) {
 			case "agent_start":
 				this.pendingTools.clear();
+				this.clearToolHookStatuses();
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(true);
 				}
@@ -2947,6 +3021,10 @@ export class InteractiveMode {
 				break;
 			}
 
+			case "tool_hook_status":
+				this.handleToolHookStatusEvent(event);
+				break;
+
 			case "tool_execution_update": {
 				const component = this.pendingTools.get(event.toolCallId);
 				if (component) {
@@ -2971,6 +3049,7 @@ export class InteractiveMode {
 					this.ui.terminal.setProgress(false);
 				}
 				this.stopWorkingLoader();
+				this.clearToolHookStatuses();
 				if (this.streamingComponent) {
 					this.chatContainer.removeChild(this.streamingComponent);
 					this.streamingComponent = undefined;
@@ -5702,6 +5781,7 @@ export class InteractiveMode {
 			this.ui.terminal.setProgress(false);
 		}
 		this.stopWorkingLoader();
+		this.clearToolHookStatuses();
 		this.clearExtensionTerminalInputListeners();
 		this.footer.dispose();
 		this.footerDataProvider.dispose();

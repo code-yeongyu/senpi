@@ -193,6 +193,58 @@ describe("AgentSession model and extension characterization", () => {
 		).toBeDefined();
 	});
 
+	it("emits hook status events around extension tool hooks", async () => {
+		const echoTool: AgentTool = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo text back",
+			parameters: Type.Object({ text: Type.String() }),
+			execute: async (_toolCallId, params) => {
+				const text = typeof params === "object" && params !== null && "text" in params ? String(params.text) : "";
+				return { content: [{ type: "text", text }], details: { text } };
+			},
+		};
+		const harness = await createHarness({
+			tools: [echoTool],
+			extensionFactories: [
+				{
+					path: "<builtin:permission-system>",
+					factory: (pi) => {
+						pi.on("tool_call", async () => undefined);
+						pi.on("tool_result", async () => undefined);
+					},
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("echo", { text: "hello" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+
+		await harness.session.prompt("hi");
+
+		const hookEvents = harness.eventsOfType("tool_hook_status");
+		expect(
+			hookEvents.map(
+				(event) => `${event.phase}:${event.hookName}:${event.phase === "end" ? event.status : "running"}`,
+			),
+		).toEqual([
+			"start:PreToolUse:running",
+			"end:PreToolUse:completed",
+			"start:PostToolUse:running",
+			"end:PostToolUse:completed",
+		]);
+		expect(hookEvents[0]).toMatchObject({
+			phase: "start",
+			hookName: "PreToolUse",
+			toolName: "echo",
+			statusMessage: "matching project rules",
+			extensionPath: "<builtin:permission-system>",
+		});
+		expect(hookEvents[0]?.toolCallId).toMatch(/^tool:/);
+	});
+
 	it("allows extension tool_result handlers to modify tool results", async () => {
 		const echoTool: AgentTool = {
 			name: "echo",

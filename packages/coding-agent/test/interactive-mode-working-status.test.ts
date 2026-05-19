@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 import { formatKeyText } from "../src/modes/interactive/components/keybinding-hints.js";
 import {
 	blendWorkingStatusShimmerRgbColor,
+	formatToolHookStatusMessage,
+	formatToolHookStatusMessageFrame,
 	formatWorkingElapsedSeconds,
 	formatWorkingStatusMessage,
 	formatWorkingStatusMessageFrame,
@@ -30,6 +32,14 @@ describe("formatWorkingElapsedSeconds", () => {
 describe("formatWorkingStatusMessage", () => {
 	test("combines message, elapsed time, and interrupt hint", () => {
 		expect(formatWorkingStatusMessage("Working", 427, "esc")).toBe("Working (7m 07s • esc to interrupt)");
+	});
+});
+
+describe("formatToolHookStatusMessage", () => {
+	test("matches the Codex hook row wording with elapsed time", () => {
+		expect(formatToolHookStatusMessage("PostToolUse", "matching project rules", 427)).toBe(
+			"Running PostToolUse hook: matching project rules (7m 07s)",
+		);
 	});
 });
 
@@ -98,5 +108,26 @@ describe("formatWorkingStatusMessageFrame", () => {
 		expect(stripAnsi(frame)).toContain("suffix( (0s • esc to interrupt))");
 		expect(intensities.length).toBe("Working".length);
 		expect(intensities.some((intensity) => intensity > 0 && intensity < 1)).toBe(true);
+	});
+});
+
+describe("formatToolHookStatusMessageFrame", () => {
+	test("animates only the running hook label without changing plain text", () => {
+		const style = {
+			base: (text: string) => `\x1b[2m${text}\x1b[22m`,
+			glow: (text: string) => `\x1b[37m${text}\x1b[39m`,
+			highlight: (text: string) => `\x1b[1m${text}\x1b[22m`,
+			suffix: (text: string) => `\x1b[90m${text}\x1b[39m`,
+		};
+
+		const firstFrame = formatToolHookStatusMessageFrame("PostToolUse", "matching project rules", 427, 0, style);
+		const nextFrame = formatToolHookStatusMessageFrame("PostToolUse", "matching project rules", 427, 1_000, style);
+		const fixedSuffix = "\x1b[90m: matching project rules (7m 07s)\x1b[39m";
+
+		expect(stripAnsi(firstFrame)).toBe("Running PostToolUse hook: matching project rules (7m 07s)");
+		expect(stripAnsi(nextFrame)).toBe("Running PostToolUse hook: matching project rules (7m 07s)");
+		expect(firstFrame.endsWith(fixedSuffix)).toBe(true);
+		expect(nextFrame.endsWith(fixedSuffix)).toBe(true);
+		expect(firstFrame.slice(0, -fixedSuffix.length)).not.toBe(nextFrame.slice(0, -fixedSuffix.length));
 	});
 });
