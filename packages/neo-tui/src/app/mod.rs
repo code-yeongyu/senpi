@@ -105,11 +105,36 @@ pub enum AppAction {
     ToggleThinkingVisibility,
     /// Toggle tool-output expansion (Ctrl+O).
     ToggleToolsExpanded,
+    /// Toggle the sidebar pane (Alt+S).
+    ToggleSidebar,
+    /// Toggle UI animations (spinners, scanners, pulses) (Alt+A).
+    ToggleAnimations,
+    /// Trigger backend session compaction (Alt+C).
+    CompactSession,
+    /// Set the backend model. Carries the parsed
+    /// `(provider, model_id)` pair from the picker selection so the
+    /// run loop can fire `Command::SetModel` end-to-end.
+    SetModel { provider: String, model_id: String },
+    /// Pop the most recent queued steering / follow-up message back
+    /// into the input buffer (Alt+Up).
+    DequeueMessage,
+    /// Hand the input buffer to `$VISUAL` / `$EDITOR` and read the
+    /// edited contents back. The run loop performs the launch + IO
+    /// because the App is render-only at that point.
+    ExternalEditorLaunch,
 }
 
 /// Stateful TUI application surface used by the run loop and behavioral
 /// tests. Bundles the resolved keymap, focus mode, and every
 /// per-component state struct the renderer consumes.
+///
+/// `#[allow(clippy::struct_excessive_bools)]`: the legacy senpi
+/// keybinding contract advertises multiple independent boolean
+/// toggles (`thinking_visible`, `tools_expanded`, `sidebar_visible`,
+/// `animations_enabled`, `demo_mode`). Promoting these to an enum
+/// would lose orthogonality - the user expects to combine them
+/// freely.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug)]
 pub struct App {
     pub keymap: ResolvedKeymap,
@@ -124,6 +149,16 @@ pub struct App {
     pub footer: FooterState,
     pub thinking_visible: bool,
     pub tools_expanded: bool,
+    /// `true` when the user has explicitly enabled the sidebar via
+    /// `neo.sidebar.toggle` (Alt+S). Layout only allocates the sidebar
+    /// pane when `sidebar_visible || demo_mode` AND the terminal is
+    /// wide enough.
+    pub sidebar_visible: bool,
+    /// `true` when spinner / scanner / pulse animations should play.
+    /// Toggled by `neo.toggle_animations` (Alt+A). When `false`, the
+    /// footer spinner glyph stops rotating so the UI stays static
+    /// (helpful for screen recordings or low-power terminals).
+    pub animations_enabled: bool,
     /// Active overlay (Help / Slash / Palette) drawn on top of the
     /// chat view. `None` = no overlay.
     pub overlay: Option<Overlay>,
@@ -175,6 +210,8 @@ impl App {
             },
             thinking_visible: true,
             tools_expanded: true,
+            sidebar_visible: false,
+            animations_enabled: true,
             overlay: None,
             demo_mode: false,
         })
@@ -497,17 +534,33 @@ impl App {
     }
 
     /// Apply a `neo.model.set:<id>` selection emitted by the model
-    /// picker overlay. Push a chat-system note so the user sees that
-    /// the selection landed even though the backend `SetModel` wiring
-    /// (provider lookup) is not yet plumbed in `senpi --neo`. The
-    /// alternative (silent consume) was a Bug 3 violation flagged by
-    /// Oracle round 5.
+    /// picker overlay. Round 12 / real port: actually fire the
+    /// backend `Command::SetModel { provider, model_id }`. The
+    /// picker only carries the model id, so we infer the provider
+    /// from the id prefix via [`provider_for_model_id`]. If the
+    /// provider cannot be inferred (custom model id), push a
+    /// chat-system note explaining the lookup miss instead of
+    /// silently consuming the selection - the user can switch via
+    /// legacy `senpi` for now.
     fn apply_model_selection(&mut self, action_id: &str) -> AppAction {
         let new_id = action_id.strip_prefix("neo.model.set:").unwrap_or_default();
-        self.chat.push_system(format!(
-            "Model selection (`{new_id}`) is not yet wired to the backend in `senpi --neo`. Use legacy `senpi` for runtime model switching.",
-        ));
-        AppAction::Consumed(action_id.to_owned())
+        let Some(provider) = provider_for_model_id(new_id) else {
+            self.chat.push_system(format!(
+                "Could not infer provider for model `{new_id}`. Bundled picker only knows the curated catalog; use `senpi` (without `--neo`) to select arbitrary models for now.",
+            ));
+            return AppAction::Consumed(action_id.to_owned());
+        };
+        // Reflect the pending change in header / footer immediately
+        // so the user sees the chord landed. The backend will echo
+        // back the canonical Model object via `set_model` response
+        // (handled by `apply_model_change_response`) which
+        // overwrites these placeholders with the canonical name.
+        self.chat
+            .push_system(format!("Switching to {provider}/{new_id}..."));
+        AppAction::SetModel {
+            provider: provider.to_owned(),
+            model_id: new_id.to_owned(),
+        }
     }
 
     /// Surface an advertised-but-unimplemented action to chat so the
@@ -603,43 +656,24 @@ impl App {
         AppAction::Consumed(action_id.to_owned())
     }
 
-    /// Bug 3 (Oracle round 6): `app.editor.external` returns
-    /// `AppAction::ExternalEditor`, but `action_to_command` maps that
-    /// variant to `None` - so Ctrl+G previously produced zero visible
-    /// effect. Push a chat-system note explaining the in-buffer
-    /// external editor launch is not yet wired and still return the
-    /// typed variant so the existing parity test (and any future
-    /// in-process editor wiring) keeps working.
-    fn apply_external_editor_action(&mut self, action_id: &str) -> AppAction {
-        self.chat.push_system(format!(
-            "`{action_id}` (external editor launch) is not yet wired in `senpi --neo`. Run `senpi` (without `--neo`) for this command.",
-        ));
-        AppAction::ExternalEditor
-    }
-
-    /// Bug 3 (Oracle round 10): `app.thinking.toggle` (Ctrl+T) flipped
-    /// `self.thinking_visible`, but no render path consumed that
-    /// field, so the user-facing effect was zero. Keep the field
-    /// mutation (so wiring the renderer later is a one-line change)
-    /// and push a chat-system note so the chord visibly lands now.
-    fn apply_thinking_visibility_toggle(&mut self, action_id: &str) -> AppAction {
-        self.thinking_visible = !self.thinking_visible;
-        self.chat.push_system(format!(
-            "`{action_id}` (toggle thinking-block visibility) is not yet wired to chat rendering in `senpi --neo`. Run `senpi` (without `--neo`) for this command.",
-        ));
-        AppAction::ToggleThinkingVisibility
-    }
-
-    /// Bug 3 (Oracle round 10): mirror of
-    /// [`Self::apply_thinking_visibility_toggle`] for `app.tools.expand`
-    /// (Ctrl+O). The arm toggled `self.tools_expanded`, but no
-    /// rendering path read it, so the chord was a silent no-op.
-    fn apply_tools_expanded_toggle(&mut self, action_id: &str) -> AppAction {
-        self.tools_expanded = !self.tools_expanded;
-        self.chat.push_system(format!(
-            "`{action_id}` (toggle tool-output expansion) is not yet wired to chat rendering in `senpi --neo`. Run `senpi` (without `--neo`) for this command.",
-        ));
-        AppAction::ToggleToolsExpanded
+    /// Round 12 / real port: `app.message.dequeue` (Alt+Up) pulls the
+    /// most recently queued steering / follow-up message back into
+    /// the input buffer so the user can edit it. The local queue is
+    /// tracked by `QueueUpdate` events; this arm pops the tail back
+    /// into the editor when one exists, or pushes a chat-system note
+    /// when the queue is empty.
+    fn apply_message_dequeue(&mut self, action_id: &str) -> AppAction {
+        if let Some(text) = self.chat.pop_queued_message() {
+            self.input.clear();
+            self.input.insert_str(&text);
+            self.refresh_autocomplete();
+            AppAction::DequeueMessage
+        } else {
+            self.chat.push_system(
+                "No queued messages to dequeue. Submit a message with Enter or Alt+Enter while the agent is working to queue one.".into(),
+            );
+            AppAction::Consumed(action_id.to_owned())
+        }
     }
 
     fn execute_action(&mut self, id: &str) -> AppAction {
@@ -710,10 +744,63 @@ impl App {
                 self.overlay = Some(Overlay::ModelPicker(ModelPickerOverlay::new()));
                 AppAction::OpenModelPicker
             }
+            "neo.sidebar.toggle" => {
+                // Round 12 / real port: Alt+S toggles the sidebar
+                // pane visibility. The actual layout split (when
+                // wide enough) is computed in `app/mod.rs::render`
+                // via `app.sidebar_visible || app.demo_mode`.
+                self.sidebar_visible = !self.sidebar_visible;
+                AppAction::ToggleSidebar
+            }
+            "neo.toggle_animations" => {
+                // Round 12 / real port: Alt+A toggles spinner /
+                // scanner / pulse playback. The footer spinner uses
+                // `app.animations_enabled` to decide whether to
+                // rotate its glyph or keep it static.
+                self.animations_enabled = !self.animations_enabled;
+                AppAction::ToggleAnimations
+            }
+            "neo.compact" => {
+                // Round 12 / real port: Alt+C fires `Command::Compact`
+                // to the backend. The backend's response (success or
+                // failure) flows through `apply_response` and
+                // existing `compaction_end` event handling.
+                self.chat
+                    .push_system("Compacting session... watch for `compaction_end` event.".into());
+                AppAction::CompactSession
+            }
+            "app.message.dequeue" => self.apply_message_dequeue(id),
             "app.thinking.cycle" => AppAction::CycleThinkingLevel,
-            "app.thinking.toggle" => self.apply_thinking_visibility_toggle(id),
-            "app.tools.expand" => self.apply_tools_expanded_toggle(id),
-            "app.editor.external" => self.apply_external_editor_action(id),
+            "app.thinking.toggle" => {
+                // Round 12 / real port: `thinking_visible` now drives
+                // chat rendering directly (see
+                // `chat::ChatViewOpts::thinking_visible`). Toggling it
+                // hides or shows every thinking block in one
+                // keystroke. The chat note is no longer needed
+                // because the visual change IS the feedback.
+                self.thinking_visible = !self.thinking_visible;
+                AppAction::ToggleThinkingVisibility
+            }
+            "app.tools.expand" => {
+                // Round 12 / real port: `tools_expanded` now drives
+                // chat rendering directly (see
+                // `chat::ChatViewOpts::tools_expanded`). Toggling it
+                // collapses every tool card's body to a single
+                // "collapsed, ctrl+o to expand" hint, or restores the
+                // full output. The visual change IS the feedback.
+                self.tools_expanded = !self.tools_expanded;
+                AppAction::ToggleToolsExpanded
+            }
+            "app.editor.external" => {
+                // Round 12 / real port: Ctrl+G now actually launches
+                // `$VISUAL` / `$EDITOR` on the current buffer. The run
+                // loop intercepts `ExternalEditorLaunch` to suspend
+                // the TUI, run the editor, read the result back, and
+                // restore the TUI. No chat note needed - the visible
+                // change IS the buffer mutation.
+                let _ = id;
+                AppAction::ExternalEditorLaunch
+            }
             "app.message.followUp" => self.apply_follow_up_action(),
             "tui.input.submit" => self.apply_submit_action(),
             "tui.input.newLine" => {
@@ -778,6 +865,15 @@ impl App {
             AppAction::CycleModel => Some(Command::CycleModel { id: None }),
             AppAction::CycleThinkingLevel => Some(Command::CycleThinkingLevel { id: None }),
             AppAction::OpenModelPicker => Some(Command::GetAvailableModels { id: None }),
+            AppAction::SetModel { provider, model_id } => Some(Command::SetModel {
+                id: None,
+                provider: provider.clone(),
+                model_id: model_id.clone(),
+            }),
+            AppAction::CompactSession => Some(Command::Compact {
+                id: None,
+                custom_instructions: None,
+            }),
             _ => None,
         }
     }
@@ -942,6 +1038,15 @@ impl App {
                     notify_type.as_deref(),
                     title.as_deref(),
                 );
+            }
+            RpcEvent::QueueUpdate { steering, follow_up } => {
+                // Round 12 / real port: track queued messages so
+                // Alt+Up (`app.message.dequeue`) can pop the most
+                // recent one back into the editor. Source order is
+                // steering then follow-up.
+                let mut combined = steering;
+                combined.extend(follow_up);
+                self.chat.replace_queued_messages(combined);
             }
             _ => {}
         }
@@ -1210,6 +1315,8 @@ impl App {
             footer: config.footer,
             thinking_visible: true,
             tools_expanded: true,
+            sidebar_visible: false,
+            animations_enabled: true,
             overlay: None,
             demo_mode: config.demo_mode,
         })
@@ -1304,6 +1411,11 @@ fn init_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
 /// notification ("not yet wired") so the user sees that the chord
 /// landed and knows where to fall back.
 const ADVERTISED_BUT_UNIMPLEMENTED_ACTIONS: &[&str] = &[
+    // Session / branching / models management remain a follow-up
+    // feature pack (overlays + JSONL session parsing + persisted
+    // favorites). Until those land they route through
+    // `note_unimplemented_action` so the chord still produces
+    // visible feedback per Bug 3.
     "app.session.toggleNamedFilter",
     "app.session.new",
     "app.session.tree",
@@ -1333,21 +1445,50 @@ const ADVERTISED_BUT_UNIMPLEMENTED_ACTIONS: &[&str] = &[
     "app.models.toggleProvider",
     "app.models.reorderUp",
     "app.models.reorderDown",
-    // NOTE: `app.message.followUp` is intentionally NOT here - it is
-    // a fully implemented explicit `execute_action` arm that drains
-    // the input buffer into an `AppAction::FollowUp`. Listing it
-    // here would route it through `note_unimplemented_action` and
-    // shadow the real behavior. Oracle round 8 audit confirmed the
-    // explicit arm wins, but the dead list entry was misleading.
-    "app.message.dequeue",
+    // Image paste requires clipboard + image content blocks - a
+    // separate feature surface. Until that lands the chord shows a
+    // visible "not yet wired" note.
     "app.clipboard.pasteImage",
-    "neo.sidebar.toggle",
-    "neo.compact",
-    "neo.toggle_animations",
+    // NOTE: `app.message.followUp`, `app.message.dequeue`,
+    // `neo.sidebar.toggle`, `neo.compact`, `neo.toggle_animations`,
+    // and `app.editor.external` all have explicit
+    // `execute_action` arms in round 12 - they are NOT advertised
+    // as unimplemented anymore. Adding them here would route them
+    // through `note_unimplemented_action` and shadow the real
+    // behavior.
 ];
 
 fn is_advertised_unimplemented_action(id: &str) -> bool {
     ADVERTISED_BUT_UNIMPLEMENTED_ACTIONS.contains(&id)
+}
+
+/// Infer the backend `provider` for a curated model id.
+///
+/// The bundled picker only carries model ids (no provider prefix),
+/// but `Command::SetModel` requires both. Returns `None` for unknown
+/// / custom model ids; the caller surfaces that to the chat instead
+/// of firing a malformed command.
+///
+/// This is intentionally a small static lookup keyed on the prefix
+/// pattern. Future iterations can replace it with a backend round-trip
+/// via `get_available_models` (Round 12 / real port).
+#[must_use]
+pub fn provider_for_model_id(model_id: &str) -> Option<&'static str> {
+    if model_id.starts_with("claude-") {
+        Some("anthropic")
+    } else if model_id.starts_with("gpt-") {
+        Some("openai")
+    } else if model_id.starts_with("kimi-") {
+        Some("kimi-for-coding")
+    } else if model_id.starts_with("glm-") {
+        Some("opencode-zen")
+    } else if model_id.starts_with("deepseek") {
+        Some("deepseek")
+    } else if model_id.starts_with("gemini-") {
+        Some("google")
+    } else {
+        None
+    }
 }
 
 /// `tui.select.*` action ids that the bundled keymap + command
@@ -1369,6 +1510,79 @@ const OVERLAY_SCOPED_SELECT_ACTIONS: &[&str] = &[
 
 fn is_overlay_scoped_select_action(id: &str) -> bool {
     OVERLAY_SCOPED_SELECT_ACTIONS.contains(&id)
+}
+
+/// Round 12 / real port: suspend the TUI, hand the input buffer to
+/// `$VISUAL` (or `$EDITOR`, falling back to `vi`), read the edited
+/// result back, and restore the TUI. The buffer is written to a temp
+/// file in `std::env::temp_dir()` named with a millisecond timestamp
+/// so concurrent edits do not collide. The editor inherits stdio so
+/// the user sees and interacts with it directly.
+async fn run_external_editor(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Result<()> {
+    use std::{
+        fs,
+        io::ErrorKind,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+    use tokio::process::Command as TokioCommand;
+
+    let editor = std::env::var_os("VISUAL")
+        .or_else(|| std::env::var_os("EDITOR"))
+        .unwrap_or_else(|| "vi".into());
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis());
+    let mut path = std::env::temp_dir();
+    path.push(format!("senpi-neo-editor-{stamp}.md"));
+    fs::write(&path, app.input.buffer.as_bytes())?;
+
+    // Suspend the TUI so the editor sees a clean terminal.
+    let caps = TerminalCaps::detect();
+    disable_raw_mode()?;
+    let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+    let _ = execute!(std::io::stdout(), DisableBracketedPaste);
+    execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
+    let _ = write_terminal_bytes(&caps.cleanup_writes());
+
+    let status_result = TokioCommand::new(&editor).arg(&path).status().await;
+
+    // Restore the TUI regardless of the editor's exit status so a
+    // crashed editor does not leave the user in a half-broken
+    // terminal.
+    write_terminal_bytes(&caps.init_writes())?;
+    enable_raw_mode()?;
+    execute!(std::io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+    let _ = execute!(std::io::stdout(), EnableBracketedPaste);
+    let _ = execute!(
+        std::io::stdout(),
+        PushKeyboardEnhancementFlags(caps.kitty_keyboard_flags),
+    );
+    terminal.clear()?;
+
+    let status = status_result?;
+    if !status.success() {
+        // Best-effort cleanup; ignore failures so the user still
+        // gets editor feedback.
+        let _ = fs::remove_file(&path);
+        return Err(color_eyre::eyre::eyre!(
+            "$VISUAL / $EDITOR exited with status {status}",
+        ));
+    }
+
+    let edited = fs::read_to_string(&path)?;
+    let trimmed = edited.trim_end_matches('\n').to_owned();
+    app.input.clear();
+    app.input.insert_str(&trimmed);
+    app.refresh_autocomplete();
+
+    if let Err(err) = fs::remove_file(&path) {
+        if err.kind() != ErrorKind::NotFound {
+            tracing::warn!(path = %path.display(), error = %err, "failed to remove editor temp file");
+        }
+    }
+
+    Ok(())
 }
 
 fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
@@ -1439,6 +1653,11 @@ enum TerminalEventOutcome {
     Quit,
     Disconnected,
     BackendChannelClosed,
+    /// Round 12 / real port: user invoked `app.editor.external`
+    /// (Ctrl+G). The run loop must suspend the TUI, spawn
+    /// `$VISUAL` / `$EDITOR` against the current input buffer, read
+    /// the edited result back, and restore the TUI.
+    ExternalEditor,
 }
 
 async fn handle_terminal_event(
@@ -1452,6 +1671,9 @@ async fn handle_terminal_event(
             let action = app.handle_key(key);
             if matches!(action, AppAction::Quit) {
                 return TerminalEventOutcome::Quit;
+            }
+            if matches!(action, AppAction::ExternalEditorLaunch) {
+                return TerminalEventOutcome::ExternalEditor;
             }
             // RPC commands only fire when a backend is attached. In
             // demo mode `cmd_tx` is `None`, so AppActions that would
@@ -1564,14 +1786,35 @@ async fn drive(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: AppCon
                 })?;
             }
             _ = spinner_tick.tick() => {
-                spinner_idx = (spinner_idx + 1) % SPINNER_FRAMES.len();
-                app.input.focus_pulse = app.input.focus_pulse.wrapping_add(8);
+                // Round 12 / real port: Alt+A toggles
+                // `animations_enabled`. When false, freeze the
+                // spinner frame and skip the input focus pulse so
+                // the UI stays completely static (useful for
+                // screen recording or low-power terminals).
+                if app.animations_enabled {
+                    spinner_idx = (spinner_idx + 1) % SPINNER_FRAMES.len();
+                    app.input.focus_pulse = app.input.focus_pulse.wrapping_add(8);
+                }
             }
             ev = events.next() => {
                 let outcome = handle_terminal_event(&mut app, cmd_tx.as_ref(), demo_mode, ev).await;
                 match outcome {
                     TerminalEventOutcome::Continue => {}
                     TerminalEventOutcome::Quit | TerminalEventOutcome::Disconnected => break,
+                    TerminalEventOutcome::ExternalEditor => {
+                        // Round 12 / real port: suspend TUI, edit
+                        // buffer in $VISUAL/$EDITOR, restore TUI.
+                        // Any error path during the launch lands as
+                        // an Inbound::Error so the user sees what
+                        // went wrong rather than getting a frozen
+                        // screen.
+                        if let Err(err) = run_external_editor(terminal, &mut app).await {
+                            app.apply_inbound(Inbound::Error {
+                                exit_code: None,
+                                stderr_tail: format!("external editor failed: {err}"),
+                            });
+                        }
+                    }
                     TerminalEventOutcome::BackendChannelClosed => {
                         app.apply_inbound(Inbound::Disconnected);
                         inbound = None;
@@ -1606,11 +1849,12 @@ fn draw_app(frame: &mut Frame<'_>, app: &App) {
     let area = frame.area();
     let input_wrap_width = usize::from(area.width.saturating_sub(6).max(1));
     let line_count = app.input.display_lines(input_wrap_width).len();
-    // The sidebar shows demo metadata (todo list, file picker, etc.) and
-    // is only wired in demo mode for now. In real `senpi --neo` runs we
-    // keep the layout single-column so the chat reclaims the right edge
-    // instead of leaving a blank gutter.
-    let sidebar_visible = app.demo_mode && area.width >= layout::SIDEBAR_MIN_TERMINAL_WIDTH;
+    // Round 12 / real port: sidebar visibility is now user-controllable
+    // via `neo.sidebar.toggle` (Alt+S). The demo-mode auto-show stays as
+    // a render-only convenience for screenshots. Either trigger requires
+    // the terminal to be wide enough so the chat does not crush.
+    let sidebar_visible =
+        (app.demo_mode || app.sidebar_visible) && area.width >= layout::SIDEBAR_MIN_TERMINAL_WIDTH;
     let computed = layout::compute(
         area,
         LayoutState {
@@ -1620,7 +1864,16 @@ fn draw_app(frame: &mut Frame<'_>, app: &App) {
     );
 
     header::render(frame, computed.header, &app.theme, &app.header);
-    chat::render(frame, computed.chat, &app.theme, &app.chat);
+    chat::render(
+        frame,
+        computed.chat,
+        &app.theme,
+        &app.chat,
+        chat::ChatViewOpts {
+            thinking_visible: app.thinking_visible,
+            tools_expanded: app.tools_expanded,
+        },
+    );
     input::render(frame, computed.input, &app.theme, &app.input);
     footer::render(frame, computed.footer, &app.theme, &app.footer);
 

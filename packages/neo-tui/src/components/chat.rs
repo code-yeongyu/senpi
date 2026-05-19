@@ -89,6 +89,11 @@ pub struct ChatState {
     pub next_id: u64,
     message_ids: Vec<u64>,
     thinking_by_id: HashMap<u64, String>,
+    /// Pending steering / follow-up messages tracked from the backend's
+    /// `QueueUpdate` events. Consumed by `app.message.dequeue`
+    /// (Alt+Up) so the user can edit a queued message before
+    /// resubmitting it.
+    queued_messages: Vec<String>,
 }
 
 impl ChatState {
@@ -101,6 +106,7 @@ impl ChatState {
             next_id: 1,
             message_ids: Vec::new(),
             thinking_by_id: HashMap::new(),
+            queued_messages: Vec::new(),
         }
     }
 
@@ -157,6 +163,26 @@ impl ChatState {
         self.thinking_by_id.insert(id, thinking);
     }
 
+    /// Replace the tracked queued messages with the latest
+    /// `QueueUpdate` payload from the backend (steering + follow-up
+    /// merged, source order preserved).
+    pub fn replace_queued_messages(&mut self, queued: Vec<String>) {
+        self.queued_messages = queued;
+    }
+
+    /// Pop the most recently queued message for `app.message.dequeue`
+    /// (Alt+Up). Returns `None` when the queue is empty.
+    pub fn pop_queued_message(&mut self) -> Option<String> {
+        self.queued_messages.pop()
+    }
+
+    /// Read-only view of pending queued messages (used by tests +
+    /// future status-line rendering).
+    #[must_use]
+    pub fn queued_messages(&self) -> &[String] {
+        &self.queued_messages
+    }
+
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.messages.is_empty()
@@ -177,8 +203,39 @@ impl Default for ChatState {
     }
 }
 
+/// Per-frame rendering options that toggle visibility of optional
+/// chat content. Drives the legacy senpi Ctrl+T (thinking) and Ctrl+O
+/// (tool output) chords.
+#[derive(Clone, Copy, Debug)]
+pub struct ChatViewOpts {
+    /// `true` (default): assistant thinking blocks are shown (collapsed
+    /// summary or expanded). `false`: thinking blocks are hidden
+    /// entirely - the "ctrl+t to expand" line is suppressed and
+    /// per-message expanded thinking is collapsed.
+    pub thinking_visible: bool,
+    /// `true` (default): tool cards render their full body output.
+    /// `false`: tool cards collapse to a single header line so the
+    /// chat stays compact during long tool runs.
+    pub tools_expanded: bool,
+}
+
+impl Default for ChatViewOpts {
+    fn default() -> Self {
+        Self {
+            thinking_visible: true,
+            tools_expanded: true,
+        }
+    }
+}
+
 /// Render the chat list into the given rect.
-pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &ChatState) {
+pub fn render(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    theme: &ResolvedTheme,
+    state: &ChatState,
+    opts: ChatViewOpts,
+) {
     if area.height == 0 || area.width == 0 {
         return;
     }
@@ -190,7 +247,12 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let lines = render_lines(theme, state, usize::from(inner.width.saturating_sub(2).max(1)));
+    let lines = render_lines(
+        theme,
+        state,
+        opts,
+        usize::from(inner.width.saturating_sub(2).max(1)),
+    );
     let para = Paragraph::new(lines).wrap(Wrap { trim: false });
     let rendered_rows = para.line_count(inner.width);
     let bottom_anchor = rendered_rows.saturating_sub(usize::from(inner.height));
@@ -200,7 +262,12 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &
     frame.render_widget(para.scroll((scroll, 0)), inner);
 }
 
-fn render_lines(theme: &ResolvedTheme, state: &ChatState, body_width: usize) -> Vec<Line<'static>> {
+fn render_lines(
+    theme: &ResolvedTheme,
+    state: &ChatState,
+    opts: ChatViewOpts,
+    body_width: usize,
+) -> Vec<Line<'static>> {
     if state.messages.is_empty() {
         return vec![empty_state_line(theme)];
     }
@@ -211,7 +278,7 @@ fn render_lines(theme: &ResolvedTheme, state: &ChatState, body_width: usize) -> 
             lines.push(Line::from(""));
         }
         let id = state.message_ids.get(index).copied();
-        lines.extend(render_message(theme, message, id, state, body_width));
+        lines.extend(render_message(theme, message, id, state, opts, body_width));
     }
     lines
 }
@@ -221,16 +288,17 @@ fn render_message(
     message: &Message,
     id: Option<u64>,
     state: &ChatState,
+    opts: ChatViewOpts,
     body_width: usize,
 ) -> Vec<Line<'static>> {
     match message.role {
         Role::User => render_user_message(theme, &message.body, body_width),
-        Role::Assistant => render_assistant_message(theme, message, id, state, body_width),
+        Role::Assistant => render_assistant_message(theme, message, id, state, opts, body_width),
         Role::System => render_system_message(theme, &message.body, body_width),
         Role::Tool => message
             .tool
             .as_ref()
-            .map_or_else(Vec::new, |tool| render_tool_card(theme, tool, body_width)),
+            .map_or_else(Vec::new, |tool| render_tool_card(theme, tool, opts, body_width)),
         Role::Error => render_error_message(theme, &message.body, body_width),
     }
 }
@@ -259,6 +327,7 @@ fn render_assistant_message(
     message: &Message,
     id: Option<u64>,
     state: &ChatState,
+    opts: ChatViewOpts,
     width: usize,
 ) -> Vec<Line<'static>> {
     let mut lines = vec![bar_line(
@@ -267,7 +336,13 @@ fn render_assistant_message(
         vec![header_span(theme, " > senpi")],
     )];
 
-    if let Some(id) = id
+    // Ctrl+T (`app.thinking.toggle`) toggles the global
+    // `thinking_visible` flag. When false, every thinking block is
+    // suppressed - neither the summary line nor the expanded body
+    // renders. This matches the legacy senpi behavior where the user
+    // can hide the inner monologue once they have read it.
+    if opts.thinking_visible
+        && let Some(id) = id
         && let Some(thinking) = state.thinking_by_id.get(&id)
     {
         if state.expanded_thinking.contains(&id) {
@@ -278,7 +353,7 @@ fn render_assistant_message(
                 theme,
                 Token::AssistantMessageBar,
                 vec![Span::styled(
-                    format!("  [thinking {count} lines, ctrl+t to expand]"),
+                    format!("  [thinking {count} lines, ctrl+t to toggle visibility]"),
                     Style::default().fg(theme.token(Token::TextMuted)),
                 )],
             ));
@@ -289,7 +364,7 @@ fn render_assistant_message(
         lines.push(markdown_body_line(theme, Token::AssistantMessageBar, line));
     }
     if let Some(tool) = &message.tool {
-        lines.extend(render_tool_card(theme, tool, width));
+        lines.extend(render_tool_card(theme, tool, opts, width));
     }
     lines
 }
@@ -346,7 +421,12 @@ fn render_error_message(theme: &ResolvedTheme, body: &str, width: usize) -> Vec<
     lines
 }
 
-fn render_tool_card(theme: &ResolvedTheme, card: &ToolCard, width: usize) -> Vec<Line<'static>> {
+fn render_tool_card(
+    theme: &ResolvedTheme,
+    card: &ToolCard,
+    opts: ChatViewOpts,
+    width: usize,
+) -> Vec<Line<'static>> {
     let border_token = match card.status {
         ToolStatus::Running => Token::ToolBorderRunning,
         ToolStatus::Success => Token::ToolBorderSuccess,
@@ -374,12 +454,28 @@ fn render_tool_card(theme: &ResolvedTheme, card: &ToolCard, width: usize) -> Vec
         Span::styled("─".repeat(rule_width), border),
     ])];
 
-    for line in card.summary.lines().take(6) {
-        let truncated = truncate_to_width(line, inner_width, "…");
-        lines.push(Line::from(vec![
-            Span::styled("  │ ".to_string(), border),
-            Span::styled(truncated, body),
-        ]));
+    // Ctrl+O (`app.tools.expand`) toggles whether tool body lines are
+    // rendered. When false, the card collapses to its header rule so
+    // long tool outputs do not flood the viewport. The user can
+    // re-expand to inspect the output.
+    if opts.tools_expanded {
+        for line in card.summary.lines().take(6) {
+            let truncated = truncate_to_width(line, inner_width, "…");
+            lines.push(Line::from(vec![
+                Span::styled("  │ ".to_string(), border),
+                Span::styled(truncated, body),
+            ]));
+        }
+    } else {
+        // Render a compact one-line "collapsed" hint instead of the
+        // tool body so the user knows there is hidden output and how
+        // to expand it.
+        let hint = "  │ [tool output collapsed, ctrl+o to expand]";
+        let truncated = truncate_to_width(hint, inner_width.saturating_add(4), "…");
+        lines.push(Line::from(Span::styled(
+            truncated,
+            Style::default().fg(theme.token(Token::TextMuted)),
+        )));
     }
     lines.push(Line::from(Span::styled(
         format!("  ╰{}", "─".repeat(inner_width.saturating_add(1))),

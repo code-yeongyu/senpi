@@ -106,6 +106,13 @@ pub enum Command {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    /// Manually compact conversation context.
+    Compact {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", rename = "customInstructions")]
+        custom_instructions: Option<String>,
+    },
     /// Escape hatch for commands not yet typed. Serializes as raw JSON
     /// with the `type` field already set by the caller.
     #[serde(untagged)]

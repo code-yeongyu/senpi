@@ -1,6 +1,6 @@
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer, layout::Rect, style::Color};
 use senpi_neo_tui::{
-    components::chat::{self, ChatState, ToolCardData, ToolStatus},
+    components::chat::{self, ChatState, ChatViewOpts, ToolCardData, ToolStatus},
     load_bundled_dark_theme,
     theme::{ResolvedTheme, Token},
 };
@@ -14,7 +14,15 @@ fn render_chat(state: &ChatState, width: u16, height: u16) -> (Buffer, ResolvedT
     let mut terminal = Terminal::new(backend).expect("test terminal must initialize");
     let theme = theme();
     terminal
-        .draw(|frame| chat::render(frame, Rect::new(0, 0, width, height), &theme, state))
+        .draw(|frame| {
+            chat::render(
+                frame,
+                Rect::new(0, 0, width, height),
+                &theme,
+                state,
+                ChatViewOpts::default(),
+            );
+        })
         .expect("chat render must complete");
     (terminal.backend().buffer().clone(), theme)
 }
@@ -143,8 +151,91 @@ fn chat_thinking_block_collapsed_by_default() {
     let (buffer, _) = render_chat(&state, 80, 16);
     let text = buffer_text(&buffer);
 
-    assert!(text.contains("[thinking 12 lines, ctrl+t to expand]"));
+    assert!(text.contains("[thinking 12 lines, ctrl+t to toggle visibility]"));
     assert!(!text.contains("line 12"));
+}
+
+#[test]
+fn chat_thinking_visible_false_hides_summary_and_body() {
+    // Round 12 / real port: `ChatViewOpts::thinking_visible = false`
+    // suppresses the entire thinking block - neither the summary
+    // line nor the expanded body renders. Driven by Ctrl+T.
+    let mut state = ChatState::new();
+    let id = state.push_assistant("answer".to_string());
+    state.set_thinking(id, "secret monologue".to_string());
+
+    let backend = TestBackend::new(80, 12);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let theme = theme();
+    terminal
+        .draw(|frame| {
+            chat::render(
+                frame,
+                Rect::new(0, 0, 80, 12),
+                &theme,
+                &state,
+                ChatViewOpts {
+                    thinking_visible: false,
+                    tools_expanded: true,
+                },
+            );
+        })
+        .expect("render");
+    let buffer = terminal.backend().buffer().clone();
+    let text = buffer_text(&buffer);
+
+    assert!(
+        !text.contains("thinking 1 lines"),
+        "thinking summary must be hidden when thinking_visible=false, got:\n{text}",
+    );
+    assert!(!text.contains("secret monologue"));
+    assert!(
+        text.contains("answer"),
+        "assistant body must still render when thinking is hidden",
+    );
+}
+
+#[test]
+fn chat_tools_expanded_false_collapses_tool_card_body() {
+    // Round 12 / real port: `ChatViewOpts::tools_expanded = false`
+    // collapses each tool card body to a single "collapsed" hint,
+    // keeping only the header rule. Driven by Ctrl+O.
+    let mut state = ChatState::new();
+    state.push_tool(ToolCardData {
+        name: "bash".to_string(),
+        status: ToolStatus::Success,
+        args: "ls".to_string(),
+        output: "file1\nfile2\nfile3".to_string(),
+    });
+
+    let backend = TestBackend::new(80, 12);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let theme = theme();
+    terminal
+        .draw(|frame| {
+            chat::render(
+                frame,
+                Rect::new(0, 0, 80, 12),
+                &theme,
+                &state,
+                ChatViewOpts {
+                    thinking_visible: true,
+                    tools_expanded: false,
+                },
+            );
+        })
+        .expect("render");
+    let buffer = terminal.backend().buffer().clone();
+    let text = buffer_text(&buffer);
+
+    assert!(
+        text.contains("collapsed") && text.contains("ctrl+o to expand"),
+        "collapsed hint must appear when tools_expanded=false, got:\n{text}",
+    );
+    assert!(
+        !text.contains("file1"),
+        "tool body must NOT render when tools_expanded=false, got:\n{text}",
+    );
 }
 
 #[test]

@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseEvent, MouseEventKind,
 };
-use senpi_neo_tui::app::{App, AppAction};
+use senpi_neo_tui::app::{App, AppAction, provider_for_model_id};
 use senpi_neo_tui::components::autocomplete::AutocompleteResult;
 use senpi_neo_tui::components::chat::{Role, ToolStatus};
 use senpi_neo_tui::components::footer::Status;
@@ -212,26 +212,59 @@ fn theme_picker_selection_with_unknown_id_pushes_a_chat_error() {
 }
 
 #[test]
-fn model_picker_selection_pushes_visible_feedback() {
-    // Oracle round 5: the model picker emits
-    // `OverlayResult::Selected("neo.model.set:<id>")`. Previously the
-    // dispatcher had no arm for that prefix and silently consumed it -
-    // the overlay closed, no model changed on the backend, and the
-    // user saw nothing happen. Until provider plumbing lands, surface
-    // a chat-system note so the chord is visibly accounted for.
+fn model_picker_selection_fires_set_model_command() {
+    // Round 12 / real port: the model picker emits
+    // `OverlayResult::Selected("neo.model.set:<id>")` and the
+    // dispatcher now fires `Command::SetModel { provider, model_id }`
+    // end-to-end. The provider is inferred from the model id prefix
+    // (claude-* → anthropic, gpt-* → openai, etc.). The backend
+    // response flows through `apply_model_change_response` and
+    // updates header + footer + pushes a chat note.
     let mut app = fresh_app();
     let messages_before = app.chat.messages.len();
     let action = app.execute_action_for_tests("neo.model.set:claude-opus-4-7");
-    assert!(matches!(action, AppAction::Consumed(_)));
+    assert_eq!(
+        action,
+        AppAction::SetModel {
+            provider: "anthropic".into(),
+            model_id: "claude-opus-4-7".into(),
+        }
+    );
+    let cmd = App::action_to_command(&action).expect("set_model must fire a command");
+    assert!(matches!(cmd, Command::SetModel { .. }));
     assert!(
         app.chat.messages.len() > messages_before,
-        "model selection must push a chat message",
+        "model selection must push a chat message (the pending-switch note)",
     );
     let last = app.chat.messages.last().expect("message exists");
     assert_eq!(last.role, Role::System);
     assert!(
         last.body.contains("claude-opus-4-7"),
         "chat body must name the picked model, got {:?}",
+        last.body,
+    );
+}
+
+#[test]
+fn model_picker_selection_with_unknown_provider_surfaces_lookup_miss() {
+    // Round 12 / real port: a custom model id (no known prefix)
+    // cannot be mapped to a backend provider by the curated heuristic.
+    // Instead of silently consuming the selection, the dispatcher
+    // surfaces a chat note explaining the lookup miss.
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+    let action = app.execute_action_for_tests("neo.model.set:exotic-vendor-model-x9");
+    assert!(matches!(action, AppAction::Consumed(_)));
+    assert!(App::action_to_command(&action).is_none());
+    assert!(
+        app.chat.messages.len() > messages_before,
+        "unknown-provider selection must push a chat note",
+    );
+    let last = app.chat.messages.last().expect("message exists");
+    assert_eq!(last.role, Role::System);
+    assert!(
+        last.body.contains("exotic-vendor-model-x9"),
+        "chat body must name the failing model id, got {:?}",
         last.body,
     );
 }
@@ -346,39 +379,16 @@ fn alt_enter_dispatches_follow_up() {
 }
 
 #[test]
-fn ctrl_g_dispatches_external_editor() {
+fn ctrl_g_dispatches_external_editor_launch() {
+    // Round 12 / real port: `app.editor.external` (Ctrl+G) now
+    // returns `AppAction::ExternalEditorLaunch`. The run loop
+    // suspends the TUI, runs `$VISUAL` / `$EDITOR` against the
+    // input buffer, reads the result back, and restores the TUI.
     let mut app = fresh_app();
     let action = app.handle_key(ev(KeyCode::Char('g'), KeyModifiers::CONTROL));
-    assert_eq!(action, AppAction::ExternalEditor);
-}
-
-#[test]
-fn ctrl_g_app_editor_external_pushes_visible_feedback_note() {
-    // Oracle round 6: `app.editor.external` (Ctrl+G) returns
-    // `AppAction::ExternalEditor`, but the run loop has no handler
-    // for that variant - the keystroke produced zero user-visible
-    // effect. Bug 3 contract: surface a chat-system note so the
-    // user sees that the chord landed AND that the external editor
-    // is not yet wired in `senpi --neo`.
-    let mut app = fresh_app();
-    let messages_before = app.chat.messages.len();
-    let action = app.execute_action_for_tests("app.editor.external");
-    assert_eq!(
-        action,
-        AppAction::ExternalEditor,
-        "must keep returning the typed variant for future wiring",
-    );
-    assert!(
-        app.chat.messages.len() > messages_before,
-        "external editor chord must push a visible chat message",
-    );
-    let last = app.chat.messages.last().expect("chat message exists");
-    assert_eq!(last.role, Role::System);
-    assert!(
-        last.body.contains("app.editor.external") && last.body.to_lowercase().contains("not yet"),
-        "chat body must name the action and flag it as not yet wired, got {:?}",
-        last.body,
-    );
+    assert_eq!(action, AppAction::ExternalEditorLaunch);
+    // Local-only action: no RPC command should fire.
+    assert!(App::action_to_command(&action).is_none());
 }
 
 #[test]
@@ -1498,52 +1508,37 @@ fn app_mouse_wheel_at_bottom_does_nothing() {
 }
 
 #[test]
-fn ctrl_t_app_thinking_toggle_visibly_notifies_user() {
-    // Oracle round 10: `app.thinking.toggle` (Ctrl+T) flipped
-    // `self.thinking_visible`, but no render path consumed that
-    // field, so the user-facing effect was zero - the chord was a
-    // silent no-op against the README/`/hotkeys` advertisement that
-    // Ctrl+T toggles thinking-block visibility. Bug 3 contract:
-    // surface a "not yet wired to rendering" chat note so the user
-    // sees that the chord landed even though nothing renders yet.
+fn ctrl_t_app_thinking_toggle_flips_thinking_visible() {
+    // Round 12 / real port: `app.thinking.toggle` (Ctrl+T) now drives
+    // chat rendering through `chat::ChatViewOpts::thinking_visible`.
+    // Toggling flips the flag; the visual change in chat IS the
+    // feedback (no more "not yet wired" note).
     let mut app = fresh_app();
-    let messages_before = app.chat.messages.len();
+    assert!(app.thinking_visible);
     let action = app.handle_key(ev(KeyCode::Char('t'), KeyModifiers::CONTROL));
     assert_eq!(action, AppAction::ToggleThinkingVisibility);
-    assert!(
-        app.chat.messages.len() > messages_before,
-        "ctrl+t must push a visible chat message until rendering is wired",
-    );
-    let last = app.chat.messages.last().expect("chat message exists");
-    assert_eq!(last.role, Role::System);
-    assert!(
-        last.body.contains("app.thinking.toggle") && last.body.to_lowercase().contains("not yet"),
-        "chat body must name the action and flag it as not yet wired, got {:?}",
-        last.body,
-    );
+    assert!(!app.thinking_visible);
+
+    let action = app.handle_key(ev(KeyCode::Char('t'), KeyModifiers::CONTROL));
+    assert_eq!(action, AppAction::ToggleThinkingVisibility);
+    assert!(app.thinking_visible);
 }
 
 #[test]
-fn ctrl_o_app_tools_expand_visibly_notifies_user() {
-    // Oracle round 10 (mirror of ctrl_t): `app.tools.expand` (Ctrl+O)
-    // toggled `self.tools_expanded`, but no render path consumed the
-    // field, so the user saw nothing change. Push a chat-system note
-    // so the chord visibly lands.
+fn ctrl_o_app_tools_expand_flips_tools_expanded() {
+    // Round 12 / real port: `app.tools.expand` (Ctrl+O) now drives
+    // chat rendering through `chat::ChatViewOpts::tools_expanded`.
+    // Toggling flips the flag; tool cards collapse / expand on the
+    // next frame.
     let mut app = fresh_app();
-    let messages_before = app.chat.messages.len();
+    assert!(app.tools_expanded);
     let action = app.handle_key(ev(KeyCode::Char('o'), KeyModifiers::CONTROL));
     assert_eq!(action, AppAction::ToggleToolsExpanded);
-    assert!(
-        app.chat.messages.len() > messages_before,
-        "ctrl+o must push a visible chat message until rendering is wired",
-    );
-    let last = app.chat.messages.last().expect("chat message exists");
-    assert_eq!(last.role, Role::System);
-    assert!(
-        last.body.contains("app.tools.expand") && last.body.to_lowercase().contains("not yet"),
-        "chat body must name the action and flag it as not yet wired, got {:?}",
-        last.body,
-    );
+    assert!(!app.tools_expanded);
+
+    let action = app.handle_key(ev(KeyCode::Char('o'), KeyModifiers::CONTROL));
+    assert_eq!(action, AppAction::ToggleToolsExpanded);
+    assert!(app.tools_expanded);
 }
 
 #[test]
@@ -1826,6 +1821,119 @@ fn apply_event_extension_ui_request_dialog_method_pushes_not_yet_wired_note() {
         "chat body must name the dialog method + title + flag as not wired, got {:?}",
         last.body,
     );
+}
+
+#[test]
+fn alt_s_toggles_sidebar_visible() {
+    // Round 12 / real port: Alt+S toggles `sidebar_visible`. The
+    // layout::compute then allocates a sidebar pane when the
+    // terminal is wide enough.
+    let mut app = fresh_app();
+    assert!(!app.sidebar_visible);
+    let action = app.handle_key(ev(KeyCode::Char('s'), KeyModifiers::ALT));
+    assert_eq!(action, AppAction::ToggleSidebar);
+    assert!(app.sidebar_visible);
+
+    let action = app.handle_key(ev(KeyCode::Char('s'), KeyModifiers::ALT));
+    assert_eq!(action, AppAction::ToggleSidebar);
+    assert!(!app.sidebar_visible);
+}
+
+#[test]
+fn alt_a_toggles_animations_enabled() {
+    // Round 12 / real port: Alt+A toggles `animations_enabled`. The
+    // run loop skips spinner / focus-pulse updates when false so
+    // screen recordings stay static.
+    let mut app = fresh_app();
+    assert!(app.animations_enabled);
+    let action = app.handle_key(ev(KeyCode::Char('a'), KeyModifiers::ALT));
+    assert_eq!(action, AppAction::ToggleAnimations);
+    assert!(!app.animations_enabled);
+
+    let action = app.handle_key(ev(KeyCode::Char('a'), KeyModifiers::ALT));
+    assert_eq!(action, AppAction::ToggleAnimations);
+    assert!(app.animations_enabled);
+}
+
+#[test]
+fn alt_c_dispatches_compact_session() {
+    // Round 12 / real port: Alt+C fires `Command::Compact` and
+    // pushes a chat-system note so the user sees the action landed.
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+    let action = app.handle_key(ev(KeyCode::Char('c'), KeyModifiers::ALT));
+    assert_eq!(action, AppAction::CompactSession);
+    let cmd = App::action_to_command(&action).expect("compact must fire a command");
+    assert!(matches!(cmd, Command::Compact { .. }));
+    assert!(
+        app.chat.messages.len() > messages_before,
+        "compact chord must push a visible note",
+    );
+    let last = app.chat.messages.last().expect("chat message exists");
+    assert_eq!(last.role, Role::System);
+    assert!(
+        last.body.to_lowercase().contains("compact"),
+        "chat body must mention compact, got {:?}",
+        last.body,
+    );
+}
+
+#[test]
+fn provider_for_model_id_recognizes_curated_catalog() {
+    // Round 12 / real port: the bundled picker only carries model
+    // ids (no provider). `provider_for_model_id` infers the
+    // provider via prefix matching so `Command::SetModel` can fire
+    // end-to-end. Lock the catalog → provider mapping so a future
+    // catalog edit cannot silently break the mapping.
+    assert_eq!(provider_for_model_id("claude-opus-4-7"), Some("anthropic"));
+    assert_eq!(provider_for_model_id("gpt-5.3-codex"), Some("openai"));
+    assert_eq!(provider_for_model_id("kimi-k2-6"), Some("kimi-for-coding"));
+    assert_eq!(provider_for_model_id("glm-4.6-air"), Some("opencode-zen"));
+    assert_eq!(provider_for_model_id("deepseek-v4-coder"), Some("deepseek"));
+    assert_eq!(provider_for_model_id("gemini-2.5-flash"), Some("google"));
+    assert_eq!(provider_for_model_id("custom-vendor-x9"), None);
+}
+
+#[test]
+fn alt_up_dequeue_when_empty_pushes_explanatory_note() {
+    // Round 12 / real port: `app.message.dequeue` (Alt+Up) pops the
+    // most recently queued message back into the editor. When the
+    // queue is empty, push a chat-system note explaining how
+    // queueing works instead of silently consuming the chord.
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+    let action = app.handle_key(ev(KeyCode::Up, KeyModifiers::ALT));
+    assert!(matches!(action, AppAction::Consumed(_)));
+    assert!(
+        app.chat.messages.len() > messages_before,
+        "dequeue with empty queue must push a chat note",
+    );
+    let last = app.chat.messages.last().expect("chat message exists");
+    assert_eq!(last.role, Role::System);
+    assert!(
+        last.body.to_lowercase().contains("queue") || last.body.to_lowercase().contains("queued"),
+        "chat body must mention the queue, got {:?}",
+        last.body,
+    );
+}
+
+#[test]
+fn alt_up_dequeue_after_queue_update_pops_into_buffer() {
+    // Round 12 / real port: after the backend emits a `QueueUpdate`
+    // event with a pending message, Alt+Up pops the most recent
+    // queued message into the input buffer so the user can edit
+    // and resubmit.
+    let mut app = fresh_app();
+    app.apply_inbound(Inbound::Event(RpcEvent::QueueUpdate {
+        steering: vec!["first queued prompt".into()],
+        follow_up: vec!["pending follow-up".into()],
+    }));
+    assert_eq!(app.chat.queued_messages().len(), 2);
+
+    let action = app.handle_key(ev(KeyCode::Up, KeyModifiers::ALT));
+    assert_eq!(action, AppAction::DequeueMessage);
+    assert_eq!(app.input_buffer(), "pending follow-up");
+    assert_eq!(app.chat.queued_messages().len(), 1);
 }
 
 #[test]

@@ -170,3 +170,29 @@ Fix: added a typed `RpcEvent::ExtensionUiRequest { method, message, notify_type,
 Regression tests: `apply_event_extension_ui_request_notify_error_pushes_chat_error`, `apply_event_extension_ui_request_notify_warning_pushes_chat_system`, `apply_event_extension_ui_request_dialog_method_pushes_not_yet_wired_note`, `apply_event_extension_ui_request_set_status_stays_silent`.
 
 Total Rust test count is now 333 passing (was 329 after round 10). `cargo fmt --check`, `cargo clippy --package senpi-neo-tui --all-targets -- -D warnings`, and `npm run check` (897 files) all green.
+
+## 2026-05-19 — Round 12: real port (sidebar, animations, compact, model.set, dequeue, external editor, thinking/tools render wiring)
+
+Oracle round 12 BLOCKED on the "full Rust port" framing - the merged state still declared ~35 legacy actions as `ADVERTISED_BUT_UNIMPLEMENTED_ACTIONS`. The Bug-3 "not yet wired" notes satisfied the silent-failure contract but did not satisfy the user's `러스트로포팅을 아예한다고 생각하고` (treat it as a complete Rust port) framing.
+
+This round implements the highest-impact remaining surface area as real behavior:
+
+1. **`app.thinking.toggle` (Ctrl+T) → real chat rendering wiring.** New `chat::ChatViewOpts { thinking_visible, tools_expanded }` flows into `chat::render`. When `thinking_visible` is `false`, `render_assistant_message` suppresses both the summary line and the expanded body - the user can hide the inner monologue once they have read it. The dispatcher arm no longer pushes a "not yet wired" note; the visual change IS the feedback.
+
+2. **`app.tools.expand` (Ctrl+O) → real chat rendering wiring.** When `tools_expanded` is `false`, `render_tool_card` collapses the tool body to a single "[tool output collapsed, ctrl+o to expand]" hint line. Header rule still renders so the user can find the card.
+
+3. **`neo.sidebar.toggle` (Alt+S) → real sidebar visibility.** New `App.sidebar_visible: bool` field. The `render` path now flips `LayoutState::sidebar_visible` based on `app.sidebar_visible || app.demo_mode` (gated by terminal width).
+
+4. **`neo.toggle_animations` (Alt+A) → real animation gating.** New `App.animations_enabled: bool` field. The `drive` loop's `spinner_tick` arm skips spinner-frame advancement and input focus-pulse updates when disabled.
+
+5. **`neo.compact` (Alt+C) → real backend RPC.** New `Command::Compact { id, custom_instructions }` variant. `AppAction::CompactSession` maps to it via `action_to_command`. The backend's `compaction_end` event handler (Oracle round 6) already surfaces success / failure to chat + footer.
+
+6. **`neo.model.set:<id>` (model picker) → real `Command::SetModel`.** New `provider_for_model_id` heuristic infers the provider from the model id prefix (`claude-*` → `anthropic`, `gpt-*` → `openai`, `kimi-*` → `kimi-for-coding`, `glm-*` → `opencode-zen`, `deepseek*` → `deepseek`, `gemini-*` → `google`). `AppAction::SetModel { provider, model_id }` maps to `Command::SetModel` via `action_to_command`. The Round-10 `apply_model_change_response` handler already updates header + footer + chat note on success.
+
+7. **`app.editor.external` (Ctrl+G) → real `$VISUAL` / `$EDITOR` launch.** New `AppAction::ExternalEditorLaunch` + `TerminalEventOutcome::ExternalEditor` + `run_external_editor` helper. The run loop suspends the TUI (disable raw mode, leave alternate screen, disable bracketed paste, pop Kitty flags), writes the input buffer to `temp_dir/senpi-neo-editor-<stamp>.md`, awaits `$VISUAL` (or `$EDITOR`, falling back to `vi`) on the temp file, reads the result back, restores the TUI, and refreshes the autocomplete state.
+
+8. **`app.message.dequeue` (Alt+Up) → real queue → buffer pop.** New `ChatState.queued_messages: Vec<String>` field tracked from `RpcEvent::QueueUpdate { steering, follow_up }`. New `pop_queued_message` / `replace_queued_messages` methods. The dispatcher arm pops the most recent queued message into the input buffer, or pushes an explanatory note when the queue is empty.
+
+Refactor: `ADVERTISED_BUT_UNIMPLEMENTED_ACTIONS` shrunk by 5 entries (`neo.sidebar.toggle`, `neo.compact`, `neo.toggle_animations`, `app.message.dequeue`, plus removal of the obsolete `app.message.followUp` comment). The remaining ~29 entries cover the genuine follow-up surface (session tree / branching / models management / tree filters / image paste) which require sub-overlays + JSONL session parsing and are tracked as a separate feature pack.
+
+Total Rust test count is now 341 passing (was 333 after round 11); eight new tests cover the new behavior. Updated tests: `model_picker_selection_fires_set_model_command` (was `..._pushes_visible_feedback`), `model_picker_selection_with_unknown_provider_surfaces_lookup_miss` (new), `ctrl_g_dispatches_external_editor_launch` (replaces two old tests). Removed: `ctrl_o_app_tools_expand_visibly_notifies_user` (superseded by `ctrl_o_app_tools_expand_flips_tools_expanded` which asserts the real toggle behavior). `cargo fmt --check`, `cargo clippy --package senpi-neo-tui --all-targets -- -D warnings` (with one targeted `struct_excessive_bools` allow on `App` documenting why), and `npm run check` (898 files) all green.
