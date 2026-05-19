@@ -63,6 +63,7 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+#[allow(clippy::too_many_lines)]
 fn real_main() -> Result<()> {
     let cli = Cli::parse();
 

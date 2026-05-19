@@ -145,7 +145,7 @@ fn header_hides_model_when_empty() {
         session: "abc123".into(),
         branch: Some("main".into()),
         branch_dirty: false,
-        model: "".into(),
+        model: String::new(),
         thinking_level: None,
         connected: true,
     };
@@ -167,7 +167,7 @@ fn header_thinking_level_pill() {
         session: "abc123".into(),
         branch: Some("main".into()),
         branch_dirty: false,
-        model: "".into(),
+        model: String::new(),
         thinking_level: Some("max".into()),
         connected: true,
     };
@@ -195,7 +195,7 @@ fn header_branch_dirty_marker() {
         session: "abc123".into(),
         branch: Some("main".into()),
         branch_dirty: true,
-        model: "".into(),
+        model: String::new(),
         thinking_level: None,
         connected: true,
     };
