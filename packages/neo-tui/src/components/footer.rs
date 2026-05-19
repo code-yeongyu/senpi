@@ -11,6 +11,37 @@ use ratatui::{
 
 use crate::theme::{ResolvedTheme, Token};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Status {
+    Idle,
+    Busy,
+    Streaming,
+    ToolRunning,
+    Error,
+}
+
+impl Status {
+    const fn token(self) -> Token {
+        match self {
+            Self::Idle => Token::StatusIdle,
+            Self::Busy => Token::StatusBusy,
+            Self::Streaming => Token::StatusStreaming,
+            Self::ToolRunning => Token::StatusTool,
+            Self::Error => Token::StatusError,
+        }
+    }
+
+    const fn bg_token(self) -> Token {
+        match self {
+            Self::Idle => Token::StatusIdleBg,
+            Self::Busy => Token::StatusBusyBg,
+            Self::Streaming => Token::StatusStreamingBg,
+            Self::ToolRunning => Token::StatusToolBg,
+            Self::Error => Token::StatusErrorBg,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct FooterState {
     pub status: Status,
@@ -23,24 +54,93 @@ pub struct FooterState {
     pub tokens_out: u64,
     pub elapsed_secs: u64,
     pub spinner_glyph: char,
+    pub connected: bool,
+    pub busy_label: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Status {
-    Idle,
-    Busy,
-    Streaming,
-    ToolRunning,
-    Compacting,
-    Error,
-}
+impl FooterState {
+    pub const fn idle() -> Self {
+        Self {
+            status: Status::Idle,
+            status_label: String::new(),
+            model: String::new(),
+            thinking: None,
+            tps: None,
+            ctx_used_pct: 0,
+            tokens_in: 0,
+            tokens_out: 0,
+            elapsed_secs: 0,
+            spinner_glyph: '\u{00b7}',
+            connected: true,
+            busy_label: None,
+        }
+    }
 
-impl Status {
-    const fn token(self) -> Token {
-        match self {
-            Self::Idle => Token::StatusIdle,
-            Self::Busy | Self::Streaming | Self::ToolRunning | Self::Compacting => Token::StatusBusy,
-            Self::Error => Token::StatusError,
+    pub fn busy(label: &'static str) -> Self {
+        Self {
+            status: Status::Busy,
+            status_label: label.to_string(),
+            model: String::new(),
+            thinking: None,
+            tps: None,
+            ctx_used_pct: 0,
+            tokens_in: 0,
+            tokens_out: 0,
+            elapsed_secs: 0,
+            spinner_glyph: '\u{2802}',
+            connected: true,
+            busy_label: Some(label.to_string()),
+        }
+    }
+
+    pub fn streaming() -> Self {
+        Self {
+            status: Status::Streaming,
+            status_label: "streaming".to_string(),
+            model: String::new(),
+            thinking: None,
+            tps: None,
+            ctx_used_pct: 0,
+            tokens_in: 0,
+            tokens_out: 0,
+            elapsed_secs: 0,
+            spinner_glyph: '\u{2802}',
+            connected: true,
+            busy_label: None,
+        }
+    }
+
+    pub fn tool_running() -> Self {
+        Self {
+            status: Status::ToolRunning,
+            status_label: "tool".to_string(),
+            model: String::new(),
+            thinking: None,
+            tps: None,
+            ctx_used_pct: 0,
+            tokens_in: 0,
+            tokens_out: 0,
+            elapsed_secs: 0,
+            spinner_glyph: '\u{2802}',
+            connected: true,
+            busy_label: None,
+        }
+    }
+
+    pub fn error() -> Self {
+        Self {
+            status: Status::Error,
+            status_label: "error".to_string(),
+            model: String::new(),
+            thinking: None,
+            tps: None,
+            ctx_used_pct: 0,
+            tokens_in: 0,
+            tokens_out: 0,
+            elapsed_secs: 0,
+            spinner_glyph: '\u{00d7}',
+            connected: true,
+            busy_label: None,
         }
     }
 }
@@ -65,16 +165,11 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &
     let left = chunks[0];
     let right = chunks[1];
 
-    // Idle should not animate — render a static dot instead of the
-    // braille spinner that the run loop keeps advancing every 80ms.
     let glyph_char = if state.status == Status::Idle {
-        '·'
+        '\u{00b7}'
     } else {
         state.spinner_glyph
     };
-    // Only render `model:<name>` when an actual model name is known
-    // so an empty production startup does not show a dangling `model:`
-    // label with nothing after the colon.
     let mut left_spans = vec![
         Span::styled(
             format!(" {glyph_char} "),
@@ -92,10 +187,6 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &
     let left_p = Paragraph::new(left_line).style(Style::default().bg(bg));
     frame.render_widget(left_p, left);
 
-    // The right cluster (ctx % / tokens / tps / elapsed) only makes
-    // sense while a turn is actively running. In Idle we leave it blank
-    // so a fresh `senpi --neo` does not look like a fake in-flight
-    // session.
     let right_line = if state.status == Status::Idle {
         Line::from(Span::raw(""))
     } else {

@@ -175,8 +175,18 @@ fn insert_status_tool_tokens(
     colors.insert(Token::SpinnerScannerTrail, context.background_panel);
     colors.insert(Token::StatusIdle, context.text_muted);
     colors.insert(Token::StatusBusy, palette.accent);
+    colors.insert(Token::StatusStreaming, palette.success);
+    colors.insert(Token::StatusTool, palette.info);
     colors.insert(Token::StatusError, palette.error);
     colors.insert(Token::StatusSuccess, palette.success);
+    colors.insert(Token::StatusIdleBg, blend(palette.neutral, palette.neutral, 0.08));
+    colors.insert(Token::StatusBusyBg, blend(palette.accent, palette.neutral, 0.08));
+    colors.insert(
+        Token::StatusStreamingBg,
+        blend(palette.success, palette.neutral, 0.08),
+    );
+    colors.insert(Token::StatusToolBg, blend(palette.info, palette.neutral, 0.08));
+    colors.insert(Token::StatusErrorBg, blend(palette.error, palette.neutral, 0.08));
     colors.insert(Token::ToolBorderRunning, palette.info);
     colors.insert(Token::ToolBorderSuccess, context.border);
     colors.insert(Token::ToolBorderError, palette.error);

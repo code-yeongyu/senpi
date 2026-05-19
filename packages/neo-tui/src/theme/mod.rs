@@ -85,8 +85,16 @@ pub enum Token {
 
     StatusIdle,
     StatusBusy,
+    StatusStreaming,
+    StatusTool,
     StatusError,
     StatusSuccess,
+
+    StatusIdleBg,
+    StatusBusyBg,
+    StatusStreamingBg,
+    StatusToolBg,
+    StatusErrorBg,
 
     ToolBorderRunning,
     ToolBorderSuccess,
@@ -105,7 +113,7 @@ pub enum Token {
 
 impl Token {
     /// Every semantic token expected by the renderer.
-    pub const ALL: [Self; 65] = [
+    pub const ALL: [Self; 72] = [
         Self::Primary,
         Self::Secondary,
         Self::Accent,
@@ -158,8 +166,15 @@ impl Token {
         Self::SpinnerScannerTrail,
         Self::StatusIdle,
         Self::StatusBusy,
+        Self::StatusStreaming,
+        Self::StatusTool,
         Self::StatusError,
         Self::StatusSuccess,
+        Self::StatusIdleBg,
+        Self::StatusBusyBg,
+        Self::StatusStreamingBg,
+        Self::StatusToolBg,
+        Self::StatusErrorBg,
         Self::ToolBorderRunning,
         Self::ToolBorderSuccess,
         Self::ToolBorderError,
