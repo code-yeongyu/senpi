@@ -326,6 +326,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	};
 
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
+	const providerRetrySettings = settingsManager.getProviderRetrySettings();
 
 	agent = new Agent({
 		initialState: {
@@ -341,15 +342,15 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				throw new Error(auth.error);
 			}
 			const requestModel = auth.upstreamModelId ? { ...model, id: auth.upstreamModelId } : model;
-			const providerRetrySettings = settingsManager.getProviderRetrySettings();
+			const requestRetrySettings = settingsManager.getProviderRetrySettings();
 			const attributionHeaders = getAttributionHeaders(model, settingsManager);
 			const streamOptions = {
 				...options,
 				apiKey: auth.apiKey,
 				serviceTier: auth.serviceTier,
-				timeoutMs: options?.timeoutMs ?? providerRetrySettings.timeoutMs,
-				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
-				maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
+				timeoutMs: options?.timeoutMs ?? requestRetrySettings.timeoutMs,
+				maxRetries: options?.maxRetries ?? requestRetrySettings.maxRetries,
+				maxRetryDelayMs: options?.maxRetryDelayMs ?? requestRetrySettings.maxRetryDelayMs,
 				headers:
 					attributionHeaders || auth.headers || options?.headers
 						? { ...attributionHeaders, ...auth.headers, ...options?.headers }
@@ -386,7 +387,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		followUpMode: settingsManager.getFollowUpMode(),
 		transport: settingsManager.getTransport(),
 		thinkingBudgets: settingsManager.getThinkingBudgets(),
-		maxRetryDelayMs: settingsManager.getProviderRetrySettings().maxRetryDelayMs,
+		timeoutMs: providerRetrySettings.timeoutMs,
+		maxRetryDelayMs: providerRetrySettings.maxRetryDelayMs,
 	});
 
 	// Restore messages if session has existing data

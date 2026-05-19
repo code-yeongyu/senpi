@@ -225,6 +225,28 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("retry", () => {
+		it("should default provider timeout to five minutes", () => {
+			const givenSettingsPath = join(agentDir, "settings.json");
+			writeFileSync(givenSettingsPath, JSON.stringify({ theme: "dark" }));
+
+			const whenManager = SettingsManager.create(projectDir, agentDir);
+			const thenRetrySettings = whenManager.getProviderRetrySettings();
+
+			expect(thenRetrySettings.timeoutMs).toBe(300_000);
+		});
+
+		it("should preserve explicit provider timeout", () => {
+			const givenSettingsPath = join(agentDir, "settings.json");
+			writeFileSync(givenSettingsPath, JSON.stringify({ retry: { provider: { timeoutMs: 12_345 } } }));
+
+			const whenManager = SettingsManager.create(projectDir, agentDir);
+			const thenRetrySettings = whenManager.getProviderRetrySettings();
+
+			expect(thenRetrySettings.timeoutMs).toBe(12_345);
+		});
+	});
+
 	describe("project settings directory creation", () => {
 		it("should not create project config folder when only reading project settings", () => {
 			// Create agent dir with global settings, but NO project config folder

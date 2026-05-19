@@ -10,7 +10,7 @@
 
 - Fixed OpenAI remote compaction to time out nonresponsive native compact routes and fall back to local compaction.
 - Fixed `senpi --neo` keymap parity so `tui.editor.newLine` no longer ships as a redundant shadow of the legacy `tui.input.newLine` and `tui.input.historyPrev`/`historyNext` are moved into the `neo.*` namespace where neo-only bindings belong.
-
+- Fixed stuck TUI working states by applying the provider timeout to stream-idle waits.
 ## [2026.5.19] - 2026-05-19
 
 ### Fixed
