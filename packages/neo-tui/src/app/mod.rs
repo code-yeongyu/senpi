@@ -409,7 +409,10 @@ impl App {
     pub fn apply_inbound(&mut self, msg: Inbound) {
         match msg {
             Inbound::Event(event) => self.apply_event(event),
-            Inbound::Response(_) => {}
+            Inbound::Response(_)
+            | Inbound::Error { .. }
+            | Inbound::Disconnected
+            | Inbound::ParseError { .. } => {}
         }
     }
 
