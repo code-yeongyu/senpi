@@ -18,6 +18,7 @@ pub mod layout;
 pub mod overlay;
 pub mod rpc;
 pub mod term;
+/// Theme loading, bundled theme registry, and semantic color token resolution.
 pub mod theme;
 
 /// Crate version, mirrored from `Cargo.toml`.
@@ -26,7 +27,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Bundled default keymap JSON source (compile-time included).
 pub const DEFAULT_KEYMAP_JSON: &str = include_str!("../assets/keymaps/default.json");
 
-/// Bundled default dark theme JSON source (compile-time included).
+/// Bundled default dark theme JSON source in senpi's native schema.
 pub const DEFAULT_DARK_THEME_JSON: &str = include_str!("../assets/themes/senpi-neo-dark.json");
 
 /// Parse + resolve the bundled dark theme JSON into a [`theme::ResolvedTheme`].

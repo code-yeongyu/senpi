@@ -1,19 +1,22 @@
 //! `senpi-neo-tui` binary entry.
 
-use std::{path::PathBuf, process::ExitCode};
+use std::{
+    io::{self, Write},
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 
 use clap::Parser;
 use color_eyre::eyre::{Context, Result};
 
 use senpi_neo_tui::{
-    DEFAULT_DARK_THEME_JSON,
     app::{self, AppConfig},
     components::{
         chat,
         footer::{FooterState, Status},
         header::HeaderState,
     },
-    theme,
+    theme::{self, DEFAULT_THEME_ID, ThemeMode},
 };
 
 #[derive(Debug, Parser)]
@@ -42,9 +45,13 @@ struct Cli {
     #[arg(long, default_value_t = 0)]
     demo_seconds: u64,
 
-    /// Override the theme JSON file.
+    /// Override the theme by bundled id or JSON file path.
     #[arg(long, env = "SENPI_NEO_THEME")]
-    theme: Option<PathBuf>,
+    theme: Option<String>,
+
+    /// Print bundled theme ids and exit.
+    #[arg(long)]
+    list_themes: bool,
 }
 
 fn main() -> ExitCode {
@@ -58,13 +65,28 @@ fn main() -> ExitCode {
 
 fn real_main() -> Result<()> {
     let cli = Cli::parse();
-    let theme_json = match cli.theme.as_deref() {
-        Some(path) => {
-            std::fs::read_to_string(path).with_context(|| format!("reading theme json {}", path.display()))?
+
+    if cli.list_themes {
+        let mut stdout = io::stdout().lock();
+        for id in theme::list_theme_ids() {
+            writeln!(stdout, "{id}")?;
         }
-        None => DEFAULT_DARK_THEME_JSON.to_string(),
+        return Ok(());
+    }
+
+    let theme = match cli.theme.as_deref() {
+        Some(value) if Path::new(value).is_file() || value.contains('/') || value.starts_with('~') => {
+            let path = value.strip_prefix("~/").map_or_else(
+                || PathBuf::from(value),
+                |rest| dirs::home_dir().map_or_else(|| PathBuf::from(value), |home| home.join(rest)),
+            );
+            let theme_json = std::fs::read_to_string(&path)
+                .with_context(|| format!("reading theme json {}", path.display()))?;
+            theme::resolve(&theme::parse(&theme_json)?)?
+        }
+        Some(id) => theme::load_by_id(id, ThemeMode::Dark)?,
+        None => theme::load_by_id(DEFAULT_THEME_ID, ThemeMode::Dark)?,
     };
-    let theme = theme::resolve(&theme::parse(&theme_json)?)?;
 
     let cwd_display = std::env::current_dir().map_or_else(
         |_| "?".into(),

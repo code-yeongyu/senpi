@@ -13,6 +13,12 @@ use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub mod opencode_palette;
+pub mod registry;
+
+pub use opencode_palette::{OpencodeTheme, derive, parse_opencode};
+pub use registry::{DEFAULT_THEME_ID, list_theme_ids, load_by_id};
+
 /// Semantic color tokens consumed by the render code. Mirrors the design
 /// brief plus extras the components need.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -97,6 +103,77 @@ pub enum Token {
     DiffRemovedText,
 }
 
+impl Token {
+    /// Every semantic token expected by the renderer.
+    pub const ALL: [Self; 65] = [
+        Self::Primary,
+        Self::Secondary,
+        Self::Accent,
+        Self::Error,
+        Self::Warning,
+        Self::Success,
+        Self::Info,
+        Self::Text,
+        Self::TextMuted,
+        Self::TextInverse,
+        Self::Background,
+        Self::BackgroundPanel,
+        Self::BackgroundElement,
+        Self::BackgroundMenu,
+        Self::Border,
+        Self::BorderActive,
+        Self::BorderSubtle,
+        Self::BorderError,
+        Self::BorderSuccess,
+        Self::BorderInfo,
+        Self::SelectionBg,
+        Self::SelectionFg,
+        Self::Cursor,
+        Self::Scrollbar,
+        Self::ScrollbarThumb,
+        Self::DiffAdded,
+        Self::DiffAddedBg,
+        Self::DiffRemoved,
+        Self::DiffRemovedBg,
+        Self::DiffLineNumber,
+        Self::DiffContext,
+        Self::MarkdownHeading,
+        Self::MarkdownCode,
+        Self::MarkdownLink,
+        Self::MarkdownQuote,
+        Self::MarkdownList,
+        Self::MarkdownEmphasis,
+        Self::MarkdownStrong,
+        Self::MarkdownRule,
+        Self::SyntaxComment,
+        Self::SyntaxKeyword,
+        Self::SyntaxFunction,
+        Self::SyntaxVariable,
+        Self::SyntaxString,
+        Self::SyntaxNumber,
+        Self::SyntaxType,
+        Self::SyntaxOperator,
+        Self::SpinnerActive,
+        Self::SpinnerScannerLeading,
+        Self::SpinnerScannerTrail,
+        Self::StatusIdle,
+        Self::StatusBusy,
+        Self::StatusError,
+        Self::StatusSuccess,
+        Self::ToolBorderRunning,
+        Self::ToolBorderSuccess,
+        Self::ToolBorderError,
+        Self::ToolHeaderText,
+        Self::ToolBodyText,
+        Self::UserMessageBar,
+        Self::AssistantMessageBar,
+        Self::SystemMessageBar,
+        Self::ErrorMessageBar,
+        Self::DiffAddedText,
+        Self::DiffRemovedText,
+    ];
+}
+
 /// On-disk theme spec. Mirrors the JSON shape in `assets/themes/*.json`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ThemeSpec {
@@ -143,6 +220,20 @@ pub struct ResolvedTheme {
 }
 
 impl ResolvedTheme {
+    pub(crate) const fn from_colors(
+        name: String,
+        mode: ThemeMode,
+        thinking_opacity: f32,
+        colors: BTreeMap<Token, Color>,
+    ) -> Self {
+        Self {
+            name,
+            mode,
+            thinking_opacity,
+            colors,
+        }
+    }
+
     /// Look up a token. Returns `Color::Reset` for unknown tokens; this is
     /// deliberate so callers can render even on incomplete themes without
     /// panicking. T7 logs missing tokens via `tracing` once the logger
@@ -167,6 +258,8 @@ pub enum ThemeError {
     InvalidColor(String),
     #[error("required token `{0}` missing from theme")]
     MissingRequiredToken(String),
+    #[error("unknown bundled theme `{0}`")]
+    UnknownTheme(String),
 }
 
 /// Parse a theme JSON document into a [`ThemeSpec`].
@@ -239,7 +332,7 @@ fn hex_string_for(value: &str, defs: &BTreeMap<String, String>) -> Result<String
     }
 }
 
-fn parse_hex_color(hex: &str) -> Result<Color, ThemeError> {
+pub(crate) fn parse_hex_color(hex: &str) -> Result<Color, ThemeError> {
     let body = hex.strip_prefix('#').unwrap_or(hex);
     let (r, g, b) = match body.len() {
         6 => (
