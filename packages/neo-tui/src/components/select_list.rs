@@ -45,6 +45,12 @@ impl SelectList {
         self.state.selected()
     }
 
+    pub fn selected_item(&self) -> Option<&str> {
+        let selected = self.state.selected()?;
+        let original_index = *self.filtered_indices.get(selected)?;
+        self.items.get(original_index).map(String::as_str)
+    }
+
     pub const fn was_cancelled(&self) -> bool {
         self.cancelled
     }
@@ -55,6 +61,19 @@ impl SelectList {
 
     pub fn visible_indices(&self) -> &[usize] {
         &self.filtered_indices
+    }
+
+    pub fn visible_items(&self) -> Vec<&str> {
+        self.filtered_indices
+            .iter()
+            .filter_map(|&idx| self.items.get(idx).map(String::as_str))
+            .collect()
+    }
+
+    pub fn set_selected(&mut self, idx: usize) {
+        if let Some(filtered_idx) = self.filtered_indices.iter().position(|&item_idx| item_idx == idx) {
+            self.state.select(Some(filtered_idx));
+        }
     }
 
     pub fn set_visible_height(&mut self, h: usize) {
