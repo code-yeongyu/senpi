@@ -16,7 +16,7 @@
 //! frame area. The compositor (in [`App`]) renders the chat scene
 //! first, then the overlay on top.
 
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use ratatui::Frame;
@@ -25,7 +25,10 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph, Wrap};
 
+use crate::components::select_list::SelectList;
+use crate::compositor::{Component, EventResult, RenderContext};
 use crate::keymap::{KeyChord, ResolvedKeymap};
+use crate::theme::registry::list_theme_ids;
 use crate::theme::{ResolvedTheme, Token};
 
 /// Outcome of dispatching a key event into an overlay.
@@ -41,6 +44,24 @@ pub enum OverlayResult {
     Selected(String),
 }
 
+impl OverlayResult {
+    /// Alias for picker cancellation; existing overlay plumbing calls
+    /// the same outcome `Close`.
+    #[allow(non_upper_case_globals)]
+    pub const Cancelled: Self = Self::Close;
+}
+
+/// Curated v0 model catalog for the model picker.
+pub const MODELS: &[&str] = &[
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-4-5",
+    "gpt-5.3-codex",
+    "kimi-k2-6",
+    "glm-4.6-air",
+    "deepseek-v4-coder",
+];
+
 /// Discriminator for the active overlay. The compositor pattern keeps
 /// at most one overlay open at a time today; a future stack-based
 /// version would replace this with `Vec<Overlay>`.
@@ -49,6 +70,8 @@ pub enum Overlay {
     Help(HelpOverlay),
     Slash(SlashOverlay),
     Palette(PaletteOverlay),
+    ModelPicker(ModelPickerOverlay),
+    ThemePicker(ThemePickerOverlay),
 }
 
 impl Overlay {
@@ -57,6 +80,8 @@ impl Overlay {
             Self::Help(o) => o.handle_key(event),
             Self::Slash(o) => o.handle_key(event),
             Self::Palette(o) => o.handle_key(event),
+            Self::ModelPicker(o) => o.handle_key(event),
+            Self::ThemePicker(o) => o.handle_key(event),
         }
     }
 
@@ -65,8 +90,146 @@ impl Overlay {
             Self::Help(o) => o.render(frame, area, theme),
             Self::Slash(o) => o.render(frame, area, theme),
             Self::Palette(o) => o.render(frame, area, theme),
+            Self::ModelPicker(o) => o.render_with_theme(frame, area, theme),
+            Self::ThemePicker(o) => o.render_with_theme(frame, area, theme),
         }
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct ModelPickerOverlay {
+    select: SelectList,
+}
+
+impl ModelPickerOverlay {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            select: SelectList::new(MODELS.iter().copied()),
+        }
+    }
+
+    pub fn set_filter(&mut self, q: &str) {
+        self.select.set_filter(q);
+    }
+
+    #[must_use]
+    pub fn visible_items(&self) -> Vec<&str> {
+        self.select.visible_items()
+    }
+
+    #[must_use]
+    pub fn selected_item(&self) -> Option<&str> {
+        self.select.selected_item()
+    }
+
+    pub fn handle_key(&mut self, event: KeyEvent) -> OverlayResult {
+        self.handle_event(&CrosstermEvent::Key(event))
+    }
+
+    pub fn handle_event(&mut self, event: &CrosstermEvent) -> OverlayResult {
+        translate_select_result(&mut self.select, event, "neo.model.set")
+    }
+
+    pub fn render(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: &RenderContext<'_>) {
+        self.select.render(frame, area, ctx);
+    }
+
+    fn render_with_theme(&self, frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme) {
+        let mut select = self.select.clone();
+        let ctx = RenderContext {
+            theme,
+            frame_index: 0,
+            now_ms: 0,
+        };
+        select.render(frame, area, &ctx);
+    }
+}
+
+impl Default for ModelPickerOverlay {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ThemePickerOverlay {
+    select: SelectList,
+    current_id: String,
+}
+
+impl ThemePickerOverlay {
+    #[must_use]
+    pub fn new(current_theme_id: &str) -> Self {
+        let ids = list_theme_ids();
+        let mut select = SelectList::new(ids.iter().copied());
+        if let Some(pos) = ids.iter().position(|id| *id == current_theme_id) {
+            select.set_selected(pos);
+        }
+        Self {
+            select,
+            current_id: current_theme_id.to_string(),
+        }
+    }
+
+    pub fn set_filter(&mut self, q: &str) {
+        self.select.set_filter(q);
+    }
+
+    #[must_use]
+    pub fn visible_items(&self) -> Vec<&str> {
+        self.select.visible_items()
+    }
+
+    #[must_use]
+    pub fn selected_item(&self) -> Option<&str> {
+        self.select.selected_item()
+    }
+
+    #[must_use]
+    pub fn current_id(&self) -> &str {
+        &self.current_id
+    }
+
+    pub fn handle_key(&mut self, event: KeyEvent) -> OverlayResult {
+        self.handle_event(&CrosstermEvent::Key(event))
+    }
+
+    pub fn handle_event(&mut self, event: &CrosstermEvent) -> OverlayResult {
+        translate_select_result(&mut self.select, event, "neo.theme.set")
+    }
+
+    pub fn render(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: &RenderContext<'_>) {
+        self.select.render(frame, area, ctx);
+    }
+
+    fn render_with_theme(&self, frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme) {
+        let mut select = self.select.clone();
+        let ctx = RenderContext {
+            theme,
+            frame_index: 0,
+            now_ms: 0,
+        };
+        select.render(frame, area, &ctx);
+    }
+}
+
+fn translate_select_result(
+    select: &mut SelectList,
+    event: &CrosstermEvent,
+    action_prefix: &str,
+) -> OverlayResult {
+    let result = select.handle_event(event);
+    if result != EventResult::Consumed {
+        return OverlayResult::Continue;
+    }
+    if let Some((label, _idx)) = select.take_selection() {
+        return OverlayResult::Selected(format!("{action_prefix}:{label}"));
+    }
+    if select.was_cancelled() {
+        return OverlayResult::Cancelled;
+    }
+    OverlayResult::Continue
 }
 
 /// One row in the help overlay.

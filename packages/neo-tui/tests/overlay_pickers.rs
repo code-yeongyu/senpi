@@ -23,10 +23,7 @@ fn model_picker_opens_with_all_models() {
 fn model_picker_filter_narrows() {
     let mut overlay = ModelPickerOverlay::new();
     overlay.set_filter("opus");
-    assert_eq!(
-        overlay.visible_items(),
-        ["claude-opus-4-7", "claude-opus-4-6"],
-    );
+    assert_eq!(overlay.visible_items(), ["claude-opus-4-7", "claude-opus-4-6"],);
 }
 
 #[test]
