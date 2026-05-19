@@ -1,5 +1,30 @@
 # changes
 
+## Tool hook lifecycle status events (2026-05-19)
+
+### What changed
+
+- `src/core/extensions/runner.ts`: `tool_call` and `tool_result` handlers now emit internal start/end lifecycle
+  observations with `PreToolUse` / `PostToolUse` labels, bounded status messages, elapsed-time anchors, and completed,
+  blocked, or failed end statuses.
+- `src/core/agent-session.ts`: the session relays those internal observations to mode listeners as
+  `tool_hook_status` events without exposing a new extension author API.
+
+### Why
+
+- The interactive TUI needs to show when extension hook work is happening, including permission-rule matching and
+  post-tool result processing, instead of leaving users with only a generic Working indicator.
+
+### Why extension system couldn't handle this
+
+- Extensions can show their own UI, but only the runner knows when each individual hook handler starts, ends, blocks, or
+  fails. The session must relay that host-owned lifecycle to the TUI.
+
+### Expected merge conflict zones
+
+- MEDIUM: `extensions/runner.ts` around `emitToolCall()` and `emitToolResult()`.
+- LOW: `agent-session.ts` around `_applyExtensionBindings()` and `AgentSessionEvent`.
+
 ## User abort prompt settlement barrier (2026-05-17)
 
 ### What changed

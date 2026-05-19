@@ -25,7 +25,7 @@ export interface BranchSummarySettings {
 }
 
 export interface ProviderRetrySettings {
-	timeoutMs?: number; // SDK/provider request timeout in milliseconds
+	timeoutMs?: number;
 	maxRetries?: number; // SDK/provider retry attempts
 	maxRetryDelayMs?: number; // default: 60000 (max server-requested delay before failing)
 }
@@ -84,6 +84,8 @@ export type PackageSource =
 			prompts?: string[];
 			themes?: string[];
 	  };
+
+const DEFAULT_PROVIDER_TIMEOUT_MS = 300_000;
 
 export interface Settings {
 	lastChangelogVersion?: string;
@@ -769,9 +771,9 @@ export class SettingsManager {
 		};
 	}
 
-	getProviderRetrySettings(): { timeoutMs?: number; maxRetries?: number; maxRetryDelayMs: number } {
+	getProviderRetrySettings(): { timeoutMs: number; maxRetries?: number; maxRetryDelayMs: number } {
 		return {
-			timeoutMs: this.settings.retry?.provider?.timeoutMs,
+			timeoutMs: this.settings.retry?.provider?.timeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS,
 			maxRetries: this.settings.retry?.provider?.maxRetries,
 			maxRetryDelayMs: this.settings.retry?.provider?.maxRetryDelayMs ?? 60000,
 		};

@@ -12,6 +12,10 @@ export {
 } from "./loader.js";
 export type {
 	ExtensionErrorListener,
+	ExtensionToolHookLifecycleEvent,
+	ExtensionToolHookLifecycleObserver,
+	ExtensionToolHookLifecycleStatus,
+	ExtensionToolHookName,
 	ForkHandler,
 	NavigateTreeHandler,
 	NewSessionHandler,

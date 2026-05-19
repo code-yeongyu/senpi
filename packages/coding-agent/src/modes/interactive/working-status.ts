@@ -38,6 +38,17 @@ export function formatWorkingStatusMessage(message: string, elapsedSeconds: numb
 	return `${message} (${formatWorkingElapsedSeconds(elapsedSeconds)} • ${interruptKey} to interrupt)`;
 }
 
+export type ToolHookStatusHookName = "PreToolUse" | "PostToolUse";
+
+export function formatToolHookStatusMessage(
+	hookName: ToolHookStatusHookName,
+	statusMessage: string,
+	elapsedSeconds: number,
+): string {
+	const suffix = statusMessage ? `: ${statusMessage}` : "";
+	return `Running ${hookName} hook${suffix} (${formatWorkingElapsedSeconds(elapsedSeconds)})`;
+}
+
 function clampColorChannel(value: number): number {
 	return Math.max(0, Math.min(255, Math.round(value)));
 }
@@ -108,4 +119,17 @@ export function formatWorkingStatusMessageFrame(
 ): string {
 	const suffix = ` (${formatWorkingElapsedSeconds(elapsedSeconds)} • ${interruptKey} to interrupt)`;
 	return `${formatWorkingStatusTextFrame(message, animationElapsedMs, style)}${style.suffix(suffix)}`;
+}
+
+export function formatToolHookStatusMessageFrame(
+	hookName: ToolHookStatusHookName,
+	statusMessage: string,
+	elapsedSeconds: number,
+	animationElapsedMs: number,
+	style: WorkingStatusMessageFrameStyle,
+): string {
+	const label = `Running ${hookName} hook`;
+	const statusSuffix = statusMessage ? `: ${statusMessage}` : "";
+	const suffix = `${statusSuffix} (${formatWorkingElapsedSeconds(elapsedSeconds)})`;
+	return `${formatWorkingStatusTextFrame(label, animationElapsedMs, style)}${style.suffix(suffix)}`;
 }

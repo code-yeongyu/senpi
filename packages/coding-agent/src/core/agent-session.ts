@@ -59,6 +59,7 @@ import {
 	type ExtensionCommandContextActions,
 	type ExtensionErrorListener,
 	ExtensionRunner,
+	type ExtensionToolHookLifecycleEvent,
 	type ExtensionUIContext,
 	type InputSource,
 	type MessageEndEvent,
@@ -145,6 +146,7 @@ export type AgentSessionEvent =
 	| { type: "compaction_start"; reason: CompactionReason }
 	| { type: "compaction_progress"; reason: CompactionReason; delta?: string; text?: string }
 	| { type: "session_info_changed"; name: string | undefined }
+	| ExtensionToolHookLifecycleEvent
 	| SystemPromptChangeEvent
 	| { type: "thinking_level_changed"; level: ThinkingLevel }
 	| {
@@ -2443,6 +2445,9 @@ export class AgentSession {
 
 	private _applyExtensionBindings(runner: ExtensionRunner): void {
 		runner.setUIContext(this._extensionUIContext);
+		runner.setToolHookLifecycleObserver((event) => {
+			this._emit(event);
+		});
 		runner.bindCommandContext(this._extensionCommandContextActions);
 
 		this._extensionErrorUnsubscriber?.();

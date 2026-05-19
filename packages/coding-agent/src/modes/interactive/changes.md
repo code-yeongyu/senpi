@@ -1,5 +1,29 @@
 # changes
 
+## live tool hook status rows (2026-05-19)
+
+### What changed
+
+- `interactive-mode.ts`: active `tool_hook_status` events render in a dedicated status lane below the normal Working
+  loader, with Codex-like `Running PreToolUse hook: ...` and `Running PostToolUse hook: ...` wording.
+- `working-status.ts`: hook rows reuse the existing Working shimmer treatment and append live elapsed time without
+  adding an interrupt hint.
+
+### Why
+
+- Extension hooks can perform visible work before and after tool execution. Showing the specific hook and elapsed time
+  makes the TUI more informative than a generic Working row.
+
+### Why extension system couldn't handle this
+
+- The built-in interactive renderer owns the live status layout and shimmer styling. Extensions can inject widgets, but
+  they cannot reliably render host-managed lifecycle rows beside the existing Working indicator.
+
+### Expected merge conflict zones
+
+- MEDIUM: `interactive-mode.ts` around status containers, Working loader helpers, and `handleEvent()`.
+- LOW: `working-status.ts` around the shared shimmer formatting helpers.
+
 ## OpenAI remote compaction details (2026-05-15)
 
 ### What changed

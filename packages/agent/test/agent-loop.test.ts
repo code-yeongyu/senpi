@@ -49,8 +49,28 @@ class ThrowingAssistantStream extends EventStream<AssistantMessageEvent, Assista
 	}
 }
 
+class HangingAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
+	constructor() {
+		super(
+			(event) => event.type === "done" || event.type === "error",
+			(event) => {
+				if (event.type === "done") return event.message;
+				if (event.type === "error") return event.error;
+				throw new Error("Unexpected event type");
+			},
+		);
+	}
+
+	override async *[Symbol.asyncIterator](): AsyncIterator<AssistantMessageEvent> {
+		const partial = createAssistantMessage([{ type: "text", text: "partial answer" }]);
+		yield { type: "start", partial };
+		await new Promise<never>(() => {});
+	}
+}
+
 async function collectAgentEvents(
 	stream: AsyncIterable<AgentEvent> & { result(): Promise<AgentMessage[]> },
+	timeoutMs = 100,
 ): Promise<{ events: AgentEvent[]; messages: AgentMessage[] }> {
 	const events: AgentEvent[] = [];
 	let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -63,7 +83,7 @@ async function collectAgentEvents(
 				return { events, messages: await stream.result() };
 			})(),
 			new Promise<never>((_resolve, reject) => {
-				timeout = setTimeout(() => reject(new Error("agentLoop stream did not terminate")), 100);
+				timeout = setTimeout(() => reject(new Error("agentLoop stream did not terminate")), timeoutMs);
 			}),
 		]);
 	} finally {
@@ -240,6 +260,38 @@ describe("agentLoop with AgentMessage", () => {
 			"message_end",
 			"message_start",
 			"message_update",
+			"message_end",
+			"turn_end",
+			"agent_end",
+		]);
+	});
+
+	it("should fail the turn when provider stream stays idle past timeoutMs", async () => {
+		const context: AgentContext = {
+			systemPrompt: "You are helpful.",
+			messages: [],
+			tools: [],
+		};
+		const userPrompt: AgentMessage = createUserMessage("Hello");
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			timeoutMs: 20,
+		};
+
+		const stream = agentLoop([userPrompt], context, config, undefined, () => new HangingAssistantStream());
+
+		const { events, messages } = await collectAgentEvents(stream, 500);
+		const assistantMessage = messages.find((message): message is AssistantMessage => message.role === "assistant");
+		expect(assistantMessage?.stopReason).toBe("error");
+		expect(assistantMessage?.errorMessage).toBe("Idle timeout waiting for provider stream after 20ms");
+		expect(assistantMessage?.content).toEqual([{ type: "text", text: "partial answer" }]);
+		expect(events.map((event) => event.type)).toEqual([
+			"agent_start",
+			"turn_start",
+			"message_start",
+			"message_end",
+			"message_start",
 			"message_end",
 			"turn_end",
 			"agent_end",
