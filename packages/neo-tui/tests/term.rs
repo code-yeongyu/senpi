@@ -10,9 +10,11 @@ fn term_emits_modify_other_keys_when_tmux_env_set() {
         kitty_keyboard_flags: KeyboardEnhancementFlags::empty(),
     };
 
-    assert!(String::from_utf8(caps.init_writes())
-        .unwrap()
-        .contains("\x1b[>4;2m"));
+    assert!(
+        String::from_utf8(caps.init_writes())
+            .unwrap()
+            .contains("\x1b[>4;2m")
+    );
 }
 
 #[test]
@@ -22,9 +24,11 @@ fn term_does_not_emit_modify_other_keys_when_tmux_absent() {
         kitty_keyboard_flags: KeyboardEnhancementFlags::empty(),
     };
 
-    assert!(!String::from_utf8(caps.init_writes())
-        .unwrap()
-        .contains("\x1b[>4;2m"));
+    assert!(
+        !String::from_utf8(caps.init_writes())
+            .unwrap()
+            .contains("\x1b[>4;2m")
+    );
 }
 
 #[test]
@@ -34,9 +38,11 @@ fn term_cleanup_writes_disable_modify_other_keys() {
         kitty_keyboard_flags: KeyboardEnhancementFlags::empty(),
     };
 
-    assert!(String::from_utf8(caps.cleanup_writes())
-        .unwrap()
-        .contains("\x1b[>4;0m"));
+    assert!(
+        String::from_utf8(caps.cleanup_writes())
+            .unwrap()
+            .contains("\x1b[>4;0m")
+    );
 }
 
 #[test]

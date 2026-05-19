@@ -1185,6 +1185,7 @@ dependencies = [
  "ansi-to-tui",
  "anyhow",
  "arc-swap",
+ "base64",
  "clap",
  "color-eyre",
  "crossterm",
