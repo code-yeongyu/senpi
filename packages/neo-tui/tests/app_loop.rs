@@ -1737,3 +1737,117 @@ fn apply_inbound_cycle_thinking_level_success_response_with_null_data_pushes_not
         last.body,
     );
 }
+
+#[test]
+fn apply_event_extension_ui_request_notify_error_pushes_chat_error() {
+    // Oracle round 11: extensions emit
+    // `extension_ui_request` frames for user-facing notifications.
+    // `notify` with `notifyType: "error"` is the loudest Bug 3
+    // candidate - the legacy senpi TUI shows it as an error toast.
+    // The old neo-tui catch-all in `apply_event` matched these as
+    // `Event::Other` and silently dropped them, so an extension
+    // could emit "Command blocked by policy" and the user saw
+    // nothing.
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+
+    app.apply_inbound(Inbound::Event(RpcEvent::ExtensionUiRequest {
+        method: "notify".into(),
+        message: Some("Command blocked by policy".into()),
+        notify_type: Some("error".into()),
+        title: None,
+    }));
+
+    assert!(
+        app.chat.messages.len() > messages_before,
+        "extension notify error must push a visible chat message",
+    );
+    let last = app.chat.messages.last().expect("chat message exists");
+    assert_eq!(last.role, Role::Error);
+    assert!(
+        last.body.contains("Command blocked by policy"),
+        "chat body must include the extension notification body, got {:?}",
+        last.body,
+    );
+    assert_eq!(app.footer.status, Status::Error);
+}
+
+#[test]
+fn apply_event_extension_ui_request_notify_warning_pushes_chat_system() {
+    // `notifyType: "warning"` and the default `info` both surface as
+    // `Role::System` so the user sees the message without the chat
+    // turning red. Footer stays untouched (these are advisory).
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+    let status_before = app.footer.status;
+
+    app.apply_inbound(Inbound::Event(RpcEvent::ExtensionUiRequest {
+        method: "notify".into(),
+        message: Some("Heads up: low disk space".into()),
+        notify_type: Some("warning".into()),
+        title: None,
+    }));
+
+    assert!(app.chat.messages.len() > messages_before);
+    let last = app.chat.messages.last().expect("chat message exists");
+    assert_eq!(last.role, Role::System);
+    assert!(last.body.contains("Heads up: low disk space"));
+    assert_eq!(
+        app.footer.status, status_before,
+        "warning / info notify must NOT flip the footer to error",
+    );
+}
+
+#[test]
+fn apply_event_extension_ui_request_dialog_method_pushes_not_yet_wired_note() {
+    // `select`, `confirm`, `input`, `editor` are dialog methods that
+    // block the agent until the client sends an
+    // `extension_ui_response`. Until neo-tui grows dialog overlays
+    // (separate feature work), surface a "not yet wired" chat note
+    // so the user sees the request landed and knows to fall back to
+    // legacy senpi if they need to act on it.
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+
+    app.apply_inbound(Inbound::Event(RpcEvent::ExtensionUiRequest {
+        method: "confirm".into(),
+        message: Some("All messages will be lost.".into()),
+        notify_type: None,
+        title: Some("Clear session?".into()),
+    }));
+
+    assert!(app.chat.messages.len() > messages_before);
+    let last = app.chat.messages.last().expect("chat message exists");
+    assert_eq!(last.role, Role::System);
+    assert!(
+        last.body.contains("confirm")
+            && last.body.contains("Clear session?")
+            && last.body.to_lowercase().contains("not yet wired"),
+        "chat body must name the dialog method + title + flag as not wired, got {:?}",
+        last.body,
+    );
+}
+
+#[test]
+fn apply_event_extension_ui_request_set_status_stays_silent() {
+    // Inverse contract: per-extension UI updates (`setStatus`,
+    // `setWidget`, `setTitle`, `set_editor_text`) are not user-facing
+    // errors. The old behavior was to drop them via `Event::Other`,
+    // and that part of the silent-drop is intentional - keep them
+    // silent so chat does not flood when extensions update their own
+    // status pills. This locks the silence so a future maintainer
+    // does not turn it into noise.
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+    let status_before = app.footer.status;
+
+    app.apply_inbound(Inbound::Event(RpcEvent::ExtensionUiRequest {
+        method: "setStatus".into(),
+        message: None,
+        notify_type: None,
+        title: None,
+    }));
+
+    assert_eq!(app.chat.messages.len(), messages_before);
+    assert_eq!(app.footer.status, status_before);
+}

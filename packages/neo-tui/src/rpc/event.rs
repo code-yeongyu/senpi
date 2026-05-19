@@ -132,6 +132,28 @@ pub enum Event {
         event: String,
         error: String,
     },
+    /// Extension UI request. Extensions emit these to drive user-facing
+    /// notifications (`notify`) and modal dialogs (`select`, `confirm`,
+    /// `input`, `editor`). See `packages/coding-agent/docs/rpc.md` →
+    /// "Extension UI Requests". Bug 3 (Oracle round 11): used to land
+    /// in [`Event::Other`] and get silently discarded by `apply_event`,
+    /// so `notifyType: "error"` extension warnings never reached chat.
+    ExtensionUiRequest {
+        /// Sub-method (`notify`, `select`, `confirm`, `input`, `editor`,
+        /// `setStatus`, `setWidget`, `setTitle`, `set_editor_text`).
+        method: String,
+        /// Notification body (used by `notify` and `confirm`).
+        #[serde(default)]
+        message: Option<String>,
+        /// `info` (default) / `warning` / `error`. Only `notify` uses
+        /// this.
+        #[serde(default, rename = "notifyType")]
+        notify_type: Option<String>,
+        /// Dialog title (used by `select`, `confirm`, `input`,
+        /// `editor`).
+        #[serde(default)]
+        title: Option<String>,
+    },
     /// Escape hatch for events we do not yet model. The full original
     /// payload is preserved so the TUI can still display it raw.
     #[serde(other)]

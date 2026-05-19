@@ -930,6 +930,19 @@ impl App {
             } => {
                 self.apply_auto_retry_failure(attempt, final_error.as_deref());
             }
+            RpcEvent::ExtensionUiRequest {
+                method,
+                message,
+                notify_type,
+                title,
+            } => {
+                self.apply_extension_ui_request(
+                    &method,
+                    message.as_deref(),
+                    notify_type.as_deref(),
+                    title.as_deref(),
+                );
+            }
             _ => {}
         }
     }
@@ -1090,6 +1103,57 @@ impl App {
         self.header.model.clone_from(&display);
         self.footer.model.clone_from(&display);
         self.chat.push_system(format!("Model: {display}"));
+    }
+
+    /// Bug 3 (Oracle round 11): extensions emit
+    /// `extension_ui_request` frames for user-facing notifications
+    /// (`notify`) and modal dialogs (`select`, `confirm`, `input`,
+    /// `editor`). The old `apply_event` catch-all matched these as
+    /// [`RpcEvent::Other`] and silently discarded the message, so
+    /// extension warnings ("Command blocked", "Path denied", ...)
+    /// never reached chat. Surface each method:
+    /// - `notify` → push the message (`Role::Error` for
+    ///   `notifyType: "error"`, `Role::System` otherwise) and flip the
+    ///   footer status on error.
+    /// - Dialog methods → push a "not yet wired" chat note naming the
+    ///   method + title so the user sees the request landed. The
+    ///   backend's per-request timeout (or `ctx.hasUI` semantics)
+    ///   auto-resolves these; future dialog overlay work will replace
+    ///   the note with a real picker / prompt.
+    /// - Per-extension UI updates (`setStatus`, `setWidget`,
+    ///   `setTitle`, `set_editor_text`) stay silent because they are
+    ///   not user-facing errors and would otherwise flood chat.
+    fn apply_extension_ui_request(
+        &mut self,
+        method: &str,
+        message: Option<&str>,
+        notify_type: Option<&str>,
+        title: Option<&str>,
+    ) {
+        match method {
+            "notify" => {
+                let body = message.unwrap_or("(empty notification)");
+                if matches!(notify_type, Some("error")) {
+                    self.chat.push_error(format!("Extension: {body}"));
+                    self.footer.status = Status::Error;
+                    self.footer.status_label = "extension error".into();
+                } else {
+                    self.chat.push_system(format!("Extension: {body}"));
+                }
+            }
+            "select" | "confirm" | "input" | "editor" => {
+                let header = title.or(message).unwrap_or("(no title)");
+                self.chat.push_system(format!(
+                    "Extension dialog (`{method}`, title: \"{header}\") is not yet wired in `senpi --neo`. Run `senpi` (without `--neo`) for interactive extensions; the request will auto-resolve when the backend's timeout fires.",
+                ));
+            }
+            // setStatus / setWidget / setTitle / set_editor_text are
+            // per-extension UI updates, not user-facing errors. Keeping
+            // them silent matches the
+            // `app_inbound_successful_response_does_not_disturb_chat_or_footer`
+            // contract for protocol acks.
+            _ => {}
+        }
     }
 
     /// Surface a successful `cycle_thinking_level` / `set_thinking_level`
