@@ -51,6 +51,7 @@ use crate::{
     rpc::{
         client::{Inbound, RpcClient},
         command::Command,
+        envelope::Response,
         event::Event as RpcEvent,
     },
     term::TerminalCaps,
@@ -89,8 +90,11 @@ pub enum AppAction {
     OpenHelp,
     /// Open the command palette (Alt+P).
     OpenPalette,
-    /// Cycle the active model forward (true) or backward (false).
-    CycleModel { forward: bool },
+    /// Cycle the active model. The wire protocol's `cycle_model` is
+    /// next-only today, so this variant carries no direction. Backward
+    /// cycling lands at [`App::note_unimplemented_action`] in
+    /// [`App::execute_action`] until the backend grows a reverse RPC.
+    CycleModel,
     /// Cycle the thinking level (Shift+Tab).
     CycleThinkingLevel,
     /// Abort the in-flight generation (Escape during stream).
@@ -613,6 +617,31 @@ impl App {
         AppAction::ExternalEditor
     }
 
+    /// Bug 3 (Oracle round 10): `app.thinking.toggle` (Ctrl+T) flipped
+    /// `self.thinking_visible`, but no render path consumed that
+    /// field, so the user-facing effect was zero. Keep the field
+    /// mutation (so wiring the renderer later is a one-line change)
+    /// and push a chat-system note so the chord visibly lands now.
+    fn apply_thinking_visibility_toggle(&mut self, action_id: &str) -> AppAction {
+        self.thinking_visible = !self.thinking_visible;
+        self.chat.push_system(format!(
+            "`{action_id}` (toggle thinking-block visibility) is not yet wired to chat rendering in `senpi --neo`. Run `senpi` (without `--neo`) for this command.",
+        ));
+        AppAction::ToggleThinkingVisibility
+    }
+
+    /// Bug 3 (Oracle round 10): mirror of
+    /// [`Self::apply_thinking_visibility_toggle`] for `app.tools.expand`
+    /// (Ctrl+O). The arm toggled `self.tools_expanded`, but no
+    /// rendering path read it, so the chord was a silent no-op.
+    fn apply_tools_expanded_toggle(&mut self, action_id: &str) -> AppAction {
+        self.tools_expanded = !self.tools_expanded;
+        self.chat.push_system(format!(
+            "`{action_id}` (toggle tool-output expansion) is not yet wired to chat rendering in `senpi --neo`. Run `senpi` (without `--neo`) for this command.",
+        ));
+        AppAction::ToggleToolsExpanded
+    }
+
     fn execute_action(&mut self, id: &str) -> AppAction {
         if let Some(action) = self.try_autocomplete_action(id) {
             return action;
@@ -658,8 +687,16 @@ impl App {
                 }
             }
             "app.interrupt" => AppAction::Interrupt,
-            "app.model.cycleForward" => AppAction::CycleModel { forward: true },
-            "app.model.cycleBackward" => AppAction::CycleModel { forward: false },
+            "app.model.cycleForward" => AppAction::CycleModel,
+            // Bug 3 (Oracle round 10): `cycle_model` on the wire is
+            // next-only. The old arm also produced `CycleModel` and
+            // `action_to_command` discarded the direction, so the
+            // backend cycled FORWARD when the user pressed
+            // `shift+ctrl+p` expecting BACKWARD. Surface a "not yet
+            // wired" chat note instead of silently doing the wrong
+            // thing. When the wire protocol grows a `cycle_model_back`
+            // (or similar), wire it up here.
+            "app.model.cycleBackward" => self.note_unimplemented_action(id),
             "app.model.select" => {
                 // Ctrl+L: open the model picker overlay AND fire the
                 // backend `GetAvailableModels` command (mapped from
@@ -674,14 +711,8 @@ impl App {
                 AppAction::OpenModelPicker
             }
             "app.thinking.cycle" => AppAction::CycleThinkingLevel,
-            "app.thinking.toggle" => {
-                self.thinking_visible = !self.thinking_visible;
-                AppAction::ToggleThinkingVisibility
-            }
-            "app.tools.expand" => {
-                self.tools_expanded = !self.tools_expanded;
-                AppAction::ToggleToolsExpanded
-            }
+            "app.thinking.toggle" => self.apply_thinking_visibility_toggle(id),
+            "app.tools.expand" => self.apply_tools_expanded_toggle(id),
             "app.editor.external" => self.apply_external_editor_action(id),
             "app.message.followUp" => self.apply_follow_up_action(),
             "tui.input.submit" => self.apply_submit_action(),
@@ -726,10 +757,11 @@ impl App {
     /// that stay purely TUI-local (overlay open/close, focus toggles,
     /// quit, literal-char insertion, ...).
     ///
-    /// `CycleModel { forward }` maps to `Command::CycleModel`
-    /// unconditionally because the wire protocol only supports forward
-    /// cycling today; the `forward` discriminator survives on
-    /// [`AppAction`] for future UI use.
+    /// `CycleModel` maps to `Command::CycleModel`. The wire protocol
+    /// only supports forward cycling today; the backward chord
+    /// (`shift+ctrl+p`) is intercepted earlier in
+    /// [`Self::execute_action`] and surfaced as a "not yet wired" chat
+    /// note (Bug 3, Oracle round 10).
     #[must_use]
     pub fn action_to_command(action: &AppAction) -> Option<Command> {
         match action {
@@ -743,7 +775,7 @@ impl App {
                 message: text.clone(),
             }),
             AppAction::Interrupt => Some(Command::Abort { id: None }),
-            AppAction::CycleModel { .. } => Some(Command::CycleModel { id: None }),
+            AppAction::CycleModel => Some(Command::CycleModel { id: None }),
             AppAction::CycleThinkingLevel => Some(Command::CycleThinkingLevel { id: None }),
             AppAction::OpenModelPicker => Some(Command::GetAvailableModels { id: None }),
             _ => None,
@@ -767,17 +799,7 @@ impl App {
                 self.footer.connected = true;
                 self.apply_event(event);
             }
-            Inbound::Response(response) => {
-                if !response.success {
-                    let body = response.error.as_deref().map_or_else(
-                        || format!("Backend reported `{}` failed.", response.command),
-                        |err| format!("`{}` failed: {err}", response.command),
-                    );
-                    self.chat.push_error(body);
-                    self.footer.status = Status::Error;
-                    self.footer.status_label = "command failed".into();
-                }
-            }
+            Inbound::Response(response) => self.apply_response(&response),
             Inbound::Error {
                 exit_code,
                 stderr_tail,
@@ -1003,6 +1025,92 @@ impl App {
             self.footer.status = Status::Idle;
             self.footer.status_label = "idle".into();
         }
+    }
+
+    /// Route an inbound RPC `Response` envelope. Splits cleanly into a
+    /// failure path (already a Bug-3 surface as of Oracle round 2) and
+    /// a success path. The success path used to silently drop the
+    /// `data` payload, so `cycle_model` / `cycle_thinking_level`
+    /// commands fired but the user saw no model or thinking change
+    /// (Bug 3 leak flagged by Oracle round 10). Now successful
+    /// responses route through command-specific handlers that update
+    /// header + footer state AND push a chat note.
+    fn apply_response(&mut self, response: &Response) {
+        if !response.success {
+            let body = response.error.as_deref().map_or_else(
+                || format!("Backend reported `{}` failed.", response.command),
+                |err| format!("`{}` failed: {err}", response.command),
+            );
+            self.chat.push_error(body);
+            self.footer.status = Status::Error;
+            self.footer.status_label = "command failed".into();
+            return;
+        }
+        match response.command.as_str() {
+            "cycle_model" | "set_model" => self.apply_model_change_response(response),
+            "cycle_thinking_level" | "set_thinking_level" => {
+                self.apply_thinking_change_response(response);
+            }
+            // Other commands (`prompt`, `abort`, `new_session`,
+            // `get_state`, `get_available_models`, `get_session_stats`,
+            // ...) are acks without user-visible state changes the
+            // chat needs to broadcast. Keep them silent so the
+            // `app_inbound_successful_response_does_not_disturb_chat_or_footer`
+            // contract holds.
+            _ => {}
+        }
+    }
+
+    /// Surface a successful `cycle_model` / `set_model` response.
+    /// `cycle_model` data is `ModelCycleResult { model, thinkingLevel,
+    /// isScoped, ... }` (or `null` if no other model is available),
+    /// while `set_model` data is the picked Model directly. Try both
+    /// shapes so the same arm handles both commands.
+    fn apply_model_change_response(&mut self, response: &Response) {
+        let Some(data) = response.data.as_ref() else {
+            if response.command == "cycle_model" {
+                self.chat.push_system(
+                    "No other model is configured to cycle to. Open the model picker (`Ctrl+L`) or run `senpi` (without `--neo`) to add favorites.".into(),
+                );
+            }
+            return;
+        };
+        // cycle_model nests the Model under `model`; set_model returns
+        // the Model directly.
+        let model_obj = data.get("model").unwrap_or(data);
+        let name = model_obj
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .or_else(|| model_obj.get("id").and_then(serde_json::Value::as_str));
+        let Some(name) = name else {
+            return;
+        };
+        let provider = model_obj.get("provider").and_then(serde_json::Value::as_str);
+        let display = provider.map_or_else(|| name.to_owned(), |provider| format!("{provider}/{name}"));
+        self.header.model.clone_from(&display);
+        self.footer.model.clone_from(&display);
+        self.chat.push_system(format!("Model: {display}"));
+    }
+
+    /// Surface a successful `cycle_thinking_level` / `set_thinking_level`
+    /// response. `cycle_thinking_level` data is `{ level }` (or
+    /// `null` if there is no other level), while `set_thinking_level`
+    /// emits no data (just the success ack), so a missing `level`
+    /// field is a noop for that command.
+    fn apply_thinking_change_response(&mut self, response: &Response) {
+        let Some(data) = response.data.as_ref() else {
+            if response.command == "cycle_thinking_level" {
+                self.chat
+                    .push_system("No other thinking level is configured to cycle to.".into());
+            }
+            return;
+        };
+        let Some(level) = data.get("level").and_then(serde_json::Value::as_str) else {
+            return;
+        };
+        self.header.thinking_level = Some(level.to_owned());
+        self.footer.thinking = Some(level.to_owned());
+        self.chat.push_system(format!("Thinking level: {level}"));
     }
 }
 

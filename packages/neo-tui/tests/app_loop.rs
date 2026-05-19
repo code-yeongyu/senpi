@@ -281,20 +281,42 @@ fn alt_t_dispatches_open_theme_picker_and_opens_overlay() {
 }
 
 #[test]
-fn ctrl_p_dispatches_cycle_model_forward() {
+fn ctrl_p_dispatches_cycle_model() {
     let mut app = fresh_app();
     let action = app.handle_key(ev(KeyCode::Char('p'), KeyModifiers::CONTROL));
-    assert_eq!(action, AppAction::CycleModel { forward: true });
+    assert_eq!(action, AppAction::CycleModel);
 }
 
 #[test]
-fn shift_ctrl_p_dispatches_cycle_model_backward() {
+fn shift_ctrl_p_app_model_cycle_backward_visibly_notifies_user() {
+    // Oracle round 10: the wire protocol's `cycle_model` is next-only.
+    // The old `app.model.cycleBackward` arm produced
+    // `AppAction::CycleModel { forward: false }` and
+    // `action_to_command` discarded the direction, so pressing
+    // `shift+ctrl+p` silently cycled FORWARD when the user expected
+    // backward. Surface a "not yet wired" chat note instead.
     let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
     let action = app.handle_key(ev(
         KeyCode::Char('p'),
         KeyModifiers::CONTROL | KeyModifiers::SHIFT,
     ));
-    assert_eq!(action, AppAction::CycleModel { forward: false });
+    assert!(matches!(action, AppAction::Consumed(_)));
+    assert!(
+        App::action_to_command(&action).is_none(),
+        "cycleBackward must NOT fire an RPC command",
+    );
+    assert!(
+        app.chat.messages.len() > messages_before,
+        "cycleBackward chord must push a visible chat message",
+    );
+    let last = app.chat.messages.last().expect("chat message exists");
+    assert_eq!(last.role, Role::System);
+    assert!(
+        last.body.contains("app.model.cycleBackward") && last.body.to_lowercase().contains("not yet"),
+        "chat body must name the action and flag it as not yet wired, got {:?}",
+        last.body,
+    );
 }
 
 #[test]
@@ -605,11 +627,13 @@ fn shift_ctrl_p_does_not_open_palette_after_rebind() {
     let mut app = fresh_app();
     // After the chord rebind, shift+ctrl+p hits the legacy
     // app.model.cycleBackward binding and must NOT open the palette.
+    // As of Oracle round 10, that chord surfaces a "not yet wired"
+    // chat note instead of producing CycleModel { forward: false }.
     let action = app.handle_key(ev(
         KeyCode::Char('p'),
         KeyModifiers::CONTROL | KeyModifiers::SHIFT,
     ));
-    assert_eq!(action, AppAction::CycleModel { forward: false });
+    assert!(matches!(action, AppAction::Consumed(_)));
     assert!(app.overlay.is_none());
 }
 
@@ -679,7 +703,10 @@ fn ctrl_shift_p_no_longer_opens_palette_after_rebind() {
         KeyCode::Char('p'),
         KeyModifiers::CONTROL | KeyModifiers::SHIFT,
     ));
-    assert_eq!(action, AppAction::CycleModel { forward: false });
+    // Oracle round 10: cycleBackward surfaces "not yet wired"; the
+    // important contract for this test is the negative (palette must
+    // stay closed) regardless of the dispatched AppAction shape.
+    assert!(matches!(action, AppAction::Consumed(_)));
     assert!(
         app.overlay.is_none(),
         "ctrl+shift+p must NOT open the palette after the rebind to alt+p",
@@ -729,15 +756,14 @@ fn action_to_command_maps_interrupt_to_abort() {
 }
 
 #[test]
-fn action_to_command_maps_cycle_model_regardless_of_direction() {
-    let forward = App::action_to_command(&AppAction::CycleModel { forward: true }).expect("forward must map");
-    let backward =
-        App::action_to_command(&AppAction::CycleModel { forward: false }).expect("backward must map");
-    // The wire protocol only carries forward cycling today; both
-    // directions reduce to the same Command. The forward flag is
-    // preserved on AppAction for future UI use.
-    assert!(matches!(forward, Command::CycleModel { .. }));
-    assert!(matches!(backward, Command::CycleModel { .. }));
+fn action_to_command_maps_cycle_model_to_cycle_model_command() {
+    // The wire protocol's `cycle_model` is next-only today, so
+    // `AppAction::CycleModel` carries no direction (Oracle round 10).
+    // The backward chord `shift+ctrl+p` lands at
+    // `note_unimplemented_action` in `execute_action` and never
+    // produces this variant.
+    let cmd = App::action_to_command(&AppAction::CycleModel).expect("cycle must map");
+    assert!(matches!(cmd, Command::CycleModel { .. }));
 }
 
 #[test]
@@ -1469,4 +1495,245 @@ fn app_mouse_wheel_at_bottom_does_nothing() {
     });
 
     assert_eq!(app.chat.scroll_offset, 0);
+}
+
+#[test]
+fn ctrl_t_app_thinking_toggle_visibly_notifies_user() {
+    // Oracle round 10: `app.thinking.toggle` (Ctrl+T) flipped
+    // `self.thinking_visible`, but no render path consumed that
+    // field, so the user-facing effect was zero - the chord was a
+    // silent no-op against the README/`/hotkeys` advertisement that
+    // Ctrl+T toggles thinking-block visibility. Bug 3 contract:
+    // surface a "not yet wired to rendering" chat note so the user
+    // sees that the chord landed even though nothing renders yet.
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+    let action = app.handle_key(ev(KeyCode::Char('t'), KeyModifiers::CONTROL));
+    assert_eq!(action, AppAction::ToggleThinkingVisibility);
+    assert!(
+        app.chat.messages.len() > messages_before,
+        "ctrl+t must push a visible chat message until rendering is wired",
+    );
+    let last = app.chat.messages.last().expect("chat message exists");
+    assert_eq!(last.role, Role::System);
+    assert!(
+        last.body.contains("app.thinking.toggle") && last.body.to_lowercase().contains("not yet"),
+        "chat body must name the action and flag it as not yet wired, got {:?}",
+        last.body,
+    );
+}
+
+#[test]
+fn ctrl_o_app_tools_expand_visibly_notifies_user() {
+    // Oracle round 10 (mirror of ctrl_t): `app.tools.expand` (Ctrl+O)
+    // toggled `self.tools_expanded`, but no render path consumed the
+    // field, so the user saw nothing change. Push a chat-system note
+    // so the chord visibly lands.
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+    let action = app.handle_key(ev(KeyCode::Char('o'), KeyModifiers::CONTROL));
+    assert_eq!(action, AppAction::ToggleToolsExpanded);
+    assert!(
+        app.chat.messages.len() > messages_before,
+        "ctrl+o must push a visible chat message until rendering is wired",
+    );
+    let last = app.chat.messages.last().expect("chat message exists");
+    assert_eq!(last.role, Role::System);
+    assert!(
+        last.body.contains("app.tools.expand") && last.body.to_lowercase().contains("not yet"),
+        "chat body must name the action and flag it as not yet wired, got {:?}",
+        last.body,
+    );
+}
+
+#[test]
+fn apply_inbound_cycle_model_success_response_updates_displays() {
+    // Oracle round 10: pressing Ctrl+P fires `Command::CycleModel`,
+    // the backend cycles to the next model and returns
+    // `Response { success: true, command: "cycle_model", data:
+    // { model: { id, name, provider, ... }, thinkingLevel,
+    // isScoped } }`. The old `apply_inbound` arm matched
+    // `Inbound::Response` only for the `success: false` case and
+    // silently dropped the success payload, so the user saw no
+    // model change in header or footer - a Bug 3 silent failure for
+    // a working backend feature.
+    use senpi_neo_tui::rpc::envelope::Response;
+
+    let mut app = fresh_app();
+    let header_before = app.header.model.clone();
+    let footer_before = app.footer.model.clone();
+    let messages_before = app.chat.messages.len();
+
+    app.apply_inbound(Inbound::Response(Response {
+        id: Some("cmd-cycle-1".into()),
+        command: "cycle_model".into(),
+        success: true,
+        data: Some(serde_json::json!({
+            "model": {
+                "id": "claude-opus-4-7",
+                "name": "Claude Opus 4.7",
+                "provider": "anthropic"
+            },
+            "thinkingLevel": "high",
+            "isScoped": true,
+        })),
+        error: None,
+    }));
+
+    assert_ne!(app.header.model, header_before);
+    assert_ne!(app.footer.model, footer_before);
+    assert!(app.header.model.contains("Claude Opus 4.7"));
+    assert!(app.footer.model.contains("Claude Opus 4.7"));
+    assert!(
+        app.chat.messages.len() > messages_before,
+        "successful cycle_model must push a visible chat note",
+    );
+    let last = app.chat.messages.last().expect("message exists");
+    assert_eq!(last.role, Role::System);
+    assert!(
+        last.body.contains("Claude Opus 4.7"),
+        "chat body must name the new model, got {:?}",
+        last.body,
+    );
+}
+
+#[test]
+fn apply_inbound_cycle_model_success_response_with_null_data_pushes_note() {
+    // When `session.cycleModel()` returns `null` (no other model
+    // configured), rpc-mode emits `Response { success: true,
+    // command: "cycle_model", data: null }`. The user pressed the
+    // chord and expects feedback; "absolutely nothing happens"
+    // violates Bug 3. Surface a one-line note explaining there is no
+    // other model to cycle to.
+    use senpi_neo_tui::rpc::envelope::Response;
+
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+
+    app.apply_inbound(Inbound::Response(Response {
+        id: Some("cmd-cycle-2".into()),
+        command: "cycle_model".into(),
+        success: true,
+        data: None,
+        error: None,
+    }));
+
+    assert!(
+        app.chat.messages.len() > messages_before,
+        "null-data cycle_model response must push a visible chat note",
+    );
+    let last = app.chat.messages.last().expect("message exists");
+    assert_eq!(last.role, Role::System);
+    assert!(
+        last.body.to_lowercase().contains("model"),
+        "chat body must mention model, got {:?}",
+        last.body,
+    );
+}
+
+#[test]
+fn apply_inbound_set_model_success_response_updates_displays() {
+    // Oracle round 10: `set_model` success data is the Model
+    // directly (not wrapped in `model`). Same Bug-3 contract:
+    // header + footer + chat note must reflect the change.
+    use senpi_neo_tui::rpc::envelope::Response;
+
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+
+    app.apply_inbound(Inbound::Response(Response {
+        id: Some("cmd-set-1".into()),
+        command: "set_model".into(),
+        success: true,
+        data: Some(serde_json::json!({
+            "id": "gpt-5",
+            "name": "GPT-5",
+            "provider": "openai"
+        })),
+        error: None,
+    }));
+
+    assert!(app.header.model.contains("GPT-5"));
+    assert!(app.footer.model.contains("GPT-5"));
+    assert!(
+        app.chat.messages.len() > messages_before,
+        "successful set_model must push a visible chat note",
+    );
+    let last = app.chat.messages.last().expect("message exists");
+    assert_eq!(last.role, Role::System);
+    assert!(
+        last.body.contains("GPT-5"),
+        "chat body must name the new model, got {:?}",
+        last.body,
+    );
+}
+
+#[test]
+fn apply_inbound_cycle_thinking_level_success_response_updates_displays() {
+    // Oracle round 10: Shift+Tab fires `CycleThinkingLevel`. The
+    // backend returns `Response { success: true, command:
+    // "cycle_thinking_level", data: { level: "..." } }`. Surface
+    // the new level to header + footer + chat.
+    use senpi_neo_tui::rpc::envelope::Response;
+
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+
+    app.apply_inbound(Inbound::Response(Response {
+        id: Some("cmd-think-1".into()),
+        command: "cycle_thinking_level".into(),
+        success: true,
+        data: Some(serde_json::json!({ "level": "minimal" })),
+        error: None,
+    }));
+
+    assert_eq!(app.header.thinking_level.as_deref(), Some("minimal"));
+    assert_eq!(app.footer.thinking.as_deref(), Some("minimal"));
+    assert!(
+        app.chat.messages.len() > messages_before,
+        "successful cycle_thinking_level must push a visible chat note",
+    );
+    let last = app.chat.messages.last().expect("message exists");
+    assert_eq!(last.role, Role::System);
+    assert!(
+        last.body.to_lowercase().contains("thinking"),
+        "chat body must mention thinking level, got {:?}",
+        last.body,
+    );
+    assert!(
+        last.body.contains("minimal"),
+        "chat body must name the new level, got {:?}",
+        last.body,
+    );
+}
+
+#[test]
+fn apply_inbound_cycle_thinking_level_success_response_with_null_data_pushes_note() {
+    // Mirror of the cycle_model null-data case. When
+    // `session.cycleThinkingLevel()` returns null (only one level
+    // configured), Bug 3 contract still requires visible feedback.
+    use senpi_neo_tui::rpc::envelope::Response;
+
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+
+    app.apply_inbound(Inbound::Response(Response {
+        id: Some("cmd-think-2".into()),
+        command: "cycle_thinking_level".into(),
+        success: true,
+        data: None,
+        error: None,
+    }));
+
+    assert!(
+        app.chat.messages.len() > messages_before,
+        "null-data cycle_thinking_level response must push a visible chat note",
+    );
+    let last = app.chat.messages.last().expect("message exists");
+    assert_eq!(last.role, Role::System);
+    assert!(
+        last.body.to_lowercase().contains("thinking"),
+        "chat body must mention thinking, got {:?}",
+        last.body,
+    );
 }
