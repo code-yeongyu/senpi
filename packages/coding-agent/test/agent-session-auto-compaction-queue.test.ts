@@ -113,14 +113,13 @@ describe("AgentSession auto-compaction queue resume", () => {
 
 		const runAutoCompaction = (
 			session as unknown as {
-				_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<void>;
+				_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<boolean>;
 			}
 		)._runAutoCompaction.bind(session);
 
-		await runAutoCompaction("threshold", false);
-		await vi.advanceTimersByTimeAsync(100);
+		await expect(runAutoCompaction("threshold", false)).resolves.toBe(true);
 
-		expect(continueSpy).toHaveBeenCalledTimes(1);
+		expect(continueSpy).not.toHaveBeenCalled();
 	});
 
 	it("should not compact repeatedly after overflow recovery already attempted", async () => {

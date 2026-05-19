@@ -4,50 +4,9 @@
 
 ### Fixed
 
-- Fixed idle provider streams to fail the current turn instead of leaving the agent loop running indefinitely.
-
-## [2026.5.19] - 2026-05-19
-
-### Fixed
-
+- Fixed tool-call preflight to stop preparing sibling tool calls after the run is aborted ([#4276](https://github.com/earendil-works/pi/issues/4276)).
 - Fixed tail truncation for oversized single-line output that ends with a trailing newline ([#4715](https://github.com/earendil-works/pi/issues/4715)).
 - Fixed Windows Node execution environment command spawns to hide helper console windows from background processes ([#4699](https://github.com/earendil-works/pi/issues/4699)).
-
-## [2026.5.18-2] - 2026-05-18
-
-### Fixed
-
-## [2026.5.18] - 2026-05-18
-
-### Fixed
-
-## [2026.5.16] - 2026-05-16
-
-### Fixed
-
-## [2026.5.15-3] - 2026-05-15
-
-### Fixed
-
-- Fixed tool-level aborts to stop the agent loop before polling queued steering/follow-up messages or starting another provider request.
-
-## [2026.5.15-2] - 2026-05-15
-
-### Fixed
-
-- Fixed provider stream creation and mid-stream failures to end the agent loop with terminal assistant error messages that preserve partial content.
-
-## [2026.5.15] - 2026-05-15
-
-## [2026.5.14] - 2026-05-14
-
-## [2026.5.13-4] - 2026-05-13
-
-## [2026.5.13-3] - 2026-05-13
-
-## [2026.5.13-2] - 2026-05-13
-
-## [2026.05.13] - 2026-05-13
 
 ## [0.75.3] - 2026-05-18
 

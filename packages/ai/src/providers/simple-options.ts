@@ -1,5 +1,6 @@
 import type { Api, Model, SimpleStreamOptions, StreamOptions, ThinkingBudgets, ThinkingLevel } from "../types.js";
 
+<<<<<<< HEAD
 /**
  * Merge user-supplied extraBody fields into a provider request payload, skipping
  * any key the provider manages itself (model id, messages, stream flag, etc.).
@@ -137,9 +138,12 @@ export function buildBaseOptions(model: Model<Api>, options?: SimpleStreamOption
 				: model.maxTokens
 			: undefined;
 
+=======
+export function buildBaseOptions(_model: Model<Api>, options?: SimpleStreamOptions, apiKey?: string): StreamOptions {
+>>>>>>> upstream/main
 	return {
 		temperature: options?.temperature,
-		maxTokens: options?.maxTokens ?? defaultMaxTokens,
+		maxTokens: options?.maxTokens,
 		signal: options?.signal,
 		apiKey: apiKey || options?.apiKey,
 		transport: options?.transport,
@@ -176,7 +180,8 @@ export function clampMaxForOpenAI(
 }
 
 export function adjustMaxTokensForThinking(
-	baseMaxTokens: number,
+	// Undefined means no explicit caller cap. Use the model cap and fit thinking inside it.
+	baseMaxTokens: number | undefined,
 	modelMaxTokens: number,
 	reasoningLevel: ThinkingLevel,
 	customBudgets?: ThinkingBudgets,
@@ -195,7 +200,8 @@ export function adjustMaxTokensForThinking(
 		return { maxTokens: baseMaxTokens, thinkingBudget: 0 };
 	}
 	let thinkingBudget = budgets[level]!;
-	const maxTokens = Math.min(baseMaxTokens + thinkingBudget, modelMaxTokens);
+	const maxTokens =
+		baseMaxTokens === undefined ? modelMaxTokens : Math.min(baseMaxTokens + thinkingBudget, modelMaxTokens);
 
 	if (maxTokens <= thinkingBudget) {
 		thinkingBudget = Math.max(0, maxTokens - minOutputTokens);

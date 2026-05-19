@@ -85,8 +85,8 @@ describe("AgentSession bash and persistence characterization", () => {
 		releaseToolExecution?.();
 		await firstPrompt;
 
-		expect(harness.session.hasPendingBashMessages).toBe(true);
-		expect(harness.session.messages.some((message) => message.role === "bashExecution")).toBe(false);
+		expect(harness.session.hasPendingBashMessages).toBe(false);
+		expect(harness.session.messages.some((message) => message.role === "bashExecution")).toBe(true);
 
 		await harness.session.prompt("next turn");
 
