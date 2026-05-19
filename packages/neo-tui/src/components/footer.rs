@@ -149,33 +149,43 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &
     if area.height == 0 || area.width == 0 {
         return;
     }
-    let bg = theme.token(Token::BackgroundPanel);
+
+    let (effective_status, effective_label) = if !state.connected && state.status != Status::Idle {
+        (Status::Error, "backend disconnected".to_string())
+    } else {
+        (state.status, state.status_label.clone())
+    };
+
+    let bg = theme.token(effective_status.bg_token());
     let text = theme.token(Token::Text);
     let muted = theme.token(Token::TextMuted);
-    let status_color = theme.token(state.status.token());
+    let status_color = theme.token(effective_status.token());
+
+    let show_metrics =
+        state.tokens_in > 0 || state.tokens_out > 0 || state.tps.is_some() || state.ctx_used_pct > 0;
+
+    let right_w = if show_metrics { right_width(area.width) } else { 0 };
 
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Min(20),
-            Constraint::Length(right_width(area.width, state.status)),
-        ])
+        .constraints([Constraint::Min(20), Constraint::Length(right_w)])
         .split(area);
 
     let left = chunks[0];
     let right = chunks[1];
 
-    let glyph_char = if state.status == Status::Idle {
-        '\u{00b7}'
-    } else {
-        state.spinner_glyph
+    let glyph_char = match effective_status {
+        Status::Idle => '\u{00b7}',
+        Status::Error => '\u{00d7}',
+        _ => state.spinner_glyph,
     };
+
     let mut left_spans = vec![
         Span::styled(
             format!(" {glyph_char} "),
             Style::default().fg(status_color).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(state.status_label.clone(), Style::default().fg(status_color)),
+        Span::styled(effective_label, Style::default().fg(status_color)),
     ];
     if !state.model.is_empty() {
         left_spans.push(Span::raw("  "));
@@ -187,9 +197,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &
     let left_p = Paragraph::new(left_line).style(Style::default().bg(bg));
     frame.render_widget(left_p, left);
 
-    let right_line = if state.status == Status::Idle {
-        Line::from(Span::raw(""))
-    } else {
+    let right_line = if show_metrics {
         let mut spans: Vec<Span<'_>> = Vec::new();
         spans.push(Span::styled(
             format!("ctx {:>3}% ", state.ctx_used_pct),
@@ -224,6 +232,8 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &
             spans.push(Span::raw(" "));
         }
         Line::from(spans)
+    } else {
+        Line::from(Span::raw(""))
     };
     let right_p = Paragraph::new(right_line)
         .alignment(Alignment::Right)
@@ -243,10 +253,7 @@ fn thinking_span(state: &FooterState, text: ratatui::style::Color) -> Span<'_> {
     )
 }
 
-const fn right_width(area_width: u16, status: Status) -> u16 {
-    if matches!(status, Status::Idle) {
-        return 0;
-    }
+const fn right_width(area_width: u16) -> u16 {
     if area_width >= 130 {
         56
     } else if area_width >= 110 {
