@@ -30,6 +30,7 @@ const compat = {
 	requiresThinkingAsText: false,
 	requiresReasoningContentOnAssistantMessages: false,
 	thinkingFormat: "openai",
+	supportsDisabledThinking: true,
 	openRouterRouting: {},
 	vercelGatewayRouting: {},
 	zaiToolStream: false,

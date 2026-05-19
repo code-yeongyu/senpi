@@ -616,9 +616,11 @@ function buildParams(
 			preserve_thinking: true,
 		};
 	} else if (compat.thinkingFormat === "deepseek" && model.reasoning) {
-		params.thinking = { type: options?.reasoningEffort ? "enabled" : "disabled" };
 		if (options?.reasoningEffort) {
+			params.thinking = { type: "enabled" };
 			params.reasoning_effort = model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
+		} else if (compat.supportsDisabledThinking !== false) {
+			params.thinking = { type: "disabled" };
 		}
 	} else if (compat.thinkingFormat === "openrouter" && model.reasoning) {
 		// OpenRouter normalizes reasoning across providers via a nested reasoning object.
@@ -1180,6 +1182,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		vercelGatewayRouting: {},
 		zaiToolStream: false,
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway,
+		supportsDisabledThinking: true,
 		toolCallFormat: undefined,
 		cacheControlFormat,
 		sendSessionAffinityHeaders: false,
@@ -1209,6 +1212,7 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 			model.compat.requiresReasoningContentOnAssistantMessages ??
 			detected.requiresReasoningContentOnAssistantMessages,
 		thinkingFormat: model.compat.thinkingFormat ?? detected.thinkingFormat,
+		supportsDisabledThinking: model.compat.supportsDisabledThinking ?? detected.supportsDisabledThinking,
 		openRouterRouting: model.compat.openRouterRouting ?? {},
 		vercelGatewayRouting: model.compat.vercelGatewayRouting ?? detected.vercelGatewayRouting,
 		zaiToolStream: model.compat.zaiToolStream ?? detected.zaiToolStream,

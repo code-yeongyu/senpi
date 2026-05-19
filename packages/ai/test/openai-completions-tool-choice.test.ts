@@ -822,6 +822,7 @@ describe("openai-completions tool_choice", () => {
 			const model = getModel(provider, "mimo-v2.5-pro")!;
 			expect(model.compat?.requiresReasoningContentOnAssistantMessages).toBe(true);
 			expect(model.compat?.thinkingFormat).toBe("deepseek");
+			expect(model.compat?.supportsDisabledThinking).toBe(false);
 			expect(model.compat?.maxTokensField).toBeUndefined();
 			expect(model.compat?.supportsDeveloperRole).toBeUndefined();
 		}
@@ -980,6 +981,7 @@ describe("openai-completions tool_choice", () => {
 				requiresThinkingAsText: false,
 				requiresReasoningContentOnAssistantMessages: false,
 				thinkingFormat: "openai",
+				supportsDisabledThinking: true,
 				openRouterRouting: {},
 				vercelGatewayRouting: {},
 				zaiToolStream: false,

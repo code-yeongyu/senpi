@@ -421,6 +421,8 @@ export interface OpenAICompletionsCompat {
 	requiresReasoningContentOnAssistantMessages?: boolean;
 	/** Format for reasoning/thinking parameter. "openai" uses reasoning_effort, "openrouter" uses reasoning: { effort }, "deepseek" uses thinking: { type } plus reasoning_effort, "together" uses reasoning: { enabled } plus reasoning_effort when supported, "zai" uses top-level enable_thinking: boolean, "qwen" uses top-level enable_thinking: boolean, and "qwen-chat-template" uses chat_template_kwargs.enable_thinking. Default: "openai". */
 	thinkingFormat?: "openai" | "openrouter" | "deepseek" | "together" | "zai" | "qwen" | "qwen-chat-template";
+	/** Whether the provider accepts explicit disabled-thinking markers when thinking is off. Default: true. */
+	supportsDisabledThinking?: boolean;
 	/** OpenRouter-specific routing preferences. Only used when baseUrl points to OpenRouter. */
 	openRouterRouting?: OpenRouterRouting;
 	/** Vercel AI Gateway routing preferences. Only used when baseUrl points to Vercel AI Gateway. */

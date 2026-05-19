@@ -1076,6 +1076,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		const xiaomiCompat: OpenAICompletionsCompat = {
 			requiresReasoningContentOnAssistantMessages: true,
 			thinkingFormat: "deepseek",
+			supportsDisabledThinking: false,
 		};
 		const xiaomiVariants = [
 			{ provider: "xiaomi", baseUrl: "https://api.xiaomimimo.com/v1" },
