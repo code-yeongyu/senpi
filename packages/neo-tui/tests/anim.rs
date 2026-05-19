@@ -19,9 +19,15 @@ fn spinner_braille_cycles_through_8_frames() {
     }
     // All 8 frames must be distinct.
     let unique: std::collections::HashSet<_> = chars.iter().copied().collect();
-    assert_eq!(unique.len(), 8, "expected 8 distinct braille frames, got {chars:?}");
+    assert_eq!(
+        unique.len(),
+        8,
+        "expected 8 distinct braille frames, got {chars:?}"
+    );
     // Each char must be a valid braille pattern.
-    let expected = ['\u{2802}', '\u{2804}', '\u{2806}', '\u{2826}', '\u{2827}', '\u{2837}', '\u{283F}', '\u{281F}'];
+    let expected = [
+        '\u{2802}', '\u{2804}', '\u{2806}', '\u{2826}', '\u{2827}', '\u{2837}', '\u{283F}', '\u{281F}',
+    ];
     for (i, &ch) in chars.iter().enumerate() {
         assert_eq!(ch, expected[i], "frame {i} mismatch");
     }
@@ -56,12 +62,12 @@ fn scanner_advances_left_to_right() {
     let scanner = Scanner::new(10);
     let positions: Vec<usize> = (0..20).map(|i| scanner.current_position(i * 60)).collect();
     // First pass: 0,1,2,...,9
-    for i in 0..10 {
-        assert_eq!(positions[i], i, "forward sweep at step {i}");
+    for (i, &pos) in positions.iter().enumerate().take(10) {
+        assert_eq!(pos, i, "forward sweep at step {i}");
     }
-    // Bounce back: 8,7,...,0
-    for i in 1..10 {
-        assert_eq!(positions[10 + i - 1], 10 - i, "backward sweep at step {}", 10 + i - 1);
+    // Bounce back: 8,7,...,1,0
+    for (i, &pos) in positions.iter().enumerate().skip(10).take(9) {
+        assert_eq!(pos, 19 - i - 1, "backward sweep at step {i}");
     }
     // Then repeats 0,1,2,...
     assert_eq!(positions[18], 0);
@@ -85,10 +91,7 @@ fn pulse_intensity_in_unit_range() {
     let pulse = Pulse::new(1000);
     for t in [0, 250, 500, 750, 999, 1000, 2000] {
         let v = pulse.intensity(t);
-        assert!(
-            (0.0..=1.0).contains(&v),
-            "intensity({t}) = {v} out of [0,1]"
-        );
+        assert!((0.0..=1.0).contains(&v), "intensity({t}) = {v} out of [0,1]");
     }
 }
 
