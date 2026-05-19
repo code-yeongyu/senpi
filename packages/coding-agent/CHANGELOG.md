@@ -2,9 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added a `--` sentinel to `senpi --neo` arg forwarding so users can pass `--theme`, `--list-themes`, `--demo`, `--demo-seconds`, `--backend-bin`, and `--backend-args` to the Rust `senpi-neo-tui` binary without colliding with senpi's own `--theme` flag, e.g. `senpi --neo -- --theme opencode/dracula`.
+
 ### Fixed
 
 - Fixed OpenAI remote compaction to time out nonresponsive native compact routes and fall back to local compaction.
+- Fixed `senpi --neo` keymap parity so `tui.editor.newLine` no longer ships as a redundant shadow of the legacy `tui.input.newLine` and `tui.input.historyPrev`/`historyNext` are moved into the `neo.*` namespace where neo-only bindings belong.
 
 ## [2026.5.19] - 2026-05-19
 

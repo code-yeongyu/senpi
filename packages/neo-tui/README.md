@@ -33,6 +33,14 @@ cargo run --release --package senpi-neo-tui --bin senpi-neo-tui -- \
 
 ## CLI flags
 
+These belong to the `senpi-neo-tui` binary. When you launch through `senpi --neo`, forward them after a `--` sentinel so the senpi CLI does not eat them (e.g. `senpi --neo` shares the spelling `--theme` with the Node CLI, which means something different there).
+
+```bash
+senpi --neo -- --theme opencode/dracula
+senpi --neo -- --list-themes
+senpi --neo -- --demo --demo-seconds 5
+```
+
 | Flag | Env | Description |
 |------|-----|-------------|
 | `--backend-bin <PATH>` | `SENPI_NEO_BACKEND_BIN` | Path to the senpi backend binary. Spawned with `--mode rpc` on startup; if unset, the TUI runs offline (demo mode or empty session). |

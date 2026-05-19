@@ -75,6 +75,21 @@ function resolveBinaryPath(): { path: string; source: string } | undefined {
 	return undefined;
 }
 
+/**
+ * Split the original argv between the senpi backend and the neo TUI
+ * binary using the `--` sentinel. Anything BEFORE the sentinel (with
+ * `--neo` filtered out) goes to the backend; anything AFTER goes to the
+ * Rust TUI verbatim. Exported for unit tests; do not call directly from
+ * production code, use {@link runNeoMode}.
+ */
+export function splitNeoArgs(originalArgv: readonly string[]): { backend: string[]; neo: string[] } {
+	const sentinelIdx = originalArgv.indexOf("--");
+	const beforeSentinel = sentinelIdx >= 0 ? originalArgv.slice(0, sentinelIdx) : [...originalArgv];
+	const neo = sentinelIdx >= 0 ? originalArgv.slice(sentinelIdx + 1) : [];
+	const backend = beforeSentinel.filter((arg) => arg !== "--neo");
+	return { backend, neo };
+}
+
 export interface RunNeoModeOptions {
 	parsed: Args;
 	originalArgv: readonly string[];
@@ -116,10 +131,22 @@ export async function runNeoMode(options: RunNeoModeOptions): Promise<number> {
 		console.log(chalk.dim(`neo-tui: launching ${located.path} (source: ${located.source})`));
 	}
 
+	// Flag forwarding contract:
+	//   senpi --neo [senpi-flags...] -- [neo-tui-flags...]
+	// Everything BEFORE the `--` sentinel (minus `--neo`) is treated as
+	// senpi-backend args and routed to `senpi --mode rpc` via env. Anything
+	// AFTER the sentinel is passed verbatim to the `senpi-neo-tui` binary,
+	// which has its own clap parser for `--theme`, `--list-themes`,
+	// `--demo`, `--demo-seconds`, `--backend-bin`, `--backend-args`.
+	// This lets users keep typing the senpi CLI flags they already know
+	// while still being able to drive the neo TUI's own flags without a
+	// naming collision (`--theme` means different things on each side).
+	const { backend, neo: neoArgs } = splitNeoArgs(options.originalArgv);
+
 	// senpi runs as `node <senpiScript> <args>` so prepend the script to
 	// the arg vector; `--mode rpc` switches the child into the JSONL RPC
 	// server that the Rust TUI talks to.
-	const backendArgs = [options.senpiScript, ...options.originalArgv.filter((arg) => arg !== "--neo"), "--mode", "rpc"];
+	const backendArgs = [options.senpiScript, ...backend, "--mode", "rpc"];
 
 	const env = {
 		...process.env,
@@ -127,7 +154,7 @@ export async function runNeoMode(options: RunNeoModeOptions): Promise<number> {
 		SENPI_NEO_BACKEND_ARGS: JSON.stringify(backendArgs),
 	};
 
-	const child: ChildProcess = spawn(located.path, [], {
+	const child: ChildProcess = spawn(located.path, neoArgs, {
 		stdio: "inherit",
 		env,
 	});
