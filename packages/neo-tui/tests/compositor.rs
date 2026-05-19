@@ -49,7 +49,7 @@ impl Component for MockComponent {
     }
 }
 
-fn mock_component(
+const fn mock_component(
     name: &'static str,
     render_log: Arc<Mutex<Vec<&'static str>>>,
     dispatch_log: Arc<Mutex<Vec<&'static str>>>,
@@ -64,7 +64,7 @@ fn mock_component(
     }
 }
 
-fn key_event() -> CrosstermEvent {
+const fn key_event() -> CrosstermEvent {
     CrosstermEvent::Key(KeyEvent {
         code: KeyCode::Char('x'),
         modifiers: KeyModifiers::NONE,
