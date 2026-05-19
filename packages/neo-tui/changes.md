@@ -64,6 +64,16 @@ Oracle's sixth review of the PR #15 head found six remaining silent-failure path
 
 Total Rust test count is now 318 passing (was 310 after round 4 / 305 after round 3); eight new tests in `tests/app_loop.rs` cover Defects 1-5 plus inverse-contract guards for successful compaction and successful auto-retry to lock the "no chat noise on success" contract. Defects 6 and 7 are in async transport code and are verified by code review + the helper extraction (`handle_terminal_event` returns a typed outcome enum, so the drive loop's match exhaustively names every failure path). `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `npm run check`, and the coding-agent regression suites all green.
 
+## 2026-05-19 — Oracle round 7: `tui.select.*` outside an overlay surfaces a chat note
+
+Oracle's seventh review confirmed all six round-6 fixes (Ctrl+G chat note, `app.suspend` list entry, `message_end.errorMessage`, `CompactionEnd` failure surface, `AutoRetryEnd { success: false }` surface, terminal stream + stderr-reader I/O errors) and all three quality gates. It flagged one remaining silent path that the previous rounds had not caught:
+
+1. `tui.select.{up,down,pageUp,pageDown,confirm,cancel}` are bound in the bundled keymap and surfaced by the command palette (every keymap binding shows up there via `overlay/mod.rs`). The compositor's `synthesise_select_event` routes them to the active overlay's raw handler **when an overlay is open**, but with no overlay open they used to fall into the dispatcher's catch-all silent consume. Selecting `tui.select.up` from the palette closed it with no action and no feedback. Added a new `OVERLAY_SCOPED_SELECT_ACTIONS` constant, the `is_overlay_scoped_select_action` predicate, and the `App::note_overlay_only_action` helper that pushes a chat-system note explaining the chord only takes effect inside an overlay. The dispatcher now matches the predicate BEFORE the unimplemented-action arm so the message is correct ("only takes effect while an overlay is open" instead of the misleading "not yet wired").
+
+Regression: `tui_select_action_outside_overlay_visibly_notifies_user`.
+
+Total Rust test count is now 319 passing (was 318 after round 6). `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `npm run check` all green.
+
 ## 2026-05-19 — Oracle round 6: close six more Bug-3 silent paths
 
 Oracle's review of the round-5 HEAD (`35bbdece`) confirmed the spawn / writer / stdout-reader / picker / unimplemented-action fixes and the three gates (cargo test, clippy, fmt), but flagged six additional places where the "if there's an error, say so" contract still leaked through:

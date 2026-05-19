@@ -520,6 +520,23 @@ impl App {
         AppAction::Consumed(action_id.to_owned())
     }
 
+    /// Bug 3 (Oracle round 7): the `tui.select.*` family is bound in
+    /// the bundled keymap and exposed by the command palette, but it
+    /// only does useful work while an overlay is open - the
+    /// compositor's `synthesise_select_event` routes those ids to the
+    /// active overlay's raw handler. Selecting one from the palette
+    /// when no overlay is open used to fall into the catch-all silent
+    /// consume. Push a chat-system note that names the action and
+    /// explains the overlay scoping so the chord is visibly accounted
+    /// for. This is distinct from `note_unimplemented_action` because
+    /// these actions ARE wired - just only inside an overlay.
+    fn note_overlay_only_action(&mut self, action_id: &str) -> AppAction {
+        self.chat.push_system(format!(
+            "`{action_id}` only takes effect while an overlay (slash menu, command palette, model / theme picker, help) is open. Open an overlay first, then trigger this action.",
+        ));
+        AppAction::Consumed(action_id.to_owned())
+    }
+
     /// Bug 3 (Oracle round 6): `app.editor.external` returns
     /// `AppAction::ExternalEditor`, but `action_to_command` maps that
     /// variant to `None` - so Ctrl+G previously produced zero visible
@@ -652,6 +669,7 @@ impl App {
             }
             other if other.starts_with("neo.theme.set:") => self.apply_theme_selection(other),
             other if other.starts_with("neo.model.set:") => self.apply_model_selection(other),
+            other if is_overlay_scoped_select_action(other) => self.note_overlay_only_action(other),
             other if is_advertised_unimplemented_action(other) => self.note_unimplemented_action(other),
             _ => AppAction::Consumed(id.to_owned()),
         }
@@ -1107,6 +1125,27 @@ const ADVERTISED_BUT_UNIMPLEMENTED_ACTIONS: &[&str] = &[
 
 fn is_advertised_unimplemented_action(id: &str) -> bool {
     ADVERTISED_BUT_UNIMPLEMENTED_ACTIONS.contains(&id)
+}
+
+/// `tui.select.*` action ids that the bundled keymap + command
+/// palette advertise but that only take effect when an overlay's raw
+/// handler is consuming the synthetic key (see
+/// `synthesise_select_event`). Selecting one from the palette when no
+/// overlay is open used to be a silent no-op (Bug 3, Oracle round 7);
+/// listing them here lets the dispatcher push an explanatory chat
+/// note via [`App::note_overlay_only_action`] instead of dropping
+/// into the catch-all.
+const OVERLAY_SCOPED_SELECT_ACTIONS: &[&str] = &[
+    "tui.select.up",
+    "tui.select.down",
+    "tui.select.pageUp",
+    "tui.select.pageDown",
+    "tui.select.confirm",
+    "tui.select.cancel",
+];
+
+fn is_overlay_scoped_select_action(id: &str) -> bool {
+    OVERLAY_SCOPED_SELECT_ACTIONS.contains(&id)
 }
 
 fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {

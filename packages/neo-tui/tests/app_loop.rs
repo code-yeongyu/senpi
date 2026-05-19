@@ -360,6 +360,34 @@ fn ctrl_g_app_editor_external_pushes_visible_feedback_note() {
 }
 
 #[test]
+fn tui_select_action_outside_overlay_visibly_notifies_user() {
+    // Oracle round 7 defect: `tui.select.{up,down,pageUp,pageDown,
+    // confirm,cancel}` are advertised in the bundled keymap +
+    // command palette but only do useful work while an overlay is
+    // open (the compositor's `synthesise_select_event` routes them
+    // to the active overlay's raw handler). Without an overlay the
+    // dispatcher previously dropped them into the catch-all silent
+    // consume - selecting `tui.select.up` from the palette produced
+    // zero visible effect. Surface a chat-system note explaining the
+    // overlay scoping so the chord is visibly accounted for.
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+    let action = app.execute_action_for_tests("tui.select.up");
+    assert!(matches!(action, AppAction::Consumed(_)));
+    assert!(
+        app.chat.messages.len() > messages_before,
+        "tui.select.* outside an overlay must push a visible chat note",
+    );
+    let last = app.chat.messages.last().expect("chat message exists");
+    assert_eq!(last.role, Role::System);
+    assert!(
+        last.body.contains("tui.select.up") && last.body.to_lowercase().contains("overlay"),
+        "chat body must name the action and explain the overlay scoping, got {:?}",
+        last.body,
+    );
+}
+
+#[test]
 fn ctrl_z_app_suspend_visibly_notifies_user() {
     // Oracle round 6: `app.suspend` (Ctrl+Z) is advertised in the
     // bundled keymap and exposed via the command palette, but the
