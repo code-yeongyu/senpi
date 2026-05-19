@@ -74,6 +74,38 @@ Regression: `tui_select_action_outside_overlay_visibly_notifies_user`.
 
 Total Rust test count is now 319 passing (was 318 after round 6). `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `npm run check` all green.
 
+## 2026-05-19 — Oracle round 8: `neo.slash.open` and `tui.input.tab` outside their contexts
+
+Oracle's eighth review of HEAD `8ac34409` confirmed all seven round-6 / round-7 fixes and the three quality gates, then surfaced two more silent paths that the previous rounds had not caught:
+
+1. `neo.slash.open` (`/`) is bound in the bundled keymap and exposed by the command palette (every keymap binding shows up there via `PaletteOverlay::from_keymap`). The raw key path in `handle_key` opens the slash overlay only when the user types `/` with an empty Input-focus buffer (so mid-prompt `/` inserts literally). When the action is dispatched THROUGH `execute_action` (the palette path), there was no arm and it fell into the catch-all silent consume. Selecting `/help` from the palette closed the palette with no slash overlay and no chat note. New `App::open_slash_overlay` helper opens `Overlay::Slash(SlashOverlay::new())` unconditionally; the palette explicitly picked the action, so the buffer-empty precondition no longer applies.
+
+2. `tui.input.tab` (`tab`) is bound in the keymap and surfaced by the palette. `try_autocomplete_action` handles it ONLY when an autocomplete popup is visible; with no popup it returned `None` and the dispatcher fell into the catch-all silent consume. New `App::note_autocomplete_only_action` helper pushes a chat-system note: `` `tui.input.tab` only takes effect while an autocomplete popup is showing. Type `@` for path completion or `/` for slash commands first. `` (mirrors the `note_overlay_only_action` shape from round 7).
+
+Cleanup (per Oracle's audit recommendation): removed the dead `"app.message.followUp"` entry from `ADVERTISED_BUT_UNIMPLEMENTED_ACTIONS`. The explicit `execute_action` arm has always shadowed it - the list entry was misleading. Replaced with a comment explaining the precedence so future auditors do not re-add it.
+
+Refactor: extracted `App::open_slash_overlay`, `App::apply_follow_up_action`, `App::apply_submit_action` helpers from `execute_action` to keep that function under clippy's 100-line `too_many_lines` ceiling. 1:1 with their inline equivalents, no behavior change.
+
+Tests added (TDD red-then-green):
+- `neo_slash_open_dispatched_from_palette_opens_slash_overlay` (drives `neo.slash.open` via `execute_action_for_tests`, asserts `Overlay::Slash` opens).
+- `tui_input_tab_outside_autocomplete_visibly_notifies_user` (drives `tui.input.tab` outside any autocomplete, asserts chat-system note mentions the action id and "autocomplete"/"popup").
+
+Oracle confirmed via an exhaustive walk of `assets/keymaps/default.json` that the only remaining class (E) defect (raw-handler-only path) is `neo.slash.open`. No class (F) orphans found. Every advertised default keybinding now routes to one of: real behavior, `note_unimplemented_action`, `note_overlay_only_action`, `note_autocomplete_only_action`, or `apply_*` overlay-open / message-action helpers.
+
+Total Rust test count is now 321 passing (was 319 after round 7). `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `npm run check` (897 files) all green.
+
+## 2026-05-19 — Oracle round 8: `neo.slash.open` + `tui.input.tab` outside their contexts
+
+Oracle's eighth review of the round-7 commit (`8ac34409`) confirmed the `tui.select.*` fix and all three gates, then flagged the next-most-similar leak: `neo.slash.open` was only handled in the raw key path (gated on Input focus + empty buffer for the mid-prompt `/` literal-insert behavior), so dispatching it through `execute_action` (i.e. via the command palette) fell into the catch-all silent consume. A follow-up classification audit also surfaced `tui.input.tab`, which `try_autocomplete_action` only consumes when an autocomplete popup is open — outside that context it landed in the catch-all too.
+
+1. `neo.slash.open` dispatched via `execute_action` now opens the slash overlay unconditionally via the new `App::open_slash_overlay` helper. The palette/slash-menu path can no longer leave the user with a closed palette and no slash overlay. Regression: `neo_slash_open_dispatched_from_palette_opens_slash_overlay`.
+2. `tui.input.tab` without an active autocomplete popup now pushes a chat-system note via the new `App::note_autocomplete_only_action` helper (modeled on `note_overlay_only_action`): `\`tui.input.tab\` only takes effect while an autocomplete popup is showing. Type \`@\` for path completion or \`/\` for slash commands first.` Regression: `tui_input_tab_outside_autocomplete_visibly_notifies_user`.
+3. Cleanup: removed the dead `\"app.message.followUp\"` entry from `ADVERTISED_BUT_UNIMPLEMENTED_ACTIONS`. The explicit `execute_action` arm at line 645 handles it as a real `AppAction::FollowUp`, so the list entry was shadowed and audit-misleading. Added an inline comment explaining the exclusion to prevent future drive-by re-adds.
+
+Refactor to stay under clippy's per-fn line ceiling: extracted `apply_follow_up_action`, `apply_submit_action`, and `open_slash_overlay` from `execute_action`. The dispatcher now reads as a flat router of arms to small named helpers.
+
+Total Rust test count is now 321 passing (was 319 after round 7). `cargo fmt --check`, `cargo clippy --package senpi-neo-tui --all-targets -- -D warnings`, and `npm run check` (897 files) all green.
+
 ## 2026-05-19 — Oracle round 6: close six more Bug-3 silent paths
 
 Oracle's review of the round-5 HEAD (`35bbdece`) confirmed the spawn / writer / stdout-reader / picker / unimplemented-action fixes and the three gates (cargo test, clippy, fmt), but flagged six additional places where the "if there's an error, say so" contract still leaked through:

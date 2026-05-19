@@ -537,6 +537,68 @@ impl App {
         AppAction::Consumed(action_id.to_owned())
     }
 
+    /// Bug 3 (Oracle round 8): the raw key path at `handle_key` only
+    /// opens the slash overlay when the user types `/` with an empty
+    /// Input-focus buffer (so mid-prompt `/` inserts literally). When
+    /// the action is dispatched THROUGH `execute_action` (the
+    /// command palette path) the user explicitly chose it - the
+    /// buffer-empty precondition is moot. Open the overlay
+    /// unconditionally. Extracted into a helper so the dispatcher
+    /// stays under clippy's per-fn line ceiling.
+    fn open_slash_overlay(&mut self, action_id: &str) -> AppAction {
+        self.overlay = Some(Overlay::Slash(SlashOverlay::new()));
+        AppAction::Consumed(action_id.to_owned())
+    }
+
+    /// Drain the input buffer into an `AppAction::FollowUp` for the
+    /// run loop to queue against the agent. Extracted from
+    /// `execute_action` to keep that function under clippy's per-fn
+    /// line ceiling.
+    fn apply_follow_up_action(&mut self) -> AppAction {
+        let text = self.input.take_buffer();
+        if !text.is_empty() {
+            self.input.push_history(&text);
+        }
+        self.clear_autocomplete();
+        AppAction::FollowUp(text)
+    }
+
+    /// Drain the input buffer into an `AppAction::SubmitPrompt` and
+    /// push a `Role::User` chat bubble immediately so the UI does not
+    /// sit at `idle` during the LLM round-trip window. Extracted from
+    /// `execute_action` to keep that function under clippy's per-fn
+    /// line ceiling.
+    fn apply_submit_action(&mut self) -> AppAction {
+        let text = self.input.take_buffer();
+        if !text.is_empty() {
+            self.input.push_history(&text);
+            self.chat.messages.push(Message {
+                role: Role::User,
+                body: text.clone(),
+                tool: None,
+            });
+            self.footer.status = Status::Busy;
+            self.footer.status_label = "waiting".into();
+        }
+        self.clear_autocomplete();
+        AppAction::SubmitPrompt(text)
+    }
+
+    /// Bug 3 (Oracle round 8): `tui.input.tab` is bound to `tab` in
+    /// the bundled keymap and exposed by the command palette. The
+    /// chord IS wired - `try_autocomplete_action` handles it when an
+    /// autocomplete popup is visible. But with no popup it used to
+    /// fall into the catch-all silent consume. Mirror the
+    /// `note_overlay_only_action` shape: push a chat-system note
+    /// that names the action and explains the autocomplete-scoping
+    /// so the user knows why their tab keystroke produced nothing.
+    fn note_autocomplete_only_action(&mut self, action_id: &str) -> AppAction {
+        self.chat.push_system(format!(
+            "`{action_id}` only takes effect while an autocomplete popup is showing. Type `@` for path completion or `/` for slash commands first.",
+        ));
+        AppAction::Consumed(action_id.to_owned())
+    }
+
     /// Bug 3 (Oracle round 6): `app.editor.external` returns
     /// `AppAction::ExternalEditor`, but `action_to_command` maps that
     /// variant to `None` - so Ctrl+G previously produced zero visible
@@ -614,33 +676,8 @@ impl App {
                 AppAction::ToggleToolsExpanded
             }
             "app.editor.external" => self.apply_external_editor_action(id),
-            "app.message.followUp" => {
-                let text = self.input.take_buffer();
-                if !text.is_empty() {
-                    self.input.push_history(&text);
-                }
-                self.clear_autocomplete();
-                AppAction::FollowUp(text)
-            }
-            "tui.input.submit" => {
-                let text = self.input.take_buffer();
-                if !text.is_empty() {
-                    self.input.push_history(&text);
-                    self.chat.messages.push(Message {
-                        role: Role::User,
-                        body: text.clone(),
-                        tool: None,
-                    });
-                    // Reflect the submit immediately so the UI doesn't
-                    // sit at `idle` for the round-trip window before the
-                    // first AgentStart event arrives. apply_event will
-                    // overwrite the label as soon as real events flow.
-                    self.footer.status = Status::Busy;
-                    self.footer.status_label = "waiting".into();
-                }
-                self.clear_autocomplete();
-                AppAction::SubmitPrompt(text)
-            }
+            "app.message.followUp" => self.apply_follow_up_action(),
+            "tui.input.submit" => self.apply_submit_action(),
             "tui.input.newLine" => {
                 self.input.insert_newline();
                 self.refresh_autocomplete();
@@ -667,6 +704,8 @@ impl App {
                 self.overlay = Some(Overlay::ThemePicker(ThemePickerOverlay::new(&self.theme.name)));
                 AppAction::OpenThemePicker
             }
+            "neo.slash.open" => self.open_slash_overlay(id),
+            "tui.input.tab" => self.note_autocomplete_only_action(id),
             other if other.starts_with("neo.theme.set:") => self.apply_theme_selection(other),
             other if other.starts_with("neo.model.set:") => self.apply_model_selection(other),
             other if is_overlay_scoped_select_action(other) => self.note_overlay_only_action(other),
@@ -1115,7 +1154,12 @@ const ADVERTISED_BUT_UNIMPLEMENTED_ACTIONS: &[&str] = &[
     "app.models.toggleProvider",
     "app.models.reorderUp",
     "app.models.reorderDown",
-    "app.message.followUp",
+    // NOTE: `app.message.followUp` is intentionally NOT here - it is
+    // a fully implemented explicit `execute_action` arm that drains
+    // the input buffer into an `AppAction::FollowUp`. Listing it
+    // here would route it through `note_unimplemented_action` and
+    // shadow the real behavior. Oracle round 8 audit confirmed the
+    // explicit arm wins, but the dead list entry was misleading.
     "app.message.dequeue",
     "app.clipboard.pasteImage",
     "neo.sidebar.toggle",

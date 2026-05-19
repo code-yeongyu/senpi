@@ -360,6 +360,60 @@ fn ctrl_g_app_editor_external_pushes_visible_feedback_note() {
 }
 
 #[test]
+fn neo_slash_open_dispatched_from_palette_opens_slash_overlay() {
+    // Oracle round 8 defect: `neo.slash.open` is bound to `/` in the
+    // bundled keymap and surfaced by the command palette via
+    // `PaletteOverlay::from_keymap`. The raw key path at
+    // `app/mod.rs:362` only opens the slash overlay when the user
+    // types `/` with an empty Input-focus buffer. When the action
+    // is dispatched THROUGH `execute_action` (the palette path) it
+    // had no arm and fell into the silent catch-all - selecting
+    // `neo.slash.open` from the palette closed the palette with no
+    // slash overlay and no feedback. Bug 3: surface an explicit
+    // overlay open when the action is dispatched directly, since
+    // the user explicitly picked it from a list.
+    let mut app = fresh_app();
+    let action = app.execute_action_for_tests("neo.slash.open");
+    assert!(
+        matches!(action, AppAction::Consumed(_)),
+        "neo.slash.open dispatched directly must produce a Consumed action, got {action:?}",
+    );
+    assert!(
+        matches!(app.overlay, Some(Overlay::Slash(_))),
+        "neo.slash.open dispatched from the palette must open the slash overlay, got {:?}",
+        app.overlay,
+    );
+}
+
+#[test]
+fn tui_input_tab_outside_autocomplete_visibly_notifies_user() {
+    // Oracle round 8 defect: `tui.input.tab` is bound to `tab` in
+    // the bundled keymap and surfaced by the command palette.
+    // `try_autocomplete_action` handles it ONLY when an autocomplete
+    // popup is present; with no popup the action fell into the
+    // catch-all silent consume. Bug 3: surface a chat-system note
+    // explaining the autocomplete scoping so the chord is visibly
+    // accounted for.
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+    let action = app.execute_action_for_tests("tui.input.tab");
+    assert!(matches!(action, AppAction::Consumed(_)));
+    assert!(
+        app.chat.messages.len() > messages_before,
+        "tui.input.tab outside an autocomplete popup must push a visible chat note",
+    );
+    let last = app.chat.messages.last().expect("chat message exists");
+    assert_eq!(last.role, Role::System);
+    assert!(
+        last.body.contains("tui.input.tab")
+            && (last.body.to_lowercase().contains("autocomplete")
+                || last.body.to_lowercase().contains("popup")),
+        "chat body must name the action and explain the autocomplete scoping, got {:?}",
+        last.body,
+    );
+}
+
+#[test]
 fn tui_select_action_outside_overlay_visibly_notifies_user() {
     // Oracle round 7 defect: `tui.select.{up,down,pageUp,pageDown,
     // confirm,cancel}` are advertised in the bundled keymap +
