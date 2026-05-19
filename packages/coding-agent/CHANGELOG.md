@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Fixed OpenAI remote compaction to time out nonresponsive native compact routes and fall back to local compaction.
+
 ## [2026.5.19] - 2026-05-19
 
 ### Fixed

@@ -128,6 +128,7 @@ type OpenAiResponsesStreamRunner = (
 type OpenAiRemoteCompactionDependencies = {
 	fetch?: typeof fetch;
 	now?: () => number;
+	remoteTimeoutMs?: number;
 	streamRunner?: OpenAiResponsesStreamRunner;
 };
 
@@ -195,6 +196,9 @@ type OpenAiRemoteCompactionEvent =
 	  };
 
 type EmitCompactionEvent = (event: OpenAiRemoteCompactionEvent) => void;
+
+const OPENAI_REMOTE_COMPACTION_TIMEOUT_MS = 15_000;
+const REMOTE_COMPACTION_TIMEOUT_REASON = "remote-compaction-timeout";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -524,6 +528,53 @@ function createHeaders(auth: { apiKey?: string; headers?: Record<string, string>
 	return headers.has("authorization") ? headers : undefined;
 }
 
+async function runWithRemoteTimeout<T>(options: {
+	signal: AbortSignal;
+	timeoutMs: number;
+	run: (signal: AbortSignal) => Promise<T>;
+	onTimeout: () => void;
+}): Promise<T | undefined> {
+	if (options.signal.aborted) {
+		throw new Error("Request was aborted");
+	}
+
+	const controller = new AbortController();
+	let timedOut = false;
+	const abortFromSource = () => controller.abort();
+	options.signal.addEventListener("abort", abortFromSource, { once: true });
+
+	let timeout: ReturnType<typeof setTimeout> | undefined;
+	const timeoutPromise = new Promise<"timeout">((resolve) => {
+		timeout = setTimeout(() => {
+			timedOut = true;
+			controller.abort();
+			resolve("timeout");
+		}, options.timeoutMs);
+		const unref = timeout.unref;
+		if (unref) unref.call(timeout);
+	});
+
+	const operation = options.run(controller.signal);
+	try {
+		const result = await Promise.race([operation, timeoutPromise]);
+		if (result === "timeout") {
+			options.onTimeout();
+			operation.catch(() => undefined);
+			return undefined;
+		}
+		return result;
+	} catch (error) {
+		if (timedOut && !options.signal.aborted) {
+			options.onTimeout();
+			return undefined;
+		}
+		throw error;
+	} finally {
+		if (timeout) clearTimeout(timeout);
+		options.signal.removeEventListener("abort", abortFromSource);
+	}
+}
+
 function createOpenAiResponsesStreamCompactionInput(request: OpenAiRemoteCompactionRequest): OpenAiRemoteInputItem[] {
 	return [...request.body.input, { type: "context_compaction" } satisfies OpenAiContextCompactionTriggerItem];
 }
@@ -817,6 +868,7 @@ export async function runOpenAiRemoteCompaction(
 		});
 		return undefined;
 	}
+	const remoteTimeoutMs = dependencies.remoteTimeoutMs ?? OPENAI_REMOTE_COMPACTION_TIMEOUT_MS;
 
 	if (supportsOpenAiResponsesWebSocket(requestModel)) {
 		emit?.({
@@ -829,17 +881,32 @@ export async function runOpenAiRemoteCompaction(
 			transport: "websocket",
 		});
 		try {
-			const result = await runOpenAiResponsesStreamCompaction({
-				model: requestModel,
-				auth,
-				firstKeptEntryId: event.preparation.firstKeptEntryId,
-				now: dependencies.now ?? Date.now,
-				request,
+			const result = await runWithRemoteTimeout({
 				signal: event.signal,
-				streamRunner:
-					dependencies.streamRunner ??
-					((streamModel, context, options) => streamSimple(streamModel, context, options)),
-				systemPrompt: ctx.getSystemPrompt(),
+				timeoutMs: remoteTimeoutMs,
+				onTimeout: () =>
+					emit?.({
+						version: 1,
+						action: "remote_fallback",
+						route: "builtin.compaction.openai_remote",
+						requestId: event.requestId,
+						modelId: requestModel.id,
+						reason: REMOTE_COMPACTION_TIMEOUT_REASON,
+						transport: "websocket",
+					}),
+				run: (signal) =>
+					runOpenAiResponsesStreamCompaction({
+						model: requestModel,
+						auth,
+						firstKeptEntryId: event.preparation.firstKeptEntryId,
+						now: dependencies.now ?? Date.now,
+						request,
+						signal,
+						streamRunner:
+							dependencies.streamRunner ??
+							((streamModel, context, options) => streamSimple(streamModel, context, options)),
+						systemPrompt: ctx.getSystemPrompt(),
+					}),
 			});
 			if (result) {
 				emit?.({
@@ -890,15 +957,30 @@ export async function runOpenAiRemoteCompaction(
 		return undefined;
 	}
 
-	return runOpenAiCompactEndpointCompaction({
-		fetchImpl: dependencies.fetch ?? fetch,
-		headers,
-		model: requestModel,
-		request,
-		requestId: event.requestId,
+	return runWithRemoteTimeout({
 		signal: event.signal,
-		firstKeptEntryId: event.preparation.firstKeptEntryId,
-		emit,
+		timeoutMs: remoteTimeoutMs,
+		onTimeout: () =>
+			emit?.({
+				version: 1,
+				action: "remote_fallback",
+				route: "builtin.compaction.openai_remote",
+				requestId: event.requestId,
+				modelId: requestModel.id,
+				reason: REMOTE_COMPACTION_TIMEOUT_REASON,
+				transport: "compact-endpoint",
+			}),
+		run: (signal) =>
+			runOpenAiCompactEndpointCompaction({
+				fetchImpl: dependencies.fetch ?? fetch,
+				headers,
+				model: requestModel,
+				request,
+				requestId: event.requestId,
+				signal,
+				firstKeptEntryId: event.preparation.firstKeptEntryId,
+				emit,
+			}),
 	});
 }
 

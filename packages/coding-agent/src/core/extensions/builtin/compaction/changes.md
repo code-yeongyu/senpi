@@ -1,5 +1,13 @@
 # Builtin compaction extension changes
 
+## OpenAI remote compaction timeout fallback (2026-05-19)
+
+- Added a bounded timeout around both OpenAI Responses WebSocket compaction and `/responses/compact` remote compaction.
+- When the remote route does not respond, the extension emits a `remote_fallback` event with `remote-compaction-timeout` and lets normal local compaction proceed.
+- This stays in `openai-remote.ts` because endpoint selection, timeout, and fallback are provider-native compaction policy, not core session lifecycle.
+
+Expected upstream conflict zones: `builtin/compaction/openai-remote.ts` around remote route execution and fallback events.
+
 ## OpenAI remote compact API path (2026-05-15)
 
 - Added `openai-remote.ts` as a builtin-extension module that can compact with OpenAI provider-native history when the

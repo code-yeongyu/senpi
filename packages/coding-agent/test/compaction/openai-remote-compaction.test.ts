@@ -272,6 +272,47 @@ describe("OpenAI remote compaction", () => {
 		]);
 	});
 
+	it("falls back when the compact endpoint does not respond before the remote timeout", async () => {
+		const emitted: unknown[] = [];
+		const compactOnlyModel = {
+			...OPENAI_MODEL,
+			baseUrl: "https://ccapi.example.com/v1",
+			compat: { supportsWebSocket: false },
+		} satisfies Model<"openai-responses">;
+		const ctx = {
+			model: compactOnlyModel,
+			serviceTier: undefined,
+			modelRegistry: {
+				getApiKeyAndHeaders: async () => ({ ok: true as const, apiKey: "test-key" }),
+			},
+			sessionManager: { getSessionId: () => "session-1" },
+			getSystemPrompt: () => "You are senpi.",
+		};
+
+		const result = await runOpenAiRemoteCompaction(
+			ctx,
+			compactionEvent(openAiBranch()),
+			(event) => emitted.push(event),
+			{
+				fetch: (_url, init) =>
+					new Promise<Response>((_resolve, reject) => {
+						init?.signal?.addEventListener("abort", () => reject(new Error("fetch aborted")), { once: true });
+					}),
+				remoteTimeoutMs: 1,
+			},
+		);
+
+		expect(result).toBeUndefined();
+		expect(emitted).toMatchObject([
+			{ action: "remote_started", transport: "compact-endpoint" },
+			{
+				action: "remote_fallback",
+				transport: "compact-endpoint",
+				reason: "remote-compaction-timeout",
+			},
+		]);
+	});
+
 	it("falls back when a non-OpenAI assistant message is present", () => {
 		const branch = openAiBranch();
 		branch.splice(
