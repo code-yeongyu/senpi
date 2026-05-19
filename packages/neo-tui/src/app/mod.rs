@@ -5,14 +5,17 @@
 //! incoming keys through the keymap, mutates per-component state, and
 //! forwards user intents to the RPC backend.
 
-use std::{io::Stdout, time::Duration};
+use std::{
+    io::{Stdout, Write},
+    time::Duration,
+};
 
 use color_eyre::eyre::Result;
 use crossterm::{
     event::{
         DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
         Event as CrosstermEvent, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
-        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -38,6 +41,7 @@ use crate::{
         command::Command,
         event::Event as RpcEvent,
     },
+    term::TerminalCaps,
     theme::{self, ResolvedTheme},
 };
 
@@ -126,16 +130,7 @@ impl App {
                 branch: None,
             },
             chat: ChatState::default(),
-            input: InputState {
-                buffer: String::new(),
-                placeholder: "Ask senpi anything…".into(),
-                mode_label: "INPUT".into(),
-                focus_pulse: 0,
-                cursor: 0,
-                preferred_column: None,
-                kill_ring: Vec::new(),
-                undo_stack: Vec::new(),
-            },
+            input: InputState::new("Ask senpi anything…", "INPUT"),
             footer: FooterState {
                 status: Status::Idle,
                 status_label: "idle".into(),
@@ -275,6 +270,7 @@ impl App {
             "tui.editor.yank" => self.input.yank(),
             "tui.editor.yankPop" => self.input.yank_pop(),
             "tui.editor.undo" => self.input.undo(),
+            "tui.editor.newLine" => self.input.insert_newline(),
             _ => return None,
         }
         Some(AppAction::Consumed(id.to_owned()))
@@ -548,16 +544,7 @@ impl App {
             theme: config.theme,
             header: config.header,
             chat: config.initial_chat,
-            input: InputState {
-                buffer: String::new(),
-                placeholder: config.input_placeholder,
-                mode_label: "INPUT".into(),
-                focus_pulse: 0,
-                cursor: 0,
-                preferred_column: None,
-                kill_ring: Vec::new(),
-                undo_stack: Vec::new(),
-            },
+            input: InputState::new(config.input_placeholder, "INPUT"),
             footer: config.footer,
             thinking_visible: true,
             tools_expanded: true,
@@ -602,7 +589,12 @@ fn synthesise_select_event(action_id: &str) -> Option<KeyEvent> {
 }
 
 fn init_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
-    enable_raw_mode()?;
+    let caps = TerminalCaps::detect();
+    write_terminal_bytes(&caps.init_writes())?;
+    if let Err(err) = enable_raw_mode() {
+        let _ = write_terminal_bytes(&caps.cleanup_writes());
+        return Err(err.into());
+    }
     let mut stdout = std::io::stdout();
     if let Err(err) = execute!(stdout, EnterAlternateScreen) {
         let _ = disable_raw_mode();
@@ -624,10 +616,7 @@ fn init_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     // their original case). Terminals that ignore the escape silently
     // fall back to legacy key reporting, so we deliberately do not fail
     // the boot when this errors.
-    let _ = execute!(
-        stdout,
-        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
-    );
+    let _ = execute!(stdout, PushKeyboardEnhancementFlags(caps.kitty_keyboard_flags),);
     let backend = CrosstermBackend::new(stdout);
     match Terminal::new(backend) {
         Ok(term) => Ok(term),
@@ -645,12 +634,20 @@ fn init_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
 }
 
 fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+    let caps = TerminalCaps::detect();
     disable_raw_mode()?;
+    let _ = write_terminal_bytes(&caps.cleanup_writes());
     let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
     let _ = execute!(std::io::stdout(), DisableBracketedPaste);
     execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
     Ok(())
+}
+
+fn write_terminal_bytes(bytes: &[u8]) -> std::io::Result<()> {
+    let mut stdout = std::io::stdout();
+    stdout.write_all(bytes)?;
+    stdout.flush()
 }
 
 /// Spawn the RPC backend if `SENPI_NEO_BACKEND_BIN` is set in the
@@ -748,7 +745,7 @@ async fn drive(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: AppCon
                         // one undo-able operation; IME pastes of
                         // multi-grapheme CJK strings stay intact.
                         if matches!(app.focus, FocusMode::Input) {
-                            app.input.insert_str(&text);
+                            app.input.handle_paste(&text);
                         }
                     }
                     _ => {}
@@ -780,7 +777,8 @@ async fn drive(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: AppCon
 
 fn draw_app(frame: &mut Frame<'_>, app: &App) {
     let area = frame.area();
-    let line_count = app.input.buffer.lines().count().max(1);
+    let input_wrap_width = usize::from(area.width.saturating_sub(6).max(1));
+    let line_count = app.input.display_lines(input_wrap_width).len();
     // The sidebar shows demo metadata (todo list, file picker, etc.) and
     // is only wired in demo mode for now. In real `senpi --neo` runs we
     // keep the layout single-column so the chat reclaims the right edge

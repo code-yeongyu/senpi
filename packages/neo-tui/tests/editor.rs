@@ -30,7 +30,10 @@ fn editor_word_wrap_mixed_korean_latin_word_boundary() {
     input.insert_str(text);
 
     let lines = input.display_lines(20);
-    assert_eq!(lines, vec!["hello 한국어 world".to_string(), "testing".to_string()]);
+    assert_eq!(
+        lines,
+        vec!["hello 한국어 world".to_string(), "testing".to_string()]
+    );
     assert_eq!(lines.join(" "), text);
     assert!(lines.iter().any(|line| line.contains("한국어")));
     for line in lines {
@@ -53,7 +56,10 @@ fn editor_paste_marker_collapses_large_pastes() {
         displayed.contains("[paste #1 +15 lines]"),
         "missing paste marker in {displayed:?}",
     );
-    assert!(!displayed.contains("line 1"), "large paste content leaked into display");
+    assert!(
+        !displayed.contains("line 1"),
+        "large paste content leaked into display"
+    );
     assert_eq!(input.take_buffer(), pasted);
 }
 

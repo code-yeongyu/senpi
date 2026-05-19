@@ -50,6 +50,7 @@ const LEGACY_REGISTRY: &[(&str, &[&str])] = &[
     ("tui.editor.yank", &["ctrl+y"]),
     ("tui.editor.yankPop", &["alt+y"]),
     ("tui.editor.undo", &["ctrl+-"]),
+    ("tui.editor.newLine", &["shift+enter"]),
     ("tui.input.newLine", &["shift+enter"]),
     ("tui.input.submit", &["enter"]),
     ("tui.input.tab", &["tab"]),

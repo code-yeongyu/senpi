@@ -2,6 +2,8 @@
 //! render column so CJK / emoji / combining marks behave the way users
 //! expect.
 
+use std::ops::Range;
+
 use ratatui::{
     Frame,
     layout::Rect,
@@ -12,10 +14,36 @@ use ratatui::{
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::theme::{ResolvedTheme, Token};
+use crate::{
+    text::{slice_by_column, visible_width, wrap_text_with_ansi},
+    theme::{ResolvedTheme, Token},
+};
+
+const PASTE_MARKER_THRESHOLD: usize = 10;
+const HISTORY_MAX_ENTRIES: usize = 1_000;
+
+#[derive(Clone, Debug)]
+struct PasteSegment {
+    id: u32,
+    content: String,
+    lines: usize,
+    byte_range: Range<usize>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct History {
+    entries: Vec<String>,
+    cursor: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum PasteReplacement {
+    Marker,
+    Content,
+}
 
 /// Inputs to the input component.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct InputState {
     pub buffer: String,
     pub placeholder: String,
@@ -37,9 +65,120 @@ pub struct InputState {
     /// Snapshot history for `undo`. Pushed on every mutation that
     /// produces a user-visible change; popped by `tui.editor.undo`.
     pub undo_stack: Vec<(String, usize)>,
+    paste_segments: Vec<PasteSegment>,
+    next_paste_id: u32,
+    history: History,
+}
+
+impl Default for InputState {
+    fn default() -> Self {
+        Self {
+            buffer: String::new(),
+            placeholder: String::new(),
+            mode_label: String::new(),
+            focus_pulse: 0,
+            cursor: 0,
+            preferred_column: None,
+            kill_ring: Vec::new(),
+            undo_stack: Vec::new(),
+            paste_segments: Vec::new(),
+            next_paste_id: 1,
+            history: History::default(),
+        }
+    }
 }
 
 impl InputState {
+    pub fn new(placeholder: impl Into<String>, mode_label: impl Into<String>) -> Self {
+        Self {
+            placeholder: placeholder.into(),
+            mode_label: mode_label.into(),
+            ..Self::default()
+        }
+    }
+
+    #[must_use]
+    pub fn display_lines(&self, wrap_width: usize) -> Vec<String> {
+        wrap_display_text(&self.display_buffer(), wrap_width)
+    }
+
+    #[must_use]
+    pub fn cursor_visual_position(&self, wrap_width: usize) -> (usize, usize) {
+        let prefix = self.display_buffer_until(self.cursor);
+        let lines = wrap_display_text(&prefix, wrap_width);
+        let row = lines.len().saturating_sub(1);
+        let col = lines.last().map_or(0, |line| visible_width(line));
+        (row, col)
+    }
+
+    pub fn handle_paste(&mut self, text: &str) {
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        let lines = logical_line_count(&normalized);
+        if lines <= PASTE_MARKER_THRESHOLD {
+            self.insert_str(&normalized);
+            return;
+        }
+
+        self.snapshot();
+        let id = self.next_paste_id;
+        self.next_paste_id = self.next_paste_id.checked_add(1).unwrap_or(1);
+        let sentinel = paste_sentinel(id);
+        let start = self.cursor;
+        self.buffer.insert_str(self.cursor, &sentinel);
+        self.cursor += sentinel.len();
+        self.paste_segments.push(PasteSegment {
+            id,
+            content: normalized,
+            lines,
+            byte_range: start..self.cursor,
+        });
+        self.after_user_edit();
+    }
+
+    pub fn push_history(&mut self, text: &str) {
+        if text.is_empty() || self.history.entries.last().is_some_and(|entry| entry == text) {
+            return;
+        }
+        self.history.entries.push(text.to_string());
+        let excess = self.history.entries.len().saturating_sub(HISTORY_MAX_ENTRIES);
+        if excess > 0 {
+            self.history.entries.drain(..excess);
+        }
+        self.history.cursor = None;
+    }
+
+    #[must_use]
+    pub fn recall_prev_history(&mut self) -> Option<String> {
+        if self.history.entries.is_empty() || (!self.buffer.is_empty() && self.history.cursor.is_none()) {
+            return None;
+        }
+
+        let next = match self.history.cursor {
+            None => self.history.entries.len() - 1,
+            Some(0) => return None,
+            Some(cursor) => cursor - 1,
+        };
+        self.history.cursor = Some(next);
+        let entry = self.history.entries[next].clone();
+        self.replace_with_history_entry(&entry);
+        Some(entry)
+    }
+
+    #[must_use]
+    pub fn recall_next_history(&mut self) -> Option<String> {
+        let current = self.history.cursor?;
+        let next = current + 1;
+        if next >= self.history.entries.len() {
+            self.history.cursor = None;
+            return None;
+        }
+
+        self.history.cursor = Some(next);
+        let entry = self.history.entries[next].clone();
+        self.replace_with_history_entry(&entry);
+        Some(entry)
+    }
+
     /// Insert a single character at the cursor and advance by its
     /// UTF-8 byte length. CJK / emoji that arrive as a single `char`
     /// land cleanly because each grapheme is a single character; IMEs
@@ -49,7 +188,7 @@ impl InputState {
         self.snapshot();
         self.buffer.insert(self.cursor, ch);
         self.cursor += ch.len_utf8();
-        self.preferred_column = None;
+        self.after_user_edit();
     }
 
     pub fn insert_newline(&mut self) {
@@ -64,29 +203,48 @@ impl InputState {
         self.snapshot();
         self.buffer.insert_str(self.cursor, text);
         self.cursor += text.len();
-        self.preferred_column = None;
+        self.after_user_edit();
     }
 
     pub fn delete_char_backward(&mut self) {
+        if let Some(range) = self.paste_range_before_or_containing_cursor() {
+            self.snapshot();
+            self.buffer.replace_range(range.clone(), "");
+            self.cursor = range.start;
+            self.after_user_edit();
+            return;
+        }
         let Some(start) = self.prev_grapheme_boundary() else {
             return;
         };
         self.snapshot();
         self.buffer.replace_range(start..self.cursor, "");
         self.cursor = start;
-        self.preferred_column = None;
+        self.after_user_edit();
     }
 
     pub fn delete_char_forward(&mut self) {
+        if let Some(range) = self.paste_range_at_or_containing_cursor() {
+            self.snapshot();
+            self.buffer.replace_range(range.clone(), "");
+            self.cursor = range.start;
+            self.after_user_edit();
+            return;
+        }
         let Some(end) = self.next_grapheme_boundary() else {
             return;
         };
         self.snapshot();
         self.buffer.replace_range(self.cursor..end, "");
-        self.preferred_column = None;
+        self.after_user_edit();
     }
 
     pub fn cursor_left(&mut self) {
+        if let Some(range) = self.paste_range_before_or_containing_cursor() {
+            self.cursor = range.start;
+            self.preferred_column = None;
+            return;
+        }
         let Some(start) = self.prev_grapheme_boundary() else {
             return;
         };
@@ -95,6 +253,11 @@ impl InputState {
     }
 
     pub fn cursor_right(&mut self) {
+        if let Some(range) = self.paste_range_at_or_containing_cursor() {
+            self.cursor = range.end;
+            self.preferred_column = None;
+            return;
+        }
         let Some(end) = self.next_grapheme_boundary() else {
             return;
         };
@@ -129,6 +292,9 @@ impl InputState {
             .find(|(_, w)| w.chars().any(char::is_alphanumeric))
             .map(|(i, _)| i);
         self.cursor = target.unwrap_or_else(|| self.prev_grapheme_boundary().unwrap_or(0));
+        if let Some(range) = self.paste_range_containing_offset(self.cursor) {
+            self.cursor = range.start;
+        }
         self.preferred_column = None;
     }
 
@@ -140,6 +306,9 @@ impl InputState {
             .find(|(_, w)| w.chars().any(char::is_alphanumeric))
             .map(|(i, w)| self.cursor + i + w.len());
         self.cursor = target.unwrap_or_else(|| self.next_grapheme_boundary().unwrap_or(self.buffer.len()));
+        if let Some(range) = self.paste_range_containing_offset(self.cursor) {
+            self.cursor = range.end;
+        }
         self.preferred_column = None;
     }
 
@@ -153,6 +322,7 @@ impl InputState {
         let killed = self.buffer[self.cursor..end].to_string();
         self.buffer.replace_range(self.cursor..end, "");
         self.kill_ring.push(killed);
+        self.after_user_edit();
     }
 
     pub fn delete_word_forward(&mut self) {
@@ -166,6 +336,7 @@ impl InputState {
         self.buffer.replace_range(start..self.cursor, "");
         self.cursor = start;
         self.kill_ring.push(killed);
+        self.after_user_edit();
     }
 
     pub fn delete_to_line_start(&mut self) {
@@ -178,7 +349,7 @@ impl InputState {
         self.buffer.replace_range(line_start..self.cursor, "");
         self.cursor = line_start;
         self.kill_ring.push(killed);
-        self.preferred_column = None;
+        self.after_user_edit();
     }
 
     pub fn delete_to_line_end(&mut self) {
@@ -194,6 +365,7 @@ impl InputState {
         let killed = self.buffer[self.cursor..end].to_string();
         self.buffer.replace_range(self.cursor..end, "");
         self.kill_ring.push(killed);
+        self.after_user_edit();
     }
 
     pub fn clear(&mut self) {
@@ -203,14 +375,18 @@ impl InputState {
         self.snapshot();
         self.kill_ring.push(std::mem::take(&mut self.buffer));
         self.cursor = 0;
-        self.preferred_column = None;
+        self.after_user_edit();
     }
 
     pub fn take_buffer(&mut self) -> String {
+        let text = self.expanded_buffer();
+        self.buffer.clear();
+        self.paste_segments.clear();
         self.cursor = 0;
         self.preferred_column = None;
         self.undo_stack.clear();
-        std::mem::take(&mut self.buffer)
+        self.history.cursor = None;
+        text
     }
 
     fn snapshot(&mut self) {
@@ -220,9 +396,126 @@ impl InputState {
         }
     }
 
+    fn after_user_edit(&mut self) {
+        self.preferred_column = None;
+        self.history.cursor = None;
+        self.refresh_paste_ranges();
+    }
+
+    fn replace_with_history_entry(&mut self, entry: &str) {
+        self.buffer.clear();
+        self.buffer.push_str(entry);
+        self.cursor = self.buffer.len();
+        self.preferred_column = None;
+        self.paste_segments.clear();
+    }
+
+    fn refresh_paste_ranges(&mut self) {
+        let buffer = self.buffer.as_str();
+        for segment in &mut self.paste_segments {
+            let sentinel = paste_sentinel(segment.id);
+            segment.byte_range = buffer
+                .find(&sentinel)
+                .map_or(0..0, |start| start..start + sentinel.len());
+        }
+    }
+
+    fn paste_range_before_or_containing_cursor(&self) -> Option<Range<usize>> {
+        self.paste_segments
+            .iter()
+            .find(|segment| {
+                segment.byte_range.start < segment.byte_range.end
+                    && segment.byte_range.start < self.cursor
+                    && self.cursor <= segment.byte_range.end
+            })
+            .map(|segment| segment.byte_range.clone())
+    }
+
+    fn paste_range_at_or_containing_cursor(&self) -> Option<Range<usize>> {
+        self.paste_segments
+            .iter()
+            .find(|segment| {
+                segment.byte_range.start < segment.byte_range.end
+                    && segment.byte_range.start <= self.cursor
+                    && self.cursor < segment.byte_range.end
+            })
+            .map(|segment| segment.byte_range.clone())
+    }
+
+    fn paste_range_containing_offset(&self, offset: usize) -> Option<Range<usize>> {
+        self.paste_segments
+            .iter()
+            .find(|segment| {
+                segment.byte_range.start < segment.byte_range.end
+                    && segment.byte_range.start < offset
+                    && offset < segment.byte_range.end
+            })
+            .map(|segment| segment.byte_range.clone())
+    }
+
+    fn display_buffer(&self) -> String {
+        self.buffer_with_paste_replacements(self.buffer.len(), PasteReplacement::Marker)
+    }
+
+    fn display_buffer_until(&self, end: usize) -> String {
+        self.buffer_with_paste_replacements(end, PasteReplacement::Marker)
+    }
+
+    fn expanded_buffer(&self) -> String {
+        self.buffer_with_paste_replacements(self.buffer.len(), PasteReplacement::Content)
+    }
+
+    fn buffer_with_paste_replacements(&self, end: usize, replacement: PasteReplacement) -> String {
+        let end = end.min(self.buffer.len());
+        let mut result = String::new();
+        let mut cursor = 0usize;
+
+        for (range, segment) in self.present_paste_segments() {
+            if range.start >= end {
+                break;
+            }
+            if range.start < cursor {
+                continue;
+            }
+            result.push_str(&self.buffer[cursor..range.start.min(end)]);
+            if range.end <= end {
+                match replacement {
+                    PasteReplacement::Marker => result.push_str(&paste_marker(segment.id, segment.lines)),
+                    PasteReplacement::Content => result.push_str(&segment.content),
+                }
+                cursor = range.end;
+            } else {
+                if matches!(replacement, PasteReplacement::Marker) {
+                    result.push_str(&paste_marker(segment.id, segment.lines));
+                }
+                cursor = end;
+            }
+        }
+
+        if cursor < end {
+            result.push_str(&self.buffer[cursor..end]);
+        }
+        result
+    }
+
+    fn present_paste_segments(&self) -> Vec<(Range<usize>, &PasteSegment)> {
+        let mut segments = Vec::new();
+        for segment in &self.paste_segments {
+            let sentinel = paste_sentinel(segment.id);
+            if let Some(start) = self.buffer.find(&sentinel) {
+                segments.push((start..start + sentinel.len(), segment));
+            }
+        }
+        segments.sort_by_key(|(range, _)| range.start);
+        segments
+    }
+
     fn prev_grapheme_boundary(&self) -> Option<usize> {
         if self.cursor == 0 {
             return None;
+        }
+        if let Some(range) = self.paste_range_before_or_containing_cursor() {
+            return Some(range.start);
         }
         self.buffer[..self.cursor]
             .grapheme_indices(true)
@@ -233,6 +526,9 @@ impl InputState {
     fn next_grapheme_boundary(&self) -> Option<usize> {
         if self.cursor >= self.buffer.len() {
             return None;
+        }
+        if let Some(range) = self.paste_range_at_or_containing_cursor() {
+            return Some(range.end);
         }
         self.buffer[self.cursor..]
             .grapheme_indices(true)
@@ -245,8 +541,9 @@ impl InputState {
     /// terminal cells. CJK / emoji contribute 2 cells each so the
     /// caret lands on the same column the user can see.
     fn display_column(&self) -> usize {
-        let line_start = self.buffer[..self.cursor].rfind('\n').map_or(0, |i| i + 1);
-        UnicodeWidthStr::width(&self.buffer[line_start..self.cursor])
+        let prefix = self.display_buffer_until(self.cursor);
+        let line_start = prefix.rfind('\n').map_or(0, |i| i + 1);
+        visible_width(&prefix[line_start..])
     }
 
     fn nth_line_start(&self, target_line: usize) -> Option<usize> {
@@ -330,6 +627,7 @@ impl InputState {
             self.snapshot();
             self.buffer.insert_str(self.cursor, &text);
             self.cursor += text.len();
+            self.after_user_edit();
         }
     }
 
@@ -337,7 +635,9 @@ impl InputState {
         if self.kill_ring.len() < 2 {
             return;
         }
-        let last = self.kill_ring.pop().expect("checked len >= 2");
+        let Some(last) = self.kill_ring.pop() else {
+            return;
+        };
         let prev = self.kill_ring.last().cloned().unwrap_or_default();
         if self.buffer[..self.cursor].ends_with(&last) {
             let start = self.cursor - last.len();
@@ -348,6 +648,7 @@ impl InputState {
             self.cursor += prev.len();
         }
         self.kill_ring.insert(0, last);
+        self.after_user_edit();
     }
 
     pub fn undo(&mut self) {
@@ -355,8 +656,58 @@ impl InputState {
             self.buffer = buf;
             self.cursor = cur;
             self.preferred_column = None;
+            self.history.cursor = None;
+            self.refresh_paste_ranges();
         }
     }
+}
+
+fn logical_line_count(text: &str) -> usize {
+    if text.is_empty() {
+        0
+    } else {
+        text.chars().filter(|&ch| ch == '\n').count() + 1
+    }
+}
+
+fn paste_sentinel(id: u32) -> String {
+    format!("\0PASTE-{id}\0")
+}
+
+fn paste_marker(id: u32, lines: usize) -> String {
+    format!("[paste #{id} +{lines} lines]")
+}
+
+fn wrap_display_text(text: &str, wrap_width: usize) -> Vec<String> {
+    let wrap_width = wrap_width.max(1);
+    let mut lines = Vec::new();
+
+    for raw in text.split('\n') {
+        if raw.is_empty() {
+            lines.push(String::new());
+            continue;
+        }
+        let line_wrap_width = if visible_width(raw) >= wrap_width
+            && raw
+                .graphemes(true)
+                .any(|grapheme| UnicodeWidthStr::width(grapheme) > 1)
+        {
+            wrap_width.saturating_sub(1).max(1)
+        } else {
+            wrap_width
+        };
+        let wrapped = wrap_text_with_ansi(raw, line_wrap_width);
+        if wrapped.is_empty() {
+            lines.push(String::new());
+        } else {
+            lines.extend(wrapped);
+        }
+    }
+
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
 }
 
 /// Render the input frame into the given rect.
@@ -409,32 +760,34 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &ResolvedTheme, state: &
             ),
         ])]
     } else {
-        let cursor = state.cursor.min(state.buffer.len());
-        let mut byte_offset = 0usize;
-        let mut lines: Vec<Line<'_>> = Vec::new();
-        for (line_idx, raw) in state.buffer.split('\n').enumerate() {
-            let line_start = byte_offset;
-            let line_end = byte_offset + raw.len();
+        let wrap_width = usize::from(inner.width.saturating_sub(2).max(1));
+        let display_lines = state.display_lines(wrap_width);
+        let (cursor_row, cursor_col) = state.cursor_visual_position(wrap_width);
+        let cursor_row = cursor_row.min(display_lines.len().saturating_sub(1));
+        let mut lines: Vec<Line<'_>> = Vec::with_capacity(display_lines.len());
+        for (line_idx, raw) in display_lines.iter().enumerate() {
             let mut spans: Vec<Span<'_>> = Vec::new();
             if line_idx == 0 {
                 spans.push(prompt.clone());
             } else {
                 spans.push(Span::raw("  "));
             }
-            if cursor >= line_start && cursor <= line_end {
-                let split = cursor - line_start;
-                if split > 0 {
-                    spans.push(Span::styled(raw[..split].to_string(), Style::default().fg(text)));
+            if line_idx == cursor_row {
+                let line_width = visible_width(raw);
+                let split_col = cursor_col.min(line_width);
+                let prefix = slice_by_column(raw, 0, split_col);
+                if !prefix.is_empty() {
+                    spans.push(Span::styled(prefix, Style::default().fg(text)));
                 }
                 spans.push(cursor_glyph.clone());
-                if split < raw.len() {
-                    spans.push(Span::styled(raw[split..].to_string(), Style::default().fg(text)));
+                let suffix = slice_by_column(raw, split_col, line_width);
+                if !suffix.is_empty() {
+                    spans.push(Span::styled(suffix, Style::default().fg(text)));
                 }
             } else {
-                spans.push(Span::styled(raw.to_string(), Style::default().fg(text)));
+                spans.push(Span::styled(raw.clone(), Style::default().fg(text)));
             }
             lines.push(Line::from(spans));
-            byte_offset = line_end + 1;
         }
         lines
     };
