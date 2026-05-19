@@ -143,7 +143,12 @@ impl RpcClient {
 
         let stderr_tail = Arc::new(Mutex::new(VecDeque::with_capacity(STDERR_TAIL_LINES)));
         let (stderr_done_tx, stderr_done_rx) = oneshot::channel::<()>();
-        let stderr_reader = spawn_stderr_reader(stderr, Arc::clone(&stderr_tail), stderr_done_tx);
+        let stderr_reader = spawn_stderr_reader(
+            stderr,
+            Arc::clone(&stderr_tail),
+            stderr_done_tx,
+            inbound_tx.clone(),
+        );
         let child_watcher = spawn_child_watcher(child, inbound_tx, stderr_tail, stderr_done_rx);
 
         Ok(Self {
@@ -281,18 +286,45 @@ fn spawn_stderr_reader(
     stderr: Option<ChildStderr>,
     stderr_tail: Arc<Mutex<VecDeque<String>>>,
     stderr_done_tx: oneshot::Sender<()>,
+    inbound_tx: mpsc::Sender<Inbound>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let Some(stderr) = stderr else {
+            let _ = stderr_done_tx.send(());
             return;
         };
         let mut lines = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            let mut tail = stderr_tail.lock().await;
-            if tail.len() == STDERR_TAIL_LINES {
-                tail.pop_front();
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => {
+                    let mut tail = stderr_tail.lock().await;
+                    if tail.len() == STDERR_TAIL_LINES {
+                        tail.pop_front();
+                    }
+                    tail.push_back(line);
+                }
+                Ok(None) => break,
+                Err(err) => {
+                    // Bug 3 (Oracle round 6): a stderr read I/O error
+                    // used to silently exit the loop via the
+                    // `while let Ok(Some(_))` pattern. The child
+                    // watcher would still surface the eventual exit,
+                    // but until that point the user had no idea why
+                    // the diagnostic stream went quiet. Push an
+                    // immediate `Inbound::Error` so the user sees
+                    // the transport failure right away.
+                    tracing::warn!(error = %err, "RPC stderr reader hit io error");
+                    let _ = send_inbound(
+                        &inbound_tx,
+                        Inbound::Error {
+                            exit_code: None,
+                            stderr_tail: format!("backend stderr read failed: {err}"),
+                        },
+                    )
+                    .await;
+                    break;
+                }
             }
-            tail.push_back(line);
         }
         let _ = stderr_done_tx.send(());
     })

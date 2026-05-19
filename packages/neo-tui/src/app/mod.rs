@@ -520,6 +520,20 @@ impl App {
         AppAction::Consumed(action_id.to_owned())
     }
 
+    /// Bug 3 (Oracle round 6): `app.editor.external` returns
+    /// `AppAction::ExternalEditor`, but `action_to_command` maps that
+    /// variant to `None` - so Ctrl+G previously produced zero visible
+    /// effect. Push a chat-system note explaining the in-buffer
+    /// external editor launch is not yet wired and still return the
+    /// typed variant so the existing parity test (and any future
+    /// in-process editor wiring) keeps working.
+    fn apply_external_editor_action(&mut self, action_id: &str) -> AppAction {
+        self.chat.push_system(format!(
+            "`{action_id}` (external editor launch) is not yet wired in `senpi --neo`. Run `senpi` (without `--neo`) for this command.",
+        ));
+        AppAction::ExternalEditor
+    }
+
     fn execute_action(&mut self, id: &str) -> AppAction {
         if let Some(action) = self.try_autocomplete_action(id) {
             return action;
@@ -582,7 +596,7 @@ impl App {
                 self.tools_expanded = !self.tools_expanded;
                 AppAction::ToggleToolsExpanded
             }
-            "app.editor.external" => AppAction::ExternalEditor,
+            "app.editor.external" => self.apply_external_editor_action(id),
             "app.message.followUp" => {
                 let text = self.input.take_buffer();
                 if !text.is_empty() {
@@ -754,20 +768,8 @@ impl App {
                 self.footer.status = Status::Idle;
                 self.footer.status_label = "idle".into();
             }
-            RpcEvent::MessageEnd { .. } => {
-                // Drop the assistant bubble entirely when the backend
-                // produced only thinking deltas (or nothing) for this
-                // message - otherwise an empty `senpi` block sits in
-                // the chat in front of the real response.
-                if let Some(last) = self.chat.messages.last()
-                    && matches!(last.role, Role::Assistant)
-                    && last.body.is_empty()
-                    && last.tool.is_none()
-                {
-                    self.chat.messages.pop();
-                }
-                self.footer.status = Status::Idle;
-                self.footer.status_label = "idle".into();
+            RpcEvent::MessageEnd { message } => {
+                self.apply_message_end(&message);
             }
             RpcEvent::MessageStart { .. } => {
                 // Do NOT push an empty assistant bubble here. The backend
@@ -784,31 +786,7 @@ impl App {
                 assistant_message_event,
                 ..
             } => {
-                let delta = assistant_message_event.as_ref().and_then(|v| {
-                    let kind = v.get("type").and_then(serde_json::Value::as_str)?;
-                    if kind == "text_delta" {
-                        v.get("delta").and_then(serde_json::Value::as_str)
-                    } else {
-                        None
-                    }
-                });
-                if let Some(text) = delta {
-                    let needs_new_bubble = self
-                        .chat
-                        .messages
-                        .last()
-                        .is_none_or(|m| !matches!(m.role, Role::Assistant) || m.tool.is_some());
-                    if needs_new_bubble {
-                        self.chat.messages.push(Message {
-                            role: Role::Assistant,
-                            body: String::new(),
-                            tool: None,
-                        });
-                    }
-                    if let Some(last) = self.chat.messages.last_mut() {
-                        last.body.push_str(text);
-                    }
-                }
+                self.apply_message_update_delta(assistant_message_event.as_ref());
             }
             RpcEvent::ToolExecutionStart { tool_name, args, .. } => {
                 self.chat.messages.push(Message {
@@ -851,7 +829,115 @@ impl App {
                 self.footer.status = Status::Error;
                 self.footer.status_label = "error".into();
             }
+            RpcEvent::CompactionEnd {
+                aborted,
+                error_message,
+                will_retry,
+                ..
+            } if aborted || error_message.is_some() => {
+                self.apply_compaction_failure(error_message.as_deref(), will_retry);
+            }
+            RpcEvent::AutoRetryEnd {
+                success: false,
+                attempt,
+                final_error,
+            } => {
+                self.apply_auto_retry_failure(attempt, final_error.as_deref());
+            }
             _ => {}
+        }
+    }
+
+    /// Append a streaming `text_delta` to the current assistant bubble,
+    /// or push a fresh assistant bubble if the last message is not an
+    /// assistant text block. Lazy bubble creation avoids the phantom
+    /// empty `senpi` row before the real reply (see `MessageStart`).
+    fn apply_message_update_delta(&mut self, event_payload: Option<&serde_json::Value>) {
+        let delta = event_payload.and_then(|v| {
+            let kind = v.get("type").and_then(serde_json::Value::as_str)?;
+            if kind == "text_delta" {
+                v.get("delta").and_then(serde_json::Value::as_str)
+            } else {
+                None
+            }
+        });
+        let Some(text) = delta else {
+            return;
+        };
+        let needs_new_bubble = self
+            .chat
+            .messages
+            .last()
+            .is_none_or(|m| !matches!(m.role, Role::Assistant) || m.tool.is_some());
+        if needs_new_bubble {
+            self.chat.messages.push(Message {
+                role: Role::Assistant,
+                body: String::new(),
+                tool: None,
+            });
+        }
+        if let Some(last) = self.chat.messages.last_mut() {
+            last.body.push_str(text);
+        }
+    }
+
+    /// Bug 3 (Oracle round 6): `compaction_end` previously silenced
+    /// `aborted` / `error_message`. Push a chat error explaining what
+    /// failed and whether the backend will retry, so the user knows
+    /// whether they need to intervene.
+    fn apply_compaction_failure(&mut self, error_message: Option<&str>, will_retry: bool) {
+        let retry_hint = if will_retry { " (will retry)" } else { "" };
+        let body = error_message.map_or_else(
+            || format!("Compaction aborted{retry_hint}."),
+            |err| format!("Compaction failed{retry_hint}: {err}"),
+        );
+        self.chat.push_error(body);
+    }
+
+    /// Bug 3 (Oracle round 6): `auto_retry_end { success: false, .. }`
+    /// previously silenced the final retry failure. Push a chat error
+    /// and flip the footer so the user sees the agent gave up instead
+    /// of watching it quietly go idle.
+    fn apply_auto_retry_failure(&mut self, attempt: u32, final_error: Option<&str>) {
+        let body = final_error.map_or_else(
+            || format!("Auto-retry exhausted after {attempt} attempt(s)."),
+            |err| format!("Auto-retry exhausted after {attempt} attempt(s): {err}"),
+        );
+        self.chat.push_error(body);
+        self.footer.status = Status::Error;
+        self.footer.status_label = "retry exhausted".into();
+    }
+
+    /// Apply a `message_end` event. Pops the empty assistant
+    /// placeholder bubble if the backend only emitted thinking
+    /// deltas (no visible text or tool card) for this message - that
+    /// kept a phantom empty `senpi` row from sitting in front of the
+    /// real reply.
+    ///
+    /// Bug 3 (Oracle round 6): when the agent loop's
+    /// `buildErrorAssistantMessage` ships a failed turn through
+    /// `message_end`, the `message.errorMessage` field carries the
+    /// provider error string. Push it as a chat error and flip the
+    /// footer instead of going straight to idle.
+    fn apply_message_end(&mut self, message: &serde_json::Value) {
+        if let Some(last) = self.chat.messages.last()
+            && matches!(last.role, Role::Assistant)
+            && last.body.is_empty()
+            && last.tool.is_none()
+        {
+            self.chat.messages.pop();
+        }
+        let err = message
+            .get("errorMessage")
+            .and_then(serde_json::Value::as_str)
+            .filter(|s| !s.is_empty());
+        if let Some(err) = err {
+            self.chat.push_error(err.to_owned());
+            self.footer.status = Status::Error;
+            self.footer.status_label = "assistant error".into();
+        } else {
+            self.footer.status = Status::Idle;
+            self.footer.status_label = "idle".into();
         }
     }
 }
@@ -992,6 +1078,7 @@ const ADVERTISED_BUT_UNIMPLEMENTED_ACTIONS: &[&str] = &[
     "app.session.deleteNoninvasive",
     "app.session.togglePath",
     "app.session.toggleSort",
+    "app.suspend",
     "app.tree.foldOrUp",
     "app.tree.unfoldOrDown",
     "app.tree.editLabel",
@@ -1010,7 +1097,6 @@ const ADVERTISED_BUT_UNIMPLEMENTED_ACTIONS: &[&str] = &[
     "app.models.toggleProvider",
     "app.models.reorderUp",
     "app.models.reorderDown",
-    "app.editor.external",
     "app.message.followUp",
     "app.message.dequeue",
     "app.clipboard.pasteImage",
@@ -1082,6 +1168,85 @@ fn parse_backend_args(raw: &str) -> Vec<String> {
     trimmed.split_whitespace().map(str::to_owned).collect()
 }
 
+/// Outcome of one `EventStream::next()` poll, surfaced from
+/// [`handle_terminal_event`] so [`drive`] stays under clippy's
+/// per-fn line ceiling without losing readability.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TerminalEventOutcome {
+    Continue,
+    Quit,
+    Disconnected,
+    BackendChannelClosed,
+}
+
+async fn handle_terminal_event(
+    app: &mut App,
+    cmd_tx: Option<&mpsc::Sender<Command>>,
+    demo_mode: bool,
+    ev: Option<Result<CrosstermEvent, std::io::Error>>,
+) -> TerminalEventOutcome {
+    match ev {
+        Some(Ok(CrosstermEvent::Key(key))) => {
+            let action = app.handle_key(key);
+            if matches!(action, AppAction::Quit) {
+                return TerminalEventOutcome::Quit;
+            }
+            // RPC commands only fire when a backend is attached. In
+            // demo mode `cmd_tx` is `None`, so AppActions that would
+            // have produced a Command silently degrade to local-only
+            // UI state changes (overlays, focus, etc.).
+            if let Some(cmd) = App::action_to_command(&action) {
+                if let Some(tx) = cmd_tx {
+                    if tx.send(cmd).await.is_err() {
+                        return TerminalEventOutcome::BackendChannelClosed;
+                    }
+                } else if !demo_mode {
+                    app.apply_inbound(Inbound::Error {
+                        exit_code: None,
+                        stderr_tail: "No backend process is connected.".into(),
+                    });
+                }
+            }
+            TerminalEventOutcome::Continue
+        }
+        Some(Ok(CrosstermEvent::Paste(text))) => {
+            // Bracketed paste: the terminal hands us the whole
+            // clipboard payload atomically. Splice it into the input
+            // buffer as one undo-able operation; IME pastes of
+            // multi-grapheme CJK strings stay intact.
+            if matches!(app.focus, FocusMode::Input) {
+                app.input.handle_paste(&text);
+                app.refresh_autocomplete();
+            }
+            TerminalEventOutcome::Continue
+        }
+        Some(Ok(CrosstermEvent::Mouse(mouse))) => {
+            app.handle_mouse(mouse);
+            TerminalEventOutcome::Continue
+        }
+        Some(Err(err)) => {
+            // Bug 3 (Oracle round 6): a `Some(Err(_))` from
+            // `EventStream` means the terminal-input pipe hit an I/O
+            // failure - keystrokes will not be landing any more.
+            // Surface it so the user knows why the TUI suddenly
+            // stopped reacting instead of getting a silent freeze.
+            app.apply_inbound(Inbound::Error {
+                exit_code: None,
+                stderr_tail: format!("terminal input stream error: {err}"),
+            });
+            TerminalEventOutcome::Continue
+        }
+        Some(Ok(_)) => TerminalEventOutcome::Continue,
+        None => {
+            // Stream exhausted - the TTY closed. Without an explicit
+            // break the loop would spin because `Poll::Ready(None)`
+            // is always immediate.
+            app.apply_inbound(Inbound::Disconnected);
+            TerminalEventOutcome::Disconnected
+        }
+    }
+}
+
 async fn drive(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: AppConfig) -> Result<()> {
     let demo_mode = config.demo_mode;
     let demo_seconds = config.demo_seconds;
@@ -1141,45 +1306,14 @@ async fn drive(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: AppCon
                 app.input.focus_pulse = app.input.focus_pulse.wrapping_add(8);
             }
             ev = events.next() => {
-                match ev {
-                    Some(Ok(CrosstermEvent::Key(key))) => {
-                        let action = app.handle_key(key);
-                        if matches!(action, AppAction::Quit) {
-                            break;
-                        }
-                        // RPC commands only fire when a backend is attached.
-                        // In demo mode `cmd_tx` is `None`, so AppActions that
-                        // would have produced a Command silently degrade to
-                        // local-only UI state changes (overlays, focus, etc.).
-                        if let Some(cmd) = App::action_to_command(&action) {
-                            if let Some(tx) = cmd_tx.as_ref() {
-                                if tx.send(cmd).await.is_err() {
-                                    app.apply_inbound(Inbound::Disconnected);
-                                    inbound = None;
-                                }
-                            } else if !demo_mode {
-                                app.apply_inbound(Inbound::Error {
-                                    exit_code: None,
-                                    stderr_tail: "No backend process is connected.".into(),
-                                });
-                            }
-                        }
+                let outcome = handle_terminal_event(&mut app, cmd_tx.as_ref(), demo_mode, ev).await;
+                match outcome {
+                    TerminalEventOutcome::Continue => {}
+                    TerminalEventOutcome::Quit | TerminalEventOutcome::Disconnected => break,
+                    TerminalEventOutcome::BackendChannelClosed => {
+                        app.apply_inbound(Inbound::Disconnected);
+                        inbound = None;
                     }
-                    Some(Ok(CrosstermEvent::Paste(text))) => {
-                        // Bracketed paste: the terminal hands us the
-                        // whole clipboard payload atomically. Splice
-                        // it into the input buffer at the cursor as
-                        // one undo-able operation; IME pastes of
-                        // multi-grapheme CJK strings stay intact.
-                        if matches!(app.focus, FocusMode::Input) {
-                            app.input.handle_paste(&text);
-                            app.refresh_autocomplete();
-                        }
-                    }
-                    Some(Ok(CrosstermEvent::Mouse(mouse))) => {
-                        app.handle_mouse(mouse);
-                    }
-                    _ => {}
                 }
             }
             // 4th arm: drain inbound RPC frames when a backend is up.

@@ -11,6 +11,7 @@
 - Fixed OpenAI remote compaction to time out nonresponsive native compact routes and fall back to local compaction.
 - Fixed `senpi --neo` keymap parity so `tui.editor.newLine` no longer ships as a redundant shadow of the legacy `tui.input.newLine` and `tui.input.historyPrev`/`historyNext` are moved into the `neo.*` namespace where neo-only bindings belong.
 - Fixed `senpi --neo` Bug 3 regression where four failure paths went silently to the user: `Inbound::Response { success: false }` was dropped, `Inbound::ParseError` only logged to `tracing::warn!`, the bundled `opencode/dracula`-style theme ids resolved as file paths and failed with `read_to_string`, and `Alt+T` (`neo.theme.picker`) was bound but never opened the theme picker overlay. Every failure now surfaces in chat + footer, the registry strips the `opencode/` prefix, and the keymap action wires through to the overlay.
+- Fixed another batch of `senpi --neo` Bug 3 silent paths flagged by Oracle round 6: `app.editor.external` (Ctrl+G) had no run-loop side effect, `app.suspend` (Ctrl+Z) was advertised but missing from the unimplemented-action list, `message_end.message.errorMessage` from failed assistant turns was dropped, `compaction_end` aborted/error variants and `auto_retry_end { success: false }` were swallowed by the catch-all, terminal `EventStream::Some(Err(_))` was silently consumed, and stderr-reader I/O failures only surfaced when the child later exited. Each path now pushes a chat error/system note and flips the footer where appropriate.
 
 ## [2026.5.19] - 2026-05-19
 

@@ -331,6 +331,60 @@ fn ctrl_g_dispatches_external_editor() {
 }
 
 #[test]
+fn ctrl_g_app_editor_external_pushes_visible_feedback_note() {
+    // Oracle round 6: `app.editor.external` (Ctrl+G) returns
+    // `AppAction::ExternalEditor`, but the run loop has no handler
+    // for that variant - the keystroke produced zero user-visible
+    // effect. Bug 3 contract: surface a chat-system note so the
+    // user sees that the chord landed AND that the external editor
+    // is not yet wired in `senpi --neo`.
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+    let action = app.execute_action_for_tests("app.editor.external");
+    assert_eq!(
+        action,
+        AppAction::ExternalEditor,
+        "must keep returning the typed variant for future wiring",
+    );
+    assert!(
+        app.chat.messages.len() > messages_before,
+        "external editor chord must push a visible chat message",
+    );
+    let last = app.chat.messages.last().expect("chat message exists");
+    assert_eq!(last.role, Role::System);
+    assert!(
+        last.body.contains("app.editor.external") && last.body.to_lowercase().contains("not yet"),
+        "chat body must name the action and flag it as not yet wired, got {:?}",
+        last.body,
+    );
+}
+
+#[test]
+fn ctrl_z_app_suspend_visibly_notifies_user() {
+    // Oracle round 6: `app.suspend` (Ctrl+Z) is advertised in the
+    // bundled keymap and exposed via the command palette, but the
+    // dispatcher silently consumed it through the catch-all `_` arm.
+    // Bug 3 contract: every advertised chord that lands must produce
+    // visible feedback - either real behavior or an explicit "not
+    // yet wired" chat note.
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+    let action = app.execute_action_for_tests("app.suspend");
+    assert!(matches!(action, AppAction::Consumed(_)));
+    assert!(
+        app.chat.messages.len() > messages_before,
+        "app.suspend chord must push a visible chat message",
+    );
+    let last = app.chat.messages.last().expect("chat message exists");
+    assert_eq!(last.role, Role::System);
+    assert!(
+        last.body.contains("app.suspend") && last.body.to_lowercase().contains("not yet"),
+        "chat body must name the action and flag it as not yet wired, got {:?}",
+        last.body,
+    );
+}
+
+#[test]
 fn ctrl_t_dispatches_toggle_thinking_visibility() {
     let mut app = fresh_app();
     let action = app.handle_key(ev(KeyCode::Char('t'), KeyModifiers::CONTROL));
@@ -732,6 +786,142 @@ fn apply_inbound_tool_execution_end_error_marks_tool_failed() {
         .and_then(|m| m.tool.as_ref())
         .expect("tool card must exist");
     assert_eq!(tool.status, ToolStatus::Failed);
+}
+
+#[test]
+fn apply_inbound_message_end_with_error_message_surfaces_to_chat_and_footer() {
+    // Oracle round 6: the agent loop ships assistant/provider
+    // failures via `message_end` with `message.errorMessage` set
+    // (see packages/agent/src/agent-loop.ts buildErrorAssistantMessage).
+    // The neo TUI's `MessageEnd` arm previously only dropped empty
+    // assistant bubbles and flipped the footer to idle - the error
+    // string was silently discarded. Bug 3: surface it as a chat
+    // error so the user sees WHY the turn ended.
+    let mut app = fresh_app();
+    app.apply_inbound(Inbound::Event(RpcEvent::MessageEnd {
+        message: serde_json::json!({
+            "role": "assistant",
+            "stopReason": "error",
+            "errorMessage": "rate limit exceeded; retry after 60s",
+        }),
+    }));
+    let last = app
+        .chat
+        .messages
+        .last()
+        .expect("message_end with errorMessage must push a chat message");
+    assert_eq!(last.role, Role::Error);
+    assert!(
+        last.body.contains("rate limit exceeded"),
+        "chat body must include the assistant error message, got {:?}",
+        last.body,
+    );
+    assert_eq!(app.footer.status, Status::Error);
+}
+
+#[test]
+fn apply_inbound_compaction_end_aborted_surfaces_to_chat() {
+    // Oracle round 6: `CompactionEnd { aborted: true }` was silently
+    // dropped by the `_ => {}` catch-all in `apply_event`. The user
+    // had no idea the compaction attempt failed.
+    let mut app = fresh_app();
+    app.apply_inbound(Inbound::Event(RpcEvent::CompactionEnd {
+        reason: Some("auto-threshold".into()),
+        result: serde_json::json!({}),
+        aborted: true,
+        will_retry: false,
+        error_message: None,
+    }));
+    let last = app
+        .chat
+        .messages
+        .last()
+        .expect("aborted compaction must push a chat message");
+    assert_eq!(last.role, Role::Error);
+    assert!(
+        last.body.to_lowercase().contains("compaction"),
+        "chat body must mention compaction, got {:?}",
+        last.body,
+    );
+}
+
+#[test]
+fn apply_inbound_compaction_end_with_error_message_surfaces_to_chat() {
+    // Oracle round 6: same defect, error-message variant.
+    let mut app = fresh_app();
+    app.apply_inbound(Inbound::Event(RpcEvent::CompactionEnd {
+        reason: None,
+        result: serde_json::json!({}),
+        aborted: false,
+        will_retry: false,
+        error_message: Some("context too large to summarize".into()),
+    }));
+    let last = app
+        .chat
+        .messages
+        .last()
+        .expect("compaction error must push a chat message");
+    assert_eq!(last.role, Role::Error);
+    assert!(
+        last.body.contains("context too large to summarize"),
+        "chat body must surface the compaction error, got {:?}",
+        last.body,
+    );
+}
+
+#[test]
+fn apply_inbound_compaction_end_success_does_not_disturb_chat() {
+    // Successful compaction is silent by design; only failure
+    // paths must surface. Locks the contract so the round-6 fix
+    // does not over-fire on clean compactions.
+    let mut app = fresh_app();
+    let before = app.chat.messages.len();
+    app.apply_inbound(Inbound::Event(RpcEvent::CompactionEnd {
+        reason: Some("auto-threshold".into()),
+        result: serde_json::json!({}),
+        aborted: false,
+        will_retry: false,
+        error_message: None,
+    }));
+    assert_eq!(app.chat.messages.len(), before);
+}
+
+#[test]
+fn apply_inbound_auto_retry_end_failure_surfaces_to_chat() {
+    // Oracle round 6: `AutoRetryEnd { success: false, final_error }`
+    // was dropped by the catch-all `_ => {}`. When retries are
+    // exhausted the user must see the final error.
+    let mut app = fresh_app();
+    app.apply_inbound(Inbound::Event(RpcEvent::AutoRetryEnd {
+        success: false,
+        attempt: 3,
+        final_error: Some("upstream 5xx after 3 attempts".into()),
+    }));
+    let last = app
+        .chat
+        .messages
+        .last()
+        .expect("failed auto-retry must push a chat message");
+    assert_eq!(last.role, Role::Error);
+    assert!(
+        last.body.contains("upstream 5xx after 3 attempts"),
+        "chat body must surface the final retry error, got {:?}",
+        last.body,
+    );
+    assert_eq!(app.footer.status, Status::Error);
+}
+
+#[test]
+fn apply_inbound_auto_retry_end_success_does_not_disturb_chat() {
+    // Successful retry recovery is silent; only failure surfaces.
+    let mut app = fresh_app();
+    let before = app.chat.messages.len();
+    app.apply_inbound(Inbound::Event(RpcEvent::AutoRetryEnd {
+        success: true,
+        attempt: 2,
+        final_error: None,
+    }));
+    assert_eq!(app.chat.messages.len(), before);
 }
 
 #[test]
