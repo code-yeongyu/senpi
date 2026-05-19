@@ -94,6 +94,16 @@ Oracle confirmed via an exhaustive walk of `assets/keymaps/default.json` that th
 
 Total Rust test count is now 321 passing (was 319 after round 7). `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `npm run check` (897 files) all green.
 
+## 2026-05-19 — Oracle round 9: `app.exit` always quits when dispatched explicitly
+
+Oracle's ninth review of HEAD `1e08e6b7` confirmed every round-8 fix (slash overlay, autocomplete-only note, dead list entry cleanup) and the three quality gates, then surfaced one last silent path: `app.exit` with a non-empty input buffer returned `AppAction::Consumed("tui.editor.deleteCharForward")` — the label was just a string, the buffer was never actually edited, and selecting `/quit` from the palette while drafting a message silently closed the palette without quitting.
+
+The old branch tried to mimic legacy senpi's `Ctrl+D` semantics ("on non-empty buffer, fall through to delete-char-forward, which is a no-op at end-of-line"). But it never actually performed the delete — it just emitted the label. And when the user picks `/quit` from the palette, the buffer-state guard makes no sense: they explicitly chose to exit. Now `app.exit` always returns `AppAction::Quit`. Users who want the keystroke-level `Ctrl+D` delete-char-forward behavior can rebind `Ctrl+D` to `tui.editor.deleteCharForward` directly (which already has its own arm with the legacy semantics).
+
+Regression: `app_exit_dispatched_from_palette_quits_even_with_nonempty_buffer`.
+
+Total Rust test count is now 322 passing (was 321 after round 8). `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `npm run check` (897 files) all green.
+
 ## 2026-05-19 — Oracle round 8: `neo.slash.open` + `tui.input.tab` outside their contexts
 
 Oracle's eighth review of the round-7 commit (`8ac34409`) confirmed the `tui.select.*` fix and all three gates, then flagged the next-most-similar leak: `neo.slash.open` was only handled in the raw key path (gated on Input focus + empty buffer for the mid-prompt `/` literal-insert behavior), so dispatching it through `execute_action` (i.e. via the command palette) fell into the catch-all silent consume. A follow-up classification audit also surfaced `tui.input.tab`, which `try_autocomplete_action` only consumes when an autocomplete popup is open — outside that context it landed in the catch-all too.
@@ -105,6 +115,16 @@ Oracle's eighth review of the round-7 commit (`8ac34409`) confirmed the `tui.sel
 Refactor to stay under clippy's per-fn line ceiling: extracted `apply_follow_up_action`, `apply_submit_action`, and `open_slash_overlay` from `execute_action`. The dispatcher now reads as a flat router of arms to small named helpers.
 
 Total Rust test count is now 321 passing (was 319 after round 7). `cargo fmt --check`, `cargo clippy --package senpi-neo-tui --all-targets -- -D warnings`, and `npm run check` (897 files) all green.
+
+## 2026-05-19 — Oracle round 9: `app.exit` with non-empty buffer was a silent no-op
+
+Oracle's ninth review of HEAD `1e08e6b7` confirmed every prior fix, then flagged one last silent path:
+
+1. `app.exit` (`/quit` from slash menu, or selecting "app.exit" from the command palette, or raw Ctrl+D) was wired with a buffer-state guard in `execute_action`. The empty-buffer branch returned `AppAction::Quit` (correct), but the non-empty branch returned `AppAction::Consumed("tui.editor.deleteCharForward")` - a label string that did NOT actually call `delete_char_forward()`. So selecting `/quit` from the palette while the input buffer had any draft text closed the palette with zero visible effect: no quit, no buffer mutation, no chat feedback. The user explicitly invoked exit and got silence.
+
+Fix: removed the non-empty branch entirely. `app.exit` now always returns `AppAction::Quit` regardless of buffer state. The user explicitly invoked exit; respect that. Users wanting the legacy Ctrl+D-deletes-char-forward behavior can rebind Ctrl+D to `tui.editor.deleteCharForward` directly (that arm already exists). Regression: `app_exit_dispatched_from_palette_quits_even_with_nonempty_buffer` (drives `execute_action_for_tests("app.exit")` with a non-empty buffer and asserts `AppAction::Quit`). The existing `ctrl_d_with_empty_input_resolves_to_app_exit` continues to pass.
+
+Total Rust test count is now 322 passing (was 321 after round 8). `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `npm run check` (897 files) all green.
 
 ## 2026-05-19 — Oracle round 6: close six more Bug-3 silent paths
 

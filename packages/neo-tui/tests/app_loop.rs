@@ -360,6 +360,29 @@ fn ctrl_g_app_editor_external_pushes_visible_feedback_note() {
 }
 
 #[test]
+fn app_exit_dispatched_from_palette_quits_even_with_nonempty_buffer() {
+    // Oracle round 9 defect: selecting `/quit` from the palette
+    // routes through `execute_action("app.exit")`. The existing arm
+    // returned `AppAction::Quit` when the buffer was empty but
+    // otherwise returned `AppAction::Consumed("tui.editor.deleteCharForward")`
+    // - a silent no-op (the label string did NOT actually invoke
+    // delete-char-forward). When the user explicitly picks /quit,
+    // they want to quit regardless of buffer state. Lock the
+    // contract so the palette path always exits.
+    let mut app = fresh_app();
+    for ch in "draft prompt".chars() {
+        app.handle_key(ev(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    assert!(!app.input_buffer().is_empty());
+    let action = app.execute_action_for_tests("app.exit");
+    assert_eq!(
+        action,
+        AppAction::Quit,
+        "app.exit dispatched explicitly (e.g. /quit from palette) must quit regardless of buffer state, got {action:?}",
+    );
+}
+
+#[test]
 fn neo_slash_open_dispatched_from_palette_opens_slash_overlay() {
     // Oracle round 8 defect: `neo.slash.open` is bound to `/` in the
     // bundled keymap and surfaced by the command palette via

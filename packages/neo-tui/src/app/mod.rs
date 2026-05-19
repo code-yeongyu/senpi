@@ -622,14 +622,21 @@ impl App {
         }
         match id {
             "app.exit" => {
-                if self.input.buffer.is_empty() {
-                    AppAction::Quit
-                } else {
-                    // Legacy senpi: Ctrl+D on a non-empty buffer falls
-                    // through to delete-char-forward, which is a no-op
-                    // at end-of-line.
-                    AppAction::Consumed("tui.editor.deleteCharForward".into())
-                }
+                // Bug 3 (Oracle round 9): the user explicitly invoked
+                // exit, either by hitting Ctrl+D or by selecting
+                // /quit from the slash menu / command palette. The
+                // old branch tried to mimic legacy senpi's
+                // Ctrl+D-with-non-empty-buffer behavior by returning
+                // `Consumed("tui.editor.deleteCharForward")`, but
+                // that string was just a label - the buffer was
+                // never actually edited, and `/quit` from the
+                // palette silently closed without quitting. Treat
+                // `app.exit` as an unambiguous exit request now;
+                // if a user wants the Ctrl+D-delete-char-forward
+                // behavior, they can rebind Ctrl+D to
+                // `tui.editor.deleteCharForward` directly (which
+                // already has its own explicit arm below).
+                AppAction::Quit
             }
             "app.clear" => {
                 self.input.clear();
