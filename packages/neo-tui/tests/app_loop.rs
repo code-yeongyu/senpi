@@ -8,8 +8,13 @@
 //! binding entry. The user explicitly required this kind of TDD
 //! coverage on keybinding equivalence.
 
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+use std::sync::Mutex;
+
+use crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseEvent, MouseEventKind,
+};
 use senpi_neo_tui::app::{App, AppAction};
+use senpi_neo_tui::components::autocomplete::AutocompleteResult;
 use senpi_neo_tui::components::chat::{Role, ToolStatus};
 use senpi_neo_tui::components::footer::Status;
 use senpi_neo_tui::overlay::Overlay;
@@ -28,6 +33,29 @@ const fn ev(code: KeyCode, mods: KeyModifiers) -> KeyEvent {
 
 fn fresh_app() -> App {
     App::for_tests().expect("test fixture builds")
+}
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+fn with_tmux_env(run: impl FnOnce()) {
+    let _guard = ENV_LOCK.lock().expect("env test lock must not be poisoned");
+    let previous = std::env::var_os("TMUX");
+    // SAFETY: this test serializes process-env mutation through ENV_LOCK and
+    // restores TMUX before releasing the lock.
+    unsafe { std::env::set_var("TMUX", "/tmp/senpi-neo-test-tmux") };
+    run();
+    match previous {
+        Some(value) => {
+            // SAFETY: this test serializes process-env mutation through ENV_LOCK
+            // and is restoring the exact value captured before the test body.
+            unsafe { std::env::set_var("TMUX", value) };
+        }
+        None => {
+            // SAFETY: this test serializes process-env mutation through ENV_LOCK
+            // and is restoring TMUX to its previously absent state.
+            unsafe { std::env::remove_var("TMUX") };
+        }
+    }
 }
 
 #[test]
@@ -718,4 +746,101 @@ fn emoji_zwj_sequence_treated_as_one_grapheme() {
         app.input_buffer().is_empty(),
         "ZWJ family emoji must collapse in one backspace"
     );
+}
+
+#[test]
+fn app_init_writes_modify_other_keys_when_tmux() {
+    with_tmux_env(|| {
+        let bytes = App::init_terminal_writes();
+
+        assert!(
+            bytes.windows(b"\x1b[>4;2m".len()).any(|window| window == b"\x1b[>4;2m"),
+            "tmux init writes must enable modifyOtherKeys mode 2: {bytes:?}",
+        );
+    });
+}
+
+#[test]
+fn app_cleanup_writes_disable_modify_other_keys() {
+    with_tmux_env(|| {
+        let bytes = App::cleanup_terminal_writes();
+
+        assert!(
+            bytes.windows(b"\x1b[>4;0m".len()).any(|window| window == b"\x1b[>4;0m"),
+            "tmux cleanup writes must disable modifyOtherKeys: {bytes:?}",
+        );
+    });
+}
+
+#[test]
+fn app_arrow_up_with_empty_buffer_recalls_history() {
+    let mut app = fresh_app();
+    for prompt in ["first prompt", "second prompt"] {
+        for ch in prompt.chars() {
+            app.handle_key(ev(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+        app.handle_key(ev(KeyCode::Enter, KeyModifiers::NONE));
+    }
+
+    assert!(app.input_buffer().is_empty());
+    app.handle_key(ev(KeyCode::Up, KeyModifiers::NONE));
+
+    assert_eq!(app.input_buffer(), "second prompt");
+}
+
+#[test]
+fn app_arrow_up_with_nonempty_buffer_moves_cursor() {
+    let mut app = fresh_app();
+    app.input.push_history("history entry");
+    app.input.insert_str("hello\nhi");
+
+    app.handle_key(ev(KeyCode::Up, KeyModifiers::NONE));
+    app.handle_key(ev(KeyCode::Char('X'), KeyModifiers::NONE));
+
+    assert_eq!(app.input_buffer(), "heXllo\nhi");
+}
+
+#[test]
+fn app_autocomplete_triggers_on_at_for_path_completion() {
+    let mut app = fresh_app();
+    app.header.cwd = env!("CARGO_MANIFEST_DIR").into();
+    app.input.insert_str("@./Carg");
+
+    let AutocompleteResult::Path(items) = app.compute_autocomplete() else {
+        panic!("expected path autocomplete result");
+    };
+
+    assert!(
+        items.iter().any(|item| item.label == "Cargo.toml"),
+        "expected Cargo.toml in path autocomplete items: {items:?}",
+    );
+}
+
+#[test]
+fn app_mouse_wheel_scrolls_chat() {
+    let mut app = fresh_app();
+
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::ScrollUp,
+        column: 0,
+        row: 0,
+        modifiers: KeyModifiers::NONE,
+    });
+
+    assert!(app.chat.scroll_offset > 0);
+}
+
+#[test]
+fn app_mouse_wheel_at_bottom_does_nothing() {
+    let mut app = fresh_app();
+    assert_eq!(app.chat.scroll_offset, 0);
+
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::ScrollDown,
+        column: 0,
+        row: 0,
+        modifiers: KeyModifiers::NONE,
+    });
+
+    assert_eq!(app.chat.scroll_offset, 0);
 }
