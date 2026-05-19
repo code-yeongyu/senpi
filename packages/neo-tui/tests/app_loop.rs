@@ -124,6 +124,94 @@ fn ctrl_l_dispatches_app_model_select_action() {
 }
 
 #[test]
+fn ctrl_l_actually_opens_the_model_picker_overlay() {
+    // Oracle round 4: returning `AppAction::OpenModelPicker` is not
+    // enough - the legacy senpi behavior, the README, and the help
+    // overlay all promise that `Ctrl+L` brings up a visible model
+    // picker. Previously the dispatch only sent
+    // `Command::GetAvailableModels` to the backend and waited for a
+    // response that nothing was wired to consume. Lock the overlay
+    // open so a user actually sees something pop up.
+    let mut app = fresh_app();
+    app.handle_key(ev(KeyCode::Char('l'), KeyModifiers::CONTROL));
+    assert!(
+        matches!(app.overlay, Some(Overlay::ModelPicker(_))),
+        "Ctrl+L must open the model picker overlay, got {:?}",
+        app.overlay,
+    );
+}
+
+#[test]
+fn theme_picker_selection_applies_the_chosen_theme() {
+    // Oracle round 4: `ThemePickerOverlay` emits
+    // `OverlayResult::Selected("neo.theme.set:<id>")`, which the
+    // dispatcher hands to `execute_action`. Previously the catch-all
+    // arm just consumed the action with no effect - the overlay closed
+    // and the theme stayed the same. The user got no error, no theme
+    // change, no feedback at all (a textbook silent failure). Lock
+    // the contract so picking a theme actually replaces `app.theme`.
+    // The bundled opencode JSON uses display names like "Dracula"
+    // while registry ids are lowercased (`dracula`), so the post-load
+    // check is on the JSON `name` field as exposed by ResolvedTheme.
+    let mut app = fresh_app();
+    let before_name = app.theme.name.clone();
+    assert_eq!(
+        before_name, "senpi-neo-dark",
+        "fresh app must boot on the bundled senpi-neo-dark theme",
+    );
+
+    let action = app.execute_action_for_tests("neo.theme.set:dracula");
+
+    assert!(
+        matches!(action, AppAction::Consumed(_)),
+        "theme set must consume the action, got {action:?}",
+    );
+    assert_ne!(
+        app.theme.name, before_name,
+        "theme must change away from the boot default after the set action",
+    );
+    assert_eq!(
+        app.theme.name, "Dracula",
+        "loading the `dracula` registry id must land on the Dracula display name",
+    );
+}
+
+#[test]
+fn theme_picker_selection_with_unknown_id_pushes_a_chat_error() {
+    // Oracle round 4 corollary: a malformed or unknown registry id
+    // (`neo.theme.set:does-not-exist`) is itself a Bug-3 silent-failure
+    // candidate. Surface the load error to chat + footer so the user
+    // sees what went wrong instead of the overlay closing with no
+    // visual change.
+    let mut app = fresh_app();
+    let before_name = app.theme.name.clone();
+    let messages_before = app.chat.messages.len();
+
+    let action = app.execute_action_for_tests("neo.theme.set:not-a-real-theme-id");
+
+    assert!(
+        matches!(action, AppAction::Consumed(_)),
+        "even on failure the dispatch must consume the action so the loop continues",
+    );
+    assert_eq!(
+        app.theme.name, before_name,
+        "failure must not partially mutate the theme",
+    );
+    assert!(
+        app.chat.messages.len() > messages_before,
+        "an error chat message must be pushed for an unknown theme id",
+    );
+    let last = app.chat.messages.last().expect("error chat message");
+    assert_eq!(last.role, Role::Error);
+    assert!(
+        last.body.contains("not-a-real-theme-id"),
+        "error body must name the failing id, got {:?}",
+        last.body,
+    );
+    assert_eq!(app.footer.status, Status::Error);
+}
+
+#[test]
 fn alt_t_dispatches_open_theme_picker_and_opens_overlay() {
     // Bug-3 followup: the keymap defines `neo.theme.picker -> alt+t` and
     // the docs (README + help overlay) advertise Alt+T as the theme

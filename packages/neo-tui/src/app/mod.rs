@@ -44,7 +44,10 @@ use crate::{
     },
     keymap::{self, FocusMode, ResolvedKeymap},
     layout::{self, LayoutState},
-    overlay::{HelpOverlay, Overlay, OverlayResult, PaletteOverlay, SlashOverlay, ThemePickerOverlay},
+    overlay::{
+        HelpOverlay, ModelPickerOverlay, Overlay, OverlayResult, PaletteOverlay, SlashOverlay,
+        ThemePickerOverlay,
+    },
     rpc::{
         client::{Inbound, RpcClient},
         command::Command,
@@ -456,6 +459,39 @@ impl App {
         }
     }
 
+    /// Test-only entry point that drives [`Self::execute_action`] directly.
+    /// Useful for asserting overlay-selected actions (`neo.theme.set:<id>`,
+    /// `neo.model.set:<id>`) that can only flow into the dispatcher via
+    /// an overlay `OverlayResult::Selected` and have no keyboard chord.
+    /// `#[doc(hidden)]` keeps it out of the rendered public docs while
+    /// still letting integration tests under `tests/` see it.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn execute_action_for_tests(&mut self, id: &str) -> AppAction {
+        self.execute_action(id)
+    }
+
+    /// Apply a `neo.theme.set:<id>` selection emitted by the theme
+    /// picker overlay. Loads the registry entry, swaps `self.theme` on
+    /// success, or pushes a chat error + footer error state on failure.
+    /// Bug 3 contract: never let a failed theme load fall through to
+    /// the catch-all silent consumer.
+    fn apply_theme_selection(&mut self, action_id: &str) -> AppAction {
+        let new_id = action_id.strip_prefix("neo.theme.set:").unwrap_or_default();
+        match theme::load_by_id(new_id, theme::ThemeMode::Dark) {
+            Ok(resolved) => {
+                self.theme = resolved;
+            }
+            Err(err) => {
+                self.chat
+                    .push_error(format!("Could not load theme `{new_id}`: {err}"));
+                self.footer.status = Status::Error;
+                self.footer.status_label = "theme load failed".into();
+            }
+        }
+        AppAction::Consumed(action_id.to_owned())
+    }
+
     fn execute_action(&mut self, id: &str) -> AppAction {
         if let Some(action) = self.try_autocomplete_action(id) {
             return action;
@@ -496,7 +532,19 @@ impl App {
             "app.interrupt" => AppAction::Interrupt,
             "app.model.cycleForward" => AppAction::CycleModel { forward: true },
             "app.model.cycleBackward" => AppAction::CycleModel { forward: false },
-            "app.model.select" => AppAction::OpenModelPicker,
+            "app.model.select" => {
+                // Ctrl+L: open the model picker overlay AND fire the
+                // backend `GetAvailableModels` command (mapped from
+                // OpenModelPicker in `action_to_command`). Pre-filling
+                // with the bundled MODELS list means the user sees a
+                // usable picker immediately; if the backend later sends
+                // a more accurate model list, the overlay can be
+                // refreshed in place. Without the overlay open, Ctrl+L
+                // was a silent no-op against the README's promise that
+                // it opens a model selector.
+                self.overlay = Some(Overlay::ModelPicker(ModelPickerOverlay::new()));
+                AppAction::OpenModelPicker
+            }
             "app.thinking.cycle" => AppAction::CycleThinkingLevel,
             "app.thinking.toggle" => {
                 self.thinking_visible = !self.thinking_visible;
@@ -560,6 +608,7 @@ impl App {
                 self.overlay = Some(Overlay::ThemePicker(ThemePickerOverlay::new(&self.theme.name)));
                 AppAction::OpenThemePicker
             }
+            other if other.starts_with("neo.theme.set:") => self.apply_theme_selection(other),
             _ => AppAction::Consumed(id.to_owned()),
         }
     }
