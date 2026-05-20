@@ -13,6 +13,7 @@ pub mod anim;
 pub mod app;
 pub mod components;
 pub mod compositor;
+pub(crate) mod frame;
 pub mod keymap;
 pub mod layout;
 pub mod overlay;
