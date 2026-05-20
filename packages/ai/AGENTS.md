@@ -48,7 +48,7 @@ test/                              # ~80 vitest files; opt-in live API gating vi
 - **Subpath exports**: each public provider is exported under its own `./<provider>` subpath in `package.json` (`./anthropic`, `./google`, `./openai-responses`, …). New providers MUST be added there too.
 - **Stream entry shape**: every provider exports `stream<Provider>(opts: StreamOptions): AssistantMessageEventStream`. Keep the name pattern.
 - **Live test gating**: `describe.skipIf(!process.env.<API_KEY>)` for any test that calls a real endpoint. Add `{ retry: 3 }` for flaky public APIs. Add an explicit `PI_ENABLE_…=1` opt-in for unstable provider regressions (precedent: OpenRouter cache-write repro).
-- **Generated files committed**: `models.generated.ts` and `image-models.generated.ts` ARE checked in (consumers that skip `prebuild` still get a working catalog). Regenerate before publishing.
+- **Generated files committed**: `models.generated.ts` and `image-models.generated.ts` ARE checked in (consumers that only build still get a working catalog). Ordinary builds must not regenerate them; regenerate before publishing or for intentional catalog updates.
 - **Browser smoke**: `scripts/check-browser-smoke.mjs` (root) bundles `src/index.ts` for the browser and verifies no Node-only imports leak.
 
 ## ANTI-PATTERNS
@@ -61,6 +61,6 @@ test/                              # ~80 vitest files; opt-in live API gating vi
 
 ## NOTES
 
-- `models.generated.ts` shows up as modified after a fresh `npm install` because `prebuild` runs. Commit only intentional regenerations.
+- `models.generated.ts` and `image-models.generated.ts` should only show up as modified after explicit generation or publish prep. Commit only intentional regenerations.
 - The `bedrock-provider` subpath export exists separately so non-AWS consumers can avoid the AWS SDK transitive cost.
 - `tool-call-middleware/TESTING.md` documents how to add a new text-tool protocol without breaking stream-error recovery.
