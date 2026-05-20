@@ -122,6 +122,14 @@ pub enum AppAction {
     /// edited contents back. The run loop performs the launch + IO
     /// because the App is render-only at that point.
     ExternalEditorLaunch,
+    /// Suspend the process via SIGTSTP (Ctrl+Z). The run loop
+    /// restores the terminal, sends SIGTSTP to self via `kill -TSTP`,
+    /// and re-initializes the TUI when the shell resumes the
+    /// process via `fg`.
+    Suspend,
+    /// Start a fresh backend session (`/new` from slash menu, or
+    /// `app.session.new` from the command palette).
+    NewSession,
 }
 
 /// Stateful TUI application surface used by the run loop and behavioral
@@ -594,6 +602,27 @@ impl App {
         AppAction::Consumed(action_id.to_owned())
     }
 
+    fn note_session_overlay_scoped_action(&mut self, action_id: &str) -> AppAction {
+        self.chat.push_system(format!(
+            "`{action_id}` is a session-management action. The session overlay (open via `/tree`, `/fork`, `/resume`, or the command palette) is not yet ported to `senpi --neo`. Run `senpi` (without `--neo`) for session navigation.",
+        ));
+        AppAction::Consumed(action_id.to_owned())
+    }
+
+    fn note_tree_overlay_scoped_action(&mut self, action_id: &str) -> AppAction {
+        self.chat.push_system(format!(
+            "`{action_id}` is a session tree navigation action. The session tree overlay is not yet ported to `senpi --neo`. Run `senpi` (without `--neo`) for the `/tree` view.",
+        ));
+        AppAction::Consumed(action_id.to_owned())
+    }
+
+    fn note_models_overlay_scoped_action(&mut self, action_id: &str) -> AppAction {
+        self.chat.push_system(format!(
+            "`{action_id}` is a favorite-models management action. The favorite-models overlay is not yet ported to `senpi --neo`. Run `senpi` (without `--neo`) for the `/favorite-models` view.",
+        ));
+        AppAction::Consumed(action_id.to_owned())
+    }
+
     /// Bug 3 (Oracle round 8): the raw key path at `handle_key` only
     /// opens the slash overlay when the user types `/` with an empty
     /// Input-focus buffer (so mid-prompt `/` inserts literally). When
@@ -656,12 +685,11 @@ impl App {
         AppAction::Consumed(action_id.to_owned())
     }
 
-    /// Round 12 / real port: `app.message.dequeue` (Alt+Up) pulls the
-    /// most recently queued steering / follow-up message back into
-    /// the input buffer so the user can edit it. The local queue is
-    /// tracked by `QueueUpdate` events; this arm pops the tail back
-    /// into the editor when one exists, or pushes a chat-system note
-    /// when the queue is empty.
+    fn note_and_dispatch(&mut self, message: &str, action: AppAction) -> AppAction {
+        self.chat.push_system(message.into());
+        action
+    }
+
     fn apply_message_dequeue(&mut self, action_id: &str) -> AppAction {
         if let Some(text) = self.chat.pop_queued_message() {
             self.input.clear();
@@ -684,34 +712,13 @@ impl App {
             return action;
         }
         match id {
-            "app.exit" => {
-                // Bug 3 (Oracle round 9): the user explicitly invoked
-                // exit, either by hitting Ctrl+D or by selecting
-                // /quit from the slash menu / command palette. The
-                // old branch tried to mimic legacy senpi's
-                // Ctrl+D-with-non-empty-buffer behavior by returning
-                // `Consumed("tui.editor.deleteCharForward")`, but
-                // that string was just a label - the buffer was
-                // never actually edited, and `/quit` from the
-                // palette silently closed without quitting. Treat
-                // `app.exit` as an unambiguous exit request now;
-                // if a user wants the Ctrl+D-delete-char-forward
-                // behavior, they can rebind Ctrl+D to
-                // `tui.editor.deleteCharForward` directly (which
-                // already has its own explicit arm below).
-                AppAction::Quit
-            }
+            "app.exit" => AppAction::Quit,
             "app.clear" => {
                 self.input.clear();
                 self.clear_autocomplete();
                 AppAction::Consumed(id.to_owned())
             }
             "tui.input.copy" => {
-                // Legacy senpi: Ctrl+C with a non-empty buffer clears
-                // the input (a quick "discard this prompt" gesture).
-                // With an empty buffer it interrupts the current turn
-                // instead. Without that branch the chord matched in
-                // Input focus but did nothing visible.
                 if self.input.buffer.is_empty() {
                     AppAction::Interrupt
                 } else {
@@ -722,85 +729,44 @@ impl App {
             }
             "app.interrupt" => AppAction::Interrupt,
             "app.model.cycleForward" => AppAction::CycleModel,
-            // Bug 3 (Oracle round 10): `cycle_model` on the wire is
-            // next-only. The old arm also produced `CycleModel` and
-            // `action_to_command` discarded the direction, so the
-            // backend cycled FORWARD when the user pressed
-            // `shift+ctrl+p` expecting BACKWARD. Surface a "not yet
-            // wired" chat note instead of silently doing the wrong
-            // thing. When the wire protocol grows a `cycle_model_back`
-            // (or similar), wire it up here.
             "app.model.cycleBackward" => self.note_unimplemented_action(id),
             "app.model.select" => {
-                // Ctrl+L: open the model picker overlay AND fire the
-                // backend `GetAvailableModels` command (mapped from
-                // OpenModelPicker in `action_to_command`). Pre-filling
-                // with the bundled MODELS list means the user sees a
-                // usable picker immediately; if the backend later sends
-                // a more accurate model list, the overlay can be
-                // refreshed in place. Without the overlay open, Ctrl+L
-                // was a silent no-op against the README's promise that
-                // it opens a model selector.
                 self.overlay = Some(Overlay::ModelPicker(ModelPickerOverlay::new()));
                 AppAction::OpenModelPicker
             }
+            "app.suspend" => self.note_and_dispatch(
+                "Suspending senpi (use `fg` in your shell to resume).",
+                AppAction::Suspend,
+            ),
+            "app.session.new" => self.note_and_dispatch("Starting a new session...", AppAction::NewSession),
+            other if is_session_overlay_scoped_action(other) => {
+                self.note_session_overlay_scoped_action(other)
+            }
+            other if is_tree_overlay_scoped_action(other) => self.note_tree_overlay_scoped_action(other),
+            other if is_models_overlay_scoped_action(other) => self.note_models_overlay_scoped_action(other),
             "neo.sidebar.toggle" => {
-                // Round 12 / real port: Alt+S toggles the sidebar
-                // pane visibility. The actual layout split (when
-                // wide enough) is computed in `app/mod.rs::render`
-                // via `app.sidebar_visible || app.demo_mode`.
                 self.sidebar_visible = !self.sidebar_visible;
                 AppAction::ToggleSidebar
             }
             "neo.toggle_animations" => {
-                // Round 12 / real port: Alt+A toggles spinner /
-                // scanner / pulse playback. The footer spinner uses
-                // `app.animations_enabled` to decide whether to
-                // rotate its glyph or keep it static.
                 self.animations_enabled = !self.animations_enabled;
                 AppAction::ToggleAnimations
             }
-            "neo.compact" => {
-                // Round 12 / real port: Alt+C fires `Command::Compact`
-                // to the backend. The backend's response (success or
-                // failure) flows through `apply_response` and
-                // existing `compaction_end` event handling.
-                self.chat
-                    .push_system("Compacting session... watch for `compaction_end` event.".into());
-                AppAction::CompactSession
-            }
+            "neo.compact" => self.note_and_dispatch(
+                "Compacting session... watch for `compaction_end` event.",
+                AppAction::CompactSession,
+            ),
             "app.message.dequeue" => self.apply_message_dequeue(id),
             "app.thinking.cycle" => AppAction::CycleThinkingLevel,
             "app.thinking.toggle" => {
-                // Round 12 / real port: `thinking_visible` now drives
-                // chat rendering directly (see
-                // `chat::ChatViewOpts::thinking_visible`). Toggling it
-                // hides or shows every thinking block in one
-                // keystroke. The chat note is no longer needed
-                // because the visual change IS the feedback.
                 self.thinking_visible = !self.thinking_visible;
                 AppAction::ToggleThinkingVisibility
             }
             "app.tools.expand" => {
-                // Round 12 / real port: `tools_expanded` now drives
-                // chat rendering directly (see
-                // `chat::ChatViewOpts::tools_expanded`). Toggling it
-                // collapses every tool card's body to a single
-                // "collapsed, ctrl+o to expand" hint, or restores the
-                // full output. The visual change IS the feedback.
                 self.tools_expanded = !self.tools_expanded;
                 AppAction::ToggleToolsExpanded
             }
-            "app.editor.external" => {
-                // Round 12 / real port: Ctrl+G now actually launches
-                // `$VISUAL` / `$EDITOR` on the current buffer. The run
-                // loop intercepts `ExternalEditorLaunch` to suspend
-                // the TUI, run the editor, read the result back, and
-                // restore the TUI. No chat note needed - the visible
-                // change IS the buffer mutation.
-                let _ = id;
-                AppAction::ExternalEditorLaunch
-            }
+            "app.editor.external" => AppAction::ExternalEditorLaunch,
             "app.message.followUp" => self.apply_follow_up_action(),
             "tui.input.submit" => self.apply_submit_action(),
             "tui.input.newLine" => {
@@ -874,6 +840,7 @@ impl App {
                 id: None,
                 custom_instructions: None,
             }),
+            AppAction::NewSession => Some(Command::NewSession { id: None }),
             _ => None,
         }
     }
@@ -1040,10 +1007,6 @@ impl App {
                 );
             }
             RpcEvent::QueueUpdate { steering, follow_up } => {
-                // Round 12 / real port: track queued messages so
-                // Alt+Up (`app.message.dequeue`) can pop the most
-                // recent one back into the editor. Source order is
-                // steering then follow-up.
                 let mut combined = steering;
                 combined.extend(follow_up);
                 self.chat.replace_queued_messages(combined);
@@ -1410,14 +1373,13 @@ fn init_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
 /// Listing them here lets the dispatcher show a one-line chat
 /// notification ("not yet wired") so the user sees that the chord
 /// landed and knows where to fall back.
-const ADVERTISED_BUT_UNIMPLEMENTED_ACTIONS: &[&str] = &[
-    // Session / branching / models management remain a follow-up
-    // feature pack (overlays + JSONL session parsing + persisted
-    // favorites). Until those land they route through
-    // `note_unimplemented_action` so the chord still produces
-    // visible feedback per Bug 3.
-    "app.session.toggleNamedFilter",
-    "app.session.new",
+const ADVERTISED_BUT_UNIMPLEMENTED_ACTIONS: &[&str] = &["app.clipboard.pasteImage"];
+
+fn is_advertised_unimplemented_action(id: &str) -> bool {
+    ADVERTISED_BUT_UNIMPLEMENTED_ACTIONS.contains(&id)
+}
+
+const SESSION_OVERLAY_SCOPED_ACTIONS: &[&str] = &[
     "app.session.tree",
     "app.session.fork",
     "app.session.resume",
@@ -1426,7 +1388,14 @@ const ADVERTISED_BUT_UNIMPLEMENTED_ACTIONS: &[&str] = &[
     "app.session.deleteNoninvasive",
     "app.session.togglePath",
     "app.session.toggleSort",
-    "app.suspend",
+    "app.session.toggleNamedFilter",
+];
+
+fn is_session_overlay_scoped_action(id: &str) -> bool {
+    SESSION_OVERLAY_SCOPED_ACTIONS.contains(&id)
+}
+
+const TREE_OVERLAY_SCOPED_ACTIONS: &[&str] = &[
     "app.tree.foldOrUp",
     "app.tree.unfoldOrDown",
     "app.tree.editLabel",
@@ -1438,6 +1407,13 @@ const ADVERTISED_BUT_UNIMPLEMENTED_ACTIONS: &[&str] = &[
     "app.tree.filter.all",
     "app.tree.filter.cycleForward",
     "app.tree.filter.cycleBackward",
+];
+
+fn is_tree_overlay_scoped_action(id: &str) -> bool {
+    TREE_OVERLAY_SCOPED_ACTIONS.contains(&id)
+}
+
+const MODELS_OVERLAY_SCOPED_ACTIONS: &[&str] = &[
     "app.models.save",
     "app.models.toggleFavorite",
     "app.models.enableAll",
@@ -1445,21 +1421,10 @@ const ADVERTISED_BUT_UNIMPLEMENTED_ACTIONS: &[&str] = &[
     "app.models.toggleProvider",
     "app.models.reorderUp",
     "app.models.reorderDown",
-    // Image paste requires clipboard + image content blocks - a
-    // separate feature surface. Until that lands the chord shows a
-    // visible "not yet wired" note.
-    "app.clipboard.pasteImage",
-    // NOTE: `app.message.followUp`, `app.message.dequeue`,
-    // `neo.sidebar.toggle`, `neo.compact`, `neo.toggle_animations`,
-    // and `app.editor.external` all have explicit
-    // `execute_action` arms in round 12 - they are NOT advertised
-    // as unimplemented anymore. Adding them here would route them
-    // through `note_unimplemented_action` and shadow the real
-    // behavior.
 ];
 
-fn is_advertised_unimplemented_action(id: &str) -> bool {
-    ADVERTISED_BUT_UNIMPLEMENTED_ACTIONS.contains(&id)
+fn is_models_overlay_scoped_action(id: &str) -> bool {
+    MODELS_OVERLAY_SCOPED_ACTIONS.contains(&id)
 }
 
 /// Infer the backend `provider` for a curated model id.
@@ -1585,6 +1550,58 @@ async fn run_external_editor(terminal: &mut Terminal<CrosstermBackend<Stdout>>, 
     Ok(())
 }
 
+/// Round 13 / extended port: suspend the process via SIGTSTP so the
+/// user's shell catches it as a stopped job. Restore the terminal
+/// first so the shell prompt does not inherit raw mode + alt screen.
+/// Re-initializes the terminal after `fg` resumes the process.
+///
+/// On non-Unix platforms (Windows), SIGTSTP does not exist; surface a
+/// friendly error instead of stopping the process in a broken way.
+#[allow(clippy::unused_async)] // tokio scope alignment with siblings
+async fn run_suspend(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::process::Command as StdCommand;
+
+        let caps = TerminalCaps::detect();
+        disable_raw_mode()?;
+        let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+        let _ = execute!(std::io::stdout(), DisableBracketedPaste);
+        execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
+        let _ = write_terminal_bytes(&caps.cleanup_writes());
+
+        let pid = std::process::id().to_string();
+        let status = StdCommand::new("kill").args(["-TSTP", &pid]).status();
+
+        // After `fg`, the process continues here. Restore the TUI
+        // regardless of whether `kill` actually delivered the
+        // signal so a kill-binary-missing system does not strand
+        // the user in a broken terminal.
+        write_terminal_bytes(&caps.init_writes())?;
+        enable_raw_mode()?;
+        execute!(std::io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+        let _ = execute!(std::io::stdout(), EnableBracketedPaste);
+        let _ = execute!(
+            std::io::stdout(),
+            PushKeyboardEnhancementFlags(caps.kitty_keyboard_flags),
+        );
+        terminal.clear()?;
+
+        match status {
+            Ok(s) if s.success() => Ok(()),
+            Ok(s) => Err(color_eyre::eyre::eyre!("kill -TSTP exited with status {s}",)),
+            Err(err) => Err(color_eyre::eyre::eyre!("could not invoke `kill`: {err}")),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = terminal;
+        Err(color_eyre::eyre::eyre!(
+            "Ctrl+Z / SIGTSTP suspend is Unix-only; senpi --neo cannot suspend itself on this platform",
+        ))
+    }
+}
+
 fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     let caps = TerminalCaps::detect();
     disable_raw_mode()?;
@@ -1658,6 +1675,11 @@ enum TerminalEventOutcome {
     /// `$VISUAL` / `$EDITOR` against the current input buffer, read
     /// the edited result back, and restore the TUI.
     ExternalEditor,
+    /// Round 13 / extended port: user invoked `app.suspend`
+    /// (Ctrl+Z). The run loop restores the terminal, sends
+    /// SIGTSTP to self, and re-initializes the TUI when the shell
+    /// resumes the process via `fg`.
+    Suspend,
 }
 
 async fn handle_terminal_event(
@@ -1674,6 +1696,9 @@ async fn handle_terminal_event(
             }
             if matches!(action, AppAction::ExternalEditorLaunch) {
                 return TerminalEventOutcome::ExternalEditor;
+            }
+            if matches!(action, AppAction::Suspend) {
+                return TerminalEventOutcome::Suspend;
             }
             // RPC commands only fire when a backend is attached. In
             // demo mode `cmd_tx` is `None`, so AppActions that would
@@ -1786,11 +1811,6 @@ async fn drive(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: AppCon
                 })?;
             }
             _ = spinner_tick.tick() => {
-                // Round 12 / real port: Alt+A toggles
-                // `animations_enabled`. When false, freeze the
-                // spinner frame and skip the input focus pulse so
-                // the UI stays completely static (useful for
-                // screen recording or low-power terminals).
                 if app.animations_enabled {
                     spinner_idx = (spinner_idx + 1) % SPINNER_FRAMES.len();
                     app.input.focus_pulse = app.input.focus_pulse.wrapping_add(8);
@@ -1802,16 +1822,18 @@ async fn drive(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: AppCon
                     TerminalEventOutcome::Continue => {}
                     TerminalEventOutcome::Quit | TerminalEventOutcome::Disconnected => break,
                     TerminalEventOutcome::ExternalEditor => {
-                        // Round 12 / real port: suspend TUI, edit
-                        // buffer in $VISUAL/$EDITOR, restore TUI.
-                        // Any error path during the launch lands as
-                        // an Inbound::Error so the user sees what
-                        // went wrong rather than getting a frozen
-                        // screen.
                         if let Err(err) = run_external_editor(terminal, &mut app).await {
                             app.apply_inbound(Inbound::Error {
                                 exit_code: None,
                                 stderr_tail: format!("external editor failed: {err}"),
+                            });
+                        }
+                    }
+                    TerminalEventOutcome::Suspend => {
+                        if let Err(err) = run_suspend(terminal).await {
+                            app.apply_inbound(Inbound::Error {
+                                exit_code: None,
+                                stderr_tail: format!("suspend failed: {err}"),
                             });
                         }
                     }
@@ -1849,10 +1871,6 @@ fn draw_app(frame: &mut Frame<'_>, app: &App) {
     let area = frame.area();
     let input_wrap_width = usize::from(area.width.saturating_sub(6).max(1));
     let line_count = app.input.display_lines(input_wrap_width).len();
-    // Round 12 / real port: sidebar visibility is now user-controllable
-    // via `neo.sidebar.toggle` (Alt+S). The demo-mode auto-show stays as
-    // a render-only convenience for screenshots. Either trigger requires
-    // the terminal to be wide enough so the chat does not crush.
     let sidebar_visible =
         (app.demo_mode || app.sidebar_visible) && area.width >= layout::SIDEBAR_MIN_TERMINAL_WIDTH;
     let computed = layout::compute(
