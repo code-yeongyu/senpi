@@ -12,3 +12,4 @@ pub mod input;
 pub mod markdown;
 pub mod select_list;
 pub mod settings_list;
+pub mod working_indicator;
