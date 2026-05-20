@@ -1,6 +1,6 @@
 {
 	"name": "@code-yeongyu/senpi",
-	"version": "2026.5.19",
+	"version": "2026.5.20",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"piConfig": {
@@ -41,9 +41,9 @@
 	},
 	"dependencies": {
 		"@anthropic-ai/sdk": "^0.91.1",
-		"@earendil-works/pi-agent-core": "^2026.5.19",
-		"@earendil-works/pi-ai": "^2026.5.19",
-		"@earendil-works/pi-tui": "^2026.5.19",
+		"@earendil-works/pi-agent-core": "^2026.5.20",
+		"@earendil-works/pi-ai": "^2026.5.20",
+		"@earendil-works/pi-tui": "^2026.5.20",
 		"@silvia-odwyer/photon-node": "^0.3.4",
 		"chalk": "^5.5.0",
 		"diff": "^8.0.2",
