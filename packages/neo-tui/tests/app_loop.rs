@@ -281,7 +281,7 @@ fn unimplemented_slash_command_visibly_notifies_user() {
     // received AND that the feature is not yet wired in --neo.
     let mut app = fresh_app();
     let messages_before = app.chat.messages.len();
-    let action = app.execute_action_for_tests("app.session.new");
+    let action = app.execute_action_for_tests("app.clipboard.pasteImage");
     assert!(matches!(action, AppAction::Consumed(_)));
     assert!(
         app.chat.messages.len() > messages_before,
@@ -290,7 +290,7 @@ fn unimplemented_slash_command_visibly_notifies_user() {
     let last = app.chat.messages.last().expect("message exists");
     assert_eq!(last.role, Role::System);
     assert!(
-        last.body.contains("app.session.new") && last.body.to_lowercase().contains("not yet"),
+        last.body.contains("app.clipboard.pasteImage") && last.body.to_lowercase().contains("not yet"),
         "chat body must name the action and mark it as not yet wired, got {:?}",
         last.body,
     );
@@ -497,26 +497,106 @@ fn tui_select_action_outside_overlay_visibly_notifies_user() {
 }
 
 #[test]
-fn ctrl_z_app_suspend_visibly_notifies_user() {
-    // Oracle round 6: `app.suspend` (Ctrl+Z) is advertised in the
-    // bundled keymap and exposed via the command palette, but the
-    // dispatcher silently consumed it through the catch-all `_` arm.
-    // Bug 3 contract: every advertised chord that lands must produce
-    // visible feedback - either real behavior or an explicit "not
-    // yet wired" chat note.
+fn ctrl_z_app_suspend_dispatches_real_suspend_action() {
+    // Round 13 / extended port: `app.suspend` (Ctrl+Z) now emits
+    // `AppAction::Suspend`. The run loop performs the actual
+    // SIGTSTP via `run_suspend`; the App pushes a chat note so the
+    // user sees the chord landed.
     let mut app = fresh_app();
     let messages_before = app.chat.messages.len();
     let action = app.execute_action_for_tests("app.suspend");
-    assert!(matches!(action, AppAction::Consumed(_)));
+    assert_eq!(action, AppAction::Suspend);
+    assert!(
+        App::action_to_command(&action).is_none(),
+        "Suspend is local-only; must not fire an RPC command",
+    );
     assert!(
         app.chat.messages.len() > messages_before,
-        "app.suspend chord must push a visible chat message",
+        "app.suspend chord must push a visible chat note",
     );
     let last = app.chat.messages.last().expect("chat message exists");
     assert_eq!(last.role, Role::System);
     assert!(
-        last.body.contains("app.suspend") && last.body.to_lowercase().contains("not yet"),
-        "chat body must name the action and flag it as not yet wired, got {:?}",
+        last.body.to_lowercase().contains("suspend") && last.body.to_lowercase().contains("fg"),
+        "chat body must explain how to resume (via `fg`), got {:?}",
+        last.body,
+    );
+}
+
+#[test]
+fn app_session_new_fires_new_session_command() {
+    // Round 13 / extended port: `app.session.new` (from `/new` slash
+    // command or command palette) fires `Command::NewSession`.
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+    let action = app.execute_action_for_tests("app.session.new");
+    assert_eq!(action, AppAction::NewSession);
+    let cmd = App::action_to_command(&action).expect("new_session must fire a command");
+    assert!(matches!(cmd, Command::NewSession { .. }));
+    assert!(
+        app.chat.messages.len() > messages_before,
+        "new session chord must push a visible chat note",
+    );
+}
+
+#[test]
+fn session_overlay_scoped_actions_route_through_scoped_helper() {
+    // Round 13 / extended port: session-overlay-scoped actions
+    // (`app.session.tree`, `.fork`, `.resume`, `.rename`, etc.) only
+    // do useful work inside the session overlay (not yet ported).
+    // Surface an explanatory note so the chord visibly lands.
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+    let action = app.execute_action_for_tests("app.session.tree");
+    assert!(matches!(action, AppAction::Consumed(_)));
+    assert!(
+        app.chat.messages.len() > messages_before,
+        "session-scoped action must push a visible chat note",
+    );
+    let last = app.chat.messages.last().expect("chat message exists");
+    assert_eq!(last.role, Role::System);
+    assert!(
+        last.body.contains("app.session.tree") && last.body.to_lowercase().contains("session"),
+        "chat body must name the action and mention session overlay, got {:?}",
+        last.body,
+    );
+}
+
+#[test]
+fn tree_overlay_scoped_actions_route_through_scoped_helper() {
+    // Round 13 / extended port: tree-overlay-scoped actions
+    // (`app.tree.foldOrUp`, `.unfoldOrDown`, `.editLabel`, filter
+    // family) only do useful work inside the session tree overlay.
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+    let action = app.execute_action_for_tests("app.tree.filter.cycleForward");
+    assert!(matches!(action, AppAction::Consumed(_)));
+    assert!(app.chat.messages.len() > messages_before);
+    let last = app.chat.messages.last().expect("chat message exists");
+    assert_eq!(last.role, Role::System);
+    assert!(
+        last.body.contains("app.tree.filter.cycleForward") && last.body.to_lowercase().contains("tree"),
+        "chat body must name the action and mention tree overlay, got {:?}",
+        last.body,
+    );
+}
+
+#[test]
+fn models_overlay_scoped_actions_route_through_scoped_helper() {
+    // Round 13 / extended port: models-overlay-scoped actions
+    // (`app.models.save`, `.toggleFavorite`, `.reorderUp`, etc.)
+    // only do useful work inside the favorite-models overlay.
+    let mut app = fresh_app();
+    let messages_before = app.chat.messages.len();
+    let action = app.execute_action_for_tests("app.models.toggleFavorite");
+    assert!(matches!(action, AppAction::Consumed(_)));
+    assert!(app.chat.messages.len() > messages_before);
+    let last = app.chat.messages.last().expect("chat message exists");
+    assert_eq!(last.role, Role::System);
+    assert!(
+        last.body.contains("app.models.toggleFavorite")
+            && last.body.to_lowercase().contains("favorite-models"),
+        "chat body must name the action and mention favorite-models, got {:?}",
         last.body,
     );
 }
