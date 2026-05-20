@@ -1,7 +1,7 @@
 //! Application loop and state container.
 //!
 //! Owns the terminal, drives a single `tokio::select!` loop multiplexing
-//! crossterm events + render ticks + inbound RPC frames, dispatches
+//! crossterm events + draw requests + inbound RPC frames, dispatches
 //! incoming keys through the keymap, mutates per-component state, and
 //! forwards user intents to the RPC backend.
 
@@ -19,7 +19,10 @@ use crossterm::{
         MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{
+        BeginSynchronizedUpdate, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
+        disable_raw_mode, enable_raw_mode,
+    },
 };
 use futures::StreamExt;
 use ratatui::{
@@ -42,6 +45,7 @@ use crate::{
         header::{self, HeaderState},
         input::{self, InputState},
     },
+    frame::FrameRequester,
     keymap::{self, FocusMode, ResolvedKeymap},
     layout::{self, LayoutState},
     overlay::{
@@ -60,7 +64,6 @@ use crate::{
 
 const SPINNER_FRAMES: [char; 8] = ['⠂', '⠆', '⠒', '⠢', '⠖', '⠲', '⠴', '⠤'];
 const SPINNER_FRAME_MS: u64 = 80;
-const RENDER_INTERVAL_MS: u64 = 33;
 
 /// Concrete outcome of one dispatched key event.
 ///
@@ -1785,14 +1788,16 @@ async fn drive(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: AppCon
     let cmd_tx: Option<mpsc::Sender<Command>> = backend.as_ref().map(RpcClient::command_sender);
 
     let mut events = EventStream::new();
-    let mut render_tick = interval(Duration::from_millis(RENDER_INTERVAL_MS));
-    render_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut spinner_tick = interval(Duration::from_millis(SPINNER_FRAME_MS));
     spinner_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     let start = Instant::now();
     let mut spinner_idx: usize = 0;
     let demo_deadline = demo_seconds.map(|s| start + Duration::from_secs(s));
+    let (draw_tx, _) = tokio::sync::broadcast::channel::<()>(16);
+    let frame_requester = FrameRequester::new(draw_tx.clone());
+    let mut draw_rx = draw_tx.subscribe();
+    frame_requester.schedule_frame();
 
     loop {
         if let Some(deadline) = demo_deadline {
@@ -1803,17 +1808,19 @@ async fn drive(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: AppCon
 
         tokio::select! {
             biased;
-            _ = render_tick.tick() => {
+            _ = draw_rx.recv() => {
                 app.footer.spinner_glyph = SPINNER_FRAMES[spinner_idx];
                 app.footer.elapsed_secs = start.elapsed().as_secs();
-                terminal.draw(|frame| {
-                    draw_app(frame, &app);
-                })?;
+                let stdout_handle = terminal.backend_mut();
+                execute!(stdout_handle, BeginSynchronizedUpdate)?;
+                terminal.draw(|frame| draw_app(frame, &app))?;
+                execute!(terminal.backend_mut(), EndSynchronizedUpdate)?;
             }
             _ = spinner_tick.tick() => {
                 if app.animations_enabled {
                     spinner_idx = (spinner_idx + 1) % SPINNER_FRAMES.len();
                     app.input.focus_pulse = app.input.focus_pulse.wrapping_add(8);
+                    frame_requester.schedule_frame();
                 }
             }
             ev = events.next() => {
@@ -1842,6 +1849,7 @@ async fn drive(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: AppCon
                         inbound = None;
                     }
                 }
+                frame_requester.schedule_frame();
             }
             // 4th arm: drain inbound RPC frames when a backend is up.
             // The async block stays Pending forever when `inbound` is
@@ -1853,7 +1861,10 @@ async fn drive(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: AppCon
                 }
             } => {
                 match inbound_msg {
-                    Some(msg) => app.apply_inbound(msg),
+                    Some(msg) => {
+                        app.apply_inbound(msg);
+                        frame_requester.schedule_frame();
+                    }
                     // Channel closed: null out the receiver so future
                     // iterations skip this arm via the pending future.
                     None => inbound = None,
