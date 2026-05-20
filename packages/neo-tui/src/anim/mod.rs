@@ -1,4 +1,4 @@
-//! Animation primitives: spinner, scanner, pulse.
+//! Animation primitives: spinner, scanner, pulse, shimmer.
 //!
 //! All animations are time-driven (millisecond `now`), stateless from
 //! the caller's perspective beyond construction. Frames are pure
@@ -84,3 +84,5 @@ impl Pulse {
         (phase * std::f32::consts::TAU).sin().mul_add(0.5, 0.5)
     }
 }
+
+pub mod shimmer;
