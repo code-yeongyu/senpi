@@ -60,6 +60,7 @@ out.jsonl
 pi-*.html
 out.html
 packages/coding-agent/binaries/
+packages/coding-agent/*.tgz
 todo.md
 plans/
 local-ignore/
