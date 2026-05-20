@@ -44,6 +44,7 @@ use crate::{
         footer::{self, FooterState, Status},
         header::{self, HeaderState},
         input::{self, InputState},
+        working_indicator::{self, WorkingIndicatorState},
     },
     frame::FrameRequester,
     keymap::{self, FocusMode, ResolvedKeymap},
@@ -145,6 +146,7 @@ pub enum AppAction {
 /// `animations_enabled`, `demo_mode`). Promoting these to an enum
 /// would lose orthogonality - the user expects to combine them
 /// freely.
+// CLIPPY-ALLOW: App stores independent UI toggles.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug)]
 pub struct App {
@@ -158,6 +160,7 @@ pub struct App {
     pub autocomplete_popup: Option<Vec<CompletionItem>>,
     pub autocomplete_index: usize,
     pub footer: FooterState,
+    pub working_indicator: WorkingIndicatorState,
     pub thinking_visible: bool,
     pub tools_expanded: bool,
     /// `true` when the user has explicitly enabled the sidebar via
@@ -219,6 +222,7 @@ impl App {
                 connected: true,
                 busy_label: None,
             },
+            working_indicator: WorkingIndicatorState::default(),
             thinking_visible: true,
             tools_expanded: true,
             sidebar_visible: false,
@@ -1279,6 +1283,7 @@ impl App {
             autocomplete_popup: None,
             autocomplete_index: 0,
             footer: config.footer,
+            working_indicator: WorkingIndicatorState::default(),
             thinking_visible: true,
             tools_expanded: true,
             sidebar_visible: false,
@@ -1560,7 +1565,8 @@ async fn run_external_editor(terminal: &mut Terminal<CrosstermBackend<Stdout>>, 
 ///
 /// On non-Unix platforms (Windows), SIGTSTP does not exist; surface a
 /// friendly error instead of stopping the process in a broken way.
-#[allow(clippy::unused_async)] // tokio scope alignment with siblings
+// CLIPPY-ALLOW: tokio scope alignment with siblings.
+#[allow(clippy::unused_async)]
 async fn run_suspend(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     #[cfg(unix)]
     {
@@ -1763,27 +1769,7 @@ async fn drive(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: AppCon
     let demo_mode = config.demo_mode;
     let demo_seconds = config.demo_seconds;
     let mut app = App::from_config(config)?;
-
-    // Demo mode keeps the loop pure-render so screenshots and tests
-    // do not require a backend on the host. Production paths set
-    // SENPI_NEO_BACKEND_BIN to either senpi --mode rpc or the QA
-    // harness's senpi-neo-faux binary.
-    let mut backend: Option<RpcClient> = None;
-    if !demo_mode {
-        match maybe_spawn_backend() {
-            Ok(client) => backend = client,
-            Err(message) => {
-                // Bug 3 contract: an env-configured-but-unspawnable
-                // backend used to boot identically to demo mode. Now
-                // the user sees the actual spawn failure as soon as the
-                // first frame renders.
-                app.apply_inbound(Inbound::Error {
-                    exit_code: None,
-                    stderr_tail: message,
-                });
-            }
-        }
-    }
+    let mut backend = attach_backend(&mut app, demo_mode);
     let mut inbound: Option<mpsc::Receiver<Inbound>> = backend.as_mut().and_then(RpcClient::take_inbound);
     let cmd_tx: Option<mpsc::Sender<Command>> = backend.as_ref().map(RpcClient::command_sender);
 
@@ -1809,12 +1795,7 @@ async fn drive(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: AppCon
         tokio::select! {
             biased;
             _ = draw_rx.recv() => {
-                app.footer.spinner_glyph = SPINNER_FRAMES[spinner_idx];
-                app.footer.elapsed_secs = start.elapsed().as_secs();
-                let stdout_handle = terminal.backend_mut();
-                execute!(stdout_handle, BeginSynchronizedUpdate)?;
-                terminal.draw(|frame| draw_app(frame, &app))?;
-                execute!(terminal.backend_mut(), EndSynchronizedUpdate)?;
+                render_requested_frame(terminal, &mut app, spinner_idx, &start, &frame_requester)?;
             }
             _ = spinner_tick.tick() => {
                 if app.animations_enabled {
@@ -1878,7 +1859,50 @@ async fn drive(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: AppCon
     Ok(())
 }
 
-fn draw_app(frame: &mut Frame<'_>, app: &App) {
+fn attach_backend(app: &mut App, demo_mode: bool) -> Option<RpcClient> {
+    if demo_mode {
+        return None;
+    }
+    match maybe_spawn_backend() {
+        Ok(client) => client,
+        Err(message) => {
+            app.apply_inbound(Inbound::Error {
+                exit_code: None,
+                stderr_tail: message,
+            });
+            None
+        }
+    }
+}
+
+fn render_requested_frame(
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    app: &mut App,
+    spinner_idx: usize,
+    start: &Instant,
+    frame_requester: &FrameRequester,
+) -> Result<()> {
+    app.footer.spinner_glyph = SPINNER_FRAMES[spinner_idx];
+    let elapsed = start.elapsed();
+    app.footer.elapsed_secs = elapsed.as_secs();
+    app.working_indicator.visible = matches!(
+        app.footer.status,
+        Status::Busy | Status::Streaming | Status::ToolRunning
+    );
+    app.working_indicator.elapsed_secs = app.footer.elapsed_secs;
+
+    let now_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX);
+    let stdout_handle = terminal.backend_mut();
+    execute!(stdout_handle, BeginSynchronizedUpdate)?;
+    terminal.draw(|frame| draw_app(frame, app, now_ms))?;
+    execute!(terminal.backend_mut(), EndSynchronizedUpdate)?;
+    if app.working_indicator.visible {
+        frame_requester.schedule_frame_in(Duration::from_millis(32));
+    }
+    Ok(())
+}
+
+fn draw_app(frame: &mut Frame<'_>, app: &App, now_ms: u64) {
     let area = frame.area();
     let input_wrap_width = usize::from(area.width.saturating_sub(6).max(1));
     let line_count = app.input.display_lines(input_wrap_width).len();
@@ -1889,6 +1913,7 @@ fn draw_app(frame: &mut Frame<'_>, app: &App) {
         LayoutState {
             input_lines: u16::try_from(line_count).unwrap_or(1),
             sidebar_visible,
+            show_working_indicator: app.working_indicator.visible,
         },
     );
 
@@ -1905,6 +1930,9 @@ fn draw_app(frame: &mut Frame<'_>, app: &App) {
     );
     input::render(frame, computed.input, &app.theme, &app.input);
     footer::render(frame, computed.footer, &app.theme, &app.footer);
+    if let Some(wi_area) = computed.working_indicator {
+        working_indicator::render(frame, wi_area, &app.theme, &app.working_indicator, now_ms);
+    }
 
     if let Some(overlay) = app.overlay.as_ref() {
         overlay.render(frame, area, &app.theme);
