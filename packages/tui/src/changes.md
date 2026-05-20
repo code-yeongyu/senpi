@@ -1,5 +1,25 @@
 # TUI delta rendering fork changes
 
+## 2026-05-20: Loader message animation is part of the shipped normal TUI
+
+### What changed
+
+- `packages/tui/src/components/loader.ts` supports `messageFormatter` with an independent message animation interval.
+- Senpi's normal TUI depends on this for `Working (Xs • esc to interrupt)` shimmer; a loader that only animates the
+  indicator frame is not compatible with the forked CLI.
+
+### Why this cannot be expressed externally
+
+The loader is instantiated by `InteractiveMode` during streaming. Extensions can replace the indicator options, but a
+globally installed CLI must ship a TUI runtime whose `Loader` honors `messageFormatter`.
+
+### Expected upstream conflict zone
+
+- HIGH: `packages/tui/src/components/loader.ts` around `LoaderIndicatorOptions`, `setIndicator()`,
+  `restartAnimation()`, and `updateDisplay()`.
+- HIGH: package/release wiring that decides whether `@code-yeongyu/senpi` bundles this forked TUI runtime or installs
+  upstream npm `@earendil-works/pi-tui`.
+
 ## 2026-05-18: flicker-free scrollback replay for offscreen expansion
 
 ### What changed

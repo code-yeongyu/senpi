@@ -9,7 +9,7 @@ src/
 ├── tui.ts                # TUI class. doRender() — the differential render core
 ├── terminal.ts           # Terminal abstraction (writes, capabilities, mouse, paste)
 ├── editor-component.ts   # Multi-line text editor primitive
-├── components/           # Built-in components (text, scroll, panel, …)
+├── components/           # Built-in components (text, loader, scroll, panel, ...)
 ├── autocomplete.ts       # Generic autocomplete engine (used by editor)
 ├── fuzzy.ts              # Fuzzy match used by autocomplete
 ├── keybindings.ts / keys.ts  # Key parsing, binding registry
@@ -27,6 +27,7 @@ src/
 | Task | File |
 |------|------|
 | Reduce flicker / re-render | `src/tui.ts` `doRender()` — three branches: viewport-shift / line-diff / fullRender |
+| Loader / Working animation | `src/components/loader.ts` — indicator frames and independent `messageFormatter` animation |
 | Add a new key / chord | `src/keys.ts` (parsing) + `src/keybindings.ts` (binding) |
 | Image rendering issue | `src/terminal-image.ts` (per-protocol path) |
 | Paste handling | `src/stdin-buffer.ts` bracketed-paste sequence handler |
@@ -39,6 +40,7 @@ src/
 - Every `DECSET 2026` (synchronized output begin) MUST have a matching end. The flicker-budget test counts them.
 - `fullRender(true)` (full clear) is allowed at most once — at init. Any post-init full clear is a regression.
 - Component memoization for high-frequency streaming updates is the consumer's responsibility (see senpi `assistant-message.ts` / `tool-execution.ts` caches).
+- `Loader` MUST preserve `messageFormatter` and `messageIntervalMs`. Senpi normal TUI uses them for animated `Working (Xs • esc to interrupt)` text; indicator-only animation is a regression.
 
 ## CONVENTIONS
 
@@ -56,4 +58,4 @@ src/
 ## NOTES
 
 - This package is consumed by `packages/coding-agent` (TUI mode) and `packages/web-ui` (only for type re-exports).
-- Authored by Mario Zechner (upstream). Fork changes are limited to `doRender()` differential paths and the matching flicker-budget tests; see `src/changes.md`.
+- Authored by Mario Zechner (upstream). Fork changes include `doRender()` differential paths and `Loader` message animation; see `src/changes.md`.

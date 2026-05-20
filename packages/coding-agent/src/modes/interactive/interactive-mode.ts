@@ -1847,7 +1847,7 @@ export class InteractiveMode {
 	private getWorkingIndicatorOptions(): LoaderIndicatorOptions {
 		return (
 			this.workingIndicatorOptions ?? {
-				frames: [theme.fg("accent", "•")],
+				frames: [theme.fg("accent", "•"), theme.fg("muted", "◦")],
 				intervalMs: DEFAULT_WORKING_STATUS_REFRESH_INTERVAL_MS,
 				messageFormatter: (message, animationElapsedMs) =>
 					formatWorkingStatusMessageFrame(

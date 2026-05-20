@@ -230,17 +230,21 @@ describe("InteractiveMode.getWorkingIndicatorOptions", () => {
 		setKeybindings(new KeybindingsManager());
 	});
 
-	test("uses a static bullet indicator with animated working text", () => {
+	test("uses a visible animated bullet indicator with animated working text", () => {
+		// Given
 		const fakeThis: any = {
 			workingIndicatorOptions: undefined,
 			getWorkingElapsedSeconds: () => 7,
 		};
 
+		// When
 		const options = (InteractiveMode as any).prototype.getWorkingIndicatorOptions.call(fakeThis);
 		const messageFormatter = options.messageFormatter;
 
-		expect(options.frames).toHaveLength(1);
+		// Then
+		expect(options.frames).toHaveLength(2);
 		expect(stripAnsi(options.frames[0])).toBe("•");
+		expect(stripAnsi(options.frames[1])).toBe("◦");
 		expect(options.messageIntervalMs).toBeGreaterThan(0);
 		expect(typeof messageFormatter).toBe("function");
 		expect(messageFormatter).toBeDefined();

@@ -54,6 +54,7 @@ components/
 |------|------|
 | Startup behavior | `interactive-mode.ts` `init()` (fork: `startup-tools.ts` instead of awaiting fd/rg downloads) |
 | Streaming render perf | `components/assistant-message.ts` + `components/tool-execution.ts` memoization caches |
+| Working row animation | `interactive-mode.ts` `getWorkingIndicatorOptions()` + `working-status.ts`; default normal TUI uses `•/◦` frames and animated text |
 | Add a slash-command UI | corresponding component + `pi.registerCommand()` from a builtin extension |
 | Footer field | `components/footer.ts` (token format / width tested) |
 | Theme | `theme/<name>.json` + `theme-selector.ts` |
@@ -65,6 +66,7 @@ components/
 - **Component memoization for streaming**: `assistant-message.ts` and `tool-execution.ts` cache rendered trees keyed by stream state. Bypassing this causes the TUI flicker-budget test (`packages/tui/test/tui-render.test.ts`) to fail.
 - **All keybindings via `core/keybindings.ts`** — no inline keystroke literals.
 - **Theme files**: name them `<theme>.json` under `theme/`; `copy-assets` copies them into `dist/`.
+- **Working row**: preserve the default `•/◦` frames and `messageFormatter` suffix `Working (Xs • esc to interrupt)`. Plain `• Working` in a global install means the packaged `pi-tui` runtime is stale.
 - **Component file naming**: `<kebab-name>.ts`. Class default-exported; tag exported.
 - **Selectors return `Promise<T | null>`** — null = canceled.
 
@@ -72,11 +74,12 @@ components/
 
 - Removing the fork's non-blocking startup probe in `startup-tools.ts` — re-introduces several seconds of "fd/rg downloading…" before the first frame.
 - Re-enabling startup version checks (npm registry / package updates) — fork-disabled per `changes.md` to keep startup deterministic.
+- Collapsing the normal TUI Working row to a static bullet or publishing against upstream `@earendil-works/pi-tui` — removes the visible working animation in global installs.
 - Bypassing component memoization for streaming renderers — measurable flicker regression.
 - Embedding ANSI escapes directly — use `core/tools/render-utils.ts`.
 
 ## NOTES
 
-- The fork's `changes.md` lists 4 `interactive-mode.ts` changes (non-blocking startup tools, favorite-model cycling, builtin display paths, disabled startup update checks). Preserve all four on upstream rebases.
+- The fork's `changes.md` lists interactive TUI deltas including normal Working animation, non-blocking startup tools, favorite-model cycling, builtin display paths, and disabled startup update checks. Preserve them on upstream rebases.
 - Splash assets (`assets/*.png`) are copied to dist by `copy-assets` script; do not symlink.
 - The `armin`, `daxnuts`, and `earendil-announcement` components are branded greeters — keep them harmlessly hidden behind branded settings.

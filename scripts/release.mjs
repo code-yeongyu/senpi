@@ -22,8 +22,9 @@
  *      (`### Added`, `### Fixed`, ...) for re-insertion in step 7.
  *   6. `git add -A`, `git commit -m "release: v<version>"` (husky pre-commit runs),
  *      `git tag v<version>`.
- *   7. Temporarily pin public `@code-yeongyu/senpi` deps to published upstream
- *      semver packages, run `npm run publish`, then restore source deps.
+ *   7. Run `npm run publish`. The public `@code-yeongyu/senpi` package
+ *      keeps lockstep workspace dependency ranges and bundles the private
+ *      forked `@earendil-works/pi-*` workspaces into the npm tarball.
  *   8. Re-insert a fresh `## [Unreleased]` block with the same subsection placeholders
  *      or the standard placeholders if none were captured, commit, then push `main`
  *      and the new tag.
@@ -32,12 +33,7 @@
 import { execFileSync } from "node:child_process";
 import { computeNextVersion } from "./calver.mjs";
 import { reAddUnreleasedSections, stampChangelogs } from "./release-changelog.mjs";
-import {
-	applyWorkspaceVersions,
-	pinPublicPackageDependencies,
-	restorePublicPackageDependencies,
-	runSyncVersions,
-} from "./release-packages.mjs";
+import { applyWorkspaceVersions, runSyncVersions } from "./release-packages.mjs";
 
 const VERSION_RE = /^\d{4}\.\d{1,2}\.\d{1,2}(-\d+)?$/;
 
@@ -237,9 +233,7 @@ function main() {
 	gitCommit(`release: v${version}`, args.dryRun);
 	gitTag(version, args.dryRun);
 
-	const publicDependencyPinUpdates = pinPublicPackageDependencies(args.dryRun, captureCommand, log, dryRunLog);
 	runPublish(args.dryRun);
-	restorePublicPackageDependencies(publicDependencyPinUpdates, args.dryRun, log, dryRunLog);
 
 	reAddUnreleasedSections(version, date, args.dryRun, capturedChangelogSubsections, log, dryRunLog);
 	gitAddAll(args.dryRun);
