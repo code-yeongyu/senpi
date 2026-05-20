@@ -41,9 +41,9 @@
 	},
 	"dependencies": {
 		"@anthropic-ai/sdk": "^0.91.1",
-		"@earendil-works/pi-agent-core": "^0.74.0",
-		"@earendil-works/pi-ai": "^0.74.0",
-		"@earendil-works/pi-tui": "^0.74.0",
+		"@earendil-works/pi-agent-core": "^2026.5.19",
+		"@earendil-works/pi-ai": "^2026.5.19",
+		"@earendil-works/pi-tui": "^2026.5.19",
 		"@silvia-odwyer/photon-node": "^0.3.4",
 		"chalk": "^5.5.0",
 		"diff": "^8.0.2",
