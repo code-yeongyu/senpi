@@ -6,6 +6,7 @@ import compactionExtension from "./compaction/index.ts";
 import diffExtension from "./diff.ts";
 import filesExtension from "./files.ts";
 import gptApplyPatchExtension from "./gpt-apply-patch/index.ts";
+import historySearchExtension from "./history-search/index.ts";
 import kimiWebSearchExtension from "./kimi-web-search/index.ts";
 import openaiWebSearchExtension from "./openai-web-search/index.ts";
 import permissionSystemExtension from "./permission-system/index.ts";
@@ -44,5 +45,6 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "bash-timeout", factory: bashTimeoutExtension },
 	{ id: "tool-pair-guard", factory: toolPairGuardExtension },
 	{ id: "compaction", factory: compactionExtension },
+	{ id: "history-search", factory: historySearchExtension },
 	{ id: "kimi-web-search", factory: kimiWebSearchExtension },
 ];
