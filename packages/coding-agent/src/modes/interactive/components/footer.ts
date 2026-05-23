@@ -111,6 +111,12 @@ export class FooterComponent implements Component {
 		const contextWindow = contextUsage?.contextWindow ?? state.model?.contextWindow ?? 0;
 		const contextPercentValue = contextUsage?.percent ?? 0;
 		const contextPercent = contextUsage?.percent !== null ? contextPercentValue.toFixed(1) : "?";
+		const contextTokens =
+			typeof contextUsage?.tokens === "number"
+				? formatTokens(contextUsage.tokens)
+				: typeof contextUsage?.percent === "number"
+					? formatTokens(Math.round((contextWindow * contextUsage.percent) / 100))
+					: "?";
 
 		// Build colored segments. Each segment carries its own theme color
 		// so the HUD stays readable at a glance instead of being one dim wash.
@@ -159,8 +165,8 @@ export class FooterComponent implements Component {
 		const autoIndicator = this.autoCompactEnabled ? " (auto)" : "";
 		const ctxDisplay =
 			contextPercent === "?"
-				? `?/${formatTokens(contextWindow)}${autoIndicator}`
-				: `${contextPercent}%/${formatTokens(contextWindow)}${autoIndicator}`;
+				? `${contextTokens}/${formatTokens(contextWindow)} (?)${autoIndicator}`
+				: `${contextTokens}/${formatTokens(contextWindow)} (${contextPercent}%)${autoIndicator}`;
 		const ctxColored =
 			contextPercentValue > 90
 				? theme.fg("error", ctxDisplay)
