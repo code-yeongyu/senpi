@@ -693,7 +693,17 @@ Content`,
 
 			expect(runCommandSpy).toHaveBeenCalledWith(
 				"mise",
-				["exec", "node@20", "--", "npm", "install", "@scope/pkg", "--prefix", join(agentDir, "npm")],
+				[
+					"exec",
+					"node@20",
+					"--",
+					"npm",
+					"install",
+					"@scope/pkg",
+					"--prefix",
+					join(agentDir, "npm"),
+					"--legacy-peer-deps",
+				],
 				undefined,
 			);
 		});
@@ -714,7 +724,7 @@ Content`,
 
 			expect(runCommandSpy).toHaveBeenCalledWith(
 				"mise",
-				["exec", "bun@1", "--", "bun", "install", "@scope/pkg", "--cwd", join(agentDir, "npm")],
+				["exec", "bun@1", "--", "bun", "install", "@scope/pkg", "--cwd", join(agentDir, "npm"), "--omit=peer"],
 				undefined,
 			);
 		});
@@ -953,6 +963,8 @@ Content`,
 						"pnpm-pkg",
 						"--prefix",
 						join(agentDir, "npm"),
+						"--config.auto-install-peers=false",
+						"--config.strict-peer-dependencies=false",
 						"--config.strict-dep-builds=false",
 					]);
 					mkdirSync(join(packagePath, "extensions"), { recursive: true });
@@ -2005,7 +2017,11 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			);
 			expect(runCommandSpy).toHaveBeenCalledWith(
 				"npm",
+<<<<<<< HEAD
 				["install", "example@latest", "--prefix", join(tempDir, ".senpi", "npm")],
+=======
+				["install", "example@latest", "--prefix", join(tempDir, ".pi", "npm"), "--legacy-peer-deps"],
+>>>>>>> upstream/main
 				undefined,
 			);
 		});
@@ -2044,7 +2060,13 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 				.mockImplementation(async (...callArgs: unknown[]) => {
 					const [command, args] = callArgs as [string, string[]];
 					expect(command).toBe("npm");
-					expect(args).toEqual(["install", "legacy-pkg@latest", "--prefix", join(agentDir, "npm")]);
+					expect(args).toEqual([
+						"install",
+						"legacy-pkg@latest",
+						"--prefix",
+						join(agentDir, "npm"),
+						"--legacy-peer-deps",
+					]);
 					mkdirSync(managedPath, { recursive: true });
 					writeFileSync(
 						join(managedPath, "package.json"),
@@ -2154,13 +2176,31 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			expect(runCommandSpy).toHaveBeenNthCalledWith(
 				1,
 				"npm",
-				["install", "user-old@latest", "user-unknown@latest", "--prefix", join(agentDir, "npm")],
+				[
+					"install",
+					"user-old@latest",
+					"user-unknown@latest",
+					"--prefix",
+					join(agentDir, "npm"),
+					"--legacy-peer-deps",
+				],
 				undefined,
 			);
 			expect(runCommandSpy).toHaveBeenNthCalledWith(
 				2,
 				"npm",
+<<<<<<< HEAD
 				["install", "project-old@latest", "project-missing@latest", "--prefix", join(tempDir, ".senpi", "npm")],
+=======
+				[
+					"install",
+					"project-old@latest",
+					"project-missing@latest",
+					"--prefix",
+					join(tempDir, ".pi", "npm"),
+					"--legacy-peer-deps",
+				],
+>>>>>>> upstream/main
 				undefined,
 			);
 			expect(updateGitSpy).toHaveBeenCalledTimes(4);
