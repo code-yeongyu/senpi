@@ -256,7 +256,7 @@ Project skill`,
 
 			const commands = runner.getRegisteredCommands();
 			const invocationNames = commands.map((command) => command.invocationName).filter((name) => name !== "tui");
-			expect(invocationNames).toEqual(["deploy:1", "project-only", "deploy:2", "user-only"]);
+			expect(invocationNames).toEqual(["history", "sessions", "deploy:1", "project-only", "deploy:2", "user-only"]);
 		});
 
 		it("should honor overrides for auto-discovered resources", async () => {
@@ -366,6 +366,8 @@ Content`,
 				"<builtin:bash-timeout>",
 				"<builtin:tool-pair-guard>",
 				"<builtin:compaction>",
+				"<builtin:history-search>",
+				"<builtin:session-observer>",
 				"<builtin:kimi-web-search>",
 			]);
 		});
