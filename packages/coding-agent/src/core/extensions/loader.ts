@@ -77,12 +77,19 @@ function getAliases(): Record<string, string> {
 	const typeboxCompileEntry = require.resolve("typebox/compile");
 	const typeboxValueEntry = require.resolve("typebox/value");
 
-	const packagesRoot = path.resolve(__dirname, "../../../../");
-	const resolveWorkspaceOrImport = (
+	const codingAgentPackageRoot = path.resolve(__dirname, "../../..");
+	const packagesRoot = path.dirname(codingAgentPackageRoot);
+	const resolveWorkspaceOrBundled = (
+		packageName: string,
+		packageEntryRelativePath: string,
 		workspaceRelativePath: string,
 		sourceRelativePath: string,
 		specifier: string,
 	): string => {
+		const bundledPath = path.join(codingAgentPackageRoot, "node_modules", packageName, packageEntryRelativePath);
+		if (fs.existsSync(bundledPath)) {
+			return bundledPath;
+		}
 		const workspacePath = path.join(packagesRoot, workspaceRelativePath);
 		if (fs.existsSync(workspacePath)) {
 			return workspacePath;
@@ -91,22 +98,38 @@ function getAliases(): Record<string, string> {
 		if (fs.existsSync(sourcePath)) {
 			return sourcePath;
 		}
-		return require.resolve(specifier);
+		return typeof import.meta.resolve === "function"
+			? fileURLToPath(import.meta.resolve(specifier))
+			: require.resolve(specifier);
 	};
 
-	const piCodingAgentEntry = resolveWorkspaceOrImport(
-		"coding-agent/dist/index.js",
-		"coding-agent/src/index.ts",
-		"@code-yeongyu/senpi",
-	);
-	const piAgentCoreEntry = resolveWorkspaceOrImport(
+	const piCodingAgentDistEntry = path.join(codingAgentPackageRoot, "dist/index.js");
+	const piCodingAgentSourceEntry = path.join(codingAgentPackageRoot, "src/index.ts");
+	const piCodingAgentEntry = fs.existsSync(piCodingAgentDistEntry) ? piCodingAgentDistEntry : piCodingAgentSourceEntry;
+	const piAgentCoreEntry = resolveWorkspaceOrBundled(
+		"@earendil-works/pi-agent-core",
+		"dist/index.js",
 		"agent/dist/index.js",
 		"agent/src/index.ts",
 		"@earendil-works/pi-agent-core",
 	);
-	const piTuiEntry = resolveWorkspaceOrImport("tui/dist/index.js", "tui/src/index.ts", "@earendil-works/pi-tui");
-	const piAiEntry = resolveWorkspaceOrImport("ai/dist/index.js", "ai/src/index.ts", "@earendil-works/pi-ai");
-	const piAiOauthEntry = resolveWorkspaceOrImport(
+	const piTuiEntry = resolveWorkspaceOrBundled(
+		"@earendil-works/pi-tui",
+		"dist/index.js",
+		"tui/dist/index.js",
+		"tui/src/index.ts",
+		"@earendil-works/pi-tui",
+	);
+	const piAiEntry = resolveWorkspaceOrBundled(
+		"@earendil-works/pi-ai",
+		"dist/index.js",
+		"ai/dist/index.js",
+		"ai/src/index.ts",
+		"@earendil-works/pi-ai",
+	);
+	const piAiOauthEntry = resolveWorkspaceOrBundled(
+		"@earendil-works/pi-ai",
+		"dist/oauth.js",
 		"ai/dist/oauth.js",
 		"ai/src/oauth.ts",
 		"@earendil-works/pi-ai/oauth",
