@@ -310,19 +310,22 @@ function extractPayloadRequestMetadata(params: MessageCreateParamsStreaming): {
 	return headers ? { params: stripped, headers } : { params: stripped };
 }
 
-function removeComputerUseBetaHeader(headers: Record<string, string> | undefined): {
+function removeAnthropicBetaHeaders(
+	headers: Record<string, string | null> | undefined,
+	shouldRemoveBeta: (beta: string) => boolean,
+): {
 	changed: boolean;
-	headers?: Record<string, string>;
+	headers?: Record<string, string | null>;
 } {
 	if (!headers) {
 		return { changed: false };
 	}
 
-	const nextHeaders: Record<string, string> = {};
+	const nextHeaders: Record<string, string | null> = {};
 	let changed = false;
 
 	for (const [key, value] of Object.entries(headers)) {
-		if (key.toLowerCase() !== "anthropic-beta") {
+		if (key.toLowerCase() !== "anthropic-beta" || value === null) {
 			nextHeaders[key] = value;
 			continue;
 		}
@@ -331,7 +334,7 @@ function removeComputerUseBetaHeader(headers: Record<string, string> | undefined
 			.split(",")
 			.map((beta) => beta.trim())
 			.filter((beta) => beta.length > 0);
-		const supportedBetas = betas.filter((beta) => !beta.startsWith(COMPUTER_USE_BETA_PREFIX));
+		const supportedBetas = betas.filter((beta) => !shouldRemoveBeta(beta));
 		changed = changed || supportedBetas.length !== betas.length;
 
 		if (supportedBetas.length > 0) {
@@ -347,6 +350,25 @@ function removeComputerUseBetaHeader(headers: Record<string, string> | undefined
 		changed: true,
 		headers: Object.keys(nextHeaders).length > 0 ? nextHeaders : undefined,
 	};
+}
+
+function removeComputerUseBetaHeader(headers: Record<string, string> | undefined): {
+	changed: boolean;
+	headers?: Record<string, string | null>;
+} {
+	return removeAnthropicBetaHeaders(headers, (beta) => beta.startsWith(COMPUTER_USE_BETA_PREFIX));
+}
+
+function sanitizeAdaptiveThinkingHeaders(
+	model: Model<"anthropic-messages">,
+	headers: Record<string, string | null>,
+): Record<string, string | null> {
+	if (!supportsAdaptiveThinking(model)) {
+		return headers;
+	}
+
+	const headerSanitization = removeAnthropicBetaHeaders(headers, (beta) => beta === INTERLEAVED_THINKING_BETA);
+	return headerSanitization.changed ? (headerSanitization.headers ?? {}) : headers;
 }
 
 function rejectsNativeComputerTool(model: Model<"anthropic-messages">, toolType: string): boolean {
@@ -422,6 +444,48 @@ function sanitizeUnsupportedNativeTools(
 			(typeof toolChoiceName === "string" && removedToolNames.has(toolChoiceName)) || sanitized.tools === undefined;
 		if (shouldRemoveToolChoice) {
 			delete sanitized.tool_choice;
+		}
+	}
+
+	return changed ? (sanitized as MessageCreateParamsStreaming) : params;
+}
+
+function sanitizeAdaptiveThinkingPayload(
+	model: Model<"anthropic-messages">,
+	params: MessageCreateParamsStreaming,
+	options?: AnthropicOptions,
+): MessageCreateParamsStreaming {
+	if (!supportsAdaptiveThinking(model)) {
+		return params;
+	}
+
+	const payload = params as AnthropicPayloadWithRequestMetadata;
+	const headers = stringRecord(payload.headers);
+	const headerSanitization = removeAnthropicBetaHeaders(headers, (beta) => beta === INTERLEAVED_THINKING_BETA);
+	const sanitized: AnthropicPayloadWithRequestMetadata = { ...payload };
+	let changed = false;
+
+	const thinking = isRecord(payload.thinking) ? payload.thinking : undefined;
+	if (thinking?.type === "enabled") {
+		const display =
+			thinking.display === "omitted" || thinking.display === "summarized"
+				? thinking.display
+				: (options?.thinkingDisplay ?? "summarized");
+		sanitized.thinking = { type: "adaptive", display } as MessageCreateParamsStreaming["thinking"];
+		if (options?.effort !== undefined && !isRecord(payload.output_config)) {
+			sanitized.output_config = { effort: options.effort } as NonNullable<
+				MessageCreateParamsStreaming["output_config"]
+			>;
+		}
+		changed = true;
+	}
+
+	if (headerSanitization.changed) {
+		changed = true;
+		if (headerSanitization.headers) {
+			sanitized.headers = headerSanitization.headers;
+		} else {
+			delete sanitized.headers;
 		}
 	}
 
@@ -679,6 +743,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 			if (nextParams !== undefined) {
 				params = nextParams as MessageCreateParamsStreaming;
 			}
+			params = sanitizeAdaptiveThinkingPayload(model, params, options);
 			params = sanitizeUnsupportedNativeTools(model, params);
 			const payloadRequestMetadata = extractPayloadRequestMetadata(params);
 			params = payloadRequestMetadata.params;
@@ -1033,17 +1098,20 @@ function createClient(
 			authToken: null,
 			baseURL: resolveCloudflareBaseUrl(model),
 			dangerouslyAllowBrowser: true,
-			defaultHeaders: mergeHeaders(
-				{
-					accept: "application/json",
-					"anthropic-dangerous-direct-browser-access": "true",
-					"cf-aig-authorization": `Bearer ${apiKey}`,
-					"x-api-key": null,
-					Authorization: null,
-					...(betaFeatures.length > 0 ? { "anthropic-beta": betaFeatures.join(",") } : {}),
-				},
-				model.headers,
-				optionsHeaders,
+			defaultHeaders: sanitizeAdaptiveThinkingHeaders(
+				model,
+				mergeHeaders(
+					{
+						accept: "application/json",
+						"anthropic-dangerous-direct-browser-access": "true",
+						"cf-aig-authorization": `Bearer ${apiKey}`,
+						"x-api-key": null,
+						Authorization: null,
+						...(betaFeatures.length > 0 ? { "anthropic-beta": betaFeatures.join(",") } : {}),
+					},
+					model.headers,
+					optionsHeaders,
+				),
 			),
 		});
 
@@ -1057,15 +1125,18 @@ function createClient(
 			authToken: apiKey,
 			baseURL: model.baseUrl,
 			dangerouslyAllowBrowser: true,
-			defaultHeaders: mergeHeaders(
-				{
-					accept: "application/json",
-					"anthropic-dangerous-direct-browser-access": "true",
-					...(betaFeatures.length > 0 ? { "anthropic-beta": betaFeatures.join(",") } : {}),
-				},
-				model.headers,
-				dynamicHeaders,
-				optionsHeaders,
+			defaultHeaders: sanitizeAdaptiveThinkingHeaders(
+				model,
+				mergeHeaders(
+					{
+						accept: "application/json",
+						"anthropic-dangerous-direct-browser-access": "true",
+						...(betaFeatures.length > 0 ? { "anthropic-beta": betaFeatures.join(",") } : {}),
+					},
+					model.headers,
+					dynamicHeaders,
+					optionsHeaders,
+				),
 			),
 		});
 
@@ -1079,16 +1150,19 @@ function createClient(
 			authToken: apiKey,
 			baseURL: model.baseUrl,
 			dangerouslyAllowBrowser: true,
-			defaultHeaders: mergeHeaders(
-				{
-					accept: "application/json",
-					"anthropic-dangerous-direct-browser-access": "true",
-					"anthropic-beta": ["claude-code-20250219", "oauth-2025-04-20", ...betaFeatures].join(","),
-					"user-agent": `claude-cli/${claudeCodeVersion}`,
-					"x-app": "cli",
-				},
-				model.headers,
-				optionsHeaders,
+			defaultHeaders: sanitizeAdaptiveThinkingHeaders(
+				model,
+				mergeHeaders(
+					{
+						accept: "application/json",
+						"anthropic-dangerous-direct-browser-access": "true",
+						"anthropic-beta": ["claude-code-20250219", "oauth-2025-04-20", ...betaFeatures].join(","),
+						"user-agent": `claude-cli/${claudeCodeVersion}`,
+						"x-app": "cli",
+					},
+					model.headers,
+					optionsHeaders,
+				),
 			),
 		});
 
@@ -1103,15 +1177,18 @@ function createClient(
 		authToken: null,
 		baseURL: model.baseUrl,
 		dangerouslyAllowBrowser: true,
-		defaultHeaders: mergeHeaders(
-			{
-				accept: "application/json",
-				"anthropic-dangerous-direct-browser-access": "true",
-				...(betaFeatures.length > 0 ? { "anthropic-beta": betaFeatures.join(",") } : {}),
-			},
-			sessionAffinityHeaders,
-			model.headers,
-			optionsHeaders,
+		defaultHeaders: sanitizeAdaptiveThinkingHeaders(
+			model,
+			mergeHeaders(
+				{
+					accept: "application/json",
+					"anthropic-dangerous-direct-browser-access": "true",
+					...(betaFeatures.length > 0 ? { "anthropic-beta": betaFeatures.join(",") } : {}),
+				},
+				sessionAffinityHeaders,
+				model.headers,
+				optionsHeaders,
+			),
 		),
 	});
 
