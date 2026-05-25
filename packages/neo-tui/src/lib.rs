@@ -1,7 +1,7 @@
 //! `senpi-neo-tui` - native Rust + ratatui TUI for senpi.
 //!
 //! See [`README`](https://github.com/code-yeongyu/senpi/blob/main/packages/neo-tui/README.md)
-//! and `plans/neo-tui.md` for the architecture and module layout.
+//! and `packages/neo-tui/AGENTS.md` for the architecture and module layout.
 //!
 //! The crate exposes a thin library surface so integration tests and the
 //! offline faux backend can drive individual subsystems without

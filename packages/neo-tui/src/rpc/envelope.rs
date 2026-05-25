@@ -1,9 +1,9 @@
 //! Wire-level envelope for senpi `--mode rpc` traffic.
 //!
 //! See `packages/coding-agent/docs/rpc.md` for the canonical protocol.
-//!
-//! The full event taxonomy lands in T6. This stub captures the two top-level
-//! kinds (`response`, `event`) plus the shapes needed by the RED tests in T2.
+//! This module captures the two top-level inbound kinds (`response`, `event`).
+//! Event payloads are decoded by [`crate::rpc::event`] after the envelope is
+//! parsed.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -45,8 +45,8 @@ pub enum EnvelopeError {
     Json(#[from] serde_json::Error),
 }
 
-/// Parse a single JSONL line into an [`Envelope`]. T6 expands this with
-/// streaming-friendly partial-line buffering.
+/// Parse a single JSONL line into an [`Envelope`]. The transport layer owns
+/// line buffering; this function parses one complete JSONL frame.
 pub fn parse_line(line: &str) -> Result<Envelope, EnvelopeError> {
     let trimmed = line.trim_end_matches(['\r', '\n']);
     let value: Envelope = serde_json::from_str(trimmed)?;

@@ -106,9 +106,9 @@ export interface RunNeoModeOptions {
 
 /**
  * Launch the Rust TUI binary with stdio inherited so it owns the TTY.
- * The Rust binary is expected to spawn `senpi --mode rpc` as its own child
- * for the agent backend (T6 wires that up; until then the binary renders
- * the demo state).
+ * The Rust binary spawns `senpi --mode rpc` as its own child for the agent
+ * backend. If no backend is configured, it runs offline (demo mode or an
+ * empty idle session).
  */
 export async function runNeoMode(options: RunNeoModeOptions): Promise<number> {
 	const located = resolveBinaryPath();

@@ -251,8 +251,8 @@ impl ResolvedTheme {
 
     /// Look up a token. Returns `Color::Reset` for unknown tokens; this is
     /// deliberate so callers can render even on incomplete themes without
-    /// panicking. T7 logs missing tokens via `tracing` once the logger
-    /// initializes (T16).
+    /// panicking. Tests assert that bundled themes resolve every token in
+    /// [`Token::ALL`].
     pub fn token(&self, token: Token) -> Color {
         self.colors.get(&token).copied().unwrap_or(Color::Reset)
     }

@@ -1,7 +1,7 @@
 //! Scaffold-level tests that lock the public surface in place.
 //!
-//! These tests start as RED (they call `parse` stubs that error out) and
-//! flip to GREEN as T6/T7/T8 land.
+//! These tests lock the bundled theme/keymap assets and the initial RPC
+//! envelope contract.
 
 use senpi_neo_tui::{
     DEFAULT_DARK_THEME_JSON, DEFAULT_KEYMAP_JSON, VERSION,

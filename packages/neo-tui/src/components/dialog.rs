@@ -1,2 +1,5 @@
-//! Dialog stack: command palette, model/theme/session pickers, help.
-//! Implementation lands in T14.
+//! Shared dialog component placeholder.
+//!
+//! The active modal UI lives in [`crate::overlay`]. This module is kept
+//! for future reusable dialog chrome once multiple overlays share a
+//! common component.
