@@ -683,8 +683,8 @@ fn slash_overlay_filter_then_enter_dispatches_app_exit() {
         app.handle_key(ev(KeyCode::Char(ch), KeyModifiers::NONE));
     }
     let action = app.handle_key(ev(KeyCode::Enter, KeyModifiers::NONE));
-    // `/quit` maps to `app.exit`; with an empty buffer this resolves
-    // to AppAction::Quit per the legacy Ctrl+D semantics.
+    // `/quit` maps to `app.exit`; explicit exit actions always quit,
+    // regardless of the composer buffer state.
     assert_eq!(action, AppAction::Quit);
 }
 

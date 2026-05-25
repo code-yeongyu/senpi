@@ -13,7 +13,9 @@
 //! neo-tui-keymap-parity.test.ts`) re-validates the same table against
 //! the actual `KEYBINDINGS` constant so we catch drift on both sides.
 //!
-//! Strict `Action`-enum validation arrives with T8.
+//! The Rust parser intentionally accepts arbitrary action ids; runtime
+//! dispatch owns the distinction between implemented, context-scoped, and
+//! visibly unimplemented actions.
 
 use senpi_neo_tui::keymap;
 
@@ -210,9 +212,9 @@ fn default_keymap_binds_shift_enter_to_legacy_input_newline() {
 }
 
 #[test]
-fn accepts_arbitrary_keys_until_t8_strictens() {
-    // Today the parser round-trips arbitrary string keys. T8 will reject
-    // unknown actions at merge time; that test lives alongside T8.
+fn accepts_arbitrary_action_ids() {
+    // The parser round-trips arbitrary string keys so the JSON can mirror
+    // legacy senpi ids plus neo-only ids without a generated action enum.
     let bad = r#"{ "bindings": { "nonsense.action": ["alt+x"] } }"#;
     let spec = keymap::parse(bad).expect("parser accepts unknown action names today");
     assert!(spec.bindings.contains_key("nonsense.action"));

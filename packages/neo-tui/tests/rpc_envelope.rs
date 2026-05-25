@@ -1,5 +1,4 @@
-//! Contract tests for the RPC envelope. RED until T6 fills in the full
-//! event taxonomy; today we lock the response / event discriminator.
+//! Contract tests for the RPC envelope parser and response/event discriminator.
 
 use senpi_neo_tui::rpc::envelope::{self, Envelope};
 

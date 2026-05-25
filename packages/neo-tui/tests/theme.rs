@@ -1,8 +1,7 @@
 //! Contract tests for the theme system.
 //!
-//! T2 locks the parse-time and resolve-error shape. T7 ships the full
-//! resolver; this file gains additional happy-path assertions as the
-//! resolver covers more tokens.
+//! These tests lock parse errors, resolve errors, and bundled token
+//! coverage for the JSON-driven theme system.
 
 use ratatui::style::Color;
 use senpi_neo_tui::theme::{self, Token};

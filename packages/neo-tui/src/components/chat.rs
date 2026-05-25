@@ -538,6 +538,6 @@ pub fn sample() -> ChatState {
         }),
     });
     state.message_ids.push(assistant.saturating_add(1));
-    state.push_assistant("Mapped 12 module files. theme = JSON-driven semantic tokens. layout = pure compute. components = header / chat / input / footer. rpc = JSONL subprocess client (in progress). compositor = layered Component dispatch (stub). anim = spinners + scanners (stub).".into());
+    state.push_assistant("Mapped the native TUI modules. theme = JSON-driven semantic tokens. layout = pure compute. components = header / chat / input / footer / overlays. rpc = JSONL subprocess client. compositor = Component event/render helpers. anim = spinners + scanners.".into());
     state
 }

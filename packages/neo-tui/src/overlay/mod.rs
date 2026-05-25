@@ -2,19 +2,21 @@
 //!
 //! Mirrors the opencode dialog pattern (semi-transparent backdrop +
 //! centered floating panel) and the DeepSeek-TUI `ViewStack` pattern
-//! (only the top overlay receives events). Three overlays ship:
+//! (only the active overlay receives events). Shipped overlays are:
 //!
 //! - [`HelpOverlay`]: scrollable list of every keymap binding +
 //!   `app.*`/`tui.*`/`neo.*` action, auto-generated from the resolved
 //!   keymap so it never drifts.
 //! - [`SlashOverlay`]: grok-CLI-style `/` menu opened when `/` is
-//!   typed into an empty input buffer.
+//!   typed into an empty input buffer, or when `neo.slash.open` is
+//!   explicitly dispatched.
 //! - [`PaletteOverlay`]: opencode-style fuzzy command palette (Alt+P)
 //!   matched via `nucleo-matcher`.
+//! - [`ModelPickerOverlay`]: model selector.
+//! - [`ThemePickerOverlay`]: bundled-theme selector.
 //!
-//! All three render via `Clear` + a bordered `Block` centered on the
-//! frame area. The compositor (in [`App`]) renders the chat scene
-//! first, then the overlay on top.
+//! Every overlay renders via `Clear` + a bordered `Block` centered on
+//! the frame area after the base chat scene has been drawn.
 
 use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
