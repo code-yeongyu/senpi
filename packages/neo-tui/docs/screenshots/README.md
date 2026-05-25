@@ -14,13 +14,13 @@ same keymap dispatch path as direct keychords.
 | `02-mid-120x40.png` | 120 × 40 | sidebar threshold; tool card and chat full width |
 | `03-mid-140x40.png` | 140 × 40 | typical laptop pane (direct binary) |
 | `04-wide-160x50.png` | 160 × 50 | ultrawide / fullscreen; same content, more breathing room |
-| `05-senpi-neo-e2e-140x40.png` | 140 × 40 | end-to-end capture of `senpi --neo --demo` proving the Node → Rust dispatch path works |
+| `05-senpi-neo-e2e-140x40.png` | 140 × 40 | demo baseline captured with the direct Rust binary at the e2e viewport size |
 
-## Overlay states (live RPC via faux backend)
+## Overlay states (demo scene)
 
-Captured by spawning the binary with `SENPI_NEO_BACKEND_BIN` pointed at
-`senpi-neo-faux --scenario streaming`, so the chat shows real RPC frames and
-the overlay layer renders on top of a populated scene.
+Captured by spawning `senpi-neo-tui --demo --demo-seconds 600` and sending the
+keystrokes needed to open each overlay. The overlays render on top of the
+bundled demo scene; these captures do not exercise the faux RPC backend.
 
 | File | Viewport | Notes |
 | --- | --- | --- |
@@ -35,13 +35,13 @@ the overlay layer renders on top of a populated scene.
 `scripts/capture-screenshots.sh` drives the canonical capture flow:
 
 1. fresh tmux session at exact `WxH` (`-x 140 -y 40`)
-2. spawn `senpi-neo-tui` with `senpi-neo-faux` as the RPC backend
+2. spawn `senpi-neo-tui --demo --demo-seconds 600`
 3. send the keystrokes needed to reach the target state
 4. `tmux capture-pane -p -e -J` to dump the alt-screen with ANSI
 5. `aha --no-header --black` to convert ANSI to standalone HTML
 6. `chrome --headless --screenshot=...` to rasterize at the exact viewport
 7. `tmux kill-session -t <name>` (NEVER `kill-server`)
 
-Source ANSI / HTML for each size live under `evidence/screenshots/` in the
-worktree (locally ignored — regenerate via the script whenever the demo scene
-or overlay layout changes).
+The ANSI and HTML intermediates live in a temporary directory and are deleted by
+the script's cleanup trap. The checked-in artifact is the regenerated PNG set
+under this directory.
