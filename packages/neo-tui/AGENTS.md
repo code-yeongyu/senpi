@@ -16,37 +16,31 @@ packages/neo-tui/
 │   ├── themes/*.json         # bundled themes
 │   └── keymaps/default.json  # default keybindings
 ├── scripts/
-│   ├── build-binary.mjs      # builds Rust + copies into coding-agent/dist
-│   ├── qa.sh                 # tmux QA harness
-│   └── qa-scenarios.json
+│   ├── build-binary.mjs             # builds/stages the release TUI binary
+│   ├── capture-screenshots.sh       # tmux + aha + Chrome screenshot capture
+│   └── capture-theme-showcase.sh    # bundled-theme screenshot matrix
 ├── src/
 │   ├── main.rs               # binary entry
 │   ├── lib.rs
 │   ├── app/                  # run loop, state, action channel
 │   ├── rpc/                  # RPC client (subprocess + JSONL codec)
-│   ├── theme/                # JSON loader, tokens, ColorSupport
-│   ├── keymap/               # configurable bindings + leader sequences
+│   ├── theme/                # JSON loader, tokens, bundled theme registry
+│   ├── keymap/               # configurable single-key bindings
 │   ├── layout/               # pure layout compute
-│   ├── compositor/           # layered Component dispatch
-│   ├── components/           # chat, input, header, footer, dialogs
+│   ├── compositor/           # Component trait + event/render helpers
+│   ├── components/           # chat, input, header, footer, lists, dialogs
 │   ├── anim/                 # spinners, scanners, pulses
 │   ├── term/                 # capability detection + OSC 52 clipboard
 │   └── bin/
 │       └── senpi-neo-faux.rs # faux RPC backend for offline QA
 └── tests/
-    ├── theme.rs
-    ├── keymap.rs
-    ├── rpc_envelope.rs
-    ├── rpc_client.rs
-    ├── layout.rs
-    ├── compositor.rs
-    ├── chat_snapshot.rs
-    ├── input_snapshot.rs
-    ├── fixtures/
-    │   ├── themes/*.json
-    │   ├── keymaps/*.json
-    │   └── rpc/*.jsonl
-    └── snapshots/
+    ├── app_loop.rs
+    ├── chat_view.rs
+    ├── editor.rs
+    ├── keymap*.rs
+    ├── overlay_pickers.rs
+    ├── rpc_*.rs
+    └── component/theme/text/layout integration tests
 ```
 
 ## RULES
@@ -64,11 +58,11 @@ packages/neo-tui/
 ## TESTING
 
 ```bash
-# Fast unit + snapshot tests
-cargo nextest run --package senpi-neo-tui
+# Fast Rust test suite
+cargo test --package senpi-neo-tui
 
-# Update snapshots after intentional changes:
-INSTA_UPDATE=always cargo nextest run --package senpi-neo-tui
+# Optional if cargo-nextest is installed:
+# cargo nextest run --package senpi-neo-tui
 
 # Lint gate
 cargo clippy --package senpi-neo-tui --all-targets -- -D warnings
@@ -92,7 +86,5 @@ cargo fmt --package senpi-neo-tui -- --check
 - `packages/coding-agent/src/cli/args.ts` parses `--neo`.
 - `packages/coding-agent/src/main.ts` dispatches to `runNeoMode`.
 - `packages/coding-agent/src/modes/neo-mode.ts` spawns `senpi-neo-tui`.
-- `packages/coding-agent/dist/neo-tui-bin/senpi-neo-tui-<platform>-<arch>` is the installed binary.
-- `packages/coding-agent/dist/neo-tui-themes/*.json` are bundled themes.
-- `packages/coding-agent/dist/neo-tui-keymap/default.json` is the default keymap.
+- `packages/coding-agent/dist/neo-tui-bin/senpi-neo-tui-<platform>-<arch>` is the only staged artifact; bundled themes and the default keymap are embedded in the Rust binary via `include_str!`.
 - The Rust binary spawns `senpi --mode rpc` as a child to drive the agent.
