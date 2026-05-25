@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed `senpi --neo -- ...` so Rust TUI flags after the sentinel reach the native binary instead of being rejected by the Node CLI parser.
+
 ### Removed
 
 ## [2026.5.24] - 2026-05-24
