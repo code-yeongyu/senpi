@@ -2801,6 +2801,12 @@ export class InteractiveMode {
 				await this.shutdown();
 				return;
 			}
+			if (this.isExtensionCommand(text)) {
+				this.editor.addToHistory?.(text);
+				this.editor.setText("");
+				await this.session.prompt(text);
+				return;
+			}
 
 			// Handle bash command (! for normal, !! for excluded from context)
 			if (text.startsWith("!")) {

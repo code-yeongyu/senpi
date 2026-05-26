@@ -80,6 +80,7 @@ async function discoverSessionFiles(root: string): Promise<readonly string[]> {
 function firstHeader(entries: readonly FileEntry[], filePath: string): SessionHeader | undefined {
 	const header = entries[0];
 	if (header?.type === "session") return header;
+	if (entries.length === 0) return undefined;
 	return { type: "session", id: basename(filePath, ".jsonl"), timestamp: new Date(0).toISOString(), cwd: "" };
 }
 
