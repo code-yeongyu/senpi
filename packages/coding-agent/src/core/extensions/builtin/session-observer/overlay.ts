@@ -120,9 +120,6 @@ export class SessionHudOverlay extends Container implements Focusable {
 		list.onCancel = () => this.options.done();
 		this.list = list;
 		this.clear();
-		this.addChild(new Spacer(1));
-		this.addChild(this.topBorder);
-		this.addChild(new Spacer(1));
 		this.addChild(
 			new Text(
 				`${theme.bold(theme.fg("accent", " Sessions"))}${theme.fg("dim", ` ${this.options.sessions.length} sessions`)}`,
@@ -136,8 +133,6 @@ export class SessionHudOverlay extends Container implements Focusable {
 		this.addChild(
 			new TruncatedText(`${keyHint("tui.select.confirm", "view")} ${keyHint("tui.select.cancel", "close")}`, 0, 0),
 		);
-		this.addChild(new Spacer(1));
-		this.addChild(this.bottomBorder);
 	}
 
 	private toPickerItem(session: SessionHudEntry, index: number): SelectItem {
