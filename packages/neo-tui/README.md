@@ -23,10 +23,12 @@ The crate ships two bins (`senpi-neo-tui`, the TUI itself; `senpi-neo-faux`, the
 cargo run --release --package senpi-neo-tui --bin senpi-neo-tui -- \
     --demo --demo-seconds 5
 
-# Through the Node CLI (resolves the binary out of target/release):
+# Through the Node CLI after `npm run build` has produced dist/cli.js
+# (SENPI_NEO_TUI_DEV=1 makes it resolve target/release first):
 SENPI_NEO_TUI_DEV=1 node packages/coding-agent/dist/cli.js --neo
 
-# Offline QA with the faux backend:
+# Offline QA with the faux backend (build both bins first):
+cargo build --release --package senpi-neo-tui --bins
 cargo run --release --package senpi-neo-tui --bin senpi-neo-tui -- \
     --backend-bin ./target/release/senpi-neo-faux
 ```
@@ -62,7 +64,7 @@ Configurable in [`assets/keymaps/default.json`](./assets/keymaps/default.json). 
 |--------|---------|
 | Insert newline in the composer | `Shift+Enter` (works inside tmux via xterm modifyOtherKeys mode 2) |
 | Submit the message | `Enter` |
-| Recall previous / next prompt | `Up` / `Down` (when the composer is empty or on the first/last line) |
+| Recall previous / next prompt | `Up` / `Down` (when the composer is empty, or while walking an active history cursor); otherwise moves the editor cursor |
 | Open slash command menu | `/` then type |
 | Open `@path` autocomplete | type `@` |
 | Cycle thinking level | `Shift+Tab` |
@@ -75,7 +77,7 @@ Configurable in [`assets/keymaps/default.json`](./assets/keymaps/default.json). 
 | Toggle animations | `Alt+A` |
 | Mouse wheel | scrolls the chat viewport |
 | Cancel current run | `Esc` |
-| Quit | `Ctrl+D` |
+| Delete forward / quit | `Ctrl+D` deletes forward while the composer has content; with an empty composer it quits. Explicit `app.exit` actions such as `/quit` always quit. |
 
 Full registry lives under the `bindings` map in the keymap JSON — every key is reassignable.
 
@@ -96,8 +98,8 @@ Module layout matches the `Layout` section below; per-module roles and the testi
 
 - `app/`        - main loop, state, action channel, RPC bridge
 - `rpc/`        - subprocess RPC client speaking senpi `--mode rpc` (JSONL), with `Inbound::{Error, Disconnected, ParseError}` surfacing
-- `theme/`      - JSON theme loader, semantic tokens, `ColorSupport` detection
-- `keymap/`     - configurable bindings + leader-key sequences
+- `theme/`      - JSON theme loader, semantic tokens, bundled theme registry
+- `keymap/`     - configurable single-key bindings; `leader` metadata is parsed but not dispatched
 - `layout/`     - pure layout computation
 - `compositor/` - layered `Component` dispatch + focus stack
 - `components/` - chat, input, header, footer, markdown, autocomplete, select_list, settings_list
@@ -109,12 +111,12 @@ Module layout matches the `Layout` section below; per-module roles and the testi
 ## Tests
 
 ```bash
-cargo nextest run --package senpi-neo-tui
+cargo test --package senpi-neo-tui
 cargo clippy --package senpi-neo-tui --all-targets -- -D warnings
 cargo fmt --package senpi-neo-tui -- --check
 ```
 
-Snapshot updates: `INSTA_UPDATE=always cargo nextest run --package senpi-neo-tui`.
+If `cargo-nextest` is installed locally, `cargo nextest run --package senpi-neo-tui` is also supported. There is no checked-in insta snapshot suite today.
 
 ## License
 
