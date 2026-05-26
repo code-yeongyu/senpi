@@ -50,11 +50,6 @@ jobs:
         with:
           bun-version: 1.2.20
 
-      - name: Setup Rust
-        # Required so `npm run build` can run `cargo build --release` for the
-        # native `senpi-neo-tui` binary that powers `senpi --neo`.
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 

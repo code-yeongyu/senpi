@@ -49,7 +49,6 @@ import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { ExtensionSelectorComponent } from "./modes/interactive/components/extension-selector.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
-import { runNeoMode } from "./modes/neo-mode.ts";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
@@ -465,24 +464,9 @@ export async function main(args: string[], options?: MainOptions) {
 		takeOverStdout();
 	}
 
-	// `--version` always wins so `senpi --neo --version` still prints the
-	// version and exits without launching the Rust binary.
 	if (parsed.version) {
 		console.log(VERSION);
 		process.exit(0);
-	}
-
-	// --neo: hand the TTY off to the native Rust ratatui binary and exit
-	// with its status. We do this before runtime/session/auth setup so the
-	// binary boots fast and owns the terminal cleanly.
-	if (parsed.neo && appMode === "interactive") {
-		const code = await runNeoMode({
-			parsed,
-			originalArgv: args,
-			senpiBin: process.execPath,
-			senpiScript: process.argv[1] ?? "",
-		});
-		process.exit(code);
 	}
 
 	if (parsed.export) {
