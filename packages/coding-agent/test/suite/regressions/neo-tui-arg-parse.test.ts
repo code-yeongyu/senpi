@@ -2,9 +2,9 @@
  * Regression: `--neo` flag must round-trip through `parseArgs` cleanly and
  * coexist with the rest of the senpi CLI surface.
  *
- * The flag dispatch into the Rust binary lives in a later wave; this test
- * only locks the arg-parser contract so future renames or accidental
- * removals fail loudly.
+ * The sentinel split into backend args vs Rust TUI args lives in neo-mode;
+ * this file locks the parser contract so forwarded neo flags do not get
+ * rejected before that split can run.
  */
 
 import { describe, expect, test } from "vitest";
@@ -43,5 +43,13 @@ describe("--neo flag", () => {
 	test("--neo does not appear in unknownFlags", () => {
 		const parsed = parseArgs(["--neo"]);
 		expect(parsed.unknownFlags.has("neo")).toBe(false);
+	});
+
+	test("--neo allows a -- sentinel for Rust TUI flags", () => {
+		const parsed = parseArgs(["--neo", "--", "--list-themes", "--theme", "dracula"]);
+		expect(parsed.neo).toBe(true);
+		expect(parsed.diagnostics).toEqual([]);
+		expect(parsed.unknownFlags.size).toBe(0);
+		expect(parsed.messages).toEqual([]);
 	});
 });

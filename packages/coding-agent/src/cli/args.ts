@@ -170,6 +170,11 @@ export function parseArgs(args: string[]): Args {
 			result.offline = true;
 		} else if (arg === "--neo") {
 			result.neo = true;
+		} else if (arg === "--") {
+			if (!result.neo) {
+				result.messages.push(...args.slice(i + 1));
+			}
+			break;
 		} else if (arg.startsWith("@")) {
 			result.fileArgs.push(arg.slice(1)); // Remove @ prefix
 		} else if (arg.startsWith("--")) {
