@@ -80,8 +80,9 @@ export function renderStreamingPatchCall(
 	const input = normalizeApplyPatchArguments(args).input;
 	if (!input) return undefined;
 	const hunks = updateStreamingState(input, state);
-	if (hunks.length > 0) return renderBox("Streaming patch", formatStreamingHunks(hunks), theme);
+	if (state.streamingError) return renderBox("Invalid patch stream", state.streamingError, theme);
+	if (hunks.length > 0) return renderBox("Applying patch", formatStreamingHunks(hunks), theme);
 	const paths = extractPatchedPaths(input);
 	if (paths.length === 0) return undefined;
-	return renderBox("Streaming patch", paths.map((filePath) => `• ${filePath}`).join("\n"), theme);
+	return renderBox("Applying patch", paths.map((filePath) => `• ${filePath}`).join("\n"), theme);
 }
