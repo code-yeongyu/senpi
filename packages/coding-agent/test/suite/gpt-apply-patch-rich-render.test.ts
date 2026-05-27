@@ -83,7 +83,7 @@ describe("gpt apply_patch rich TUI rendering", () => {
 		const component = tool.renderCall?.(args, theme, createRenderContext(harness.tempDir, args));
 		const rendered = stripAnsi(component?.render(120).join("\n") ?? "");
 
-		expect(rendered).toContain("Streaming patch");
+		expect(rendered).toContain("Applying patch");
 		expect(rendered).toContain("sample.txt");
 		expect(rendered).toContain("- before");
 		expect(rendered).toContain("+ after");
