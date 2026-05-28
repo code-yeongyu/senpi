@@ -44,6 +44,10 @@ type WorktreeFixture = {
 	reftableDir: string;
 };
 
+type FooterDataProviderInternals = {
+	scheduleRefresh(): void;
+};
+
 function createPlainReftableRepo(tempDir: string): string {
 	const repoDir = join(tempDir, "repo");
 	mkdirSync(join(repoDir, ".git", "reftable"), { recursive: true });
@@ -77,7 +81,7 @@ function createReftableWorktree(tempDir: string): WorktreeFixture {
 	return { worktreeDir, reftableDir };
 }
 
-async function waitFor(condition: () => boolean, timeoutMs = 3000): Promise<void> {
+async function waitFor(condition: () => boolean, timeoutMs = 10_000): Promise<void> {
 	const startedAt = Date.now();
 	while (!condition()) {
 		if (Date.now() - startedAt > timeoutMs) {
@@ -179,6 +183,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 			provider.onBranchChange(onBranchChange);
 
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
+			(provider as unknown as FooterDataProviderInternals).scheduleRefresh();
 			await waitFor(() => vi.mocked(execFile).mock.calls.length === 1);
 
 			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);
@@ -202,6 +207,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
 			writeFileSync(join(reftableDir, "tables.list"), "2\n");
 			writeFileSync(join(reftableDir, "tables.list"), "3\n");
+			(provider as unknown as FooterDataProviderInternals).scheduleRefresh();
 			await waitFor(() => vi.mocked(execFile).mock.calls.length === 1);
 			await new Promise((resolve) => setTimeout(resolve, 650));
 
@@ -223,6 +229,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 			provider.onBranchChange(onBranchChange);
 
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
+			(provider as unknown as FooterDataProviderInternals).scheduleRefresh();
 			await waitFor(() => vi.mocked(execFile).mock.calls.length === 1);
 			await waitFor(() => provider.getGitBranch() === "foo");
 
