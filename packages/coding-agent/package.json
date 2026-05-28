@@ -42,12 +42,12 @@
 		"shrinkwrap": "node ../../scripts/generate-coding-agent-shrinkwrap.mjs"
 	},
 	"dependencies": {
-		"@anthropic-ai/sdk": "0.91.1",
-		"@aws-sdk/client-bedrock-runtime": "3.1048.0",
-		"@earendil-works/pi-agent-core": "^2026.5.26",
-		"@earendil-works/pi-ai": "^2026.5.26",
-		"@earendil-works/pi-tui": "^2026.5.26",
-		"@mistralai/mistralai": "2.2.1",
+	"@anthropic-ai/sdk": "0.91.1",
+	"@aws-sdk/client-bedrock-runtime": "3.1048.0",
+	"@earendil-works/pi-agent-core": "^2026.5.26",
+	"@earendil-works/pi-ai": "^2026.5.26",
+	"@earendil-works/pi-tui": "^2026.5.26",
+	"@mistralai/mistralai": "2.2.1",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"@smithy/node-http-handler": "4.7.3",
 		"@smithy/types": "4.8.0",

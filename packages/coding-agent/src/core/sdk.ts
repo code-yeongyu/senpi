@@ -351,15 +351,22 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				throw new Error(auth.error);
 			}
 			const requestModel = auth.upstreamModelId ? { ...model, id: auth.upstreamModelId } : model;
-			const requestRetrySettings = settingsManager.getProviderRetrySettings();
+			const providerRetrySettings = settingsManager.getProviderRetrySettings();
+			const timeoutMs =
+				options?.timeoutMs ??
+				providerRetrySettings.timeoutMs ??
+				(model.api === "openai-codex-responses" ? settingsManager.getHttpIdleTimeoutMs() : undefined);
+			const websocketConnectTimeoutMs =
+				options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
 			const attributionHeaders = getAttributionHeaders(model, settingsManager, options?.sessionId);
 			const streamOptions = {
 				...options,
 				apiKey: auth.apiKey,
 				serviceTier: auth.serviceTier,
-				timeoutMs: options?.timeoutMs ?? requestRetrySettings.timeoutMs,
-				maxRetries: options?.maxRetries ?? requestRetrySettings.maxRetries,
-				maxRetryDelayMs: options?.maxRetryDelayMs ?? requestRetrySettings.maxRetryDelayMs,
+				timeoutMs,
+				websocketConnectTimeoutMs,
+				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
+				maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
 				headers:
 					attributionHeaders || auth.headers || options?.headers
 						? { ...attributionHeaders, ...auth.headers, ...options?.headers }
