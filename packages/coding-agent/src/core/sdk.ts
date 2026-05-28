@@ -354,7 +354,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			const providerRetrySettings = settingsManager.getProviderRetrySettings();
 			const timeoutMs =
 				options?.timeoutMs ??
-				providerRetrySettings.timeoutMs ??
+				settingsManager.getConfiguredProviderTimeoutMs() ??
 				(model.api === "openai-codex-responses" ? settingsManager.getHttpIdleTimeoutMs() : undefined);
 			const websocketConnectTimeoutMs =
 				options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();

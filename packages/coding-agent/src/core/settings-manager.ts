@@ -86,6 +86,8 @@ export type PackageSource =
 			themes?: string[];
 	  };
 
+const DEFAULT_PROVIDER_TIMEOUT_MS = 300_000;
+
 export interface Settings {
 	lastChangelogVersion?: string;
 	defaultProvider?: string;
@@ -789,12 +791,16 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getProviderRetrySettings(): { timeoutMs?: number; maxRetries?: number; maxRetryDelayMs: number } {
+	getProviderRetrySettings(): { timeoutMs: number; maxRetries?: number; maxRetryDelayMs: number } {
 		return {
-			timeoutMs: this.settings.retry?.provider?.timeoutMs,
+			timeoutMs: this.settings.retry?.provider?.timeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS,
 			maxRetries: this.settings.retry?.provider?.maxRetries,
 			maxRetryDelayMs: this.settings.retry?.provider?.maxRetryDelayMs ?? 60000,
 		};
+	}
+
+	getConfiguredProviderTimeoutMs(): number | undefined {
+		return this.settings.retry?.provider?.timeoutMs;
 	}
 
 	getWebSocketConnectTimeoutMs(): number | undefined {
