@@ -470,11 +470,43 @@ export class Agent {
 
 		try {
 			await executor(abortController.signal);
+			while (!abortController.signal.aborted && this.hasQueuedMessages()) {
+				await this.runQueuedMessagesAfterAgentEnd(abortController.signal);
+			}
 		} catch (error) {
 			await this.handleRunFailure(error, abortController.signal.aborted);
 		} finally {
 			this.finishRun();
 		}
+	}
+
+	private async runQueuedMessagesAfterAgentEnd(signal: AbortSignal): Promise<void> {
+		const queuedSteering = this.steeringQueue.drain();
+		if (queuedSteering.length > 0) {
+			await runAgentLoop(
+				queuedSteering,
+				this.createContextSnapshot(),
+				this.createLoopConfig({ skipInitialSteeringPoll: true }),
+				(event) => this.processEvents(event),
+				signal,
+				this.streamFn,
+			);
+			return;
+		}
+
+		const queuedFollowUps = this.followUpQueue.drain();
+		if (queuedFollowUps.length === 0) {
+			return;
+		}
+
+		await runAgentLoop(
+			queuedFollowUps,
+			this.createContextSnapshot(),
+			this.createLoopConfig(),
+			(event) => this.processEvents(event),
+			signal,
+			this.streamFn,
+		);
 	}
 
 	private async handleRunFailure(error: unknown, aborted: boolean): Promise<void> {
