@@ -94,7 +94,7 @@ if [[ "$SKIP_DEPS" == "false" ]]; then
     # We need all platform bindings for bun cross-compilation
     # Use --force to bypass platform checks (os/cpu restrictions in package.json)
     # Install all in one command to avoid npm removing packages from previous installs
-    npm install --no-save --package-lock=false --force --ignore-scripts \
+    npm install --no-save --package-lock=false --force --ignore-scripts --min-release-age=0 \
         @mariozechner/clipboard@0.3.9 \
         @mariozechner/clipboard-darwin-arm64@0.3.9 \
         @mariozechner/clipboard-darwin-x64@0.3.9 \
