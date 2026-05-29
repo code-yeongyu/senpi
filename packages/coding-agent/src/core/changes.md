@@ -1,5 +1,32 @@
 # changes
 
+## Compaction prompt settlement barrier (2026-05-28)
+
+### What changed
+
+- `src/core/agent-session.ts`: normal user prompts now wait for pending session event processing and in-flight
+  compaction work before starting a fresh provider request.
+- `src/core/agent-session.ts`: overflow retry and user-visible queued follow-up/steering recovery now await the
+  post-compaction continuation instead of scheduling an unobserved delayed `continue()`.
+- `src/core/agent-session.ts`: agent-level custom-only queues keep their prior non-immediate continuation behavior.
+- `src/core/session-work-barrier.ts`: centralizes nested session-work barriers used by compaction settlement.
+
+### Why
+
+- `Agent` can become idle before `AgentSession` finishes `agent_end` compaction work. A prompt submitted in that window
+  could race ahead of the compaction boundary or overflow recovery, making queued messages appear out of order or miss the
+  compacted context.
+
+### Why extension system couldn't handle this
+
+- Extensions can provide compaction results, but only `AgentSession` can serialize fresh prompts against session event
+  processing, compaction mutation, and retry/queue continuation.
+
+### Expected merge conflict zones
+
+- MEDIUM: `AgentSession.prompt()` around the pre-prompt settlement and post-prompt wait.
+- MEDIUM: `_executeCompaction()` and `_runAutoCompaction()` around compaction lifecycle and continuation handling.
+
 ## Compaction cancellation across abort and model changes (2026-05-23)
 
 ### What changed

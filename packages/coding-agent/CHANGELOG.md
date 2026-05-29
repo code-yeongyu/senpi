@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed queued prompts racing ahead of compaction or overflow recovery.
+
 ### Removed
 
 - Removed the `--neo` CLI flag and native neo TUI binary build wiring.
