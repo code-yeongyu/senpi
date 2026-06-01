@@ -38,9 +38,9 @@ function detectPm() {
 }
 
 const pm = detectPm();
-// bun's execpath is a native binary, npm/pnpm are .js we load via Node.
+// bun's execpath is a native binary, npm/pnpm are .js we load via Node, unless they are native binaries (like pnpm.exe).
 function runCheck() {
-	if (pm.execpath && pm.cmd === "bun") {
+	if (pm.execpath && (pm.cmd === "bun" || !/\.[cm]?js$/i.test(pm.execpath))) {
 		return spawnSync(pm.execpath, ["run", "check"], { cwd: webUiDir, stdio: "inherit", env, shell: false });
 	}
 	if (pm.execpath) {

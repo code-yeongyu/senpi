@@ -91,10 +91,10 @@ export function cleanEnv(envSource = process.env) {
 function spawnPmAsync(pm, args, cwd, env) {
 	// bun's execpath is a native binary so we invoke it directly.
 	// npm's and pnpm's execpaths are .js / .cjs entry points that have to
-	// be loaded through the current Node runtime.
+	// be loaded through the current Node runtime, unless they are native binaries (like pnpm.exe).
 	let command = pm.cmd;
 	let spawnArgs = args;
-	if (pm.execpath && pm.cmd === "bun") {
+	if (pm.execpath && (pm.cmd === "bun" || !/\.[cm]?js$/i.test(pm.execpath))) {
 		command = pm.execpath;
 	} else if (pm.execpath) {
 		command = process.execPath;
