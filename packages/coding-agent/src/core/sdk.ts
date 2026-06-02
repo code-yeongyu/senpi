@@ -11,13 +11,21 @@ import type { ServiceTier } from "./extensions/builtin/service-tier.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { convertToLlm } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
+<<<<<<< HEAD
 import { findInitialModel, getModelNarrowingPatterns, resolveModelScope } from "./model-resolver.ts";
+=======
+import { findInitialModel } from "./model-resolver.ts";
+import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
+>>>>>>> upstream/main
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
 import { SettingsManager } from "./settings-manager.ts";
+<<<<<<< HEAD
 import { isInstallTelemetryEnabled } from "./telemetry.ts";
 import { getSupportedThinkingLevels } from "./thinking-levels.ts";
+=======
+>>>>>>> upstream/main
 import { time } from "./timings.ts";
 import {
 	createBashTool,
@@ -132,6 +140,7 @@ function getDefaultAgentDir(): string {
 	return getAgentDir();
 }
 
+<<<<<<< HEAD
 function getAttributionHeaders(
 	model: Model<any>,
 	settingsManager: SettingsManager,
@@ -170,6 +179,8 @@ function getAttributionHeaders(
 	return undefined;
 }
 
+=======
+>>>>>>> upstream/main
 /**
  * Create an AgentSession with the specified options.
  *
@@ -354,14 +365,19 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			}
 			const requestModel = auth.upstreamModelId ? { ...model, id: auth.upstreamModelId } : model;
 			const providerRetrySettings = settingsManager.getProviderRetrySettings();
-			const timeoutMs =
-				options?.timeoutMs ??
-				providerRetrySettings.timeoutMs ??
-				(model.api === "openai-codex-responses" ? settingsManager.getHttpIdleTimeoutMs() : undefined);
+			const httpIdleTimeoutMs = settingsManager.getHttpIdleTimeoutMs();
+			// SDKs treat timeout=0 as 0ms (immediate timeout), not "no timeout".
+			// Use max int32 to effectively disable the timeout.
+			const effectiveTimeoutMs = httpIdleTimeoutMs === 0 ? 2147483647 : httpIdleTimeoutMs;
+			const timeoutMs = options?.timeoutMs ?? providerRetrySettings.timeoutMs ?? effectiveTimeoutMs;
 			const websocketConnectTimeoutMs =
 				options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
+<<<<<<< HEAD
 			const attributionHeaders = getAttributionHeaders(model, settingsManager, options?.sessionId);
 			const streamOptions = {
+=======
+			return streamSimple(model, context, {
+>>>>>>> upstream/main
 				...options,
 				apiKey: auth.apiKey,
 				serviceTier: auth.serviceTier,
@@ -369,6 +385,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				websocketConnectTimeoutMs,
 				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
 				maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
+<<<<<<< HEAD
 				headers:
 					attributionHeaders || auth.headers || options?.headers
 						? { ...attributionHeaders, ...auth.headers, ...options?.headers }
@@ -376,6 +393,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				extraBody: auth.extraBody || options?.extraBody ? { ...auth.extraBody, ...options?.extraBody } : undefined,
 			};
 			return streamSimple(requestModel, context, streamOptions);
+=======
+				headers: mergeProviderAttributionHeaders(
+					model,
+					settingsManager,
+					options?.sessionId,
+					auth.headers,
+					options?.headers,
+				),
+			});
+>>>>>>> upstream/main
 		},
 		onPayload: async (payload, _model) => {
 			const runner = extensionRunnerRef.current;

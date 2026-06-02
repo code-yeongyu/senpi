@@ -2,15 +2,9 @@
 
 ## [Unreleased]
 
-### Breaking Changes
-
-### Added
-
-### Changed
-
 ### Fixed
 
-### Removed
+- Fixed tab width accounting in column slicing and overlay compositing so tab-containing output cannot exceed the terminal width ([#5218](https://github.com/earendil-works/pi/issues/5218)).
 
 ## [0.78.0] - 2026-05-29
 
@@ -22,85 +16,22 @@
 
 ## [0.77.0] - 2026-05-28
 
-## [2026.5.29-4] - 2026-05-29
+### Fixed
 
-### Breaking Changes
+- Fixed keyboard protocol negotiation to ignore mismatched or delayed terminal responses, avoiding false Kitty keyboard protocol detection ([#5091](https://github.com/earendil-works/pi/pull/5091) by [@mitsuhiko](https://github.com/mitsuhiko)).
+
+## [0.76.0] - 2026-05-27
 
 ### Added
 
 - Added an opt-in Markdown renderer option to preserve source ordered-list markers for transcript rendering ([#5013](https://github.com/earendil-works/pi/issues/5013)).
 
-### Changed
-
 ### Fixed
 
-- Fixed keyboard protocol negotiation to ignore mismatched or delayed terminal responses, avoiding false Kitty keyboard protocol detection ([#5091](https://github.com/earendil-works/pi/pull/5091) by [@mitsuhiko](https://github.com/mitsuhiko)).
 - Fixed `Shift+Enter` in Apple Terminal by detecting local macOS modifier state when Terminal.app sends plain Return.
 - Fixed Windows Terminal capability detection to enable OSC 8 hyperlinks, preserving clickable long URLs across wrapped lines ([#4923](https://github.com/earendil-works/pi/issues/4923)).
 - Fixed JetBrains terminal capability detection to enable truecolor while disabling unsupported OSC 8 hyperlinks ([#5037](https://github.com/earendil-works/pi-mono/pull/5037) by [@Perlence](https://github.com/Perlence)).
 - Fixed editor and input word navigation/deletion to use Unicode word boundaries while preserving ASCII punctuation boundaries ([#5022](https://github.com/earendil-works/pi-mono/pull/5022) by [@haoqixu](https://github.com/haoqixu), [#5067](https://github.com/earendil-works/pi-mono/pull/5067) by [@haoqixu](https://github.com/haoqixu), [#5068](https://github.com/earendil-works/pi-mono/pull/5068) by [@haoqixu](https://github.com/haoqixu)).
-
-### Removed
-
-## [2026.5.29-3] - 2026-05-29
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.26] - 2026-05-26
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.24] - 2026-05-24
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.23-2] - 2026-05-23
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.23] - 2026-05-23
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
 
 ## [0.75.5] - 2026-05-23
 
@@ -108,53 +39,16 @@
 
 - Replaced the optional `koffi` dependency for Windows VT input with a tiny vendored native helper, reducing install size while preserving Shift+Tab handling ([#4480](https://github.com/earendil-works/pi/issues/4480)).
 
-## [2026.5.21-2] - 2026-05-21
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.21] - 2026-05-21
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.20-4] - 2026-05-20
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.20] - 2026-05-20
+## [0.75.4] - 2026-05-20
 
 ### Changed
 
 - Removed the package-level development watch script now that the root TypeScript check validates strip-only-compatible sources.
 
-## [2026.5.19] - 2026-05-19
+### Fixed
 
-## [2026.5.18-2] - 2026-05-18
-
-## [2026.5.18] - 2026-05-18
+- Fixed loader initialization so indicator startup cannot run before frames are initialized.
+- Fixed truecolor capability detection to align terminal image rendering with the interactive theme detector.
 
 ## [0.75.3] - 2026-05-18
 
@@ -180,36 +74,7 @@
 - Fixed markdown rendering robustness for very large markdown files ([#4463](https://github.com/earendil-works/pi-mono/pull/4463) by [@ndanielherrera](https://github.com/ndanielherrera)).
 - Fixed Kitty image placement when the viewport is shorter than the rendered image ([#4461](https://github.com/earendil-works/pi-mono/pull/4461) by [@xu0o0](https://github.com/xu0o0)).
 - Fixed WezTerm Kitty keyboard protocol edge cases so escape handling remains correct ([#4482](https://github.com/earendil-works/pi-mono/pull/4482) by [@Felixoid](https://github.com/Felixoid)).
-
-## [2026.5.16] - 2026-05-16
-
-### Fixed
-
-## [2026.5.15-3] - 2026-05-15
-
-### Fixed
-
-## [2026.5.15-2] - 2026-05-15
-
-### Fixed
-
-## [2026.5.15] - 2026-05-15
-
-### Fixed
-
-## [2026.5.14] - 2026-05-14
-
-### Fixed
-
 - Fixed inline image rendering to cap portrait images by height instead of always scaling them to the configured maximum width.
-
-## [2026.5.13-4] - 2026-05-13
-
-## [2026.5.13-3] - 2026-05-13
-
-## [2026.5.13-2] - 2026-05-13
-
-## [2026.05.13] - 2026-05-13
 
 ## [0.74.0] - 2026-05-07
 
@@ -381,6 +246,7 @@
 - Fixed slash-command Tab completion from immediately chaining into argument autocomplete after completing the command name, restoring flows like `/model` that submit into a selector dialog ([#2577](https://github.com/badlogic/pi-mono/issues/2577))
 - Fixed stale content and incorrect viewport tracking after TUI content shrinks or transient components inflate the working area ([#2126](https://github.com/badlogic/pi-mono/pull/2126) by [@Perlence](https://github.com/Perlence))
 - Fixed `@` autocomplete to debounce editor-triggered searches, cancel in-flight `fd` lookups cleanly, and keep suggestions visible while results refresh ([#1278](https://github.com/badlogic/pi-mono/issues/1278))
+
 
 ## [0.62.0] - 2026-03-23
 
@@ -809,7 +675,7 @@
 
 ### Fixed
 
-- Overlay compositing crash when rendered lines exceed terminal width due to complex ANSI/OSC sequences (e.g., hyperlinks in extension output) ([#667](https://github.com/badlogic/pi-mono/pull/667) by [@nicobailon](https://github.com/nicobailon))
+- Overlay compositing crash when rendered lines exceed terminal width due to complex ANSI/OSC sequences (e.g., hyperlinks in subagent output) ([#667](https://github.com/badlogic/pi-mono/pull/667) by [@nicobailon](https://github.com/nicobailon))
 
 ## [0.45.5] - 2026-01-13
 
