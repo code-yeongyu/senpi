@@ -6,8 +6,8 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { Model } from "@earendil-works/pi-ai";
+import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
+import type { Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { completeSimple } from "@earendil-works/pi-ai";
 import type { ExtensionRunner } from "../extensions/runner.ts";
 import type { SessionBeforeCompactResult } from "../extensions/types.ts";
@@ -86,6 +86,8 @@ export interface GenerateBranchSummaryOptions {
 	reserveTokens?: number;
 	/** Extension runner used to emit session_before_compact for branch summaries */
 	extensionRunner?: ExtensionRunner;
+	/** Optional session stream function. Used to preserve SDK request behavior without mutating agent state. */
+	streamFn?: StreamFn;
 }
 
 // ============================================================================
@@ -329,6 +331,7 @@ export async function generateBranchSummary(
 		replaceInstructions,
 		reserveTokens = 16384,
 		extensionRunner,
+		streamFn,
 	} = options;
 
 	// Token budget = context window minus reserved space for prompt + response
@@ -390,12 +393,14 @@ export async function generateBranchSummary(
 		},
 	];
 
-	// Call LLM for summarization
-	const response = await completeSimple(
-		model,
-		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		{ apiKey, headers, extraBody, signal, maxTokens: 2048 },
-	);
+	// Call LLM for summarization. Prefer the session stream function so SDK
+	// request behavior (timeouts, retries, attribution headers) stays consistent
+	// without running through agent state/events.
+	const context = { systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages };
+	const requestOptions: SimpleStreamOptions = { apiKey, headers, extraBody, signal, maxTokens: 2048 };
+	const response = streamFn
+		? await (await streamFn(model, context, requestOptions)).result()
+		: await completeSimple(model, context, requestOptions);
 
 	// Check if aborted or errored
 	if (response.stopReason === "aborted") {

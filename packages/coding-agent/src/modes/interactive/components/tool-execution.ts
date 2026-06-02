@@ -226,7 +226,33 @@ export class ToolExecutionComponent extends Container {
 		if (this.cachedLines && this.cachedWidth === width && this.cachedSignature === signature) {
 			return [...this.cachedLines];
 		}
-		const lines = super.render(width);
+
+		let lines: string[];
+		if (this.hasRendererDefinition() && this.getRenderShell() === "self") {
+			const contentLines = this.selfRenderContainer.render(width);
+			if (contentLines.length === 0 && this.imageComponents.length === 0) {
+				return [];
+			}
+
+			lines = [];
+			if (contentLines.length > 0) {
+				lines.push("");
+				lines.push(...contentLines);
+			}
+			for (let i = 0; i < this.imageComponents.length; i++) {
+				const spacer = this.imageSpacers[i];
+				if (spacer) {
+					lines.push(...spacer.render(width));
+				}
+				const imageComponent = this.imageComponents[i];
+				if (imageComponent) {
+					lines.push(...imageComponent.render(width));
+				}
+			}
+		} else {
+			lines = super.render(width);
+		}
+
 		this.cachedWidth = width;
 		this.cachedSignature = signature;
 		this.cachedLines = [...lines];

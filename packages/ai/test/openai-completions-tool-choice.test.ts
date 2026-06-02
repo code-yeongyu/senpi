@@ -815,7 +815,7 @@ describe("openai-completions tool_choice", () => {
 		expect(writeCall).not.toHaveProperty("partialArgs");
 	});
 
-	it("uses system messages for OpenRouter reasoning model instructions", async () => {
+	it("uses system messages for non-OpenAI/Anthropic OpenRouter reasoning model instructions", async () => {
 		const model = getModel("openrouter", "deepseek/deepseek-v4-pro")!;
 		let payload: unknown;
 
@@ -835,6 +835,33 @@ describe("openai-completions tool_choice", () => {
 
 		const params = payload as { messages?: Array<{ role?: string }> };
 		expect(params.messages?.[0]?.role).toBe("system");
+	});
+
+	it("keeps developer messages for OpenAI and Anthropic OpenRouter reasoning model instructions", async () => {
+		for (const model of [
+			getModel("openrouter", "openai/gpt-5.2-codex"),
+			getModel("openrouter", "anthropic/claude-sonnet-4.5"),
+		]) {
+			expect(model).toBeDefined();
+			let payload: unknown;
+
+			await streamSimple(
+				model!,
+				{
+					systemPrompt: "Follow instructions.",
+					messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
+				},
+				{
+					apiKey: "test",
+					onPayload: (params: unknown) => {
+						payload = params;
+					},
+				},
+			).result();
+
+			const params = payload as { messages?: Array<{ role?: string }> };
+			expect(params.messages?.[0]?.role).toBe("developer");
+		}
 	});
 
 	it("keeps developer messages for OpenAI reasoning model instructions", async () => {
@@ -858,6 +885,14 @@ describe("openai-completions tool_choice", () => {
 
 		const params = payload as { messages?: Array<{ role?: string }> };
 		expect(params.messages?.[0]?.role).toBe("developer");
+	});
+
+	it("stores OpenRouter Kimi K2.6 reasoning replay compat in built-in metadata", () => {
+		for (const modelId of ["moonshotai/kimi-k2.6", "moonshotai/kimi-k2.6:free"] as const) {
+			const model = getModel("openrouter", modelId)!;
+			expect(model.compat?.supportsDeveloperRole).toBe(false);
+			expect(model.compat?.requiresReasoningContentOnAssistantMessages).toBe(true);
+		}
 	});
 
 	it("stores Xiaomi MiMo reasoning replay compat in built-in metadata", () => {
