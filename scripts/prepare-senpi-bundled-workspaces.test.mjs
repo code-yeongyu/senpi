@@ -3,7 +3,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { copyPublishDependencies, directNodeModulesPackageName } from "./prepare-senpi-bundled-workspaces.mjs";
+import {
+	assertSenpiPackedWorkspaceFiles,
+	copyPublishDependencies,
+	directNodeModulesPackageName,
+} from "./prepare-senpi-bundled-workspaces.mjs";
 
 let tempDir;
 
@@ -108,5 +112,56 @@ describe("copyPublishDependencies", () => {
 		});
 
 		assert.throws(() => copyPublishDependencies(tempDir), /Missing .*node_modules\/typebox/);
+	});
+});
+
+describe("assertSenpiPackedWorkspaceFiles", () => {
+	it("rejects senpi package metadata that omits bundled workspace files", () => {
+		// Given
+		const packed = {
+			files: [{ path: "package/dist/cli.js" }, { path: "package/npm-shrinkwrap.json" }],
+		};
+
+		// When / Then
+		assert.throws(
+			() => assertSenpiPackedWorkspaceFiles(packed),
+			/package tarball is missing bundled workspace files: .*@earendil-works\/pi-ai/,
+		);
+	});
+
+	it("accepts senpi package metadata that includes bundled workspace entrypoints", () => {
+		// Given
+		const packed = {
+			files: [
+				{ path: "package/dist/cli.js" },
+				{ path: "package/node_modules/@earendil-works/pi-agent-core/package.json" },
+				{ path: "package/node_modules/@earendil-works/pi-agent-core/dist/index.js" },
+				{ path: "package/node_modules/@earendil-works/pi-ai/package.json" },
+				{ path: "package/node_modules/@earendil-works/pi-ai/dist/index.js" },
+				{ path: "package/node_modules/@earendil-works/pi-tui/package.json" },
+				{ path: "package/node_modules/@earendil-works/pi-tui/dist/index.js" },
+			],
+		};
+
+		// When / Then
+		assert.doesNotThrow(() => assertSenpiPackedWorkspaceFiles(packed));
+	});
+
+	it("accepts npm dry-run package metadata with unprefixed paths", () => {
+		// Given
+		const packed = {
+			files: [
+				{ path: "dist/cli.js" },
+				{ path: "node_modules/@earendil-works/pi-agent-core/package.json" },
+				{ path: "node_modules/@earendil-works/pi-agent-core/dist/index.js" },
+				{ path: "node_modules/@earendil-works/pi-ai/package.json" },
+				{ path: "node_modules/@earendil-works/pi-ai/dist/index.js" },
+				{ path: "node_modules/@earendil-works/pi-tui/package.json" },
+				{ path: "node_modules/@earendil-works/pi-tui/dist/index.js" },
+			],
+		};
+
+		// When / Then
+		assert.doesNotThrow(() => assertSenpiPackedWorkspaceFiles(packed));
 	});
 });

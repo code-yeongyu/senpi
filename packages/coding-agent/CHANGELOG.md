@@ -6,6 +6,8 @@
 
 ### Fixed
 
+- Fixed published npm packages missing bundled `@earendil-works` workspace dependencies, which caused fresh `senpi` installs to fail at startup with `ERR_MODULE_NOT_FOUND`.
+
 ## [2026.6.2] - 2026-06-02
 
 ### Added

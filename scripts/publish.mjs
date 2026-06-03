@@ -3,6 +3,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { assertSenpiPackedWorkspaceFiles, prepareSenpiBundledWorkspaces } from "./prepare-senpi-bundled-workspaces.mjs";
 
 const packages = [
 	{ directory: "packages/ai", name: "@earendil-works/pi-ai" },
@@ -28,6 +29,7 @@ function run(command, args, options = {}) {
 	const result = spawnSync(commandForPlatform(command), args, {
 		cwd: options.cwd,
 		encoding: "utf8",
+		maxBuffer: 128 * 1024 * 1024,
 		stdio: options.capture ? ["inherit", "pipe", "pipe"] : "inherit",
 	});
 
@@ -52,6 +54,9 @@ function assertBuildOutputExists(directory) {
 function validatePack(directory) {
 	const result = run("npm", ["pack", "--dry-run", "--ignore-scripts", "--json"], { capture: true, cwd: directory });
 	const packed = JSON.parse(result.stdout)[0];
+	if (directory === "packages/coding-agent") {
+		assertSenpiPackedWorkspaceFiles(packed);
+	}
 	console.log(`  ${packed.filename}: ${packed.files.length} files, ${packed.size} bytes packed, ${packed.unpackedSize} bytes unpacked`);
 }
 
@@ -88,6 +93,8 @@ if (versions.length !== 1) {
 }
 
 console.log(`Publishing senpi packages at ${versions[0]}${dryRun ? " (dry run)" : ""}\n`);
+
+prepareSenpiBundledWorkspaces();
 
 for (const pkg of packages) {
 	const version = packageVersions.get(pkg.name);

@@ -11,6 +11,7 @@ const bundledWorkspaces = [
 	{ source: "packages/tui", targetName: "pi-tui" },
 ];
 const internalPackageNames = new Set(bundledWorkspaces.map((workspace) => `@earendil-works/${workspace.targetName}`));
+const bundledWorkspacePackageNames = bundledWorkspaces.map((workspace) => `@earendil-works/${workspace.targetName}`);
 
 function shouldCopyWorkspaceFile(sourceRoot, sourcePath) {
 	const path = relative(sourceRoot, sourcePath);
@@ -60,6 +61,28 @@ export function copyPublishDependencies(repoRoot) {
 		rmSync(targetPath, { recursive: true, force: true });
 		mkdirSync(dirname(targetPath), { recursive: true });
 		cpSync(sourcePath, targetPath, { recursive: true });
+	}
+}
+
+export function assertSenpiPackedWorkspaceFiles(packed) {
+	const filePaths = new Set((packed.files ?? []).map((file) => file.path));
+	const missing = [];
+
+	for (const packageName of bundledWorkspacePackageNames) {
+		const packageRoot = `package/node_modules/${packageName}`;
+		const dryRunPackageRoot = `node_modules/${packageName}`;
+		for (const [path, dryRunPath] of [
+			[`${packageRoot}/package.json`, `${dryRunPackageRoot}/package.json`],
+			[`${packageRoot}/dist/index.js`, `${dryRunPackageRoot}/dist/index.js`],
+		]) {
+			if (!filePaths.has(path) && !filePaths.has(dryRunPath)) {
+				missing.push(`${path} or ${dryRunPath}`);
+			}
+		}
+	}
+
+	if (missing.length > 0) {
+		throw new Error(`senpi package tarball is missing bundled workspace files: ${missing.join(", ")}`);
 	}
 }
 

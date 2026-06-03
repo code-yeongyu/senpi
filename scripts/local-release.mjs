@@ -4,6 +4,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symli
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { prepareSenpiBundledWorkspaces } from "./prepare-senpi-bundled-workspaces.mjs";
 
 const packages = [
 	{ directory: "packages/ai", name: "@earendil-works/pi-ai" },
@@ -206,6 +207,8 @@ for (const pkg of packages) {
 	run("npm", ["run", "clean"], { cwd: pkg.directory });
 	run("npm", ["run", "build"], { cwd: pkg.directory });
 }
+
+prepareSenpiBundledWorkspaces(repoRoot);
 
 const tarballs = new Map();
 for (const pkg of packages) {
