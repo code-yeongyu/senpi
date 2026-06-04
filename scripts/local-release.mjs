@@ -4,6 +4,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symli
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { prepareSenpiBundledWorkspaces } from "./prepare-senpi-bundled-workspaces.mjs";
 
 const packages = [
@@ -13,6 +14,7 @@ const packages = [
 	{ directory: "packages/coding-agent", name: "@code-yeongyu/senpi" },
 ];
 const packageCliCommand = "senpi";
+const captureMaxBufferBytes = 64 * 1024 * 1024;
 
 function printUsage() {
 	console.log(`Usage: node scripts/local-release.mjs [options]
@@ -70,11 +72,12 @@ function parseArgs() {
 	return options;
 }
 
-function run(command, args, options = {}) {
+export function run(command, args, options = {}) {
 	console.log(`$ ${[command, ...args].join(" ")}`);
 	const result = spawnSync(command, args, {
 		cwd: options.cwd,
 		encoding: "utf8",
+		maxBuffer: options.capture ? captureMaxBufferBytes : undefined,
 		shell: process.platform === "win32",
 		stdio: options.capture ? ["inherit", "pipe", "inherit"] : "inherit",
 	});
@@ -184,89 +187,95 @@ function packPackage(pkg, tarballDirectory) {
 	return join(tarballDirectory, packed.filename);
 }
 
-const options = parseArgs();
-const repoRoot = process.cwd();
-const rootPackageJson = readPackageJson(repoRoot);
+function main() {
+	const options = parseArgs();
+	const repoRoot = process.cwd();
+	const rootPackageJson = readPackageJson(repoRoot);
 
-if (rootPackageJson.name !== "senpi-monorepo") {
-	throw new Error("Run this script from the repository root");
-}
+	if (rootPackageJson.name !== "senpi-monorepo") {
+		throw new Error("Run this script from the repository root");
+	}
 
-const outDir = prepareOutputDirectory(options, repoRoot);
-const tarballDirectory = join(outDir, "tarballs");
-const nodeInstallDirectory = join(outDir, "node");
-const bunInstallDirectory = join(outDir, "bun-install");
-const binaryDirectory = join(outDir, "bun");
-mkdirSync(tarballDirectory, { recursive: true });
+	const outDir = prepareOutputDirectory(options, repoRoot);
+	const tarballDirectory = join(outDir, "tarballs");
+	const nodeInstallDirectory = join(outDir, "node");
+	const bunInstallDirectory = join(outDir, "bun-install");
+	const binaryDirectory = join(outDir, "bun");
+	mkdirSync(tarballDirectory, { recursive: true });
 
-if (!options.skipCheck) {
-	run("npm", ["run", "check"], { cwd: repoRoot });
-}
+	if (!options.skipCheck) {
+		run("npm", ["run", "check"], { cwd: repoRoot });
+	}
 
-for (const pkg of packages) {
-	run("npm", ["run", "clean"], { cwd: pkg.directory });
-	run("npm", ["run", "build"], { cwd: pkg.directory });
-}
+	for (const pkg of packages) {
+		run("npm", ["run", "clean"], { cwd: pkg.directory });
+		run("npm", ["run", "build"], { cwd: pkg.directory });
+	}
 
-prepareSenpiBundledWorkspaces(repoRoot);
+	prepareSenpiBundledWorkspaces(repoRoot);
 
-const tarballs = new Map();
-for (const pkg of packages) {
-	const tarball = packPackage(pkg, tarballDirectory);
-	tarballs.set(pkg.name, tarball);
-}
+	const tarballs = new Map();
+	for (const pkg of packages) {
+		const tarball = packPackage(pkg, tarballDirectory);
+		tarballs.set(pkg.name, tarball);
+	}
 
-let binaryPlatform;
-if (!options.skipInstall) {
-	binaryPlatform = buildBunBinaryRelease(binaryDirectory, outDir);
+	let binaryPlatform;
+	if (!options.skipInstall) {
+		binaryPlatform = buildBunBinaryRelease(binaryDirectory, outDir);
 
-	mkdirSync(nodeInstallDirectory, { recursive: true });
-	const dependencies = Object.fromEntries(
-		packages.map((pkg) => [pkg.name, fileSpecifier(nodeInstallDirectory, tarballs.get(pkg.name))]),
-	);
-	const installPackageJson = `${JSON.stringify({ private: true, dependencies, overrides: dependencies }, undefined, "\t")}\n`;
-	writeFileSync(join(nodeInstallDirectory, "package.json"), installPackageJson);
-
-	run("npm", ["install", "--omit=dev", "--ignore-scripts"], { cwd: nodeInstallDirectory });
-	createPackageCliShim(nodeInstallDirectory);
-
-	if (!options.skipBunInstall) {
-		if (!commandExists("bun")) {
-			throw new Error("Bun is required for the isolated Bun install. Use --skip-bun-install to skip it.");
-		}
-		mkdirSync(bunInstallDirectory, { recursive: true });
-		const bunDependencies = Object.fromEntries(
-			packages.map((pkg) => [pkg.name, fileSpecifier(bunInstallDirectory, tarballs.get(pkg.name))]),
+		mkdirSync(nodeInstallDirectory, { recursive: true });
+		const dependencies = Object.fromEntries(
+			packages.map((pkg) => [pkg.name, fileSpecifier(nodeInstallDirectory, tarballs.get(pkg.name))]),
 		);
-		writeFileSync(join(bunInstallDirectory, "package.json"), `${JSON.stringify({ private: true, dependencies: bunDependencies, overrides: bunDependencies }, undefined, "\t")}\n`);
-		run("bun", ["install", "--production", "--ignore-scripts"], { cwd: bunInstallDirectory });
-		createPackageCliShim(bunInstallDirectory);
+		const installPackageJson = `${JSON.stringify({ private: true, dependencies, overrides: dependencies }, undefined, "\t")}\n`;
+		writeFileSync(join(nodeInstallDirectory, "package.json"), installPackageJson);
+
+		run("npm", ["install", "--omit=dev", "--ignore-scripts"], { cwd: nodeInstallDirectory });
+		createPackageCliShim(nodeInstallDirectory);
+
+		if (!options.skipBunInstall) {
+			if (!commandExists("bun")) {
+				throw new Error("Bun is required for the isolated Bun install. Use --skip-bun-install to skip it.");
+			}
+			mkdirSync(bunInstallDirectory, { recursive: true });
+			const bunDependencies = Object.fromEntries(
+				packages.map((pkg) => [pkg.name, fileSpecifier(bunInstallDirectory, tarballs.get(pkg.name))]),
+			);
+			writeFileSync(join(bunInstallDirectory, "package.json"), `${JSON.stringify({ private: true, dependencies: bunDependencies, overrides: bunDependencies }, undefined, "\t")}\n`);
+			run("bun", ["install", "--production", "--ignore-scripts"], { cwd: bunInstallDirectory });
+			createPackageCliShim(bunInstallDirectory);
+		}
+	}
+
+	console.log("\nLocal release artifacts created:");
+	console.log(`  ${outDir}`);
+	console.log("\nTarballs:");
+	for (const tarball of tarballs.values()) {
+		console.log(`  ${tarball}`);
+	}
+
+	if (!options.skipInstall) {
+		console.log("\nLocal Bun binary release:");
+		console.log(`  ${binaryDirectory}`);
+		console.log(`  ${join(outDir, `pi-${binaryPlatform}.${String(binaryPlatform).startsWith("windows-") ? "zip" : "tar.gz"}`)}`);
+		console.log("\nRun the local Bun binary release from outside the repository:");
+		console.log(`  ${join(binaryDirectory, String(binaryPlatform).startsWith("windows-") ? "pi.exe" : "pi")} --help`);
+
+		console.log("\nIsolated npm install:");
+		console.log(`  ${nodeInstallDirectory}`);
+		console.log("\nRun the locally packed npm CLI from outside the repository:");
+		console.log(`  ${join(nodeInstallDirectory, process.platform === "win32" ? `${packageCliCommand}.cmd` : packageCliCommand)} --help`);
+
+		if (!options.skipBunInstall) {
+			console.log("\nIsolated Bun package install:");
+			console.log(`  ${bunInstallDirectory}`);
+			console.log("\nRun the locally packed Bun package CLI from outside the repository:");
+			console.log(`  ${join(bunInstallDirectory, process.platform === "win32" ? `${packageCliCommand}.cmd` : packageCliCommand)} --help`);
+		}
 	}
 }
 
-console.log("\nLocal release artifacts created:");
-console.log(`  ${outDir}`);
-console.log("\nTarballs:");
-for (const tarball of tarballs.values()) {
-	console.log(`  ${tarball}`);
-}
-
-if (!options.skipInstall) {
-	console.log("\nLocal Bun binary release:");
-	console.log(`  ${binaryDirectory}`);
-	console.log(`  ${join(outDir, `pi-${binaryPlatform}.${String(binaryPlatform).startsWith("windows-") ? "zip" : "tar.gz"}`)}`);
-	console.log("\nRun the local Bun binary release from outside the repository:");
-	console.log(`  ${join(binaryDirectory, String(binaryPlatform).startsWith("windows-") ? "pi.exe" : "pi")} --help`);
-
-	console.log("\nIsolated npm install:");
-	console.log(`  ${nodeInstallDirectory}`);
-	console.log("\nRun the locally packed npm CLI from outside the repository:");
-	console.log(`  ${join(nodeInstallDirectory, process.platform === "win32" ? `${packageCliCommand}.cmd` : packageCliCommand)} --help`);
-
-	if (!options.skipBunInstall) {
-		console.log("\nIsolated Bun package install:");
-		console.log(`  ${bunInstallDirectory}`);
-		console.log("\nRun the locally packed Bun package CLI from outside the repository:");
-		console.log(`  ${join(bunInstallDirectory, process.platform === "win32" ? `${packageCliCommand}.cmd` : packageCliCommand)} --help`);
-	}
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+	main();
 }
