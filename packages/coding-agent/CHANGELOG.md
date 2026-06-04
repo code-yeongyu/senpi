@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- Fixed `senpi update` failing to repair npm installs with missing bundled workspace dependencies before the full CLI could load.
 - Fixed temporary extension package installs to use a private `~/.pi/agent/tmp/extensions` directory with `0700` permissions instead of `os.tmpdir()/pi-extensions`.
 - Fixed git package source handling to reject unsafe host/path components and keep managed clone paths inside install roots.
 - Fixed stored XSS in HTML session exports by sanitizing Markdown link and image URLs with a scheme allow-list after stripping control characters.

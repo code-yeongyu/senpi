@@ -1,18 +1,51 @@
 #!/usr/bin/env node
-/**
- * CLI entry point for the refactored coding agent.
- * Uses main.ts with AgentSession and new mode modules.
- *
- * Test with: npx tsx src/cli-new.ts [args...]
- */
-import { APP_NAME } from "./config.js";
-import { configureHttpDispatcher } from "./core/http-dispatcher.js";
-import { main } from "./main.js";
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { APP_NAME, getPackageDir } from "./config.js";
+import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.js";
 process.title = APP_NAME;
 process.env.PI_CODING_AGENT = "true";
 process.emitWarning = (() => { });
-// Configure undici's global dispatcher before provider SDKs issue requests.
-// Runtime settings are applied once SettingsManager has loaded global/project settings.
-configureHttpDispatcher();
-main(process.argv.slice(2));
+const args = process.argv.slice(2);
+function isPackageManagerInstall(packageDir) {
+    return packageDir.replace(/\\/g, "/").includes("/node_modules/@code-yeongyu/senpi");
+}
+function isMissingBundledWorkspaceDependencies(packageDir) {
+    if (!isPackageManagerInstall(packageDir)) {
+        return false;
+    }
+    const bundledPackages = ["pi-agent-core", "pi-ai", "pi-tui"];
+    return bundledPackages.some((name) => {
+        return !existsSync(join(packageDir, "node_modules", "@earendil-works", name, "dist", "index.js"));
+    });
+}
+async function runFullCli() {
+    const extension = import.meta.url.endsWith(".ts") ? ".ts" : ".js";
+    const fullCliPath = fileURLToPath(new URL(`./cli-main${extension}`, import.meta.url));
+    return await new Promise((resolve, reject) => {
+        const child = spawn(process.execPath, [...process.execArgv, fullCliPath, ...args], {
+            env: process.env,
+            stdio: "inherit",
+        });
+        child.on("error", (error) => {
+            reject(error);
+        });
+        child.on("close", (code, signal) => {
+            if (signal) {
+                process.kill(process.pid, signal);
+                resolve(1);
+                return;
+            }
+            resolve(code ?? 1);
+        });
+    });
+}
+if (isMissingBundledWorkspaceDependencies(getPackageDir())) {
+    if (await handleBootstrapSelfUpdate(args)) {
+        process.exit();
+    }
+}
+process.exitCode = await runFullCli();
 //# sourceMappingURL=cli.js.map
