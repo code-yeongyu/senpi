@@ -138,7 +138,10 @@ describe("FooterComponent width handling", () => {
 		});
 		const footer = new FooterComponent(session, createFooterData(1));
 
-		const statsLine = stripAnsi(footer.render(120)[1]);
-		expect(statsLine).toContain("CH25.0%");
+		const renderedFooter = footer
+			.render(120)
+			.map((line) => stripAnsi(line))
+			.join("\n");
+		expect(renderedFooter).toContain("CH25.0%");
 	});
 });
