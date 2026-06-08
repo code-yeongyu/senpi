@@ -166,6 +166,14 @@ const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
 const COMPUTER_USE_BETA_PREFIX = "computer-use-";
 const NATIVE_COMPUTER_TOOL_TYPE = "computer_20250124";
 const ADAPTIVE_THINKING_MODEL_MARKERS = ["opus-4-6", "opus-4-7", "sonnet-4-6"] as const;
+const UNSUPPORTED_NATIVE_COMPUTER_TOOL_MODEL_MARKERS = [
+	"opus-4-6",
+	"opus-4.6",
+	"opus-4-7",
+	"opus-4.7",
+	"opus-4-8",
+	"opus-4.8",
+] as const;
 
 function getAnthropicCompat(
 	model: Model<"anthropic-messages">,
@@ -376,14 +384,16 @@ function rejectsNativeComputerTool(model: Model<"anthropic-messages">, toolType:
 	if (model.provider === "cloudflare-ai-gateway" && model.baseUrl.includes("anthropic")) {
 		return toolType.startsWith("computer_");
 	}
-	return (isOpus46(model) || isOpus47(model)) && toolType === NATIVE_COMPUTER_TOOL_TYPE;
+	return (
+		matchesModelMarker(model, UNSUPPORTED_NATIVE_COMPUTER_TOOL_MODEL_MARKERS) &&
+		toolType === NATIVE_COMPUTER_TOOL_TYPE
+	);
 }
 
 function rejectsComputerUseBeta(model: Model<"anthropic-messages">): boolean {
 	return (
 		(model.provider === "cloudflare-ai-gateway" && model.baseUrl.includes("anthropic")) ||
-		isOpus46(model) ||
-		isOpus47(model)
+		matchesModelMarker(model, UNSUPPORTED_NATIVE_COMPUTER_TOOL_MODEL_MARKERS)
 	);
 }
 
