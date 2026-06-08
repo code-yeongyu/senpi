@@ -1,5 +1,23 @@
 # changes
 
+## Resident session payload retention (2026-06-08)
+
+### What changed
+
+- `src/core/session-manager.ts`: large in-memory session strings are retained through a resident store while public
+  readers, LLM context construction, branching, forking, and JSONL persistence materialize the original content.
+- `src/core/session-resident-store.ts`: centralizes resident string references and store statistics for session payloads.
+
+### Why
+
+- Long sessions can retain repeated large message payloads in every session tree/index view. Keeping large resident
+  strings behind lightweight refs lowers steady-state session memory pressure without changing persisted sessions.
+
+### Expected merge conflict zones
+
+- MEDIUM: `SessionManager` append, reload, branch, and persistence paths.
+- LOW: tests under `test/session-manager/` that assert exact in-memory entry identity.
+
 ## Compaction prompt settlement barrier (2026-05-28)
 
 ### What changed

@@ -19,6 +19,7 @@ import { createInterface } from "readline";
 import { StringDecoder } from "string_decoder";
 import { getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
+import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
 
 // Fork change: inlined UUIDv7 (upstream uses the `uuid` npm package). Keeps this
 // package self-contained so consumers don't need a transitive `uuid` install.
@@ -795,6 +796,7 @@ export class SessionManager {
 	private labelsById: Map<string, string> = new Map();
 	private labelTimestampsById: Map<string, string> = new Map();
 	private leafId: string | null = null;
+	private residentStore = new ResidentStringStore();
 
 	private constructor(
 		cwd: string,
@@ -820,6 +822,7 @@ export class SessionManager {
 	/** Switch to a different session file (used for resume and branching) */
 	setSessionFile(sessionFile: string): void {
 		this.sessionFile = resolvePath(sessionFile);
+		this.residentStore.clear();
 		if (existsSync(this.sessionFile)) {
 			this.fileEntries = loadEntriesFromFile(this.sessionFile);
 
@@ -841,6 +844,7 @@ export class SessionManager {
 				this._rewriteFile();
 			}
 
+			this.fileEntries = this.fileEntries.map((entry) => this.residentStore.externalize(entry));
 			this._buildIndex();
 			this.flushed = true;
 		} else {
@@ -865,8 +869,10 @@ export class SessionManager {
 			parentSession: options?.parentSession,
 		};
 		this.fileEntries = [header];
+		this.residentStore.clear();
 		this.byId.clear();
 		this.labelsById.clear();
+		this.labelTimestampsById.clear();
 		this.leafId = null;
 		this.flushed = false;
 
@@ -903,7 +909,7 @@ export class SessionManager {
 		const fd = openSync(this.sessionFile, "w");
 		try {
 			for (const entry of this.fileEntries) {
-				writeFileSync(fd, `${JSON.stringify(entry)}\n`);
+				writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(entry))}\n`);
 			}
 		} finally {
 			closeSync(fd);
@@ -934,13 +940,18 @@ export class SessionManager {
 		return this.sessionFile;
 	}
 
+	getResidentStoreStats(): ResidentStoreStats {
+		return this.residentStore.stats();
+	}
+
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
+		const persistedEntry = this.residentStore.materialize(entry);
 
 		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
 		if (!hasAssistant) {
 			if (this.flushed) {
-				appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
+				appendFileSync(this.sessionFile, `${JSON.stringify(persistedEntry)}\n`);
 			} else {
 				// Mark as not flushed so when assistant arrives, all entries get written
 				this.flushed = false;
@@ -952,22 +963,23 @@ export class SessionManager {
 			const fd = openSync(this.sessionFile, "wx");
 			try {
 				for (const e of this.fileEntries) {
-					writeFileSync(fd, `${JSON.stringify(e)}\n`);
+					writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(e))}\n`);
 				}
 			} finally {
 				closeSync(fd);
 			}
 			this.flushed = true;
 		} else {
-			appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
+			appendFileSync(this.sessionFile, `${JSON.stringify(persistedEntry)}\n`);
 		}
 	}
 
 	private _appendEntry(entry: SessionEntry): void {
-		this.fileEntries.push(entry);
-		this.byId.set(entry.id, entry);
-		this.leafId = entry.id;
-		this._persist(entry);
+		const residentEntry = this.residentStore.externalize(entry);
+		this.fileEntries.push(residentEntry);
+		this.byId.set(residentEntry.id, residentEntry);
+		this.leafId = residentEntry.id;
+		this._persist(residentEntry);
 	}
 
 	/** Append a message as child of current leaf, then advance leaf. Returns entry id.
@@ -1116,11 +1128,13 @@ export class SessionManager {
 	}
 
 	getLeafEntry(): SessionEntry | undefined {
-		return this.leafId ? this.byId.get(this.leafId) : undefined;
+		const entry = this.leafId ? this.byId.get(this.leafId) : undefined;
+		return entry ? this.residentStore.materialize(entry) : undefined;
 	}
 
 	getEntry(id: string): SessionEntry | undefined {
-		return this.byId.get(id);
+		const entry = this.byId.get(id);
+		return entry ? this.residentStore.materialize(entry) : undefined;
 	}
 
 	/**
@@ -1130,7 +1144,7 @@ export class SessionManager {
 		const children: SessionEntry[] = [];
 		for (const entry of this.byId.values()) {
 			if (entry.parentId === parentId) {
-				children.push(entry);
+				children.push(this.residentStore.materialize(entry));
 			}
 		}
 		return children;
@@ -1181,7 +1195,7 @@ export class SessionManager {
 		const startId = fromId ?? this.leafId;
 		let current = startId ? this.byId.get(startId) : undefined;
 		while (current) {
-			path.unshift(current);
+			path.unshift(this.residentStore.materialize(current));
 			current = current.parentId ? this.byId.get(current.parentId) : undefined;
 		}
 		return path;
@@ -1192,7 +1206,7 @@ export class SessionManager {
 	 * Uses tree traversal from current leaf.
 	 */
 	buildSessionContext(): SessionContext {
-		return buildSessionContext(this.getEntries(), this.leafId, this.byId);
+		return buildSessionContext(this.getEntries(), this.leafId);
 	}
 
 	/**
@@ -1200,7 +1214,7 @@ export class SessionManager {
 	 */
 	getHeader(): SessionHeader | null {
 		const h = this.fileEntries.find((e) => e.type === "session");
-		return h ? (h as SessionHeader) : null;
+		return h ? this.residentStore.materialize(h as SessionHeader) : null;
 	}
 
 	/**
@@ -1209,7 +1223,9 @@ export class SessionManager {
 	 * change the leaf pointer. Entries cannot be modified or deleted.
 	 */
 	getEntries(): SessionEntry[] {
-		return this.fileEntries.filter((e): e is SessionEntry => e.type !== "session");
+		return this.fileEntries
+			.filter((e): e is SessionEntry => e.type !== "session")
+			.map((entry) => this.residentStore.materialize(entry));
 	}
 
 	/**
@@ -1364,7 +1380,10 @@ export class SessionManager {
 				parentId = labelEntry.id;
 			}
 
-			this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries];
+			this.residentStore.clear();
+			this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries].map((entry) =>
+				this.residentStore.externalize(entry),
+			);
 			this.sessionId = newSessionId;
 			this.sessionFile = newSessionFile;
 			this._buildIndex();
@@ -1400,7 +1419,10 @@ export class SessionManager {
 			labelEntries.push(labelEntry);
 			parentId = labelEntry.id;
 		}
-		this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries];
+		this.residentStore.clear();
+		this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries].map((entry) =>
+			this.residentStore.externalize(entry),
+		);
 		this.sessionId = newSessionId;
 		this._buildIndex();
 		return undefined;
