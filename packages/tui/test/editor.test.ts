@@ -122,7 +122,7 @@ describe("Editor component", () => {
 			editor.handleInput("\x1b[A"); // Up - shows "old prompt"
 			editor.handleInput("x"); // Type a character - exits history mode
 
-			assert.strictEqual(editor.getText(), "old promptx");
+			assert.strictEqual(editor.getText(), "xold prompt");
 		});
 
 		it("exits history mode on setText", () => {
@@ -222,61 +222,55 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.getText(), "prompt 5");
 		});
 
-		it("allows cursor movement within multi-line history entry with Down", () => {
-			const editor = new Editor(createTestTUI(), defaultEditorTheme);
-
-			editor.addToHistory("line1\nline2\nline3");
-
-			// Browse to the multi-line entry
-			editor.handleInput("\x1b[A"); // Up - shows entry, cursor at end of line3
-			assert.strictEqual(editor.getText(), "line1\nline2\nline3");
-
-			// Down should exit history since cursor is on last line
-			editor.handleInput("\x1b[B"); // Down
-			assert.strictEqual(editor.getText(), ""); // Exited to empty
-		});
-
-		it("allows cursor movement within multi-line history entry with Up", () => {
+		it("places cursor at start after browsing history upward", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 
 			editor.addToHistory("older entry");
 			editor.addToHistory("line1\nline2\nline3");
 
-			// Browse to the multi-line entry
-			editor.handleInput("\x1b[A"); // Up - shows multi-line, cursor at end of line3
+			editor.handleInput("\x1b[A"); // Up - shows multi-line entry at start
+			assert.strictEqual(editor.getText(), "line1\nline2\nline3");
+			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 0 });
 
-			// Up should move cursor within the entry (not on first line yet)
-			editor.handleInput("\x1b[A"); // Up - cursor moves to line2
-			assert.strictEqual(editor.getText(), "line1\nline2\nline3"); // Still same entry
-
-			editor.handleInput("\x1b[A"); // Up - cursor moves to line1 (now on first visual line)
-			assert.strictEqual(editor.getText(), "line1\nline2\nline3"); // Still same entry
-
-			// Now Up should navigate to older history entry
-			editor.handleInput("\x1b[A"); // Up - navigate to older
+			editor.handleInput("\x1b[A"); // Up again - immediately navigates to older entry
 			assert.strictEqual(editor.getText(), "older entry");
+			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 0 });
 		});
 
-		it("navigates from multi-line entry back to newer via Down after cursor movement", () => {
+		it("places cursor at end after browsing history downward", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+
+			editor.addToHistory("older entry");
+			editor.addToHistory("line1\nline2\nline3");
+			editor.addToHistory("newer entry");
+
+			editor.handleInput("\x1b[A"); // newer entry
+			editor.handleInput("\x1b[A"); // multi-line entry
+			editor.handleInput("\x1b[A"); // older entry
+
+			editor.handleInput("\x1b[B"); // Down - shows multi-line entry at end
+			assert.strictEqual(editor.getText(), "line1\nline2\nline3");
+			assert.deepStrictEqual(editor.getCursor(), { line: 2, col: 5 });
+
+			editor.handleInput("\x1b[B"); // Down again - immediately navigates to newer entry
+			assert.strictEqual(editor.getText(), "newer entry");
+		});
+
+		it("allows opposite-direction cursor movement within multi-line history entry", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 
 			editor.addToHistory("line1\nline2\nline3");
 
-			// Browse to entry and move cursor up
-			editor.handleInput("\x1b[A"); // Up - shows entry, cursor at end
-			editor.handleInput("\x1b[A"); // Up - cursor to line2
-			editor.handleInput("\x1b[A"); // Up - cursor to line1
+			editor.handleInput("\x1b[A"); // Up - shows entry at start
+			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 0 });
 
-			// Now Down should move cursor down within the entry
-			editor.handleInput("\x1b[B"); // Down - cursor to line2
+			editor.handleInput("\x1b[B"); // Down - cursor moves to line2
 			assert.strictEqual(editor.getText(), "line1\nline2\nline3");
+			assert.deepStrictEqual(editor.getCursor(), { line: 1, col: 0 });
 
-			editor.handleInput("\x1b[B"); // Down - cursor to line3
+			editor.handleInput("\x1b[A"); // Up - cursor moves back to line1
 			assert.strictEqual(editor.getText(), "line1\nline2\nline3");
-
-			// Now on last line, Down should exit history
-			editor.handleInput("\x1b[B"); // Down - exit to empty
-			assert.strictEqual(editor.getText(), "");
+			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 0 });
 		});
 	});
 

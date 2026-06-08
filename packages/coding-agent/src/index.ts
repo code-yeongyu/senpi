@@ -3,7 +3,7 @@
 export { type Args, parseArgs } from "./cli/args.ts";
 
 // Config paths
-export { getAgentDir, VERSION } from "./config.ts";
+export { getAgentDir, getDocsPath, getExamplesPath, getPackageDir, getReadmePath, VERSION } from "./config.ts";
 export {
 	AgentSession,
 	type AgentSessionConfig,
@@ -295,6 +295,8 @@ export {
 	type RpcClientOptions,
 	type RpcCommand,
 	type RpcEventListener,
+	type RpcExtensionUIRequest,
+	type RpcExtensionUIResponse,
 	type RpcResponse,
 	type RpcSessionState,
 	runPrintMode,

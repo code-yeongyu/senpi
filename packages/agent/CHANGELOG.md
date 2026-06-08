@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed the compaction summarization system prompt to use neutral AI assistant wording for non-coding agents ([#5401](https://github.com/earendil-works/pi/issues/5401)).
+
 ### Removed
 
 ## [2026.6.6-3] - 2026-06-06

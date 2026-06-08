@@ -10,6 +10,9 @@
 
 ### Fixed
 
+- Fixed prompt history navigation to place the cursor at the start when browsing upward and at the end when browsing downward, so repeated Up/Down traverses multiline prompts immediately ([#5454](https://github.com/earendil-works/pi/issues/5454)).
+- Fixed intermittent Shift+Enter handling by making Kitty keyboard protocol fallback response-driven instead of timeout-driven ([#5188](https://github.com/earendil-works/pi/issues/5188)).
+
 ### Removed
 
 ## [2026.6.6-3] - 2026-06-06

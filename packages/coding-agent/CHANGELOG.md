@@ -24,9 +24,14 @@
 
 - Added project trust gating for project-local settings, resources, instructions, and packages ([#5332](https://github.com/earendil-works/pi/pull/5332)).
 - Added the latest prompt cache hit rate to the interactive footer.
+- Exported RPC extension UI request and response types from the public API ([#5455](https://github.com/earendil-works/pi/issues/5455)).
+- Exported coding-agent package asset path helpers from the public API ([#5415](https://github.com/earendil-works/pi/issues/5415)).
 
 ### Fixed
 
+- Fixed the compaction summarization system prompt to use neutral AI assistant wording for non-coding agents ([#5401](https://github.com/earendil-works/pi/issues/5401)).
+- Fixed `models.json` schema support for OpenAI Responses `compat.supportsDeveloperRole` ([#5456](https://github.com/earendil-works/pi/issues/5456)).
+- Fixed tmux setup documentation to require tmux 3.5 for `extended-keys-format csi-u` and document the tmux 3.2-3.4 fallback ([#5432](https://github.com/earendil-works/pi/issues/5432)).
 - Fixed built-in tool expand hints to style closing parentheses consistently ([#5359](https://github.com/earendil-works/pi/issues/5359)).
 
 ## [2026.6.4] - 2026-06-04

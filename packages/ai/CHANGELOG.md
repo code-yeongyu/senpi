@@ -46,6 +46,7 @@
 
 ### Fixed
 
+- Fixed OpenAI Responses custom providers to honor `compat.supportsDeveloperRole: false` for reasoning models ([#5456](https://github.com/earendil-works/pi/issues/5456)).
 - Fixed OpenRouter routing preferences on OpenAI-compatible custom providers to send `compat.openRouterRouting` even when `baseUrl` does not point directly at OpenRouter ([#5347](https://github.com/earendil-works/pi/issues/5347)).
 
 ### Removed

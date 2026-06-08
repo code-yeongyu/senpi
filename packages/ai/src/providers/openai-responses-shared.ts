@@ -164,7 +164,8 @@ export function convertResponsesMessages<TApi extends Api>(
 
 	const includeSystemPrompt = options?.includeSystemPrompt ?? true;
 	if (includeSystemPrompt && context.systemPrompt) {
-		const role = model.reasoning ? "developer" : "system";
+		const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
+		const role = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
 		messages.push({
 			role,
 			content: sanitizeSurrogates(context.systemPrompt),
