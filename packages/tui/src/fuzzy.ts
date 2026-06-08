@@ -9,87 +9,165 @@ export interface FuzzyMatch {
 	score: number;
 }
 
+const ALPHANUMERIC_SWAP_PENALTY = 5;
+
+function isAsciiLetter(char: string | undefined): boolean {
+	if (!char) {
+		return false;
+	}
+	const code = char.charCodeAt(0);
+	return code >= 97 && code <= 122;
+}
+
+function isAsciiDigit(char: string | undefined): boolean {
+	if (!char) {
+		return false;
+	}
+	const code = char.charCodeAt(0);
+	return code >= 48 && code <= 57;
+}
+
+function isWordBoundaryPrefix(char: string): boolean {
+	switch (char) {
+		case " ":
+		case "\t":
+		case "\n":
+		case "\r":
+		case "-":
+		case "_":
+		case ".":
+		case "/":
+		case ":":
+			return true;
+		default:
+			return false;
+	}
+}
+
+function scoreMatch(queryLower: string, textLower: string): FuzzyMatch {
+	if (queryLower.length === 0) {
+		return { matches: true, score: 0 };
+	}
+
+	if (queryLower.length > textLower.length) {
+		return { matches: false, score: 0 };
+	}
+
+	let queryIndex = 0;
+	let score = 0;
+	let lastMatchIndex = -1;
+	let consecutiveMatches = 0;
+
+	for (let i = 0; i < textLower.length && queryIndex < queryLower.length; i++) {
+		if (textLower[i] === queryLower[queryIndex]) {
+			const isWordBoundary = i === 0 || isWordBoundaryPrefix(textLower[i - 1]!);
+
+			// Reward consecutive matches
+			if (lastMatchIndex === i - 1) {
+				consecutiveMatches++;
+				score -= consecutiveMatches * 5;
+			} else {
+				consecutiveMatches = 0;
+				// Penalize gaps
+				if (lastMatchIndex >= 0) {
+					score += (i - lastMatchIndex - 1) * 2;
+				}
+			}
+
+			// Reward word boundary matches
+			if (isWordBoundary) {
+				score -= 10;
+			}
+
+			// Slight penalty for later matches
+			score += i * 0.1;
+
+			lastMatchIndex = i;
+			queryIndex++;
+		}
+	}
+
+	if (queryIndex < queryLower.length) {
+		return { matches: false, score: 0 };
+	}
+
+	if (queryLower === textLower) {
+		score -= 100;
+	}
+
+	return { matches: true, score };
+}
+
+function addWholeTokenSwap(variants: Set<string>, queryLower: string): void {
+	let splitIndex = 0;
+	while (splitIndex < queryLower.length && isAsciiLetter(queryLower[splitIndex])) {
+		splitIndex++;
+	}
+	if (splitIndex > 0 && splitIndex < queryLower.length) {
+		let digitEnd = splitIndex;
+		while (digitEnd < queryLower.length && isAsciiDigit(queryLower[digitEnd])) {
+			digitEnd++;
+		}
+		if (digitEnd === queryLower.length) {
+			variants.add(queryLower.slice(splitIndex) + queryLower.slice(0, splitIndex));
+		}
+	}
+
+	splitIndex = 0;
+	while (splitIndex < queryLower.length && isAsciiDigit(queryLower[splitIndex])) {
+		splitIndex++;
+	}
+	if (splitIndex > 0 && splitIndex < queryLower.length) {
+		let letterEnd = splitIndex;
+		while (letterEnd < queryLower.length && isAsciiLetter(queryLower[letterEnd])) {
+			letterEnd++;
+		}
+		if (letterEnd === queryLower.length) {
+			variants.add(queryLower.slice(splitIndex) + queryLower.slice(0, splitIndex));
+		}
+	}
+}
+
+function buildAlphanumericSwapQueries(queryLower: string): string[] {
+	const variants = new Set<string>();
+	addWholeTokenSwap(variants, queryLower);
+
+	for (let i = 0; i < queryLower.length - 1; i++) {
+		const current = queryLower[i];
+		const next = queryLower[i + 1];
+		const isAlphaNumSwap =
+			(isAsciiLetter(current) && isAsciiDigit(next)) || (isAsciiDigit(current) && isAsciiLetter(next));
+		if (!isAlphaNumSwap) {
+			continue;
+		}
+		variants.add(queryLower.slice(0, i) + next + current + queryLower.slice(i + 2));
+	}
+
+	return [...variants];
+}
+
 export function fuzzyMatch(query: string, text: string): FuzzyMatch {
 	const queryLower = query.toLowerCase();
 	const textLower = text.toLowerCase();
 
-	const matchQuery = (normalizedQuery: string): FuzzyMatch => {
-		if (normalizedQuery.length === 0) {
-			return { matches: true, score: 0 };
-		}
-
-		if (normalizedQuery.length > textLower.length) {
-			return { matches: false, score: 0 };
-		}
-
-		let queryIndex = 0;
-		let score = 0;
-		let lastMatchIndex = -1;
-		let consecutiveMatches = 0;
-
-		for (let i = 0; i < textLower.length && queryIndex < normalizedQuery.length; i++) {
-			if (textLower[i] === normalizedQuery[queryIndex]) {
-				const isWordBoundary = i === 0 || /[\s\-_./:]/.test(textLower[i - 1]!);
-
-				// Reward consecutive matches
-				if (lastMatchIndex === i - 1) {
-					consecutiveMatches++;
-					score -= consecutiveMatches * 5;
-				} else {
-					consecutiveMatches = 0;
-					// Penalize gaps
-					if (lastMatchIndex >= 0) {
-						score += (i - lastMatchIndex - 1) * 2;
-					}
-				}
-
-				// Reward word boundary matches
-				if (isWordBoundary) {
-					score -= 10;
-				}
-
-				// Slight penalty for later matches
-				score += i * 0.1;
-
-				lastMatchIndex = i;
-				queryIndex++;
-			}
-		}
-
-		if (queryIndex < normalizedQuery.length) {
-			return { matches: false, score: 0 };
-		}
-
-		if (normalizedQuery === textLower) {
-			score -= 100;
-		}
-
-		return { matches: true, score };
-	};
-
-	const primaryMatch = matchQuery(queryLower);
-	if (primaryMatch.matches) {
-		return primaryMatch;
+	const direct = scoreMatch(queryLower, textLower);
+	if (direct.matches) {
+		return direct;
 	}
 
-	const alphaNumericMatch = queryLower.match(/^(?<letters>[a-z]+)(?<digits>[0-9]+)$/);
-	const numericAlphaMatch = queryLower.match(/^(?<digits>[0-9]+)(?<letters>[a-z]+)$/);
-	const swappedQuery = alphaNumericMatch
-		? `${alphaNumericMatch.groups?.digits ?? ""}${alphaNumericMatch.groups?.letters ?? ""}`
-		: numericAlphaMatch
-			? `${numericAlphaMatch.groups?.letters ?? ""}${numericAlphaMatch.groups?.digits ?? ""}`
-			: "";
-
-	if (!swappedQuery) {
-		return primaryMatch;
+	let bestSwap: FuzzyMatch | null = null;
+	for (const variant of buildAlphanumericSwapQueries(queryLower)) {
+		const match = scoreMatch(variant, textLower);
+		if (!match.matches) {
+			continue;
+		}
+		const score = match.score + ALPHANUMERIC_SWAP_PENALTY;
+		if (!bestSwap || score < bestSwap.score) {
+			bestSwap = { matches: true, score };
+		}
 	}
 
-	const swappedMatch = matchQuery(swappedQuery);
-	if (!swappedMatch.matches) {
-		return primaryMatch;
-	}
-
-	return { matches: true, score: swappedMatch.score + 5 };
+	return bestSwap ?? direct;
 }
 
 /**

@@ -58,6 +58,11 @@ describe("fuzzyMatch", () => {
 		const result = fuzzyMatch("codex52", "gpt-5.2-codex");
 		assert.strictEqual(result.matches, true);
 	});
+
+	it("matches adjacent swapped alpha numeric characters", () => {
+		const result = fuzzyMatch("gpt5a", "gpt-a5");
+		assert.strictEqual(result.matches, true);
+	});
 });
 
 describe("fuzzyFilter", () => {
