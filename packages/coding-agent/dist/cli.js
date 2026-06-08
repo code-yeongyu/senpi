@@ -3,12 +3,17 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { APP_NAME, getPackageDir } from "./config.js";
+import { APP_NAME, getPackageDir, VERSION } from "./config.js";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.js";
 process.title = APP_NAME;
 process.env.PI_CODING_AGENT = "true";
 process.emitWarning = (() => { });
 const args = process.argv.slice(2);
+const PACKAGE_COMMANDS = new Set(["install", "remove", "uninstall", "update", "list", "config"]);
+function isRootCommand(args) {
+    const firstArg = args[0];
+    return firstArg === undefined || !PACKAGE_COMMANDS.has(firstArg);
+}
 function isPackageManagerInstall(packageDir) {
     return packageDir.replace(/\\/g, "/").includes("/node_modules/@code-yeongyu/senpi");
 }
@@ -41,6 +46,10 @@ async function runFullCli() {
             resolve(code ?? 1);
         });
     });
+}
+if (isRootCommand(args) && (args.includes("--version") || args.includes("-v"))) {
+    console.log(VERSION);
+    process.exit();
 }
 if (isMissingBundledWorkspaceDependencies(getPackageDir())) {
     if (await handleBootstrapSelfUpdate(args)) {
