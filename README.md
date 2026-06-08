@@ -52,12 +52,11 @@ senpi install git:github.com/code-yeongyu/pi-nested-agents-md      # 🔍  Auto-
 senpi install git:github.com/code-yeongyu/pi-websearch             # 📚  Provider-backed web search (fills the Exa-style slot)
 senpi install git:github.com/code-yeongyu/pi-webfetch              #     web_fetch tool (markdown / text / HTML, bounded time + size)
 senpi install git:github.com/code-yeongyu/pi-goal                  #     Persistent goal tracking + continuation prompts (closest thing to Sisyphus discipline)
-senpi install git:github.com/code-yeongyu/pi-sandbox               #     OS-level sandbox: native / Docker / justbash / QEMU + SSH transport
 
 # Optional — only if you used the matching OMO surface:
 senpi install git:github.com/code-yeongyu/pi-cua-integration                 # 🖥️  Computer-use bindings (desktop / browser)
 senpi install git:github.com/code-yeongyu/pi-anthropic-computer-use          #     Claude-native computer use
-senpi install git:github.com/code-yeongyu/pi-anthropic-code-execution        #     Claude-native code execution sandbox
+senpi install git:github.com/code-yeongyu/pi-anthropic-code-execution        #     Claude-native code execution
 senpi install git:github.com/code-yeongyu/pi-google-code-execution           #     Google-native code execution
 senpi install git:github.com/code-yeongyu/pi-openai-code-interpreter         #     OpenAI Code Interpreter
 senpi install git:github.com/code-yeongyu/pi-anthropic-text-editor           #     Claude-native text editor tool
@@ -69,6 +68,25 @@ senpi install git:github.com/code-yeongyu/pi-openai-api-parallel-tool-calls  #  
 ```
 
 Each package is also installable by git URL, e.g. `senpi install git:github.com/code-yeongyu/pi-comment-checker`. See [Senpi Packages](packages/coding-agent/README.md#pi-packages) for the full install / update / remove flow.
+
+### Allow all permissions (OMO-style)
+
+OMO runs with all tool permissions pre-approved. To replicate that behavior in senpi, add a wildcard allow rule to your global settings:
+
+```bash
+mkdir -p ~/.senpi/agent
+cat > ~/.senpi/agent/settings.json << 'EOF'
+{
+  "permission": {
+    "*": "allow"
+  }
+}
+EOF
+```
+
+This tells the permission system to auto-approve every tool call without prompting. The `"*"` key matches all permission names, and `"allow"` grants them unconditionally. You can also set this per-project by placing the same `settings.json` in `.senpi/settings.json` at the project root.
+
+> **Note:** This disables all interactive permission prompts. Only do this if you trust the model and the workspace you are running in.
 
 ### No direct senpi counterpart
 
@@ -84,7 +102,7 @@ These are part of OMO's opencode harness shape and are intentionally **not** in 
 
 ## Want more? Try the pi-extensions ecosystem
 
-senpi ships a fixed set of builtin extensions and stops there. The [`code-yeongyu/pi-*`](https://github.com/code-yeongyu?tab=repositories&q=pi-) GitHub repos contain the full extension ecosystem: some packages are vendored into senpi as builtins, while the rest can be installed on top when you want extra capabilities like LSP, AST-grep, sandboxing, goal tracking, web search/fetch, or rule loading.
+senpi ships a fixed set of builtin extensions and stops there. The [`code-yeongyu/pi-*`](https://github.com/code-yeongyu?tab=repositories&q=pi-) GitHub repos contain the full extension ecosystem: some packages are vendored into senpi as builtins, while the rest can be installed on top when you want extra capabilities like LSP, AST-grep, goal tracking, web search/fetch, or rule loading.
 
 ### Installable extensions
 
@@ -92,7 +110,7 @@ These [`code-yeongyu/pi-*`](https://github.com/code-yeongyu?tab=repositories&q=p
 
 | Extension | What it adds |
 |---|---|
-| [`pi-anthropic-code-execution`](https://github.com/code-yeongyu/pi-anthropic-code-execution) | Anthropic-native code execution sandbox. |
+| [`pi-anthropic-code-execution`](https://github.com/code-yeongyu/pi-anthropic-code-execution) | Anthropic-native code execution. |
 | [`pi-anthropic-computer-use`](https://github.com/code-yeongyu/pi-anthropic-computer-use) | Anthropic computer-use bindings. |
 | [`pi-anthropic-text-editor`](https://github.com/code-yeongyu/pi-anthropic-text-editor) | Anthropic-native text editor tool. |
 | [`pi-anthropic-tool-search`](https://github.com/code-yeongyu/pi-anthropic-tool-search) | Anthropic-native tool search. |
@@ -109,7 +127,6 @@ These [`code-yeongyu/pi-*`](https://github.com/code-yeongyu?tab=repositories&q=p
 | [`pi-openai-api-parallel-tool-calls`](https://github.com/code-yeongyu/pi-openai-api-parallel-tool-calls) | OpenAI `parallel_tool_calls` payload support. |
 | [`pi-openai-code-interpreter`](https://github.com/code-yeongyu/pi-openai-code-interpreter) | OpenAI Code Interpreter. |
 | [`pi-rules`](https://github.com/code-yeongyu/pi-rules) | Auto-discovers rule files from `.sisyphus/rules/`, `.claude/rules/`, `.cursor/rules/`, `.github/instructions/`, `AGENTS.md`, and `CLAUDE.md`. |
-| [`pi-sandbox`](https://github.com/code-yeongyu/pi-sandbox) | OS-level sandbox policy with native, Docker, justbash, and QEMU backends plus SSH transport facets. |
 | [`pi-webfetch`](https://github.com/code-yeongyu/pi-webfetch) | `web_fetch` tool: URL content as markdown, plain text, or HTML with bounded time and size. |
 | [`pi-websearch`](https://github.com/code-yeongyu/pi-websearch) | Provider-backed web search with config-gated activation, TUI status, and source-aware results. |
 
@@ -261,7 +278,7 @@ I regularly publish my own `pi-mono` work sessions here:
 | **[@earendil-works/pi-ai](packages/ai)** | Unified multi-provider LLM API with text streaming, tool calling, OAuth helpers, and image generation |
 | **[@earendil-works/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
 | **[senpi](packages/coding-agent)** | Interactive coding agent CLI, rebranded as senpi |
-| **mom** | Slack bot runner for dispatching coding-agent work in a target workspace, with host or Docker sandbox modes |
+| **mom** | Slack bot runner for dispatching coding-agent work in a target workspace |
 | **pods** | CLI utilities for managing vLLM models on GPU pods over SSH |
 | **[@earendil-works/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
 
@@ -271,9 +288,9 @@ For Slack/chat automation and workflows see [earendil-works/pi-chat](https://git
 
 senpi does not include a built-in container boundary for restricting filesystem, process, network, or credential access. By default, it runs with the permissions of the user and process that launched it.
 
-If you need stronger boundaries, containerize or sandbox senpi. See [packages/coding-agent/docs/containerization.md](packages/coding-agent/docs/containerization.md) for three patterns:
+If you need stronger boundaries, containerize senpi. See [packages/coding-agent/docs/containerization.md](packages/coding-agent/docs/containerization.md) for three patterns:
 
-- **OpenShell**: run the whole `senpi` process in a policy-controlled sandbox.
+- **OpenShell**: run the whole `senpi` process in a policy-controlled container.
 - **Gondolin extension**: keep `senpi` and provider auth on the host while routing built-in tools and `!` commands into a local Linux micro-VM.
 - **Plain Docker**: run the whole `senpi` process in a local container for simple isolation.
 
