@@ -333,53 +333,58 @@ async function streamAssistantResponse(
 		});
 
 		const iterator = response[Symbol.asyncIterator]();
-		while (true) {
-			const next = await readNextAssistantEvent(iterator, config.timeoutMs, signal);
-			if (next.done) break;
-			const event = next.value;
-			switch (event.type) {
-				case "start":
-					partialMessage = event.partial;
-					context.messages.push(partialMessage);
-					addedPartial = true;
-					await emit({ type: "message_start", message: { ...partialMessage } });
-					break;
-
-				case "text_start":
-				case "text_delta":
-				case "text_end":
-				case "thinking_start":
-				case "thinking_delta":
-				case "thinking_end":
-				case "toolcall_start":
-				case "toolcall_delta":
-				case "toolcall_end":
-					if (partialMessage) {
+		const eventReader = createAssistantEventReader(iterator, config.timeoutMs, signal);
+		try {
+			while (true) {
+				const next = await eventReader.next();
+				if (next.done) break;
+				const event = next.value;
+				switch (event.type) {
+					case "start":
 						partialMessage = event.partial;
-						context.messages[context.messages.length - 1] = partialMessage;
-						await emit({
-							type: "message_update",
-							assistantMessageEvent: event,
-							message: { ...partialMessage },
-						});
-					}
-					break;
+						context.messages.push(partialMessage);
+						addedPartial = true;
+						await emit({ type: "message_start", message: { ...partialMessage } });
+						break;
 
-				case "done":
-				case "error": {
-					const finalMessage = normalizeTerminalAssistantMessage(await response.result(), event);
-					if (addedPartial) {
-						context.messages[context.messages.length - 1] = finalMessage;
-					} else {
-						context.messages.push(finalMessage);
+					case "text_start":
+					case "text_delta":
+					case "text_end":
+					case "thinking_start":
+					case "thinking_delta":
+					case "thinking_end":
+					case "toolcall_start":
+					case "toolcall_delta":
+					case "toolcall_end":
+						if (partialMessage) {
+							partialMessage = event.partial;
+							context.messages[context.messages.length - 1] = partialMessage;
+							await emit({
+								type: "message_update",
+								assistantMessageEvent: event,
+								message: { ...partialMessage },
+							});
+						}
+						break;
+
+					case "done":
+					case "error": {
+						const finalMessage = normalizeTerminalAssistantMessage(await response.result(), event);
+						if (addedPartial) {
+							context.messages[context.messages.length - 1] = finalMessage;
+						} else {
+							context.messages.push(finalMessage);
+						}
+						if (!addedPartial) {
+							await emit({ type: "message_start", message: { ...finalMessage } });
+						}
+						await emit({ type: "message_end", message: finalMessage });
+						return finalMessage;
 					}
-					if (!addedPartial) {
-						await emit({ type: "message_start", message: { ...finalMessage } });
-					}
-					await emit({ type: "message_end", message: finalMessage });
-					return finalMessage;
 				}
 			}
+		} finally {
+			eventReader.dispose();
 		}
 
 		const finalMessage = await response.result();
@@ -409,22 +414,57 @@ async function streamAssistantResponse(
 	}
 }
 
-async function readNextAssistantEvent(
+const ABORTED = Symbol("aborted");
+
+type AssistantEventReader = {
+	next(): Promise<IteratorResult<AssistantMessageEvent>>;
+	dispose(): void;
+};
+
+function createAssistantEventReader(
 	iterator: AsyncIterator<AssistantMessageEvent>,
 	timeoutMs: number | undefined,
 	signal: AbortSignal | undefined,
-): Promise<IteratorResult<AssistantMessageEvent>> {
+): AssistantEventReader {
 	const idleTimeoutMs =
 		typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : undefined;
-	if (idleTimeoutMs === undefined && signal === undefined) {
-		return iterator.next();
+	let removeAbortListener: (() => void) | undefined;
+	let abortPromise: Promise<typeof ABORTED> | undefined;
+
+	if (signal !== undefined) {
+		if (signal.aborted) {
+			abortPromise = Promise.resolve(ABORTED);
+		} else {
+			abortPromise = new Promise<typeof ABORTED>((resolve) => {
+				const abortHandler = () => resolve(ABORTED);
+				signal.addEventListener("abort", abortHandler, { once: true });
+				removeAbortListener = () => signal.removeEventListener("abort", abortHandler);
+			});
+		}
 	}
-	if (signal?.aborted) {
-		throw new Error("Request was aborted");
+
+	return {
+		next: () => {
+			if (signal?.aborted) {
+				void iterator.return?.();
+				return Promise.reject(new Error("Request was aborted"));
+			}
+			return readNextAssistantEvent(iterator, idleTimeoutMs, abortPromise);
+		},
+		dispose: () => removeAbortListener?.(),
+	};
+}
+
+async function readNextAssistantEvent(
+	iterator: AsyncIterator<AssistantMessageEvent>,
+	idleTimeoutMs: number | undefined,
+	abortPromise: Promise<typeof ABORTED> | undefined,
+): Promise<IteratorResult<AssistantMessageEvent>> {
+	if (idleTimeoutMs === undefined && abortPromise === undefined) {
+		return iterator.next();
 	}
 
 	let timeout: ReturnType<typeof setTimeout> | undefined;
-	let abortHandler: (() => void) | undefined;
 	let settled = false;
 
 	return new Promise<IteratorResult<AssistantMessageEvent>>((resolve, reject) => {
@@ -433,9 +473,6 @@ async function readNextAssistantEvent(
 			settled = true;
 			if (timeout !== undefined) {
 				clearTimeout(timeout);
-			}
-			if (abortHandler !== undefined) {
-				signal?.removeEventListener("abort", abortHandler);
 			}
 			complete();
 		};
@@ -447,16 +484,16 @@ async function readNextAssistantEvent(
 			}, idleTimeoutMs);
 		}
 
-		if (signal !== undefined) {
-			abortHandler = () => {
-				void iterator.return?.();
-				settle(() => reject(new Error("Request was aborted")));
-			};
-			signal.addEventListener("abort", abortHandler, { once: true });
-		}
-
-		void iterator.next().then(
-			(result) => settle(() => resolve(result)),
+		const next = abortPromise ? Promise.race([iterator.next(), abortPromise]) : iterator.next();
+		void next.then(
+			(result) => {
+				if (result === ABORTED) {
+					void iterator.return?.();
+					settle(() => reject(new Error("Request was aborted")));
+					return;
+				}
+				settle(() => resolve(result));
+			},
 			(error: unknown) => settle(() => reject(error)),
 		);
 	});

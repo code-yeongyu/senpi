@@ -7,7 +7,7 @@ import {
 	type UserMessage,
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { agentLoop, agentLoopContinue } from "../src/agent-loop.ts";
 import type { CustomMessage } from "../src/harness/messages.ts";
 import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool } from "../src/types.ts";
@@ -300,6 +300,39 @@ describe("agentLoop with AgentMessage", () => {
 			"turn_end",
 			"agent_end",
 		]);
+	});
+
+	it("should register one abort listener while reading a provider stream", async () => {
+		const context: AgentContext = {
+			systemPrompt: "You are helpful.",
+			messages: [],
+			tools: [],
+		};
+		const userPrompt: AgentMessage = createUserMessage("Hello");
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+		const controller = new AbortController();
+		const addEventListenerSpy = vi.spyOn(controller.signal, "addEventListener");
+
+		const stream = agentLoop([userPrompt], context, config, controller.signal, () => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				const partialOne = createAssistantMessage([{ type: "text", text: "one" }]);
+				const partialTwo = createAssistantMessage([{ type: "text", text: "two" }]);
+				const finalMessage = createAssistantMessage([{ type: "text", text: "done" }]);
+				mockStream.push({ type: "start", partial: partialOne });
+				mockStream.push({ type: "text_delta", contentIndex: 0, delta: "two", partial: partialTwo });
+				mockStream.push({ type: "done", reason: "stop", message: finalMessage });
+			});
+			return mockStream;
+		});
+
+		await collectAgentEvents(stream);
+
+		const abortListenerAdds = addEventListenerSpy.mock.calls.filter(([type]) => type === "abort");
+		expect(abortListenerAdds).toHaveLength(1);
 	});
 
 	it("should attach fallback error details when a terminal error event omits them", async () => {
