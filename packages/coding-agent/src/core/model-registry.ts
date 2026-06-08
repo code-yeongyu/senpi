@@ -6,6 +6,7 @@ import {
 	type AnthropicMessagesCompat,
 	type Api,
 	type AssistantMessageEventStream,
+	type CacheRetention,
 	type Context,
 	getModels,
 	getProviders,
@@ -163,6 +164,7 @@ const ProviderCompatSchema = Type.Union([
 // Most fields are optional with sensible defaults for local models (Ollama, LM Studio, etc.)
 const ExtraBodySchema = Type.Record(Type.String(), Type.Unknown());
 const ServiceTierSchema = Type.Union([Type.Literal("auto"), Type.Literal("flex"), Type.Literal("priority")]);
+const CacheRetentionSchema = Type.Union([Type.Literal("none"), Type.Literal("short"), Type.Literal("long")]);
 type ModelServiceTier = Static<typeof ServiceTierSchema>;
 
 const ModelDefinitionSchema = Type.Object({
@@ -188,6 +190,7 @@ const ModelDefinitionSchema = Type.Object({
 	maxTokens: Type.Optional(Type.Number()),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
 	extraBody: Type.Optional(ExtraBodySchema),
+	cacheRetention: Type.Optional(CacheRetentionSchema),
 	compat: Type.Optional(ProviderCompatSchema),
 });
 
@@ -211,12 +214,17 @@ const ModelOverrideSchema = Type.Object({
 	maxTokens: Type.Optional(Type.Number()),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
 	extraBody: Type.Optional(ExtraBodySchema),
+	cacheRetention: Type.Optional(CacheRetentionSchema),
 	compat: Type.Optional(ProviderCompatSchema),
 });
 
 type ModelOverride = Static<typeof ModelOverrideSchema>;
 type ThinkingLevelMap = Static<typeof ThinkingLevelMapSchema>;
-type ModelWithConfigMetadata = Model<Api> & { promptPreset?: string; thinkingLevelMap?: ThinkingLevelMap };
+type ModelWithConfigMetadata = Model<Api> & {
+	promptPreset?: string;
+	thinkingLevelMap?: ThinkingLevelMap;
+	cacheRetention?: CacheRetention;
+};
 
 const ProviderConfigSchema = Type.Object({
 	name: Type.Optional(Type.String({ minLength: 1 })),
@@ -226,6 +234,7 @@ const ProviderConfigSchema = Type.Object({
 	api: Type.Optional(Type.String({ minLength: 1 })),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
 	extraBody: Type.Optional(ExtraBodySchema),
+	cacheRetention: Type.Optional(CacheRetentionSchema),
 	compat: Type.Optional(ProviderCompatSchema),
 	authHeader: Type.Optional(Type.Boolean()),
 	whitelist: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
@@ -260,6 +269,7 @@ function formatValidationPath(error: TLocalizedValidationError): string {
 interface ProviderOverride {
 	baseUrl?: string;
 	compat?: Model<Api>["compat"];
+	cacheRetention?: CacheRetention;
 }
 
 interface ProviderRequestConfig {
@@ -431,6 +441,7 @@ function applyModelOverride(model: Model<Api>, override: ModelOverride): Model<A
 	if (override.input !== undefined) result.input = override.input as Model<Api>["input"];
 	if (override.contextWindow !== undefined) result.contextWindow = override.contextWindow;
 	if (override.maxTokens !== undefined) result.maxTokens = override.maxTokens;
+	if (override.cacheRetention !== undefined) result.cacheRetention = override.cacheRetention;
 
 	// Merge cost (partial override)
 	if (override.cost) {
@@ -569,7 +580,7 @@ export class ModelRegistry {
 				if (whitelist && !whitelist.has(m.id)) return [];
 				if (blacklist?.has(m.id)) return [];
 
-				let model = m;
+				let model = m as ModelWithConfigMetadata;
 
 				// Apply provider-level baseUrl/headers/compat override
 				if (providerOverride) {
@@ -577,6 +588,7 @@ export class ModelRegistry {
 						...model,
 						baseUrl: providerOverride.baseUrl ?? model.baseUrl,
 						compat: mergeCompat(model.compat, providerOverride.compat),
+						cacheRetention: model.cacheRetention ?? providerOverride.cacheRetention,
 					};
 				}
 
@@ -646,10 +658,11 @@ export class ModelRegistry {
 					modelBlacklists.set(providerName, new Set(providerConfig.blacklist));
 				}
 
-				if (providerConfig.baseUrl || providerConfig.compat) {
+				if (providerConfig.baseUrl || providerConfig.compat || providerConfig.cacheRetention) {
 					overrides.set(providerName, {
 						baseUrl: providerConfig.baseUrl,
 						compat: providerConfig.compat,
+						cacheRetention: providerConfig.cacheRetention,
 					});
 				}
 
@@ -701,13 +714,14 @@ export class ModelRegistry {
 					!providerConfig.baseUrl &&
 					!providerConfig.headers &&
 					!providerConfig.compat &&
+					!providerConfig.cacheRetention &&
 					!hasModelOverrides &&
 					!providerConfig.extraBody &&
 					!providerConfig.whitelist &&
 					!providerConfig.blacklist
 				) {
 					throw new Error(
-						`Provider ${providerName}: must specify "baseUrl", "headers", "compat", "modelOverrides", "extraBody", or "models".`,
+						`Provider ${providerName}: must specify "baseUrl", "headers", "compat", "cacheRetention", "modelOverrides", "extraBody", or "models".`,
 					);
 				}
 			} else if (!isBuiltIn) {
@@ -798,6 +812,7 @@ export class ModelRegistry {
 					provider: providerName,
 					baseUrl,
 					reasoning: modelDef.reasoning ?? false,
+					cacheRetention: modelDef.cacheRetention ?? providerConfig.cacheRetention,
 					thinkingLevelMap: modelDef.thinkingLevelMap,
 					input: (modelDef.input ?? ["text"]) as Model<Api>["input"],
 					cost: modelDef.cost ?? defaultCost,
@@ -1125,6 +1140,11 @@ export class ModelRegistry {
 		} else {
 			delete next.extraBody;
 		}
+		if (config.cacheRetention !== undefined) {
+			next.cacheRetention = config.cacheRetention;
+		} else {
+			delete next.cacheRetention;
+		}
 		if (config.authHeader !== undefined) {
 			next.authHeader = config.authHeader;
 		} else {
@@ -1203,6 +1223,7 @@ export class ModelRegistry {
 					provider: providerName,
 					baseUrl: modelDef.baseUrl ?? config.baseUrl!,
 					reasoning: modelDef.reasoning,
+					cacheRetention: modelDef.cacheRetention ?? config.cacheRetention,
 					thinkingLevelMap: modelDef.thinkingLevelMap,
 					input: modelDef.input as Model<Api>["input"],
 					cost: modelDef.cost,
@@ -1220,13 +1241,14 @@ export class ModelRegistry {
 					this.models = config.oauth.modifyModels(this.models, cred);
 				}
 			}
-		} else if (config.baseUrl || config.headers || config.extraBody) {
+		} else if (config.baseUrl || config.headers || config.extraBody || config.cacheRetention) {
 			// Override-only: update baseUrl for existing models. Request headers and extraBody are resolved per request.
 			this.models = this.models.map((m) => {
 				if (m.provider !== providerName) return m;
 				return {
 					...m,
 					baseUrl: config.baseUrl ?? m.baseUrl,
+					cacheRetention: (m as ModelWithConfigMetadata).cacheRetention ?? config.cacheRetention,
 				};
 			});
 		}
@@ -1244,6 +1266,7 @@ export interface ProviderConfigInput {
 	streamSimple?: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
 	headers?: Record<string, string>;
 	extraBody?: Record<string, unknown>;
+	cacheRetention?: CacheRetention;
 	authHeader?: boolean;
 	/** OAuth provider for /login support */
 	oauth?: Omit<OAuthProviderInterface, "id">;
@@ -1262,6 +1285,7 @@ export interface ProviderConfigInput {
 		maxTokens: number;
 		headers?: Record<string, string>;
 		extraBody?: Record<string, unknown>;
+		cacheRetention?: CacheRetention;
 		compat?: Model<Api>["compat"];
 	}>;
 }

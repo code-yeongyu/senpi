@@ -126,14 +126,14 @@ export const BEDROCK_RESERVED_BODY_KEYS: ReadonlySet<string> = new Set([
 	"requestMetadata",
 ]);
 
-export function buildBaseOptions(_model: Model<Api>, options?: SimpleStreamOptions, apiKey?: string): StreamOptions {
+export function buildBaseOptions(model: Model<Api>, options?: SimpleStreamOptions, apiKey?: string): StreamOptions {
 	return {
 		temperature: options?.temperature,
 		maxTokens: options?.maxTokens,
 		signal: options?.signal,
 		apiKey: apiKey || options?.apiKey,
 		transport: options?.transport,
-		cacheRetention: options?.cacheRetention,
+		cacheRetention: options?.cacheRetention ?? model.cacheRetention,
 		sessionId: options?.sessionId,
 		headers: options?.headers,
 		extraBody: options?.extraBody,

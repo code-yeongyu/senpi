@@ -181,7 +181,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
 			const compat = getCompat(model);
-			const cacheRetention = resolveCacheRetention(options?.cacheRetention);
+			const cacheRetention = resolveCacheRetention(options?.cacheRetention ?? model.cacheRetention);
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
 			const client = createClient(model, context, apiKey, options?.headers, cacheSessionId, compat);
 			let params = buildParams(model, context, options, compat, cacheRetention);
@@ -543,7 +543,7 @@ function buildParams(
 	context: Context,
 	options?: OpenAICompletionsOptions,
 	compat: ResolvedOpenAICompletionsCompat = getCompat(model),
-	cacheRetention: CacheRetention = resolveCacheRetention(options?.cacheRetention),
+	cacheRetention: CacheRetention = resolveCacheRetention(options?.cacheRetention ?? model.cacheRetention),
 ) {
 	const messages = convertMessages(model, context, compat, {
 		preserveThinking: options?.reasoningEffort !== undefined,

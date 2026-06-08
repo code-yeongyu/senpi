@@ -61,6 +61,19 @@ describe("ModelRegistry", () => {
 		return registry.getAll().filter((m) => m.provider === provider);
 	}
 
+	type CacheRetentionValue = "none" | "short" | "long";
+
+	function getCacheRetention(model: Model<Api> | undefined): CacheRetentionValue | undefined {
+		if (!model || !("cacheRetention" in model)) {
+			return undefined;
+		}
+		const value = model.cacheRetention;
+		if (value === "none" || value === "short" || value === "long") {
+			return value;
+		}
+		return undefined;
+	}
+
 	function toShPath(value: string): string {
 		return value.replace(/\\/g, "/").replace(/"/g, '\\"');
 	}
@@ -159,6 +172,20 @@ describe("ModelRegistry", () => {
 					expect(auth.headers?.["X-Custom-Header"]).toBe("custom-value");
 				}
 			}
+		});
+
+		test("provider-level cache retention override applies to built-in models", () => {
+			writeRawModelsJson({
+				anthropic: {
+					cacheRetention: "long",
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const anthropicModels = getModelsForProvider(registry, "anthropic");
+
+			expect(anthropicModels.length).toBeGreaterThan(1);
+			expect(anthropicModels.every((model) => getCacheRetention(model) === "long")).toBe(true);
 		});
 
 		test("baseUrl-only override does not affect other providers", () => {
@@ -784,6 +811,54 @@ describe("ModelRegistry", () => {
 			}
 		});
 
+		test("model override cache retention beats provider default", () => {
+			writeRawModelsJson({
+				openrouter: {
+					cacheRetention: "long",
+					modelOverrides: {
+						"anthropic/claude-sonnet-4": {
+							cacheRetention: "none",
+						},
+					},
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const models = getModelsForProvider(registry, "openrouter");
+			const sonnet = models.find((model) => model.id === "anthropic/claude-sonnet-4");
+			const opus = models.find((model) => model.id === "anthropic/claude-opus-4");
+
+			expect(getCacheRetention(sonnet)).toBe("none");
+			expect(getCacheRetention(opus)).toBe("long");
+		});
+
+		test("custom model inherits provider cache retention unless the model overrides it", () => {
+			const config = providerConfig(
+				"https://custom-cache.example.com/v1",
+				[{ id: "custom-default" }, { id: "custom-short" }],
+				"openai-completions",
+			);
+			config.cacheRetention = "long";
+			config.models?.splice(1, 1, {
+				id: "custom-short",
+				name: "custom-short",
+				reasoning: false,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 100000,
+				maxTokens: 8000,
+				cacheRetention: "short",
+			});
+			writeRawModelsJson({
+				"custom-provider": config,
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+			expect(getCacheRetention(registry.find("custom-provider", "custom-default"))).toBe("long");
+			expect(getCacheRetention(registry.find("custom-provider", "custom-short"))).toBe("short");
+		});
+
 		test("custom model can route to an upstream model id with a service tier", async () => {
 			writeRawModelsJson({
 				openai: {
@@ -1275,6 +1350,21 @@ describe("ModelRegistry", () => {
 					ok: true,
 					apiKey: "test-key",
 				});
+			});
+
+			test("cache retention override keeps custom provider models after refresh", () => {
+				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+				registry.registerProvider(
+					"custom-provider",
+					providerConfig("https://custom.test/v1", [{ id: "custom-a" }, { id: "custom-b" }], "openai-completions"),
+				);
+				registry.registerProvider("custom-provider", { cacheRetention: "long" });
+				registry.refresh();
+
+				const models = getModelsForProvider(registry, "custom-provider");
+				expect(models.map((model) => model.id)).toEqual(["custom-a", "custom-b"]);
+				expect(models.every((model) => getCacheRetention(model) === "long")).toBe(true);
 			});
 		});
 	});

@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getModel } from "../src/models.ts";
+import { streamAnthropic } from "../src/providers/anthropic.ts";
+import { streamOpenAICompletions } from "../src/providers/openai-completions.ts";
+import { streamOpenAIResponses } from "../src/providers/openai-responses.ts";
 import { stream } from "../src/stream.ts";
 import type { Context, Model } from "../src/types.ts";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
 
 describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 	const originalEnv = process.env.PI_CACHE_RETENTION;
@@ -220,6 +227,32 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			expect(capturedPayload).not.toBeNull();
 			expect(capturedPayload.system[0].cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
 		});
+
+		it("uses model cacheRetention when request options omit cacheRetention", async () => {
+			const model = {
+				...getModel("anthropic", "claude-haiku-4-5"),
+				cacheRetention: "long",
+			} satisfies Model<"anthropic-messages">;
+			let capturedPayload: Record<string, unknown> | undefined;
+
+			const s = streamAnthropic(model, context, {
+				apiKey: "fake-key",
+				onPayload: (payload) => {
+					if (isRecord(payload)) {
+						capturedPayload = payload;
+					}
+					return payload;
+				},
+			});
+
+			for await (const event of s) {
+				if (event.type === "error") break;
+			}
+
+			expect(capturedPayload).toMatchObject({
+				system: [{ cache_control: { type: "ephemeral", ttl: "1h" } }],
+			});
+		});
 	});
 
 	describe("OpenAI Responses Provider", () => {
@@ -387,6 +420,34 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			expect(capturedPayload.prompt_cache_key).toBe("session-2");
 			expect(capturedPayload.prompt_cache_retention).toBe("24h");
 		});
+
+		it("uses model cacheRetention when request options omit cacheRetention", async () => {
+			const model = {
+				...getModel("openai", "gpt-4o-mini"),
+				cacheRetention: "long",
+			} satisfies Model<"openai-responses">;
+			let capturedPayload: Record<string, unknown> | undefined;
+
+			const s = streamOpenAIResponses(model, context, {
+				apiKey: "fake-key",
+				sessionId: "model-default-session",
+				onPayload: (payload) => {
+					if (isRecord(payload)) {
+						capturedPayload = payload;
+					}
+					return payload;
+				},
+			});
+
+			for await (const event of s) {
+				if (event.type === "error") break;
+			}
+
+			expect(capturedPayload).toMatchObject({
+				prompt_cache_key: "model-default-session",
+				prompt_cache_retention: "24h",
+			});
+		});
 	});
 
 	describe("OpenAI Completions Provider", () => {
@@ -456,6 +517,34 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			expect(capturedPayload).not.toBeNull();
 			expect(capturedPayload.prompt_cache_key).toBeUndefined();
 			expect(capturedPayload.prompt_cache_retention).toBeUndefined();
+		});
+
+		it("uses model cacheRetention when request options omit cacheRetention", async () => {
+			let capturedPayload: Record<string, unknown> | undefined;
+			const model = {
+				...createCompletionsModel(),
+				cacheRetention: "long",
+			} satisfies Model<"openai-completions">;
+
+			const s = streamOpenAICompletions(model, context, {
+				apiKey: "fake-key",
+				sessionId: "model-completions-session",
+				onPayload: (payload) => {
+					if (isRecord(payload)) {
+						capturedPayload = payload;
+					}
+					return payload;
+				},
+			});
+
+			for await (const event of s) {
+				if (event.type === "error") break;
+			}
+
+			expect(capturedPayload).toMatchObject({
+				prompt_cache_key: "model-completions-session",
+				prompt_cache_retention: "24h",
+			});
 		});
 	});
 });

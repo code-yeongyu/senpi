@@ -196,7 +196,7 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 			if (options.headers && Object.keys(options.headers).length > 0) {
 				addCustomHeadersMiddleware(client, options.headers);
 			}
-			const cacheRetention = resolveCacheRetention(options.cacheRetention);
+			const cacheRetention = resolveCacheRetention(options.cacheRetention ?? model.cacheRetention);
 			const inferenceMaxTokens = options.maxTokens ?? (isAnthropicClaudeModel(model) ? model.maxTokens : undefined);
 			let commandInput: ConverseStreamCommandInput & Record<string, unknown> = {
 				modelId: model.id,

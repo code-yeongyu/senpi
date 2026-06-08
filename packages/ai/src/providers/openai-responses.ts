@@ -209,7 +209,7 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses", OpenAIRes
 			if (!apiKey) {
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
-			const cacheRetention = resolveCacheRetention(options?.cacheRetention);
+			const cacheRetention = resolveCacheRetention(options?.cacheRetention ?? model.cacheRetention);
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
 			let params = buildParams(model, context, options);
 			const nextParams = await options?.onPayload?.(params, model);
@@ -365,7 +365,7 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 		preserveThinking: reasoningRequested,
 	});
 
-	const cacheRetention = resolveCacheRetention(options?.cacheRetention);
+	const cacheRetention = resolveCacheRetention(options?.cacheRetention ?? model.cacheRetention);
 	const compat = getCompat(model);
 	const params: ResponseCreateParamsStreaming = {
 		model: model.id,
