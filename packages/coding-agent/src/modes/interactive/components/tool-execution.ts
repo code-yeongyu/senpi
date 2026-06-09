@@ -3,6 +3,7 @@ import { Box, type Component, Container, getCapabilities, Image, Spacer, Text, t
 import type { ToolDefinition, ToolRenderContext } from "../../../core/extensions/types.ts";
 import { createAllToolDefinitions, type ToolName } from "../../../core/tools/index.ts";
 import { getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
+import { stripAnsi } from "../../../utils/ansi.ts";
 import { convertToPng } from "../../../utils/image-convert.ts";
 import { theme } from "../theme/theme.ts";
 
@@ -15,6 +16,27 @@ type ToolExecutionResult = Omit<AgentToolResult<unknown>, "details"> & {
 	details?: unknown;
 	isError: boolean;
 };
+
+const FALLBACK_STRING_MAX_LENGTH = 160;
+const FALLBACK_JSON_MAX_LENGTH = 2000;
+
+function sanitizeFallbackString(value: string, maxLength = FALLBACK_STRING_MAX_LENGTH): string {
+	const sanitized = stripAnsi(value)
+		.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+	if (sanitized.length <= maxLength) {
+		return sanitized;
+	}
+	return `${sanitized.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function sanitizeFallbackJsonValue(_key: string, value: unknown): unknown {
+	if (typeof value === "string") {
+		return sanitizeFallbackString(value);
+	}
+	return value;
+}
 
 export class ToolExecutionComponent extends Container {
 	private cachedLines?: string[];
@@ -385,14 +407,18 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private formatToolExecution(): string {
-		let text = theme.fg("toolTitle", theme.bold(this.toolName));
-		const content = JSON.stringify(this.args, null, 2);
+		let text = theme.fg("toolTitle", theme.bold(sanitizeFallbackString(this.toolName)));
+		const content = JSON.stringify(this.args, sanitizeFallbackJsonValue, 2);
 		if (content) {
-			text += `\n\n${content}`;
+			const boundedContent =
+				content.length > FALLBACK_JSON_MAX_LENGTH
+					? `${content.slice(0, FALLBACK_JSON_MAX_LENGTH - 3)}...`
+					: content;
+			text += `\n\n${boundedContent}`;
 		}
 		const output = this.getTextOutput();
 		if (output) {
-			text += `\n${output}`;
+			text += `\n${sanitizeFallbackString(output, FALLBACK_JSON_MAX_LENGTH)}`;
 		}
 		return text;
 	}

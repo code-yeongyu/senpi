@@ -20,6 +20,7 @@ class ProcessExitError extends Error {
 describe("--list-models fast path", () => {
 	const tempDirs: string[] = [];
 	let originalAgentDir: string | undefined;
+	let originalOpenaiApiKey: string | undefined;
 	let originalCwd = process.cwd();
 	let originalExitCode: typeof process.exitCode = process.exitCode;
 
@@ -31,6 +32,11 @@ describe("--list-models fast path", () => {
 			delete process.env[ENV_AGENT_DIR];
 		} else {
 			process.env[ENV_AGENT_DIR] = originalAgentDir;
+		}
+		if (originalOpenaiApiKey === undefined) {
+			delete process.env.OPENAI_API_KEY;
+		} else {
+			process.env.OPENAI_API_KEY = originalOpenaiApiKey;
 		}
 		for (const dir of tempDirs.splice(0)) {
 			rmSync(dir, { recursive: true, force: true });
@@ -63,9 +69,11 @@ describe("--list-models fast path", () => {
 		mkdirSync(agentDir, { recursive: true });
 		mkdirSync(projectDir, { recursive: true });
 		originalAgentDir = process.env[ENV_AGENT_DIR];
+		originalOpenaiApiKey = process.env.OPENAI_API_KEY;
 		originalCwd = process.cwd();
 		originalExitCode = process.exitCode;
 		process.env[ENV_AGENT_DIR] = agentDir;
+		process.env.OPENAI_API_KEY = "fake-openai-key";
 		process.exitCode = undefined;
 		process.chdir(projectDir);
 

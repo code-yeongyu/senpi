@@ -1,6 +1,7 @@
 const WORKING_STATUS_MESSAGE_SHIMMER_PADDING = 10;
 const WORKING_STATUS_MESSAGE_SHIMMER_BAND_HALF_WIDTH = 5;
 const WORKING_STATUS_MESSAGE_SHIMMER_SWEEP_MS = 2_000;
+const ACTIVE_TOOL_WORKING_LABEL_MAX_LENGTH = 80;
 
 export type WorkingStatusRgbColor = {
 	r: number;
@@ -47,6 +48,43 @@ export function formatToolHookStatusMessage(
 ): string {
 	const suffix = statusMessage ? `: ${statusMessage}` : "";
 	return `Running ${hookName} hook${suffix} (${formatWorkingElapsedSeconds(elapsedSeconds)})`;
+}
+
+export function sanitizeWorkingStatusPlainText(value: string): string {
+	return value
+		.replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, "")
+		.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+		.replace(/[\r\n\t]+/g, " ")
+		.replace(/[\u0000-\u001f\u007f]+/g, "")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+function truncateActiveToolWorkingLabel(value: string): string {
+	const chars = Array.from(value);
+	if (chars.length <= ACTIVE_TOOL_WORKING_LABEL_MAX_LENGTH) {
+		return value;
+	}
+	return `${chars.slice(0, ACTIVE_TOOL_WORKING_LABEL_MAX_LENGTH - 3).join("")}...`;
+}
+
+function getActiveToolWorkingDetail(input: unknown): string {
+	if (typeof input !== "object" || input === null || !("command" in input)) {
+		return "";
+	}
+	const command = input.command;
+	if (typeof command !== "string") {
+		return "";
+	}
+	return sanitizeWorkingStatusPlainText(command);
+}
+
+export function formatActiveToolWorkingLabel(toolName: string, input: unknown): string {
+	const sanitizedToolName = sanitizeWorkingStatusPlainText(toolName);
+	const labelToolName = sanitizedToolName || "tool";
+	const detail = getActiveToolWorkingDetail(input);
+	const label = detail ? `Running ${labelToolName}: ${detail}` : `Running ${labelToolName}`;
+	return truncateActiveToolWorkingLabel(label);
 }
 
 function clampColorChannel(value: number): number {
