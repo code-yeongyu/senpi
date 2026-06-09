@@ -60,16 +60,18 @@ The release script (`scripts/release.mjs`) imports `scripts/calver.mjs` to compu
 
 ### Upstream sync
 
-You do NOT manually merge upstream. `.github/workflows/sync-upstream.yml` runs every 6 hours and syncs `badlogic/pi-mono` automatically.
+You do NOT manually merge upstream. `.github/workflows/upstream-agent-merge.yml` polls `badlogic/pi-mono` and, when a new upstream release lands, runs Claude Code headless inside the runner to merge it.
 
-- **Clean merge** → committed directly to `main` with `sync: merge upstream <short-sha> into main`.
-- **Conflicts** → a PR labeled `sync-conflict` is opened from a `sync/upstream-<short-sha>` branch with conflict markers intact. If another sync runs before the PR is resolved, the prior PR is closed (`Superseded by upcoming sync from <new>`) and a new PR opens.
+The agent uses the committed `merge-upstream` skill and `/cl` changelog-audit command (under `.github/agent/`) plus the fork conflict-resolution rules in `.github/agent/merge-driver.md`. On a clean, building, changelog-audited merge it lets the release run (`scripts/release.mjs` tags `vX.Y.Z` and pushes; `build-binaries.yml` publishes from the tag).
 
-To resolve a conflict PR: follow the per-file resolution rules in `AGENTS.md` § `VERSIONING & UPSTREAM SYNC`. The `changes.md` files in fork-modified subdirectories tell you what the fork preserves and why.
+- **Clean merge** → merged into `main`, changelog audited, QA gates pass, a new release is cut automatically.
+- **Conflicts / QA failure** → the agent aborts, writes `.github/agent/last-merge-report.md`, and the workflow opens an issue labeled `sync-conflict`. Resolve manually following the per-file rules in `.github/agent/merge-driver.md`; the `changes.md` files in fork-modified subdirectories tell you what the fork preserves and why.
 
-To trigger sync manually:
+Requires the `ANTHROPIC_API_KEY` (or `CLAUDE_CODE_OAUTH_TOKEN`) repository secret.
+
+To trigger manually:
 ```bash
-gh workflow run sync-upstream.yml
+gh workflow run upstream-agent-merge.yml -f force=true
 ```
 
 ### CHANGELOG entries

@@ -1,0 +1,164 @@
+name: Upstream Agent Merge
+
+# New upstream release -> Claude Code headless merges + audits changelog + QAs -> release.mjs
+# tags vX.Y.Z -> build-binaries.yml publishes. See plans/upstream-agent-merge.md.
+
+'on':
+  schedule:
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Run even if no new upstream release is detected'
+        required: false
+        type: boolean
+        default: false
+      model:
+        description: 'Claude Code model override (optional)'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: upstream-agent-merge
+  cancel-in-progress: false
+
+jobs:
+  merge-and-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      UPSTREAM_URL: https://github.com/badlogic/pi-mono.git
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      MODEL_INPUT: ${{ github.event.inputs.model }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+
+      - name: Configure git and upstream remote
+        run: |
+          git config user.name "senpi-merge-bot"
+          git config user.email "actions@github.com"
+          git remote add upstream "${UPSTREAM_URL}" 2>/dev/null || git remote set-url upstream "${UPSTREAM_URL}"
+          git fetch --quiet --tags upstream
+
+      - name: Detect new upstream release
+        id: detect
+        run: |
+          ARGS=""
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then ARGS="--force"; fi
+          node scripts/check-upstream-release.mjs $ARGS
+
+      - name: Setup Node.js
+        if: steps.detect.outputs.proceed == 'true'
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org/'
+
+      - name: Setup Bun
+        if: steps.detect.outputs.proceed == 'true'
+        uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
+        with:
+          bun-version: 1.2.20
+
+      - name: Install system dependencies
+        if: steps.detect.outputs.proceed == 'true'
+        run: |
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y \
+            libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
+          sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
+
+      - name: Install dependencies
+        if: steps.detect.outputs.proceed == 'true'
+        run: npm install --no-audit --no-fund
+
+      - name: Install Claude Code
+        if: steps.detect.outputs.proceed == 'true'
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude --version
+
+      - name: Stage agent resources into runtime
+        if: steps.detect.outputs.proceed == 'true'
+        run: |
+          mkdir -p "$HOME/.claude/skills" "$HOME/.claude/commands"
+          cp -R .github/agent/skills/. "$HOME/.claude/skills/"
+          cp .github/agent/commands/*.md "$HOME/.claude/commands/"
+          ls -R "$HOME/.claude/skills" "$HOME/.claude/commands"
+
+      - name: Run merge + changelog agent
+        id: agent
+        if: steps.detect.outputs.proceed == 'true'
+        env:
+          UPSTREAM_TAG: ${{ steps.detect.outputs.tag }}
+        run: |
+          if [ -z "${ANTHROPIC_API_KEY}" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN}" ]; then
+            echo "::error::Neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN is set. Add one as a repository secret."
+            exit 1
+          fi
+          MODEL_ARG=""
+          if [ -n "${MODEL_INPUT}" ]; then MODEL_ARG="--model ${MODEL_INPUT}"; fi
+          DRIVER="$(cat .github/agent/merge-driver.md)
+          The latest upstream release tag to integrate is ${UPSTREAM_TAG}."
+          set -o pipefail
+          claude -p "${DRIVER}" \
+            --permission-mode bypassPermissions \
+            --max-turns 200 \
+            $MODEL_ARG 2>&1 | tee /tmp/agent.log
+          RESULT="$(grep -E '^MERGE_RESULT:' /tmp/agent.log | tail -1 | awk '{print $2}')"
+          echo "result=${RESULT:-UNKNOWN}" >> "$GITHUB_OUTPUT"
+          echo "Agent result: ${RESULT:-UNKNOWN}"
+
+      - name: Verify merged tree (deterministic QA gate)
+        if: steps.detect.outputs.proceed == 'true' && steps.agent.outputs.result == 'CLEAN'
+        run: |
+          git status --porcelain
+          npm run build
+          npm run check
+          npm test
+
+      - name: Release
+        if: steps.detect.outputs.proceed == 'true' && steps.agent.outputs.result == 'CLEAN'
+        env:
+          PI_ALLOW_LOCKFILE_CHANGE: '1'
+          npm_config_min_release_age: '0'
+          SENPI_SKIP_PM_VERIFY: '1'
+        run: node scripts/release.mjs
+
+      - name: Open conflict / failure issue
+        if: steps.detect.outputs.proceed == 'true' && steps.agent.outputs.result != 'CLEAN' && steps.agent.outputs.result != ''
+        run: |
+          TAG="${{ steps.detect.outputs.tag }}"
+          RESULT="${{ steps.agent.outputs.result }}"
+          BODY_FILE=/tmp/issue-body.md
+          {
+            echo "Automated upstream merge for \`${TAG}\` did not complete cleanly (result: \`${RESULT}\`)."
+            echo
+            echo "## Agent report"
+            echo
+            if [ -f .github/agent/last-merge-report.md ]; then cat .github/agent/last-merge-report.md; else echo "(no report written)"; fi
+            echo
+            echo "Resolve manually, then re-run \`Upstream Agent Merge\` with \`force=true\` or cut the release by hand."
+          } > "$BODY_FILE"
+          gh issue create \
+            --title "upstream merge needs attention: ${TAG} (${RESULT})" \
+            --label "sync-conflict" \
+            --body-file "$BODY_FILE" || echo "::warning::failed to open issue"
+          exit 1
+
+      - name: No new upstream release
+        if: steps.detect.outputs.proceed != 'true'
+        run: |
+          echo "No new upstream release. Current pin: ${{ steps.detect.outputs.current_tag }}. Nothing to do."
