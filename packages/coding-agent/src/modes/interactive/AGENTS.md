@@ -28,7 +28,7 @@ components/
 ├── skill-invocation-message.ts         # Skill-call render
 ├── custom-message.ts                   # Extension-injected message renderer
 ├── diff.ts                             # In-line diff viewer
-├── footer.ts / footer.test.ts          # Status footer (model, cost, tokens, mode)
+├── footer.ts                          # Status footer (model, cost, tokens, mode); tests in test/footer-*.test.ts
 ├── countdown-timer.ts                  # Compaction / startup timer
 ├── bordered-loader.ts / dynamic-border.ts  # Animated borders
 ├── keybinding-hints.ts                 # Inline cheat-sheet

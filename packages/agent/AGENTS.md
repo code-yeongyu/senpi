@@ -15,14 +15,13 @@ src/
 └── harness/
     ├── agent-harness.ts # AgentHarness — wires Agent into a coding-CLI shape
     ├── compaction/      # branch-summarization.ts, compaction.ts, utils.ts
-    ├── env/             # nodejs.ts (process / fs / shell facades)
-    ├── execution-env.ts # ExecutionEnvironment interface (testable shell)
+    ├── env/             # nodejs.ts (process / fs / shell facades = ExecutionEnv impl)
     ├── messages.ts      # Harness-level message helpers
     ├── prompt-templates.ts  # User-facing prompt scaffolding
-    ├── session/         # session.ts + repo/{jsonl,memory,shared}.ts + storage/{jsonl,memory}.ts
+    ├── session/         # session.ts + {jsonl,memory}-repo.ts + {jsonl,memory}-storage.ts + repo-utils.ts + uuid.ts
     ├── skills.ts        # Skill discovery + invocation
     ├── system-prompt.ts # Default harness system prompt
-    ├── types.ts         # Harness types
+    ├── types.ts         # Harness types incl. ExecutionEnv interface (testable shell)
     └── utils/           # shell-output.ts, truncate.ts
 ```
 
@@ -33,8 +32,8 @@ src/
 | Change tool-execution scheduling | `src/agent-loop.ts` `executeToolCallsParallel()` |
 | Add new event type | `src/types.ts` `AgentEvent` union |
 | Customize message conversion | `src/types.ts` `convertToLlm` (declaration merging point for app-specific message types) |
-| Persist sessions to disk | `src/harness/session/storage/jsonl.ts` |
-| In-memory session (tests) | `src/harness/session/storage/memory.ts` |
+| Persist sessions to disk | `src/harness/session/jsonl-storage.ts` |
+| In-memory session (tests) | `src/harness/session/memory-storage.ts` |
 | Branch-summary compaction | `src/harness/compaction/branch-summarization.ts` |
 | Stream Agent over RPC | `src/proxy.ts` |
 
