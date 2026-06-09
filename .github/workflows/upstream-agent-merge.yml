@@ -34,9 +34,11 @@ jobs:
     env:
       UPSTREAM_URL: https://github.com/badlogic/pi-mono.git
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       MODEL_INPUT: ${{ github.event.inputs.model }}
+      DEFAULT_MODEL: claude-opus-4-8
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -108,8 +110,9 @@ jobs:
             echo "::error::Neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN is set. Add one as a repository secret."
             exit 1
           fi
+          MODEL="${MODEL_INPUT:-$DEFAULT_MODEL}"
           MODEL_ARG=""
-          if [ -n "${MODEL_INPUT}" ]; then MODEL_ARG="--model ${MODEL_INPUT}"; fi
+          if [ -n "${MODEL}" ]; then MODEL_ARG="--model ${MODEL}"; fi
           DRIVER="$(cat .github/agent/merge-driver.md)
           The latest upstream release tag to integrate is ${UPSTREAM_TAG}."
           set -o pipefail
