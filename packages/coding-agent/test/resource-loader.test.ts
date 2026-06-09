@@ -194,6 +194,55 @@ Project skill`,
 			expect(discoveredExtensions[0].path).toBe(join(projectConfigDir, "extensions", "shared.ts"));
 		});
 
+		it("should load user extensions before trust and reuse them after trust resolves", async () => {
+			const userExtDir = join(agentDir, "extensions");
+			const projectExtDir = join(projectConfigDir, "extensions");
+			mkdirSync(userExtDir, { recursive: true });
+			mkdirSync(projectExtDir, { recursive: true });
+			const loadCountKey = `__piTrustPreloadCount_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+			const globalState = globalThis as typeof globalThis & Record<string, number | undefined>;
+
+			writeFileSync(
+				join(userExtDir, "user.ts"),
+				`globalThis[${JSON.stringify(loadCountKey)}] = (globalThis[${JSON.stringify(loadCountKey)}] ?? 0) + 1;
+export default function(pi) {
+	pi.on("project_trust", () => ({ trusted: "yes" }));
+	pi.registerCommand("user-trust", {
+		description: "user trust",
+		handler: async () => {},
+	});
+}`,
+			);
+			writeFileSync(
+				join(projectExtDir, "project.ts"),
+				`export default function(pi) {
+	pi.registerCommand("project-trusted", {
+		description: "project trusted",
+		handler: async () => {},
+	});
+}`,
+			);
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			// Filter out the fork's always-loaded global-default builtin/inline extensions
+			// (path prefixed with "<"); the trust gating only concerns file-backed extensions.
+			const fileExtensionPaths = (result: { extensions: Array<{ path: string }> }): string[] =>
+				result.extensions.map((extension) => extension.path).filter((path) => !path.startsWith("<"));
+			await loader.reload({
+				resolveProjectTrust: async ({ extensionsResult }) => {
+					expect(fileExtensionPaths(extensionsResult)).toEqual([join(userExtDir, "user.ts")]);
+					return true;
+				},
+			});
+
+			const extensionsResult = loader.getExtensions();
+			expect(fileExtensionPaths(extensionsResult)).toEqual([
+				join(projectConfigDir, "extensions", "project.ts"),
+				join(userExtDir, "user.ts"),
+			]);
+			expect(globalState[loadCountKey]).toBe(1);
+		});
+
 		it("should keep both extensions loaded when command names collide", async () => {
 			const userExtDir = join(agentDir, "extensions");
 			const projectExtDir = join(projectConfigDir, "extensions");

@@ -6,6 +6,8 @@
 
 ### Fixed
 
+- Fixed inherited autocomplete suggestions to refresh after editor cursor movement ([#5499](https://github.com/earendil-works/pi/pull/5499) by [@Roman-Galeev](https://github.com/Roman-Galeev)).
+
 ## [2026.6.6-3] - 2026-06-06
 
 ### Added

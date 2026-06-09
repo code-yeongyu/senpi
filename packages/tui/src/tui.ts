@@ -1429,15 +1429,17 @@ export class TUI extends Container {
 					fullRender(true);
 					return;
 				}
-				if (extraLines > 0) {
-					buffer += "\x1b[1B";
+				const clearStartOffset = newLines.length === 0 ? 0 : 1;
+				if (extraLines > 0 && clearStartOffset > 0) {
+					buffer += `\x1b[${clearStartOffset}B`;
 				}
 				for (let i = 0; i < extraLines; i++) {
 					buffer += "\r\x1b[2K";
 					if (i < extraLines - 1) buffer += "\x1b[1B";
 				}
-				if (extraLines > 0) {
-					buffer += `\x1b[${extraLines}A`;
+				const moveBack = Math.max(0, extraLines - 1 + clearStartOffset);
+				if (moveBack > 0) {
+					buffer += `\x1b[${moveBack}A`;
 				}
 				buffer += "\x1b[?2026l";
 				this.terminal.write(buffer);

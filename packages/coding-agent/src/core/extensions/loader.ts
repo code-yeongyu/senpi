@@ -464,13 +464,14 @@ export async function loadExtensions(
 	paths: string[],
 	cwd: string,
 	eventBus?: EventBus,
+	runtime?: ExtensionRuntime,
 	options?: { factoryResolver?: ExtensionFactoryResolver },
 ): Promise<LoadExtensionsResult> {
 	const extensions: Extension[] = [];
 	const errors: Array<{ path: string; error: string }> = [];
 	const resolvedCwd = resolvePath(cwd);
 	const resolvedEventBus = eventBus ?? createEventBus();
-	const runtime = createExtensionRuntime();
+	const resolvedRuntime = runtime ?? createExtensionRuntime();
 	let importer: ExtensionModuleImporter | undefined;
 	const getImporter = () => {
 		importer ??= createExtensionModuleImporter();
@@ -482,7 +483,7 @@ export async function loadExtensions(
 			extPath,
 			resolvedCwd,
 			resolvedEventBus,
-			runtime,
+			resolvedRuntime,
 			getImporter,
 			options?.factoryResolver,
 		);
@@ -500,7 +501,7 @@ export async function loadExtensions(
 	return {
 		extensions,
 		errors,
-		runtime,
+		runtime: resolvedRuntime,
 	};
 }
 

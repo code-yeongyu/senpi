@@ -94,9 +94,13 @@ function withTrustFileLock<T>(path: string, fn: () => T): T {
 	}
 }
 
+export function hasProjectConfigDir(cwd: string): boolean {
+	return existsSync(join(canonicalizePath(resolvePath(cwd)), CONFIG_DIR_NAME));
+}
+
 export function hasProjectTrustInputs(cwd: string): boolean {
 	let currentDir = canonicalizePath(resolvePath(cwd));
-	if (existsSync(join(currentDir, CONFIG_DIR_NAME))) {
+	if (hasProjectConfigDir(currentDir)) {
 		return true;
 	}
 

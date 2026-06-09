@@ -7,7 +7,12 @@ import { AuthStorage } from "./auth-storage.ts";
 import type { ServiceTier } from "./extensions/builtin/service-tier.ts";
 import type { SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { ModelRegistry } from "./model-registry.ts";
-import { DefaultResourceLoader, type DefaultResourceLoaderOptions, type ResourceLoader } from "./resource-loader.ts";
+import {
+	DefaultResourceLoader,
+	type DefaultResourceLoaderOptions,
+	type ResourceLoader,
+	type ResourceLoaderReloadOptions,
+} from "./resource-loader.ts";
 import { type CreateAgentSessionOptions, type CreateAgentSessionResult, createAgentSession } from "./sdk.ts";
 import type { SessionManager } from "./session-manager.ts";
 import { SettingsManager } from "./settings-manager.ts";
@@ -39,6 +44,7 @@ export interface CreateAgentSessionServicesOptions {
 	modelRegistry?: ModelRegistry;
 	extensionFlagValues?: Map<string, boolean | string>;
 	resourceLoaderOptions?: Omit<DefaultResourceLoaderOptions, "cwd" | "agentDir" | "settingsManager">;
+	resourceLoaderReloadOptions?: ResourceLoaderReloadOptions;
 }
 
 /**
@@ -146,7 +152,7 @@ export async function createAgentSessionServices(
 		agentDir,
 		settingsManager,
 	});
-	await resourceLoader.reload();
+	await resourceLoader.reload(options.resourceLoaderReloadOptions);
 
 	const diagnostics: AgentSessionRuntimeDiagnostic[] = [];
 	const extensionsResult = resourceLoader.getExtensions();

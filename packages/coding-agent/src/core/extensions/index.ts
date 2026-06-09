@@ -103,6 +103,11 @@ export type {
 	ModelSelectEvent,
 	ModelSelectEventResult,
 	ModelSelectSource,
+	ProjectTrustContext,
+	ProjectTrustEvent,
+	ProjectTrustEventDecision,
+	ProjectTrustEventResult,
+	ProjectTrustHandler,
 	// Provider Registration
 	ProviderConfig,
 	ProviderModelConfig,
