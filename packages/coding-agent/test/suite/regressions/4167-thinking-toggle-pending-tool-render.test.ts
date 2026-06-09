@@ -28,6 +28,7 @@ const EMPTY_USAGE: Usage = {
 };
 
 type RenderSessionContextThis = {
+	activeToolExecutions: Map<string, string>;
 	pendingTools: Map<string, ToolExecutionComponent>;
 	chatContainer: Container;
 	footer: { invalidate(): void };
@@ -42,6 +43,7 @@ type RenderSessionContextThis = {
 	isInitialized: boolean;
 	updateEditorBorderColor(): void;
 	getRegisteredToolDefinition(toolName: string): undefined;
+	handleToolExecutionEnd(event: Extract<AgentSessionEvent, { type: "tool_execution_end" }>): void;
 	addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void;
 };
 
@@ -56,6 +58,7 @@ type HandleEvent = (this: RenderSessionContextThis, event: AgentSessionEvent) =>
 function createFakeInteractiveModeThis(): RenderSessionContextThis {
 	const chatContainer = new Container();
 	return {
+		activeToolExecutions: new Map<string, string>(),
 		pendingTools: new Map<string, ToolExecutionComponent>(),
 		chatContainer,
 		footer: { invalidate: vi.fn() },
@@ -70,6 +73,7 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 		isInitialized: true,
 		updateEditorBorderColor: vi.fn(),
 		getRegisteredToolDefinition: (_toolName: string) => undefined,
+		handleToolExecutionEnd: Reflect.get(InteractiveMode.prototype, "handleToolExecutionEnd"),
 		addMessageToChat(message: AgentMessage) {
 			chatContainer.addChild(new Text(message.role, 0, 0));
 		},

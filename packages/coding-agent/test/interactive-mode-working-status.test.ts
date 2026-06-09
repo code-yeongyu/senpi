@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { formatKeyText } from "../src/modes/interactive/components/keybinding-hints.ts";
 import {
 	blendWorkingStatusShimmerRgbColor,
+	formatActiveToolWorkingLabel,
 	formatToolHookStatusMessage,
 	formatToolHookStatusMessageFrame,
 	formatWorkingElapsedSeconds,
@@ -40,6 +41,23 @@ describe("formatToolHookStatusMessage", () => {
 		expect(formatToolHookStatusMessage("PostToolUse", "matching project rules", 427)).toBe(
 			"Running PostToolUse hook: matching project rules (7m 07s)",
 		);
+	});
+});
+
+describe("formatActiveToolWorkingLabel", () => {
+	test("formats active tool working labels", () => {
+		expect(formatActiveToolWorkingLabel("bash", { command: "npm run check -- --watch" })).toBe(
+			"Running bash: npm run check -- --watch",
+		);
+		expect(formatActiveToolWorkingLabel("", {})).toBe("Running tool");
+
+		const maliciousLabel = formatActiveToolWorkingLabel("\x1b[31mbash\x1b]0;owned\x07\nnext", {
+			command: `printf '${"x".repeat(120)}'\nrm -rf /tmp/example`,
+		});
+
+		expect(maliciousLabel).toBe(`Running bash next: printf '${"x".repeat(50)}...`);
+		expect(maliciousLabel.length).toBeLessThanOrEqual(80);
+		expect(maliciousLabel).not.toMatch(/[\u001b\u0007\r\n]/);
 	});
 });
 

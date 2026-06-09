@@ -425,6 +425,33 @@ describe("ToolExecutionComponent parity", () => {
 		expect(rendered).toContain("done");
 	});
 
+	test("bounds running tool detail for hostile fallback metadata", () => {
+		const hostileToolName = `${"very-long-tool-name".repeat(20)}\nleaked-line\x1b[31mred\x1b]2;owned\x07`;
+		const hostilePath = "src/ok.ts\nsrc/hidden.ts\x1b[35mraw\x1b]8;;https://example.test\x07link\x1b]8;;\x07";
+		const component = new ToolExecutionComponent(
+			hostileToolName,
+			"tool-hostile-running-detail",
+			{ path: hostilePath, query: "needle".repeat(80) },
+			{},
+			undefined,
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		component.markExecutionStarted();
+
+		const renderedLines = component.render(60);
+		const rendered = renderedLines.join("\n");
+		const plain = stripAnsi(rendered);
+
+		expect(rendered).not.toContain("\x1b]2;");
+		expect(rendered).not.toContain("\x1b]8;");
+		expect(rendered).not.toContain("\x1b[31mred");
+		expect(plain).not.toContain("leaked-line");
+		expect(rendered).not.toContain("src/ok.ts\nsrc/hidden.ts");
+		expect(Math.max(...renderedLines.map((line) => stripAnsi(line).length))).toBeLessThanOrEqual(60);
+	});
+
 	test("trims trailing blank display lines from write previews", () => {
 		const component = new ToolExecutionComponent(
 			"write",

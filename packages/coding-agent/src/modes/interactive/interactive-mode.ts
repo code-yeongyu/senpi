@@ -149,8 +149,10 @@ import {
 } from "./theme/theme.ts";
 import {
 	blendWorkingStatusShimmerRgbColor,
+	formatActiveToolWorkingLabel,
 	formatToolHookStatusMessageFrame,
 	formatWorkingStatusMessageFrame,
+	sanitizeWorkingStatusPlainText,
 	type WorkingStatusRgbColor,
 } from "./working-status.ts";
 
@@ -189,8 +191,16 @@ type CompactionQueuedMessage = {
 	mode: "steer" | "followUp";
 };
 
+type ToolExecutionStartEvent = Extract<AgentSessionEvent, { type: "tool_execution_start" }>;
+type ToolExecutionEndEvent = Extract<AgentSessionEvent, { type: "tool_execution_end" }>;
 type ToolHookStatusStartEvent = Extract<AgentSessionEvent, { type: "tool_hook_status"; phase: "start" }>;
 type ToolHookStatusEvent = Extract<AgentSessionEvent, { type: "tool_hook_status" }>;
+
+function formatToolHookTerminalTitle(event: ToolHookStatusStartEvent): string {
+	const hookName = sanitizeWorkingStatusPlainText(event.hookName) || "hook";
+	const statusMessage = sanitizeWorkingStatusPlainText(event.statusMessage);
+	return `${APP_TITLE} - ${hookName}: ${statusMessage}`;
+}
 
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
 const DEFAULT_WORKING_STATUS_REFRESH_INTERVAL_MS = 600;
@@ -356,8 +366,13 @@ export class InteractiveMode {
 	private readonly defaultWorkingMessage = "Working";
 	private readonly defaultHiddenThinkingLabel = "Thinking...";
 	private hiddenThinkingLabel = this.defaultHiddenThinkingLabel;
+	private activeToolExecutions = new Map<string, string>();
+	private activeToolExecutionTerminalTitle: string | undefined = undefined;
+	private workingMessageBeforeActiveTool: string | undefined = undefined;
 	private activeToolHooks = new Map<string, ToolHookStatusStartEvent>();
 	private hookStatusIntervalId: NodeJS.Timeout | undefined = undefined;
+	private activeToolTerminalTitle: string | undefined = undefined;
+	private extensionTerminalTitle: string | undefined = undefined;
 
 	private lastSigintTime = 0;
 	private lastEscapeTime = 0;
@@ -796,14 +811,26 @@ export class InteractiveMode {
 	/**
 	 * Update terminal title with session name and cwd.
 	 */
-	private updateTerminalTitle(): void {
+	private getNormalTerminalTitle(): string {
 		const cwdBasename = path.basename(this.sessionManager.getCwd());
 		const sessionName = this.sessionManager.getSessionName();
 		if (sessionName) {
-			this.ui.terminal.setTitle(`${APP_TITLE} - ${sessionName} - ${cwdBasename}`);
-		} else {
-			this.ui.terminal.setTitle(`${APP_TITLE} - ${cwdBasename}`);
+			return `${APP_TITLE} - ${sessionName} - ${cwdBasename}`;
 		}
+		return `${APP_TITLE} - ${cwdBasename}`;
+	}
+
+	private applyTerminalTitle(): void {
+		this.ui.terminal.setTitle(
+			this.activeToolTerminalTitle ??
+				this.activeToolExecutionTerminalTitle ??
+				this.extensionTerminalTitle ??
+				this.getNormalTerminalTitle(),
+		);
+	}
+
+	private updateTerminalTitle(): void {
+		this.applyTerminalTitle();
 	}
 
 	/**
@@ -1863,16 +1890,75 @@ export class InteractiveMode {
 	private handleToolHookStatusEvent(event: ToolHookStatusEvent): void {
 		if (event.phase === "start") {
 			this.activeToolHooks.set(event.hookRunId, event);
+			this.activeToolTerminalTitle = formatToolHookTerminalTitle(event);
+			if (this.ui.terminal) {
+				this.applyTerminalTitle();
+			}
 			this.startToolHookStatusTimer();
 			this.refreshToolHookStatuses();
 			return;
 		}
 		this.activeToolHooks.delete(event.hookRunId);
+		const nextHook = this.activeToolHooks.values().next().value;
+		this.activeToolTerminalTitle = nextHook ? formatToolHookTerminalTitle(nextHook) : undefined;
+		if (this.ui.terminal) {
+			this.applyTerminalTitle();
+		}
 		this.refreshToolHookStatuses();
+	}
+
+	private handleToolExecutionStart(event: ToolExecutionStartEvent): void {
+		const label = formatActiveToolWorkingLabel(event.toolName, event.args);
+		if (this.activeToolExecutions.size === 0) {
+			this.workingMessageBeforeActiveTool = this.workingMessage;
+		}
+		this.activeToolExecutions.set(event.toolCallId, label);
+		this.workingMessage = label;
+		this.activeToolExecutionTerminalTitle = `${APP_TITLE} - ${label}`;
+		this.refreshWorkingLoaderMessage();
+		this.applyTerminalTitle();
+	}
+
+	private handleToolExecutionEnd(event: ToolExecutionEndEvent): void {
+		if (!this.activeToolExecutions.delete(event.toolCallId)) {
+			return;
+		}
+
+		const nextExecution = this.activeToolExecutions.values().next();
+		if (!nextExecution.done) {
+			this.workingMessage = nextExecution.value;
+			this.activeToolExecutionTerminalTitle = `${APP_TITLE} - ${nextExecution.value}`;
+		} else {
+			this.workingMessage = this.workingMessageBeforeActiveTool;
+			this.workingMessageBeforeActiveTool = undefined;
+			this.activeToolExecutionTerminalTitle = undefined;
+		}
+		this.refreshWorkingLoaderMessage();
+		this.applyTerminalTitle();
+	}
+
+	private clearActiveToolExecutionStatus(): void {
+		if (
+			this.activeToolExecutions.size === 0 &&
+			this.activeToolExecutionTerminalTitle === undefined &&
+			this.workingMessageBeforeActiveTool === undefined
+		) {
+			return;
+		}
+		this.activeToolExecutions.clear();
+		this.activeToolExecutionTerminalTitle = undefined;
+		this.workingMessage = this.workingMessageBeforeActiveTool;
+		this.workingMessageBeforeActiveTool = undefined;
+		this.refreshWorkingLoaderMessage();
+		this.applyTerminalTitle();
 	}
 
 	private clearToolHookStatuses(): void {
 		this.activeToolHooks.clear();
+		this.activeToolTerminalTitle = undefined;
+		if (this.ui.terminal) {
+			this.applyTerminalTitle();
+		}
 		this.hookStatusContainer.clear();
 		this.stopToolHookStatusTimer();
 	}
@@ -2038,6 +2124,10 @@ export class InteractiveMode {
 		this.setCustomEditorComponent(undefined);
 		this.setupAutocompleteProvider();
 		this.defaultEditor.onExtensionShortcut = undefined;
+		this.activeToolExecutions.clear();
+		this.activeToolExecutionTerminalTitle = undefined;
+		this.workingMessageBeforeActiveTool = undefined;
+		this.extensionTerminalTitle = undefined;
 		this.updateTerminalTitle();
 		this.workingMessage = undefined;
 		this.workingVisible = true;
@@ -2203,7 +2293,10 @@ export class InteractiveMode {
 			) => this.setExtensionWidget(key, content, options),
 			setFooter: (factory) => this.setExtensionFooter(factory),
 			setHeader: (factory) => this.setExtensionHeader(factory),
-			setTitle: (title) => this.ui.terminal.setTitle(title),
+			setTitle: (title) => {
+				this.extensionTerminalTitle = title;
+				this.applyTerminalTitle();
+			},
 			custom: (factory, options) => this.showExtensionCustom(factory, options),
 			pasteToEditor: (text) => this.editor.handleInput(`\x1b[200~${text}\x1b[201~`),
 			setEditorText: (text) => this.editor.setText(text),
@@ -2918,6 +3011,7 @@ export class InteractiveMode {
 		switch (event.type) {
 			case "agent_start":
 				this.pendingTools.clear();
+				this.clearActiveToolExecutionStatus();
 				this.clearToolHookStatuses();
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(true);
@@ -3065,6 +3159,7 @@ export class InteractiveMode {
 				break;
 
 			case "tool_execution_start": {
+				this.handleToolExecutionStart(event);
 				let component = this.pendingTools.get(event.toolCallId);
 				if (!component) {
 					component = new ToolExecutionComponent(
@@ -3102,6 +3197,7 @@ export class InteractiveMode {
 			}
 
 			case "tool_execution_end": {
+				this.handleToolExecutionEnd(event);
 				const component = this.pendingTools.get(event.toolCallId);
 				if (component) {
 					component.updateResult({ ...event.result, isError: event.isError });
@@ -3116,6 +3212,7 @@ export class InteractiveMode {
 					this.ui.terminal.setProgress(false);
 				}
 				this.stopWorkingLoader();
+				this.clearActiveToolExecutionStatus();
 				this.clearToolHookStatuses();
 				if (this.streamingComponent) {
 					this.chatContainer.removeChild(this.streamingComponent);
@@ -5938,6 +6035,7 @@ export class InteractiveMode {
 			this.ui.terminal.setProgress(false);
 		}
 		this.stopWorkingLoader();
+		this.clearActiveToolExecutionStatus();
 		this.clearToolHookStatuses();
 		this.clearExtensionTerminalInputListeners();
 		this.footer.dispose();

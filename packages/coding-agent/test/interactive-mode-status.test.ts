@@ -10,6 +10,8 @@ import {
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { type Component, Container, type Focusable, TUI } from "../../tui/src/tui.ts";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
+import { APP_TITLE } from "../src/config.ts";
+import type { AgentSessionEvent } from "../src/core/agent-session.ts";
 import type { AutocompleteProviderFactory } from "../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import type { SourceInfo } from "../src/core/source-info.ts";
@@ -77,6 +79,92 @@ type ExtensionFixture = {
 	sourceInfo?: SourceInfo;
 };
 
+type ToolHookStatusEvent = Extract<AgentSessionEvent, { type: "tool_hook_status" }>;
+type UnsafeToolHookStatusStartEvent = Omit<Extract<ToolHookStatusEvent, { phase: "start" }>, "hookName"> & {
+	readonly hookName: string;
+};
+type TerminalTitleToolHookStatusEvent = ToolHookStatusEvent | UnsafeToolHookStatusStartEvent;
+type ToolExecutionStartEvent = Extract<AgentSessionEvent, { type: "tool_execution_start" }>;
+type ToolExecutionEndEvent = Extract<AgentSessionEvent, { type: "tool_execution_end" }>;
+
+type TerminalTitlePrototype = {
+	handleToolHookStatusEvent(this: TerminalTitleThis, event: TerminalTitleToolHookStatusEvent): void;
+	refreshToolHookStatuses(this: TerminalTitleThis): void;
+	applyTerminalTitle(this: TerminalTitleThis): void;
+	updateTerminalTitle(this: TerminalTitleThis): void;
+	getNormalTerminalTitle(this: TerminalTitleThis): string;
+};
+
+type TerminalTitleThis = {
+	activeToolHooks: Map<string, Extract<ToolHookStatusEvent, { phase: "start" }>>;
+	activeToolTerminalTitle: string | undefined;
+	extensionTerminalTitle: string | undefined;
+	hookStatusContainer: Container;
+	sessionManager: {
+		getCwd(): string;
+		getSessionName(): string | undefined;
+	};
+	startToolHookStatusTimer(): void;
+	stopToolHookStatusTimer(): void;
+	refreshToolHookStatuses(): void;
+	applyTerminalTitle(): void;
+	updateTerminalTitle(): void;
+	getNormalTerminalTitle(): string;
+	ui: {
+		requestRender(): void;
+		terminal: {
+			setTitle(title: string): void;
+		};
+	};
+};
+
+type ActiveToolLifecyclePrototype = TerminalTitlePrototype & {
+	getWorkingLoaderMessage(this: ActiveToolLifecycleThis): string;
+	handleEvent(this: ActiveToolLifecycleThis, event: ToolExecutionStartEvent | ToolExecutionEndEvent): Promise<void>;
+	handleToolExecutionEnd(this: ActiveToolLifecycleThis, event: ToolExecutionEndEvent): void;
+	handleToolExecutionStart(this: ActiveToolLifecycleThis, event: ToolExecutionStartEvent): void;
+	refreshWorkingLoaderMessage(this: ActiveToolLifecycleThis): void;
+};
+
+type ActiveToolLifecycleThis = TerminalTitleThis & {
+	activeToolExecutionTerminalTitle: string | undefined;
+	activeToolExecutions: Map<string, string>;
+	chatContainer: Container;
+	defaultWorkingMessage: string;
+	footer: {
+		invalidate(): void;
+	};
+	getRegisteredToolDefinition(toolName: string): undefined;
+	getWorkingLoaderMessage(): string;
+	handleToolExecutionEnd(event: ToolExecutionEndEvent): void;
+	handleToolExecutionStart(event: ToolExecutionStartEvent): void;
+	isInitialized: boolean;
+	loadingAnimation:
+		| {
+				setMessage(message: string): void;
+		  }
+		| undefined;
+	pendingTools: Map<
+		string,
+		{
+			markExecutionStarted(): void;
+			updateResult(result: unknown): void;
+		}
+	>;
+	refreshWorkingLoaderMessage(): void;
+	requestStreamingRender(): void;
+	session: {
+		isStreaming: boolean;
+	};
+	settingsManager: {
+		getImageWidthCells(): number;
+		getShowImages(): boolean;
+	};
+	toolOutputExpanded: boolean;
+	workingMessage: string | undefined;
+	workingMessageBeforeActiveTool: string | undefined;
+};
+
 describe("InteractiveMode.showStatus", () => {
 	beforeAll(() => {
 		// showStatus uses the global theme instance
@@ -121,6 +209,201 @@ describe("InteractiveMode.showStatus", () => {
 		// adds spacer + text
 		expect(fakeThis.chatContainer.children).toHaveLength(5);
 		expect(renderLastLine(fakeThis.chatContainer)).toContain("STATUS_TWO");
+	});
+});
+
+describe("InteractiveMode terminal title state", () => {
+	beforeAll(() => {
+		initTheme("dark");
+	});
+
+	test("restores terminal title after active tool status", () => {
+		// Given
+		const prototype = InteractiveMode.prototype as unknown as TerminalTitlePrototype;
+		const setTitle = vi.fn();
+		const fakeThis: TerminalTitleThis = {
+			activeToolHooks: new Map(),
+			activeToolTerminalTitle: undefined,
+			extensionTerminalTitle: undefined,
+			hookStatusContainer: new Container(),
+			sessionManager: {
+				getCwd: () => "/tmp/senpi-project",
+				getSessionName: () => "Visible Session",
+			},
+			startToolHookStatusTimer: vi.fn(),
+			stopToolHookStatusTimer: vi.fn(),
+			refreshToolHookStatuses: prototype.refreshToolHookStatuses,
+			applyTerminalTitle: prototype.applyTerminalTitle,
+			updateTerminalTitle: prototype.updateTerminalTitle,
+			getNormalTerminalTitle: prototype.getNormalTerminalTitle,
+			ui: {
+				requestRender: vi.fn(),
+				terminal: { setTitle },
+			},
+		};
+
+		// When
+		prototype.handleToolHookStatusEvent.call(fakeThis, {
+			type: "tool_hook_status",
+			phase: "start",
+			hookRunId: "run-1",
+			hookName: "PostToolUse",
+			toolName: "bash",
+			toolCallId: "call-1",
+			extensionPath: "<builtin:comment-checker>",
+			statusMessage: "checking generated comments",
+			startedAt: Date.now(),
+		});
+
+		// Then
+		expect(setTitle).toHaveBeenLastCalledWith(`${APP_TITLE} - PostToolUse: checking generated comments`);
+
+		// When
+		prototype.handleToolHookStatusEvent.call(fakeThis, {
+			type: "tool_hook_status",
+			phase: "end",
+			hookRunId: "run-1",
+			hookName: "PostToolUse",
+			toolName: "bash",
+			toolCallId: "call-1",
+			extensionPath: "<builtin:comment-checker>",
+			statusMessage: "checking generated comments",
+			startedAt: Date.now(),
+			completedAt: Date.now(),
+			status: "completed",
+		});
+
+		// Then
+		expect(setTitle).toHaveBeenLastCalledWith(`${APP_TITLE} - Visible Session - senpi-project`);
+	});
+
+	test("sanitizes active tool hook terminal title", () => {
+		// Given
+		const prototype = InteractiveMode.prototype as unknown as TerminalTitlePrototype;
+		const setTitle = vi.fn();
+		const fakeThis: TerminalTitleThis = {
+			activeToolHooks: new Map(),
+			activeToolTerminalTitle: undefined,
+			extensionTerminalTitle: undefined,
+			hookStatusContainer: new Container(),
+			sessionManager: {
+				getCwd: () => "/tmp/senpi-project",
+				getSessionName: () => "Visible Session",
+			},
+			startToolHookStatusTimer: vi.fn(),
+			stopToolHookStatusTimer: vi.fn(),
+			refreshToolHookStatuses: prototype.refreshToolHookStatuses,
+			applyTerminalTitle: prototype.applyTerminalTitle,
+			updateTerminalTitle: prototype.updateTerminalTitle,
+			getNormalTerminalTitle: prototype.getNormalTerminalTitle,
+			ui: {
+				requestRender: vi.fn(),
+				terminal: { setTitle },
+			},
+		};
+
+		// When
+		prototype.handleToolHookStatusEvent.call(fakeThis, {
+			type: "tool_hook_status",
+			phase: "start",
+			hookRunId: "run-hostile",
+			hookName: "PostToolUse\x1b]2;owned\x07\nPreToolUse",
+			toolName: "bash",
+			toolCallId: "call-1",
+			extensionPath: "<builtin:comment-checker>",
+			statusMessage: "checking\x1b]0;pwned\x07 comments\r\nnext\tpart\x1b[31mred",
+			startedAt: Date.now(),
+		});
+
+		// Then
+		const title = setTitle.mock.calls.at(-1)?.[0];
+		expect(title).toBe(`${APP_TITLE} - PostToolUse PreToolUse: checking comments next partred`);
+		expect(title).not.toMatch(/[\u0000-\u001f\u007f]/);
+		expect(title).not.toContain("owned");
+		expect(title).not.toContain("pwned");
+	});
+
+	test("shows active tool name in the working row", async () => {
+		// Given
+		const prototype = InteractiveMode.prototype as unknown as ActiveToolLifecyclePrototype;
+		const setTitle = vi.fn();
+		const setMessage = vi.fn();
+		const toolComponent = {
+			markExecutionStarted: vi.fn(),
+			updateResult: vi.fn(),
+		};
+		const fakeThis: ActiveToolLifecycleThis = {
+			activeToolExecutionTerminalTitle: undefined,
+			activeToolExecutions: new Map(),
+			activeToolHooks: new Map(),
+			activeToolTerminalTitle: undefined,
+			chatContainer: new Container(),
+			defaultWorkingMessage: "Working",
+			extensionTerminalTitle: undefined,
+			footer: { invalidate: vi.fn() },
+			getNormalTerminalTitle: prototype.getNormalTerminalTitle,
+			getRegisteredToolDefinition: () => undefined,
+			getWorkingLoaderMessage: prototype.getWorkingLoaderMessage,
+			handleToolExecutionEnd: prototype.handleToolExecutionEnd,
+			handleToolExecutionStart: prototype.handleToolExecutionStart,
+			hookStatusContainer: new Container(),
+			isInitialized: true,
+			loadingAnimation: { setMessage },
+			pendingTools: new Map([["call-1", toolComponent]]),
+			refreshToolHookStatuses: prototype.refreshToolHookStatuses,
+			refreshWorkingLoaderMessage: prototype.refreshWorkingLoaderMessage,
+			requestStreamingRender: vi.fn(),
+			session: { isStreaming: true },
+			sessionManager: {
+				getCwd: () => "/tmp/senpi-project",
+				getSessionName: () => "Visible Session",
+			},
+			settingsManager: {
+				getImageWidthCells: () => 80,
+				getShowImages: () => false,
+			},
+			startToolHookStatusTimer: vi.fn(),
+			stopToolHookStatusTimer: vi.fn(),
+			toolOutputExpanded: false,
+			workingMessage: "Thinking",
+			workingMessageBeforeActiveTool: undefined,
+			applyTerminalTitle: prototype.applyTerminalTitle,
+			updateTerminalTitle: prototype.updateTerminalTitle,
+			ui: {
+				requestRender: vi.fn(),
+				terminal: { setTitle },
+			},
+		};
+
+		const startEvent = {
+			type: "tool_execution_start",
+			toolCallId: "call-1",
+			toolName: "bash",
+			args: { command: "npm run check -- --watch" },
+		} satisfies ToolExecutionStartEvent;
+		const endEvent = {
+			type: "tool_execution_end",
+			toolCallId: "call-1",
+			toolName: "bash",
+			result: { content: [{ type: "text", text: "ok" }] },
+			isError: false,
+		} satisfies ToolExecutionEndEvent;
+
+		// When
+		await prototype.handleEvent.call(fakeThis, startEvent);
+
+		// Then
+		expect(fakeThis.workingMessage).toBe("Running bash: npm run check -- --watch");
+		expect(setMessage).toHaveBeenLastCalledWith("Running bash: npm run check -- --watch");
+		expect(setTitle).toHaveBeenLastCalledWith(`${APP_TITLE} - Running bash: npm run check -- --watch`);
+
+		// When
+		await prototype.handleEvent.call(fakeThis, endEvent);
+
+		// Then
+		expect(fakeThis.workingMessage).toBe("Thinking");
+		expect(setMessage).toHaveBeenLastCalledWith("Thinking");
+		expect(setTitle).toHaveBeenLastCalledWith(`${APP_TITLE} - Visible Session - senpi-project`);
 	});
 });
 
