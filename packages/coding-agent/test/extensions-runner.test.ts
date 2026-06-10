@@ -88,6 +88,7 @@ describe("ExtensionRunner", () => {
 		getModel: () => undefined,
 		getServiceTier: () => undefined,
 		isIdle: () => true,
+		isProjectTrusted: () => true,
 		getSignal: () => undefined,
 		abort: () => {},
 		hasPendingMessages: () => false,
@@ -509,6 +510,18 @@ describe("ExtensionRunner", () => {
 			const ctx = runner.createContext();
 			expect(ctx.mode).toBe("print");
 			expect(ctx.hasUI).toBe(false);
+		});
+
+		it("exposes project trust state on ExtensionContext", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, {
+				...extensionContextActions,
+				isProjectTrusted: () => false,
+			});
+
+			const ctx = runner.createContext();
+			expect(ctx.isProjectTrusted()).toBe(false);
 		});
 
 		it("exposes rpc mode with hasUI true when an RPC UI context is provided", async () => {

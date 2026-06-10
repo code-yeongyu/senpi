@@ -4,27 +4,25 @@ Pi is a local coding agent. It runs with the permissions of the user account tha
 
 ## Project Trust
 
-Project trust controls whether pi loads project-local inputs. It is not a sandbox and it does not restrict what the model can ask tools to do after you start working in a directory.
+Project trust controls whether pi loads project-local settings, resources, packages, and extensions. It is not a sandbox and it does not restrict what the model can ask tools to do after you start working in a directory.
 
 Pi considers a project to have trust inputs when it finds any of these from the current working directory:
 
 - `.pi/` in the current directory
-- `AGENTS.md` or `CLAUDE.md` in the current directory or an ancestor directory
 - `.agents/skills` in the current directory or an ancestor directory
 
-When an interactive session starts in a project with trust inputs and no saved decision, pi asks whether to trust the project. Saved decisions are stored per canonical working directory in `~/.pi/agent/trust.json`.
+When an interactive session starts in a project with configs in `.pi` or `.agents/skills` and no saved decision for the current directory or a parent directory, pi follows `defaultProjectTrust` from global settings. The default value is `"ask"`, which asks whether to trust the project when UI is available. Saved decisions are stored by canonical directory in `~/.pi/agent/trust.json`, and the closest saved decision on the current or parent path applies before the global default.
 
-Trusting a project allows pi to load project-local inputs, including:
+Trusting a project allows pi to load trust-gated project inputs, including:
 
-- project instructions from `AGENTS.md` or `CLAUDE.md`
 - `.pi/settings.json`
 - `.pi` resources such as extensions, skills, prompt templates, themes, and system prompt files
 - missing project packages configured through project settings
 - project-local extensions and project package-managed extensions
 
-Declining trust skips those project-local inputs. Before trust is resolved, pi only loads user/global extensions and CLI `-e` extensions. User/global and CLI extensions can handle the `project_trust` event; the first extension that returns a yes/no decision owns the decision.
+Declining trust skips protected resources. `AGENTS.md` and `CLAUDE.md` context files are loaded regardless of project trust unless context loading is disabled. Before trust is resolved, pi only loads context files, user/global extensions, and CLI `-e` extensions. User/global and CLI extensions can handle the `project_trust` event; the first extension that returns a yes/no decision owns the decision.
 
-Non-interactive modes (`-p`, `--mode json`, and `--mode rpc`) do not show a trust prompt. Without a saved trust decision, they ignore project-local inputs unless `--approve`/`-a` is passed. Use `--no-approve`/`-na` to ignore project-local inputs for one run even when the project is trusted.
+Non-interactive modes (`-p`, `--mode json`, and `--mode rpc`) do not show a trust prompt. Without an applicable saved trust decision, `defaultProjectTrust: "ask"` and `"never"` ignore such resources, while `"always"` trusts them. Use `--approve`/`-a` or `--no-approve`/`-na` to override project trust for one run.
 
 ## No Built-in Sandbox
 
@@ -32,7 +30,7 @@ Pi does not include a built-in sandbox. Built-in tools can read files, write fil
 
 This is intentional. Pi is designed to operate on local source trees, invoke project toolchains, and integrate with the user's existing development environment. A partial in-process sandbox would be easy to misunderstand as a security boundary while still depending on the host shell, filesystem, package managers, credentials, and extension code. Real isolation needs to come from the operating system or a virtualization/container boundary.
 
-Project trust is only an input-loading guard. It prevents a repository from silently changing pi's instructions, settings, or extensions before you approve it. It does not make untrusted code, untrusted prompts, or untrusted model output safe. Prompt injection from repository files, comments, documentation, or build output is expected local-agent risk and cannot be reliably prevented by pi.
+Project trust is only an input-loading guard. It prevents a repository from silently changing pi's settings or extensions before you approve it. It does not make untrusted code, untrusted prompts, or untrusted model output safe. Prompt injection from repository files, comments, documentation, context files, or build output is expected local-agent risk and cannot be reliably prevented by pi.
 
 ## Running Untrusted or Unmonitored Work
 

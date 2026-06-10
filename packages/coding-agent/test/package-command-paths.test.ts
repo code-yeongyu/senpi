@@ -182,6 +182,70 @@ describe("package commands", () => {
 		}
 	});
 
+	it("uses default project trust for list", async () => {
+		mkdirSync(join(projectDir, ".pi"), { recursive: true });
+		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProjectTrust: "always" }));
+		writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:@project/pkg"] }));
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		try {
+			await expect(main(["list"])).resolves.toBeUndefined();
+
+			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			expect(stdout).toContain("Project packages:");
+			expect(stdout).toContain("npm:@project/pkg");
+			expect(stdout).not.toContain("No packages installed.");
+			expect(process.exitCode).toBeUndefined();
+		} finally {
+			logSpy.mockRestore();
+		}
+	});
+
+	it("uses project_trust extensions for package commands", async () => {
+		mkdirSync(join(projectDir, ".pi"), { recursive: true });
+		writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:@project/pkg"] }));
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		try {
+			await expect(
+				main(["list"], {
+					extensionFactories: [
+						(pi) => {
+							pi.on("project_trust", () => ({ trusted: "yes" }));
+						},
+					],
+				}),
+			).resolves.toBeUndefined();
+
+			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			expect(stdout).toContain("Project packages:");
+			expect(stdout).toContain("npm:@project/pkg");
+			expect(stdout).not.toContain("No packages installed.");
+			expect(process.exitCode).toBeUndefined();
+		} finally {
+			logSpy.mockRestore();
+		}
+	});
+
+	it("lets trust.json override default project trust", async () => {
+		mkdirSync(join(projectDir, ".pi"), { recursive: true });
+		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProjectTrust: "always" }));
+		writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:@project/pkg"] }));
+		new ProjectTrustStore(agentDir).set(projectDir, false);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		try {
+			await expect(main(["list"])).resolves.toBeUndefined();
+
+			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			expect(stdout).toContain("No packages installed.");
+			expect(stdout).not.toContain("Project packages:");
+			expect(process.exitCode).toBeUndefined();
+		} finally {
+			logSpy.mockRestore();
+		}
+	});
+
 	it("blocks local package changes when project is untrusted", async () => {
 		mkdirSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});

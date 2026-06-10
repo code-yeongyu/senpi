@@ -128,4 +128,30 @@ describe("bedrock endpoint resolution", () => {
 		expect(config.endpoint).toBe("https://bedrock-vpc.example.com");
 		expect(config.region).toBe("us-west-2");
 	});
+
+	it("extracts region from inference profile ARN regardless of AWS_REGION", async () => {
+		process.env.AWS_REGION = "us-east-1";
+		const baseModel = getModel("amazon-bedrock", "us.anthropic.claude-opus-4-8");
+		const model: Model<"bedrock-converse-stream"> = {
+			...baseModel,
+			id: "arn:aws:bedrock:us-west-2:123456789012:application-inference-profile/abc123",
+		};
+
+		const config = await captureClientConfig(model);
+
+		expect(config.region).toBe("us-west-2");
+	});
+
+	it("extracts region from GovCloud inference profile ARN", async () => {
+		process.env.AWS_REGION = "us-east-1";
+		const baseModel = getModel("amazon-bedrock", "us.anthropic.claude-opus-4-8");
+		const model: Model<"bedrock-converse-stream"> = {
+			...baseModel,
+			id: "arn:aws-us-gov:bedrock:us-gov-west-1:123456789012:application-inference-profile/abc123",
+		};
+
+		const config = await captureClientConfig(model);
+
+		expect(config.region).toBe("us-gov-west-1");
+	});
 });

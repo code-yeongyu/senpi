@@ -79,16 +79,20 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.getText(), "first");
 		});
 
-		it("returns to empty editor on Down arrow after browsing history", () => {
+		it("restores draft on Down arrow after browsing history", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 
 			editor.addToHistory("prompt");
+			editor.setText("draft");
+			editor.handleInput("\x1b[D");
+			editor.handleInput("\x1b[D");
 
 			editor.handleInput("\x1b[A"); // Up - shows "prompt"
 			assert.strictEqual(editor.getText(), "prompt");
 
-			editor.handleInput("\x1b[B"); // Down - clears editor
-			assert.strictEqual(editor.getText(), "");
+			editor.handleInput("\x1b[B"); // Down - restores draft
+			assert.strictEqual(editor.getText(), "draft");
+			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 3 });
 		});
 
 		it("navigates forward through history with Down arrow", () => {
@@ -97,6 +101,7 @@ describe("Editor component", () => {
 			editor.addToHistory("first");
 			editor.addToHistory("second");
 			editor.addToHistory("third");
+			editor.setText("draft");
 
 			// Go to oldest
 			editor.handleInput("\x1b[A"); // third
@@ -110,8 +115,8 @@ describe("Editor component", () => {
 			editor.handleInput("\x1b[B"); // third
 			assert.strictEqual(editor.getText(), "third");
 
-			editor.handleInput("\x1b[B"); // empty
-			assert.strictEqual(editor.getText(), "");
+			editor.handleInput("\x1b[B"); // draft
+			assert.strictEqual(editor.getText(), "draft");
 		});
 
 		it("exits history mode when typing a character", () => {
@@ -2356,6 +2361,58 @@ describe("Editor component", () => {
 
 			assert.strictEqual(suggestionCalls, 1);
 			assert.strictEqual(editor.isShowingAutocomplete(), true);
+		});
+
+		it("debounces custom triggerCharacters autocomplete while typing", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let suggestionCalls = 0;
+
+			editor.setAutocompleteProvider({
+				triggerCharacters: ["$"],
+				getSuggestions: async (lines, _cursorLine, cursorCol) => {
+					suggestionCalls += 1;
+					const prefix = (lines[0] || "").slice(0, cursorCol);
+					return { items: [{ value: "$skill-name", label: "skill-name" }], prefix };
+				},
+				applyCompletion,
+			});
+
+			editor.handleInput("$");
+			editor.handleInput("s");
+			editor.handleInput("k");
+
+			assert.strictEqual(suggestionCalls, 0);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			await flushAutocomplete();
+
+			assert.strictEqual(suggestionCalls, 1);
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+		});
+
+		it("resets custom triggerCharacters when provider changes", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let suggestionCalls = 0;
+
+			editor.setAutocompleteProvider({
+				triggerCharacters: ["$"],
+				getSuggestions: async () => ({ items: [{ value: "$skill-name", label: "skill-name" }], prefix: "$" }),
+				applyCompletion,
+			});
+			editor.setAutocompleteProvider({
+				getSuggestions: async () => {
+					suggestionCalls += 1;
+					return { items: [{ value: "$skill-name", label: "skill-name" }], prefix: "$" };
+				},
+				applyCompletion,
+			});
+
+			editor.handleInput("$");
+			editor.handleInput("s");
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			await flushAutocomplete();
+
+			assert.strictEqual(suggestionCalls, 0);
+			assert.strictEqual(editor.isShowingAutocomplete(), false);
 		});
 
 		it("aborts active @ autocomplete when typing continues", async () => {

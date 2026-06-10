@@ -69,6 +69,7 @@ function createExtensionContext(entries: SessionEntry[]): ExtensionContext {
 			notify: vi.fn(),
 		}) as ExtensionContext["ui"],
 		cwd: process.cwd(),
+		isProjectTrusted: () => true,
 		sessionManager,
 		modelRegistry: {} as ExtensionContext["modelRegistry"],
 		model: undefined,

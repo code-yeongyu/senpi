@@ -283,6 +283,23 @@ describe("SettingsManager", () => {
 			expect(manager.getProjectSettings()).toEqual({});
 			expect(JSON.parse(readFileSync(projectSettingsPath, "utf-8"))).toEqual({ packages: ["npm:existing"] });
 		});
+
+		it("should read default project trust from global settings only", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProjectTrust: "always" }));
+			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ defaultProjectTrust: "never" }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getDefaultProjectTrust()).toBe("always");
+		});
+
+		it("should default invalid project trust settings to ask", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProjectTrust: "sometimes" }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getDefaultProjectTrust()).toBe("ask");
+		});
 	});
 
 	describe("project settings directory creation", () => {

@@ -440,9 +440,9 @@ export const IMAGE_MODELS = {
 				cacheWrite: 0,
 			},
 		} satisfies ImagesModel<"openrouter-images">,
-		"sourceful/riverflow-v2.5-fast:free": {
-			id: "sourceful/riverflow-v2.5-fast:free",
-			name: "Sourceful: Riverflow V2.5 Fast (free)",
+		"sourceful/riverflow-v2.5-fast": {
+			id: "sourceful/riverflow-v2.5-fast",
+			name: "Sourceful: Riverflow V2.5 Fast",
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
@@ -455,9 +455,9 @@ export const IMAGE_MODELS = {
 				cacheWrite: 0,
 			},
 		} satisfies ImagesModel<"openrouter-images">,
-		"sourceful/riverflow-v2.5-pro:free": {
-			id: "sourceful/riverflow-v2.5-pro:free",
-			name: "Sourceful: Riverflow V2.5 Pro (free)",
+		"sourceful/riverflow-v2.5-pro": {
+			id: "sourceful/riverflow-v2.5-pro",
+			name: "Sourceful: Riverflow V2.5 Pro",
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",

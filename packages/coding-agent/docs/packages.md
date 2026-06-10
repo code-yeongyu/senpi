@@ -40,8 +40,6 @@ These commands manage senpi packages, not the senpi CLI installation. To uninsta
 
 By default, `install` and `remove` write to global settings (`~/.senpi/agent/settings.json`). Use `-l` to write to project settings (`.senpi/settings.json`) instead. Project settings can be shared with your team, and senpi installs any missing packages automatically on startup after the project is trusted.
 
-Project package commands read project settings only when the project is trusted. Use `--approve` to trust project-local files for one command, or `--no-approve` to ignore them for one command.
-
 To try a package without installing it, use `--extension` or `-e`. This installs to a temporary directory for the current run only:
 
 ```bash

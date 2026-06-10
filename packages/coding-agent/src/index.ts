@@ -220,6 +220,7 @@ export {
 } from "./core/session-manager.ts";
 export {
 	type CompactionSettings,
+	type DefaultProjectTrust,
 	type ImageSettings,
 	type PackageSource,
 	type RetrySettings,
@@ -287,7 +288,13 @@ export {
 	type WriteToolOptions,
 	withFileMutationQueue,
 } from "./core/tools/index.ts";
-export { hasProjectTrustInputs, type ProjectTrustDecision, ProjectTrustStore } from "./core/trust-manager.ts";
+export {
+	hasProjectTrustInputs,
+	type ProjectTrustDecision,
+	ProjectTrustStore,
+	type ProjectTrustStoreEntry,
+	type ProjectTrustUpdate,
+} from "./core/trust-manager.ts";
 // Main entry point
 export { type MainOptions, main } from "./main.ts";
 // Run modes for programmatic SDK usage

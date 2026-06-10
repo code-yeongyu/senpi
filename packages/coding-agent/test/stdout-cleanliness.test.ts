@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ENV_AGENT_DIR, VERSION } from "../src/config.ts";
+import { ENV_AGENT_DIR } from "../src/config.ts";
 
 const cliPath = resolve(__dirname, "../src/cli.ts");
 
@@ -80,31 +80,20 @@ async function runCli(args: string[]): Promise<{ stdout: string; stderr: string;
 }
 
 describe("stdout cleanliness in non-interactive modes", () => {
-	it("prints --version without running startup package commands", async () => {
+	it("prints --version to stdout when stdout is redirected", async () => {
 		const result = await runCli(["--version"]);
 
 		expect(result.code).toBe(0);
-		expect(result.stdout.trim()).toBe(VERSION);
-		expect(result.stderr).not.toContain("changed 1 package in 471ms");
-		expect(result.stderr).not.toContain("found 0 vulnerabilities");
+		expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+		expect(result.stderr).toBe("");
 	});
 
-	it("routes plain --help through trusted startup so extension flags can be included", async () => {
-		const result = await runCli(["--help", "--approve"]);
+	it("prints plain --help to stdout when stdout is redirected", async () => {
+		const result = await runCli(["--help"]);
 
 		expect(result.code).toBe(0);
-		expect(result.stderr).toContain("Usage:");
-		expect(result.stderr).toContain("changed 1 package in 471ms");
-		expect(result.stderr).toContain("found 0 vulnerabilities");
-	});
-
-	it("routes -h through trusted startup so extension flags can be included", async () => {
-		const result = await runCli(["-h", "--approve"]);
-
-		expect(result.code).toBe(0);
-		expect(result.stderr).toContain("Usage:");
-		expect(result.stderr).toContain("changed 1 package in 471ms");
-		expect(result.stderr).toContain("found 0 vulnerabilities");
+		expect(result.stdout).toContain("Usage:");
+		expect(result.stderr).not.toContain("Usage:");
 	});
 
 	it("keeps stdout empty for --mode json --help while routing trusted startup chatter to stderr", async () => {

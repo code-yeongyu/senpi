@@ -3,6 +3,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
+import { AuthStorage } from "../src/core/auth-storage.ts";
+import { ModelRegistry } from "../src/core/model-registry.ts";
 import { runMigrations } from "../src/migrations.ts";
 
 describe("config value env var syntax migration", () => {
@@ -66,6 +68,23 @@ describe("config value env var syntax migration", () => {
 		const logMessage = String(logSpy.mock.calls[0]?.[0] ?? "");
 		expect(logMessage).toContain("explicit $ENV_VAR syntax");
 		expect(logMessage).toContain('auth.json["anthropic"].key: ANTHROPIC_API_KEY -> $ANTHROPIC_API_KEY');
+	});
+
+	it.each([
+		["malformed", '{\n  "providers": {\n'],
+		["blank", ""],
+	])("does not throw on %s models.json during config migration", (_name, content) => {
+		const agentDir = createAgentDir();
+		const modelsPath = path.join(agentDir, "models.json");
+		fs.writeFileSync(modelsPath, content, "utf-8");
+
+		withAgentDir(agentDir, () => expect(() => runMigrations(agentDir)).not.toThrow());
+
+		expect(fs.readFileSync(modelsPath, "utf-8")).toBe(content);
+		const registry = ModelRegistry.create(AuthStorage.create(path.join(agentDir, "auth.json")), modelsPath);
+		const loadError = registry.getError();
+		expect(loadError).toContain("Failed to parse models.json");
+		expect(loadError).toContain(`File: ${modelsPath}`);
 	});
 
 	it("rewrites legacy uppercase models.json API key and header values", () => {

@@ -150,10 +150,13 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 
 		// in Node.js/Bun environment only
 		if (typeof process !== "undefined" && (process.versions?.node || process.versions?.bun)) {
-			// Region resolution: explicit option > env vars > SDK default chain.
-			// When AWS_PROFILE is set, we leave region undefined so the SDK can
-			// resovle it from aws profile configs. Otherwise fall back to us-east-1.
-			if (configuredRegion) {
+			// Region resolution: ARN-embedded > explicit option > env vars > SDK default chain.
+			// When the model ID is an inference profile ARN, extract the region from it.
+			// This avoids conflicts with AWS_REGION set for other services.
+			const arnRegionMatch = model.id.match(/^arn:aws(?:-[a-z0-9-]+)?:bedrock:([a-z0-9-]+):/);
+			if (arnRegionMatch) {
+				config.region = arnRegionMatch[1];
+			} else if (configuredRegion) {
 				config.region = configuredRegion;
 			} else if (endpointRegion && useExplicitEndpoint) {
 				config.region = endpointRegion;
@@ -544,13 +547,18 @@ function getModelMatchCandidates(modelId: string, modelName?: string): string[] 
 function supportsAdaptiveThinking(modelId: string, modelName?: string): boolean {
 	const candidates = getModelMatchCandidates(modelId, modelName);
 	return candidates.some(
-		(s) => s.includes("opus-4-6") || s.includes("opus-4-7") || s.includes("opus-4-8") || s.includes("sonnet-4-6"),
+		(s) =>
+			s.includes("opus-4-6") ||
+			s.includes("opus-4-7") ||
+			s.includes("opus-4-8") ||
+			s.includes("sonnet-4-6") ||
+			s.includes("fable-5"),
 	);
 }
 
 function supportsNativeXhighEffort(model: Model<"bedrock-converse-stream">): boolean {
 	const candidates = getModelMatchCandidates(model.id, model.name);
-	return candidates.some((s) => s.includes("opus-4-7") || s.includes("opus-4-8"));
+	return candidates.some((s) => s.includes("opus-4-7") || s.includes("opus-4-8") || s.includes("fable-5"));
 }
 
 function mapThinkingLevelToEffort(

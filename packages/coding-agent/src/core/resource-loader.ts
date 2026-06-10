@@ -151,7 +151,6 @@ function loadContextFileFromDir(dir: string): { path: string; content: string } 
 export function loadProjectContextFiles(options: {
 	cwd: string;
 	agentDir: string;
-	projectTrusted?: boolean;
 }): Array<{ path: string; content: string }> {
 	const resolvedCwd = resolvePath(options.cwd);
 	const resolvedAgentDir = resolvePath(options.agentDir);
@@ -165,28 +164,26 @@ export function loadProjectContextFiles(options: {
 		seenPaths.add(globalContext.path);
 	}
 
-	if (options.projectTrusted !== false) {
-		const ancestorContextFiles: Array<{ path: string; content: string }> = [];
+	const ancestorContextFiles: Array<{ path: string; content: string }> = [];
 
-		let currentDir = resolvedCwd;
-		const root = resolve("/");
+	let currentDir = resolvedCwd;
+	const root = resolve("/");
 
-		while (true) {
-			const contextFile = loadContextFileFromDir(currentDir);
-			if (contextFile && !seenPaths.has(contextFile.path)) {
-				ancestorContextFiles.unshift(contextFile);
-				seenPaths.add(contextFile.path);
-			}
-
-			if (currentDir === root) break;
-
-			const parentDir = resolve(currentDir, "..");
-			if (parentDir === currentDir) break;
-			currentDir = parentDir;
+	while (true) {
+		const contextFile = loadContextFileFromDir(currentDir);
+		if (contextFile && !seenPaths.has(contextFile.path)) {
+			ancestorContextFiles.unshift(contextFile);
+			seenPaths.add(contextFile.path);
 		}
 
-		contextFiles.push(...ancestorContextFiles);
+		if (currentDir === root) break;
+
+		const parentDir = resolve(currentDir, "..");
+		if (parentDir === currentDir) break;
+		currentDir = parentDir;
 	}
+
+	contextFiles.push(...ancestorContextFiles);
 
 	return contextFiles;
 }
@@ -384,15 +381,19 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 	}
 
+	async loadProjectTrustExtensions(): Promise<LoadExtensionsResult> {
+		// Force untrusted project settings for the bootstrap pass. This keeps project-local
+		// extensions/packages out while still loading user/global and temporary CLI extensions.
+		this.settingsManager.setProjectTrusted(false);
+		await this.settingsManager.reload();
+		return this.loadCurrentExtensionSet({ includeInlineFactories: true });
+	}
+
 	async reload(options?: ResourceLoaderReloadOptions): Promise<void> {
 		this.ensureGlobalDefaultExtensions();
 		let preTrustExtensions: LoadExtensionsResult | undefined;
 		if (options?.resolveProjectTrust) {
-			// Force untrusted project settings for the bootstrap pass. This keeps project-local
-			// extensions/packages out while still loading user/global and temporary CLI extensions.
-			this.settingsManager.setProjectTrusted(false);
-			await this.settingsManager.reload();
-			preTrustExtensions = await this.loadCurrentExtensionSet({ includeInlineFactories: true });
+			preTrustExtensions = await this.loadProjectTrustExtensions();
 			const projectTrusted = await options.resolveProjectTrust({ extensionsResult: preTrustExtensions });
 			this.settingsManager.setProjectTrusted(projectTrusted);
 		}
@@ -520,7 +521,6 @@ export class DefaultResourceLoader implements ResourceLoader {
 				: loadProjectContextFiles({
 						cwd: this.cwd,
 						agentDir: this.agentDir,
-						projectTrusted: this.settingsManager.isProjectTrusted(),
 					}),
 		};
 		const resolvedAgentsFiles = this.agentsFilesOverride ? this.agentsFilesOverride(agentsFiles) : agentsFiles;

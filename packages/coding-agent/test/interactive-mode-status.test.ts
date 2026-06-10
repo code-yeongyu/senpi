@@ -615,6 +615,36 @@ describe("InteractiveMode.setupAutocompleteProvider", () => {
 		expect(provider.shouldTriggerFileCompletion?.(["foo"], 0, 3)).toBe(true);
 		expect(calls).toEqual(["shouldTrigger:wrap2", "shouldTrigger:wrap1"]);
 	});
+
+	test("merges triggerCharacters from wrapper factories", () => {
+		const defaultEditor = { setAutocompleteProvider: vi.fn() };
+		const customEditor = { setAutocompleteProvider: vi.fn() };
+		const passThrough =
+			(triggerCharacters: string[]): AutocompleteProviderFactory =>
+			(current) => ({
+				triggerCharacters,
+				getSuggestions: (lines, cursorLine, cursorCol, options) =>
+					current.getSuggestions(lines, cursorLine, cursorCol, options),
+				applyCompletion: (lines, cursorLine, cursorCol, item, prefix) =>
+					current.applyCompletion(lines, cursorLine, cursorCol, item, prefix),
+			});
+
+		const fakeThis = {
+			createBaseAutocompleteProvider: () => new CombinedAutocompleteProvider([], "/tmp/project", undefined),
+			defaultEditor,
+			editor: customEditor,
+			autocompleteProviderWrappers: [passThrough(["$"]), passThrough(["!"])],
+		};
+
+		(
+			InteractiveMode as unknown as {
+				prototype: { setupAutocompleteProvider: (this: typeof fakeThis) => void };
+			}
+		).prototype.setupAutocompleteProvider.call(fakeThis);
+
+		const provider = defaultEditor.setAutocompleteProvider.mock.calls[0]?.[0] as AutocompleteProvider;
+		expect(provider.triggerCharacters).toEqual(["$", "!"]);
+	});
 });
 
 describe("InteractiveMode.getWorkingIndicatorOptions", () => {

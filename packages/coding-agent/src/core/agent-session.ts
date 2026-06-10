@@ -1887,6 +1887,11 @@ export class AgentSession {
 	// Queue Mode Management
 	// =========================================================================
 
+	private syncQueueModesFromSettings(): void {
+		this.agent.steeringMode = this.settingsManager.getSteeringMode();
+		this.agent.followUpMode = this.settingsManager.getFollowUpMode();
+	}
+
 	/**
 	 * Set steering message mode.
 	 * Saves to settings.
@@ -2662,6 +2667,7 @@ export class AgentSession {
 				getModel: () => this.model,
 				getServiceTier: () => this.serviceTier,
 				isIdle: () => !this.isStreaming,
+				isProjectTrusted: () => this.settingsManager.isProjectTrusted(),
 				getSignal: () => this.agent.signal,
 				abort: () => {
 					if (this._extensionAbortHandler) {
@@ -2886,6 +2892,7 @@ export class AgentSession {
 		const previousFlagValues = this._extensionRunner.getFlagValues();
 		await emitSessionShutdownEvent(this._extensionRunner, { type: "session_shutdown", reason: "reload" });
 		await this.settingsManager.reload();
+		this.syncQueueModesFromSettings();
 		resetApiProviders();
 		this._modelRegistry.refresh();
 		this.setScopedModels(

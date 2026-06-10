@@ -1,6 +1,6 @@
 # Custom Models
 
-Add custom providers and models (Ollama, vLLM, LM Studio, proxies) via `~/.senpi/agent/models.json`.
+Add custom providers and models (Ollama, vLLM, LM Studio, proxies) via `~/.pi/agent/models.json`.
 
 ## Table of Contents
 
@@ -198,8 +198,7 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `id` | Yes | — | Model identifier (passed to the API) |
-| `name` | No | `id` | Human-readable model label. Used for matching (`--model` patterns) and shown in model details/status text. |
-| `promptPreset` | No | auto-detected | System prompt preset for this model. Use this when a provider-specific model ID should force a known preset, such as `"kimi-k2-6"`. |
+| `name` | No | `id` | Human-readable model label. Used for matching (`--model` patterns) and shown as secondary model detail text. |
 | `api` | No | provider's `api` | Override provider's API for this model |
 | `reasoning` | No | `false` | Supports extended thinking |
 | `thinkingLevelMap` | No | omitted | Maps pi thinking levels to provider values and marks unsupported levels (see below) |
@@ -210,32 +209,8 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
 | `compat` | No | provider `compat` | Provider compatibility overrides. Merged with provider-level `compat` when both are set. |
 
 Current behavior:
-- `/model` and `--list-models` list entries by model `id`.
-- The configured `name` is used for model matching and detail/status text.
-
-### Prompt Preset
-
-Use `promptPreset` on a model when auto-detection cannot infer the right system prompt preset from the provider's model ID.
-
-```json
-{
-  "providers": {
-    "moonshot": {
-      "baseUrl": "https://api.moonshot.ai/v1",
-      "api": "openai-responses",
-      "apiKey": "MOONSHOT_API_KEY",
-      "models": [
-        {
-          "id": "kimi-k2p6-turbo",
-          "promptPreset": "kimi-k2-6"
-        }
-      ]
-    }
-  }
-}
-```
-
-If `settings.json` sets `promptPreset` to anything other than `"auto"`, that settings override wins. Model-level `promptPreset` is used when settings remain on `"auto"`.
+- `/model`, `--list-models`, and the interactive footer display entries by model `id`.
+- The configured `name` is used for model matching and secondary model detail text. It does not replace the footer/status-bar model id.
 
 ### Thinking Level Map
 
@@ -339,12 +314,13 @@ Use `modelOverrides` to customize specific built-in models without replacing the
 }
 ```
 
-`modelOverrides` supports these fields per model: `name`, `promptPreset`, `reasoning`, `input`, `cost` (partial), `contextWindow`, `maxTokens`, `headers`, `compat`.
+`modelOverrides` supports these fields per model: `name`, `reasoning`, `input`, `cost` (partial), `contextWindow`, `maxTokens`, `headers`, `compat`.
 
 Behavior notes:
 - `modelOverrides` are applied to built-in provider models.
 - Unknown model IDs are ignored.
 - You can combine provider-level `baseUrl`/`headers` with `modelOverrides`.
+- Overriding `name` changes model matching and secondary detail text only; the footer and primary model lists continue to show the model `id`.
 - If `models` is also defined for a provider, custom models are merged after built-in overrides. A custom model with the same `id` replaces the overridden built-in model entry.
 
 ## Anthropic Messages Compatibility
@@ -431,15 +407,6 @@ For providers with partial OpenAI compatibility, use the `compat` field.
 | `supportsLongCacheRetention` | Whether the provider accepts long cache retention when cache retention is `long`: `prompt_cache_retention: "24h"` for OpenAI prompt caching, or `cache_control.ttl: "1h"` when `cacheControlFormat` is `anthropic`. Default: `true`. |
 | `openRouterRouting` | OpenRouter provider routing preferences. This object is sent as-is in the `provider` field of the [OpenRouter API request](https://openrouter.ai/docs/guides/routing/provider-selection). |
 | `vercelGatewayRouting` | Vercel AI Gateway routing config for provider selection (`only`, `order`) |
-
-For `api: "openai-responses"` models, only Responses-specific `compat` fields apply:
-
-| Field | Description |
-|-------|-------------|
-| `sendSessionIdHeader` | Send the OpenAI cache-affinity `session_id` header from `sessionId`. Default: `true`. |
-| `supportsLongCacheRetention` | Accepts `prompt_cache_retention: "24h"` when cache retention is `long`. Default: `true`. |
-| `supportsWebSocket` | Supports OpenAI Responses WebSocket transport. Default: `true` only for `api.openai.com`. |
-| `supportsWebSearchPreview` | Supports OpenAI-native `web_search_preview` tools. Default: `true` only for `api.openai.com`; custom Responses proxies must opt in. |
 
 `openrouter` uses `reasoning: { effort }`. `together` uses `reasoning: { enabled }` and also `reasoning_effort` when `supportsReasoningEffort` is enabled. `qwen` uses top-level `enable_thinking`. Use `qwen-chat-template` for local Qwen-compatible servers that require `chat_template_kwargs.enable_thinking`.
 

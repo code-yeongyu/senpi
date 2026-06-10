@@ -145,47 +145,52 @@ function migrateModelsJsonConfigValues(agentDir: string): ConfigValueMigration[]
 	const modelsPath = join(agentDir, "models.json");
 	if (!existsSync(modelsPath)) return [];
 
-	const parsed = JSON.parse(stripJsonComments(readFileSync(modelsPath, "utf-8"))) as unknown;
-	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return [];
-	const modelsData = parsed as Record<string, unknown>;
-	const providers = modelsData.providers;
-	if (typeof providers !== "object" || providers === null || Array.isArray(providers)) return [];
+	try {
+		const parsed = JSON.parse(stripJsonComments(readFileSync(modelsPath, "utf-8"))) as unknown;
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return [];
+		const modelsData = parsed as Record<string, unknown>;
+		const providers = modelsData.providers;
+		if (typeof providers !== "object" || providers === null || Array.isArray(providers)) return [];
 
-	const migrations: ConfigValueMigration[] = [];
-	for (const [provider, providerConfig] of Object.entries(providers)) {
-		if (typeof providerConfig !== "object" || providerConfig === null || Array.isArray(providerConfig)) continue;
-		const providerRecord = providerConfig as Record<string, unknown>;
-		const providerLocation = `models.json.providers[${JSON.stringify(provider)}]`;
-		migrateStringProperty(providerRecord, "apiKey", `${providerLocation}.apiKey`, migrations);
-		migrateHeadersConfig(providerRecord.headers, `${providerLocation}.headers`, migrations);
+		const migrations: ConfigValueMigration[] = [];
+		for (const [provider, providerConfig] of Object.entries(providers)) {
+			if (typeof providerConfig !== "object" || providerConfig === null || Array.isArray(providerConfig)) continue;
+			const providerRecord = providerConfig as Record<string, unknown>;
+			const providerLocation = `models.json.providers[${JSON.stringify(provider)}]`;
+			migrateStringProperty(providerRecord, "apiKey", `${providerLocation}.apiKey`, migrations);
+			migrateHeadersConfig(providerRecord.headers, `${providerLocation}.headers`, migrations);
 
-		if (Array.isArray(providerRecord.models)) {
-			for (let index = 0; index < providerRecord.models.length; index++) {
-				const modelConfig = providerRecord.models[index];
-				if (typeof modelConfig !== "object" || modelConfig === null || Array.isArray(modelConfig)) continue;
-				const modelRecord = modelConfig as Record<string, unknown>;
-				const modelKey = typeof modelRecord.id === "string" ? JSON.stringify(modelRecord.id) : String(index);
-				migrateHeadersConfig(modelRecord.headers, `${providerLocation}.models[${modelKey}].headers`, migrations);
+			if (Array.isArray(providerRecord.models)) {
+				for (let index = 0; index < providerRecord.models.length; index++) {
+					const modelConfig = providerRecord.models[index];
+					if (typeof modelConfig !== "object" || modelConfig === null || Array.isArray(modelConfig)) continue;
+					const modelRecord = modelConfig as Record<string, unknown>;
+					const modelKey = typeof modelRecord.id === "string" ? JSON.stringify(modelRecord.id) : String(index);
+					migrateHeadersConfig(modelRecord.headers, `${providerLocation}.models[${modelKey}].headers`, migrations);
+				}
+			}
+
+			const modelOverrides = providerRecord.modelOverrides;
+			if (typeof modelOverrides === "object" && modelOverrides !== null && !Array.isArray(modelOverrides)) {
+				for (const [modelId, modelOverride] of Object.entries(modelOverrides)) {
+					if (typeof modelOverride !== "object" || modelOverride === null || Array.isArray(modelOverride))
+						continue;
+					const modelOverrideRecord = modelOverride as Record<string, unknown>;
+					migrateHeadersConfig(
+						modelOverrideRecord.headers,
+						`${providerLocation}.modelOverrides[${JSON.stringify(modelId)}].headers`,
+						migrations,
+					);
+				}
 			}
 		}
 
-		const modelOverrides = providerRecord.modelOverrides;
-		if (typeof modelOverrides === "object" && modelOverrides !== null && !Array.isArray(modelOverrides)) {
-			for (const [modelId, modelOverride] of Object.entries(modelOverrides)) {
-				if (typeof modelOverride !== "object" || modelOverride === null || Array.isArray(modelOverride)) continue;
-				const modelOverrideRecord = modelOverride as Record<string, unknown>;
-				migrateHeadersConfig(
-					modelOverrideRecord.headers,
-					`${providerLocation}.modelOverrides[${JSON.stringify(modelId)}].headers`,
-					migrations,
-				);
-			}
-		}
+		if (migrations.length === 0) return [];
+		writeFileSync(modelsPath, `${JSON.stringify(parsed, null, 2)}\n`, "utf-8");
+		return migrations;
+	} catch {
+		return [];
 	}
-
-	if (migrations.length === 0) return [];
-	writeFileSync(modelsPath, `${JSON.stringify(parsed, null, 2)}\n`, "utf-8");
-	return migrations;
 }
 
 function migrateExplicitEnvVarConfigValues(): void {
