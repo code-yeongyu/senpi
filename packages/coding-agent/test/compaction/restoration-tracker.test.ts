@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { type CompactionSettings, DEFAULT_COMPACTION_SETTINGS } from "../../src/core/compaction/index.ts";
+import compactionExtension from "../../src/core/extensions/builtin/compaction/index.ts";
 import {
 	computeRestorationBudget,
 	consumePendingPayload,
@@ -6,6 +8,183 @@ import {
 	preparePendingPayload,
 	trackToolCall,
 } from "../../src/core/extensions/builtin/compaction/restoration-tracker.ts";
+import type {
+	BeforeAgentStartEvent,
+	BeforeAgentStartEventResult,
+	ExtensionAPI,
+	ExtensionContext,
+	ExtensionHandler,
+	SessionCompactEvent,
+	ToolCallEvent,
+	ToolCallEventResult,
+} from "../../src/core/extensions/index.ts";
+import type { SessionEntry } from "../../src/core/session-manager.ts";
+
+interface RestorationGateHarness {
+	toolCall: ExtensionHandler<ToolCallEvent, ToolCallEventResult>;
+	sessionCompact: ExtensionHandler<SessionCompactEvent>;
+	beforeAgentStart: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>;
+}
+
+function createRestorationGateHarness(): RestorationGateHarness {
+	let toolCall: ExtensionHandler<ToolCallEvent, ToolCallEventResult> | undefined;
+	let sessionCompact: ExtensionHandler<SessionCompactEvent> | undefined;
+	let beforeAgentStart: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult> | undefined;
+	const api = Object.assign(Object.create(null), {
+		on: (event: string, handler: unknown) => {
+			if (event === "tool_call") {
+				toolCall = handler as ExtensionHandler<ToolCallEvent, ToolCallEventResult>;
+			}
+			if (event === "session_compact") {
+				sessionCompact = handler as ExtensionHandler<SessionCompactEvent>;
+			}
+			if (event === "before_agent_start") {
+				beforeAgentStart = handler as ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>;
+			}
+		},
+		appendEntry: vi.fn(),
+		getActiveTools: () => [],
+		getThinkingLevel: () => "off" as const,
+		events: { emit: vi.fn() },
+		sendMessage: vi.fn(),
+	}) as ExtensionAPI;
+
+	compactionExtension(api);
+	if (!toolCall || !sessionCompact || !beforeAgentStart) {
+		throw new Error("Compaction extension did not register expected handlers");
+	}
+	return { toolCall, sessionCompact, beforeAgentStart };
+}
+
+function createGateExtensionContext(settings: CompactionSettings): ExtensionContext {
+	const entries: SessionEntry[] = [
+		{
+			type: "message",
+			id: "kept-user",
+			parentId: null,
+			timestamp: new Date().toISOString(),
+			message: { role: "user", content: "continue", timestamp: Date.now() },
+		},
+	];
+	const sessionManager = {
+		getEntries: () => entries,
+		getBranch: () => entries,
+	} as ExtensionContext["sessionManager"];
+
+	return {
+		hasUI: false,
+		mode: "print",
+		ui: Object.assign(Object.create(null), {
+			notify: vi.fn(),
+		}) as ExtensionContext["ui"],
+		cwd: process.cwd(),
+		isProjectTrusted: () => true,
+		sessionManager,
+		modelRegistry: {} as ExtensionContext["modelRegistry"],
+		model: undefined,
+		serviceTier: undefined,
+		isIdle: () => true,
+		signal: undefined,
+		abort: vi.fn(),
+		hasPendingMessages: () => false,
+		shutdown: vi.fn(),
+		getContextUsage: () => undefined,
+		getCompactionSettings: () => settings,
+		compact: vi.fn(),
+		getMessageRevision: () => 1,
+		applyCompaction: async () => ({ applied: false, reason: "rejected" }),
+		beginCompaction: () => undefined,
+		endCompaction: vi.fn(),
+		getSystemPrompt: () => "",
+	} as ExtensionContext;
+}
+
+function createAcceptedCompactEvent(): SessionCompactEvent {
+	return {
+		type: "session_compact",
+		reason: "manual",
+		requestId: "restoration-gate-request",
+		accepted: true,
+		compactionEntry: {
+			type: "compaction",
+			id: "compact-gate",
+			parentId: "kept-user",
+			timestamp: new Date().toISOString(),
+			summary: "Compacted context",
+			firstKeptEntryId: "kept-user",
+			tokensBefore: 100,
+		},
+		fromExtension: true,
+	};
+}
+
+function createBeforeAgentStartEvent(): BeforeAgentStartEvent {
+	return {
+		type: "before_agent_start",
+		prompt: "continue",
+		systemPrompt: "base prompt",
+		systemPromptOptions: {} as BeforeAgentStartEvent["systemPromptOptions"],
+	};
+}
+
+describe("restoration gate honors runtime compaction settings", () => {
+	describe("Given compaction.restorationEnabled is false in the session settings", () => {
+		describe("When an accepted compaction is followed by the next agent start", () => {
+			it("Then no restoration payload is injected", async () => {
+				// Given
+				const harness = createRestorationGateHarness();
+				const ctx = createGateExtensionContext({ ...DEFAULT_COMPACTION_SETTINGS, restorationEnabled: false });
+				await harness.toolCall(
+					{ type: "tool_call", toolCallId: "t1", toolName: "read", input: { path: "lost-context.ts" } },
+					ctx,
+				);
+
+				// When
+				await harness.sessionCompact(createAcceptedCompactEvent(), ctx);
+				const result = await harness.beforeAgentStart(createBeforeAgentStartEvent(), ctx);
+
+				// Then
+				expect(result?.message).toBeUndefined();
+			});
+		});
+	});
+
+	describe("Given compaction.restorationEnabled is true with a runtime restorationMaxItems of 1", () => {
+		describe("When an accepted compaction is followed by the next agent start", () => {
+			it("Then the restoration payload is injected and capped by the runtime settings", async () => {
+				// Given
+				const harness = createRestorationGateHarness();
+				const ctx = createGateExtensionContext({
+					...DEFAULT_COMPACTION_SETTINGS,
+					restorationEnabled: true,
+					restorationMaxItems: 1,
+				});
+				await harness.toolCall(
+					{ type: "tool_call", toolCallId: "t1", toolName: "read", input: { path: "read-only.ts" } },
+					ctx,
+				);
+				await harness.toolCall(
+					{
+						type: "tool_call",
+						toolCallId: "t2",
+						toolName: "edit",
+						input: { path: "edited.ts", oldText: "old", newText: "new" },
+					},
+					ctx,
+				);
+
+				// When
+				await harness.sessionCompact(createAcceptedCompactEvent(), ctx);
+				const result = await harness.beforeAgentStart(createBeforeAgentStartEvent(), ctx);
+
+				// Then
+				expect(result?.message?.customType).toBe("compaction.post-compact-restoration");
+				expect(result?.message?.content).toContain("edited.ts");
+				expect(result?.message?.content).not.toContain("read-only.ts");
+			});
+		});
+	});
+});
 
 describe("post-compact restoration tracker", () => {
 	describe("Given file and skill tool calls were observed before compaction", () => {

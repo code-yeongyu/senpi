@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { type CompactionResult, DEFAULT_COMPACTION_SETTINGS } from "../../../compaction/index.ts";
+import type { CompactionResult } from "../../../compaction/index.ts";
 import { convertToLlm } from "../../../messages.ts";
 import type { CompactionEntry } from "../../../session-manager.ts";
 import type { ContextUsage, ExtensionAPI, ExtensionContext, SessionBeforeCompactEvent } from "../../types.ts";
@@ -337,15 +337,16 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 			resetOnSessionCompact(degradationState);
 			todoBridge.restoreTodosIfMissing(pi, ctx);
 			const usage = ctx.getContextUsage();
-			if (DEFAULT_COMPACTION_SETTINGS.restorationEnabled) {
+			const settings = ctx.getCompactionSettings();
+			if (settings.restorationEnabled ?? true) {
 				restoration.preparePendingPayload(restorationState, {
 					accepted: true,
 					reason: event.reason,
 					compactionEntryId: event.compactionEntry.id,
 					contextWindow: usage?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
 					usageTokens: usage?.tokens ?? null,
-					reserveTokens: DEFAULT_COMPACTION_SETTINGS.reserveTokens,
-					settings: DEFAULT_COMPACTION_SETTINGS,
+					reserveTokens: settings.reserveTokens,
+					settings,
 					keptMessages: keptEntries.flatMap((entry) => {
 						if (entry.type !== "message") return [];
 						return [entry.message];
