@@ -1,12 +1,20 @@
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { createApplyPatchTool } from "./tool.ts";
 import type { ApplyPatchExtensionAPI, BaselineState } from "./types.ts";
 
-const GPT_APPLY_PATCH_PROVIDERS = new Set(["openai", "azure-openai-responses", "github-copilot"]);
+// apply_patch ships as a freeform custom tool, which only the OpenAI Responses-family
+// APIs can carry (openai-completions throws on freeform tools). Gate on the model's API
+// rather than a provider allowlist so OpenAI-compatible custom providers (e.g. a proxy
+// exposing gpt-5.5 via openai-responses) also swap edit/write for apply_patch.
+const APPLY_PATCH_FREEFORM_APIS = new Set<Api>([
+	"openai-responses",
+	"azure-openai-responses",
+	"openai-codex-responses",
+]);
 const EDIT_TOOL_NAMES = new Set(["write", "edit"]);
 
-export function isOpenAIGptModel(model: Pick<Model<string>, "provider" | "id"> | undefined): boolean {
-	return model !== undefined && GPT_APPLY_PATCH_PROVIDERS.has(model.provider) && model.id.startsWith("gpt-");
+export function isOpenAIGptModel(model: Pick<Model<string>, "api" | "id"> | undefined): boolean {
+	return model !== undefined && APPLY_PATCH_FREEFORM_APIS.has(model.api) && model.id.startsWith("gpt-");
 }
 
 function hasEditTools(toolNames: string[]): boolean {

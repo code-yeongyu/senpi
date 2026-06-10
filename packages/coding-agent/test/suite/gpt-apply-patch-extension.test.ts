@@ -74,33 +74,41 @@ describe("gpt-apply-patch builtin extension", () => {
 	});
 
 	it("identifies only OpenAI GPT-family models", () => {
-		expect(isOpenAIGptModel({ provider: "openai", id: "gpt-5" } as { provider: string; id: string })).toBe(true);
-		expect(isOpenAIGptModel({ provider: "openai", id: "gpt-4o-mini" } as { provider: string; id: string })).toBe(
+		expect(isOpenAIGptModel({ api: "openai-responses", id: "gpt-5" } as { api: string; id: string })).toBe(true);
+		expect(isOpenAIGptModel({ api: "openai-responses", id: "gpt-4o-mini" } as { api: string; id: string })).toBe(
 			true,
 		);
-		expect(isOpenAIGptModel({ provider: "openai", id: "o1" } as { provider: string; id: string })).toBe(false);
-		expect(isOpenAIGptModel({ provider: "anthropic", id: "gpt-5" } as { provider: string; id: string })).toBe(false);
+		expect(isOpenAIGptModel({ api: "openai-responses", id: "o1" } as { api: string; id: string })).toBe(false);
+		expect(isOpenAIGptModel({ api: "anthropic-messages", id: "gpt-5" } as { api: string; id: string })).toBe(false);
 	});
 
 	it("recognises GPT models hosted on Azure and GitHub Copilot providers", () => {
-		expect(
-			isOpenAIGptModel({ provider: "azure-openai-responses", id: "gpt-5.2" } as { provider: string; id: string }),
-		).toBe(true);
-		expect(
-			isOpenAIGptModel({ provider: "azure-openai-responses", id: "gpt-5.5" } as { provider: string; id: string }),
-		).toBe(true);
-		expect(isOpenAIGptModel({ provider: "github-copilot", id: "gpt-5" } as { provider: string; id: string })).toBe(
+		expect(isOpenAIGptModel({ api: "azure-openai-responses", id: "gpt-5.2" } as { api: string; id: string })).toBe(
 			true,
 		);
+		expect(isOpenAIGptModel({ api: "azure-openai-responses", id: "gpt-5.5" } as { api: string; id: string })).toBe(
+			true,
+		);
+		// github-copilot serves modern GPT models via the Responses API.
+		expect(isOpenAIGptModel({ api: "openai-responses", id: "gpt-5" } as { api: string; id: string })).toBe(true);
+		expect(isOpenAIGptModel({ api: "azure-openai-responses", id: "o1" } as { api: string; id: string })).toBe(false);
 		expect(
-			isOpenAIGptModel({ provider: "azure-openai-responses", id: "o1" } as { provider: string; id: string }),
+			isOpenAIGptModel({ api: "openai-responses", id: "claude-sonnet-4-5" } as { api: string; id: string }),
 		).toBe(false);
-		expect(
-			isOpenAIGptModel({ provider: "github-copilot", id: "claude-sonnet-4-5" } as {
-				provider: string;
-				id: string;
-			}),
-		).toBe(false);
+	});
+
+	it("enables apply_patch for OpenAI-compatible custom providers using the Responses API", () => {
+		// Regression: custom providers (e.g. quotio-openai/gpt-5.5-fast) proxy OpenAI via
+		// openai-responses. The gate must key off the API, not a provider allowlist.
+		expect(isOpenAIGptModel({ api: "openai-responses", id: "gpt-5.5-fast" } as { api: string; id: string })).toBe(
+			true,
+		);
+		expect(isOpenAIGptModel({ api: "openai-codex-responses", id: "gpt-5.5" } as { api: string; id: string })).toBe(
+			true,
+		);
+		// Completions API cannot carry freeform tools, so apply_patch must stay disabled even
+		// for gpt-* ids (e.g. github-copilot/gpt-4.1).
+		expect(isOpenAIGptModel({ api: "openai-completions", id: "gpt-4.1" } as { api: string; id: string })).toBe(false);
 	});
 
 	it("exposes a codex-style promptSnippet and promptGuidelines on the apply_patch tool", () => {
