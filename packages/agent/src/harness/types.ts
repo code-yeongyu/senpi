@@ -21,11 +21,6 @@ export function getOrThrow<TValue, TError>(result: Result<TValue, TError>): TVal
 	return result.value;
 }
 
-/** Return the success value or `undefined`. Only object values are allowed to avoid truthiness bugs with primitives. */
-export function getOrUndefined<TValue extends object, TError>(result: Result<TValue, TError>): TValue | undefined {
-	return result.ok ? result.value : undefined;
-}
-
 /** Normalize unknown thrown values into Error instances before using them as typed error causes. */
 export function toError(error: unknown): Error {
 	if (error instanceof Error) return error;

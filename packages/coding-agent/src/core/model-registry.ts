@@ -32,7 +32,6 @@ import { normalizePath } from "../utils/paths.ts";
 import type { AuthStatus, AuthStorage } from "./auth-storage.ts";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "./provider-display-names.ts";
 import {
-	clearConfigValueCache,
 	getConfigValueEnvVarNames,
 	isCommandConfigValue,
 	isConfigValueConfigured,
@@ -458,9 +457,6 @@ function applyModelOverride(model: Model<Api>, override: ModelOverride): Model<A
 
 	return result;
 }
-
-/** Clear the config value command cache. Exported for testing. */
-export const clearApiKeyCache = clearConfigValueCache;
 
 /**
  * Model registry - loads and manages models, resolves API keys via AuthStorage.

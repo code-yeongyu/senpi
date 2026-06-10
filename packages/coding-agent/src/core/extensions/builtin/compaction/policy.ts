@@ -10,10 +10,6 @@ const MIN_EFFECTIVE_KEEP_RECENT_TOKENS = 1024;
 
 export const SPECULATIVE_FRACTION = 0.75;
 
-export interface CompactionState {
-	lastFailureAt: number | null;
-}
-
 export interface CompactionYield {
 	savedTokens: number;
 	tokensBefore: number;
@@ -132,10 +128,4 @@ export function shouldTriggerCompaction(
 	}
 
 	return usage.tokens >= contextWindow * computeEffectiveThreshold(contextWindow, lastYield);
-}
-
-export const cooldownMs = 60000;
-
-export function isInCooldown(state: CompactionState, now: number): boolean {
-	return state.lastFailureAt !== null && now - state.lastFailureAt < cooldownMs;
 }

@@ -56,12 +56,6 @@ export interface SpeculativeCompactionSnapshot {
 
 export type SpeculativeCompactionResult = ApplyCompactionResult | { applied: false; reason: "unavailable" };
 
-export type ExtensionCompactionRequest = {
-	customInstructions?: string;
-	generation: number;
-	signal?: AbortSignal;
-};
-
 function approxTokens(text: string): number {
 	return Math.ceil(text.length / 4);
 }
@@ -366,13 +360,6 @@ export async function applyGeneratedCompaction(
 		reason: "extension",
 		expectedRevision: snapshot.expectedRevision,
 	});
-}
-
-export function snapshotExtensionCompaction(
-	context: SpeculativeCompactionContext,
-	request: ExtensionCompactionRequest,
-): SpeculativeCompactionSnapshot | undefined {
-	return createSpeculativeCompactionSnapshot(context, request);
 }
 
 export async function applySpeculativeCompaction(

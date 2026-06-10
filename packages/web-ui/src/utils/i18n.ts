@@ -65,18 +65,10 @@ declare module "@mariozechner/mini-lit" {
 		"(no output)": string;
 		Input: string;
 		Output: string;
-		"Writing expression...": string;
-		"Waiting for expression...": string;
-		Calculating: string;
-		"Getting current time in": string;
-		"Getting current date and time": string;
 		"Waiting for command...": string;
 		"Writing command...": string;
 		"Running command...": string;
 		"Command failed:": string;
-		"Enter Auth Token": string;
-		"Please enter your auth token.": string;
-		"Auth token is required for proxy transport": string;
 		// JavaScript REPL strings
 		"Execution aborted": string;
 		"Code parameter is required": string;
@@ -89,9 +81,7 @@ declare module "@mariozechner/mini-lit" {
 		"Executing JavaScript": string;
 		"Preparing JavaScript...": string;
 		"Preparing command...": string;
-		"Preparing calculation...": string;
 		"Preparing tool...": string;
-		"Getting time...": string;
 		// Artifacts strings
 		"Processing artifact...": string;
 		"Preparing artifact...": string;
@@ -276,18 +266,10 @@ export const translations = {
 		"(no output)": "(no output)",
 		Input: "Input",
 		Output: "Output",
-		"Waiting for expression...": "Waiting for expression...",
-		"Writing expression...": "Writing expression...",
-		Calculating: "Calculating",
-		"Getting current time in": "Getting current time in",
-		"Getting current date and time": "Getting current date and time",
 		"Waiting for command...": "Waiting for command...",
 		"Writing command...": "Writing command...",
 		"Running command...": "Running command...",
 		"Command failed": "Command failed",
-		"Enter Auth Token": "Enter Auth Token",
-		"Please enter your auth token.": "Please enter your auth token.",
-		"Auth token is required for proxy transport": "Auth token is required for proxy transport",
 		// JavaScript REPL strings
 		"Execution aborted": "Execution aborted",
 		"Code parameter is required": "Code parameter is required",
@@ -300,9 +282,7 @@ export const translations = {
 		"Executing JavaScript": "Executing JavaScript",
 		"Preparing JavaScript...": "Preparing JavaScript...",
 		"Preparing command...": "Preparing command...",
-		"Preparing calculation...": "Preparing calculation...",
 		"Preparing tool...": "Preparing tool...",
-		"Getting time...": "Getting time...",
 		// Artifacts strings
 		"Processing artifact...": "Processing artifact...",
 		"Preparing artifact...": "Preparing artifact...",
@@ -495,18 +475,10 @@ export const translations = {
 		"(no output)": "(keine Ausgabe)",
 		Input: "Eingabe",
 		Output: "Ausgabe",
-		"Waiting for expression...": "Warte auf Ausdruck",
-		"Writing expression...": "Schreibe Ausdruck...",
-		Calculating: "Berechne",
-		"Getting current time in": "Hole aktuelle Zeit in",
-		"Getting current date and time": "Hole aktuelles Datum und Uhrzeit",
 		"Waiting for command...": "Warte auf Befehl...",
 		"Writing command...": "Schreibe Befehl...",
 		"Running command...": "Führe Befehl aus...",
 		"Command failed": "Befehl fehlgeschlagen",
-		"Enter Auth Token": "Auth-Token eingeben",
-		"Please enter your auth token.": "Bitte geben Sie Ihr Auth-Token ein.",
-		"Auth token is required for proxy transport": "Auth-Token ist für Proxy-Transport erforderlich",
 		// JavaScript REPL strings
 		"Execution aborted": "Ausführung abgebrochen",
 		"Code parameter is required": "Code-Parameter ist erforderlich",
@@ -519,9 +491,7 @@ export const translations = {
 		"Executing JavaScript": "Führe JavaScript aus",
 		"Preparing JavaScript...": "Bereite JavaScript vor...",
 		"Preparing command...": "Bereite Befehl vor...",
-		"Preparing calculation...": "Bereite Berechnung vor...",
 		"Preparing tool...": "Bereite Tool vor...",
-		"Getting time...": "Hole Zeit...",
 		// Artifacts strings
 		"Processing artifact...": "Verarbeite Artefakt...",
 		"Preparing artifact...": "Bereite Artefakt vor...",

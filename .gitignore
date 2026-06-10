@@ -27,10 +27,6 @@ packages/*/dist/*
 !packages/ai/dist/cli.js
 !packages/coding-agent/dist/
 !packages/coding-agent/dist/cli.js
-!packages/mom/dist/
-!packages/mom/dist/main.js
-!packages/pods/dist/
-!packages/pods/dist/cli.js
 packages/*/dist-chrome/
 packages/*/dist-firefox/
 *.cpuprofile
@@ -58,6 +54,7 @@ compaction-results/
 syntax.jsonl
 out.jsonl
 pi-*.html
+senpi-*.html
 out.html
 packages/coding-agent/binaries/
 packages/coding-agent/*.tgz

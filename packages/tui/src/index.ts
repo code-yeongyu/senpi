@@ -65,7 +65,6 @@ export { ProcessTerminal, type Terminal } from "./terminal.ts";
 export {
 	allocateImageId,
 	type CellDimensions,
-	calculateImageRows,
 	deleteAllKittyImages,
 	deleteKittyImage,
 	detectCapabilities,

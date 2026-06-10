@@ -26,7 +26,6 @@
 export const POST_COMPACTION_MONITOR_COUNT = 5;
 export const POST_COMPACTION_NO_TEXT_THRESHOLD = 3;
 export const MAX_RECOVERY_ATTEMPTS = 3;
-export const RECOVERY_COMPACTION_SUPPRESSION_MS = 5_000;
 
 export const RECOVERY_INSTRUCTIONS = "RECOVERY: prior compaction caused degraded responses; rebuild context";
 export const RECOVERY_NOTIFICATION = "Detected repeated no-text assistant responses; retried compaction recovery.";

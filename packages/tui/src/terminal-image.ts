@@ -275,14 +275,6 @@ export function calculateImageCellSize(
 	};
 }
 
-export function calculateImageRows(
-	imageDimensions: ImageDimensions,
-	targetWidthCells: number,
-	cellDimensions: CellDimensions = { widthPx: 9, heightPx: 18 },
-): number {
-	return calculateImageCellSize(imageDimensions, targetWidthCells, undefined, cellDimensions).rows;
-}
-
 export function getPngDimensions(base64Data: string): ImageDimensions | null {
 	try {
 		const buffer = Buffer.from(base64Data, "base64");

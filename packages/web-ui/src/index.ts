@@ -106,15 +106,11 @@ export { getToolRenderer, registerToolRenderer, renderTool, setShowJsonMode } fr
 export { createJavaScriptReplTool, javascriptReplTool } from "./tools/javascript-repl.ts";
 export { renderCollapsibleHeader, renderHeader } from "./tools/renderer-registry.ts";
 export { BashRenderer } from "./tools/renderers/BashRenderer.ts";
-export { CalculateRenderer } from "./tools/renderers/CalculateRenderer.ts";
-// Tool renderers
 export { DefaultRenderer } from "./tools/renderers/DefaultRenderer.ts";
-export { GetCurrentTimeRenderer } from "./tools/renderers/GetCurrentTimeRenderer.ts";
 export type { ToolRenderer, ToolRenderResult } from "./tools/types.ts";
 export type { Attachment } from "./utils/attachment-utils.ts";
 // Utils
 export { loadAttachment } from "./utils/attachment-utils.ts";
-export { clearAuthToken, getAuthToken } from "./utils/auth-token.ts";
 export { formatCost, formatModelCost, formatTokenCount, formatUsage } from "./utils/format.ts";
 export { i18n, setLanguage, translations } from "./utils/i18n.ts";
 export { applyProxyIfNeeded, createStreamFn, isCorsError, shouldUseProxyForProvider } from "./utils/proxy-utils.ts";

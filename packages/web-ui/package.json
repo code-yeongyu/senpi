@@ -23,7 +23,6 @@
 	"dependencies": {
 		"@earendil-works/pi-agent-core": "^2026.6.10",
 		"@earendil-works/pi-ai": "^2026.6.10",
-		"@earendil-works/pi-tui": "^2026.6.10",
 		"@lmstudio/sdk": "1.5.0",
 		"docx-preview": "0.3.7",
 		"highlight.js": "11.11.1",

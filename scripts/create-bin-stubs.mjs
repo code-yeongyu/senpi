@@ -24,8 +24,6 @@ const WORKSPACE_PACKAGES = [
 	"packages/agent",
 	"packages/ai",
 	"packages/coding-agent",
-	"packages/mom",
-	"packages/pods",
 	"packages/tui",
 	"packages/web-ui",
 ];

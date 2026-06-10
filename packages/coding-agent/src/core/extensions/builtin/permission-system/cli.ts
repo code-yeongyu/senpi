@@ -1,4 +1,3 @@
-import type { ExtensionAPI } from "../../types.ts";
 import type { Action, Rule, Ruleset } from "./types.ts";
 
 export function parsePermissionFlag(value: string): Ruleset {
@@ -21,19 +20,4 @@ export function parsePermissionFlag(value: string): Ruleset {
 	}
 
 	return rules;
-}
-
-export function registerPermissionFlag(pi: ExtensionAPI): Ruleset {
-	pi.registerFlag("permission", {
-		description: "Set permission rules (format: tool=action or tool:pattern=action)",
-		type: "string",
-	});
-
-	return [];
-}
-
-export function loadPermissionFlag(pi: ExtensionAPI): Ruleset {
-	const flagValue = pi.getFlag("permission") as string | undefined;
-	if (!flagValue) return [];
-	return parsePermissionFlag(flagValue);
 }

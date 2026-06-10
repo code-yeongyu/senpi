@@ -6,7 +6,8 @@ import { getApiProvider } from "@earendil-works/pi-ai";
 import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { clearApiKeyCache, ModelRegistry, type ProviderConfigInput } from "../src/core/model-registry.ts";
+import { ModelRegistry, type ProviderConfigInput } from "../src/core/model-registry.ts";
+import { clearConfigValueCache } from "../src/core/resolve-config-value.ts";
 import { clearDeprecationWarningsForTests } from "../src/utils/deprecation.ts";
 
 describe("ModelRegistry", () => {
@@ -26,7 +27,7 @@ describe("ModelRegistry", () => {
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true });
 		}
-		clearApiKeyCache();
+		clearConfigValueCache();
 		clearDeprecationWarningsForTests();
 		vi.restoreAllMocks();
 	});

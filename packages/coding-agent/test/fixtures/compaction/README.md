@@ -18,12 +18,11 @@ Per-feature fixtures establish a **behavioral contract** between each subsystem 
 | 4 | `pre-prune/` | `oversized-with-pairs.jsonl` | Interleaved tool_call/tool_result with large content | 20 |
 | 5 | `tool-truncation/` | `large-bash-output.jsonl` | Bash output exceeding token limits | 7 |
 | 6 | `tool-pair-repair/` | `orphan-tool-result.jsonl` | Tool result without matching tool call | 6 |
-| 7 | `overflow-detection/` | `anthropic-prompt-too-long.jsonl` | API overflow error and recovery | 9 |
-| 8 | `prompt-sections/` | `full-context.jsonl` | Rich session with todos, agent state, delegated sessions | 17 |
-| 9 | `agent-checkpoint/` | `multi-agent-state.jsonl` | Model changes and thinking level changes | 11 |
-| 10 | `todo-preservation/` | `todos-then-compact.jsonl` | Todo entries preserved across compaction | 12 |
-| 11 | `degradation-monitor/` | `post-compact-three-no-text.jsonl` | Assistant messages with only tool calls after compaction | 13 |
-| 12 | `extension-hooks/` | `manual-with-custom-instructions.jsonl` | Extension-driven compaction with custom instructions | 12 |
+| 7 | `prompt-sections/` | `full-context.jsonl` | Rich session with todos, agent state, delegated sessions | 17 |
+| 8 | `agent-checkpoint/` | `multi-agent-state.jsonl` | Model changes and thinking level changes | 11 |
+| 9 | `todo-preservation/` | `todos-then-compact.jsonl` | Todo entries preserved across compaction | 12 |
+| 10 | `degradation-monitor/` | `post-compact-three-no-text.jsonl` | Assistant messages with only tool calls after compaction | 13 |
+| 11 | `extension-hooks/` | `manual-with-custom-instructions.jsonl` | Extension-driven compaction with custom instructions | 12 |
 
 ## Validation
 
