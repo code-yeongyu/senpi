@@ -1745,7 +1745,7 @@ export class InteractiveMode {
 		this.compactionQueuedMessages = [];
 		this.streamingComponent = undefined;
 		this.streamingMessage = undefined;
-		this.pendingTools.clear();
+		this.clearPendingTools();
 		this.clearToolHookStatuses();
 		this.renderInitialMessages();
 	}
@@ -1947,6 +1947,13 @@ export class InteractiveMode {
 		}
 		this.refreshWorkingLoaderMessage();
 		this.applyTerminalTitle();
+	}
+
+	private clearPendingTools(): void {
+		for (const component of this.pendingTools.values()) {
+			component.stopAnimation();
+		}
+		this.pendingTools.clear();
 	}
 
 	private clearActiveToolExecutionStatus(): void {
@@ -3037,7 +3044,7 @@ export class InteractiveMode {
 
 		switch (event.type) {
 			case "agent_start":
-				this.pendingTools.clear();
+				this.clearPendingTools();
 				this.clearActiveToolExecutionStatus();
 				this.clearToolHookStatuses();
 				if (this.settingsManager.getShowTerminalProgress()) {
@@ -3171,7 +3178,7 @@ export class InteractiveMode {
 								isError: true,
 							});
 						}
-						this.pendingTools.clear();
+						this.clearPendingTools();
 					} else {
 						// Args are now complete - trigger diff computation for edit tools
 						for (const [, component] of this.pendingTools.entries()) {
@@ -3246,7 +3253,7 @@ export class InteractiveMode {
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
 				}
-				this.pendingTools.clear();
+				this.clearPendingTools();
 
 				await this.checkShutdownRequested();
 
@@ -3543,7 +3550,7 @@ export class InteractiveMode {
 		sessionContext: SessionContext,
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
-		this.pendingTools.clear();
+		this.clearPendingTools();
 		const renderedPendingTools = new Map<string, ToolExecutionComponent>();
 
 		if (options.updateFooter) {
@@ -6099,6 +6106,7 @@ export class InteractiveMode {
 			this.ui.terminal.setProgress(false);
 		}
 		this.stopWorkingLoader();
+		this.clearPendingTools();
 		this.clearActiveToolExecutionStatus();
 		this.clearToolHookStatuses();
 		this.clearExtensionTerminalInputListeners();

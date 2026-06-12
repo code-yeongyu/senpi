@@ -43,6 +43,7 @@ type RenderSessionContextThis = {
 	isInitialized: boolean;
 	updateEditorBorderColor(): void;
 	getRegisteredToolDefinition(toolName: string): undefined;
+	clearPendingTools(): void;
 	handleToolExecutionEnd(event: Extract<AgentSessionEvent, { type: "tool_execution_end" }>): void;
 	addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void;
 };
@@ -73,6 +74,7 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 		isInitialized: true,
 		updateEditorBorderColor: vi.fn(),
 		getRegisteredToolDefinition: (_toolName: string) => undefined,
+		clearPendingTools: Reflect.get(InteractiveMode.prototype, "clearPendingTools"),
 		handleToolExecutionEnd: Reflect.get(InteractiveMode.prototype, "handleToolExecutionEnd"),
 		addMessageToChat(message: AgentMessage) {
 			chatContainer.addChild(new Text(message.role, 0, 0));
