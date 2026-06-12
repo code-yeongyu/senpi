@@ -1,7 +1,16 @@
-import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ImageContent, Message, ToolResultMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionShutdownEvent } from "../src/index.ts";
 import { runPrintMode } from "../src/modes/print-mode.ts";
+
+const outputGuard = vi.hoisted((): { stdout: string[] } => ({ stdout: [] }));
+
+vi.mock("../src/core/output-guard.ts", () => ({
+	flushRawStdout: vi.fn(async () => {}),
+	writeRawStdout: vi.fn((text: string) => {
+		outputGuard.stdout.push(text);
+	}),
+}));
 
 type EmitEvent = SessionShutdownEvent;
 
@@ -13,7 +22,7 @@ type FakeExtensionRunner = {
 type FakeSession = {
 	sessionManager: { getHeader: () => object | undefined };
 	agent: { waitForIdle: () => Promise<void> };
-	state: { messages: AssistantMessage[] };
+	state: { messages: Message[] };
 	extensionRunner: FakeExtensionRunner;
 	bindExtensions: ReturnType<typeof vi.fn>;
 	subscribe: ReturnType<typeof vi.fn>;
@@ -55,13 +64,24 @@ function createAssistantMessage(options?: {
 	};
 }
 
-function createRuntimeHost(assistantMessage: AssistantMessage): FakeRuntimeHost {
+function createToolResultMessage(): ToolResultMessage<unknown> {
+	return {
+		role: "toolResult",
+		toolCallId: "call-1",
+		toolName: "finish",
+		content: [{ type: "text", text: "terminated" }],
+		isError: false,
+		timestamp: Date.now(),
+	};
+}
+
+function createRuntimeHost(messages: AssistantMessage | Message[]): FakeRuntimeHost {
 	const extensionRunner: FakeExtensionRunner = {
 		hasHandlers: (eventType: string) => eventType === "session_shutdown",
 		emit: vi.fn(async () => {}),
 	};
 
-	const state = { messages: [assistantMessage] };
+	const state = { messages: Array.isArray(messages) ? messages : [messages] };
 
 	const session: FakeSession = {
 		sessionManager: { getHeader: () => undefined },
@@ -87,6 +107,7 @@ function createRuntimeHost(assistantMessage: AssistantMessage): FakeRuntimeHost 
 }
 
 afterEach(() => {
+	outputGuard.stdout = [];
 	vi.restoreAllMocks();
 });
 
@@ -138,5 +159,35 @@ describe("runPrintMode", () => {
 		expect(errorSpy).toHaveBeenCalledWith("provider failure");
 		expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
 		expect(session.extensionRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown", reason: "quit" });
+	});
+
+	it("prints the last assistant text when a terminating tool result trails it", async () => {
+		const runtimeHost = createRuntimeHost([
+			createAssistantMessage({ text: "final answer" }),
+			createToolResultMessage(),
+		]);
+
+		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
+			mode: "text",
+		});
+
+		expect(exitCode).toBe(0);
+		expect(outputGuard.stdout.join("")).toBe("final answer\n");
+	});
+
+	it("returns non-zero when an aborted assistant message is followed by a tool result", async () => {
+		const runtimeHost = createRuntimeHost([
+			createAssistantMessage({ stopReason: "aborted", errorMessage: "user aborted" }),
+			createToolResultMessage(),
+		]);
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
+			mode: "text",
+		});
+
+		expect(exitCode).toBe(1);
+		expect(errorSpy).toHaveBeenCalledWith("user aborted");
+		expect(outputGuard.stdout.join("")).toBe("");
 	});
 });

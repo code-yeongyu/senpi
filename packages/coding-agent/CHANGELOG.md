@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Fixed print mode to print preceding assistant text when a terminating tool result is the final message; empty assistant text still prints nothing.
+
 ### Removed
 
 ## [2026.6.12-2] - 2026-06-12
