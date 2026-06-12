@@ -8,6 +8,8 @@
 
 ### Changed
 
+- Improved repeated Markdown rendering and editor wrapping performance with bounded caches.
+
 ### Fixed
 
 ### Removed

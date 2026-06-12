@@ -54,12 +54,23 @@ export async function executeBashWithOperations(
 	options?: BashExecutorOptions,
 ): Promise<BashResult> {
 	const outputChunks: string[] = [];
+	let outputChunkStart = 0;
 	let outputBytes = 0;
 	const maxOutputBytes = DEFAULT_MAX_BYTES * 2;
 
 	let tempFilePath: string | undefined;
 	let tempFileStream: WriteStream | undefined;
 	let totalBytes = 0;
+
+	const compactOutputChunks = () => {
+		if (outputChunkStart < 64) {
+			return;
+		}
+		outputChunks.splice(0, outputChunkStart);
+		outputChunkStart = 0;
+	};
+
+	const outputText = () => outputChunks.slice(outputChunkStart).join("");
 
 	const ensureTempFile = () => {
 		if (tempFilePath) {
@@ -68,8 +79,11 @@ export async function executeBashWithOperations(
 		const id = randomBytes(8).toString("hex");
 		tempFilePath = join(tmpdir(), `pi-bash-${id}.log`);
 		tempFileStream = createWriteStream(tempFilePath);
-		for (const chunk of outputChunks) {
-			tempFileStream.write(chunk);
+		for (let i = outputChunkStart; i < outputChunks.length; i++) {
+			const chunk = outputChunks[i];
+			if (chunk !== undefined) {
+				tempFileStream.write(chunk);
+			}
 		}
 	};
 
@@ -90,17 +104,28 @@ export async function executeBashWithOperations(
 			tempFileStream.write(text);
 		}
 
-		// Keep rolling buffer
 		outputChunks.push(text);
 		outputBytes += text.length;
-		while (outputBytes > maxOutputBytes && outputChunks.length > 1) {
-			const removed = outputChunks.shift()!;
+		while (outputBytes > maxOutputBytes && outputChunkStart < outputChunks.length - 1) {
+			const removed = outputChunks[outputChunkStart];
+			if (removed === undefined) {
+				break;
+			}
 			outputBytes -= removed.length;
+			outputChunkStart++;
 		}
+		compactOutputChunks();
 
 		// Stream to callback
 		if (options?.onChunk) {
 			options.onChunk(text);
+		}
+	};
+
+	const finishDecoder = () => {
+		const finalText = sanitizeBinaryOutput(stripAnsi(decoder.decode())).replace(/\r/g, "");
+		if (finalText.length > 0) {
+			onData(Buffer.from(finalText, "utf-8"));
 		}
 	};
 
@@ -110,7 +135,8 @@ export async function executeBashWithOperations(
 			signal: options?.signal,
 		});
 
-		const fullOutput = outputChunks.join("");
+		finishDecoder();
+		const fullOutput = outputText();
 		const truncationResult = truncateTail(fullOutput);
 		if (truncationResult.truncated) {
 			ensureTempFile();
@@ -130,7 +156,8 @@ export async function executeBashWithOperations(
 	} catch (err) {
 		// Check if it was an abort
 		if (options?.signal?.aborted) {
-			const fullOutput = outputChunks.join("");
+			finishDecoder();
+			const fullOutput = outputText();
 			const truncationResult = truncateTail(fullOutput);
 			if (truncationResult.truncated) {
 				ensureTempFile();

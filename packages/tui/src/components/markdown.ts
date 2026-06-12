@@ -27,6 +27,44 @@ markdownParser.setOptions({
 	tokenizer: new StrictStrikethroughTokenizer(),
 });
 
+const RENDER_CACHE_MAX = 256;
+const PARSE_CACHE_MAX = 128;
+const renderCache = new Map<string, { source: string; lines: string[] }>();
+const parseCache = new Map<string, { source: string; tokens: Token[] }>();
+const objectIds = new WeakMap<object, number>();
+let nextObjectId = 0;
+
+function objectId(value: object): number {
+	const cached = objectIds.get(value);
+	if (cached !== undefined) return cached;
+	const id = nextObjectId++;
+	objectIds.set(value, id);
+	return id;
+}
+
+function cacheSet<T>(cache: Map<string, T>, key: string, value: T, maxSize: number): void {
+	if (cache.has(key)) cache.delete(key);
+	cache.set(key, value);
+	if (cache.size > maxSize) {
+		const oldest = cache.keys().next().value;
+		if (oldest !== undefined) cache.delete(oldest);
+	}
+}
+
+function contentKey(text: string): string {
+	let hash = 2166136261;
+	for (let i = 0; i < text.length; i++) {
+		hash ^= text.charCodeAt(i);
+		hash = Math.imul(hash, 16777619);
+	}
+	return `${text.length}:${(hash >>> 0).toString(36)}`;
+}
+
+export function clearRenderCache(): void {
+	renderCache.clear();
+	parseCache.clear();
+}
+
 /**
  * Default text styling for markdown content.
  * Applied to all text unless overridden by markdown formatting.
@@ -142,9 +180,38 @@ export class Markdown implements Component {
 
 		// Replace tabs with 3 spaces for consistent rendering
 		const normalizedText = this.text.replace(/\t/g, "   ");
+		const normalizedContentKey = contentKey(normalizedText);
+		const styleKey = this.defaultTextStyle ? objectId(this.defaultTextStyle) : -1;
+		const renderKey = [
+			normalizedContentKey,
+			width,
+			contentWidth,
+			this.paddingX,
+			this.paddingY,
+			this.theme.codeBlockIndent ?? "  ",
+			this.options.preserveOrderedListMarkers ? 1 : 0,
+			objectId(this.theme),
+			styleKey,
+			getCapabilities().images ?? "",
+			getCapabilities().hyperlinks ? 1 : 0,
+		].join("\x00");
+		const cachedRender = renderCache.get(renderKey);
+		if (cachedRender?.source === normalizedText) {
+			this.cachedText = this.text;
+			this.cachedWidth = width;
+			this.cachedLines = cachedRender.lines;
+			return cachedRender.lines;
+		}
 
 		// Parse markdown to HTML-like tokens
-		const tokens = markdownParser.lexer(normalizedText);
+		const cachedParse = parseCache.get(normalizedContentKey);
+		let tokens: Token[];
+		if (cachedParse?.source === normalizedText) {
+			tokens = cachedParse.tokens;
+		} else {
+			tokens = markdownParser.lexer(normalizedText);
+			cacheSet(parseCache, normalizedContentKey, { source: normalizedText, tokens }, PARSE_CACHE_MAX);
+		}
 
 		// Convert tokens to styled terminal output
 		const renderedLines: string[] = [];
@@ -209,6 +276,7 @@ export class Markdown implements Component {
 		this.cachedText = this.text;
 		this.cachedWidth = width;
 		this.cachedLines = result;
+		cacheSet(renderCache, renderKey, { source: normalizedText, lines: result }, RENDER_CACHE_MAX);
 
 		return result.length > 0 ? result : [""];
 	}

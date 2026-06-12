@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { TailWindow } from "./tail-window.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult, truncateTail } from "./truncate.ts";
 
 export interface OutputAccumulatorOptions {
@@ -35,14 +36,11 @@ function byteLength(text: string): number {
 export class OutputAccumulator {
 	private readonly maxLines: number;
 	private readonly maxBytes: number;
-	private readonly maxRollingBytes: number;
 	private readonly tempFilePrefix: string;
 	private readonly decoder = new TextDecoder();
+	private readonly tail: TailWindow;
 
-	private rawChunks: Buffer[] = [];
-	private tailText = "";
-	private tailBytes = 0;
-	private tailStartsAtLineBoundary = true;
+	private rawChunks: Array<Buffer | string> = [];
 	private totalRawBytes = 0;
 	private totalDecodedBytes = 0;
 	private completedLines = 0;
@@ -57,8 +55,8 @@ export class OutputAccumulator {
 	constructor(options: OutputAccumulatorOptions = {}) {
 		this.maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
 		this.maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
-		this.maxRollingBytes = Math.max(this.maxBytes * 2, 1);
 		this.tempFilePrefix = options.tempFilePrefix ?? "pi-output";
+		this.tail = new TailWindow(Math.max(this.maxBytes * 2, 1));
 	}
 
 	append(data: Buffer): void {
@@ -66,8 +64,9 @@ export class OutputAccumulator {
 			throw new Error("Cannot append to a finished output accumulator");
 		}
 
+		const text = this.decoder.decode(data, { stream: true });
 		this.totalRawBytes += data.length;
-		this.appendDecodedText(this.decoder.decode(data, { stream: true }));
+		this.appendDecodedText(text, byteLength(text));
 
 		if (this.tempFileStream || this.shouldUseTempFile()) {
 			this.ensureTempFile();
@@ -77,12 +76,33 @@ export class OutputAccumulator {
 		}
 	}
 
+	appendText(text: string): void {
+		if (this.finished) {
+			throw new Error("Cannot append to a finished output accumulator");
+		}
+		if (text.length === 0) {
+			return;
+		}
+
+		const bytes = byteLength(text);
+		this.totalRawBytes += bytes;
+		this.appendDecodedText(text, bytes);
+
+		if (this.tempFileStream || this.shouldUseTempFile()) {
+			this.ensureTempFile();
+			this.tempFileStream?.write(text);
+		} else {
+			this.rawChunks.push(text);
+		}
+	}
+
 	finish(): void {
 		if (this.finished) {
 			return;
 		}
 		this.finished = true;
-		this.appendDecodedText(this.decoder.decode());
+		const finalText = this.decoder.decode();
+		this.appendDecodedText(finalText, byteLength(finalText));
 		if (this.shouldUseTempFile()) {
 			this.ensureTempFile();
 		}
@@ -119,12 +139,10 @@ export class OutputAccumulator {
 	}
 
 	async closeTempFile(): Promise<void> {
-		if (!this.tempFileStream) {
+		const stream = this.takeTempFileStream();
+		if (!stream) {
 			return;
 		}
-
-		const stream = this.tempFileStream;
-		this.tempFileStream = undefined;
 
 		await new Promise<void>((resolve, reject) => {
 			const onError = (error: Error) => {
@@ -145,18 +163,13 @@ export class OutputAccumulator {
 		return this.currentLineBytes;
 	}
 
-	private appendDecodedText(text: string): void {
+	private appendDecodedText(text: string, bytes: number): void {
 		if (text.length === 0) {
 			return;
 		}
 
-		const bytes = byteLength(text);
 		this.totalDecodedBytes += bytes;
-		this.tailText += text;
-		this.tailBytes += bytes;
-		if (this.tailBytes > this.maxRollingBytes * 2) {
-			this.trimTail();
-		}
+		this.tail.append(text, bytes, !this.hasOpenLine);
 
 		let newlines = 0;
 		let lastNewline = -1;
@@ -176,30 +189,14 @@ export class OutputAccumulator {
 		this.totalLines = this.completedLines + (this.hasOpenLine ? 1 : 0);
 	}
 
-	private trimTail(): void {
-		const buffer = Buffer.from(this.tailText, "utf-8");
-		if (buffer.length <= this.maxRollingBytes) {
-			this.tailBytes = buffer.length;
-			return;
-		}
-
-		let start = buffer.length - this.maxRollingBytes;
-		while (start < buffer.length && (buffer[start] & 0xc0) === 0x80) {
-			start++;
-		}
-
-		this.tailStartsAtLineBoundary = start === 0 ? this.tailStartsAtLineBoundary : buffer[start - 1] === 0x0a;
-		this.tailText = buffer.subarray(start).toString("utf-8");
-		this.tailBytes = byteLength(this.tailText);
-	}
-
 	private getSnapshotText(): string {
-		if (this.tailStartsAtLineBoundary) {
-			return this.tailText;
+		const text = this.tail.text();
+		if (this.tail.startsAtLineBoundary) {
+			return text;
 		}
 
-		const firstNewline = this.tailText.indexOf("\n");
-		return firstNewline === -1 ? this.tailText : this.tailText.slice(firstNewline + 1);
+		const firstNewline = text.indexOf("\n");
+		return firstNewline === -1 ? text : text.slice(firstNewline + 1);
 	}
 
 	private shouldUseTempFile(): boolean {
@@ -218,5 +215,11 @@ export class OutputAccumulator {
 			this.tempFileStream.write(chunk);
 		}
 		this.rawChunks = [];
+	}
+
+	private takeTempFileStream(): WriteStream | undefined {
+		const stream = this.tempFileStream;
+		this.tempFileStream = undefined;
+		return stream;
 	}
 }
