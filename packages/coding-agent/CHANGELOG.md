@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added JSONL parse and RPC event emission benchmark harnesses.
+
 ### Fixed
 
 ### Removed
