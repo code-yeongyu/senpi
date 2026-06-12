@@ -100,6 +100,51 @@ export interface TextChunk {
 	endIndex: number;
 }
 
+function isPrintableAsciiText(text: string): boolean {
+	for (let i = 0; i < text.length; i++) {
+		const code = text.charCodeAt(i);
+		if (code < 0x20 || code > 0x7e) return false;
+	}
+	return true;
+}
+
+function wordWrapAsciiLine(line: string, maxWidth: number): TextChunk[] {
+	if (line.length <= maxWidth) {
+		return [{ text: line, startIndex: 0, endIndex: line.length }];
+	}
+
+	const chunks: TextChunk[] = [];
+	let chunkStart = 0;
+	while (chunkStart < line.length) {
+		let chunkEnd = Math.min(line.length, chunkStart + maxWidth);
+		if (chunkEnd < line.length) {
+			let breakAt = -1;
+			for (let i = chunkEnd; i > chunkStart; i--) {
+				const code = line.charCodeAt(i - 1);
+				if (code === 0x20 || code === 0x09) {
+					breakAt = i - 1;
+					break;
+				}
+			}
+			if (breakAt > chunkStart) chunkEnd = breakAt;
+		}
+
+		const raw = line.slice(chunkStart, chunkEnd);
+		const text = raw.trimEnd();
+		if (text || chunks.length === 0) {
+			chunks.push({ text, startIndex: chunkStart, endIndex: chunkStart + raw.length });
+		}
+		chunkStart = chunkEnd;
+		while (chunkStart < line.length) {
+			const code = line.charCodeAt(chunkStart);
+			if (code !== 0x20 && code !== 0x09) break;
+			chunkStart++;
+		}
+	}
+
+	return chunks.length > 0 ? chunks : [{ text: "", startIndex: 0, endIndex: 0 }];
+}
+
 /**
  * Split a line into word-wrapped chunks.
  * Wraps at word boundaries when possible, falling back to character-level
@@ -114,6 +159,9 @@ export interface TextChunk {
 export function wordWrapLine(line: string, maxWidth: number, preSegmented?: Intl.SegmentData[]): TextChunk[] {
 	if (!line || maxWidth <= 0) {
 		return [{ text: "", startIndex: 0, endIndex: 0 }];
+	}
+	if (preSegmented === undefined && !/\s/.test(line) && !line.includes("[paste #") && isPrintableAsciiText(line)) {
+		return wordWrapAsciiLine(line, maxWidth);
 	}
 
 	const lineWidth = visibleWidth(line);
@@ -319,6 +367,7 @@ export class Editor implements Component, Focusable {
 
 	// Undo support
 	private undoStack = new UndoStack<EditorState>();
+	private wrappedLineCache = new Map<string, TextChunk[]>();
 
 	public onSubmit?: (text: string) => void;
 	public onChange?: (text: string) => void;
@@ -454,7 +503,23 @@ export class Editor implements Component, Focusable {
 	}
 
 	invalidate(): void {
-		// No cached state to invalidate currently
+		this.wrappedLineCache.clear();
+	}
+
+	private getWrappedLineChunks(line: string, contentWidth: number): TextChunk[] {
+		if (line.includes("[paste #")) {
+			return wordWrapLine(line, contentWidth, [...this.segment(line, "grapheme")]);
+		}
+		const key = `${contentWidth}\x00${line}`;
+		const cached = this.wrappedLineCache.get(key);
+		if (cached) return cached;
+		const chunks = wordWrapLine(line, contentWidth);
+		if (this.wrappedLineCache.size >= 256) {
+			const oldest = this.wrappedLineCache.keys().next().value;
+			if (oldest !== undefined) this.wrappedLineCache.delete(oldest);
+		}
+		this.wrappedLineCache.set(key, chunks);
+		return chunks;
 	}
 
 	render(width: number): string[] {
@@ -906,7 +971,7 @@ export class Editor implements Component, Focusable {
 				}
 			} else {
 				// Line needs wrapping - use word-aware wrapping
-				const chunks = wordWrapLine(line, contentWidth, [...this.segment(line, "grapheme")]);
+				const chunks = this.getWrappedLineChunks(line, contentWidth);
 
 				for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
 					const chunk = chunks[chunkIndex];
@@ -1693,7 +1758,7 @@ export class Editor implements Component, Focusable {
 				visualLines.push({ logicalLine: i, startCol: 0, length: line.length });
 			} else {
 				// Line needs wrapping - use word-aware wrapping
-				const chunks = wordWrapLine(line, width, [...this.segment(line, "grapheme")]);
+				const chunks = this.getWrappedLineChunks(line, width);
 				for (const chunk of chunks) {
 					visualLines.push({
 						logicalLine: i,
