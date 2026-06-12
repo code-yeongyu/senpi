@@ -1,15 +1,22 @@
 import { MODELS } from "./models.generated.ts";
 import type { Api, KnownProvider, Model, ModelThinkingLevel, Usage } from "./types.ts";
 
+type GeneratedProvider = keyof typeof MODELS;
+
+const providerNames = Object.keys(MODELS) as KnownProvider[];
 const modelRegistry: Map<string, Map<string, Model<Api>>> = new Map();
 
-// Initialize registry from MODELS on module load
-for (const [provider, models] of Object.entries(MODELS)) {
+function getProviderModels(provider: GeneratedProvider): Map<string, Model<Api>> | undefined {
+	const cached = modelRegistry.get(provider);
+	if (cached) return cached;
+	const models = MODELS[provider];
+	if (!models) return undefined;
 	const providerModels = new Map<string, Model<Api>>();
 	for (const [id, model] of Object.entries(models)) {
 		providerModels.set(id, model as Model<Api>);
 	}
 	modelRegistry.set(provider, providerModels);
+	return providerModels;
 }
 
 type ModelApi<
@@ -21,18 +28,18 @@ export function getModel<TProvider extends KnownProvider, TModelId extends keyof
 	provider: TProvider,
 	modelId: TModelId,
 ): Model<ModelApi<TProvider, TModelId>> {
-	const providerModels = modelRegistry.get(provider);
+	const providerModels = getProviderModels(provider);
 	return providerModels?.get(modelId as string) as Model<ModelApi<TProvider, TModelId>>;
 }
 
 export function getProviders(): KnownProvider[] {
-	return Array.from(modelRegistry.keys()) as KnownProvider[];
+	return providerNames.slice();
 }
 
 export function getModels<TProvider extends KnownProvider>(
 	provider: TProvider,
 ): Model<ModelApi<TProvider, keyof (typeof MODELS)[TProvider]>>[] {
-	const models = modelRegistry.get(provider);
+	const models = getProviderModels(provider);
 	return models ? (Array.from(models.values()) as Model<ModelApi<TProvider, keyof (typeof MODELS)[TProvider]>>[]) : [];
 }
 
