@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed Korean, CJK, and emoji paste input when UTF-8 bytes are split across stdin chunks.
+
 ### Removed
 
 ## [2026.6.12-2] - 2026-06-12

@@ -17,11 +17,16 @@
  * MIT License - Copyright (c) 2025 opentui
  */
 
+import { StringDecoder } from "node:string_decoder";
 import { EventEmitter } from "events";
 
 const ESC = "\x1b";
 const BRACKETED_PASTE_START = "\x1b[200~";
 const BRACKETED_PASTE_END = "\x1b[201~";
+
+type StatefulStringDecoder = StringDecoder & {
+	readonly lastNeed?: number;
+};
 
 /**
  * Check if a string is a complete escape sequence or needs more data
@@ -245,9 +250,10 @@ function extractCompleteSequences(buffer: string): { sequences: string[]; remain
 				return { sequences, remainder: remaining };
 			}
 		} else {
-			// Not an escape sequence - take a single character
-			sequences.push(remaining[0]!);
-			pos++;
+			const codepoint = remaining.codePointAt(0)!;
+			const character = String.fromCodePoint(codepoint);
+			sequences.push(character);
+			pos += character.length;
 		}
 	}
 
@@ -278,6 +284,7 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 	private pasteMode: boolean = false;
 	private pasteBuffer: string = "";
 	private pendingKittyPrintableCodepoint: number | undefined;
+	private decoder: StatefulStringDecoder = new StringDecoder("utf8");
 
 	constructor(options: StdinBufferOptions = {}) {
 		super();
@@ -291,22 +298,25 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			this.timeout = null;
 		}
 
-		// Handle high-byte conversion (for compatibility with parseKeypress)
-		// If buffer has single byte > 127, convert to ESC + (byte - 128)
 		let str: string;
+		let decodedFromBuffer = false;
 		if (Buffer.isBuffer(data)) {
-			if (data.length === 1 && data[0]! > 127) {
+			const hasPendingUtf8Bytes = (this.decoder.lastNeed ?? 0) > 0;
+			if (!hasPendingUtf8Bytes && data.length === 1 && data[0]! >= 0x80 && data[0]! < 0xc2) {
 				const byte = data[0]! - 128;
 				str = `\x1b${String.fromCharCode(byte)}`;
 			} else {
-				str = data.toString();
+				str = this.decoder.write(data);
+				decodedFromBuffer = true;
 			}
 		} else {
 			str = data;
 		}
 
 		if (str.length === 0 && this.buffer.length === 0) {
-			this.emitDataSequence("");
+			if (!decodedFromBuffer) {
+				this.emitDataSequence("");
+			}
 			return;
 		}
 
@@ -422,6 +432,7 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 		this.pasteMode = false;
 		this.pasteBuffer = "";
 		this.pendingKittyPrintableCodepoint = undefined;
+		this.decoder = new StringDecoder("utf8");
 	}
 
 	getBuffer(): string {

@@ -1,7 +1,51 @@
 import assert from "node:assert";
-import { describe, it, mock } from "node:test";
+import { mock, describe as nodeDescribe, it as nodeIt } from "node:test";
+import { vi, describe as vitestDescribe, it as vitestIt } from "vitest";
 import { setKittyProtocolActive } from "../src/keys.ts";
 import { normalizeAppleTerminalInput, ProcessTerminal } from "../src/terminal.ts";
+
+const isVitest = process.env.VITEST === "true";
+type TestCallback = () => void | Promise<void>;
+
+function describe(name: string, fn: TestCallback): void {
+	if (isVitest) {
+		vitestDescribe(name, fn);
+		return;
+	}
+	nodeDescribe(name, fn);
+}
+
+function it(name: string, fn: TestCallback): void {
+	if (isVitest) {
+		vitestIt(name, fn);
+		return;
+	}
+	nodeIt(name, fn);
+}
+
+function enableFakeTimers(): void {
+	if (isVitest) {
+		vi.useFakeTimers();
+		return;
+	}
+	mock.timers.enable({ apis: ["setTimeout"] });
+}
+
+function advanceTimersByTime(ms: number): void {
+	if (isVitest) {
+		vi.advanceTimersByTime(ms);
+		return;
+	}
+	mock.timers.tick(ms);
+}
+
+function resetFakeTimers(): void {
+	if (isVitest) {
+		vi.useRealTimers();
+		return;
+	}
+	mock.timers.reset();
+}
 
 describe("normalizeAppleTerminalInput", () => {
 	it("rewrites Apple Terminal Return to CSI-u Shift+Enter when Shift is pressed", () => {
@@ -26,7 +70,7 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 	type NegotiationHarness = {
 		terminal: ProcessTerminal;
 		writes: string[];
-		send(data: string): void;
+		send(data: string | Buffer): void;
 		getInput(): string | undefined;
 		cleanup(): void;
 	};
@@ -35,7 +79,7 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 		const terminal = new ProcessTerminal();
 		const writes: string[] = [];
 		let input: string | undefined;
-		let dataHandler: ((data: string) => void) | undefined;
+		let dataHandler: ((data: string | Buffer) => void) | undefined;
 		let cleaned = false;
 		const previousWrite = process.stdout.write;
 		const previousOn = process.stdin.on;
@@ -52,7 +96,7 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 			return true;
 		}) as typeof process.stdout.write;
 		process.stdin.on = ((event: string | symbol, listener: (...args: unknown[]) => void) => {
-			if (event === "data") dataHandler = listener as (data: string) => void;
+			if (event === "data") dataHandler = listener as (data: string | Buffer) => void;
 			return process.stdin;
 		}) as typeof process.stdin.on;
 
@@ -69,7 +113,7 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 		return {
 			terminal,
 			writes,
-			send(data: string): void {
+			send(data: string | Buffer): void {
 				dataHandler?.(data);
 			},
 			getInput(): string | undefined {
@@ -163,12 +207,26 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 		}
 	});
 
+	it("reassembles split Korean Buffer chunks before forwarding input", () => {
+		const harness = setupNegotiation();
+		try {
+			harness.send(Buffer.from([0xed, 0x95]));
+			assert.equal(harness.getInput(), undefined);
+
+			harness.send(Buffer.from([0x9c]));
+
+			assert.equal(harness.getInput(), "한");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	it("tracks split Kitty confirmation", () => {
-		mock.timers.enable({ apis: ["setTimeout"] });
+		enableFakeTimers();
 		const harness = setupNegotiation();
 		try {
 			harness.send("\x1b[?7");
-			mock.timers.tick(10);
+			advanceTimersByTime(10);
 
 			assert.equal(harness.getInput(), undefined);
 
@@ -178,25 +236,25 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 			assert.equal(harness.writes.includes("\x1b[>4;2m"), false);
 		} finally {
 			harness.cleanup();
-			mock.timers.reset();
+			resetFakeTimers();
 		}
 	});
 
 	it("replays buffered CSI-prefix input when it is not a Kitty response", () => {
-		mock.timers.enable({ apis: ["setTimeout"] });
+		enableFakeTimers();
 		const harness = setupNegotiation();
 		try {
 			harness.send("\x1b[");
-			mock.timers.tick(10);
+			advanceTimersByTime(10);
 
 			assert.equal(harness.getInput(), undefined);
 
-			mock.timers.tick(150);
+			advanceTimersByTime(150);
 
 			assert.equal(harness.getInput(), "\x1b[");
 		} finally {
 			harness.cleanup();
-			mock.timers.reset();
+			resetFakeTimers();
 		}
 	});
 
