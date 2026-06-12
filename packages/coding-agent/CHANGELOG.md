@@ -8,6 +8,7 @@
 
 ### Changed
 
+- Improved RPC event emission by coalescing same-tick event frames into one stdout write, reducing the benchmarked write count by 99.90%.
 - Reduced Bun compiled binary size by 7.06% with minification while preserving function names.
 - Models registry Anthropic compatibility config now accepts `supportsToolChoice` and `supportsForcedToolChoice` flags.
 

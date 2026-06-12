@@ -27,7 +27,8 @@ import {
 } from "../../core/output-guard.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
-import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
+import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
+import { attachJsonlLineReader } from "./jsonl.ts";
 import type {
 	RpcCommand,
 	RpcExtensionUIRequest,
@@ -55,9 +56,19 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	let session = runtimeHost.session;
 	let unsubscribe: (() => void) | undefined;
 	let unsubscribeBackpressure: (() => void) | undefined;
+	const eventOutput = createRpcEventOutputBuffer(writeRawStdout);
 
 	const output = (obj: RpcResponse | RpcExtensionUIRequest | object) => {
-		writeRawStdout(serializeJsonLine(obj));
+		eventOutput.writeImmediate(obj);
+	};
+
+	const outputEvent = (event: object) => {
+		eventOutput.enqueueEvent(event);
+	};
+
+	const waitForRpcStdoutBackpressure = async (): Promise<void> => {
+		eventOutput.flushEvents();
+		await waitForRawStdoutBackpressure();
 	};
 
 	const success = <T extends RpcCommand["type"]>(
@@ -352,10 +363,10 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		unsubscribe?.();
 		unsubscribeBackpressure?.();
 		unsubscribe = session.subscribe((event) => {
-			output(event);
+			outputEvent(event);
 		});
 		unsubscribeBackpressure = session.agent.subscribe(async () => {
-			await waitForRawStdoutBackpressure();
+			await waitForRpcStdoutBackpressure();
 		});
 	};
 
@@ -692,6 +703,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		detachInput();
 		process.stdin.pause();
 		if (signal !== "SIGTERM") {
+			eventOutput.flushEvents();
 			await flushRawStdout();
 		}
 		process.exit(exitCode);
@@ -714,7 +726,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 					`Failed to parse command: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
 				),
 			);
-			await waitForRawStdoutBackpressure();
+			await waitForRpcStdoutBackpressure();
 			return;
 		}
 
@@ -739,7 +751,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			const response = await handleCommand(command);
 			if (response) {
 				output(response);
-				await waitForRawStdoutBackpressure();
+				await waitForRpcStdoutBackpressure();
 			}
 			await checkShutdownRequested();
 		} catch (commandError: unknown) {
@@ -750,7 +762,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 					commandError instanceof Error ? commandError.message : String(commandError),
 				),
 			);
-			await waitForRawStdoutBackpressure();
+			await waitForRpcStdoutBackpressure();
 		}
 	};
 

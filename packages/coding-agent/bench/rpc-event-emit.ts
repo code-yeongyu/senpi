@@ -3,7 +3,7 @@
 import process from "node:process";
 import { TextEncoder } from "node:util";
 import { forceGc, metadata, percentile, readIterations } from "../../tui/bench/_meta.ts";
-import { serializeJsonLine } from "../src/modes/rpc/jsonl.ts";
+import { createRpcEventOutputBuffer } from "../src/modes/rpc/event-output-buffer.ts";
 
 const EVENT_COUNT = 1_000;
 const SCENARIOS_PER_SAMPLE = 50;
@@ -92,11 +92,19 @@ const EVENTS = buildEvents();
 
 function runScenario(): CountingSink {
 	const sink = new CountingSink();
+	const scheduledFlushes: Array<() => void> = [];
+	const output = createRpcEventOutputBuffer(
+		(chunk) => sink.write(chunk),
+		(flush) => scheduledFlushes.push(flush),
+	);
 	for (const event of EVENTS) {
-		sink.write(serializeJsonLine(event));
+		output.enqueueEvent(event);
 	}
-	if (sink.writeCalls !== EVENT_COUNT) {
-		throw new Error(`Expected ${EVENT_COUNT} writes, got ${sink.writeCalls}`);
+	for (const flush of scheduledFlushes) {
+		flush();
+	}
+	if (sink.writeCalls !== 1) {
+		throw new Error(`Expected 1 coalesced write, got ${sink.writeCalls}`);
 	}
 	if (sink.totalBytes === 0) {
 		throw new Error("Expected serialized bytes");
