@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- Fixed resumed aborted tool calls to reuse the persisted retry-attempt label.
 - Fixed Bun binaries ignoring project `.env` provider credentials so untrusted project files cannot inject API keys.
 - Fixed print mode to print preceding assistant text when a terminating tool result is the final message; empty assistant text still prints nothing.
 

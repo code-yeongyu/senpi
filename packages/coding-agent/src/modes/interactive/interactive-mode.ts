@@ -100,6 +100,7 @@ import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { checkForNewPiVersion } from "../../utils/version-check.ts";
+import { abortedErrorLabel } from "./aborted-error-label.ts";
 import { ArminComponent } from "./components/armin.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
@@ -3159,11 +3160,7 @@ export class InteractiveMode {
 					this.streamingMessage = event.message;
 					let errorMessage: string | undefined;
 					if (this.streamingMessage.stopReason === "aborted") {
-						const retryAttempt = this.session.retryAttempt;
-						errorMessage =
-							retryAttempt > 0
-								? `Aborted after ${retryAttempt} retry attempt${retryAttempt > 1 ? "s" : ""}`
-								: "Operation aborted";
+						errorMessage = abortedErrorLabel(undefined, this.session.retryAttempt);
 						this.streamingMessage.errorMessage = errorMessage;
 					}
 					this.streamingComponent.updateContent(this.streamingMessage);
@@ -3583,11 +3580,7 @@ export class InteractiveMode {
 						if (message.stopReason === "aborted" || message.stopReason === "error") {
 							let errorMessage: string;
 							if (message.stopReason === "aborted") {
-								const retryAttempt = this.session.retryAttempt;
-								errorMessage =
-									retryAttempt > 0
-										? `Aborted after ${retryAttempt} retry attempt${retryAttempt > 1 ? "s" : ""}`
-										: "Operation aborted";
+								errorMessage = abortedErrorLabel(message.errorMessage, this.session.retryAttempt);
 							} else {
 								errorMessage = message.errorMessage || "Error";
 							}
