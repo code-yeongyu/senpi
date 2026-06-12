@@ -8,6 +8,7 @@
 
 ### Changed
 
+- Reduced Bun compiled binary size by 7.06% with minification while preserving function names.
 - Models registry Anthropic compatibility config now accepts `supportsToolChoice` and `supportsForcedToolChoice` flags.
 
 ### Fixed
