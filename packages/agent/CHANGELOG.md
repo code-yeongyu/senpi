@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed late tool progress callbacks after tool settlement to be ignored instead of emitting stale `tool_execution_update` events ([#5573](https://github.com/earendil-works/pi/issues/5573)).
+
 ### Removed
 
 ## [2026.6.12-2] - 2026-06-12

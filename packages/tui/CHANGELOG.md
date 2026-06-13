@@ -11,6 +11,11 @@
 ### Fixed
 
 - Fixed Korean, CJK, and emoji paste input when UTF-8 bytes are split across stdin chunks.
+- Fixed Markdown source list marker preservation to include unordered markers, so standalone `+` user messages no longer render as `-` ([#5657](https://github.com/earendil-works/pi/issues/5657)).
+- Fixed slash-separated fuzzy queries so provider/model completions remain matchable after insertion.
+- Fixed WezTerm inline Kitty image rendering so reserved row clears do not erase all but the top strip of tool image previews ([#5618](https://github.com/earendil-works/pi/issues/5618)).
+- Fixed editor wrapping for CJK text to break at character boundaries instead of leaving large trailing gaps ([#5585](https://github.com/earendil-works/pi/pull/5585) by [@haoqixu](https://github.com/haoqixu)).
+- Fixed loose Markdown list rendering to preserve blank-line separation between list items ([#5562](https://github.com/earendil-works/pi/pull/5562) by [@Perlence](https://github.com/Perlence)).
 
 ### Removed
 

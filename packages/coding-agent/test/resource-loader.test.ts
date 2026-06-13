@@ -17,6 +17,7 @@ describe("DefaultResourceLoader", () => {
 	let tempDir: string;
 	let agentDir: string;
 	let cwd: string;
+	let originalHome: string | undefined;
 
 	beforeEach(() => {
 		tempDir = join(tmpdir(), `rl-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -24,9 +25,16 @@ describe("DefaultResourceLoader", () => {
 		cwd = join(tempDir, "project");
 		mkdirSync(agentDir, { recursive: true });
 		mkdirSync(cwd, { recursive: true });
+		originalHome = process.env.HOME;
+		process.env.HOME = tempDir;
 	});
 
 	afterEach(() => {
+		if (originalHome === undefined) {
+			delete process.env.HOME;
+		} else {
+			process.env.HOME = originalHome;
+		}
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
@@ -36,7 +44,7 @@ describe("DefaultResourceLoader", () => {
 
 	describe("reload", () => {
 		it("should initialize with empty results before reload", () => {
-			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			const loader = new DefaultResourceLoader({ cwd, agentDir, noSkills: true });
 
 			expect(loader.getExtensions().extensions).toEqual([]);
 			expect(loader.getSkills().skills).toEqual([]);
@@ -385,7 +393,7 @@ Content`,
 			expect(loader.getSystemPrompt()).toBeUndefined();
 		});
 
-		it("should skip trust-gated project resources when project is not trusted", async () => {
+		it("should skip project resources that require trust when project is not trusted", async () => {
 			const configDir = join(cwd, CONFIG_DIR_NAME);
 			const extensionsDir = join(configDir, "extensions");
 			const skillDir = join(configDir, "skills", "project-skill");

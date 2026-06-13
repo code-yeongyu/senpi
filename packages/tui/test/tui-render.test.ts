@@ -1,7 +1,14 @@
 import assert from "node:assert";
 import { describe, it, test } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
-import { deleteKittyImage, encodeKitty } from "../src/terminal-image.ts";
+import { Image } from "../src/components/image.ts";
+import {
+	deleteKittyImage,
+	encodeKitty,
+	resetCapabilitiesCache,
+	setCapabilities,
+	setCellDimensions,
+} from "../src/terminal-image.ts";
 import { type Component, TUI } from "../src/tui.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
@@ -249,6 +256,86 @@ describe("TUI lifecycle memory", () => {
 });
 
 describe("TUI Kitty image cleanup", () => {
+	it("clears reserved Kitty image rows before drawing appended image placements", async () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		setCellDimensions({ widthPx: 10, heightPx: 10 });
+		try {
+			const terminal = new LoggingVirtualTerminal(40, 10);
+			const tui = new TUI(terminal);
+			const component = new TestComponent();
+			tui.addChild(component);
+
+			component.lines = ["before"];
+			tui.start();
+			await terminal.waitForRender();
+			terminal.clearWrites();
+
+			const image = new Image(
+				"AAAA",
+				"image/png",
+				{ fallbackColor: (value) => value },
+				{ maxWidthCells: 2 },
+				{ widthPx: 20, heightPx: 20 },
+			);
+			const imageLines = image.render(40);
+			const imageSequence = imageLines[0];
+			component.lines = ["before", ...imageLines, "after"];
+			tui.requestRender();
+			await terminal.waitForRender();
+
+			const writes = terminal.getWrites();
+			assert.ok(
+				writes.includes(`\x1b[2K\r\n\x1b[2K\x1b[1A${imageSequence}\x1b[1B`),
+				"reserved rows should be cleared before the image placement is drawn",
+			);
+			assert.ok(
+				!writes.includes(`${imageSequence}\r\n\x1b[2K`),
+				"reserved row clears must not run after the image placement is drawn",
+			);
+
+			tui.stop();
+		} finally {
+			resetCapabilitiesCache();
+			setCellDimensions({ widthPx: 9, heightPx: 18 });
+		}
+	});
+
+	it("falls back to full redraw when Kitty image pre-clear would scroll", async () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		setCellDimensions({ widthPx: 10, heightPx: 10 });
+		try {
+			const terminal = new LoggingVirtualTerminal(40, 2);
+			const tui = new TUI(terminal);
+			const component = new TestComponent();
+			tui.addChild(component);
+
+			component.lines = ["before"];
+			tui.start();
+			await terminal.waitForRender();
+			const redrawsBeforeImage = tui.fullRedraws;
+			terminal.clearWrites();
+
+			const image = new Image(
+				"AAAA",
+				"image/png",
+				{ fallbackColor: (value) => value },
+				{ maxWidthCells: 3 },
+				{ widthPx: 30, heightPx: 30 },
+			);
+			component.lines = ["before", ...image.render(40), "after"];
+			tui.requestRender();
+			await terminal.waitForRender();
+
+			assert.ok(tui.fullRedraws > redrawsBeforeImage, "unsafe image pre-clear should force a full redraw");
+			assert.ok(terminal.getWrites().includes("\x1b[2J"), "fallback should clear and fully redraw");
+
+			tui.stop();
+		} finally {
+			resetCapabilitiesCache();
+			setCellDimensions({ widthPx: 9, heightPx: 18 });
+		}
+	});
+
 	it("deletes changed image ids before drawing moved placements", async () => {
 		const terminal = new LoggingVirtualTerminal(40, 10);
 		const tui = new TUI(terminal);

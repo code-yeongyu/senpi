@@ -6,11 +6,18 @@
 
 ### Added
 
+- Added AWS data retention documentation links to Amazon Bedrock unsupported data retention mode validation errors ([#5561](https://github.com/earendil-works/pi/pull/5561) by [@unexge](https://github.com/unexge)).
+
 ### Changed
 
 ### Fixed
 
 - Fixed Anthropic Claude Fable/Mythos requests to omit unsupported forced `tool_choice` values while preserving tools and automatic tool choice.
+- Restored OpenAI GPT-5.4/GPT-5.5 and OpenAI Codex GPT-5.4/GPT-5.4 mini/GPT-5.5 context window metadata to the observed 272k-token Codex backend limit, avoiding a billing hazard from sending prompts above Codex's accepted limit (reported by [@trethore](https://github.com/trethore)).
+- Fixed OpenAI-compatible context overflow detection for parenthesized `maximum context length (N)` errors ([#5677](https://github.com/earendil-works/pi/issues/5677)).
+- Increased the OpenAI Codex Responses SSE response-header timeout to 20 seconds to reduce false-positive stalls while retaining the bounded wait introduced for zero-event hangs ([#4945](https://github.com/earendil-works/pi/issues/4945)).
+- Fixed Anthropic refusal stops to preserve provider `stop_details` explanations in error messages ([#5666](https://github.com/earendil-works/pi/pull/5666) by [@rwachtler](https://github.com/rwachtler)).
+- Fixed Claude Fable 5 thinking-off requests to omit Anthropic's unsupported `thinking.type: "disabled"` payload ([#5567](https://github.com/earendil-works/pi/pull/5567) by [@tmustier](https://github.com/tmustier)).
 
 ### Removed
 
@@ -36,12 +43,6 @@
 
 - When Amazon Bedrock rejects an unsupported data retention mode, the error now links the AWS data retention documentation ([#5561](https://github.com/earendil-works/pi/pull/5561) by [@unexge](https://github.com/unexge)).
 - Improved EventStream queued-event throughput and lazily initializes bundled model registry maps.
-
-### Fixed
-
-- Fixed Claude Fable 5 thinking-off requests to omit Anthropic's unsupported `thinking.type: "disabled"` payload ([#5567](https://github.com/earendil-works/pi/pull/5567) by [@tmustier](https://github.com/tmustier)).
-
-### Removed
 
 ## [2026.6.10-2] - 2026-06-10
 

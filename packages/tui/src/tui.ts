@@ -13,24 +13,42 @@ import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
 
-function extractKittyImageIds(line: string): number[] {
+interface KittyImageHeader {
+	ids: number[];
+	rows: number;
+}
+
+function parseKittyImageHeader(line: string): KittyImageHeader | undefined {
 	const sequenceStart = line.indexOf(KITTY_SEQUENCE_PREFIX);
-	if (sequenceStart === -1) return [];
+	if (sequenceStart === -1) return undefined;
 
 	const paramsStart = sequenceStart + KITTY_SEQUENCE_PREFIX.length;
 	const paramsEnd = line.indexOf(";", paramsStart);
-	if (paramsEnd === -1) return [];
+	if (paramsEnd === -1) return undefined;
 
+	const ids: number[] = [];
+	let rows = 1;
 	const params = line.slice(paramsStart, paramsEnd);
 	for (const param of params.split(",")) {
 		const [key, value] = param.split("=", 2);
-		if (key !== "i" || value === undefined) continue;
-		const id = Number(value);
-		if (Number.isInteger(id) && id > 0 && id <= 0xffffffff) {
-			return [id];
+		if (value === undefined) continue;
+		const numberValue = Number(value);
+		if (!Number.isInteger(numberValue) || numberValue <= 0 || numberValue > 0xffffffff) continue;
+		if (key === "i") {
+			ids.push(numberValue);
+		} else if (key === "r") {
+			rows = numberValue;
 		}
 	}
-	return [];
+	return { ids, rows };
+}
+
+function extractKittyImageIds(line: string): number[] {
+	return parseKittyImageHeader(line)?.ids ?? [];
+}
+
+function extractKittyImageRows(line: string): number {
+	return parseKittyImageHeader(line)?.rows ?? 1;
 }
 
 /**
@@ -1035,14 +1053,41 @@ export class TUI extends Container {
 		return buffer;
 	}
 
-	private expandLastChangedForKittyImages(firstChanged: number, lastChanged: number): number {
-		let expandedLastChanged = lastChanged;
-		for (let i = firstChanged; i < this.previousLines.length; i++) {
-			if (extractKittyImageIds(this.previousLines[i]).length > 0) {
-				expandedLastChanged = Math.max(expandedLastChanged, i);
-			}
+	private getKittyImageReservedRows(lines: string[], index: number, maxIndex = lines.length - 1): number {
+		const rows = extractKittyImageRows(lines[index] ?? "");
+		if (rows <= 1) return 1;
+
+		const maxRows = Math.min(rows, maxIndex - index + 1, lines.length - index);
+		let reservedRows = 1;
+		while (reservedRows < maxRows) {
+			const line = lines[index + reservedRows] ?? "";
+			if (isImageLine(line) || visibleWidth(line) > 0) break;
+			reservedRows++;
 		}
-		return expandedLastChanged;
+		return reservedRows;
+	}
+
+	private expandChangedRangeForKittyImages(
+		firstChanged: number,
+		lastChanged: number,
+		newLines: string[],
+	): { firstChanged: number; lastChanged: number } {
+		let expandedFirstChanged = firstChanged;
+		let expandedLastChanged = lastChanged;
+		const expandForLines = (lines: string[]): void => {
+			for (let i = 0; i < lines.length; i++) {
+				if (extractKittyImageIds(lines[i]).length === 0) continue;
+				const blockEnd = i + this.getKittyImageReservedRows(lines, i) - 1;
+				if (i >= firstChanged || (i <= lastChanged && blockEnd >= firstChanged)) {
+					expandedFirstChanged = Math.min(expandedFirstChanged, i);
+					expandedLastChanged = Math.max(expandedLastChanged, blockEnd);
+				}
+			}
+		};
+
+		expandForLines(this.previousLines);
+		expandForLines(newLines);
+		return { firstChanged: expandedFirstChanged, lastChanged: expandedLastChanged };
 	}
 
 	private deleteChangedKittyImages(firstChanged: number, lastChanged: number): string {
@@ -1388,7 +1433,9 @@ export class TUI extends Container {
 			lastChanged = newLines.length - 1;
 		}
 		if (firstChanged !== -1) {
-			lastChanged = this.expandLastChangedForKittyImages(firstChanged, lastChanged);
+			const expandedRange = this.expandChangedRangeForKittyImages(firstChanged, lastChanged, newLines);
+			firstChanged = expandedRange.firstChanged;
+			lastChanged = expandedRange.lastChanged;
 		}
 		const appendStart = appendedLines && firstChanged === this.previousLines.length && firstChanged > 0;
 		const insertScrollPlan = this.createViewportInsertScrollPlan(newLines, prevViewportTop, height, lineCountDelta);
@@ -1563,9 +1610,31 @@ export class TUI extends Container {
 		const renderEnd = Math.min(lastChanged, newLines.length - 1);
 		for (let i = firstChanged; i <= renderEnd; i++) {
 			if (i > firstChanged) buffer += "\r\n";
-			buffer += "\x1b[2K"; // Clear current line
 			const line = newLines[i];
 			const isImage = isImageLine(line);
+			const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i, renderEnd) : 1;
+			if (imageReservedRows > 1) {
+				const imageStartScreenRow = i - viewportTop;
+				if (imageStartScreenRow < 0 || imageStartScreenRow + imageReservedRows > height) {
+					logRedraw(
+						`kitty image pre-clear would scroll (${imageStartScreenRow} + ${imageReservedRows} > ${height})`,
+					);
+					fullRender(true);
+					return;
+				}
+
+				buffer += "\x1b[2K";
+				for (let row = 1; row < imageReservedRows; row++) {
+					buffer += "\r\n\x1b[2K";
+				}
+				buffer += `\x1b[${imageReservedRows - 1}A`;
+				buffer += line;
+				buffer += `\x1b[${imageReservedRows - 1}B`;
+				i += imageReservedRows - 1;
+				continue;
+			}
+
+			buffer += "\x1b[2K"; // Clear current line
 			if (!isImage && visibleWidth(line) > width) {
 				// Log all lines to crash file for debugging
 				const crashLogPath = path.join(os.homedir(), ".senpi", "agent", "senpi-crash.log");
