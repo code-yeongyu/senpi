@@ -45,10 +45,6 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 		return event;
 	}
 
-	get #queueLength(): number {
-		return this.#queue.length - this.#queueHead;
-	}
-
 	push(event: T): void {
 		if (this.done) return;
 
@@ -90,22 +86,21 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 		}
 	}
 
-	async *[Symbol.asyncIterator](): AsyncIterator<T> {
-		while (true) {
-			if (this.#queueLength > 0) {
-				yield this.#dequeue();
-			} else if (this.#failed) {
-				throw this.#error;
-			} else if (this.done) {
-				return;
-			} else {
-				const result = await new Promise<IteratorResult<T>>((resolve, reject) =>
-					this.waiting.push({ resolve, reject }),
-				);
-				if (result.done) return;
-				yield result.value;
-			}
-		}
+	[Symbol.asyncIterator](): AsyncIterator<T> {
+		return {
+			next: () => {
+				if (this.#queueHead < this.#queue.length) {
+					return Promise.resolve({ value: this.#dequeue(), done: false });
+				}
+				if (this.#failed) {
+					return Promise.reject(this.#error);
+				}
+				if (this.done) {
+					return Promise.resolve({ value: undefined, done: true });
+				}
+				return new Promise<IteratorResult<T>>((resolve, reject) => this.waiting.push({ resolve, reject }));
+			},
+		};
 	}
 
 	result(): Promise<R> {
