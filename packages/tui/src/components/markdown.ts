@@ -29,8 +29,10 @@ markdownParser.setOptions({
 
 const RENDER_CACHE_MAX = 256;
 const PARSE_CACHE_MAX = 128;
+const CONTENT_KEY_CACHE_MAX = 128;
 const renderCache = new Map<string, { source: string; lines: string[] }>();
 const parseCache = new Map<string, { source: string; tokens: Token[] }>();
+const contentKeyCache = new Map<string, string>();
 const objectIds = new WeakMap<object, number>();
 let nextObjectId = 0;
 
@@ -52,17 +54,26 @@ function cacheSet<T>(cache: Map<string, T>, key: string, value: T, maxSize: numb
 }
 
 function contentKey(text: string): string {
+	const cached = contentKeyCache.get(text);
+	if (cached !== undefined) {
+		cacheSet(contentKeyCache, text, cached, CONTENT_KEY_CACHE_MAX);
+		return cached;
+	}
+
 	let hash = 2166136261;
 	for (let i = 0; i < text.length; i++) {
 		hash ^= text.charCodeAt(i);
 		hash = Math.imul(hash, 16777619);
 	}
-	return `${text.length}:${(hash >>> 0).toString(36)}`;
+	const key = `${text.length}:${(hash >>> 0).toString(36)}`;
+	cacheSet(contentKeyCache, text, key, CONTENT_KEY_CACHE_MAX);
+	return key;
 }
 
 export function clearRenderCache(): void {
 	renderCache.clear();
 	parseCache.clear();
+	contentKeyCache.clear();
 }
 
 /**
