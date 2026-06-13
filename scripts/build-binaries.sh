@@ -134,9 +134,9 @@ for platform in "${PLATFORMS[@]}"; do
     # explicit build entrypoints. The runtime can still use new URL(...), but the
     # worker must be present in the compiled executable.
     if [[ "$platform" == windows-* ]]; then
-        bun build --compile --minify --keep-names --target=bun-$platform ./dist/bun/cli.js ./src/utils/image-resize-worker.ts --outfile "$OUTPUT_DIR/$platform/pi.exe"
+        bun build --compile --no-compile-autoload-dotenv --minify --keep-names --target=bun-$platform ./dist/bun/cli.js ./src/utils/image-resize-worker.ts --outfile "$OUTPUT_DIR/$platform/pi.exe"
     else
-        bun build --compile --minify --keep-names --target=bun-$platform ./dist/bun/cli.js ./src/utils/image-resize-worker.ts --outfile "$OUTPUT_DIR/$platform/pi"
+        bun build --compile --no-compile-autoload-dotenv --minify --keep-names --target=bun-$platform ./dist/bun/cli.js ./src/utils/image-resize-worker.ts --outfile "$OUTPUT_DIR/$platform/pi"
         if [[ "$platform" == darwin-* ]] && command -v codesign >/dev/null 2>&1; then
             codesign --remove-signature "$OUTPUT_DIR/$platform/pi" 2>/dev/null || true
             codesign --force --sign - "$OUTPUT_DIR/$platform/pi"

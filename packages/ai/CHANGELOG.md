@@ -6,8 +6,6 @@
 
 ### Added
 
-- Exported the built-in provider credential environment variable list for runtime credential filtering.
-
 ### Changed
 
 ### Fixed
