@@ -106,7 +106,7 @@ export class ProcessTerminal implements Terminal {
 	private keyboardProtocolNegotiationBuffer = "";
 	private keyboardProtocolBufferFlushTimer?: ReturnType<typeof setTimeout>;
 	private stdinBuffer?: StdinBuffer;
-	private stdinDataHandler?: (data: string) => void;
+	private stdinDataHandler?: (data: string | Buffer) => void;
 	private progressInterval?: ReturnType<typeof setInterval>;
 	private writeLogPath = (() => {
 		const env = process.env.PI_TUI_WRITE_LOG || "";
@@ -140,7 +140,6 @@ export class ProcessTerminal implements Terminal {
 		if (process.stdin.setRawMode) {
 			process.stdin.setRawMode(true);
 		}
-		process.stdin.setEncoding("utf8");
 		process.stdin.resume();
 
 		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
@@ -199,7 +198,7 @@ export class ProcessTerminal implements Terminal {
 		});
 
 		// Handler that pipes stdin data through the buffer
-		this.stdinDataHandler = (data: string) => {
+		this.stdinDataHandler = (data: string | Buffer) => {
 			this.stdinBuffer!.process(data);
 		};
 	}

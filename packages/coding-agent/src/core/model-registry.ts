@@ -150,6 +150,8 @@ const AnthropicMessagesCompatSchema = Type.Object({
 	supportsDisabledThinking: Type.Optional(Type.Boolean()),
 	sendSessionAffinityHeaders: Type.Optional(Type.Boolean()),
 	supportsCacheControlOnTools: Type.Optional(Type.Boolean()),
+	supportsToolChoice: Type.Optional(Type.Boolean()),
+	supportsForcedToolChoice: Type.Optional(Type.Boolean()),
 	forceAdaptiveThinking: Type.Optional(Type.Boolean()),
 });
 

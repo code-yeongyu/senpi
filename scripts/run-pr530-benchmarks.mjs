@@ -10,6 +10,8 @@ const BENCHES = {
 	"tui-markdown": "packages/tui/bench/markdown-render.ts",
 	"coding-agent-render-transcript": "packages/coding-agent/bench/render-transcript.ts",
 	"coding-agent-bash-output": "packages/coding-agent/bench/bash-output.ts",
+	"coding-agent-jsonl-parse": "packages/coding-agent/bench/jsonl-parse.ts",
+	"coding-agent-rpc-event-emit": "packages/coding-agent/bench/rpc-event-emit.ts",
 };
 
 function parseArgs(argv) {

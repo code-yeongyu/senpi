@@ -1,0 +1,199 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-06-13T08:10:11Z",
+  "source": "github-ci-same-run",
+  "ciRun": {
+    "url": null,
+    "runId": null,
+    "discovery": "No matching GitHub run was discoverable with gh run list for branch port/gajae-3day-fixes; gh pr view 35 resolves to an unrelated old PR on this remote. CI source is the downloaded artifact timestamped 2026-06-13T17:07:00+0900 at /tmp/task-11-gh-artifact-3/task-11-benchmarks/comparison.json."
+  },
+  "artifactPaths": {
+    "comparison": "/tmp/task-11-gh-artifact-3/task-11-benchmarks/comparison.json",
+    "base": "/tmp/task-11-gh-artifact-3/task-11-benchmarks/base.json",
+    "head": "/tmp/task-11-gh-artifact-3/task-11-benchmarks/head.json",
+    "staticBaselineStatus": "/tmp/task-11-gh-artifact-3/task-11-benchmarks/static-baseline.status",
+    "staticBaselineStderr": "/tmp/task-11-gh-artifact-3/task-11-benchmarks/static-baseline.stderr"
+  },
+  "evidence": {
+    "r2RpcEventEmit": {
+      "compareJson": "/tmp/port-gajae-evidence/task-9-compare.json",
+      "writeCallsTxt": "/tmp/port-gajae-evidence/task-9-writecalls.txt",
+      "compareJsonParsed": {
+        "createdAt": "2026-06-12T15:43:10.293Z",
+        "gitCommit": "6876cc8af71cf2f2e17a09e5b49e0b9b665f3f48",
+        "iterations": 30,
+        "suite": "coding-agent-rpc-event-emit",
+        "comparisonFailures": []
+      },
+      "writeCallsParsed": {
+        "baselineWriteCalls": 1000,
+        "currentWriteCalls": 1,
+        "writeCallDropPercent": 99.9,
+        "medianImprovementPercent": 22.66
+      }
+    }
+  },
+  "base": {
+    "createdAt": "2026-06-13T08:04:50.787Z",
+    "gitCommit": "2ae966efb37abaf4b535ffd40545d2580eae10ba",
+    "iterations": 30,
+    "platform": "linux",
+    "arch": "x64",
+    "cpu": "AMD EPYC 9V74 80-Core Processor"
+  },
+  "head": {
+    "createdAt": "2026-06-13T08:04:57.519Z",
+    "gitCommit": "6e771fdbdb7547bb319dafdc030a85fb8960c270",
+    "iterations": 30,
+    "platform": "linux",
+    "arch": "x64",
+    "cpu": "AMD EPYC 9V74 80-Core Processor"
+  },
+  "noiseTolerancePct": 5,
+  "failures": [],
+  "newSuites": [
+    "coding-agent-jsonl-parse",
+    "coding-agent-rpc-event-emit"
+  ],
+  "rows": [
+    {
+      "suite": "ai-event-stream",
+      "status": "compared",
+      "baseMedianMs": 7.1587749999999915,
+      "headMedianMs": 3.6678039999999896,
+      "medianImprovementPct": 48.76492137272098,
+      "baseP95Ms": 13.833057999999994,
+      "headP95Ms": 6.566148999999996,
+      "p95ImprovementPct": 52.53291788410055
+    },
+    {
+      "suite": "ai-model-registry",
+      "status": "compared",
+      "baseMedianMs": 0.008393000000012307,
+      "headMedianMs": 0.008722000000034313,
+      "medianImprovementPct": -3.919933277987891,
+      "baseP95Ms": 0.026868999999976495,
+      "headP95Ms": 0.02519799999998895,
+      "p95ImprovementPct": 6.219062860504691
+    },
+    {
+      "suite": "tui-editor",
+      "status": "compared",
+      "baseMedianMs": 33.97665200000006,
+      "headMedianMs": 18.993535000000065,
+      "medianImprovementPct": 44.09827372043593,
+      "baseP95Ms": 43.04218500000002,
+      "headP95Ms": 25.189029000000005,
+      "p95ImprovementPct": 41.47827532454499
+    },
+    {
+      "suite": "tui-markdown",
+      "status": "compared",
+      "baseMedianMs": 26.644548999999984,
+      "headMedianMs": 0.1949989999999957,
+      "medianImprovementPct": 99.26814674175947,
+      "baseP95Ms": 26.763114000000087,
+      "headP95Ms": 0.3481460000000425,
+      "p95ImprovementPct": 98.69915735515666
+    },
+    {
+      "suite": "coding-agent-render-transcript",
+      "status": "compared",
+      "baseMedianMs": 29.621959999999945,
+      "headMedianMs": 30.030586000000085,
+      "medianImprovementPct": -1.3794698257648752,
+      "baseP95Ms": 52.9610009999999,
+      "headP95Ms": 48.31768399999987,
+      "p95ImprovementPct": 8.767426809021291
+    },
+    {
+      "suite": "coding-agent-bash-output",
+      "status": "compared",
+      "baseMedianMs": 52.48479499999996,
+      "headMedianMs": 14.196324000000004,
+      "medianImprovementPct": 72.95154911055666,
+      "baseP95Ms": 65.4712760000001,
+      "headP95Ms": 20.974882000000093,
+      "p95ImprovementPct": 67.96323016524062
+    },
+    {
+      "suite": "coding-agent-jsonl-parse",
+      "status": "new-suite"
+    },
+    {
+      "suite": "coding-agent-rpc-event-emit",
+      "status": "new-suite"
+    }
+  ],
+  "localFocusedEvidence": [
+    {
+      "element": "P4 binary size",
+      "metric": "bytes",
+      "baseline": 75830114,
+      "final": 70480226,
+      "deltaBytes": 5349888,
+      "deltaPct": 7.06,
+      "hypothesisMet": "Y",
+      "evidencePath": "/tmp/port-gajae-evidence/task-5-minify-sizes.txt"
+    },
+    {
+      "element": "R1 jsonl parse",
+      "metric": "medianMs",
+      "baseline": 13.301500000000004,
+      "final": 11.195958000000019,
+      "deltaPct": 15.829357591248993,
+      "hypothesisMet": "N",
+      "evidencePath": "/tmp/port-gajae-evidence/task-11-jsonl-after-inline-cr.json",
+      "note": "Original Task 8 hypothesis predicted at least 25% median improvement; /tmp/port-gajae-evidence/task-8-compare.json is absent and /tmp/port-gajae-evidence/task-8-compare.txt records a 19.57% miss."
+    },
+    {
+      "element": "R1 jsonl parse",
+      "metric": "p95Ms",
+      "baseline": 15.038916999999998,
+      "final": 12.307249999999982,
+      "deltaPct": 18.163987473300214,
+      "hypothesisMet": "N",
+      "evidencePath": "/tmp/port-gajae-evidence/task-11-jsonl-after-inline-cr.json"
+    },
+    {
+      "element": "R2 rpc event emit",
+      "metric": "medianMs",
+      "baseline": 22.165084000000036,
+      "final": 17.141666999999984,
+      "deltaPct": 22.66364972945757,
+      "hypothesisMet": "Y",
+      "evidencePath": "/tmp/port-gajae-evidence/task-9-compare.json"
+    },
+    {
+      "element": "R2 rpc event emit",
+      "metric": "writeCalls",
+      "baseline": 1000,
+      "final": 1,
+      "deltaPct": 99.9,
+      "hypothesisMet": "Y",
+      "evidencePath": "/tmp/port-gajae-evidence/task-9-writecalls.txt"
+    },
+    {
+      "element": "R3 profile",
+      "metric": "decision",
+      "baseline": 16.56404200000003,
+      "final": "skip",
+      "deltaPct": null,
+      "hypothesisMet": "deferred",
+      "evidencePath": "/tmp/port-gajae-evidence/task-10-profile.txt",
+      "note": "Closure and backpressure shares were 0.00603717377677301% and 0.0005010854234951096%, so R3 was not shipped."
+    }
+  ],
+  "missingEvidence": [
+    {
+      "path": "/tmp/port-gajae-evidence/task-8-compare.json",
+      "status": "missing",
+      "handling": "Task 8 original JSON row is not invented; later JSONL optimization evidence is recorded separately."
+    }
+  ],
+  "staticBaseline": {
+    "status": 1,
+    "diagnosticOnly": true,
+    "note": "Static baseline mode compared Darwin/M4 baseline data against CI/Linux and failed; this ledger uses same-run CI instead."
+  }
+}

@@ -135,6 +135,10 @@ export function sanitizeBinaryOutput(str: string): string {
 	// Use Array.from to properly iterate over code points (not code units)
 	// This handles surrogate pairs correctly and catches edge cases where
 	// codePointAt() might return undefined
+	if (!hasUnsafeDisplayCharacter(str)) {
+		return str;
+	}
+
 	return Array.from(str)
 		.filter((char) => {
 			// Filter out characters that cause string-width to crash
@@ -161,6 +165,16 @@ export function sanitizeBinaryOutput(str: string): string {
 			return true;
 		})
 		.join("");
+}
+
+function hasUnsafeDisplayCharacter(str: string): boolean {
+	for (let i = 0; i < str.length; i++) {
+		const code = str.charCodeAt(i);
+		const isAllowedControl = code === 0x09 || code === 0x0a || code === 0x0d;
+		if (code <= 0x1f && !isAllowedControl) return true;
+		if (code >= 0xfff9 && code <= 0xfffb) return true;
+	}
+	return false;
 }
 
 /**

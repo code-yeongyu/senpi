@@ -4,7 +4,19 @@
 
 ### Added
 
+- Added JSONL parse and RPC event emission benchmark harnesses.
+
+### Changed
+
+- Improved RPC event emission by coalescing same-tick event frames into one stdout write, reducing the benchmarked write count by 99.90%.
+- Reduced Bun compiled binary size by 7.06% with minification while preserving function names.
+- Models registry Anthropic compatibility config now accepts `supportsToolChoice` and `supportsForcedToolChoice` flags.
+
 ### Fixed
+
+- Fixed resumed aborted tool calls to reuse the persisted retry-attempt label.
+- Fixed Bun binaries ignoring project `.env` provider credentials so untrusted project files cannot inject API keys.
+- Fixed print mode to print preceding assistant text when a terminating tool result is the final message; empty assistant text still prints nothing.
 
 ### Removed
 

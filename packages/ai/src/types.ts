@@ -520,6 +520,13 @@ export interface AnthropicMessagesCompat {
 	 * Default: true.
 	 */
 	supportsTemperature?: boolean;
+	/** Whether the model accepts Anthropic `tool_choice`. Default: true. */
+	supportsToolChoice?: boolean;
+	/**
+	 * Whether the model accepts forced Anthropic tool choices (`any` or a named
+	 * tool). Default: true, except Claude Fable/Mythos models.
+	 */
+	supportsForcedToolChoice?: boolean;
 	/**
 	 * Whether to force adaptive thinking (`thinking.type: "adaptive"` plus
 	 * `output_config.effort`) regardless of the model id. Built-in models that

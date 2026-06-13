@@ -166,6 +166,7 @@ const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
 const COMPUTER_USE_BETA_PREFIX = "computer-use-";
 const NATIVE_COMPUTER_TOOL_TYPE = "computer_20250124";
 const ADAPTIVE_THINKING_MODEL_MARKERS = ["opus-4-6", "opus-4-7", "sonnet-4-6"] as const;
+const CLAUDE_FABLE_OR_MYTHOS_MODEL_ID = /^claude-(?:fable|mythos)(?:-|$)/i;
 const UNSUPPORTED_NATIVE_COMPUTER_TOOL_MODEL_MARKERS = [
 	"opus-4-6",
 	"opus-4.6",
@@ -191,6 +192,9 @@ function getAnthropicCompat(
 		supportsCacheControlOnTools: model.compat?.supportsCacheControlOnTools ?? !isFireworks,
 		supportsDisabledThinking: model.compat?.supportsDisabledThinking ?? !isXiaomi,
 		supportsTemperature: model.compat?.supportsTemperature ?? true,
+		supportsToolChoice: model.compat?.supportsToolChoice ?? true,
+		supportsForcedToolChoice:
+			model.compat?.supportsForcedToolChoice ?? !CLAUDE_FABLE_OR_MYTHOS_MODEL_ID.test(model.id),
 		allowEmptySignature: model.compat?.allowEmptySignature ?? false,
 	};
 }
@@ -1316,11 +1320,14 @@ function buildParams(
 		}
 	}
 
-	if (options?.toolChoice) {
-		if (typeof options.toolChoice === "string") {
-			params.tool_choice = { type: options.toolChoice };
-		} else {
-			params.tool_choice = options.toolChoice;
+	if (options?.toolChoice && compat.supportsToolChoice) {
+		const isForcedToolChoice = options.toolChoice === "any" || typeof options.toolChoice === "object";
+		if (!isForcedToolChoice || compat.supportsForcedToolChoice) {
+			if (typeof options.toolChoice === "string") {
+				params.tool_choice = { type: options.toolChoice };
+			} else {
+				params.tool_choice = options.toolChoice;
+			}
 		}
 	}
 

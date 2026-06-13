@@ -6,8 +6,36 @@
  */
 
 import assert from "node:assert";
-import { beforeEach, describe, it } from "node:test";
+import { beforeEach as nodeBeforeEach, describe as nodeDescribe, it as nodeIt } from "node:test";
+import { beforeEach as vitestBeforeEach, describe as vitestDescribe, it as vitestIt } from "vitest";
 import { StdinBuffer } from "../src/stdin-buffer.ts";
+
+const isVitest = process.env.VITEST === "true";
+type TestCallback = () => void | Promise<void>;
+
+function beforeEach(fn: TestCallback): void {
+	if (isVitest) {
+		vitestBeforeEach(fn);
+		return;
+	}
+	nodeBeforeEach(fn);
+}
+
+function describe(name: string, fn: TestCallback): void {
+	if (isVitest) {
+		vitestDescribe(name, fn);
+		return;
+	}
+	nodeDescribe(name, fn);
+}
+
+function it(name: string, fn: TestCallback): void {
+	if (isVitest) {
+		vitestIt(name, fn);
+		return;
+	}
+	nodeIt(name, fn);
+}
 
 describe("StdinBuffer", () => {
 	let buffer: StdinBuffer;
@@ -342,6 +370,11 @@ describe("StdinBuffer", () => {
 			assert.deepStrictEqual(emittedSequences, ["\x1b[A"]);
 		});
 
+		it("should not emit an empty event when a Buffer chunk only contains a partial UTF-8 prefix", () => {
+			processInput(Buffer.from([0xed, 0x95]));
+			assert.deepStrictEqual(emittedSequences, []);
+		});
+
 		it("should handle very long sequences", () => {
 			const longSeq = `\x1b[${"1;".repeat(50)}H`;
 			processInput(longSeq);
@@ -381,6 +414,14 @@ describe("StdinBuffer", () => {
 			buffer.clear();
 			assert.strictEqual(buffer.getBuffer(), "");
 			assert.deepStrictEqual(emittedSequences, []);
+		});
+
+		it("should reset incomplete UTF-8 bytes on clear", () => {
+			processInput(Buffer.from([0xed, 0x95]));
+			buffer.clear();
+			processInput(Buffer.from([0x9c]));
+
+			assert.notStrictEqual(emittedSequences.join(""), "한");
 		});
 	});
 
@@ -448,6 +489,33 @@ describe("StdinBuffer", () => {
 			assert.deepStrictEqual(emittedPaste, ["Hello 世界 🎉"]);
 			assert.deepStrictEqual(emittedSequences, []);
 		});
+
+		it("should reassemble Korean paste content and an end marker split across Buffer chunks", () => {
+			const payload = Buffer.from("\x1b[200~한글\x1b[201~", "utf8");
+			processInput(payload.subarray(0, 9));
+			processInput(payload.subarray(9, payload.length - 3));
+			processInput(payload.subarray(payload.length - 3));
+
+			assert.deepStrictEqual(emittedPaste, ["한글"]);
+			assert.ok(!emittedPaste.join("").includes("\uFFFD"));
+		});
+
+		it("should reassemble Hangul split across paste content Buffer chunks", () => {
+			processInput("\x1b[200~");
+			processInput(Buffer.from([0xed, 0x95]));
+			processInput(Buffer.concat([Buffer.from([0x9c]), Buffer.from("\x1b[201~")]));
+
+			assert.deepStrictEqual(emittedPaste, ["한"]);
+			assert.ok(!emittedPaste.join("").includes("\uFFFD"));
+		});
+
+		it("should terminate paste mode when the end marker is split across chunks", () => {
+			processInput("\x1b[200~hello\x1b[20");
+			processInput("1~a");
+
+			assert.deepStrictEqual(emittedPaste, ["hello"]);
+			assert.deepStrictEqual(emittedSequences, ["a"]);
+		});
 	});
 
 	describe("Destroy", () => {
@@ -468,6 +536,54 @@ describe("StdinBuffer", () => {
 
 			// Should not have emitted anything
 			assert.deepStrictEqual(emittedSequences, []);
+		});
+
+		it("should reset incomplete UTF-8 bytes on destroy", () => {
+			processInput(Buffer.from([0xed, 0x95]));
+			buffer.destroy();
+			processInput(Buffer.from([0x9c]));
+
+			assert.notStrictEqual(emittedSequences.join(""), "한");
+		});
+	});
+
+	describe("UTF-8 Buffer Decoding", () => {
+		it("should reassemble a 3-byte Hangul syllable split across two Buffer chunks", () => {
+			processInput(Buffer.from([0xed, 0x95]));
+			assert.deepStrictEqual(emittedSequences, []);
+
+			processInput(Buffer.from([0x9c]));
+
+			assert.deepStrictEqual(emittedSequences, ["한"]);
+			assert.ok(!emittedSequences.join("").includes("\uFFFD"));
+		});
+
+		it("should reassemble 4-byte emoji split 1+3 and 3+1", () => {
+			const emoji = Buffer.from("🎉", "utf8");
+			processInput(emoji.subarray(0, 1));
+			processInput(emoji.subarray(1));
+			assert.deepStrictEqual(emittedSequences, ["🎉"]);
+
+			emittedSequences = [];
+			processInput(emoji.subarray(0, 3));
+			processInput(emoji.subarray(3));
+			assert.deepStrictEqual(emittedSequences, ["🎉"]);
+		});
+
+		it("should hold trailing incomplete UTF-8 bytes across flush until completion", () => {
+			processInput(Buffer.from([0xed, 0x95]));
+			assert.deepStrictEqual(emittedSequences, []);
+			assert.deepStrictEqual(buffer.flush(), []);
+
+			processInput(Buffer.from([0x9c]));
+
+			assert.deepStrictEqual(emittedSequences, ["한"]);
+			assert.ok(!emittedSequences.join("").includes("\uFFFD"));
+		});
+
+		it("should preserve legacy single-byte high-bit meta conversion", () => {
+			processInput(Buffer.from([0x9b]));
+			assert.deepStrictEqual(emittedSequences, ["\x1b\u001b"]);
 		});
 	});
 });

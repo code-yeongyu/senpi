@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed Anthropic Claude Fable/Mythos requests to omit unsupported forced `tool_choice` values while preserving tools and automatic tool choice.
+
 ### Removed
 
 ## [2026.6.12-2] - 2026-06-12

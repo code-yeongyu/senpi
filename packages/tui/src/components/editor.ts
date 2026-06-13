@@ -100,6 +100,16 @@ export interface TextChunk {
 	endIndex: number;
 }
 
+interface WrappedLine {
+	chunks: TextChunk[];
+	width: number;
+}
+
+interface CachedWrappedLine extends WrappedLine {
+	lineRef: string;
+	contentWidth: number;
+}
+
 function isPrintableAsciiText(text: string): boolean {
 	for (let i = 0; i < text.length; i++) {
 		const code = text.charCodeAt(i);
@@ -367,7 +377,7 @@ export class Editor implements Component, Focusable {
 
 	// Undo support
 	private undoStack = new UndoStack<EditorState>();
-	private wrappedLineCache = new Map<string, TextChunk[]>();
+	private wrappedLineCache: CachedWrappedLine[] = [];
 
 	public onSubmit?: (text: string) => void;
 	public onChange?: (text: string) => void;
@@ -503,23 +513,38 @@ export class Editor implements Component, Focusable {
 	}
 
 	invalidate(): void {
-		this.wrappedLineCache.clear();
+		this.wrappedLineCache.length = 0;
 	}
 
-	private getWrappedLineChunks(line: string, contentWidth: number): TextChunk[] {
+	private getWrappedLine(lineIndex: number, contentWidth: number): WrappedLine {
+		const line = this.state.lines[lineIndex] || "";
+		const cached = this.wrappedLineCache[lineIndex];
+		if (cached && cached.lineRef === line && cached.contentWidth === contentWidth) {
+			return cached;
+		}
+
+		const width = isPrintableAsciiText(line) ? line.length : visibleWidth(line);
 		if (line.includes("[paste #")) {
-			return wordWrapLine(line, contentWidth, [...this.segment(line, "grapheme")]);
+			return {
+				width,
+				chunks:
+					width <= contentWidth
+						? [{ text: line, startIndex: 0, endIndex: line.length }]
+						: wordWrapLine(line, contentWidth, [...this.segment(line, "grapheme")]),
+			};
 		}
-		const key = `${contentWidth}\x00${line}`;
-		const cached = this.wrappedLineCache.get(key);
-		if (cached) return cached;
-		const chunks = wordWrapLine(line, contentWidth);
-		if (this.wrappedLineCache.size >= 256) {
-			const oldest = this.wrappedLineCache.keys().next().value;
-			if (oldest !== undefined) this.wrappedLineCache.delete(oldest);
-		}
-		this.wrappedLineCache.set(key, chunks);
-		return chunks;
+
+		const wrapped = {
+			lineRef: line,
+			contentWidth,
+			width,
+			chunks:
+				width <= contentWidth
+					? [{ text: line, startIndex: 0, endIndex: line.length }]
+					: wordWrapLine(line, contentWidth),
+		};
+		this.wrappedLineCache[lineIndex] = wrapped;
+		return wrapped;
 	}
 
 	render(width: number): string[] {
@@ -941,6 +966,7 @@ export class Editor implements Component, Focusable {
 
 		if (this.state.lines.length === 0 || (this.state.lines.length === 1 && this.state.lines[0] === "")) {
 			// Empty editor
+			this.wrappedLineCache.length = this.state.lines.length;
 			layoutLines.push({
 				text: "",
 				hasCursor: true,
@@ -953,9 +979,9 @@ export class Editor implements Component, Focusable {
 		for (let i = 0; i < this.state.lines.length; i++) {
 			const line = this.state.lines[i] || "";
 			const isCurrentLine = i === this.state.cursorLine;
-			const lineVisibleWidth = visibleWidth(line);
+			const wrappedLine = this.getWrappedLine(i, contentWidth);
 
-			if (lineVisibleWidth <= contentWidth) {
+			if (wrappedLine.width <= contentWidth) {
 				// Line fits in one layout line
 				if (isCurrentLine) {
 					layoutLines.push({
@@ -971,7 +997,7 @@ export class Editor implements Component, Focusable {
 				}
 			} else {
 				// Line needs wrapping - use word-aware wrapping
-				const chunks = this.getWrappedLineChunks(line, contentWidth);
+				const chunks = wrappedLine.chunks;
 
 				for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
 					const chunk = chunks[chunkIndex];
@@ -1021,6 +1047,7 @@ export class Editor implements Component, Focusable {
 			}
 		}
 
+		this.wrappedLineCache.length = this.state.lines.length;
 		return layoutLines;
 	}
 
@@ -1758,7 +1785,7 @@ export class Editor implements Component, Focusable {
 				visualLines.push({ logicalLine: i, startCol: 0, length: line.length });
 			} else {
 				// Line needs wrapping - use word-aware wrapping
-				const chunks = this.getWrappedLineChunks(line, width);
+				const chunks = this.getWrappedLine(i, width).chunks;
 				for (const chunk of chunks) {
 					visualLines.push({
 						logicalLine: i,
