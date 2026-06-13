@@ -1,0 +1,120 @@
+name: Task 11 Benchmarks
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  benchmark:
+    name: PR530 benchmark gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '26.3.0'
+          cache: npm
+
+      - name: Install system dependencies
+        run: |
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y \
+            libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
+          sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Check
+        run: npm run check
+
+      - name: Run exact benchmark gate
+        id: benchmark
+        shell: bash
+        run: |
+          mkdir -p /tmp/task-11-bench
+          set +e
+          node scripts/run-pr530-benchmarks.mjs \
+            --suite all \
+            --iterations 30 \
+            --baseline bench/baseline/all-baseline.json \
+            --allow-regression-pct 0 \
+            --json bench/IMPROVEMENTS.json \
+            > /tmp/task-11-bench/exact.stdout \
+            2> /tmp/task-11-bench/exact.stderr
+          exact_status=$?
+          set -e
+
+          printf 'exact_status=%s\n' "$exact_status" | tee /tmp/task-11-bench/exact.status
+          cat /tmp/task-11-bench/exact.stderr
+
+          if [ -f bench/IMPROVEMENTS.json ]; then
+            cp bench/IMPROVEMENTS.json /tmp/task-11-bench/IMPROVEMENTS.json
+          else
+            node scripts/run-pr530-benchmarks.mjs \
+              --suite all \
+              --iterations 30 \
+              --json /tmp/task-11-bench/current.json
+            node <<'NODE'
+          const fs = require("node:fs");
+          const baseline = JSON.parse(fs.readFileSync("bench/baseline/all-baseline.json", "utf8"));
+          const current = JSON.parse(fs.readFileSync("/tmp/task-11-bench/current.json", "utf8"));
+          const baselineBySuite = new Map(baseline.results.map((result) => [result.suite, result]));
+          const rows = current.results.map((result) => {
+            const base = baselineBySuite.get(result.suite);
+            if (!base) return { suite: result.suite, error: "missing baseline" };
+            return {
+              suite: result.suite,
+              baselineMedianMs: base.medianMs,
+              currentMedianMs: result.medianMs,
+              medianImprovementPct: ((base.medianMs - result.medianMs) / base.medianMs) * 100,
+              baselineP95Ms: base.p95Ms,
+              currentP95Ms: result.p95Ms,
+              p95ImprovementPct: ((base.p95Ms - result.p95Ms) / base.p95Ms) * 100,
+            };
+          });
+          fs.writeFileSync(
+            "/tmp/task-11-bench/comparison.json",
+            `${JSON.stringify({ createdAt: new Date().toISOString(), rows }, null, 2)}\n`,
+          );
+          NODE
+          fi
+
+          {
+            echo "## Task 11 benchmark gate"
+            echo
+            echo "- exact status: ${exact_status}"
+            echo "- runner: $(uname -a)"
+            echo "- node: $(node --version)"
+            echo
+            if [ -f /tmp/task-11-bench/comparison.json ]; then
+              echo "### Comparison"
+              echo
+              node <<'NODE'
+          const fs = require("node:fs");
+          const comparison = JSON.parse(fs.readFileSync("/tmp/task-11-bench/comparison.json", "utf8"));
+          console.log("| Suite | Median improvement | P95 improvement |");
+          console.log("| --- | ---: | ---: |");
+          for (const row of comparison.rows) {
+            console.log(`| ${row.suite} | ${row.medianImprovementPct.toFixed(2)}% | ${row.p95ImprovementPct.toFixed(2)}% |`);
+          }
+          NODE
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit "$exact_status"
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task-11-benchmarks
+          path: /tmp/task-11-bench
+          if-no-files-found: warn
