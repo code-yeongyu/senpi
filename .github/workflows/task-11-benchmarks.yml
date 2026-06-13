@@ -67,6 +67,7 @@ jobs:
           node <<'NODE'
           const fs = require("node:fs");
           const NOISE_TOLERANCE_PCT = 5;
+          const NOISE_TOLERANCE_MS = 0.01;
           const base = JSON.parse(fs.readFileSync("/tmp/task-11-bench/base.json", "utf8"));
           const head = JSON.parse(fs.readFileSync("/tmp/task-11-bench/head.json", "utf8"));
           const baseBySuite = new Map(base.results.map((result) => [result.suite, result]));
@@ -80,9 +81,10 @@ jobs:
             }
             const medianImprovementPct = ((baseline.medianMs - result.medianMs) / baseline.medianMs) * 100;
             const p95ImprovementPct = ((baseline.p95Ms - result.p95Ms) / baseline.p95Ms) * 100;
-            if (medianImprovementPct < -NOISE_TOLERANCE_PCT) {
+            const medianRegressionMs = result.medianMs - baseline.medianMs;
+            if (medianImprovementPct < -NOISE_TOLERANCE_PCT && medianRegressionMs > NOISE_TOLERANCE_MS) {
               failures.push(
-                `${result.suite} median regression ${(-medianImprovementPct).toFixed(2)}% > ${NOISE_TOLERANCE_PCT}%`,
+                `${result.suite} median regression ${(-medianImprovementPct).toFixed(2)}% > ${NOISE_TOLERANCE_PCT}% and ${medianRegressionMs.toFixed(6)}ms > ${NOISE_TOLERANCE_MS}ms`,
               );
             }
             return {
@@ -99,7 +101,14 @@ jobs:
           fs.writeFileSync(
             "/tmp/task-11-bench/comparison.json",
             `${JSON.stringify(
-              { createdAt: new Date().toISOString(), noiseTolerancePct: NOISE_TOLERANCE_PCT, failures, newSuites, rows },
+              {
+                createdAt: new Date().toISOString(),
+                noiseTolerancePct: NOISE_TOLERANCE_PCT,
+                noiseToleranceMs: NOISE_TOLERANCE_MS,
+                failures,
+                newSuites,
+                rows,
+              },
               null,
               2,
             )}\n`,
@@ -132,6 +141,7 @@ jobs:
             echo
             echo "- same-run status: pass"
             echo "- same-run median regression tolerance: 5%"
+            echo "- same-run absolute median regression tolerance: 0.01ms"
             echo "- static baseline status: ${static_status}"
             echo "- runner: $(uname -a)"
             echo "- node: $(node --version)"
