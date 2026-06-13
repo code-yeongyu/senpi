@@ -227,11 +227,11 @@ export default function kimiWebSearchExtension(pi: ExtensionAPI): void {
 	}
 
 	pi.registerTool({
-		name: "SearchWeb",
-		label: "SearchWeb",
+		name: "kimi_search_web",
+		label: "kimi_search_web",
 		description:
 			"WebSearch tool allows you to search on the internet to get latest information, including news, documents, release notes, blog posts, papers, etc.",
-		promptSnippet: "SearchWeb — search the internet for current information",
+		promptSnippet: "kimi_search_web — search the internet for current information",
 		parameters: searchWebSchema,
 		async execute(toolCallId, params, signal, _onUpdate, ctx) {
 			const apiKey = await resolveApiKey(ctx);
@@ -251,10 +251,10 @@ export default function kimiWebSearchExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerTool({
-		name: "FetchURL",
-		label: "FetchURL",
-		description: "FetchURL tool allows you to fetch content from a URL.",
-		promptSnippet: "FetchURL — fetch web page content from a URL",
+		name: "kimi_fetch_url",
+		label: "kimi_fetch_url",
+		description: "kimi_fetch_url tool allows you to fetch content from a URL.",
+		promptSnippet: "kimi_fetch_url — fetch web page content from a URL",
 		parameters: fetchUrlSchema,
 		async execute(toolCallId, params, signal, _onUpdate, ctx) {
 			const apiKey = await resolveApiKey(ctx);
