@@ -9,6 +9,7 @@ import { buildGpt54Prompt } from "./gpt-5.4.ts";
 import { buildGpt55Prompt } from "./gpt-5.5.ts";
 import { buildGpt5Prompt } from "./gpt-5.ts";
 import { buildKimiK26Prompt } from "./kimi-k2-6.ts";
+import { buildKimiK27Prompt } from "./kimi-k2-7.ts";
 import { type PromptPresetName, type PromptPresetSettings, parsePromptPreset } from "./settings.ts";
 
 export type { PromptPresetSettings } from "./settings.ts";
@@ -55,6 +56,14 @@ function isKimiK26Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasKimiK26Signal(model.id) || (model.name !== undefined && hasKimiK26Signal(model.name));
 }
 
+function hasKimiK27Signal(value: string): boolean {
+	return /(?:^|[/@._-])kimi-k2(?:[._-]|p)7(?:$|[/@._-])/.test(normalizeModelId(value));
+}
+
+function isKimiK27Model(model: ModelWithPromptPresetMetadata): boolean {
+	return hasKimiK27Signal(model.id) || (model.name !== undefined && hasKimiK27Signal(model.name));
+}
+
 type ClaudeOpusVersion = "claude-opus-4-7" | "claude-opus-4-6" | "claude-opus-4-5";
 
 function extractClaudeOpusVersion(modelId: string): ClaudeOpusVersion | undefined {
@@ -88,6 +97,9 @@ export function resolvePresetName(
 	if (gpt5Version) {
 		return gpt5Version;
 	}
+	if (isKimiK27Model(model)) {
+		return "kimi-k2-7";
+	}
 	if (isKimiK26Model(model)) {
 		return "kimi-k2-6";
 	}
@@ -110,6 +122,8 @@ function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPrompt
 			return { name, prompt: buildGpt52Prompt(options) };
 		case "gpt-5":
 			return { name, prompt: buildGpt5Prompt(options) };
+		case "kimi-k2-7":
+			return { name, prompt: buildKimiK27Prompt(options) };
 		case "kimi-k2-6":
 			return { name, prompt: buildKimiK26Prompt(options) };
 		case "claude-opus-4-7":

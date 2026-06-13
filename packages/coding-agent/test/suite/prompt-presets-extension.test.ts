@@ -160,6 +160,51 @@ describe("prompt preset resolver", () => {
 		expect(preset?.prompt.length).toBeGreaterThan(2_000);
 	});
 
+	it.each([
+		{ id: "kimi-k2.7-0711", provider: "moonshot", api: "openai-responses" as const },
+		{ id: "kimi-k2p7-turbo", provider: "moonshot", api: "openai-responses" as const },
+	])("returns kimi-k2-7 preset for $provider/$id", ({ id, provider, api }) => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel(id, provider, api);
+
+		// when
+		const preset = resolvePreset(model, settings);
+
+		// then
+		expect(preset?.name).toBe("kimi-k2-7");
+		expect(preset?.prompt).toContain("You are senpi");
+		expect(preset?.prompt).toContain("running on Kimi K2.7");
+		expect(preset?.prompt).toContain("## Intent Gate");
+		expect(preset?.prompt.length).toBeGreaterThan(2_000);
+	});
+
+	it("keeps Kimi K2.6 on the kimi-k2-6 preset, distinct from K2.7", () => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const k26 = resolvePreset(createModel("kimi-k2.6-0528", "moonshot", "openai-responses"), settings);
+		const k27 = resolvePreset(createModel("kimi-k2.7-0711", "moonshot", "openai-responses"), settings);
+
+		// then
+		expect(k26?.name).toBe("kimi-k2-6");
+		expect(k26?.prompt).not.toContain("running on Kimi K2.7");
+		expect(k27?.name).toBe("kimi-k2-7");
+		expect(k27?.prompt).not.toContain("filler verification language");
+	});
+
+	it("allows settings.json to force kimi-k2-7 regardless of model id", () => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "kimi-k2-7" };
+		const model = createModel("gpt-5.5", "openai-codex", "openai-codex-responses");
+
+		// when
+		const preset = resolvePreset(model, settings);
+
+		// then
+		expect(preset?.name).toBe("kimi-k2-7");
+		expect(preset?.prompt).toContain("running on Kimi K2.7");
+	});
+
 	it("returns kimi-k2-6 preset for every Kimi K2.6 built-in catalog model", () => {
 		// given
 		const settings: PromptPresetSettings = { promptPreset: "auto" };
