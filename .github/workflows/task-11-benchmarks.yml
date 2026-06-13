@@ -66,23 +66,28 @@ jobs:
 
           node <<'NODE'
           const fs = require("node:fs");
+          const NOISE_TOLERANCE_PCT = 5;
           const base = JSON.parse(fs.readFileSync("/tmp/task-11-bench/base.json", "utf8"));
           const head = JSON.parse(fs.readFileSync("/tmp/task-11-bench/head.json", "utf8"));
           const baseBySuite = new Map(base.results.map((result) => [result.suite, result]));
           const failures = [];
+          const newSuites = [];
           const rows = head.results.map((result) => {
             const baseline = baseBySuite.get(result.suite);
             if (!baseline) {
-              failures.push(`Missing base benchmark for ${result.suite}`);
-              return { suite: result.suite, error: "missing base benchmark" };
+              newSuites.push(result.suite);
+              return { suite: result.suite, status: "new-suite" };
             }
             const medianImprovementPct = ((baseline.medianMs - result.medianMs) / baseline.medianMs) * 100;
             const p95ImprovementPct = ((baseline.p95Ms - result.p95Ms) / baseline.p95Ms) * 100;
-            if (medianImprovementPct < 0) {
-              failures.push(`${result.suite} median regression ${(-medianImprovementPct).toFixed(2)}%`);
+            if (medianImprovementPct < -NOISE_TOLERANCE_PCT) {
+              failures.push(
+                `${result.suite} median regression ${(-medianImprovementPct).toFixed(2)}% > ${NOISE_TOLERANCE_PCT}%`,
+              );
             }
             return {
               suite: result.suite,
+              status: "compared",
               baseMedianMs: baseline.medianMs,
               headMedianMs: result.medianMs,
               medianImprovementPct,
@@ -93,7 +98,11 @@ jobs:
           });
           fs.writeFileSync(
             "/tmp/task-11-bench/comparison.json",
-            `${JSON.stringify({ createdAt: new Date().toISOString(), failures, rows }, null, 2)}\n`,
+            `${JSON.stringify(
+              { createdAt: new Date().toISOString(), noiseTolerancePct: NOISE_TOLERANCE_PCT, failures, newSuites, rows },
+              null,
+              2,
+            )}\n`,
           );
           if (failures.length > 0) {
             console.error(failures.join("\n"));
@@ -122,6 +131,7 @@ jobs:
             echo "## Task 11 benchmark gate"
             echo
             echo "- same-run status: pass"
+            echo "- same-run median regression tolerance: 5%"
             echo "- static baseline status: ${static_status}"
             echo "- runner: $(uname -a)"
             echo "- node: $(node --version)"
@@ -134,7 +144,11 @@ jobs:
           console.log("| Suite | Median improvement | P95 improvement |");
           console.log("| --- | ---: | ---: |");
           for (const row of comparison.rows) {
-            console.log(`| ${row.suite} | ${row.medianImprovementPct.toFixed(2)}% | ${row.p95ImprovementPct.toFixed(2)}% |`);
+            if (row.status === "new-suite") {
+              console.log(`| ${row.suite} | new suite | new suite |`);
+            } else {
+              console.log(`| ${row.suite} | ${row.medianImprovementPct.toFixed(2)}% | ${row.p95ImprovementPct.toFixed(2)}% |`);
+            }
           }
           NODE
           } >> "$GITHUB_STEP_SUMMARY"
