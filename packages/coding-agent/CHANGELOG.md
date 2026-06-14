@@ -6,6 +6,8 @@
 
 ### Fixed
 
+- Fixed startup so a broken extension reports a warning instead of aborting the entire `senpi` process.
+
 ### Changed
 
 ### Removed

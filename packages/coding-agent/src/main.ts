@@ -87,6 +87,15 @@ function collectSettingsDiagnostics(
 	}));
 }
 
+export function collectExtensionLoadDiagnostics(
+	errors: readonly { path: string; error: string }[],
+): AgentSessionRuntimeDiagnostic[] {
+	return errors.map(({ path, error }) => ({
+		type: "warning",
+		message: `Failed to load extension "${path}": ${error}`,
+	}));
+}
+
 function reportDiagnostics(diagnostics: readonly AgentSessionRuntimeDiagnostic[]): void {
 	for (const diagnostic of diagnostics) {
 		const color = diagnostic.type === "error" ? chalk.red : diagnostic.type === "warning" ? chalk.yellow : chalk.dim;
@@ -684,10 +693,7 @@ export async function main(args: string[], options?: MainOptions) {
 			...projectTrustDiagnostics,
 			...services.diagnostics,
 			...collectSettingsDiagnostics(settingsManager, "runtime creation"),
-			...resourceLoader.getExtensions().errors.map(({ path, error }) => ({
-				type: "error" as const,
-				message: `Failed to load extension "${path}": ${error}`,
-			})),
+			...collectExtensionLoadDiagnostics(resourceLoader.getExtensions().errors),
 		];
 
 		const modelPatterns = getModelNarrowingPatterns({
