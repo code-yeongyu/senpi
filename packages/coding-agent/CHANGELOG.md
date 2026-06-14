@@ -6,6 +6,8 @@
 
 ### Fixed
 
+- Fixed interactive startup rendering so the initial TUI screen is not duplicated.
+
 ### Changed
 
 ### Removed
