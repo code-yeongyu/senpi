@@ -10,6 +10,9 @@
 
 ### Fixed
 
+- Fixed focused input rendering so keystrokes can echo before a pending normal render timer under streaming load.
+- Added `PI_TUI_KEYBOARD_PROTOCOL=0` to leave terminal keyboard protocols disabled for IMEs that break under Kitty/modifyOtherKeys negotiation.
+
 ### Removed
 
 ## [2026.6.13] - 2026-06-13

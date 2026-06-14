@@ -2,7 +2,7 @@
 import { matchesKey } from "../src/keys.ts";
 import { ProcessTerminal } from "../src/terminal.ts";
 import { type Component, TUI } from "../src/tui.ts";
-import { truncateToWidth } from "../src/utils.ts";
+import { truncateToWidth, visibleWidth } from "../src/utils.ts";
 
 /**
  * Simple key code logger component
@@ -62,7 +62,8 @@ class KeyLogger implements Component {
 	}
 
 	private fit(line: string, width: number): string {
-		return truncateToWidth(line, width).padEnd(width);
+		const truncated = truncateToWidth(line, width);
+		return truncated + " ".repeat(Math.max(0, width - visibleWidth(truncated)));
 	}
 
 	render(width: number): string[] {

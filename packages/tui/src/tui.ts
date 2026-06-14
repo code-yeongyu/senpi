@@ -301,6 +301,7 @@ export class TUI extends Container {
 	private renderTimer: NodeJS.Timeout | undefined;
 	private lastRenderAt = 0;
 	private static readonly MIN_RENDER_INTERVAL_MS = 16;
+	private inputRenderPending = false;
 	private cursorRow = 0; // Logical cursor row (end of rendered content)
 	private hardwareCursorRow = 0; // Actual terminal cursor row (may differ due to IME positioning)
 	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
@@ -684,8 +685,9 @@ export class TUI extends Container {
 		this.previousViewportTop = 0;
 	}
 
-	requestRender(force = false): void {
+	requestRender(force = false, source = "unknown"): void {
 		if (force) {
+			this.inputRenderPending = false;
 			this.previousLines = [];
 			this.previousWidth = -1; // -1 triggers widthChanged, forcing a full clear
 			this.previousHeight = -1; // -1 triggers heightChanged, forcing a full clear
@@ -706,6 +708,14 @@ export class TUI extends Container {
 				this.lastRenderAt = performance.now();
 				this.doRender();
 			});
+			return;
+		}
+		if (source === "input" || source === "editor.input") {
+			if (!this.inputRenderPending) {
+				this.inputRenderPending = true;
+				this.renderRequested = true;
+				process.nextTick(() => this.commitExpeditedRender());
+			}
 			return;
 		}
 		if (this.renderRequested) return;
@@ -731,6 +741,21 @@ export class TUI extends Container {
 				this.scheduleRender();
 			}
 		}, delay);
+	}
+
+	private commitExpeditedRender(): void {
+		if (!this.inputRenderPending) return;
+		this.inputRenderPending = false;
+		if (this.stopped || !this.renderRequested) {
+			return;
+		}
+		if (this.renderTimer) {
+			clearTimeout(this.renderTimer);
+			this.renderTimer = undefined;
+		}
+		this.renderRequested = false;
+		this.lastRenderAt = performance.now();
+		this.doRender();
 	}
 
 	private handleInput(data: string): void {
@@ -798,7 +823,7 @@ export class TUI extends Container {
 				return;
 			}
 			this.focusedComponent.handleInput(data);
-			this.requestRender();
+			this.requestRender(false, "input");
 		}
 	}
 

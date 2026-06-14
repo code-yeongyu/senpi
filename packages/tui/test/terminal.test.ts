@@ -2,7 +2,7 @@ import assert from "node:assert";
 import { mock, describe as nodeDescribe, it as nodeIt } from "node:test";
 import { vi, describe as vitestDescribe, it as vitestIt } from "vitest";
 import { setKittyProtocolActive } from "../src/keys.ts";
-import { normalizeAppleTerminalInput, ProcessTerminal } from "../src/terminal.ts";
+import { keyboardEnhancementEnabled, normalizeAppleTerminalInput, ProcessTerminal } from "../src/terminal.ts";
 
 const isVitest = process.env.VITEST === "true";
 type TestCallback = () => void | Promise<void>;
@@ -84,7 +84,7 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 		const previousWrite = process.stdout.write;
 		const previousOn = process.stdin.on;
 		const previousEnv = new Map<string, string | undefined>();
-		const effectiveEnv = { TMUX: undefined, TMUX_PANE: undefined, ...env };
+		const effectiveEnv = { PI_TUI_KEYBOARD_PROTOCOL: undefined, TMUX: undefined, TMUX_PANE: undefined, ...env };
 
 		for (const [name, value] of Object.entries(effectiveEnv)) {
 			previousEnv.set(name, process.env[name]);
@@ -270,6 +270,25 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 
 			harness.cleanup();
 			assert.equal(harness.writes.filter((write) => write === "\x1b[>4;0m").length, 1);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("skips enhanced keyboard protocols when disabled while preserving input delivery", () => {
+		const harness = setupNegotiation({ PI_TUI_KEYBOARD_PROTOCOL: "0", TMUX: "/tmp/tmux-501/default,123,0" });
+		try {
+			assert.equal(keyboardEnhancementEnabled(), false);
+			assert.equal(harness.writes.includes("\x1b[>7u\x1b[?u\x1b[c"), false);
+			assert.equal(harness.writes.includes("\x1b[>4;2m"), false);
+
+			harness.send("한");
+
+			assert.equal(harness.getInput(), "한");
+
+			harness.cleanup();
+			assert.equal(harness.writes.includes("\x1b[<u"), false);
+			assert.equal(harness.writes.includes("\x1b[>4;0m"), false);
 		} finally {
 			harness.cleanup();
 		}

@@ -20,6 +20,20 @@ class TestComponent implements Component {
 	invalidate(): void {}
 }
 
+class EchoInputComponent implements Component {
+	text = "";
+
+	render(_width: number): string[] {
+		return [`input:${this.text}`];
+	}
+
+	handleInput(data: string): void {
+		this.text += data;
+	}
+
+	invalidate(): void {}
+}
+
 class StreamingBudgetComponent implements Component {
 	private tokenCount = 0;
 	readonly stableTail = Array.from({ length: 18 }, (_, index) => `stable viewport row ${index}`);
@@ -252,6 +266,29 @@ describe("TUI lifecycle memory", () => {
 
 		const previousLinesAfterStop = Reflect.get(tui, "previousLines");
 		assert.deepEqual(previousLinesAfterStop, []);
+	});
+});
+
+describe("TUI input render scheduling", () => {
+	it("echoes focused component input on the next tick while a normal render is pending", async () => {
+		const terminal = new VirtualTerminal(40, 5);
+		const tui = new TUI(terminal);
+		const component = new EchoInputComponent();
+		tui.addChild(component);
+		tui.setFocus(component);
+
+		tui.start();
+		await terminal.waitForRender();
+
+		tui.requestRender();
+		terminal.sendInput("ZQX");
+		await new Promise<void>((resolve) => process.nextTick(resolve));
+		await terminal.flush();
+
+		assert.equal(component.text, "ZQX");
+		assert.ok(terminal.getViewport().join("\n").includes("input:ZQX"));
+
+		tui.stop();
 	});
 });
 

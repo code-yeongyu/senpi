@@ -46,6 +46,12 @@ export function normalizeAppleTerminalInput(data: string, isAppleTerminal: boole
 	return data;
 }
 
+export function keyboardEnhancementEnabled(): boolean {
+	const value = process.env.PI_TUI_KEYBOARD_PROTOCOL;
+	if (value === undefined) return true;
+	return !["0", "false", "no", "off"].includes(value.toLowerCase());
+}
+
 /**
  * Minimal terminal interface for TUI
  */
@@ -219,6 +225,9 @@ export class ProcessTerminal implements Terminal {
 	private queryAndEnableKittyProtocol(): void {
 		this.setupStdinBuffer();
 		process.stdin.on("data", this.stdinDataHandler!);
+		if (!keyboardEnhancementEnabled()) {
+			return;
+		}
 		if (process.env.TMUX !== undefined || process.env.TMUX_PANE !== undefined) {
 			this.enableModifyOtherKeys();
 		}
