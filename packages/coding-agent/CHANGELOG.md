@@ -10,6 +10,8 @@
 
 ### Changed
 
+- Improved single-line intra-line diff rendering with conservative fast paths for identical, long, and single-span edits.
+
 ### Removed
 
 ## [2026.6.15] - 2026-06-15
