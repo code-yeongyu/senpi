@@ -8,6 +8,17 @@ Note: static Darwin/M4 baseline is diagnostic only on CI/Linux; same-run CI pass
 
 R2 numeric rows are traceable through explicit evidence files: `/tmp/port-gajae-evidence/task-9-compare.json` and `/tmp/port-gajae-evidence/task-9-writecalls.txt`.
 
+## Remaining gajae 3-day optimizations (2026-06-15)
+
+| Item | Suite/status | Baseline median | Final median | Median delta % | Baseline p95 | Final p95 | P95 delta % | PR | Evidence |
+|---|---|---:|---:|---:|---:|---:|---:|---|---|
+| WI-5 word-diff | word-diff / 5-single-line-diff-cases | 22.34375 ms | 8.1148340000002 ms | 63.68186181818092 | 26.71362499999998 ms | 22.63858300000004 ms | 15.254545199312869 | [#41](https://github.com/code-yeongyu/senpi/pull/41), merge `1da1ab5e4ba1bc65c340820ccc4e110bade9b7f3`, merged `2026-06-15T15:10:23Z` | `/tmp/wi5-word-diff-base.json`; `/tmp/wi5-word-diff-final-head.json`; `.omo/start-work/evidence/wi5-bench-summary.txt`; comparisonFailures `[]`; hypothesis met Y |
+| WI-3 compaction-trim | compaction-trim / 500-1000-2000-message-emergency-prune | 29.648124999999936 ms | 12.111666000000014 ms | 59.14862744271336 | 44.001916999999935 ms | 24.484874999999988 ms | 44.354981170479405 | [#42](https://github.com/code-yeongyu/senpi/pull/42), merge `a3a31da9be6549df1386b3ed301438f38b024a91`, merged `2026-06-15T16:40:01Z` | `/tmp/wi3-compaction-trim-base.json`; `/tmp/wi3-compaction-trim-final-head.json`; `.omo/start-work/evidence/wi3-bench-summary.txt`; comparisonFailures `[]`; hypothesis met Y |
+| WI-4 emit-context-clone | emit-context-clone / 10-100-1000-json-context-messages | 2.2787920000000668 ms | 1.6458749999999327 ms | 27.77423301469004 | 2.606625000000008 ms | 1.8852500000000418 ms | 27.674675106697897 | [#43](https://github.com/code-yeongyu/senpi/pull/43), merge `2fc7a02bcc44e868d0cc7b7cf1108451ce410e84`, merged `2026-06-15T17:39:51Z` | `/tmp/wi4-emit-context-clone-base.json`; `/tmp/wi4-emit-context-clone-head.json`; `.omo/start-work/evidence/wi4-bench-summary.txt`; comparisonFailures `[]`; hypothesis met Y |
+| WI-2 mutation safety | deferred / no code shipped | n/a | n/a | n/a | n/a | n/a | n/a | n/a | `.omo/start-work/evidence/wi2-mutation-safety-deferred.txt` |
+
+WI-2 is deferred and no code shipped. Explorer the 4th found in-place mutation of existing `AgentMessage` objects in `packages/agent/src/proxy.ts:217-218`, `packages/agent/src/proxy.ts:247-325`, `packages/agent/src/proxy.ts:351-358`, `packages/coding-agent/src/core/agent-session.ts:786-845`, and `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3185-3191`. `buildSessionContext().messages` is assigned into mutable state at `packages/coding-agent/src/core/agent-session-runtime.ts:253`, `packages/coding-agent/src/core/agent-session.ts:2126`, `packages/coding-agent/src/core/agent-session.ts:3436`, and `packages/coding-agent/src/core/sdk.ts:379`. Decision: deferred / needs deeper proof; shared-object cache not shipped.
+
 | Element | Metric | Baseline (original) | Final | Delta % | Hypothesis met (Y/N/deferred) | Evidence path |
 |---|---:|---:|---:|---:|---|---|
 | P4 binary size | bytes | 75830114 | 70480226 | 7.06 | Y | `/tmp/port-gajae-evidence/task-5-minify-sizes.txt` |
