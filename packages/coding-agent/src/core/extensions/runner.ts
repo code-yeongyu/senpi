@@ -158,6 +158,14 @@ type RunnerEmitResult<TEvent extends RunnerEmitEvent> = TEvent extends { type: "
 				? SessionBeforeTreeResult | undefined
 				: undefined;
 
+function cloneJsonValue<T>(value: T): T {
+	const serialized = JSON.stringify(value);
+	if (serialized === undefined) {
+		throw new Error("Expected JSON-serializable value");
+	}
+	return JSON.parse(serialized);
+}
+
 export type ExtensionErrorListener = (error: ExtensionError) => void;
 
 export type ExtensionToolHookName = "PreToolUse" | "PostToolUse";
@@ -1145,7 +1153,7 @@ export class ExtensionRunner {
 
 	async emitContext(messages: AgentMessage[]): Promise<AgentMessage[]> {
 		const ctx = this.createContext();
-		let currentMessages = structuredClone(messages);
+		let currentMessages = cloneJsonValue(messages);
 
 		for (const ext of this.extensions) {
 			const handlers = ext.handlers.get("context");

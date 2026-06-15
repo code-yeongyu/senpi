@@ -13,6 +13,7 @@
 ### Changed
 
 - Improved hard-limit emergency pruning so old-message trimming tracks a running token total instead of re-estimating the whole conversation each iteration.
+- Improved extension context emission by using a JSON-only clone for the hot context message copy.
 - Improved single-line intra-line diff rendering with conservative fast paths for identical, long, and single-span edits.
 
 ### Removed

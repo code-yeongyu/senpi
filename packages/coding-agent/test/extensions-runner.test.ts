@@ -5,6 +5,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { DEFAULT_COMPACTION_SETTINGS } from "../src/core/compaction/index.ts";
@@ -99,6 +100,115 @@ describe("ExtensionRunner", () => {
 		applyCompaction: async () => ({ applied: false, reason: "rejected" }),
 		getCompactionSettings: () => DEFAULT_COMPACTION_SETTINGS,
 		getSystemPrompt: () => "",
+	};
+
+	type JsonContextFixture = {
+		readonly messages: AgentMessage[];
+		readonly providerRaw: Record<string, unknown>;
+		readonly toolDetails: Record<string, unknown>;
+	};
+
+	const createJsonContextFixture = (): JsonContextFixture => {
+		const providerRaw = {
+			query: "json clone",
+			results: [
+				{ title: "first", score: 0.98, flags: [true, false], extra: null },
+				{ title: "second", score: 0.87, flags: [], extra: { source: "fixture" } },
+			],
+			meta: {
+				ok: true,
+				count: 2,
+				note: "provider native payload",
+			},
+		};
+		const toolDetails = {
+			status: "complete",
+			attempt: 1,
+			values: [1, "two", false, null],
+			nested: {
+				files: ["a.ts", "b.ts"],
+				timing: { elapsedMs: 12.5 },
+			},
+		};
+		return {
+			providerRaw,
+			toolDetails,
+			messages: [
+				{
+					role: "user",
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify({
+								task: "inspect",
+								input: { plain: true, count: 3, tags: ["json", "context"] },
+							}),
+						},
+					],
+					timestamp: 1,
+				},
+				{
+					role: "assistant",
+					content: [
+						{ type: "text", text: "I will inspect the JSON context." },
+						{ type: "providerNative", subtype: "web_search_call", raw: providerRaw },
+					],
+					api: "openai-responses",
+					provider: "openai",
+					model: "test-model",
+					usage: {
+						input: 10,
+						output: 5,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 15,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "toolUse",
+					timestamp: 2,
+				},
+				{
+					role: "toolResult",
+					toolCallId: "call-json",
+					toolName: "inspect_json",
+					content: [{ type: "text", text: "inspected JSON payload" }],
+					details: toolDetails,
+					isError: false,
+					timestamp: 3,
+				},
+			],
+		};
+	};
+
+	function isRecord(value: unknown): value is Record<string, unknown> {
+		return typeof value === "object" && value !== null && !Array.isArray(value);
+	}
+
+	const requireRecord = (value: unknown, label: string): Record<string, unknown> => {
+		if (!isRecord(value)) {
+			throw new Error(`Expected ${label} to be a record`);
+		}
+		return value;
+	};
+
+	const requireAssistantProviderRaw = (messages: AgentMessage[]): unknown => {
+		const assistant = messages.find((message) => message.role === "assistant");
+		if (assistant?.role !== "assistant") {
+			throw new Error("Expected assistant message");
+		}
+		const providerNative = assistant.content.find((content) => content.type === "providerNative");
+		if (providerNative?.type !== "providerNative") {
+			throw new Error("Expected providerNative content");
+		}
+		return providerNative.raw;
+	};
+
+	const requireToolDetails = (messages: AgentMessage[]): Record<string, unknown> => {
+		const toolResult = messages.find((message) => message.role === "toolResult");
+		if (toolResult?.role !== "toolResult") {
+			throw new Error("Expected tool result message");
+		}
+		return requireRecord(toolResult.details, "tool result details");
 	};
 
 	describe("project_trust", () => {
@@ -572,6 +682,119 @@ describe("ExtensionRunner", () => {
 			expect(errors.length).toBe(1);
 			expect(errors[0].error).toContain("Handler error!");
 			expect(errors[0].event).toBe("context");
+		});
+	});
+
+	describe("context event cloning", () => {
+		it("passes JSON context messages through as deep-equal isolated clones", async () => {
+			const { messages, providerRaw, toolDetails } = createJsonContextFixture();
+			const runtime = createExtensionRuntime();
+			let handlerMessages: AgentMessage[] | undefined;
+			const extension = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("context", async (event) => {
+						handlerMessages = event.messages;
+						return undefined;
+					});
+				},
+				tempDir,
+				createEventBus(),
+				runtime,
+				"<inline:context-clone-parity>",
+			);
+			const runner = new ExtensionRunner([extension], runtime, tempDir, sessionManager, modelRegistry);
+
+			const result = await runner.emitContext(messages);
+
+			expect(result).toEqual(messages);
+			expect(result).not.toBe(messages);
+			expect(result[0]).not.toBe(messages[0]);
+			expect(handlerMessages).toBe(result);
+			expect(requireAssistantProviderRaw(result)).toEqual(providerRaw);
+			expect(requireAssistantProviderRaw(result)).not.toBe(providerRaw);
+			expect(requireToolDetails(result)).toEqual(toolDetails);
+			expect(requireToolDetails(result)).not.toBe(toolDetails);
+		});
+
+		it("does not call structuredClone for the hot emitContext clone", async () => {
+			const { messages } = createJsonContextFixture();
+			const runtime = createExtensionRuntime();
+			const extension = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("context", async (event) => ({ messages: event.messages }));
+				},
+				tempDir,
+				createEventBus(),
+				runtime,
+				"<inline:context-json-clone>",
+			);
+			const runner = new ExtensionRunner([extension], runtime, tempDir, sessionManager, modelRegistry);
+			const structuredCloneSpy = vi.spyOn(globalThis, "structuredClone").mockImplementation(<_T>() => {
+				throw new Error("structuredClone hot path should not run");
+			});
+
+			try {
+				const result = await runner.emitContext(messages);
+
+				expect(result).toEqual(messages);
+				expect(structuredCloneSpy).not.toHaveBeenCalled();
+			} finally {
+				structuredCloneSpy.mockRestore();
+			}
+		});
+
+		it("keeps original JSON context messages isolated from handler mutations", async () => {
+			const { messages, providerRaw, toolDetails } = createJsonContextFixture();
+			const runtime = createExtensionRuntime();
+			const extension = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("context", async (event) => {
+						const raw = requireRecord(requireAssistantProviderRaw(event.messages), "providerNative raw");
+						const meta = requireRecord(raw.meta, "providerNative raw meta");
+						meta.count = 99;
+						raw.mutated = true;
+
+						const details = requireToolDetails(event.messages);
+						const nested = requireRecord(details.nested, "tool result nested details");
+						nested.files = ["mutated.ts"];
+						details.status = "mutated";
+
+						return { messages: event.messages };
+					});
+				},
+				tempDir,
+				createEventBus(),
+				runtime,
+				"<inline:context-clone-mutation>",
+			);
+			const runner = new ExtensionRunner([extension], runtime, tempDir, sessionManager, modelRegistry);
+
+			const result = await runner.emitContext(messages);
+
+			expect(result).not.toEqual(messages);
+			expect(providerRaw).toEqual({
+				query: "json clone",
+				results: [
+					{ title: "first", score: 0.98, flags: [true, false], extra: null },
+					{ title: "second", score: 0.87, flags: [], extra: { source: "fixture" } },
+				],
+				meta: {
+					ok: true,
+					count: 2,
+					note: "provider native payload",
+				},
+			});
+			expect(toolDetails).toEqual({
+				status: "complete",
+				attempt: 1,
+				values: [1, "two", false, null],
+				nested: {
+					files: ["a.ts", "b.ts"],
+					timing: { elapsedMs: 12.5 },
+				},
+			});
+			expect(requireRecord(requireAssistantProviderRaw(result), "result providerNative raw").mutated).toBe(true);
+			expect(requireToolDetails(result).status).toBe("mutated");
 		});
 	});
 
