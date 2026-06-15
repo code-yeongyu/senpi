@@ -31,6 +31,7 @@ const PROVIDERS: readonly SearchProvider[] = [
 	"anthropic",
 	"perplexity",
 	"xai",
+	"kimi",
 ];
 const CONTEXT_SIZES: readonly SearchContextSize[] = ["low", "medium", "high"];
 const CODEX_MODES: readonly CodexSearchMode[] = ["cached", "live"];

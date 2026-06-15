@@ -14,6 +14,8 @@ type ProviderModelContext = {
 };
 
 function isProviderNativeBypass(model: ProviderModelContext | undefined): boolean {
+	// kimi-coding uses the anthropic-messages protocol but its search is the kimi provider (native route), not Anthropic-native; must not be bypassed.
+	if (model?.provider === "kimi-coding") return false;
 	return (
 		model?.provider === "openai" ||
 		model?.provider === "anthropic" ||

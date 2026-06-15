@@ -10,7 +10,8 @@ export type SearchProvider =
 	| "codex"
 	| "anthropic"
 	| "perplexity"
-	| "xai";
+	| "xai"
+	| "kimi";
 
 export type SearchContextSize = "low" | "medium" | "high";
 export type CodexSearchMode = "cached" | "live";

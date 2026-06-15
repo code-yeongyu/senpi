@@ -329,6 +329,19 @@ export function buildSearchRequest(config: SearchProviderConfig, request: Search
 		};
 	}
 
+	if (config.provider === "kimi") {
+		return {
+			url: providerUrl(config),
+			init: { method: "POST", headers: contentHeaders({ Authorization: `Bearer ${config.apiKey ?? ""}` }) },
+			body: {
+				text_query: appendDomainFilters(request.query, allowedDomains, blockedDomains),
+				limit: clamp(maxResults, 1, 20),
+				enable_page_crawling: false,
+				timeout_seconds: 30,
+			},
+		};
+	}
+
 	const webSearchTool: JsonObject = {
 		type: "web_search",
 		external_web_access: (config.codexMode ?? "live") === "live",
@@ -499,6 +512,19 @@ export function normalizeSearchResponse(provider: SearchProvider, payload: unkno
 						getString(searchItem?.["page_age"]) ?? text,
 					);
 				});
+			}),
+		);
+	}
+
+	if (provider === "kimi") {
+		return collect(
+			getArray(data["search_results"]).map((raw) => {
+				const item = getObject(raw);
+				return result(
+					getString(item?.["title"]),
+					getString(item?.["url"]),
+					getString(item?.["summary"]) ?? getString(item?.["content"]),
+				);
 			}),
 		);
 	}

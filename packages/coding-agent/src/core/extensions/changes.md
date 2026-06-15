@@ -1,5 +1,21 @@
 # Core Extensions Changes
 
+## 2026-06-15 - Remove kimi-web-search builtin; fold Kimi search into pi-websearch
+
+### What changed
+
+- Removed `builtin/kimi-web-search/` and its registration in `builtin/index.ts`. The `kimi_search_web` / `kimi_fetch_url` tools no longer exist.
+- Kimi search is now a `pi-websearch` provider (`kimi`, vendored at 0.2.0). On a `kimi-coding` model the native auto-route prepends a `kimi` entry (api.kimi.com/coding/v1/search) using the model API key, so `web_search` works zero-config and falls back to the configured chain. URL fetching is handled by the `webfetch` builtin.
+- `test/suite/regressions/3592-...test.ts`: dropped `kimi_search_web` / `kimi_fetch_url` from the tool-list expectations.
+
+### Why
+
+- One web-search surface instead of two. Kimi's coding search fits pi-websearch's provider + native-route architecture, so the standalone builtin was redundant.
+
+### Expected merge conflict zones
+
+- LOW: `builtin/index.ts` registration array; `builtin/websearch/` vendored sources (re-vendor from `../pi-extensions/pi-websearch`).
+
 ## 2026-05-15 - OpenAI native web search endpoint compatibility
 
 ### What changed

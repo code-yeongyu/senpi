@@ -47,6 +47,10 @@ function nativeMapping(model: NativeModelInfo): NativeProviderMapping | null {
 		return { provider: "z-ai", resource: "chat/completions" };
 	}
 
+	if (model.provider === "kimi-coding") {
+		return { provider: "kimi", resource: "search" };
+	}
+
 	if (model.provider === "openrouter") {
 		const slashIndex = model.id.indexOf("/");
 		if (slashIndex <= 0) return null;

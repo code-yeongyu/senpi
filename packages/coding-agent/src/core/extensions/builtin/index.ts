@@ -8,7 +8,6 @@ import filesExtension from "./files.ts";
 import goalExtension from "./goal/index.ts";
 import gptApplyPatchExtension from "./gpt-apply-patch/index.ts";
 import historySearchExtension from "./history-search/index.ts";
-import kimiWebSearchExtension from "./kimi-web-search/index.ts";
 import nestedAgentsMdExtension from "./nested-agents-md/index.ts";
 import openaiWebSearchExtension from "./openai-web-search/index.ts";
 import permissionSystemExtension from "./permission-system/index.ts";
@@ -53,7 +52,6 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "compaction", factory: compactionExtension },
 	{ id: "history-search", factory: historySearchExtension },
 	{ id: "session-observer", factory: sessionObserverExtension },
-	{ id: "kimi-web-search", factory: kimiWebSearchExtension },
 	{ id: "websearch", factory: websearchExtension },
 	{ id: "webfetch", factory: webfetchExtension },
 	{ id: "nested-agents-md", factory: nestedAgentsMdExtension },

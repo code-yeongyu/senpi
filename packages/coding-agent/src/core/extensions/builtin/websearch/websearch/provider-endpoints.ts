@@ -13,6 +13,7 @@ const DEFAULT_PROVIDER_URLS: Record<SearchProvider, string> = {
 	anthropic: "https://api.anthropic.com/v1/messages",
 	perplexity: "https://api.perplexity.ai/search",
 	xai: "https://api.x.ai/v1/responses",
+	kimi: "https://api.kimi.com/coding/v1/search",
 };
 
 export function defaultProviderUrl(provider: SearchProvider): string {
