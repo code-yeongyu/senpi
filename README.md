@@ -33,6 +33,7 @@ If you're migrating from [OMO (oh-my-openagent)](https://github.com/code-yeongyu
 |---|---|
 | 🚪 **IntentGate** | [Dynamic system prompt](packages/coding-agent/src/core/dynamic-prompt/AGENTS.md) — every prompt opens with a forced intent gate before tool use. |
 | ✅ **Todo Enforcer** | [`todowrite`](packages/coding-agent/src/core/extensions/builtin/todotools/) + continuation loop that re-engages idle agents. |
+| **Persistent goal tracking** (Sisyphus-style) | [`goal`](packages/coding-agent/src/core/extensions/builtin/goal/) — `create_goal` / `update_goal` / `get_goal` + `/goal` command + continuation prompts; budget-free, file-based port of `pi-goal`. |
 | **Per-model tuning** ("Model Setup") | [`prompt-preset`](packages/coding-agent/src/core/extensions/builtin/prompt-preset/) — GPT-5.x / Claude Opus 4.{5,6,7} / Kimi K2.{6,7} presets. |
 | **Session recovery / context management** | [`compaction`](packages/coding-agent/src/core/extensions/builtin/compaction/) — adaptive thresholds, restoration tracker, emergency compaction, tool-result truncation. |
 | **Apply-patch on GPT models** | [`gpt-apply-patch`](packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/) — Codex-style freeform `apply_patch` with Lark grammar. |
@@ -51,7 +52,6 @@ senpi install git:github.com/code-yeongyu/pi-rules                 #     Context
 senpi install git:github.com/code-yeongyu/pi-nested-agents-md      # 🔍  Auto-injects nearby AGENTS.md (the runtime half of /init-deep)
 senpi install git:github.com/code-yeongyu/pi-websearch             # 📚  Provider-backed web search (fills the Exa-style slot)
 senpi install git:github.com/code-yeongyu/pi-webfetch              #     web_fetch tool (markdown / text / HTML, bounded time + size)
-senpi install git:github.com/code-yeongyu/pi-goal                  #     Persistent goal tracking + continuation prompts (closest thing to Sisyphus discipline)
 
 # Optional — only if you used the matching OMO surface:
 senpi install git:github.com/code-yeongyu/pi-cua-integration                 # 🖥️  Computer-use bindings (desktop / browser)
@@ -118,7 +118,7 @@ These [`code-yeongyu/pi-*`](https://github.com/code-yeongyu?tab=repositories&q=p
 | [`pi-ast-grep`](https://github.com/code-yeongyu/pi-ast-grep) | AST-aware code search/replace across 25 languages. Auto-downloads `sg` on first use. |
 | [`pi-comment-checker`](https://github.com/code-yeongyu/pi-comment-checker) | Runs comment-quality checks after file-editing tools and shows warnings in the TUI. |
 | [`pi-cua-integration`](https://github.com/code-yeongyu/pi-cua-integration) | Computer-use action wiring for desktop/browser interaction surfaces. |
-| [`pi-goal`](https://github.com/code-yeongyu/pi-goal) | Persistent goal tracking with Codex-style goal tools, TUI footer, and continuation prompts. |
+| [`pi-goal`](https://github.com/code-yeongyu/pi-goal) | Persistent goal tracking with Codex-style goal tools and continuation prompts. **Now shipped builtin** as the budget-free [`goal`](packages/coding-agent/src/core/extensions/builtin/goal/) extension. |
 | [`pi-google-code-execution`](https://github.com/code-yeongyu/pi-google-code-execution) | Google native code execution. |
 | [`pi-google-google-search`](https://github.com/code-yeongyu/pi-google-google-search) | Google Search grounding. |
 | [`pi-google-url-context`](https://github.com/code-yeongyu/pi-google-url-context) | Google URL grounding. |
@@ -152,7 +152,7 @@ You do **not** need to install these packages for normal senpi use; their functi
 | [`pi-openai-web-search`](https://github.com/code-yeongyu/pi-openai-web-search) | `openai-web-search` | OpenAI Responses native web search. |
 | [`pi-todotools`](https://github.com/code-yeongyu/pi-todotools) | `todowrite` | `todowrite` / `todoread`, todo sidebar state, workflow prompt guidance, and continuation follow-ups. |
 
-Other builtins such as `permission-system`, `prompt-preset`, `anthropic-bash`, `service-tier`, `tool-pair-guard`, `compaction`, `history-search`, `session-observer`, and `kimi-web-search` are senpi-owned builtin extensions, not installable sibling packages.
+Other builtins such as `permission-system`, `prompt-preset`, `anthropic-bash`, `service-tier`, `tool-pair-guard`, `compaction`, `history-search`, `session-observer`, `kimi-web-search`, and `goal` are senpi-owned builtin extensions, not installable sibling packages.
 
 ## Why "senpi"
 
@@ -195,6 +195,7 @@ In-tree, tightly coupled to senpi internals. Loaded in this exact registration o
 | 13 | [`history-search`](packages/coding-agent/src/core/extensions/builtin/history-search/) | `/history` command — searches prompt history across sessions in an overlay | — |
 | 14 | [`session-observer`](packages/coding-agent/src/core/extensions/builtin/session-observer/) | `/sessions` command — peeks at previous session transcripts in a HUD overlay | — |
 | 15 | [`kimi-web-search`](packages/coding-agent/src/core/extensions/builtin/kimi-web-search/) | `SearchWeb` / `FetchURL` tools backed by the Kimi search/fetch API; toggled via `PI_KIMI_WEB_SEARCH` | — |
+| 16 | [`goal`](packages/coding-agent/src/core/extensions/builtin/goal/) | Persistent per-thread goal tracking: `create_goal` / `update_goal` / `get_goal` + `/goal` command + continuation prompts; budget-free, file-based port of `pi-goal` | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/goal/AGENTS.md) · [changes.md](packages/coding-agent/src/core/extensions/builtin/goal/changes.md) |
 
 > The builtin directories above are new vs upstream `pi-mono` — none exist in `badlogic/pi-mono`. Vendored versions are pinned in [`external-versions.json`](packages/coding-agent/src/core/extensions/builtin/external-versions.json) and synced from the sibling `pi-extensions` checkout with [`sync-builtin-extensions.mjs`](packages/coding-agent/scripts/sync-builtin-extensions.mjs).
 

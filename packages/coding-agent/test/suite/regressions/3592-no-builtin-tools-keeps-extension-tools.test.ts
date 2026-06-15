@@ -81,9 +81,11 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 		).toEqual([
 			"apply_patch",
 			"bash",
+			"create_goal",
 			"dynamic_tool",
 			"edit",
 			"find",
+			"get_goal",
 			"grep",
 			"kimi_fetch_url",
 			"kimi_search_web",
@@ -91,6 +93,7 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 			"read",
 			"todoread",
 			"todowrite",
+			"update_goal",
 			"write",
 		]);
 		expect(session.getActiveToolNames()).toEqual([
@@ -98,6 +101,9 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 			"todoread",
 			"kimi_search_web",
 			"kimi_fetch_url",
+			"create_goal",
+			"update_goal",
+			"get_goal",
 			"dynamic_tool",
 		]);
 		expect(session.systemPrompt).toContain("- dynamic_tool: Run dynamic test behavior");
@@ -137,6 +143,9 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 			"todoread",
 			"kimi_search_web",
 			"kimi_fetch_url",
+			"create_goal",
+			"update_goal",
+			"get_goal",
 		]);
 		expect(session.systemPrompt).toContain("- todowrite:");
 		expect(session.systemPrompt).not.toContain("- read:");

@@ -1,6 +1,6 @@
 # packages/coding-agent/src/core/extensions/builtin
 
-15 in-tree extensions. Each is the canonical answer to "can senpi do X without core changes?". Registration order matters.
+16 in-tree extensions. Each is the canonical answer to "can senpi do X without core changes?". Registration order matters.
 
 ## INVENTORY (registration order from `builtin/index.ts`)
 
@@ -21,6 +21,7 @@
 | 13 | `history-search` | `history-search/` | Cross-session transcript search overlay (indexes session files) |
 | 14 | `session-observer` | `session-observer/` | `/sessions` command — peek at previous session transcripts in a HUD |
 | 15 | `kimi-web-search` | `kimi-web-search/` | Kimi web search + fetch tools (gated by `PI_KIMI_WEB_SEARCH`) |
+| 16 | `goal` | `goal/` | Persistent per-thread goal tracking + continuation (budget-free file-based port of pi-goal) |
 
 Plus 4 **global default extensions** (resolved fast-path): `diff`, `files`, `prompt-url-widget`, `tps` (in `globalDefaultExtensionFactories`).
 

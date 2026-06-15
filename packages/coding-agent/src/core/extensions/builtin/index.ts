@@ -5,6 +5,7 @@ import bashTimeoutExtension from "./bash-timeout/index.ts";
 import compactionExtension from "./compaction/index.ts";
 import diffExtension from "./diff.ts";
 import filesExtension from "./files.ts";
+import goalExtension from "./goal/index.ts";
 import gptApplyPatchExtension from "./gpt-apply-patch/index.ts";
 import historySearchExtension from "./history-search/index.ts";
 import kimiWebSearchExtension from "./kimi-web-search/index.ts";
@@ -49,4 +50,5 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "history-search", factory: historySearchExtension },
 	{ id: "session-observer", factory: sessionObserverExtension },
 	{ id: "kimi-web-search", factory: kimiWebSearchExtension },
+	{ id: "goal", factory: goalExtension },
 ];
