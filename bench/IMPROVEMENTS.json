@@ -191,6 +191,132 @@
       "handling": "Task 8 original JSON row is not invented; later JSONL optimization evidence is recorded separately."
     }
   ],
+  "remainingGajaeOptimizations": {
+    "createdAt": "2026-06-15T17:39:51Z",
+    "source": "remaining-gajae-3-day-optimizations-2026-06-15",
+    "rows": [
+      {
+        "item": "WI-5 word-diff",
+        "suite": "word-diff",
+        "fixture": "5-single-line-diff-cases",
+        "status": "shipped",
+        "baselineMedianMs": 22.34375,
+        "finalMedianMs": 8.1148340000002,
+        "medianDeltaPct": 63.68186181818092,
+        "baselineP95Ms": 26.71362499999998,
+        "finalP95Ms": 22.63858300000004,
+        "p95DeltaPct": 15.254545199312869,
+        "comparisonFailures": [],
+        "hypothesisMet": "Y",
+        "artifactPaths": {
+          "baseline": "/tmp/wi5-word-diff-base.json",
+          "final": "/tmp/wi5-word-diff-final-head.json",
+          "summary": ".omo/start-work/evidence/wi5-bench-summary.txt"
+        },
+        "pullRequest": {
+          "number": 41,
+          "url": "https://github.com/code-yeongyu/senpi/pull/41",
+          "mergeCommit": "1da1ab5e4ba1bc65c340820ccc4e110bade9b7f3",
+          "mergedAt": "2026-06-15T15:10:23Z"
+        }
+      },
+      {
+        "item": "WI-3 compaction-trim",
+        "suite": "compaction-trim",
+        "fixture": "500-1000-2000-message-emergency-prune",
+        "status": "shipped",
+        "baselineMedianMs": 29.648124999999936,
+        "finalMedianMs": 12.111666000000014,
+        "medianDeltaPct": 59.14862744271336,
+        "baselineP95Ms": 44.001916999999935,
+        "finalP95Ms": 24.484874999999988,
+        "p95DeltaPct": 44.354981170479405,
+        "comparisonFailures": [],
+        "hypothesisMet": "Y",
+        "artifactPaths": {
+          "baseline": "/tmp/wi3-compaction-trim-base.json",
+          "final": "/tmp/wi3-compaction-trim-final-head.json",
+          "summary": ".omo/start-work/evidence/wi3-bench-summary.txt"
+        },
+        "pullRequest": {
+          "number": 42,
+          "url": "https://github.com/code-yeongyu/senpi/pull/42",
+          "mergeCommit": "a3a31da9be6549df1386b3ed301438f38b024a91",
+          "mergedAt": "2026-06-15T16:40:01Z"
+        }
+      },
+      {
+        "item": "WI-4 emit-context-clone",
+        "suite": "emit-context-clone",
+        "fixture": "10-100-1000-json-context-messages",
+        "status": "shipped",
+        "baselineMedianMs": 2.2787920000000668,
+        "finalMedianMs": 1.6458749999999327,
+        "medianDeltaPct": 27.77423301469004,
+        "baselineP95Ms": 2.606625000000008,
+        "finalP95Ms": 1.8852500000000418,
+        "p95DeltaPct": 27.674675106697897,
+        "comparisonFailures": [],
+        "hypothesisMet": "Y",
+        "artifactPaths": {
+          "baseline": "/tmp/wi4-emit-context-clone-base.json",
+          "final": "/tmp/wi4-emit-context-clone-head.json",
+          "summary": ".omo/start-work/evidence/wi4-bench-summary.txt"
+        },
+        "pullRequest": {
+          "number": 43,
+          "url": "https://github.com/code-yeongyu/senpi/pull/43",
+          "mergeCommit": "2fc7a02bcc44e868d0cc7b7cf1108451ce410e84",
+          "mergedAt": "2026-06-15T17:39:51Z"
+        }
+      }
+    ],
+    "deferred": [
+      {
+        "item": "WI-2 mutation safety",
+        "status": "deferred",
+        "codeShipped": false,
+        "decision": "deferred / needs deeper proof; shared-object cache not shipped",
+        "evidencePath": ".omo/start-work/evidence/wi2-mutation-safety-deferred.txt",
+        "inPlaceMutationFindings": [
+          "packages/agent/src/proxy.ts:217-218",
+          "packages/agent/src/proxy.ts:247-325",
+          "packages/agent/src/proxy.ts:351-358",
+          "packages/coding-agent/src/core/agent-session.ts:786-845",
+          "packages/coding-agent/src/modes/interactive/interactive-mode.ts:3185-3191"
+        ],
+        "mutableStateAssignments": [
+          "packages/coding-agent/src/core/agent-session-runtime.ts:253",
+          "packages/coding-agent/src/core/agent-session.ts:2126",
+          "packages/coding-agent/src/core/agent-session.ts:3436",
+          "packages/coding-agent/src/core/sdk.ts:379"
+        ]
+      }
+    ],
+    "pullRequests": [
+      {
+        "item": "WI-5 word-diff",
+        "number": 41,
+        "url": "https://github.com/code-yeongyu/senpi/pull/41",
+        "mergeCommit": "1da1ab5e4ba1bc65c340820ccc4e110bade9b7f3",
+        "mergedAt": "2026-06-15T15:10:23Z"
+      },
+      {
+        "item": "WI-3 compaction-trim",
+        "number": 42,
+        "url": "https://github.com/code-yeongyu/senpi/pull/42",
+        "mergeCommit": "a3a31da9be6549df1386b3ed301438f38b024a91",
+        "mergedAt": "2026-06-15T16:40:01Z"
+      },
+      {
+        "item": "WI-4 emit-context-clone",
+        "number": 43,
+        "url": "https://github.com/code-yeongyu/senpi/pull/43",
+        "mergeCommit": "2fc7a02bcc44e868d0cc7b7cf1108451ce410e84",
+        "mergedAt": "2026-06-15T17:39:51Z"
+      }
+    ]
+  },
   "staticBaseline": {
     "status": 1,
     "diagnosticOnly": true,
