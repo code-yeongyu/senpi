@@ -1,6 +1,6 @@
 # builtin/prompt-preset
 
-Builtin extension #3. On `before_agent_start` and `model_select`, picks a system prompt preset by **model family** (gpt-5.x, claude-opus-4-{5,6,7}, kimi-k2-6) and falls back to the senpi dynamic prompt when nothing matches. Renders the active preset name in the startup header. After 2026-04-30, presets are thin wrappers around `buildDynamicSystemPrompt()` carrying only model-specific tuning.
+Builtin extension #3. On `before_agent_start` and `model_select`, picks a system prompt preset by **model family** (gpt-5.x, claude-opus-4-{5,6,7}, kimi-k2-{6,7}) and falls back to the senpi dynamic prompt when nothing matches. Renders the active preset name in the startup header. After 2026-04-30, presets are thin wrappers around `buildDynamicSystemPrompt()` carrying only model-specific tuning.
 
 ## FILES
 
@@ -19,6 +19,7 @@ prompt-preset/
 ├── claude-opus-4-6.ts   # Claude Opus 4.6 preset
 ├── claude-opus-4-7.ts   # Claude Opus 4.7 preset
 ├── kimi-k2-6.ts         # Kimi K2.6 preset
+├── kimi-k2-7.ts         # Kimi K2.7 preset
 └── changes.md           # Fork tracker (model-family rename 2026-04-30, file-operations 2026-05-07)
 ```
 

@@ -49,7 +49,7 @@ function extractGpt5Version(modelId: string): Gpt5Version | undefined {
 }
 
 function hasKimiK26Signal(value: string): boolean {
-	return /(?:^|[/@._-])kimi-k2(?:[._-]|p)6(?:$|[/@._-])/.test(normalizeModelId(value));
+	return /(?:^|[/@._-])kimi-k2(?:[._-]|p)6(?:$|[/@._:-])/.test(normalizeModelId(value));
 }
 
 function isKimiK26Model(model: ModelWithPromptPresetMetadata): boolean {
@@ -57,7 +57,7 @@ function isKimiK26Model(model: ModelWithPromptPresetMetadata): boolean {
 }
 
 function hasKimiK27Signal(value: string): boolean {
-	return /(?:^|[/@._-])kimi-k2(?:[._-]|p)7(?:$|[/@._-])/.test(normalizeModelId(value));
+	return /(?:^|[/@._-])kimi-k2(?:[._-]|p)7(?:$|[/@._:-])/.test(normalizeModelId(value));
 }
 
 function isKimiK27Model(model: ModelWithPromptPresetMetadata): boolean {

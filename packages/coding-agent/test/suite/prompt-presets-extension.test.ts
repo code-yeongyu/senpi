@@ -40,11 +40,20 @@ function fallbackPrompt(): string {
 
 function hasKimiK26CatalogSignal(model: Model<Api>): boolean {
 	const searchable = `${model.id} ${model.name}`.toLowerCase().replace(/\s+/g, "-");
-	return /(?:^|[/@._-])kimi-k2(?:[._-]|p)6(?:$|[/@._-])/.test(searchable);
+	return /(?:^|[/@._-])kimi-k2(?:[._-]|p)6(?:$|[/@._:-])/.test(searchable);
 }
 
 function getKimiK26CatalogModels(): Model<Api>[] {
 	return getProviders().flatMap((provider) => (getModels(provider) as Model<Api>[]).filter(hasKimiK26CatalogSignal));
+}
+
+function hasKimiK27CatalogSignal(model: Model<Api>): boolean {
+	const searchable = `${model.id} ${model.name}`.toLowerCase().replace(/\s+/g, "-");
+	return /(?:^|[/@._-])kimi-k2(?:[._-]|p)7(?:$|[/@._:-])/.test(searchable);
+}
+
+function getKimiK27CatalogModels(): Model<Api>[] {
+	return getProviders().flatMap((provider) => (getModels(provider) as Model<Api>[]).filter(hasKimiK27CatalogSignal));
 }
 
 describe("prompt preset resolver", () => {
@@ -163,6 +172,14 @@ describe("prompt preset resolver", () => {
 	it.each([
 		{ id: "kimi-k2.7-0711", provider: "moonshot", api: "openai-responses" as const },
 		{ id: "kimi-k2p7-turbo", provider: "moonshot", api: "openai-responses" as const },
+		{ id: "kimi-k2.7-code", provider: "moonshot", api: "openai-responses" as const },
+		{ id: "moonshotai/kimi-k2.7-code", provider: "openrouter", api: "openai-responses" as const },
+		{ id: "moonshotai/kimi-k2.7-code-free", provider: "openrouter", api: "openai-responses" as const },
+		{ id: "moonshotai/Kimi-K2.7-Code", provider: "baseten", api: "openai-responses" as const },
+		{ id: "@cf/moonshotai/kimi-k2.7-code", provider: "workers-ai", api: "openai-responses" as const },
+		{ id: "accounts/fireworks/models/kimi-k2p7-code", provider: "fireworks", api: "openai-responses" as const },
+		{ id: "accounts/fireworks/routers/kimi-k2p7-code-fast", provider: "fireworks", api: "openai-responses" as const },
+		{ id: "moonshotai/kimi-k2.7:thinking", provider: "openrouter", api: "openai-responses" as const },
 	])("returns kimi-k2-7 preset for $provider/$id", ({ id, provider, api }) => {
 		// given
 		const settings: PromptPresetSettings = { promptPreset: "auto" };
@@ -225,6 +242,41 @@ describe("prompt preset resolver", () => {
 			]),
 		);
 		expect(misses).toEqual([]);
+	});
+
+	it("returns kimi-k2-7 preset for every Kimi K2.7 built-in catalog model", () => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const catalogModels = getKimiK27CatalogModels();
+		const catalogModelIds = catalogModels.map((model) => `${model.provider}/${model.id}`);
+
+		// when
+		const misses = catalogModels
+			.filter((model) => resolvePresetName(model, settings) !== "kimi-k2-7")
+			.map((model) => `${model.provider}/${model.id}`);
+
+		// then
+		expect(catalogModelIds).toEqual(
+			expect.arrayContaining([
+				"fireworks/accounts/fireworks/models/kimi-k2p7-code",
+				"moonshotai/kimi-k2.7-code",
+				"openrouter/moonshotai/kimi-k2.7-code",
+			]),
+		);
+		expect(misses).toEqual([]);
+	});
+
+	it("keeps colon-tagged Kimi K2.6 thinking variants on the kimi-k2-6 preset", () => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel("moonshotai/kimi-k2.6:thinking", "openrouter", "openai-responses");
+
+		// when
+		const preset = resolvePreset(model, settings);
+
+		// then
+		expect(preset?.name).toBe("kimi-k2-6");
+		expect(preset?.prompt).toContain("filler verification language");
 	});
 
 	it("returns undefined for unknown model", () => {

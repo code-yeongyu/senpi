@@ -8,7 +8,7 @@
 |---|-----|------|------|
 | 1 | `permission-system` | `permission-system/` | Full opencode-style permission port: rules, JSONL storage, prompts |
 | 2 | `gpt-apply-patch` | `gpt-apply-patch/` | Codex-style `apply_patch` tool with rich render + freeform grammar |
-| 3 | `prompt-preset` | `prompt-preset/` | Per-model system prompts (gpt-5.x, claude-opus-4-{5,6,7}, kimi-k2-6) |
+| 3 | `prompt-preset` | `prompt-preset/` | Per-model system prompts (gpt-5.x, claude-opus-4-{5,6,7}, kimi-k2-{6,7}) |
 | 4 | `todowrite` | `todotools/` | Plan/task tools; synced from `../pi-extensions/pi-todotools` |
 | 5 | `redraws` | `redraws.ts` | Force-redraw event hooks for stable streaming visuals |
 | 6 | `anthropic-web-search` | `anthropic-web-search/` | Anthropic-native web search tool |
