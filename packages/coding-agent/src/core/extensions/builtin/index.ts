@@ -9,16 +9,20 @@ import goalExtension from "./goal/index.ts";
 import gptApplyPatchExtension from "./gpt-apply-patch/index.ts";
 import historySearchExtension from "./history-search/index.ts";
 import kimiWebSearchExtension from "./kimi-web-search/index.ts";
+import nestedAgentsMdExtension from "./nested-agents-md/index.ts";
 import openaiWebSearchExtension from "./openai-web-search/index.ts";
 import permissionSystemExtension from "./permission-system/index.ts";
 import promptPresetExtension from "./prompt-preset/index.ts";
 import promptUrlWidgetExtension from "./prompt-url-widget.ts";
 import redrawsExtension from "./redraws.ts";
+import piRulesExtension from "./rules/index.ts";
 import serviceTierExtension from "./service-tier.ts";
 import sessionObserverExtension from "./session-observer/index.ts";
 import todowriteExtension from "./todotools/index.ts";
 import toolPairGuardExtension from "./tool-pair-guard/index.ts";
 import tpsExtension from "./tps.ts";
+import webfetchExtension from "./webfetch/index.ts";
+import websearchExtension from "./websearch/index.ts";
 
 export interface BuiltinExtensionFactory {
 	id: string;
@@ -50,5 +54,9 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "history-search", factory: historySearchExtension },
 	{ id: "session-observer", factory: sessionObserverExtension },
 	{ id: "kimi-web-search", factory: kimiWebSearchExtension },
+	{ id: "websearch", factory: websearchExtension },
+	{ id: "webfetch", factory: webfetchExtension },
+	{ id: "nested-agents-md", factory: nestedAgentsMdExtension },
+	{ id: "rules", factory: piRulesExtension },
 	{ id: "goal", factory: goalExtension },
 ];

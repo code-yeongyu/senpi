@@ -62,9 +62,11 @@
 		"minimatch": "10.2.5",
 		"openai": "6.26.0",
 		"partial-json": "0.1.7",
+		"picomatch": "4.0.4",
 		"proper-lockfile": "4.1.2",
 		"proxy-from-env": "1.1.0",
 		"semver": "7.8.0",
+		"turndown": "7.2.4",
 		"typebox": "1.1.38",
 		"undici": "8.3.0",
 		"yaml": "2.9.0"
@@ -89,8 +91,10 @@
 		"@types/hosted-git-info": "3.0.5",
 		"@types/ms": "2.1.0",
 		"@types/node": "25.9.1",
+		"@types/picomatch": "4.0.3",
 		"@types/proper-lockfile": "4.1.4",
 		"@types/semver": "7.7.1",
+		"@types/turndown": "5.0.6",
 		"shx": "0.4.0",
 		"typescript": "6.0.3",
 		"vitest": "4.1.8"
