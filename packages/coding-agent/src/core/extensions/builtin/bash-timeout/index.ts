@@ -26,7 +26,8 @@ export default function bashTimeoutExtension(pi: ExtensionAPI): void {
 		const input = event.input as BashToolInputLike;
 		const updated = applyBashTimeout(input, defaults);
 		if (updated !== input) {
-			input.timeout = updated.timeout;
+			const timeout = updated.timeout;
+			if (timeout !== undefined) input.timeout = timeout;
 		}
 	});
 

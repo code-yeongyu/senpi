@@ -94,6 +94,8 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 			"todoread",
 			"todowrite",
 			"update_goal",
+			"web_search",
+			"webfetch",
 			"write",
 		]);
 		expect(session.getActiveToolNames()).toEqual([
@@ -101,6 +103,8 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 			"todoread",
 			"kimi_search_web",
 			"kimi_fetch_url",
+			"web_search",
+			"webfetch",
 			"create_goal",
 			"update_goal",
 			"get_goal",
@@ -143,6 +147,8 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 			"todoread",
 			"kimi_search_web",
 			"kimi_fetch_url",
+			"web_search",
+			"webfetch",
 			"create_goal",
 			"update_goal",
 			"get_goal",

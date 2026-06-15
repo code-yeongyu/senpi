@@ -33,7 +33,6 @@ If you're migrating from [OMO (oh-my-openagent)](https://github.com/code-yeongyu
 |---|---|
 | 🚪 **IntentGate** | [Dynamic system prompt](packages/coding-agent/src/core/dynamic-prompt/AGENTS.md) — every prompt opens with a forced intent gate before tool use. |
 | ✅ **Todo Enforcer** | [`todowrite`](packages/coding-agent/src/core/extensions/builtin/todotools/) + continuation loop that re-engages idle agents. |
-| **Persistent goal tracking** (Sisyphus-style) | [`goal`](packages/coding-agent/src/core/extensions/builtin/goal/) — `create_goal` / `update_goal` / `get_goal` + `/goal` command + continuation prompts; budget-free, file-based port of `pi-goal`. |
 | **Per-model tuning** ("Model Setup") | [`prompt-preset`](packages/coding-agent/src/core/extensions/builtin/prompt-preset/) — GPT-5.x / Claude Opus 4.{5,6,7} / Kimi K2.{6,7} presets. |
 | **Session recovery / context management** | [`compaction`](packages/coding-agent/src/core/extensions/builtin/compaction/) — adaptive thresholds, restoration tracker, emergency compaction, tool-result truncation. |
 | **Apply-patch on GPT models** | [`gpt-apply-patch`](packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/) — Codex-style freeform `apply_patch` with Lark grammar. |
@@ -41,6 +40,11 @@ If you're migrating from [OMO (oh-my-openagent)](https://github.com/code-yeongyu
 | **Bash timeout discipline** | [`bash-timeout`](packages/coding-agent/src/core/extensions/builtin/bash-timeout/) — default + max-timeout enforcement, policy in system prompt. |
 | **Compaction-safe tool pairing** | [`tool-pair-guard`](packages/coding-agent/src/core/extensions/builtin/tool-pair-guard/) — strips orphan `tool_result` blocks. |
 | **Permission system** (opencode-style allow/deny) | [`permission-system`](packages/coding-agent/src/core/extensions/builtin/permission-system/) — rules, JSONL storage, TUI prompts, parser-aware patterns. |
+| 📚 **Web search** (Exa-style slot) | [`websearch`](packages/coding-agent/src/core/extensions/builtin/websearch/) — provider-backed `web_search` tool, config-gated, defers to provider natives. |
+| **Web fetch** | [`webfetch`](packages/coding-agent/src/core/extensions/builtin/webfetch/) — `webfetch` tool: URL content as markdown / text / HTML, bounded time + size. |
+| **Rule loading** (`.claude/rules`, `AGENTS.md`, …) | [`rules`](packages/coding-agent/src/core/extensions/builtin/rules/) — auto-discovers `.sisyphus/rules`, `.claude/rules`, `.cursor/rules`, `.github/instructions`, `AGENTS.md`, `CLAUDE.md`. |
+| 🔍 **Nested AGENTS.md** (`/init-deep` runtime half) | [`nested-agents-md`](packages/coding-agent/src/core/extensions/builtin/nested-agents-md/) — auto-injects nearby `AGENTS.md` when reading from a nested directory. |
+| **Goal tracking** (Sisyphus-style discipline) | [`goal`](packages/coding-agent/src/core/extensions/builtin/goal/) — budget-free `create_goal` / `update_goal` / `get_goal` + `/goal`, persistent per-thread objective with continuation prompts. |
 
 ### Install these pi-extension packages for the OMO-shaped senpi
 
@@ -48,10 +52,9 @@ If you're migrating from [OMO (oh-my-openagent)](https://github.com/code-yeongyu
 senpi install git:github.com/code-yeongyu/pi-lsp-client            # 🛠️  LSP: rename / goto / refs / diagnostics + /lsp inspector
 senpi install git:github.com/code-yeongyu/pi-ast-grep              # 🛠️  AST-Grep across 25 languages (auto-downloads sg)
 senpi install git:github.com/code-yeongyu/pi-comment-checker       # 💬  Comment Checker — the standalone pi port of OMO's hook
-senpi install git:github.com/code-yeongyu/pi-rules                 #     Context injection: .claude/rules, .cursor/rules, .github/instructions, AGENTS.md, CLAUDE.md
-senpi install git:github.com/code-yeongyu/pi-nested-agents-md      # 🔍  Auto-injects nearby AGENTS.md (the runtime half of /init-deep)
-senpi install git:github.com/code-yeongyu/pi-websearch             # 📚  Provider-backed web search (fills the Exa-style slot)
-senpi install git:github.com/code-yeongyu/pi-webfetch              #     web_fetch tool (markdown / text / HTML, bounded time + size)
+
+# Web search / fetch, rule loading, nested AGENTS.md, and goal tracking are now senpi builtins —
+# nothing to install. See "Already builtin in senpi" above.
 
 # Optional — only if you used the matching OMO surface:
 senpi install git:github.com/code-yeongyu/pi-cua-integration                 # 🖥️  Computer-use bindings (desktop / browser)
@@ -68,6 +71,24 @@ senpi install git:github.com/code-yeongyu/pi-openai-api-parallel-tool-calls  #  
 ```
 
 Each package is also installable by git URL, e.g. `senpi install git:github.com/code-yeongyu/pi-comment-checker`. See [Senpi Packages](packages/coding-agent/README.md#pi-packages) for the full install / update / remove flow.
+
+### Recommended coding set
+
+The four extensions that pull the most weight on day-to-day coding work. `goal` is already a senpi builtin (nothing to install); the other three are one `senpi install` away.
+
+| Extension | Status | What it gives you |
+|---|---|---|
+| [`pi-ast-grep`](https://github.com/code-yeongyu/pi-ast-grep) | `senpi install` | AST-aware structural search/replace across 25 languages (auto-downloads `sg`). |
+| [`pi-lsp-client`](https://github.com/code-yeongyu/pi-lsp-client) | `senpi install` | Compiler-grade `lsp_rename` / `lsp_goto_definition` / `lsp_find_references` / `lsp_diagnostics` + `/lsp` inspector. |
+| [`pi-comment-checker`](https://github.com/code-yeongyu/pi-comment-checker) | `senpi install` | Comment-quality checks after every file edit, surfaced in the TUI. |
+| [`goal`](packages/coding-agent/src/core/extensions/builtin/goal/) | **builtin** | Budget-free persistent goal tracking with continuation prompts (synced from [`pi-goal`](https://github.com/code-yeongyu/pi-goal)). |
+
+```bash
+senpi install git:github.com/code-yeongyu/pi-ast-grep
+senpi install git:github.com/code-yeongyu/pi-lsp-client
+senpi install git:github.com/code-yeongyu/pi-comment-checker
+# goal is builtin — already on.
+```
 
 ### Allow all permissions (OMO-style)
 
@@ -97,7 +118,7 @@ These are part of OMO's opencode harness shape and are intentionally **not** in 
 - **Hashline / hash-anchored edit tool** — senpi stays with pi's standard `edit` / `multiedit` / `apply_patch`. `pi-comment-checker` covers the post-edit validation slot OMO uses Hashline for, just without `LINE#ID` content-hash identifiers.
 - **Skill system** and **skill-embedded MCPs** — skills as a first-class concept (`SKILL.md`, scoped per-skill MCP servers) do not exist in senpi.
 - **Prometheus interview-mode planner** and the **Ralph Loop / `/ulw-loop`** self-referential loop.
-- **`/init-deep`** — there is no in-tree generator. Generate the hierarchical `AGENTS.md` tree manually (or with a normal agent prompt), then install `pi-nested-agents-md` so the agent actually reads them.
+- **`/init-deep`** — there is no in-tree generator. Generate the hierarchical `AGENTS.md` tree manually (or with a normal agent prompt); the `nested-agents-md` builtin then reads them automatically (no install needed).
 - **Built-in `doctor` command**, **Claude Code hook/command/skill/plugin compatibility layer**, and the **agent category router** (`visual-engineering` / `deep` / `quick` / `ultrabrain`).
 
 ## Want more? Try the pi-extensions ecosystem
@@ -118,17 +139,14 @@ These [`code-yeongyu/pi-*`](https://github.com/code-yeongyu?tab=repositories&q=p
 | [`pi-ast-grep`](https://github.com/code-yeongyu/pi-ast-grep) | AST-aware code search/replace across 25 languages. Auto-downloads `sg` on first use. |
 | [`pi-comment-checker`](https://github.com/code-yeongyu/pi-comment-checker) | Runs comment-quality checks after file-editing tools and shows warnings in the TUI. |
 | [`pi-cua-integration`](https://github.com/code-yeongyu/pi-cua-integration) | Computer-use action wiring for desktop/browser interaction surfaces. |
-| [`pi-goal`](https://github.com/code-yeongyu/pi-goal) | Persistent goal tracking with Codex-style goal tools and continuation prompts. **Now shipped builtin** as the budget-free [`goal`](packages/coding-agent/src/core/extensions/builtin/goal/) extension. |
 | [`pi-google-code-execution`](https://github.com/code-yeongyu/pi-google-code-execution) | Google native code execution. |
 | [`pi-google-google-search`](https://github.com/code-yeongyu/pi-google-google-search) | Google Search grounding. |
 | [`pi-google-url-context`](https://github.com/code-yeongyu/pi-google-url-context) | Google URL grounding. |
 | [`pi-lsp-client`](https://github.com/code-yeongyu/pi-lsp-client) | LSP integration: `lsp_rename`, `lsp_goto_definition`, `lsp_find_references`, `lsp_diagnostics`, plus a `/lsp` inspector. |
-| [`pi-nested-agents-md`](https://github.com/code-yeongyu/pi-nested-agents-md) | Auto-injects nearby `AGENTS.md` files when the agent reads from a nested directory. |
 | [`pi-openai-api-parallel-tool-calls`](https://github.com/code-yeongyu/pi-openai-api-parallel-tool-calls) | OpenAI `parallel_tool_calls` payload support. |
 | [`pi-openai-code-interpreter`](https://github.com/code-yeongyu/pi-openai-code-interpreter) | OpenAI Code Interpreter. |
-| [`pi-rules`](https://github.com/code-yeongyu/pi-rules) | Auto-discovers rule files from `.sisyphus/rules/`, `.claude/rules/`, `.cursor/rules/`, `.github/instructions/`, `AGENTS.md`, and `CLAUDE.md`. |
-| [`pi-webfetch`](https://github.com/code-yeongyu/pi-webfetch) | `web_fetch` tool: URL content as markdown, plain text, or HTML with bounded time and size. |
-| [`pi-websearch`](https://github.com/code-yeongyu/pi-websearch) | Provider-backed web search with config-gated activation, TUI status, and source-aware results. |
+
+> Web search/fetch (`websearch`, `webfetch`), rule loading (`rules`), nested `AGENTS.md` injection (`nested-agents-md`), and goal tracking (`goal`) used to live here — they are now senpi builtins. See [pi-extension packages already shipped as senpi builtins](#pi-extension-packages-already-shipped-as-senpi-builtins).
 
 Install any of them with:
 
@@ -149,8 +167,13 @@ You do **not** need to install these packages for normal senpi use; their functi
 | [`pi-anthropic-web-search`](https://github.com/code-yeongyu/pi-anthropic-web-search) | `anthropic-web-search` | Anthropic-native web search support. |
 | [`pi-apply-patch`](https://github.com/code-yeongyu/pi-apply-patch) | `gpt-apply-patch` | Codex-style `apply_patch` tool for GPT-family runs. |
 | [`pi-bash-timeout`](https://github.com/code-yeongyu/pi-bash-timeout) | `bash-timeout` | Bash timeout defaults, max timeout enforcement, and prompt policy. |
+| [`pi-goal`](https://github.com/code-yeongyu/pi-goal) | `goal` | Budget-free persistent goal tracking: `create_goal` / `update_goal` / `get_goal` + `/goal`, per-thread objective with continuation prompts. |
+| [`pi-nested-agents-md`](https://github.com/code-yeongyu/pi-nested-agents-md) | `nested-agents-md` | Auto-injects nearby `AGENTS.md` files when the agent reads from a nested directory. |
 | [`pi-openai-web-search`](https://github.com/code-yeongyu/pi-openai-web-search) | `openai-web-search` | OpenAI Responses native web search. |
+| [`pi-rules`](https://github.com/code-yeongyu/pi-rules) | `rules` | Auto-discovers rule files from `.sisyphus/rules/`, `.claude/rules/`, `.cursor/rules/`, `.github/instructions/`, `AGENTS.md`, and `CLAUDE.md`. |
 | [`pi-todotools`](https://github.com/code-yeongyu/pi-todotools) | `todowrite` | `todowrite` / `todoread`, todo sidebar state, workflow prompt guidance, and continuation follow-ups. |
+| [`pi-webfetch`](https://github.com/code-yeongyu/pi-webfetch) | `webfetch` | `webfetch` tool: URL content as markdown, plain text, or HTML with bounded time and size. |
+| [`pi-websearch`](https://github.com/code-yeongyu/pi-websearch) | `websearch` | Provider-backed web search with config-gated activation, TUI status, and source-aware results. |
 
 Other builtins such as `permission-system`, `prompt-preset`, `anthropic-bash`, `service-tier`, `tool-pair-guard`, `compaction`, `history-search`, `session-observer`, `kimi-web-search`, and `goal` are senpi-owned builtin extensions, not installable sibling packages.
 
@@ -194,8 +217,12 @@ In-tree, tightly coupled to senpi internals. Loaded in this exact registration o
 | 12 | [`compaction`](packages/coding-agent/src/core/extensions/builtin/compaction/) | Speculative + emergency compaction policy: degradation monitor, circuit breaker, per-turn cap, todo bridging, checkpoint state, restoration tracker, tool-result truncation | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/compaction/AGENTS.md) · [changes.md](packages/coding-agent/src/core/extensions/builtin/compaction/changes.md) |
 | 13 | [`history-search`](packages/coding-agent/src/core/extensions/builtin/history-search/) | `/history` command — searches prompt history across sessions in an overlay | — |
 | 14 | [`session-observer`](packages/coding-agent/src/core/extensions/builtin/session-observer/) | `/sessions` command — peeks at previous session transcripts in a HUD overlay | — |
-| 15 | [`kimi-web-search`](packages/coding-agent/src/core/extensions/builtin/kimi-web-search/) | `SearchWeb` / `FetchURL` tools backed by the Kimi search/fetch API; toggled via `PI_KIMI_WEB_SEARCH` | — |
-| 16 | [`goal`](packages/coding-agent/src/core/extensions/builtin/goal/) | Persistent per-thread goal tracking: `create_goal` / `update_goal` / `get_goal` + `/goal` command + continuation prompts; budget-free, file-based port of `pi-goal` | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/goal/AGENTS.md) · [changes.md](packages/coding-agent/src/core/extensions/builtin/goal/changes.md) |
+| 15 | [`kimi-web-search`](packages/coding-agent/src/core/extensions/builtin/kimi-web-search/) | `kimi_search_web` / `kimi_fetch_url` tools backed by the Kimi search/fetch API; toggled via `PI_KIMI_WEB_SEARCH` | — |
+| 16 | [`websearch`](packages/coding-agent/src/core/extensions/builtin/websearch/) *(vendored)* | Provider-backed `web_search` tool + `/websearch` status command; config-gated, defers to provider natives. Synced from [`code-yeongyu/pi-websearch`](https://github.com/code-yeongyu/pi-websearch). | — |
+| 17 | [`webfetch`](packages/coding-agent/src/core/extensions/builtin/webfetch/) *(vendored)* | `webfetch` tool — URL content as markdown / text / HTML, bounded time + size; toggled via `PI_WEBFETCH`. Synced from [`code-yeongyu/pi-webfetch`](https://github.com/code-yeongyu/pi-webfetch). | — |
+| 18 | [`nested-agents-md`](packages/coding-agent/src/core/extensions/builtin/nested-agents-md/) *(vendored)* | Auto-injects nearby `AGENTS.md` files when the agent reads from a nested directory; `/nested-agents` toggle. Synced from [`code-yeongyu/pi-nested-agents-md`](https://github.com/code-yeongyu/pi-nested-agents-md). | — |
+| 19 | [`rules`](packages/coding-agent/src/core/extensions/builtin/rules/) *(vendored)* | Auto-discovers rule files (`.sisyphus/rules`, `.claude/rules`, `.cursor/rules`, `.github/instructions`, `AGENTS.md`, `CLAUDE.md`); `/rules` + `/reload-rules`. Synced from [`code-yeongyu/pi-rules`](https://github.com/code-yeongyu/pi-rules). | — |
+| 20 | [`goal`](packages/coding-agent/src/core/extensions/builtin/goal/) *(vendored)* | Budget-free persistent goal tracking — `create_goal` / `update_goal` / `get_goal` + `/goal`, per-thread objective with continuation prompts. Synced from [`code-yeongyu/pi-goal`](https://github.com/code-yeongyu/pi-goal). | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/goal/AGENTS.md) · [changes.md](packages/coding-agent/src/core/extensions/builtin/goal/changes.md) |
 
 > The builtin directories above are new vs upstream `pi-mono` — none exist in `badlogic/pi-mono`. Vendored versions are pinned in [`external-versions.json`](packages/coding-agent/src/core/extensions/builtin/external-versions.json) and synced from the sibling `pi-extensions` checkout with [`sync-builtin-extensions.mjs`](packages/coding-agent/scripts/sync-builtin-extensions.mjs).
 

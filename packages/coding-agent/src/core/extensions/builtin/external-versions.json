@@ -14,6 +14,31 @@
 			"packageName": "pi-todotools",
 			"version": "0.1.0",
 			"source": "../pi-extensions/pi-todotools"
+		},
+		"goal": {
+			"packageName": "pi-goal",
+			"version": "0.2.0",
+			"source": "../pi-extensions/pi-goal"
+		},
+		"websearch": {
+			"packageName": "pi-websearch",
+			"version": "0.1.0",
+			"source": "../pi-extensions/pi-websearch"
+		},
+		"webfetch": {
+			"packageName": "pi-webfetch",
+			"version": "0.1.0",
+			"source": "../pi-extensions/pi-webfetch"
+		},
+		"nested-agents-md": {
+			"packageName": "@code-yeongyu/pi-nested-agents-md",
+			"version": "0.1.0",
+			"source": "../pi-extensions/pi-nested-agents-md"
+		},
+		"rules": {
+			"packageName": "@code-yeongyu/pi-rules",
+			"version": "0.1.0",
+			"source": "../pi-extensions/pi-rules"
 		}
 	}
 }
