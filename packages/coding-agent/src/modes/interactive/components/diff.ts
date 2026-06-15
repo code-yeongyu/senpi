@@ -1,5 +1,20 @@
+import type { Change } from "diff";
 import * as Diff from "diff";
 import { theme } from "../theme/theme.ts";
+
+export const LONG_LINE_FAST_PATH_LIMIT = 500;
+
+type IntraLineDiff = {
+	readonly removedLine: string;
+	readonly addedLine: string;
+};
+
+type ReplacementSpan = {
+	readonly prefix: string;
+	readonly removed: string;
+	readonly added: string;
+	readonly suffix: string;
+};
 
 /**
  * Parse diff line to extract prefix, line number, and content.
@@ -23,8 +38,8 @@ function replaceTabs(text: string): string {
  * Uses diffWords which groups whitespace with adjacent words for cleaner highlighting.
  * Strips leading whitespace from inverse to avoid highlighting indentation.
  */
-function renderIntraLineDiff(oldContent: string, newContent: string): { removedLine: string; addedLine: string } {
-	const wordDiff = Diff.diffWords(oldContent, newContent);
+export function renderIntraLineDiffWithDiffWords(oldContent: string, newContent: string): IntraLineDiff {
+	const wordDiff: readonly Change[] = Diff.diffWords(oldContent, newContent);
 
 	let removedLine = "";
 	let addedLine = "";
@@ -63,6 +78,81 @@ function renderIntraLineDiff(oldContent: string, newContent: string): { removedL
 	}
 
 	return { removedLine, addedLine };
+}
+
+export function renderIntraLineDiff(oldContent: string, newContent: string): IntraLineDiff {
+	return (
+		renderIntraLineDiffFastPath(oldContent, newContent) ?? renderIntraLineDiffWithDiffWords(oldContent, newContent)
+	);
+}
+
+export function renderIntraLineDiffFastPath(oldContent: string, newContent: string): IntraLineDiff | null {
+	if (oldContent === newContent) return { removedLine: oldContent, addedLine: newContent };
+	return renderSingleSpanIntraLineDiff(oldContent, newContent);
+}
+
+function renderSingleSpanIntraLineDiff(oldContent: string, newContent: string): IntraLineDiff | null {
+	const span = findSingleDiffWordsReplacement(oldContent, newContent);
+	if (!span) return null;
+	return {
+		removedLine: `${span.prefix}${theme.inverse(span.removed)}${span.suffix}`,
+		addedLine: `${span.prefix}${theme.inverse(span.added)}${span.suffix}`,
+	};
+}
+
+function findSingleDiffWordsReplacement(oldContent: string, newContent: string): ReplacementSpan | null {
+	let start = 0;
+	while (start < oldContent.length && start < newContent.length && oldContent[start] === newContent[start]) {
+		start++;
+	}
+
+	let oldEnd = oldContent.length;
+	let newEnd = newContent.length;
+	while (oldEnd > start && newEnd > start && oldContent[oldEnd - 1] === newContent[newEnd - 1]) {
+		oldEnd--;
+		newEnd--;
+	}
+
+	while (
+		start > 0 &&
+		(isAsciiWordCode(oldContent.charCodeAt(start - 1)) || isAsciiWordCode(newContent.charCodeAt(start - 1)))
+	) {
+		start--;
+	}
+	while (
+		oldEnd < oldContent.length &&
+		newEnd < newContent.length &&
+		(isAsciiWordCode(oldContent.charCodeAt(oldEnd)) || isAsciiWordCode(newContent.charCodeAt(newEnd)))
+	) {
+		oldEnd++;
+		newEnd++;
+	}
+
+	const prefix = oldContent.slice(0, start);
+	const removed = oldContent.slice(start, oldEnd);
+	const added = newContent.slice(start, newEnd);
+	const oldSuffix = oldContent.slice(oldEnd);
+	const newSuffix = newContent.slice(newEnd);
+
+	if (oldSuffix !== newSuffix) return null;
+	if (!isSingleDiffWordsReplacement(removed, added)) return null;
+	return { prefix, removed, added, suffix: oldSuffix };
+}
+
+function isSingleDiffWordsReplacement(removed: string, added: string): boolean {
+	return removed.length > 0 && added.length > 0 && isSimpleDiffToken(removed) && isSimpleDiffToken(added);
+}
+
+function isSimpleDiffToken(value: string): boolean {
+	for (let i = 0; i < value.length; i++) {
+		const code = value.charCodeAt(i);
+		if (!isAsciiWordCode(code)) return false;
+	}
+	return true;
+}
+
+function isAsciiWordCode(code: number): boolean {
+	return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || code === 95 || (code >= 97 && code <= 122);
 }
 
 export interface RenderDiffOptions {
