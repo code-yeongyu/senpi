@@ -12,6 +12,7 @@ const BENCHES = {
 	"coding-agent-bash-output": "packages/coding-agent/bench/bash-output.ts",
 	"coding-agent-jsonl-parse": "packages/coding-agent/bench/jsonl-parse.ts",
 	"coding-agent-rpc-event-emit": "packages/coding-agent/bench/rpc-event-emit.ts",
+	"compaction-trim": "packages/coding-agent/bench/compaction-trim.ts",
 	"word-diff": "packages/coding-agent/bench/word-diff.ts",
 };
 

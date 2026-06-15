@@ -4,12 +4,15 @@
 
 ### Added
 
+- Added a compaction trim benchmark suite for hard-limit emergency pruning.
+
 ### Fixed
 
 - Compaction now keeps the last valid cut point when the recent-token budget is exceeded entirely within trailing tool results, instead of silently retaining the whole history.
 
 ### Changed
 
+- Improved hard-limit emergency pruning so old-message trimming tracks a running token total instead of re-estimating the whole conversation each iteration.
 - Improved single-line intra-line diff rendering with conservative fast paths for identical, long, and single-span edits.
 
 ### Removed

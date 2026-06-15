@@ -30,6 +30,7 @@ const EMERGENCY_CONTEXT_TARGET_RATIO = 0.95;
 const MAX_SUMMARY_TOKENS = 8192;
 const SUMMARY_SCHEMA = "senpi.compaction.summary.v1";
 type CompactionProgressCallback = (delta: string) => void;
+type PruneStep = { messages: AgentMessage[]; removedTokens: number };
 
 export interface SpeculativeCompactionContext {
 	model: Model<any> | undefined;
@@ -170,43 +171,56 @@ function findLastUserLikeIndex(messages: AgentMessage[]): number {
 	return messages.length;
 }
 
-function removeAssistantToolPair(messages: AgentMessage[], assistantIndex: number): AgentMessage[] {
+function removeAssistantToolPair(messages: AgentMessage[], assistantIndex: number): PruneStep {
 	const ids = getToolCallIds(messages[assistantIndex]);
-	return messages.filter((message, index) => {
-		if (index === assistantIndex) return false;
-		return message.role !== "toolResult" || !ids.has(message.toolCallId);
+	let removedTokens = 0;
+	const pruned = messages.filter((message, index) => {
+		const remove = index === assistantIndex || (message.role === "toolResult" && ids.has(message.toolCallId));
+		if (remove) removedTokens += estimateTokens(message);
+		return !remove;
 	});
+	return { messages: pruned, removedTokens };
 }
 
-function removeFirstOldToolPair(messages: AgentMessage[], boundaryIndex: number): AgentMessage[] | undefined {
+function removeFirstOldToolPair(messages: AgentMessage[], boundaryIndex: number): PruneStep | undefined {
 	for (let index = 0; index < boundaryIndex; index++) {
 		const message = messages[index];
 		if (!message) continue;
 		if (message.role === "assistant" && getToolCallIds(message).size > 0)
 			return removeAssistantToolPair(messages, index);
-		if (message.role === "toolResult") return messages.filter((_message, candidateIndex) => candidateIndex !== index);
+		if (message.role === "toolResult") {
+			return {
+				messages: messages.filter((_message, candidateIndex) => candidateIndex !== index),
+				removedTokens: estimateTokens(message),
+			};
+		}
 	}
 	return undefined;
 }
 
-function removeFirstOldMessage(messages: AgentMessage[], boundaryIndex: number): AgentMessage[] | undefined {
+function removeFirstOldMessage(messages: AgentMessage[], boundaryIndex: number): PruneStep | undefined {
 	for (let index = 0; index < boundaryIndex; index++) {
 		const message = messages[index];
 		if (!message || message.role === "toolResult") continue;
 		if (message.role === "assistant" && getToolCallIds(message).size > 0)
 			return removeAssistantToolPair(messages, index);
-		return messages.filter((_candidate, candidateIndex) => candidateIndex !== index);
+		return {
+			messages: messages.filter((_candidate, candidateIndex) => candidateIndex !== index),
+			removedTokens: estimateTokens(message),
+		};
 	}
 	return undefined;
 }
 
 function pruneOldMessagesToBudget(messages: AgentMessage[], targetTokens: number): AgentMessage[] {
 	let pruned = messages;
-	while (estimateTotalTokens(pruned) > targetTokens) {
+	let total = estimateTotalTokens(pruned);
+	while (total > targetTokens) {
 		const boundaryIndex = findLastUserLikeIndex(pruned);
 		const next = removeFirstOldToolPair(pruned, boundaryIndex) ?? removeFirstOldMessage(pruned, boundaryIndex);
-		if (!next || next.length === pruned.length) break;
-		pruned = next;
+		if (!next || next.messages.length === pruned.length) break;
+		pruned = next.messages;
+		total -= next.removedTokens;
 	}
 	return pruned;
 }
@@ -215,8 +229,8 @@ function removeOldestHistoryItemForOverflowRetry(messages: AgentMessage[]): Agen
 	if (messages.length <= 1) return undefined;
 	const boundaryIndex = findLastUserLikeIndex(messages);
 	return (
-		removeFirstOldToolPair(messages, boundaryIndex) ??
-		removeFirstOldMessage(messages, boundaryIndex) ??
+		removeFirstOldToolPair(messages, boundaryIndex)?.messages ??
+		removeFirstOldMessage(messages, boundaryIndex)?.messages ??
 		(messages.length > 1 ? messages.slice(1) : undefined)
 	);
 }
