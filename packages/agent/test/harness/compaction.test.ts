@@ -239,6 +239,41 @@ describe("harness compaction", () => {
 		expect(findCutPoint([user, compaction, assistant], 0, 3, 1).firstKeptEntryIndex).toBe(2);
 	});
 
+	it("falls back to the last valid cut point when the budget overshoots it", () => {
+		const tinyBudget = 100;
+		const toolResultExceedingBudgetAlone = "x".repeat(8000);
+		const lastValidCutPointIndex = 1;
+		const user = createMessageEntry(createUserMessage("u"));
+		const assistant = createMessageEntry(createAssistantMessage("a"), user.id);
+		const toolResult1 = createMessageEntry(
+			{
+				role: "toolResult",
+				toolCallId: "call-1",
+				toolName: "read",
+				content: [{ type: "text", text: toolResultExceedingBudgetAlone }],
+				isError: false,
+				timestamp: Date.now(),
+			},
+			assistant.id,
+		);
+		const toolResult2 = createMessageEntry(
+			{
+				role: "toolResult",
+				toolCallId: "call-2",
+				toolName: "read",
+				content: [{ type: "text", text: toolResultExceedingBudgetAlone }],
+				isError: false,
+				timestamp: Date.now(),
+			},
+			toolResult1.id,
+		);
+		const entries = [user, assistant, toolResult1, toolResult2];
+
+		const result = findCutPoint(entries, 0, entries.length, tinyBudget);
+
+		expect(result.firstKeptEntryIndex).toBe(lastValidCutPointIndex);
+	});
+
 	it("estimates tokens and context usage across supported message roles", () => {
 		const usage = createMockUsage(10, 5, 3, 2);
 		const assistant = createAssistantMessage("assistant", usage);

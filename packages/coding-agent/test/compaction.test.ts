@@ -519,6 +519,36 @@ describe("findCutPoint", () => {
 			expect(result.turnStartIndex).toBe(2); // Turn 2 starts at index 2
 		}
 	});
+
+	it("falls back to the last valid cut point when the budget is exceeded beyond it", () => {
+		const tinyBudget = 100;
+		const toolResultExceedingBudgetAlone = "x".repeat(8000);
+		const lastValidCutPointIndex = 1;
+		const entries: SessionEntry[] = [
+			createMessageEntry(createUserMessage("u")),
+			createMessageEntry(createAssistantMessage("a", createMockUsage(0, 50, 500, 0))),
+			createMessageEntry({
+				role: "toolResult",
+				toolCallId: "call-1",
+				toolName: "read",
+				content: [{ type: "text", text: toolResultExceedingBudgetAlone }],
+				isError: false,
+				timestamp: Date.now(),
+			}),
+			createMessageEntry({
+				role: "toolResult",
+				toolCallId: "call-2",
+				toolName: "read",
+				content: [{ type: "text", text: toolResultExceedingBudgetAlone }],
+				isError: false,
+				timestamp: Date.now(),
+			}),
+		];
+
+		const result = findCutPoint(entries, 0, entries.length, tinyBudget);
+
+		expect(result.firstKeptEntryIndex).toBe(lastValidCutPointIndex);
+	});
 });
 
 describe("buildSessionContext", () => {

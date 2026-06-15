@@ -6,6 +6,8 @@
 
 ### Fixed
 
+- Compaction now keeps the last valid cut point when the recent-token budget is exceeded entirely within trailing tool results, instead of silently retaining the whole history.
+
 ### Changed
 
 ### Removed

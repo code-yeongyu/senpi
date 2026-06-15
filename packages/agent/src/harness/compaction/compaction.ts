@@ -346,11 +346,16 @@ export function findCutPoint(
 		const messageTokens = estimateTokens(entry.message as AgentMessage);
 		accumulatedTokens += messageTokens;
 		if (accumulatedTokens >= keepRecentTokens) {
+			let foundCutPoint = false;
 			for (let c = 0; c < cutPoints.length; c++) {
 				if (cutPoints[c] >= i) {
 					cutIndex = cutPoints[c];
+					foundCutPoint = true;
 					break;
 				}
+			}
+			if (!foundCutPoint) {
+				cutIndex = cutPoints[cutPoints.length - 1];
 			}
 			break;
 		}

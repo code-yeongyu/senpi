@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- `findCutPoint` now falls back to the last valid cut point when the recent-token budget overshoots it, instead of defaulting to the first cut point and retaining the entire history.
+
 ### Removed
 
 ## [2026.6.15] - 2026-06-15
