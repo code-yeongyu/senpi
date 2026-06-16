@@ -1,19 +1,19 @@
 {
 	"name": "@code-yeongyu/senpi",
-	"version": "2026.6.16",
+	"version": "2026.6.16-2",
 	"lockfileVersion": 3,
 	"requires": true,
 	"packages": {
 		"": {
 			"name": "@code-yeongyu/senpi",
-			"version": "2026.6.16",
+			"version": "2026.6.16-2",
 			"license": "MIT",
 			"dependencies": {
 				"@anthropic-ai/sdk": "0.91.1",
 				"@aws-sdk/client-bedrock-runtime": "3.1048.0",
-				"@earendil-works/pi-agent-core": "^2026.6.16",
-				"@earendil-works/pi-ai": "^2026.6.16",
-				"@earendil-works/pi-tui": "^2026.6.16",
+				"@earendil-works/pi-agent-core": "^2026.6.16-2",
+				"@earendil-works/pi-ai": "^2026.6.16-2",
+				"@earendil-works/pi-tui": "^2026.6.16-2",
 				"@mistralai/mistralai": "2.2.1",
 				"@silvia-odwyer/photon-node": "0.3.4",
 				"@smithy/node-http-handler": "4.7.3",
@@ -488,11 +488,11 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-agent-core": {
-			"version": "2026.6.16",
+			"version": "2026.6.16-2",
 			"inBundle": true,
 			"license": "MIT",
 			"dependencies": {
-				"@earendil-works/pi-ai": "^2026.6.16",
+				"@earendil-works/pi-ai": "^2026.6.16-2",
 				"ignore": "7.0.5",
 				"typebox": "1.1.38",
 				"yaml": "2.9.0"
@@ -502,7 +502,7 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-ai": {
-			"version": "2026.6.16",
+			"version": "2026.6.16-2",
 			"inBundle": true,
 			"license": "MIT",
 			"dependencies": {
@@ -529,7 +529,7 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-tui": {
-			"version": "2026.6.16",
+			"version": "2026.6.16-2",
 			"inBundle": true,
 			"license": "MIT",
 			"dependencies": {
