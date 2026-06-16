@@ -616,7 +616,7 @@ function buildParams(
 			if (compat.supportsReasoningEffort) {
 				params.reasoning_effort = model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
 			}
-		} else if (compat.supportsDisabledThinking !== false) {
+		} else if (compat.supportsDisabledThinking !== false && model.thinkingLevelMap?.off !== null) {
 			params.thinking = { type: "disabled" };
 		}
 	} else if (compat.thinkingFormat === "openrouter" && model.reasoning) {
