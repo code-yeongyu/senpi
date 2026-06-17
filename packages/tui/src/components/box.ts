@@ -16,6 +16,7 @@ export class Box implements Component {
 	private paddingX: number;
 	private paddingY: number;
 	private bgFn?: (text: string) => string;
+	private disposed = false;
 
 	// Cache for rendered output
 	private cache?: RenderCache;
@@ -36,11 +37,29 @@ export class Box implements Component {
 		if (index !== -1) {
 			this.children.splice(index, 1);
 			this.invalidateCache();
+			component.dispose?.();
 		}
 	}
 
 	clear(): void {
+		for (const child of this.children) {
+			child.dispose?.();
+		}
 		this.children = [];
+		this.invalidateCache();
+	}
+
+	detachAll(): void {
+		this.children = [];
+		this.invalidateCache();
+	}
+
+	dispose(): void {
+		if (this.disposed) return;
+		this.disposed = true;
+		for (const child of this.children) {
+			child.dispose?.();
+		}
 		this.invalidateCache();
 	}
 

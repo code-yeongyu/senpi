@@ -79,6 +79,8 @@ export interface Component {
 	 * Called when theme changes or when component needs to re-render from scratch.
 	 */
 	invalidate(): void;
+
+	dispose?(): void;
 }
 
 type InputListenerResult = { consume?: boolean; data?: string } | undefined;
@@ -255,6 +257,7 @@ type OverlayFocusRestorePolicy = "clear" | "preserve";
  */
 export class Container implements Component {
 	children: Component[] = [];
+	private disposed = false;
 
 	addChild(component: Component): void {
 		this.children.push(component);
@@ -264,11 +267,34 @@ export class Container implements Component {
 		const index = this.children.indexOf(component);
 		if (index !== -1) {
 			this.children.splice(index, 1);
+			component.dispose?.();
+		}
+	}
+
+	detachChild(component: Component): void {
+		const index = this.children.indexOf(component);
+		if (index !== -1) {
+			this.children.splice(index, 1);
 		}
 	}
 
 	clear(): void {
+		for (const child of this.children) {
+			child.dispose?.();
+		}
 		this.children = [];
+	}
+
+	detachAll(): void {
+		this.children = [];
+	}
+
+	dispose(): void {
+		if (this.disposed) return;
+		this.disposed = true;
+		for (const child of this.children) {
+			child.dispose?.();
+		}
 	}
 
 	invalidate(): void {

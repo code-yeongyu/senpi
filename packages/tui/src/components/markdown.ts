@@ -30,11 +30,16 @@ markdownParser.setOptions({
 const RENDER_CACHE_MAX = 256;
 const PARSE_CACHE_MAX = 128;
 const CONTENT_KEY_CACHE_MAX = 128;
+const HIGHLIGHT_CACHE_MAX = 512;
+const MAX_HIGHLIGHT_BYTES = 200_000;
+const MAX_HIGHLIGHT_LINES = 2000;
 const renderCache = new Map<string, { source: string; lines: string[] }>();
 const parseCache = new Map<string, { source: string; tokens: Token[] }>();
 const contentKeyCache = new Map<string, string>();
+const highlightCache = new Map<string, string[]>();
 const objectIds = new WeakMap<object, number>();
 let nextObjectId = 0;
+let markdownHighlightCallCount = 0;
 
 function objectId(value: object): number {
 	const cached = objectIds.get(value);
@@ -74,6 +79,15 @@ export function clearRenderCache(): void {
 	renderCache.clear();
 	parseCache.clear();
 	contentKeyCache.clear();
+	highlightCache.clear();
+}
+
+export function getMarkdownHighlightCallCount(): number {
+	return markdownHighlightCallCount;
+}
+
+export function resetMarkdownHighlightCallCount(): void {
+	markdownHighlightCallCount = 0;
 }
 
 /**
@@ -375,6 +389,48 @@ export class Markdown implements Component {
 		};
 	}
 
+	private exceedsHighlightCap(code: string): boolean {
+		let newlineCount = 0;
+		for (let i = 0; i < code.length; i++) {
+			if (code.charCodeAt(i) === 10) newlineCount += 1;
+			if (newlineCount + 1 > MAX_HIGHLIGHT_LINES) return true;
+		}
+		return new TextEncoder().encode(code).byteLength > MAX_HIGHLIGHT_BYTES;
+	}
+
+	private highlightCodeBlock(code: string, lang: string | undefined): string[] | null {
+		if (!this.theme.highlightCode) return null;
+		if (this.exceedsHighlightCap(code)) return null;
+		const key = `${objectId(this.theme)}\x00${lang ?? ""}\x00${code}`;
+		const cached = highlightCache.get(key);
+		if (cached) {
+			cacheSet(highlightCache, key, cached, HIGHLIGHT_CACHE_MAX);
+			return cached;
+		}
+		markdownHighlightCallCount += 1;
+		const highlighted = this.theme.highlightCode(code, lang);
+		cacheSet(highlightCache, key, highlighted, HIGHLIGHT_CACHE_MAX);
+		return highlighted;
+	}
+
+	private renderCodeBlock(lines: string[], code: string, lang: string | undefined, indent: string): void {
+		lines.push(this.theme.codeBlockBorder(`\`\`\`${lang || ""}`));
+		const highlightedLines = this.highlightCodeBlock(code, lang);
+		if (highlightedLines) {
+			for (const hlLine of highlightedLines) {
+				lines.push(`${indent}${hlLine}`);
+			}
+		} else {
+			if (this.theme.highlightCode && this.exceedsHighlightCap(code)) {
+				lines.push(`${indent}${this.theme.codeBlock("[syntax highlighting skipped: code block too large]")}`);
+			}
+			for (const codeLine of code.split("\n")) {
+				lines.push(`${indent}${this.theme.codeBlock(codeLine)}`);
+			}
+		}
+		lines.push(this.theme.codeBlockBorder("```"));
+	}
+
 	private renderToken(
 		token: Token,
 		width: number,
@@ -428,20 +484,7 @@ export class Markdown implements Component {
 
 			case "code": {
 				const indent = this.theme.codeBlockIndent ?? "  ";
-				lines.push(this.theme.codeBlockBorder(`\`\`\`${token.lang || ""}`));
-				if (this.theme.highlightCode) {
-					const highlightedLines = this.theme.highlightCode(token.text, token.lang);
-					for (const hlLine of highlightedLines) {
-						lines.push(`${indent}${hlLine}`);
-					}
-				} else {
-					// Split code by newlines and style each line
-					const codeLines = token.text.split("\n");
-					for (const codeLine of codeLines) {
-						lines.push(`${indent}${this.theme.codeBlock(codeLine)}`);
-					}
-				}
-				lines.push(this.theme.codeBlockBorder("```"));
+				this.renderCodeBlock(lines, token.text, token.lang, indent);
 				if (nextTokenType && nextTokenType !== "space") {
 					lines.push(""); // Add spacing after code blocks (unless space token follows)
 				}

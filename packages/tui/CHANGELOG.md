@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- Fixed long-session TUI cleanup and markdown rendering by disposing removed components, stopping loader timers, and bounding cached syntax highlighting.
 - Fixed inherited editor Cursor Up handling so non-empty drafts jump to the start of the line before browsing input history.
 
 ### Removed

@@ -18,9 +18,11 @@ export { Loader, type LoaderIndicatorOptions } from "./components/loader.ts";
 export {
 	clearRenderCache,
 	type DefaultTextStyle,
+	getMarkdownHighlightCallCount,
 	Markdown,
 	type MarkdownOptions,
 	type MarkdownTheme,
+	resetMarkdownHighlightCallCount,
 } from "./components/markdown.ts";
 export {
 	type SelectItem,
