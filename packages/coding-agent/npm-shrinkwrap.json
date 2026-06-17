@@ -29,7 +29,7 @@
 				"https-proxy-agent": "7.0.6",
 				"ignore": "7.0.5",
 				"jiti": "2.7.0",
-				"marked": "15.0.12",
+				"marked": "18.0.5",
 				"minimatch": "10.2.5",
 				"openai": "6.26.0",
 				"partial-json": "0.1.7",
@@ -534,7 +534,7 @@
 			"license": "MIT",
 			"dependencies": {
 				"get-east-asian-width": "1.6.0",
-				"marked": "15.0.12"
+				"marked": "18.0.5"
 			},
 			"engines": {
 				"node": ">=24.0.0"

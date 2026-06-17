@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed inherited editor Cursor Up handling so non-empty drafts jump to the start of the line before browsing input history.
+
 ### Removed
 
 ## [2026.6.16-2] - 2026-06-16

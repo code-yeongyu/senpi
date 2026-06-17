@@ -20,6 +20,7 @@ import type {
 	Message,
 	Model,
 	OpenAICompletionsCompat,
+	ProviderEnv,
 	SimpleStreamOptions,
 	StopReason,
 	StreamFunction,
@@ -33,6 +34,7 @@ import type {
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
+import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { isForcedToolChoiceUnsupportedError, omitToolChoiceParam } from "../utils/tool-choice-fallback.ts";
 import { isCloudflareProvider, resolveCloudflareBaseUrl } from "./cloudflare.ts";
@@ -146,11 +148,11 @@ type ChatCompletionToolWithCacheControl = OpenAI.Chat.Completions.ChatCompletion
 	cache_control?: OpenAICompatCacheControl;
 };
 
-function resolveCacheRetention(cacheRetention?: CacheRetention): CacheRetention {
+function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEnv): CacheRetention {
 	if (cacheRetention) {
 		return cacheRetention;
 	}
-	if (typeof process !== "undefined" && process.env.PI_CACHE_RETENTION === "long") {
+	if (getProviderEnvValue("PI_CACHE_RETENTION", env) === "long") {
 		return "long";
 	}
 	return "short";
@@ -188,9 +190,9 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
 			const compat = getCompat(model);
-			const cacheRetention = resolveCacheRetention(options?.cacheRetention ?? model.cacheRetention);
+			const cacheRetention = resolveCacheRetention(options?.cacheRetention ?? model.cacheRetention, options?.env);
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
-			const client = createClient(model, context, apiKey, options?.headers, cacheSessionId, compat);
+			const client = createClient(model, context, apiKey, options?.headers, cacheSessionId, compat, options?.env);
 			let params = buildParams(model, context, options, compat, cacheRetention);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
@@ -519,6 +521,7 @@ function createClient(
 	optionsHeaders?: Record<string, string>,
 	sessionId?: string,
 	compat: ResolvedOpenAICompletionsCompat = getCompat(model),
+	env?: ProviderEnv,
 ) {
 	const headers = { ...model.headers };
 	if (model.provider === "github-copilot") {
@@ -552,7 +555,7 @@ function createClient(
 
 	return new OpenAI({
 		apiKey,
-		baseURL: isCloudflareProvider(model.provider) ? resolveCloudflareBaseUrl(model) : model.baseUrl,
+		baseURL: isCloudflareProvider(model.provider) ? resolveCloudflareBaseUrl(model, env) : model.baseUrl,
 		dangerouslyAllowBrowser: true,
 		defaultHeaders,
 	});
@@ -563,7 +566,10 @@ function buildParams(
 	context: Context,
 	options?: OpenAICompletionsOptions,
 	compat: ResolvedOpenAICompletionsCompat = getCompat(model),
-	cacheRetention: CacheRetention = resolveCacheRetention(options?.cacheRetention ?? model.cacheRetention),
+	cacheRetention: CacheRetention = resolveCacheRetention(
+		options?.cacheRetention ?? model.cacheRetention,
+		options?.env,
+	),
 ) {
 	const messages = convertMessages(model, context, compat, {
 		preserveThinking: options?.reasoningEffort !== undefined,
@@ -621,8 +627,18 @@ function buildParams(
 	}
 
 	if (compat.thinkingFormat === "zai" && model.reasoning) {
-		const zaiParams = params as typeof params & { thinking?: { type: "enabled" | "disabled" } };
+		const zaiParams = params as Omit<typeof params, "reasoning_effort"> & {
+			thinking?: { type: "enabled" | "disabled" };
+			reasoning_effort?: string;
+		};
 		zaiParams.thinking = { type: options?.reasoningEffort ? "enabled" : "disabled" };
+		if (options?.reasoningEffort && compat.supportsReasoningEffort) {
+			const mappedEffort = model.thinkingLevelMap?.[options.reasoningEffort];
+			const effort = mappedEffort === undefined ? options.reasoningEffort : mappedEffort;
+			if (typeof effort === "string") {
+				zaiParams.reasoning_effort = effort;
+			}
+		}
 	} else if (compat.thinkingFormat === "qwen" && model.reasoning) {
 		params.enable_thinking = !!options?.reasoningEffort;
 	} else if (compat.thinkingFormat === "qwen-chat-template" && model.reasoning) {

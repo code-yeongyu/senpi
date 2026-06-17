@@ -286,6 +286,7 @@ export type ResolvedRequestAuth =
 			extraBody?: Record<string, unknown>;
 			upstreamModelId?: string;
 			serviceTier?: ModelServiceTier;
+			env?: Record<string, string>;
 	  }
 	| {
 			ok: false;
@@ -880,18 +881,28 @@ export class ModelRegistry {
 	async getApiKeyAndHeaders(model: Model<Api>): Promise<ResolvedRequestAuth> {
 		try {
 			const providerConfig = this.providerRequestConfigs.get(model.provider);
+			const providerEnv = this.authStorage.getProviderEnv(model.provider);
 			const apiKeyFromAuthStorage = await this.authStorage.getApiKey(model.provider, { includeFallback: false });
 			const apiKey =
 				apiKeyFromAuthStorage ??
 				(providerConfig?.apiKey
-					? resolveConfigValueOrThrow(providerConfig.apiKey, `API key for provider "${model.provider}"`)
+					? resolveConfigValueOrThrow(
+							providerConfig.apiKey,
+							`API key for provider "${model.provider}"`,
+							providerEnv,
+						)
 					: undefined);
 
-			const providerHeaders = resolveHeadersOrThrow(providerConfig?.headers, `provider "${model.provider}"`);
 			const modelRequestKey = this.getModelRequestKey(model.provider, model.id);
+			const providerHeaders = resolveHeadersOrThrow(
+				providerConfig?.headers,
+				`provider "${model.provider}"`,
+				providerEnv,
+			);
 			const modelHeaders = resolveHeadersOrThrow(
 				this.modelRequestHeaders.get(modelRequestKey),
 				`model "${model.provider}/${model.id}"`,
+				providerEnv,
 			);
 
 			let headers =
@@ -928,6 +939,9 @@ export class ModelRegistry {
 			}
 			if (serviceTier !== undefined) {
 				resolved.serviceTier = serviceTier;
+			}
+			if (providerEnv && Object.keys(providerEnv).length > 0) {
+				resolved.env = providerEnv;
 			}
 			return resolved;
 		} catch (error) {
@@ -993,7 +1007,9 @@ export class ModelRegistry {
 		}
 
 		const providerApiKey = this.providerRequestConfigs.get(provider)?.apiKey;
-		return providerApiKey ? resolveConfigValueUncached(providerApiKey) : undefined;
+		return providerApiKey
+			? resolveConfigValueUncached(providerApiKey, this.authStorage.getProviderEnv(provider))
+			: undefined;
 	}
 
 	/**

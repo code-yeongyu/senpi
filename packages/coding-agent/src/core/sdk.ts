@@ -315,6 +315,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				throw new Error(auth.error);
 			}
 			const requestModel = auth.upstreamModelId ? { ...model, id: auth.upstreamModelId } : model;
+			const env = auth.env;
 			const providerRetrySettings = settingsManager.getProviderRetrySettings();
 			const httpIdleTimeoutMs = settingsManager.getHttpIdleTimeoutMs();
 			// SDKs treat timeout=0 as 0ms (immediate timeout), not "no timeout".
@@ -327,6 +328,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				...options,
 				apiKey: auth.apiKey,
 				serviceTier: auth.serviceTier,
+				env,
 				timeoutMs,
 				websocketConnectTimeoutMs,
 				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,

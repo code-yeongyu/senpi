@@ -31,6 +31,10 @@ import {
 	serializeConversation,
 } from "./utils.ts";
 
+type BranchSummaryStreamOptions = SimpleStreamOptions & {
+	readonly env?: Record<string, string>;
+};
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -76,6 +80,8 @@ export interface GenerateBranchSummaryOptions {
 	headers?: Record<string, string>;
 	/** Extra request body fields to merge into outgoing provider payload */
 	extraBody?: Record<string, unknown>;
+	/** Provider-scoped environment values for the model */
+	env?: Record<string, string>;
 	/** Abort signal for cancellation */
 	signal: AbortSignal;
 	/** Optional custom instructions for summarization */
@@ -326,6 +332,7 @@ export async function generateBranchSummary(
 		apiKey,
 		headers,
 		extraBody,
+		env,
 		signal,
 		customInstructions,
 		replaceInstructions,
@@ -397,7 +404,7 @@ export async function generateBranchSummary(
 	// request behavior (timeouts, retries, attribution headers) stays consistent
 	// without running through agent state/events.
 	const context = { systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages };
-	const requestOptions: SimpleStreamOptions = { apiKey, headers, extraBody, signal, maxTokens: 2048 };
+	const requestOptions: BranchSummaryStreamOptions = { apiKey, headers, extraBody, env, signal, maxTokens: 2048 };
 	const response = streamFn
 		? await (await streamFn(model, context, requestOptions)).result()
 		: await completeSimple(model, context, requestOptions);

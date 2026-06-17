@@ -6,9 +6,15 @@
 
 ### Added
 
+- Added provider-scoped environment overrides for provider configuration, cache retention, and proxy lookups inherited from upstream.
+
 ### Changed
 
 ### Fixed
+
+- Fixed OpenAI Responses streaming to tolerate null message content from OpenAI-compatible servers before tool calls.
+- Fixed OpenCode DeepSeek V4 and Z.AI GLM thinking parameter compatibility inherited from upstream.
+- Fixed Google and `google-vertex` Gemini model metadata inherited from upstream.
 
 ### Removed
 

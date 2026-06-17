@@ -26,7 +26,7 @@ import { formatNoModelsAvailableMessage } from "./core/auth-guidance.ts";
 import { AuthStorage } from "./core/auth-storage.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
 import type { ExtensionFactory } from "./core/extensions/types.ts";
-import { configureHttpDispatcher } from "./core/http-dispatcher.ts";
+import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
 import type { ModelRegistry } from "./core/model-registry.ts";
 import {
 	getModelNarrowingPatterns,
@@ -480,8 +480,22 @@ export async function main(args: string[], options?: MainOptions) {
 		cleanupWindowsSelfUpdateQuarantine(getPackageDir());
 	}
 
+	const cwd = process.cwd();
+	const agentDir = getAgentDir();
+	const bootstrapSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
+	applyHttpProxySettings(bootstrapSettingsManager.getGlobalSettings().httpProxy);
+	configureHttpDispatcher();
+
 	if (await handlePackageCommand(args, { extensionFactories: options?.extensionFactories })) {
-		process.exit(process.exitCode ?? 0);
+		const exitCode = process.exitCode ?? 0;
+		if (process.platform === "win32" && exitCode === 0 && args[0] === "update") {
+			// We normally prefer process.exit(0) for package commands so bad extensions cannot keep
+			// one-shot commands alive. On Windows, Node can assert after fetch() if process.exit(0)
+			// runs during teardown; let successful `pi update` drain naturally instead.
+			// https://github.com/nodejs/node/issues/56645
+			return;
+		}
+		process.exit(exitCode);
 		return;
 	}
 
@@ -535,11 +549,9 @@ export async function main(args: string[], options?: MainOptions) {
 	validateSessionIdFlags(parsed);
 
 	// Run migrations (pass cwd for project-local migrations)
-	const { migratedAuthProviders: migratedProviders, deprecationWarnings } = runMigrations(process.cwd());
+	const { migratedAuthProviders: migratedProviders, deprecationWarnings } = runMigrations(cwd);
 	time("runMigrations");
 
-	const cwd = process.cwd();
-	const agentDir = getAgentDir();
 	const startupSettingsManager = SettingsManager.create(cwd, agentDir);
 	reportDiagnostics(collectSettingsDiagnostics(startupSettingsManager, "startup session lookup"));
 	const resolvedExtensionPaths = resolveCliPaths(cwd, parsed.extensions);
@@ -759,6 +771,7 @@ export async function main(args: string[], options?: MainOptions) {
 	time("createAgentSessionRuntime");
 	const { services, session, modelFallbackMessage } = runtime;
 	const { settingsManager, resourceLoader } = services;
+	applyHttpProxySettings(settingsManager.getGlobalSettings().httpProxy);
 	configureHttpDispatcher(settingsManager.getHttpIdleTimeoutMs());
 
 	if (parsed.help) {

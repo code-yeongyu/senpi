@@ -4,9 +4,17 @@
 
 ### Added
 
+- Added provider-scoped `auth.json` environment overrides and a global `httpProxy` setting inherited from upstream.
+
 ### Fixed
 
+- Fixed HTTP dispatcher configuration to preserve caller-provided `fetch` overrides.
+- Fixed inherited OpenAI Responses null-content handling and DeepSeek thinking-off compatibility.
+- Fixed device-code login to avoid opening the browser automatically.
+
 ### Changed
+
+- Updated the vendored Markdown parser used by HTML session exports to `marked` 18.0.5.
 
 ### Removed
 

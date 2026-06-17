@@ -17,6 +17,7 @@ import type {
 	ImageContent,
 	Message,
 	Model,
+	ProviderEnv,
 	ProviderNativeContent,
 	SimpleStreamOptions,
 	StopReason,
@@ -31,6 +32,7 @@ import type {
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
+import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { isForcedToolChoiceUnsupportedError, omitToolChoiceParam } from "../utils/tool-choice-fallback.ts";
 
@@ -43,11 +45,15 @@ import { transformMessages } from "./transform-messages.ts";
  * Resolve cache retention preference.
  * Defaults to the provided fallback and uses PI_CACHE_RETENTION for backward compatibility.
  */
-function resolveCacheRetention(cacheRetention?: CacheRetention, fallback: CacheRetention = "short"): CacheRetention {
+function resolveCacheRetention(
+	cacheRetention?: CacheRetention,
+	env?: ProviderEnv,
+	fallback: CacheRetention = "short",
+): CacheRetention {
 	if (cacheRetention) {
 		return cacheRetention;
 	}
-	if (typeof process !== "undefined" && process.env.PI_CACHE_RETENTION === "long") {
+	if (getProviderEnvValue("PI_CACHE_RETENTION", env) === "long") {
 		return "long";
 	}
 	if (typeof process !== "undefined" && process.env.PI_CACHE_RETENTION !== undefined) {
@@ -67,8 +73,9 @@ function isAnthropicApiBaseUrl(baseUrl: string): boolean {
 function getCacheControl(
 	model: Model<"anthropic-messages">,
 	cacheRetention?: CacheRetention,
+	env?: ProviderEnv,
 ): { retention: CacheRetention; cacheControl?: CacheControlEphemeral } {
-	const retention = resolveCacheRetention(cacheRetention, "long");
+	const retention = resolveCacheRetention(cacheRetention, env, "long");
 	if (retention === "none") {
 		return { retention };
 	}
@@ -763,8 +770,11 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 					});
 				}
 
-				const cacheRetention =
-					options?.cacheRetention ?? model.cacheRetention ?? resolveCacheRetention(undefined, "long");
+				const cacheRetention = resolveCacheRetention(
+					options?.cacheRetention ?? model.cacheRetention,
+					options?.env,
+					"long",
+				);
 				const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
 
 				const created = createClient(
@@ -775,6 +785,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 					options?.headers,
 					copilotDynamicHeaders,
 					cacheSessionId,
+					options?.env,
 				);
 				client = created.client;
 				isOAuth = created.isOAuthToken;
@@ -1137,6 +1148,7 @@ function createClient(
 	optionsHeaders?: Record<string, string>,
 	dynamicHeaders?: Record<string, string>,
 	sessionId?: string,
+	env?: ProviderEnv,
 ): { client: Anthropic; isOAuthToken: boolean } {
 	// Adaptive thinking models have interleaved thinking built in, so skip the beta header.
 	const needsInterleavedBeta = interleavedThinking && !supportsAdaptiveThinking(model);
@@ -1152,7 +1164,7 @@ function createClient(
 		const client = new Anthropic({
 			apiKey: null,
 			authToken: null,
-			baseURL: resolveCloudflareBaseUrl(model),
+			baseURL: resolveCloudflareBaseUrl(model, env),
 			dangerouslyAllowBrowser: true,
 			defaultHeaders: sanitizeAdaptiveThinkingHeaders(
 				model,
@@ -1258,7 +1270,7 @@ function buildParams(
 	options?: AnthropicOptions,
 ): MessageCreateParamsStreaming {
 	const compat = getAnthropicCompat(model);
-	const { cacheControl } = getCacheControl(model, options?.cacheRetention ?? model.cacheRetention);
+	const { cacheControl } = getCacheControl(model, options?.cacheRetention ?? model.cacheRetention, options?.env);
 	const params: MessageCreateParamsStreaming = {
 		model: model.id,
 		messages: convertMessages(

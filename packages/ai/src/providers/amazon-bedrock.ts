@@ -1,3 +1,4 @@
+import type { Agent as HttpsAgent } from "node:https";
 import {
 	BedrockRuntimeClient,
 	type BedrockRuntimeClientConfig,
@@ -24,6 +25,8 @@ import {
 } from "@aws-sdk/client-bedrock-runtime";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import type { DocumentType } from "@smithy/types";
+import { HttpProxyAgent } from "http-proxy-agent";
+import { HttpsProxyAgent } from "https-proxy-agent";
 import { calculateCost } from "../models.ts";
 import type {
 	Api,
@@ -32,6 +35,7 @@ import type {
 	Context,
 	ImageContent,
 	Model,
+	ProviderEnv,
 	SimpleStreamOptions,
 	StopReason,
 	StreamFunction,
@@ -46,7 +50,8 @@ import type {
 } from "../types.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
-import { createHttpProxyAgentsForTarget } from "../utils/node-http-proxy.ts";
+import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
+import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import {
 	adjustMaxTokensForThinking,
@@ -126,18 +131,18 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 		const blocks = output.content as Block[];
 
 		const config: BedrockRuntimeClientConfig = {
-			profile: options.profile,
+			profile: options.profile || getProviderEnvValue("AWS_PROFILE", options.env),
 		};
 		const configuredRegion = getConfiguredBedrockRegion(options);
-		const hasConfiguredProfile = hasConfiguredBedrockProfile();
+		const hasAmbientConfiguredProfile = Boolean(getProviderEnvValue("AWS_PROFILE"));
 		const endpointRegion = getStandardBedrockEndpointRegion(model.baseUrl);
 		const useExplicitEndpoint = shouldUseExplicitBedrockEndpoint(
 			model.baseUrl,
 			configuredRegion,
-			hasConfiguredProfile,
+			hasAmbientConfiguredProfile,
 		);
 
-		// Only pin standard AWS Bedrock runtime endpoints when no region/profile is configured.
+		// Only pin standard AWS Bedrock runtime endpoints when no region or ambient AWS_PROFILE is configured.
 		// This preserves custom endpoints (VPC/proxy) from #3402 without forcing built-in
 		// catalog defaults such as us-east-1 to override AWS_REGION/AWS_PROFILE.
 		if (useExplicitEndpoint) {
@@ -145,8 +150,10 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 		}
 
 		// Resolve bearer token for Bedrock API key auth.
-		const bearerToken = options.bearerToken || process.env.AWS_BEARER_TOKEN_BEDROCK || undefined;
-		const useBearerToken = bearerToken !== undefined && process.env.AWS_BEDROCK_SKIP_AUTH !== "1";
+		const skipAuth = getProviderEnvValue("AWS_BEDROCK_SKIP_AUTH", options.env) === "1";
+		const bearerToken =
+			options.bearerToken || getProviderEnvValue("AWS_BEARER_TOKEN_BEDROCK", options.env) || undefined;
+		const useBearerToken = bearerToken !== undefined && !skipAuth;
 
 		// in Node.js/Bun environment only
 		if (typeof process !== "undefined" && (process.versions?.node || process.versions?.bun)) {
@@ -160,25 +167,33 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 				config.region = configuredRegion;
 			} else if (endpointRegion && useExplicitEndpoint) {
 				config.region = endpointRegion;
-			} else if (!hasConfiguredProfile) {
+			} else if (!hasAmbientConfiguredProfile) {
 				config.region = "us-east-1";
 			}
 
 			// Support proxies that don't need authentication
-			if (process.env.AWS_BEDROCK_SKIP_AUTH === "1") {
+			if (skipAuth) {
 				config.credentials = {
 					accessKeyId: "dummy-access-key",
 					secretAccessKey: "dummy-secret-key",
 				};
 			}
 
-			const proxyAgents = createHttpProxyAgentsForTarget(model.baseUrl);
-			if (proxyAgents) {
+			const credentials = getConfiguredBedrockCredentials(options.env);
+			if (!skipAuth && credentials) {
+				config.credentials = credentials;
+			}
+
+			const proxyUrl = resolveHttpProxyUrlForTarget(model.baseUrl, options.env);
+			if (proxyUrl) {
 				// Bedrock runtime uses NodeHttp2Handler by default since v3.798.0, which is based
 				// on `http2` module and has no support for http agent.
 				// Use NodeHttpHandler to support HTTP(S) proxy agents.
-				config.requestHandler = new NodeHttpHandler(proxyAgents);
-			} else if (process.env.AWS_BEDROCK_FORCE_HTTP1 === "1") {
+				config.requestHandler = new NodeHttpHandler({
+					httpAgent: new HttpProxyAgent(proxyUrl),
+					httpsAgent: new HttpsProxyAgent(proxyUrl) as unknown as HttpsAgent,
+				});
+			} else if (getProviderEnvValue("AWS_BEDROCK_FORCE_HTTP1", options.env) === "1") {
 				// Some custom endpoints require HTTP/1.1 instead of HTTP/2
 				config.requestHandler = new NodeHttpHandler();
 			}
@@ -199,14 +214,15 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 			if (options.headers && Object.keys(options.headers).length > 0) {
 				addCustomHeadersMiddleware(client, options.headers);
 			}
-			const cacheRetention = resolveCacheRetention(options.cacheRetention ?? model.cacheRetention);
+			const cacheRetention = resolveCacheRetention(options.cacheRetention ?? model.cacheRetention, options.env);
 			const inferenceMaxTokens = options.maxTokens ?? (isAnthropicClaudeModel(model) ? model.maxTokens : undefined);
 			let commandInput: ConverseStreamCommandInput & Record<string, unknown> = {
 				modelId: model.id,
 				messages: convertMessages(context, model, cacheRetention, {
 					preserveThinking: options.reasoning !== undefined,
+					env: options.env,
 				}),
-				system: buildSystemPrompt(context.systemPrompt, model, cacheRetention),
+				system: buildSystemPrompt(context.systemPrompt, model, cacheRetention, options.env),
 				inferenceConfig: {
 					...(inferenceMaxTokens !== undefined && { maxTokens: inferenceMaxTokens }),
 					...(options.temperature !== undefined && { temperature: options.temperature }),
@@ -607,11 +623,11 @@ function mapThinkingLevelToEffort(
  * Resolve cache retention preference.
  * Defaults to "short" and uses PI_CACHE_RETENTION for backward compatibility.
  */
-function resolveCacheRetention(cacheRetention?: CacheRetention): CacheRetention {
+function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEnv): CacheRetention {
 	if (cacheRetention) {
 		return cacheRetention;
 	}
-	if (typeof process !== "undefined" && process.env.PI_CACHE_RETENTION === "long") {
+	if (getProviderEnvValue("PI_CACHE_RETENTION", env) === "long") {
 		return "long";
 	}
 	return "short";
@@ -646,14 +662,14 @@ function isAnthropicClaudeModel(model: Model<"bedrock-converse-stream">): boolea
  * As a last resort, set AWS_BEDROCK_FORCE_CACHE=1 to enable cache points.
  * Amazon Nova models have automatic caching and don't need explicit cache points.
  */
-function supportsPromptCaching(model: Model<"bedrock-converse-stream">): boolean {
+function supportsPromptCaching(model: Model<"bedrock-converse-stream">, env?: ProviderEnv): boolean {
 	const candidates = getModelMatchCandidates(model.id, model.name);
 
 	const hasClaudeRef = candidates.some((s) => s.includes("claude"));
 	if (!hasClaudeRef) {
 		// Application inference profiles don't contain the model name in the ARN.
 		// Allow users to force cache points via environment variable.
-		if (typeof process !== "undefined" && process.env.AWS_BEDROCK_FORCE_CACHE === "1") return true;
+		if (getProviderEnvValue("AWS_BEDROCK_FORCE_CACHE", env) === "1") return true;
 		return false;
 	}
 	// Claude 4.x models (opus-4, sonnet-4, haiku-4)
@@ -681,13 +697,14 @@ function buildSystemPrompt(
 	systemPrompt: string | undefined,
 	model: Model<"bedrock-converse-stream">,
 	cacheRetention: CacheRetention,
+	env?: ProviderEnv,
 ): SystemContentBlock[] | undefined {
 	if (!systemPrompt) return undefined;
 
 	const blocks: SystemContentBlock[] = [{ text: sanitizeSurrogates(systemPrompt) }];
 
 	// Add cache point for supported Claude models when caching is enabled
-	if (cacheRetention !== "none" && supportsPromptCaching(model)) {
+	if (cacheRetention !== "none" && supportsPromptCaching(model, env)) {
 		blocks.push({
 			cachePoint: { type: CachePointType.DEFAULT, ...(cacheRetention === "long" ? { ttl: CacheTTL.ONE_HOUR } : {}) },
 		});
@@ -728,7 +745,7 @@ function convertMessages(
 	context: Context,
 	model: Model<"bedrock-converse-stream">,
 	cacheRetention: CacheRetention,
-	options: { preserveThinking?: boolean } = {},
+	options: { preserveThinking?: boolean; env?: ProviderEnv } = {},
 ): Message[] {
 	const result: Message[] = [];
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId, {
@@ -876,7 +893,7 @@ function convertMessages(
 	}
 
 	// Add cache point to the last user message for supported Claude models when caching is enabled
-	if (cacheRetention !== "none" && supportsPromptCaching(model) && result.length > 0) {
+	if (cacheRetention !== "none" && supportsPromptCaching(model, options.env) && result.length > 0) {
 		const lastMessage = result[result.length - 1];
 		if (lastMessage.role === ConversationRole.USER && lastMessage.content) {
 			(lastMessage.content as ContentBlock[]).push({
@@ -942,19 +959,26 @@ function mapStopReason(reason: string | undefined): StopReason {
 }
 
 function getConfiguredBedrockRegion(options: BedrockOptions): string | undefined {
-	if (typeof process === "undefined") {
-		return options.region;
-	}
-
-	return options.region || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || undefined;
+	return (
+		options.region ||
+		getProviderEnvValue("AWS_REGION", options.env) ||
+		getProviderEnvValue("AWS_DEFAULT_REGION", options.env) ||
+		undefined
+	);
 }
 
-function hasConfiguredBedrockProfile(): boolean {
-	if (typeof process === "undefined") {
-		return false;
+function getConfiguredBedrockCredentials(env?: ProviderEnv): BedrockRuntimeClientConfig["credentials"] | undefined {
+	const accessKeyId = getProviderEnvValue("AWS_ACCESS_KEY_ID", env);
+	const secretAccessKey = getProviderEnvValue("AWS_SECRET_ACCESS_KEY", env);
+	if (!accessKeyId || !secretAccessKey) {
+		return undefined;
 	}
-
-	return Boolean(process.env.AWS_PROFILE);
+	const sessionToken = getProviderEnvValue("AWS_SESSION_TOKEN", env);
+	return {
+		accessKeyId,
+		secretAccessKey,
+		...(sessionToken ? { sessionToken } : {}),
+	};
 }
 
 function getStandardBedrockEndpointRegion(baseUrl: string | undefined): string | undefined {
@@ -974,14 +998,14 @@ function getStandardBedrockEndpointRegion(baseUrl: string | undefined): string |
 function shouldUseExplicitBedrockEndpoint(
 	baseUrl: string,
 	configuredRegion: string | undefined,
-	hasConfiguredProfile: boolean,
+	hasAmbientConfiguredProfile: boolean,
 ): boolean {
 	const endpointRegion = getStandardBedrockEndpointRegion(baseUrl);
 	if (!endpointRegion) {
 		return true;
 	}
 
-	return !configuredRegion && !hasConfiguredProfile;
+	return !configuredRegion && !hasAmbientConfiguredProfile;
 }
 
 function isGovCloudBedrockTarget(model: Model<"bedrock-converse-stream">, options: BedrockOptions): boolean {

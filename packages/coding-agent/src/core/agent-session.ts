@@ -444,6 +444,7 @@ export class AgentSession {
 		apiKey: string;
 		headers?: Record<string, string>;
 		extraBody?: Record<string, unknown>;
+		env?: Record<string, string>;
 	}> {
 		const result = await this._modelRegistry.getApiKeyAndHeaders(model);
 		if (!result.ok) {
@@ -453,7 +454,7 @@ export class AgentSession {
 			throw new Error(result.error);
 		}
 		if (result.apiKey) {
-			return { apiKey: result.apiKey, headers: result.headers, extraBody: result.extraBody };
+			return { apiKey: result.apiKey, headers: result.headers, extraBody: result.extraBody, env: result.env };
 		}
 
 		const isOAuth = this._modelRegistry.isUsingOAuth(model);
@@ -471,13 +472,16 @@ export class AgentSession {
 		apiKey?: string;
 		headers?: Record<string, string>;
 		extraBody?: Record<string, unknown>;
+		env?: Record<string, string>;
 	}> {
 		if (this.agent.streamFn === streamSimple) {
 			return this._getRequiredRequestAuth(model);
 		}
 
 		const result = await this._modelRegistry.getApiKeyAndHeaders(model);
-		return result.ok ? { apiKey: result.apiKey, headers: result.headers, extraBody: result.extraBody } : {};
+		return result.ok
+			? { apiKey: result.apiKey, headers: result.headers, extraBody: result.extraBody, env: result.env }
+			: {};
 	}
 
 	/**
@@ -2087,7 +2091,7 @@ export class AgentSession {
 				}
 
 				if (!compactionResult) {
-					const { apiKey, headers, extraBody } = await this._getCompactionRequestAuth(this.model);
+					const { apiKey, headers, extraBody, env } = await this._getCompactionRequestAuth(this.model);
 					compactionResult = await compact(
 						preparation,
 						this.model,
@@ -2098,6 +2102,7 @@ export class AgentSession {
 						extraBody,
 						this.thinkingLevel,
 						this.agent.streamFn,
+						env,
 					);
 				}
 			}
@@ -3349,13 +3354,14 @@ export class AgentSession {
 			let summaryDetails: unknown;
 			if (options.summarize && entriesToSummarize.length > 0 && !extensionSummary) {
 				const model = this.model!;
-				const { apiKey, headers, extraBody } = await this._getRequiredRequestAuth(model);
+				const { apiKey, headers, extraBody, env } = await this._getRequiredRequestAuth(model);
 				const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
 				const result = await generateBranchSummary(entriesToSummarize, {
 					model,
 					apiKey,
 					headers,
 					extraBody,
+					env,
 					signal: this._branchSummaryAbortController.signal,
 					customInstructions,
 					replaceInstructions,

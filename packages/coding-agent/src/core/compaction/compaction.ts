@@ -28,6 +28,9 @@ import {
 } from "./utils.ts";
 
 type SummarizationStreamFn = StreamFn;
+type SummarizationOptions = SimpleStreamOptions & {
+	readonly env?: Record<string, string>;
+};
 
 // ============================================================================
 // File Operation Tracking
@@ -562,11 +565,12 @@ function createSummarizationOptions(
 	maxTokens: number,
 	apiKey: string | undefined,
 	headers: Record<string, string> | undefined,
+	env: Record<string, string> | undefined,
 	signal: AbortSignal | undefined,
 	thinkingLevel: ThinkingLevel | undefined,
 	extraBody?: Record<string, unknown>,
-): SimpleStreamOptions {
-	const options: SimpleStreamOptions = { maxTokens, signal, apiKey, headers, extraBody };
+): SummarizationOptions {
+	const options: SummarizationOptions = { maxTokens, signal, apiKey, headers, env, extraBody };
 	if (model.reasoning && thinkingLevel && thinkingLevel !== "off") {
 		options.reasoning = thinkingLevel;
 	}
@@ -601,7 +605,8 @@ export async function generateSummary(
 	previousSummary?: string,
 	extraBody?: Record<string, unknown>,
 	thinkingLevel?: ThinkingLevel,
-	streamFn?: SummarizationStreamFn,
+	streamFn?: StreamFn,
+	env?: Record<string, string>,
 ): Promise<string> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
@@ -634,10 +639,20 @@ export async function generateSummary(
 		},
 	];
 
+	const completionOptions = createSummarizationOptions(
+		model,
+		maxTokens,
+		apiKey,
+		headers,
+		env,
+		signal,
+		thinkingLevel,
+		extraBody,
+	);
 	const response = await completeSummarization(
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		createSummarizationOptions(model, maxTokens, apiKey, headers, signal, thinkingLevel, extraBody),
+		completionOptions,
 		streamFn,
 	);
 
@@ -793,7 +808,8 @@ export async function compact(
 	signal?: AbortSignal,
 	extraBody?: Record<string, unknown>,
 	thinkingLevel?: ThinkingLevel,
-	streamFn?: SummarizationStreamFn,
+	streamFn?: StreamFn,
+	env?: Record<string, string>,
 ): Promise<CompactionResult> {
 	const {
 		firstKeptEntryId,
@@ -825,6 +841,7 @@ export async function compact(
 						extraBody,
 						thinkingLevel,
 						streamFn,
+						env,
 					)
 				: Promise.resolve("No prior history."),
 			generateTurnPrefixSummary(
@@ -833,6 +850,7 @@ export async function compact(
 				settings.reserveTokens,
 				apiKey,
 				headers,
+				env,
 				signal,
 				extraBody,
 				thinkingLevel,
@@ -855,6 +873,7 @@ export async function compact(
 			extraBody,
 			thinkingLevel,
 			streamFn,
+			env,
 		);
 	}
 
@@ -883,6 +902,7 @@ async function generateTurnPrefixSummary(
 	reserveTokens: number,
 	apiKey: string | undefined,
 	headers?: Record<string, string>,
+	env?: Record<string, string>,
 	signal?: AbortSignal,
 	extraBody?: Record<string, unknown>,
 	thinkingLevel?: ThinkingLevel,
@@ -906,7 +926,7 @@ async function generateTurnPrefixSummary(
 	const response = await completeSummarization(
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		createSummarizationOptions(model, maxTokens, apiKey, headers, signal, thinkingLevel, extraBody),
+		createSummarizationOptions(model, maxTokens, apiKey, headers, env, signal, thinkingLevel, extraBody),
 		streamFn,
 	);
 
