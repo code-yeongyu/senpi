@@ -1,0 +1,16 @@
+{
+	"name": "senpi-qa-skill",
+	"private": true,
+	"version": "0.0.0",
+	"description": "Isolated tooling deps for the senpi-qa skill. node-pty drives the TUI in a real pseudo-terminal on macOS, Linux, and Windows (ConPTY). Kept out of the senpi workspace so it never touches the root lockfile or coding-agent shrinkwrap.",
+	"type": "module",
+	"engines": {
+		"node": ">=24.0.0"
+	},
+	"dependencies": {
+		"node-pty": "1.1.0"
+	},
+	"allowScripts": {
+		"node-pty@1.1.0": true
+	}
+}

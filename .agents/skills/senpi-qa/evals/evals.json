@@ -1,0 +1,29 @@
+{
+	"skill_name": "senpi-qa",
+	"evals": [
+		{
+			"id": 1,
+			"prompt": "I just changed the agent loop in packages/coding-agent/src/core/agent-session.ts. Verify it still completes a turn without spending tokens, and show me evidence.",
+			"expected_output": "Uses the senpi-qa skill, runs the mock-loop channel (and/or rpc-drive), captures evidence under local-ignore/qa-evidence/, reports pass/fail.",
+			"files": []
+		},
+		{
+			"id": 2,
+			"prompt": "I added a new keybinding to the TUI. Smoke test that the interactive TUI still boots and accepts input.",
+			"expected_output": "Uses senpi-qa Channel 2 (tui-smoke.mjs) and confirms boot/render/input with the real auth file untouched.",
+			"files": []
+		},
+		{
+			"id": 3,
+			"prompt": "qa senpi rpc mode and prove get_state works headlessly.",
+			"expected_output": "Runs scripts/rpc-drive.mjs --self-test (or --state) and reports the RpcSessionState round-trip with no API call.",
+			"files": []
+		},
+		{
+			"id": 4,
+			"prompt": "I wired up a new provider in packages/ai. How do I QA it end to end without burning real tokens?",
+			"expected_output": "Points to senpi-qa Channel 3 mock loop with the custom-provider models.json shape, and notes env-vars.md / credential-injection.md updates.",
+			"files": []
+		}
+	]
+}
