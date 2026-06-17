@@ -75,7 +75,7 @@ The agent uses the committed `merge-upstream` skill and `/cl` changelog-audit co
 - **Clean merge** → PR branch is merged into `main` with a merge commit, changelog audited, QA gates pass, and a new release is cut automatically when release-worthy.
 - **Conflicts / QA failure** → the agent aborts, writes `.github/agent/last-merge-report.md`, and the workflow opens an issue labeled `sync-conflict`. Resolve manually following the per-file rules in `.github/agent/merge-driver.md`; the `changes.md` files in fork-modified subdirectories tell you what the fork preserves and why.
 
-Requires `UPSTREAM_AUTOMATION_TOKEN`, `CODEX_CONFIG_TOML_B64`, and either `CODEX_AUTH_JSON_B64` or `QUOTIO_API_KEY`. Optional QA/config secrets include `CODEX_QUOTIO_CONFIG_TOML_B64`, `CODEX_CCAPI_CONFIG_TOML_B64`, `SENPI_AUTH_JSON_B64`, `SENPI_MODELS_JSON_B64`, and `SENPI_SETTINGS_JSON_B64`. See `.github/agent/README.md`.
+Requires `UPSTREAM_AUTOMATION_TOKEN`, `CODEX_CONFIG_TOML_B64`, and either `CODEX_AUTH_JSON_B64` or `QUOTIO_API_KEY`. Optional QA/config secrets include `CODEX_QUOTIO_CONFIG_TOML_B64`, `CODEX_CCAPI_CONFIG_TOML_B64`, `SENPI_AUTH_JSON_B64`, `SENPI_MODELS_JSON_B64` or `SENPI_MODELS_JSON_GZ_B64`, and `SENPI_SETTINGS_JSON_B64`. See `.github/agent/README.md`.
 
 To trigger manually:
 ```bash
