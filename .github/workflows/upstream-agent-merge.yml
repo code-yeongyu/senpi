@@ -57,7 +57,6 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
-          token: ${{ secrets.UPSTREAM_AUTOMATION_TOKEN }}
           persist-credentials: false
 
       - name: Configure git and upstream remote
@@ -130,6 +129,7 @@ jobs:
           QUOTIO_BASE_URL: ${{ secrets.QUOTIO_BASE_URL }}
           SENPI_AUTH_JSON_B64: ${{ secrets.SENPI_AUTH_JSON_B64 }}
           SENPI_MODELS_JSON_B64: ${{ secrets.SENPI_MODELS_JSON_B64 }}
+          SENPI_MODELS_JSON_GZ_B64: ${{ secrets.SENPI_MODELS_JSON_GZ_B64 }}
           SENPI_SETTINGS_JSON_B64: ${{ secrets.SENPI_SETTINGS_JSON_B64 }}
         run: |
           set -euo pipefail
@@ -145,12 +145,24 @@ jobs:
             fi
           }
 
+          write_secret_gz_b64() {
+            local value="$1"
+            local path="$2"
+            if [ -n "$value" ]; then
+              printf '%s' "$value" | base64 -d | gunzip > "$path"
+              chmod 600 "$path"
+            fi
+          }
+
           write_secret_b64 "$CODEX_AUTH_JSON_B64" "$HOME/.codex/auth.json"
           write_secret_b64 "$CODEX_CONFIG_TOML_B64" "$HOME/.codex/config.toml"
           write_secret_b64 "$CODEX_QUOTIO_CONFIG_TOML_B64" "$HOME/.codex/quotio.config.toml"
           write_secret_b64 "$CODEX_CCAPI_CONFIG_TOML_B64" "$HOME/.codex/ccapi.config.toml"
           write_secret_b64 "$SENPI_AUTH_JSON_B64" "$HOME/.senpi/agent/auth.json"
           write_secret_b64 "$SENPI_MODELS_JSON_B64" "$HOME/.senpi/agent/models.json"
+          if [ ! -s "$HOME/.senpi/agent/models.json" ]; then
+            write_secret_gz_b64 "$SENPI_MODELS_JSON_GZ_B64" "$HOME/.senpi/agent/models.json"
+          fi
           write_secret_b64 "$SENPI_SETTINGS_JSON_B64" "$HOME/.senpi/agent/settings.json"
 
           if [ ! -s "$HOME/.codex/config.toml" ]; then

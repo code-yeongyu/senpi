@@ -18,13 +18,37 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Detect benchmark scope
+        id: scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD > /tmp/task-11-changed-files.txt
+          if grep -Eq '^(packages/|bench/|scripts/run-pr530-benchmarks\.mjs$|package\.json$|package-lock\.json$|tsconfig|vitest)' /tmp/task-11-changed-files.txt; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "## Task 11 benchmark gate"
+              echo
+              echo "Skipped: this PR does not change runtime, benchmark, dependency, or TypeScript config files."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Setup Node.js
+        if: steps.scope.outputs.run == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '26.3.0'
           cache: npm
 
       - name: Install system dependencies
+        if: steps.scope.outputs.run == 'true'
         run: |
           sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
           sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y \
@@ -32,12 +56,15 @@ jobs:
           sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
 
       - name: Install dependencies
+        if: steps.scope.outputs.run == 'true'
         run: npm ci --ignore-scripts
 
       - name: Check
+        if: steps.scope.outputs.run == 'true'
         run: npm run check
 
       - name: Run same-run benchmark gate
+        if: steps.scope.outputs.run == 'true'
         id: benchmark
         shell: bash
         run: |
@@ -164,14 +191,14 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run static baseline diagnostic
-        if: failure()
+        if: failure() && steps.scope.outputs.run == 'true'
         shell: bash
         run: |
           cat /tmp/task-11-bench/comparison.json
           cat /tmp/task-11-bench/static-baseline.stderr 2>/dev/null || true
 
       - name: Upload benchmark artifacts
-        if: always()
+        if: always() && steps.scope.outputs.run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: task-11-benchmarks
