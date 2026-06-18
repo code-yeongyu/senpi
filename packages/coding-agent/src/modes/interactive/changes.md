@@ -1,5 +1,26 @@
 # changes
 
+## abort queue restoration during retry (2026-06-18)
+
+### What changed
+
+- `interactive-mode.ts`: Escape during streaming or retry now aborts the active operation, clears queued steering/follow-up
+  rows, and restores the queued text to the editor instead of auto-submitting it as a fresh prompt.
+
+### Why
+
+- Auto-submitting restored queue text could race the abort barrier and surface `Agent is already processing` after the user
+  had already aborted. It also made an aborted retry appear to keep working on queued input.
+
+### Why extension system couldn't handle this
+
+- The default Escape handler and pending-message display are owned by `InteractiveMode`; extensions can request aborts but
+  cannot change the built-in queue restoration path.
+
+### Expected merge conflict zones
+
+- HIGH: `interactive-mode.ts` around `abortAndFireQueuedMessages()` and the default Escape handler.
+
 ## normal Working animation and packaged TUI runtime (2026-05-20)
 
 ### What changed

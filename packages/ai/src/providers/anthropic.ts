@@ -317,6 +317,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
+const REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES: ReadonlySet<string> = new Set([
+	"server_tool_use",
+	"web_search_tool_result",
+	"web_fetch_tool_result",
+	"code_execution_tool_result",
+	"bash_code_execution_tool_result",
+	"text_editor_code_execution_tool_result",
+	"tool_search_tool_result",
+	"container_upload",
+]);
+
+function isReplayableAnthropicProviderNativeBlock(raw: unknown): raw is ContentBlockParam {
+	return isRecord(raw) && typeof raw.type === "string" && REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES.has(raw.type);
+}
+
 function stringRecord(value: unknown): Record<string, string> | undefined {
 	if (!isRecord(value)) {
 		return undefined;
@@ -1461,6 +1476,7 @@ function convertMessages(
 			}
 		} else if (msg.role === "assistant") {
 			const blocks: ContentBlockParam[] = [];
+			const isSameModel = msg.provider === model.provider && msg.api === model.api && msg.model === model.id;
 
 			for (const block of msg.content) {
 				if (block.type === "text") {
@@ -1510,6 +1526,9 @@ function convertMessages(
 						input: block.arguments ?? {},
 					});
 				} else if (block.type === "providerNative") {
+					if (isSameModel && isReplayableAnthropicProviderNativeBlock(block.raw)) {
+						blocks.push(block.raw);
+					}
 				}
 			}
 			if (blocks.length === 0) continue;

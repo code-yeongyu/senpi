@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed Anthropic same-model replay to preserve provider-native server tool blocks around signed thinking, avoiding `thinking` / `redacted_thinking` modification errors on follow-up tool-result requests.
+
 ### Removed
 
 ## [2026.6.17-2] - 2026-06-17

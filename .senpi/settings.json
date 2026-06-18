@@ -1,0 +1,8 @@
+{
+  "macosCua": {
+    "codeMode": true
+  },
+  "packages": [
+    "../../macos-cua/packages/pi-extension"
+  ]
+}

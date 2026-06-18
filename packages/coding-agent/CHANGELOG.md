@@ -4,7 +4,12 @@
 
 ### Added
 
+- Added the GLM 5.2 prompt preset with automatic model detection.
+
 ### Fixed
+
+- Fixed inherited Anthropic same-model replay to preserve provider-native server tool blocks around signed thinking, avoiding `thinking` / `redacted_thinking` modification errors on follow-up tool-result requests.
+- Fixed interactive abort during streaming or retry to restore queued messages to the editor instead of auto-firing them into a still-settling session.
 
 ### Changed
 

@@ -4205,14 +4205,12 @@ export class InteractiveMode {
 
 	/**
 	 * User-abort path that drains the queue, aborts the active run (and any in-flight retry),
-	 * waits for settle, then re-fires queued messages as a single fresh prompt.
+	 * waits for settle, then restores queued messages to the editor.
 	 *
 	 * Behavior contract:
 	 * - clearAllQueues() is called synchronously so the pending-messages display empties immediately.
-	 * - `await session.abort()` ensures the previous run is fully idle before the fresh prompt fires,
-	 *   so it starts a new turn instead of being re-queued as steering behind the dying run.
-	 * - When no messages were queued, the helper is just a sync clear + abort (no fresh prompt).
-	 * - Failures from the fresh prompt are surfaced via showError but do not throw.
+	 * - `await session.abort()` ensures the previous run is fully idle before touching the draft.
+	 * - The helper never auto-prompts restored queue text; the user decides whether to send it.
 	 */
 	private async abortAndFireQueuedMessages(): Promise<number> {
 		const { steering, followUp } = this.clearAllQueues();
@@ -4225,13 +4223,9 @@ export class InteractiveMode {
 		}
 
 		const queuedText = allQueued.join("\n\n");
-		try {
-			await this.session.prompt(queuedText);
-		} catch (error: unknown) {
-			const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
-			this.showError(`Failed to fire queued message: ${errorMessage}`);
-		}
-
+		const currentText = this.editor.getText();
+		const combinedText = [queuedText, currentText].filter((t) => t.trim()).join("\n\n");
+		this.editor.setText(combinedText);
 		return allQueued.length;
 	}
 
