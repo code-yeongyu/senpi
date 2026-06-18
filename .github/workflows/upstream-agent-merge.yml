@@ -54,7 +54,7 @@ jobs:
       EVIDENCE_DIR: local-ignore/qa-evidence/upstream-agent
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -81,10 +81,11 @@ jobs:
 
       - name: Setup Node.js
         if: steps.detect.outputs.proceed == 'true'
-        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org/'
+          package-manager-cache: false
 
       - name: Setup Bun
         if: steps.detect.outputs.proceed == 'true'
@@ -356,6 +357,7 @@ jobs:
           node scripts/upstream-release-worthy.mjs "${ARGS[@]}" >> "$GITHUB_OUTPUT"
 
       - name: Release after PR merge
+        id: release
         if: steps.detect.outputs.proceed == 'true' && steps.agent.outputs.result == 'CLEAN_PR_READY' && github.event.inputs.dry_run != 'true' && steps.release_audit.outputs.decision == 'RELEASE' && (steps.worthy.outputs.release_worthy == 'true' || github.event.inputs.force_release == 'true')
         env:
           GH_TOKEN: ${{ secrets.UPSTREAM_AUTOMATION_TOKEN }}
@@ -367,6 +369,7 @@ jobs:
           node scripts/release.mjs
 
       - name: Dry-run release preview
+        id: dry_run_release
         if: steps.detect.outputs.proceed == 'true' && steps.agent.outputs.result == 'CLEAN_PR_READY' && github.event.inputs.dry_run == 'true'
         env:
           PI_ALLOW_LOCKFILE_CHANGE: '1'
@@ -379,7 +382,7 @@ jobs:
 
       - name: Upload QA evidence
         if: always() && steps.detect.outputs.proceed == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: upstream-agent-qa-${{ steps.detect.outputs.tag || 'unknown' }}
           path: local-ignore/qa-evidence/
@@ -437,11 +440,72 @@ jobs:
           exit 1
 
       - name: No release needed
+        id: no_release_needed
         if: steps.detect.outputs.proceed == 'true' && (steps.agent.outputs.result == 'NO_RELEASE_NEEDED' || steps.release_audit.outputs.decision == 'SKIP' || steps.worthy.outputs.release_worthy == 'false')
         run: |
           echo "NO_RELEASE_NEEDED: upstream sync completed without release-worthy package changes."
 
       - name: No new upstream release
+        id: no_new_upstream
         if: steps.detect.outputs.proceed != 'true'
         run: |
           echo "No new upstream release. Current pin: ${{ steps.detect.outputs.current_tag }}. Nothing to do."
+
+      - name: Summarize merge and release outcome
+        if: always()
+        env:
+          PROCEED: ${{ steps.detect.outputs.proceed || 'false' }}
+          CURRENT_TAG: ${{ steps.detect.outputs.current_tag || '' }}
+          UPSTREAM_TAG: ${{ steps.detect.outputs.tag || '' }}
+          UPSTREAM_SHA: ${{ steps.detect.outputs.sha || '' }}
+          AGENT_RESULT: ${{ steps.agent.outputs.result || 'skipped' }}
+          PR_URL: ${{ steps.pr.outputs.url || '' }}
+          RELEASE_DECISION: ${{ steps.release_audit.outputs.decision || 'skipped' }}
+          RELEASE_WORTHY: ${{ steps.worthy.outputs.release_worthy || 'skipped' }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          FORCE_RELEASE: ${{ github.event.inputs.force_release || 'false' }}
+          PR_OUTCOME: ${{ steps.pr.outcome || 'skipped' }}
+          RELEASE_OUTCOME: ${{ steps.release.outcome || 'skipped' }}
+          DRY_RUN_RELEASE_OUTCOME: ${{ steps.dry_run_release.outcome || 'skipped' }}
+          NO_RELEASE_OUTCOME: ${{ steps.no_release_needed.outcome || 'skipped' }}
+          NO_NEW_UPSTREAM_OUTCOME: ${{ steps.no_new_upstream.outcome || 'skipped' }}
+        run: |
+          set -euo pipefail
+          follow_up="none"
+          if [ "$PROCEED" != "true" ]; then
+            follow_up="none: no new upstream release"
+          elif [ "$AGENT_RESULT" != "CLEAN_PR_READY" ]; then
+            follow_up="attention issue or failure path: agent result ${AGENT_RESULT}"
+          elif [ "$DRY_RUN" = "true" ]; then
+            follow_up="dry-run release preview"
+          elif [ "$RELEASE_OUTCOME" = "success" ]; then
+            follow_up="release executed"
+          elif [ "$NO_RELEASE_OUTCOME" = "success" ]; then
+            follow_up="none: release not needed"
+          else
+            follow_up="no release step executed; inspect audit and worthy outputs"
+          fi
+
+          {
+            echo "## Merge and release outcome"
+            echo
+            echo "| Item | Value |"
+            echo "| --- | --- |"
+            echo "| New upstream work detected | \`${PROCEED}\` |"
+            echo "| Current pinned tag | \`${CURRENT_TAG:-unknown}\` |"
+            echo "| Upstream tag | \`${UPSTREAM_TAG:-none}\` |"
+            echo "| Upstream SHA | \`${UPSTREAM_SHA:-none}\` |"
+            echo "| Merge agent result | \`${AGENT_RESULT}\` |"
+            echo "| Sync PR | ${PR_URL:-none} |"
+            echo "| PR merge step | \`${PR_OUTCOME}\` |"
+            echo "| Release audit decision | \`${RELEASE_DECISION}\` |"
+            echo "| Release-worthy changes | \`${RELEASE_WORTHY}\` |"
+            echo "| Force release input | \`${FORCE_RELEASE}\` |"
+            echo "| Dry run input | \`${DRY_RUN}\` |"
+            echo "| Release step | \`${RELEASE_OUTCOME}\` |"
+            echo "| Dry-run release preview | \`${DRY_RUN_RELEASE_OUTCOME}\` |"
+            echo "| No-release path | \`${NO_RELEASE_OUTCOME}\` |"
+            echo "| No-new-upstream path | \`${NO_NEW_UPSTREAM_OUTCOME}\` |"
+            echo
+            echo "**Follow-up action:** ${follow_up}"
+          } >> "$GITHUB_STEP_SUMMARY"
