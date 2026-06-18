@@ -3,6 +3,7 @@ import type { BuildDynamicSystemPromptOptions } from "../../../dynamic-prompt/bu
 import { buildClaudeOpus45Prompt } from "./claude-opus-4-5.ts";
 import { buildClaudeOpus46Prompt } from "./claude-opus-4-6.ts";
 import { buildClaudeOpus47Prompt } from "./claude-opus-4-7.ts";
+import { buildGlm52Prompt } from "./glm-5-2.ts";
 import { buildGpt52Prompt } from "./gpt-5.2.ts";
 import { buildGpt53CodexPrompt } from "./gpt-5.3-codex.ts";
 import { buildGpt54Prompt } from "./gpt-5.4.ts";
@@ -64,6 +65,14 @@ function isKimiK27Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasKimiK27Signal(model.id) || (model.name !== undefined && hasKimiK27Signal(model.name));
 }
 
+function hasGlm52Signal(value: string): boolean {
+	return /(?:^|[/@._-])glm(?:[._-]|p)5(?:[._-]|p)2(?:$|[/@._:-])/.test(normalizeModelId(value));
+}
+
+function isGlm52Model(model: ModelWithPromptPresetMetadata): boolean {
+	return hasGlm52Signal(model.id) || (model.name !== undefined && hasGlm52Signal(model.name));
+}
+
 type ClaudeOpusVersion = "claude-opus-4-7" | "claude-opus-4-6" | "claude-opus-4-5";
 
 function extractClaudeOpusVersion(modelId: string): ClaudeOpusVersion | undefined {
@@ -107,6 +116,9 @@ export function resolvePresetName(
 	if (claudeVersion) {
 		return claudeVersion;
 	}
+	if (isGlm52Model(model)) {
+		return "glm-5.2";
+	}
 	return undefined;
 }
 
@@ -122,6 +134,8 @@ function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPrompt
 			return { name, prompt: buildGpt52Prompt(options) };
 		case "gpt-5":
 			return { name, prompt: buildGpt5Prompt(options) };
+		case "glm-5.2":
+			return { name, prompt: buildGlm52Prompt(options) };
 		case "kimi-k2-7":
 			return { name, prompt: buildKimiK27Prompt(options) };
 		case "kimi-k2-6":
