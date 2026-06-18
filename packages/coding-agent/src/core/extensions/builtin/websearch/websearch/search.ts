@@ -9,6 +9,8 @@ import type {
 	WebsearchConfig,
 } from "./types.ts";
 
+export { formatSearchText } from "./search-format.ts";
+
 const MAX_ERROR_DETAIL_LENGTH = 500;
 
 function isJsonObject(value: unknown): value is JsonObject {
@@ -22,13 +24,13 @@ function truncate(value: string, max: number): string {
 function extractErrorDetail(payload: unknown, bodyText: string): string {
 	if (isJsonObject(payload)) {
 		const obj = payload;
-		const error = obj["error"];
+		const error = obj.error;
 		if (typeof error === "string" && error.length > 0) return truncate(error, MAX_ERROR_DETAIL_LENGTH);
 		if (isJsonObject(error)) {
-			const message = error["message"];
+			const message = error.message;
 			if (typeof message === "string" && message.length > 0) return truncate(message, MAX_ERROR_DETAIL_LENGTH);
 		}
-		const message = obj["message"];
+		const message = obj.message;
 		if (typeof message === "string" && message.length > 0) return truncate(message, MAX_ERROR_DETAIL_LENGTH);
 	}
 	const trimmed = bodyText.trim();
@@ -255,32 +257,4 @@ export async function performSearch(
 		attempts,
 		error: `All configured search providers failed: ${attempts.map((attempt) => `${entryLabel(attempt)} ${attempt.error ?? "failed"}`).join("; ")}`,
 	};
-}
-
-export function formatSearchText(details: SearchDetails): string {
-	if (details.error) return details.error;
-	if (details.results.length === 0) return `No web search results found for "${details.query}".`;
-
-	const route = details.strategy
-		? ` via ${details.entryId ? `${details.provider}/${details.entryId}` : details.provider} (${details.strategy})`
-		: ` via ${details.provider}`;
-	const lines = [`Web search results for "${details.query}"${route}:`, ""];
-	if (details.attempts && details.attempts.length > 0) {
-		lines.push(
-			`Routing attempts: ${details.attempts
-				.map(
-					(attempt) =>
-						`${entryLabel(attempt)} ${attempt.error ? `failed: ${attempt.error}` : `${attempt.resultsCount} result${attempt.resultsCount === 1 ? "" : "s"}`}`,
-				)
-				.join(" -> ")}`,
-			"",
-		);
-	}
-	for (const [index, item] of details.results.entries()) {
-		lines.push(`${index + 1}. ${item.title}`);
-		lines.push(`   ${item.url}`);
-		if (item.snippet) lines.push(`   ${item.snippet}`);
-	}
-	lines.push("", "REMINDER: Include relevant sources from the URLs above in the final answer.");
-	return lines.join("\n");
 }
