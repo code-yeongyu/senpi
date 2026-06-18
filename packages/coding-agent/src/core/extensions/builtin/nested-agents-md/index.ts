@@ -42,7 +42,7 @@ export default function nestedAgentsMd(pi: ExtensionAPI): void {
 	pi.on("tool_result", async (event, ctx) => {
 		if (disabled) return undefined;
 		if (!isReadToolResult(event) || event.isError) return undefined;
-		const filePath = event.input["path"];
+		const filePath = event.input.path;
 		if (typeof filePath !== "string" || filePath.length === 0) return undefined;
 		const hasText = event.content.some((block) => block.type === "text");
 		if (!hasText) return undefined;
