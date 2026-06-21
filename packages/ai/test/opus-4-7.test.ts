@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getModel, supportsXhigh } from "../src/models.ts";
+import "../src/providers/register-builtins.ts";
 import { streamSimple } from "../src/stream.ts";
 import type { Context, Model } from "../src/types.ts";
 

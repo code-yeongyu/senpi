@@ -302,6 +302,14 @@ interface ToolDefinitionEntry {
 	sourceInfo: SourceInfo;
 }
 
+function estimateMessagesTokens(messages: AgentMessage[]): number {
+	let tokens = 0;
+	for (const message of messages) {
+		tokens += estimateTokens(message);
+	}
+	return tokens;
+}
+
 // ============================================================================
 // Constants
 // ============================================================================
@@ -2129,6 +2137,7 @@ export class AgentSession {
 
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
+			compactionResult.estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
 			this._incrementMessageRevision();
 
 			await this._extensionRunner.emit({
