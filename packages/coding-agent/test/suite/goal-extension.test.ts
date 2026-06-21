@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it } from "vitest";
 import goalExtension from "../../src/core/extensions/builtin/goal/index.ts";
 import { goalFilePath, readGoal } from "../../src/core/extensions/builtin/goal/store.ts";
@@ -139,12 +140,51 @@ describe("goal extension contract (budget-free)", () => {
 		await tools.get("create_goal")?.execute("c1", { objective: "Keep going" }, undefined, undefined, ctx);
 
 		await runHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
-		await runHandlers(handlers, "agent_end", { type: "agent_end", messages: [] }, ctx);
+		await runHandlers(
+			handlers,
+			"agent_end",
+			{ type: "agent_end", messages: [assistantMessageWithStopReason("stop")] },
+			ctx,
+		);
 
 		expect(sent).toHaveLength(1);
 		expect(sent[0]?.message.customType).toBe("goal-continuation");
 		expect(sent[0]?.message.display).toBe(false);
 		expect(sent[0]?.message.content.toLowerCase()).not.toContain("token budget");
+	});
+
+	it("does not queue a hidden continuation prompt after an aborted agent_end", async () => {
+		const { tools, handlers, sent } = createGoalHarness();
+		const ctx = await makeCtx();
+		await tools.get("create_goal")?.execute("c1", { objective: "Stop when aborted" }, undefined, undefined, ctx);
+
+		await runHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
+		await runHandlers(
+			handlers,
+			"agent_end",
+			{ type: "agent_end", messages: [assistantMessageWithStopReason("aborted")] },
+			ctx,
+		);
+
+		expect(sent).toHaveLength(0);
+	});
+
+	it("does not queue a hidden continuation prompt after an error agent_end", async () => {
+		const { tools, handlers, sent } = createGoalHarness();
+		const ctx = await makeCtx();
+		await tools
+			.get("create_goal")
+			?.execute("c1", { objective: "Stop when provider errors" }, undefined, undefined, ctx);
+
+		await runHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
+		await runHandlers(
+			handlers,
+			"agent_end",
+			{ type: "agent_end", messages: [assistantMessageWithStopReason("error")] },
+			ctx,
+		);
+
+		expect(sent).toHaveLength(0);
 	});
 });
 
@@ -161,4 +201,30 @@ async function runHandlers(
 	for (const handler of handlers.get(event) ?? []) {
 		await handler(payload, ctx);
 	}
+}
+
+function assistantMessageWithStopReason(stopReason: "aborted" | "error" | "stop"): AgentMessage {
+	return {
+		role: "assistant",
+		content: [{ type: "text", text: "" }],
+		api: "faux",
+		provider: "faux",
+		model: "faux",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason,
+		errorMessage:
+			stopReason === "aborted"
+				? "Operation aborted"
+				: stopReason === "error"
+					? "429 usage limit reached"
+					: undefined,
+		timestamp: Date.now(),
+	};
 }

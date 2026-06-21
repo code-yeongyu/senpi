@@ -1,3 +1,4 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { describe, expect, it } from "vitest";
 import { parseGoalCommand } from "../../src/core/extensions/builtin/goal/command.ts";
 import {
@@ -28,6 +29,43 @@ function makeGoal(overrides: Partial<Goal> = {}): Goal {
 	};
 }
 
+function assistantMessageWithStopReason(stopReason: "aborted" | "error" | "stop" | "toolUse"): AgentMessage {
+	return {
+		role: "assistant",
+		content: [{ type: "text", text: "" }],
+		api: "faux",
+		provider: "faux",
+		model: "faux",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason,
+		errorMessage:
+			stopReason === "aborted"
+				? "Operation aborted"
+				: stopReason === "error"
+					? "429 usage limit reached"
+					: undefined,
+		timestamp: Date.now(),
+	};
+}
+
+function abortedToolResultMessage(): AgentMessage {
+	return {
+		role: "toolResult",
+		toolCallId: "call-1",
+		toolName: "wait",
+		content: [{ type: "text", text: "Operation aborted" }],
+		isError: true,
+		timestamp: Date.now(),
+	};
+}
+
 describe("goal command parsing", () => {
 	it("maps bare input, keywords, and objectives", () => {
 		expect(parseGoalCommand("")).toEqual({ kind: "show" });
@@ -50,9 +88,29 @@ describe("goal continuation gating", () => {
 	});
 
 	it("queues after agent end for active goals with no pending messages", () => {
-		expect(shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "active" }), false)).toBe(true);
-		expect(shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "active" }), true)).toBe(false);
-		expect(shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "complete" }), false)).toBe(false);
+		const cleanMessages = [assistantMessageWithStopReason("stop")];
+		expect(shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "active" }), false, cleanMessages)).toBe(true);
+		expect(shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "active" }), true, cleanMessages)).toBe(false);
+		expect(shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "complete" }), false, cleanMessages)).toBe(
+			false,
+		);
+		expect(shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "active" }), false, [])).toBe(false);
+		expect(
+			shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "active" }), false, [
+				assistantMessageWithStopReason("aborted"),
+			]),
+		).toBe(false);
+		expect(
+			shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "active" }), false, [
+				assistantMessageWithStopReason("error"),
+			]),
+		).toBe(false);
+		expect(
+			shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "active" }), false, [
+				assistantMessageWithStopReason("toolUse"),
+				abortedToolResultMessage(),
+			]),
+		).toBe(false);
 	});
 });
 
