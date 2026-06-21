@@ -2,255 +2,43 @@
 
 ## [Unreleased]
 
-### Breaking Changes
-
-### Added
-
-### Changed
+## [0.79.9] - 2026-06-20
 
 ### Fixed
 
-### Removed
+- Fixed Node execution environment commands through legacy WSL `bash.exe` to pass scripts over stdin so shell variables expand in the target bash ([#5893](https://github.com/earendil-works/pi/issues/5893)).
 
-## [2026.6.17-2] - 2026-06-17
-
-### Breaking Changes
+## [0.79.8] - 2026-06-19
 
 ### Added
 
-### Changed
+- Added `@earendil-works/pi-agent-core/base` for bundlers that want to pair the agent core with selective `@earendil-works/pi-ai/base` provider registration ([#5348](https://github.com/earendil-works/pi/pull/5348) by [@FredKSchott](https://github.com/FredKSchott)).
 
-### Fixed
+## [0.79.7] - 2026-06-18
 
-### Removed
+## [0.79.6] - 2026-06-16
 
-## [2026.6.17] - 2026-06-17
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.16-2] - 2026-06-16
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.16] - 2026-06-16
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-- `findCutPoint` now falls back to the last valid cut point when the recent-token budget overshoots it, instead of defaulting to the first cut point and retaining the entire history.
-
-### Removed
+## [0.79.5] - 2026-06-16
 
 ## [0.79.4] - 2026-06-15
 
-## [2026.6.15] - 2026-06-15
+## [0.79.3] - 2026-06-13
 
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.14-3] - 2026-06-14
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.14-2] - 2026-06-14
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.14] - 2026-06-14
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.13] - 2026-06-13
-
-### Breaking Changes
-
-### Added
-
-### Changed
+## [0.79.2] - 2026-06-12
 
 ### Fixed
 
 - Fixed late tool progress callbacks after tool settlement to be ignored instead of emitting stale `tool_execution_update` events ([#5573](https://github.com/earendil-works/pi/issues/5573)).
 
-### Removed
+## [0.79.1] - 2026-06-09
 
-## [2026.6.12-2] - 2026-06-12
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.12] - 2026-06-12
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.10-2] - 2026-06-10
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-- Removed the unused `getOrUndefined` harness helper.
-
-## [2026.6.10] - 2026-06-10
-
-### Breaking Changes
-
-### Added
-
-### Changed
+## [0.79.0] - 2026-06-08
 
 ### Fixed
 
 - Fixed the compaction summarization system prompt to use neutral AI assistant wording for non-coding agents ([#5401](https://github.com/earendil-works/pi/issues/5401)).
 
-### Removed
-
-## [2026.6.6-3] - 2026-06-06
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.6-2] - 2026-06-06
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.6] - 2026-06-06
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.4] - 2026-06-04
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.3] - 2026-06-03
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.2] - 2026-06-02
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.29-4] - 2026-05-29
+## [0.78.1] - 2026-06-04
 
 ## [0.78.0] - 2026-05-29
 
@@ -264,113 +52,15 @@
 
 - Added agent harness tool registry APIs, `tools_update` events, branch-scoped active-tool persistence, and duplicate tool validation.
 
-### Changed
+## [0.76.0] - 2026-05-27
 
 ### Fixed
 
 - Fixed context token estimates to count user image attachments consistently with tool result images ([#4983](https://github.com/earendil-works/pi/issues/4983)).
 
-### Removed
-
-## [2026.5.29-3] - 2026-05-29
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.26] - 2026-05-26
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.24] - 2026-05-24
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.23-2] - 2026-05-23
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.23] - 2026-05-23
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
 ## [0.75.5] - 2026-05-23
 
-## [2026.5.21-2] - 2026-05-21
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.21] - 2026-05-21
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.20-4] - 2026-05-20
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.20] - 2026-05-20
+## [0.75.4] - 2026-05-20
 
 ### Changed
 
@@ -379,50 +69,9 @@
 
 ### Fixed
 
-- Fixed idle provider streams to fail the current turn instead of leaving the agent loop running indefinitely.
 - Fixed tool-call preflight to stop preparing sibling tool calls after the run is aborted ([#4276](https://github.com/earendil-works/pi/issues/4276)).
 - Fixed tail truncation for oversized single-line output that ends with a trailing newline ([#4715](https://github.com/earendil-works/pi/issues/4715)).
 - Fixed Windows Node execution environment command spawns to hide helper console windows from background processes ([#4699](https://github.com/earendil-works/pi/issues/4699)).
-
-## [2026.5.19] - 2026-05-19
-
-### Fixed
-
-## [2026.5.18-2] - 2026-05-18
-
-### Fixed
-
-## [2026.5.18] - 2026-05-18
-
-### Fixed
-
-## [2026.5.16] - 2026-05-16
-
-### Fixed
-
-## [2026.5.15-3] - 2026-05-15
-
-### Fixed
-
-- Fixed tool-level aborts to stop the agent loop before polling queued steering/follow-up messages or starting another provider request.
-
-## [2026.5.15-2] - 2026-05-15
-
-### Fixed
-
-- Fixed provider stream creation and mid-stream failures to end the agent loop with terminal assistant error messages that preserve partial content.
-
-## [2026.5.15] - 2026-05-15
-
-## [2026.5.14] - 2026-05-14
-
-## [2026.5.13-4] - 2026-05-13
-
-## [2026.5.13-3] - 2026-05-13
-
-## [2026.5.13-2] - 2026-05-13
-
-## [2026.05.13] - 2026-05-13
 
 ## [0.75.3] - 2026-05-18
 

@@ -41,7 +41,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@code-yeongyu/senpi";
-import { DynamicBorder, getAgentDir } from "@code-yeongyu/senpi";
+import { CONFIG_DIR_NAME, DynamicBorder, getAgentDir } from "@code-yeongyu/senpi";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { Container, Key, type SelectItem, SelectList, Text } from "@earendil-works/pi-tui";
 
@@ -69,7 +69,7 @@ interface PresetsConfig {
  */
 function loadPresets(cwd: string): PresetsConfig {
 	const globalPath = join(getAgentDir(), "presets.json");
-	const projectPath = join(cwd, ".senpi", "presets.json");
+	const projectPath = join(cwd, CONFIG_DIR_NAME, "presets.json");
 
 	let globalPresets: PresetsConfig = {};
 	let projectPresets: PresetsConfig = {};
@@ -201,7 +201,7 @@ export default function presetExtension(pi: ExtensionAPI) {
 
 		if (presetNames.length === 0) {
 			ctx.ui.notify(
-				"No presets defined. Add presets to ~/.senpi/agent/presets.json or .senpi/presets.json",
+				`No presets defined. Add presets to ${join(getAgentDir(), "presets.json")} or ${join(ctx.cwd, CONFIG_DIR_NAME, "presets.json")}`,
 				"warning",
 			);
 			return;
@@ -312,7 +312,7 @@ export default function presetExtension(pi: ExtensionAPI) {
 		const presetNames = getPresetOrder();
 		if (presetNames.length === 0) {
 			ctx.ui.notify(
-				"No presets defined. Add presets to ~/.senpi/agent/presets.json or .senpi/presets.json",
+				`No presets defined. Add presets to ${join(getAgentDir(), "presets.json")} or ${join(ctx.cwd, CONFIG_DIR_NAME, "presets.json")}`,
 				"warning",
 			);
 			return;

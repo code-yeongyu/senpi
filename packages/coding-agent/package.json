@@ -68,7 +68,7 @@
 		"semver": "7.8.0",
 		"turndown": "7.2.4",
 		"typebox": "1.1.38",
-		"undici": "8.3.0",
+		"undici": "8.5.0",
 		"yaml": "2.9.0"
 	},
 	"bundledDependencies": [
@@ -97,7 +97,7 @@
 		"@types/turndown": "5.0.6",
 		"shx": "0.4.0",
 		"typescript": "6.0.3",
-		"vitest": "4.1.8"
+		"vitest": "4.1.9"
 	},
 	"keywords": [
 		"coding-agent",

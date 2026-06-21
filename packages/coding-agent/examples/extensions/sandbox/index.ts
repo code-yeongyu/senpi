@@ -46,7 +46,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import type { ExtensionAPI } from "@code-yeongyu/senpi";
-import { type BashOperations, createBashTool, getAgentDir } from "@code-yeongyu/senpi";
+import { type BashOperations, CONFIG_DIR_NAME, createBashTool, getAgentDir } from "@code-yeongyu/senpi";
 
 interface SandboxConfig extends SandboxRuntimeConfig {
 	enabled?: boolean;
@@ -77,7 +77,7 @@ const DEFAULT_CONFIG: SandboxConfig = {
 };
 
 function loadConfig(cwd: string): SandboxConfig {
-	const projectConfigPath = join(cwd, ".pi", "sandbox.json");
+	const projectConfigPath = join(cwd, CONFIG_DIR_NAME, "sandbox.json");
 	const globalConfigPath = join(getAgentDir(), "extensions", "sandbox.json");
 
 	let globalConfig: Partial<SandboxConfig> = {};

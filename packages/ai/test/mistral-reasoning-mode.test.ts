@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { streamSimple } from "../src/index.ts";
 import { getModel } from "../src/models.ts";
-import { streamSimple } from "../src/stream.ts";
 import type { AssistantMessage, Context, Model, SimpleStreamOptions } from "../src/types.ts";
 
 interface MistralPayload {
 	promptMode?: "reasoning";
 	reasoningEffort?: "none" | "high";
 	messages?: Array<{ role?: string; content?: unknown }>;
+	promptCacheKey?: string;
 }
 
 function makeContext(): Context {
@@ -112,5 +113,22 @@ describe("Mistral reasoning mode selection", () => {
 
 		const assistantMessage = payload.messages?.find((message) => message.role === "assistant");
 		expect(JSON.stringify(assistantMessage?.content)).not.toContain('"type":"thinking"');
+	});
+
+	it("uses the session id as prompt cache key", async () => {
+		const payload = await capturePayload(getModel("mistral", "mistral-large-latest"), {
+			sessionId: "session-123",
+		});
+
+		expect(payload.promptCacheKey).toBe("session-123");
+	});
+
+	it("omits prompt cache key when cache retention is disabled", async () => {
+		const payload = await capturePayload(getModel("mistral", "mistral-large-latest"), {
+			sessionId: "session-123",
+			cacheRetention: "none",
+		});
+
+		expect(payload.promptCacheKey).toBeUndefined();
 	});
 });

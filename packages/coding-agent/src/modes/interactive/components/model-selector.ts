@@ -11,6 +11,7 @@ import {
 } from "@earendil-works/pi-tui";
 import type { ModelRegistry } from "../../../core/model-registry.ts";
 import type { SettingsManager } from "../../../core/settings-manager.ts";
+import { getModelSelectorSearchText } from "../model-search.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint } from "./keybinding-hints.ts";
@@ -21,10 +22,6 @@ interface ModelItem {
 	provider: string;
 	id: string;
 	model: Model<any>;
-}
-
-function getModelSearchText({ fullId, id, provider, model }: ModelItem): string {
-	return `${fullId} ${provider}/${id} ${id} ${model.name} ${provider}`;
 }
 
 interface ScopedModelItem {
@@ -252,7 +249,11 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	}
 
 	private filterModels(query: string): void {
-		this.filteredModels = query ? fuzzyFilter(this.activeModels, query, getModelSearchText) : this.activeModels;
+		this.filteredModels = query
+			? fuzzyFilter(this.activeModels, query, ({ id, provider, model }) =>
+					getModelSelectorSearchText({ id, provider, name: model.name }),
+				)
+			: this.activeModels;
 		this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, this.filteredModels.length - 1));
 		this.updateList();
 	}
