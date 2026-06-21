@@ -36,6 +36,9 @@ const MAX_MISTRAL_ERROR_BODY_CHARS = 4000;
  * Provider-specific options for the Mistral API.
  */
 type MistralReasoningEffort = "none" | "high";
+type MistralChatCompletionStreamRequest = ChatCompletionStreamRequest & {
+	promptCacheKey?: string;
+};
 
 export interface MistralOptions extends StreamOptions {
 	toolChoice?: "auto" | "none" | "any" | "required" | { type: "function"; function: { name: string } };
@@ -82,7 +85,7 @@ export const streamMistral: StreamFunction<"mistral-conversations", MistralOptio
 			let payload = buildChatPayload(model, context, transformedMessages, options);
 			const nextPayload = await options?.onPayload?.(payload, model);
 			if (nextPayload !== undefined) {
-				payload = nextPayload as ChatCompletionStreamRequest;
+				payload = nextPayload as MistralChatCompletionStreamRequest;
 			}
 			const mistralStream = await mistral.chat.stream(payload, buildRequestOptions(model, options));
 			stream.push({ type: "start", partial: output });
@@ -259,8 +262,8 @@ function buildChatPayload(
 	context: Context,
 	messages: Message[],
 	options?: MistralOptions,
-): ChatCompletionStreamRequest {
-	const payload: ChatCompletionStreamRequest = {
+): MistralChatCompletionStreamRequest {
+	const payload: MistralChatCompletionStreamRequest = {
 		model: model.id,
 		stream: true,
 		messages: toChatMessages(messages, model.input.includes("image")),
