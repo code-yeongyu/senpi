@@ -2280,7 +2280,8 @@ export class AgentSession {
 			const willRetry = assistantMessage.stopReason !== "stop";
 
 			if (!willRetry) {
-				return await this._runAutoCompaction("overflow", false);
+				await this._runAutoCompaction("overflow", false);
+				return;
 			}
 
 			if (this._overflowRecoveryAttempted) {
