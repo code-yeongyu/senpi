@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Fixed active goal continuation so aborted or errored turns do not queue another hidden follow-up after user interruption, and made retry cancellation catch Esc immediately when retry starts.
+- Fixed active goal continuation so aborted, errored, or aborting tool-execution turns do not queue another hidden follow-up after user interruption, and made retry cancellation catch Esc immediately when retry starts.
 
 ## [2026.6.21] - 2026-06-21
 
