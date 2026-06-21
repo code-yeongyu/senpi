@@ -10,6 +10,7 @@ import {
 	Spacer,
 	Text,
 } from "@earendil-works/pi-tui";
+import { getModelSearchText } from "../model-search.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyText } from "./keybinding-hints.ts";
@@ -28,10 +29,6 @@ interface ModelItem {
 	fullId: string;
 	model: Model<any>;
 	favorite: boolean;
-}
-
-function getModelSearchText(item: ModelItem): string {
-	return `${item.fullId} ${item.model.id} ${item.model.name} ${item.model.provider}`;
 }
 
 export interface FavoriteModelsConfig {
@@ -172,7 +169,11 @@ export class FavoriteModelsSelectorComponent extends Container implements Focusa
 		const query = this.searchInput.getValue();
 		const selectedId = preferredSelectedId ?? this.filteredItems[this.selectedIndex]?.fullId;
 		const items = this.buildItems();
-		this.filteredItems = query ? fuzzyFilter(items, query, getModelSearchText) : items;
+		this.filteredItems = query
+			? fuzzyFilter(items, query, (i) =>
+					getModelSearchText({ id: i.model.id, provider: i.model.provider, name: i.model.name }),
+				)
+			: items;
 		const selectedIndex = selectedId ? this.filteredItems.findIndex((item) => item.fullId === selectedId) : -1;
 		this.selectedIndex =
 			selectedIndex >= 0 ? selectedIndex : Math.min(this.selectedIndex, Math.max(0, this.filteredItems.length - 1));

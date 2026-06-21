@@ -5,6 +5,7 @@
 		"noEmit": true,
 		"paths": {
 			"@earendil-works/pi-agent-core": ["../agent/src/index.ts"],
+			"@earendil-works/pi-ai/base": ["../ai/src/base.ts"],
 			"@earendil-works/pi-ai": ["../ai/src/index.ts"]
 		}
 	},

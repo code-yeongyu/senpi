@@ -12,6 +12,9 @@
 			"@earendil-works/pi-ai/oauth": [
 				"./packages/ai/src/oauth.ts"
 			],
+			"@earendil-works/pi-ai/openrouter-images": [
+				"./packages/ai/src/providers/images/openrouter.ts"
+			],
 			"@earendil-works/pi-ai/*": [
 				"./packages/ai/src/*.ts",
 				"./packages/ai/src/providers/*.ts"
@@ -27,6 +30,9 @@
 			],
 			"@earendil-works/pi-coding-agent": [
 				"./packages/coding-agent/src/index.ts"
+			],
+			"@earendil-works/pi-coding-agent/hooks": [
+				"./packages/coding-agent/src/core/hooks/index.ts"
 			],
 			"@earendil-works/pi-coding-agent/*": [
 				"./packages/coding-agent/src/*"
@@ -54,6 +60,9 @@
 			],
 			"@code-yeongyu/senpi": [
 				"./packages/coding-agent/src/index.ts"
+			],
+			"@code-yeongyu/senpi/hooks": [
+				"./packages/coding-agent/src/core/hooks/index.ts"
 			],
 			"@code-yeongyu/senpi/*": [
 				"./packages/coding-agent/src/*"

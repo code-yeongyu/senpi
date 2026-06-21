@@ -162,6 +162,30 @@ type HandlerFn = (...args: unknown[]) => Promise<unknown>;
 type ExtensionModuleImporter = ReturnType<typeof createJiti>;
 export type ExtensionFactoryResolver = (extensionPath: string, resolvedPath: string) => ExtensionFactory | undefined;
 
+let extensionCacheCwd: string | undefined;
+let extensionCacheGeneration = 0;
+const extensionCache = new Map<string, ExtensionFactory>();
+
+interface ExtensionCacheToken {
+	cwd: string;
+	generation: number;
+}
+
+export function clearExtensionCache(): void {
+	extensionCache.clear();
+	extensionCacheCwd = undefined;
+	extensionCacheGeneration++;
+}
+
+function useExtensionCacheCwd(cwd: string): ExtensionCacheToken {
+	const resolvedCwd = resolvePath(cwd);
+	if (extensionCacheCwd !== undefined && extensionCacheCwd !== resolvedCwd) {
+		clearExtensionCache();
+	}
+	extensionCacheCwd = resolvedCwd;
+	return { cwd: resolvedCwd, generation: extensionCacheGeneration };
+}
+
 /**
  * Create a runtime with throwing stubs for action methods.
  * Runner.bindCore() replaces these with real implementations.
@@ -383,10 +407,35 @@ function createExtensionModuleImporter(): ExtensionModuleImporter {
 	});
 }
 
-async function loadExtensionModule(extensionPath: string, importer: ExtensionModuleImporter) {
+function isCurrentCacheToken(cacheToken: ExtensionCacheToken | undefined): cacheToken is ExtensionCacheToken {
+	return (
+		cacheToken !== undefined &&
+		extensionCacheCwd === cacheToken.cwd &&
+		extensionCacheGeneration === cacheToken.generation
+	);
+}
+
+async function loadExtensionModule(
+	extensionPath: string,
+	importer: ExtensionModuleImporter,
+	cacheToken?: ExtensionCacheToken,
+) {
+	if (isCurrentCacheToken(cacheToken)) {
+		const cachedFactory = extensionCache.get(extensionPath);
+		if (cachedFactory) {
+			return cachedFactory;
+		}
+	}
+
 	const module = await importer.import(extensionPath, { default: true });
 	const factory = module as ExtensionFactory;
-	return typeof factory !== "function" ? undefined : factory;
+	if (typeof factory !== "function") {
+		return undefined;
+	}
+	if (isCurrentCacheToken(cacheToken)) {
+		extensionCache.set(extensionPath, factory);
+	}
+	return factory;
 }
 
 /**
@@ -419,12 +468,14 @@ async function loadExtension(
 	runtime: ExtensionRuntime,
 	getImporter: () => ExtensionModuleImporter,
 	factoryResolver?: ExtensionFactoryResolver,
+	cacheToken?: ExtensionCacheToken,
 ): Promise<{ extension: Extension | null; error: string | null }> {
 	const resolvedPath = resolvePath(extensionPath, cwd, { normalizeUnicodeSpaces: true });
 
 	try {
 		const factory =
-			factoryResolver?.(extensionPath, resolvedPath) ?? (await loadExtensionModule(resolvedPath, getImporter()));
+			factoryResolver?.(extensionPath, resolvedPath) ??
+			(await loadExtensionModule(resolvedPath, getImporter(), cacheToken));
 		if (!factory) {
 			return { extension: null, error: `Extension does not export a valid factory function: ${extensionPath}` };
 		}
@@ -460,16 +511,18 @@ export async function loadExtensionFromFactory(
 /**
  * Load extensions from paths.
  */
-export async function loadExtensions(
+async function loadExtensionsInternal(
 	paths: string[],
 	cwd: string,
 	eventBus?: EventBus,
 	runtime?: ExtensionRuntime,
 	options?: { factoryResolver?: ExtensionFactoryResolver },
+	useCache = false,
 ): Promise<LoadExtensionsResult> {
 	const extensions: Extension[] = [];
 	const errors: Array<{ path: string; error: string }> = [];
-	const resolvedCwd = resolvePath(cwd);
+	const cacheToken = useCache ? useExtensionCacheCwd(cwd) : undefined;
+	const resolvedCwd = cacheToken?.cwd ?? resolvePath(cwd);
 	const resolvedEventBus = eventBus ?? createEventBus();
 	const resolvedRuntime = runtime ?? createExtensionRuntime();
 	let importer: ExtensionModuleImporter | undefined;
@@ -486,6 +539,7 @@ export async function loadExtensions(
 			resolvedRuntime,
 			getImporter,
 			options?.factoryResolver,
+			cacheToken,
 		);
 
 		if (error) {
@@ -503,6 +557,25 @@ export async function loadExtensions(
 		errors,
 		runtime: resolvedRuntime,
 	};
+}
+
+export async function loadExtensions(
+	paths: string[],
+	cwd: string,
+	eventBus?: EventBus,
+	runtime?: ExtensionRuntime,
+	options?: { factoryResolver?: ExtensionFactoryResolver },
+): Promise<LoadExtensionsResult> {
+	return loadExtensionsInternal(paths, cwd, eventBus, runtime, options);
+}
+
+export async function loadExtensionsCached(
+	paths: string[],
+	cwd: string,
+	eventBus?: EventBus,
+	runtime?: ExtensionRuntime,
+): Promise<LoadExtensionsResult> {
+	return loadExtensionsInternal(paths, cwd, eventBus, runtime, undefined, true);
 }
 
 interface PiManifest {

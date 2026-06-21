@@ -2,79 +2,121 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed the update notice to include a changelog URL when one is available.
+- Fixed `pi update` to install the exact version returned by the Pi update check, make `--force` reinstall that checked version, fail instead of falling back to an unversioned reinstall when no version is available, and report both the old and updated versions.
+
+## [0.79.9] - 2026-06-20
+
+### New Features
+
+- **Chat-template thinking compatibility** - OpenAI-compatible custom providers can map Pi thinking levels into `chat_template_kwargs`, enabling vLLM/Hugging Face chat-template models such as DeepSeek to use provider-native thinking controls. See [Custom Provider API Types](docs/custom-provider.md#api-types) and [OpenAI Compatibility](docs/models.md#openai-compatibility).
+- **GLM-5.2 provider improvements** - GLM-5.2 now has corrected Fireworks OpenAI-compatible routing and OpenRouter `xhigh` thinking support, improving `/model` behavior and high-effort reasoning for GLM-5.2 users. See [Model Options](docs/usage.md#model-options).
+
 ### Added
 
-- Added the GLM 5.2 prompt preset with automatic model detection.
+- Added inherited configurable `chat-template` thinking support for OpenAI-compatible providers that use `chat_template_kwargs`, such as DeepSeek models behind vLLM ([#5673](https://github.com/earendil-works/pi/issues/5673)).
 
 ### Fixed
 
-- Fixed inherited Anthropic same-model replay to preserve provider-native server tool blocks around signed thinking, avoiding `thinking` / `redacted_thinking` modification errors on follow-up tool-result requests.
-- Fixed interactive abort during streaming or retry to restore queued messages to the editor instead of auto-firing them into a still-settling session.
+- Fixed inherited Fireworks GLM-5.2 metadata to use the OpenAI-compatible Chat Completions endpoint with `reasoning_effort` support ([#5923](https://github.com/earendil-works/pi/issues/5923)).
+- Fixed same-directory session switches to reuse imported extension modules while preserving fresh extension instances and lifecycle events ([#5905](https://github.com/earendil-works/pi/issues/5905)).
+- Fixed deep session branches taking quadratic time to build context or branch paths ([#5909](https://github.com/earendil-works/pi/issues/5909)).
+- Fixed inherited OpenRouter GLM-5.2 metadata to expose `xhigh` reasoning and send OpenRouter's native `xhigh` effort ([#5770](https://github.com/earendil-works/pi/issues/5770)).
+- Fixed inherited Markdown streaming code fence rendering so partial closing fences no longer make code blocks shrink or flicker while content streams ([#5846](https://github.com/earendil-works/pi/pull/5846) by [@xl0](https://github.com/xl0)).
+- Fixed fuzzy `edit` matches to preserve untouched line blocks instead of rewriting the whole file through normalized content ([#5899](https://github.com/earendil-works/pi/issues/5899)).
+- Fixed bash commands through legacy WSL `bash.exe` to pass scripts over stdin so shell variables expand in the target bash ([#5893](https://github.com/earendil-works/pi/issues/5893)).
+- Fixed `/model` to hide GitHub Copilot models that are unavailable to the authenticated account ([#5897](https://github.com/earendil-works/pi/issues/5897)).
+- Fixed `/model` selector search to rank exact provider-prefixed matches before proxy-provider model ID matches ([#5892](https://github.com/earendil-works/pi/issues/5892)).
+
+## [0.79.8] - 2026-06-19
+
+### New Features
+
+- **Selective provider base entry points** - SDK users can pair `@earendil-works/pi-ai/base` and `@earendil-works/pi-agent-core/base` with explicit provider registration to keep bundled applications from including unused provider transports. See [`pi-ai` Base Entry Point](../ai/README.md#base-entry-point) and [`pi-agent-core` Base Entry Point](../agent/README.md#base-entry-point).
+- **Mistral prompt caching** - Mistral sessions now use provider-side prompt caching with session affinity and cached-token usage/cost accounting. See [API Keys](docs/providers.md#api-keys) and [Environment Variables](docs/usage.md#environment-variables).
+- **Post-compaction token estimates** - Compact results and compaction events now include estimated post-compaction token counts so clients can show the approximate context reduction. See [RPC compact](docs/rpc.md#compact) and [compaction events](docs/rpc.md#compaction_start--compaction_end).
+- **OpenRouter Fusion alias** - `openrouter/fusion` is available as a built-in OpenRouter model alias. See [API Keys](docs/providers.md#api-keys).
+
+### Added
+
+- Added inherited `@earendil-works/pi-ai/base` and `@earendil-works/pi-agent-core/base` entry points for selective provider registration in bundled applications ([#5348](https://github.com/earendil-works/pi/pull/5348) by [@FredKSchott](https://github.com/FredKSchott)).
+- Added inherited Mistral prompt caching using the pi session ID as `prompt_cache_key`, including cached-token usage and cost accounting ([#5854](https://github.com/earendil-works/pi/issues/5854)).
+- Added estimated post-compaction token counts to compact results and compaction events ([#5877](https://github.com/earendil-works/pi/issues/5877)).
+- Added the inherited OpenRouter Fusion alias as `openrouter/fusion` ([#5866](https://github.com/earendil-works/pi/pull/5866) by [@dannote](https://github.com/dannote)).
+
+### Fixed
+
+- Updated vulnerable runtime dependencies, including `undici` and the packaged `protobufjs` transitive dependency.
+- Fixed compaction to refuse sessions with no eligible messages instead of producing empty summaries ([#4811](https://github.com/earendil-works/pi/issues/4811)).
+- Fixed successful overflow-triggered auto-compaction to avoid retrying completed assistant responses ([#5720](https://github.com/earendil-works/pi/issues/5720)).
+
+## [0.79.7] - 2026-06-18
+
+### New Features
+
+- **Automatic theme mode** - `/settings` can choose separate light and dark themes and follow terminal color-scheme changes. See [Selecting a Theme](docs/themes.md#selecting-a-theme).
+- **Self-only updates by default** - `pi update` now updates pi only, with `pi update --all` for updating pi and packages together. See [Install and Manage](docs/packages.md#install-and-manage).
+- **Extension API helpers** - extensions can use `CONFIG_DIR_NAME` for project config paths and import edit diff helpers for edit-style diffs. See [`ctx.cwd`](docs/extensions.md#ctxcwd) and [SDK Exports](docs/sdk.md#exports).
+- **Warp inline images** - Warp terminals now get inline image rendering through Kitty graphics detection. See [Image](docs/tui.md#image).
+
+### Added
+
+- Added automatic theme mode so `/settings` can use separate light and dark themes and follow terminal color-scheme changes ([#5874](https://github.com/earendil-works/pi/pull/5874)).
+- Added inherited Warp terminal image capability detection so inline images render through Warp's Kitty graphics support ([#5841](https://github.com/earendil-works/pi/pull/5841) by [@dodiego](https://github.com/dodiego)).
+- Exported `CONFIG_DIR_NAME` from the coding-agent public API so extensions can resolve project config paths without hardcoding `.pi` ([#5869](https://github.com/earendil-works/pi/pull/5869) by [@xl0](https://github.com/xl0)).
+- Exported edit diff helpers (`generateDiffString`, `generateUnifiedPatch`, and `EditDiffResult`) from the public API for extensions that need edit-style diffs ([#5756](https://github.com/earendil-works/pi/pull/5756) by [@xl0](https://github.com/xl0)).
 
 ### Changed
 
-### Removed
-
-## [2026.6.17-2] - 2026-06-17
-
-### Added
+- Changed bare `pi update` to update only pi, added `pi update --all` for updating pi and extensions together, and clarified extension update prompts.
+- Reserved `/` in theme names for automatic light/dark theme settings.
+- Updated extension docs, examples, runtime help, trust prompts, and config labels to use the configured project config directory instead of hardcoded `.pi` paths.
 
 ### Fixed
 
-- Fixed reusable tool renderer components to survive repeated TUI refreshes after long-session cleanup changes.
+- Fixed RPC unknown-command errors to include the request id so clients do not hang waiting for a response ([#5868](https://github.com/earendil-works/pi/issues/5868)).
+- Fixed `/model` autocomplete and model selection searches to match provider/model queries regardless of whether the provider or model token is typed first.
+- Fixed the tree navigator to horizontally pan deep entries so the selected item remains readable ([#5830](https://github.com/earendil-works/pi/issues/5830)).
 
-### Changed
-
-### Removed
-
-## [2026.6.17] - 2026-06-17
-
-### Added
-
-- Added provider-scoped `auth.json` environment overrides and a global `httpProxy` setting inherited from upstream.
+## [0.79.6] - 2026-06-16
 
 ### Fixed
 
-- Fixed HTTP dispatcher configuration to preserve caller-provided `fetch` overrides.
-- Fixed inherited OpenAI Responses null-content handling and DeepSeek thinking-off compatibility.
-- Fixed device-code login to avoid opening the browser automatically.
+- Fixed HTTP dispatcher configuration to preserve a caller's deliberate `fetch` override instead of reinstalling the undici global fetch over it.
+- Fixed inherited OpenCode Go DeepSeek V4 thinking-off requests to send the provider's `thinking: { type: "disabled" }` compatibility parameter.
+
+## [0.79.5] - 2026-06-16
+
+### New Features
+
+- **Provider-scoped API key environments** - `auth.json` API key entries can now include `env` overrides for provider-specific Cloudflare, Azure OpenAI, Google Vertex, Amazon Bedrock, cache retention, and proxy settings without changing the project shell. See [Auth File](docs/providers.md#auth-file).
+- **Global HTTP proxy setting** - Configure `httpProxy` once in global settings to apply `HTTP_PROXY` and `HTTPS_PROXY` to Pi-managed HTTP clients. See [Network](docs/settings.md#network).
+- **Vercel AI Gateway attribution** - Vercel AI Gateway requests now include Pi attribution headers by default. See [API Keys](docs/providers.md#api-keys).
+
+### Added
+
+- Added Vercel AI Gateway request attribution headers (`http-referer` and `x-title`) for Vercel AI Gateway models ([#5798](https://github.com/earendil-works/pi/pull/5798) by [@rwachtler](https://github.com/rwachtler)).
+- Added an `xp` footer marker when experimental features are enabled.
+- Added a global `httpProxy` setting that applies as `HTTP_PROXY` and `HTTPS_PROXY` for Pi-managed HTTP clients ([#5790](https://github.com/earendil-works/pi/issues/5790)).
+- Added `auth.json` API key `env` values so provider-specific environment overrides can be scoped to Pi and propagated to inherited provider configuration ([#5728](https://github.com/earendil-works/pi/issues/5728)).
 
 ### Changed
 
 - Updated the vendored Markdown parser used by HTML session exports to `marked` 18.0.5.
 
-### Removed
-
-## [2026.6.16-2] - 2026-06-16
-
-### Added
-
 ### Fixed
 
-### Changed
-
-### Removed
-
-## [2026.6.16] - 2026-06-16
-
-### Added
-
-- Added a compaction trim benchmark suite for hard-limit emergency pruning.
-
-### Fixed
-
+- Fixed inherited OpenAI Responses streaming to tolerate null message content from OpenAI-compatible servers before tool calls ([#5819](https://github.com/earendil-works/pi/issues/5819)).
+- Fixed inherited OpenCode DeepSeek V4 thinking requests to avoid sending both `thinking` and `reasoning_effort` ([#5818](https://github.com/earendil-works/pi/issues/5818)).
+- Fixed device-code login to stop opening the browser automatically.
+- Fixed inherited editor Cursor Up handling so non-empty drafts jump to the start of the line before browsing input history ([#5789](https://github.com/earendil-works/pi/pull/5789) by [@4h9fbZ](https://github.com/4h9fbZ)).
+- Fixed inherited Z.AI GLM-5.2 thinking requests to send `reasoning_effort` with the provider's `high`/`max` effort mapping ([#5770](https://github.com/earendil-works/pi/issues/5770)).
+- Fixed successful `pi update` on Windows to exit naturally instead of calling `process.exit(0)`, avoiding a Node.js/libuv assertion after version-check network requests ([#5805](https://github.com/earendil-works/pi/issues/5805)).
 - Fixed inherited Google and `google-vertex` Gemini model metadata to map `latest` aliases to the current models, add Gemini 3.5 Flash for Vertex, correct Gemini 2.5 Flash Vertex cache pricing, and remove shut-down Vertex preview models ([#5761](https://github.com/earendil-works/pi/issues/5761)).
 - Fixed the session selector to stay open and show the all-sessions empty state when both current-folder and all-scope session lists are empty ([#5747](https://github.com/earendil-works/pi/issues/5747)).
 - Fixed inherited Moonshot AI China model metadata to include Kimi K2.7 Code, and omitted unsupported thinking-off payloads for Kimi K2.7 Code models ([#5760](https://github.com/earendil-works/pi/issues/5760)).
-- Compaction now keeps the last valid cut point when the recent-token budget is exceeded entirely within trailing tool results, instead of silently retaining the whole history.
-
-### Changed
-
-- Improved hard-limit emergency pruning so old-message trimming tracks a running token total instead of re-estimating the whole conversation each iteration.
-- Improved extension context emission by using a JSON-only clone for the hot context message copy.
-- Improved single-line intra-line diff rendering with conservative fast paths for identical, long, and single-span edits.
-
-### Removed
 
 ## [0.79.4] - 2026-06-15
 
@@ -105,79 +147,28 @@
 - Fixed inherited WezTerm inline Kitty image rendering during full redraw fallbacks so image padding rows are reserved before the placement is drawn without regressing tall-image placement ([#5618](https://github.com/earendil-works/pi/issues/5618), [#4415](https://github.com/earendil-works/pi/issues/4415)).
 - Fixed custom provider config so plain uppercase API key and header values remain literals instead of being treated as legacy environment references; use explicit `$ENV_VAR` syntax for environment variables ([#5661](https://github.com/earendil-works/pi/issues/5661)).
 
-### Changed
-
-### Removed
-
-## [2026.6.15] - 2026-06-15
-
-### Added
+## [0.79.3] - 2026-06-13
 
 ### Fixed
 
-### Changed
+- Fixed inherited OpenAI GPT-5.4/GPT-5.5 and OpenAI Codex GPT-5.4/GPT-5.4 mini/GPT-5.5 context window metadata to use the observed 272k-token Codex backend limit, avoiding a billing hazard from prompts above Codex's accepted limit (reported by [@trethore](https://github.com/trethore)).
 
-### Removed
+## [0.79.2] - 2026-06-12
 
-## [2026.6.14-3] - 2026-06-14
+### New Features
 
-### Added
-
-### Fixed
-
-- Fixed interactive startup rendering so the initial TUI screen is not duplicated.
-
-### Changed
-
-### Removed
-
-## [2026.6.14-2] - 2026-06-14
+- **Clearer Bedrock validation guidance** - Amazon Bedrock data retention validation errors now link to AWS data retention documentation. See [Amazon Bedrock](docs/providers.md#amazon-bedrock).
 
 ### Added
 
-### Fixed
-
-- Fixed startup so a broken extension reports a warning instead of aborting the entire `senpi` process.
-
-### Changed
-
-### Removed
-
-## [2026.6.14] - 2026-06-14
-
-### Added
-
-- Added first-run interactive theme detection from the terminal background.
-
-### Fixed
-
-- Fixed `/tree` help rendering to show compact wrapped controls instead of truncating them on narrow terminals ([#5055](https://github.com/earendil-works/pi/issues/5055)).
-- Fixed SIGTERM/SIGHUP interactive shutdown to keep signal handlers installed until terminal cleanup completes, preventing `signal-exit` from re-sending the signal and leaving the terminal in raw/Kitty keyboard mode ([#5724](https://github.com/earendil-works/pi/issues/5724)).
-- Fixed extensions documentation to clarify that `pi.getActiveTools()` returns active tool names while `pi.getAllTools()` returns tool metadata ([#5729](https://github.com/earendil-works/pi/issues/5729)).
-- Fixed package commands such as `pi list`, `pi install`, and `pi update` to terminate after completing even if an extension leaves background handles open ([#5687](https://github.com/earendil-works/pi/issues/5687)).
-- Fixed `pi update` for pnpm global installs whose configured `global-bin-dir` no longer matches the active pnpm home ([#5689](https://github.com/earendil-works/pi/issues/5689)).
-- Fixed npm package specs that use ranges or tags (for example `@^1.2.7`) so installed package resources still load instead of being treated as mismatched exact pins ([#5695](https://github.com/earendil-works/pi/issues/5695)).
-- Fixed inherited OpenCode/OpenCode Go completion model metadata to omit long-retention cache fields for routes that reject `prompt_cache_retention` ([#5702](https://github.com/earendil-works/pi/issues/5702)).
-- Fixed custom provider config so plain uppercase API key and header values remain literals instead of being treated as legacy environment references; use explicit `$ENV_VAR` syntax for environment variables ([#5661](https://github.com/earendil-works/pi/issues/5661)).
-
-### Changed
-
-### Removed
-
-## [2026.6.13] - 2026-06-13
-
-### Added
-
-- Added JSONL parse and RPC event emission benchmark harnesses.
 - Added an experimental first-time setup flow behind `PI_EXPERIMENTAL=1` that asks for a dark/light theme choice (preselecting the detected appearance) and opt-in analytics data sharing on first launch with the default agent directory; opting in stores a `trackingId` in `settings.json` ([#5587](https://github.com/earendil-works/pi/pull/5587) by [@vegarsti](https://github.com/vegarsti)).
 - Added AWS data retention documentation links to inherited Amazon Bedrock unsupported data retention mode validation errors ([#5561](https://github.com/earendil-works/pi/pull/5561) by [@unexge](https://github.com/unexge)).
 
 ### Fixed
 
-- Fixed project trust detection to ignore global `~/.senpi/agent` state when running from `$HOME`, and made `senpi update` use only saved or explicit project trust without prompting ([#5619](https://github.com/earendil-works/pi/issues/5619)).
+- Fixed project trust detection to ignore global `~/.pi/agent` state when running from `$HOME`, and made `pi update` use only saved or explicit project trust without prompting ([#5619](https://github.com/earendil-works/pi/issues/5619)).
 - Fixed experimental first-time setup to skip forked sessions instead of rerunning the setup prompts ([#5627](https://github.com/earendil-works/pi/pull/5627) by [@vegarsti](https://github.com/vegarsti)).
 - Fixed inherited OpenAI-compatible context overflow detection for parenthesized `maximum context length (N)` errors ([#5677](https://github.com/earendil-works/pi/issues/5677)).
-- Fixed inherited OpenAI GPT-5.4/GPT-5.5 and OpenAI Codex GPT-5.4/GPT-5.4 mini/GPT-5.5 context window metadata to use the observed 272k-token Codex backend limit, avoiding a billing hazard from prompts above Codex's accepted limit (reported by [@trethore](https://github.com/trethore)).
 - Fixed inherited OpenAI GPT-5.4/GPT-5.5 and OpenAI Codex GPT-5.4/GPT-5.4 mini/GPT-5.5 context window metadata to match current OpenAI limits ([#5644](https://github.com/earendil-works/pi/issues/5644)).
 - Fixed inherited Anthropic refusal stops to preserve provider `stop_details` explanations in error messages ([#5666](https://github.com/earendil-works/pi/pull/5666) by [@rwachtler](https://github.com/rwachtler)).
 - Increased the inherited OpenAI Codex Responses SSE response-header timeout to 20 seconds to reduce false-positive stalls while retaining the bounded wait introduced for zero-event hangs ([#4945](https://github.com/earendil-works/pi/issues/4945)).
@@ -192,81 +183,57 @@
 - Fixed `/fork` to keep session parent chains connected when the forked path contains labels ([#5669](https://github.com/earendil-works/pi/issues/5669)).
 - Fixed `/share` and `/export` HTML exports to use the active fallback theme when the configured custom theme no longer exists ([#5596](https://github.com/earendil-works/pi/issues/5596)).
 - Fixed custom fallback model IDs with `:<thinking>` suffixes to preserve the requested thinking level when the provider template model does not advertise reasoning ([#5560](https://github.com/earendil-works/pi/pull/5560) by [@haoqixu](https://github.com/haoqixu)).
-- Fixed resumed aborted tool calls to reuse the persisted retry-attempt label.
-- Fixed Bun binaries ignoring project `.env` provider credentials so untrusted project files cannot inject API keys.
-- Fixed print mode to print preceding assistant text when a terminating tool result is the final message; empty assistant text still prints nothing.
 
-### Changed
+## [0.79.1] - 2026-06-09
 
-- Improved RPC event emission by coalescing same-tick event frames into one stdout write, reducing the benchmarked write count by 99.90%.
-- Reduced Bun compiled binary size by 7.06% with minification while preserving function names.
-- Models registry Anthropic compatibility config now accepts `supportsToolChoice` and `supportsForcedToolChoice` flags.
+### New Features
 
-### Removed
-
-## [2026.6.12-2] - 2026-06-12
+- **Claude Fable 5** - Claude Fable 5 is now available on the Anthropic and Amazon Bedrock providers, with adaptive thinking and `xhigh` effort support.
+- **Prompt template defaults** - Prompt templates can use default positional arguments such as `${1:-7}` for optional values. See [Prompt Template Arguments](docs/prompt-templates.md#arguments).
+- **Configurable project trust defaults** - `defaultProjectTrust` lets users choose whether unresolved project trust asks, always trusts, or never trusts by default, and extensions can inspect effective trust decisions. See [Project Trust](docs/security.md#project-trust) and [`ctx.isProjectTrusted()`](docs/extensions.md#ctxisprojecttrusted).
+- **Natural extension autocomplete triggers** - Extension autocomplete providers can declare trigger characters such as `#` or `$` so suggestions open without slash-command prefixes. See [Autocomplete Providers](docs/extensions.md#autocomplete-providers).
 
 ### Added
+
+- Added default-value expansion for prompt template positional arguments, e.g. `${1:-7}` ([#5553](https://github.com/earendil-works/pi/pull/5553) by [@dannote](https://github.com/dannote)).
+- Added `areExperimentalFeaturesEnabled` feature guard to allow users to opt in to early features ([#5547](https://github.com/earendil-works/pi/pull/5547) by [@vegarsti](https://github.com/vegarsti)).
+- Added `ctx.isProjectTrusted()` for extensions to observe the effective project trust decision, including temporary trust decisions ([#5523](https://github.com/earendil-works/pi/issues/5523)).
+- Added a global `defaultProjectTrust` setting to choose whether unresolved project trust asks, always trusts, or never trusts by default.
+- Added extension autocomplete trigger character support for `ctx.ui.addAutocompleteProvider()` wrappers ([#4703](https://github.com/earendil-works/pi/issues/4703)).
+- Added Claude Fable 5 model support inherited from `@earendil-works/pi-ai` for the Anthropic and Amazon Bedrock providers, with adaptive thinking and `xhigh` effort support.
 
 ### Fixed
 
-### Removed
+- Fixed inherited Amazon Bedrock inference profile ARN region resolution to prefer the ARN's embedded region over `AWS_REGION` ([#5527](https://github.com/earendil-works/pi/pull/5527) by [@AJM10565](https://github.com/AJM10565)).
+- Fixed inherited IME hardware cursor positioning while slash-command autocomplete is visible ([#5283](https://github.com/earendil-works/pi/pull/5283) by [@smoosex](https://github.com/smoosex)).
+- Fixed inherited z.ai thinking-off requests to send the provider's `thinking: { type: "disabled" }` compatibility parameter ([#5330](https://github.com/earendil-works/pi/issues/5330)).
+- Fixed inherited OpenCode completions model metadata to send explicit `maxTokens` as `max_tokens` ([#5331](https://github.com/earendil-works/pi/issues/5331)).
+- Fixed inherited Moonshot Kimi thinking-off requests to send the provider's `thinking: { type: "disabled" }` compatibility parameter ([#5531](https://github.com/earendil-works/pi/issues/5531)).
+- Fixed inherited Azure OpenAI Responses requests to disable server-side response storage ([#5530](https://github.com/earendil-works/pi/issues/5530)).
+- Fixed inherited Azure GPT-5.4 and GPT-5.5 context window metadata to 1,050,000 tokens, matching Azure Foundry deployments instead of OpenAI's 272k limit ([#5559](https://github.com/earendil-works/pi/issues/5559)).
+- Fixed inherited OpenAI and Azure GPT-5 Pro `maxTokens` metadata to 128,000, correcting an upstream value that duplicated the input sub-limit as the output limit ([#5559](https://github.com/earendil-works/pi/issues/5559)).
+- Fixed inherited prompt history navigation to restore the current draft when returning from history browsing ([#5494](https://github.com/earendil-works/pi/issues/5494)).
+- Fixed inherited wrapping for mixed Latin and CJK text so unspaced CJK runs can break at grapheme boundaries without leaving large trailing gaps ([#5495](https://github.com/earendil-works/pi/issues/5495)).
+- Fixed extension OAuth login prompts to keep previous submitted prompt rows stable instead of mirroring the active input value ([#5433](https://github.com/earendil-works/pi/issues/5433)).
+- Fixed `/reload` to apply updated `steeringMode` and `followUpMode` settings to the current session ([#5377](https://github.com/earendil-works/pi/issues/5377)).
+- Fixed invalid `models.json` syntax to skip startup config migrations and report the normal file-path-aware models error instead of a raw JSON parse stack trace ([#5418](https://github.com/earendil-works/pi/issues/5418)).
+- Fixed GitHub release notes and interactive changelog links to resolve package-relative documentation URLs correctly ([#5516](https://github.com/earendil-works/pi/issues/5516)).
+- Fixed CLI help and version output, including plain redirected `--help`/`--version` output and simplified `list`/`config` help text.
+- Fixed `/new` from ephemeral sessions to keep the new session ephemeral instead of persisting it by default ([#5045](https://github.com/earendil-works/pi/issues/5045)).
+- Clarified custom model docs that `name` and `modelOverrides.name` do not replace model IDs in the footer or primary model lists ([#4841](https://github.com/earendil-works/pi/issues/4841)).
 
-## [2026.6.12] - 2026-06-12
+## [0.79.0] - 2026-06-08
 
-### Added
+### New Features
 
-- Added an experimental first-time setup flow behind `PI_EXPERIMENTAL=1` that asks for a dark/light theme choice (preselecting the detected appearance) and opt-in analytics data sharing on first launch with the default agent directory; opting in stores a `trackingId` in `settings.json`.
-- Added local benchmark coverage for interactive assistant transcript rendering and large bash output handling.
-
-### Fixed
-
-- Improved large bash output retention by using a head-indexed rolling buffer and a compact tail window for streaming output snapshots.
-- Restored pending tool-call wait rendering during thinking updates and stopped stale pending animations after the interactive display clears.
-
-### Removed
-
-## [2026.6.10-2] - 2026-06-10
-
-### Added
-
-### Fixed
-
-- `apply_patch` now activates based on the model's API (`openai-responses`, `azure-openai-responses`, `openai-codex-responses`) instead of a provider allowlist, so OpenAI-compatible custom providers serving `gpt-*` models get the freeform patch tool, and Chat Completions models (which reject freeform tools) never do.
-- The `compaction.restorationEnabled` setting is now honored at runtime; previously the restoration tracker read a hardcoded default and could not be disabled.
-
-### Removed
-
-- Removed dead internal modules and exports: `system-messages.ts`, compaction `overflow-detection.ts`, the `PI_EXPERIMENTAL` flag, unused tool factory functions (`createTool`, `createToolDefinition`, `createCodingToolDefinitions`, `createReadOnlyToolDefinitions`, `createAllTools`), `computeEditDiff`, `resolveHeaders`, `isLightTheme`, `RpcCommandType`, and the unwired compaction cooldown helpers.
-
-## [2026.6.10] - 2026-06-10
+- **Project trust for local inputs** - Pi now asks before loading project-local settings, resources, instructions, and packages, with saved decisions and `--approve` / `--no-approve` controls for non-interactive modes. See [Project Trust](README.md#project-trust).
+- **Extension-controlled trust decisions** - Global and CLI extensions can handle `project_trust`, decide, remember, or defer project trust before project-local resources load. See [`project_trust`](docs/extensions.md#project_trust).
+- **Cache-hit visibility in the footer** - The interactive footer now shows the latest prompt cache hit rate (`CH`). See [Interactive Mode](README.md#interactive-mode).
+- **Richer SDK and RPC extension surfaces** - Public exports now include RPC extension UI request/response types and package asset path helpers. See [Extension UI Protocol](docs/rpc.md#extension-ui-protocol) and [SDK Exports](docs/sdk.md#exports).
 
 ### Added
 
-### Fixed
-
-- Fixed inherited autocomplete suggestions to refresh after editor cursor movement ([#5499](https://github.com/earendil-works/pi/pull/5499) by [@Roman-Galeev](https://github.com/Roman-Galeev)).
-
-### Removed
-
-- Removed todo continuation auto-follow-up (the `--disable-todo-continuation` flag and `todotools.continuation` settings).
-
-## [2026.6.6-3] - 2026-06-06
-
-### Added
-
-### Fixed
-
-## [2026.6.6-2] - 2026-06-06
-
-### Added
-
-### Fixed
-
-## [2026.6.6] - 2026-06-06
-
-### Added
-
+- Added a `project_trust` extension event so global and CLI extensions can decide or defer project trust during startup and runtime cwd switches.
 - Added project trust gating for project-local settings, resources, instructions, and packages ([#5332](https://github.com/earendil-works/pi/pull/5332)).
 - Added the latest prompt cache hit rate to the interactive footer.
 - Exported RPC extension UI request and response types from the public API ([#5455](https://github.com/earendil-works/pi/issues/5455)).
@@ -274,12 +241,21 @@
 
 ### Fixed
 
+- Fixed package exports by removing the stale `./hooks` subpath that pointed at non-existent build output.
+- Fixed inherited TUI rendering to clear stale lines when content shrinks to zero.
+- Fixed inherited autocomplete suggestions to refresh after editor cursor movement ([#5499](https://github.com/earendil-works/pi/pull/5499) by [@Roman-Galeev](https://github.com/Roman-Galeev)).
+- Fixed `/reload` to persist project trust when an implicitly trusted session creates a project `.pi` directory.
+- Fixed project trust input discovery to traverse parent directories portably.
+- Fixed inherited intermittent Shift+Enter handling by making Kitty keyboard protocol fallback response-driven instead of timeout-driven ([#5188](https://github.com/earendil-works/pi/issues/5188)).
 - Fixed the compaction summarization system prompt to use neutral AI assistant wording for non-coding agents ([#5401](https://github.com/earendil-works/pi/issues/5401)).
-- Fixed `models.json` schema support for OpenAI Responses `compat.supportsDeveloperRole` ([#5456](https://github.com/earendil-works/pi/issues/5456)).
+- Fixed `models.json` schema support and inherited OpenAI Responses custom-provider handling for `compat.supportsDeveloperRole: false` ([#5456](https://github.com/earendil-works/pi/issues/5456)).
+- Fixed inherited prompt history navigation to place the cursor at the start when browsing upward and at the end when browsing downward ([#5454](https://github.com/earendil-works/pi/issues/5454)).
 - Fixed tmux setup documentation to require tmux 3.5 for `extended-keys-format csi-u` and document the tmux 3.2-3.4 fallback ([#5432](https://github.com/earendil-works/pi/issues/5432)).
+- Fixed inherited OpenRouter routing preferences on OpenAI-compatible custom providers to work when the custom provider base URL does not point directly at OpenRouter ([#5347](https://github.com/earendil-works/pi/issues/5347)).
 - Fixed built-in tool expand hints to style closing parentheses consistently ([#5359](https://github.com/earendil-works/pi/issues/5359)).
+- Fixed skill-wrapped prompts to insert spacing between skill instructions and the user message ([#5371](https://github.com/earendil-works/pi/pull/5371) by [@Perlence](https://github.com/Perlence)).
 
-## [2026.6.4] - 2026-06-04
+## [0.78.1] - 2026-06-04
 
 ### New Features
 
@@ -297,7 +273,6 @@
 
 ### Fixed
 
-- Fixed `senpi update` failing to repair npm installs with missing bundled workspace dependencies before the full CLI could load.
 - Fixed temporary extension package installs to use a private `~/.pi/agent/tmp/extensions` directory with `0700` permissions instead of `os.tmpdir()/pi-extensions`.
 - Fixed git package source handling to reject unsafe host/path components and keep managed clone paths inside install roots.
 - Fixed stored XSS in HTML session exports by sanitizing Markdown link and image URLs with a scheme allow-list after stripping control characters.
@@ -314,24 +289,6 @@
 - Fixed the footer branch display in WSL `/mnt/...` repositories to refresh after branch changes ([#5264](https://github.com/earendil-works/pi/pull/5264) by [@psoukie](https://github.com/psoukie)).
 - Fixed `renderShell: "self"` tool renderers that emit no component lines leaving a blank chat row ([#5299](https://github.com/earendil-works/pi/issues/5299)).
 - Restored inherited NVIDIA Qwen 3.5 122B NIM model support.
-
-## [2026.6.3] - 2026-06-03
-
-### Added
-
-### Fixed
-
-- Fixed published npm packages missing bundled `@earendil-works` workspace dependencies, which caused fresh `senpi` installs to fail at startup with `ERR_MODULE_NOT_FOUND`.
-
-## [2026.6.2] - 2026-06-02
-
-### Added
-
-## [2026.5.29-4] - 2026-05-29
-
-### Fixed
-
-- Fixed senpi local release and publish artifacts so package installs expose the `senpi` CLI shim, publish validation targets `@code-yeongyu/senpi`, and macOS Bun binaries are ad-hoc signed for local execution.
 
 ## [0.78.0] - 2026-05-29
 
@@ -415,46 +372,6 @@
 
 ### Fixed
 
-### Removed
-
-## [2026.5.29-3] - 2026-05-29
-
-### Fixed
-
-### Removed
-
-## [2026.5.29-2] - 2026-05-29
-
-### Fixed
-
-- Fixed queued prompts racing ahead of compaction or overflow recovery.
-
-### Removed
-
-- Removed the `--neo` CLI flag and native neo TUI binary build wiring.
-
-## [2026.5.26] - 2026-05-26
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.24] - 2026-05-24
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
 - Fixed user message transcript rendering to preserve user-authored ordered-list markers ([#5013](https://github.com/earendil-works/pi/issues/5013)).
 - Fixed self-update commands to bypass npm, pnpm, and Bun minimum release age gates for explicit `pi update` runs ([#4929](https://github.com/earendil-works/pi/issues/4929)).
 - Fixed context token estimates to count user image attachments consistently with tool result images ([#4983](https://github.com/earendil-works/pi/issues/4983)).
@@ -471,34 +388,6 @@
 - Fixed JetBrains terminal capability detection to enable truecolor while disabling unsupported OSC 8 hyperlinks ([#5037](https://github.com/earendil-works/pi-mono/pull/5037) by [@Perlence](https://github.com/Perlence)).
 - Fixed editor and input word navigation/deletion to use Unicode word boundaries while preserving ASCII punctuation boundaries ([#5022](https://github.com/earendil-works/pi-mono/pull/5022) by [@haoqixu](https://github.com/haoqixu), [#5067](https://github.com/earendil-works/pi-mono/pull/5067) by [@haoqixu](https://github.com/haoqixu), [#5068](https://github.com/earendil-works/pi-mono/pull/5068) by [@haoqixu](https://github.com/haoqixu)).
 - Fixed the development docs `AGENTS.md` link to point at the pi-mono guidelines ([#5041](https://github.com/earendil-works/pi/issues/5041)).
-
-### Removed
-
-## [2026.5.23-2] - 2026-05-23
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.23] - 2026-05-23
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-- Fixed stale compaction jobs surviving aborts or model switches and surfacing alongside the next assistant response.
-
-### Removed
 
 ## [0.75.5] - 2026-05-23
 
@@ -540,73 +429,43 @@
 - Fixed macOS Bun release binaries to resolve the native clipboard sidecar so Ctrl+V image paste can load `@mariozechner/clipboard` ([#4307](https://github.com/earendil-works/pi/issues/4307)).
 - Fixed coding-agent tools to avoid synchronous filesystem operations during streaming and moved image resizing off the main TUI thread ([#4756](https://github.com/earendil-works/pi-mono/pull/4756) by [@mitsuhiko](https://github.com/mitsuhiko)).
 
-## [2026.5.21-2] - 2026-05-21
+## [0.75.4] - 2026-05-20
 
-### Breaking Changes
+### New Features
+
+- **Hardened npm install and release path** - Pi now ships the CLI with a generated shrinkwrap for transitive dependencies, blocks accidental lockfile changes, verifies dependency pinning and lifecycle-script allowlists in checks, disables lifecycle scripts for self-update and local release installs where supported, and smoke-tests isolated npm and Bun installs before release. See [Supply-chain hardening](../../README.md#supply-chain-hardening).
 
 ### Added
+
+- Added interactive update notes after `pi update` runs, so users can see the installed version's changelog before continuing ([#4724](https://github.com/earendil-works/pi-mono/pull/4724) by [@mitsuhiko](https://github.com/mitsuhiko)).
+- Exported image resize utilities from the package root for SDK consumers ([#4775](https://github.com/earendil-works/pi-mono/pull/4775) by [@xl0](https://github.com/xl0)).
 
 ### Changed
 
-### Fixed
-
-### Removed
-
-## [2026.5.21] - 2026-05-21
-
-### Breaking Changes
-
-### Added
-
-### Changed
+- Changed source syntax to avoid TypeScript constructs that require JavaScript emit, keeping core sources compatible with Node.js strip-only TypeScript checks.
+- Removed web UI workspace references from the CLI package and dropped the package-level development watch script.
+- Published npm installs now include an `npm-shrinkwrap.json` to lock transitive dependencies for the CLI package.
+- Improved terminal theme detection for light/dark and truecolor handling.
+- Changed self-update package-manager commands to disable lifecycle scripts during reinstall.
 
 ### Fixed
 
-### Removed
-
-## [2026.5.20-4] - 2026-05-20
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-- Fixed release changelog bookkeeping to recreate next-cycle `[Unreleased]` sections even when the previous release did not capture one, preserving TUI working / Escape / history notes for future release cycles.
-
-### Removed
-
-## [2026.5.20] - 2026-05-20
-
-### Added
-
-- Added a `--` sentinel to `senpi --neo` arg forwarding so users can pass `--theme`, `--list-themes`, `--demo`, `--demo-seconds`, `--backend-bin`, and `--backend-args` to the Rust `senpi-neo-tui` binary without colliding with senpi's own `--theme` flag, e.g. `senpi --neo -- --theme opencode/dracula`.
-- Added real legacy-feature wiring to `senpi --neo` (Round 12 real port). `Ctrl+T` (`app.thinking.toggle`) now actually hides / shows thinking blocks in chat via new `chat::ChatViewOpts::thinking_visible`. `Ctrl+O` (`app.tools.expand`) now collapses / expands tool card bodies via `ChatViewOpts::tools_expanded`. `Alt+S` (`neo.sidebar.toggle`) now toggles the sidebar pane visibility (gated by terminal width). `Alt+A` (`neo.toggle_animations`) now freezes the spinner and input focus pulse. `Alt+C` (`neo.compact`) now fires `Command::Compact` to the backend. The model picker (`Ctrl+L`) now fires `Command::SetModel` end-to-end via a curated provider-prefix lookup (claude → anthropic, gpt → openai, kimi → kimi-for-coding, glm → opencode-zen, deepseek → deepseek, gemini → google). `Ctrl+G` (`app.editor.external`) now actually suspends the TUI, launches `$VISUAL` / `$EDITOR` (falling back to `vi`) against the input buffer, and reads the edited result back. `Alt+Up` (`app.message.dequeue`) now pops the most recently queued steering / follow-up message from the local queue (tracked via `RpcEvent::QueueUpdate`) back into the input buffer.
-- Added more `senpi --neo` real legacy-feature wiring (Round 13 real port). `Ctrl+Z` (`app.suspend`) now actually suspends the TUI via `SIGTSTP` so the user lands back at the shell prompt and can `fg` to re-enter; non-Unix platforms surface a chat error explaining suspend is not supported. `app.session.new` now fires the real `Command::NewSession` instead of stubbing as unimplemented. Session / tree / models overlay-scoped actions (27 total ids) now route through dedicated predicates and `note_*_overlay_scoped_action` helpers that name the parent overlay so the user understands the chord is scoped instead of getting a generic "not yet wired" string. The `ADVERTISED_BUT_UNIMPLEMENTED_ACTIONS` list shrunk from 30 entries to 1 (`app.clipboard.pasteImage`).
-
-### Fixed
-
-- Fixed OpenAI remote compaction to time out nonresponsive native compact routes and fall back to local compaction.
-- Fixed `senpi --neo` keymap parity so `tui.editor.newLine` no longer ships as a redundant shadow of the legacy `tui.input.newLine` and `tui.input.historyPrev`/`historyNext` are moved into the `neo.*` namespace where neo-only bindings belong.
-- Fixed `senpi --neo` Bug 3 regression where four failure paths went silently to the user: `Inbound::Response { success: false }` was dropped, `Inbound::ParseError` only logged to `tracing::warn!`, the bundled `opencode/dracula`-style theme ids resolved as file paths and failed with `read_to_string`, and `Alt+T` (`neo.theme.picker`) was bound but never opened the theme picker overlay. Every failure now surfaces in chat + footer, the registry strips the `opencode/` prefix, and the keymap action wires through to the overlay.
-- Fixed another batch of `senpi --neo` Bug 3 silent paths flagged by Oracle round 6: `app.editor.external` (Ctrl+G) had no run-loop side effect, `app.suspend` (Ctrl+Z) was advertised but missing from the unimplemented-action list, `message_end.message.errorMessage` from failed assistant turns was dropped, `compaction_end` aborted/error variants and `auto_retry_end { success: false }` were swallowed by the catch-all, terminal `EventStream::Some(Err(_))` was silently consumed, and stderr-reader I/O failures only surfaced when the child later exited. Each path now pushes a chat error/system note and flips the footer where appropriate.
-- Fixed `senpi --neo` last-mile Bug 3 leak flagged by Oracle round 7: `tui.select.{up,down,pageUp,pageDown,confirm,cancel}` are advertised in the bundled keymap and surfaced by the command palette, but only have a useful effect while a list overlay (slash menu, palette, model / theme picker, help) is open. Selecting one from the palette outside an overlay used to silently consume; now pushes a chat-system note explaining the overlay scoping via a new `note_overlay_only_action` helper distinct from the "not yet wired" message.
-- Fixed `senpi --neo` Bug 3 leak Oracle round 7 flagged: `tui.select.{up,down,pageUp,pageDown,confirm,cancel}` are bound in the keymap and exposed by the command palette but only do useful work when an overlay is open (`synthesise_select_event` routes them to the active overlay's raw handler). Selecting one from the palette with no overlay open used to silently fall into the catch-all consume. The dispatcher now pushes a chat-system note explaining the overlay scoping instead of swallowing the chord.
-- Fixed two more `senpi --neo` Bug 3 leaks Oracle round 8 flagged: `neo.slash.open` was only handled in the raw key path (gated on Input focus + empty buffer to keep mid-prompt `/` inserting literally), so dispatching it through the command palette fell into the catch-all silent consume; the dispatcher now opens the slash overlay unconditionally via a new helper when the action is fired explicitly. `tui.input.tab` was only consumed by `try_autocomplete_action` when an autocomplete popup was visible; outside that context it now pushes a chat-system note explaining the autocomplete scoping via a new `note_autocomplete_only_action` helper. Also removed the dead `app.message.followUp` entry from the advertised-unimplemented list because the explicit `execute_action` arm already wires it to `AppAction::FollowUp`.
-- Fixed the last `senpi --neo` Bug 3 leak Oracle round 9 flagged: `app.exit` (`/quit` from the slash menu or palette) with a non-empty input buffer returned `AppAction::Consumed("tui.editor.deleteCharForward")` — a label string that did NOT actually delete a char and did NOT actually quit. The arm now always returns `AppAction::Quit` because the user explicitly chose to exit. Users wanting the legacy "Ctrl+D mid-text deletes a char" behavior can rebind Ctrl+D to `tui.editor.deleteCharForward` directly (that arm already has the legacy semantics).
-- Fixed `senpi --neo` last Bug 3 leak Oracle round 9 flagged: `app.exit` with a non-empty input buffer returned `AppAction::Consumed("tui.editor.deleteCharForward")` (a label string, NOT an actual delete-char-forward call), so selecting `/quit` from the slash menu / command palette while typing in the input buffer silently closed the menu with no quit, no delete, no chat feedback. The arm now always returns `AppAction::Quit`; users wanting the legacy Ctrl+D-deletes-char-forward semantics can rebind Ctrl+D to `tui.editor.deleteCharForward` directly.
-- Fixed three more `senpi --neo` Bug 3 silent paths Oracle round 10 flagged. (a) `app.thinking.toggle` (Ctrl+T) and `app.tools.expand` (Ctrl+O) flipped `self.thinking_visible` / `self.tools_expanded` but no render path read those fields, so the chord produced zero visible effect; the dispatcher now pushes a chat-system "not yet wired to chat rendering" note while preserving the field mutations for future renderer hookups. (b) Successful `cycle_model`, `set_model`, and `cycle_thinking_level` responses were silently dropped by `apply_inbound` (only the `success: false` branch was wired), so pressing Ctrl+P or Shift+Tab fired the RPC but the user saw no model / level change anywhere; the success branch now routes through new `apply_model_change_response` / `apply_thinking_change_response` helpers that update header + footer AND push a chat note (including a null-data "no other model configured" note when the backend cycles past the only available option). (c) `app.model.cycleBackward` (Shift+Ctrl+P) silently cycled FORWARD because both directions mapped to the same forward-only `Command::CycleModel` (the wire protocol is next-only today); backward cycling now routes through `note_unimplemented_action` instead of doing the wrong thing.
-- Fixed `senpi --neo` Bug 3 leak Oracle round 11 flagged: `extension_ui_request` JSONL frames (used by extensions for user-facing notifications via `method: "notify"` with `notifyType: "info"/"warning"/"error"` and modal dialogs via `select`, `confirm`, `input`, `editor`) had no `Event` variant in neo-tui's RPC types, so the `#[serde(other)]` catch landed them in `Event::Other` and `apply_event` silently dropped them. An extension could emit `notifyType: "error"` with a body like "Command blocked by policy" and the user saw absolutely nothing. Added a typed `RpcEvent::ExtensionUiRequest` variant and a new `apply_extension_ui_request` handler that surfaces `notify` errors as Role::Error + footer error state, surfaces warning / info notifications as Role::System, surfaces dialog methods as "not yet wired" Role::System notes naming the method + title, and intentionally stays silent for per-extension UI updates (`setStatus`, `setWidget`, `setTitle`, `set_editor_text`).
-- Fixed stuck TUI working states by applying the provider timeout to stream-idle waits.
-
-## [2026.5.19] - 2026-05-19
-
-### Fixed
-
+- Fixed the system prompt to tell models to resolve pi docs and examples under the absolute package paths before reading topic-specific relative references ([#4752](https://github.com/earendil-works/pi/issues/4752)).
+- Fixed extension `ctx.abort()` during tool-call preflight to stop later confirmations and restore queued interactive input like Escape ([#4276](https://github.com/earendil-works/pi/issues/4276)).
+- Fixed AgentSession retry, compaction, and event settlement to use the awaited agent lifecycle instead of a separate event queue, and added `willRetry` to `agent_end` session events.
+- Fixed forked session runtime state to keep the active session id aligned with the fork target ([#4799](https://github.com/earendil-works/pi-mono/pull/4799) by [@Perlence](https://github.com/Perlence)).
 - Fixed the subagent extension's parallel mode to return useful per-task output and failed-task diagnostics to the parent model instead of 100-character previews ([#4710](https://github.com/earendil-works/pi/issues/4710)).
 - Fixed Windows local bash execution to hide helper console windows when launched from background SDK processes ([#4699](https://github.com/earendil-works/pi/issues/4699)).
+- Fixed managed npm extension folders to set cloud-sync ignore metadata where supported ([#4763](https://github.com/earendil-works/pi/issues/4763)).
+- Fixed HTTP idle timeout configuration so long-running provider streams can avoid premature idle disconnects ([#4759](https://github.com/earendil-works/pi-mono/pull/4759) by [@mitsuhiko](https://github.com/mitsuhiko)).
+- Fixed default system prompt boundaries to use explicit XML tags for clearer file separation ([#4709](https://github.com/earendil-works/pi-mono/pull/4709) by [@herrnel](https://github.com/herrnel)).
+- Fixed HTML share/export sidebar clicks for shared tool entries to scroll to the rendered tool call ([#4664](https://github.com/earendil-works/pi-mono/pull/4664) by [@yzhg1983](https://github.com/yzhg1983)).
+- Fixed theme palettes to set explicit text colors and avoid terminal-default color drift.
+- Fixed truecolor detection to align terminal image rendering and interactive theme decisions.
+- Fixed loader indicator startup inherited from `@earendil-works/pi-tui` so initialization cannot run before frames are available.
+- Fixed OpenAI-compatible default output token requests inherited from `@earendil-works/pi-ai` to avoid reserving impossible context windows on servers such as vLLM ([#4675](https://github.com/earendil-works/pi/issues/4675)).
+- Fixed OpenAI prompt cache keys inherited from `@earendil-works/pi-ai` to stay within the 64-character provider limit ([#4720](https://github.com/earendil-works/pi/issues/4720)).
+- Fixed Windows npm-family package commands for fnm-managed Node.js installs that expose both extensionless Unix scripts and `.cmd` shims ([#4793](https://github.com/earendil-works/pi/issues/4793)).
 
 ## [0.75.3] - 2026-05-18
 

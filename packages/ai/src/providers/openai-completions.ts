@@ -11,10 +11,12 @@ import type {
 	ChatCompletionToolMessageParam,
 } from "openai/resources/chat/completions.js";
 import type { FunctionParameters } from "openai/resources/shared.js";
+import { registerApiProvider } from "../api-registry.ts";
 import { calculateCost, clampThinkingLevel, supportsXhigh } from "../models.ts";
 import type {
 	AssistantMessage,
 	CacheRetention,
+	ChatTemplateKwargValue,
 	Context,
 	ImageContent,
 	Message,
@@ -137,6 +139,8 @@ type ResolvedOpenAICompletionsCompat = Omit<
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	toolCallFormat?: OpenAICompletionsCompat["toolCallFormat"];
 };
+
+type ResolvedChatTemplateKwargValue = string | number | boolean | null;
 
 type ChatCompletionInstructionMessageParam = ChatCompletionDeveloperMessageParam | ChatCompletionSystemMessageParam;
 
@@ -514,6 +518,14 @@ export const streamSimpleOpenAICompletions: StreamFunction<"openai-completions",
 	} satisfies OpenAICompletionsOptions);
 };
 
+export function register(): void {
+	registerApiProvider({
+		api: "openai-completions",
+		stream: streamOpenAICompletions,
+		streamSimple: streamSimpleOpenAICompletions,
+	});
+}
+
 function createClient(
 	model: Model<"openai-completions">,
 	context: Context,
@@ -646,6 +658,11 @@ function buildParams(
 			enable_thinking: !!options?.reasoningEffort,
 			preserve_thinking: true,
 		};
+	} else if (compat.thinkingFormat === "chat-template" && model.reasoning) {
+		const chatTemplateKwargs = buildChatTemplateKwargs(model, options, compat);
+		if (chatTemplateKwargs) {
+			(params as any).chat_template_kwargs = chatTemplateKwargs;
+		}
 	} else if (compat.thinkingFormat === "deepseek" && model.reasoning) {
 		if (options?.reasoningEffort) {
 			params.thinking = { type: "enabled" };
@@ -714,6 +731,44 @@ function buildParams(
 	applyExtraBody(params, options?.extraBody, OPENAI_COMPLETIONS_RESERVED_BODY_KEYS);
 
 	return params;
+}
+
+function buildChatTemplateKwargs(
+	model: Model<"openai-completions">,
+	options: OpenAICompletionsOptions | undefined,
+	compat: ResolvedOpenAICompletionsCompat,
+): Record<string, ResolvedChatTemplateKwargValue> | undefined {
+	const kwargs: Record<string, ResolvedChatTemplateKwargValue> = {};
+
+	for (const [key, value] of Object.entries(compat.chatTemplateKwargs)) {
+		const resolved = resolveChatTemplateKwargValue(model, options, value);
+		if (resolved !== undefined) {
+			kwargs[key] = resolved;
+		}
+	}
+
+	return Object.keys(kwargs).length > 0 ? kwargs : undefined;
+}
+
+function resolveChatTemplateKwargValue(
+	model: Model<"openai-completions">,
+	options: OpenAICompletionsOptions | undefined,
+	value: ChatTemplateKwargValue,
+): ResolvedChatTemplateKwargValue | undefined {
+	if (typeof value !== "object" || value === null) {
+		return value;
+	}
+
+	const reasoningEffort = options?.reasoningEffort;
+	if (!reasoningEffort && value.omitWhenOff) {
+		return undefined;
+	}
+	if (value.$var === "thinking.enabled") {
+		return !!reasoningEffort;
+	}
+
+	const mappedValue = reasoningEffort ? model.thinkingLevelMap?.[reasoningEffort] : model.thinkingLevelMap?.off;
+	return mappedValue === undefined ? reasoningEffort : typeof mappedValue === "string" ? mappedValue : undefined;
 }
 
 function getCompatCacheControl(
@@ -1239,6 +1294,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 							: "openai",
 		openRouterRouting: {},
 		vercelGatewayRouting: {},
+		chatTemplateKwargs: {},
 		zaiToolStream: false,
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
 		supportsDisabledThinking: true,
@@ -1280,6 +1336,7 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		supportsDisabledThinking: model.compat.supportsDisabledThinking ?? detected.supportsDisabledThinking,
 		openRouterRouting: model.compat.openRouterRouting ?? {},
 		vercelGatewayRouting: model.compat.vercelGatewayRouting ?? detected.vercelGatewayRouting,
+		chatTemplateKwargs: model.compat.chatTemplateKwargs ?? detected.chatTemplateKwargs,
 		zaiToolStream: model.compat.zaiToolStream ?? detected.zaiToolStream,
 		supportsStrictMode: model.compat.supportsStrictMode ?? detected.supportsStrictMode,
 		toolCallFormat: model.compat.toolCallFormat ?? detected.toolCallFormat,
