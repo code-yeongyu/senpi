@@ -1,5 +1,3 @@
-import "./providers/register-builtins.ts";
-
 import { getApiProvider } from "./api-registry.ts";
 import { getEnvApiKey } from "./env-api-keys.ts";
 import {
@@ -18,8 +16,6 @@ import type {
 	SimpleStreamOptions,
 	StreamOptions,
 } from "./types.ts";
-
-export { getEnvApiKey } from "./env-api-keys.ts";
 
 function hasExplicitApiKey(apiKey: string | undefined): apiKey is string {
 	return typeof apiKey === "string" && apiKey.trim().length > 0;

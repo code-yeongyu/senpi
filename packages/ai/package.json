@@ -1,7 +1,7 @@
 {
 	"name": "@earendil-works/pi-ai",
 	"private": true,
-	"version": "2026.6.17-2",
+	"version": "2026.6.21",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -10,6 +10,14 @@
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
+		},
+		"./base": {
+			"types": "./dist/base.d.ts",
+			"import": "./dist/base.js"
+		},
+		"./amazon-bedrock": {
+			"types": "./dist/providers/amazon-bedrock.d.ts",
+			"import": "./dist/providers/amazon-bedrock.js"
 		},
 		"./anthropic": {
 			"types": "./dist/providers/anthropic.d.ts",
@@ -43,6 +51,10 @@
 			"types": "./dist/providers/openai-responses.d.ts",
 			"import": "./dist/providers/openai-responses.js"
 		},
+		"./openrouter-images": {
+			"types": "./dist/providers/images/openrouter.d.ts",
+			"import": "./dist/providers/images/openrouter.js"
+		},
 		"./oauth": {
 			"types": "./dist/oauth.d.ts",
 			"import": "./dist/oauth.js"
@@ -73,7 +85,8 @@
 		"@anthropic-ai/sdk": "0.91.1",
 		"@aws-sdk/client-bedrock-runtime": "3.1048.0",
 		"@google/genai": "1.52.0",
-		"@mistralai/mistralai": "2.2.1",
+		"@mistralai/mistralai": "2.2.6",
+		"@opentelemetry/api": "1.9.0",
 		"@smithy/node-http-handler": "4.7.3",
 		"@smithy/types": "4.8.0",
 		"chalk": "5.6.2",
@@ -108,6 +121,6 @@
 	"devDependencies": {
 		"@types/node": "25.9.1",
 		"canvas": "3.2.3",
-		"vitest": "4.1.8"
+		"vitest": "4.1.9"
 	}
 }

@@ -17,6 +17,7 @@ import {
 	globalDefaultExtensionIds,
 } from "./extensions/builtin/index.ts";
 import {
+	clearExtensionCache,
 	createExtensionRuntime,
 	type ExtensionFactoryResolver,
 	loadExtensionFromFactory,
@@ -269,6 +270,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private extensionThemeSourceInfos: Map<string, SourceInfo>;
 	private lastPromptPaths: string[];
 	private lastThemePaths: string[];
+	private loaded: boolean;
 
 	constructor(options: DefaultResourceLoaderOptions) {
 		this.cwd = resolvePath(options.cwd);
@@ -311,6 +313,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.extensionThemeSourceInfos = new Map();
 		this.lastPromptPaths = [];
 		this.lastThemePaths = [];
+		this.loaded = false;
 	}
 
 	getExtensions(): LoadExtensionsResult {
@@ -390,6 +393,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	async reload(options?: ResourceLoaderReloadOptions): Promise<void> {
+		if (this.loaded) {
+			clearExtensionCache();
+		}
 		this.ensureGlobalDefaultExtensions();
 		let preTrustExtensions: LoadExtensionsResult | undefined;
 		if (options?.resolveProjectTrust) {
@@ -525,6 +531,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		};
 		const resolvedAgentsFiles = this.agentsFilesOverride ? this.agentsFilesOverride(agentsFiles) : agentsFiles;
 		this.agentsFiles = resolvedAgentsFiles.agentsFiles;
+		this.loaded = true;
 	}
 
 	private ensureGlobalDefaultExtensions(): void {

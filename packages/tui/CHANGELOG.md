@@ -2,66 +2,35 @@
 
 ## [Unreleased]
 
-### Breaking Changes
+## [2026.6.21] - 2026-06-21
 
-### Added
-
-### Changed
+## [0.79.9] - 2026-06-20
 
 ### Fixed
 
-### Removed
+- Fixed Markdown streaming code fence rendering so partial closing fences no longer make code blocks shrink or flicker while content streams ([#5846](https://github.com/earendil-works/pi/pull/5846) by [@xl0](https://github.com/xl0)).
 
-## [2026.6.17-2] - 2026-06-17
+## [0.79.8] - 2026-06-19
 
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.17] - 2026-06-17
-
-### Breaking Changes
+## [0.79.7] - 2026-06-18
 
 ### Added
 
-### Changed
+- Added terminal color-scheme query and notification support for light/dark appearance detection (`TUI.queryTerminalColorScheme()`, `TUI.onTerminalColorSchemeChange()`, and `TUI.setTerminalColorSchemeNotifications()`) ([#5874](https://github.com/earendil-works/pi/pull/5874)).
+- Added Warp terminal detection for Kitty graphics inline image support ([#5841](https://github.com/earendil-works/pi/pull/5841) by [@dodiego](https://github.com/dodiego)).
+- Exported `sliceByColumn` for ANSI-aware horizontal column slicing.
 
-### Fixed
+## [0.79.6] - 2026-06-16
 
-- Fixed long-session TUI cleanup and markdown rendering by disposing removed components, stopping loader timers, and bounding cached syntax highlighting.
-- Fixed inherited editor Cursor Up handling so non-empty drafts jump to the start of the line before browsing input history.
-
-### Removed
-
-## [2026.6.16-2] - 2026-06-16
-
-### Breaking Changes
-
-### Added
+## [0.79.5] - 2026-06-16
 
 ### Changed
 
-### Fixed
-
-### Removed
-
-## [2026.6.16] - 2026-06-16
-
-### Breaking Changes
-
-### Added
-
-### Changed
+- Updated Markdown parsing to `marked` 18.0.5.
 
 ### Fixed
 
-### Removed
+- Fixed editor Cursor Up handling so non-empty drafts jump to the start of the line before browsing input history ([#5789](https://github.com/earendil-works/pi/pull/5789) by [@4h9fbZ](https://github.com/4h9fbZ)).
 
 ## [0.79.4] - 2026-06-15
 
@@ -74,212 +43,45 @@
 - Fixed overlay compositing over CJK wide characters so borders stay aligned when an overlay starts inside a full-width cell ([#5297](https://github.com/earendil-works/pi/issues/5297)).
 - Fixed WezTerm inline Kitty image rendering during full redraw fallbacks so image padding rows are reserved before the placement is drawn without regressing tall-image placement ([#5618](https://github.com/earendil-works/pi/issues/5618), [#4415](https://github.com/earendil-works/pi/issues/4415)).
 
-## [2026.6.15] - 2026-06-15
+## [0.79.3] - 2026-06-13
 
-### Breaking Changes
-
-### Added
-
-### Changed
+## [0.79.2] - 2026-06-12
 
 ### Fixed
 
-- Fixed overlay compositing over CJK wide characters so borders stay aligned when an overlay starts inside a full-width cell ([#5297](https://github.com/earendil-works/pi/issues/5297)).
-- Fixed WezTerm inline Kitty image rendering during full redraw fallbacks so image padding rows are reserved before the placement is drawn without regressing tall-image placement ([#5618](https://github.com/earendil-works/pi/issues/5618), [#4415](https://github.com/earendil-works/pi/issues/4415)).
-
-### Removed
-
-## [2026.6.14-3] - 2026-06-14
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.14-2] - 2026-06-14
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.14] - 2026-06-14
-
-### Breaking Changes
-
-### Added
-
-- Added terminal background color query support for OSC 11 replies.
-
-### Changed
-
-### Fixed
-
-- Fixed focused input rendering so keystrokes can echo before a pending normal render timer under streaming load.
-- Added `PI_TUI_KEYBOARD_PROTOCOL=0` to leave terminal keyboard protocols disabled for IMEs that break under Kitty/modifyOtherKeys negotiation.
-
-### Removed
-
-## [2026.6.13] - 2026-06-13
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-- Fixed Korean, CJK, and emoji paste input when UTF-8 bytes are split across stdin chunks.
 - Fixed Markdown source list marker preservation to include unordered markers, so standalone `+` user messages no longer render as `-` ([#5657](https://github.com/earendil-works/pi/issues/5657)).
 - Fixed slash-separated fuzzy queries so provider/model completions remain matchable after insertion.
 - Fixed WezTerm inline Kitty image rendering so reserved row clears do not erase all but the top strip of tool image previews ([#5618](https://github.com/earendil-works/pi/issues/5618)).
 - Fixed editor wrapping for CJK text to break at character boundaries instead of leaving large trailing gaps ([#5585](https://github.com/earendil-works/pi/pull/5585) by [@haoqixu](https://github.com/haoqixu)).
 - Fixed loose Markdown list rendering to preserve blank-line separation between list items ([#5562](https://github.com/earendil-works/pi/pull/5562) by [@Perlence](https://github.com/Perlence)).
 
-### Removed
-
-## [2026.6.12-2] - 2026-06-12
-
-### Breaking Changes
+## [0.79.1] - 2026-06-09
 
 ### Added
 
-### Changed
+- Added `AutocompleteProvider.triggerCharacters` so editor autocomplete can naturally trigger on provider-defined token prefixes ([#4703](https://github.com/earendil-works/pi/issues/4703)).
 
 ### Fixed
 
-### Removed
+- Fixed IME hardware cursor positioning while slash-command autocomplete is visible ([#5283](https://github.com/earendil-works/pi/pull/5283) by [@smoosex](https://github.com/smoosex)).
+- Fixed prompt history navigation to restore the current draft when returning from history browsing ([#5494](https://github.com/earendil-works/pi/issues/5494)).
+- Fixed wrapping for mixed Latin and CJK text so unspaced CJK runs can break at grapheme boundaries without leaving large trailing gaps ([#5495](https://github.com/earendil-works/pi/issues/5495)).
 
-## [2026.6.12] - 2026-06-12
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-- Improved repeated Markdown rendering and editor wrapping performance with bounded caches.
-
-### Fixed
-
-### Removed
-
-## [2026.6.10-2] - 2026-06-10
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-- Removed vestigial exports `calculateImageRows` and `isPunctuationChar`, and the unused `vitest.config.ts` (tests run via `node --test`).
-
-## [2026.6.10] - 2026-06-10
-
-### Breaking Changes
-
-### Added
-
-### Changed
+## [0.79.0] - 2026-06-08
 
 ### Fixed
 
 - Fixed prompt history navigation to place the cursor at the start when browsing upward and at the end when browsing downward, so repeated Up/Down traverses multiline prompts immediately ([#5454](https://github.com/earendil-works/pi/issues/5454)).
 - Fixed intermittent Shift+Enter handling by making Kitty keyboard protocol fallback response-driven instead of timeout-driven ([#5188](https://github.com/earendil-works/pi/issues/5188)).
+- Fixed TUI rendering to clear stale lines when content shrinks to zero.
 - Fixed autocomplete suggestions to re-query after editor cursor movement ([#5499](https://github.com/earendil-works/pi/pull/5499) by [@Roman-Galeev](https://github.com/Roman-Galeev)).
 
-### Removed
-
-## [2026.6.6-3] - 2026-06-06
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.6-2] - 2026-06-06
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.6] - 2026-06-06
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.4] - 2026-06-04
-
-### Breaking Changes
-
-### Added
-
-### Changed
+## [0.78.1] - 2026-06-04
 
 ### Fixed
 
 - Fixed overlay focus restoration so non-capturing overlays remain interactive after UI rerenders and explicit focus release ([#5235](https://github.com/earendil-works/pi/pull/5235) by [@nicobailon](https://github.com/nicobailon)).
-
-### Removed
-
-## [2026.6.3] - 2026-06-03
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.2] - 2026-06-02
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
 - Fixed tab width accounting in column slicing and overlay compositing so tab-containing output cannot exceed the terminal width ([#5218](https://github.com/earendil-works/pi/issues/5218)).
-
-### Removed
 
 ## [0.78.0] - 2026-05-29
 
@@ -291,85 +93,22 @@
 
 ## [0.77.0] - 2026-05-28
 
-## [2026.5.29-4] - 2026-05-29
+### Fixed
 
-### Breaking Changes
+- Fixed keyboard protocol negotiation to ignore mismatched or delayed terminal responses, avoiding false Kitty keyboard protocol detection ([#5091](https://github.com/earendil-works/pi/pull/5091) by [@mitsuhiko](https://github.com/mitsuhiko)).
+
+## [0.76.0] - 2026-05-27
 
 ### Added
 
 - Added an opt-in Markdown renderer option to preserve source ordered-list markers for transcript rendering ([#5013](https://github.com/earendil-works/pi/issues/5013)).
 
-### Changed
-
 ### Fixed
 
-- Fixed keyboard protocol negotiation to ignore mismatched or delayed terminal responses, avoiding false Kitty keyboard protocol detection ([#5091](https://github.com/earendil-works/pi/pull/5091) by [@mitsuhiko](https://github.com/mitsuhiko)).
 - Fixed `Shift+Enter` in Apple Terminal by detecting local macOS modifier state when Terminal.app sends plain Return.
 - Fixed Windows Terminal capability detection to enable OSC 8 hyperlinks, preserving clickable long URLs across wrapped lines ([#4923](https://github.com/earendil-works/pi/issues/4923)).
 - Fixed JetBrains terminal capability detection to enable truecolor while disabling unsupported OSC 8 hyperlinks ([#5037](https://github.com/earendil-works/pi-mono/pull/5037) by [@Perlence](https://github.com/Perlence)).
 - Fixed editor and input word navigation/deletion to use Unicode word boundaries while preserving ASCII punctuation boundaries ([#5022](https://github.com/earendil-works/pi-mono/pull/5022) by [@haoqixu](https://github.com/haoqixu), [#5067](https://github.com/earendil-works/pi-mono/pull/5067) by [@haoqixu](https://github.com/haoqixu), [#5068](https://github.com/earendil-works/pi-mono/pull/5068) by [@haoqixu](https://github.com/haoqixu)).
-
-### Removed
-
-## [2026.5.29-3] - 2026-05-29
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.26] - 2026-05-26
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.24] - 2026-05-24
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.23-2] - 2026-05-23
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.23] - 2026-05-23
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
 
 ## [0.75.5] - 2026-05-23
 
@@ -377,53 +116,16 @@
 
 - Replaced the optional `koffi` dependency for Windows VT input with a tiny vendored native helper, reducing install size while preserving Shift+Tab handling ([#4480](https://github.com/earendil-works/pi/issues/4480)).
 
-## [2026.5.21-2] - 2026-05-21
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.21] - 2026-05-21
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.20-4] - 2026-05-20
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.20] - 2026-05-20
+## [0.75.4] - 2026-05-20
 
 ### Changed
 
 - Removed the package-level development watch script now that the root TypeScript check validates strip-only-compatible sources.
 
-## [2026.5.19] - 2026-05-19
+### Fixed
 
-## [2026.5.18-2] - 2026-05-18
-
-## [2026.5.18] - 2026-05-18
+- Fixed loader initialization so indicator startup cannot run before frames are initialized.
+- Fixed truecolor capability detection to align terminal image rendering with the interactive theme detector.
 
 ## [0.75.3] - 2026-05-18
 
@@ -449,36 +151,7 @@
 - Fixed markdown rendering robustness for very large markdown files ([#4463](https://github.com/earendil-works/pi-mono/pull/4463) by [@ndanielherrera](https://github.com/ndanielherrera)).
 - Fixed Kitty image placement when the viewport is shorter than the rendered image ([#4461](https://github.com/earendil-works/pi-mono/pull/4461) by [@xu0o0](https://github.com/xu0o0)).
 - Fixed WezTerm Kitty keyboard protocol edge cases so escape handling remains correct ([#4482](https://github.com/earendil-works/pi-mono/pull/4482) by [@Felixoid](https://github.com/Felixoid)).
-
-## [2026.5.16] - 2026-05-16
-
-### Fixed
-
-## [2026.5.15-3] - 2026-05-15
-
-### Fixed
-
-## [2026.5.15-2] - 2026-05-15
-
-### Fixed
-
-## [2026.5.15] - 2026-05-15
-
-### Fixed
-
-## [2026.5.14] - 2026-05-14
-
-### Fixed
-
 - Fixed inline image rendering to cap portrait images by height instead of always scaling them to the configured maximum width.
-
-## [2026.5.13-4] - 2026-05-13
-
-## [2026.5.13-3] - 2026-05-13
-
-## [2026.5.13-2] - 2026-05-13
-
-## [2026.05.13] - 2026-05-13
 
 ## [0.74.0] - 2026-05-07
 
@@ -650,6 +323,7 @@
 - Fixed slash-command Tab completion from immediately chaining into argument autocomplete after completing the command name, restoring flows like `/model` that submit into a selector dialog ([#2577](https://github.com/badlogic/pi-mono/issues/2577))
 - Fixed stale content and incorrect viewport tracking after TUI content shrinks or transient components inflate the working area ([#2126](https://github.com/badlogic/pi-mono/pull/2126) by [@Perlence](https://github.com/Perlence))
 - Fixed `@` autocomplete to debounce editor-triggered searches, cancel in-flight `fd` lookups cleanly, and keep suggestions visible while results refresh ([#1278](https://github.com/badlogic/pi-mono/issues/1278))
+
 
 ## [0.62.0] - 2026-03-23
 
@@ -1078,7 +752,7 @@
 
 ### Fixed
 
-- Overlay compositing crash when rendered lines exceed terminal width due to complex ANSI/OSC sequences (e.g., hyperlinks in extension output) ([#667](https://github.com/badlogic/pi-mono/pull/667) by [@nicobailon](https://github.com/nicobailon))
+- Overlay compositing crash when rendered lines exceed terminal width due to complex ANSI/OSC sequences (e.g., hyperlinks in subagent output) ([#667](https://github.com/badlogic/pi-mono/pull/667) by [@nicobailon](https://github.com/nicobailon))
 
 ## [0.45.5] - 2026-01-13
 

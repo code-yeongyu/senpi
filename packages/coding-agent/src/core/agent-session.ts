@@ -302,6 +302,14 @@ interface ToolDefinitionEntry {
 	sourceInfo: SourceInfo;
 }
 
+function estimateMessagesTokens(messages: AgentMessage[]): number {
+	let tokens = 0;
+	for (const message of messages) {
+		tokens += estimateTokens(message);
+	}
+	return tokens;
+}
+
 // ============================================================================
 // Constants
 // ============================================================================
@@ -2129,6 +2137,7 @@ export class AgentSession {
 
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
+			compactionResult.estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
 			this._incrementMessageRevision();
 
 			await this._extensionRunner.emit({
@@ -2269,6 +2278,13 @@ export class AgentSession {
 			contextUsage.tokens !== null &&
 			shouldCompact(contextUsage.tokens, contextUsage.contextWindow, settings);
 		if (isContextOverflow(assistantMessage, contextWindow) && (sameModel || currentContextNeedsCompaction)) {
+			const willRetry = assistantMessage.stopReason !== "stop";
+
+			if (!willRetry) {
+				await this._runAutoCompaction("overflow", false);
+				return;
+			}
+
 			if (this._overflowRecoveryAttempted) {
 				const errorMessage =
 					"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.";
@@ -2297,7 +2313,7 @@ export class AgentSession {
 			if (requestReason) {
 				await this._runPrePromptCompaction(assistantMessage, skipAbortedCheck);
 			} else {
-				await this._runAutoCompaction("overflow", true);
+				await this._runAutoCompaction("overflow", willRetry);
 			}
 			return;
 		}

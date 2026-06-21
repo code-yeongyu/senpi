@@ -2,123 +2,51 @@
 
 ## [Unreleased]
 
-### Breaking Changes
+## [2026.6.21] - 2026-06-21
+
+## [0.79.9] - 2026-06-20
 
 ### Added
 
-### Changed
+- Added configurable `chat-template` thinking support for OpenAI-compatible providers that use `chat_template_kwargs`, such as DeepSeek models behind vLLM ([#5673](https://github.com/earendil-works/pi/issues/5673)).
 
 ### Fixed
 
-- Fixed Anthropic same-model replay to preserve provider-native server tool blocks around signed thinking, avoiding `thinking` / `redacted_thinking` modification errors on follow-up tool-result requests.
+- Fixed Fireworks GLM-5.2 metadata to use the OpenAI-compatible Chat Completions endpoint with `reasoning_effort` support ([#5923](https://github.com/earendil-works/pi/issues/5923)).
+- Fixed OpenRouter GLM-5.2 metadata to expose `xhigh` reasoning and send OpenRouter's native `xhigh` effort ([#5770](https://github.com/earendil-works/pi/issues/5770)).
+- Fixed GitHub Copilot OAuth model availability to use the authenticated account's model picker catalog ([#5897](https://github.com/earendil-works/pi/issues/5897)).
 
-### Removed
-
-## [2026.6.17-2] - 2026-06-17
-
-### Breaking Changes
+## [0.79.8] - 2026-06-19
 
 ### Added
 
-### Changed
+- Added `@earendil-works/pi-ai/base` and direct provider registration exports for bundlers that want selective provider transports without root built-in registration ([#5348](https://github.com/earendil-works/pi/pull/5348) by [@FredKSchott](https://github.com/FredKSchott)).
+- Added prompt caching for Mistral requests using the pi session ID as `prompt_cache_key`, including cached-token usage and cost accounting ([#5854](https://github.com/earendil-works/pi/issues/5854)).
+- Added the OpenRouter Fusion alias as `openrouter/fusion` ([#5866](https://github.com/earendil-works/pi/pull/5866) by [@dannote](https://github.com/dannote)).
 
-### Fixed
-
-### Removed
-
-## [2026.6.17] - 2026-06-17
-
-### Breaking Changes
+## [0.79.7] - 2026-06-18
 
 ### Added
 
-- Added provider-scoped environment overrides for provider configuration, cache retention, and proxy lookups inherited from upstream.
+- Added GLM-5.2 model to the OpenCode Go subscription model catalog ([#5860](https://github.com/earendil-works/pi/issues/5860)).
 
-### Changed
+## [0.79.6] - 2026-06-16
 
 ### Fixed
 
-- Fixed Codex Responses streaming to allow opaque custom backend tokens and recover stale cached websocket continuations.
-- Fixed OpenAI Responses streaming to tolerate null message content from OpenAI-compatible servers before tool calls.
-- Fixed OpenCode DeepSeek V4 and Z.AI GLM thinking parameter compatibility inherited from upstream.
-- Fixed Google and `google-vertex` Gemini model metadata inherited from upstream.
+- Fixed OpenCode Go DeepSeek V4 thinking-off requests to send the provider's `thinking: { type: "disabled" }` compatibility parameter.
 
-### Removed
-
-## [2026.6.16-2] - 2026-06-16
-
-### Breaking Changes
+## [0.79.5] - 2026-06-16
 
 ### Added
 
-### Changed
+- Added provider-scoped `StreamOptions.env` overrides for provider configuration, including Cloudflare endpoint placeholders, Azure OpenAI, Google Vertex, Amazon Bedrock, cache retention, and proxy environment lookups ([#5728](https://github.com/earendil-works/pi/issues/5728)).
 
 ### Fixed
 
-- Fixed Anthropic prompt caching to default to 1-hour cache retention on the canonical Anthropic API while keeping proxy/gateway requests on the standard ephemeral cache marker unless explicitly supported.
-
-### Removed
-
-## [2026.6.16] - 2026-06-16
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-- Fixed Anthropic and OpenAI-compatible streaming requests to retry forced `tool_choice` 400 capability errors once without forcing a tool while preserving tools.
-
-### Removed
-
-## [2026.6.15] - 2026-06-15
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.14-3] - 2026-06-14
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.14-2] - 2026-06-14
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.14] - 2026-06-14
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
+- Fixed OpenAI Responses streaming to tolerate null message content from OpenAI-compatible servers before tool calls ([#5819](https://github.com/earendil-works/pi/issues/5819)).
+- Fixed OpenCode DeepSeek V4 thinking requests to avoid sending both `thinking` and `reasoning_effort` ([#5818](https://github.com/earendil-works/pi/issues/5818)).
+- Fixed Z.AI GLM-5.2 thinking requests to send `reasoning_effort` with the provider's `high`/`max` effort mapping ([#5770](https://github.com/earendil-works/pi/issues/5770)).
 - Fixed Google and `google-vertex` Gemini model metadata to map `latest` aliases to the current models, add Gemini 3.5 Flash for Vertex, correct Gemini 2.5 Flash Vertex cache pricing, and remove shut-down Vertex preview models ([#5761](https://github.com/earendil-works/pi/issues/5761)).
 - Fixed Moonshot AI China model metadata to include Kimi K2.7 Code, and omitted unsupported thinking-off payloads for Kimi K2.7 Code models ([#5760](https://github.com/earendil-works/pi/issues/5760)).
 
@@ -130,152 +58,56 @@
 - Fixed GitHub Copilot Claude adaptive-thinking effort metadata to match manually checked Copilot model capabilities ([#4637](https://github.com/earendil-works/pi/issues/4637)).
 - Fixed OpenCode/OpenCode Go completion models that reject `prompt_cache_retention` to omit long-retention cache fields when `cacheRetention` is `long` ([#5702](https://github.com/earendil-works/pi/issues/5702)).
 
-### Removed
+## [0.79.3] - 2026-06-13
 
-## [2026.6.13] - 2026-06-13
+### Fixed
 
-### Breaking Changes
+- Restored OpenAI GPT-5.4/GPT-5.5 and OpenAI Codex GPT-5.4/GPT-5.4 mini/GPT-5.5 context window metadata to the observed 272k-token Codex backend limit, avoiding a billing hazard from sending prompts above Codex's accepted limit (reported by [@trethore](https://github.com/trethore)).
+
+## [0.79.2] - 2026-06-12
 
 ### Added
 
 - Added AWS data retention documentation links to Amazon Bedrock unsupported data retention mode validation errors ([#5561](https://github.com/earendil-works/pi/pull/5561) by [@unexge](https://github.com/unexge)).
 
-### Changed
-
 ### Fixed
 
-- Fixed Anthropic Claude Fable/Mythos requests to omit unsupported forced `tool_choice` values while preserving tools and automatic tool choice.
-- Restored OpenAI GPT-5.4/GPT-5.5 and OpenAI Codex GPT-5.4/GPT-5.4 mini/GPT-5.5 context window metadata to the observed 272k-token Codex backend limit, avoiding a billing hazard from sending prompts above Codex's accepted limit (reported by [@trethore](https://github.com/trethore)).
 - Fixed OpenAI-compatible context overflow detection for parenthesized `maximum context length (N)` errors ([#5677](https://github.com/earendil-works/pi/issues/5677)).
+- Fixed OpenAI GPT-5.4/GPT-5.5 and OpenAI Codex GPT-5.4/GPT-5.4 mini/GPT-5.5 context window metadata to match current OpenAI limits ([#5644](https://github.com/earendil-works/pi/issues/5644)).
 - Increased the OpenAI Codex Responses SSE response-header timeout to 20 seconds to reduce false-positive stalls while retaining the bounded wait introduced for zero-event hangs ([#4945](https://github.com/earendil-works/pi/issues/4945)).
 - Fixed Anthropic refusal stops to preserve provider `stop_details` explanations in error messages ([#5666](https://github.com/earendil-works/pi/pull/5666) by [@rwachtler](https://github.com/rwachtler)).
 - Fixed Claude Fable 5 thinking-off requests to omit Anthropic's unsupported `thinking.type: "disabled"` payload ([#5567](https://github.com/earendil-works/pi/pull/5567) by [@tmustier](https://github.com/tmustier)).
 
-### Removed
-
-## [2026.6.12-2] - 2026-06-12
-
-### Breaking Changes
+## [0.79.1] - 2026-06-09
 
 ### Added
 
-### Changed
+- Added Claude Fable 5 to Anthropic and Amazon Bedrock model metadata, with adaptive thinking and `xhigh` effort support.
 
 ### Fixed
 
-### Removed
+- Fixed Amazon Bedrock inference profile ARN region resolution to prefer the ARN's embedded region over `AWS_REGION` ([#5527](https://github.com/earendil-works/pi/pull/5527) by [@AJM10565](https://github.com/AJM10565)).
+- Fixed z.ai thinking-off requests to send the provider's `thinking: { type: "disabled" }` compatibility parameter ([#5330](https://github.com/earendil-works/pi/issues/5330)).
+- Fixed OpenCode completions model metadata to send explicit `maxTokens` as `max_tokens` ([#5331](https://github.com/earendil-works/pi/issues/5331)).
+- Fixed Moonshot Kimi thinking-off requests to send the provider's `thinking: { type: "disabled" }` compatibility parameter ([#5531](https://github.com/earendil-works/pi/issues/5531)).
+- Fixed Azure OpenAI Responses requests to disable server-side response storage ([#5530](https://github.com/earendil-works/pi/issues/5530)).
+- Fixed Azure GPT-5.4 and GPT-5.5 context window metadata to 1,050,000 tokens, matching Azure Foundry deployments instead of OpenAI's 272k limit ([#5559](https://github.com/earendil-works/pi/issues/5559)).
+- Fixed OpenAI and Azure GPT-5 Pro `maxTokens` metadata to 128,000, correcting an upstream value that duplicated the 272,000 input sub-limit as the output limit ([#5559](https://github.com/earendil-works/pi/issues/5559)).
 
-## [2026.6.12] - 2026-06-12
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-- When Amazon Bedrock rejects an unsupported data retention mode, the error now links the AWS data retention documentation ([#5561](https://github.com/earendil-works/pi/pull/5561) by [@unexge](https://github.com/unexge)).
-- Improved EventStream queued-event throughput and lazily initializes bundled model registry maps.
-
-## [2026.6.10-2] - 2026-06-10
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-- Removed dead exports left by earlier provider removals: `mapStopReasonString`, `getOverflowPatterns`, `getApiProviders`, and `GOOGLE_GEMINI_CLI_RESERVED_BODY_KEYS`.
-
-## [2026.6.10] - 2026-06-10
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.6-3] - 2026-06-06
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.6-2] - 2026-06-06
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.6] - 2026-06-06
-
-### Breaking Changes
-
-### Added
-
-### Changed
+## [0.79.0] - 2026-06-08
 
 ### Fixed
 
 - Fixed OpenAI Responses custom providers to honor `compat.supportsDeveloperRole: false` for reasoning models ([#5456](https://github.com/earendil-works/pi/issues/5456)).
 - Fixed OpenRouter routing preferences on OpenAI-compatible custom providers to send `compat.openRouterRouting` even when `baseUrl` does not point directly at OpenRouter ([#5347](https://github.com/earendil-works/pi/issues/5347)).
 
-### Removed
-
-## [2026.6.4] - 2026-06-04
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.3] - 2026-06-03
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.6.2] - 2026-06-02
-
-### Breaking Changes
+## [0.78.1] - 2026-06-04
 
 ### Added
 
 - Added Ant Ling as a built-in OpenAI-compatible provider with Ling 2.6 and Ring 2.6 models.
 - Added MiniMax-M3 model to the `minimax` and `minimax-cn` direct providers, and removed the hardcoded context-window override that was masking models.dev values ([#5313](https://github.com/earendil-works/pi/issues/5313)).
 - Added NVIDIA NIM as a built-in OpenAI-compatible provider, exposing public NIM models that support tool use.
-
-### Changed
 
 ### Fixed
 
@@ -284,14 +116,7 @@
 - Fixed OpenAI GPT-5.5 generated metadata to omit unsupported minimal thinking ([#5243](https://github.com/earendil-works/pi/issues/5243)).
 - Fixed OpenRouter Kimi K2.6 thinking replay and preserved developer-role instructions for OpenRouter OpenAI and Anthropic models ([#5309](https://github.com/earendil-works/pi/issues/5309)).
 - Fixed OpenRouter reasoning instruction requests to preserve the system role when required ([#5221](https://github.com/earendil-works/pi/pull/5221) by [@PriNova](https://github.com/PriNova)).
-- Fixed GitHub Copilot and OpenRouter test model references that became stale after model regeneration.
 - Restored the NVIDIA Qwen 3.5 122B NIM model.
-
-### Removed
-
-## [2026.5.29-4] - 2026-05-29
-
-### Breaking Changes
 
 ## [0.78.0] - 2026-05-29
 
@@ -317,8 +142,6 @@
 - Added OpenAI Codex subscription device-code login as a selectable headless alternative while keeping browser login as the default ([#4911](https://github.com/earendil-works/pi/pull/4911) by [@vegarsti](https://github.com/vegarsti)).
 - Added Claude Opus 4.8 model metadata for Anthropic and updated Opus adaptive-thinking coverage to use it.
 
-### Changed
-
 ### Fixed
 
 - Fixed OpenRouter DeepSeek V4 `xhigh` reasoning metadata to preserve OpenRouter's native effort instead of sending DeepSeek's `max` effort ([#4801](https://github.com/earendil-works/pi/issues/4801)).
@@ -327,43 +150,22 @@
 - Fixed OpenAI and OpenRouter GPT-5.5 Pro thinking level metadata to expose only supported medium, high, and xhigh efforts.
 - Fixed OpenCode Go Kimi K2.6 thinking-off requests to send `thinking: "none"` ([#5078](https://github.com/earendil-works/pi/issues/5078)).
 - Fixed Xiaomi Token Plan model metadata to omit unsupported `mimo-v2-flash` variants ([#5075](https://github.com/earendil-works/pi/issues/5075)).
+
+## [0.76.0] - 2026-05-27
+
+### Fixed
+
 - Fixed OpenAI Codex Responses cache-affinity headers to send `session-id` instead of proxy-incompatible `session_id` ([#4967](https://github.com/earendil-works/pi/issues/4967)).
 - Fixed `openai-codex/gpt-5.3-codex-spark` generated metadata to use its 128k context window ([#4969](https://github.com/earendil-works/pi/issues/4969)).
 - Fixed OpenRouter/Poolside context overflow detection for `maximum allowed input length` errors ([#4943](https://github.com/earendil-works/pi/issues/4943)).
 - Fixed OpenAI Codex Responses WebSocket streams and SSE response-header waits to apply bounded timeouts instead of waiting indefinitely when no events arrive ([#4945](https://github.com/earendil-works/pi/issues/4945)).
 - Fixed provider retry controls so OpenAI Codex Responses honors `maxRetries`, SDK retries default to `0`, and quota/billing 429s are not retried behind Pi's retry handling ([#4991](https://github.com/earendil-works/pi-mono/pull/4991) by [@mitsuhiko](https://github.com/mitsuhiko)).
 
-### Removed
-
-## [2026.5.29-3] - 2026-05-29
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.26] - 2026-05-26
-
-## [2026.5.24] - 2026-05-24
-
-## [2026.5.23-2] - 2026-05-23
-
-## [2026.5.23] - 2026-05-23
-
 ## [0.75.5] - 2026-05-23
 
 ### Breaking Changes
 
 - Changed `OAuthLoginCallbacks` to require `onDeviceCode` and `onSelect`, so OAuth providers can rely on pi supplying device-code and selection UI callbacks ([#4788](https://github.com/earendil-works/pi-mono/pull/4788) by [@vegarsti](https://github.com/vegarsti)).
-
-### Added
-
-### Changed
 
 ### Fixed
 
@@ -372,45 +174,7 @@
 - Fixed Amazon Bedrock provider loading under strict package managers by declaring its direct `@smithy/node-http-handler` dependency ([#4842](https://github.com/earendil-works/pi/issues/4842)).
 - Fixed Amazon Bedrock Claude requests to send the model output token cap by default, matching Anthropic requests and avoiding Bedrock's 4096-token default truncation ([#4848](https://github.com/earendil-works/pi/issues/4848)).
 
-### Removed
-
-## [2026.5.21-2] - 2026-05-21
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.21] - 2026-05-21
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.20-4] - 2026-05-20
-
-### Breaking Changes
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Removed
-
-## [2026.5.20] - 2026-05-20
+## [0.75.4] - 2026-05-20
 
 ### Changed
 
@@ -423,15 +187,9 @@
 
 ### Fixed
 
-- Fixed Cloudflare Anthropic routes to strip hook-injected native `computer_*` tools before the SDK call.
 - Fixed OpenAI-compatible `streamSimple()` requests to stop sending model-derived default output token caps, avoiding context-window reservation failures on servers such as vLLM while preserving explicit `maxTokens` and required Anthropic `max_tokens` handling ([#4675](https://github.com/earendil-works/pi/issues/4675)).
 - Fixed OpenAI prompt cache keys to clamp session-derived values to the 64-character API limit across OpenAI Responses, Chat Completions, Codex Responses, and Azure OpenAI Responses ([#4720](https://github.com/earendil-works/pi/issues/4720)).
 
-## [2026.5.19] - 2026-05-19
-
-## [2026.5.18-2] - 2026-05-18
-
-## [2026.5.18] - 2026-05-18
 ## [0.75.3] - 2026-05-18
 
 ## [0.75.2] - 2026-05-18
@@ -472,73 +230,6 @@
 
 - Added image generation APIs, image model metadata, and built-in OpenRouter image generation support ([#3887](https://github.com/earendil-works/pi-mono/pull/3887) by [@cristinaponcela](https://github.com/cristinaponcela)).
 - Added Together AI as a built-in OpenAI-compatible provider with generated model metadata and `TOGETHER_API_KEY` authentication ([#3624](https://github.com/earendil-works/pi-mono/pull/3624) by [@Nutlope](https://github.com/Nutlope)).
-
-### Fixed
-
-## [2026.5.16] - 2026-05-16
-
-### Added
-
-### Fixed
-
-- Fixed OpenAI Responses custom endpoints to strip unsupported native `web_search_preview` request fields after `onPayload` unless `compat.supportsWebSearchPreview` opts in.
-- Fixed xAI test fixtures to use the generated `grok-code-fast-1` model after refreshing the model catalog.
-
-## [2026.5.15-3] - 2026-05-15
-
-### Added
-
-### Fixed
-
-- Fixed Anthropic-compatible thinking-off requests to avoid unsupported disabled-thinking markers on Xiaomi MiMo and to omit stale Opus 4.6 thinking blocks from normal follow-up replay.
-
-## [2026.5.15-2] - 2026-05-15
-
-### Added
-
-### Fixed
-
-- Fixed Anthropic Opus 4.6 and 4.7 requests to strip hook-injected native `computer_20250124` tools before the SDK call.
-
-## [2026.5.15] - 2026-05-15
-
-### Added
-
-### Fixed
-
-## [2026.5.14] - 2026-05-14
-
-### Added
-
-### Fixed
-
-## [2026.5.13-4] - 2026-05-13
-
-### Added
-
-### Fixed
-
-## [2026.5.13-3] - 2026-05-13
-
-### Added
-
-### Fixed
-
-## [2026.5.13-2] - 2026-05-13
-
-### Added
-
-### Fixed
-
-## [2026.05.13] - 2026-05-13
-
-### Added
-
-- `ProviderNativeContent` content variant in `AssistantMessage.content` for surfacing provider-native blocks (web_search results, server tool calls, grounding metadata, etc.) without lossy normalization.
-- Anthropic Messages now preserves unknown `content_block_start` variants as `ProviderNativeContent` (`subtype` + `raw`) and skips them when converting assistant history back into request payloads.
-- OpenAI Responses now preserves unknown `response.output_item.added` variants (for example `web_search_call`, `file_search_call`, `image_generation_call`, `code_interpreter_call`, `computer_call`, MCP calls, local shell calls, and future item types) as `ProviderNativeContent` and skips them when replaying assistant history.
-- Google AI Studio and Vertex now surface `executableCode` / `codeExecutionResult` parts and candidate-level `groundingMetadata` / `urlContextMetadata` as `ProviderNativeContent`, with replay conversion explicitly skipping provider-native blocks.
-- Added `repairOrphanedToolResults` and `TOOL_RESULT_PLACEHOLDER` in `pi-ai` utilities for bidirectional tool pair repair across consumers.
 
 ### Fixed
 
@@ -629,29 +320,13 @@
 
 ### Added
 
-- Extended `registerFauxProvider()` (test-only) with three additive APIs: `getCallLog()` returns ordered `RequestSnapshot[]` capturing context, options, timestamp and resolved model id per stream invocation; `RegisterFauxProviderOptions.schedulerHook` replaces the default real-`setTimeout` chunk pacer so tests can integrate `vi.useFakeTimers()`; and `fauxOverflowError(provider, phrase)` returns an `AssistantMessage` with `stopReason: "error"` and an `errorMessage` that matches per-provider overflow regexes.
-- Added Claude Opus 4.7 (`claude-opus-4-7`) plus Bedrock cross-region profiles (`anthropic.claude-opus-4-7-v1`, `us.*`, `eu.*`, `global.*`). 1M context window, 128k max output tokens, adaptive thinking.
-- Added native `"max"` thinking level to `ThinkingLevel` union. Opus 4.7 maps `max` to Anthropic's native `max` effort; Opus 4.6 preserves the legacy `max` tier; other adaptive models clamp to `high`; budget-based Anthropic models fall back to the highest budget; OpenAI-style providers clamp `max` to `xhigh` on supported models or `high` otherwise.
-- Extended `supportsXhigh()` to include Opus 4.7 so `xhigh` is available in addition to `max`.
-- Added `StreamOptions.extraBody` for user-supplied custom request body fields (mirrors opencode's provider options). Wired through every builtin provider's payload builder (Anthropic, OpenAI Responses/Completions/Codex/Azure, Mistral, Google, Google Vertex, Amazon Bedrock). Provider-managed fields (model, messages, stream, reasoning, cache keys, service_tier, metadata, etc.) are protected via per-provider reserved-key sets; Google and Vertex merge extras into `config` (the SDK's generationConfig surface) so custom fields actually reach the wire.
 - Added Cloudflare AI Gateway as a built-in provider with OpenAI, Anthropic, and Workers AI gateway routing plus `CLOUDFLARE_API_KEY`/`CLOUDFLARE_ACCOUNT_ID`/`CLOUDFLARE_GATEWAY_ID` authentication ([#3856](https://github.com/badlogic/pi-mono/pull/3856) by [@mchenco](https://github.com/mchenco)).
 - Added Moonshot AI as a built-in OpenAI-compatible provider with model catalog generation and `MOONSHOT_API_KEY` authentication.
 - Added Mistral Medium 3.5 model metadata and reasoning-mode handling ([#4009](https://github.com/badlogic/pi-mono/pull/4009) by [@technocidal](https://github.com/technocidal)).
 - Added `AssistantMessage.responseModel` on the openai-completions path: surfaces the concrete `chunk.model` when it differs from the requested id (e.g. OpenRouter `auto` -> `anthropic/...`) ([#3968](https://github.com/badlogic/pi-mono/pull/3968) by [@purrgrammer](https://github.com/purrgrammer)).
 
-### Changed
-
-- Changed OpenAI Codex Responses default text verbosity to `low` when no verbosity is specified.
-
 ### Fixed
 
-- Fixed API-key environment discovery to fall back to `/proc/self/environ` when Bun's sandbox leaves `process.env` empty ([#3801](https://github.com/badlogic/pi-mono/pull/3801) by [@mdsjip](https://github.com/mdsjip)).
-- Fixed Bedrock prompt-caching and adaptive-thinking capability checks to use the model name when the model id is an inference profile ARN ([#3527](https://github.com/badlogic/pi-mono/pull/3527) by [@anirudhmarc](https://github.com/anirudhmarc)).
-- Fixed Anthropic SSE parsing to ignore unknown proxy events such as OpenAI-style `done` terminators ([#3708](https://github.com/badlogic/pi-mono/issues/3708)).
-- Fixed OpenAI-compatible prompt cache tests to cover proxies that explicitly disable long cache retention.
-- Stopped sending `tools: []` on OpenAI-compatible, Anthropic, OpenAI Responses, OpenAI Codex Responses, and Azure OpenAI Responses requests when no tools are active (e.g. `pi --no-tools`). DashScope/Aliyun Qwen (OpenAI-compatible) rejects empty tools arrays with `"[] is too short - 'tools'"` (HTTP 400); the field is now omitted unless the conversation has tool history (the existing LiteLLM/Anthropic-proxy workaround) ([#3650](https://github.com/badlogic/pi-mono/pull/3650) by [@HQidea](https://github.com/HQidea)).
-- Fixed `supportsXhigh()` to recognize DeepSeek V4 Pro, preserving `xhigh` reasoning requests so they map to DeepSeek's `max` effort ([#3662](https://github.com/badlogic/pi-mono/issues/3662))
-- Fixed OpenAI-compatible DeepSeek V4 model replay to include empty `reasoning_content` on assistant messages when needed, preventing OpenRouter DeepSeek V4 sessions from failing after responses without reasoning deltas ([#3668](https://github.com/badlogic/pi-mono/issues/3668))
 - Fixed Google Vertex Gemini 3 tool call replay by no longer sending the non-Vertex `skip_thought_signature_validator` sentinel for unsigned tool calls ([#4032](https://github.com/badlogic/pi-mono/issues/4032)).
 - Updated `@anthropic-ai/sdk` to `^0.91.1` to clear GHSA-p7fg-763f-g4gf audit findings ([#3992](https://github.com/badlogic/pi-mono/issues/3992)).
 - Fixed DeepSeek V4 Flash `xhigh` thinking support so requests preserve `xhigh` and map it to DeepSeek's `max` reasoning effort ([#3944](https://github.com/badlogic/pi-mono/issues/3944)).
@@ -684,6 +359,20 @@
 ### Added
 
 - Added Azure Cognitive Services endpoint support for Azure OpenAI Responses base URLs ([#3799](https://github.com/badlogic/pi-mono/pull/3799) by [@marcbloech](https://github.com/marcbloech)).
+
+### Changed
+
+- Changed OpenAI Codex Responses default text verbosity to `low` when no verbosity is specified.
+
+### Fixed
+
+- Fixed API-key environment discovery to fall back to `/proc/self/environ` when Bun's sandbox leaves `process.env` empty ([#3801](https://github.com/badlogic/pi-mono/pull/3801) by [@mdsjip](https://github.com/mdsjip)).
+- Fixed Bedrock prompt-caching and adaptive-thinking capability checks to use the model name when the model id is an inference profile ARN ([#3527](https://github.com/badlogic/pi-mono/pull/3527) by [@anirudhmarc](https://github.com/anirudhmarc)).
+- Fixed Anthropic SSE parsing to ignore unknown proxy events such as OpenAI-style `done` terminators ([#3708](https://github.com/badlogic/pi-mono/issues/3708)).
+- Fixed OpenAI-compatible prompt cache tests to cover proxies that explicitly disable long cache retention.
+- Stopped sending `tools: []` on OpenAI-compatible, Anthropic, OpenAI Responses, OpenAI Codex Responses, and Azure OpenAI Responses requests when no tools are active (e.g. `pi --no-tools`). DashScope/Aliyun Qwen (OpenAI-compatible) rejects empty tools arrays with `"[] is too short - 'tools'"` (HTTP 400); the field is now omitted unless the conversation has tool history (the existing LiteLLM/Anthropic-proxy workaround) ([#3650](https://github.com/badlogic/pi-mono/pull/3650) by [@HQidea](https://github.com/HQidea)).
+- Fixed `supportsXhigh()` to recognize DeepSeek V4 Pro, preserving `xhigh` reasoning requests so they map to DeepSeek's `max` effort ([#3662](https://github.com/badlogic/pi-mono/issues/3662))
+- Fixed OpenAI-compatible DeepSeek V4 model replay to include empty `reasoning_content` on assistant messages when needed, preventing OpenRouter DeepSeek V4 sessions from failing after responses without reasoning deltas ([#3668](https://github.com/badlogic/pi-mono/issues/3668))
 
 ## [0.70.2] - 2026-04-24
 

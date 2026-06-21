@@ -12,8 +12,8 @@
 
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
+import { completeSimple } from "../src/index.ts";
 import { getModel } from "../src/models.ts";
-import { completeSimple } from "../src/stream.ts";
 import type { AssistantMessage, Message, Tool, ToolResultMessage } from "../src/types.ts";
 import { getLiveEnvApiKey, OPENROUTER_LIVE_TEST_FLAG } from "./live-api-gates.ts";
 import { resolveApiKey } from "./oauth.ts";
