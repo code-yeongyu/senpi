@@ -22,7 +22,6 @@ import {
 	type ExtensionFactoryResolver,
 	loadExtensionFromFactory,
 	loadExtensions,
-	loadExtensionsCached,
 } from "./extensions/loader.ts";
 import type { Extension, ExtensionFactory, ExtensionRuntime, LoadExtensionsResult } from "./extensions/types.ts";
 import { DefaultPackageManager, type PathMetadata, type ResolvedResource } from "./package-manager.ts";

@@ -81,6 +81,10 @@ export function getApiProvider(api: Api): ApiProviderInternal | undefined {
 	return apiProviderRegistry.get(api)?.provider;
 }
 
+export function getApiProviders(): ApiProviderInternal[] {
+	return [...apiProviderRegistry.values()].map((entry) => entry.provider);
+}
+
 export function unregisterApiProviders(sourceId: string): void {
 	for (const [api, entry] of apiProviderRegistry.entries()) {
 		if (entry.sourceId === sourceId) {

@@ -53,9 +53,8 @@ import { spawn, spawnSync } from "child_process";
 import {
 	APP_NAME,
 	APP_TITLE,
-	expandTildePath,
 	CONFIG_DIR_NAME,
-	getAgentDir,
+	expandTildePath,
 	getAuthPath,
 	getDebugLogPath,
 	getDocsPath,
