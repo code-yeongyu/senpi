@@ -10,6 +10,7 @@
 
 - Fixed inherited Anthropic same-model replay to preserve provider-native server tool blocks around signed thinking, avoiding `thinking` / `redacted_thinking` modification errors on follow-up tool-result requests.
 - Fixed interactive abort during streaming or retry to restore queued messages to the editor instead of auto-firing them into a still-settling session.
+- Fixed active goal continuation so aborted or errored turns do not queue another hidden follow-up after user interruption, and made retry cancellation catch Esc immediately when retry starts.
 
 ### Changed
 

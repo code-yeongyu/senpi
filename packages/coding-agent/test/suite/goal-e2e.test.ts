@@ -23,6 +23,12 @@ function toolResultTexts(harness: Harness, toolName: string): string[] {
 		.map((message) => getMessageText(message));
 }
 
+function goalContinuationEntries(harness: Harness) {
+	return harness.sessionManager.getEntries().filter((entry) => {
+		return entry.type === "custom_message" && entry.customType === "goal-continuation";
+	});
+}
+
 describe("goal extension end-to-end through the real AgentSession", () => {
 	it("registers, creates, and completes a goal through real tool execution (budget-free)", async () => {
 		const harness = await createHarness({ extensionFactories: [goalExtension] });
@@ -51,5 +57,42 @@ describe("goal extension end-to-end through the real AgentSession", () => {
 		const updateResults = toolResultTexts(harness, "update_goal");
 		expect(updateResults).toHaveLength(1);
 		expect(JSON.parse(updateResults[0] ?? "{}").goal).toMatchObject({ status: "complete" });
+	}, 20_000);
+
+	it("does not queue another hidden continuation after aborting a retrying goal turn", async () => {
+		const harness = await createHarness({
+			extensionFactories: [goalExtension],
+			settings: { retry: { enabled: true, maxRetries: 2, baseDelayMs: 100 } },
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "overloaded_error",
+			}),
+		]);
+		const retryEnded = new Promise<void>((resolve) => {
+			const unsubscribe = harness.session.subscribe((event) => {
+				if (event.type === "auto_retry_start") {
+					void harness.session.abort();
+				}
+				if (event.type === "auto_retry_end") {
+					unsubscribe();
+					resolve();
+				}
+			});
+		});
+
+		await harness.session.prompt("/goal keep working until explicitly stopped");
+		await retryEnded;
+
+		expect(goalContinuationEntries(harness)).toHaveLength(1);
+		expect(harness.eventsOfType("auto_retry_end")).toEqual([
+			expect.objectContaining({ success: false, finalError: "Retry cancelled" }),
+		]);
+		expect(harness.session.retryAttempt).toBe(0);
+		expect(harness.session.isRetrying).toBe(false);
+		expect(harness.session.isStreaming).toBe(false);
+		expect(harness.faux.state.callCount).toBe(1);
 	}, 20_000);
 });
