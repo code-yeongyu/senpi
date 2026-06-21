@@ -6,6 +6,7 @@
 
 - Fixed the update notice to include a changelog URL when one is available.
 - Fixed `pi update` to install the exact version returned by the Pi update check, make `--force` reinstall that checked version, fail instead of falling back to an unversioned reinstall when no version is available, and report both the old and updated versions.
+- Fixed `senpi --list-models` to show the full model catalog instead of only models available under the current credentials.
 
 ## [0.79.9] - 2026-06-20
 
