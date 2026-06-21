@@ -32,7 +32,7 @@ export async function listModels(modelRegistry: ModelRegistry, searchPattern?: s
 		console.error(chalk.yellow(`Warning: errors loading models.json:\n${loadError}`));
 	}
 
-	const models = modelRegistry.getAvailable();
+	const models = modelRegistry.getAll();
 
 	if (models.length === 0) {
 		console.log(formatNoModelsAvailableMessage());
