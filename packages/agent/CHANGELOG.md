@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Removed
+
+- Removed the temporary `@earendil-works/pi-agent-core/base` entrypoint and selective provider-registration surface.
+
 ## [0.79.10] - 2026-06-22
 
 ## [2026.6.21] - 2026-06-21

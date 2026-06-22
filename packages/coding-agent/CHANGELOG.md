@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added reader-mode cleanup for webfetch HTML extraction.
+
 ### Changed
 
 - Added `Ctrl+J` as a default newline keybinding alongside `Shift+Enter`.
@@ -10,6 +14,7 @@
 ### Fixed
 
 - Fixed the Gondolin example dependency lockfiles to resolve the patched `undici` runtime version and keep production audit clean.
+- Fixed inherited OpenCode Go GLM-5.2 metadata to expose `xhigh` reasoning and send `reasoning_effort: "max"` ([#5967](https://github.com/earendil-works/pi/issues/5967)).
 - Fixed active goal continuation so aborted, errored, or aborting tool-execution turns do not queue another hidden follow-up after user interruption, and made retry cancellation catch Esc immediately when retry starts.
 
 ## [0.79.10] - 2026-06-22

@@ -6,6 +6,10 @@
 
 - Fixed OpenCode Go GLM-5.2 metadata to expose `xhigh` reasoning and send `reasoning_effort: "max"` ([#5967](https://github.com/earendil-works/pi/issues/5967)).
 
+### Removed
+
+- Removed the temporary `@earendil-works/pi-ai/base` entrypoint and direct provider self-registration exports.
+
 ## [0.79.10] - 2026-06-22
 
 ### Fixed
