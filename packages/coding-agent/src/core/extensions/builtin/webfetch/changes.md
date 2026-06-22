@@ -6,8 +6,8 @@ Vendored from [`code-yeongyu/pi-webfetch`](https://github.com/code-yeongyu/pi-we
 
 - Imports rewritten by `scripts/vendor-transform.mjs`: `@mariozechner/pi-{ai,tui}` -> `@earendil-works/pi-{ai,tui}`; `@mariozechner/pi-coding-agent` symbols -> `../../types.ts` (and `Theme` -> `modes/interactive/theme/theme.ts`); relative `.js` import suffixes -> `.ts`.
 - `webfetch/fetcher.ts`: `buildHeaders` return type `HeadersInit` -> `Record<string, string>` (senpi's root tsconfig has no DOM lib, so the `HeadersInit` global is unavailable; the value is already a plain string record).
-- Runtime dep `turndown` (+ `@types/turndown`) added to `package.json`.
-- No behavior changes. Registers the `webfetch` tool, gated by `PI_WEBFETCH` (default on).
+- Runtime deps `@mozilla/readability`, `jsdom`, and `turndown` (+ `@types/jsdom`, `@types/turndown`) added to `package.json`.
+- HTML markdown/text responses now pass through Readability before conversion so reader-style article content is returned without nav/header/footer/aside/script page chrome. Registers the `webfetch` tool, gated by `PI_WEBFETCH` (default on).
 
 ## Conflict zones
 

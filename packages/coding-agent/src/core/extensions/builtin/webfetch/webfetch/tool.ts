@@ -73,10 +73,10 @@ export const webfetch = defineTool<typeof Params, WebfetchRenderDetails>({
 		let converted = false;
 
 		if (isHtml && format === "markdown") {
-			text = htmlToMarkdown(raw);
+			text = htmlToMarkdown(raw, fetched.url);
 			converted = true;
 		} else if (isHtml && format === "text") {
-			text = htmlToText(raw);
+			text = htmlToText(raw, fetched.url);
 			converted = true;
 		}
 
