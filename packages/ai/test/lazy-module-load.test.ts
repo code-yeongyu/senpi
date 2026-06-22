@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const aiEntryUrl = new URL("../src/index.ts", import.meta.url).href;
-const baseEntryUrl = new URL("../src/base.ts", import.meta.url).href;
 
 const SDK_SPECIFIERS = [
 	"@anthropic-ai/sdk",
@@ -17,10 +16,9 @@ const SDK_SPECIFIERS = [
 
 type ProbeResult = {
 	loadedSpecifiers: string[];
-	value?: unknown;
 };
 
-function runProbe(action: string, entryUrl = aiEntryUrl): ProbeResult {
+function runProbe(action: string): ProbeResult {
 	const script = `
 		import { registerHooks } from "node:module";
 
@@ -36,11 +34,9 @@ function runProbe(action: string, entryUrl = aiEntryUrl): ProbeResult {
 			},
 		});
 
-		const mod = await import(${JSON.stringify(entryUrl)});
-		const value = await (async () => {
-			${action}
-		})();
-		console.log(JSON.stringify({ loadedSpecifiers: [...new Set(loaded)], value }));
+		const mod = await import(${JSON.stringify(aiEntryUrl)});
+		${action}
+		console.log(JSON.stringify({ loadedSpecifiers: [...new Set(loaded)] }));
 	`;
 
 	const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
@@ -68,33 +64,6 @@ describe("lazy provider module loading", () => {
 	it("does not load provider SDKs when importing the root barrel", () => {
 		const result = runProbe("");
 		expect(result.loadedSpecifiers).toEqual([]);
-	});
-
-	it("registers built-in transports when importing the root barrel", () => {
-		const result = runProbe(`return mod.getApiProviders().map((provider) => provider.api).sort();`);
-		expect(result.value).toEqual([
-			"anthropic-messages",
-			"azure-openai-responses",
-			"bedrock-converse-stream",
-			"google-generative-ai",
-			"google-vertex",
-			"mistral-conversations",
-			"openai-codex-responses",
-			"openai-completions",
-			"openai-responses",
-		]);
-	});
-
-	it("registers built-in image transports when importing the root barrel", () => {
-		const result = runProbe(`return mod.getImagesApiProvider("openrouter-images")?.api;`);
-		expect(result.loadedSpecifiers).toEqual([]);
-		expect(result.value).toBe("openrouter-images");
-	});
-
-	it("does not load provider SDKs or register transports when importing the base barrel", () => {
-		const result = runProbe(`return mod.getApiProviders().map((provider) => provider.api);`, baseEntryUrl);
-		expect(result.loadedSpecifiers).toEqual([]);
-		expect(result.value).toEqual([]);
 	});
 
 	it("loads only the Anthropic SDK when calling the root lazy wrapper", () => {
@@ -126,18 +95,5 @@ describe("lazy provider module loading", () => {
 		`);
 
 		expect(result.loadedSpecifiers).toEqual(["@anthropic-ai/sdk"]);
-	});
-
-	it("dispatches through a lazy wrapper again after resetting providers", () => {
-		const result = runProbe(`
-			const model = mod.getModel("anthropic", "claude-sonnet-4-6");
-			const context = { messages: [{ role: "user", content: "hi" }] };
-			await mod.streamSimple(model, context).result();
-			mod.resetApiProviders();
-			return (await mod.streamSimple(model, context).result()).stopReason;
-		`);
-
-		expect(result.loadedSpecifiers).toEqual(["@anthropic-ai/sdk"]);
-		expect(result.value).toBe("error");
 	});
 });

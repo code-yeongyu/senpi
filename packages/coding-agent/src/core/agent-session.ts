@@ -2909,7 +2909,7 @@ export class AgentSession {
 		});
 	}
 
-	async reload(): Promise<void> {
+	async reload(options?: { beforeSessionStart?: () => void | Promise<void> }): Promise<void> {
 		const previousFlagValues = this._extensionRunner.getFlagValues();
 		await emitSessionShutdownEvent(this._extensionRunner, { type: "session_shutdown", reason: "reload" });
 		await this.settingsManager.reload();
@@ -2940,6 +2940,7 @@ export class AgentSession {
 			this._extensionShutdownHandler ||
 			this._extensionErrorListener;
 		if (hasBindings) {
+			await options?.beforeSessionStart?.();
 			await this._extensionRunner.emit({ type: "session_start", reason: "reload" });
 			await this.extendResourcesFromExtensions("reload");
 		}

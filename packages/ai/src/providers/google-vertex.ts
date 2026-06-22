@@ -7,7 +7,6 @@ import {
 	type ThinkingConfig,
 	ThinkingLevel,
 } from "@google/genai";
-import { registerApiProvider } from "../api-registry.ts";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
 import type {
 	Api,
@@ -357,14 +356,6 @@ export const streamSimpleGoogleVertex: StreamFunction<"google-vertex", SimpleStr
 		},
 	} satisfies GoogleVertexOptions);
 };
-
-export function register(): void {
-	registerApiProvider({
-		api: "google-vertex",
-		stream: streamGoogleVertex,
-		streamSimple: streamSimpleGoogleVertex,
-	});
-}
 
 function createClient(
 	model: Model<"google-vertex">,

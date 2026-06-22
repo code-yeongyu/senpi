@@ -623,6 +623,10 @@ export interface SessionBeforeCompactEvent {
 	preparation: CompactionPreparation;
 	branchEntries: SessionEntry[];
 	customInstructions?: string;
+	/** What triggered the compaction: manual /compact, the context threshold, or context overflow recovery */
+	reason: "manual" | "threshold" | "overflow";
+	/** True when the aborted turn is retried after this compaction (overflow recovery) */
+	willRetry: boolean;
 	signal: AbortSignal;
 }
 
@@ -643,6 +647,10 @@ export interface SessionCompactEvent {
 	rejectionCause?: CompactionRejectionCause;
 	compactionEntry: CompactionEntry;
 	fromExtension: boolean;
+	/** What triggered the compaction: manual /compact, the context threshold, or context overflow recovery */
+	reason: "manual" | "threshold" | "overflow";
+	/** True when the aborted turn is retried after this compaction (overflow recovery) */
+	willRetry: boolean;
 }
 
 /** Fired before an extension runtime is torn down due to quit, reload, or session replacement. */

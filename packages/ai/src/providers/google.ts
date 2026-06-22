@@ -5,7 +5,6 @@ import {
 	ThinkingLevel as GoogleGenAIThinkingLevel,
 	type ThinkingConfig,
 } from "@google/genai";
-import { registerApiProvider } from "../api-registry.ts";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
 import type {
 	Api,
@@ -352,14 +351,6 @@ export const streamSimpleGoogle: StreamFunction<"google-generative-ai", SimpleSt
 		},
 	} satisfies GoogleOptions);
 };
-
-export function register(): void {
-	registerApiProvider({
-		api: "google-generative-ai",
-		stream: streamGoogle,
-		streamSimple: streamSimpleGoogle,
-	});
-}
 
 function createClient(
 	model: Model<"google-generative-ai">,

@@ -7,7 +7,6 @@ import type {
 	RawMessageStreamEvent,
 	RefusalStopDetails,
 } from "@anthropic-ai/sdk/resources/messages.js";
-import { registerApiProvider } from "../api-registry.ts";
 import { calculateCost } from "../models.ts";
 import type {
 	AnthropicMessagesCompat,
@@ -1151,14 +1150,6 @@ export const streamSimpleAnthropic: StreamFunction<"anthropic-messages", SimpleS
 		thinkingBudgetTokens: adjusted.thinkingBudget,
 	} satisfies AnthropicOptions);
 };
-
-export function register(): void {
-	registerApiProvider({
-		api: "anthropic-messages",
-		stream: streamAnthropic,
-		streamSimple: streamSimpleAnthropic,
-	});
-}
 
 function isOAuthToken(apiKey: string): boolean {
 	return apiKey.includes("sk-ant-oat");

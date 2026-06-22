@@ -1010,6 +1010,7 @@ describe("ModelRegistry", () => {
 
 			expect(registry.getProviderDisplayName("openai")).toBe("OpenAI");
 			expect(registry.getProviderDisplayName("github-copilot")).toBe("GitHub Copilot");
+			expect(registry.getProviderDisplayName("zai")).toBe("ZAI Coding Plan (Global)");
 			expect(registry.getProviderDisplayName("unknown-provider")).toBe("unknown-provider");
 
 			registry.registerProvider("named-provider", {

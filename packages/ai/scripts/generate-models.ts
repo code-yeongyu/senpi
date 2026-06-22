@@ -164,6 +164,14 @@ const ZAI_GLM52_THINKING_LEVEL_MAP = {
 	high: "high",
 	xhigh: "max",
 } as const;
+const OPENCODE_GO_GLM52_THINKING_LEVEL_MAP = {
+	off: null,
+	minimal: null,
+	low: null,
+	medium: null,
+	high: "high",
+	xhigh: "max",
+} as const;
 const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS = new Set([
 	"github-copilot:claude-haiku-4.5",
 	"github-copilot:claude-sonnet-4",
@@ -379,6 +387,9 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	}
 	if (model.provider === "fireworks" && model.id === "accounts/fireworks/models/glm-5p2") {
 		mergeThinkingLevelMap(model, { off: "none", minimal: null, low: "high", medium: "high", xhigh: "max" });
+	}
+	if (model.provider === "opencode-go" && model.id === "glm-5.2") {
+		mergeThinkingLevelMap(model, OPENCODE_GO_GLM52_THINKING_LEVEL_MAP);
 	}
 	if (model.provider === "opencode-go" && model.id === "kimi-k2.6") {
 		// OpenCode Go exposes Kimi K2.6 thinking as on/off, not distinct effort tiers.

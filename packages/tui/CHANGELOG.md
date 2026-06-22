@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Added `Ctrl+J` as a default newline keybinding alongside `Shift+Enter`.
+
+## [0.79.10] - 2026-06-22
+
 ## [2026.6.21] - 2026-06-21
 
 ## [0.79.9] - 2026-06-20

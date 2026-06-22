@@ -53,6 +53,11 @@ jobs:
               return;
             }
 
+            if (context.payload.action === 'labeled' && context.payload.label?.name === NO_ACTION_LABEL) {
+              await removeLabelIfPresent(context.issue.number, context.payload.issue, UNTRIAGED_LABEL);
+              return;
+            }
+
             if (context.payload.action !== 'labeled' || context.payload.label?.name !== LAST_READ_LABEL) {
               console.log('Not a last-read label event');
               return;

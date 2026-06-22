@@ -13,8 +13,8 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { complete } from "../src/index.ts";
 import { getModel } from "../src/models.ts";
+import { complete } from "../src/stream.ts";
 import type { Api, Context, Model, StreamOptions, Usage } from "../src/types.ts";
 import { getLiveEnvApiKey, OPENROUTER_LIVE_TEST_FLAG } from "./live-api-gates.ts";
 

@@ -121,7 +121,7 @@ For each built-in provider, pi maintains a list of tool-capable models, updated 
 - xAI
 - OpenRouter
 - Vercel AI Gateway
-- ZAI
+- ZAI Coding Plan (Global)
 - ZAI Coding Plan (China)
 - OpenCode Zen
 - OpenCode Go
@@ -186,7 +186,8 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/clone` | Duplicate the current active branch into a new session |
 | `/compact [prompt]` | Manually compact context, optional custom instructions |
 | `/copy` | Copy last assistant message to clipboard |
-| `/export [file]` | Export session to HTML file |
+| `/export [file]` | Export session to HTML or JSONL file |
+| `/import <file>` | Import and resume a session from a JSONL file |
 | `/share` | Upload as private GitHub gist with shareable HTML link |
 | `/reload` | Reload keybindings, extensions, skills, prompts, and context files (themes hot-reload automatically) |
 | `/hotkeys` | Show all keyboard shortcuts |

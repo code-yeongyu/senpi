@@ -6,7 +6,6 @@ import type {
 	ChatCompletionContentPartText,
 	ChatCompletionCreateParamsNonStreaming,
 } from "openai/resources/chat/completions.js";
-import { registerImagesApiProvider } from "../../images-api-registry.ts";
 import type {
 	AssistantImages,
 	ImageContent,
@@ -103,13 +102,6 @@ export const generateImagesOpenRouter: ImagesFunction<"openrouter-images", Image
 		return output;
 	}
 };
-
-export function register(): void {
-	registerImagesApiProvider({
-		api: "openrouter-images",
-		generateImages: generateImagesOpenRouter,
-	});
-}
 
 function createClient(
 	model: ImagesModel<"openrouter-images">,

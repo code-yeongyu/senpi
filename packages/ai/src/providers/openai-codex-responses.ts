@@ -20,7 +20,6 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
 	});
 }
 
-import { registerApiProvider } from "../api-registry.ts";
 import { clampThinkingLevel, supportsXhigh } from "../models.ts";
 import { registerSessionResourceCleanup } from "../session-resources.ts";
 import type {
@@ -435,14 +434,6 @@ export const streamSimpleOpenAICodexResponses: StreamFunction<"openai-codex-resp
 		reasoningEffort,
 	} satisfies OpenAICodexResponsesOptions);
 };
-
-export function register(): void {
-	registerApiProvider({
-		api: "openai-codex-responses",
-		stream: streamOpenAICodexResponses,
-		streamSimple: streamSimpleOpenAICodexResponses,
-	});
-}
 
 // ============================================================================
 // Request Building

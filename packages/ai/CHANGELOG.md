@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed OpenCode Go GLM-5.2 metadata to expose `xhigh` reasoning and send `reasoning_effort: "max"` ([#5967](https://github.com/earendil-works/pi/issues/5967)).
+
+## [0.79.10] - 2026-06-22
+
+### Fixed
+
+- Fixed OpenAI-compatible streaming to preserve encrypted `reasoning_details` that arrive before matching tool call deltas ([#5114](https://github.com/earendil-works/pi/issues/5114)).
+
 ## [2026.6.21] - 2026-06-21
 
 ## [0.79.9] - 2026-06-20

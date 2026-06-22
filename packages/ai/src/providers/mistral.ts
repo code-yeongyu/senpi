@@ -6,7 +6,6 @@ import type {
 	ContentChunk,
 	FunctionTool,
 } from "@mistralai/mistralai/models/components";
-import { registerApiProvider } from "../api-registry.ts";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
 import type {
 	AssistantMessage,
@@ -141,14 +140,6 @@ export const streamSimpleMistral: StreamFunction<"mistral-conversations", Simple
 			shouldUseReasoning && usesReasoningEffort(model) ? mapReasoningEffort(model, reasoning) : undefined,
 	} satisfies MistralOptions);
 };
-
-export function register(): void {
-	registerApiProvider({
-		api: "mistral-conversations",
-		stream: streamMistral,
-		streamSimple: streamSimpleMistral,
-	});
-}
 
 function createOutput(model: Model<"mistral-conversations">): AssistantMessage {
 	return {

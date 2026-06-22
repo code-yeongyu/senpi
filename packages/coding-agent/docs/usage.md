@@ -44,11 +44,13 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/name <name>` | Set session display name |
 | `/session` | Show session file, ID, messages, tokens, and cost |
 | `/tree` | Jump to any point in the session and continue from there |
+| `/trust` | Save project trust decision for future sessions |
 | `/fork` | Create a new session from a previous user message |
 | `/clone` | Duplicate the current active branch into a new session |
 | `/compact [prompt]` | Manually compact context, optionally with custom instructions |
 | `/copy` | Copy last assistant message to clipboard |
-| `/export [file]` | Export session to HTML |
+| `/export [file]` | Export session to HTML or JSONL |
+| `/import <file>` | Import and resume a session from a JSONL file |
 | `/share` | Upload as private GitHub gist with shareable HTML link |
 | `/reload` | Reload keybindings, extensions, skills, prompts, and context files |
 | `/hotkeys` | Show all keyboard shortcuts |
