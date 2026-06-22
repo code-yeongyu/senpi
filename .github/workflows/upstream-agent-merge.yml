@@ -70,6 +70,8 @@ jobs:
           fi
           git config user.name "senpi-merge-bot"
           git config user.email "actions@github.com"
+          git fetch --quiet origin main
+          git checkout -B main origin/main
           git remote add upstream "${UPSTREAM_URL}" 2>/dev/null || git remote set-url upstream "${UPSTREAM_URL}"
           git fetch --quiet --tags upstream
 
@@ -221,7 +223,7 @@ jobs:
           QUOTIO_API_KEY: ${{ secrets.QUOTIO_API_KEY }}
         run: |
           set -euo pipefail
-          BRANCH="automation/upstream-${UPSTREAM_TAG}"
+          BRANCH="automation/upstream-${UPSTREAM_TAG}-${GITHUB_RUN_ID}"
           git checkout -B "$BRANCH"
 
           {
@@ -282,7 +284,24 @@ jobs:
         run: |
           set -euo pipefail
           BRANCH="${{ steps.agent.outputs.branch }}"
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$BRANCH:$BRANCH"
+          git fetch --quiet origin main
+          if git merge-base --is-ancestor "$UPSTREAM_SHA" origin/main; then
+            echo "merged=false" >> "$GITHUB_OUTPUT"
+            echo "Upstream ${UPSTREAM_TAG} is already merged into origin/main; skipping stale PR and release."
+            exit 0
+          fi
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:$BRANCH"
+          for attempt in {1..12}; do
+            AHEAD_BY="$(gh api "repos/${GITHUB_REPOSITORY}/compare/main...${BRANCH}" --jq '.ahead_by // 0' 2>/dev/null || echo 0)"
+            if [ "$AHEAD_BY" -gt 0 ]; then
+              break
+            fi
+            if [ "$attempt" = "12" ]; then
+              echo "::error::Pushed ${BRANCH}, but GitHub compare still does not show commits ahead of main."
+              exit 1
+            fi
+            sleep 5
+          done
 
           BODY_FILE=/tmp/upstream-pr-body.md
           {
@@ -299,24 +318,50 @@ jobs:
             echo "- \`senpi-qa\` common, mock-loop, CLI smoke, and tmux TUI smoke when available"
           } > "$BODY_FILE"
 
-          EXISTING="$(gh pr list --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+          PR_HEAD="${GITHUB_REPOSITORY_OWNER}:${BRANCH}"
+          EXISTING="$(gh pr list --repo "$GITHUB_REPOSITORY" --base main --head "$PR_HEAD" --state open --json number --jq '.[0].number // empty')"
           if [ -n "$EXISTING" ]; then
             PR_NUMBER="$EXISTING"
             gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --title "sync: upstream ${UPSTREAM_TAG}" --body-file "$BODY_FILE"
           else
-            PR_URL="$(gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" --title "sync: upstream ${UPSTREAM_TAG}" --body-file "$BODY_FILE")"
+            PR_URL="$(gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$PR_HEAD" --title "sync: upstream ${UPSTREAM_TAG}" --body-file "$BODY_FILE")"
             PR_NUMBER="${PR_URL##*/}"
           fi
           echo "number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "url=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json url --jq .url)" >> "$GITHUB_OUTPUT"
 
+          QA_COMMENT_FILE=/tmp/upstream-pr-qa.md
+          {
+            echo "## QA evidence"
+            echo
+            echo "- Workflow run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "- Artifact: \`upstream-agent-qa-${UPSTREAM_TAG}\`"
+            echo "- Upstream SHA: \`${UPSTREAM_SHA}\`"
+            echo
+            echo "Evidence files captured before this PR was opened:"
+            find "$EVIDENCE_DIR" -maxdepth 1 -type f -printf "- \`%f\`\n" | sort
+          } > "$QA_COMMENT_FILE"
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$QA_COMMENT_FILE"
+
+          for attempt in {1..24}; do
+            CHECK_COUNT="$(gh pr checks "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json name --jq '[.[] | select(.name == "Check and test")] | length' 2>/dev/null || echo 0)"
+            if [ "$CHECK_COUNT" -gt 0 ]; then
+              break
+            fi
+            if [ "$attempt" = "24" ]; then
+              echo "::error::PR ${PR_NUMBER} has no reported Check and test CI check yet."
+              exit 1
+            fi
+            sleep 5
+          done
           gh pr checks "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --watch --fail-fast --interval 30
           HEAD_SHA="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)"
           gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --merge --delete-branch --match-head-commit "$HEAD_SHA"
+          echo "merged=true" >> "$GITHUB_OUTPUT"
 
       - name: Fresh /cl release audit
         id: release_audit
-        if: steps.detect.outputs.proceed == 'true' && steps.agent.outputs.result == 'CLEAN_PR_READY' && github.event.inputs.dry_run != 'true'
+        if: steps.detect.outputs.proceed == 'true' && steps.agent.outputs.result == 'CLEAN_PR_READY' && steps.pr.outputs.merged == 'true' && github.event.inputs.dry_run != 'true'
         env:
           QUOTIO_API_KEY: ${{ secrets.QUOTIO_API_KEY }}
         run: |
@@ -348,7 +393,7 @@ jobs:
 
       - name: Decide release worthiness
         id: worthy
-        if: steps.detect.outputs.proceed == 'true' && steps.agent.outputs.result == 'CLEAN_PR_READY' && github.event.inputs.dry_run != 'true' && steps.release_audit.outputs.decision == 'RELEASE'
+        if: steps.detect.outputs.proceed == 'true' && steps.agent.outputs.result == 'CLEAN_PR_READY' && steps.pr.outputs.merged == 'true' && github.event.inputs.dry_run != 'true' && steps.release_audit.outputs.decision == 'RELEASE'
         run: |
           ARGS=()
           if [ "${{ github.event.inputs.force_release }}" = "true" ]; then ARGS+=(--force-release); fi
@@ -357,7 +402,7 @@ jobs:
 
       - name: Release after PR merge
         id: release
-        if: steps.detect.outputs.proceed == 'true' && steps.agent.outputs.result == 'CLEAN_PR_READY' && github.event.inputs.dry_run != 'true' && steps.release_audit.outputs.decision == 'RELEASE' && (steps.worthy.outputs.release_worthy == 'true' || github.event.inputs.force_release == 'true')
+        if: steps.detect.outputs.proceed == 'true' && steps.agent.outputs.result == 'CLEAN_PR_READY' && steps.pr.outputs.merged == 'true' && github.event.inputs.dry_run != 'true' && steps.release_audit.outputs.decision == 'RELEASE' && (steps.worthy.outputs.release_worthy == 'true' || github.event.inputs.force_release == 'true')
         env:
           GH_TOKEN: ${{ secrets.UPSTREAM_AUTOMATION_TOKEN }}
           PI_ALLOW_LOCKFILE_CHANGE: '1'
@@ -444,7 +489,7 @@ jobs:
 
       - name: No release needed
         id: no_release_needed
-        if: steps.detect.outputs.proceed == 'true' && (steps.agent.outputs.result == 'NO_RELEASE_NEEDED' || steps.release_audit.outputs.decision == 'SKIP' || steps.worthy.outputs.release_worthy == 'false')
+        if: steps.detect.outputs.proceed == 'true' && (steps.agent.outputs.result == 'NO_RELEASE_NEEDED' || steps.pr.outputs.merged == 'false' || steps.release_audit.outputs.decision == 'SKIP' || steps.worthy.outputs.release_worthy == 'false')
         run: |
           echo "NO_RELEASE_NEEDED: upstream sync completed without release-worthy package changes."
 
@@ -463,6 +508,7 @@ jobs:
           UPSTREAM_SHA: ${{ steps.detect.outputs.sha || '' }}
           AGENT_RESULT: ${{ steps.agent.outputs.result || 'skipped' }}
           PR_URL: ${{ steps.pr.outputs.url || '' }}
+          PR_MERGED: ${{ steps.pr.outputs.merged || 'skipped' }}
           RELEASE_DECISION: ${{ steps.release_audit.outputs.decision || 'skipped' }}
           RELEASE_WORTHY: ${{ steps.worthy.outputs.release_worthy || 'skipped' }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
@@ -481,6 +527,10 @@ jobs:
             follow_up="attention issue or failure path: agent result ${AGENT_RESULT}"
           elif [ "$DRY_RUN" = "true" ]; then
             follow_up="dry-run release preview"
+          elif [ "$PR_MERGED" = "false" ]; then
+            follow_up="none: upstream release was already merged by another run"
+          elif [ "$PR_OUTCOME" != "success" ]; then
+            follow_up="PR step did not complete; inspect logs"
           elif [ "$RELEASE_OUTCOME" = "success" ]; then
             follow_up="release executed"
           elif [ "$NO_RELEASE_OUTCOME" = "success" ]; then
@@ -501,6 +551,7 @@ jobs:
             echo "| Merge agent result | \`${AGENT_RESULT}\` |"
             echo "| Sync PR | ${PR_URL:-none} |"
             echo "| PR merge step | \`${PR_OUTCOME}\` |"
+            echo "| PR merged by this run | \`${PR_MERGED}\` |"
             echo "| Release audit decision | \`${RELEASE_DECISION}\` |"
             echo "| Release-worthy changes | \`${RELEASE_WORTHY}\` |"
             echo "| Force release input | \`${FORCE_RELEASE}\` |"
