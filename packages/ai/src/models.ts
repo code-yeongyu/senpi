@@ -1,10 +1,27 @@
 import { MODELS } from "./models.generated.ts";
-import type { Api, KnownProvider, Model, ModelThinkingLevel, Usage } from "./types.ts";
+import type { Api, KnownProvider, Model, ModelThinkingLevel, OpenAICompletionsCompat, Usage } from "./types.ts";
 
 type GeneratedProvider = keyof typeof MODELS;
 
 const providerNames = Object.keys(MODELS) as KnownProvider[];
 const modelRegistry: Map<string, Map<string, Model<Api>>> = new Map();
+
+function normalizeGeneratedModel(model: Model<Api>): Model<Api> {
+	if (
+		model.api !== "openai-completions" ||
+		(model.provider !== "xiaomi" && !model.provider.startsWith("xiaomi-token-plan-"))
+	) {
+		return model;
+	}
+
+	const compat: OpenAICompletionsCompat = {
+		...(model.compat as OpenAICompletionsCompat | undefined),
+		requiresReasoningContentOnAssistantMessages: true,
+		thinkingFormat: "deepseek",
+		supportsDisabledThinking: false,
+	};
+	return { ...model, compat };
+}
 
 function getProviderModels(provider: GeneratedProvider): Map<string, Model<Api>> | undefined {
 	const cached = modelRegistry.get(provider);
@@ -13,7 +30,7 @@ function getProviderModels(provider: GeneratedProvider): Map<string, Model<Api>>
 	if (!models) return undefined;
 	const providerModels = new Map<string, Model<Api>>();
 	for (const [id, model] of Object.entries(models)) {
-		providerModels.set(id, model as Model<Api>);
+		providerModels.set(id, normalizeGeneratedModel(model as Model<Api>));
 	}
 	modelRegistry.set(provider, providerModels);
 	return providerModels;
