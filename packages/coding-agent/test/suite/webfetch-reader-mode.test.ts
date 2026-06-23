@@ -6,6 +6,7 @@ import type { ExtensionContext } from "../../src/core/extensions/types.ts";
 
 type RouteHandler = (request: IncomingMessage, response: ServerResponse) => void;
 type WebfetchParams = Static<typeof webfetch.parameters>;
+type CapturedHeaders = IncomingMessage["headers"];
 
 const servers: Server[] = [];
 const context = {} as ExtensionContext;
@@ -33,6 +34,12 @@ function textContent(result: Awaited<ReturnType<typeof executeWebfetch>>): strin
 		throw new Error("Expected text content");
 	}
 	return first.text;
+}
+
+function headerValue(headers: CapturedHeaders, name: string): string {
+	const value = headers[name.toLowerCase()];
+	if (Array.isArray(value)) return value.join(", ");
+	return value ?? "";
 }
 
 afterEach(async () => {
@@ -113,5 +120,77 @@ describe("webfetch reader-mode cleanup", () => {
 		expect(text).not.toContain("Fixture sponsored sidebar");
 		expect(text).not.toContain("Fixture footer legal links");
 		expect(text).not.toContain("fixtureTracker");
+	});
+
+	it("#given a web page #when fetching markdown #then sends browser navigation headers", async () => {
+		// given
+		let capturedHeaders: CapturedHeaders | undefined;
+		const server = await createFixtureServer((request, response) => {
+			capturedHeaders = request.headers;
+			response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+			response.end(readerFixtureHtml());
+		});
+
+		// when
+		await executeWebfetch({ url: `${server.baseUrl}/article`, format: "markdown" });
+
+		// then
+		expect(capturedHeaders).toBeDefined();
+		if (!capturedHeaders) throw new Error("Expected captured request headers");
+		expect(headerValue(capturedHeaders, "user-agent")).toContain("Mozilla/5.0");
+		expect(headerValue(capturedHeaders, "accept")).toContain("text/markdown");
+		expect(headerValue(capturedHeaders, "accept-language")).toBe("en-US,en;q=0.9");
+		expect(headerValue(capturedHeaders, "sec-fetch-mode")).toBe("navigate");
+		expect(headerValue(capturedHeaders, "sec-fetch-dest")).toBe("document");
+		expect(headerValue(capturedHeaders, "sec-ch-ua-platform")).toBe('"Windows"');
+	});
+
+	it("#given a Cloudflare challenge response #when fetching #then does not retry with a bot identity", async () => {
+		// given
+		const attempts: CapturedHeaders[] = [];
+		const server = await createFixtureServer((request, response) => {
+			attempts.push(request.headers);
+			if (attempts.length === 1) {
+				response.writeHead(403, {
+					"cf-mitigated": "challenge",
+					"content-type": "text/html; charset=utf-8",
+				});
+				response.end("<html><body>challenge</body></html>");
+				return;
+			}
+			response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+			response.end(readerFixtureHtml());
+		});
+
+		// when
+		await executeWebfetch({ url: `${server.baseUrl}/article`, format: "markdown" });
+
+		// then
+		expect(attempts).toHaveLength(1);
+		const challengeHeaders = attempts[0];
+		if (!challengeHeaders) throw new Error("Expected challenge request headers");
+		expect(headerValue(challengeHeaders, "user-agent")).toContain("Mozilla/5.0");
+		expect(headerValue(challengeHeaders, "user-agent")).not.toContain("pi-webfetch");
+		expect(headerValue(challengeHeaders, "sec-fetch-mode")).toBe("navigate");
+		expect(headerValue(challengeHeaders, "sec-fetch-dest")).toBe("document");
+		expect(headerValue(challengeHeaders, "sec-ch-ua-platform")).toBe('"Windows"');
+	});
+
+	it("#given too many redirects #when fetching #then returns the final redirect response body", async () => {
+		// given
+		const server = await createFixtureServer((_request, response) => {
+			response.writeHead(302, {
+				location: "/loop",
+				"content-type": "text/plain; charset=utf-8",
+			});
+			response.end("redirect limit reached");
+		});
+
+		// when
+		const result = await executeWebfetch({ url: `${server.baseUrl}/loop`, format: "text" });
+		const text = textContent(result);
+
+		// then
+		expect(text).toContain("redirect limit reached");
 	});
 });

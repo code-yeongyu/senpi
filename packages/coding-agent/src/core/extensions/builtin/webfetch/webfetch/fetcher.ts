@@ -1,3 +1,6 @@
+import type { IncomingHttpHeaders } from "node:http";
+import { request } from "undici";
+
 import {
 	InvalidWebfetchUrlError,
 	WebfetchAbortError,
@@ -8,9 +11,12 @@ import {
 export const MAX_RESPONSE_SIZE_BYTES = 5 * 1024 * 1024;
 export const DEFAULT_TIMEOUT_SECONDS = 30;
 export const MAX_TIMEOUT_SECONDS = 120;
+const MAX_REDIRECTS = 20;
 
 const BROWSER_USER_AGENT =
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
+const CHROME_MAJOR_VERSION = "143";
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 export type WebfetchFormat = "markdown" | "text" | "html";
 
@@ -31,33 +37,40 @@ export interface FetchResult {
 	truncated: boolean;
 }
 
+interface HttpResponse {
+	readonly url: string;
+	readonly status: number;
+	readonly statusText: string;
+	readonly headers: IncomingHttpHeaders;
+	readonly body: ResponseBodyStream;
+}
+
+interface ResponseBodyStream extends AsyncIterable<unknown> {
+	destroy(error?: Error): void;
+	dump(options?: { limit: number; signal?: AbortSignal }): Promise<void>;
+}
+
 export async function fetchUrl(options: FetchOptions): Promise<FetchResult> {
 	validateUrl(options.url);
 
 	const timeoutSeconds = clampTimeout(options.timeoutSeconds);
+	const timeoutMs = timeoutSeconds * 1000;
 	const controller = new AbortController();
 	const timeout = setTimeout(
 		() => controller.abort(new WebfetchTimeoutError(`Request timed out after ${timeoutSeconds}s`)),
-		timeoutSeconds * 1000,
+		timeoutMs,
 	);
 	const removeAbortForwarder = forwardAbort(options.signal, controller);
 
 	try {
-		const response = await fetch(options.url, {
-			headers: buildHeaders(options.format, BROWSER_USER_AGENT),
+		const response = await requestUrl({
+			url: options.url,
+			format: options.format,
 			signal: controller.signal,
+			timeoutMs,
 		});
 
-		if (response.status === 403 && response.headers.get("cf-mitigated") === "challenge") {
-			await cancelBody(response);
-			const retry = await fetch(options.url, {
-				headers: buildHeaders(options.format, "pi-webfetch"),
-				signal: controller.signal,
-			});
-			return await readFetchResponse(options.url, retry, controller.signal);
-		}
-
-		return await readFetchResponse(options.url, response, controller.signal);
+		return await readHttpResponse(response, controller.signal);
 	} finally {
 		clearTimeout(timeout);
 		removeAbortForwarder();
@@ -93,68 +106,139 @@ export function buildAcceptHeader(format: WebfetchFormat): string {
 	}
 }
 
-function buildHeaders(format: WebfetchFormat, userAgent: string): Record<string, string> {
+function buildHeaders(format: WebfetchFormat): Record<string, string> {
 	return {
 		Accept: buildAcceptHeader(format),
 		"Accept-Language": "en-US,en;q=0.9",
-		"User-Agent": userAgent,
+		"Sec-CH-UA": `"Google Chrome";v="${CHROME_MAJOR_VERSION}", "Chromium";v="${CHROME_MAJOR_VERSION}", "Not A(Brand";v="24"`,
+		"Sec-CH-UA-Mobile": "?0",
+		"Sec-CH-UA-Platform": '"Windows"',
+		"Sec-Fetch-Dest": "document",
+		"Sec-Fetch-Mode": "navigate",
+		"Sec-Fetch-Site": "none",
+		"Sec-Fetch-User": "?1",
+		"Upgrade-Insecure-Requests": "1",
+		"User-Agent": BROWSER_USER_AGENT,
 	};
 }
 
-async function readFetchResponse(url: string, response: Response, signal: AbortSignal): Promise<FetchResult> {
+interface RequestUrlOptions {
+	readonly url: string;
+	readonly format: WebfetchFormat;
+	readonly signal: AbortSignal;
+	readonly timeoutMs: number;
+}
+
+async function requestUrl(options: RequestUrlOptions): Promise<HttpResponse> {
+	const headers = buildHeaders(options.format);
+	let currentUrl = options.url;
+
+	for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
+		const response = await request(currentUrl, {
+			method: "GET",
+			headers,
+			signal: options.signal,
+			headersTimeout: options.timeoutMs,
+			bodyTimeout: options.timeoutMs,
+		});
+
+		if (!REDIRECT_STATUSES.has(response.statusCode)) {
+			return {
+				url: currentUrl,
+				status: response.statusCode,
+				statusText: response.statusText,
+				headers: response.headers,
+				body: response.body,
+			};
+		}
+
+		const location = getHeader(response.headers, "location");
+		if (!location) {
+			return {
+				url: currentUrl,
+				status: response.statusCode,
+				statusText: response.statusText,
+				headers: response.headers,
+				body: response.body,
+			};
+		}
+
+		if (redirectCount === MAX_REDIRECTS) {
+			return {
+				url: currentUrl,
+				status: response.statusCode,
+				statusText: response.statusText,
+				headers: response.headers,
+				body: response.body,
+			};
+		}
+
+		await discardBody(response.body);
+		currentUrl = new URL(location, currentUrl).toString();
+	}
+
+	throw new WebfetchAbortError("Redirect resolution aborted");
+}
+
+async function readHttpResponse(response: HttpResponse, signal: AbortSignal): Promise<FetchResult> {
 	await rejectOversizedContentLength(response);
 	const body = await readResponseBody(response, signal);
 	return {
-		url: response.url || url,
+		url: response.url,
 		status: response.status,
 		statusText: response.statusText,
-		contentType: response.headers.get("content-type") ?? "",
+		contentType: getHeader(response.headers, "content-type"),
 		bytes: body.length,
 		body,
 		truncated: body.length === MAX_RESPONSE_SIZE_BYTES,
 	};
 }
 
-async function rejectOversizedContentLength(response: Response): Promise<void> {
-	const contentLength = response.headers.get("content-length");
+async function rejectOversizedContentLength(response: HttpResponse): Promise<void> {
+	const contentLength = getHeader(response.headers, "content-length");
 	if (contentLength && Number.parseInt(contentLength, 10) > MAX_RESPONSE_SIZE_BYTES) {
-		await cancelBody(response);
+		await discardBody(response.body);
 		throw new WebfetchResponseTooLargeError("Response too large (exceeds 5MB limit)");
 	}
 }
 
-async function cancelBody(response: Response): Promise<void> {
+function getHeader(headers: IncomingHttpHeaders, name: string): string {
+	const value = headers[name.toLowerCase()];
+	if (Array.isArray(value)) return value.join(", ");
+	return value ?? "";
+}
+
+async function discardBody(body: ResponseBodyStream): Promise<void> {
 	try {
-		await response.body?.cancel();
+		await body.dump({ limit: 1024 });
 	} catch {
 		// Preserve the caller's original failure.
 	}
 }
 
-async function readResponseBody(response: Response, signal: AbortSignal): Promise<Uint8Array> {
-	if (!response.body) return new Uint8Array();
-
-	const reader = response.body.getReader();
+async function readResponseBody(response: HttpResponse, signal: AbortSignal): Promise<Uint8Array> {
 	const chunks: Uint8Array[] = [];
 	let total = 0;
 
 	try {
-		while (true) {
+		for await (const chunk of response.body) {
 			if (signal.aborted) {
-				await cancelReader(reader);
+				response.body.destroy();
 				throw new WebfetchAbortError("Request aborted");
 			}
-			const read = await reader.read();
-			if (read.done) break;
-			chunks.push(read.value);
-			total += read.value.length;
+			const bytes = toUint8Array(chunk);
+			chunks.push(bytes);
+			total += bytes.length;
 			if (total > MAX_RESPONSE_SIZE_BYTES) {
-				await cancelReader(reader);
+				response.body.destroy();
 				throw new WebfetchResponseTooLargeError("Response too large (exceeds 5MB limit)");
 			}
 		}
-	} finally {
-		reader.releaseLock();
+	} catch (error) {
+		if (signal.aborted) {
+			throw new WebfetchAbortError("Request aborted");
+		}
+		throw error;
 	}
 
 	const body = new Uint8Array(total);
@@ -166,12 +250,10 @@ async function readResponseBody(response: Response, signal: AbortSignal): Promis
 	return body;
 }
 
-async function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
-	try {
-		await reader.cancel();
-	} catch {
-		// Preserve the caller's original failure.
-	}
+function toUint8Array(chunk: unknown): Uint8Array {
+	if (chunk instanceof Uint8Array) return chunk;
+	if (typeof chunk === "string") return new TextEncoder().encode(chunk);
+	throw new Error("Unexpected response body chunk");
 }
 
 function forwardAbort(signal: AbortSignal | undefined, controller: AbortController): () => void {
