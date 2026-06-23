@@ -36,7 +36,16 @@ For Slack/chat automation and workflows see [earendil-works/pi-chat](https://git
 
 ## Permissions & Containerization
 
-Pi does not include a built-in permission system for restricting filesystem, process, network, or credential access. By default, it runs with the permissions of the user and process that launched it.
+Pi runs with the permissions of the user and process that launched it. The built-in permission system can ask, allow, or deny tool calls before they run, but it is not a sandbox and does not restrict the host process, installed extensions, package installs, or child processes after they are started.
+
+By default, Pi uses the `full-access` permission preset, so ordinary tool calls do not prompt. Choose a stricter preset with `permissionPreset` in settings or `--permission-preset` on the CLI:
+
+- `full-access`: allow all permission checks
+- `workspace`: allow workspace read, search, edit, and shell tools; ask for external-directory access
+- `read-only`: allow read/search/list tools; ask before edits, shell commands, and external-directory access
+- `ask`: restore prompt-on-unknown behavior
+
+Explicit `permission` rules in settings and `--permission` CLI rules override the selected preset.
 
 If you need stronger boundaries, containerize or sandbox Pi. See [packages/coding-agent/docs/containerization.md](packages/coding-agent/docs/containerization.md) for three patterns:
 

@@ -1,4 +1,4 @@
-import type { Action, Rule, Ruleset } from "./types.ts";
+import type { Action, PermissionPresetName, Rule, Ruleset } from "./types.ts";
 
 export function parsePermissionFlag(value: string): Ruleset {
 	const rules: Rule[] = [];
@@ -20,4 +20,20 @@ export function parsePermissionFlag(value: string): Ruleset {
 	}
 
 	return rules;
+}
+
+export function parsePermissionPresetFlag(value: string): PermissionPresetName | undefined {
+	return parsePermissionPresetName(value.trim());
+}
+
+export function parsePermissionPresetName(value: string): PermissionPresetName | undefined {
+	switch (value) {
+		case "full-access":
+		case "workspace":
+		case "read-only":
+		case "ask":
+			return value;
+		default:
+			return undefined;
+	}
 }

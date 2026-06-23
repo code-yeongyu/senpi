@@ -21,6 +21,60 @@ If no extension or saved decision applies, `defaultProjectTrust` controls the fa
 
 Use `/trust` in interactive mode to save a project trust decision for future sessions, including trust for the immediate parent folder. It writes `~/.senpi/agent/trust.json` only; the current session is not reloaded, so restart senpi for changes to take effect.
 
+## Permissions
+
+Senpi includes a built-in permission system for tool calls. It evaluates a preset first, then applies explicit rules from global settings, project settings, and CLI flags. The last matching rule wins.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `permissionPreset` | string | `"full-access"` | Permission preset: `"full-access"`, `"workspace"`, `"read-only"`, or `"ask"` |
+| `permission` | object | - | Explicit permission rules that override the selected preset |
+
+Presets:
+
+| Preset | Behavior |
+|--------|----------|
+| `full-access` | Allow all permission checks without prompting |
+| `workspace` | Allow `read`, `list`, `grep`, `edit`, and `bash`; ask for `external_directory` |
+| `read-only` | Allow `read`, `list`, and `grep`; ask for `edit`, `bash`, and `external_directory` |
+| `ask` | Restore prompt-on-unknown behavior |
+
+Example:
+
+```json
+{
+  "permissionPreset": "workspace",
+  "permission": {
+    "bash": {
+      "rm *": "deny"
+    },
+    "edit": {
+      "secrets/*": "ask"
+    }
+  }
+}
+```
+
+Flat rules apply to all patterns for that permission:
+
+```json
+{
+  "permissionPreset": "read-only",
+  "permission": {
+    "bash": "deny"
+  }
+}
+```
+
+CLI overrides have the highest precedence:
+
+```bash
+senpi --permission-preset ask
+senpi --permission-preset workspace --permission "bash:rm *=deny"
+```
+
+Permission rules are a confirmation policy, not a sandbox. Senpi, extensions, package installs, and child processes still run with the host process permissions.
+
 ## All Settings
 
 ### Model & Thinking

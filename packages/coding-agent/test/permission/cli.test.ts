@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parsePermissionFlag } from "../../src/core/extensions/builtin/permission-system/cli.ts";
+import {
+	parsePermissionFlag,
+	parsePermissionPresetFlag,
+} from "../../src/core/extensions/builtin/permission-system/cli.ts";
 import type { Rule } from "../../src/core/extensions/builtin/permission-system/types.ts";
 
 function createRule(permission: string, pattern: string, action: Rule["action"]): Rule {
@@ -124,6 +127,32 @@ describe("permission-system cli", () => {
 
 			// then
 			expect(result).toEqual([createRule("bash", "rm -rf *", "deny")]);
+		});
+	});
+
+	describe("parsePermissionPresetFlag", () => {
+		it("accepts built-in permission preset names", () => {
+			// when/then
+			expect(parsePermissionPresetFlag("full-access")).toBe("full-access");
+			expect(parsePermissionPresetFlag("workspace")).toBe("workspace");
+			expect(parsePermissionPresetFlag("read-only")).toBe("read-only");
+			expect(parsePermissionPresetFlag("ask")).toBe("ask");
+		});
+
+		it("trims valid preset names", () => {
+			// when
+			const result = parsePermissionPresetFlag(" workspace ");
+
+			// then
+			expect(result).toBe("workspace");
+		});
+
+		it("rejects unknown preset names", () => {
+			// when
+			const result = parsePermissionPresetFlag("dangerous");
+
+			// then
+			expect(result).toBeUndefined();
 		});
 	});
 });

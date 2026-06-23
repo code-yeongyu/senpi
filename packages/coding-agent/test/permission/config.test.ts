@@ -1,11 +1,13 @@
 import os from "node:os";
 import { describe, expect, it } from "vitest";
 import {
+	DEFAULT_PERMISSION_PRESET,
 	disabled,
 	EDIT_TOOLS,
 	expand,
 	fromConfig,
 	merge,
+	rulesForPreset,
 } from "../../src/core/extensions/builtin/permission-system/config.ts";
 import type { PermissionConfig, Ruleset } from "../../src/core/extensions/builtin/permission-system/types.ts";
 
@@ -14,6 +16,57 @@ describe("permission config transforms", () => {
 		it("contains the expected edit-related tools", () => {
 			// then
 			expect(EDIT_TOOLS).toEqual(["edit", "write", "apply_patch", "multiedit"]);
+		});
+	});
+
+	describe("rulesForPreset", () => {
+		it("defaults to full access so tool calls are not prompted", () => {
+			// when
+			const result = rulesForPreset(DEFAULT_PERMISSION_PRESET);
+
+			// then
+			expect(DEFAULT_PERMISSION_PRESET).toBe("full-access");
+			expect(result).toEqual([{ permission: "*", pattern: "*", action: "allow" }]);
+		});
+
+		it("keeps ask preset as the previous prompt-on-unknown behavior", () => {
+			// when
+			const result = rulesForPreset("ask");
+
+			// then
+			expect(result).toEqual([{ permission: "*", pattern: "*", action: "ask" }]);
+		});
+
+		it("allows workspace tools while asking for external directory access", () => {
+			// when
+			const result = rulesForPreset("workspace");
+
+			// then
+			expect(result).toEqual([
+				{ permission: "*", pattern: "*", action: "ask" },
+				{ permission: "read", pattern: "*", action: "allow" },
+				{ permission: "list", pattern: "*", action: "allow" },
+				{ permission: "grep", pattern: "*", action: "allow" },
+				{ permission: "edit", pattern: "*", action: "allow" },
+				{ permission: "bash", pattern: "*", action: "allow" },
+				{ permission: "external_directory", pattern: "*", action: "ask" },
+			]);
+		});
+
+		it("allows read-only tools while asking before writes and commands", () => {
+			// when
+			const result = rulesForPreset("read-only");
+
+			// then
+			expect(result).toEqual([
+				{ permission: "*", pattern: "*", action: "ask" },
+				{ permission: "read", pattern: "*", action: "allow" },
+				{ permission: "list", pattern: "*", action: "allow" },
+				{ permission: "grep", pattern: "*", action: "allow" },
+				{ permission: "edit", pattern: "*", action: "ask" },
+				{ permission: "bash", pattern: "*", action: "ask" },
+				{ permission: "external_directory", pattern: "*", action: "ask" },
+			]);
 		});
 	});
 

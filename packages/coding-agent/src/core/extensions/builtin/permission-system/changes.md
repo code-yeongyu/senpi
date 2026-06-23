@@ -22,6 +22,25 @@ Full port of opencode's permission system to senpi-mono as a builtin extension.
 ## Why Builtin Extension?
 Following pi-mono's extension-first philosophy. All permission logic is in the extension, zero core tool modifications.
 
+## 2026-06-23 - permission presets
+
+### What changed and why
+- Added `permissionPreset` settings and `--permission-preset` CLI support with `full-access` as the default.
+- Added `workspace`, `read-only`, and `ask` presets that mask lower-precedence wildcard allows before applying their own policy.
+- Kept approved JSONL storage unchanged; session approvals still load separately after static rules.
+
+### Files modified
+- `types.ts`
+- `config.ts`
+- `cli.ts`
+- `settings.ts`
+- `index.ts`
+
+### Expected merge conflict zones
+- `settings.ts` merge order if upstream changes settings precedence.
+- `config.ts` preset rule definitions if upstream adds default permission policy.
+- `index.ts` extension flag registration if upstream moves permission flags into core args.
+
 ## 2026-05-11 - Local wildcard matcher
 
 ### What changed and why

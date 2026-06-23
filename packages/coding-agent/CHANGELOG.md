@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added built-in permission presets with `full-access` as the default and `workspace`, `read-only`, and `ask` options selectable from settings or `--permission-preset`.
+
 ### Changed
 
 - Changed webfetch to send browser-shaped navigation request headers and avoid retrying challenge responses with a bot-specific identity.

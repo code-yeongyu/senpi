@@ -1,6 +1,6 @@
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { BashArity } from "../permission-system/arity.ts";
-import { extractExternalPaths } from "../permission-system/external-dir.ts";
+import { extractExternalPaths, isExternalPath } from "../permission-system/external-dir.ts";
 import type { Request } from "../permission-system/types.ts";
 
 /** Simplified permission request without ID/session metadata */
@@ -31,20 +31,51 @@ function getString(input: Record<string, unknown>, ...keys: string[]): string | 
 	return undefined;
 }
 
-function toParentDirectoryPattern(inputPath: string): string {
+type AlwaysScope = "file" | "directory";
+
+function toParentDirectoryPattern(inputPath: string, scope: AlwaysScope): string {
 	if (inputPath === "~" || inputPath === "$HOME") {
 		return `${inputPath}/*`;
+	}
+
+	if (scope === "directory") {
+		return inputPath.endsWith("/") || inputPath.endsWith("\\") ? `${inputPath}*` : `${inputPath}/*`;
 	}
 
 	if (inputPath.endsWith("/") || inputPath.endsWith("\\")) {
 		return `${inputPath}*`;
 	}
 
-	return inputPath.replace(/[\\/][^\\/]+$/, "/*");
+	const parentPattern = inputPath.replace(/[\\/][^\\/]+$/, "/*");
+	if (parentPattern === "/*") {
+		return inputPath;
+	}
+	return parentPattern;
 }
 
 function parseFilePath(input: Record<string, unknown>): string | undefined {
 	return getString(input, "path", "file_path");
+}
+
+function withExternalDirectoryRequests(
+	requests: PermissionRequest[],
+	paths: string[],
+	cwd: string,
+	scope: AlwaysScope,
+): PermissionRequest[] {
+	const externalPaths = paths.filter((inputPath) => isExternalPath(inputPath, cwd));
+	if (externalPaths.length === 0) {
+		return requests;
+	}
+
+	return [
+		...requests,
+		{
+			permission: "external_directory",
+			patterns: externalPaths,
+			always: externalPaths.map((externalPath) => toParentDirectoryPattern(externalPath, scope)),
+		},
+	];
 }
 
 /** Registry for tool-specific permission parsers */
@@ -92,7 +123,7 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 			requests.push({
 				permission: "external_directory",
 				patterns: externalPaths,
-				always: externalPaths.map(toParentDirectoryPattern),
+				always: externalPaths.map((externalPath) => toParentDirectoryPattern(externalPath, "file")),
 			});
 		}
 
@@ -103,16 +134,21 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 		return [fallbackPermissionRequest("edit")];
 	};
 
-	const parseEditPermission: ToolPermissionParser = (_toolName, input) => {
+	const parseEditPermission: ToolPermissionParser = (_toolName, input, cwd) => {
 		const filePath = parseFilePath(input);
 		if (filePath) {
-			return [
-				{
-					permission: "edit",
-					patterns: [filePath],
-					always: [filePath],
-				},
-			];
+			return withExternalDirectoryRequests(
+				[
+					{
+						permission: "edit",
+						patterns: [filePath],
+						always: [filePath],
+					},
+				],
+				[filePath],
+				cwd,
+				"file",
+			);
 		}
 
 		const patchText = getString(input, "input", "patchText");
@@ -125,11 +161,13 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 			return editParser("edit", input, "");
 		}
 
-		return patchedPaths.map((patchedPath) => ({
+		const editRequests = patchedPaths.map((patchedPath) => ({
 			permission: "edit",
 			patterns: [patchedPath],
 			always: [patchedPath],
 		}));
+
+		return withExternalDirectoryRequests(editRequests, patchedPaths, cwd, "file");
 	};
 
 	registry.register("edit", parseEditPermission);
@@ -137,22 +175,27 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 	registry.register("apply_patch", parseEditPermission);
 	registry.register("multiedit", parseEditPermission);
 
-	registry.register("read", (_toolName, input) => {
+	registry.register("read", (_toolName, input, cwd) => {
 		const filePath = parseFilePath(input);
 		if (!filePath) {
 			return [fallbackPermissionRequest("read")];
 		}
 
-		return [
-			{
-				permission: "read",
-				patterns: [filePath],
-				always: [filePath],
-			},
-		];
+		return withExternalDirectoryRequests(
+			[
+				{
+					permission: "read",
+					patterns: [filePath],
+					always: [filePath],
+				},
+			],
+			[filePath],
+			cwd,
+			"file",
+		);
 	});
 
-	registry.register("grep", (_toolName, input) => {
+	registry.register("grep", (_toolName, input, cwd) => {
 		const searchPath = getString(input, "path");
 		const pattern = getString(input, "pattern");
 		const permissionPattern = searchPath ?? pattern;
@@ -160,24 +203,30 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 			return [fallbackPermissionRequest("grep")];
 		}
 
-		return [
+		const grepRequests: PermissionRequest[] = [
 			{
 				permission: "grep",
 				patterns: [permissionPattern],
 				always: ["*"],
 			},
 		];
+		return searchPath ? withExternalDirectoryRequests(grepRequests, [searchPath], cwd, "directory") : grepRequests;
 	});
 
-	const listParser: ToolPermissionParser = (_toolName, input) => {
+	const listParser: ToolPermissionParser = (_toolName, input, cwd) => {
 		const searchPath = getString(input, "path") ?? ".";
-		return [
-			{
-				permission: "list",
-				patterns: [searchPath],
-				always: [searchPath],
-			},
-		];
+		return withExternalDirectoryRequests(
+			[
+				{
+					permission: "list",
+					patterns: [searchPath],
+					always: [searchPath],
+				},
+			],
+			[searchPath],
+			cwd,
+			"directory",
+		);
 	};
 
 	registry.register("find", listParser);

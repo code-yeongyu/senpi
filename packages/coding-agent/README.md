@@ -285,6 +285,37 @@ Use `/settings` to modify common options, or edit JSON files directly:
 
 See [docs/settings.md](docs/settings.md) for all options.
 
+### Permissions
+
+Pi includes a built-in permission system for tool calls. The default preset is `full-access`, which allows tool calls without prompting. Use `permissionPreset` in settings or `--permission-preset` for stricter behavior:
+
+| Preset | Behavior |
+|--------|----------|
+| `full-access` | Allow all permission checks |
+| `workspace` | Allow read, list, grep, edit, and bash; ask for external-directory access |
+| `read-only` | Allow read, list, and grep; ask before edit, bash, and external-directory access |
+| `ask` | Prompt whenever no explicit rule matches |
+
+```json
+{
+  "permissionPreset": "workspace",
+  "permission": {
+    "bash": {
+      "rm *": "deny"
+    }
+  }
+}
+```
+
+Explicit `permission` rules override the selected preset. CLI overrides have the highest precedence:
+
+```bash
+pi --permission-preset read-only
+pi --permission-preset workspace --permission "bash:rm *=deny"
+```
+
+Permissions are confirmation policy, not a sandbox. Pi and its extensions still run with the permissions of the host process. Use containers, VMs, or a policy sandbox for isolation.
+
 ### Project Trust
 
 On interactive startup, pi asks before trusting a project folder that contains project-local settings, resources, or project `.agents/skills` and has no saved decision for the folder or a parent folder in `~/.pi/agent/trust.json`. Trusting a project allows pi to load `.pi/settings.json` and `.pi` resources, install missing project packages, and execute project extensions.
@@ -491,7 +522,7 @@ Pi is aggressively extensible so it doesn't have to dictate your workflow. Featu
 
 **No sub-agents.** There's many ways to do this. Spawn pi instances via tmux, or build your own with [extensions](#extensions), or install a package that does it your way.
 
-**No permission popups.** Run in a container, or build your own confirmation flow with [extensions](#extensions) inline with your environment and security requirements.
+**Permission presets, not a sandbox.** Use the built-in permission presets for tool-call confirmation policy. Run in a container or VM when you need an actual isolation boundary.
 
 **No plan mode.** Write plans to files, or build it with [extensions](#extensions), or install a package.
 
@@ -572,6 +603,8 @@ cat README.md | pi -p "Summarize this text"
 |--------|-------------|
 | `--tools <list>`, `-t <list>` | Allowlist specific tool names across built-in, extension, and custom tools |
 | `--exclude-tools <list>`, `-xt <list>` | Disable specific tool names across built-in, extension, and custom tools |
+| `--permission-preset <preset>` | Set permission preset: `full-access`, `workspace`, `read-only`, or `ask` |
+| `--permission <rules>` | Add permission rules, e.g. `bash:rm *=deny` or `edit=ask` |
 | `--no-builtin-tools`, `-nbt` | Disable built-in tools by default but keep extension/custom tools enabled |
 | `--no-tools`, `-nt` | Disable all tools by default |
 

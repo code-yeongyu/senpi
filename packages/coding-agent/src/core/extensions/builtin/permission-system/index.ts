@@ -1,7 +1,7 @@
 import { SettingsManager } from "../../../settings-manager.ts";
 import type { ExtensionAPI } from "../../types.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
-import { parsePermissionFlag } from "./cli.ts";
+import { parsePermissionFlag, parsePermissionPresetFlag } from "./cli.ts";
 import { disabled } from "./config.ts";
 import { createEventEmitter } from "./events.ts";
 import { handleNoUI } from "./non-interactive.ts";
@@ -67,13 +67,26 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		description: "Set permission rules (format: tool=action or tool:pattern=action)",
 		type: "string",
 	});
+	pi.registerFlag("permission-preset", {
+		description: "Set permission preset (full-access, workspace, read-only, or ask)",
+		type: "string",
+	});
 
 	pi.on("session_start", async (_event, ctx) => {
 		const settingsManager = SettingsManager.create(ctx.cwd);
 		const permissionFlag = pi.getFlag("permission");
+		const permissionPresetFlag = pi.getFlag("permission-preset");
 		cliRuleset = typeof permissionFlag === "string" ? parsePermissionFlag(permissionFlag) : [];
+		const cliPreset =
+			typeof permissionPresetFlag === "string" ? parsePermissionPresetFlag(permissionPresetFlag) : undefined;
 
-		const loadedSettings = loadPermissionSettings(settingsManager, cliRuleset, ctx.cwd);
+		if (typeof permissionPresetFlag === "string" && !cliPreset) {
+			throw new Error(
+				`Invalid --permission-preset "${permissionPresetFlag}". Expected one of: full-access, workspace, read-only, ask.`,
+			);
+		}
+
+		const loadedSettings = loadPermissionSettings(settingsManager, cliRuleset, ctx.cwd, cliPreset);
 		staticRuleset = loadedSettings.staticRuleset;
 		const approved = loadedSettings.approved;
 		parserRegistry = createBuiltinParserRegistry();
