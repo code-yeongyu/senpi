@@ -1,4 +1,4 @@
-import type { Api, ImagesApi, ImagesModel, Model } from "../types.ts";
+import type { Api, ImagesApi, ImagesModel, Model, ProviderEnv } from "../types.ts";
 import type {
 	ApiKeyAuth,
 	ApiKeyCredential,
@@ -12,6 +12,11 @@ import type {
 } from "./types.ts";
 
 export type ModelsErrorCode = "model_source" | "model_validation" | "provider" | "stream" | "auth" | "oauth";
+
+export interface AuthResolutionOverrides {
+	apiKey?: string;
+	env?: ProviderEnv;
+}
 
 export class ModelsError extends Error {
 	readonly code: ModelsErrorCode;
@@ -37,20 +42,39 @@ export async function resolveProviderAuth(
 	model: AuthModel,
 	credentials: CredentialStore,
 	authContext: AuthContext,
+	overrides?: AuthResolutionOverrides,
 ): Promise<AuthResult | undefined> {
+	const requestAuthContext = overrides?.env ? overlayEnvAuthContext(authContext, overrides.env) : authContext;
+
+	if (overrides?.apiKey !== undefined && provider.auth.apiKey) {
+		return resolveApiKey(requestAuthContext, provider.auth.apiKey, model, {
+			type: "api_key",
+			key: overrides.apiKey,
+			env: overrides.env,
+		});
+	}
+
 	const stored = await readCredential(credentials, provider.id);
 	if (stored) {
 		if (stored.type === "oauth" && provider.auth.oauth) {
 			return resolveStoredOAuth(credentials, provider.id, provider.auth.oauth, stored);
 		}
-		if (stored.type === "api-key" && provider.auth.apiKey) {
-			return resolveApiKey(authContext, provider.auth.apiKey, model, stored);
+		if (stored.type === "api_key" && provider.auth.apiKey) {
+			const credential = overrides?.env ? { ...stored, env: { ...stored.env, ...overrides.env } } : stored;
+			return resolveApiKey(requestAuthContext, provider.auth.apiKey, model, credential);
 		}
 		return undefined;
 	}
 
 	// Ambient (env vars, AWS profiles, ADC files).
-	return provider.auth.apiKey ? resolveApiKey(authContext, provider.auth.apiKey, model, undefined) : undefined;
+	return provider.auth.apiKey ? resolveApiKey(requestAuthContext, provider.auth.apiKey, model, undefined) : undefined;
+}
+
+function overlayEnvAuthContext(base: AuthContext, env: ProviderEnv): AuthContext {
+	return {
+		env: async (name) => env[name] || (await base.env(name)),
+		fileExists: (path) => base.fileExists(path),
+	};
 }
 
 /**

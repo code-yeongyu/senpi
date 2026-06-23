@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createModels } from "@earendil-works/pi-ai";
-import { getBuiltinModel } from "@earendil-works/pi-ai/providers/all";
+import { cloudflareAIGatewayProvider } from "@earendil-works/pi-ai/providers/cloudflare-ai-gateway";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { InMemorySessionStorage } from "../../src/harness/session/memory-storage.ts";
@@ -39,13 +39,20 @@ const { promptTemplates: sourcedPromptTemplates } = await loadSourcedPromptTempl
 
 const models = createModels();
 models.setProvider(openaiProvider());
+models.setProvider(cloudflareAIGatewayProvider());
+const model = models.getModel("openai", "gpt-5.5");
+// const model = models.getModel("cloudflare-ai-gateway", "claude-haiku-4-5");
+if (!model) {
+	console.log("Model not found");
+	process.exit(-1);
+}
 
 const session = new Session(new InMemorySessionStorage());
 const agent = new AgentHarness({
 	env,
 	session,
 	models,
-	model: getBuiltinModel("openai", "gpt-5.5"),
+	model,
 	thinkingLevel: "low",
 	systemPrompt: ({ env, resources }) =>
 		[

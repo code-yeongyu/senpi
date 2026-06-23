@@ -361,6 +361,19 @@ const models = createModels({ credentials: myFileBackedStore });
 
 The contract is small: `read(providerId)`, `modify(providerId, fn)` (the only write path — a serialized read-modify-write), and `delete(providerId)`. OAuth token refresh runs inside `modify`, so concurrent requests and processes cannot double-refresh a rotated token. A stored credential *owns* its provider: environment variables are only consulted when nothing is stored, and a failed refresh never silently falls back to an env key.
 
+API-key credentials use the same discriminator as pi's `auth.json` and can carry provider-scoped env/config values:
+
+```typescript
+const credential = {
+  type: 'api_key',
+  key: '...',
+  env: {
+    CLOUDFLARE_ACCOUNT_ID: 'account-id',
+    CLOUDFLARE_GATEWAY_ID: 'gateway-id'
+  }
+} as const;
+```
+
 ### Environment Variables
 
 Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` explicitly):

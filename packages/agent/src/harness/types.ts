@@ -241,22 +241,6 @@ export interface FileInfo {
 	mtimeMs: number;
 }
 
-/** Options for {@link Shell.exec}. */
-export interface ExecutionEnvExecOptions {
-	/** Working directory for the command. Relative paths are resolved against {@link ExecutionEnv.cwd}. Defaults to {@link ExecutionEnv.cwd}. */
-	cwd?: string;
-	/** Additional environment variables for the command. Values override the environment defaults. Defaults to no overrides. */
-	env?: Record<string, string>;
-	/** Timeout in seconds. Implementations should return a timeout error when the command exceeds this duration. Defaults to no timeout. */
-	timeout?: number;
-	/** Abort signal used to terminate the command. Defaults to no abort signal. */
-	abortSignal?: AbortSignal;
-	/** Called with stdout chunks as they are produced. */
-	onStdout?: (chunk: string) => void;
-	/** Called with stderr chunks as they are produced. */
-	onStderr?: (chunk: string) => void;
-}
-
 /**
  * Filesystem capability used by the harness.
  *
@@ -318,12 +302,28 @@ export interface FileSystem {
 	cleanup(): Promise<void>;
 }
 
+/** Options for {@link Shell.exec}. */
+export interface ShellExecOptions {
+	/** Working directory for the command. Relative paths are resolved against {@link ExecutionEnv.cwd}. Defaults to {@link ExecutionEnv.cwd}. */
+	cwd?: string;
+	/** Additional environment variables for the command. Values override the environment defaults. Defaults to no overrides. */
+	env?: Record<string, string>;
+	/** Timeout in seconds. Implementations should return a timeout error when the command exceeds this duration. Defaults to no timeout. */
+	timeout?: number;
+	/** Abort signal used to terminate the command. Defaults to no abort signal. */
+	abortSignal?: AbortSignal;
+	/** Called with stdout chunks as they are produced. */
+	onStdout?: (chunk: string) => void;
+	/** Called with stderr chunks as they are produced. */
+	onStderr?: (chunk: string) => void;
+}
+
 /** Shell execution capability used by the harness. */
 export interface Shell {
 	/** Execute a shell command in {@link FileSystem.cwd} unless `options.cwd` is provided. */
 	exec(
 		command: string,
-		options?: ExecutionEnvExecOptions,
+		options?: ShellExecOptions,
 	): Promise<Result<{ stdout: string; stderr: string; exitCode: number }, ExecutionError>>;
 	/** Release shell resources. Must be best-effort and must not throw or reject. */
 	cleanup(): Promise<void>;

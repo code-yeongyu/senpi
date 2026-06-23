@@ -1332,7 +1332,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 
 /**
  * Get resolved compatibility settings for a model.
- * Uses explicit generated/custom model.compat over OpenAI-standard defaults.
+ * Auto-detects from provider/URL then overrides with explicit model.compat.
  */
 function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletionsCompat {
 	const detected = detectCompat(model);

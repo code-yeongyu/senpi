@@ -3,7 +3,7 @@ import type { ApiKeyAuth, OAuthAuth } from "./types.ts";
 /**
  * Standard api-key auth: a stored credential key wins, otherwise the first
  * set env var resolves. Includes a `login` that prompts for the key.
- * Providers with non-standard resolution (metadata, ambient files, IAM)
+ * Providers with non-standard resolution (provider env, ambient files, IAM)
  * write their own `ApiKeyAuth`.
  */
 export function envApiKeyAuth(name: string, envVars: readonly string[]): ApiKeyAuth {
@@ -11,7 +11,7 @@ export function envApiKeyAuth(name: string, envVars: readonly string[]): ApiKeyA
 		name,
 		login: async (callbacks) => {
 			const key = await callbacks.prompt({ type: "secret", message: `Enter ${name}` });
-			return { type: "api-key", key };
+			return { type: "api_key", key };
 		},
 		resolve: async ({ ctx, credential }) => {
 			if (credential?.key) return { auth: { apiKey: credential.key }, source: "stored credential" };

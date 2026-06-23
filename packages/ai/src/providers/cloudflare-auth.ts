@@ -7,16 +7,16 @@ const CLOUDFLARE_GATEWAY_ID = "CLOUDFLARE_GATEWAY_ID";
 
 type CloudflareAuthKind = "workers-ai" | "ai-gateway";
 
-async function resolveValue(input: {
-	name: string;
-	ctx: AuthContext;
-	credential: ApiKeyCredential | undefined;
-}): Promise<string | undefined> {
-	if (input.credential) {
-		if (input.name === CLOUDFLARE_API_KEY) return input.credential.key;
-		return input.credential.metadata?.[input.name];
+async function resolveValue(
+	name: string,
+	ctx: AuthContext,
+	credential: ApiKeyCredential | undefined,
+): Promise<string | undefined> {
+	if (credential) {
+		if (name === CLOUDFLARE_API_KEY) return credential.key;
+		return credential.env?.[name];
 	}
-	return input.ctx.env(input.name);
+	return ctx.env(name);
 }
 
 function resolveCloudflareBaseUrl(
@@ -29,20 +29,17 @@ function resolveCloudflareBaseUrl(
 		.replaceAll(`{${CLOUDFLARE_GATEWAY_ID}}`, gatewayId ?? "");
 }
 
-async function resolveCloudflareEnv(input: {
-	kind: CloudflareAuthKind;
-	model: Model<Api> | ImagesModel<ImagesApi>;
-	ctx: AuthContext;
-	credential: ApiKeyCredential | undefined;
-}): Promise<{ apiKey: string; env: ProviderEnv; baseUrl: string; source: string } | undefined> {
-	const apiKey = await resolveValue({ name: CLOUDFLARE_API_KEY, ctx: input.ctx, credential: input.credential });
-	const accountId = await resolveValue({ name: CLOUDFLARE_ACCOUNT_ID, ctx: input.ctx, credential: input.credential });
-	const gatewayId =
-		input.kind === "ai-gateway"
-			? await resolveValue({ name: CLOUDFLARE_GATEWAY_ID, ctx: input.ctx, credential: input.credential })
-			: undefined;
+async function resolveCloudflareEnv(
+	kind: CloudflareAuthKind,
+	model: Model<Api> | ImagesModel<ImagesApi>,
+	ctx: AuthContext,
+	credential: ApiKeyCredential | undefined,
+): Promise<{ apiKey: string; env: ProviderEnv; baseUrl: string; source: string } | undefined> {
+	const apiKey = await resolveValue(CLOUDFLARE_API_KEY, ctx, credential);
+	const accountId = await resolveValue(CLOUDFLARE_ACCOUNT_ID, ctx, credential);
+	const gatewayId = kind === "ai-gateway" ? await resolveValue(CLOUDFLARE_GATEWAY_ID, ctx, credential) : undefined;
 
-	if (!apiKey || !accountId || (input.kind === "ai-gateway" && !gatewayId)) return undefined;
+	if (!apiKey || !accountId || (kind === "ai-gateway" && !gatewayId)) return undefined;
 
 	return {
 		apiKey,
@@ -50,8 +47,8 @@ async function resolveCloudflareEnv(input: {
 			CLOUDFLARE_ACCOUNT_ID: accountId,
 			...(gatewayId ? { CLOUDFLARE_GATEWAY_ID: gatewayId } : {}),
 		},
-		baseUrl: resolveCloudflareBaseUrl(input.model, accountId, gatewayId),
-		source: input.credential ? "stored credential" : CLOUDFLARE_API_KEY,
+		baseUrl: resolveCloudflareBaseUrl(model, accountId, gatewayId),
+		source: credential ? "stored credential" : CLOUDFLARE_API_KEY,
 	};
 }
 
@@ -61,10 +58,10 @@ export function cloudflareWorkersAIAuth(): ApiKeyAuth {
 		login: async (callbacks) => {
 			const key = await callbacks.prompt({ type: "secret", message: "Enter Cloudflare API key" });
 			const accountId = await callbacks.prompt({ type: "text", message: "Enter Cloudflare account ID" });
-			return { type: "api-key", key, metadata: { CLOUDFLARE_ACCOUNT_ID: accountId } };
+			return { type: "api_key", key, env: { CLOUDFLARE_ACCOUNT_ID: accountId } };
 		},
 		resolve: async ({ model, ctx, credential }) => {
-			const resolved = await resolveCloudflareEnv({ kind: "workers-ai", model, ctx, credential });
+			const resolved = await resolveCloudflareEnv("workers-ai", model, ctx, credential);
 			if (!resolved) return undefined;
 			return {
 				auth: { apiKey: resolved.apiKey, baseUrl: resolved.baseUrl },
@@ -83,13 +80,13 @@ export function cloudflareAIGatewayAuth(): ApiKeyAuth {
 			const accountId = await callbacks.prompt({ type: "text", message: "Enter Cloudflare account ID" });
 			const gatewayId = await callbacks.prompt({ type: "text", message: "Enter Cloudflare AI Gateway ID" });
 			return {
-				type: "api-key",
+				type: "api_key",
 				key,
-				metadata: { CLOUDFLARE_ACCOUNT_ID: accountId, CLOUDFLARE_GATEWAY_ID: gatewayId },
+				env: { CLOUDFLARE_ACCOUNT_ID: accountId, CLOUDFLARE_GATEWAY_ID: gatewayId },
 			};
 		},
 		resolve: async ({ model, ctx, credential }) => {
-			const resolved = await resolveCloudflareEnv({ kind: "ai-gateway", model, ctx, credential });
+			const resolved = await resolveCloudflareEnv("ai-gateway", model, ctx, credential);
 			if (!resolved) return undefined;
 			return {
 				auth: {

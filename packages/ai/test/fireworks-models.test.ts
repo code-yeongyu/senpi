@@ -79,7 +79,16 @@ const tool: Tool = {
 	parameters: Type.Object({ value: Type.String() }),
 };
 
-function createFireworksModel(compat?: Model<"anthropic-messages">["compat"]): Model<"anthropic-messages"> {
+const FIREWORKS_ANTHROPIC_COMPAT = {
+	sendSessionAffinityHeaders: true,
+	supportsEagerToolInputStreaming: false,
+	supportsCacheControlOnTools: false,
+	supportsLongCacheRetention: false,
+} satisfies NonNullable<Model<"anthropic-messages">["compat"]>;
+
+function createFireworksModel(
+	compat: Model<"anthropic-messages">["compat"] = FIREWORKS_ANTHROPIC_COMPAT,
+): Model<"anthropic-messages"> {
 	return {
 		id: "accounts/fireworks/models/kimi-k2p6",
 		name: "Kimi K2.6",

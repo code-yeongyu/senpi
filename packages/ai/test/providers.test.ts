@@ -149,7 +149,7 @@ describe("envApiKeyAuth", () => {
 		const stored = await auth.resolve({
 			model,
 			ctx: fakeAuthContext({ FIRST_KEY: "env" }),
-			credential: { type: "api-key", key: "stored" },
+			credential: { type: "api_key", key: "stored" },
 		});
 		expect(stored?.auth.apiKey).toBe("stored");
 		expect(stored?.source).toBe("stored credential");
@@ -170,7 +170,7 @@ describe("envApiKeyAuth", () => {
 			},
 			notify: () => {},
 		});
-		expect(credential).toEqual({ type: "api-key", key: "entered-key" });
+		expect(credential).toEqual({ type: "api_key", key: "entered-key" });
 	});
 });
 
