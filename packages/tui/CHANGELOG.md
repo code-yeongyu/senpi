@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
 ## [2026.6.23] - 2026-06-23
 
 ### Fixed

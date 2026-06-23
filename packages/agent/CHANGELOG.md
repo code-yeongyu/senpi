@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+### Fixed
+
+### Removed
+
 ## [2026.6.23] - 2026-06-23
 
 ### Added
