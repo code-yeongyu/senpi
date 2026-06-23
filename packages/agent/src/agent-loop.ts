@@ -8,10 +8,10 @@ import {
 	type AssistantMessageEvent,
 	type Context,
 	EventStream,
-	streamSimple,
 	type ToolResultMessage,
 	validateToolArguments,
 } from "@earendil-works/pi-ai";
+import { streamSimple } from "@earendil-works/pi-ai/compat";
 import type {
 	AgentContext,
 	AgentEvent,

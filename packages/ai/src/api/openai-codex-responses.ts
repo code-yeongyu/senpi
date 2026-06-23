@@ -28,6 +28,7 @@ import type {
 	Context,
 	Model,
 	ProviderEnv,
+	ProviderHeaders,
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
@@ -67,6 +68,7 @@ const DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS = 15_000;
 const CODEX_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
 const WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE = 1009;
 const CODEX_PREVIOUS_RESPONSE_STALE_CODES = new Set(["previous_response_not_found", "codex_previous_response_stale"]);
+const WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE = "websocket_connection_limit_reached";
 
 const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
 	"completed",
@@ -201,7 +203,7 @@ function createSSEHeaderTimeout(): { signal: AbortSignal; clear: () => void; err
 // Main Stream Function
 // ============================================================================
 
-export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses", OpenAICodexResponsesOptions> = (
+export const stream: StreamFunction<"openai-codex-responses", OpenAICodexResponsesOptions> = (
 	model: Model<"openai-codex-responses">,
 	context: Context,
 	options?: OpenAICodexResponsesOptions,
@@ -259,52 +261,62 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 
 			if (transport !== "sse" && !websocketDisabledForSession) {
 				let websocketStarted = false;
-				try {
-					await processWebSocketStream(
-						resolveCodexWebSocketUrl(model.baseUrl),
-						body,
-						websocketHeaders,
-						output,
-						stream,
-						model,
-						() => {
-							websocketStarted = true;
-						},
-						idleTimeoutMs,
-						websocketConnectTimeoutMs,
-						options,
-					);
+				let retriedWebSocketConnectionLimit = false;
+				while (true) {
+					websocketStarted = false;
+					try {
+						await processWebSocketStream(
+							resolveCodexWebSocketUrl(model.baseUrl),
+							body,
+							websocketHeaders,
+							output,
+							stream,
+							model,
+							() => {
+								websocketStarted = true;
+							},
+							idleTimeoutMs,
+							websocketConnectTimeoutMs,
+							options,
+						);
 
-					if (options?.signal?.aborted) {
-						throw new Error("Request was aborted");
+						if (options?.signal?.aborted) {
+							throw new Error("Request was aborted");
+						}
+						stream.push({
+							type: "done",
+							reason: output.stopReason as "stop" | "length" | "toolUse",
+							message: output,
+						});
+						stream.end();
+						return;
+					} catch (error) {
+						const aborted = options?.signal?.aborted;
+						const connectionLimitBeforeStart = !websocketStarted && isWebSocketConnectionLimitReachedError(error);
+						if (!aborted && connectionLimitBeforeStart && !retriedWebSocketConnectionLimit) {
+							retriedWebSocketConnectionLimit = true;
+							continue;
+						}
+						if (aborted || (isCodexNonTransportError(error) && !connectionLimitBeforeStart)) {
+							throw error;
+						}
+						appendAssistantMessageDiagnostic(
+							output,
+							createAssistantMessageDiagnostic("provider_transport_failure", error, {
+								configuredTransport: transport,
+								fallbackTransport: websocketStarted ? undefined : "sse",
+								eventsEmitted: websocketStarted,
+								phase: websocketStarted ? "after_message_stream_start" : "before_message_stream_start",
+								requestBytes: new TextEncoder().encode(bodyJson).byteLength,
+							}),
+						);
+						recordWebSocketFailure(options?.sessionId, error);
+						if (websocketStarted) {
+							throw error;
+						}
+						recordWebSocketSseFallback(options?.sessionId);
+						break;
 					}
-					stream.push({
-						type: "done",
-						reason: output.stopReason as "stop" | "length" | "toolUse",
-						message: output,
-					});
-					stream.end();
-					return;
-				} catch (error) {
-					const aborted = options?.signal?.aborted;
-					if (aborted || isCodexNonTransportError(error)) {
-						throw error;
-					}
-					appendAssistantMessageDiagnostic(
-						output,
-						createAssistantMessageDiagnostic("provider_transport_failure", error, {
-							configuredTransport: transport,
-							fallbackTransport: websocketStarted ? undefined : "sse",
-							eventsEmitted: websocketStarted,
-							phase: websocketStarted ? "after_message_stream_start" : "before_message_stream_start",
-							requestBytes: new TextEncoder().encode(bodyJson).byteLength,
-						}),
-					);
-					recordWebSocketFailure(options?.sessionId, error);
-					if (websocketStarted) {
-						throw error;
-					}
-					recordWebSocketSseFallback(options?.sessionId);
 				}
 			}
 
@@ -414,7 +426,7 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 	return stream;
 };
 
-export const streamSimpleOpenAICodexResponses: StreamFunction<"openai-codex-responses", SimpleStreamOptions> = (
+export const streamSimple: StreamFunction<"openai-codex-responses", SimpleStreamOptions> = (
 	model: Model<"openai-codex-responses">,
 	context: Context,
 	options?: SimpleStreamOptions,
@@ -429,7 +441,7 @@ export const streamSimpleOpenAICodexResponses: StreamFunction<"openai-codex-resp
 	const reasoningEffort =
 		clampedReasoning === "off" ? undefined : clampMaxForOpenAI(clampedReasoning, supportsXhigh(model));
 
-	return streamOpenAICodexResponses(model, context, {
+	return stream(model, context, {
 		...base,
 		reasoningEffort,
 	} satisfies OpenAICodexResponsesOptions);
@@ -626,6 +638,10 @@ function isCodexPreviousResponseStale(error: unknown): boolean {
 		typeof error.code === "string" &&
 		CODEX_PREVIOUS_RESPONSE_STALE_CODES.has(error.code)
 	);
+}
+
+function isWebSocketConnectionLimitReachedError(error: unknown): boolean {
+	return error instanceof CodexApiError && error.code === WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE;
 }
 
 async function* mapCodexEvents(events: AsyncIterable<Record<string, unknown>>): AsyncGenerator<ResponseStreamEvent> {
@@ -1537,13 +1553,17 @@ function createCodexRequestId(): string {
 
 function buildBaseCodexHeaders(
 	initHeaders: Record<string, string> | undefined,
-	additionalHeaders: Record<string, string> | undefined,
+	additionalHeaders: ProviderHeaders | undefined,
 	accountId: string | undefined,
 	token: string,
 ): Headers {
 	const headers = new Headers(initHeaders);
 	for (const [key, value] of Object.entries(additionalHeaders || {})) {
-		headers.set(key, value);
+		if (value === null) {
+			headers.delete(key);
+		} else {
+			headers.set(key, value);
+		}
 	}
 	headers.set("Authorization", `Bearer ${token}`);
 	if (accountId) {
@@ -1559,7 +1579,7 @@ function buildBaseCodexHeaders(
 
 function buildSSEHeaders(
 	initHeaders: Record<string, string> | undefined,
-	additionalHeaders: Record<string, string> | undefined,
+	additionalHeaders: ProviderHeaders | undefined,
 	accountId: string | undefined,
 	token: string,
 	sessionId?: string,
@@ -1579,7 +1599,7 @@ function buildSSEHeaders(
 
 function buildWebSocketHeaders(
 	initHeaders: Record<string, string> | undefined,
-	additionalHeaders: Record<string, string> | undefined,
+	additionalHeaders: ProviderHeaders | undefined,
 	accountId: string | undefined,
 	token: string,
 	requestId: string,

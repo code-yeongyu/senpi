@@ -1,12 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-	complete,
-	fauxAssistantMessage,
-	fauxOverflowError,
-	fauxText,
-	registerFauxProvider,
-	stream,
-} from "../src/index.ts";
+import { complete, stream } from "../src/compat.ts";
+import { fauxAssistantMessage, fauxOverflowError, fauxText, registerFauxProvider } from "../src/index.ts";
 import type { AssistantMessageEvent, Context } from "../src/types.ts";
 
 const registrations: Array<{ unregister: () => void }> = [];

@@ -7,8 +7,8 @@
 
 import { randomUUID } from "node:crypto";
 import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
-import type { Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
-import { completeSimple } from "@earendil-works/pi-ai";
+import type { Model, SimpleStreamOptions } from "@earendil-works/pi-ai/compat";
+import { completeSimple } from "@earendil-works/pi-ai/compat";
 import type { ExtensionRunner } from "../extensions/runner.ts";
 import type { SessionBeforeCompactResult } from "../extensions/types.ts";
 import {

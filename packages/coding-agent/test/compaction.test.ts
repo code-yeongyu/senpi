@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, Context, Model, StreamOptions, Usage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Context, Model, StreamOptions, Usage } from "@earendil-works/pi-ai/compat";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,8 +8,8 @@ const { completeMock } = vi.hoisted(() => ({
 	completeMock: vi.fn(),
 }));
 
-vi.mock("@earendil-works/pi-ai", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("@earendil-works/pi-ai")>();
+vi.mock("@earendil-works/pi-ai/compat", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("@earendil-works/pi-ai/compat")>();
 	return {
 		...actual,
 		complete: completeMock,
@@ -33,6 +33,7 @@ import {
 	type CompactionSettings,
 	calculateContextTokens,
 	DEFAULT_COMPACTION_SETTINGS,
+	estimateContextTokens,
 	findCutPoint,
 	getLastAssistantUsage,
 	prepareCompaction,
@@ -430,9 +431,40 @@ describe("getLastAssistantUsage", () => {
 		expect(usage!.input).toBe(100);
 	});
 
+	it("should skip all-zero assistant usage", () => {
+		const entries: SessionEntry[] = [
+			createMessageEntry(createUserMessage("Hello")),
+			createMessageEntry(createAssistantMessage("Hi", createMockUsage(100, 50))),
+			createMessageEntry(createUserMessage("continue")),
+			createMessageEntry(createAssistantMessage("Partial", createMockUsage(0, 0))),
+		];
+
+		const usage = getLastAssistantUsage(entries);
+		expect(usage).not.toBeNull();
+		expect(usage!.input).toBe(100);
+	});
+
 	it("should return undefined if no assistant messages", () => {
 		const entries: SessionEntry[] = [createMessageEntry(createUserMessage("Hello"))];
 		expect(getLastAssistantUsage(entries)).toBeUndefined();
+	});
+});
+
+describe("estimateContextTokens", () => {
+	it("uses the last non-zero assistant usage as the context anchor", () => {
+		const messages: AgentMessage[] = [
+			createUserMessage("Hello"),
+			createAssistantMessage("Hi", createMockUsage(100, 50)),
+			createUserMessage("continue"),
+			createAssistantMessage("Partial thinking", createMockUsage(0, 0)),
+		];
+
+		const estimate = estimateContextTokens(messages);
+
+		expect(estimate.usageTokens).toBe(150);
+		expect(estimate.lastUsageIndex).toBe(1);
+		expect(estimate.trailingTokens).toBeGreaterThan(0);
+		expect(estimate.tokens).toBe(150 + estimate.trailingTokens);
 	});
 });
 

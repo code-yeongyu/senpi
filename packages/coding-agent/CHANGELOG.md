@@ -5,12 +5,15 @@
 ### Added
 
 - Added built-in permission presets with `full-access` as the default and `workspace`, `read-only`, and `ask` options selectable from settings or `--permission-preset`.
+- Added inherited Models runtime support for custom providers, provider-resolved environment, stored auth, and startup theme loading.
 
 ### Changed
 
 - Changed webfetch to send browser-shaped navigation request headers and avoid retrying challenge responses with a bot-specific identity.
 
 ### Fixed
+
+- Fixed inherited extension load failures to show actionable hints, normalized session names, threaded session latest-activity sorting, custom-provider stored auth, and scoped Bedrock/OpenAI auth handling.
 
 ## [2026.6.22] - 2026-06-22
 

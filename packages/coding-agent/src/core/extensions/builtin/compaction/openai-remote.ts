@@ -1,15 +1,15 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import {
-	type Api,
-	type AssistantMessage,
-	type Context,
-	type ImageContent,
-	type Model,
-	type SimpleStreamOptions,
-	streamSimple,
-	type TextContent,
-	type ToolCall,
+import type {
+	Api,
+	AssistantMessage,
+	Context,
+	ImageContent,
+	Model,
+	SimpleStreamOptions,
+	TextContent,
+	ToolCall,
 } from "@earendil-works/pi-ai";
+import { streamSimple } from "@earendil-works/pi-ai/compat";
 import type { CompactionResult } from "../../../compaction/index.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
 import type { ServiceTier, SessionBeforeCompactEvent } from "../../types.ts";

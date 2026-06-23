@@ -234,12 +234,13 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 	}
 
 	async appendSessionName(name: string): Promise<string> {
+		const sanitizedName = name.replace(/[\r\n]+/g, " ").trim();
 		return this.appendTypedEntry({
 			type: "session_info",
 			id: await this.storage.createEntryId(),
 			parentId: await this.storage.getLeafId(),
 			timestamp: new Date().toISOString(),
-			name: name.trim(),
+			name: sanitizedName,
 		} satisfies SessionInfoEntry);
 	}
 

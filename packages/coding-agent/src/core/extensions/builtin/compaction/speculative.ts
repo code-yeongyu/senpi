@@ -4,9 +4,9 @@ import {
 	isContextOverflow,
 	type Message,
 	type Model,
-	stream,
 	type TextContent,
 } from "@earendil-works/pi-ai";
+import { stream } from "@earendil-works/pi-ai/compat";
 import {
 	type CompactionPreparation,
 	type CompactionResult,

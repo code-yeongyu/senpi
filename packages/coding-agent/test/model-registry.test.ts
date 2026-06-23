@@ -1,8 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AnthropicMessagesCompat, Api, Context, Model, OpenAICompletionsCompat } from "@earendil-works/pi-ai";
-import { getApiProvider } from "@earendil-works/pi-ai";
+import type {
+	AnthropicMessagesCompat,
+	Api,
+	Context,
+	Model,
+	OpenAICompletionsCompat,
+} from "@earendil-works/pi-ai/compat";
+import { getApiProvider } from "@earendil-works/pi-ai/compat";
 import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
@@ -270,9 +276,10 @@ describe("ModelRegistry", () => {
 			expect(model?.baseUrl).toBe("https://openrouter.ai/api/v1");
 		});
 
-		test("non-built-in provider custom models still require baseUrl and apiKey", () => {
+		test("non-built-in provider custom models still require baseUrl", () => {
 			writeRawModelsJson({
 				"my-custom-provider": {
+					apiKey: "test-key",
 					models: [
 						{
 							id: "my-model",

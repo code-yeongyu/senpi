@@ -1,4 +1,5 @@
-import { streamSimple, type ToolResultMessage, type Usage } from "@earendil-works/pi-ai";
+import type { ToolResultMessage, Usage } from "@earendil-works/pi-ai";
+import { streamSimple } from "@earendil-works/pi-ai/compat";
 import { html, LitElement } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
 import { ModelSelector } from "../dialogs/ModelSelector.ts";

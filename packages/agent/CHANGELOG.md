@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added the inherited harness Models integration so agent harness streams resolve provider auth exclusively through a required Models instance.
+
+### Fixed
+
+- Fixed inherited session-name normalization.
+
 ### Removed
 
 ## [2026.6.22] - 2026-06-22

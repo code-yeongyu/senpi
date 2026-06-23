@@ -31,9 +31,8 @@
 			"!**/node_modules/**/*",
 			"!**/test-sessions.ts",
 			"!**/models.generated.ts",
-			"!packages/coding-agent/bin/**/*",
-			"!local-ignore/**/*",
-			"!.worktrees/**/*",
+			"!**/*.models.ts",
+			"!packages/mom/data/**/*",
 			"!!**/node_modules"
 		]
 	}

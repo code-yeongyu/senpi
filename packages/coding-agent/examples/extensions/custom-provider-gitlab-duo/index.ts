@@ -5,24 +5,24 @@
  * Delegates to pi-ai's built-in Anthropic and OpenAI streaming implementations.
  *
  * Usage:
- *   senpi -e ./packages/coding-agent/examples/extensions/custom-provider-gitlab-duo
+ *   pi -e ./packages/coding-agent/examples/extensions/custom-provider-gitlab-duo
  *   # Then /login gitlab-duo, or set GITLAB_TOKEN=glpat-...
  */
 
-import type { ExtensionAPI } from "@code-yeongyu/senpi";
 import {
 	type Api,
 	type AssistantMessageEventStream,
+	anthropicMessagesApi,
 	type Context,
 	createAssistantMessageEventStream,
 	type Model,
 	type OAuthCredentials,
 	type OAuthLoginCallbacks,
+	openAIResponsesApi,
 	type SimpleStreamOptions,
-	streamSimpleAnthropic,
-	streamSimpleOpenAIResponses,
 	type ThinkingLevelMap,
-} from "@earendil-works/pi-ai";
+} from "@earendil-works/pi-ai/compat";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // =============================================================================
 // Constants
@@ -325,7 +325,7 @@ export function streamGitLabDuo(
 
 			const innerStream =
 				cfg.backend === "anthropic"
-					? streamSimpleAnthropic(
+					? anthropicMessagesApi().streamSimple(
 							{
 								...(modelWithBaseUrl as Model<"anthropic-messages">),
 								compat: {
@@ -336,7 +336,11 @@ export function streamGitLabDuo(
 							context,
 							streamOptions,
 						)
-					: streamSimpleOpenAIResponses(modelWithBaseUrl as Model<"openai-responses">, context, streamOptions);
+					: openAIResponsesApi().streamSimple(
+							modelWithBaseUrl as Model<"openai-responses">,
+							context,
+							streamOptions,
+						);
 
 			for await (const event of innerStream) stream.push(event);
 			stream.end();
