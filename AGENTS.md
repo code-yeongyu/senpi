@@ -59,7 +59,13 @@ Unless the user explicitly says otherwise (or it is an urgent must-fix-now hotfi
 
 1. **Branch.** Cut a feature branch (or a git worktree) off `main`. Do not develop on `main`.
 2. **Implement + QA with evidence.** Run the scoped `senpi-qa` channel(s) for what you touched and write the artifacts to `local-ignore/qa-evidence/<YYYYMMDD>-<slug>/`. That evidence is the gate, and it is what the PR must carry.
-3. **Open an English PR** with `gh pr create`. The body states what changed, why there is no regression, and quotes/links the QA evidence (commands + observed real-harness behavior). A PR without QA evidence is not ready to merge.
+3. **Open an English, reviewer-readable PR** with `gh pr create`. The body must include:
+   - **Summary**: user-facing change, reason, and before/after behavior.
+   - **Changes**: reviewer-relevant groups, not a file dump.
+   - **QA / Evidence**: for each command or manual action, the tested surface, observed result, saved artifact/log path, and why it is sufficient.
+   - **Risks**: residual risks mapped to covering evidence and conclusion.
+   - **Secret safety**: no raw secret-bearing logs, env dumps, tokens, auth headers, cookies, or private credentials; use sanitized excerpts or summaries.
+   A PR without reviewer-readable QA/evidence is not ready to merge.
 4. **Verify.** Wait for CI/checks, fix every finding, then re-run the scoped QA and refresh the evidence.
 5. **Merge with a merge commit, ALWAYS.** Land it via `gh pr merge <number> --merge --delete-branch`, then push `main`. NEVER squash-merge or rebase-merge, even if a tool or GitHub default suggests it.
 6. **Conflicts → the `smart-rebase` skill**, then re-run the scoped QA. Never force-push shared history.
