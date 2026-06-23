@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed provider/model settings and streaming flows to use the restored `@earendil-works/pi-ai/compat` APIs after the Models runtime migration.
+
 ### Removed
 
 ## [2026.6.22] - 2026-06-22

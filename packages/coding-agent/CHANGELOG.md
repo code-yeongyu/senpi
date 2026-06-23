@@ -14,6 +14,7 @@
 ### Fixed
 
 - Fixed inherited extension load failures to show actionable hints, normalized session names, threaded session latest-activity sorting, custom-provider stored auth, and scoped Bedrock/OpenAI auth handling.
+- Fixed fork compatibility with the restored `@earendil-works/pi-ai/compat` streaming API for compaction and SDK entrypoints.
 
 ## [2026.6.22] - 2026-06-22
 

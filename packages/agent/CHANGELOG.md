@@ -9,6 +9,7 @@
 ### Fixed
 
 - Fixed inherited session-name normalization.
+- Fixed fork compatibility with the restored `@earendil-works/pi-ai/compat` streaming API after the Models runtime migration.
 
 ### Removed
 

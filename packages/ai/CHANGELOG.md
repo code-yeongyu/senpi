@@ -13,6 +13,7 @@
 ### Fixed
 
 - Fixed inherited provider auth/env handling for scoped credentials, stored auth injection, Bedrock scoped AWS profile endpoint resolution, OpenAI Responses terminal-event handling, Codex WebSocket connection-limit reconnects, and release provider tests.
+- Fixed fork compatibility APIs after the Models runtime migration, including static catalog reads, faux provider registration, compat stream tool-call middleware, and restored model metadata normalization.
 
 ### Removed
 
