@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed inherited tall dialog redraw-loop handling by preserving the upstream revert state from v0.80.1.
+
 ## [0.80.1] - 2026-06-23
 
 ## [0.80.0] - 2026-06-23

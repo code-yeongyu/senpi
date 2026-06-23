@@ -2,9 +2,21 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added the inherited Models runtime with provider-owned auth, provider factories, per-provider catalogs, explicit refresh APIs, `ImagesModels`, and the `compat` entrypoint for existing callers.
+
+### Changed
+
+- Changed inherited provider implementations to live under `src/api` with lazy wrappers, and changed the root package barrel to expose the core API surface while compatibility exports move to `compat`.
+
 ### Fixed
 
+- Fixed inherited provider auth/env handling for scoped credentials, stored auth injection, Bedrock scoped AWS profile endpoint resolution, OpenAI Responses terminal-event handling, Codex WebSocket connection-limit reconnects, and release provider tests.
+
 ### Removed
+
+- Removed inherited legacy raw API subpaths after the Models runtime migration.
 
 ## [2026.6.22] - 2026-06-22
 
