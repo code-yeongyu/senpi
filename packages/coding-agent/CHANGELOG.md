@@ -6,6 +6,8 @@
 
 ### Changed
 
+- Changed webfetch to send browser-shaped navigation request headers and avoid retrying challenge responses with a bot-specific identity.
+
 ### Fixed
 
 ## [2026.6.22] - 2026-06-22
