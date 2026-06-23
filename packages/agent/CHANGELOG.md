@@ -4,6 +4,10 @@
 
 ### Added
 
+### Changed
+
+- Renamed the public harness shell execution options type from `ExecutionEnvExecOptions` to `ShellExecOptions`.
+
 ### Fixed
 
 ### Removed
