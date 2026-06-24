@@ -127,7 +127,7 @@ class DefaultNotificationProjector implements NotificationProjector {
 			externalCallbackId: undefined,
 			appThreadId,
 			appSessionId: binding?.appSessionId,
-			appTurnId: readString(params, "turn_id"),
+			appTurnId: readAppTurnId(params),
 			appItemId: readAppItemId(input.params),
 			appRequestId: readAppRequestId(params),
 			sequence,
@@ -142,12 +142,16 @@ class DefaultNotificationProjector implements NotificationProjector {
 
 function readAppThreadId(params: unknown): string | undefined {
 	if (!isRecord(params)) return undefined;
-	return readString(params, "thread_id");
+	return readString(params, "threadId") ?? readString(params, "thread_id");
+}
+
+function readAppTurnId(params: Readonly<Record<string, unknown>>): string | undefined {
+	return readString(params, "turnId") ?? readString(params, "turn_id");
 }
 
 function readAppItemId(params: unknown): string | undefined {
 	if (!isRecord(params)) return undefined;
-	const itemId = readString(params, "item_id");
+	const itemId = readString(params, "itemId") ?? readString(params, "item_id");
 	if (itemId) return itemId;
 	const item = params.item;
 	if (!isRecord(item)) return undefined;
@@ -155,7 +159,7 @@ function readAppItemId(params: unknown): string | undefined {
 }
 
 function readAppRequestId(params: Readonly<Record<string, unknown>>): string | undefined {
-	return readString(params, "request_id") ?? readString(params, "id");
+	return readString(params, "requestId") ?? readString(params, "request_id") ?? readString(params, "id");
 }
 
 function readString(input: Readonly<Record<string, unknown>>, key: string): string | undefined {

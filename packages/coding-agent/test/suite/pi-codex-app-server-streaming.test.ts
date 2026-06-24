@@ -157,6 +157,40 @@ describe("pi-codex-app-server notification and item stream projection", () => {
 		});
 	});
 
+	it("projects generated camelCase notification ids without losing session correlation", () => {
+		const { idMapper, projector } = createBoundProjector();
+		const camelCaseItem = { appThreadId: "app-thread-1", appTurnId: "app-turn-1", appItemId: "app-item-camel-1" };
+
+		const started = projector.project({
+			method: "item/started",
+			params: {
+				threadId: "app-thread-1",
+				turnId: "app-turn-1",
+				item: { id: "app-item-camel-1", type: "agentMessage" },
+			},
+		});
+		const opaque = projector.project({
+			method: "warning",
+			params: {
+				threadId: "app-thread-1",
+				turnId: "app-turn-1",
+				itemId: "app-item-camel-1",
+				requestId: "app-request-1",
+			},
+		});
+
+		expect(started).toMatchObject({
+			kind: "semantic",
+			externalSessionId: "external-session-1",
+			...camelCaseItem,
+		});
+		expect(idMapper.getItem("app-item-camel-1")).toMatchObject({ ...camelCaseItem, itemKind: "agentMessage" });
+		expect(opaque).toMatchObject({
+			kind: "opaque",
+			envelope: { externalSessionId: "external-session-1", ...camelCaseItem, appRequestId: "app-request-1" },
+		});
+	});
+
 	it("skips negotiated notification opt-outs before projection", () => {
 		const sessionRegistry = createSessionRegistry();
 		const idMapper = createIdMapper();

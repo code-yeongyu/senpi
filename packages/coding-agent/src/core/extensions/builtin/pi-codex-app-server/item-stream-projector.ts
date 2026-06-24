@@ -89,8 +89,8 @@ export function projectItemStreamNotification(input: ProjectItemStreamInput): Se
 	if (!shape) return undefined;
 
 	const params = isRecord(input.params) ? input.params : {};
-	const appThreadId = readString(params, "thread_id");
-	const appTurnId = readString(params, "turn_id");
+	const appThreadId = readAppThreadId(params);
+	const appTurnId = readAppTurnId(params);
 	const completedItem = readCompletedItem(input.method, params);
 	const appItemId = readItemId(params, completedItem);
 	const delta = readString(params, "delta");
@@ -140,8 +140,16 @@ function readCompletedItem(method: string, params: Readonly<Record<string, unkno
 	return params.item;
 }
 
+function readAppThreadId(params: Readonly<Record<string, unknown>>): string | undefined {
+	return readString(params, "threadId") ?? readString(params, "thread_id");
+}
+
+function readAppTurnId(params: Readonly<Record<string, unknown>>): string | undefined {
+	return readString(params, "turnId") ?? readString(params, "turn_id");
+}
+
 function readItemId(params: Readonly<Record<string, unknown>>, completedItem: unknown): string | undefined {
-	const itemId = readString(params, "item_id");
+	const itemId = readString(params, "itemId") ?? readString(params, "item_id");
 	if (itemId) return itemId;
 	if (!isRecord(completedItem)) return undefined;
 	return readString(completedItem, "id");
