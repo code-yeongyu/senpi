@@ -5,6 +5,7 @@
     "item/fileChange/requestApproval",
     "item/permissions/requestApproval",
     "item/tool/requestUserInput",
+    "mcpServer/elicitation/request",
     "item/tool/call",
     "serverRequest/resolved"
   ],
