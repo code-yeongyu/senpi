@@ -3,6 +3,7 @@ export const ADAPTER_JSON_RPC_ERROR_CODE = -32080;
 
 export type AdapterErrorCode =
 	| "duplicate-routing-id"
+	| "invalid-callback-state"
 	| "incompatible-capabilities"
 	| "invalid-session-state"
 	| "malformed-message"

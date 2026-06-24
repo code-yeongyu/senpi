@@ -1,0 +1,4 @@
+{"scenario":"08-command-approval","step":"server-request","method":"item/commandExecution/requestApproval","requestId":"app-request-1","threadId":"app-thread-1","turnId":"app-turn-1","itemId":"app-command-1","externalCallbackId":"callback-app-request-1","streamClass":"lossless","autoApproved":false,"redactionClass":"public-contract"}
+{"scenario":"08-command-approval","step":"external-callback","method":"callback/respond","externalCallbackId":"callback-app-request-1","response":{"decision":"acceptForSession"},"forwardedToAppRequestId":"app-request-1"}
+{"scenario":"08-command-approval","step":"resolved","method":"serverRequest/resolved","requestId":"app-request-resolved-1","mappingCleared":true}
+{"scenario":"08-command-approval","step":"timeout-negative","requestId":"app-request-timeout-1","externalCallbackId":"callback-app-request-timeout-1","timedOut":true,"lateResponseRejected":true,"adapterCode":"invalid-callback-state"}

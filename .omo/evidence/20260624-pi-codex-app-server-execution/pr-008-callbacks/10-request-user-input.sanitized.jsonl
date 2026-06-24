@@ -1,0 +1,3 @@
+{"scenario":"10-request-user-input","step":"server-request","method":"item/tool/requestUserInput","requestId":"app-request-input-1","threadId":"app-thread-1","turnId":"app-turn-1","itemId":"app-tool-1","externalCallbackId":"callback-app-request-input-1","questions":[{"id":"token","isSecret":true,"options":null}],"autoResolutionMs":60000,"redactionClass":"secret-bearing"}
+{"scenario":"10-request-user-input","step":"external-response","method":"callback/respond","externalCallbackId":"callback-app-request-input-1","forwardedToAppRequestId":"app-request-input-1","rawAnswerForwardedToAppServer":true}
+{"scenario":"10-request-user-input","step":"secret-safety","artifactView":{"answers":{"token":{"answers":["[REDACTED]"]}}},"rawSecretInCommittedEvidence":false}
