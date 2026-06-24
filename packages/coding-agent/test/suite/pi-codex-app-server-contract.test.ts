@@ -68,9 +68,8 @@ describe("pi-codex-app-server contract lock", () => {
 		expect(EXTERNAL_PROTOCOL_METHODS.every((method) => method.errorBehavior.length > 0)).toBe(true);
 	});
 
-	it("classifies required app-server surfaces without downstream projection or bridge code", () => {
+	it("classifies required app-server surfaces without callback, reconnect, or evidence-packet code", () => {
 		const downstreamFileNames = [
-			"notification-projector.ts",
 			"server-request-bridge.ts",
 			"reconnect-resume.ts",
 			"redaction-scanner.ts",
