@@ -13,3 +13,6 @@ This work is using code-yeongyu/lazycodex teammode.
 - The forwarding-retry follow-up added only sanitized command summaries and raw
   artifact paths; no raw secret-bearing logs, env dumps, tokens, auth headers,
   cookies, or private credentials were committed.
+- The timeout-retry follow-up added only sanitized command summaries and raw
+  artifact paths; no raw secret-bearing logs, env dumps, tokens, auth headers,
+  cookies, or private credentials were committed.

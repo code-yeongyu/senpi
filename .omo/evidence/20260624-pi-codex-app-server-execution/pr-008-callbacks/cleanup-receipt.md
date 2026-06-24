@@ -6,6 +6,8 @@ UTC: 2026-06-24T11:36Z.
 
 Follow-up UTC: 2026-06-24T11:45Z.
 
+Timeout follow-up UTC: 2026-06-24T11:50Z.
+
 No intentionally retained adapter process, socket, port, tmux session, or temp
 runtime was created by PR-008 verification. senpi QA scripts ran in isolated
 sandboxes and reported the real auth file unchanged.
@@ -17,3 +19,7 @@ The symlink was local tool state, not product code or committed evidence.
 The PR-008 forwarding-retry follow-up created no intentionally retained adapter
 process, socket, port, tmux session, or temp runtime. senpi QA follow-up scripts
 again reported the real auth file unchanged.
+
+The timeout-retry follow-up created no intentionally retained adapter process,
+socket, port, tmux session, or temp runtime. senpi QA follow-up scripts again
+reported the real auth file unchanged.

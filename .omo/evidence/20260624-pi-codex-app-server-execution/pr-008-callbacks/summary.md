@@ -37,10 +37,16 @@ regressions failed before the fix. Retrying the same `externalCallbackId` after
 a synthetic `callbackClient.respond()` or `callbackClient.reject()` failure
 returned `invalid-callback-state` instead of remaining retryable.
 
+Second follow-up blocker proof:
+`followup-timeout-retry-failing-first.txt` shows timeout rejection forwarding
+was not retryable before the fix. After a synthetic timeout
+`callbackClient.reject()` failure, a later timeout sweep recorded no successful
+rejection.
+
 ## Verification
 
-- Targeted PR-008 callback suite: 1 file / 6 tests passed.
-- Adjacent app-server suite: 5 files / 23 tests passed.
+- Targeted PR-008 callback suite: 1 file / 7 tests passed.
+- Adjacent app-server suite: 5 files / 24 tests passed.
 - `npm run check`: passed.
 - senpi QA common self-check: 9/9 passed.
 - senpi QA CLI smoke: 5/5 passed.
@@ -62,8 +68,14 @@ forwarding succeeds. The first throwing-client attempt now propagates the
 client error without consuming the callback; retrying the same external callback
 ID forwards exactly once.
 
+The timeout review follow-up keeps timed-out callbacks in a non-external-pending
+state when timeout rejection forwarding throws. Late external responses remain
+rejected, while a later timeout sweep retries the app-server timeout rejection
+and clears the mapping after a successful forward.
+
 Committed command/result details are in `commands.md`. Full raw local artifacts
-for the follow-up use the `followup-forwarding-retry-*` prefix under:
+for the follow-ups use the `followup-forwarding-retry-*` and
+`followup-timeout-retry-*` prefixes under:
 `local-ignore/qa-evidence/20260624-pi-codex-app-server/pr-008-callbacks/`.
 
 Full raw local artifacts remain under:

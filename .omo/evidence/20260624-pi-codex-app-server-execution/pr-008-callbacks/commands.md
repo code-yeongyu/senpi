@@ -51,6 +51,43 @@ Result after the follow-up fix: 5 files / 23 tests passed.
 Raw local artifact:
 `local-ignore/qa-evidence/20260624-pi-codex-app-server/pr-008-callbacks/followup-forwarding-retry-app-server-suite.txt`.
 
+### Review Follow-Up: Timeout Forwarding Retryability
+
+```bash
+cd /Users/yeongyu/local-workspaces/senpi/packages/coding-agent
+npx tsx ../../node_modules/vitest/dist/cli.js --run test/suite/pi-codex-app-server-callbacks.test.ts
+```
+
+Failing-first result before the timeout follow-up fix: 1 file failed, 1 of 7
+tests failed. The failure showed that after a synthetic timeout
+`callbackClient.reject()` rejection, a later timeout sweep recorded no
+successful timeout rejection.
+Raw local artifact:
+`local-ignore/qa-evidence/20260624-pi-codex-app-server/pr-008-callbacks/followup-timeout-retry-failing-first.txt`.
+
+```bash
+cd /Users/yeongyu/local-workspaces/senpi/packages/coding-agent
+npx tsx ../../node_modules/vitest/dist/cli.js --run test/suite/pi-codex-app-server-callbacks.test.ts
+```
+
+Result after the timeout follow-up fix: 1 file / 7 tests passed.
+Raw local artifact:
+`local-ignore/qa-evidence/20260624-pi-codex-app-server/pr-008-callbacks/followup-timeout-retry-targeted.txt`.
+
+```bash
+cd /Users/yeongyu/local-workspaces/senpi/packages/coding-agent
+npx tsx ../../node_modules/vitest/dist/cli.js --run \
+  test/suite/pi-codex-app-server-callbacks.test.ts \
+  test/suite/pi-codex-app-server-contract.test.ts \
+  test/suite/pi-codex-app-server-routing.test.ts \
+  test/suite/pi-codex-app-server-streaming.test.ts \
+  test/suite/pi-codex-app-server-backpressure.test.ts
+```
+
+Result after the timeout follow-up fix: 5 files / 24 tests passed.
+Raw local artifact:
+`local-ignore/qa-evidence/20260624-pi-codex-app-server/pr-008-callbacks/followup-timeout-retry-app-server-suite.txt`.
+
 ```bash
 cd /Users/yeongyu/local-workspaces/senpi/packages/coding-agent
 npx tsx ../../node_modules/vitest/dist/cli.js --run test/suite/pi-codex-app-server-callbacks.test.ts
@@ -117,6 +154,13 @@ Follow-up raw local artifacts:
 - `followup-forwarding-retry-drive-adapter-help.txt`
 - `followup-forwarding-retry-no-excuse-audit.txt`
 - `followup-forwarding-retry-git-diff-check.txt`
+- `followup-timeout-retry-npm-run-check.txt`
+- `followup-timeout-retry-senpi-qa-common-self-check.txt`
+- `followup-timeout-retry-senpi-qa-cli-smoke.txt`
+- `followup-timeout-retry-senpi-qa-mock-loop.txt`
+- `followup-timeout-retry-drive-adapter-help.txt`
+- `followup-timeout-retry-no-excuse-audit.txt`
+- `followup-timeout-retry-git-diff-check.txt`
 
 ## Project Tracking
 

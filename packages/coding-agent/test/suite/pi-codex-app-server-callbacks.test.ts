@@ -348,4 +348,40 @@ describe("pi-codex-app-server server-request callback bridge", () => {
 			{ appRequestId: "app-request-retry-reject-1", reason: "user declined patch" },
 		]);
 	});
+
+	it("keeps timeout rejections retryable when forwarding throws", async () => {
+		const { bridge, callbackClient } = createThrowOnceBridgeFixture();
+		bridge.deliver({
+			method: "item/commandExecution/requestApproval",
+			requestId: "app-request-retry-timeout-1",
+			params: {
+				threadId: "app-thread-1",
+				turnId: "app-turn-1",
+				itemId: "app-command-timeout-retry-1",
+				startedAtMs: 1000,
+				command: "rm -rf tmp",
+			},
+		});
+
+		await expect(bridge.rejectTimedOutCallbacks(7001)).rejects.toThrow("synthetic reject failure");
+		const late = await bridge.respond({
+			externalCallbackId: "callback-app-request-retry-timeout-1",
+			response: { decision: "accept" },
+		});
+		const retry = await bridge.rejectTimedOutCallbacks(7001);
+
+		expect(callbackClient.rejections).toEqual([
+			{ appRequestId: "app-request-retry-timeout-1", reason: "callback timed out" },
+		]);
+		expect(late).toMatchObject({
+			kind: "adapter-error",
+			error: { data: { adapterCode: "invalid-callback-state" } },
+		});
+		expect(retry).toEqual([
+			{
+				appRequestId: "app-request-retry-timeout-1",
+				externalCallbackId: "callback-app-request-retry-timeout-1",
+			},
+		]);
+	});
 });

@@ -184,7 +184,7 @@ class DefaultServerRequestBridge implements ServerRequestBridge {
 	async rejectTimedOutCallbacks(nowMs = this.nowMs()): Promise<readonly TimedOutCallback[]> {
 		const timedOut: TimedOutCallback[] = [];
 		for (const state of this.callbacksByExternalId.values()) {
-			if (state.status !== "pending" || state.timeoutAtMs > nowMs) continue;
+			if ((state.status !== "pending" && state.status !== "timed-out") || state.timeoutAtMs > nowMs) continue;
 			state.status = "timed-out";
 			await this.callbackClient.reject(state.appRequestId, "callback timed out");
 			this.clearCallbackState(state);
