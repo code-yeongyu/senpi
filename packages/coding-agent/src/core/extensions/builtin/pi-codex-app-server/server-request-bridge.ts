@@ -118,7 +118,7 @@ class DefaultServerRequestBridge implements ServerRequestBridge {
 
 	deliver(input: AppServerRequestInput): ServerRequestDeliveryResult {
 		if (!isSupportedCallbackMethod(input.method)) {
-			return invalidCallback(`Unsupported PR-008 callback method: ${input.method}`);
+			return invalidCallback(`Unsupported PR-008/PR-009 callback method: ${input.method}`);
 		}
 		const appRequestId = String(input.requestId);
 		const ids = readAppServerRequestIds(input.params);
@@ -241,7 +241,9 @@ const SUPPORTED_CALLBACK_METHODS: ReadonlySet<string> = new Set([
 	"item/commandExecution/requestApproval",
 	"item/fileChange/requestApproval",
 	"item/tool/requestUserInput",
+	"mcpServer/elicitation/request",
 	"item/permissions/requestApproval",
+	"item/tool/call",
 ] satisfies readonly string[]);
 
 function isSupportedCallbackMethod(method: string): boolean {
