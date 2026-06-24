@@ -104,8 +104,9 @@ class DefaultRequestRouter implements RequestRouter {
 			case "session/fork":
 				return this.routeThreadBinding(input.method, input.params);
 			case "session/list":
-			case "session/read":
 				return this.callAppServer(mapExternalMethod(input.method), appParamsFrom(input.params));
+			case "session/read":
+				return this.routeThreadRead(input.params);
 			case "session/archive":
 			case "session/delete":
 			case "session/unsubscribe":
@@ -168,6 +169,12 @@ class DefaultRequestRouter implements RequestRouter {
 		});
 		if (bindResult.kind === "rejected") return { kind: "adapter-error", error: bindResult.error };
 		return { kind: "app-server-response", appServerResponse: response };
+	}
+
+	private async routeThreadRead(params: unknown): Promise<RouteExternalRequestResult> {
+		const active = this.requireSession(params);
+		if (active.kind === "adapter-error") return active;
+		return this.callAppServer("thread/read", withThreadId(appParamsFrom(params), active.binding));
 	}
 
 	private async routeThreadClose(
