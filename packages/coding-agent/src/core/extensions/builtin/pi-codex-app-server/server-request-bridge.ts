@@ -75,6 +75,8 @@ export interface ServerRequestBridge {
 	deliver(input: AppServerRequestInput): ServerRequestDeliveryResult;
 	respond(input: CallbackResponseInput): Promise<CallbackForwardResult>;
 	reject(input: CallbackRejectionInput): Promise<CallbackForwardResult>;
+	replayPendingCallbacks(): readonly OpaqueServerRequestProjection[];
+	rejectPendingCallbacks(reason: string): Promise<readonly TimedOutCallback[]>;
 	rejectTimedOutCallbacks(nowMs?: number): Promise<readonly TimedOutCallback[]>;
 	resolveFromNotification(input: ServerRequestResolvedInput): ServerRequestResolvedResult;
 	redactCallbackResponse(externalCallbackId: string, response: unknown): unknown;
@@ -87,6 +89,7 @@ interface CallbackState {
 	readonly externalCallbackId: string;
 	readonly timeoutAtMs: number;
 	readonly secretQuestionIds: ReadonlySet<string>;
+	readonly request: OpaqueServerRequestProjection;
 	status: CallbackStatus;
 }
 
@@ -139,12 +142,6 @@ class DefaultServerRequestBridge implements ServerRequestBridge {
 			externalCallbackId,
 			timeoutAtMs,
 			secretQuestionIds: readSecretQuestionIds(input.params),
-			status: "pending",
-		};
-		this.callbacksByExternalId.set(externalCallbackId, state);
-		this.externalCallbackIdByAppRequestId.set(appRequestId, externalCallbackId);
-		return {
-			kind: "delivered",
 			request: {
 				kind: "opaque-request",
 				method: "appServer/request",
@@ -162,6 +159,13 @@ class DefaultServerRequestBridge implements ServerRequestBridge {
 					sessionRegistry: this.sessionRegistry,
 				}),
 			},
+			status: "pending",
+		};
+		this.callbacksByExternalId.set(externalCallbackId, state);
+		this.externalCallbackIdByAppRequestId.set(appRequestId, externalCallbackId);
+		return {
+			kind: "delivered",
+			request: state.request,
 		};
 	}
 
@@ -179,6 +183,23 @@ class DefaultServerRequestBridge implements ServerRequestBridge {
 		await this.callbackClient.reject(state.callback.appRequestId, input.reason);
 		state.callback.status = "forwarded";
 		return { kind: "forwarded" };
+	}
+
+	replayPendingCallbacks(): readonly OpaqueServerRequestProjection[] {
+		return [...this.callbacksByExternalId.values()]
+			.filter((state) => state.status === "pending")
+			.map((state) => state.request);
+	}
+
+	async rejectPendingCallbacks(reason: string): Promise<readonly TimedOutCallback[]> {
+		const rejected: TimedOutCallback[] = [];
+		for (const state of this.callbacksByExternalId.values()) {
+			if (state.status !== "pending") continue;
+			await this.callbackClient.reject(state.appRequestId, reason);
+			this.clearCallbackState(state);
+			rejected.push({ appRequestId: state.appRequestId, externalCallbackId: state.externalCallbackId });
+		}
+		return rejected;
 	}
 
 	async rejectTimedOutCallbacks(nowMs = this.nowMs()): Promise<readonly TimedOutCallback[]> {

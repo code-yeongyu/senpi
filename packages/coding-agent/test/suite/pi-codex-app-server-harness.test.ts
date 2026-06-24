@@ -19,7 +19,7 @@ describe("pi-codex-app-server runtime harness", () => {
 		expect(result.stdout).toContain("pi-codex-app-server adapter harness");
 		expect(result.stdout).toContain("--external-stdio");
 		expect(result.stdout).toContain("--app-server-url");
-		expect(result.stdout).toContain("PR-004 runtime smoke only");
+		expect(result.stdout).toContain("PR-004 runtime smoke plus PR-010 reconnect/resume evidence support");
 		expect(result.stderr).toBe("");
 	});
 

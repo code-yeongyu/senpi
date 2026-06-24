@@ -23,8 +23,8 @@ Options:
   --cleanup-receipt <path>       Write teardown evidence for reviewer packets.
 
 Status:
-  PR-004 runtime smoke only. Protocol routing, streaming, callbacks, reconnect,
-  redaction, and final evidence packet generation are intentionally deferred.
+  PR-004 runtime smoke plus PR-010 reconnect/resume evidence support. Redaction,
+  realtime/filesystem/plugin/config, and final evidence packet generation are deferred.
 `;
 
 const CHILD_HEALTH_WINDOW_MS = 100;
