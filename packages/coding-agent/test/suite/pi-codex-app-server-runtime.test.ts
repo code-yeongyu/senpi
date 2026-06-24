@@ -69,6 +69,16 @@ async function waitForFile(path: string): Promise<void> {
 	}
 }
 
+async function waitForRuntimeFailure(runtime: PiCodexAppServerRuntime): Promise<void> {
+	const deadline = Date.now() + 1000;
+	while (runtime.getStatus().kind !== "failed") {
+		if (Date.now() > deadline) {
+			throw new Error(`Timed out waiting for failed runtime status; last status: ${runtime.getStatus().kind}`);
+		}
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+}
+
 describe("pi-codex-app-server runtime transport", () => {
 	it("starts a child-process stdio app-server and stops it cleanly", async () => {
 		const runtime = createPiCodexAppServerRuntime();
@@ -101,7 +111,7 @@ describe("pi-codex-app-server runtime transport", () => {
 			appServerUrl: "",
 			connectTimeoutMs: 1000,
 		});
-		await new Promise((resolve) => setTimeout(resolve, 50));
+		await waitForRuntimeFailure(runtime);
 
 		expect(started).toMatchObject({ kind: "running", mode: "stdio" });
 		expect(runtime.getStatus()).toMatchObject({
