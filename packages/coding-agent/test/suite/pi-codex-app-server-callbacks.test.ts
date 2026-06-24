@@ -19,6 +19,27 @@ class RecordingCallbackClient implements AppServerCallbackClient {
 	}
 }
 
+class ThrowOnceCallbackClient extends RecordingCallbackClient {
+	private shouldThrowRespond = true;
+	private shouldThrowReject = true;
+
+	async respond(appRequestId: string, response: unknown): Promise<void> {
+		if (this.shouldThrowRespond) {
+			this.shouldThrowRespond = false;
+			throw new Error("synthetic respond failure");
+		}
+		await super.respond(appRequestId, response);
+	}
+
+	async reject(appRequestId: string, reason: string): Promise<void> {
+		if (this.shouldThrowReject) {
+			this.shouldThrowReject = false;
+			throw new Error("synthetic reject failure");
+		}
+		await super.reject(appRequestId, reason);
+	}
+}
+
 function createBridgeFixture(nowMs = 1000) {
 	const idMapper = createIdMapper(() => nowMs);
 	const sessionRegistry = createSessionRegistry();
@@ -39,6 +60,28 @@ function createBridgeFixture(nowMs = 1000) {
 		callbackClient,
 	});
 	return { bridge, callbackClient, idMapper };
+}
+
+function createThrowOnceBridgeFixture(nowMs = 1000) {
+	const idMapper = createIdMapper(() => nowMs);
+	const sessionRegistry = createSessionRegistry();
+	const bindResult = sessionRegistry.bindSession({
+		externalSessionId: "external-session-1",
+		appThreadId: "app-thread-1",
+		appSessionId: "app-session-1",
+	});
+	expect(bindResult.kind).toBe("bound");
+	const callbackClient = new ThrowOnceCallbackClient();
+	const bridge = createServerRequestBridge({
+		connectionId: "connection-1",
+		capabilityFlags: ["opaque-callbacks"],
+		callbackTimeoutMs: 5000,
+		nowMs: () => nowMs,
+		idMapper,
+		sessionRegistry,
+		callbackClient,
+	});
+	return { bridge, callbackClient };
 }
 
 describe("pi-codex-app-server server-request callback bridge", () => {
@@ -242,5 +285,67 @@ describe("pi-codex-app-server server-request callback bridge", () => {
 
 		expect(resolved).toEqual({ kind: "resolved", appRequestId: "app-request-resolved-1" });
 		expect(idMapper.getServerRequest("app-request-resolved-1")).toBeUndefined();
+	});
+
+	it("keeps respond callbacks retryable when forwarding throws", async () => {
+		const { bridge, callbackClient } = createThrowOnceBridgeFixture();
+		bridge.deliver({
+			method: "item/commandExecution/requestApproval",
+			requestId: "app-request-retry-respond-1",
+			params: {
+				threadId: "app-thread-1",
+				turnId: "app-turn-1",
+				itemId: "app-command-retry-1",
+				startedAtMs: 1000,
+				command: "npm test",
+			},
+		});
+
+		await expect(
+			bridge.respond({
+				externalCallbackId: "callback-app-request-retry-respond-1",
+				response: { decision: "accept" },
+			}),
+		).rejects.toThrow("synthetic respond failure");
+		const retry = await bridge.respond({
+			externalCallbackId: "callback-app-request-retry-respond-1",
+			response: { decision: "acceptForSession" },
+		});
+
+		expect(retry).toEqual({ kind: "forwarded" });
+		expect(callbackClient.responses).toEqual([
+			{ appRequestId: "app-request-retry-respond-1", response: { decision: "acceptForSession" } },
+		]);
+	});
+
+	it("keeps reject callbacks retryable when forwarding throws", async () => {
+		const { bridge, callbackClient } = createThrowOnceBridgeFixture();
+		bridge.deliver({
+			method: "item/fileChange/requestApproval",
+			requestId: "app-request-retry-reject-1",
+			params: {
+				threadId: "app-thread-1",
+				turnId: "app-turn-1",
+				itemId: "app-file-retry-1",
+				startedAtMs: 1000,
+				reason: "Needs write access",
+			},
+		});
+
+		await expect(
+			bridge.reject({
+				externalCallbackId: "callback-app-request-retry-reject-1",
+				reason: "first delivery failed",
+			}),
+		).rejects.toThrow("synthetic reject failure");
+		const retry = await bridge.reject({
+			externalCallbackId: "callback-app-request-retry-reject-1",
+			reason: "user declined patch",
+		});
+
+		expect(retry).toEqual({ kind: "forwarded" });
+		expect(callbackClient.rejections).toEqual([
+			{ appRequestId: "app-request-retry-reject-1", reason: "user declined patch" },
+		]);
 	});
 });

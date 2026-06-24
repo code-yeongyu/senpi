@@ -31,10 +31,16 @@ secret answers in evidence views. It does not auto-approve privileged requests.
 `failing-first.txt` shows the callback suite failed before implementation:
 `Cannot find module ... server-request-bridge.ts`.
 
+Follow-up blocker proof:
+`followup-forwarding-retry-failing-first.txt` shows the throwing-client
+regressions failed before the fix. Retrying the same `externalCallbackId` after
+a synthetic `callbackClient.respond()` or `callbackClient.reject()` failure
+returned `invalid-callback-state` instead of remaining retryable.
+
 ## Verification
 
-- Targeted PR-008 callback suite: 1 file / 4 tests passed.
-- Adjacent app-server suite: 5 files / 21 tests passed.
+- Targeted PR-008 callback suite: 1 file / 6 tests passed.
+- Adjacent app-server suite: 5 files / 23 tests passed.
 - `npm run check`: passed.
 - senpi QA common self-check: 9/9 passed.
 - senpi QA CLI smoke: 5/5 passed.
@@ -48,6 +54,17 @@ secret answers in evidence views. It does not auto-approve privileged requests.
 - `08-command-approval.sanitized.jsonl`
 - `09-file-permission-approval.sanitized.jsonl`
 - `10-request-user-input.sanitized.jsonl`
+
+## Follow-Up Evidence
+
+The PR-008 review follow-up keeps callback state pending until app-server
+forwarding succeeds. The first throwing-client attempt now propagates the
+client error without consuming the callback; retrying the same external callback
+ID forwards exactly once.
+
+Committed command/result details are in `commands.md`. Full raw local artifacts
+for the follow-up use the `followup-forwarding-retry-*` prefix under:
+`local-ignore/qa-evidence/20260624-pi-codex-app-server/pr-008-callbacks/`.
 
 Full raw local artifacts remain under:
 `local-ignore/qa-evidence/20260624-pi-codex-app-server/pr-008-callbacks/`.

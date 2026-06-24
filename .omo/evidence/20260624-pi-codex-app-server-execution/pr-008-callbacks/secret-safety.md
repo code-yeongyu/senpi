@@ -10,3 +10,6 @@ This work is using code-yeongyu/lazycodex teammode.
 - senpi QA common self-check, CLI smoke, and mock-loop all reported the real
   auth file unchanged.
 - Process command arguments are not included in cleanup evidence.
+- The forwarding-retry follow-up added only sanitized command summaries and raw
+  artifact paths; no raw secret-bearing logs, env dumps, tokens, auth headers,
+  cookies, or private credentials were committed.

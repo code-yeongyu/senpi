@@ -168,16 +168,16 @@ class DefaultServerRequestBridge implements ServerRequestBridge {
 	async respond(input: CallbackResponseInput): Promise<CallbackForwardResult> {
 		const state = this.readPendingCallback(input.externalCallbackId);
 		if (state.kind === "adapter-error") return state;
-		state.callback.status = "forwarded";
 		await this.callbackClient.respond(state.callback.appRequestId, input.response);
+		state.callback.status = "forwarded";
 		return { kind: "forwarded" };
 	}
 
 	async reject(input: CallbackRejectionInput): Promise<CallbackForwardResult> {
 		const state = this.readPendingCallback(input.externalCallbackId);
 		if (state.kind === "adapter-error") return state;
-		state.callback.status = "forwarded";
 		await this.callbackClient.reject(state.callback.appRequestId, input.reason);
+		state.callback.status = "forwarded";
 		return { kind: "forwarded" };
 	}
 
