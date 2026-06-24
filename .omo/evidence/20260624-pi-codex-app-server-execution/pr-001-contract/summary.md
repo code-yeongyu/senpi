@@ -5,7 +5,8 @@ Status: ready for PR.
 Scope:
 - External JSON-RPC-compatible method names are locked.
 - Opaque app-server envelope fields are locked.
-- Representative current app-server surfaces are classified as semantic, opaque lossless, opaque best-effort, or snapshot-authoritative.
+- Every string-named current app-server protocol surface from `codex-rs/app-server-protocol/src/protocol/common.rs` is classified as semantic, opaque lossless, opaque best-effort, or snapshot-authoritative.
+- The full required catalog currently covers 219 app-server request, server-request, notification, event, thread-item, and future opaque surfaces.
 - Fixture folders and reviewer evidence packet templates were added.
 
 Out of scope:
@@ -44,5 +45,6 @@ Secret safety:
 
 Changed TypeScript file size audit:
 - `packages/coding-agent/src/core/extensions/builtin/pi-codex-app-server/protocol-core.ts`: 244 pure lines.
-- `packages/coding-agent/src/core/extensions/builtin/pi-codex-app-server/protocol-inventory.ts`: 239 pure lines.
-- `packages/coding-agent/test/suite/pi-codex-app-server-contract.test.ts`: 134 pure lines.
+- `packages/coding-agent/src/core/extensions/builtin/pi-codex-app-server/protocol-inventory.ts`: 89 pure lines.
+- `packages/coding-agent/src/core/extensions/builtin/pi-codex-app-server/protocol-required-surfaces.ts`: 233 pure lines.
+- `packages/coding-agent/test/suite/pi-codex-app-server-contract.test.ts`: 107 pure lines.

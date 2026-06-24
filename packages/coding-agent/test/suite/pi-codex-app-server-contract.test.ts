@@ -9,6 +9,7 @@ import {
 	OPAQUE_APP_SERVER_ENVELOPE_FIELDS,
 	PI_CODEX_APP_SERVER_PROTOCOL_VERSION,
 } from "../../src/core/extensions/builtin/pi-codex-app-server/protocol-core.ts";
+import { PLAN_REQUIRED_APP_SERVER_SURFACES } from "../../src/core/extensions/builtin/pi-codex-app-server/protocol-required-surfaces.ts";
 
 const extensionRoot = join(process.cwd(), "src", "core", "extensions", "builtin", "pi-codex-app-server");
 const fixtureRoot = join(extensionRoot, "compatibility-fixtures");
@@ -68,35 +69,6 @@ describe("pi-codex-app-server contract lock", () => {
 	});
 
 	it("classifies required app-server surfaces without runtime routing code", () => {
-		const requiredSurfaces = [
-			"initialize",
-			"initialized",
-			"thread/start",
-			"thread/resume",
-			"thread/fork",
-			"turn/start",
-			"turn/steer",
-			"turn/interrupt",
-			"item/started",
-			"item/agentMessage/delta",
-			"item/plan/delta",
-			"item/reasoning/summaryTextDelta",
-			"item/commandExecution/outputDelta",
-			"item/fileChange/patchUpdated",
-			"item/mcpToolCall/progress",
-			"turn/completed",
-			"item/commandExecution/requestApproval",
-			"item/fileChange/requestApproval",
-			"item/tool/requestUserInput",
-			"item/permissions/requestApproval",
-			"item/tool/call",
-			"serverRequest/resolved",
-			"thread/realtime/start",
-			"fs/changed",
-			"config/get",
-			"plugin/list",
-			"appServer/futureMethod",
-		];
 		const runtimeFileNames = [
 			"transport-runtime.ts",
 			"request-router.ts",
@@ -105,10 +77,11 @@ describe("pi-codex-app-server contract lock", () => {
 		];
 
 		const inventoryMethods = APP_SERVER_SURFACE_INVENTORY.map((entry) => entry.method);
-		const classifications = requiredSurfaces.map((method) => classifyAppServerSurface(method));
+		const missingSurfaces = PLAN_REQUIRED_APP_SERVER_SURFACES.filter((method) => !classifyAppServerSurface(method));
+		const classifications = PLAN_REQUIRED_APP_SERVER_SURFACES.map((method) => classifyAppServerSurface(method));
 
-		expect(inventoryMethods).toEqual(expect.arrayContaining(requiredSurfaces));
-		expect(classifications.every((classification) => classification !== undefined)).toBe(true);
+		expect(inventoryMethods).toEqual(expect.arrayContaining([...PLAN_REQUIRED_APP_SERVER_SURFACES]));
+		expect(missingSurfaces).toEqual([]);
 		expect(classifications.map((classification) => classification?.relayClass)).not.toContain(undefined);
 		for (const fileName of runtimeFileNames) {
 			expect(existsSync(join(extensionRoot, fileName))).toBe(false);

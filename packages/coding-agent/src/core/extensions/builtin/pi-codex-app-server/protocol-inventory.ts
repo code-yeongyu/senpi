@@ -1,242 +1,96 @@
 import type { AppServerSurfaceInventoryEntry, RelayClass, StreamClass, SurfaceDirection } from "./protocol-core.ts";
+import {
+	PLAN_REQUIRED_APP_SERVER_SURFACES,
+	PLAN_REQUIRED_CLIENT_REQUEST_SURFACES,
+	PLAN_REQUIRED_SERVER_NOTIFICATION_SURFACES,
+	PLAN_REQUIRED_SERVER_REQUEST_SURFACES,
+	PLAN_REQUIRED_THREAD_ITEM_VARIANT_SURFACES,
+} from "./protocol-required-surfaces.ts";
 
-type InventoryRow = readonly [string, SurfaceDirection, RelayClass, StreamClass, string, string];
+const clientRequests = new Set<string>(PLAN_REQUIRED_CLIENT_REQUEST_SURFACES);
+const serverRequests = new Set<string>(PLAN_REQUIRED_SERVER_REQUEST_SURFACES);
+const serverNotifications = new Set<string>(PLAN_REQUIRED_SERVER_NOTIFICATION_SURFACES);
+const threadItemVariants = new Set<string>(PLAN_REQUIRED_THREAD_ITEM_VARIANT_SURFACES);
 
-const inventoryRows = [
-	["initialize", "external-to-app", "semantic", "control", "initialization", "appRequestId"],
-	["initialized", "external-to-app", "semantic", "control", "initialization", "appRequestId"],
-	[
-		"thread/start",
-		"external-to-app",
-		"semantic",
-		"snapshot-authoritative",
-		"thread lifecycle",
-		"appThreadId,appSessionId",
-	],
-	[
-		"thread/resume",
-		"external-to-app",
-		"semantic",
-		"snapshot-authoritative",
-		"thread lifecycle",
-		"appThreadId,appSessionId",
-	],
-	[
-		"thread/fork",
-		"external-to-app",
-		"semantic",
-		"snapshot-authoritative",
-		"thread lifecycle",
-		"appThreadId,appSessionId",
-	],
-	["thread/archive", "external-to-app", "semantic", "control", "thread lifecycle", "appThreadId"],
-	["thread/delete", "external-to-app", "semantic", "control", "thread lifecycle", "appThreadId"],
-	["thread/unsubscribe", "external-to-app", "semantic", "control", "thread lifecycle", "appThreadId"],
-	[
-		"thread/list",
-		"external-to-app",
-		"semantic",
-		"snapshot-authoritative",
-		"thread inventory",
-		"appThreadId,appSessionId",
-	],
-	[
-		"thread/search",
-		"external-to-app",
-		"semantic",
-		"snapshot-authoritative",
-		"thread inventory",
-		"appThreadId,appSessionId",
-	],
-	[
-		"thread/loaded/list",
-		"external-to-app",
-		"semantic",
-		"snapshot-authoritative",
-		"thread inventory",
-		"appThreadId,appSessionId",
-	],
-	[
-		"thread/read",
-		"external-to-app",
-		"semantic",
-		"snapshot-authoritative",
-		"thread inventory",
-		"appThreadId,appSessionId",
-	],
-	[
-		"thread/turns/list",
-		"external-to-app",
-		"semantic",
-		"snapshot-authoritative",
-		"thread inventory",
-		"appThreadId,appTurnId",
-	],
-	[
-		"thread/turns/items/list",
-		"external-to-app",
-		"semantic",
-		"snapshot-authoritative",
-		"thread inventory",
-		"appThreadId,appTurnId,appItemId",
-	],
-	[
-		"thread/items/inject",
-		"external-to-app",
-		"opaque-lossless",
-		"lossless",
-		"thread mutation",
-		"appThreadId,appItemId",
-	],
-	["thread/status/changed", "app-to-external", "semantic", "lossless", "thread status", "appThreadId"],
-	["thread/tokenUsage/updated", "app-to-external", "semantic", "lossless", "thread status", "appThreadId"],
-	["turn/start", "external-to-app", "semantic", "lossless", "turn lifecycle", "appThreadId,appTurnId"],
-	["turn/steer", "external-to-app", "semantic", "lossless", "turn lifecycle", "appThreadId,appTurnId"],
-	["turn/interrupt", "external-to-app", "semantic", "control", "turn lifecycle", "appThreadId,appTurnId"],
-	["turn/started", "app-to-external", "semantic", "lossless", "turn lifecycle", "appThreadId,appTurnId"],
-	["turn/completed", "app-to-external", "semantic", "lossless", "turn lifecycle", "appThreadId,appTurnId"],
-	["item/started", "app-to-external", "semantic", "lossless", "item stream", "appThreadId,appTurnId,appItemId"],
-	["item/completed", "app-to-external", "semantic", "lossless", "item stream", "appThreadId,appTurnId,appItemId"],
-	[
-		"item/agentMessage/delta",
-		"app-to-external",
-		"semantic",
-		"lossless",
-		"item stream",
-		"appThreadId,appTurnId,appItemId",
-	],
-	["item/plan/delta", "app-to-external", "semantic", "lossless", "item stream", "appThreadId,appTurnId,appItemId"],
-	[
-		"item/reasoning/summaryTextDelta",
-		"app-to-external",
-		"semantic",
-		"lossless",
-		"item stream",
-		"appThreadId,appTurnId,appItemId",
-	],
-	[
-		"item/reasoning/textDelta",
-		"app-to-external",
-		"semantic",
-		"lossless",
-		"item stream",
-		"appThreadId,appTurnId,appItemId",
-	],
-	[
-		"item/commandExecution/outputDelta",
-		"app-to-external",
-		"semantic",
-		"best-effort",
-		"command stream",
-		"appThreadId,appTurnId,appItemId",
-	],
-	[
-		"process/outputDelta",
-		"app-to-external",
-		"semantic",
-		"best-effort",
-		"process stream",
-		"appThreadId,appTurnId,appItemId",
-	],
-	[
-		"item/terminalInteraction",
-		"app-to-external",
-		"opaque-lossless",
-		"lossless",
-		"terminal stream",
-		"appThreadId,appTurnId,appItemId",
-	],
-	[
-		"item/fileChange/patchUpdated",
-		"app-to-external",
-		"semantic",
-		"best-effort",
-		"file stream",
-		"appThreadId,appTurnId,appItemId",
-	],
-	[
-		"item/mcpToolCall/progress",
-		"app-to-external",
-		"semantic",
-		"best-effort",
-		"mcp stream",
-		"appThreadId,appTurnId,appItemId",
-	],
-	[
-		"item/commandExecution/requestApproval",
-		"app-to-external",
-		"semantic",
-		"lossless",
-		"server request",
-		"appThreadId,appTurnId,appItemId,appRequestId",
-	],
-	[
-		"item/fileChange/requestApproval",
-		"app-to-external",
-		"semantic",
-		"lossless",
-		"server request",
-		"appThreadId,appTurnId,appItemId,appRequestId",
-	],
-	[
-		"item/tool/requestUserInput",
-		"app-to-external",
-		"semantic",
-		"lossless",
-		"server request",
-		"appThreadId,appTurnId,appItemId,appRequestId",
-	],
-	[
-		"item/permissions/requestApproval",
-		"app-to-external",
-		"semantic",
-		"lossless",
-		"server request",
-		"appThreadId,appTurnId,appItemId,appRequestId",
-	],
-	[
-		"item/tool/call",
-		"app-to-external",
-		"semantic",
-		"lossless",
-		"server request",
-		"appThreadId,appTurnId,appItemId,appRequestId",
-	],
-	["auth/chatgpt/refresh", "app-to-external", "opaque-lossless", "lossless", "server request", "appRequestId"],
-	["attestation/generate", "app-to-external", "opaque-lossless", "lossless", "server request", "appRequestId"],
-	["time/current", "app-to-external", "opaque-lossless", "lossless", "server request", "appRequestId"],
-	["serverRequest/resolved", "app-to-external", "semantic", "lossless", "server request", "appRequestId"],
-	["skills/list", "bidirectional", "opaque-lossless", "lossless", "app/plugin/skills/config", "appRequestId"],
-	["hooks/list", "bidirectional", "opaque-lossless", "lossless", "app/plugin/skills/config", "appRequestId"],
-	["marketplace/list", "bidirectional", "opaque-lossless", "lossless", "app/plugin/skills/config", "appRequestId"],
-	["plugin/list", "bidirectional", "opaque-lossless", "lossless", "app/plugin/skills/config", "appRequestId"],
-	["app/list", "bidirectional", "opaque-lossless", "lossless", "app/plugin/skills/config", "appRequestId"],
-	["config/get", "bidirectional", "opaque-lossless", "lossless", "app/plugin/skills/config", "appRequestId"],
-	["fs/read", "bidirectional", "opaque-lossless", "lossless", "filesystem", "appRequestId"],
-	["fs/write", "bidirectional", "opaque-lossless", "lossless", "filesystem", "appRequestId"],
-	["fs/watch", "bidirectional", "opaque-lossless", "lossless", "filesystem", "appRequestId"],
-	["fs/changed", "app-to-external", "opaque-lossless", "lossless", "filesystem", "appRequestId"],
-	["thread/realtime/start", "bidirectional", "opaque-lossless", "lossless", "realtime", "appThreadId,appTurnId"],
-	[
-		"thread/realtime/inputAudio",
-		"bidirectional",
-		"opaque-best-effort",
-		"best-effort",
-		"realtime",
-		"appThreadId,appTurnId",
-	],
-	["thread/realtime/stop", "bidirectional", "opaque-lossless", "lossless", "realtime", "appThreadId,appTurnId"],
-	["appServer/futureMethod", "bidirectional", "opaque-lossless", "lossless", "future compatibility", "appRequestId"],
-] satisfies readonly InventoryRow[];
+function inferDirection(method: string): SurfaceDirection {
+	if (serverRequests.has(method) || serverNotifications.has(method) || threadItemVariants.has(method)) {
+		return "app-to-external";
+	}
+	if (method.startsWith("fs/") || method.startsWith("thread/realtime/") || method.startsWith("mcpServer/")) {
+		return "bidirectional";
+	}
+	return clientRequests.has(method) ? "external-to-app" : "bidirectional";
+}
 
-export const APP_SERVER_SURFACE_INVENTORY: readonly AppServerSurfaceInventoryEntry[] = inventoryRows.map(
-	([method, direction, relayClass, streamClass, surface, idFields]) => ({
-		method,
-		direction,
-		relayClass,
-		streamClass,
-		surface,
-		idFields: idFields.split(",").filter(Boolean),
-		source: "pi-codex-app-server-event-adapter-compatibility.md sections 1-7",
-	}),
-);
+function inferStreamClass(method: string): StreamClass {
+	if (method.includes("outputDelta") || method.includes("progress") || method.includes("appendAudio")) {
+		return "best-effort";
+	}
+	if (
+		method.includes("/list") ||
+		method.includes("/read") ||
+		method.includes("get") ||
+		method.includes("status/read") ||
+		method.startsWith("threadItem/")
+	) {
+		return "snapshot-authoritative";
+	}
+	if (method.includes("changed") || method.includes("updated") || method.includes("completed")) {
+		return "lossless";
+	}
+	return method.includes("start") || method.includes("stop") || method.includes("interrupt") ? "control" : "lossless";
+}
+
+function inferRelayClass(method: string, streamClass: StreamClass): RelayClass {
+	if (method === "appServer/futureMethod") return "opaque-lossless";
+	if (threadItemVariants.has(method)) return "snapshot-authoritative";
+	if (method.startsWith("fs/") || method.startsWith("thread/realtime/") || method.startsWith("remoteControl/")) {
+		return streamClass === "best-effort" ? "opaque-best-effort" : "opaque-lossless";
+	}
+	return "semantic";
+}
+
+function inferSurface(method: string): string {
+	if (threadItemVariants.has(method)) return "thread item variant";
+	if (serverRequests.has(method)) return "server request";
+	if (serverNotifications.has(method)) return "server notification";
+	if (method.startsWith("thread/")) return "thread lifecycle and control";
+	if (method.startsWith("turn/")) return "turn lifecycle";
+	if (method.startsWith("item/") || method.startsWith("rawResponseItem/")) return "item stream";
+	if (method.startsWith("fs/")) return "filesystem";
+	if (method.startsWith("fuzzyFileSearch/")) return "fuzzy file search";
+	if (method.startsWith("windowsSandbox/") || method.startsWith("windows/")) return "windows sandbox";
+	if (method.startsWith("config") || method.startsWith("skills/") || method.startsWith("plugin/"))
+		return "configuration";
+	if (method.startsWith("experimentalFeature/")) return "experimental feature";
+	if (method.startsWith("permissionProfile/")) return "permission profile";
+	if (method.startsWith("collaborationMode/")) return "collaboration mode";
+	if (method.startsWith("environment/")) return "environment";
+	if (method.startsWith("account/")) return "account";
+	if (method.startsWith("model")) return "model";
+	if (method.startsWith("remoteControl/")) return "remote control";
+	if (method.startsWith("mcpServer")) return "mcp";
+	return "app-server compatibility";
+}
+
+function inferIdFields(method: string): readonly string[] {
+	if (method.startsWith("threadItem/")) return ["appThreadId", "appTurnId", "appItemId"];
+	if (method.startsWith("item/")) return ["appThreadId", "appTurnId", "appItemId", "appRequestId"];
+	if (method.startsWith("turn/")) return ["appThreadId", "appTurnId"];
+	if (method.startsWith("thread/")) return ["appThreadId", "appSessionId"];
+	return ["appRequestId"];
+}
+
+export const APP_SERVER_SURFACE_INVENTORY: readonly AppServerSurfaceInventoryEntry[] =
+	PLAN_REQUIRED_APP_SERVER_SURFACES.map((method) => {
+		const streamClass = inferStreamClass(method);
+		return {
+			method,
+			direction: inferDirection(method),
+			relayClass: inferRelayClass(method, streamClass),
+			streamClass,
+			surface: inferSurface(method),
+			idFields: inferIdFields(method),
+			source: "codex-rs/app-server-protocol/src/protocol/common.rs current string-named surfaces",
+		};
+	});
