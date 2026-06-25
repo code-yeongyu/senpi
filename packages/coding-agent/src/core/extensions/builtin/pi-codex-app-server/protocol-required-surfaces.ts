@@ -122,6 +122,8 @@ export const PLAN_REQUIRED_CLIENT_REQUEST_SURFACES = [
 	"fuzzyFileSearch/sessionStop",
 ] as const;
 
+export type AppServerClientRequestSurface = (typeof PLAN_REQUIRED_CLIENT_REQUEST_SURFACES)[number];
+
 export const PLAN_REQUIRED_SERVER_REQUEST_SURFACES = [
 	"item/commandExecution/requestApproval",
 	"item/fileChange/requestApproval",

@@ -1,10 +1,11 @@
 import { APP_SERVER_SURFACE_INVENTORY } from "./protocol-inventory.ts";
+import type { AppServerClientRequestSurface } from "./protocol-required-surfaces.ts";
 
 export { APP_SERVER_SURFACE_INVENTORY } from "./protocol-inventory.ts";
 
 export const PI_CODEX_APP_SERVER_PROTOCOL_VERSION = "2026-06-24.pr-001";
 
-export type ExternalProtocolMethodName =
+export type CoreExternalProtocolMethodName =
 	| "initialize"
 	| "initialized"
 	| "session/new"
@@ -26,6 +27,7 @@ export type ExternalProtocolMethodName =
 	| "lag"
 	| "disconnect"
 	| "resume";
+export type ExternalProtocolMethodName = CoreExternalProtocolMethodName | AppServerClientRequestSurface;
 
 export type StreamClass = "lossless" | "best-effort" | "snapshot-authoritative" | "control";
 export type RelayClass = "semantic" | "opaque-lossless" | "opaque-best-effort" | "snapshot-authoritative";

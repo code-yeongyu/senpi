@@ -1,6 +1,7 @@
 import {
 	type AppServerInitializeCapabilities,
 	type ExternalInitializeCapabilities,
+	type NegotiatedCapabilityFlag,
 	negotiatePiCodexAppServerCapabilities,
 	parseExternalInitializeCapabilities,
 } from "./capability-negotiator.ts";
@@ -59,6 +60,7 @@ class DefaultRequestRouter implements RequestRouter {
 	private readonly idMapper: IdMapper;
 	private readonly sessionRegistry: SessionRegistry;
 	private readonly appServerCapabilities: AppServerInitializeCapabilities | undefined;
+	private negotiatedCapabilityFlags: ReadonlySet<NegotiatedCapabilityFlag> = new Set();
 
 	constructor(options: RequestRouterOptions) {
 		this.client = options.client;
@@ -118,7 +120,7 @@ class DefaultRequestRouter implements RequestRouter {
 			case "turn/interrupt":
 				return this.routeTurnInterrupt(input.params);
 			default:
-				return unsupported(input.method);
+				return this.routePassThrough(input.method, input.params);
 		}
 	}
 
@@ -132,7 +134,7 @@ class DefaultRequestRouter implements RequestRouter {
 		if (negotiated.kind === "rejected") {
 			return { kind: "adapter-error", error: negotiated.error };
 		}
-		return this.callAppServer("initialize", {
+		const response = await this.callAppServer("initialize", {
 			capabilities: {
 				experimentalApi: this.appServerCapabilities?.experimentalApi,
 				requestAttestation: this.appServerCapabilities?.requestAttestation,
@@ -140,6 +142,10 @@ class DefaultRequestRouter implements RequestRouter {
 				optOutNotificationMethods: negotiated.notificationOptOuts,
 			},
 		});
+		if (response.kind === "app-server-response") {
+			this.negotiatedCapabilityFlags = new Set(negotiated.capabilityFlags);
+		}
+		return response;
 	}
 
 	private async routeThreadBinding(
@@ -238,6 +244,25 @@ class DefaultRequestRouter implements RequestRouter {
 		return this.callAppServer("turn/interrupt", withField(withThreadId({}, active.binding), "turn_id", appTurnId));
 	}
 
+	private async routePassThrough(
+		method: ExternalProtocolMethodName,
+		params: unknown,
+	): Promise<RouteExternalRequestResult> {
+		if (!passThroughClientRequestMethods.has(method)) return unsupported(method);
+		const capabilityGate = capabilityGateForPassThrough(method);
+		if (capabilityGate && !this.negotiatedCapabilityFlags.has(capabilityGate)) {
+			return {
+				kind: "adapter-error",
+				error: createAdapterJsonRpcError({
+					adapterCode: "incompatible-capabilities",
+					message: `External client did not negotiate ${capabilityGate} for ${method}.`,
+					details: [method],
+				}),
+			};
+		}
+		return this.callAppServer(method, appParamsFrom(params));
+	}
+
 	private requireSession(params: unknown): ActiveSessionResult {
 		const externalSessionId = parseRoutingParams(params).externalSessionId;
 		if (!externalSessionId) return invalidSession("Routing requires externalSessionId.");
@@ -249,6 +274,77 @@ class DefaultRequestRouter implements RequestRouter {
 	private async callAppServer(method: string, params: unknown): Promise<RouteExternalRequestResult> {
 		return { kind: "app-server-response", appServerResponse: await this.client.request(method, params) };
 	}
+}
+
+const passThroughClientRequestMethods: ReadonlySet<string> = new Set([
+	"skills/list",
+	"skills/extraRoots/set",
+	"hooks/list",
+	"marketplace/add",
+	"marketplace/remove",
+	"marketplace/upgrade",
+	"plugin/list",
+	"plugin/installed",
+	"plugin/read",
+	"plugin/skill/read",
+	"plugin/share/save",
+	"plugin/share/updateTargets",
+	"plugin/share/list",
+	"plugin/share/checkout",
+	"plugin/share/delete",
+	"app/list",
+	"fs/readFile",
+	"fs/writeFile",
+	"fs/createDirectory",
+	"fs/getMetadata",
+	"fs/readDirectory",
+	"fs/remove",
+	"fs/copy",
+	"fs/watch",
+	"fs/unwatch",
+	"skills/config/write",
+	"plugin/install",
+	"plugin/uninstall",
+	"thread/realtime/start",
+	"thread/realtime/appendAudio",
+	"thread/realtime/appendText",
+	"thread/realtime/appendSpeech",
+	"thread/realtime/stop",
+	"thread/realtime/listVoices",
+	"remoteControl/enable",
+	"remoteControl/disable",
+	"remoteControl/status/read",
+	"remoteControl/pairing/start",
+	"remoteControl/pairing/status",
+	"remoteControl/client/list",
+	"remoteControl/client/revoke",
+	"config/read",
+	"externalAgentConfig/detect",
+	"externalAgentConfig/import",
+	"externalAgentConfig/import/readHistories",
+	"config/value/write",
+	"config/batchWrite",
+	"configRequirements/read",
+] as const);
+
+function capabilityGateForPassThrough(method: string): NegotiatedCapabilityFlag | undefined {
+	if (method.startsWith("fs/")) return "filesystem";
+	if (method.startsWith("thread/realtime/")) return "realtime";
+	if (isAppPluginConfigMethod(method)) return "app-plugin-config";
+	return undefined;
+}
+
+function isAppPluginConfigMethod(method: string): boolean {
+	return (
+		method.startsWith("skills/") ||
+		method.startsWith("hooks/") ||
+		method.startsWith("marketplace/") ||
+		method.startsWith("plugin/") ||
+		method.startsWith("app/") ||
+		method.startsWith("config") ||
+		method.startsWith("externalAgentConfig/") ||
+		method.startsWith("remoteControl/")
+	);
 }
 
 function parseInitialize(
