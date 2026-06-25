@@ -23,8 +23,9 @@ Options:
   --cleanup-receipt <path>       Write teardown evidence for reviewer packets.
 
 Status:
-  PR-004 runtime smoke plus PR-010 reconnect/resume evidence support. Redaction,
-  realtime/filesystem/plugin/config, and final evidence packet generation are deferred.
+  PR-004 runtime smoke plus PR-010 reconnect/resume evidence support. Use
+  write-evidence-packet.mjs for PR-012 redaction packets. Final PR-013
+  compatibility evidence remains deferred.
 `;
 
 const CHILD_HEALTH_WINDOW_MS = 100;

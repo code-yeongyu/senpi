@@ -68,8 +68,13 @@ describe("pi-codex-app-server contract lock", () => {
 		expect(EXTERNAL_PROTOCOL_METHODS.every((method) => method.errorBehavior.length > 0)).toBe(true);
 	});
 
-	it("classifies required app-server surfaces without later redaction or evidence-packet code", () => {
-		const downstreamFileNames = ["redaction-scanner.ts", "evidence-packet-writer.ts"];
+	it("classifies required app-server surfaces without final compatibility evidence code", () => {
+		const downstreamFileNames = [
+			"final-compatibility-evidence.ts",
+			"manual-qa-matrix.ts",
+			"qa/final-compatibility-evidence.mjs",
+			"qa/manual-qa-matrix.mjs",
+		];
 
 		const inventoryMethods = APP_SERVER_SURFACE_INVENTORY.map((entry) => entry.method);
 		const missingSurfaces = PLAN_REQUIRED_APP_SERVER_SURFACES.filter((method) => !classifyAppServerSurface(method));
