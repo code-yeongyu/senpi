@@ -1,4 +1,13 @@
-import type { Api, Model, SimpleStreamOptions, StreamOptions, ThinkingBudgets, ThinkingLevel } from "../types.ts";
+import type {
+	Api,
+	Context,
+	Model,
+	SimpleStreamOptions,
+	StreamOptions,
+	ThinkingBudgets,
+	ThinkingLevel,
+} from "../types.ts";
+import { estimateContextTokens } from "../utils/estimate.ts";
 
 /**
  * Merge user-supplied extraBody fields into a provider request payload, skipping
@@ -111,10 +120,24 @@ export const BEDROCK_RESERVED_BODY_KEYS: ReadonlySet<string> = new Set([
 	"requestMetadata",
 ]);
 
-export function buildBaseOptions(model: Model<Api>, options?: SimpleStreamOptions, apiKey?: string): StreamOptions {
+const CONTEXT_SAFETY_TOKENS = 4096;
+const MIN_MAX_TOKENS = 1;
+
+export function clampMaxTokensToContext(model: Model<Api>, context: Context, maxTokens: number): number {
+	if (model.contextWindow <= 0) return Math.max(MIN_MAX_TOKENS, maxTokens);
+	const available = model.contextWindow - estimateContextTokens(context).tokens - CONTEXT_SAFETY_TOKENS;
+	return Math.min(maxTokens, Math.max(MIN_MAX_TOKENS, available));
+}
+
+export function buildBaseOptions(
+	model: Model<Api>,
+	context: Context,
+	options?: SimpleStreamOptions,
+	apiKey?: string,
+): StreamOptions {
 	return {
 		temperature: options?.temperature,
-		maxTokens: options?.maxTokens,
+		maxTokens: clampMaxTokensToContext(model, context, options?.maxTokens ?? model.maxTokens),
 		signal: options?.signal,
 		apiKey: apiKey || options?.apiKey,
 		transport: options?.transport,

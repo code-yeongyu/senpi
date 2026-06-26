@@ -38,7 +38,12 @@ import { isForcedToolChoiceUnsupportedError, omitToolChoiceParam } from "../util
 
 import { resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
-import { ANTHROPIC_RESERVED_BODY_KEYS, adjustMaxTokensForThinking, buildBaseOptions } from "./simple-options.ts";
+import {
+	ANTHROPIC_RESERVED_BODY_KEYS,
+	adjustMaxTokensForThinking,
+	buildBaseOptions,
+	clampMaxTokensToContext,
+} from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 /**
@@ -1006,6 +1011,14 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					if (event.usage.cache_creation_input_tokens != null) {
 						output.usage.cacheWrite = event.usage.cache_creation_input_tokens;
 					}
+					// Anthropic reports reasoning tokens in `output_tokens_details.thinking_tokens` on the
+					// final message_delta usage (a subset of output_tokens). SDK 0.91.1 omits the field from
+					// its Usage type, so read it through a narrow cast. Verified against the live API.
+					const thinkingTokens = (event.usage as { output_tokens_details?: { thinking_tokens?: number } })
+						.output_tokens_details?.thinking_tokens;
+					if (thinkingTokens != null) {
+						output.usage.reasoning = thinkingTokens;
+					}
 					// Anthropic doesn't provide total_tokens, compute from components
 					output.usage.totalTokens =
 						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
@@ -1118,7 +1131,7 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 		throw new Error(`No API key for provider: ${model.provider}`);
 	}
 
-	const base = buildBaseOptions(model, options, apiKey);
+	const base = buildBaseOptions(model, context, options, options?.apiKey);
 	if (!options?.reasoning) {
 		return stream(model, context, { ...base, thinkingEnabled: false } satisfies AnthropicOptions);
 	}
@@ -1143,11 +1156,13 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 		options.thinkingBudgets,
 	);
 
+	const maxTokens = clampMaxTokensToContext(model, context, adjusted.maxTokens);
+
 	return stream(model, context, {
 		...base,
-		maxTokens: adjusted.maxTokens,
+		maxTokens,
 		thinkingEnabled: true,
-		thinkingBudgetTokens: adjusted.thinkingBudget,
+		thinkingBudgetTokens: Math.min(adjusted.thinkingBudget, Math.max(0, maxTokens - 1024)),
 	} satisfies AnthropicOptions);
 };
 

@@ -9,6 +9,11 @@
 ### Fixed
 
 - Fixed builtin webfetch extraction for Tistory-style articles so the post body and readable line breaks are preserved instead of blog chrome or category blocks.
+- Fixed `--session` and `SessionManager.open()` to reject non-empty invalid session files without overwriting them ([#6002](https://github.com/earendil-works/pi/issues/6002)).
+- Fixed assistant messages stopped by output length to show a visible incomplete-response error ([#4290](https://github.com/earendil-works/pi/issues/4290)).
+- Fixed `--no-session --session-id` so ephemeral CLI runs can use deterministic session IDs for provider cache affinity ([#6070](https://github.com/earendil-works/pi/issues/6070)).
+- Fixed disk BMP image files to be detected, converted to PNG, and attached through `read` and CLI `@file` inputs ([#6047](https://github.com/earendil-works/pi/issues/6047)).
+- Fixed auto-retry for provider stream errors that explicitly tell callers to retry the request ([#6019](https://github.com/earendil-works/pi/issues/6019)).
 
 ## [2026.6.23-2] - 2026-06-23
 

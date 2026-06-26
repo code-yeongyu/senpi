@@ -263,4 +263,18 @@ describe("AssistantMessageComponent", () => {
 		expect(rendered).toContain("https://ai.google.dev/gemini-api/docs/grounding");
 		expect(rendered).not.toContain("groundingChunks");
 	});
+
+	test("renders length stops as visible errors", () => {
+		initTheme("dark");
+
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([{ type: "thinking", thinking: "private reasoning" }], { stopReason: "length" }),
+			true,
+		);
+		const rendered = component.render(80).join("\n");
+
+		expect(rendered).toContain("Thinking...");
+		expect(rendered).toContain("maximum output token limit");
+		expect(rendered).toContain("response may be incomplete");
+	});
 });

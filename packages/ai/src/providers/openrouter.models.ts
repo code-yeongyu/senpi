@@ -1807,7 +1807,7 @@ export const OPENROUTER_MODELS = {
 		cost: {
 			input: 0.6,
 			output: 2.5,
-			cacheRead: 0,
+			cacheRead: 0.6,
 			cacheWrite: 0,
 		},
 		contextWindow: 262144,
@@ -3799,11 +3799,11 @@ export const OPENROUTER_MODELS = {
 		cost: {
 			input: 0.14,
 			output: 1,
-			cacheRead: 0,
+			cacheRead: 0.05,
 			cacheWrite: 0,
 		},
 		contextWindow: 262144,
-		maxTokens: 262144,
+		maxTokens: 81920,
 	} satisfies Model<"openai-completions">,
 	"qwen/qwen3.5-397b-a17b": {
 		id: "qwen/qwen3.5-397b-a17b",
@@ -4057,6 +4057,24 @@ export const OPENROUTER_MODELS = {
 		contextWindow: 256000,
 		maxTokens: 128000,
 	} satisfies Model<"openai-completions">,
+	"sakana/fugu-ultra": {
+		id: "sakana/fugu-ultra",
+		name: "Sakana: Fugu Ultra",
+		api: "openai-completions",
+		provider: "openrouter",
+		baseUrl: "https://openrouter.ai/api/v1",
+		compat: {"supportsDeveloperRole":false,"thinkingFormat":"openrouter"},
+		reasoning: true,
+		input: ["text", "image"],
+		cost: {
+			input: 5,
+			output: 30,
+			cacheRead: 0.5,
+			cacheWrite: 0,
+		},
+		contextWindow: 1000000,
+		maxTokens: 128000,
+	} satisfies Model<"openai-completions">,
 	"sao10k/l3.1-euryale-70b": {
 		id: "sao10k/l3.1-euryale-70b",
 		name: "Sao10K: Llama 3.1 Euryale 70B v2.2",
@@ -4229,13 +4247,13 @@ export const OPENROUTER_MODELS = {
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
-			input: 0.14,
+			input: 0.105,
 			output: 0.28,
-			cacheRead: 0.0028,
+			cacheRead: 0,
 			cacheWrite: 0,
 		},
 		contextWindow: 1048576,
-		maxTokens: 131072,
+		maxTokens: 4096,
 	} satisfies Model<"openai-completions">,
 	"xiaomi/mimo-v2.5-pro": {
 		id: "xiaomi/mimo-v2.5-pro",
@@ -4429,11 +4447,11 @@ export const OPENROUTER_MODELS = {
 		cost: {
 			input: 0.98,
 			output: 3.08,
-			cacheRead: 0.49,
+			cacheRead: 0.182,
 			cacheWrite: 0,
 		},
 		contextWindow: 202752,
-		maxTokens: 65535,
+		maxTokens: 4096,
 	} satisfies Model<"openai-completions">,
 	"z-ai/glm-5.2": {
 		id: "z-ai/glm-5.2",

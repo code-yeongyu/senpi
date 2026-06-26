@@ -1,0 +1,38 @@
+import { describe, expect, it } from "vitest";
+import { fauxAssistantMessage } from "../src/providers/faux.ts";
+import { isRetryableAssistantError } from "../src/utils/retry.ts";
+
+const openAIExplicitRetryMessage =
+	"An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID req_******** in your message.";
+const bedrockExplicitRetryMessage =
+	'{"message":"The system encountered an unexpected error during processing. Try your request again."}';
+
+describe("provider retry classification", () => {
+	it("matches explicit provider retry guidance", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: openAIExplicitRetryMessage }),
+			),
+		).toBe(true);
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: bedrockExplicitRetryMessage }),
+			),
+		).toBe(true);
+	});
+
+	it("keeps provider limit errors non-retryable", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "429 quota exceeded" }),
+			),
+		).toBe(false);
+	});
+
+	it("classifies assistant error messages", () => {
+		expect(
+			isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" })),
+		).toBe(true);
+		expect(isRetryableAssistantError(fauxAssistantMessage("not an error"))).toBe(false);
+	});
+});

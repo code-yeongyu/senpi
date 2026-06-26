@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -148,6 +149,18 @@ describe("external-dir", () => {
 			const target = "/Users/me/project/src/../config";
 			const result = isExternalPath(target, cwd);
 			expect(result).toBe(false);
+		});
+
+		it.skipIf(process.platform === "win32")("keeps relative non-existent paths inside a symlinked cwd", () => {
+			const realRoot = fs.mkdtempSync(path.join(os.tmpdir(), "external-dir-real-"));
+			const linkRoot = path.join(os.tmpdir(), `external-dir-link-${process.pid}-${Date.now()}`);
+			fs.symlinkSync(realRoot, linkRoot, "dir");
+			try {
+				expect(isExternalPath("src/new.ts", linkRoot)).toBe(false);
+			} finally {
+				fs.rmSync(linkRoot, { force: true });
+				fs.rmSync(realRoot, { recursive: true, force: true });
+			}
 		});
 	});
 

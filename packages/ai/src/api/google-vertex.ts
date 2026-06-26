@@ -266,6 +266,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 							(chunk.usageMetadata.candidatesTokenCount || 0) + (chunk.usageMetadata.thoughtsTokenCount || 0),
 						cacheRead: chunk.usageMetadata.cachedContentTokenCount || 0,
 						cacheWrite: 0,
+						reasoning: chunk.usageMetadata.thoughtsTokenCount || 0,
 						totalTokens: chunk.usageMetadata.totalTokenCount || 0,
 						cost: {
 							input: 0,
@@ -329,7 +330,7 @@ export const streamSimple: StreamFunction<"google-vertex", SimpleStreamOptions> 
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
-	const base = buildBaseOptions(model, options, undefined);
+	const base = buildBaseOptions(model, context, options, undefined);
 	if (!options?.reasoning) {
 		return stream(model, context, {
 			...base,

@@ -860,10 +860,13 @@ export class SessionManager {
 		if (existsSync(this.sessionFile)) {
 			this.fileEntries = loadEntriesFromFile(this.sessionFile);
 
-			// If file was empty or corrupted (no valid header), truncate and start fresh
-			// to avoid appending messages without a session header (which breaks the session)
+			// If file was empty, initialize it with a valid session header. If it was
+			// non-empty but did not parse as a pi session, fail without modifying it.
 			if (this.fileEntries.length === 0) {
 				const explicitPath = this.sessionFile;
+				if (statSync(explicitPath).size > 0) {
+					throw new Error(`Session file is not a valid pi session: ${explicitPath}`);
+				}
 				this.newSession();
 				this.sessionFile = explicitPath;
 				this._rewriteFile();
@@ -1544,8 +1547,8 @@ export class SessionManager {
 	}
 
 	/** Create an in-memory session (no file persistence) */
-	static inMemory(cwd: string = process.cwd()): SessionManager {
-		return new SessionManager(cwd, "", undefined, false);
+	static inMemory(cwd: string = process.cwd(), options?: NewSessionOptions): SessionManager {
+		return new SessionManager(cwd, "", undefined, false, options);
 	}
 
 	/**

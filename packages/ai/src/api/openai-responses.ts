@@ -312,7 +312,7 @@ export const streamSimple: StreamFunction<"openai-responses", SimpleStreamOption
 ): AssistantMessageEventStream => {
 	getClientApiKey(model.provider, options?.apiKey, options?.headers);
 
-	const base = buildBaseOptions(model, options, options?.apiKey);
+	const base = buildBaseOptions(model, context, options, options?.apiKey);
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
 	const reasoningEffort =
 		clampedReasoning === "off" ? undefined : clampMaxForOpenAI(clampedReasoning, supportsXhigh(model));
