@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- Fixed builtin webfetch extraction for Tistory-style articles so the post body and readable line breaks are preserved instead of blog chrome or category blocks.
+
 ## [2026.6.23-2] - 2026-06-23
 
 ### Added

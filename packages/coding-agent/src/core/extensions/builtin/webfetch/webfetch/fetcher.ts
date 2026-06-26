@@ -211,8 +211,12 @@ function getHeader(headers: IncomingHttpHeaders, name: string): string {
 async function discardBody(body: ResponseBodyStream): Promise<void> {
 	try {
 		await body.dump({ limit: 1024 });
-	} catch {
-		// Preserve the caller's original failure.
+	} catch (error) {
+		if (error instanceof Error) {
+			body.destroy(error);
+			return;
+		}
+		throw error;
 	}
 }
 
