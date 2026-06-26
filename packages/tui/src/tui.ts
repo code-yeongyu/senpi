@@ -1307,7 +1307,7 @@ export class TUI extends Container {
 		const firstInsertedScreenRow = regionBottom - plan.insertedRows.length + 1;
 		for (let index = 0; index < plan.insertedRows.length; index++) {
 			const screenRow = firstInsertedScreenRow + index;
-			buffer += `\x1b[${screenRow + 1};1H\x1b[2K`;
+			buffer += `\x1b[${screenRow + 1};1H\x1b[2K${TUI.SEGMENT_RESET}`;
 			buffer += plan.insertedRows[index] ?? "";
 		}
 
@@ -1345,7 +1345,7 @@ export class TUI extends Container {
 		const bufferLength = Math.max(height, newLines.length);
 		for (let row = 0; row < bufferLength; row++) {
 			if (row > 0) buffer += "\r\n";
-			buffer += "\r\x1b[2K";
+			buffer += `\r\x1b[2K${TUI.SEGMENT_RESET}`;
 			buffer += newLines[row] ?? "";
 		}
 
@@ -1627,7 +1627,7 @@ export class TUI extends Container {
 					buffer += `\x1b[${clearStartOffset}B`;
 				}
 				for (let i = 0; i < extraLines; i++) {
-					buffer += "\r\x1b[2K";
+					buffer += `\r\x1b[2K${TUI.SEGMENT_RESET}`;
 					if (i < extraLines - 1) buffer += "\x1b[1B";
 				}
 				const moveBack = Math.max(0, extraLines - 1 + clearStartOffset);
@@ -1699,7 +1699,7 @@ export class TUI extends Container {
 
 				for (let row = 0; row < height; row++) {
 					if (row > 0) buffer += "\r\n";
-					buffer += "\r\x1b[2K";
+					buffer += `\r\x1b[2K${TUI.SEGMENT_RESET}`;
 					buffer += newLines[viewportTop + row] ?? "";
 				}
 
@@ -1769,9 +1769,9 @@ export class TUI extends Container {
 					return;
 				}
 
-				buffer += "\x1b[2K";
+				buffer += `\x1b[2K${TUI.SEGMENT_RESET}`;
 				for (let row = 1; row < imageReservedRows; row++) {
-					buffer += "\r\n\x1b[2K";
+					buffer += `\r\n\x1b[2K${TUI.SEGMENT_RESET}`;
 				}
 				buffer += `\x1b[${imageReservedRows - 1}A`;
 				buffer += line;
@@ -1780,7 +1780,7 @@ export class TUI extends Container {
 				continue;
 			}
 
-			buffer += "\x1b[2K"; // Clear current line
+			buffer += `\x1b[2K${TUI.SEGMENT_RESET}`; // Clear current line
 			if (!isImage && visibleWidth(line) > width) {
 				// Log all lines to crash file for debugging
 				const crashLogPath = path.join(os.homedir(), ".senpi", "agent", "senpi-crash.log");
@@ -1825,7 +1825,7 @@ export class TUI extends Container {
 			}
 			const extraLines = this.previousLines.length - newLines.length;
 			for (let i = newLines.length; i < this.previousLines.length; i++) {
-				buffer += "\r\n\x1b[2K";
+				buffer += `\r\n\x1b[2K${TUI.SEGMENT_RESET}`;
 			}
 			// Move cursor back to end of new content
 			buffer += `\x1b[${extraLines}A`;
