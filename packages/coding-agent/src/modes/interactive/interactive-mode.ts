@@ -2239,6 +2239,8 @@ export class InteractiveMode {
 					this.hideExtensionEditor();
 					resolve(undefined);
 				},
+				undefined,
+				this.settingsManager.getExternalEditorCommand(),
 			);
 
 			this.editorContainer.clear();
@@ -3647,10 +3649,9 @@ export class InteractiveMode {
 	}
 
 	private async openExternalEditor(): Promise<void> {
-		// Determine editor (respect $VISUAL, then $EDITOR)
-		const editorCmd = process.env.VISUAL || process.env.EDITOR;
+		const editorCmd = this.settingsManager.getExternalEditorCommand();
 		if (!editorCmd) {
-			this.showWarning("No editor configured. Set $VISUAL or $EDITOR environment variable.");
+			this.showWarning("No editor configured. Set externalEditor in settings.json or $VISUAL/$EDITOR.");
 			return;
 		}
 
