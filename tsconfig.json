@@ -40,6 +40,12 @@
 			"@earendil-works/pi-orchestrator/*": [
 				"./packages/orchestrator/src/*"
 			],
+			"@code-yeongyu/senpi-orchestrator": [
+				"./packages/orchestrator/src/index.ts"
+			],
+			"@code-yeongyu/senpi-orchestrator/*": [
+				"./packages/orchestrator/src/*"
+			],
 			"typebox": [
 				"./node_modules/typebox"
 			],
