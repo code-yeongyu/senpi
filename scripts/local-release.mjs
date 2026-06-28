@@ -12,7 +12,7 @@ const packages = [
 	{ directory: "packages/tui", name: "@earendil-works/pi-tui" },
 	{ directory: "packages/agent", name: "@earendil-works/pi-agent-core" },
 	{ directory: "packages/coding-agent", name: "@code-yeongyu/senpi" },
-	{ directory: "packages/orchestrator", name: "@earendil-works/pi-orchestrator" },
+	{ directory: "packages/orchestrator", name: "@code-yeongyu/senpi-orchestrator" },
 ];
 const packageCliCommand = "senpi";
 const captureMaxBufferBytes = 64 * 1024 * 1024;

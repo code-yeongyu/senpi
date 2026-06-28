@@ -241,7 +241,7 @@ export class Markdown implements Component {
 			this.paddingX,
 			this.paddingY,
 			this.theme.codeBlockIndent ?? "  ",
-			this.options.preserveOrderedListMarkers ? 1 : 0,
+			(this.options.preserveOrderedListMarkers ? 1 : 0) | (this.options.preserveBackslashEscapes ? 2 : 0),
 			objectId(this.theme),
 			styleKey,
 			getCapabilities().images ?? "",
