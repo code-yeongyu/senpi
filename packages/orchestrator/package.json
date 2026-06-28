@@ -1,6 +1,7 @@
 {
 	"name": "@code-yeongyu/senpi-orchestrator",
 	"version": "2026.6.28-3",
+	"private": true,
 	"description": "experimental orchestrator package for senpi",
 	"type": "module",
 	"main": "./dist/index.js",
