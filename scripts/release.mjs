@@ -12,7 +12,7 @@
  *   1. Pre-flight: branch must be `main`; working tree must be clean (--dry-run warns
  *      and continues so the preview is usable during development).
  *   2. Resolve version: `--version` override or `computeNextVersion()` from calver.mjs.
- *   3. Write `version` into all 5 workspace package.json files directly (TAB indent,
+ *   3. Write `version` into all release workspace package.json files directly (TAB indent,
  *      trailing newline). `npm version` is intentionally NOT used; the `-N` suffix on
  *      same-day re-releases looks like a prerelease tag to npm.
  *   4. Run `scripts/sync-versions.js` to propagate the new version to source
@@ -29,6 +29,13 @@
 
 import { execFileSync } from "node:child_process";
 import { computeNextVersion } from "./calver.mjs";
+import {
+	runGenerateImageModels,
+	runGenerateModels,
+	runInstallLock,
+	runPackageLockRefresh,
+	runShrinkwrap,
+} from "./release-artifacts.mjs";
 import { reAddUnreleasedSections, stampChangelogs } from "./release-changelog.mjs";
 import { applyWorkspaceVersions, runSyncVersions } from "./release-packages.mjs";
 
@@ -202,42 +209,6 @@ function gitPush(refspec, dryRun) {
 	runCommand("git", ["push", "origin", refspec]);
 }
 
-function runGenerateModels(dryRun) {
-	if (dryRun) {
-		dryRunLog("npm --prefix packages/ai run generate-models");
-		return;
-	}
-	log("npm --prefix packages/ai run generate-models");
-	runCommand("npm", ["--prefix", "packages/ai", "run", "generate-models"]);
-}
-
-function runGenerateImageModels(dryRun) {
-	if (dryRun) {
-		dryRunLog("npm --prefix packages/ai run generate-image-models");
-		return;
-	}
-	log("npm --prefix packages/ai run generate-image-models");
-	runCommand("npm", ["--prefix", "packages/ai", "run", "generate-image-models"]);
-}
-
-function runShrinkwrap(dryRun) {
-	if (dryRun) {
-		dryRunLog("node scripts/generate-coding-agent-shrinkwrap.mjs");
-		return;
-	}
-	log("node scripts/generate-coding-agent-shrinkwrap.mjs");
-	runCommand("node", ["scripts/generate-coding-agent-shrinkwrap.mjs"]);
-}
-
-function runPackageLockRefresh(dryRun) {
-	if (dryRun) {
-		dryRunLog("npm install --package-lock-only --ignore-scripts");
-		return;
-	}
-	log("npm install --package-lock-only --ignore-scripts");
-	runCommand("npm", ["install", "--package-lock-only", "--ignore-scripts"]);
-}
-
 function runCheck(dryRun) {
 	if (dryRun) {
 		dryRunLog("npm run check");
@@ -266,10 +237,11 @@ function main() {
 
 	applyWorkspaceVersions(version, args.dryRun, log, dryRunLog);
 	runSyncVersions(args.dryRun, runCommand, log, dryRunLog);
-	runPackageLockRefresh(args.dryRun);
-	runGenerateModels(args.dryRun);
-	runGenerateImageModels(args.dryRun);
-	runShrinkwrap(args.dryRun);
+	runPackageLockRefresh(args.dryRun, runCommand, log, dryRunLog);
+	runGenerateModels(args.dryRun, runCommand, log, dryRunLog);
+	runGenerateImageModels(args.dryRun, runCommand, log, dryRunLog);
+	runShrinkwrap(args.dryRun, runCommand, log, dryRunLog);
+	runInstallLock(args.dryRun, runCommand, log, dryRunLog);
 	stampChangelogs(version, date, args.dryRun, capturedChangelogSubsections, log, dryRunLog);
 	runCheck(args.dryRun);
 

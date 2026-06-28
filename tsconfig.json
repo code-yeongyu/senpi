@@ -34,6 +34,12 @@
 			"@earendil-works/pi-coding-agent/*": [
 				"./packages/coding-agent/src/*"
 			],
+			"@earendil-works/pi-orchestrator": [
+				"./packages/orchestrator/src/index.ts"
+			],
+			"@earendil-works/pi-orchestrator/*": [
+				"./packages/orchestrator/src/*"
+			],
 			"typebox": [
 				"./node_modules/typebox"
 			],

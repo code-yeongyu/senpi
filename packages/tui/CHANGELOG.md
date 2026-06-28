@@ -2,7 +2,9 @@
 
 ## [Unreleased]
 
-### Fixed
+### Added
+
+- Added an opt-in Markdown renderer option to preserve source backslash escapes for transcript rendering ([#6105](https://github.com/earendil-works/pi/issues/6105)).
 
 ## [2026.6.23-2] - 2026-06-23
 
@@ -13,6 +15,8 @@
 ### Fixed
 
 - Fixed inherited tall dialog redraw-loop handling by preserving the upstream revert state from v0.80.1.
+
+## [0.80.2] - 2026-06-23
 
 ## [0.80.1] - 2026-06-23
 
