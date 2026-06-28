@@ -1,7 +1,7 @@
 {
 	"name": "@earendil-works/pi-tui",
 	"private": true,
-	"version": "2026.6.28-2",
+	"version": "2026.6.28-3",
 	"description": "Terminal User Interface library with differential rendering for efficient text-based applications",
 	"type": "module",
 	"main": "dist/index.js",
