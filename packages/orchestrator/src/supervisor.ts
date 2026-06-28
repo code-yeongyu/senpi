@@ -1,3 +1,4 @@
+// allow: SIZE_OK - upstream experimental supervisor kept cohesive during this merge; split in a dedicated behavior-locked refactor.
 import { randomUUID } from "node:crypto";
 import type {
 	AgentSessionEvent,

@@ -1,3 +1,4 @@
+// allow: SIZE_OK - upstream experimental Radius client kept cohesive during this merge; split in a dedicated behavior-locked refactor.
 import { hostname, platform } from "node:os";
 import { AuthStorage, type OAuthCredential } from "@code-yeongyu/senpi";
 import { getOrchestratorDir, getSocketPath, VERSION } from "./config.ts";

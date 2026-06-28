@@ -1,3 +1,4 @@
+// allow: SIZE_OK - existing markdown renderer is oversized; this merge only preserves behavior and cache-key correctness.
 import { Marked, type Token, Tokenizer, type Tokens } from "marked";
 import { getCapabilities, hyperlink, isImageLine } from "../terminal-image.ts";
 import type { Component } from "../tui.ts";
