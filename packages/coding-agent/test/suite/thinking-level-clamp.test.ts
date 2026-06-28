@@ -54,7 +54,7 @@ describe("clampThinkingLevelToModel", () => {
 	});
 
 	it("forces off on non-reasoning models", () => {
-		const model = getModel("anthropic", "claude-3-5-haiku-latest");
+		const model = getModel("anthropic", "claude-sonnet-4-5");
 		const nonReasoning = { ...model, reasoning: false };
 		expect(clampThinkingLevelToModel("max", nonReasoning)).toBe("off");
 	});

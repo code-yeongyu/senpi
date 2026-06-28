@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- Fixed release validation after model catalog regeneration by avoiding a removed Anthropic Haiku alias in thinking-level tests.
+
 ## [2026.6.28] - 2026-06-28
 
 ### Added
