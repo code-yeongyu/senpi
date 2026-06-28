@@ -53,6 +53,11 @@ console.log('\n✅ All packages at same version (lockstep)');
 
 // Update all inter-package dependencies
 let totalUpdates = 0;
+
+function nextWorkspaceVersion(currentVersion, nextVersion) {
+	return currentVersion.startsWith('^') ? `^${nextVersion}` : nextVersion;
+}
+
 for (const [dir, pkg] of Object.entries(packages)) {
 	let updated = false;
 	
@@ -60,7 +65,7 @@ for (const [dir, pkg] of Object.entries(packages)) {
 	if (pkg.data.dependencies) {
 		for (const [depName, currentVersion] of Object.entries(pkg.data.dependencies)) {
 			if (versionMap[depName]) {
-				const newVersion = `^${versionMap[depName]}`;
+				const newVersion = nextWorkspaceVersion(currentVersion, versionMap[depName]);
 				if (currentVersion !== newVersion) {
 					console.log(`\n${pkg.data.name}:`);
 					console.log(`  ${depName}: ${currentVersion} → ${newVersion}`);
@@ -76,7 +81,7 @@ for (const [dir, pkg] of Object.entries(packages)) {
 	if (pkg.data.devDependencies) {
 		for (const [depName, currentVersion] of Object.entries(pkg.data.devDependencies)) {
 			if (versionMap[depName]) {
-				const newVersion = `^${versionMap[depName]}`;
+				const newVersion = nextWorkspaceVersion(currentVersion, versionMap[depName]);
 				if (currentVersion !== newVersion) {
 					console.log(`\n${pkg.data.name}:`);
 					console.log(`  ${depName}: ${currentVersion} → ${newVersion} (devDependencies)`);

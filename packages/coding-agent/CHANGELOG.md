@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2026.6.28] - 2026-06-28
 
 ### Added
 
@@ -32,6 +32,7 @@
 - Fixed app-server callback retries, notification IDs, resume cursors, runtime guards, capability fields, protocol inventory classification, and session routing behavior.
 - Fixed standalone Bun binary startup by preparing css-tree patch data in a compile-friendly form during binary packaging.
 - Fixed the release script to stamp the orchestrator package changelog with the released version.
+- Fixed workspace version syncing to preserve exact internal dependency pins during release.
 
 ## [2026.6.23-2] - 2026-06-23
 
