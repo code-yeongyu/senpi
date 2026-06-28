@@ -36,6 +36,7 @@ const DEFAULT_PACKAGES = [
 	"@code-yeongyu/senpi",
 	"@earendil-works/pi-ai",
 	"@earendil-works/pi-agent-core",
+	"@code-yeongyu/senpi-orchestrator",
 	"@earendil-works/pi-tui",
 	"@earendil-works/pi-web-ui",
 ];

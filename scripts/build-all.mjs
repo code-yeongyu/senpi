@@ -24,6 +24,7 @@ export const BUILD_PHASES = [
 	["packages/tui", "packages/ai"],
 	["packages/agent"],
 	["packages/coding-agent", "packages/web-ui"],
+	["packages/orchestrator"],
 ];
 
 export function parseArgs(argv) {

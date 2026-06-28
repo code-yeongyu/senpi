@@ -28,6 +28,7 @@ import type { AssistantMessage, ImageContent, Message, Model, TextContent } from
 import {
 	cleanupSessionResources,
 	isContextOverflow,
+	isRetryableAssistantError,
 	modelsAreEqual,
 	resetApiProviders,
 	streamSimple,
@@ -2953,12 +2954,6 @@ export class AgentSession {
 	// Auto-Retry
 	// =========================================================================
 
-	private _isNonRetryableProviderLimitError(errorMessage: string): boolean {
-		return /GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|available balance|insufficient_quota|out of budget|quota exceeded|billing/i.test(
-			errorMessage,
-		);
-	}
-
 	/**
 	 * Check if an error is retryable (overloaded, rate limit, server errors).
 	 * Context overflow errors are NOT retryable (handled by compaction instead).
@@ -2966,21 +2961,14 @@ export class AgentSession {
 	private _isRetryableError(message: AssistantMessage): boolean {
 		if (!message.errorMessage) return false;
 
-		// Context overflow is handled by compaction, not retry
-		const contextWindow = this.model?.contextWindow ?? 0;
-		if (isContextOverflow(message, contextWindow)) return false;
+		// Context overflow is handled by compaction, not retry.
+		if (isContextOverflow(message, this.model?.contextWindow ?? 0)) return false;
 
-		const err = message.errorMessage;
 		if (message.stopReason === "aborted") {
-			return /timed? out|timeout/i.test(err);
+			return /timed? out|timeout/i.test(message.errorMessage);
 		}
-		if (message.stopReason !== "error") return false;
 
-		if (this._isNonRetryableProviderLimitError(err)) return false;
-		// Match: overloaded_error, provider returned error, rate limit, 429, 500, 502, 503, 504, service unavailable, network/connection errors (including connection lost), WebSocket transport closes/errors, fetch failed, premature stream endings, HTTP/2 closed before response, terminated, retry delay exceeded
-		return /overloaded|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|websocket.?closed|websocket.?error|other side closed|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|stream ended before message_stop|http2 request did not get a response|timed? out|timeout|terminated|retry delay/i.test(
-			err,
-		);
+		return isRetryableAssistantError(message);
 	}
 
 	private _getProviderRetryDelayMs(errorMessage: string): number | undefined {

@@ -29,9 +29,9 @@ function normalizePath(inputPath: string): string {
 
 export function isExternalPath(inputPath: string, cwd: string): boolean {
 	const expandedPath = expandHome(inputPath);
-	const absolutePath = path.resolve(cwd, expandedPath);
-	const normalizedTarget = normalizePath(absolutePath);
 	const normalizedCwd = normalizePath(cwd);
+	const absolutePath = path.isAbsolute(expandedPath) ? expandedPath : path.resolve(normalizedCwd, expandedPath);
+	const normalizedTarget = normalizePath(absolutePath);
 
 	if (normalizedTarget === normalizedCwd) {
 		return false;

@@ -3,11 +3,11 @@ import type {
 	Tool as OpenAITool,
 	ResponseCreateParamsStreaming,
 	ResponseFunctionCallOutputItemList,
-	ResponseFunctionToolCall,
 	ResponseInput,
 	ResponseInputContent,
 	ResponseInputImage,
 	ResponseInputText,
+	ResponseOutputItem,
 	ResponseOutputMessage,
 	ResponseReasoningItem,
 	ResponseStreamEvent,
@@ -355,6 +355,13 @@ export function convertResponsesTools(tools: Tool[], options?: ConvertResponsesT
 // Stream processing
 // =============================================================================
 
+type StreamingToolCall = ToolCall & { partialJson: string };
+
+type ResponsesOutputSlot =
+	| { type: "thinking"; block: ThinkingContent; contentIndex: number }
+	| { type: "text"; block: TextContent; contentIndex: number }
+	| { type: "toolCall"; block: StreamingToolCall; contentIndex: number };
+
 export async function processResponsesStream<TApi extends Api>(
 	openaiStream: AsyncIterable<ResponseStreamEvent>,
 	output: AssistantMessage,
@@ -362,20 +369,87 @@ export async function processResponsesStream<TApi extends Api>(
 	model: Model<TApi>,
 	options?: OpenAIResponsesStreamOptions,
 ): Promise<void> {
-	let currentItem:
-		| ResponseReasoningItem
-		| ResponseOutputMessage
-		| ResponseFunctionToolCall
-		| ResponseCustomToolCallItem
-		| null = null;
-	let currentBlock: ThinkingContent | TextContent | (ToolCall & { partialJson: string }) | null = null;
-	const blocks = output.content;
-	const blockIndex = () => blocks.length - 1;
 	let sawTerminalResponseEvent = false;
-
-	function finalizeResponse(
+	const outputSlots = new Map<number, ResponsesOutputSlot>();
+	const getSlot = <TType extends ResponsesOutputSlot["type"]>(
+		outputIndex: number,
+		type: TType,
+	): Extract<ResponsesOutputSlot, { type: TType }> | undefined => {
+		const slot = outputSlots.get(outputIndex);
+		return slot?.type === type ? (slot as Extract<ResponsesOutputSlot, { type: TType }>) : undefined;
+	};
+	const createSlot = (
+		outputIndex: number,
+		item: ResponseOutputItem | ResponseCustomToolCallItem,
+	): ResponsesOutputSlot | undefined => {
+		if (item.type === "reasoning") {
+			const block: ThinkingContent = { type: "thinking", thinking: "" };
+			output.content.push(block);
+			const slot = {
+				type: "thinking",
+				block,
+				contentIndex: output.content.length - 1,
+			} satisfies ResponsesOutputSlot;
+			outputSlots.set(outputIndex, slot);
+			stream.push({ type: "thinking_start", contentIndex: slot.contentIndex, partial: output });
+			return slot;
+		}
+		if (item.type === "message") {
+			const block: TextContent = { type: "text", text: "" };
+			output.content.push(block);
+			const slot = { type: "text", block, contentIndex: output.content.length - 1 } satisfies ResponsesOutputSlot;
+			outputSlots.set(outputIndex, slot);
+			stream.push({ type: "text_start", contentIndex: slot.contentIndex, partial: output });
+			return slot;
+		}
+		if (item.type === "function_call") {
+			const block: StreamingToolCall = {
+				type: "toolCall",
+				id: `${item.call_id}|${item.id}`,
+				name: item.name,
+				arguments: {},
+				partialJson: item.arguments || "",
+			};
+			output.content.push(block);
+			const slot = {
+				type: "toolCall",
+				block,
+				contentIndex: output.content.length - 1,
+			} satisfies ResponsesOutputSlot;
+			outputSlots.set(outputIndex, slot);
+			stream.push({ type: "toolcall_start", contentIndex: slot.contentIndex, partial: output });
+			return slot;
+		}
+		if (isResponseCustomToolCallItem(item)) {
+			const input = item.input || "";
+			const block: StreamingToolCall = {
+				type: "toolCall",
+				id: `${item.call_id}|custom`,
+				name: item.name,
+				arguments: { input },
+				partialJson: JSON.stringify({ input }),
+			};
+			output.content.push(block);
+			const slot = {
+				type: "toolCall",
+				block,
+				contentIndex: output.content.length - 1,
+			} satisfies ResponsesOutputSlot;
+			outputSlots.set(outputIndex, slot);
+			stream.push({ type: "toolcall_start", contentIndex: slot.contentIndex, partial: output });
+			return slot;
+		}
+		return undefined;
+	};
+	const getOrCreateSlot = (
+		outputIndex: number,
+		item: ResponseOutputItem | ResponseCustomToolCallItem,
+	): ResponsesOutputSlot | undefined => {
+		return outputSlots.get(outputIndex) ?? createSlot(outputIndex, item);
+	};
+	const finalizeResponse = (
 		response: Extract<ResponseStreamEvent, { type: "response.completed" | "response.incomplete" }>["response"],
-	) {
+	) => {
 		sawTerminalResponseEvent = true;
 		if (response?.id) {
 			output.responseId = response.id;
@@ -388,6 +462,7 @@ export async function processResponsesStream<TApi extends Api>(
 				output: response.usage.output_tokens || 0,
 				cacheRead: cachedTokens,
 				cacheWrite: 0,
+				reasoning: response.usage.output_tokens_details?.reasoning_tokens || 0,
 				totalTokens: response.usage.total_tokens || 0,
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			};
@@ -404,239 +479,148 @@ export async function processResponsesStream<TApi extends Api>(
 		if (output.content.some((b) => b.type === "toolCall") && output.stopReason === "stop") {
 			output.stopReason = "toolUse";
 		}
-	}
+	};
 
 	for await (const event of openaiStream) {
 		if (event.type === "response.created") {
 			output.responseId = event.response.id;
 		} else if (event.type === "response.output_item.added") {
-			const item = event.item;
-			if (item.type === "reasoning") {
-				currentItem = item;
-				currentBlock = { type: "thinking", thinking: "" };
-				output.content.push(currentBlock);
-				stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
-			} else if (item.type === "message") {
-				currentItem = item;
-				currentBlock = { type: "text", text: "" };
-				output.content.push(currentBlock);
-				stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
-			} else if (item.type === "function_call") {
-				currentItem = item;
-				currentBlock = {
-					type: "toolCall",
-					id: `${item.call_id}|${item.id}`,
-					name: item.name,
-					arguments: {},
-					partialJson: item.arguments || "",
-				};
-				output.content.push(currentBlock);
-				stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
-			} else if (isResponseCustomToolCallItem(item)) {
-				currentItem = item;
-				const input = item.input || "";
-				currentBlock = {
-					type: "toolCall",
-					id: `${item.call_id}|custom`,
-					name: item.name,
-					arguments: { input },
-					partialJson: JSON.stringify({ input }),
-				};
-				output.content.push(currentBlock);
-				stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
-			} else {
-				currentItem = null;
-				currentBlock = null;
+			const slot = createSlot(event.output_index, event.item);
+			if (!slot) {
 				output.content.push({
 					type: "providerNative",
-					subtype: item.type,
-					raw: item,
+					subtype: event.item.type,
+					raw: event.item,
 				} satisfies ProviderNativeContent);
 			}
-		} else if (event.type === "response.reasoning_summary_part.added") {
-			if (currentItem && currentItem.type === "reasoning") {
-				currentItem.summary = currentItem.summary || [];
-				currentItem.summary.push(event.part);
-			}
 		} else if (event.type === "response.reasoning_summary_text.delta") {
-			if (currentItem?.type === "reasoning" && currentBlock?.type === "thinking") {
-				currentItem.summary = currentItem.summary || [];
-				const lastPart = currentItem.summary[currentItem.summary.length - 1];
-				if (lastPart) {
-					currentBlock.thinking += event.delta;
-					lastPart.text += event.delta;
-					stream.push({
-						type: "thinking_delta",
-						contentIndex: blockIndex(),
-						delta: event.delta,
-						partial: output,
-					});
-				}
-			}
+			const slot = getSlot(event.output_index, "thinking");
+			if (!slot) continue;
+			slot.block.thinking += event.delta;
+			stream.push({
+				type: "thinking_delta",
+				contentIndex: slot.contentIndex,
+				delta: event.delta,
+				partial: output,
+			});
 		} else if (event.type === "response.reasoning_summary_part.done") {
-			if (currentItem?.type === "reasoning" && currentBlock?.type === "thinking") {
-				currentItem.summary = currentItem.summary || [];
-				const lastPart = currentItem.summary[currentItem.summary.length - 1];
-				if (lastPart) {
-					currentBlock.thinking += "\n\n";
-					lastPart.text += "\n\n";
-					stream.push({
-						type: "thinking_delta",
-						contentIndex: blockIndex(),
-						delta: "\n\n",
-						partial: output,
-					});
-				}
-			}
+			const slot = getSlot(event.output_index, "thinking");
+			if (!slot) continue;
+			slot.block.thinking += "\n\n";
+			stream.push({
+				type: "thinking_delta",
+				contentIndex: slot.contentIndex,
+				delta: "\n\n",
+				partial: output,
+			});
 		} else if (event.type === "response.reasoning_text.delta") {
-			if (currentItem?.type === "reasoning" && currentBlock?.type === "thinking") {
-				currentBlock.thinking += event.delta;
-				stream.push({
-					type: "thinking_delta",
-					contentIndex: blockIndex(),
-					delta: event.delta,
-					partial: output,
-				});
-			}
-		} else if (event.type === "response.content_part.added") {
-			if (currentItem?.type === "message") {
-				currentItem.content = currentItem.content || [];
-				// Filter out ReasoningText, only accept output_text and refusal
-				if (event.part.type === "output_text" || event.part.type === "refusal") {
-					currentItem.content.push(event.part);
-				}
-			}
+			const slot = getSlot(event.output_index, "thinking");
+			if (!slot) continue;
+			slot.block.thinking += event.delta;
+			stream.push({
+				type: "thinking_delta",
+				contentIndex: slot.contentIndex,
+				delta: event.delta,
+				partial: output,
+			});
 		} else if (event.type === "response.output_text.delta") {
-			if (currentItem?.type === "message" && currentBlock?.type === "text") {
-				if (!currentItem.content || currentItem.content.length === 0) {
-					continue;
-				}
-				const lastPart = currentItem.content[currentItem.content.length - 1];
-				if (lastPart?.type === "output_text") {
-					currentBlock.text += event.delta;
-					lastPart.text += event.delta;
-					stream.push({
-						type: "text_delta",
-						contentIndex: blockIndex(),
-						delta: event.delta,
-						partial: output,
-					});
-				}
-			}
+			const slot = getSlot(event.output_index, "text");
+			if (!slot) continue;
+			slot.block.text += event.delta;
+			stream.push({
+				type: "text_delta",
+				contentIndex: slot.contentIndex,
+				delta: event.delta,
+				partial: output,
+			});
 		} else if (event.type === "response.refusal.delta") {
-			if (currentItem?.type === "message" && currentBlock?.type === "text") {
-				if (!currentItem.content || currentItem.content.length === 0) {
-					continue;
-				}
-				const lastPart = currentItem.content[currentItem.content.length - 1];
-				if (lastPart?.type === "refusal") {
-					currentBlock.text += event.delta;
-					lastPart.refusal += event.delta;
+			const slot = getSlot(event.output_index, "text");
+			if (!slot) continue;
+			slot.block.text += event.delta;
+			stream.push({
+				type: "text_delta",
+				contentIndex: slot.contentIndex,
+				delta: event.delta,
+				partial: output,
+			});
+		} else if (event.type === "response.function_call_arguments.delta") {
+			const slot = getSlot(event.output_index, "toolCall");
+			if (!slot) continue;
+			slot.block.partialJson += event.delta;
+			slot.block.arguments = parseStreamingJson(slot.block.partialJson);
+			stream.push({
+				type: "toolcall_delta",
+				contentIndex: slot.contentIndex,
+				delta: event.delta,
+				partial: output,
+			});
+		} else if (event.type === "response.function_call_arguments.done") {
+			const slot = getSlot(event.output_index, "toolCall");
+			if (!slot) continue;
+			const previousPartialJson = slot.block.partialJson;
+			slot.block.partialJson = event.arguments;
+			slot.block.arguments = parseStreamingJson(slot.block.partialJson);
+
+			if (event.arguments.startsWith(previousPartialJson)) {
+				const delta = event.arguments.slice(previousPartialJson.length);
+				if (delta.length > 0) {
 					stream.push({
-						type: "text_delta",
-						contentIndex: blockIndex(),
-						delta: event.delta,
+						type: "toolcall_delta",
+						contentIndex: slot.contentIndex,
+						delta,
 						partial: output,
 					});
-				}
-			}
-		} else if (event.type === "response.function_call_arguments.delta") {
-			if (currentItem?.type === "function_call" && currentBlock?.type === "toolCall") {
-				currentBlock.partialJson += event.delta;
-				currentBlock.arguments = parseStreamingJson(currentBlock.partialJson);
-				stream.push({
-					type: "toolcall_delta",
-					contentIndex: blockIndex(),
-					delta: event.delta,
-					partial: output,
-				});
-			}
-		} else if (event.type === "response.function_call_arguments.done") {
-			if (currentItem?.type === "function_call" && currentBlock?.type === "toolCall") {
-				const previousPartialJson = currentBlock.partialJson;
-				currentBlock.partialJson = event.arguments;
-				currentBlock.arguments = parseStreamingJson(currentBlock.partialJson);
-
-				if (event.arguments.startsWith(previousPartialJson)) {
-					const delta = event.arguments.slice(previousPartialJson.length);
-					if (delta.length > 0) {
-						stream.push({
-							type: "toolcall_delta",
-							contentIndex: blockIndex(),
-							delta,
-							partial: output,
-						});
-					}
 				}
 			}
 		} else if (event.type === "response.output_item.done") {
 			const item = event.item;
+			const slot = getOrCreateSlot(event.output_index, item);
 
-			if (item.type === "reasoning" && currentBlock?.type === "thinking") {
+			if (item.type === "reasoning" && slot?.type === "thinking") {
 				const summaryText = item.summary?.map((s) => s.text).join("\n\n") || "";
 				const contentText = item.content?.map((c) => c.text).join("\n\n") || "";
-				currentBlock.thinking = summaryText || contentText || currentBlock.thinking;
-				currentBlock.thinkingSignature = JSON.stringify(item);
+				slot.block.thinking = summaryText || contentText || slot.block.thinking;
+				slot.block.thinkingSignature = JSON.stringify(item);
 				stream.push({
 					type: "thinking_end",
-					contentIndex: blockIndex(),
-					content: currentBlock.thinking,
+					contentIndex: slot.contentIndex,
+					content: slot.block.thinking,
 					partial: output,
 				});
-				currentBlock = null;
-			} else if (item.type === "message" && currentBlock?.type === "text") {
-				currentBlock.text =
-					item.content?.map((c) => (c.type === "output_text" ? c.text : c.refusal)).join("") || "";
-				currentBlock.textSignature = encodeTextSignatureV1(item.id, item.phase ?? undefined);
+				outputSlots.delete(event.output_index);
+			} else if (item.type === "message" && slot?.type === "text") {
+				slot.block.text = item.content?.map((c) => (c.type === "output_text" ? c.text : c.refusal)).join("") || "";
+				slot.block.textSignature = encodeTextSignatureV1(item.id, item.phase ?? undefined);
 				stream.push({
 					type: "text_end",
-					contentIndex: blockIndex(),
-					content: currentBlock.text,
+					contentIndex: slot.contentIndex,
+					content: slot.block.text,
 					partial: output,
 				});
-				currentBlock = null;
-			} else if (item.type === "function_call") {
-				const args =
-					currentBlock?.type === "toolCall" && currentBlock.partialJson
-						? parseStreamingJson(currentBlock.partialJson)
-						: parseStreamingJson(item.arguments || "{}");
-
-				let toolCall: ToolCall;
-				if (currentBlock?.type === "toolCall") {
-					// Finalize in-place and strip the scratch buffer so replay only
-					// carries parsed arguments.
-					currentBlock.arguments = args;
-					delete (currentBlock as { partialJson?: string }).partialJson;
-					toolCall = currentBlock;
-				} else {
-					toolCall = {
-						type: "toolCall",
-						id: `${item.call_id}|${item.id}`,
-						name: item.name,
-						arguments: args,
-					};
-				}
-
-				currentBlock = null;
-				stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
-			} else if (isResponseCustomToolCallItem(item)) {
+				outputSlots.delete(event.output_index);
+			} else if (item.type === "function_call" && slot?.type === "toolCall") {
+				slot.block.arguments = parseStreamingJson(item.arguments || slot.block.partialJson || "{}");
+				// Finalize in-place and strip the scratch buffer so replay only
+				// carries parsed arguments.
+				delete (slot.block as { partialJson?: string }).partialJson;
+				stream.push({
+					type: "toolcall_end",
+					contentIndex: slot.contentIndex,
+					toolCall: slot.block,
+					partial: output,
+				});
+				outputSlots.delete(event.output_index);
+			} else if (isResponseCustomToolCallItem(item) && slot?.type === "toolCall") {
 				const input = typeof item.input === "string" ? item.input : "";
-				let toolCall: ToolCall;
-				if (currentBlock?.type === "toolCall") {
-					currentBlock.arguments = { input };
-					delete (currentBlock as { partialJson?: string }).partialJson;
-					toolCall = currentBlock;
-				} else {
-					toolCall = {
-						type: "toolCall",
-						id: `${item.call_id}|custom`,
-						name: item.name,
-						arguments: { input },
-					};
-				}
-
-				currentBlock = null;
-				stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
+				slot.block.arguments = { input };
+				delete (slot.block as { partialJson?: string }).partialJson;
+				stream.push({
+					type: "toolcall_end",
+					contentIndex: slot.contentIndex,
+					toolCall: slot.block,
+					partial: output,
+				});
+				outputSlots.delete(event.output_index);
 			}
 		} else if (event.type === "response.completed" || event.type === "response.incomplete") {
 			finalizeResponse(event.response);

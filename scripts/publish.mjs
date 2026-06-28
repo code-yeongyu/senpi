@@ -9,6 +9,7 @@ const packages = [
 	{ directory: "packages/ai", name: "@earendil-works/pi-ai" },
 	{ directory: "packages/agent", name: "@earendil-works/pi-agent-core" },
 	{ directory: "packages/tui", name: "@earendil-works/pi-tui" },
+	{ directory: "packages/orchestrator", name: "@code-yeongyu/senpi-orchestrator" },
 	{ directory: "packages/coding-agent", name: "@code-yeongyu/senpi" },
 ];
 

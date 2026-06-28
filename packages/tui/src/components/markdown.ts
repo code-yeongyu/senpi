@@ -1,3 +1,4 @@
+// allow: SIZE_OK - existing markdown renderer is oversized; this merge only preserves behavior and cache-key correctness.
 import { Marked, type Token, Tokenizer, type Tokens } from "marked";
 import { getCapabilities, hyperlink, isImageLine } from "../terminal-image.ts";
 import type { Component } from "../tui.ts";
@@ -161,6 +162,8 @@ export interface MarkdownTheme {
 export interface MarkdownOptions {
 	/** Preserve source list markers instead of normalizing them. */
 	preserveOrderedListMarkers?: boolean;
+	/** Preserve source backslash escapes instead of normalizing escaped punctuation. */
+	preserveBackslashEscapes?: boolean;
 }
 
 interface InlineStyleContext {
@@ -239,7 +242,7 @@ export class Markdown implements Component {
 			this.paddingX,
 			this.paddingY,
 			this.theme.codeBlockIndent ?? "  ",
-			this.options.preserveOrderedListMarkers ? 1 : 0,
+			(this.options.preserveOrderedListMarkers ? 1 : 0) | (this.options.preserveBackslashEscapes ? 2 : 0),
 			objectId(this.theme),
 			styleKey,
 			getCapabilities().images ?? "",
@@ -620,6 +623,10 @@ export class Markdown implements Component {
 
 		for (const token of tokens) {
 			switch (token.type) {
+				case "escape":
+					result += applyTextWithNewlines(this.options.preserveBackslashEscapes ? token.raw : token.text);
+					break;
+
 				case "text":
 					// Text tokens in list items can have nested tokens for inline formatting
 					if (token.tokens && token.tokens.length > 0) {

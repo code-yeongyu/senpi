@@ -4,6 +4,7 @@ export const WORKSPACE_PACKAGES = [
 	"packages/ai/package.json",
 	"packages/agent/package.json",
 	"packages/coding-agent/package.json",
+	"packages/orchestrator/package.json",
 	"packages/tui/package.json",
 	"packages/web-ui/package.json",
 ];

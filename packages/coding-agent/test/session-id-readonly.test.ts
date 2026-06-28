@@ -108,6 +108,13 @@ describe("--session-id read-only commands", () => {
 		expect(hasSessionWithId(join(result.agentDir, "sessions"), "read-only-help")).toBe(false);
 	});
 
+	it("allows --no-session with --session-id", async () => {
+		const result = await runCli(["--no-session", "--session-id", "ephemeral-id", "--help"]);
+
+		expect(result.code).toBe(0);
+		expect(hasSessionWithId(join(result.agentDir, "sessions"), "ephemeral-id")).toBe(false);
+	});
+
 	it("does not reserve a session for --list-models", async () => {
 		const result = await runCli(["--session-id", "read-only-models", "--list-models"]);
 
