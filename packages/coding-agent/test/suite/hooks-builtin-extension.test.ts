@@ -12,8 +12,6 @@ import { SessionManager } from "../../src/core/session-manager.ts";
 import { createTestExtensionsResult } from "../utilities.ts";
 
 const createdDirs: string[] = [];
-const T13_FORBIDDEN_ADAPTER_EVENTS = ["agent_end"] as const;
-
 afterEach(() => {
 	for (const dir of createdDirs.splice(0)) {
 		rmSync(dir, { recursive: true, force: true });
@@ -50,7 +48,7 @@ describe("builtin hooks extension registration and resource plumbing", () => {
 		expect(hooksIndex).toBeLessThan(permissionIndex);
 	});
 
-	it("registers the T11 prompt, T12 tool, and T13 lifecycle adapter runtime handlers only", async () => {
+	it("registers the T11 prompt, T12 tool, T13 lifecycle, and T14 Stop runtime handlers only", async () => {
 		// Given
 		const cwd = createTempDir("senpi-hooks-t10-registration-cwd");
 		const hooksExtension = getBuiltinExtension("hooks");
@@ -77,10 +75,9 @@ describe("builtin hooks extension registration and resource plumbing", () => {
 		expect(registeredEvents.has("session_start")).toBe(true);
 		expect(registeredEvents.has("session_before_compact")).toBe(true);
 		expect(registeredEvents.has("session_compact")).toBe(true);
-		for (const event of T13_FORBIDDEN_ADAPTER_EVENTS) {
-			expect(registeredEvents.has(event)).toBe(false);
-		}
+		expect(registeredEvents.has("agent_end")).toBe(true);
 		expect(Array.from(registeredEvents).sort()).toEqual([
+			"agent_end",
 			"before_agent_start",
 			"input",
 			"session_before_compact",

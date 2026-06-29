@@ -23,6 +23,7 @@ import {
 	promptContextFromResult,
 	safeDiagnosticDetails,
 } from "./prompt-adapter.ts";
+import { applyStopHookResult, buildStopHookInput, createStopTurnTracker } from "./stop-adapter.ts";
 import {
 	applyPostToolUseResult,
 	applyPreToolUseResult,
@@ -60,6 +61,7 @@ export type {
 export default function hooksExtension(pi: ExtensionAPI): void {
 	const pendingPromptContexts: PendingPromptHookContext[] = [];
 	const pendingPreToolContexts = new Map<string, readonly string[]>();
+	const stopTurnTracker = createStopTurnTracker();
 
 	const refreshState = (ctx: ExtensionContext): HookRuntimeState => {
 		const sources = ctx.getLoadedHookSources?.() ?? fallbackHookSources(ctx.cwd);
@@ -104,6 +106,7 @@ export default function hooksExtension(pi: ExtensionAPI): void {
 
 	pi.on("input", async (event, ctx) => {
 		if (event.source === "extension") return undefined;
+		stopTurnTracker.reset();
 		pendingPromptContexts.splice(0);
 		const state = refreshState(ctx);
 		const input = buildUserPromptHookInput({
@@ -240,6 +243,19 @@ export default function hooksExtension(pi: ExtensionAPI): void {
 		});
 		recordLifecycleHookResult(pi, "PostCompact", postCompactResultDetails(result));
 		return undefined;
+	});
+
+	pi.on("agent_end", async (event, ctx) => {
+		const state = refreshState(ctx);
+		const result = await dispatchHookEvent({
+			cwd: ctx.cwd,
+			handlers: state.parsed.executableHandlers,
+			input: buildStopHookInput(event, ctx),
+			signal: ctx.signal,
+			trustOptions: { platform: process.platform },
+			trustState: state.trust,
+		});
+		await applyStopHookResult(pi, ctx, result, stopTurnTracker.turnKey(ctx));
 	});
 
 	pi.registerCommand("hooks", {

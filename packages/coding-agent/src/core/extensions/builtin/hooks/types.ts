@@ -186,7 +186,14 @@ export type HookInputWire =
 			readonly transcript_path?: string;
 			readonly will_retry?: boolean;
 	  }
-	| { readonly event: "Stop"; readonly stopReason?: string; readonly cwd: string };
+	| {
+			readonly event: "Stop";
+			readonly stopReason?: string;
+			readonly cwd: string;
+			readonly hook_event_name?: "Stop";
+			readonly session_id?: string;
+			readonly transcript_path?: string;
+	  };
 
 export type HookOutputWire = {
 	readonly decision?: "approve" | "block" | "deny" | "ask";
