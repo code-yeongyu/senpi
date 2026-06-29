@@ -270,6 +270,26 @@ describe("TUI lifecycle memory", () => {
 });
 
 describe("TUI input render scheduling", () => {
+	it("clears a dirty current line before the initial render", async () => {
+		const terminal = new VirtualTerminal(40, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		// given
+		terminal.write("12:21 \x1b[2mfrom-shell-prompt");
+		component.lines = ["\x1b[1m•\x1b[22m \x1b[2mWorking\x1b[22m"];
+
+		// when
+		tui.start();
+		await terminal.waitForRender();
+
+		// then
+		assert.strictEqual(terminal.getViewport()[0], "• Working");
+
+		tui.stop();
+	});
+
 	it("echoes focused component input on the next tick while a normal render is pending", async () => {
 		const terminal = new VirtualTerminal(40, 5);
 		const tui = new TUI(terminal);
