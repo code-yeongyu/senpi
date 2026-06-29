@@ -100,7 +100,7 @@ import { parseGitUrl } from "../../utils/git.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
-import { checkForNewPiVersion } from "../../utils/version-check.ts";
+import { checkForNewPiVersion, getReleaseChangelogUrl } from "../../utils/version-check.ts";
 import { abortedErrorLabel } from "./aborted-error-label.ts";
 import { ArminComponent } from "./components/armin.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
@@ -4089,7 +4089,7 @@ export class InteractiveMode {
 	showNewVersionNotification(newVersion: string): void {
 		const action = theme.fg("accent", `${APP_NAME} update`);
 		const updateInstruction = theme.fg("muted", `New version ${newVersion} is available. Run `) + action;
-		const changelogUrl = "https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/CHANGELOG.md";
+		const changelogUrl = getReleaseChangelogUrl(newVersion);
 		const changelogLink = getCapabilities().hyperlinks
 			? hyperlink(theme.fg("accent", changelogUrl), changelogUrl)
 			: theme.fg("accent", changelogUrl);

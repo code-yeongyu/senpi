@@ -4,6 +4,8 @@ import { getPiUserAgent } from "./pi-user-agent.ts";
 
 const LATEST_VERSION_URL = `https://registry.npmjs.org/${encodeURIComponent(PACKAGE_NAME)}/latest`;
 const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10000;
+const RELEASE_CHANGELOG_BASE_URL = "https://github.com/code-yeongyu/senpi/blob";
+const RELEASE_CHANGELOG_PATH = "packages/coding-agent/CHANGELOG.md";
 
 export interface LatestPiRelease {
 	version: string;
@@ -26,6 +28,12 @@ export function isNewerPackageVersion(candidateVersion: string, currentVersion: 
 		return comparison > 0;
 	}
 	return candidateVersion.trim() !== currentVersion.trim();
+}
+
+export function getReleaseChangelogUrl(version: string): string {
+	const trimmedVersion = version.trim();
+	const tag = trimmedVersion.startsWith("v") ? trimmedVersion : `v${trimmedVersion}`;
+	return `${RELEASE_CHANGELOG_BASE_URL}/${tag}/${RELEASE_CHANGELOG_PATH}`;
 }
 
 export async function getLatestPiRelease(

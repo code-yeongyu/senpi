@@ -4,6 +4,7 @@ import {
 	comparePackageVersions,
 	getLatestPiRelease,
 	getLatestPiVersion,
+	getReleaseChangelogUrl,
 	isNewerPackageVersion,
 } from "../src/utils/version-check.ts";
 
@@ -55,6 +56,12 @@ describe("version checks", () => {
 					accept: "application/json",
 				}),
 			}),
+		);
+	});
+
+	it("builds a release-specific senpi changelog URL", () => {
+		expect(getReleaseChangelogUrl("2026.6.28-4")).toBe(
+			"https://github.com/code-yeongyu/senpi/blob/v2026.6.28-4/packages/coding-agent/CHANGELOG.md",
 		);
 	});
 

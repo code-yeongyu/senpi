@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- Fixed update notifications to link to the senpi changelog for the specific advertised release instead of the drifting upstream `main` changelog.
+
 ## [2026.6.28-4] - 2026-06-28
 
 ### Added
