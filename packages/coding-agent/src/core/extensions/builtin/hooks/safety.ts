@@ -46,7 +46,18 @@ type PluginRootTarget = {
 };
 
 export function resolveHookTimeoutSeconds(handler: ExecutableHookHandler): number {
-	return handler.config.timeout ?? DEFAULT_HOOK_TIMEOUT_SECONDS;
+	const timeout = handler.config.timeout;
+	if (timeout === undefined) {
+		return DEFAULT_HOOK_TIMEOUT_SECONDS;
+	}
+	if (!isValidHookTimeoutSeconds(timeout)) {
+		throw new Error("Invalid command hook timeout reached runtime execution.");
+	}
+	return timeout;
+}
+
+export function isValidHookTimeoutSeconds(timeout: number): boolean {
+	return Number.isFinite(timeout) && timeout > 0;
 }
 
 export function buildHookEnvironment(options: HookEnvironmentOptions): NodeJS.ProcessEnv {

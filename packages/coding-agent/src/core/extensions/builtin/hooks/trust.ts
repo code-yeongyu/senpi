@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { DEFAULT_HOOK_TIMEOUT_SECONDS, isValidHookTimeoutSeconds } from "./safety.ts";
 import type {
 	ExecutableHookHandler,
 	HookSourceMetadata,
@@ -39,7 +40,6 @@ type JsonValue =
 	| readonly JsonValue[]
 	| { readonly [key: string]: JsonValue | undefined };
 
-const DEFAULT_TIMEOUT_SECONDS = 600;
 const HOOK_STATE_VERSION = 1;
 
 export function emptyHookTrustState(): HookTrustState {
@@ -226,7 +226,13 @@ function selectedCommand(handler: ExecutableHookHandler, platform: HookTrustPlat
 }
 
 function normalizedTimeout(timeout: number | undefined): number {
-	return Math.max(timeout ?? DEFAULT_TIMEOUT_SECONDS, 1);
+	if (timeout === undefined) {
+		return DEFAULT_HOOK_TIMEOUT_SECONDS;
+	}
+	if (!isValidHookTimeoutSeconds(timeout)) {
+		throw new Error("Invalid command hook timeout reached trust hashing.");
+	}
+	return timeout;
 }
 
 function sourceKeyHash(source: HookSourceMetadata): string {

@@ -161,4 +161,46 @@ describe("builtin hooks schema", () => {
 			}),
 		);
 	});
+
+	it("rejects invalid command hook timeouts without making handlers executable", () => {
+		// Given
+		const invalidTimeouts = [
+			{ label: "zero", value: 0 },
+			{ label: "negative", value: -1 },
+			{ label: "nan", value: Number.NaN },
+			{ label: "positive-infinity", value: Number.POSITIVE_INFINITY },
+			{ label: "negative-infinity", value: Number.NEGATIVE_INFINITY },
+		] as const;
+
+		// When
+		const parsed = parseHookConfig(
+			{
+				hooks: {
+					PreToolUse: [
+						{
+							hooks: invalidTimeouts.map((timeout) => ({
+								type: "command",
+								command: `node hooks/${timeout.label}.mjs`,
+								timeout: timeout.value,
+							})),
+						},
+					],
+				},
+			},
+			SOURCE,
+		);
+
+		// Then
+		expect(parsed.executableHandlers).toEqual([]);
+		expect(parsed.diagnostics).toHaveLength(invalidTimeouts.length);
+		for (const [index] of invalidTimeouts.entries()) {
+			expect(parsed.diagnostics).toContainEqual(
+				expect.objectContaining({
+					code: "invalid_timeout",
+					event: "PreToolUse",
+					path: `hooks.PreToolUse[0].hooks[${index}].timeout`,
+				}),
+			);
+		}
+	});
 });

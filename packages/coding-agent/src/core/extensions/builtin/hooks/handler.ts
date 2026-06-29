@@ -1,4 +1,5 @@
 import { diagnostic } from "./diagnostics.ts";
+import { isValidHookTimeoutSeconds } from "./safety.ts";
 import type {
 	CommandHookConfig,
 	ExecutableHookHandler,
@@ -166,13 +167,13 @@ function normalizeCommandConfig(
 	}
 
 	const timeout = handler.timeout;
-	if (timeout !== undefined && typeof timeout !== "number") {
+	if (timeout !== undefined && (typeof timeout !== "number" || !isValidHookTimeoutSeconds(timeout))) {
 		context.diagnostics.push(
 			diagnostic(
 				{
 					code: "invalid_timeout",
 					event: context.event,
-					message: "Command hook timeout must be a number.",
+					message: "Command hook timeout must be a finite number greater than 0.",
 					path: `${path}.timeout`,
 				},
 				context.source,

@@ -145,8 +145,21 @@ describe("builtin hooks command runner", () => {
 		expect(result.timedOut).toBe(true);
 		expect(result.aborted).toBe(false);
 		expect(result.exitCode).toBeNull();
+		expect(result.timeoutSeconds).toBe(0.1);
 		expect(existsSync(pidPath)).toBe(true);
 		assertProcessExited(Number(readFileSync(pidPath, "utf8")));
+	});
+
+	it("rejects invalid timeout values before starting a command", async () => {
+		// Given
+		const cwd = createTempDir("invalid-timeout");
+		mkdirSync(cwd, { recursive: true });
+		const input: HookInputWire = { cwd, event: "SessionStart", sessionId: "s1" };
+
+		// Then
+		await expect(
+			runCommandHook(createHandler('node -e "process.exit(0)"', { timeout: 0 }), input, { cwd }),
+		).rejects.toThrow("Invalid command hook timeout reached runtime execution.");
 	});
 
 	it("kills a running command when the abort signal fires", async () => {

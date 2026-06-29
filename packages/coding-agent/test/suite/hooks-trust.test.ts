@@ -91,6 +91,21 @@ describe("builtin hooks trust", () => {
 		expect(isCommandHookTrusted(statusMessageChanged, trusted, { platform: "linux" })).toBe(false);
 	});
 
+	it("rejects invalid timeout values before trust can normalize them", () => {
+		// Given
+		const invalidTimeouts = [0, -1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY] as const;
+
+		// Then
+		expect(buildHookTrustRecord(commandHook({ timeout: 1 }), { platform: "linux" }).commandPreview).toBe(
+			"node hooks/check.mjs",
+		);
+		for (const timeout of invalidTimeouts) {
+			expect(() => buildHookTrustRecord(commandHook({ timeout }), { platform: "linux" })).toThrow(
+				"Invalid command hook timeout reached trust hashing.",
+			);
+		}
+	});
+
 	it("lists disabled and untrusted hooks while skipping execution", () => {
 		// Given
 		const trustedHook = commandHook({ groupIndex: 0, handlerIndex: 0 });
