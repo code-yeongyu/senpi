@@ -3,6 +3,17 @@ import type { BeforeAgentStartEventResult, ExtensionAPI, ExtensionContext, Loade
 import { loadHookConfigSources } from "./config-loader.ts";
 import { dispatchHookEvent } from "./dispatcher.ts";
 import {
+	buildPostCompactHookInput,
+	buildPreCompactHookInput,
+	buildSessionStartHookInput,
+	dispatchLifecycleHookEvent,
+	postCompactResultDetails,
+	preCompactResultDetails,
+	recordLifecycleHookResult,
+	sessionBeforeCompactResult,
+	sessionStartResultDetails,
+} from "./lifecycle-adapter.ts";
+import {
 	appendSystemMessages,
 	buildUserPromptHookInput,
 	formatPromptContextMessage,
@@ -76,6 +87,20 @@ export default function hooksExtension(pi: ExtensionAPI): void {
 		);
 		return { parsed, trust };
 	};
+
+	pi.on("session_start", async (event, ctx) => {
+		const state = refreshState(ctx);
+		const input = buildSessionStartHookInput(event, ctx);
+		const result = await dispatchLifecycleHookEvent({
+			cwd: ctx.cwd,
+			handlers: state.parsed.executableHandlers,
+			input,
+			matcherInputs: ["SessionStart", event.reason],
+			...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
+			trustState: state.trust,
+		});
+		recordLifecycleHookResult(pi, "SessionStart", sessionStartResultDetails(result));
+	});
 
 	pi.on("input", async (event, ctx) => {
 		if (event.source === "extension") return undefined;
@@ -185,6 +210,36 @@ export default function hooksExtension(pi: ExtensionAPI): void {
 			trustState: state.trust,
 		});
 		return applyPostToolUseResult(event, result, preToolContexts);
+	});
+
+	pi.on("session_before_compact", async (event, ctx) => {
+		const state = refreshState(ctx);
+		const result = await dispatchLifecycleHookEvent({
+			cwd: ctx.cwd,
+			handlers: state.parsed.executableHandlers,
+			input: buildPreCompactHookInput(event, ctx),
+			matcherInputs: ["PreCompact", event.reason],
+			signal: event.signal,
+			trustState: state.trust,
+		});
+		const details = preCompactResultDetails(result);
+		recordLifecycleHookResult(pi, "PreCompact", details);
+		return sessionBeforeCompactResult(details);
+	});
+
+	pi.on("session_compact", async (event, ctx) => {
+		if (!event.accepted) return undefined;
+		const state = refreshState(ctx);
+		const result = await dispatchLifecycleHookEvent({
+			cwd: ctx.cwd,
+			handlers: state.parsed.executableHandlers,
+			input: buildPostCompactHookInput(event, ctx),
+			matcherInputs: ["PostCompact", event.reason],
+			...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
+			trustState: state.trust,
+		});
+		recordLifecycleHookResult(pi, "PostCompact", postCompactResultDetails(result));
+		return undefined;
 	});
 
 	pi.registerCommand("hooks", {

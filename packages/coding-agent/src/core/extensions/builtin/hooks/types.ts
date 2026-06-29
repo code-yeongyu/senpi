@@ -123,7 +123,15 @@ export type HookRuntimeState = {
 };
 
 export type HookInputWire =
-	| { readonly event: "SessionStart"; readonly sessionId: string; readonly cwd: string }
+	| {
+			readonly event: "SessionStart";
+			readonly sessionId: string;
+			readonly cwd: string;
+			readonly hook_event_name?: "SessionStart";
+			readonly reason?: string;
+			readonly session_id?: string;
+			readonly transcript_path?: string;
+	  }
 	| {
 			readonly event: "UserPromptSubmit";
 			readonly prompt: string;
@@ -156,8 +164,28 @@ export type HookInputWire =
 			readonly tool_response?: unknown;
 			readonly tool_use_id?: string;
 	  }
-	| { readonly event: "PreCompact"; readonly reason: string; readonly cwd: string }
-	| { readonly event: "PostCompact"; readonly reason: string; readonly cwd: string }
+	| {
+			readonly event: "PreCompact";
+			readonly reason: string;
+			readonly cwd: string;
+			readonly custom_instructions?: string;
+			readonly hook_event_name?: "PreCompact";
+			readonly request_id?: string;
+			readonly session_id?: string;
+			readonly transcript_path?: string;
+			readonly will_retry?: boolean;
+	  }
+	| {
+			readonly event: "PostCompact";
+			readonly reason: string;
+			readonly cwd: string;
+			readonly accepted?: boolean;
+			readonly hook_event_name?: "PostCompact";
+			readonly request_id?: string;
+			readonly session_id?: string;
+			readonly transcript_path?: string;
+			readonly will_retry?: boolean;
+	  }
 	| { readonly event: "Stop"; readonly stopReason?: string; readonly cwd: string };
 
 export type HookOutputWire = {
