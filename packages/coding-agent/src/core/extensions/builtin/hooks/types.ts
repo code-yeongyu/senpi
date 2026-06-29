@@ -77,6 +77,8 @@ export type HookDiagnosticCode =
 	| "invalid_handler"
 	| "invalid_command"
 	| "invalid_command_windows"
+	| "invalid_command_target"
+	| "missing_command_target"
 	| "invalid_timeout"
 	| "invalid_status_message"
 	| "unknown_event"

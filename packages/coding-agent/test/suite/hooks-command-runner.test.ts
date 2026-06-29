@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { runCommandHook, selectCommandForPlatform } from "../../src/core/extensions/builtin/hooks/command-runner.ts";
 import type {
 	ExecutableHookHandler,
@@ -182,5 +182,48 @@ describe("builtin hooks command runner", () => {
 		expect(result.timedOut).toBe(false);
 		expect(result.exitCode).toBeNull();
 		assertProcessExited(Number(readFileSync(pidPath, "utf8")));
+	});
+
+	it("caps stdout and stderr in memory before concatenation", async () => {
+		// Given
+		const cwd = createTempDir("output-cap");
+		mkdirSync(cwd, { recursive: true });
+		const spillDir = join(cwd, "spill");
+		const scriptPath = join(cwd, "large-output.mjs");
+		writeFileSync(
+			scriptPath,
+			["process.stdout.write('o'.repeat(4096));", "process.stderr.write('e'.repeat(4096));"].join("\n"),
+		);
+		const originalConcat = Buffer.concat;
+		const concatSpy = vi.spyOn(Buffer, "concat").mockImplementation((list, totalLength) => {
+			const observedBytes = totalLength ?? list.reduce((sum, chunk) => sum + chunk.length, 0);
+			if (observedBytes > 128) {
+				throw new Error(`unbounded Buffer.concat observed ${observedBytes} bytes`);
+			}
+			return originalConcat(list, totalLength);
+		});
+		const input: HookInputWire = { cwd, event: "SessionStart", sessionId: "s1" };
+
+		try {
+			// When
+			const result = await runCommandHook(createHandler(`${process.execPath} ${scriptPath}`), input, {
+				cwd,
+				outputPolicy: { maxStderrBytes: 128, maxStdoutBytes: 128, spillDir },
+			});
+
+			// Then
+			expect(Buffer.byteLength(result.stdout)).toBeLessThanOrEqual(128);
+			expect(Buffer.byteLength(result.stderr)).toBeLessThanOrEqual(128);
+			expect(result.outputSafety.stdout).toEqual(
+				expect.objectContaining({ originalBytes: 4096, returnedBytes: 128, spilled: true, truncated: true }),
+			);
+			expect(result.outputSafety.stderr).toEqual(
+				expect.objectContaining({ originalBytes: 4096, returnedBytes: 128, spilled: true, truncated: true }),
+			);
+			expect(result.outputSafety.stdout.spillPath).toEqual(expect.any(String));
+			expect(result.outputSafety.stderr.spillPath).toEqual(expect.any(String));
+		} finally {
+			concatSpy.mockRestore();
+		}
 	});
 });

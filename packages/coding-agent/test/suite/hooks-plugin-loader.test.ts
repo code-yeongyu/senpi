@@ -22,6 +22,7 @@ describe("plugin hook manifest loader", () => {
 		const manifestPath = join(pluginRoot, ".codex-plugin", "plugin.json");
 		const pluginRootCommand = ["node $", "{PLUGIN_ROOT}/hooks/one.mjs"].join("");
 		writeJson(join(pluginRoot, "hooks", "one.json"), hookConfig(pluginRootCommand));
+		writeFileSync(join(pluginRoot, "hooks", "one.mjs"), "process.exit(0);\n");
 		writeJson(join(pluginRoot, "hooks", "two.json"), hookConfig("node hooks/two.mjs"));
 		writeJson(join(pluginRoot, "hooks", "hooks.json"), hookConfig("node hooks/default.mjs"));
 		writeJson(manifestPath, {

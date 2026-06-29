@@ -15,6 +15,7 @@ import {
 	resolveContainedPath,
 	sourceForPath,
 } from "./plugin-manifest.ts";
+import { validateHookHandlerSafety } from "./safety.ts";
 import { parseHookConfig } from "./schema.ts";
 import type { ExecutableHookHandler, HookDiagnostic, ParsedHookConfig } from "./types.ts";
 
@@ -194,7 +195,14 @@ function parseDrafts(
 		});
 		sources.push(source);
 		const parsed = parseHookConfig(draft.config, source);
-		executableHandlers.push(...parsed.executableHandlers);
+		for (const handler of parsed.executableHandlers) {
+			const safetyDiagnostics = validateHookHandlerSafety(handler);
+			if (safetyDiagnostics.length === 0) {
+				executableHandlers.push(handler);
+			} else {
+				parseDiagnostics.push(...safetyDiagnostics);
+			}
+		}
 		parseDiagnostics.push(...parsed.diagnostics);
 	}
 

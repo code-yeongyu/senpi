@@ -1,17 +1,24 @@
 import { spawn } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import { waitForChildProcess } from "../../../../utils/child-process.ts";
+import { killProcessTree, trackDetachedChildPid, untrackDetachedChildPid } from "../../../../utils/shell.ts";
 import {
-	getShellEnv,
-	killProcessTree,
-	trackDetachedChildPid,
-	untrackDetachedChildPid,
-} from "../../../../utils/shell.ts";
+	applyHookOutputSafety,
+	buildHookEnvironment,
+	DEFAULT_STDERR_LIMIT_BYTES,
+	DEFAULT_STDOUT_LIMIT_BYTES,
+	type HookOutputPolicy,
+	type HookOutputSafetyMetadata,
+	resolveHookTimeoutSeconds,
+} from "./safety.ts";
 import type { ExecutableHookHandler, HookInputWire } from "./types.ts";
 
 export type CommandHookRunOptions = {
 	readonly cwd: string;
+	readonly envPassthrough?: readonly string[];
+	readonly outputPolicy?: HookOutputPolicy;
 	readonly signal?: AbortSignal;
+	readonly sourceEnv?: NodeJS.ProcessEnv;
 };
 
 export type CommandHookRunResult = {
@@ -24,7 +31,8 @@ export type CommandHookRunResult = {
 	readonly timedOut: boolean;
 	readonly aborted: boolean;
 	readonly durationMs: number;
-	readonly timeoutSeconds?: number;
+	readonly outputSafety: HookOutputSafetyMetadata;
+	readonly timeoutSeconds: number;
 };
 
 export async function runCommandHook(
@@ -34,6 +42,7 @@ export async function runCommandHook(
 ): Promise<CommandHookRunResult> {
 	const command = selectCommandForPlatform(handler);
 	const startedAt = performance.now();
+	const timeoutSeconds = resolveHookTimeoutSeconds(handler);
 	if (options.signal?.aborted) {
 		return buildResult({
 			aborted: true,
@@ -42,25 +51,31 @@ export async function runCommandHook(
 			exitCode: null,
 			signal: null,
 			startedAt,
-			stderr: "",
-			stdout: "",
+			stderr: createEmptyStreamCapture("stderr"),
+			stdout: createEmptyStreamCapture("stdout"),
 			timedOut: false,
-			timeoutSeconds: handler.config.timeout,
+			timeoutSeconds,
+			outputPolicy: options.outputPolicy,
 		});
 	}
 
 	const child = spawn(command, {
 		cwd: options.cwd,
 		detached: process.platform !== "win32",
-		env: getShellEnv(),
+		env: buildHookEnvironment({
+			envPassthrough: options.envPassthrough,
+			handler,
+			input,
+			sourceEnv: options.sourceEnv ?? process.env,
+		}),
 		shell: true,
 		stdio: ["pipe", "pipe", "pipe"],
 		windowsHide: true,
 	});
 	if (child.pid !== undefined) trackDetachedChildPid(child.pid);
 
-	const stdout: Buffer[] = [];
-	const stderr: Buffer[] = [];
+	const stdout = createBoundedStreamCapture("stdout", options.outputPolicy);
+	const stderr = createBoundedStreamCapture("stderr", options.outputPolicy);
 	let exitSignal: NodeJS.Signals | null = null;
 	let timedOut = false;
 	let timeoutHandle: NodeJS.Timeout | undefined;
@@ -71,14 +86,13 @@ export async function runCommandHook(
 	const onAbort = (): void => killChild();
 
 	try {
-		child.stdout?.on("data", (chunk: Buffer) => stdout.push(chunk));
-		child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
+		child.stdout?.on("data", (chunk: Buffer) => stdout.append(chunk));
+		child.stderr?.on("data", (chunk: Buffer) => stderr.append(chunk));
 		child.once("exit", (_code, signal) => {
 			exitSignal = signal;
 		});
 
-		const timeoutSeconds = handler.config.timeout;
-		if (timeoutSeconds !== undefined && timeoutSeconds > 0) {
+		if (timeoutSeconds > 0) {
 			timeoutHandle = setTimeout(() => {
 				timedOut = true;
 				killChild();
@@ -99,10 +113,11 @@ export async function runCommandHook(
 			exitCode: timedOut || options.signal?.aborted === true ? null : exitCode,
 			signal: exitSignal,
 			startedAt,
-			stderr: Buffer.concat(stderr).toString("utf8"),
-			stdout: Buffer.concat(stdout).toString("utf8"),
+			stderr,
+			stdout,
 			timedOut,
 			timeoutSeconds,
+			outputPolicy: options.outputPolicy,
 		});
 	} finally {
 		if (child.pid !== undefined) untrackDetachedChildPid(child.pid);
@@ -124,25 +139,76 @@ export function selectCommandForPlatform(
 function buildResult(input: {
 	readonly command: string;
 	readonly cwd: string;
-	readonly stdout: string;
-	readonly stderr: string;
 	readonly exitCode: number | null;
 	readonly signal: NodeJS.Signals | null;
 	readonly timedOut: boolean;
 	readonly aborted: boolean;
 	readonly startedAt: number;
-	readonly timeoutSeconds?: number;
+	readonly stderr: BoundedStreamCapture;
+	readonly stdout: BoundedStreamCapture;
+	readonly timeoutSeconds: number;
+	readonly outputPolicy?: HookOutputPolicy;
 }): CommandHookRunResult {
+	const stdout = input.stdout.finalize(input.outputPolicy);
+	const stderr = input.stderr.finalize(input.outputPolicy);
 	return {
 		aborted: input.aborted,
 		command: input.command,
 		cwd: input.cwd,
 		durationMs: Math.max(0, performance.now() - input.startedAt),
 		exitCode: input.exitCode,
+		outputSafety: { stderr: stderr.safety, stdout: stdout.safety },
 		signal: input.signal,
-		stderr: input.stderr,
-		stdout: input.stdout,
+		stderr: stderr.text,
+		stdout: stdout.text,
 		timedOut: input.timedOut,
-		...(input.timeoutSeconds === undefined ? {} : { timeoutSeconds: input.timeoutSeconds }),
+		timeoutSeconds: input.timeoutSeconds,
+	};
+}
+
+type BoundedStreamCapture = {
+	readonly append: (chunk: Buffer) => void;
+	readonly finalize: (policy: HookOutputPolicy | undefined) => ReturnType<typeof applyHookOutputSafety>;
+};
+
+function createBoundedStreamCapture(
+	stream: "stderr" | "stdout",
+	policy: HookOutputPolicy | undefined,
+): BoundedStreamCapture {
+	const limit =
+		stream === "stdout"
+			? (policy?.maxStdoutBytes ?? DEFAULT_STDOUT_LIMIT_BYTES)
+			: (policy?.maxStderrBytes ?? DEFAULT_STDERR_LIMIT_BYTES);
+	const chunks: Buffer[] = [];
+	let keptBytes = 0;
+	let totalBytes = 0;
+
+	return {
+		append(chunk: Buffer): void {
+			totalBytes += chunk.length;
+			if (keptBytes >= limit) return;
+			const bytesToKeep = Math.min(limit - keptBytes, chunk.length);
+			chunks.push(Buffer.from(chunk.subarray(0, bytesToKeep)));
+			keptBytes += bytesToKeep;
+		},
+		finalize(finalPolicy: HookOutputPolicy | undefined): ReturnType<typeof applyHookOutputSafety> {
+			let text = "";
+			for (const chunk of chunks) {
+				text += chunk.toString("utf8");
+			}
+			return applyHookOutputSafety(stream, text, finalPolicy, {
+				originalBytes: totalBytes,
+				truncated: totalBytes > keptBytes,
+			});
+		},
+	};
+}
+
+function createEmptyStreamCapture(stream: "stderr" | "stdout"): BoundedStreamCapture {
+	return {
+		append(_chunk: Buffer): void {},
+		finalize(policy: HookOutputPolicy | undefined): ReturnType<typeof applyHookOutputSafety> {
+			return applyHookOutputSafety(stream, "", policy, { originalBytes: 0, truncated: false });
+		},
 	};
 }
