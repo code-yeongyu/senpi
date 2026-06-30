@@ -179,9 +179,9 @@ export const OPENCODE_GO_MODELS = {
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
-			input: 0.1,
-			output: 0.4,
-			cacheRead: 0.02,
+			input: 0.3,
+			output: 1.2,
+			cacheRead: 0.06,
 			cacheWrite: 0,
 		},
 		contextWindow: 1000000,

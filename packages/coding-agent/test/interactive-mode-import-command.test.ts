@@ -11,8 +11,7 @@ type InteractiveModePrototype = {
 };
 
 type ImportCommandContext = {
-	loadingAnimation?: { stop: () => void };
-	statusContainer: { clear: () => void };
+	clearStatusIndicator: () => void;
 	runtimeHost: { importFromJsonl: (inputPath: string, cwdOverride?: string) => Promise<{ cancelled: boolean }> };
 	stopWorkingLoader: () => void;
 	showError: (message: string) => void;
@@ -82,7 +81,7 @@ describe("InteractiveMode /import parsing", () => {
 		const showError = vi.fn();
 
 		const context: ImportCommandContext = {
-			statusContainer: { clear: vi.fn() },
+			clearStatusIndicator: vi.fn(),
 			runtimeHost: { importFromJsonl },
 			stopWorkingLoader: vi.fn(),
 			showError,
@@ -115,7 +114,7 @@ describe("InteractiveMode /import parsing", () => {
 		const showError = vi.fn();
 
 		const context: ImportCommandContext = {
-			statusContainer: { clear: vi.fn() },
+			clearStatusIndicator: vi.fn(),
 			runtimeHost: { importFromJsonl },
 			stopWorkingLoader: vi.fn(),
 			showError,
@@ -149,7 +148,7 @@ describe("InteractiveMode /import parsing", () => {
 		});
 
 		const context: ImportCommandContext = {
-			statusContainer: { clear: vi.fn() },
+			clearStatusIndicator: vi.fn(),
 			runtimeHost: { importFromJsonl },
 			stopWorkingLoader: vi.fn(),
 			showError,

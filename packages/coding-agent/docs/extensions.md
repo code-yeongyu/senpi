@@ -327,6 +327,9 @@ user sends another prompt ◄─────────────────
   ├─► session_start { reason: "fork", previousSessionFile }
   └─► resources_discover { reason: "startup" }
 
+/name or pi.setSessionName()
+  └─► session_info_changed
+
 /compact or auto-compaction
   ├─► session_before_compact (can cancel or customize)
   └─► session_compact
@@ -842,6 +845,17 @@ pi.on("session_start", async (event, ctx) => {
   // event.reason - "startup" | "reload" | "new" | "resume" | "fork"
   // event.previousSessionFile - present for "new", "resume", and "fork"
   ctx.ui.notify(`Session: ${ctx.sessionManager.getSessionFile() ?? "ephemeral"}`, "info");
+});
+```
+
+#### session_info_changed
+
+Fired when the current session display name is set via `/name`, RPC, or `pi.setSessionName()`.
+
+```typescript
+pi.on("session_info_changed", async (event, ctx) => {
+  // event.name - current normalized name, or undefined if cleared
+  ctx.ui.notify(`Session renamed: ${event.name ?? "(none)"}`, "info");
 });
 ```
 

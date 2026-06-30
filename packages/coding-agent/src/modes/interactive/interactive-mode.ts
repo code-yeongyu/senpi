@@ -36,8 +36,6 @@ import {
 	fuzzyFilter,
 	getCapabilities,
 	hyperlink,
-	Loader,
-	type LoaderIndicatorOptions,
 	Markdown,
 	matchesKey,
 	ProcessTerminal,
@@ -73,6 +71,7 @@ import type {
 	ExtensionUIDialogOptions,
 	ExtensionWidgetOptions,
 	ProjectTrustContext,
+	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
@@ -108,7 +107,6 @@ import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BorderedLoader } from "./components/bordered-loader.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
-import { CountdownTimer } from "./components/countdown-timer.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
 import { DaxnutsComponent } from "./components/daxnuts.ts";
@@ -127,6 +125,14 @@ import { type AuthSelectorProvider, OAuthSelectorComponent } from "./components/
 import { SessionSelectorComponent } from "./components/session-selector.ts";
 import { SettingsSelectorComponent } from "./components/settings-selector.ts";
 import { SkillInvocationMessageComponent } from "./components/skill-invocation-message.ts";
+import {
+	BranchSummaryStatusIndicator,
+	CompactionStatusIndicator,
+	IdleStatus,
+	RetryStatusIndicator,
+	type StatusIndicator,
+	WorkingStatusIndicator,
+} from "./components/status-indicator.ts";
 import { ToolExecutionComponent } from "./components/tool-execution.ts";
 import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
@@ -362,12 +368,11 @@ export class InteractiveMode {
 	private isInitialized = false;
 	private onInputCallback?: (text: string) => void;
 	private pendingUserInputs: string[] = [];
-	private loadingAnimation: Loader | undefined = undefined;
+	private activeStatusIndicator: StatusIndicator | undefined = undefined;
+	private readonly idleStatus = new IdleStatus();
 	private workingMessage: string | undefined = undefined;
 	private workingVisible = true;
-	private workingIndicatorOptions: LoaderIndicatorOptions | undefined = undefined;
-	private workingStartedAt: number | undefined = undefined;
-	private workingElapsedIntervalId: NodeJS.Timeout | undefined = undefined;
+	private workingIndicatorOptions: WorkingIndicatorOptions | undefined = undefined;
 	private readonly defaultWorkingMessage = "Working";
 	private readonly defaultHiddenThinkingLabel = "Thinking...";
 	private hiddenThinkingLabel = this.defaultHiddenThinkingLabel;
@@ -404,6 +409,7 @@ export class InteractiveMode {
 
 	// Thinking block visibility state
 	private hideThinkingBlock = false;
+	private outputPad = 1;
 
 	// Skill commands: command name -> skill file path
 	private skillCommands = new Map<string, string>();
@@ -422,13 +428,10 @@ export class InteractiveMode {
 	private pendingBashComponents: BashExecutionComponent[] = [];
 
 	// Auto-compaction state
-	private autoCompactionLoader: Loader | undefined = undefined;
 	private autoCompactionEscapeHandler?: () => void;
 	private autoCompactionProgressText = "";
 
 	// Auto-retry state
-	private retryLoader: Loader | undefined = undefined;
-	private retryCountdown: CountdownTimer | undefined = undefined;
 	private retryEscapeHandler?: () => void;
 
 	// Messages queued while compaction is running
@@ -513,6 +516,7 @@ export class InteractiveMode {
 
 		// Load hide thinking block setting
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
+		this.outputPad = this.settingsManager.getOutputPad();
 
 		// Register themes from resource loader and initialize
 		setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
@@ -1652,7 +1656,7 @@ export class InteractiveMode {
 			commandContextActions: {
 				waitForIdle: () => this.session.agent.waitForIdle(),
 				newSession: async (options) => {
-					this.stopWorkingLoader();
+					this.clearStatusIndicator();
 					try {
 						return await this.runtimeHost.newSession(options);
 					} catch (error: unknown) {
@@ -1724,8 +1728,13 @@ export class InteractiveMode {
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		this.footerDataProvider.setCwd(this.sessionManager.getCwd());
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
+		this.outputPad = this.settingsManager.getOutputPad();
 		this.ui.setShowHardwareCursor(this.settingsManager.getShowHardwareCursor());
-		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
+		const clearOnShrink = this.settingsManager.getClearOnShrink();
+		this.ui.setClearOnShrink(clearOnShrink);
+		if (!clearOnShrink && !this.activeStatusIndicator) {
+			this.statusContainer.clear();
+		}
 		const editorPaddingX = this.settingsManager.getEditorPaddingX();
 		const autocompleteMaxVisible = this.settingsManager.getAutocompleteMaxVisible();
 		this.defaultEditor.setPaddingX(editorPaddingX);
@@ -1847,36 +1856,6 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	private getWorkingLoaderMessage(): string {
-		return this.workingMessage ?? this.defaultWorkingMessage;
-	}
-
-	private getWorkingElapsedSeconds(): number {
-		if (this.workingStartedAt === undefined) {
-			return 0;
-		}
-		return Math.max(0, Math.floor((Date.now() - this.workingStartedAt) / 1000));
-	}
-
-	private refreshWorkingLoaderMessage(): void {
-		this.loadingAnimation?.setMessage(this.getWorkingLoaderMessage());
-	}
-
-	private startWorkingElapsedTimer(): void {
-		this.stopWorkingElapsedTimer();
-		this.workingStartedAt = Date.now();
-		this.workingElapsedIntervalId = setInterval(() => {
-			this.refreshWorkingLoaderMessage();
-		}, DEFAULT_WORKING_STATUS_REFRESH_INTERVAL_MS);
-	}
-
-	private stopWorkingElapsedTimer(): void {
-		if (this.workingElapsedIntervalId) {
-			clearInterval(this.workingElapsedIntervalId);
-			this.workingElapsedIntervalId = undefined;
-		}
-	}
-
 	private startToolHookStatusTimer(): void {
 		if (this.hookStatusIntervalId) {
 			return;
@@ -1950,7 +1929,7 @@ export class InteractiveMode {
 		this.activeToolExecutions.set(event.toolCallId, label);
 		this.workingMessage = label;
 		this.activeToolExecutionTerminalTitle = `${APP_TITLE} - ${label}`;
-		this.refreshWorkingLoaderMessage();
+		this.updateWorkingIndicatorMessage();
 		this.applyTerminalTitle();
 	}
 
@@ -1968,7 +1947,7 @@ export class InteractiveMode {
 			this.workingMessageBeforeActiveTool = undefined;
 			this.activeToolExecutionTerminalTitle = undefined;
 		}
-		this.refreshWorkingLoaderMessage();
+		this.updateWorkingIndicatorMessage();
 		this.applyTerminalTitle();
 	}
 
@@ -1991,7 +1970,7 @@ export class InteractiveMode {
 		this.activeToolExecutionTerminalTitle = undefined;
 		this.workingMessage = this.workingMessageBeforeActiveTool;
 		this.workingMessageBeforeActiveTool = undefined;
-		this.refreshWorkingLoaderMessage();
+		this.updateWorkingIndicatorMessage();
 		this.applyTerminalTitle();
 	}
 
@@ -2005,7 +1984,7 @@ export class InteractiveMode {
 		this.stopToolHookStatusTimer();
 	}
 
-	private getWorkingIndicatorOptions(): LoaderIndicatorOptions {
+	private getWorkingIndicatorOptions(): WorkingIndicatorOptions {
 		return (
 			this.workingIndicatorOptions ?? {
 				frames: theme.getColorMode() === "truecolor" ? ["•"] : [theme.fg("accent", "•"), theme.fg("muted", "◦")],
@@ -2017,7 +1996,7 @@ export class InteractiveMode {
 				messageFormatter: (message, animationElapsedMs) =>
 					formatWorkingStatusMessageFrame(
 						message,
-						this.getWorkingElapsedSeconds(),
+						Math.floor(animationElapsedMs / 1000),
 						keyText("app.interrupt"),
 						animationElapsedMs,
 						{
@@ -2033,45 +2012,56 @@ export class InteractiveMode {
 		);
 	}
 
-	private createWorkingLoader(): Loader {
-		return new Loader(
-			this.ui,
-			(spinner) => theme.fg("accent", spinner),
-			(text) => theme.fg("muted", text),
-			this.getWorkingLoaderMessage(),
-			this.getWorkingIndicatorOptions(),
-		);
+	private showStatusIndicator(indicator: StatusIndicator): void {
+		this.activeStatusIndicator?.dispose();
+		this.activeStatusIndicator = indicator;
+		this.statusContainer.clear();
+		this.statusContainer.addChild(indicator);
 	}
 
-	private stopWorkingLoader(): void {
-		this.stopWorkingElapsedTimer();
-		this.workingStartedAt = undefined;
-		if (this.loadingAnimation) {
-			this.loadingAnimation.stop();
-			this.loadingAnimation = undefined;
+	private updateWorkingIndicatorMessage(): void {
+		if (this.activeStatusIndicator?.kind === "working") {
+			this.activeStatusIndicator.setMessage(this.workingMessage ?? this.defaultWorkingMessage);
 		}
+	}
+
+	private clearStatusIndicator(kind?: StatusIndicator["kind"]): void {
+		if (kind && this.activeStatusIndicator?.kind !== kind) {
+			return;
+		}
+		const hadActiveStatusIndicator = this.activeStatusIndicator !== undefined;
+		this.activeStatusIndicator?.dispose();
+		this.activeStatusIndicator = undefined;
 		this.statusContainer.clear();
+		if (hadActiveStatusIndicator && this.ui.getClearOnShrink()) {
+			this.statusContainer.addChild(this.idleStatus);
+		}
 	}
 
 	private setWorkingVisible(visible: boolean): void {
 		this.workingVisible = visible;
 		if (!visible) {
-			this.stopWorkingLoader();
+			this.clearStatusIndicator("working");
 			this.ui.requestRender();
 			return;
 		}
-		if (this.session.isStreaming && !this.loadingAnimation) {
-			this.statusContainer.clear();
-			this.startWorkingElapsedTimer();
-			this.loadingAnimation = this.createWorkingLoader();
-			this.statusContainer.addChild(this.loadingAnimation);
+		if (this.session.isStreaming && this.activeStatusIndicator?.kind !== "working") {
+			this.showStatusIndicator(
+				new WorkingStatusIndicator(
+					this.ui,
+					this.workingMessage ?? this.defaultWorkingMessage,
+					this.getWorkingIndicatorOptions(),
+				),
+			);
 		}
 		this.ui.requestRender();
 	}
 
-	private setWorkingIndicator(options?: LoaderIndicatorOptions): void {
+	private setWorkingIndicator(options?: WorkingIndicatorOptions): void {
 		this.workingIndicatorOptions = options;
-		this.loadingAnimation?.setIndicator(this.getWorkingIndicatorOptions());
+		if (this.activeStatusIndicator?.kind === "working") {
+			this.activeStatusIndicator.setIndicator(this.getWorkingIndicatorOptions());
+		}
 		this.ui.requestRender();
 	}
 
@@ -2174,7 +2164,7 @@ export class InteractiveMode {
 		this.workingMessage = undefined;
 		this.workingVisible = true;
 		this.setWorkingIndicator();
-		this.refreshWorkingLoaderMessage();
+		this.updateWorkingIndicatorMessage();
 		this.setHiddenThinkingLabel();
 		this.clearToolHookStatuses();
 	}
@@ -2338,7 +2328,7 @@ export class InteractiveMode {
 			setStatus: (key, text) => this.setExtensionStatus(key, text),
 			setWorkingMessage: (message) => {
 				this.workingMessage = message;
-				this.refreshWorkingLoaderMessage();
+				this.updateWorkingIndicatorMessage();
 			},
 			setWorkingVisible: (visible) => this.setWorkingVisible(visible),
 			setWorkingIndicator: (options) => this.setWorkingIndicator(options),
@@ -3078,19 +3068,16 @@ export class InteractiveMode {
 					this.defaultEditor.onEscape = this.retryEscapeHandler;
 					this.retryEscapeHandler = undefined;
 				}
-				if (this.retryCountdown) {
-					this.retryCountdown.dispose();
-					this.retryCountdown = undefined;
-				}
-				if (this.retryLoader) {
-					this.retryLoader.stop();
-					this.retryLoader = undefined;
-				}
-				this.stopWorkingLoader();
 				if (this.workingVisible) {
-					this.startWorkingElapsedTimer();
-					this.loadingAnimation = this.createWorkingLoader();
-					this.statusContainer.addChild(this.loadingAnimation);
+					this.showStatusIndicator(
+						new WorkingStatusIndicator(
+							this.ui,
+							this.workingMessage ?? this.defaultWorkingMessage,
+							this.getWorkingIndicatorOptions(),
+						),
+					);
+				} else {
+					this.clearStatusIndicator();
 				}
 				this.ui.requestRender();
 				break;
@@ -3131,6 +3118,7 @@ export class InteractiveMode {
 						this.hideThinkingBlock,
 						this.getMarkdownThemeWithSettings(),
 						this.hiddenThinkingLabel,
+						this.outputPad,
 					);
 					this.streamingComponent.setExpanded(this.toolOutputExpanded);
 					this.streamingMessage = event.message;
@@ -3263,7 +3251,7 @@ export class InteractiveMode {
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(false);
 				}
-				this.stopWorkingLoader();
+				this.clearStatusIndicator("working");
 				this.clearActiveToolExecutionStatus();
 				this.clearToolHookStatuses();
 				if (this.streamingComponent) {
@@ -3287,37 +3275,21 @@ export class InteractiveMode {
 				this.defaultEditor.onEscape = () => {
 					this.session.abortCompaction();
 				};
-				this.statusContainer.clear();
-				const cancelHint = `(${keyText("app.interrupt")} to cancel)`;
-				const label =
-					event.reason === "threshold"
-						? `Auto-compacting... ${cancelHint}`
-						: event.reason === "overflow"
-							? `Context overflow detected, compacting... ${cancelHint}`
-							: event.reason === "pre_prompt"
-								? `Compacting before next prompt... ${cancelHint}`
-								: `Compacting context... ${cancelHint}`;
-				this.autoCompactionLoader = new Loader(
-					this.ui,
-					(spinner) => theme.fg("accent", spinner),
-					(text) => theme.fg("muted", text),
-					label,
-				);
-				this.statusContainer.addChild(this.autoCompactionLoader);
+				this.showStatusIndicator(new CompactionStatusIndicator(this.ui, event.reason));
 				this.autoCompactionProgressText = "";
 				this.ui.requestRender();
 				break;
 			}
 
 			case "compaction_progress": {
-				if (!this.autoCompactionLoader) break;
+				if (this.activeStatusIndicator?.kind !== "compaction") break;
 				const nextText =
 					event.text !== undefined ? event.text : `${this.autoCompactionProgressText}${event.delta ?? ""}`;
 				if (!nextText) break;
 				this.autoCompactionProgressText = nextText;
 				const preview = nextText.length > 4_000 ? `...${nextText.slice(nextText.length - 4_000)}` : nextText;
 				this.statusContainer.clear();
-				this.statusContainer.addChild(this.autoCompactionLoader);
+				this.statusContainer.addChild(this.activeStatusIndicator);
 				this.statusContainer.addChild(new Spacer(1));
 				this.statusContainer.addChild(new Text(theme.fg("muted", preview), 1, 0));
 				this.ui.requestRender();
@@ -3332,12 +3304,8 @@ export class InteractiveMode {
 					this.defaultEditor.onEscape = this.autoCompactionEscapeHandler;
 					this.autoCompactionEscapeHandler = undefined;
 				}
-				if (this.autoCompactionLoader) {
-					this.autoCompactionLoader.stop();
-					this.autoCompactionLoader = undefined;
-					this.autoCompactionProgressText = "";
-					this.statusContainer.clear();
-				}
+				this.clearStatusIndicator("compaction");
+				this.autoCompactionProgressText = "";
 				if (event.aborted) {
 					if (event.reason === "manual") {
 						this.showError("Compaction cancelled");
@@ -3375,28 +3343,9 @@ export class InteractiveMode {
 				// no separate retry-only handler is installed (the prior one only called
 				// session.abortRetry() and left queued steering messages stranded).
 				this.retryEscapeHandler = undefined;
-				// Show retry indicator
-				this.statusContainer.clear();
-				this.retryCountdown?.dispose();
-				const retryMessage = (seconds: number) =>
-					`Retrying (${event.attempt}/${event.maxAttempts}) in ${seconds}s... (${keyText("app.interrupt")} to cancel)`;
-				this.retryLoader = new Loader(
-					this.ui,
-					(spinner) => theme.fg("warning", spinner),
-					(text) => theme.fg("muted", text),
-					retryMessage(Math.ceil(event.delayMs / 1000)),
+				this.showStatusIndicator(
+					new RetryStatusIndicator(this.ui, event.attempt, event.maxAttempts, event.delayMs),
 				);
-				this.retryCountdown = new CountdownTimer(
-					event.delayMs,
-					this.ui,
-					(seconds) => {
-						this.retryLoader?.setMessage(retryMessage(seconds));
-					},
-					() => {
-						this.retryCountdown = undefined;
-					},
-				);
-				this.statusContainer.addChild(this.retryLoader);
 				this.ui.requestRender();
 				break;
 			}
@@ -3407,16 +3356,7 @@ export class InteractiveMode {
 					this.defaultEditor.onEscape = this.retryEscapeHandler;
 					this.retryEscapeHandler = undefined;
 				}
-				if (this.retryCountdown) {
-					this.retryCountdown.dispose();
-					this.retryCountdown = undefined;
-				}
-				// Stop loader
-				if (this.retryLoader) {
-					this.retryLoader.stop();
-					this.retryLoader = undefined;
-					this.statusContainer.clear();
-				}
+				this.clearStatusIndicator("retry");
 				// Show error only on final failure (success shows normal response)
 				if (!event.success) {
 					this.showError(`Retry failed after ${event.attempt} attempts: ${event.finalError || "Unknown error"}`);
@@ -3523,11 +3463,16 @@ export class InteractiveMode {
 							const userComponent = new UserMessageComponent(
 								skillBlock.userMessage,
 								this.getMarkdownThemeWithSettings(),
+								this.outputPad,
 							);
 							this.chatContainer.addChild(userComponent);
 						}
 					} else {
-						const userComponent = new UserMessageComponent(textContent, this.getMarkdownThemeWithSettings());
+						const userComponent = new UserMessageComponent(
+							textContent,
+							this.getMarkdownThemeWithSettings(),
+							this.outputPad,
+						);
 						this.chatContainer.addChild(userComponent);
 					}
 					if (options?.populateHistory) {
@@ -3542,6 +3487,7 @@ export class InteractiveMode {
 					this.hideThinkingBlock,
 					this.getMarkdownThemeWithSettings(),
 					this.hiddenThinkingLabel,
+					this.outputPad,
 				);
 				assistantComponent.setExpanded(this.toolOutputExpanded);
 				this.chatContainer.addChild(assistantComponent);
@@ -4380,6 +4326,7 @@ export class InteractiveMode {
 					showHardwareCursor: this.settingsManager.getShowHardwareCursor(),
 					defaultProjectTrust: this.settingsManager.getDefaultProjectTrust(),
 					editorPaddingX: this.settingsManager.getEditorPaddingX(),
+					outputPad: this.settingsManager.getOutputPad(),
 					autocompleteMaxVisible: this.settingsManager.getAutocompleteMaxVisible(),
 					quietStartup: this.settingsManager.getQuietStartup(),
 					clearOnShrink: this.settingsManager.getClearOnShrink(),
@@ -4482,6 +4429,23 @@ export class InteractiveMode {
 							this.editor.setPaddingX(padding);
 						}
 					},
+					onOutputPadChange: (padding) => {
+						this.settingsManager.setOutputPad(padding);
+						this.outputPad = padding;
+						if (this.streamingComponent || this.session.isStreaming) {
+							for (const child of this.chatContainer.children) {
+								if (child instanceof AssistantMessageComponent || child instanceof UserMessageComponent) {
+									child.setOutputPad(padding);
+								}
+							}
+							if (this.streamingComponent) {
+								this.streamingComponent.setOutputPad(padding);
+							}
+							this.ui.requestRender();
+							return;
+						}
+						this.rebuildChatFromMessages();
+					},
 					onAutocompleteMaxVisibleChange: (maxVisible) => {
 						this.settingsManager.setAutocompleteMaxVisible(maxVisible);
 						this.defaultEditor.setAutocompleteMaxVisible(maxVisible);
@@ -4492,6 +4456,9 @@ export class InteractiveMode {
 					onClearOnShrinkChange: (enabled) => {
 						this.settingsManager.setClearOnShrink(enabled);
 						this.ui.setClearOnShrink(enabled);
+						if (!enabled && !this.activeStatusIndicator) {
+							this.statusContainer.clear();
+						}
 					},
 					onShowTerminalProgressChange: (enabled) => {
 						this.settingsManager.setShowTerminalProgress(enabled);
@@ -4895,8 +4862,8 @@ export class InteractiveMode {
 						}
 					}
 
-					// Set up escape handler and loader if summarizing
-					let summaryLoader: Loader | undefined;
+					// Set up escape handler and status indicator if summarizing
+					let showingSummaryIndicator = false;
 					const originalOnEscape = this.defaultEditor.onEscape;
 
 					if (wantsSummary) {
@@ -4904,13 +4871,8 @@ export class InteractiveMode {
 							this.session.abortBranchSummary();
 						};
 						this.chatContainer.addChild(new Spacer(1));
-						summaryLoader = new Loader(
-							this.ui,
-							(spinner) => theme.fg("accent", spinner),
-							(text) => theme.fg("muted", text),
-							`Summarizing branch... (${keyText("app.interrupt")} to cancel)`,
-						);
-						this.statusContainer.addChild(summaryLoader);
+						this.showStatusIndicator(new BranchSummaryStatusIndicator(this.ui));
+						showingSummaryIndicator = true;
 						this.ui.requestRender();
 					}
 
@@ -4942,9 +4904,8 @@ export class InteractiveMode {
 					} catch (error) {
 						this.showError(error instanceof Error ? error.message : String(error));
 					} finally {
-						if (summaryLoader) {
-							summaryLoader.stop();
-							this.statusContainer.clear();
+						if (showingSummaryIndicator) {
+							this.clearStatusIndicator("branchSummary");
 						}
 						this.defaultEditor.onEscape = originalOnEscape;
 					}
@@ -5006,7 +4967,7 @@ export class InteractiveMode {
 		sessionPath: string,
 		options?: Parameters<ExtensionCommandContext["switchSession"]>[1],
 	): Promise<{ cancelled: boolean }> {
-		this.stopWorkingLoader();
+		this.clearStatusIndicator();
 		try {
 			const result = await this.runtimeHost.switchSession(sessionPath, {
 				withSession: options?.withSession,
@@ -5495,6 +5456,7 @@ export class InteractiveMode {
 				return;
 			}
 			this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
+			this.outputPad = this.settingsManager.getOutputPad();
 			this.rebuildChatFromMessages();
 			chatRestoredBeforeSessionStart = true;
 		};
@@ -5519,7 +5481,11 @@ export class InteractiveMode {
 				this.editor.setAutocompleteMaxVisible?.(autocompleteMaxVisible);
 			}
 			this.ui.setShowHardwareCursor(this.settingsManager.getShowHardwareCursor());
-			this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
+			const clearOnShrink = this.settingsManager.getClearOnShrink();
+			this.ui.setClearOnShrink(clearOnShrink);
+			if (!clearOnShrink && !this.activeStatusIndicator) {
+				this.statusContainer.clear();
+			}
 			this.setupAutocompleteProvider();
 			const runner = this.session.extensionRunner;
 			this.setupExtensionShortcuts(runner);
@@ -5606,7 +5572,7 @@ export class InteractiveMode {
 		}
 
 		try {
-			this.stopWorkingLoader();
+			this.clearStatusIndicator();
 			const result = await this.runtimeHost.importFromJsonl(inputPath);
 			if (result.cancelled) {
 				this.showStatus("Import cancelled");
@@ -5932,7 +5898,7 @@ export class InteractiveMode {
 	}
 
 	private async handleClearCommand(): Promise<void> {
-		this.stopWorkingLoader();
+		this.clearStatusIndicator();
 		try {
 			const result = await this.runtimeHost.newSession();
 			if (result.cancelled) {
@@ -6099,8 +6065,7 @@ export class InteractiveMode {
 			return;
 		}
 
-		this.stopWorkingLoader();
-		this.statusContainer.clear();
+		this.clearStatusIndicator();
 
 		try {
 			await this.session.compact(customInstructions);
@@ -6113,7 +6078,7 @@ export class InteractiveMode {
 		if (this.settingsManager.getShowTerminalProgress()) {
 			this.ui.terminal.setProgress(false);
 		}
-		this.stopWorkingLoader();
+		this.clearStatusIndicator();
 		this.clearPendingTools();
 		this.clearActiveToolExecutionStatus();
 		this.clearToolHookStatuses();

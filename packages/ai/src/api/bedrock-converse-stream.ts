@@ -48,6 +48,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
@@ -334,15 +335,22 @@ const BEDROCK_DATA_RETENTION_DOCS_URL = "https://docs.aws.amazon.com/bedrock/lat
  * detection) can distinguish error categories via simple string matching.
  */
 function formatBedrockError(error: unknown): string {
-	const message = error instanceof Error ? error.message : JSON.stringify(error);
-	const dataRetentionHint = /data retention mode/i.test(message)
+	const norm = normalizeProviderError(error);
+	// Surface the raw HTTP body (with status) when the SDK did not fold it into
+	// the message; otherwise fall back to the message. This is what stops a
+	// gateway 403 from collapsing to `Unknown: UnknownError`.
+	const core =
+		!norm.messageCarriesBody && norm.status !== undefined && norm.body !== undefined
+			? `${norm.status}: ${norm.body}`
+			: norm.message;
+	const dataRetentionHint = /data retention mode/i.test(core)
 		? ` See ${BEDROCK_DATA_RETENTION_DOCS_URL} for supported data retention modes.`
 		: "";
 	if (error instanceof BedrockRuntimeServiceException) {
 		const prefix = BEDROCK_ERROR_PREFIXES[error.name] ?? error.name;
-		return `${prefix}: ${message}${dataRetentionHint}`;
+		return `${prefix}: ${core}${dataRetentionHint}`;
 	}
-	return `${message}${dataRetentionHint}`;
+	return `${core}${dataRetentionHint}`;
 }
 
 /**
@@ -583,6 +591,7 @@ function supportsAdaptiveThinking(modelId: string, modelName?: string): boolean 
 			s.includes("opus-4-7") ||
 			s.includes("opus-4-8") ||
 			s.includes("sonnet-4-6") ||
+			s.includes("sonnet-5") ||
 			s.includes("fable-5"),
 	);
 }

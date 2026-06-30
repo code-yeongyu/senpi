@@ -22,6 +22,7 @@ import type {
 	AgentMessage,
 	AgentState,
 	AgentTool,
+	PrepareNextTurnContext,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@earendil-works/pi-ai/compat";
@@ -398,6 +399,7 @@ export class AgentSession {
 	private _baseSystemPrompt = "";
 	private _currentServiceTier: ServiceTier | undefined = undefined;
 	private _baseSystemPromptOptions!: BuildDynamicSystemPromptOptions;
+	private _systemPromptOverride?: string;
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
@@ -424,19 +426,7 @@ export class AgentSession {
 
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 		this._installAgentToolHooks();
-		const previousPrepareNextTurn = this.agent.prepareNextTurn;
-		this.agent.prepareNextTurn = async (signal) => {
-			const nextTurn = await previousPrepareNextTurn?.(signal);
-			const model = this.agent.state.model;
-			if (!model) {
-				return nextTurn;
-			}
-			return {
-				...nextTurn,
-				model,
-				thinkingLevel: this.agent.state.thinkingLevel,
-			};
-		};
+		this._installAgentNextTurnRefresh();
 
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
@@ -549,6 +539,29 @@ export class AgentSession {
 				content: hookResult.content,
 				details: hookResult.details,
 				isError: hookResult.isError ?? isError,
+			};
+		};
+	}
+
+	private _installAgentNextTurnRefresh(): void {
+		const previousPrepareNextTurnWithContext =
+			this.agent.prepareNextTurnWithContext ??
+			(this.agent.prepareNextTurn
+				? async (_turn: PrepareNextTurnContext, signal?: AbortSignal) => await this.agent.prepareNextTurn?.(signal)
+				: undefined);
+		this.agent.prepareNextTurnWithContext = async (turn, signal) => {
+			const previousSnapshot = await previousPrepareNextTurnWithContext?.(turn, signal);
+			const previousContext = previousSnapshot?.context ?? turn.context;
+
+			return {
+				...previousSnapshot,
+				context: {
+					...previousContext,
+					systemPrompt: this._systemPromptOverride ?? this._baseSystemPrompt,
+					tools: this.agent.state.tools.slice(),
+				},
+				model: this.agent.state.model,
+				thinkingLevel: this.agent.state.thinkingLevel,
 			};
 		};
 	}
@@ -759,6 +772,9 @@ export class AgentSession {
 
 			this._resolveRetry();
 			await this._checkCompaction(msg);
+			if (this.agent.hasQueuedMessages()) {
+				await this._continueAgentAfterCurrentRun();
+			}
 		}
 
 		if (event.type === "agent_end") {
@@ -1029,7 +1045,7 @@ export class AgentSession {
 
 		// Rebuild base system prompt with new tool set
 		this._baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
-		this.agent.state.systemPrompt = this._baseSystemPrompt;
+		this.agent.state.systemPrompt = this._systemPromptOverride ?? this._baseSystemPrompt;
 	}
 
 	/** Whether compaction or branch summarization is currently running */
@@ -1289,7 +1305,8 @@ export class AgentSession {
 				throw new Error(formatNoApiKeyFoundMessage(this.model.provider));
 			}
 
-			// Check if we need to compact before sending (catches aborted responses)
+			// Check if we need to compact before sending (catches aborted responses).
+			// The user's new prompt is sent below, so do not call agent.continue() here.
 			const lastAssistant = this._findLastAssistantMessage();
 			if (lastAssistant) {
 				await this._checkCompaction(lastAssistant, false, "pre_prompt");
@@ -1336,10 +1353,12 @@ export class AgentSession {
 				}
 			}
 			// Apply extension-modified system prompt, or reset to base
-			if (result?.systemPrompt) {
+			if (result?.systemPrompt !== undefined) {
+				this._systemPromptOverride = result.systemPrompt;
 				this.agent.state.systemPrompt = result.systemPrompt;
 			} else {
 				// Ensure we're using the base prompt (in case previous turn had modifications)
+				this._systemPromptOverride = undefined;
 				this.agent.state.systemPrompt = this._baseSystemPrompt;
 			}
 		} catch (error) {
@@ -3274,7 +3293,9 @@ export class AgentSession {
 	 */
 	setSessionName(name: string): void {
 		this.sessionManager.appendSessionInfo(name);
-		this._emit({ type: "session_info_changed", name: this.sessionManager.getSessionName() });
+		const event = { type: "session_info_changed", name: this.sessionManager.getSessionName() } as const;
+		this._emit(event);
+		void this._extensionRunner.emit(event);
 	}
 
 	// =========================================================================
