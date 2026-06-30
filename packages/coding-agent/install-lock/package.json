@@ -1,10 +1,10 @@
 {
 	"name": "@code-yeongyu/senpi-install",
-	"version": "2026.6.28-4",
+	"version": "2026.6.30",
 	"private": true,
 	"description": "Lockfile root used by the Pi installer and updater.",
 	"dependencies": {
-		"@code-yeongyu/senpi": "2026.6.28-4"
+		"@code-yeongyu/senpi": "2026.6.30"
 	},
 	"overrides": {
 		"rimraf": "6.1.2",

@@ -1,6 +1,6 @@
 {
 	"name": "@code-yeongyu/senpi-orchestrator",
-	"version": "2026.6.28-4",
+	"version": "2026.6.30",
 	"private": true,
 	"description": "experimental orchestrator package for senpi",
 	"type": "module",
@@ -39,7 +39,7 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@code-yeongyu/senpi": "2026.6.28-4"
+		"@code-yeongyu/senpi": "2026.6.30"
 	},
 	"devDependencies": {
 		"shx": "0.4.0"

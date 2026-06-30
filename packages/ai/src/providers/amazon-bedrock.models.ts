@@ -1623,6 +1623,23 @@ export const AMAZON_BEDROCK_MODELS = {
 		contextWindow: 1040000,
 		maxTokens: 8192,
 	} satisfies Model<"bedrock-converse-stream">,
+	"xai.grok-4.3": {
+		id: "xai.grok-4.3",
+		name: "Grok 4.3",
+		api: "bedrock-converse-stream",
+		provider: "amazon-bedrock",
+		baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+		reasoning: true,
+		input: ["text", "image"],
+		cost: {
+			input: 1.25,
+			output: 2.5,
+			cacheRead: 0.2,
+			cacheWrite: 0,
+		},
+		contextWindow: 1000000,
+		maxTokens: 131072,
+	} satisfies Model<"bedrock-converse-stream">,
 	"zai.glm-4.7": {
 		id: "zai.glm-4.7",
 		name: "GLM-4.7",
