@@ -4,9 +4,25 @@
 
 ### Added
 
+- Added inherited Anthropic Claude Sonnet 5 model support.
+- Added `get_entries` and `get_tree` RPC commands for reading session entries and tree snapshots over RPC ([#6078](https://github.com/earendil-works/pi/pull/6078) by [@geraschenko](https://github.com/geraschenko)).
+- Added session-name change events for extensions ([#6175](https://github.com/earendil-works/pi/pull/6175) by [@xl0](https://github.com/xl0)).
+- Added an `outputPad` setting for user message, assistant message, and thinking horizontal padding ([#6168](https://github.com/earendil-works/pi/issues/6168)).
+
 ### Changed
 
+- Changed inherited OpenAI Codex Responses SSE response-header waits to use the configured HTTP timeout instead of the previous fixed 20 second timeout, reducing false timeouts on slow connections ([#4945](https://github.com/earendil-works/pi/issues/4945)).
+
 ### Fixed
+
+- Fixed inherited Claude Sonnet 5 metadata to use adaptive thinking payloads for Anthropic-compatible and Bedrock requests.
+- Fixed inherited generated Xiaomi MiMo model pricing to match current pay-as-you-go pricing from models.dev ([#6138](https://github.com/earendil-works/pi/issues/6138)).
+- Fixed inherited provider HTTP errors to include response bodies instead of opaque SDK messages ([#5832](https://github.com/earendil-works/pi/pull/5832) by [@stephanmck](https://github.com/stephanmck)).
+- Fixed inherited Z.AI preserved thinking requests to send `thinking.clear_thinking: false` when thinking is enabled, allowing replayed `reasoning_content` to participate in provider caching ([#6083](https://github.com/earendil-works/pi/issues/6083)).
+- Fixed pre-prompt compaction to stop after compaction instead of continuing immediately ([#6074](https://github.com/earendil-works/pi/pull/6074) by [@yzhg1983](https://github.com/yzhg1983)).
+- Fixed extension tool changes to apply before the next provider request in the same agent run without dropping `before_agent_start` system-prompt overrides ([#6162](https://github.com/earendil-works/pi/issues/6162)).
+- Fixed a crash when undici emits an internal client error while terminating a mid-stream HTTP response ([#6133](https://github.com/earendil-works/pi/issues/6133)).
+- Fixed interactive status indicators so ending work, retry, compaction, or branch-summary indicators no longer shrink the TUI when clear-on-shrink is enabled ([#6026](https://github.com/earendil-works/pi/pull/6026)).
 
 ## [2026.6.30] - 2026-06-30
 
