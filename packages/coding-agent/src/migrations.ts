@@ -2,12 +2,13 @@
  * One-time migrations that run on startup.
  */
 
-import os from "node:os";
 import chalk from "chalk";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
-import { CONFIG_DIR_NAME, getAgentDir, getBinDir } from "./config.ts";
+import { getAgentDir, getBinDir } from "./config.ts";
 import { migrateKeybindingsConfig } from "./core/keybindings.ts";
+import { migrateExtensionSystem } from "./extension-system-migration.ts";
+import { migrateLegacySenpiDirs } from "./legacy-senpi-dir-migration.ts";
 
 const MIGRATION_GUIDE_URL =
 	"https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/CHANGELOG.md#extensions-migration";
@@ -131,30 +132,6 @@ export function migrateSessionsFromAgentRoot(): void {
 	}
 }
 
-/**
- * Migrate commands/ to prompts/ if needed.
- * Works for both regular directories and symlinks.
- */
-function migrateCommandsToPrompts(baseDir: string, label: string): boolean {
-	const commandsDir = join(baseDir, "commands");
-	const promptsDir = join(baseDir, "prompts");
-
-	if (existsSync(commandsDir) && !existsSync(promptsDir)) {
-		try {
-			renameSync(commandsDir, promptsDir);
-			console.log(chalk.green(`Migrated ${label} commands/ → prompts/`));
-			return true;
-		} catch (err) {
-			console.log(
-				chalk.yellow(
-					`Warning: Could not migrate ${label} commands/ to prompts/: ${err instanceof Error ? err.message : err}`,
-				),
-			);
-		}
-	}
-	return false;
-}
-
 function migrateKeybindingsConfigFile(): void {
 	const configPath = join(getAgentDir(), "keybindings.json");
 	if (!existsSync(configPath)) return;
@@ -169,35 +146,6 @@ function migrateKeybindingsConfigFile(): void {
 		writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
 	} catch {
 		// Ignore malformed files during migration
-	}
-}
-
-function migrateLegacySenpiDirs(cwd: string): void {
-	if (CONFIG_DIR_NAME === ".pi") return;
-
-	const homeDir = os.homedir();
-	const globalOldAgentDir = join(homeDir, ".pi", "agent");
-	const globalNewAgentDir = getAgentDir();
-	const globalOldMomDir = join(homeDir, ".pi", "mom");
-	const globalNewMomDir = join(homeDir, CONFIG_DIR_NAME, "mom");
-	const projectOldDir = join(cwd, ".pi");
-	const projectNewDir = join(cwd, CONFIG_DIR_NAME);
-
-	const moves: Array<[string, string, string]> = [
-		[globalOldAgentDir, globalNewAgentDir, "global agent directory"],
-		[globalOldMomDir, globalNewMomDir, "global mom directory"],
-		[projectOldDir, projectNewDir, "project config directory"],
-	];
-
-	for (const [oldPath, newPath, label] of moves) {
-		if (!existsSync(oldPath) || existsSync(newPath)) continue;
-		try {
-			mkdirSync(dirname(newPath), { recursive: true });
-			renameSync(oldPath, newPath);
-			console.log(chalk.green(`Migrated ${label} ${oldPath} → ${newPath}`));
-		} catch {
-			// Ignore migration failures and keep startup working.
-		}
 	}
 }
 
@@ -243,62 +191,6 @@ function migrateToolsToBin(): void {
 	if (movedAny) {
 		console.log(chalk.green(`Migrated managed binaries tools/ → bin/`));
 	}
-}
-
-/**
- * Check for deprecated hooks/ and tools/ directories.
- * Note: tools/ may contain fd/rg binaries extracted by pi, so only warn if it has other files.
- */
-function checkDeprecatedExtensionDirs(baseDir: string, label: string): string[] {
-	const hooksDir = join(baseDir, "hooks");
-	const toolsDir = join(baseDir, "tools");
-	const warnings: string[] = [];
-
-	if (existsSync(hooksDir)) {
-		warnings.push(`${label} hooks/ directory found. Hooks have been renamed to extensions.`);
-	}
-
-	if (existsSync(toolsDir)) {
-		// Check if tools/ contains anything other than fd/rg (which are auto-extracted binaries)
-		try {
-			const entries = readdirSync(toolsDir);
-			const customTools = entries.filter((e) => {
-				const lower = e.toLowerCase();
-				return (
-					lower !== "fd" && lower !== "rg" && lower !== "fd.exe" && lower !== "rg.exe" && !e.startsWith(".") // Ignore .DS_Store and other hidden files
-				);
-			});
-			if (customTools.length > 0) {
-				warnings.push(
-					`${label} tools/ directory contains custom tools. Custom tools have been merged into extensions.`,
-				);
-			}
-		} catch {
-			// Ignore read errors
-		}
-	}
-
-	return warnings;
-}
-
-/**
- * Run extension system migrations (commands→prompts) and collect warnings about deprecated directories.
- */
-function migrateExtensionSystem(cwd: string): string[] {
-	const agentDir = getAgentDir();
-	const projectDir = join(cwd, CONFIG_DIR_NAME);
-
-	// Migrate commands/ to prompts/
-	migrateCommandsToPrompts(agentDir, "Global");
-	migrateCommandsToPrompts(projectDir, "Project");
-
-	// Check for deprecated directories
-	const warnings = [
-		...checkDeprecatedExtensionDirs(agentDir, "Global"),
-		...checkDeprecatedExtensionDirs(projectDir, "Project"),
-	];
-
-	return warnings;
 }
 
 /**

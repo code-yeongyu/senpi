@@ -1,5 +1,20 @@
 # changes
 
+## Nested legacy config migration (2026-07-01)
+
+### What changed
+
+- `migrations.ts`: split legacy directory and extension-system migrations into focused modules.
+- `legacy-senpi-dir-migration.ts`: migrates missing files from nested legacy `~/.senpi/.pi/agent` and `~/.senpi/.pi/mom` directories into the current senpi config layout without overwriting existing files.
+
+### Why
+
+- Some pre-rename local configs ended up under nested `~/.senpi/.pi/agent`, so a fresh `~/.senpi/agent` could strand custom `models.json` entries such as ccapi-routed Anthropic models.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: startup migration orchestration in `migrations.ts`.
+
 ## shared provider-native rendering in text output (2026-05-14)
 
 ### What changed
