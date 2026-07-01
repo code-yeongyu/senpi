@@ -1885,20 +1885,6 @@ async function generateModels() {
 		});
 	}
 
-	// Add missing GitHub Copilot GPT-5.3 models until models.dev includes them.
-	const copilotBaseModel = allModels.find(
-		(m) => m.provider === "github-copilot" && m.id === "gpt-5.2-codex",
-	);
-	if (copilotBaseModel) {
-		if (!allModels.some((m) => m.provider === "github-copilot" && m.id === "gpt-5.3-codex")) {
-			allModels.push({
-				...copilotBaseModel,
-				id: "gpt-5.3-codex",
-				name: "GPT-5.3 Codex",
-			});
-		}
-	}
-
 	// Add missing GitHub Copilot Claude Sonnet 5 until models.dev includes it.
 	const anthropicSonnet5 = allModels.find((m) => m.provider === "anthropic" && m.id === "claude-sonnet-5");
 	if (anthropicSonnet5 && !allModels.some((m) => m.provider === "github-copilot" && m.id === "claude-sonnet-5")) {
@@ -1907,26 +1893,6 @@ async function generateModels() {
 			provider: "github-copilot",
 			baseUrl: "https://api.individual.githubcopilot.com",
 			headers: { ...COPILOT_STATIC_HEADERS },
-		});
-	}
-
-	if (!allModels.some((m) => m.provider === "openai" && m.id === "gpt-5.4")) {
-		allModels.push({
-			id: "gpt-5.4",
-			name: "GPT-5.4",
-			api: "openai-responses",
-			baseUrl: "https://api.openai.com/v1",
-			provider: "openai",
-			reasoning: true,
-			input: ["text", "image"],
-			cost: {
-				input: 2.5,
-				output: 15,
-				cacheRead: 0.25,
-				cacheWrite: 0,
-			},
-			contextWindow: 272000,
-			maxTokens: 128000,
 		});
 	}
 
