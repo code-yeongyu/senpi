@@ -1,1 +1,0 @@
-Record exact commands, cwd, sanitized environment choices, and exit codes here.

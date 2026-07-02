@@ -12,7 +12,6 @@ import hooksExtension from "./hooks/index.ts";
 import nestedAgentsMdExtension from "./nested-agents-md/index.ts";
 import openaiWebSearchExtension from "./openai-web-search/index.ts";
 import permissionSystemExtension from "./permission-system/index.ts";
-import piCodexAppServerExtension from "./pi-codex-app-server/index.ts";
 import promptPresetExtension from "./prompt-preset/index.ts";
 import promptUrlWidgetExtension from "./prompt-url-widget.ts";
 import redrawsExtension from "./redraws.ts";
@@ -60,5 +59,4 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "nested-agents-md", factory: nestedAgentsMdExtension },
 	{ id: "rules", factory: piRulesExtension },
 	{ id: "goal", factory: goalExtension },
-	{ id: "pi-codex-app-server", factory: piCodexAppServerExtension },
 ];
