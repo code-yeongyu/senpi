@@ -1,6 +1,7 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import WebSocket, { type RawData } from "ws";
 import { restoreStdout } from "../../src/core/output-guard.ts";
@@ -75,6 +76,100 @@ describe("app-server mode entry", () => {
 		await expect(fetch(`http://127.0.0.1:${port}/readyz`)).rejects.toThrow();
 		banner.restore();
 	});
+
+	it("continues an active turn when a websocket closes mid-turn and replays terminal completion", async () => {
+		// Given: app-server mode uses an isolated faux provider and the first websocket owns an active turn.
+		const root = await scratchRoot();
+		const completionGate = createDeferred();
+		const faux = registerFauxProvider({ schedulerHook: () => completionGate.promise });
+		faux.setResponses([fauxAssistantMessage("close-mid-turn complete")]);
+		await seedFauxConfig(root, faux);
+		vi.stubEnv("SENPI_CODING_AGENT_DIR", join(root, "agent"));
+		vi.stubEnv("SENPI_CODING_AGENT_SESSION_DIR", join(root, "sessions"));
+		vi.stubEnv("PI_OFFLINE", "1");
+		vi.spyOn(process, "exit").mockImplementation(exitThrows);
+		const banner = captureStderrPort();
+		const mode = runAppServerMode({
+			kind: "server",
+			listen: {
+				kind: "ws",
+				url: "ws://127.0.0.1:0",
+				host: "127.0.0.1",
+				port: 0,
+			},
+			wsAuth: { kind: "off" },
+			jsonLogs: false,
+		});
+		runningModes.push(mode);
+
+		const port = await Promise.race([banner.wait, mode.then(() => failModeExited())]);
+		const firstSocket = await openSocket(port);
+		const firstReader = new BufferedSocketReader(firstSocket);
+		let secondReader: BufferedSocketReader | undefined;
+		let secondSocket: WebSocket | undefined;
+		try {
+			await initializeSocket(firstSocket, firstReader);
+			firstSocket.send(JSON.stringify({ id: 2, method: "thread/start", params: { cwd: root } }));
+			const threadId = threadIdFromResponse(await firstReader.readUntilResponse(2));
+			firstSocket.send(
+				JSON.stringify({
+					id: 3,
+					method: "turn/start",
+					params: { threadId, input: [{ type: "text", text: "continue after websocket close" }] },
+				}),
+			);
+			const turnResponse = await firstReader.readUntilResponse(3);
+			const turnId = turnIdFromResponse(turnResponse);
+			expect(await firstReader.readUntilNotification("turn/started")).toMatchObject({
+				method: "turn/started",
+				params: { threadId, turn: expect.objectContaining({ id: turnId, status: "inProgress" }) },
+			});
+
+			// When: the subscribed websocket closes before the faux provider finishes the turn.
+			await eventually(() => expect(faux.state.callCount).toBe(1));
+			firstReader.dispose();
+			await closeSocket(firstSocket);
+			secondSocket = await openSocket(port);
+			secondReader = new BufferedSocketReader(secondSocket);
+			await initializeSocket(secondSocket, secondReader);
+			secondSocket.send(JSON.stringify({ id: 4, method: "thread/loaded/list", params: {} }));
+			expect(await secondReader.readUntilResponse(4)).toMatchObject({
+				id: 4,
+				result: {
+					data: [expect.objectContaining({ id: threadId, status: { type: "active" } })],
+				},
+			});
+			completionGate.resolve();
+			secondSocket.send(JSON.stringify({ id: 5, method: "thread/resume", params: { threadId } }));
+
+			// Then: the thread remains loaded, and the terminal completion queued with zero subscribers replays on resume.
+			const completed = await secondReader.readUntilNotification("turn/completed");
+			expect(completed).toMatchObject({
+				method: "turn/completed",
+				params: { threadId, turn: expect.objectContaining({ id: turnId, status: "completed" }) },
+			});
+			expect(await secondReader.readUntilResponse(5)).toMatchObject({
+				id: 5,
+				result: { thread: expect.objectContaining({ id: threadId }) },
+			});
+			secondSocket.send(JSON.stringify({ id: 6, method: "thread/loaded/list", params: {} }));
+			expect(await secondReader.readUntilResponse(6)).toMatchObject({
+				id: 6,
+				result: { data: [expect.objectContaining({ id: threadId })] },
+			});
+			expect(faux.state.callCount).toBe(1);
+		} finally {
+			firstReader.dispose();
+			firstSocket.close();
+			secondReader?.dispose();
+			secondSocket?.close();
+			faux.unregister();
+			process.emit("SIGTERM", "SIGTERM");
+			await expect(mode).resolves.toBeUndefined();
+			runningModes.splice(runningModes.indexOf(mode), 1);
+			banner.restore();
+		}
+	});
 });
 
 function exitThrows(code?: string | number | null): never {
@@ -139,12 +234,73 @@ function initializeRequest(id: number): Record<string, unknown> {
 	};
 }
 
+async function seedFauxConfig(root: string, faux: ReturnType<typeof registerFauxProvider>): Promise<void> {
+	const agentDir = join(root, "agent");
+	await mkdir(agentDir, { recursive: true });
+	const model = faux.getModel();
+	await writeFile(
+		join(agentDir, "settings.json"),
+		`${JSON.stringify({ defaultProvider: model.provider, defaultModel: model.id, disabledBuiltinExtensions: [] }, null, 2)}\n`,
+		"utf8",
+	);
+	await writeFile(
+		join(agentDir, "models.json"),
+		`${JSON.stringify(
+			{
+				providers: {
+					[model.provider]: {
+						api: model.api,
+						baseUrl: model.baseUrl,
+						apiKey: "faux-key",
+						models: [{ id: model.id, name: model.name, input: model.input }],
+					},
+				},
+			},
+			null,
+			2,
+		)}\n`,
+		"utf8",
+	);
+}
+
+function deferOneTick(): Promise<void> {
+	return new Promise((resolve) => setImmediate(resolve));
+}
+
+function createDeferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
+	let resolvePromise: () => void = () => {};
+	const promise = new Promise<void>((resolve) => {
+		resolvePromise = resolve;
+	});
+	return { promise, resolve: resolvePromise };
+}
+
 function openSocket(port: number): Promise<WebSocket> {
 	return new Promise((resolve, reject) => {
 		const socket = new WebSocket(`ws://127.0.0.1:${port}/`);
 		socket.once("open", () => resolve(socket));
 		socket.once("error", reject);
 	});
+}
+
+function closeSocket(socket: WebSocket): Promise<void> {
+	if (socket.readyState === WebSocket.CLOSED) {
+		return Promise.resolve();
+	}
+	return new Promise((resolve, reject) => {
+		socket.once("close", () => resolve());
+		socket.once("error", reject);
+		socket.close();
+	});
+}
+
+async function initializeSocket(socket: WebSocket, reader: BufferedSocketReader): Promise<void> {
+	socket.send(JSON.stringify(initializeRequest(1)));
+	await expect(reader.readUntilResponse(1)).resolves.toMatchObject({
+		id: 1,
+		result: { userAgent: expect.any(String) },
+	});
+	socket.send(JSON.stringify({ method: "initialized", params: {} }));
 }
 
 type SocketWaiter = {
@@ -193,13 +349,40 @@ class BufferedSocketReader {
 	}
 
 	async readUntilResponse(id: number): Promise<Record<string, unknown>> {
+		const skipped: Record<string, unknown>[] = [];
 		for (let index = 0; index < 16; index++) {
-			const message = await this.read();
+			const message = await this.readFor(`response ${id}`);
 			if (message.id === id) {
+				this.messages.unshift(...skipped);
 				return message;
 			}
+			skipped.push(message);
 		}
+		this.messages.unshift(...skipped);
 		throw new Error(`response ${id} not observed`);
+	}
+
+	async readUntilNotification(method: string): Promise<Record<string, unknown>> {
+		const skipped: Record<string, unknown>[] = [];
+		for (let index = 0; index < 16; index++) {
+			const message = await this.readFor(`notification ${method}`);
+			if (message.method === method) {
+				this.messages.unshift(...skipped);
+				return message;
+			}
+			skipped.push(message);
+		}
+		this.messages.unshift(...skipped);
+		throw new Error(`notification ${method} not observed`);
+	}
+
+	private async readFor(label: string): Promise<Record<string, unknown>> {
+		try {
+			return await this.read();
+		} catch (error: unknown) {
+			const detail = error instanceof Error ? error.message : String(error);
+			throw new Error(`${label} not observed: ${detail}`);
+		}
 	}
 
 	private readonly onMessage = (data: RawData, isBinary: boolean): void => {
@@ -248,6 +431,30 @@ function threadIdFromResponse(response: Record<string, unknown>): string {
 		throw new Error("thread/start response missing thread id");
 	}
 	return threadId;
+}
+
+function turnIdFromResponse(response: Record<string, unknown>): string {
+	expectRecord(response.result);
+	expectRecord(response.result.turn);
+	const turnId = response.result.turn.id;
+	if (typeof turnId !== "string") {
+		throw new Error("turn/start response missing turn id");
+	}
+	return turnId;
+}
+
+async function eventually(assertion: () => void | Promise<void>): Promise<void> {
+	let lastError: unknown;
+	for (let attempt = 0; attempt < 20; attempt++) {
+		try {
+			await assertion();
+			return;
+		} catch (error: unknown) {
+			lastError = error;
+			await deferOneTick();
+		}
+	}
+	throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 function expectRecord(value: unknown): asserts value is Record<string, unknown> {
