@@ -352,6 +352,7 @@ export class TUI extends Container {
 	private pendingOsc11BackgroundQueries: PendingOsc11BackgroundQuery[] = [];
 	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
 	private terminalColorSchemeNotificationsEnabled = false;
+	#lastCursorVisibility: boolean | undefined;
 
 	// Overlay stack for modal components rendered on top of base content
 	private focusOrderCounter = 0;
@@ -378,7 +379,7 @@ export class TUI extends Container {
 		if (this.showHardwareCursor === enabled) return;
 		this.showHardwareCursor = enabled;
 		if (!enabled) {
-			this.terminal.hideCursor();
+			this.#setCursorVisibility(false);
 		}
 		this.requestRender();
 	}
@@ -536,7 +537,7 @@ export class TUI extends Container {
 		if (!options?.nonCapturing && this.isOverlayVisible(entry)) {
 			this.setFocus(component);
 		}
-		this.terminal.hideCursor();
+		this.#setCursorVisibility(false);
 		this.requestRender();
 
 		// Return handle for controlling this overlay
@@ -552,7 +553,7 @@ export class TUI extends Container {
 						const topVisible = this.getTopmostVisibleOverlay();
 						this.setFocus(topVisible?.component ?? entry.preFocus);
 					}
-					if (this.overlayStack.length === 0) this.terminal.hideCursor();
+					if (this.overlayStack.length === 0) this.#setCursorVisibility(false);
 					this.requestRender();
 				}
 			},
@@ -630,7 +631,7 @@ export class TUI extends Container {
 			const topVisible = this.getTopmostVisibleOverlay();
 			this.setFocus(topVisible?.component ?? overlay.preFocus);
 		}
-		if (this.overlayStack.length === 0) this.terminal.hideCursor();
+		if (this.overlayStack.length === 0) this.#setCursorVisibility(false);
 		this.requestRender();
 	}
 
@@ -667,11 +668,12 @@ export class TUI extends Container {
 
 	start(): void {
 		this.stopped = false;
+		this.#lastCursorVisibility = undefined;
 		this.terminal.start(
 			(data) => this.handleInput(data),
 			() => this.requestRender(),
 		);
-		this.terminal.hideCursor();
+		this.#setCursorVisibility(false);
 		if (this.terminalColorSchemeNotificationsEnabled) {
 			this.terminal.write("\x1b[?2031h");
 		}
@@ -738,8 +740,10 @@ export class TUI extends Container {
 			this.terminal.write("\r\n");
 		}
 
-		this.terminal.showCursor();
+		this.#lastCursorVisibility = undefined;
+		this.#setCursorVisibility(true);
 		this.terminal.stop();
+		this.#lastCursorVisibility = undefined;
 		this.previousLines = [];
 		this.previousKittyImageIds.clear();
 		this.previousWidth = 0;
@@ -748,6 +752,16 @@ export class TUI extends Container {
 		this.hardwareCursorRow = 0;
 		this.maxLinesRendered = 0;
 		this.previousViewportTop = 0;
+	}
+
+	#setCursorVisibility(visible: boolean): void {
+		if (this.#lastCursorVisibility === visible) return;
+		if (visible) {
+			this.terminal.showCursor();
+		} else {
+			this.terminal.hideCursor();
+		}
+		this.#lastCursorVisibility = visible;
 	}
 
 	requestRender(force = false, source = "unknown"): void {
@@ -1905,35 +1919,36 @@ export class TUI extends Container {
 	 * @param totalLines Total number of rendered lines
 	 */
 	private positionHardwareCursor(cursorPos: { row: number; col: number } | null, totalLines: number): void {
-		if (!cursorPos || totalLines <= 0) {
-			this.terminal.hideCursor();
-			return;
-		}
-
-		// Clamp cursor position to valid range
-		const targetRow = Math.max(0, Math.min(cursorPos.row, totalLines - 1));
-		const targetCol = Math.max(0, cursorPos.col);
-
-		// Move cursor from current position to target
-		const rowDelta = targetRow - this.hardwareCursorRow;
 		let buffer = "";
-		if (rowDelta > 0) {
-			buffer += `\x1b[${rowDelta}B`; // Move down
-		} else if (rowDelta < 0) {
-			buffer += `\x1b[${-rowDelta}A`; // Move up
+		if (!cursorPos || totalLines <= 0) {
+			if (this.#lastCursorVisibility !== false) {
+				buffer += "\x1b[?25l";
+				this.#lastCursorVisibility = false;
+			}
+		} else {
+			// Clamp cursor position to valid range
+			const targetRow = Math.max(0, Math.min(cursorPos.row, totalLines - 1));
+			const targetCol = Math.max(0, cursorPos.col);
+
+			// Move cursor from current position to target
+			const rowDelta = targetRow - this.hardwareCursorRow;
+			if (rowDelta > 0) {
+				buffer += `\x1b[${rowDelta}B`; // Move down
+			} else if (rowDelta < 0) {
+				buffer += `\x1b[${-rowDelta}A`; // Move up
+			}
+			// Move to absolute column (1-indexed)
+			buffer += `\x1b[${targetCol + 1}G`;
+
+			this.hardwareCursorRow = targetRow;
+			if (this.#lastCursorVisibility !== this.showHardwareCursor) {
+				buffer += this.showHardwareCursor ? "\x1b[?25h" : "\x1b[?25l";
+				this.#lastCursorVisibility = this.showHardwareCursor;
+			}
 		}
-		// Move to absolute column (1-indexed)
-		buffer += `\x1b[${targetCol + 1}G`;
 
 		if (buffer) {
 			this.terminal.write(buffer);
-		}
-
-		this.hardwareCursorRow = targetRow;
-		if (this.showHardwareCursor) {
-			this.terminal.showCursor();
-		} else {
-			this.terminal.hideCursor();
 		}
 	}
 
