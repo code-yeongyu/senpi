@@ -208,6 +208,7 @@ const OPENCODE_OPENAI_COMPLETIONS_LONG_CACHE_RETENTION_UNSUPPORTED_MODELS = new 
 	"opencode:deepseek-v4-pro",
 	"opencode:kimi-k2.5",
 	"opencode:kimi-k2.6",
+	"opencode:kimi-k2.7-code",
 	"opencode:minimax-m2.7",
 	"opencode-go:kimi-k2.6",
 ]);
@@ -1788,6 +1789,27 @@ async function generateModels() {
 			},
 			contextWindow: 1000000,
 			maxTokens: 64000,
+		});
+	}
+
+	if (!allModels.some((m) => m.provider === "cloudflare-ai-gateway" && m.id === "claude-sonnet-5")) {
+		allModels.push({
+			id: "claude-sonnet-5",
+			name: "Claude Sonnet 5",
+			api: "anthropic-messages",
+			baseUrl: CLOUDFLARE_AI_GATEWAY_ANTHROPIC_BASE_URL,
+			provider: "cloudflare-ai-gateway",
+			compat: { sendSessionAffinityHeaders: true },
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 2,
+				output: 10,
+				cacheRead: 0.2,
+				cacheWrite: 2.5,
+			},
+			contextWindow: 1000000,
+			maxTokens: 128000,
 		});
 	}
 
