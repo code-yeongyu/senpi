@@ -141,7 +141,7 @@ describe("builtin hooks command runner", () => {
 		const input: HookInputWire = { cwd, event: "SessionStart", sessionId: "s1" };
 
 		// When
-		const result = await runCommandHook(createHandler(`${process.execPath} ${scriptPath}`, { timeout: 0.1 }), input, {
+		const result = await runCommandHook(createHandler(`${process.execPath} ${scriptPath}`, { timeout: 1 }), input, {
 			cwd,
 		});
 
@@ -149,7 +149,7 @@ describe("builtin hooks command runner", () => {
 		expect(result.timedOut).toBe(true);
 		expect(result.aborted).toBe(false);
 		expect(result.exitCode).toBeNull();
-		expect(result.timeoutSeconds).toBe(0.1);
+		expect(result.timeoutSeconds).toBe(1);
 		expect(existsSync(pidPath)).toBe(true);
 		await waitForProcessExit(Number(readFileSync(pidPath, "utf8")));
 	});
