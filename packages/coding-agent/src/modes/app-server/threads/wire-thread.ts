@@ -7,7 +7,16 @@ const ACTIVE_STATUS: ThreadStatus = { type: "active", activeFlags: [] };
 const IDLE_STATUS: ThreadStatus = { type: "idle" };
 export const NOT_LOADED_STATUS: ThreadStatus = { type: "notLoaded" };
 
-export function buildWireThread(entry: ThreadEntry | WireThread, turnLog: TurnLog, includeTurns: boolean): Thread {
+export interface BuildWireThreadOptions {
+	readonly forkedFromId?: string | null;
+}
+
+export function buildWireThread(
+	entry: ThreadEntry | WireThread,
+	turnLog: TurnLog,
+	includeTurns: boolean,
+	options: BuildWireThreadOptions = {},
+): Thread {
 	const model = "session" in entry ? entry.session.model : undefined;
 	const wire = "session" in entry ? entryToWire(entry) : entry;
 	const createdAt = isoSeconds(wire.createdAt);
@@ -15,7 +24,7 @@ export function buildWireThread(entry: ThreadEntry | WireThread, turnLog: TurnLo
 	return {
 		id: wire.id,
 		sessionId: wire.sessionId,
-		forkedFromId: null,
+		forkedFromId: options.forkedFromId ?? null,
 		parentThreadId: null,
 		preview: wire.preview ?? "",
 		ephemeral: false,
@@ -33,7 +42,7 @@ export function buildWireThread(entry: ThreadEntry | WireThread, turnLog: TurnLo
 		agentRole: null,
 		gitInfo: null,
 		name: wire.name,
-		turns: includeTurns ? turnLog.readTurns(wire.id).map(loggedTurnToWireTurn) : [],
+		turns: includeTurns ? threadTurns(entry, turnLog) : [],
 	};
 }
 
@@ -61,6 +70,21 @@ function loggedTurnToWireTurn(turn: LoggedTurn): Turn {
 		completedAt: null,
 		durationMs: null,
 	};
+}
+
+function threadTurns(entry: ThreadEntry | WireThread, turnLog: TurnLog): Turn[] {
+	const loggedTurns = turnLog.readTurns(entry.id);
+	if (loggedTurns.length > 0 || !("session" in entry)) {
+		return loggedTurns.map(loggedTurnToWireTurn);
+	}
+	return entry.session.getUserMessagesForForking().map((message, index) =>
+		loggedTurnToWireTurn({
+			turnId: `turn-${index + 1}`,
+			startedAt: entry.createdAt,
+			status: "completed",
+			items: [{ id: message.entryId, type: "userMessage", content: [] }],
+		}),
+	);
 }
 
 function wireItemToThreadItem(item: WireItem): ThreadItem {

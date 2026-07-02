@@ -25,6 +25,7 @@ class FakeConnection implements RoutableConnection, RegistryConnection {
 }
 
 const scratchRoot = join(tmpdir(), `senpi-qa-task12-resume-unknown-${process.pid}`);
+const unknownThreadId = "11111111-1111-1111-1111-111111111111";
 
 async function main(): Promise<void> {
 	rmSync(scratchRoot, { recursive: true, force: true });
@@ -44,15 +45,19 @@ async function main(): Promise<void> {
 		const response = await registry.dispatch(connection, {
 			id: 1,
 			method: "thread/resume",
-			params: { threadId: "missing-thread" },
+			params: { threadId: unknownThreadId },
 		});
 		const message = "error" in response ? response.error.message : "NO_ERROR";
 		console.log(`RESUME_UNKNOWN=${message}`);
-		if (message !== "no rollout found for thread id missing-thread") {
+		if (message !== `no rollout found for thread id ${unknownThreadId}`) {
 			throw new Error(`unexpected resume error: ${message}`);
 		}
 	} catch (error) {
-		runError = error;
+		if (error instanceof Error) {
+			runError = error;
+		} else {
+			throw error;
+		}
 	}
 	rmSync(scratchRoot, { recursive: true, force: true });
 	if (existsSync(scratchRoot)) {

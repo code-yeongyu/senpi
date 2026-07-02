@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,12 +19,16 @@ import { TurnLog } from "../../src/modes/app-server/threads/turn-log.ts";
 const roots: string[] = [];
 
 class FakeConnection implements RoutableConnection, RegistryConnection {
-	readonly id = "conn-1";
+	readonly id: string;
 	readonly transport = "ws";
 	readonly received: RouterNotification[] = [];
 	readonly capabilities = { experimentalApi: true };
 	initialized = true;
 	optOutNotificationMethods: readonly string[] | null = null;
+
+	constructor(id = "conn-1") {
+		this.id = id;
+	}
 
 	send(notification: RouterNotification): void {
 		this.received.push(notification);
@@ -66,7 +70,10 @@ describe("app-server thread lifecycle handlers", () => {
 	afterEach(async () => {
 		vi.useRealTimers();
 		while (roots.length > 0) {
-			await rm(roots.pop()!, { recursive: true, force: true });
+			const root = roots.pop();
+			if (root) {
+				await rm(root, { recursive: true, force: true });
+			}
 		}
 	});
 
@@ -124,18 +131,19 @@ describe("app-server thread lifecycle handlers", () => {
 	it("returns the exact unknown rollout text when resuming a missing thread", async () => {
 		// Given: no registry entry or disk session for the requested thread id.
 		const { connection, registry } = await createHarness();
+		const threadId = "11111111-1111-1111-1111-111111111111";
 
 		// When: the connection resumes an unknown thread.
 		const response = await registry.dispatch(connection, {
 			id: 2,
 			method: "thread/resume",
-			params: { threadId: "missing-thread" },
+			params: { threadId },
 		});
 
 		// Then: the JSON-RPC error text matches the Codex app contract exactly.
 		expect(response).toEqual({
 			id: 2,
-			error: { code: -32603, message: "no rollout found for thread id missing-thread" },
+			error: { code: -32603, message: `no rollout found for thread id ${threadId}` },
 		});
 	});
 
@@ -230,6 +238,215 @@ describe("app-server thread lifecycle handlers", () => {
 		expect(threads.getLoadedThread(entry.id).subscribers.has(connection.id)).toBe(false);
 	});
 
+	it("returns fork origin and subscribes the forked thread", async () => {
+		// Given: a source thread already started by the connection.
+		const { connection, registry, root, threads } = await createHarness();
+		const started = await registry.dispatch(connection, { id: 11, method: "thread/start", params: { cwd: root } });
+		const sourceThreadId = threadIdFromResponse(started);
+
+		// When: the connection forks that source thread.
+		const forked = await registry.dispatch(connection, {
+			id: 12,
+			method: "thread/fork",
+			params: { threadId: sourceThreadId },
+		});
+
+		// Then: the response names the fork origin and the fork is loaded/subscribed.
+		expect(forked).not.toHaveProperty("error");
+		const forkedThread = objectAt(responseResult(forked), "thread");
+		const forkedThreadId = stringAt(forkedThread, "id");
+		expect(forkedThread.forkedFromId).toBe(sourceThreadId);
+		expect(threads.getLoadedThread(forkedThreadId).subscribers.has(connection.id)).toBe(true);
+	});
+
+	it("round-trips thread/name/set through broadcast and read", async () => {
+		// Given: a started thread.
+		const { connection, registry, root } = await createHarness();
+		const started = await registry.dispatch(connection, { id: 13, method: "thread/start", params: { cwd: root } });
+		const threadId = threadIdFromResponse(started);
+		connection.received.length = 0;
+
+		// When: the thread name is set and the thread is read.
+		await expect(
+			registry.dispatch(connection, {
+				id: 14,
+				method: "thread/name/set",
+				params: { threadId, name: "Todo 12" },
+			}),
+		).resolves.toEqual({ id: 14, result: {} });
+		const read = await registry.dispatch(connection, { id: 15, method: "thread/read", params: { threadId } });
+
+		// Then: the broadcast and read response expose the new name.
+		expect(connection.received).toEqual([
+			{ method: "thread/name/updated", params: { threadId, threadName: "Todo 12" } },
+		]);
+		expect(objectAt(responseResult(read), "thread").name).toBe("Todo 12");
+	});
+
+	it("archives a thread, unloads it, and filters archived listings", async () => {
+		// Given: two started threads.
+		const { connection, registry, root, threads } = await createHarness();
+		const archived = threadIdFromResponse(
+			await registry.dispatch(connection, { id: 16, method: "thread/start", params: { cwd: root } }),
+		);
+		const active = threadIdFromResponse(
+			await registry.dispatch(connection, { id: 17, method: "thread/start", params: { cwd: root } }),
+		);
+		connection.received.length = 0;
+
+		// When: one thread is archived and both list filters are read.
+		await expect(
+			registry.dispatch(connection, { id: 18, method: "thread/archive", params: { threadId: archived } }),
+		).resolves.toEqual({ id: 18, result: {} });
+		const defaultList = await registry.dispatch(connection, { id: 19, method: "thread/list", params: {} });
+		const archivedList = await registry.dispatch(connection, {
+			id: 20,
+			method: "thread/list",
+			params: { archived: true },
+		});
+
+		// Then: archive emits the typed notification, unloads the runtime, and list filters by archive state.
+		expect(connection.received).toEqual([{ method: "thread/archived", params: { threadId: archived } }]);
+		expect(() => threads.getLoadedThread(archived)).toThrow();
+		expect(threadIdsFromList(defaultList)).toContain(active);
+		expect(threadIdsFromList(defaultList)).not.toContain(archived);
+		expect(threadIdsFromList(archivedList)).toEqual([archived]);
+	});
+
+	it("deletes a thread and removes it from loaded/list responses", async () => {
+		// Given: a started thread.
+		const { connection, registry, root } = await createHarness();
+		const threadId = threadIdFromResponse(
+			await registry.dispatch(connection, { id: 21, method: "thread/start", params: { cwd: root } }),
+		);
+		connection.received.length = 0;
+
+		// When: the thread is deleted and list surfaces are queried.
+		await expect(
+			registry.dispatch(connection, { id: 22, method: "thread/delete", params: { threadId } }),
+		).resolves.toEqual({ id: 22, result: {} });
+		const loaded = await registry.dispatch(connection, { id: 23, method: "thread/loaded/list", params: {} });
+		const listed = await registry.dispatch(connection, { id: 24, method: "thread/list", params: {} });
+
+		// Then: the delete notification is broadcast and the thread no longer appears.
+		expect(connection.received).toEqual([{ method: "thread/deleted", params: { threadId } }]);
+		expect(dataArray(responseResult(loaded))).not.toContain(threadId);
+		expect(threadIdsFromList(listed)).not.toContain(threadId);
+	});
+
+	it("paginates thread/loaded/list over loaded thread ids", async () => {
+		// Given: two loaded threads.
+		const { connection, registry, root } = await createHarness();
+		const first = threadIdFromResponse(
+			await registry.dispatch(connection, { id: 25, method: "thread/start", params: { cwd: root } }),
+		);
+		const second = threadIdFromResponse(
+			await registry.dispatch(connection, { id: 26, method: "thread/start", params: { cwd: root } }),
+		);
+
+		// When: loaded threads are listed one at a time.
+		const pageOne = await registry.dispatch(connection, {
+			id: 27,
+			method: "thread/loaded/list",
+			params: { limit: 1 },
+		});
+		const pageOneResult = responseResult(pageOne);
+		const nextCursor = pageOneResult.nextCursor;
+		const pageTwo = await registry.dispatch(connection, {
+			id: 28,
+			method: "thread/loaded/list",
+			params: { cursor: typeof nextCursor === "string" ? nextCursor : null, limit: 1 },
+		});
+
+		// Then: both loaded ids are returned across the pages.
+		expect([...dataArray(pageOneResult), ...dataArray(responseResult(pageTwo))].sort()).toEqual(
+			[first, second].sort(),
+		);
+	});
+
+	it("replays pending approvals on warm resume", async () => {
+		// Given: a loaded thread and a replay hook.
+		const { root, threads } = await createHarness();
+		const connection = new FakeConnection("conn-2");
+		const entry = await threads.createThread({ cwd: root });
+		const notifications = new NotificationRouter({ connections: [connection], threads: [entry] });
+		const handlerRegistry = createRegistry();
+		const replays: string[] = [];
+		registerThreadLifecycleHandlers(handlerRegistry, {
+			threads,
+			turnLog: new TurnLog(),
+			notifications,
+			replayPendingApprovals: (threadId, targetConnectionId) => {
+				replays.push(`${threadId}:${targetConnectionId}`);
+			},
+		});
+
+		// When: the connection resumes the loaded thread.
+		await handlerRegistry.dispatch(connection, {
+			id: 29,
+			method: "thread/resume",
+			params: { threadId: entry.id },
+		});
+
+		// Then: pending approval replay is invoked for the new subscriber.
+		expect(replays).toEqual([`${entry.id}:conn-2`]);
+	});
+
+	it("reconstructs synthetic turns when cold thread/read includes turns", async () => {
+		// Given: a persisted session file with two user messages and no live turn log.
+		const root = await scratchRoot();
+		const sessionDir = join(root, "sessions");
+		await mkdir(sessionDir, { recursive: true });
+		const threadId = "22222222-2222-4222-8222-222222222222";
+		const sessionFile = join(sessionDir, `2026-07-02T00-00-00-000Z_${threadId}.jsonl`);
+		await writeFile(
+			sessionFile,
+			[
+				JSON.stringify({
+					type: "session",
+					version: 3,
+					id: threadId,
+					timestamp: "2026-07-02T00:00:00.000Z",
+					cwd: root,
+				}),
+				JSON.stringify({
+					type: "message",
+					id: "msg-1",
+					parentId: threadId,
+					timestamp: "2026-07-02T00:00:01.000Z",
+					message: { role: "user", content: [{ type: "text", text: "first" }] },
+				}),
+				JSON.stringify({
+					type: "message",
+					id: "msg-2",
+					parentId: "msg-1",
+					timestamp: "2026-07-02T00:00:02.000Z",
+					message: { role: "user", content: [{ type: "text", text: "second" }] },
+				}),
+				"",
+			].join("\n"),
+		);
+		const connection = new FakeConnection();
+		const threads = new ThreadRegistry({ agentDir: join(root, "agent"), sessionDir });
+		const registry = createRegistry();
+		registerThreadLifecycleHandlers(registry, {
+			threads,
+			turnLog: new TurnLog(),
+			notifications: new NotificationRouter({ connections: [connection] }),
+		});
+
+		// When: the cold thread is read with turns included.
+		const response = await registry.dispatch(connection, {
+			id: 30,
+			method: "thread/read",
+			params: { threadId, includeTurns: true },
+		});
+
+		// Then: synthetic turns are materialized from persisted user messages.
+		const turns = dataArray(objectAt(responseResult(response), "thread"), "turns");
+		expect(turns.map((turn) => objectValue(turn).id)).toEqual(["turn-1", "turn-2"]);
+	});
+
 	it("unloads idle threads after the configured no-subscriber delay", async () => {
 		vi.useFakeTimers();
 		// Given: a started thread becomes idle with no subscribers.
@@ -267,6 +484,23 @@ function stringAt(value: unknown, key: string): string {
 	const child = object[key];
 	if (typeof child !== "string") {
 		throw new Error(`Expected ${key} to be a string`);
+	}
+	return child;
+}
+
+function threadIdFromResponse(response: Awaited<ReturnType<MethodRegistry["dispatch"]>>): string {
+	return stringAt(objectAt(responseResult(response), "thread"), "id");
+}
+
+function threadIdsFromList(response: Awaited<ReturnType<MethodRegistry["dispatch"]>>): string[] {
+	return dataArray(responseResult(response)).map((thread) => stringAt(thread, "id"));
+}
+
+function dataArray(value: unknown, key = "data"): unknown[] {
+	const object = objectValue(value);
+	const child = object[key];
+	if (!Array.isArray(child)) {
+		throw new Error(`Expected ${key} to be an array`);
 	}
 	return child;
 }

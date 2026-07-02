@@ -19,7 +19,7 @@ import {
 	removeLoadedThread,
 	requiredString,
 } from "./handler-params.ts";
-import { type ThreadEntry, ThreadNotFoundError, type ThreadRegistry } from "./registry.ts";
+import { type ThreadEntry, ThreadNotFoundError, type ThreadRegistry, type WireThread } from "./registry.ts";
 import type { TurnLog } from "./turn-log.ts";
 import { buildWireThread, NOT_LOADED_STATUS } from "./wire-thread.ts";
 
@@ -52,6 +52,8 @@ class ThreadLifecycleHandlers {
 	private readonly replayPendingApprovals: ((threadId: string, connectionId: string) => void) | undefined;
 	private readonly idleUnloadMs: number;
 	private readonly idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	private readonly archivedThreadIds = new Set<string>();
+	private readonly archivedThreads = new Map<string, WireThread>();
 
 	constructor(options: ThreadLifecycleHandlersOptions) {
 		this.threads = options.threads;
@@ -120,7 +122,7 @@ class ThreadLifecycleHandlers {
 		const entry = await this.threads.forkThread(sourceThreadId, { cwd: optionalString(params.cwd) ?? undefined });
 		this.attachThread(entry);
 		this.subscribe(entry, connectionId(connection));
-		const response = this.runtimeResponse(entry, true);
+		const response = this.runtimeResponse(entry, true, sourceThreadId);
 		this.notifications.broadcast({ method: "thread/started", params: { thread: response.thread } });
 		return response;
 	}
@@ -139,8 +141,11 @@ class ThreadLifecycleHandlers {
 			cursor: optionalString(params.cursor) ?? null,
 			limit: optionalNumber(params.limit) ?? undefined,
 		});
+		const archived = params.archived === true;
+		const threads = archived ? this.archivedListThreads(page.threads) : page.threads;
+		const filtered = threads.filter((thread) => this.archivedThreadIds.has(thread.id) === archived);
 		return {
-			data: page.threads.map((thread) => buildWireThread(thread, this.turnLog, false)),
+			data: filtered.map((thread) => buildWireThread(thread, this.turnLog, false)),
 			nextCursor: page.nextCursor,
 			backwardsCursor: null,
 		};
@@ -169,9 +174,15 @@ class ThreadLifecycleHandlers {
 		return {};
 	}
 
-	private archive(request: RpcRequest): Record<string, never> {
+	private async archive(request: RpcRequest): Promise<Record<string, never>> {
 		const params = objectValue(request.params);
 		const threadId = requiredString(params.threadId, "threadId");
+		const entry = await this.threads.resumeThread(threadId);
+		this.clearIdleTimer(threadId);
+		this.archivedThreads.set(threadId, this.threads.buildThread(entry));
+		entry.session.dispose();
+		removeLoadedThread(this.threads, threadId);
+		this.archivedThreadIds.add(threadId);
 		this.notifications.broadcast({ method: "thread/archived", params: { threadId } });
 		return {};
 	}
@@ -181,6 +192,8 @@ class ThreadLifecycleHandlers {
 		const threadId = requiredString(params.threadId, "threadId");
 		this.clearIdleTimer(threadId);
 		await this.threads.deleteThread(threadId);
+		this.archivedThreadIds.delete(threadId);
+		this.archivedThreads.delete(threadId);
 		this.notifications.broadcast({ method: "thread/deleted", params: { threadId } });
 		return {};
 	}
@@ -203,9 +216,13 @@ class ThreadLifecycleHandlers {
 		return { status: "unsubscribed" };
 	}
 
-	private runtimeResponse(entry: ThreadEntry, includeTurns: boolean): RuntimeThreadResponse {
+	private runtimeResponse(
+		entry: ThreadEntry,
+		includeTurns: boolean,
+		forkedFromId: string | null = null,
+	): RuntimeThreadResponse {
 		const model = entry.session.model;
-		const thread = buildWireThread(entry, this.turnLog, includeTurns);
+		const thread = buildWireThread(entry, this.turnLog, includeTurns, { forkedFromId });
 		return {
 			thread,
 			model: model?.id ?? "unknown",
@@ -269,5 +286,16 @@ class ThreadLifecycleHandlers {
 		}
 		clearTimeout(timer);
 		this.idleTimers.delete(threadId);
+	}
+
+	private archivedListThreads(listedThreads: readonly WireThread[]): WireThread[] {
+		const threadsById = new Map<string, WireThread>();
+		for (const thread of listedThreads) {
+			threadsById.set(thread.id, thread);
+		}
+		for (const thread of this.archivedThreads.values()) {
+			threadsById.set(thread.id, thread);
+		}
+		return [...threadsById.values()];
 	}
 }
