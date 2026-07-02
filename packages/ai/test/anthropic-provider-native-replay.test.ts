@@ -138,6 +138,95 @@ describe("Anthropic provider-native replay", () => {
 		]);
 	});
 
+	it("preserves same-model fallback blocks interleaved with signed thinking", async () => {
+		// Server-side fallback (server-side-fallback-2026-06-01 beta) emits a
+		// `fallback` content block mid-response. Dropping it on replay mutates the
+		// latest assistant message and the API rejects the request with
+		// "`thinking` or `redacted_thinking` blocks in the latest assistant
+		// message cannot be modified".
+		const model = getModel("anthropic", "claude-fable-5");
+		const fallbackBlock = {
+			type: "fallback",
+			from: { model: "claude-fable-5" },
+			to: { model: "claude-opus-4-8" },
+			trigger: { type: "refusal", category: null },
+		};
+		const assistant = assistantMessage(
+			[
+				{ type: "thinking", thinking: "before fallback", thinkingSignature: "sig_1" },
+				{ type: "providerNative", subtype: "fallback", raw: fallbackBlock },
+				{ type: "thinking", thinking: "after fallback", thinkingSignature: "sig_2" },
+				{ type: "toolCall", id: "toolu_1", name: "read", arguments: { path: "README.md" } },
+			],
+			{ stopReason: "toolUse", model: "claude-fable-5" },
+		);
+
+		const payload = await capturePayload(model, [
+			{ role: "user", content: "hello", timestamp: 1 },
+			assistant,
+			{
+				role: "toolResult",
+				toolCallId: "toolu_1",
+				toolName: "read",
+				content: [{ type: "text", text: "tool output" }],
+				isError: false,
+				timestamp: 2,
+			},
+		]);
+
+		const assistantPayload = payload.messages?.find((message) => message.role === "assistant");
+		expect(assistantPayload?.content).toEqual([
+			{ type: "thinking", thinking: "before fallback", signature: "sig_1" },
+			fallbackBlock,
+			{ type: "thinking", thinking: "after fallback", signature: "sig_2" },
+			{ type: "tool_use", id: "toolu_1", name: "read", input: { path: "README.md" } },
+		]);
+	});
+
+	it("drops same-model provider-native blocks with unknown subtypes", async () => {
+		const model = getModel("anthropic", "claude-haiku-4-5");
+		const assistant = assistantMessage(
+			[
+				{ type: "providerNative", subtype: "mystery_block", raw: { type: "mystery_block", data: "x" } },
+				{ type: "text", text: "kept" },
+			],
+			{ stopReason: "stop" },
+		);
+
+		const payload = await capturePayload(model, [
+			{ role: "user", content: "hello", timestamp: 1 },
+			assistant,
+			{ role: "user", content: "follow up", timestamp: 2 },
+		]);
+
+		const assistantPayload = payload.messages?.find((message) => message.role === "assistant");
+		expect(assistantPayload?.content).toEqual([{ type: "text", text: "kept" }]);
+	});
+
+	it("drops fallback blocks from a different model's assistant message", async () => {
+		const model = getModel("anthropic", "claude-haiku-4-5");
+		const assistant = assistantMessage(
+			[
+				{
+					type: "providerNative",
+					subtype: "fallback",
+					raw: { type: "fallback", from: { model: "claude-fable-5" }, to: { model: "claude-opus-4-8" } },
+				},
+				{ type: "text", text: "kept" },
+			],
+			{ stopReason: "stop", model: "claude-fable-5" },
+		);
+
+		const payload = await capturePayload(model, [
+			{ role: "user", content: "hello", timestamp: 1 },
+			assistant,
+			{ role: "user", content: "follow up", timestamp: 2 },
+		]);
+
+		const assistantPayload = payload.messages?.find((message) => message.role === "assistant");
+		expect(assistantPayload?.content).toEqual([{ type: "text", text: "kept" }]);
+	});
+
 	it("drops cross-provider provider-native blocks", async () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
 		const assistant = assistantMessage(

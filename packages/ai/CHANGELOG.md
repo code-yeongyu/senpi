@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- Fixed Anthropic same-model replay dropping server-side fallback (`server-side-fallback-2026-06-01` beta) `fallback` content blocks, which mutated the latest assistant message and caused 400 "`thinking` or `redacted_thinking` blocks in the latest assistant message cannot be modified" on the next request after a mid-response model fallback.
+
 ### Removed
 
 ## [2026.7.2] - 2026-07-02

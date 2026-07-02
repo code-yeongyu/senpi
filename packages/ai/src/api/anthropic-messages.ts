@@ -331,6 +331,12 @@ const REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES: ReadonlySet<string> = new Set(
 	"text_editor_code_execution_tool_result",
 	"tool_search_tool_result",
 	"container_upload",
+	// Server-side fallback beta (server-side-fallback-2026-06-01) emits a
+	// `fallback` block mid-response, interleaved with thinking blocks. The API
+	// requires the latest assistant message to be replayed with its block
+	// sequence unmodified; dropping the block yields a 400
+	// ("thinking ... blocks in the latest assistant message cannot be modified").
+	"fallback",
 ]);
 
 function isReplayableAnthropicProviderNativeBlock(raw: unknown): raw is ContentBlockParam {
