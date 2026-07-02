@@ -14,7 +14,7 @@ prompt-preset/
 ├── gpt-5.2.ts           # GPT-5.2 preset
 ├── gpt-5.3-codex.ts     # GPT-5.3 Codex preset
 ├── gpt-5.4.ts           # GPT-5.4 preset
-├── gpt-5.5.ts           # GPT-5.5 preset
+├── gpt-5.5.ts           # GPT-5.5 preset — full-core rewrite via `corePrompt` (outcome-first, per the GPT-5.5 prompting guide)
 ├── claude-fable-5.ts    # Claude Fable 5 preset
 ├── claude-opus-4-5.ts   # Claude Opus 4.5 preset
 ├── claude-opus-4-6.ts   # Claude Opus 4.6 preset
@@ -51,6 +51,8 @@ export function buildGpt55Prompt(options: BuildDynamicSystemPromptOptions): stri
 
 Each preset is ~10 lines. The shared default in `dynamic-prompt/` carries identity, intent gate, exploration, parallel-tools, verification, policies, style. Preset only carries **what's different for that model family**.
 
+Exception: `gpt-5.5.ts` passes `corePrompt` instead of `tuningSection` — a full core rewrite (GPT-5.5 wants short, outcome-first prompts, not the shared scaffolding). It still reuses `buildTestDisciplineSection()`, `buildFileOperationsTuning()`, and the builder's dynamic assembly, so shared rules stay single-sourced.
+
 ## CONVENTIONS
 
 - **Model-family naming, not personas**: presets are named after the model they target (`gpt-5.ts`, not `coder.ts`). The 2026-04-30 rename removed persona-style names.
@@ -61,7 +63,7 @@ Each preset is ~10 lines. The shared default in `dynamic-prompt/` carries identi
 ## ANTI-PATTERNS
 
 - Renaming a preset file to a persona ("coder", "architect", "thinker") — was tried, reverted.
-- Embedding full prompt scaffolding in a preset — defeats the point of the 2026-04-30 thin-wrapper architecture.
+- Embedding full prompt scaffolding in a `tuningSection` — defeats the point of the 2026-04-30 thin-wrapper architecture. A deliberate full rewrite goes through the builder's `corePrompt` override (see `gpt-5.5.ts`), never by duplicating shared sections as tuning text.
 - Adding a non-GPT preset that copies `buildFileOperationsTuning()` — the apply_patch routing is GPT-specific.
 - Mutating `BuildDynamicSystemPromptOptions` before passing through — pass via spread, add only `tuningSection`.
 

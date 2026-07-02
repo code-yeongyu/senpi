@@ -6,7 +6,7 @@ Fork-introduced system-prompt assembler. Replaces upstream's static `buildSystem
 
 ```
 dynamic-prompt/
-├── build.ts                # buildDynamicSystemPrompt() + BuildDynamicSystemPromptOptions — assembler, public entry
+├── build.ts                # buildDynamicSystemPrompt() + BuildDynamicSystemPromptOptions (+ corePrompt override) — assembler, public entry
 ├── index.ts                # Public re-exports
 ├── types.ts                # AvailableTool
 ├── identity.ts             # buildIdentitySection() — senpi neutral identity
@@ -32,6 +32,7 @@ dynamic-prompt/
 | Tune verification tier definitions | `verification.ts` |
 | Add/remove a tool category | `types.ts` (`AvailableTool["category"]`) + `tool-categorization.ts` + `tool-section.ts` |
 | Per-model addendum to the prompt | callers pass `tuningSection` (see `extensions/builtin/prompt-preset/`) |
+| Full per-model core rewrite | callers pass `corePrompt` (see `prompt-preset/gpt-5.5.ts`) — replaces identity→style, keeps tool section/context/skills/date/cwd assembly |
 
 ## SECTION ORDER (assembled in `build.ts`)
 
@@ -44,6 +45,8 @@ dynamic-prompt/
 7. **Policies** — hard blocks + anti-patterns
 8. **Style** — output formatting
 9. **Optional `tuningSection`** — per-model preset addendum (appended last)
+
+When `corePrompt` is set, sections 1–8 are replaced by the override's output (the rendered tool section is handed to it via `DynamicPromptCoreContext`); tuning, context files, skills, and date/cwd assembly are unchanged.
 
 ## CONVENTIONS
 

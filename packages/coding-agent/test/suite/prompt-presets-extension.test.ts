@@ -105,13 +105,19 @@ describe("prompt preset resolver", () => {
 		expect(preset?.prompt).toContain("You are senpi");
 		expect(preset?.prompt).toContain("Reason efficiently");
 		expect(preset?.prompt).toContain("outcome-first");
-		expect(preset?.prompt).toContain("Preamble");
 		expect(preset?.prompt).toContain("Todo discipline");
 		expect(preset?.prompt).toContain("todowrite");
 		expect(preset?.prompt).toContain("Dig deeper");
 		expect(preset?.prompt).toContain("decision rules");
 		expect(preset?.prompt).toContain("## Intent Gate");
 		expect(preset?.prompt).toContain("I read this as");
+		// Full-core rewrite: shared-core scaffolding is replaced, dynamic pieces stay.
+		expect(preset?.prompt).toContain("## Verification");
+		expect(preset?.prompt).toContain("### Test Discipline");
+		expect(preset?.prompt).toContain("## Hard Limits");
+		expect(preset?.prompt).not.toContain("## Policies");
+		expect(preset?.prompt).not.toContain("### Execution Stance");
+		expect(preset?.prompt).not.toContain("### Request Classification");
 		expect(preset?.prompt.length).toBeGreaterThan(2_000);
 	});
 

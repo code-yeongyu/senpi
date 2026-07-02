@@ -1,4 +1,4 @@
-export type { BuildDynamicSystemPromptOptions } from "./build.ts";
+export type { BuildDynamicSystemPromptOptions, DynamicPromptCoreContext } from "./build.ts";
 export { buildDynamicSystemPrompt } from "./build.ts";
 export { buildExplorationSection } from "./exploration.ts";
 export { buildIdentitySection } from "./identity.ts";

@@ -22,6 +22,25 @@
 
 - LOW: section files are fork-owned; upstream does not have `dynamic-prompt/`.
 
+## Optional `corePrompt` override (2026-07-02)
+
+### What changed
+
+- `build.ts`: added `corePrompt?: (context: DynamicPromptCoreContext) => string` to `BuildDynamicSystemPromptOptions`. When set, it replaces the default core sections (identity through style) with the override's output; the rendered tool section is passed in via `DynamicPromptCoreContext` so overrides reuse the dynamic tool list. Tuning, context files, skills, date, and cwd assembly are untouched. The default path is byte-identical to before.
+- `index.ts`: re-exports `DynamicPromptCoreContext`.
+
+### Why
+
+- The GPT-5.5 prompting guide calls for short, outcome-first prompts instead of process-heavy scaffolding. A `tuningSection` appended after the full shared core cannot deliver that — the scaffolding it needs to remove is already emitted. `corePrompt` gives a preset a first-class way to rewrite the whole core while keeping the dynamic assembly single-sourced.
+
+### Why extension system couldn't handle this
+
+- Same as the original builder fork: this changes what `buildDynamicSystemPrompt` produces, which extensions can only append to, not replace.
+
+### Expected merge conflict zones
+
+- `build.ts` section assembly if upstream reshapes it. Resolution: keep the `corePrompt` branch and the extracted `toolSection`.
+
 ## Test discipline rules in verification prompt (2026-05-15)
 
 ### What changed
