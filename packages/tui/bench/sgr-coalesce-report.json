@@ -1,0 +1,39 @@
+{
+  "bytesBefore": 1296281,
+  "bytesAfter": 1291425,
+  "reductionPct": 0.3746101346853036,
+  "adopted": false,
+  "corpora": [
+    {
+      "name": "frame-cost-n10000-virtual-terminal",
+      "source": "packages/tui/bench/frame-cost.ts pattern",
+      "capture": "virtual terminal writes",
+      "n": 10000,
+      "frames": 50,
+      "writeCount": 51,
+      "bytesBefore": 950014,
+      "bytesAfter": 950014,
+      "reductionPct": 0,
+      "evidence": ".omo/evidence/task-12-write-log-corpus.txt"
+    },
+    {
+      "name": "markdown-200-blocks-50-append-frames",
+      "source": "/tmp/task-12-sgr-corpus.mjs",
+      "capture": "one Markdown component mounted on TUI + LoggingVirtualTerminal",
+      "blocks": 200,
+      "appendFrames": 50,
+      "writeCount": 51,
+      "bytesBefore": 346267,
+      "bytesAfter": 341411,
+      "reductionPct": 1.4023860200365614,
+      "evidence": ".omo/evidence/task-12-markdown-corpus.txt"
+    }
+  ],
+  "provenance": {
+    "head": "750b9bda7b3bb800765f4e33436ce065198e74cb",
+    "generatedAt": "2026-07-02T15:42:21.256Z",
+    "command": "env -u TMUX -u TMUX_PANE -u STY -u ZELLIJ node --import tsx /tmp/task-12-sgr-corpus.mjs",
+    "coalescing": "split each captured write on CRLF/LF and run coalesceAdjacentSgr on each line segment",
+    "adoptionGate": "adopted is true iff reductionPct >= 10"
+  }
+}

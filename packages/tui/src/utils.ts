@@ -315,10 +315,26 @@ export function visibleWidth(str: string): number {
  */
 const THAI_LAO_AM_REGEX = /[\u0e33\u0eb3]/;
 const THAI_LAO_AM_GLOBAL_REGEX = /[\u0e33\u0eb3]/g;
+const ADJACENT_SGR_RUN_REGEX = /(?:\x1b\[[0-9;]*m){2,}/g;
+const SGR_IN_RUN_REGEX = /\x1b\[([0-9;]*)m/g;
 
 export function normalizeTerminalOutput(str: string): string {
 	if (!THAI_LAO_AM_REGEX.test(str)) return str;
 	return str.replace(THAI_LAO_AM_GLOBAL_REGEX, (char) => (char === "\u0e33" ? "\u0e4d\u0e32" : "\u0ecd\u0eb2"));
+}
+
+export function coalesceAdjacentSgr(line: string): string {
+	if (!line.includes("\x1b[")) {
+		return line;
+	}
+
+	return line.replace(ADJACENT_SGR_RUN_REGEX, (run) => {
+		const params: string[] = [];
+		for (const match of run.matchAll(SGR_IN_RUN_REGEX)) {
+			params.push(match[1] === "" ? "0" : (match[1] ?? "0"));
+		}
+		return `\x1b[${params.join(";")}m`;
+	});
 }
 
 /**
