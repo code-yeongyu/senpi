@@ -3,6 +3,8 @@ import {
 	ApprovalBridge,
 	type AppServerOutboundMessage,
 	createAppServerUIContext,
+	readSecretQuestionIds,
+	redactSecretAnswers,
 } from "../../src/modes/app-server/server/approvals.ts";
 
 type SentMessage = {
@@ -246,5 +248,37 @@ describe("app-server approval bridge", () => {
 
 		// Then: the permission-system receives the corresponding option label.
 		await expect(choicePromise).resolves.toBe("Allow always");
+	});
+
+	it("redacts only secret-marked approval answers", () => {
+		// Given: app-server approval questions that include both secret and public command/env-ish answers.
+		const secretQuestionIds = readSecretQuestionIds({
+			questions: [
+				{ id: "api-key", label: "OPENAI_API_KEY", isSecret: true },
+				{ id: "token", label: "SENPI_TOKEN", is_secret: true },
+				{ id: "command", label: "Command", isSecret: false },
+			],
+		});
+
+		// When: the client response is redacted before leaving the approval surface.
+		const response = redactSecretAnswers(
+			{
+				answers: {
+					"api-key": { answers: ["sk-live-secret"] },
+					token: { answers: ["token-secret", "second-secret"] },
+					command: { answers: ["npm run check"] },
+				},
+			},
+			secretQuestionIds,
+		);
+
+		// Then: only fields marked secret by the copied app-server helper are redacted.
+		expect(response).toEqual({
+			answers: {
+				"api-key": { answers: ["[REDACTED]"] },
+				token: { answers: ["[REDACTED]", "[REDACTED]"] },
+				command: { answers: ["npm run check"] },
+			},
+		});
 	});
 });
