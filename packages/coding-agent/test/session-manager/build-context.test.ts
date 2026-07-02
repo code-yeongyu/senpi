@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { describe, expect, it } from "vitest";
 import {
 	type BranchSummaryEntry,
@@ -7,9 +10,16 @@ import {
 	type CustomEntry,
 	type ModelChangeEntry,
 	type SessionEntry,
+	SessionManager,
 	type SessionMessageEntry,
 	type ThinkingLevelChangeEntry,
 } from "../../src/core/session-manager.ts";
+
+const SENTINEL_PREFIX = "\\u0000senpi-resident-string:v1:";
+
+function largeText(label: string): string {
+	return `${label}: ${"x".repeat(40 * 1024)}`;
+}
 
 function msg(id: string, parentId: string | null, role: "user" | "assistant", text: string): SessionMessageEntry {
 	const base = { type: "message" as const, id, parentId, timestamp: "2025-01-01T00:00:00Z" };
@@ -191,6 +201,39 @@ describe("buildSessionContext", () => {
 			expect(buildContextEntries(entries).map((entry) => entry.id)).toEqual(["6", "4", "5", "7", "8"]);
 			const ctx = buildSessionContext(entries);
 			expect(ctx.messages.map((message) => message.role)).toEqual(["compactionSummary", "user", "assistant"]);
+		});
+
+		it("SessionManager.buildContextEntries materializes resident strings in messages and custom messages", () => {
+			const tempDir = mkdtempSync(join(tmpdir(), "senpi-build-context-resident-"));
+			try {
+				const userText = largeText("resident-user-message");
+				const customText = largeText("resident-custom-message");
+				const session = SessionManager.create(tempDir, tempDir);
+				const userId = session.appendMessage({ role: "user", content: userText, timestamp: 1 });
+				const customId = session.appendCustomMessageEntry("resident-extension", customText, true);
+
+				expect(session.getResidentStoreStats().blobCount).toBeGreaterThanOrEqual(2);
+
+				const contextEntries = session.buildContextEntries();
+				const serialized = JSON.stringify(contextEntries);
+				expect(serialized).not.toContain(SENTINEL_PREFIX);
+				expect(serialized).toContain(userText);
+				expect(serialized).toContain(customText);
+
+				const userEntry = contextEntries.find((entry) => entry.id === userId);
+				if (userEntry?.type !== "message" || userEntry.message.role !== "user") {
+					throw new Error("resident user message entry should be present");
+				}
+				expect(userEntry.message.content).toBe(userText);
+
+				const customEntry = contextEntries.find((entry) => entry.id === customId);
+				if (customEntry?.type !== "custom_message") {
+					throw new Error("resident custom message entry should be present");
+				}
+				expect(customEntry.content).toBe(customText);
+			} finally {
+				rmSync(tempDir, { recursive: true, force: true });
+			}
 		});
 
 		it("keeps settings from the full path after compaction", () => {
