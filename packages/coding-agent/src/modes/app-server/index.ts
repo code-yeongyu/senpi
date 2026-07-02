@@ -2,7 +2,13 @@ import { isIP } from "node:net";
 import { APP_NAME, ENV_SESSION_DIR, getAgentDir } from "../../config.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
 import { type CreateAgentSessionOptions, type CreateAgentSessionResult, createAgentSession } from "../../core/sdk.ts";
-import type { TurnInterruptParams, TurnStartParams, TurnSteerParams, UserInput } from "./protocol/index.ts";
+import type {
+	ThreadLoadedListResponse,
+	TurnInterruptParams,
+	TurnStartParams,
+	TurnSteerParams,
+	UserInput,
+} from "./protocol/index.ts";
 import type { ClassifiedIncoming, RpcEnvelope, RpcResponse } from "./rpc/envelope.ts";
 import { createRegistry, type MethodRegistry, type RpcRequest } from "./rpc/registry.ts";
 import { ApprovalBridge, createAppServerUIContext } from "./server/approvals.ts";
@@ -21,6 +27,7 @@ import {
 	type TurnEngineStore,
 	type TurnEngineThreadEntry,
 } from "./threads/turns.ts";
+import { buildWireThread } from "./threads/wire-thread.ts";
 import { type StdioTransport, startStdioTransport } from "./transports/stdio.ts";
 import {
 	startAppServerWebSocketListener,
@@ -387,7 +394,7 @@ function createAppServerRuntime(requestShutdown: (reason: string) => void): AppS
 		notifications,
 		idleUnloadMinutes: 30,
 	});
-	registerLoadedThreadObjectListHandler(registry, threads);
+	registerLoadedThreadObjectListHandler(registry, threads, turnLog);
 
 	return { core, threads, turnLog, turns };
 }
@@ -431,7 +438,11 @@ function registerTurnHandlers(registry: MethodRegistry, turns: TurnEngineApi): v
 	});
 }
 
-function registerLoadedThreadObjectListHandler(registry: MethodRegistry, threads: ThreadRegistry): void {
+function registerLoadedThreadObjectListHandler(
+	registry: MethodRegistry,
+	threads: ThreadRegistry,
+	turnLog: TurnLog,
+): void {
 	registry.register("thread/loaded/list", {
 		scope: "thread",
 		handler: (context) => {
@@ -442,9 +453,9 @@ function registerLoadedThreadObjectListHandler(registry: MethodRegistry, threads
 			const data = loaded.slice(cursor, cursor + limit);
 			const nextOffset = cursor + data.length;
 			return {
-				data,
+				data: data.map((thread) => buildWireThread(thread, turnLog, false)),
 				nextCursor: nextOffset < loaded.length ? encodeCursor(nextOffset) : null,
-			};
+			} satisfies ThreadLoadedListResponse;
 		},
 	});
 }
