@@ -81,6 +81,18 @@ describe("app-server notification router", () => {
 		expect(b.received.map((notification) => notification.method)).toEqual(["thread/started"]);
 	});
 
+	it("rejects globally broadcast turn notifications without delivering them", () => {
+		// Given: two initialized connections with no thread subscription context.
+		const a = new FakeConnection({ id: "A" });
+		const b = new FakeConnection({ id: "B" });
+		const router = new NotificationRouter({ connections: [a, b] });
+
+		// When/Then: misrouting a scoped turn notification through broadcast fails clearly.
+		expect(() => router.broadcast(turnNotification)).toThrow(/not allowed for broadcast/);
+		expect(a.received).toEqual([]);
+		expect(b.received).toEqual([]);
+	});
+
 	it("queues terminal notifications with zero subscribers and flushes them before live events on subscribe", () => {
 		// Given: a thread with no subscribers and two terminal notifications.
 		const entry = thread("t1");
@@ -138,6 +150,23 @@ describe("app-server notification router", () => {
 		expect(ws.received.map((notification) => notification.method)).toEqual(["thread/started"]);
 		expect(stdio.closedReasons).toEqual([]);
 		expect(stdio.received.map((notification) => notification.method)).toEqual([
+			"thread/started",
+			"thread/status/changed",
+		]);
+	});
+
+	it("does not count synchronous websocket sends as queued backlog", () => {
+		// Given: a websocket connection whose send completes synchronously and a one-message outbound bound.
+		const ws = new FakeConnection({ id: "ws", transport: "ws" });
+		const router = new NotificationRouter({ connections: [ws], outboundQueueLimit: 1 });
+
+		// When: multiple lifecycle notifications are sent back-to-back.
+		router.broadcast(lifecycleNotification);
+		router.broadcast({ method: "thread/status/changed", params: { threadId: "t1", status: { type: "idle" } } });
+
+		// Then: the synchronous sender is not mistaken for a slow client.
+		expect(ws.closedReasons).toEqual([]);
+		expect(ws.received.map((notification) => notification.method)).toEqual([
 			"thread/started",
 			"thread/status/changed",
 		]);

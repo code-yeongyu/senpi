@@ -16,6 +16,22 @@ class FakeConnection implements RoutableConnection {
 	}
 }
 
+class SyncWsConnection implements RoutableConnection {
+	readonly id = "sync";
+	readonly transport = "ws";
+	readonly initialized = true;
+	readonly received: RouterNotification[] = [];
+	readonly closedReasons: string[] = [];
+
+	send(notification: RouterNotification): void {
+		this.received.push(notification);
+	}
+
+	close(reason: "slow-client"): void {
+		this.closedReasons.push(reason);
+	}
+}
+
 const thread: RoutableThread = {
 	id: "t1",
 	subscribers: new Set<string>(),
@@ -30,5 +46,18 @@ router.subscribe("t1", "C");
 const firstMethod = c.received[0]?.method ?? "NONE";
 console.log(`C_FIRST=${firstMethod}`);
 if (firstMethod !== "turn/completed") {
+	process.exitCode = 1;
+}
+
+const syncWs = new SyncWsConnection();
+const overflowRouter = new NotificationRouter({ connections: [syncWs], outboundQueueLimit: 1 });
+overflowRouter.broadcast({ method: "thread/started", params: { thread: { id: "t1" } } });
+overflowRouter.broadcast({ method: "thread/status/changed", params: { threadId: "t1", status: { type: "idle" } } });
+
+const syncMethods = syncWs.received.map((notification) => notification.method).join(",");
+const syncCloseReasons = syncWs.closedReasons.join(",");
+console.log(`SYNC_WS_GOT=${syncMethods}`);
+console.log(`SYNC_WS_CLOSED=${syncCloseReasons || "NONE"}`);
+if (syncMethods !== "thread/started,thread/status/changed" || syncCloseReasons !== "") {
 	process.exitCode = 1;
 }

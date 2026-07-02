@@ -41,7 +41,25 @@ const DEFAULT_OUTBOUND_QUEUE_LIMIT = 32_768;
 const DEFAULT_TERMINAL_QUEUE_LIMIT = 100;
 
 const DEFAULT_EXPERIMENTAL_NOTIFICATION_METHODS = ["remoteControl/status/changed"] as const;
+const BROADCAST_NOTIFICATION_METHODS = new Set([
+	"thread/started",
+	"thread/status/changed",
+	"thread/closed",
+	"thread/deleted",
+	"thread/name/updated",
+	"thread/tokenUsage/updated",
+]);
 const TERMINAL_NOTIFICATION_METHODS = new Set(["turn/completed", "turn/failed", "error"]);
+
+export class BroadcastNotificationMethodError extends Error {
+	readonly method: string;
+
+	constructor(method: string) {
+		super(`Notification method ${method} is not allowed for broadcast`);
+		this.name = "BroadcastNotificationMethodError";
+		this.method = method;
+	}
+}
 
 export class NotificationRouter {
 	private readonly connections = new Map<string, ConnectionState>();
@@ -104,6 +122,9 @@ export class NotificationRouter {
 	}
 
 	broadcast(notification: RouterNotification): void {
+		if (!this.canBroadcast(notification.method)) {
+			throw new BroadcastNotificationMethodError(notification.method);
+		}
 		for (const state of this.connections.values()) {
 			if (state.connection.initialized) {
 				this.enqueue(state, notification);
@@ -142,7 +163,12 @@ export class NotificationRouter {
 			return;
 		}
 		state.pending += 1;
-		Promise.resolve(state.connection.send(notification)).then(
+		const sendResult = state.connection.send(notification);
+		if (sendResult === undefined) {
+			state.pending -= 1;
+			return;
+		}
+		sendResult.then(
 			() => {
 				state.pending -= 1;
 			},
@@ -150,6 +176,10 @@ export class NotificationRouter {
 				state.pending -= 1;
 			},
 		);
+	}
+
+	private canBroadcast(method: string): boolean {
+		return BROADCAST_NOTIFICATION_METHODS.has(method) || this.experimentalNotificationMethods.has(method);
 	}
 
 	private filtered(connection: RoutableConnection, notification: RouterNotification): boolean {

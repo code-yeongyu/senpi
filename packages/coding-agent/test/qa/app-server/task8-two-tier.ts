@@ -37,3 +37,20 @@ console.log(`B_GOT=${bMethods}`);
 if (bMethods !== "thread/started") {
 	process.exitCode = 1;
 }
+
+let forbiddenBroadcastError: string | null = null;
+try {
+	router.broadcast({ method: "turn/started", params: { threadId: "t1", turn: { id: "turn-2" } } });
+} catch (error: unknown) {
+	forbiddenBroadcastError = error instanceof Error ? error.message : String(error);
+}
+
+const bMethodsAfterForbiddenBroadcast = b.received.map((notification) => notification.method).join(",");
+console.log(`FORBIDDEN_BROADCAST_ERROR=${forbiddenBroadcastError ?? "NONE"}`);
+console.log(`B_AFTER_FORBIDDEN_BROADCAST=${bMethodsAfterForbiddenBroadcast}`);
+if (
+	forbiddenBroadcastError?.includes("not allowed for broadcast") !== true ||
+	bMethodsAfterForbiddenBroadcast !== "thread/started"
+) {
+	process.exitCode = 1;
+}
