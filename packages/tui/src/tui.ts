@@ -7,7 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 import { isKeyRelease, matchesKey } from "./keys.ts";
-import { isMultiplexerSession, useLegacyMuxRender } from "./mux.ts";
+import { isMultiplexerSession, useLegacyMuxRender, viewportRenderEnabled } from "./mux.ts";
 import type { Terminal } from "./terminal.ts";
 import {
 	isOsc11BackgroundColorResponse,
@@ -104,6 +104,23 @@ interface ViewportInsertScrollPlan {
 	insertedRows: string[];
 }
 
+interface ViewportRenderStats {
+	readonly lastNormalizedLines: number;
+	readonly lastKittyImageScannedLines: number;
+	readonly totalNormalizedLines: number;
+	readonly totalKittyImageScannedLines: number;
+	readonly boundedFrames: number;
+	readonly escapedFrames: number;
+	readonly fullFrames: number;
+}
+
+interface NormalizedLinesResult {
+	readonly lines: string[];
+	readonly firstRawChanged: number;
+	readonly compareEndExclusive: number;
+	readonly bounded: boolean;
+}
+
 /**
  * Interface for components that can receive focus and display a hardware cursor.
  * When focused, the component should emit CURSOR_MARKER at the cursor position
@@ -132,12 +149,46 @@ export { visibleWidth };
 
 const renderErrorLoggedClasses = new Set<string>();
 let renderErrorLogWrites = 0;
+const VIEWPORT_RENDER_OVERSCAN = 16;
+const viewportRenderStats = {
+	lastNormalizedLines: 0,
+	lastKittyImageScannedLines: 0,
+	totalNormalizedLines: 0,
+	totalKittyImageScannedLines: 0,
+	boundedFrames: 0,
+	escapedFrames: 0,
+	fullFrames: 0,
+};
 
 export function __renderErrorLogStats(): { writes: number } | undefined {
 	if (process.env.PI_TUI_TEST_SEAMS !== "1") {
 		return undefined;
 	}
 	return { writes: renderErrorLogWrites };
+}
+
+export function __viewportRenderStats(): ViewportRenderStats | undefined {
+	if (process.env.PI_TUI_TEST_SEAMS !== "1") {
+		return undefined;
+	}
+	return { ...viewportRenderStats };
+}
+
+function recordViewportRenderStats(normalizedLines: number, mode: "bounded" | "escaped" | "full"): void {
+	viewportRenderStats.lastNormalizedLines = normalizedLines;
+	viewportRenderStats.totalNormalizedLines += normalizedLines;
+	if (mode === "bounded") {
+		viewportRenderStats.boundedFrames += 1;
+	} else if (mode === "escaped") {
+		viewportRenderStats.escapedFrames += 1;
+	} else {
+		viewportRenderStats.fullFrames += 1;
+	}
+}
+
+function recordKittyImageScanStats(scannedLines: number): void {
+	viewportRenderStats.lastKittyImageScannedLines = scannedLines;
+	viewportRenderStats.totalKittyImageScannedLines += scannedLines;
 }
 
 function componentRenderErrorName(component: Component): string {
@@ -380,6 +431,7 @@ export class Container implements Component {
 export class TUI extends Container {
 	public terminal: Terminal;
 	private previousLines: string[] = [];
+	private previousRawLines: string[] = [];
 	private previousKittyImageIds = new Set<number>();
 	private previousWidth = 0;
 	private previousHeight = 0;
@@ -808,6 +860,7 @@ export class TUI extends Container {
 		this.terminal.stop();
 		this.#lastCursorVisibility = undefined;
 		this.previousLines = [];
+		this.previousRawLines = [];
 		this.previousKittyImageIds.clear();
 		this.previousWidth = 0;
 		this.previousHeight = 0;
@@ -831,6 +884,7 @@ export class TUI extends Container {
 		if (force) {
 			this.inputRenderPending = false;
 			this.previousLines = [];
+			this.previousRawLines = [];
 			this.previousWidth = -1; // -1 triggers widthChanged, forcing a full clear
 			this.previousHeight = -1; // -1 triggers heightChanged, forcing a full clear
 			this.cursorRow = 0;
@@ -1248,18 +1302,96 @@ export class TUI extends Container {
 	private static readonly FRAME_BEGIN = "\x1b[?2026h\x1b[?7l";
 	private static readonly FRAME_END = "\x1b[?7h\x1b[?2026l";
 
-	private applyLineResets(lines: string[]): string[] {
-		const reset = TUI.SEGMENT_RESET;
+	private setPreviousLines(lines: string[], rawLines: string[]): void {
+		this.previousLines = lines;
+		this.previousRawLines = rawLines;
+	}
+
+	private normalizeLine(line: string): { line: string; normalized: boolean } {
+		if (isImageLine(line)) {
+			return { line, normalized: false };
+		}
+		return { line: normalizeTerminalOutput(line) + TUI.SEGMENT_RESET, normalized: true };
+	}
+
+	private applyLineResets(lines: string[], mode: "escaped" | "full" = "full"): NormalizedLinesResult {
+		const normalizedLines: string[] = [];
+		let normalizedCount = 0;
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i];
-			if (!isImageLine(line)) {
-				lines[i] = normalizeTerminalOutput(line) + reset;
+			if (isImageLine(line)) {
+				normalizedLines.push(line);
+			} else {
+				normalizedLines.push(normalizeTerminalOutput(line) + TUI.SEGMENT_RESET);
+				normalizedCount += 1;
 			}
 		}
-		return lines;
+		recordViewportRenderStats(normalizedCount, mode);
+		return {
+			lines: normalizedLines,
+			firstRawChanged: 0,
+			compareEndExclusive: normalizedLines.length,
+			bounded: false,
+		};
+	}
+
+	private applyViewportLineResets(
+		rawLines: string[],
+		viewportTop: number,
+		height: number,
+		stableDimensions: boolean,
+	): NormalizedLinesResult {
+		if (
+			!viewportRenderEnabled() ||
+			!stableDimensions ||
+			this.previousLines.length === 0 ||
+			this.previousLines.length !== rawLines.length ||
+			this.previousRawLines.length !== rawLines.length
+		) {
+			return this.applyLineResets(rawLines);
+		}
+
+		const windowStart = Math.max(0, viewportTop - VIEWPORT_RENDER_OVERSCAN);
+		const windowEnd = Math.min(rawLines.length, viewportTop + height + VIEWPORT_RENDER_OVERSCAN);
+		let firstRawChanged = -1;
+		for (let i = 0; i < rawLines.length; i++) {
+			if (rawLines[i] === this.previousRawLines[i]) {
+				continue;
+			}
+			if (firstRawChanged === -1) {
+				firstRawChanged = i;
+			}
+			if (i < windowStart || i >= windowEnd) {
+				return this.applyLineResets(rawLines, "escaped");
+			}
+		}
+
+		const lines = this.previousLines.slice();
+		let normalizedCount = 0;
+		if (firstRawChanged !== -1) {
+			for (let i = windowStart; i < windowEnd; i++) {
+				if (rawLines[i] === this.previousRawLines[i]) {
+					continue;
+				}
+				const normalized = this.normalizeLine(rawLines[i] ?? "");
+				lines[i] = normalized.line;
+				if (normalized.normalized) {
+					normalizedCount += 1;
+				}
+			}
+		}
+
+		recordViewportRenderStats(normalizedCount, "bounded");
+		return {
+			lines,
+			firstRawChanged,
+			compareEndExclusive: windowEnd,
+			bounded: true,
+		};
 	}
 
 	private collectKittyImageIds(lines: string[]): Set<number> {
+		recordKittyImageScanStats(lines.length);
 		const ids = new Set<number>();
 		for (const line of lines) {
 			for (const id of extractKittyImageIds(line)) {
@@ -1312,6 +1444,26 @@ export class TUI extends Container {
 		expandForLines(this.previousLines);
 		expandForLines(newLines);
 		return { firstChanged: expandedFirstChanged, lastChanged: expandedLastChanged };
+	}
+
+	private changedRangeNeedsKittyImageExpansion(lines: string[], firstChanged: number, lastChanged: number): boolean {
+		if (this.previousKittyImageIds.size > 0) {
+			return true;
+		}
+
+		const start = Math.max(0, firstChanged);
+		const end = Math.min(lines.length - 1, lastChanged);
+		let scannedLines = 0;
+		for (let i = start; i <= end; i++) {
+			scannedLines += 1;
+			const line = lines[i] ?? "";
+			if (isImageLine(line) || extractKittyImageIds(line).length > 0) {
+				recordKittyImageScanStats(scannedLines);
+				return true;
+			}
+		}
+		recordKittyImageScanStats(scannedLines);
+		return false;
 	}
 
 	private deleteChangedKittyImages(firstChanged: number, lastChanged: number): string {
@@ -1387,6 +1539,7 @@ export class TUI extends Container {
 	private renderViewportInsertScroll(
 		plan: ViewportInsertScrollPlan,
 		newLines: string[],
+		rawLines: string[],
 		cursorPos: { row: number; col: number } | null,
 		width: number,
 		height: number,
@@ -1414,7 +1567,7 @@ export class TUI extends Container {
 		this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length);
 		this.previousViewportTop = plan.viewportTop;
 		this.positionHardwareCursor(cursorPos, newLines.length);
-		this.previousLines = newLines;
+		this.setPreviousLines(newLines, rawLines);
 		this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 		this.previousWidth = width;
 		this.previousHeight = height;
@@ -1422,6 +1575,7 @@ export class TUI extends Container {
 
 	private renderScrollbackReplay(
 		newLines: string[],
+		rawLines: string[],
 		cursorPos: { row: number; col: number } | null,
 		width: number,
 		height: number,
@@ -1454,7 +1608,7 @@ export class TUI extends Container {
 		this.maxLinesRendered = newLines.length;
 		this.previousViewportTop = Math.max(0, bufferLength - height);
 		this.positionHardwareCursor(cursorPos, newLines.length);
-		this.previousLines = newLines;
+		this.setPreviousLines(newLines, rawLines);
 		this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 		this.previousWidth = width;
 		this.previousHeight = height;
@@ -1462,6 +1616,7 @@ export class TUI extends Container {
 
 	private renderMuxViewportRepaint(
 		newLines: string[],
+		rawLines: string[],
 		cursorPos: { row: number; col: number } | null,
 		width: number,
 		height: number,
@@ -1494,7 +1649,7 @@ export class TUI extends Container {
 		this.maxLinesRendered = newLines.length;
 		this.previousViewportTop = viewportTop;
 		this.positionHardwareCursor(cursorPos, newLines.length);
-		this.previousLines = newLines;
+		this.setPreviousLines(newLines, rawLines);
 		this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 		this.previousWidth = width;
 		this.previousHeight = height;
@@ -1607,7 +1762,14 @@ export class TUI extends Container {
 		// Extract cursor position before applying line resets (marker must be found first)
 		const cursorPos = this.extractCursorPosition(newLines, height);
 
-		newLines = this.applyLineResets(newLines);
+		const rawLines = newLines;
+		const normalizedLines = this.applyViewportLineResets(
+			rawLines,
+			prevViewportTop,
+			height,
+			!widthChanged && !heightChanged,
+		);
+		newLines = normalizedLines.lines;
 		const preserveMuxScrollback = this.shouldPreserveMuxScrollback();
 
 		// Helper to clear scrollback and viewport and render all new lines
@@ -1653,7 +1815,7 @@ export class TUI extends Container {
 			const bufferLength = Math.max(height, newLines.length);
 			this.previousViewportTop = Math.max(0, bufferLength - height);
 			this.positionHardwareCursor(cursorPos, newLines.length);
-			this.previousLines = newLines;
+			this.setPreviousLines(newLines, rawLines);
 			this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 			this.previousWidth = width;
 			this.previousHeight = height;
@@ -1688,7 +1850,7 @@ export class TUI extends Container {
 		if (heightChanged && !isTermuxSession()) {
 			logRedraw(`terminal height changed (${this.previousHeight} -> ${height})`);
 			if (preserveMuxScrollback) {
-				if (!this.renderMuxViewportRepaint(newLines, cursorPos, width, height)) {
+				if (!this.renderMuxViewportRepaint(newLines, rawLines, cursorPos, width, height)) {
 					fullRender(true, false);
 				}
 			} else {
@@ -1710,7 +1872,10 @@ export class TUI extends Container {
 		let firstChanged = -1;
 		let lastChanged = -1;
 		const maxLines = Math.max(newLines.length, this.previousLines.length);
-		for (let i = 0; i < maxLines; i++) {
+		const diffScanStart =
+			normalizedLines.bounded && normalizedLines.firstRawChanged !== -1 ? normalizedLines.firstRawChanged : 0;
+		const diffScanEndExclusive = normalizedLines.bounded ? normalizedLines.compareEndExclusive : maxLines;
+		for (let i = diffScanStart; i < diffScanEndExclusive; i++) {
 			const oldLine = i < this.previousLines.length ? this.previousLines[i] : "";
 			const newLine = i < newLines.length ? newLines[i] : "";
 
@@ -1729,7 +1894,9 @@ export class TUI extends Container {
 			}
 			lastChanged = newLines.length - 1;
 		}
-		if (firstChanged !== -1) {
+		const needsKittyImageExpansion =
+			firstChanged !== -1 && this.changedRangeNeedsKittyImageExpansion(newLines, firstChanged, lastChanged);
+		if (needsKittyImageExpansion) {
 			const expandedRange = this.expandChangedRangeForKittyImages(firstChanged, lastChanged, newLines);
 			firstChanged = expandedRange.firstChanged;
 			lastChanged = expandedRange.lastChanged;
@@ -1746,7 +1913,7 @@ export class TUI extends Container {
 		}
 
 		if (insertScrollPlan) {
-			this.renderViewportInsertScroll(insertScrollPlan, newLines, cursorPos, width, height);
+			this.renderViewportInsertScroll(insertScrollPlan, newLines, rawLines, cursorPos, width, height);
 			return;
 		}
 
@@ -1791,7 +1958,7 @@ export class TUI extends Container {
 				this.hardwareCursorRow = targetRow;
 			}
 			this.positionHardwareCursor(cursorPos, newLines.length);
-			this.previousLines = newLines;
+			this.setPreviousLines(newLines, rawLines);
 			this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 			this.previousWidth = width;
 			this.previousHeight = height;
@@ -1827,18 +1994,26 @@ export class TUI extends Container {
 				if (lineCountDelta !== 0) {
 					if (preserveMuxScrollback) {
 						// Above-viewport scrollback may stay stale in mux panes; only the visible viewport is repainted.
-						if (!this.renderMuxViewportRepaint(newLines, cursorPos, width, height, viewportTop)) {
+						if (!this.renderMuxViewportRepaint(newLines, rawLines, cursorPos, width, height, viewportTop)) {
 							fullRender(true, false);
 						}
 					} else {
-						this.renderScrollbackReplay(newLines, cursorPos, width, height, prevViewportTop, hardwareCursorRow);
+						this.renderScrollbackReplay(
+							newLines,
+							rawLines,
+							cursorPos,
+							width,
+							height,
+							prevViewportTop,
+							hardwareCursorRow,
+						);
 					}
 					return;
 				}
 
 				this.cursorRow = Math.max(0, newLines.length - 1);
 				this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length);
-				this.previousLines = newLines;
+				this.setPreviousLines(newLines, rawLines);
 				this.previousWidth = width;
 				this.previousHeight = height;
 				this.previousViewportTop = viewportTop;
@@ -1869,7 +2044,7 @@ export class TUI extends Container {
 				this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length);
 				this.previousViewportTop = viewportTop;
 				this.positionHardwareCursor(cursorPos, newLines.length);
-				this.previousLines = newLines;
+				this.setPreviousLines(newLines, rawLines);
 				this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 				this.previousWidth = width;
 				this.previousHeight = height;
@@ -2048,8 +2223,10 @@ export class TUI extends Container {
 		// Position hardware cursor for IME
 		this.positionHardwareCursor(cursorPos, newLines.length);
 
-		this.previousLines = newLines;
-		this.previousKittyImageIds = this.collectKittyImageIds(newLines);
+		this.setPreviousLines(newLines, rawLines);
+		if (needsKittyImageExpansion) {
+			this.previousKittyImageIds = this.collectKittyImageIds(newLines);
+		}
 		this.previousWidth = width;
 		this.previousHeight = height;
 	}

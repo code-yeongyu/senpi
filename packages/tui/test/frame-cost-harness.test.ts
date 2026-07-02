@@ -36,4 +36,16 @@ describe("frame-cost bench harness", () => {
 		// then
 		assertFrameCostShape(result, n);
 	});
+
+	it("keeps transcript rendering outside measured frames in stable-components mode", async () => {
+		// given
+		const n = 200;
+
+		// when
+		const result = await runFrameCost(n, { stableComponents: true });
+
+		// then
+		assertFrameCostShape(result, n);
+		assert.strictEqual(result.transcriptRenderCalls, 0);
+	});
 });
