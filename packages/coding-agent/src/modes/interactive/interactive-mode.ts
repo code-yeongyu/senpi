@@ -1872,6 +1872,7 @@ export class InteractiveMode {
 		this.hookStatusIntervalId = setInterval(() => {
 			this.refreshToolHookStatuses();
 		}, DEFAULT_WORKING_STATUS_MESSAGE_ANIMATION_INTERVAL_MS);
+		this.hookStatusIntervalId.unref();
 	}
 
 	private stopToolHookStatusTimer(): void {

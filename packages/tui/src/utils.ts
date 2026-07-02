@@ -41,9 +41,44 @@ const zeroWidthRegex = /^(?:\p{Default_Ignorable_Code_Point}|\p{Control}|\p{Mark
 const leadingNonPrintingRegex = /^[\p{Default_Ignorable_Code_Point}\p{Control}\p{Format}\p{Mark}\p{Surrogate}]+/v;
 const rgiEmojiRegex = /^\p{RGI_Emoji}$/v;
 
-// Cache for non-ASCII strings
-const WIDTH_CACHE_SIZE = 512;
-const widthCache = new Map<string, number>();
+const WIDTH_CACHE_GENERATION_SIZE = 2048;
+let widthCacheCurrent = new Map<string, number>();
+let widthCachePrevious = new Map<string, number>();
+let widthCacheHits = 0;
+let widthCacheMisses = 0;
+
+interface WidthCacheStats {
+	readonly hits: number;
+	readonly misses: number;
+	readonly currentSize: number;
+	readonly previousSize: number;
+	readonly totalRetained: number;
+}
+
+function rotateWidthCacheIfNeeded(): void {
+	if (widthCacheCurrent.size >= WIDTH_CACHE_GENERATION_SIZE) {
+		widthCachePrevious = widthCacheCurrent;
+		widthCacheCurrent = new Map<string, number>();
+	}
+}
+
+function setWidthCache(str: string, width: number): void {
+	widthCacheCurrent.set(str, width);
+	rotateWidthCacheIfNeeded();
+}
+
+export function __widthCacheStats(): WidthCacheStats | undefined {
+	if (process.env.PI_TUI_TEST_SEAMS !== "1") {
+		return undefined;
+	}
+	return {
+		hits: widthCacheHits,
+		misses: widthCacheMisses,
+		currentSize: widthCacheCurrent.size,
+		previousSize: widthCachePrevious.size,
+		totalRetained: widthCacheCurrent.size + widthCachePrevious.size,
+	};
+}
 
 export const cjkBreakRegex =
 	/[\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}\p{Script_Extensions=Hangul}\p{Script_Extensions=Bopomofo}]/u;
@@ -224,10 +259,18 @@ export function visibleWidth(str: string): number {
 	}
 
 	// Check cache
-	const cached = widthCache.get(str);
-	if (cached !== undefined) {
-		return cached;
+	const cachedCurrent = widthCacheCurrent.get(str);
+	if (cachedCurrent !== undefined) {
+		widthCacheHits++;
+		return cachedCurrent;
 	}
+	const cachedPrevious = widthCachePrevious.get(str);
+	if (cachedPrevious !== undefined) {
+		widthCacheHits++;
+		setWidthCache(str, cachedPrevious);
+		return cachedPrevious;
+	}
+	widthCacheMisses++;
 
 	// Normalize: tabs to 3 spaces, strip ANSI escape codes
 	let clean = str;
@@ -259,13 +302,7 @@ export function visibleWidth(str: string): number {
 	}
 
 	// Cache result
-	if (widthCache.size >= WIDTH_CACHE_SIZE) {
-		const firstKey = widthCache.keys().next().value;
-		if (firstKey !== undefined) {
-			widthCache.delete(firstKey);
-		}
-	}
-	widthCache.set(str, width);
+	setWidthCache(str, width);
 
 	return width;
 }
@@ -278,10 +315,26 @@ export function visibleWidth(str: string): number {
  */
 const THAI_LAO_AM_REGEX = /[\u0e33\u0eb3]/;
 const THAI_LAO_AM_GLOBAL_REGEX = /[\u0e33\u0eb3]/g;
+const ADJACENT_SGR_RUN_REGEX = /(?:\x1b\[[0-9;]*m){2,}/g;
+const SGR_IN_RUN_REGEX = /\x1b\[([0-9;]*)m/g;
 
 export function normalizeTerminalOutput(str: string): string {
 	if (!THAI_LAO_AM_REGEX.test(str)) return str;
 	return str.replace(THAI_LAO_AM_GLOBAL_REGEX, (char) => (char === "\u0e33" ? "\u0e4d\u0e32" : "\u0ecd\u0eb2"));
+}
+
+export function coalesceAdjacentSgr(line: string): string {
+	if (!line.includes("\x1b[")) {
+		return line;
+	}
+
+	return line.replace(ADJACENT_SGR_RUN_REGEX, (run) => {
+		const params: string[] = [];
+		for (const match of run.matchAll(SGR_IN_RUN_REGEX)) {
+			params.push(match[1] === "" ? "0" : (match[1] ?? "0"));
+		}
+		return `\x1b[${params.join(";")}m`;
+	});
 }
 
 /**

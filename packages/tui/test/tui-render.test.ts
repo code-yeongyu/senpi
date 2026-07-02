@@ -342,7 +342,7 @@ describe("TUI Kitty image cleanup", () => {
 
 			const writes = terminal.getWrites();
 			assert.ok(
-				writes.includes(`\x1b[2K\r\n\x1b[2K\x1b[1A${imageSequence}\x1b[1B`),
+				writes.includes(`\x1b[2K\x1b[0m\x1b]8;;\x07\r\n\x1b[2K\x1b[0m\x1b]8;;\x07\x1b[1A${imageSequence}\x1b[1B`),
 				"reserved rows should be cleared before the image placement is drawn",
 			);
 			assert.ok(

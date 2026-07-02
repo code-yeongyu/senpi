@@ -28,7 +28,7 @@ describe("pi-codex-app-server runtime harness", () => {
 		try {
 			const failingScript = join(tempRoot, "fail-now.mjs");
 			const cleanupReceipt = join(tempRoot, "cleanup-receipt.txt");
-			writeFileSync(failingScript, "process.exit(42);\n");
+			writeFileSync(failingScript, "setTimeout(() => process.exit(42), 0);\n");
 
 			const result = spawnSync(
 				process.execPath,
@@ -60,7 +60,7 @@ describe("pi-codex-app-server runtime harness", () => {
 		try {
 			const exitingScript = join(tempRoot, "exit-now.mjs");
 			const cleanupReceipt = join(tempRoot, "cleanup-receipt.txt");
-			writeFileSync(exitingScript, "process.exit(0);\n");
+			writeFileSync(exitingScript, "setTimeout(() => process.exit(0), 0);\n");
 
 			const result = spawnSync(
 				process.execPath,

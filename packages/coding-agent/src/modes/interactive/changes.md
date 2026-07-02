@@ -1,5 +1,25 @@
 # changes
 
+## hook-status ticker unref (2026-07-03)
+
+### What changed
+
+- `interactive-mode.ts`: the hook-status ticker interval is unref'd after creation.
+- `packages/coding-agent/test/hook-status-ticker.test.ts`: verifies the timer exposes and calls `unref()`.
+
+### Why
+
+- The hook-status ticker should not keep the interactive process alive after other work completes.
+
+### Why extension system couldn't handle this
+
+- The timer is internal to `InteractiveMode`'s built-in hook status lifecycle.
+
+### Expected merge conflict zones
+
+- LOW/MED: `interactive-mode.ts` around `startToolHookStatusTimer`, `stopToolHookStatusTimer`, and hook status
+  lifecycle methods.
+
 ## custom entry renderer display order sync (2026-07-02)
 
 ### What changed

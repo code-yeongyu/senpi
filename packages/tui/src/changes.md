@@ -1,5 +1,31 @@
 # TUI delta rendering fork changes
 
+## 2026-07-03: TUI rendering excellence gates
+
+### What changed
+
+- `packages/tui/src/tui.ts`: added multiplexer-aware full-render policy, bounded mux viewport repaint, opt-in
+  viewport-bounded normalize/diff, scroll-then-diff for bounded concurrent mutations, cursor visibility write
+  coalescing, SGR reset-after-clear coverage, and release-mode render-failure containment.
+- `packages/tui/src/utils.ts`: replaced the width cache with a two-generation cache and added the measured
+  SGR coalescing utility/report path; runtime SGR coalescing remains unwired because the measured byte reduction
+  was below the adoption gate.
+
+### Why this cannot be expressed externally
+
+These behaviors depend on `TUI`'s private render state: previous and raw line snapshots, viewport offsets,
+terminal dimensions, cursor bookkeeping, synchronized output framing, mux detection, image-row handling, and
+row-clear invariants. Components and extensions can reduce churn or request renders, but they cannot safely
+replace the renderer's terminal-byte decisions or update its internal cursor/viewport state.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/tui/src/tui.ts` around `doRender()`, `fullRender()`, `renderViewportInsertScroll()`,
+  `renderScrollbackReplay()`, `positionHardwareCursor()`, and render-error diagnostic handling.
+- MEDIUM: `packages/tui/src/utils.ts` around width caching, terminal-output normalization, and ANSI parsing helpers.
+- LOW: `packages/tui/test/tui-render.test.ts` flicker-budget and scrollback assertions when upstream changes
+  renderer byte expectations.
+
 ## 2026-07-02: autowrap disabled during frame writes (ghost-line fix)
 
 ### What changed
