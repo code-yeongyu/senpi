@@ -12,7 +12,17 @@ import {
 	startFakeModelServer,
 	writeMockModelsJson,
 } from "./lib/env.mjs";
-import { assertTurnStream, fail, httpStatus, initialize, pass, requiredThreadId, waitFor, WebSocketRpcClient } from "./lib/rpc.mjs";
+import {
+	assertTurnStream,
+	fail,
+	httpStatus,
+	initialize,
+	pass,
+	requiredThreadId,
+	upgradeStatus,
+	waitFor,
+	WebSocketRpcClient,
+} from "./lib/rpc.mjs";
 
 const transcript = [];
 const outPath = flag("--out");
@@ -32,6 +42,16 @@ try {
 	if ((await httpStatus(port, "/readyz")) !== 200) throw new Error("/readyz did not return 200");
 	if ((await httpStatus(port, "/readyz", { Origin: "https://example.test" })) !== 403) {
 		throw new Error("Origin request did not return 403");
+	}
+	const authRejectStatus = await upgradeStatus(port);
+	transcript.push(`authRejectStatus=${authRejectStatus}`);
+	if (![401, 403].includes(authRejectStatus)) {
+		throw new Error(`unauthenticated websocket upgrade returned ${authRejectStatus}, expected 401 or 403`);
+	}
+	const badTokenRejectStatus = await upgradeStatus(port, { Authorization: "Bearer bad-token" });
+	transcript.push(`badTokenRejectStatus=${badTokenRejectStatus}`);
+	if (![401, 403].includes(badTokenRejectStatus)) {
+		throw new Error(`bad-token websocket upgrade returned ${badTokenRejectStatus}, expected 401 or 403`);
 	}
 
 	const clientA = await WebSocketRpcClient.connect(port, token, transcript, "A");
