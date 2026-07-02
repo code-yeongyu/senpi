@@ -1493,7 +1493,7 @@ export class TUI extends Container {
 				buffer += this.deleteKittyImages(this.previousKittyImageIds);
 				buffer += "\x1b[2J\x1b[H\x1b[3J"; // Clear screen, home, then clear scrollback
 			} else {
-				buffer += "\r\x1b[2K";
+				buffer += `\r\x1b[2K${TUI.SEGMENT_RESET}`;
 			}
 			for (let i = 0; i < newLines.length; i++) {
 				if (i > 0) buffer += "\r\n";
