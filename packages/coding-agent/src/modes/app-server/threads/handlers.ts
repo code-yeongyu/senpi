@@ -177,7 +177,10 @@ class ThreadLifecycleHandlers {
 		let entry: ThreadEntry;
 		try {
 			entry = this.threads.getLoadedThread(threadId);
-		} catch {
+		} catch (error) {
+			if (!(error instanceof ThreadNotFoundError)) {
+				throw error;
+			}
 			return { status: "notLoaded" };
 		}
 		const id = connectionId(connection);
@@ -237,7 +240,10 @@ class ThreadLifecycleHandlers {
 		let entry: ThreadEntry;
 		try {
 			entry = this.threads.getLoadedThread(threadId);
-		} catch {
+		} catch (error) {
+			if (!(error instanceof ThreadNotFoundError)) {
+				throw error;
+			}
 			return;
 		}
 		if (entry.subscribers.size > 0 || entry.activeTurn) {
