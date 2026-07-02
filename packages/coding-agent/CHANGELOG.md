@@ -6,6 +6,8 @@
 
 ### Changed
 
+- Rewrote the Claude Opus 4.5–4.8 system prompt preset tuning against Anthropic's Opus prompting guidance: removed lines restating native model behavior, extended tools-over-reasoning guidance to Opus 4.7, compensated literal instruction following with evident-intent scoping, overrode the default frontend house style on 4.7/4.8, reduced post-user-turn re-reasoning on 4.8, and told all Opus presets not to wrap up early since senpi auto-compacts context.
+
 ### Fixed
 
 ## [2026.7.2] - 2026-07-02

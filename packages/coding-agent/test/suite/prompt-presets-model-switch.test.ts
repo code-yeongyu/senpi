@@ -46,7 +46,7 @@ describe("prompt preset model switching", () => {
 
 		// then
 		expect(promptChange?.systemPromptName).toBe("claude-opus-4-7");
-		expect(harness.session.systemPrompt).toContain("Maintain coherent state");
+		expect(harness.session.systemPrompt).toContain("full set rather than the first item");
 		expect(extensionEvents).toEqual(["gpt-5.5->claude-opus-4-7:claude-opus-4-7"]);
 		expect(harness.eventsOfType("system_prompt_change").map((event) => event.systemPromptName)).toEqual([
 			"claude-opus-4-7",
@@ -73,7 +73,7 @@ describe("prompt preset model switching", () => {
 		// then
 		expect(promptChange?.systemPromptName).toBe("fallback (senpi-current)");
 		expect(harness.session.systemPrompt).toContain("## Available Tools");
-		expect(harness.session.systemPrompt).not.toContain("Maintain coherent state");
+		expect(harness.session.systemPrompt).not.toContain("full set rather than the first item");
 		expect(harness.eventsOfType("system_prompt_change").map((event) => event.systemPromptName)).toEqual([
 			"fallback (senpi-current)",
 		]);
@@ -98,7 +98,7 @@ describe("prompt preset model switching", () => {
 
 		// then
 		expect(promptChange?.systemPromptName).toBe("claude-opus-4-6");
-		expect(harness.session.systemPrompt).toContain("Default output is thorough");
+		expect(harness.session.systemPrompt).toContain("Choose an approach and commit to it");
 		expect(harness.eventsOfType("system_prompt_change").map((event) => event.systemPromptName)).toEqual([
 			"claude-opus-4-6",
 		]);
