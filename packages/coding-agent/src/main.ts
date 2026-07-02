@@ -48,6 +48,12 @@ import { SettingsManager } from "./core/settings-manager.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
+import {
+	formatAppServerUsage,
+	parseAppServerCliArgs,
+	runAppServerDaemonCommand,
+	runAppServerMode,
+} from "./modes/app-server/index.ts";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
@@ -112,6 +118,9 @@ function isTruthyEnvFlag(value: string | undefined): boolean {
 }
 
 function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean): AppMode {
+	if (parsed.mode === undefined && parsed.messages[0] === "app-server") {
+		return "app-server";
+	}
 	if (parsed.mode === "rpc") {
 		return "rpc";
 	}
@@ -126,6 +135,10 @@ function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean)
 
 function toPrintOutputMode(appMode: AppMode): Exclude<Mode, "rpc"> {
 	return appMode === "json" ? "json" : "text";
+}
+
+function toProjectTrustMode(appMode: AppMode): AppMode {
+	return appMode === "app-server" ? "print" : appMode;
 }
 
 function isPlainRuntimeMetadataCommand(parsed: Args): boolean {
@@ -479,6 +492,28 @@ export interface MainOptions {
 	extensionFactories?: ExtensionFactory[];
 }
 
+async function handleAppServerCommand(args: string[]): Promise<boolean> {
+	if (args[0] !== "app-server") {
+		return false;
+	}
+
+	const parsed = parseAppServerCliArgs(args.slice(1));
+	if (parsed.kind === "usage-error") {
+		console.error(`Error: ${parsed.message}`);
+		console.error(formatAppServerUsage());
+		process.exit(2);
+	}
+
+	switch (parsed.kind) {
+		case "daemon":
+			await runAppServerDaemonCommand(parsed);
+			return true;
+		case "server":
+			await runAppServerMode(parsed);
+			return true;
+	}
+}
+
 export async function main(args: string[], options?: MainOptions) {
 	resetTimings();
 	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(process.env.PI_OFFLINE);
@@ -511,6 +546,10 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	if (await handleConfigCommand(args, { extensionFactories: options?.extensionFactories })) {
+		return;
+	}
+
+	if (await handleAppServerCommand(args)) {
 		return;
 	}
 
@@ -647,7 +686,8 @@ export async function main(args: string[], options?: MainOptions) {
 		parsed.projectTrustOverride === undefined && !hasTrustRequiringProjectResources(sessionCwd)
 			? sessionCwd
 			: undefined;
-	const trustPromptMode: AppMode = parsed.help || parsed.listModels !== undefined ? "print" : appMode;
+	const trustPromptMode: AppMode =
+		parsed.help || parsed.listModels !== undefined ? "print" : toProjectTrustMode(appMode);
 	const projectTrustByCwd = new Map<string, boolean>();
 
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
@@ -688,7 +728,7 @@ export async function main(args: string[], options?: MainOptions) {
 									projectTrustContext ??
 									createProjectTrustContext({
 										cwd,
-										mode: isInitialRuntime ? trustPromptMode : appMode,
+										mode: isInitialRuntime ? trustPromptMode : toProjectTrustMode(appMode),
 										settingsManager: startupSettingsManager,
 										hasUI: isInitialRuntime && trustPromptMode === "interactive",
 									}),

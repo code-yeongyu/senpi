@@ -236,6 +236,10 @@ ${chalk.bold("Commands:")}
                                  List installed extensions from settings
   ${APP_NAME} config [--no-approve]
                                  Open TUI to enable/disable package resources
+  ${APP_NAME} app-server [--listen <url>]
+                                 Serve agent sessions over the Codex app-server protocol
+  ${APP_NAME} app-server daemon <start|stop|status|restart> [--listen <url>]
+                                 Manage the app-server daemon
   ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list
 
 ${chalk.bold("Options:")}
@@ -335,6 +339,10 @@ ${chalk.bold("Examples:")}
   # Export a session file to HTML
   ${APP_NAME} --export ~/${CONFIG_DIR_NAME}/agent/sessions/--path--/session.jsonl
   ${APP_NAME} --export session.jsonl output.html
+
+  # Start Codex app-server protocol scaffolding
+  ${APP_NAME} app-server --listen stdio://
+  ${APP_NAME} app-server --listen ws://127.0.0.1:18991
 
 ${chalk.bold("Environment Variables:")}
   ANTHROPIC_API_KEY                - Anthropic Claude API key
