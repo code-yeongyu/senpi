@@ -137,7 +137,7 @@ describe("app-server protocol metadata", () => {
 		const threadStartParams: ThreadStartParams = { model: "mock-model", cwd: "/tmp" };
 		const turnStartParams: TurnStartParams = { threadId: "thread-1", input: [{ type: "text", text: "hi" }] };
 		const threadListResponse: ThreadListResponse = { data: [thread], nextCursor: null, backwardsCursor: null };
-		const threadLoadedListResponse: ThreadLoadedListResponse = { data: [thread], nextCursor: null };
+		const threadLoadedListResponse: ThreadLoadedListResponse = { data: ["thread-1"], nextCursor: null };
 		const modelListResponse: ModelListResponse = { data: [{ id: "mock-model" }], nextCursor: null };
 		const request: ClientRequest = { method: "initialize", id: 1, params: initializeParams };
 		const notification: ServerNotification = { method: "thread/status/changed", params: { threadId: "thread-1" } };
@@ -152,7 +152,7 @@ describe("app-server protocol metadata", () => {
 		expect(threadStartParams.cwd).toBe("/tmp");
 		expect(turnStartParams.input[0]?.type).toBe("text");
 		expect(threadListResponse.data[0]?.id).toBe("thread-1");
-		expect(threadLoadedListResponse.data[0]?.sessionId).toBe("session-1");
+		expect(threadLoadedListResponse.data[0]).toBe("thread-1");
 		expect(modelListResponse.data[0]).toEqual({ id: "mock-model" });
 		expect(notification.method).toBe("thread/status/changed");
 		expect(serverRequest.id).toBe("approval-1");

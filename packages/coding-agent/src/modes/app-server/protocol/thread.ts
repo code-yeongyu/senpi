@@ -143,7 +143,7 @@ export type ThreadListResponse = {
 	readonly backwardsCursor: string | null;
 };
 export type ThreadLoadedListParams = { readonly cursor?: string | null; readonly limit?: number | null };
-export type ThreadLoadedListResponse = { readonly data: readonly Thread[]; readonly nextCursor: string | null };
+export type ThreadLoadedListResponse = { readonly data: readonly string[]; readonly nextCursor: string | null };
 export type ThreadSetNameParams = { readonly threadId: ThreadId; readonly name: string };
 export type ThreadSetNameResponse = Record<string, never>;
 export type ThreadArchiveParams = { readonly threadId: ThreadId };
