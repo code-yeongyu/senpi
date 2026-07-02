@@ -1,6 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { zstdDecompressSync } from "node:zlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	getOpenAICodexWebSocketDebugStats,
@@ -30,6 +31,22 @@ function mockToken(): string {
 		"utf8",
 	).toString("base64");
 	return `aaa.${payload}.bbb`;
+}
+
+function decodeCodexRequestBody(body: RequestInit["body"] | undefined): Record<string, unknown> | null {
+	if (typeof body === "string") {
+		return JSON.parse(body) as Record<string, unknown>;
+	}
+	if (body instanceof Uint8Array) {
+		return JSON.parse(Buffer.from(zstdDecompressSync(body)).toString("utf8")) as Record<string, unknown>;
+	}
+	if (body instanceof ArrayBuffer) {
+		return JSON.parse(Buffer.from(zstdDecompressSync(new Uint8Array(body))).toString("utf8")) as Record<
+			string,
+			unknown
+		>;
+	}
+	return null;
 }
 
 function buildSSEPayload({
@@ -592,7 +609,7 @@ describe("openai-codex streaming", () => {
 				expect(headers?.get("x-client-request-id")).toBe(sessionId);
 
 				// Verify sessionId is set in request body as prompt_cache_key
-				const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+				const body = decodeCodexRequestBody(init?.body);
 				expect(body?.prompt_cache_key).toBe(sessionId);
 
 				return new Response(stream, {
@@ -700,7 +717,7 @@ describe("openai-codex streaming", () => {
 				return new Response("PROMPT", { status: 200, headers: { etag: '"etag"' } });
 			}
 			if (url === "https://chatgpt.com/backend-api/codex/responses") {
-				const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+				const body = decodeCodexRequestBody(init?.body);
 				requestedReasoning = body?.reasoning;
 				return new Response(stream, {
 					status: 200,
@@ -797,7 +814,7 @@ describe("openai-codex streaming", () => {
 				return new Response("PROMPT", { status: 200, headers: { etag: '"etag"' } });
 			}
 			if (url === "https://chatgpt.com/backend-api/codex/responses") {
-				const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+				const body = decodeCodexRequestBody(init?.body);
 				requestedReasoning = body?.reasoning;
 
 				return new Response(stream, {
@@ -1868,6 +1885,81 @@ describe("openai-codex streaming", () => {
 		const result = await resultPromise;
 		expect(result.content.find((content) => content.type === "text")?.text).toBe("Hello");
 		expect(codexRequests).toBe(2);
+	});
+
+	it("zstd-compresses SSE request bodies", async () => {
+		const token = mockToken();
+		const encoder = new TextEncoder();
+		const sse = buildSSEPayload({ status: "completed" });
+
+		let capturedEncoding: string | null = null;
+		let capturedBody: ArrayBuffer | Uint8Array | string | undefined;
+
+		const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+			const url = typeof input === "string" ? input : input.toString();
+			if (url !== "https://chatgpt.com/backend-api/codex/responses") {
+				throw new Error(`Unexpected URL: ${url}`);
+			}
+			const headers = init?.headers instanceof Headers ? init.headers : undefined;
+			capturedEncoding = headers?.get("content-encoding") ?? null;
+			capturedBody = init?.body as ArrayBuffer | Uint8Array | string | undefined;
+			return new Response(
+				new ReadableStream<Uint8Array>({
+					start(controller) {
+						controller.enqueue(encoder.encode(sse));
+						controller.close();
+					},
+				}),
+				{ status: 200, headers: { "content-type": "text/event-stream" } },
+			);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.1-codex",
+			name: "GPT-5.1 Codex",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+
+		const largeText = "compress me ".repeat(400);
+		await streamOpenAICodexResponses(
+			model,
+			{
+				systemPrompt: "You are a helpful assistant.",
+				messages: [{ role: "user", content: largeText, timestamp: 1 }],
+			},
+			{ apiKey: token, transport: "sse" },
+		).result();
+
+		expect(capturedEncoding).toBe("zstd");
+		expect(capturedBody).toBeInstanceOf(ArrayBuffer);
+		const decodedBody =
+			capturedBody instanceof Uint8Array ? capturedBody : new Uint8Array(capturedBody as ArrayBuffer);
+		const decoded = JSON.parse(Buffer.from(zstdDecompressSync(decodedBody)).toString("utf8")) as {
+			input: Array<{ content: Array<{ text: string }> }>;
+		};
+		expect(decoded.input[0].content[0].text).toBe(largeText);
+
+		capturedEncoding = null;
+		capturedBody = undefined;
+		await streamOpenAICodexResponses(
+			model,
+			{
+				systemPrompt: "You are a helpful assistant.",
+				messages: [{ role: "user", content: "hi", timestamp: 1 }],
+			},
+			{ apiKey: token, transport: "sse" },
+		).result();
+
+		expect(capturedEncoding).toBe("zstd");
+		expect(capturedBody).toBeInstanceOf(ArrayBuffer);
 	});
 
 	it("uses exponential backoff across repeated SSE retries without retry headers", async () => {

@@ -257,8 +257,8 @@ export const AMAZON_BEDROCK_MODELS = {
 		cost: {
 			input: 16.5,
 			output: 82.5,
-			cacheRead: 0.5,
-			cacheWrite: 6.25,
+			cacheRead: 1.65,
+			cacheWrite: 20.625,
 		},
 		contextWindow: 1000000,
 		maxTokens: 128000,
@@ -447,8 +447,8 @@ export const AMAZON_BEDROCK_MODELS = {
 		cost: {
 			input: 5.5,
 			output: 27.5,
-			cacheRead: 0.5,
-			cacheWrite: 6.25,
+			cacheRead: 0.55,
+			cacheWrite: 6.875,
 		},
 		contextWindow: 1000000,
 		maxTokens: 128000,

@@ -38,6 +38,29 @@ describe("OAuth device-code polling", () => {
 		]);
 	});
 
+	it("can wait before the first poll", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-03-09T00:00:00Z"));
+
+		const pollTimes: number[] = [];
+		const resultPromise = pollOAuthDeviceCodeFlow({
+			intervalSeconds: 2,
+			expiresInSeconds: 30,
+			waitBeforeFirstPoll: true,
+			poll: async () => {
+				pollTimes.push(Date.now());
+				return { status: "complete" as const, value: "token" };
+			},
+		});
+
+		await vi.advanceTimersByTimeAsync(1999);
+		expect(pollTimes).toEqual([]);
+
+		await vi.advanceTimersByTimeAsync(1);
+		await expect(resultPromise).resolves.toBe("token");
+		expect(pollTimes).toEqual([new Date("2026-03-09T00:00:02Z").getTime()]);
+	});
+
 	it("cancels an in-flight wait", async () => {
 		vi.useFakeTimers();
 		const controller = new AbortController();

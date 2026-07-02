@@ -4,9 +4,17 @@
 
 ### Added
 
+- Added public SDK exports for CLI-equivalent model and scoped-model resolution ([#6201](https://github.com/earendil-works/pi/issues/6201)).
+- Added extension entry renderers for persisted display-only session entries that are rendered in interactive mode without being sent to the model context.
+
 ### Changed
 
 ### Fixed
+
+- Fixed `/login` to report auth storage persistence failures instead of claiming credentials were saved when `auth.json` is locked ([#6223](https://github.com/earendil-works/pi/issues/6223)).
+- Fixed split-turn compaction to serialize summary requests so single-concurrency local providers do not fail with 429 errors ([#5536](https://github.com/earendil-works/pi/issues/5536)).
+- Fixed custom session entries appended during assistant streaming to render before the live assistant message, matching persisted session order.
+- Fixed oversized bash tool timeouts to fail with a clear validation error instead of being clamped to an immediate timeout ([#6181](https://github.com/earendil-works/pi/issues/6181)).
 
 ## [2026.6.30-2] - 2026-06-30
 

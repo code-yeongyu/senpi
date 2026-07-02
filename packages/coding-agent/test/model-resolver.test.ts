@@ -1,10 +1,12 @@
 import type { Model } from "@earendil-works/pi-ai";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
 	defaultModelPerProvider,
 	findInitialModel,
 	parseModelPattern,
 	resolveCliModel,
+	resolveModelScope,
+	resolveModelScopeWithDiagnostics,
 } from "../src/core/model-resolver.ts";
 
 // Mock models for testing
@@ -203,6 +205,55 @@ describe("parseModelPattern", () => {
 			expect(result.model?.id).toBe("claude-sonnet-4-5");
 			expect(result.warning).toContain("Invalid thinking level");
 		});
+	});
+});
+
+describe("resolveModelScopeWithDiagnostics", () => {
+	test("returns scoped models and structured diagnostics without writing console warnings", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			const registry = {
+				getAvailable: () => allModels,
+			} as unknown as Parameters<typeof resolveModelScopeWithDiagnostics>[1];
+
+			const result = await resolveModelScopeWithDiagnostics(["sonnet:high", "gpt-4o:invalid", "missing"], registry);
+
+			expect(result.scopedModels.map((scoped) => scoped.model.id)).toEqual(["claude-sonnet-4-5", "gpt-4o"]);
+			expect(result.scopedModels[0].thinkingLevel).toBe("high");
+			expect(result.scopedModels[1].thinkingLevel).toBeUndefined();
+			expect(result.diagnostics).toEqual([
+				{
+					type: "warning",
+					message: 'Invalid thinking level "invalid" in pattern "gpt-4o:invalid". Using default instead.',
+					pattern: "gpt-4o:invalid",
+				},
+				{
+					type: "warning",
+					message: 'No models match pattern "missing"',
+					pattern: "missing",
+				},
+			]);
+			expect(warn).not.toHaveBeenCalled();
+		} finally {
+			warn.mockRestore();
+		}
+	});
+
+	test("resolveModelScope preserves CLI warning output", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			const registry = {
+				getAvailable: () => allModels,
+			} as unknown as Parameters<typeof resolveModelScope>[1];
+
+			const scopedModels = await resolveModelScope(["missing"], registry);
+
+			expect(scopedModels).toEqual([]);
+			expect(warn).toHaveBeenCalledOnce();
+			expect(warn.mock.calls[0][0]).toContain('Warning: No models match pattern "missing"');
+		} finally {
+			warn.mockRestore();
+		}
 	});
 });
 

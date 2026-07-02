@@ -18,6 +18,7 @@ export type OAuthDeviceCodePollResult<T> = OAuthDeviceCodeIncompletePollResult |
 export type OAuthDeviceCodePollOptions<T> = {
 	intervalSeconds?: number;
 	expiresInSeconds?: number;
+	waitBeforeFirstPoll?: boolean;
 	poll: () => Promise<OAuthDeviceCodePollResult<T>>;
 	signal?: AbortSignal;
 };
@@ -53,6 +54,13 @@ export async function pollOAuthDeviceCodeFlow<T>(options: OAuthDeviceCodePollOpt
 	);
 
 	let slowDownResponses = 0;
+	if (options.waitBeforeFirstPoll) {
+		const remainingMs = deadline - Date.now();
+		if (remainingMs > 0) {
+			await abortableSleep(Math.min(intervalMs, remainingMs), options.signal, CANCEL_MESSAGE);
+		}
+	}
+
 	while (Date.now() < deadline) {
 		if (options.signal?.aborted) {
 			throw new Error(CANCEL_MESSAGE);

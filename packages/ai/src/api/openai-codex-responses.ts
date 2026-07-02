@@ -1,4 +1,5 @@
 import type * as NodeOs from "node:os";
+import type * as NodeZlib from "node:zlib";
 import type {
 	Tool as OpenAITool,
 	ResponseCreateParamsStreaming,
@@ -6,19 +7,19 @@ import type {
 	ResponseStreamEvent,
 } from "openai/resources/responses/responses.js";
 
-// NEVER convert to top-level runtime imports - breaks browser/Vite builds
-let _os: typeof NodeOs | null = null;
+type ProcessWithOsBuiltinModule = typeof process & {
+	getBuiltinModule?: (id: "node:os") => typeof NodeOs;
+};
 
-type DynamicImport = (specifier: string) => Promise<unknown>;
-
-const dynamicImport: DynamicImport = (specifier) => import(specifier);
-const NODE_OS_SPECIFIER = "node:" + "os";
-
-if (typeof process !== "undefined" && (process.versions?.node || process.versions?.bun)) {
-	dynamicImport(NODE_OS_SPECIFIER).then((m) => {
-		_os = m as typeof NodeOs;
-	});
+function loadNodeOs(): typeof NodeOs | null {
+	if (typeof process === "undefined" || !(process.versions?.node || process.versions?.bun)) {
+		return null;
+	}
+	return (process as ProcessWithOsBuiltinModule).getBuiltinModule?.("node:os") ?? null;
 }
+
+// NEVER convert to top-level runtime imports - breaks browser/Vite builds
+const _os: typeof NodeOs | null = loadNodeOs();
 
 import { clampThinkingLevel, supportsXhigh } from "../models.ts";
 import { registerSessionResourceCleanup } from "../session-resources.ts";
@@ -63,6 +64,9 @@ const DEFAULT_MAX_RETRIES = 0;
 const BASE_DELAY_MS = 1000;
 const DEFAULT_MAX_RETRY_DELAY_MS = 60_000;
 const DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS = 15_000;
+// The Codex backend accepts zstd-compressed request bodies on the SSE responses
+// endpoint (the same endpoint the official Codex client compresses against).
+const REQUEST_COMPRESSION_ZSTD_LEVEL = 3;
 const CODEX_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
 const WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE = 1009;
 const CODEX_PREVIOUS_RESPONSE_STALE_CODES = new Set(["previous_response_not_found", "codex_previous_response_stale"]);
@@ -181,6 +185,45 @@ function normalizeTimeoutMs(value: number | undefined): number | undefined {
 		throw new Error(`Invalid timeoutMs: ${String(value)}`);
 	}
 	return Math.floor(value);
+}
+
+// ============================================================================
+// Request Compression
+// ============================================================================
+
+type ProcessWithBuiltinModule = typeof process & {
+	getBuiltinModule?: (id: "node:zlib") => typeof NodeZlib;
+};
+
+function loadNodeZlib(): typeof NodeZlib | null {
+	if (typeof process === "undefined" || !(process.versions?.node || process.versions?.bun)) {
+		return null;
+	}
+	return (process as ProcessWithBuiltinModule).getBuiltinModule?.("node:zlib") ?? null;
+}
+
+// Returns the zstd-compressed body bytes, or null when compression is
+// unavailable (browser/Vite builds). Callers fall back to sending the
+// uncompressed JSON when this returns null.
+function compressRequestBodyZstd(bodyJson: string): Uint8Array | null {
+	const zlib = loadNodeZlib();
+	if (!zlib || typeof zlib.zstdCompressSync !== "function") {
+		return null;
+	}
+	try {
+		const compressed = zlib.zstdCompressSync(bodyJson, {
+			params: { [zlib.constants.ZSTD_c_compressionLevel]: REQUEST_COMPRESSION_ZSTD_LEVEL },
+		});
+		return new Uint8Array(compressed.buffer, compressed.byteOffset, compressed.byteLength);
+	} catch {
+		return null;
+	}
+}
+
+function copyBytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+	const copy: Uint8Array<ArrayBuffer> = new Uint8Array(bytes.byteLength);
+	copy.set(bytes);
+	return copy.buffer;
 }
 
 // ============================================================================
@@ -304,6 +347,15 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				}
 			}
 
+			// Compress the request body once for the SSE path. The Codex backend
+			// decodes Content-Encoding: zstd; the WebSocket transport above sends the
+			// uncompressed JSON frame, matching the official Codex client.
+			const compressedBody = compressRequestBodyZstd(bodyJson);
+			if (compressedBody) {
+				sseHeaders.set("content-encoding", "zstd");
+			}
+			const sseBody = compressedBody ? copyBytesToArrayBuffer(compressedBody) : bodyJson;
+
 			// Fetch with retry logic for rate limits and transient errors
 			let response: Response | undefined;
 			let lastError: Error | undefined;
@@ -322,7 +374,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 						response = await fetch(resolveCodexUrl(model.baseUrl), {
 							method: "POST",
 							headers: sseHeaders,
-							body: bodyJson,
+							body: sseBody,
 							signal: combinedSignal.signal,
 						});
 					} catch (error) {

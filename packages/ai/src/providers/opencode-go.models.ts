@@ -154,7 +154,7 @@ export const OPENCODE_GO_MODELS = {
 	} satisfies Model<"openai-completions">,
 	"minimax-m2.7": {
 		id: "minimax-m2.7",
-		name: "MiniMax M2.7",
+		name: "MiniMax-M2.7",
 		api: "openai-completions",
 		provider: "opencode-go",
 		baseUrl: "https://opencode.ai/zen/go/v1",
@@ -172,7 +172,7 @@ export const OPENCODE_GO_MODELS = {
 	} satisfies Model<"openai-completions">,
 	"minimax-m3": {
 		id: "minimax-m3",
-		name: "MiniMax M3 (3x usage)",
+		name: "MiniMax-M3 (3x usage)",
 		api: "anthropic-messages",
 		provider: "opencode-go",
 		baseUrl: "https://opencode.ai/zen/go",
