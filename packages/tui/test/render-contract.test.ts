@@ -169,6 +169,23 @@ describe("TUI render contract", () => {
 		});
 	});
 
+	it("truncates an over-wide raw component when crash logging cannot write in release", async () => {
+		await withEnv({ HOME: "/dev/null", [STRICT_ENV]: undefined, PI_TUI_TEST_SEAMS: "1" }, async () => {
+			const terminal = new LoggingVirtualTerminal(12, 4);
+			const tui = new tuiModule.TUI(terminal);
+			const component = new RawOverWideComponent();
+			component.line = "short";
+			tui.addChild(component);
+			await driveRender(tui, terminal);
+
+			component.line = "x".repeat(30);
+			await assert.doesNotReject(() => driveRender(tui, terminal));
+			assert.strictEqual(visibleWidth(terminal.getViewport()[0] ?? ""), 12);
+			assert.ok(terminal.getWrites().includes("x".repeat(12)));
+			tui.stop();
+		});
+	});
+
 	it("strict mode throws for an over-wide raw component", () => {
 		return withTempHome(async () => {
 			await withEnv({ [STRICT_ENV]: "1", PI_TUI_TEST_SEAMS: "1" }, async () => {

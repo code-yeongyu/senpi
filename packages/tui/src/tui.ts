@@ -224,6 +224,19 @@ function appendRenderErrorLogBestEffort(logPath: string, msg: string): void {
 	}
 }
 
+function writeRenderDiagnosticBestEffort(logPath: string, data: string): boolean {
+	try {
+		fs.mkdirSync(path.dirname(logPath), { recursive: true });
+		fs.writeFileSync(logPath, data);
+		return true;
+	} catch (error) {
+		if (error instanceof Error) {
+			return false;
+		}
+		throw error;
+	}
+}
+
 /**
  * Anchor position for overlays
  */
@@ -2142,8 +2155,7 @@ export class TUI extends Container {
 					"",
 				].join("\n");
 				if (process.env.PI_TUI_STRICT_RENDER === "1") {
-					fs.mkdirSync(path.dirname(crashLogPath), { recursive: true });
-					fs.writeFileSync(crashLogPath, crashData);
+					const crashDumpWritten = writeRenderDiagnosticBestEffort(crashLogPath, crashData);
 
 					// Clean up terminal state before throwing
 					this.stop();
@@ -2154,14 +2166,15 @@ export class TUI extends Container {
 						"This is likely caused by a custom TUI component not truncating its output.",
 						"Use visibleWidth() to measure and truncateToWidth() to truncate lines.",
 						"",
-						`Debug log written to: ${crashLogPath}`,
+						crashDumpWritten
+							? `Debug log written to: ${crashLogPath}`
+							: `Debug log could not be written to: ${crashLogPath}`,
 					].join("\n");
 					throw new Error(errorMsg);
 				}
 
 				if (!this.overWideCrashDumpWritten) {
-					fs.mkdirSync(path.dirname(crashLogPath), { recursive: true });
-					fs.writeFileSync(crashLogPath, crashData);
+					writeRenderDiagnosticBestEffort(crashLogPath, crashData);
 					this.overWideCrashDumpWritten = true;
 				}
 				const truncatedLine = sliceByColumn(line, 0, width, true) + TUI.SEGMENT_RESET;
