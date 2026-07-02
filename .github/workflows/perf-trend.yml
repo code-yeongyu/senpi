@@ -1,0 +1,84 @@
+# advisory-only; may become blocking only after ≥30 runs establish a false-positive rate <5% using ratio gates against a same-runner baseline window
+name: Perf Trend
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  perf-trend:
+    name: Advisory perf trend
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install system dependencies
+        run: |
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y \
+            libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
+          sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run advisory benches
+        run: bash scripts/perf-trend-local.sh || echo "bench failed (advisory)"
+
+      - name: Append perf summary
+        if: always()
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+
+          path = Path("perf-trend.json")
+          rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()] if path.exists() else []
+
+          print("| suite | n | p50Ms | p95Ms | bytesPerFrameP50 |")
+          print("| --- | ---: | ---: | ---: | ---: |")
+          for row in rows:
+              bytes_value = row["bytesPerFrameP50"]
+              bytes_text = "-" if bytes_value is None else f"{bytes_value:.3f}"
+              n_value = row["n"]
+              n_text = "-" if n_value is None else str(n_value)
+              print(f"| {row['label']} | {n_text} | {row['p50Ms']:.3f} | {row['p95Ms']:.3f} | {bytes_text} |")
+
+          def p50(label):
+              for row in rows:
+                  if row["label"] == label:
+                      return row["p50Ms"]
+              return None
+
+          baseline_1k = p50("frame-cost-n1000")
+          baseline_10k = p50("frame-cost-n10000")
+          viewport_10k = p50("frame-cost-n10000-viewport")
+          print("")
+          print("| ratio | value |")
+          print("| --- | ---: |")
+          if baseline_10k and viewport_10k:
+              print(f"| flag-on/off p50 | {viewport_10k / baseline_10k:.3f} |")
+          else:
+              print("| flag-on/off p50 | - |")
+          if baseline_1k and baseline_10k:
+              print(f"| 10k/1k scaling p50 | {baseline_10k / baseline_1k:.3f} |")
+          else:
+              print("| 10k/1k scaling p50 | - |")
+          PY
+
+      - name: Upload perf trend artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-trend
+          path: perf-trend.json
+          retention-days: 90
