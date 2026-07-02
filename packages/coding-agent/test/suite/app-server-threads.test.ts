@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -27,7 +27,10 @@ async function createRegistry(): Promise<{ registry: ThreadRegistry; root: strin
 describe("app-server thread registry", () => {
 	afterEach(async () => {
 		while (roots.length > 0) {
-			await rm(roots.pop()!, { recursive: true, force: true });
+			const root = roots.pop();
+			if (root) {
+				await rm(root, { recursive: true, force: true });
+			}
 		}
 	});
 
@@ -112,6 +115,31 @@ describe("app-server thread registry", () => {
 		await expect(registry.resumeThread("00000000-0000-0000-0000-000000000000")).rejects.toMatchObject({
 			name: "ThreadNotFoundError",
 		});
+	});
+
+	it("unloads a loaded thread without deleting its durable session", async () => {
+		const { registry, root } = await createRegistry();
+		const sessionDir = join(root, "sessions");
+		const threadId = "44444444-4444-4444-8444-444444444444";
+		await mkdir(sessionDir, { recursive: true });
+		await writeFile(
+			join(sessionDir, `2026-07-02T00-00-00-000Z_${threadId}.jsonl`),
+			[
+				JSON.stringify({
+					type: "session",
+					version: 3,
+					id: threadId,
+					timestamp: "2026-07-02T00:00:00.000Z",
+					cwd: root,
+				}),
+				"",
+			].join("\n"),
+		);
+		const entry = await registry.resumeThread(threadId);
+
+		expect(registry.unloadThread(entry.id)).toBe(true);
+		expect(registry.listLoaded()).toEqual([]);
+		await expect(registry.resumeThread(entry.id)).resolves.toMatchObject({ id: entry.id });
 	});
 });
 

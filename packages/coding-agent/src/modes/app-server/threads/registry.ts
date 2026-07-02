@@ -217,6 +217,12 @@ export class ThreadRegistry {
 		return entry;
 	}
 
+	unloadThread(threadId: string): boolean {
+		const entry = this.entries.get(threadId);
+		entry?.session.dispose();
+		return this.entries.delete(threadId);
+	}
+
 	buildThread(entry: ThreadEntry): WireThread {
 		return this.buildLoadedThread(entry);
 	}

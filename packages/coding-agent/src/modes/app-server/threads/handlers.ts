@@ -8,7 +8,7 @@ import type {
 import type { MethodRegistry, RegistryConnection, RpcRequest } from "../rpc/registry.ts";
 import type { NotificationRouter } from "../server/notifications.ts";
 import { ThreadArchiveState } from "./archive-state.ts";
-import { connectionId, objectValue, optionalString, removeLoadedThread, requiredString } from "./handler-params.ts";
+import { connectionId, objectValue, optionalString, requiredString } from "./handler-params.ts";
 import { listThreadsResponse, loadedThreadsResponse } from "./list-handlers.ts";
 import { type ThreadEntry, ThreadNotFoundError, type ThreadRegistry } from "./registry.ts";
 import { requestedApprovalPolicy, requestedStartModel } from "./start-options.ts";
@@ -155,8 +155,7 @@ class ThreadLifecycleHandlers {
 		const entry = await this.threads.resumeThread(threadId);
 		this.clearIdleTimer(threadId);
 		await this.archiveState.markArchived(this.threads.buildThread(entry));
-		entry.session.dispose();
-		removeLoadedThread(this.threads, threadId);
+		this.threads.unloadThread(threadId);
 		this.notifications.broadcast({ method: "thread/archived", params: { threadId } });
 		return {};
 	}
@@ -249,8 +248,7 @@ class ThreadLifecycleHandlers {
 		if (entry.subscribers.size > 0 || entry.activeTurn) {
 			return;
 		}
-		entry.session.dispose();
-		removeLoadedThread(this.threads, threadId);
+		this.threads.unloadThread(threadId);
 		this.notifications.broadcast({ method: "thread/closed", params: { threadId } });
 		this.notifications.broadcast({
 			method: "thread/status/changed",

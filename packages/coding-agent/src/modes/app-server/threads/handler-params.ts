@@ -1,5 +1,4 @@
 import type { RegistryConnection } from "../rpc/registry.ts";
-import type { ThreadRegistry } from "./registry.ts";
 
 type JsonObject = { readonly [key: string]: unknown };
 
@@ -7,7 +6,7 @@ export function objectValue(value: unknown): JsonObject {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) {
 		return {};
 	}
-	return Object.fromEntries(Object.entries(value));
+	return Object.assign<Record<string, unknown>, object>({}, value);
 }
 
 export function requiredString(value: unknown, name: string): string {
@@ -31,13 +30,6 @@ export function connectionId(connection: RegistryConnection): string {
 		throw new Error("Connection id is required for thread lifecycle methods");
 	}
 	return id;
-}
-
-export function removeLoadedThread(threads: ThreadRegistry, threadId: string): void {
-	const entries = Reflect.get(threads, "entries");
-	if (entries instanceof Map) {
-		entries.delete(threadId);
-	}
 }
 
 export function encodeCursor(offset: number): string {
