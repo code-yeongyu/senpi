@@ -5,7 +5,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { Agent } from "@earendil-works/pi-agent-core";
+import { Agent, type StreamFn } from "@earendil-works/pi-agent-core";
 import { getModel, type OAuthCredentials, type OAuthProvider } from "@earendil-works/pi-ai/compat";
 import { getOAuthApiKey } from "@earendil-works/pi-ai/oauth";
 import { AgentSession } from "../src/core/agent-session.ts";
@@ -164,6 +164,7 @@ export interface TestSessionOptions {
 	systemPrompt?: string;
 	/** Custom settings overrides */
 	settingsOverrides?: Record<string, unknown>;
+	streamFn?: StreamFn;
 }
 
 /**
@@ -238,6 +239,7 @@ export function createTestSession(options: TestSessionOptions = {}): TestSession
 	const model = getModel("anthropic", "claude-sonnet-4-5")!;
 	const agent = new Agent({
 		getApiKey: () => API_KEY,
+		streamFn: options.streamFn,
 		initialState: {
 			model,
 			systemPrompt: options.systemPrompt ?? "You are a helpful assistant. Be extremely concise.",
@@ -253,6 +255,7 @@ export function createTestSession(options: TestSessionOptions = {}): TestSession
 	}
 
 	const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
+	if (API_KEY) authStorage.setRuntimeApiKey("anthropic", API_KEY);
 	const modelRegistry = ModelRegistry.create(authStorage, tempDir);
 
 	const session = new AgentSession({

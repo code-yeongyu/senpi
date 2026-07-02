@@ -9,8 +9,55 @@
  * - Abort handling during summarization
  */
 
+import type { StreamFn } from "@earendil-works/pi-agent-core";
+import { createAssistantMessageEventStream, fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { API_KEY, createTestSession, type TestSessionContext } from "./utilities.ts";
+
+const treeNavigationStreamFn: StreamFn = (model, context, options) => {
+	const stream = createAssistantMessageEventStream();
+	const promptText = JSON.stringify(context.messages);
+	const isBranchSummary = promptText.includes("<conversation>");
+	const message = (text: string, stopReason: "stop" | "aborted" = "stop") => ({
+		...fauxAssistantMessage(text, { stopReason, errorMessage: stopReason === "aborted" ? "Aborted" : undefined }),
+		api: model.api,
+		provider: model.provider,
+		model: model.id,
+		usage: {
+			input: 10,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 10,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+	});
+	const summary = promptText.includes("MONKEY MONKEY MONKEY")
+		? "Deterministic branch summary. MONKEY MONKEY MONKEY"
+		: "Deterministic branch summary.";
+	const finish = (aborted = false) =>
+		stream.push(
+			aborted
+				? { type: "error", reason: "aborted", error: message("Aborted", "aborted") }
+				: { type: "done", reason: "stop", message: message(isBranchSummary ? summary : "ok") },
+		);
+
+	if (!isBranchSummary) {
+		queueMicrotask(finish);
+		return stream;
+	}
+
+	const timer = setTimeout(finish, 250);
+	options?.signal?.addEventListener(
+		"abort",
+		() => {
+			clearTimeout(timer);
+			finish(true);
+		},
+		{ once: true },
+	);
+	return stream;
+};
 
 describe.skipIf(!API_KEY)("AgentSession tree navigation e2e", () => {
 	let ctx: TestSessionContext;
@@ -19,6 +66,7 @@ describe.skipIf(!API_KEY)("AgentSession tree navigation e2e", () => {
 		ctx = createTestSession({
 			systemPrompt: "You are a helpful assistant. Reply with just a few words.",
 			settingsOverrides: { compaction: { keepRecentTokens: 1 } },
+			streamFn: treeNavigationStreamFn,
 		});
 	});
 
@@ -282,6 +330,7 @@ describe.skipIf(!API_KEY)("AgentSession tree navigation - branch scenarios", () 
 	beforeEach(() => {
 		ctx = createTestSession({
 			systemPrompt: "You are a helpful assistant. Reply with just a few words.",
+			streamFn: treeNavigationStreamFn,
 		});
 	});
 
