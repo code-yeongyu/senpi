@@ -1,7 +1,5 @@
 import type {
 	ThreadForkResponse,
-	ThreadListResponse,
-	ThreadLoadedListResponse,
 	ThreadReadResponse,
 	ThreadResumeResponse,
 	ThreadStartResponse,
@@ -9,17 +7,10 @@ import type {
 } from "../protocol/generated/v2/index.ts";
 import type { MethodRegistry, RegistryConnection, RpcRequest } from "../rpc/registry.ts";
 import type { NotificationRouter } from "../server/notifications.ts";
-import {
-	connectionId,
-	decodeCursor,
-	encodeCursor,
-	objectValue,
-	optionalNumber,
-	optionalString,
-	removeLoadedThread,
-	requiredString,
-} from "./handler-params.ts";
-import { type ThreadEntry, ThreadNotFoundError, type ThreadRegistry, type WireThread } from "./registry.ts";
+import { ThreadArchiveState } from "./archive-state.ts";
+import { connectionId, objectValue, optionalString, removeLoadedThread, requiredString } from "./handler-params.ts";
+import { listThreadsResponse, loadedThreadsResponse } from "./list-handlers.ts";
+import { type ThreadEntry, ThreadNotFoundError, type ThreadRegistry } from "./registry.ts";
 import type { TurnLog } from "./turn-log.ts";
 import { buildWireThread, NOT_LOADED_STATUS } from "./wire-thread.ts";
 
@@ -50,16 +41,16 @@ class ThreadLifecycleHandlers {
 	private readonly turnLog: TurnLog;
 	private readonly notifications: NotificationRouter;
 	private readonly replayPendingApprovals: ((threadId: string, connectionId: string) => void) | undefined;
+	private readonly archiveState: ThreadArchiveState;
 	private readonly idleUnloadMs: number;
 	private readonly idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
-	private readonly archivedThreadIds = new Set<string>();
-	private readonly archivedThreads = new Map<string, WireThread>();
 
 	constructor(options: ThreadLifecycleHandlersOptions) {
 		this.threads = options.threads;
 		this.turnLog = options.turnLog;
 		this.notifications = options.notifications;
 		this.replayPendingApprovals = options.replayPendingApprovals;
+		this.archiveState = new ThreadArchiveState(options.threads.getSessionDir());
 		this.idleUnloadMs = Math.max(0, options.idleUnloadMinutes ?? DEFAULT_IDLE_UNLOAD_MINUTES) * 60 * 1000;
 	}
 
@@ -77,8 +68,16 @@ class ThreadLifecycleHandlers {
 			["thread/resume", (context) => this.resume(context.connection, context.request)],
 			["thread/fork", (context) => this.fork(context.connection, context.request)],
 			["thread/read", (context) => this.read(context.request)],
-			["thread/list", (context) => this.list(context.request)],
-			["thread/loaded/list", (context) => this.loadedList(context.request)],
+			[
+				"thread/list",
+				(context) =>
+					listThreadsResponse(context.request.params, {
+						threads: this.threads,
+						turnLog: this.turnLog,
+						archiveState: this.archiveState,
+					}),
+			],
+			["thread/loaded/list", (context) => loadedThreadsResponse(context.request.params, this.threads)],
 			["thread/name/set", (context) => this.setName(context.request)],
 			["thread/archive", (context) => this.archive(context.request)],
 			["thread/delete", (context) => this.delete(context.request)],
@@ -135,35 +134,6 @@ class ThreadLifecycleHandlers {
 		return { thread: buildWireThread(entry, this.turnLog, params.includeTurns === true) };
 	}
 
-	private async list(request: RpcRequest): Promise<ThreadListResponse> {
-		const params = objectValue(request.params);
-		const page = await this.threads.listThreads({
-			cursor: optionalString(params.cursor) ?? null,
-			limit: optionalNumber(params.limit) ?? undefined,
-		});
-		const archived = params.archived === true;
-		const threads = archived ? this.archivedListThreads(page.threads) : page.threads;
-		const filtered = threads.filter((thread) => this.archivedThreadIds.has(thread.id) === archived);
-		return {
-			data: filtered.map((thread) => buildWireThread(thread, this.turnLog, false)),
-			nextCursor: page.nextCursor,
-			backwardsCursor: null,
-		};
-	}
-
-	private loadedList(request: RpcRequest): ThreadLoadedListResponse {
-		const params = objectValue(request.params);
-		const cursor = decodeCursor(optionalString(params.cursor) ?? null);
-		const limit = optionalNumber(params.limit) ?? Number.POSITIVE_INFINITY;
-		const ids = this.threads.listLoaded().map((thread) => thread.id);
-		const data = ids.slice(cursor, cursor + limit);
-		const nextOffset = cursor + data.length;
-		return {
-			data,
-			nextCursor: nextOffset < ids.length ? encodeCursor(nextOffset) : null,
-		};
-	}
-
 	private async setName(request: RpcRequest): Promise<Record<string, never>> {
 		const params = objectValue(request.params);
 		const threadId = requiredString(params.threadId, "threadId");
@@ -179,10 +149,9 @@ class ThreadLifecycleHandlers {
 		const threadId = requiredString(params.threadId, "threadId");
 		const entry = await this.threads.resumeThread(threadId);
 		this.clearIdleTimer(threadId);
-		this.archivedThreads.set(threadId, this.threads.buildThread(entry));
+		await this.archiveState.markArchived(this.threads.buildThread(entry));
 		entry.session.dispose();
 		removeLoadedThread(this.threads, threadId);
-		this.archivedThreadIds.add(threadId);
 		this.notifications.broadcast({ method: "thread/archived", params: { threadId } });
 		return {};
 	}
@@ -191,9 +160,8 @@ class ThreadLifecycleHandlers {
 		const params = objectValue(request.params);
 		const threadId = requiredString(params.threadId, "threadId");
 		this.clearIdleTimer(threadId);
+		await this.archiveState.clearArchived(threadId);
 		await this.threads.deleteThread(threadId);
-		this.archivedThreadIds.delete(threadId);
-		this.archivedThreads.delete(threadId);
 		this.notifications.broadcast({ method: "thread/deleted", params: { threadId } });
 		return {};
 	}
@@ -286,16 +254,5 @@ class ThreadLifecycleHandlers {
 		}
 		clearTimeout(timer);
 		this.idleTimers.delete(threadId);
-	}
-
-	private archivedListThreads(listedThreads: readonly WireThread[]): WireThread[] {
-		const threadsById = new Map<string, WireThread>();
-		for (const thread of listedThreads) {
-			threadsById.set(thread.id, thread);
-		}
-		for (const thread of this.archivedThreads.values()) {
-			threadsById.set(thread.id, thread);
-		}
-		return [...threadsById.values()];
 	}
 }

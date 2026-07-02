@@ -7,6 +7,7 @@ import {
 } from "../../../core/sdk.ts";
 import { type SessionInfo, SessionManager } from "../../../core/session-manager.ts";
 import { resolvePath } from "../../../utils/paths.ts";
+import { buildDiskThread, compareThreads, decodeCursor, encodeCursor } from "./registry-listing.ts";
 
 export type ConnectionId = string;
 
@@ -26,6 +27,7 @@ export type ThreadStatusType = LoadedThreadStatus | "notLoaded";
 export interface WireThread {
 	id: string;
 	sessionId: string;
+	sessionPath: string | null;
 	cwd: string;
 	createdAt: string;
 	updatedAt: string;
@@ -219,6 +221,10 @@ export class ThreadRegistry {
 		return this.buildLoadedThread(entry);
 	}
 
+	getSessionDir(): string | undefined {
+		return this.sessionDir;
+	}
+
 	private registerSession(session: AgentSession, cwd: string, sessionInfo?: SessionInfo): ThreadEntry {
 		const existing = this.entries.get(session.sessionId);
 		if (existing) {
@@ -260,6 +266,7 @@ export class ThreadRegistry {
 		return {
 			id: entry.id,
 			sessionId: entry.session.sessionId,
+			sessionPath: entry.session.sessionFile ?? null,
 			cwd: entry.cwd,
 			createdAt: entry.createdAt,
 			updatedAt: entry.updatedAt,
@@ -268,37 +275,4 @@ export class ThreadRegistry {
 			name: entry.session.sessionName ?? null,
 		};
 	}
-}
-
-function buildDiskThread(info: SessionInfo): WireThread {
-	return {
-		id: info.id,
-		sessionId: info.id,
-		cwd: info.cwd,
-		createdAt: info.created.toISOString(),
-		updatedAt: info.modified.toISOString(),
-		status: { type: "notLoaded" },
-		preview: info.firstMessage && info.firstMessage !== "(no messages)" ? info.firstMessage : null,
-		name: info.name ?? null,
-	};
-}
-
-function compareThreads(left: WireThread, right: WireThread): number {
-	const updated = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
-	if (updated !== 0) {
-		return updated;
-	}
-	return left.id.localeCompare(right.id);
-}
-
-function encodeCursor(offset: number): string {
-	return Buffer.from(String(offset), "utf8").toString("base64");
-}
-
-function decodeCursor(cursor: string | null | undefined): number {
-	if (!cursor) {
-		return 0;
-	}
-	const offset = Number.parseInt(Buffer.from(cursor, "base64").toString("utf8"), 10);
-	return Number.isFinite(offset) && offset >= 0 ? offset : 0;
 }

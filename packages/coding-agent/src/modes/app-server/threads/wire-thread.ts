@@ -33,7 +33,7 @@ export function buildWireThread(
 		updatedAt,
 		recencyAt: updatedAt,
 		status: toGeneratedStatus(wire.status.type),
-		path: "session" in entry ? (entry.session.sessionFile ?? null) : null,
+		path: "session" in entry ? (entry.session.sessionFile ?? null) : wire.sessionPath,
 		cwd: wire.cwd,
 		cliVersion: VERSION,
 		source: "appServer",
@@ -50,6 +50,7 @@ function entryToWire(entry: ThreadEntry): WireThread {
 	return {
 		id: entry.id,
 		sessionId: entry.session.sessionId,
+		sessionPath: entry.session.sessionFile ?? null,
 		cwd: entry.cwd,
 		createdAt: entry.createdAt,
 		updatedAt: entry.updatedAt,
