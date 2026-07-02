@@ -103,6 +103,10 @@
           "path": "app-server.md"
         },
         {
+          "title": "App Server Daemon",
+          "path": "app-server-daemon.md"
+        },
+        {
           "title": "JSON Event Stream Mode",
           "path": "json.md"
         },
