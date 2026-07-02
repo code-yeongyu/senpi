@@ -152,6 +152,7 @@ export type AgentSessionEvent =
 	  }
 	| { type: "compaction_start"; reason: CompactionReason }
 	| { type: "compaction_progress"; reason: CompactionReason; delta?: string; text?: string }
+	| { type: "entry_appended"; entry: SessionEntry }
 	| { type: "session_info_changed"; name: string | undefined }
 	| ExtensionToolHookLifecycleEvent
 	| SystemPromptChangeEvent
@@ -2685,7 +2686,11 @@ export class AgentSession {
 					});
 				},
 				appendEntry: (customType, data) => {
-					this.sessionManager.appendCustomEntry(customType, data);
+					const entryId = this.sessionManager.appendCustomEntry(customType, data);
+					const entry = this.sessionManager.getEntry(entryId);
+					if (entry) {
+						this._emit({ type: "entry_appended", entry });
+					}
 				},
 				setSessionName: (name) => {
 					this.setSessionName(name);

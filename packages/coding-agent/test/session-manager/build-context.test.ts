@@ -1,13 +1,25 @@
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { describe, expect, it } from "vitest";
 import {
 	type BranchSummaryEntry,
+	buildContextEntries,
 	buildSessionContext,
 	type CompactionEntry,
+	type CustomEntry,
 	type ModelChangeEntry,
 	type SessionEntry,
+	SessionManager,
 	type SessionMessageEntry,
 	type ThinkingLevelChangeEntry,
 } from "../../src/core/session-manager.ts";
+
+const SENTINEL_PREFIX = "\\u0000senpi-resident-string:v1:";
+
+function largeText(label: string): string {
+	return `${label}: ${"x".repeat(40 * 1024)}`;
+}
 
 function msg(id: string, parentId: string | null, role: "user" | "assistant", text: string): SessionMessageEntry {
 	const base = { type: "message" as const, id, parentId, timestamp: "2025-01-01T00:00:00Z" };
@@ -50,6 +62,10 @@ function compaction(id: string, parentId: string | null, summary: string, firstK
 
 function branchSummary(id: string, parentId: string | null, summary: string, fromId: string): BranchSummaryEntry {
 	return { type: "branch_summary", id, parentId, timestamp: "2025-01-01T00:00:00Z", summary, fromId };
+}
+
+function custom(id: string, parentId: string | null, customType: string, data?: unknown): CustomEntry {
+	return { type: "custom", id, parentId, timestamp: "2025-01-01T00:00:00Z", customType, data };
 }
 
 function thinkingLevel(id: string, parentId: string | null, level: string): ThinkingLevelChangeEntry {
@@ -168,6 +184,70 @@ describe("buildSessionContext", () => {
 			// Should use second summary, keep from 4
 			expect(ctx.messages).toHaveLength(4);
 			expect((ctx.messages[0] as any).summary).toContain("Second summary");
+		});
+
+		it("buildContextEntries returns compaction-aware entries including custom entries", () => {
+			const entries: SessionEntry[] = [
+				msg("1", null, "user", "first"),
+				custom("2", "1", "old-state", { hidden: true }),
+				msg("3", "2", "assistant", "response1"),
+				custom("4", "3", "kept-card", { title: "Kept" }),
+				msg("5", "4", "user", "second"),
+				compaction("6", "5", "Summary", "4"),
+				custom("7", "6", "after-card", { title: "After" }),
+				msg("8", "7", "assistant", "response2"),
+			];
+
+			expect(buildContextEntries(entries).map((entry) => entry.id)).toEqual(["6", "4", "5", "7", "8"]);
+			const ctx = buildSessionContext(entries);
+			expect(ctx.messages.map((message) => message.role)).toEqual(["compactionSummary", "user", "assistant"]);
+		});
+
+		it("SessionManager.buildContextEntries materializes resident strings in messages and custom messages", () => {
+			const tempDir = mkdtempSync(join(tmpdir(), "senpi-build-context-resident-"));
+			try {
+				const userText = largeText("resident-user-message");
+				const customText = largeText("resident-custom-message");
+				const session = SessionManager.create(tempDir, tempDir);
+				const userId = session.appendMessage({ role: "user", content: userText, timestamp: 1 });
+				const customId = session.appendCustomMessageEntry("resident-extension", customText, true);
+
+				expect(session.getResidentStoreStats().blobCount).toBeGreaterThanOrEqual(2);
+
+				const contextEntries = session.buildContextEntries();
+				const serialized = JSON.stringify(contextEntries);
+				expect(serialized).not.toContain(SENTINEL_PREFIX);
+				expect(serialized).toContain(userText);
+				expect(serialized).toContain(customText);
+
+				const userEntry = contextEntries.find((entry) => entry.id === userId);
+				if (userEntry?.type !== "message" || userEntry.message.role !== "user") {
+					throw new Error("resident user message entry should be present");
+				}
+				expect(userEntry.message.content).toBe(userText);
+
+				const customEntry = contextEntries.find((entry) => entry.id === customId);
+				if (customEntry?.type !== "custom_message") {
+					throw new Error("resident custom message entry should be present");
+				}
+				expect(customEntry.content).toBe(customText);
+			} finally {
+				rmSync(tempDir, { recursive: true, force: true });
+			}
+		});
+
+		it("keeps settings from the full path after compaction", () => {
+			const entries: SessionEntry[] = [
+				msg("1", null, "user", "first"),
+				thinkingLevel("2", "1", "high"),
+				msg("3", "2", "assistant", "response1"),
+				msg("4", "3", "user", "second"),
+				compaction("5", "4", "Summary", "4"),
+			];
+
+			const ctx = buildSessionContext(entries);
+			expect(ctx.thinkingLevel).toBe("high");
+			expect(ctx.messages.map((message) => message.role)).toEqual(["compactionSummary", "user"]);
 		});
 	});
 

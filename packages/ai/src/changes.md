@@ -1,5 +1,40 @@
 # AI Source Changes
 
+## 2026-07-02 - Upstream provider metadata and Codex SSE transport sync
+
+### What changed and why
+
+- `api/openai-codex-responses.ts`: accepted upstream zstd request-body compression for Codex Responses SSE while
+  preserving the fork's senpi-branded Codex headers, stale response handling, service-tier support, and thinking support.
+- `utils/oauth/device-code.ts` and `utils/oauth/github-copilot.ts`: accepted delayed GitHub Copilot device-code polling
+  and related OAuth cleanup.
+- Provider model catalogs were refreshed for Copilot, Fireworks, OpenCode, Cloudflare AI Gateway, Bedrock, and related
+  providers while retaining fork-specific model capability metadata such as `supportsXhigh`.
+
+### Files modified
+
+- `api/openai-codex-responses.ts`
+- `providers/amazon-bedrock.models.ts`
+- `providers/cloudflare-ai-gateway.models.ts`
+- `providers/fireworks.models.ts`
+- `providers/github-copilot.models.ts`
+- `providers/opencode-go.models.ts`
+- `providers/opencode.models.ts`
+- `utils/oauth/device-code.ts`
+- `utils/oauth/github-copilot.ts`
+
+### Why the higher-level extension system couldn't handle this alone
+
+- Codex SSE request compression, OAuth polling, and generated provider metadata all live inside `pi-ai` before
+  coding-agent extensions can intercept a request or model catalog entry.
+
+### Expected merge conflict zones
+
+- MEDIUM: `api/openai-codex-responses.ts` around request body creation, zstd encoding, headers, and stream response
+  handling.
+- LOW: `utils/oauth/device-code.ts` around polling cadence and error handling.
+- LOW: provider `*.models.ts` catalogs when upstream regenerates model metadata.
+
 ## 2026-05-19 - Cloudflare Anthropic computer tool guard
 
 ### What changed and why

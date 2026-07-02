@@ -1,5 +1,30 @@
 # Local fork changes
 
+## 2026-07-02 — upstream extension renderer docs and regression sync
+
+- Changed:
+  - `docs/extensions.md`
+  - `docs/sdk.md`
+  - `docs/session-format.md`
+  - `examples/extensions/README.md`
+  - `examples/extensions/entry-renderer.ts`
+  - `test/auth-storage.test.ts`
+  - `test/extensions-discovery.test.ts`
+  - `test/extensions-runner.test.ts`
+  - `test/model-resolver.test.ts`
+  - `test/session-manager/build-context.test.ts`
+  - `test/suite/regressions/4167-thinking-toggle-pending-tool-render.test.ts`
+- Why: The upstream sync adds extension entry renderers, public model-resolution helpers, auth-save failure reporting,
+  split-turn compaction serialization, and bash timeout validation. The docs, example extension, and tests document and
+  pin those user-visible behaviors for the fork.
+- What changed: Accepted upstream docs/examples/tests for the synced behaviors while preserving fork-specific runtime
+  expectations such as compaction detail propagation and model-resolution warning behavior.
+- Why the extension system could not handle this: these are documentation, example, and regression-test updates for the
+  package API and runtime behavior; extensions can consume the API, but they cannot document or verify package-level
+  contracts.
+- Merge-conflict risk: low to medium. Expected conflict zones are the extension renderer docs/example, model-resolution
+  SDK docs, and focused regression assertions if upstream revises these APIs again.
+
 ## 2026-05-15 — stop rebuilding linked `senpi` on launch
 
 - Changed:

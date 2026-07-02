@@ -1,5 +1,26 @@
 # changes
 
+## Public model resolution SDK exports (2026-07-02)
+
+### What changed
+
+- `index.ts`: accepted upstream exports for CLI-equivalent model and scoped-model resolution helpers.
+- Documentation and examples were updated to describe extension entry renderers and the public SDK surface.
+
+### Why
+
+- External integrations need the same model-resolution behavior the CLI uses without duplicating internal resolver logic.
+
+### Why extension system couldn't handle this
+
+- Public package exports and SDK documentation are package API surfaces. Extensions can consume the exported helpers after
+  load, but they cannot publish or document the root module exports themselves.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `index.ts` export list if upstream changes public SDK exports.
+- LOW: docs/examples around extension entry renderer examples and model-resolution helper documentation.
+
 ## Nested legacy config migration (2026-07-01)
 
 ### What changed

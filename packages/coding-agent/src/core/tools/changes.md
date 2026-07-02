@@ -1,5 +1,26 @@
 # core/tools changes
 
+## bash timeout validation sync (2026-07-02)
+
+### What changed
+
+- `bash.ts`: accepted upstream validation that rejects non-positive and oversized bash tool timeouts with clear errors
+  instead of silently clamping to surprising runtime behavior.
+
+### Why
+
+- Invalid timeout values should fail before command execution so agent/tool callers receive a deterministic validation
+  error.
+
+### Why extension system couldn't handle this
+
+- Timeout parsing and validation are part of the built-in bash tool definition before extensions can observe a running
+  command result.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: timeout schema/parsing and validation branches in `bash.ts`.
+
 ## bash tool elapsed display (2026-05-15)
 
 ### What changed

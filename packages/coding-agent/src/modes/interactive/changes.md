@@ -1,5 +1,30 @@
 # changes
 
+## custom entry renderer display order sync (2026-07-02)
+
+### What changed
+
+- `interactive-mode.ts`: accepted upstream rendering for extension custom entry renderers and kept fork-specific
+  hook/system-prompt UI behavior.
+- `components/custom-entry.ts`: added the display component for custom session entries rendered by extension entry
+  renderers.
+
+### Why
+
+- Display-only custom entries appended during assistant streaming must render in persisted session order and before the
+  live assistant message, matching replayed sessions.
+
+### Why extension system couldn't handle this
+
+- Extensions provide renderer implementations, but the built-in interactive mode owns session-entry ordering and the
+  default component host where persisted custom entries are displayed.
+
+### Expected merge conflict zones
+
+- MEDIUM: `interactive-mode.ts` around session entry rendering, live assistant message ordering, and extension renderer
+  dispatch.
+- LOW: `components/custom-entry.ts` if upstream changes custom-entry component shape.
+
 ## abort queue restoration during retry (2026-06-18)
 
 ### What changed

@@ -1,5 +1,26 @@
 # changes.md — compaction
 
+## Split-turn compaction serialization sync (2026-07-02)
+
+### What changed
+
+- `compaction.ts`: accepted upstream serialization of split-turn compaction summaries so single-concurrency providers do
+  not receive overlapping generations.
+
+### Why
+
+- Split-turn compaction can be triggered while the session is still processing summary work. Serializing those summaries
+  avoids provider-side 429/concurrency failures and keeps compaction state deterministic.
+
+### Why extension system couldn't handle this
+
+- The serialization boundary is inside core compaction preparation/execution. Extensions can provide or observe
+  summaries, but they cannot serialize the underlying core summary request queue from outside.
+
+### Expected merge conflict zones
+
+- LOW: `compaction.ts` around summary generation scheduling and split-turn helper calls.
+
 ## Plugsuit-style Threshold Foundation (2026-04-28)
 
 ### What changed

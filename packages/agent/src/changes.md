@@ -1,5 +1,29 @@
 # Changes
 
+## 2026-07-02 - Upstream harness timeout and compaction serialization sync
+
+### What changed and why
+
+- Accepted upstream harness changes for rejecting invalid/non-positive Node timeouts and serializing split-turn compaction
+  summary requests.
+- This keeps the fork aligned with upstream runtime validation and prevents single-concurrency providers from receiving
+  overlapping compaction-summary generations.
+
+### Files modified
+
+- `packages/agent/src/harness/compaction/compaction.ts`
+- `packages/agent/src/harness/env/nodejs.ts`
+
+### Why the extension system could not handle this
+
+- Timeout validation and harness compaction scheduling happen inside shared agent-core helpers before coding-agent
+  extensions or mode renderers participate.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `packages/agent/src/harness/env/nodejs.ts` around timeout parsing and validation.
+- LOW: `packages/agent/src/harness/compaction/compaction.ts` around summary request scheduling.
+
 ## 2026-05-15 - Tool abort loop termination
 
 ### What changed and why

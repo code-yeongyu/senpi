@@ -258,20 +258,24 @@ export function parseModelPattern(
  * The algorithm tries to match the full pattern first, then progressively
  * strips colon-suffixes to find a match.
  */
-export async function resolveModelScope(
+export interface ModelScopeDiagnostic {
+	type: "warning";
+	message: string;
+	pattern: string;
+}
+
+export interface ResolveModelScopeResult {
+	scopedModels: ScopedModel[];
+	diagnostics: ModelScopeDiagnostic[];
+}
+
+export async function resolveModelScopeWithDiagnostics(
 	patterns: string[],
 	modelRegistry: ModelRegistry,
-	options?: { onWarning?: (message: string) => void },
-): Promise<ScopedModel[]> {
+): Promise<ResolveModelScopeResult> {
 	const availableModels = modelRegistry.getAvailable();
 	const scopedModels: ScopedModel[] = [];
-	const emitWarning = (message: string): void => {
-		if (options?.onWarning) {
-			options.onWarning(message);
-			return;
-		}
-		console.warn(chalk.yellow(`Warning: ${message}`));
-	};
+	const diagnostics: ModelScopeDiagnostic[] = [];
 
 	for (const pattern of patterns) {
 		if (pattern.includes("*") || pattern.includes("?") || pattern.includes("[")) {
@@ -297,7 +301,7 @@ export async function resolveModelScope(
 			});
 
 			if (matchingModels.length === 0) {
-				emitWarning(`No models match pattern "${pattern}"`);
+				diagnostics.push({ type: "warning", message: `No models match pattern "${pattern}"`, pattern });
 				continue;
 			}
 
@@ -312,11 +316,11 @@ export async function resolveModelScope(
 		const { model, thinkingLevel, serviceTier, warning } = parseModelPattern(pattern, availableModels);
 
 		if (warning) {
-			emitWarning(warning);
+			diagnostics.push({ type: "warning", message: warning, pattern });
 		}
 
 		if (!model) {
-			emitWarning(`No models match pattern "${pattern}"`);
+			diagnostics.push({ type: "warning", message: `No models match pattern "${pattern}"`, pattern });
 			continue;
 		}
 
@@ -325,6 +329,22 @@ export async function resolveModelScope(
 		}
 	}
 
+	return { scopedModels, diagnostics };
+}
+
+export async function resolveModelScope(
+	patterns: string[],
+	modelRegistry: ModelRegistry,
+	options?: { onWarning?: (message: string) => void },
+): Promise<ScopedModel[]> {
+	const { scopedModels, diagnostics } = await resolveModelScopeWithDiagnostics(patterns, modelRegistry);
+	for (const diagnostic of diagnostics) {
+		if (options?.onWarning) {
+			options.onWarning(diagnostic.message);
+			continue;
+		}
+		console.warn(chalk.yellow(`Warning: ${diagnostic.message}`));
+	}
 	return scopedModels;
 }
 

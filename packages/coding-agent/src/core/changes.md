@@ -1,5 +1,34 @@
 # changes
 
+## Upstream session, auth, and model-resolution sync (2026-07-02)
+
+### What changed
+
+- `auth-storage.ts`: accepted upstream persistence-failure surfacing so `/login` does not report success when `auth.json`
+  could not be saved.
+- `agent-session.ts`: accepted upstream split-turn serialization and kept fork prompt/compaction settlement behavior.
+- `session-manager.ts`: accepted upstream context-building helper splits while preserving fork compaction detail propagation
+  through `createCompactionSummaryMessage(entry.details)`.
+- `model-resolver.ts`: accepted upstream structured model-resolution diagnostics and public helper behavior while
+  preserving the fork's optional warning callback.
+
+### Why
+
+- These upstream fixes improve observable login errors, prevent overlapping summary generations, and expose consistent
+  model diagnostics without dropping fork-only compaction metadata or warning behavior.
+
+### Why extension system couldn't handle this
+
+- Auth persistence, session context reconstruction, prompt/compaction scheduling, and model scope resolution are core
+  session services that run before extensions can replace them.
+
+### Expected merge conflict zones
+
+- HIGH: `agent-session.ts` around prompt execution, compaction settlement, and split-turn continuation.
+- MEDIUM: `session-manager.ts` around `sessionEntryToContextMessages()` and compaction-entry reconstruction.
+- MEDIUM: `model-resolver.ts` around `resolveModelScope()` and diagnostics helpers.
+- LOW: `auth-storage.ts` around save failure propagation.
+
 ## Resident session payload retention (2026-06-08)
 
 ### What changed

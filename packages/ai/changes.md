@@ -1,5 +1,37 @@
 # changes.md — ai
 
+## Upstream model generation and test sync (2026-07-02)
+
+### What changed
+
+- `scripts/generate-models.ts`: accepted upstream removal of stale model metadata fallbacks, including Copilot Sonnet 5
+  fallback cleanup.
+- Updated focused AI regression tests covering Fireworks model routing, GitHub Copilot OAuth, delayed device-code polling,
+  and OpenAI Codex stream request-body handling.
+
+### Why
+
+- The fork should now rely on live/generated model metadata instead of keeping stale fallback entries, while preserving
+  coverage for provider behavior touched by the upstream sync.
+
+### Why extension system couldn't handle this
+
+- Model generation is a build-time catalog script, and the changed tests assert provider/library behavior outside the
+  coding-agent extension runtime.
+
+### Modified upstream files
+
+- `scripts/generate-models.ts`
+- `test/fireworks-models.test.ts`
+- `test/github-copilot-oauth.test.ts`
+- `test/oauth-device-code.test.ts`
+- `test/openai-codex-stream.test.ts`
+
+### Expected merge conflict zones
+
+- MEDIUM: `scripts/generate-models.ts` if upstream changes provider metadata fetch or fallback handling again.
+- LOW: focused provider tests if upstream changes request decoding, OAuth polling timing, or Fireworks model mappings.
+
 ## Explicit live API opt-in for ambient credentials (2026-05-12)
 
 ### What changed

@@ -239,7 +239,7 @@ describe("GitHub Copilot OAuth device flow", () => {
 		await loginPromise;
 	});
 
-	it("polls immediately and increases the interval after slow_down", async () => {
+	it("waits before polling and increases the interval after slow_down", async () => {
 		vi.useFakeTimers();
 		const startTime = new Date("2026-03-09T00:00:00Z");
 		vi.setSystemTime(startTime);
@@ -315,6 +315,12 @@ describe("GitHub Copilot OAuth device flow", () => {
 		});
 
 		await vi.advanceTimersByTimeAsync(0);
+		expect(accessTokenPollTimes).toHaveLength(0);
+
+		await vi.advanceTimersByTimeAsync(4999);
+		expect(accessTokenPollTimes).toHaveLength(0);
+
+		await vi.advanceTimersByTimeAsync(1);
 		expect(accessTokenPollTimes).toHaveLength(1);
 
 		await vi.advanceTimersByTimeAsync(4999);
@@ -330,9 +336,9 @@ describe("GitHub Copilot OAuth device flow", () => {
 		await loginPromise;
 
 		expect(accessTokenPollTimes).toEqual([
-			startTime.getTime(),
 			startTime.getTime() + 5000,
-			startTime.getTime() + 15000,
+			startTime.getTime() + 10000,
+			startTime.getTime() + 20000,
 		]);
 	});
 
@@ -383,18 +389,24 @@ describe("GitHub Copilot OAuth device flow", () => {
 			/Device flow timed out after one or more slow_down responses/,
 		);
 
-		await vi.advanceTimersByTimeAsync(5000);
-		expect(accessTokenPollTimes).toEqual([startTime.getTime()]);
+		await vi.advanceTimersByTimeAsync(4999);
+		expect(accessTokenPollTimes).toEqual([]);
 
-		await vi.advanceTimersByTimeAsync(5000);
-		expect(accessTokenPollTimes).toEqual([startTime.getTime(), startTime.getTime() + 10000]);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(accessTokenPollTimes).toEqual([startTime.getTime() + 5000]);
 
-		await vi.advanceTimersByTimeAsync(14999);
-		expect(accessTokenPollTimes).toEqual([startTime.getTime(), startTime.getTime() + 10000]);
+		await vi.advanceTimersByTimeAsync(9999);
+		expect(accessTokenPollTimes).toEqual([startTime.getTime() + 5000]);
+
+		await vi.advanceTimersByTimeAsync(1);
+		expect(accessTokenPollTimes).toEqual([startTime.getTime() + 5000, startTime.getTime() + 15000]);
+
+		await vi.advanceTimersByTimeAsync(9999);
+		expect(accessTokenPollTimes).toEqual([startTime.getTime() + 5000, startTime.getTime() + 15000]);
 
 		await vi.advanceTimersByTimeAsync(1);
 		await rejection;
 
-		expect(accessTokenPollTimes).toEqual([startTime.getTime(), startTime.getTime() + 10000]);
+		expect(accessTokenPollTimes).toEqual([startTime.getTime() + 5000, startTime.getTime() + 15000]);
 	});
 });

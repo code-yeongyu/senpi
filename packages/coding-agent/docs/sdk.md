@@ -404,6 +404,32 @@ If no model is provided:
 2. Uses default from settings
 3. Falls back to first available model
 
+To match CLI model parsing, use the exported resolver helpers:
+
+```typescript
+import {
+  resolveCliModel,
+  resolveModelScopeWithDiagnostics,
+} from "@earendil-works/pi-coding-agent";
+
+const cliModel = resolveCliModel({
+  cliModel: "anthropic/claude-opus-4-5:high",
+  modelRegistry,
+});
+if (cliModel.error) throw new Error(cliModel.error);
+if (cliModel.warning) console.warn(cliModel.warning);
+
+const { scopedModels, diagnostics } = await resolveModelScopeWithDiagnostics(
+  ["anthropic/*:high", "gpt-5"],
+  modelRegistry,
+);
+for (const diagnostic of diagnostics) {
+  console.warn(diagnostic.message);
+}
+```
+
+`resolveCliModel()` uses all registered models so `--api-key` style first-time setup can resolve a model before stored auth exists. `resolveModelScopeWithDiagnostics()` matches `--models` and `enabledModels` semantics while returning warnings instead of printing them.
+
 > See [examples/sdk/02-custom-model.ts](../examples/sdk/02-custom-model.ts)
 
 ### API Keys and OAuth
@@ -1109,6 +1135,8 @@ AgentSessionRuntime
 // Auth and Models
 AuthStorage
 ModelRegistry
+resolveCliModel
+resolveModelScopeWithDiagnostics
 
 // Resource loading
 DefaultResourceLoader

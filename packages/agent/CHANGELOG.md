@@ -8,6 +8,9 @@
 
 ### Fixed
 
+- Fixed harness split-turn compaction to serialize summary requests so single-concurrency providers are not asked to run overlapping generations ([#5536](https://github.com/earendil-works/pi/issues/5536)).
+- Fixed oversized harness shell execution timeouts to fail with a clear validation error instead of being clamped to an immediate timeout ([#6181](https://github.com/earendil-works/pi/issues/6181)).
+
 ### Removed
 
 ## [2026.6.30-2] - 2026-06-30

@@ -1,5 +1,30 @@
 # Core Extensions Changes
 
+## 2026-07-02 - Extension entry renderer sync
+
+### What changed
+
+- `types.ts`, `runner.ts`, `loader.ts`, and `index.ts`: accepted upstream extension entry-renderer support for persisted
+  display-only session entries.
+- `agent-session.ts` and interactive rendering now use those renderers so custom entries can render in persisted order
+  without being sent back to the model context.
+
+### Why
+
+- Extensions need a typed way to render custom session entries that are display-only, survive persistence, and do not
+  mutate the model transcript.
+
+### Why extension system couldn't handle this alone
+
+- This is an extension-system API addition: the runner, loader, exported types, session dispatch, and interactive renderer
+  all need matching core support before an extension can provide an entry renderer.
+
+### Expected merge conflict zones
+
+- MEDIUM: `types.ts` around extension API and entry renderer type definitions.
+- MEDIUM: `runner.ts` and `loader.ts` around renderer registration/loading.
+- LOW: `index.ts` exports if upstream changes extension type re-exports.
+
 ## 2026-06-29 - Builtin hooks extension runtime resource plumbing
 
 ### What changed
