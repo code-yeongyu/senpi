@@ -14,6 +14,7 @@
 
 - Added public SDK exports for CLI-equivalent model and scoped-model resolution ([#6201](https://github.com/earendil-works/pi/issues/6201)).
 - Added extension entry renderers for persisted display-only session entries that are rendered in interactive mode without being sent to the model context.
+- Added a Claude Fable 5 system prompt preset with auto-detection for `claude-fable-5` model IDs across built-in providers, selectable via `promptPreset: "claude-fable-5"`.
 
 ### Changed
 
