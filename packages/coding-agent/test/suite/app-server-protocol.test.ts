@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -23,7 +24,7 @@ import {
 } from "../../src/modes/app-server/protocol/methods.ts";
 
 const generatedDir = join(process.cwd(), "src/modes/app-server/protocol/generated");
-const researchDir = join(process.cwd(), "../../.omo/ulw-research/20260702-114518/raw/schema-ts-experimental");
+const generatedManifestPath = join(process.cwd(), "test/goldens/app-server-protocol-generated-tree.sha256");
 
 function expectSortedDistinct(methods: readonly string[]): void {
 	const sorted = [...methods].sort();
@@ -48,6 +49,32 @@ function listTypeScriptFiles(dir: string): string[] {
 
 function relativeTypeScriptFiles(dir: string): string[] {
 	return listTypeScriptFiles(dir).map((path) => relative(dir, path));
+}
+
+function readGeneratedManifest(): Map<string, string> {
+	const entries = new Map<string, string>();
+	const lines = readFileSync(generatedManifestPath, "utf8").trim().split("\n");
+
+	for (const line of lines) {
+		const match = /^([0-9a-f]{64}) {2}(.+)$/.exec(line);
+		if (match === null) {
+			throw new Error(`Invalid generated manifest line: ${line}`);
+		}
+
+		const hash = match[1];
+		const path = match[2];
+		if (hash === undefined || path === undefined) {
+			throw new Error(`Invalid generated manifest capture: ${line}`);
+		}
+
+		entries.set(path, hash);
+	}
+
+	return entries;
+}
+
+function sha256File(path: string): string {
+	return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
 describe("app-server protocol metadata", () => {
@@ -81,15 +108,15 @@ describe("app-server protocol metadata", () => {
 		expect(new Set(allMethods).size).toBe(allMethods.length);
 	});
 
-	it("vendors the full generated TypeScript tree byte-for-byte", () => {
+	it("matches the committed generated TypeScript tree manifest", () => {
 		const generatedFiles = relativeTypeScriptFiles(generatedDir);
-		const researchFiles = relativeTypeScriptFiles(researchDir);
+		const manifest = readGeneratedManifest();
 
 		expect(generatedFiles.length).toBeGreaterThanOrEqual(500);
-		expect(generatedFiles).toEqual(researchFiles);
+		expect(generatedFiles).toEqual([...manifest.keys()]);
 
 		for (const path of generatedFiles) {
-			expect(readFileSync(join(generatedDir, path), "utf8")).toBe(readFileSync(join(researchDir, path), "utf8"));
+			expect(sha256File(join(generatedDir, path))).toBe(manifest.get(path));
 		}
 	});
 
