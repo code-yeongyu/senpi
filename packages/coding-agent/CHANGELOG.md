@@ -12,6 +12,10 @@
 
 ### Fixed
 
+- Fixed inherited startup model selection to skip unauthenticated saved defaults so configured local custom models can be selected instead.
+- Fixed inherited Escape aborts to clear runs stuck in extension context hooks that ignore abort signals.
+- Fixed the inherited question extension example to run question tool calls sequentially so multiple questions in one assistant turn remain answerable.
+
 ## [2026.7.2] - 2026-07-02
 
 ### Added

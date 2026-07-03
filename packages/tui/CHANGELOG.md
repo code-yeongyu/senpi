@@ -2,7 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added multiplexer-aware TUI render policy switches and bounded viewport repaint support for preserving terminal scrollback while keeping the full-frame renderer available.
+
+### Changed
+
+- Improved TUI frame rendering performance with SGR run coalescing, post-frame cursor write coalescing, cached cursor visibility state, and a two-generation width cache.
+
 ### Fixed
+
+- Fixed TUI render-path failures to be contained in release builds instead of crashing the process.
+- Fixed SGR state reset handling after row clears and kept over-wide diagnostic output best-effort.
+- Fixed diagnostic log permissions for TUI debug output.
 
 ## [2026.7.2] - 2026-07-02
 
