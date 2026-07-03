@@ -3163,12 +3163,12 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		reasoning: true,
 		input: ["text"],
 		cost: {
-			input: 1.5,
-			output: 4.5,
-			cacheRead: 0.3,
+			input: 1.4,
+			output: 4.4,
+			cacheRead: 0.26,
 			cacheWrite: 0,
 		},
-		contextWindow: 1000000,
+		contextWindow: 1040000,
 		maxTokens: 128000,
 	} satisfies Model<"anthropic-messages">,
 	"zai/glm-5.2-fast": {
