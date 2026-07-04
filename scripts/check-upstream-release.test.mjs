@@ -12,9 +12,11 @@ describe("upstream release detector outputs", () => {
 				.map((line) => line.split("=", 2)),
 		);
 		const upstreamMain = execFileSync("git", ["rev-parse", "upstream/main"], { encoding: "utf8" }).trim();
+		const releaseTag = output.tag;
+		const releaseSha = execFileSync("git", ["rev-parse", `${releaseTag}^{commit}`], { encoding: "utf8" }).trim();
 
 		assert.equal(output.proceed, "true");
-		assert.match(output.sha, /^[0-9a-f]{40}$/);
+		assert.equal(output.sha, releaseSha);
 		assert.equal(output.upstream_head_sha, upstreamMain);
 	});
 });
