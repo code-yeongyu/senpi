@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { redactSensitiveOutput, redactSensitiveTokenValues } from "../../../sensitive-output.ts";
 
 export const DEFAULT_STDOUT_LIMIT_BYTES = 64 * 1024;
 export const DEFAULT_STDERR_LIMIT_BYTES = 64 * 1024;
@@ -60,18 +61,11 @@ export function applyHookOutputSafety(
 }
 
 function redactHookOutput(text: string): string {
-	return redactHookTokenValues(
-		text
-			.replace(/\b([A-Z][A-Z0-9_]*(?:API_KEY|SECRET|TOKEN|PASSWORD|AUTH)[A-Z0-9_]*)=([^\s'"]+)/g, "$1=[REDACTED]")
-			.replace(/\b(Authorization:\s*Bearer\s+)([^\s'"]+)/gi, "$1[REDACTED]")
-			.replace(/\b(Bearer\s+)(sk-[A-Za-z0-9._-]+)/g, "$1[REDACTED]"),
-	);
+	return redactSensitiveOutput(text);
 }
 
 export function redactHookTokenValues(text: string, replacement = "[REDACTED]"): string {
-	return text
-		.replace(/\bghp_[A-Za-z0-9]{20,}\b/g, replacement)
-		.replace(/\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, replacement);
+	return redactSensitiveTokenValues(text, replacement);
 }
 
 function spillRedactedOutput(stream: "stderr" | "stdout", text: string, policy: HookOutputPolicy | undefined): string {

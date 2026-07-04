@@ -4,7 +4,14 @@ interface StdoutTakeoverState {
 	originalStdoutWrite: typeof process.stdout.write;
 }
 
+interface StderrTakeoverState {
+	originalStderrWrite: typeof process.stderr.write;
+	onHiddenDiagnostic: ((text: string) => void) | undefined;
+	formatHiddenDiagnosticFallback: ((text: string) => string) | undefined;
+}
+
 let stdoutTakeoverState: StdoutTakeoverState | undefined;
+let stderrTakeoverState: StderrTakeoverState | undefined;
 
 const RAW_STDOUT_RETRY_DELAY_MS = 10;
 
@@ -76,6 +83,81 @@ export function restoreStdout(): void {
 
 	process.stdout.write = stdoutTakeoverState.originalStdoutWrite;
 	stdoutTakeoverState = undefined;
+}
+
+function stdioChunkToString(chunk: string | Uint8Array, encoding: BufferEncoding | undefined): string {
+	if (typeof chunk === "string") {
+		return chunk;
+	}
+	return Buffer.from(chunk).toString(encoding);
+}
+
+function normalizeThrownError(error: unknown): Error {
+	return error instanceof Error ? error : new Error(String(error));
+}
+
+function writeOriginalStderr(state: StderrTakeoverState, text: string): void {
+	if (text.length === 0) {
+		return;
+	}
+	state.originalStderrWrite.call(process.stderr, text);
+}
+
+export function takeOverStderr(
+	onHiddenDiagnostic?: (text: string) => void,
+	formatHiddenDiagnosticFallback?: (text: string) => string,
+): void {
+	if (stderrTakeoverState) {
+		return;
+	}
+
+	const originalStderrWrite = process.stderr.write;
+
+	process.stderr.write = ((
+		chunk: string | Uint8Array,
+		encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
+		callback?: (error?: Error | null) => void,
+	): boolean => {
+		const encoding = typeof encodingOrCallback === "string" ? encodingOrCallback : undefined;
+		const text = stdioChunkToString(chunk, encoding);
+		try {
+			stderrTakeoverState?.onHiddenDiagnostic?.(text);
+		} catch (error) {
+			const state = stderrTakeoverState;
+			if (state) {
+				const fallbackText = state.formatHiddenDiagnosticFallback?.(text) ?? text;
+				writeOriginalStderr(state, fallbackText);
+			}
+			const writeError = normalizeThrownError(error);
+			if (typeof encodingOrCallback === "function") {
+				encodingOrCallback(writeError);
+			} else {
+				callback?.(writeError);
+			}
+			return false;
+		}
+		if (typeof encodingOrCallback === "function") {
+			encodingOrCallback(null);
+		} else {
+			callback?.(null);
+		}
+		return true;
+	}) satisfies typeof process.stderr.write;
+
+	stderrTakeoverState = {
+		formatHiddenDiagnosticFallback,
+		originalStderrWrite,
+		onHiddenDiagnostic,
+	};
+}
+
+export function restoreStderr(): void {
+	if (!stderrTakeoverState) {
+		return;
+	}
+
+	process.stderr.write = stderrTakeoverState.originalStderrWrite;
+	stderrTakeoverState = undefined;
 }
 
 export function isStdoutTakenOver(): boolean {

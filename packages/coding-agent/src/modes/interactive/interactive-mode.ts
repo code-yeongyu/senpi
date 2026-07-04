@@ -140,6 +140,7 @@ import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
+import { restoreInteractiveStderr, takeOverInteractiveStderr } from "./interactive-stderr-guard.ts";
 import { getModelSearchText } from "./model-search.ts";
 import { formatSessionInfo } from "./session-info-format.ts";
 import { resolveStartupToolPaths } from "./startup-tools.ts";
@@ -758,7 +759,13 @@ export class InteractiveMode {
 		this.setupEditorSubmitHandler();
 
 		// Start the UI before initializing extensions so session_start handlers can use interactive dialogs
-		this.ui.start();
+		try {
+			takeOverInteractiveStderr();
+			this.ui.start();
+		} catch (error) {
+			restoreInteractiveStderr();
+			throw error;
+		}
 		this.isInitialized = true;
 
 		await this.themeController.applyFromSettings();
@@ -3821,6 +3828,7 @@ export class InteractiveMode {
 		try {
 			this.ui.stop();
 		} catch {}
+		restoreInteractiveStderr();
 		console.error("pi exiting due to uncaughtException:");
 		console.error(error);
 		process.exit(1);
@@ -3901,12 +3909,14 @@ export class InteractiveMode {
 		process.once("SIGCONT", () => {
 			clearInterval(suspendKeepAlive);
 			process.removeListener("SIGINT", ignoreSigint);
+			takeOverInteractiveStderr();
 			this.ui.start();
 			this.ui.requestRender(true);
 		});
 
 		try {
 			// Stop the TUI (restore terminal to normal mode)
+			restoreInteractiveStderr();
 			this.ui.stop();
 
 			// Send SIGTSTP to process group (pid=0 means all processes in group)
@@ -4058,6 +4068,7 @@ export class InteractiveMode {
 			fs.writeFileSync(tmpFile, currentText, "utf-8");
 
 			// Stop TUI to release terminal
+			restoreInteractiveStderr();
 			this.ui.stop();
 
 			// Split by space to support editor arguments (e.g., "code --wait")
@@ -4092,6 +4103,7 @@ export class InteractiveMode {
 			}
 
 			// Restart TUI
+			takeOverInteractiveStderr();
 			this.ui.start();
 			// Force full re-render since external editor uses alternate screen
 			this.ui.requestRender(true);
@@ -6177,8 +6189,14 @@ export class InteractiveMode {
 			this.unsubscribe();
 		}
 		if (this.isInitialized) {
-			this.ui.stop();
-			this.isInitialized = false;
+			try {
+				this.ui.stop();
+			} finally {
+				this.isInitialized = false;
+				restoreInteractiveStderr();
+			}
+		} else {
+			restoreInteractiveStderr();
 		}
 		this.unregisterSignalHandlers();
 	}
