@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added an opt-in `ProcessTerminal` external stdout guard (`onExternalStdoutWrite`): while the terminal is started, stdout writes not issued by the terminal itself (e.g. `console.log` from libraries or extensions) are forwarded to the handler instead of reaching the screen, preventing differential-render desync and visual corruption.
+
 ### Changed
 
 ### Fixed
