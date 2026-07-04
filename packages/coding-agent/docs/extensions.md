@@ -515,7 +515,7 @@ Only command handlers are executable in builtin hooks v1:
 }
 ```
 
-`command` is required and runs through the host shell with the hook input JSON on stdin. `commandWindows` or `command_windows` can override the command on Windows. `timeout` is seconds and defaults to 600. `statusMessage` is display text only.
+`command` is required and runs through the host shell with the hook input JSON on stdin. `commandWindows` or `command_windows` can override the command on Windows. `timeout` is seconds and defaults to 600. `statusMessage` is display text: while the hook command runs during `PreToolUse`/`PostToolUse`, the TUI shows it in the live `Running PreToolUse/PostToolUse hook: ...` status row (hooks without one show their sanitized command text instead).
 
 Hook commands inherit a minimal environment (`PATH`, home/user/shell/temp variables, and Windows shell basics). Hooks loaded through the plugin manifest helper also receive `PLUGIN_ROOT`, `PLUGIN_DATA`, `CLAUDE_PLUGIN_ROOT`, and `CLAUDE_PLUGIN_DATA`. Every command receives `SENPI_HOOK_SOURCE` and `SENPI_HOOK_EVENT`. Do not put API keys or tokens in hook config, command text, status messages, stdout, stderr, or diagnostics. Read secrets inside the command from your own secret store and avoid echoing them.
 
@@ -1448,6 +1448,19 @@ pi.on("tool_call", (event, ctx) => {
   if (isFatal(event.input)) {
     ctx.shutdown();
   }
+});
+```
+
+### ctx.updateToolHookStatus()
+
+Only available on the context passed to `tool_call` and `tool_result` handlers. Replaces the label of that handler's live `Running PreToolUse/PostToolUse hook: ...` status row in the TUI, so long-running hooks can report what they are doing. Messages are truncated to 79 characters; calls after the handler finished are ignored.
+
+```typescript
+pi.on("tool_result", async (event, ctx) => {
+  ctx.updateToolHookStatus?.("Checking comments");
+  await runCommentChecker(event);
+  ctx.updateToolHookStatus?.("Collecting diagnostics");
+  await collectDiagnostics(event);
 });
 ```
 

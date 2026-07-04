@@ -376,6 +376,13 @@ export interface ExtensionContext {
 	getSystemPrompt(): string;
 	/** Get hook source paths currently visible to the builtin hooks extension. */
 	getLoadedHookSources?(): LoadedHookSources;
+	/**
+	 * Report what the currently running tool_call/tool_result handler is doing.
+	 * Updates the live "Running PreToolUse/PostToolUse hook" status row in the TUI.
+	 * Only available on the context passed to tool_call/tool_result handlers; calls
+	 * after the handler finished are ignored.
+	 */
+	updateToolHookStatus?(statusMessage: string): void;
 }
 
 /**

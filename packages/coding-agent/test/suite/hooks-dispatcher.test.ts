@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { CommandHookRunResult } from "../../src/core/extensions/builtin/hooks/command-runner.ts";
-import { dispatchHookEvent, type HookCommandRunner } from "../../src/core/extensions/builtin/hooks/dispatcher.ts";
+import {
+	dispatchHookEvent,
+	type HookCommandRunner,
+	runningHookHandlersStatusLabel,
+} from "../../src/core/extensions/builtin/hooks/dispatcher.ts";
 import { createHookTrustEntry, hookTrustId } from "../../src/core/extensions/builtin/hooks/trust.ts";
 import type {
 	ExecutableHookHandler,
@@ -98,12 +102,19 @@ function preToolOutput(
 function dispatch(
 	handlers: readonly ExecutableHookHandler[],
 	runCommand: HookCommandRunner,
-	options: { readonly input?: HookInputWire; readonly trusted?: readonly ExecutableHookHandler[] } = {},
+	options: {
+		readonly input?: HookInputWire;
+		readonly trusted?: readonly ExecutableHookHandler[];
+		readonly onRunningHandlersChange?: (running: readonly ExecutableHookHandler[]) => void;
+	} = {},
 ) {
 	return dispatchHookEvent({
 		cwd: "/repo",
 		handlers,
 		input: options.input ?? INPUT,
+		...(options.onRunningHandlersChange === undefined
+			? {}
+			: { onRunningHandlersChange: options.onRunningHandlersChange }),
 		runCommand,
 		trustOptions: { platform: "linux" },
 		trustState: trustedState(options.trusted ?? handlers),
@@ -235,6 +246,66 @@ describe("builtin hooks dispatcher", () => {
 			{ command: "untrusted", reason: "untrusted" },
 		]);
 		expect(result.skipped[0]?.record.executable).toBe(false);
+	});
+
+	it("notifies onRunningHandlersChange as hooks start and finish", async () => {
+		// Given
+		const first = commandHook("run-first", { handlerIndex: 0, matcher: "bash" });
+		const second = commandHook("run-second", { handlerIndex: 1, matcher: "bash" });
+		const deferred = new Map<string, DeferredRun>();
+		const runner: HookCommandRunner = (handler) => {
+			const pending = deferredRun();
+			deferred.set(handler.config.command, pending);
+			return pending.promise;
+		};
+		const transitions: string[][] = [];
+
+		// When
+		const dispatching = dispatch([first, second], runner, {
+			onRunningHandlersChange: (running) => transitions.push(running.map((handler) => handler.config.command)),
+		});
+		await Promise.resolve();
+		deferred.get("run-first")?.resolve(runResult(first, ""));
+		await Promise.resolve();
+		await Promise.resolve();
+		deferred.get("run-second")?.resolve(runResult(second, ""));
+		await dispatching;
+
+		// Then
+		expect(transitions).toEqual([["run-first"], ["run-first", "run-second"], ["run-second"], []]);
+	});
+
+	it("builds running-hook status labels from statusMessage with command fallback", () => {
+		// Given
+		const labeled: ExecutableHookHandler = {
+			...commandHook("node run-hook.mjs comment-checker", { matcher: "bash" }),
+			config: {
+				type: "command",
+				command: "node run-hook.mjs comment-checker",
+				statusMessage: "(OmO) Checking Comments",
+			},
+		};
+		const bare = commandHook("sleep 5 # lsp-diagnostics-pass", { handlerIndex: 1, matcher: "bash" });
+		const windowsAware: ExecutableHookHandler = {
+			...commandHook("posix.sh", { handlerIndex: 2 }),
+			config: { type: "command", command: "posix.sh", commandWindows: "windows.cmd" },
+		};
+		const noisy: ExecutableHookHandler = {
+			...commandHook("noisy", { handlerIndex: 3 }),
+			config: { type: "command", command: "noisy", statusMessage: `line\u001b[31mone\ntwo\t ${"y".repeat(200)}` },
+		};
+
+		// When / Then
+		expect(runningHookHandlersStatusLabel([labeled], "linux")).toBe("(OmO) Checking Comments");
+		expect(runningHookHandlersStatusLabel([bare], "linux")).toBe("sleep 5 # lsp-diagnostics-pass");
+		expect(runningHookHandlersStatusLabel([labeled, bare], "linux")).toBe(
+			"(OmO) Checking Comments · sleep 5 # lsp-diagnostics-pass",
+		);
+		expect(runningHookHandlersStatusLabel([windowsAware], "win32")).toBe("windows.cmd");
+		expect(runningHookHandlersStatusLabel([windowsAware], "linux")).toBe("posix.sh");
+		const noisyLabel = runningHookHandlersStatusLabel([noisy], "linux");
+		expect(noisyLabel.startsWith("lineone two y")).toBe(true);
+		expect(noisyLabel.length).toBeLessThanOrEqual(79);
 	});
 
 	it("keeps nonblocking malformed output diagnostics nonfatal but blocks on explicit continue false", async () => {

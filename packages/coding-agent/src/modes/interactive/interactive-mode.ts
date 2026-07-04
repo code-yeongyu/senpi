@@ -1929,6 +1929,20 @@ export class InteractiveMode {
 			this.refreshToolHookStatuses();
 			return;
 		}
+		if (event.phase === "update") {
+			const existing = this.activeToolHooks.get(event.hookRunId);
+			if (!existing) {
+				return;
+			}
+			const updated = { ...existing, statusMessage: event.statusMessage };
+			this.activeToolHooks.set(event.hookRunId, updated);
+			this.activeToolTerminalTitle = formatToolHookTerminalTitle(updated);
+			if (this.ui.terminal) {
+				this.applyTerminalTitle();
+			}
+			this.refreshToolHookStatuses();
+			return;
+		}
 		this.activeToolHooks.delete(event.hookRunId);
 		const nextHook = this.activeToolHooks.values().next().value;
 		this.activeToolTerminalTitle = nextHook ? formatToolHookTerminalTitle(nextHook) : undefined;
