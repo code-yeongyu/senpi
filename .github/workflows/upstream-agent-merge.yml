@@ -356,7 +356,18 @@ jobs:
           done
           gh pr checks "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --watch --fail-fast --interval 30
           HEAD_SHA="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)"
-          gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --merge --delete-branch --match-head-commit "$HEAD_SHA"
+          gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --merge --auto --delete-branch --match-head-commit "$HEAD_SHA"
+          for attempt in {1..40}; do
+            PR_STATE="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json state --jq .state)"
+            if [ "$PR_STATE" = "MERGED" ]; then
+              break
+            fi
+            if [ "$attempt" = "40" ]; then
+              echo "::error::PR ${PR_NUMBER} did not merge after auto-merge was enabled."
+              exit 1
+            fi
+            sleep 15
+          done
           echo "merged=true" >> "$GITHUB_OUTPUT"
 
       - name: Fresh /cl release audit
