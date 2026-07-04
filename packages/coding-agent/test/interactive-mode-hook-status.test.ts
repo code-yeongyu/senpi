@@ -92,4 +92,78 @@ describe("InteractiveMode hook status events", () => {
 		expect(hookStatusContainer.children).toHaveLength(0);
 		expect(fakeThis.stopToolHookStatusTimer).toHaveBeenCalledTimes(1);
 	});
+
+	test("replaces the row label on update events without resetting elapsed time", async () => {
+		vi.useFakeTimers({ now });
+		const prototype = InteractiveMode.prototype as unknown as HookStatusPrototype;
+		const hookStatusContainer = new Container();
+		const fakeThis: HookStatusThis = {
+			isInitialized: true,
+			footer: { invalidate: vi.fn() },
+			activeToolHooks: new Map(),
+			hookStatusContainer,
+			startToolHookStatusTimer: vi.fn(),
+			stopToolHookStatusTimer: vi.fn(),
+			refreshToolHookStatuses: prototype.refreshToolHookStatuses,
+			handleToolHookStatusEvent: prototype.handleToolHookStatusEvent,
+			ui: { requestRender: vi.fn() },
+		};
+
+		await prototype.handleEvent.call(fakeThis, {
+			type: "tool_hook_status",
+			phase: "start",
+			hookRunId: "run-update",
+			hookName: "PostToolUse",
+			toolName: "bash",
+			toolCallId: "call-1",
+			extensionPath: "<builtin:hooks>",
+			statusMessage: "running hooks",
+			startedAt: now - 7_000,
+		});
+		await prototype.handleEvent.call(fakeThis, {
+			type: "tool_hook_status",
+			phase: "update",
+			hookRunId: "run-update",
+			hookName: "PostToolUse",
+			toolName: "bash",
+			toolCallId: "call-1",
+			extensionPath: "<builtin:hooks>",
+			statusMessage: "(OmO) Checking Comments",
+			startedAt: now - 7_000,
+		});
+
+		const rendered = renderHookStatus(hookStatusContainer);
+		expect(rendered).toContain("Running PostToolUse hook: (OmO) Checking Comments (7s)");
+		expect(rendered).not.toContain("running hooks");
+		expect(fakeThis.activeToolHooks.size).toBe(1);
+
+		await prototype.handleEvent.call(fakeThis, {
+			type: "tool_hook_status",
+			phase: "update",
+			hookRunId: "run-unknown",
+			hookName: "PostToolUse",
+			toolName: "bash",
+			toolCallId: "call-2",
+			extensionPath: "<builtin:hooks>",
+			statusMessage: "ghost",
+			startedAt: now,
+		});
+		expect(fakeThis.activeToolHooks.size).toBe(1);
+		expect(renderHookStatus(hookStatusContainer)).not.toContain("ghost");
+
+		await prototype.handleEvent.call(fakeThis, {
+			type: "tool_hook_status",
+			phase: "end",
+			hookRunId: "run-update",
+			hookName: "PostToolUse",
+			toolName: "bash",
+			toolCallId: "call-1",
+			extensionPath: "<builtin:hooks>",
+			statusMessage: "(OmO) Checking Comments",
+			startedAt: now - 7_000,
+			completedAt: now,
+			status: "completed",
+		});
+		expect(hookStatusContainer.children).toHaveLength(0);
+	});
 });

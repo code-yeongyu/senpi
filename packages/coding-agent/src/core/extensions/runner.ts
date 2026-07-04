@@ -188,6 +188,10 @@ function cloneJsonValue<T>(value: T): T {
 
 export type ExtensionErrorListener = (error: ExtensionError) => void;
 
+function boundedToolHookStatusMessage(message: string): string {
+	return message.length <= 79 ? message : `${message.slice(0, 76)}...`;
+}
+
 export type ExtensionToolHookName = "PreToolUse" | "PostToolUse";
 export type ExtensionToolHookLifecycleStatus = "completed" | "blocked" | "failed";
 
@@ -205,6 +209,9 @@ type ExtensionToolHookLifecycleEventBase = {
 export type ExtensionToolHookLifecycleEvent =
 	| (ExtensionToolHookLifecycleEventBase & {
 			phase: "start";
+	  })
+	| (ExtensionToolHookLifecycleEventBase & {
+			phase: "update";
 	  })
 	| (ExtensionToolHookLifecycleEventBase & {
 			phase: "end";
@@ -659,15 +666,64 @@ export class ExtensionRunner {
 		}
 
 		const extensionName =
-			extensionPath.startsWith("<") && extensionPath.endsWith(">")
+			builtinName ??
+			(extensionPath.startsWith("<") && extensionPath.endsWith(">")
 				? extensionPath.slice(1, -1)
-				: basename(extensionPath).replace(/\.(?:c|m)?[jt]sx?$/, "");
-		const message = `running ${extensionName}`;
-		return message.length <= 79 ? message : `${message.slice(0, 76)}...`;
+				: basename(extensionPath).replace(/\.(?:c|m)?[jt]sx?$/, ""));
+		return boundedToolHookStatusMessage(`running ${extensionName}`);
 	}
 
 	private emitToolHookLifecycleEvent(event: ExtensionToolHookLifecycleEvent): void {
 		this.toolHookLifecycleObserver?.(event);
+	}
+
+	private beginToolHookRun(
+		baseContext: ExtensionContext,
+		run: {
+			hookName: ExtensionToolHookName;
+			toolName: string;
+			toolCallId: string;
+			extensionPath: string;
+		},
+	): {
+		readonly context: ExtensionContext;
+		end(status: ExtensionToolHookLifecycleStatus, errorMessage?: string): void;
+	} {
+		const base = {
+			type: "tool_hook_status" as const,
+			hookRunId: `${run.toolCallId}:${run.hookName}:${this.nextToolHookRunIndex++}`,
+			hookName: run.hookName,
+			toolName: run.toolName,
+			toolCallId: run.toolCallId,
+			extensionPath: run.extensionPath,
+			startedAt: Date.now(),
+		};
+		let statusMessage = this.getToolHookStatusMessage(run.extensionPath, run.hookName);
+		let ended = false;
+		this.emitToolHookLifecycleEvent({ ...base, phase: "start", statusMessage });
+		// Property descriptors keep the guarded getters from createContext() lazy; a
+		// spread would freeze their current values and bypass stale-instance checks.
+		const context = Object.defineProperties({}, Object.getOwnPropertyDescriptors(baseContext)) as ExtensionContext;
+		context.updateToolHookStatus = (update: string) => {
+			if (ended) return;
+			statusMessage = boundedToolHookStatusMessage(update);
+			this.emitToolHookLifecycleEvent({ ...base, phase: "update", statusMessage });
+		};
+		return {
+			context,
+			end: (status, errorMessage) => {
+				if (ended) return;
+				ended = true;
+				this.emitToolHookLifecycleEvent({
+					...base,
+					phase: "end",
+					statusMessage,
+					completedAt: Date.now(),
+					status,
+					...(errorMessage !== undefined ? { errorMessage } : {}),
+				});
+			},
+		};
 	}
 
 	getMessageRenderer(customType: string): MessageRenderer | undefined {
@@ -1033,24 +1089,18 @@ export class ExtensionRunner {
 			if (!handlers || handlers.length === 0) continue;
 
 			for (const handler of handlers) {
-				const hookRunId = `${event.toolCallId}:PostToolUse:${this.nextToolHookRunIndex++}`;
-				const startedAt = Date.now();
-				const statusMessage = this.getToolHookStatusMessage(ext.path, "PostToolUse");
-				let endStatus: ExtensionToolHookLifecycleStatus = "completed";
-				let errorMessage: string | undefined;
-				this.emitToolHookLifecycleEvent({
-					type: "tool_hook_status",
-					phase: "start",
-					hookRunId,
+				const hookRun = this.beginToolHookRun(ctx, {
 					hookName: "PostToolUse",
 					toolName: event.toolName,
 					toolCallId: event.toolCallId,
 					extensionPath: ext.path,
-					statusMessage,
-					startedAt,
 				});
+				let endStatus: ExtensionToolHookLifecycleStatus = "completed";
+				let errorMessage: string | undefined;
 				try {
-					const handlerResult = (await handler(currentEvent, ctx)) as ToolResultEventResult | undefined;
+					const handlerResult = (await handler(currentEvent, hookRun.context)) as
+						| ToolResultEventResult
+						| undefined;
 					if (!handlerResult) continue;
 
 					if (handlerResult.content !== undefined) {
@@ -1077,20 +1127,7 @@ export class ExtensionRunner {
 						stack,
 					});
 				} finally {
-					this.emitToolHookLifecycleEvent({
-						type: "tool_hook_status",
-						phase: "end",
-						hookRunId,
-						hookName: "PostToolUse",
-						toolName: event.toolName,
-						toolCallId: event.toolCallId,
-						extensionPath: ext.path,
-						statusMessage,
-						startedAt,
-						completedAt: Date.now(),
-						status: endStatus,
-						...(errorMessage !== undefined ? { errorMessage } : {}),
-					});
+					hookRun.end(endStatus, errorMessage);
 				}
 			}
 		}
@@ -1115,24 +1152,16 @@ export class ExtensionRunner {
 			if (!handlers || handlers.length === 0) continue;
 
 			for (const handler of handlers) {
-				const hookRunId = `${event.toolCallId}:PreToolUse:${this.nextToolHookRunIndex++}`;
-				const startedAt = Date.now();
-				const statusMessage = this.getToolHookStatusMessage(ext.path, "PreToolUse");
-				let endStatus: ExtensionToolHookLifecycleStatus = "completed";
-				let errorMessage: string | undefined;
-				this.emitToolHookLifecycleEvent({
-					type: "tool_hook_status",
-					phase: "start",
-					hookRunId,
+				const hookRun = this.beginToolHookRun(ctx, {
 					hookName: "PreToolUse",
 					toolName: event.toolName,
 					toolCallId: event.toolCallId,
 					extensionPath: ext.path,
-					statusMessage,
-					startedAt,
 				});
+				let endStatus: ExtensionToolHookLifecycleStatus = "completed";
+				let errorMessage: string | undefined;
 				try {
-					const handlerResult = await handler(event, ctx);
+					const handlerResult = await handler(event, hookRun.context);
 
 					if (handlerResult) {
 						result = handlerResult as ToolCallEventResult;
@@ -1146,20 +1175,7 @@ export class ExtensionRunner {
 					errorMessage = err instanceof Error ? err.message : String(err);
 					throw err;
 				} finally {
-					this.emitToolHookLifecycleEvent({
-						type: "tool_hook_status",
-						phase: "end",
-						hookRunId,
-						hookName: "PreToolUse",
-						toolName: event.toolName,
-						toolCallId: event.toolCallId,
-						extensionPath: ext.path,
-						statusMessage,
-						startedAt,
-						completedAt: Date.now(),
-						status: endStatus,
-						...(errorMessage !== undefined ? { errorMessage } : {}),
-					});
+					hookRun.end(endStatus, errorMessage);
 				}
 			}
 		}

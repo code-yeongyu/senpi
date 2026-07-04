@@ -1200,6 +1200,86 @@ describe("ExtensionRunner", () => {
 			});
 		});
 
+		it("emits update events while a handler reports live tool hook status", async () => {
+			const runtime = createExtensionRuntime();
+			let staleUpdater: ((statusMessage: string) => void) | undefined;
+			const extension = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("tool_result", async (_event, ctx) => {
+						ctx.updateToolHookStatus?.("(OmO) Checking Comments");
+						staleUpdater = ctx.updateToolHookStatus;
+					});
+				},
+				tempDir,
+				createEventBus(),
+				runtime,
+				"<builtin:hooks>",
+			);
+			const runner = new ExtensionRunner([extension], runtime, tempDir, sessionManager, modelRegistry);
+			const lifecycleEvents: ExtensionToolHookLifecycleEvent[] = [];
+			runner.setToolHookLifecycleObserver((event) => lifecycleEvents.push(event));
+
+			await runner.emitToolResult({
+				type: "tool_result",
+				toolName: "bash",
+				toolCallId: "call-update",
+				input: {},
+				content: [{ type: "text", text: "ok" }],
+				details: {},
+				isError: false,
+			});
+
+			expect(lifecycleEvents.map((event) => event.phase)).toEqual(["start", "update", "end"]);
+			expect(lifecycleEvents[0]).toMatchObject({
+				phase: "start",
+				statusMessage: "running hooks",
+				extensionPath: "<builtin:hooks>",
+			});
+			expect(lifecycleEvents[1]).toMatchObject({
+				phase: "update",
+				hookRunId: lifecycleEvents[0]?.hookRunId,
+				statusMessage: "(OmO) Checking Comments",
+				startedAt: lifecycleEvents[0]?.startedAt,
+			});
+			expect(lifecycleEvents[2]).toMatchObject({
+				phase: "end",
+				status: "completed",
+				statusMessage: "(OmO) Checking Comments",
+			});
+
+			staleUpdater?.("too late");
+			expect(lifecycleEvents).toHaveLength(3);
+		});
+
+		it("bounds live tool hook status updates to the display budget", async () => {
+			const runtime = createExtensionRuntime();
+			const longMessage = "x".repeat(200);
+			const extension = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("tool_call", async (_event, ctx) => {
+						ctx.updateToolHookStatus?.(longMessage);
+					});
+				},
+				tempDir,
+				createEventBus(),
+				runtime,
+				"<builtin:hooks>",
+			);
+			const runner = new ExtensionRunner([extension], runtime, tempDir, sessionManager, modelRegistry);
+			const lifecycleEvents: ExtensionToolHookLifecycleEvent[] = [];
+			runner.setToolHookLifecycleObserver((event) => lifecycleEvents.push(event));
+
+			await runner.emitToolCall({
+				type: "tool_call",
+				toolName: "bash",
+				toolCallId: "call-bounded",
+				input: {},
+			});
+
+			const update = lifecycleEvents.find((event) => event.phase === "update");
+			expect(update?.statusMessage).toBe(`${"x".repeat(76)}...`);
+		});
+
 		it("uses bounded custom hook status labels", async () => {
 			const runtime = createExtensionRuntime();
 			const extensionPath = path.join(tempDir, ".senpi", "extensions", "check-output.ts");
