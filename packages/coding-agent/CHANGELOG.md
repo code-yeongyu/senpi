@@ -5,6 +5,7 @@
 ### Added
 
 - Added `ctx.updateToolHookStatus()` so `tool_call`/`tool_result` extension handlers can report what they are doing in the live "Running PreToolUse/PostToolUse hook" TUI status row
+- Added inherited generated model catalog refreshes from models.dev, including newly listed models such as Kimi K2.7 Code for GitHub Copilot and Fable 5 providers ([#6256](https://github.com/earendil-works/pi/issues/6256)).
 
 ### Changed
 
@@ -12,6 +13,16 @@
 
 - Fixed TUI screen corruption from external stdout writes: `console.log` from libraries or extensions while a TUI owns the terminal (interactive mode, startup dialogs, config selector) is now hidden from the screen and appended, redacted, to the debug log — matching the existing stderr guard.
 - Fixed the live tool hook status row showing a generic `running builtin:hooks` label instead of the running command hook's configured `statusMessage` (falling back to its sanitized command text)
+- Fixed startup model resolution to await available-model lookups before selecting defaults.
+- Fixed pnpm self-update failures to show a prune hint when package-manager metadata blocks a self-update ([#6279](https://github.com/earendil-works/pi/pull/6279) by [@rajp152k](https://github.com/rajp152k)).
+- Fixed the edit tool schema to allow model-invented extra replacement fields instead of rejecting otherwise valid edits ([#6278](https://github.com/earendil-works/pi/issues/6278)).
+- Fixed inherited OAuth device-code polling to honor the server-provided `slow_down` interval so GitHub Copilot login recovers instead of appearing to hang when polls arrive early ([#6187](https://github.com/earendil-works/pi/issues/6187)).
+- Fixed inherited OpenAI Codex WebSocket sessions to rotate cached connections before the backend's 60-minute limit, avoiding connection-limit failures on long sessions ([#6268](https://github.com/earendil-works/pi/issues/6268)).
+- Fixed inherited retry classification for Cloudflare 524 timeout responses ([#6239](https://github.com/earendil-works/pi/issues/6239)).
+
+### Removed
+
+- Removed default attribution headers from Vercel AI Gateway requests.
 
 ## [2026.7.3] - 2026-07-03
 
@@ -48,11 +59,6 @@
 - Fixed split-turn compaction to serialize summary requests so single-concurrency local providers do not fail with 429 errors ([#5536](https://github.com/earendil-works/pi/issues/5536)).
 - Fixed custom session entries appended during assistant streaming to render before the live assistant message, matching persisted session order.
 - Fixed oversized bash tool timeouts to fail with a clear validation error instead of being clamped to an immediate timeout ([#6181](https://github.com/earendil-works/pi/issues/6181)).
-- Fixed the edit tool schema to allow model-invented extra replacement fields instead of rejecting otherwise valid edits ([#6278](https://github.com/earendil-works/pi/issues/6278)).
-
-### Removed
-
-- Removed default attribution headers from Vercel AI Gateway requests.
 
 ## [2026.6.30-2] - 2026-06-30
 
