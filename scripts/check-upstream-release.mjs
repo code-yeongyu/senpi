@@ -11,7 +11,8 @@
  *      Otherwise -> proceed.
  *
  * Output: human-readable log on stderr; `key=value` lines appended to $GITHUB_OUTPUT when set
- * (proceed, tag, sha, current_tag). Also prints the same pairs to stdout for local runs.
+ * (proceed, tag, sha, upstream_head_sha, current_tag). Also prints the same pairs to stdout for
+ * local runs.
  *
  * Flags:
  *   --force   Always report proceed=true (manual re-run / recovery).
