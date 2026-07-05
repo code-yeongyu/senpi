@@ -332,15 +332,64 @@ const REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES: ReadonlySet<string> = new Set(
 	"tool_search_tool_result",
 	"container_upload",
 	// Server-side fallback beta (server-side-fallback-2026-06-01) emits a
-	// `fallback` block mid-response, interleaved with thinking blocks. The API
-	// requires the latest assistant message to be replayed with its block
-	// sequence unmodified; dropping the block yields a 400
-	// ("thinking ... blocks in the latest assistant message cannot be modified").
+	// `fallback` marker mid-response. The marker itself is replayed as a kept
+	// audit block. Blocks emitted *before* the final marker are the declined
+	// attempt and are pruned in convertMessages (see lastAnthropicFallbackBoundary
+	// and collectDiscardedFallbackToolCallIds); the marker onward replays verbatim.
 	"fallback",
 ]);
 
 function isReplayableAnthropicProviderNativeBlock(raw: unknown): raw is ContentBlockParam {
 	return isRecord(raw) && typeof raw.type === "string" && REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES.has(raw.type);
+}
+
+function isSameAnthropicModel(message: AssistantMessage, model: Model<"anthropic-messages">): boolean {
+	return message.provider === model.provider && message.api === model.api && message.model === model.id;
+}
+
+function isAnthropicFallbackMarkerBlock(block: AssistantMessage["content"][number]): boolean {
+	return (
+		block.type === "providerNative" &&
+		block.subtype === "fallback" &&
+		isRecord(block.raw) &&
+		block.raw.type === "fallback"
+	);
+}
+
+// The server-side fallback beta (server-side-fallback-2026-06-01) can emit a
+// `fallback` marker mid-message after a declined attempt is replaced. Blocks
+// before the final marker belong to the discarded attempt: replaying its
+// thinking/tool_use makes the API reject the turn (a discarded tool_use has no
+// matching tool_result after normalization). Returns the index of the last
+// fallback marker, or -1 when the message has none.
+function lastAnthropicFallbackBoundary(content: AssistantMessage["content"]): number {
+	let boundary = -1;
+	for (let index = 0; index < content.length; index++) {
+		if (isAnthropicFallbackMarkerBlock(content[index])) {
+			boundary = index;
+		}
+	}
+	return boundary;
+}
+
+// Tool-call ids emitted by a discarded pre-fallback attempt on a same-model
+// assistant turn. These tool_use blocks are dropped from the assistant turn, so
+// their tool_result blocks must be dropped from the following user turn too — an
+// orphaned tool_result triggers its own 400.
+function collectDiscardedFallbackToolCallIds(messages: Message[], model: Model<"anthropic-messages">): Set<string> {
+	const discarded = new Set<string>();
+	for (const message of messages) {
+		if (message.role !== "assistant" || !isSameAnthropicModel(message, model)) continue;
+		const boundary = lastAnthropicFallbackBoundary(message.content);
+		if (boundary < 0) continue;
+		for (let index = 0; index < boundary; index++) {
+			const block = message.content[index];
+			if (block.type === "toolCall") {
+				discarded.add(block.id);
+			}
+		}
+	}
+	return discarded;
 }
 
 function stringRecord(value: unknown): Record<string, string> | undefined {
@@ -1454,6 +1503,10 @@ function convertMessages(
 		preserveUnsignedThinking: true,
 	});
 
+	// Tool calls from a declined pre-fallback attempt are dropped from their
+	// assistant turn below; drop their tool_results in lockstep so none dangle.
+	const discardedFallbackToolCallIds = collectDiscardedFallbackToolCallIds(transformedMessages, model);
+
 	for (let i = 0; i < transformedMessages.length; i++) {
 		const msg = transformedMessages[i];
 
@@ -1497,9 +1550,21 @@ function convertMessages(
 			}
 		} else if (msg.role === "assistant") {
 			const blocks: ContentBlockParam[] = [];
-			const isSameModel = msg.provider === model.provider && msg.api === model.api && msg.model === model.id;
+			const isSameModel = isSameAnthropicModel(msg, model);
+			// Drop the declined attempt's model-internal blocks (thinking, tool_use)
+			// that precede the final fallback marker; the marker onward is the
+			// serving model's output and replays verbatim.
+			const fallbackBoundary = isSameModel ? lastAnthropicFallbackBoundary(msg.content) : -1;
 
-			for (const block of msg.content) {
+			for (let blockIndex = 0; blockIndex < msg.content.length; blockIndex++) {
+				const block = msg.content[blockIndex];
+				if (
+					fallbackBoundary >= 0 &&
+					blockIndex < fallbackBoundary &&
+					(block.type === "thinking" || block.type === "toolCall")
+				) {
+					continue;
+				}
 				if (block.type === "text") {
 					if (block.text.trim().length === 0) continue;
 					blocks.push({
@@ -1561,29 +1626,37 @@ function convertMessages(
 			// Collect all consecutive toolResult messages, needed for z.ai Anthropic endpoint
 			const toolResults: ContentBlockParam[] = [];
 
-			// Add the current tool result
-			toolResults.push({
-				type: "tool_result",
-				tool_use_id: msg.toolCallId,
-				content: convertContentBlocks(msg.content),
-				is_error: msg.isError,
-			});
+			// Add the current tool result, unless its tool_use was dropped as a
+			// declined pre-fallback attempt (its result would otherwise dangle).
+			if (!discardedFallbackToolCallIds.has(msg.toolCallId)) {
+				toolResults.push({
+					type: "tool_result",
+					tool_use_id: msg.toolCallId,
+					content: convertContentBlocks(msg.content),
+					is_error: msg.isError,
+				});
+			}
 
 			// Look ahead for consecutive toolResult messages
 			let j = i + 1;
 			while (j < transformedMessages.length && transformedMessages[j].role === "toolResult") {
 				const nextMsg = transformedMessages[j] as ToolResultMessage; // We know it's a toolResult
-				toolResults.push({
-					type: "tool_result",
-					tool_use_id: nextMsg.toolCallId,
-					content: convertContentBlocks(nextMsg.content),
-					is_error: nextMsg.isError,
-				});
+				if (!discardedFallbackToolCallIds.has(nextMsg.toolCallId)) {
+					toolResults.push({
+						type: "tool_result",
+						tool_use_id: nextMsg.toolCallId,
+						content: convertContentBlocks(nextMsg.content),
+						is_error: nextMsg.isError,
+					});
+				}
 				j++;
 			}
 
 			// Skip the messages we've already processed
 			i = j - 1;
+
+			// Every result in this run may have been dropped; don't emit an empty turn.
+			if (toolResults.length === 0) continue;
 
 			// Add a single user message with all tool results
 			params.push({
