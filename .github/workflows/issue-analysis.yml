@@ -6,10 +6,11 @@
 #      (~/.pi/agent/auth.json).
 #   2. Create the `pi-analyze` label.
 #   3. Add a repository secret `EARENDIL_ORG_READ_TOKEN` with permission to
-#      read `earendil-works` org membership and create secret gists. The
-#      authorization job uses it to verify that the label actor is an active
-#      member of `earendil-works/staff`; the analysis job uses it to upload
-#      the exported session gist.
+#      read `earendil-works` org membership. The authorization job uses it to
+#      verify that the label actor is an active member of `earendil-works/staff`.
+#   4. Add an environment secret `PI_GIST_TOKEN` on `pi-analyze` with gist
+#      creation permission. The analysis job uses it to upload the exported
+#      session gist.
 #
 # The session runs in a high-entropy checkout directory so the recorded cwd is
 # a unique string. Import the session into a local checkout with the
@@ -202,10 +203,10 @@ jobs:
         if: always() && steps.export_session_files.outcome == 'success'
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.EARENDIL_ORG_READ_TOKEN }}
+          GH_TOKEN: ${{ secrets.PI_GIST_TOKEN }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
-            echo "EARENDIL_ORG_READ_TOKEN is not configured" >&2
+            echo "PI_GIST_TOKEN is not configured" >&2
             exit 1
           fi
           gist_url="$(gh gist create --public=false "$RUNNER_TEMP/pi-out/session.html" "$RUNNER_TEMP/pi-out/session.jsonl")"
