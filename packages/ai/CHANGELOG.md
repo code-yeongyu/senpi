@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- Fixed Anthropic same-model replay of server-side fallback (`server-side-fallback-2026-06-01` beta) turns keeping the declined pre-fallback attempt's `thinking`/`tool_use` blocks, which left the pre-fallback `tool_use` without an adjacent `tool_result` after API-side normalization and caused 400 "`tool_use` ids were found without `tool_result` blocks immediately after" on the next request. Blocks before the final `fallback` marker and their now-orphaned `tool_result`s are dropped per the fallback replay contract; the marker onward replays verbatim.
+
 ### Removed
 
 ## [2026.7.4] - 2026-07-04
