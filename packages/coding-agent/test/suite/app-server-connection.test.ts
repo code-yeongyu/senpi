@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { VERSION } from "../../src/config.ts";
 import type { ClassifiedIncoming, RpcEnvelope } from "../../src/modes/app-server/rpc/envelope.ts";
 import { createConnection } from "../../src/modes/app-server/server/connection.ts";
 import { ServerCore } from "../../src/modes/app-server/server/server-core.ts";
@@ -62,7 +63,9 @@ describe("app-server connection initialize gate", () => {
 			codexHome: expect.any(String),
 			platformFamily: expect.stringMatching(/^(unix|windows)$/),
 			platformOs: expect.stringMatching(/^(macos|linux|windows)$/),
-			userAgent: expect.stringMatching(/^qa\/2026\.7\.2 \(.+\) senpi_app_server$/),
+			userAgent: expect.stringMatching(
+				new RegExp(`^qa/${VERSION.replaceAll(".", "\\.")} \\(.+\\) senpi_app_server$`),
+			),
 		});
 		expect(core.getConnection(id)?.capabilities.experimentalApi).toBe(true);
 		expect(core.getConnection(id)?.optOutNotificationMethods.has("thread/started")).toBe(true);
