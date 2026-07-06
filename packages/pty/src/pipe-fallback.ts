@@ -145,7 +145,8 @@ export class PipeFallbackSession {
 	}
 
 	onExit(handler: ExitHandler): () => void {
-		if (this.exitResult) queueMicrotask(() => handler(this.exitResult as PipeFallbackSessionExit));
+		const exitResult = this.exitResult;
+		if (exitResult !== null) queueMicrotask(() => handler(exitResult));
 		else this.exitHandlers.add(handler);
 		return () => this.exitHandlers.delete(handler);
 	}
