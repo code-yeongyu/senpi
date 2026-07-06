@@ -8,9 +8,13 @@ import { describe, expect, it } from "vitest";
 // Task 14 (neo) reimplements the 5 builtin ctx.ui.custom extensions natively in
 // Go and adds a Go-side "custom_unsupported" notice dialog. The audit asked for
 // an ADDITIVE TS test asserting the CURRENT behavior of ctx.ui.custom in RPC
-// mode (rpc-mode.ts, the `async custom()` method): it returns undefined
-// synchronously with NO wire message emitted — there is nothing for a default
-// RPC client to render a dialog FROM today. This test documents exactly that.
+// mode (the `async custom()` method): it returns undefined synchronously with
+// NO wire message emitted — there is nothing for a default RPC client to render
+// a dialog FROM today. This test documents exactly that.
+//
+// The RPC uiContext (with `async custom()`) was extracted from rpc-mode.ts into
+// connection-handler.ts during the neo daemon refactor, so this test reads the
+// method from its current home.
 //
 // It is intentionally kept off-main and additive: it neither imports the private
 // createExtensionUIContext closure nor changes production code. Instead it (1)
@@ -20,13 +24,13 @@ import { describe, expect, it } from "vitest";
 // output() call).
 
 const thisDir = dirname(fileURLToPath(import.meta.url));
-const rpcModePath = join(thisDir, "..", "..", "src", "modes", "rpc", "rpc-mode.ts");
+const rpcUiContextPath = join(thisDir, "..", "..", "src", "modes", "rpc", "connection-handler.ts");
 
-/** Extract the body of the `async custom() { ... }` method from rpc-mode.ts. */
+/** Extract the body of the `async custom() { ... }` method from the RPC uiContext source. */
 function extractCustomBody(source: string): string {
 	const marker = "async custom() {";
 	const start = source.indexOf(marker);
-	if (start === -1) throw new Error("async custom() not found in rpc-mode.ts");
+	if (start === -1) throw new Error("async custom() not found in connection-handler.ts");
 	const bodyStart = start + marker.length;
 	let depth = 1;
 	let index = bodyStart;
@@ -41,7 +45,7 @@ function extractCustomBody(source: string): string {
 
 describe("rpc-mode ctx.ui.custom characterization", () => {
 	it("source: async custom() returns undefined and emits no wire message", () => {
-		const source = readFileSync(rpcModePath, "utf-8");
+		const source = readFileSync(rpcUiContextPath, "utf-8");
 		const body = extractCustomBody(source);
 
 		// The current body is a comment plus `return undefined as never;`.
