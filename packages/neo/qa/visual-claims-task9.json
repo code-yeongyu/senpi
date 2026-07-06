@@ -1,0 +1,76 @@
+{
+  "description": "Task 9 (transcript + message/tool renderers) visual claims. Frames are captured from the internal/ui/transcript qaharness in tmux via `tmux capture-pane -e` (the raw .ans), rendered through the xterm.js headless harness (qa/xterm-render.mjs) to a self-contained HTML review page and a per-cell grid JSON. Captured rows are LF-separated by capture-pane; each row is a laid-out visual line, so the .ans is normalized to CRLF (one column reset per captured row) before the xterm.js render — the SGR content is untouched, only row boundaries. Every color assertion targets a grok palette token from internal/theme (grok-night): AccentGreen #9ece6a (tool guide/marker), AccentRed #f7768e (abort/error), TextPrimary #e1e1e1, TextSecondary #c8c8c8, TextMuted #6c6c6c, SurfaceBase #141414, SurfaceHighlight #242424. All assertions run against the parsed cell grid, never raw escape strings.",
+  "claims": [
+    {
+      "id": "task-9-tool-row-grok-glyphs",
+      "task": 9,
+      "title": "The tool-execution block renders the grok row `┃ ◆ Run <cmd>` with the accent-green guide + marker glyphs on the base surface, and the tool result body below it — the pending-tool-row → result scenario.",
+      "requiredFrames": ["task9-happy-120x36"],
+      "frames": [
+        {
+          "id": "task9-happy-120x36",
+          "size": "120x36",
+          "state": "tool-call-result-final-message",
+          "ans": "triplets/task9-happy-120x36.ans",
+          "html": "triplets/task9-happy-120x36.html",
+          "json": "triplets/task9-happy-120x36.grid.json"
+        }
+      ],
+      "assertions": [
+        { "id": "tool-guide-glyph", "kind": "cell-glyph", "frame": "task9-happy-120x36", "x": 0, "y": 3, "glyph": "┃" },
+        { "id": "tool-guide-accent-green", "kind": "cell-fg", "frame": "task9-happy-120x36", "x": 0, "y": 3, "hex": "#9ece6a" },
+        { "id": "tool-marker-glyph", "kind": "cell-glyph", "frame": "task9-happy-120x36", "x": 2, "y": 3, "glyph": "◆" },
+        { "id": "tool-marker-accent-green", "kind": "cell-fg", "frame": "task9-happy-120x36", "x": 2, "y": 3, "hex": "#9ece6a" },
+        { "id": "tool-guide-base-surface", "kind": "cell-bg", "frame": "task9-happy-120x36", "x": 0, "y": 3, "hex": "#141414" },
+        { "id": "tool-output-text-primary", "kind": "cell-fg", "frame": "task9-happy-120x36", "x": 20, "y": 3, "hex": "#e1e1e1" },
+        { "id": "user-message-text-primary", "kind": "cell-fg", "frame": "task9-happy-120x36", "x": 1, "y": 0, "hex": "#e1e1e1" },
+        { "id": "user-message-highlight-surface", "kind": "cell-bg", "frame": "task9-happy-120x36", "x": 1, "y": 0, "hex": "#242424" }
+      ]
+    },
+    {
+      "id": "task-9-abort-no-orphan-spinner",
+      "task": 9,
+      "title": "A tool error + user abort mid-stream renders the aborted assistant notice in the accent-red error color, and the frame carries NO spinner frame glyph (the no-orphan-spinner acceptance criterion). Captured at 80x24.",
+      "requiredFrames": ["task9-failure-80x24"],
+      "frames": [
+        {
+          "id": "task9-failure-80x24",
+          "size": "80x24",
+          "state": "tool-error-and-abort",
+          "ans": "triplets/task9-failure-80x24.ans",
+          "html": "triplets/task9-failure-80x24.html",
+          "json": "triplets/task9-failure-80x24.grid.json"
+        }
+      ],
+      "assertions": [
+        { "id": "abort-notice-glyph", "kind": "cell-glyph", "frame": "task9-failure-80x24", "x": 0, "y": 14, "glyph": "O" },
+        { "id": "abort-notice-accent-red", "kind": "cell-fg", "frame": "task9-failure-80x24", "x": 0, "y": 14, "hex": "#f7768e" },
+        { "id": "abort-tool-guide-still-green", "kind": "cell-fg", "frame": "task9-failure-80x24", "x": 0, "y": 3, "hex": "#9ece6a" },
+        { "id": "abort-tool-marker-glyph", "kind": "cell-glyph", "frame": "task9-failure-80x24", "x": 2, "y": 3, "glyph": "◆" }
+      ]
+    },
+    {
+      "id": "task-9-tool-expand-hooks-badge",
+      "task": 9,
+      "title": "An expanded tool block shows the `[hooks: N]` badge in the muted color on the header row and the full multi-line result body below (collapse/expand via app.tools.expand).",
+      "requiredFrames": ["task9-toolexpand-120x36"],
+      "frames": [
+        {
+          "id": "task9-toolexpand-120x36",
+          "size": "120x36",
+          "state": "tool-expanded-with-hooks",
+          "ans": "triplets/task9-toolexpand-120x36.ans",
+          "html": "triplets/task9-toolexpand-120x36.html",
+          "json": "triplets/task9-toolexpand-120x36.grid.json"
+        }
+      ],
+      "assertions": [
+        { "id": "expand-tool-guide-glyph", "kind": "cell-glyph", "frame": "task9-toolexpand-120x36", "x": 0, "y": 0, "glyph": "┃" },
+        { "id": "expand-tool-guide-accent-green", "kind": "cell-fg", "frame": "task9-toolexpand-120x36", "x": 0, "y": 0, "hex": "#9ece6a" },
+        { "id": "expand-hooks-badge-muted", "kind": "cell-fg", "frame": "task9-toolexpand-120x36", "x": 16, "y": 0, "hex": "#6c6c6c" },
+        { "id": "expand-hooks-badge-glyph", "kind": "cell-glyph", "frame": "task9-toolexpand-120x36", "x": 16, "y": 0, "glyph": "h" },
+        { "id": "expand-output-text-secondary", "kind": "cell-fg", "frame": "task9-toolexpand-120x36", "x": 0, "y": 1, "hex": "#c8c8c8" }
+      ]
+    }
+  ]
+}

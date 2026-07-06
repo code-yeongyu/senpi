@@ -1,0 +1,7 @@
+{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"Run the failing command."}]}}
+{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"toolUse"}}
+{"type":"tool_execution_start","toolCallId":"call_1","toolName":"bash","toolArgs":{"command":"sh -c 'echo boom: command failed 1>&2; exit 1'"}}
+{"type":"tool_execution_end","toolCallId":"call_1","result":{"content":[{"type":"text","text":"boom: command failed\n\n\nCommand exited with code 1"}],"isError":false}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"The command failed; stopping here."}],"stopReason":"stop"}}
+{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"Now elaborate at length."}]}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":""}],"stopReason":"aborted","errorMessage":"Request was aborted"}}
