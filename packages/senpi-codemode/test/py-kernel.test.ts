@@ -1,7 +1,7 @@
-import { once } from "node:events";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { readFile } from "node:fs/promises";
 import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
+import { type BridgeHttpCallRequest, startBridgeServer } from "../src/bridge/http-server.ts";
 import type { BridgeConnectionConfig, KernelToHostMessage } from "../src/bridge/protocol.ts";
 import { decodeBridgeFrame, encodeBridgeFrame } from "../src/bridge/protocol.ts";
 import { createInterpreterDetector } from "../src/interpreters/detect.ts";
@@ -113,6 +113,17 @@ async function runCell(kernel: PythonKernel, code: string): Promise<Extract<Kern
 }
 
 describe("PythonKernel transport", () => {
+	it("prelude speaks the loopback bridge server HTTP contract", async () => {
+		const source = await readFile(new URL("../src/kernels/py/prelude.py", import.meta.url), "utf8");
+
+		expect(source).toContain("/call");
+		expect(source).toContain("/completion");
+		expect(source).toContain('"callId"');
+		expect(source).toContain('"opts"');
+		expect(source).not.toContain('"kind": "tool"');
+		expect(source).not.toContain('"kind": "completion"');
+	});
+
 	it("spawns the prelude without leaking bridge secrets through argv", async () => {
 		const child = new FakeChild();
 		const spawns: KernelSpawnOptions[] = [];
@@ -179,38 +190,62 @@ describe.skipIf(!(await hasPython3()))("PythonKernel live", () => {
 	});
 
 	it("calls host tools through the loopback bridge", async () => {
-		const requests: unknown[] = [];
-		const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-			let raw = "";
-			req.setEncoding("utf8");
-			req.on("data", (chunk) => {
-				raw += chunk;
-			});
-			await once(req, "end");
-			requests.push(JSON.parse(raw) as unknown);
-			expect(req.headers.authorization).toBe("Bearer bridge-token");
-			res.setHeader("content-type", "application/json");
-			res.end(JSON.stringify({ ok: true, value: { echoed: true } }));
+		const requests: BridgeHttpCallRequest[] = [];
+		const server = await startBridgeServer({
+			token: "bridge-token",
+			onCall: async (request) => {
+				requests.push(request);
+				return { echoed: true, callId: request.callId };
+			},
+			onEmit: async () => {},
+			onCompletion: async () => "unused",
 		});
-		server.listen(0, "127.0.0.1");
-		await once(server, "listening");
-		const address = server.address();
-		if (address === null || typeof address === "string") throw new Error("missing server port");
 		const kernel = await PythonKernel.start({
 			interpreterPath: (await createInterpreterDetector().detect("py")).ok ? "python3" : "python",
 			sessionId: "tool-session",
 			cwd: process.cwd(),
-			connection: { port: address.port, token: "bridge-token" },
+			connection: { port: server.port, token: server.token },
 		});
 		try {
 			await expect(runCell(kernel, "tool.echo_tool({'q': 'hi'})")).resolves.toMatchObject({
 				ok: true,
-				valueRepr: "{'echoed': True}",
+				valueRepr: expect.stringContaining("'echoed': True"),
 			});
-			expect(requests).toContainEqual({ kind: "tool", toolName: "echo_tool", args: { q: "hi" } });
+			expect(requests).toHaveLength(1);
+			expect(requests[0]).toMatchObject({ toolName: "echo_tool", args: { q: "hi" } });
+			expect(requests[0]?.callId).toMatch(/^py-/);
 		} finally {
 			await kernel.close();
-			server.close();
+			await server.close();
+		}
+	});
+
+	it("sends completions to the bridge completion route", async () => {
+		const completions: { readonly prompt: string; readonly opts?: unknown }[] = [];
+		const server = await startBridgeServer({
+			token: "completion-token",
+			onCall: async () => "unused",
+			onEmit: async () => {},
+			onCompletion: async (request) => {
+				completions.push({ prompt: request.prompt, opts: request.opts });
+				return "completion-ok";
+			},
+		});
+		const kernel = await PythonKernel.start({
+			interpreterPath: (await createInterpreterDetector().detect("py")).ok ? "python3" : "python",
+			sessionId: "completion-session",
+			cwd: process.cwd(),
+			connection: { port: server.port, token: server.token },
+		});
+		try {
+			await expect(runCell(kernel, "completion('Say hi', temperature=0)")).resolves.toMatchObject({
+				ok: true,
+				valueRepr: "'completion-ok'",
+			});
+			expect(completions).toEqual([{ prompt: "Say hi", opts: { temperature: 0 } }]);
+		} finally {
+			await kernel.close();
+			await server.close();
 		}
 	});
 });

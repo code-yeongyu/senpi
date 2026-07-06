@@ -13,6 +13,7 @@ import time
 import traceback
 import urllib.error
 import urllib.request
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -106,22 +107,22 @@ def pipeline(items: list[Any], *stages: Any) -> list[Any]:
 class ToolProxy:
     def __getattr__(self, name: str) -> Any:
         def call(args: Any = None) -> Any:
-            return bridge_post({"kind": "tool", "toolName": name, "args": {} if args is None else args})
+            return bridge_post("/call", {"callId": f"py-{uuid.uuid4()}", "toolName": name, "args": {} if args is None else args})
         return call
 
 
 def completion(prompt: str, **options: Any) -> Any:
-    return bridge_post({"kind": "completion", "prompt": prompt, "options": options})
+    return bridge_post("/completion", {"prompt": prompt, "opts": options})
 
 
-def bridge_post(payload: dict[str, Any]) -> Any:
+def bridge_post(path: str, payload: dict[str, Any]) -> Any:
     port = CONNECTION.get("port")
     token = CONNECTION.get("token")
     if not isinstance(port, int) or not isinstance(token, str):
         raise RuntimeError("Python tool bridge is not initialized")
     data = json.dumps(payload, ensure_ascii=False, default=repr).encode("utf-8")
     req = urllib.request.Request(
-        f"http://127.0.0.1:{port}/call",
+        f"http://127.0.0.1:{port}{path}",
         data=data,
         headers={"authorization": f"Bearer {token}", "content-type": "application/json"},
         method="POST",

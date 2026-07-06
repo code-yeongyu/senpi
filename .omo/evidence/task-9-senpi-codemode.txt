@@ -287,3 +287,6 @@ check:neo: packages/neo build+vet+test passed
 
 ## git diff --check scoped files
 $ git diff --check -- packages/senpi-codemode/src/kernels/py packages/senpi-codemode/test/py-kernel.test.ts .omo/evidence/task-9-senpi-codemode.txt
+
+
+Task 12 follow-up (2026-07-06): Python bridge contract blocker fixed. Evidence: .omo/evidence/task-12-fix-python-bridge.txt. Targeted py-kernel test passed 7/7; npm run check passed; scoped diff 62 insertions/26 deletions; touched files <=250 pure LOC.
