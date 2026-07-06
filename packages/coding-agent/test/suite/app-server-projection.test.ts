@@ -47,7 +47,7 @@ function collect(events: readonly AgentSessionEvent[]) {
 		nowMs: () => 1234,
 	});
 	const outputs = events.flatMap((event) => projector.project(event).notifications);
-	return { outputs, turns: turnLog.readTurns("thread-1") };
+	return { outputs, turns: turnLog.readTurns("thread-1"), projector };
 }
 
 const itemScope = { threadId: "thread-1", turnId: "turn-1" } as const;
@@ -225,6 +225,81 @@ describe("app-server AgentEvent projector", () => {
 			completed(commandCompleted),
 		]);
 		expect(turns[0]?.items).toEqual([commandCompleted]);
+	});
+
+	it("keeps in-flight tool items open across message boundaries within one turn", () => {
+		// Given: a turn where the assistant message finishes (done) before its tool executes,
+		// which is the normal shape of every multi-message tool-using turn.
+		const message = assistant([
+			{ type: "toolCall", id: "tool-1", name: "bash", arguments: { command: "printf ok" } },
+		]);
+		const events: AgentSessionEvent[] = [
+			{
+				type: "message_update",
+				message,
+				assistantMessageEvent: {
+					type: "toolcall_end",
+					contentIndex: 0,
+					toolCall: { type: "toolCall", id: "tool-1", name: "bash", arguments: { command: "printf ok" } },
+					partial: message,
+				},
+			},
+			{
+				type: "message_update",
+				message,
+				assistantMessageEvent: { type: "done", reason: "stop", message },
+			},
+			{
+				type: "tool_execution_end",
+				toolCallId: "tool-1",
+				toolName: "bash",
+				result: { content: [{ type: "text", text: "ok" }], details: { exitCode: 0 } },
+				isError: false,
+			},
+		];
+
+		// When: the events are projected.
+		const { outputs, turns } = collect(events);
+
+		// Then: `done` does not force-complete the pending tool; the execution result does.
+		const commandCompleted = commandItem("completed", "ok", 0);
+		expect(outputs).toEqual([started(commandItem("inProgress", null, null)), completed(commandCompleted)]);
+		expect(turns[0]?.items).toEqual([commandCompleted]);
+	});
+
+	it("finalize closes dangling tool items exactly once", () => {
+		// Given: a projected tool call that never executed before turn end.
+		const message = assistant([
+			{ type: "toolCall", id: "tool-1", name: "bash", arguments: { command: "printf ok" } },
+		]);
+		const { projector } = collect([
+			{
+				type: "message_update",
+				message,
+				assistantMessageEvent: {
+					type: "toolcall_end",
+					contentIndex: 0,
+					toolCall: { type: "toolCall", id: "tool-1", name: "bash", arguments: { command: "printf ok" } },
+					partial: message,
+				},
+			},
+		]);
+
+		// When: the turn is finalized twice and another event arrives afterwards.
+		const firstFinalize = projector.finalize();
+		const secondFinalize = projector.finalize();
+		const afterFinalize = projector.project({
+			type: "tool_execution_end",
+			toolCallId: "tool-1",
+			toolName: "bash",
+			result: { content: [{ type: "text", text: "late" }], details: { exitCode: 0 } },
+			isError: false,
+		});
+
+		// Then: the dangling tool completes once and post-finalize events are dropped.
+		expect(firstFinalize).toEqual([completed(commandItem("completed", null, null))]);
+		expect(secondFinalize).toEqual([]);
+		expect(afterFinalize.notifications).toEqual([]);
 	});
 
 	it("caps oversized bash output deltas and completed items on a UTF-8 boundary", () => {

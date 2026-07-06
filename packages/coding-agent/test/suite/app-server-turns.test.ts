@@ -14,7 +14,7 @@ class ScriptedSession implements TurnEngineSession {
 	abortCalls = 0;
 	promptPreflightResult = true;
 	promptError: Error | null = null;
-	private readonly listeners: Array<(event: { readonly type: "agent_end" }) => void> = [];
+	private readonly listeners: Array<(event: { readonly type: string }) => void> = [];
 
 	async prompt(
 		text: string,
@@ -36,7 +36,7 @@ class ScriptedSession implements TurnEngineSession {
 		this.emitAgentEnd();
 	}
 
-	subscribe(listener: (event: { readonly type: "agent_end" }) => void): () => void {
+	subscribe(listener: (event: { readonly type: string }) => void): () => void {
 		this.listeners.push(listener);
 		return () => {
 			const index = this.listeners.indexOf(listener);
@@ -46,10 +46,14 @@ class ScriptedSession implements TurnEngineSession {
 		};
 	}
 
-	emitAgentEnd(): void {
+	emit(event: { readonly type: string }): void {
 		for (const listener of [...this.listeners]) {
-			listener({ type: "agent_end" });
+			listener(event);
 		}
+	}
+
+	emitAgentEnd(): void {
+		this.emit({ type: "agent_end" });
 	}
 }
 
@@ -275,5 +279,89 @@ describe("app-server turn engine", () => {
 				input: [{ type: "skill", name: "nope", path: "/tmp/nope" }],
 			}),
 		).rejects.toBeInstanceOf(TurnEngineError);
+	});
+
+	it("projects assistant message events into item notifications and the turn log", async () => {
+		// Given: a started turn on a live session.
+		const { engine, store, notifications } = createHarness();
+		const entry = store.add("thread-a");
+		const response = await engine.startTurn({ threadId: "thread-a", input: [{ type: "text", text: "hi" }] });
+
+		// When: the session streams an assistant message and the run ends.
+		const message = {
+			role: "assistant",
+			content: [{ type: "text", text: "mock answer" }],
+			responseId: "msg-1",
+		};
+		entry.session.emit({ type: "message_start", message } as { type: string });
+		entry.session.emit({
+			type: "message_update",
+			message,
+			assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: message },
+		} as { type: string });
+		entry.session.emit({
+			type: "message_update",
+			message,
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "mock answer", partial: message },
+		} as { type: string });
+		entry.session.emit({
+			type: "message_update",
+			message,
+			assistantMessageEvent: { type: "text_end", contentIndex: 0, content: "mock answer", partial: message },
+		} as { type: string });
+		entry.session.emitAgentEnd();
+		await entry.taskQueue;
+
+		// Then: the agent message reaches the wire as item notifications.
+		const methods = notifications.map((notification) => notification.method);
+		expect(methods).toContain("item/agentMessage/delta");
+		const delta = notifications.find((notification) => notification.method === "item/agentMessage/delta");
+		expect(delta?.params).toMatchObject({ threadId: "thread-a", turnId: response.turn.id, delta: "mock answer" });
+		const completedItems = notifications
+			.filter((notification) => notification.method === "item/completed")
+			.map((notification) => (notification.params as { item: { type: string } }).item);
+		expect(completedItems.map((item) => item.type)).toEqual(["userMessage", "agentMessage"]);
+
+		// And: turn/completed serves the same agent message item from the turn log.
+		const turnCompleted = notifications.find((notification) => notification.method === "turn/completed");
+		const turn = (turnCompleted?.params as { turn: { items: Array<{ type: string; text?: string }> } }).turn;
+		expect(turn.items.map((item) => item.type)).toEqual(["userMessage", "agentMessage"]);
+		expect(turn.items[1]?.text).toBe("mock answer");
+	});
+
+	it("closes dangling tool items before turn/completed when execution never finished", async () => {
+		// Given: a turn whose assistant message requested a tool that never executed.
+		const { engine, store, notifications } = createHarness();
+		const entry = store.add("thread-a");
+		await engine.startTurn({ threadId: "thread-a", input: [{ type: "text", text: "run it" }] });
+		const message = {
+			role: "assistant",
+			content: [{ type: "toolCall", id: "tool-1", name: "bash", arguments: { command: "echo hi" } }],
+			responseId: "msg-1",
+		};
+		entry.session.emit({
+			type: "message_update",
+			message,
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 0,
+				toolCall: { type: "toolCall", id: "tool-1", name: "bash", arguments: { command: "echo hi" } },
+				partial: message,
+			},
+		} as { type: string });
+
+		// When: the run ends without a tool_execution_end.
+		entry.session.emitAgentEnd();
+		await entry.taskQueue;
+
+		// Then: the dangling tool item completes before turn/completed, and the turn carries it.
+		const methods = notifications.map((notification) => notification.method);
+		const toolCompletedIndex = methods.lastIndexOf("item/completed");
+		const turnCompletedIndex = methods.indexOf("turn/completed");
+		expect(toolCompletedIndex).toBeGreaterThan(-1);
+		expect(toolCompletedIndex).toBeLessThan(turnCompletedIndex);
+		const turnCompleted = notifications.find((notification) => notification.method === "turn/completed");
+		const turn = (turnCompleted?.params as { turn: { items: Array<{ type: string }> } }).turn;
+		expect(turn.items.map((item) => item.type)).toEqual(["userMessage", "commandExecution"]);
 	});
 });

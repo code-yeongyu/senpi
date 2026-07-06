@@ -11,13 +11,13 @@ import type {
 	TurnSteerResponse,
 	UserInput,
 } from "../protocol/index.ts";
-import type { JsonRpcError } from "../rpc/errors.ts";
+import { type JsonRpcError, RpcHandlerError } from "../rpc/errors.ts";
 import type { ActiveTurn } from "./registry.ts";
 import type { TurnLog, WireItem } from "./turn-log.ts";
 
 export type TurnWireStatus = "inProgress" | "completed" | "failed" | "interrupted";
 export type LoggedStartStatus = "running";
-export type TurnEngineSessionEvent = { readonly type: string; readonly [key: string]: unknown };
+export type TurnEngineSessionEvent = { readonly type: string };
 
 export interface TurnEngineSession {
 	prompt(
@@ -34,6 +34,7 @@ export type TurnEngineThreadStatus = "idle" | "active";
 export interface TurnEngineThreadEntry {
 	readonly id: string;
 	readonly session: TurnEngineSession;
+	readonly cwd?: string;
 	activeTurn: ActiveTurn | null;
 	status: TurnEngineThreadStatus;
 	updatedAt: string;
@@ -85,11 +86,11 @@ export function createTurnId(): string {
 	return crypto.randomUUID();
 }
 
-export class TurnEngineError extends Error {
+export class TurnEngineError extends RpcHandlerError {
 	readonly error: JsonRpcError;
 
 	constructor(error: JsonRpcError) {
-		super(error.message);
+		super(error);
 		this.name = "TurnEngineError";
 		this.error = error;
 	}

@@ -1,4 +1,6 @@
+import type { AgentSessionEvent } from "../../../core/agent-session.ts";
 import type {
+	JsonValue,
 	ThreadId,
 	TurnInterruptParams,
 	TurnInterruptResponse,
@@ -7,6 +9,8 @@ import type {
 	TurnSteerParams,
 	TurnSteerResponse,
 } from "../protocol/index.ts";
+import { EventProjector } from "./projection.ts";
+import type { ProjectedNotification } from "./projection-types.ts";
 import type { TurnLog, WireItem } from "./turn-log.ts";
 import {
 	buildTurn,
@@ -20,6 +24,7 @@ import {
 	type TurnEngineApi,
 	type TurnEngineNotification,
 	type TurnEngineOptions,
+	type TurnEngineSessionEvent,
 	type TurnEngineStore,
 	type TurnEngineThreadEntry,
 	type TurnWireStatus,
@@ -52,6 +57,10 @@ class TurnEngine<Entry extends TurnEngineThreadEntry> {
 	private readonly broadcast: (notification: TurnEngineNotification) => void;
 	private readonly pendingByThreadId = new Map<ThreadId, PendingTurn>();
 	private readonly subscribedThreadIds = new Set<ThreadId>();
+	private readonly projectorByThreadId = new Map<
+		ThreadId,
+		{ readonly turnId: string; readonly projector: EventProjector }
+	>();
 
 	constructor(options: TurnEngineOptions<Entry>) {
 		this.store = options.store;
@@ -210,6 +219,9 @@ class TurnEngine<Entry extends TurnEngineThreadEntry> {
 		}
 
 		pending.completed = true;
+		// Close dangling projected items first so they land on the wire and in the
+		// turn log before turn/completed reads the logged items.
+		this.finalizeProjection(threadId);
 		const completedStatus = pending.interrupted && status === "completed" ? "interrupted" : status;
 		const completedAtMs = Date.now();
 		this.turnLog.completeTurn(threadId, pending.turnId, completedStatus);
@@ -250,10 +262,61 @@ class TurnEngine<Entry extends TurnEngineThreadEntry> {
 		}
 		this.subscribedThreadIds.add(threadId);
 		entry.session.subscribe((event) => {
+			this.projectSessionEvent(threadId, event);
 			if (event.type === "agent_end") {
 				this.completeTurn(threadId);
 			}
 		});
+	}
+
+	private projectSessionEvent(threadId: ThreadId, event: TurnEngineSessionEvent): void {
+		let entry: Entry;
+		try {
+			entry = this.getLoadedThreadOrThrow(threadId);
+		} catch {
+			return;
+		}
+		const activeTurn = entry.activeTurn;
+		if (!activeTurn) {
+			return;
+		}
+		let state = this.projectorByThreadId.get(threadId);
+		if (!state || state.turnId !== activeTurn.turnId) {
+			state = {
+				turnId: activeTurn.turnId,
+				projector: new EventProjector({
+					threadId,
+					turnId: activeTurn.turnId,
+					turnLog: this.turnLog,
+					cwd: entry.cwd,
+				}),
+			};
+			this.projectorByThreadId.set(threadId, state);
+		}
+		// The engine only ever sees real AgentSession events at runtime; the
+		// narrow TurnEngineSessionEvent supertype exists so unit tests can drive
+		// the engine with minimal fakes. Unknown event types project to nothing.
+		const result = state.projector.project(event as AgentSessionEvent);
+		this.emitProjected(threadId, result.notifications);
+		const completion = result.turnCompletion;
+		if (completion && completion.status !== "completed" && completion.status !== "running") {
+			this.completeTurn(threadId, completion.status, completion.errorMessage);
+		}
+	}
+
+	private finalizeProjection(threadId: ThreadId): void {
+		const state = this.projectorByThreadId.get(threadId);
+		if (!state) {
+			return;
+		}
+		this.projectorByThreadId.delete(threadId);
+		this.emitProjected(threadId, state.projector.finalize());
+	}
+
+	private emitProjected(threadId: ThreadId, notifications: readonly ProjectedNotification[]): void {
+		for (const notification of notifications) {
+			this.emitToThread(threadId, { method: notification.method, params: notification.params as JsonValue });
+		}
 	}
 
 	private getLoadedThreadOrThrow(threadId: ThreadId): Entry {

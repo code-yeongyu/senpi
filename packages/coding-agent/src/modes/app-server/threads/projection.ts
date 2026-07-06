@@ -33,6 +33,7 @@ export class EventProjector {
 	private messageCounter = 0;
 	private activeMessageId: string | undefined;
 	private compactionItemId: string | undefined;
+	private finalized = false;
 
 	constructor(options: EventProjectorOptions) {
 		this.options = options;
@@ -45,6 +46,7 @@ export class EventProjector {
 	}
 
 	project(event: AgentSessionEvent): ProjectionResult {
+		if (this.finalized) return emptyResult();
 		switch (event.type) {
 			case "message_start":
 				if (event.message.role === "assistant") {
@@ -102,7 +104,13 @@ export class EventProjector {
 			case "toolcall_end":
 				return { notifications: this.startTool(event.toolCall) };
 			case "done":
-				return { notifications: this.closeDanglingItems(), turnCompletion: { status: "completed" } };
+				// A single turn can stream multiple assistant messages (tool calls run
+				// between them), so message-level `done` must not force-complete tool
+				// items that have not executed yet; `finalize()` closes those at turn end.
+				return {
+					notifications: this.messageItems.closeDanglingItems(),
+					turnCompletion: { status: "completed" },
+				};
 			case "error":
 				return {
 					notifications: [this.errorNotification(event.error.errorMessage ?? "Agent turn failed")],
@@ -114,6 +122,16 @@ export class EventProjector {
 			default:
 				return assertNeverProjection(event);
 		}
+	}
+
+	/**
+	 * Closes every dangling item at turn end. Idempotent: later calls (and any
+	 * further projected events) become no-ops once the turn is finalized.
+	 */
+	finalize(): ProjectedNotification[] {
+		if (this.finalized) return [];
+		this.finalized = true;
+		return this.closeDanglingItems();
 	}
 
 	private nextMessageId(): string {

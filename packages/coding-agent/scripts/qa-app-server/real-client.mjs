@@ -41,8 +41,14 @@ try {
 
 	const created = await runClient(["create", scratch.cwd], clientEnv, scratch.cwd, 30000, true);
 	const threadId = parseCreatedThreadId(created.stdout);
-	await runClient(["msg", threadId, "short prompt", "--timeout", "30"], clientEnv, scratch.cwd, 60000, true);
-	await runClient(["read", threadId], clientEnv, scratch.cwd, 30000, true);
+	const firstMsg = await runClient(["msg", threadId, "short prompt", "--timeout", "30"], clientEnv, scratch.cwd, 60000, true);
+	if (!firstMsg.stdout.includes("real-client-fast")) {
+		throw new Error("msg did not stream the agent reply text (item/agentMessage projection missing)");
+	}
+	const read = await runClient(["read", threadId], clientEnv, scratch.cwd, 30000, true);
+	if (!read.stdout.includes("agentMessage")) {
+		throw new Error("thread/read did not include a persisted agentMessage turn item");
+	}
 	await runClient(["threads", "10"], clientEnv, scratch.cwd, 30000, true);
 	await runClient(["loaded"], clientEnv, scratch.cwd, 30000, true);
 

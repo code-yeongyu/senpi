@@ -48,8 +48,9 @@ export function createRoutedServerCore(
 	registry: MethodRegistry,
 	notifications: NotificationRouter,
 	approvals: ApprovalBridge,
+	onThreadSubscribersEmpty?: (threadId: string) => void,
 ): ServerCore {
-	return new RoutedServerCore(registry, notifications, approvals);
+	return new RoutedServerCore(registry, notifications, approvals, onThreadSubscribersEmpty);
 }
 
 export function registerLoadedThreadObjectListHandler(registry: MethodRegistry, threads: ThreadRegistry): void {
@@ -73,11 +74,18 @@ export function registerLoadedThreadObjectListHandler(registry: MethodRegistry, 
 class RoutedServerCore extends ServerCore {
 	private readonly notifications: NotificationRouter;
 	private readonly approvals: ApprovalBridge;
+	private readonly onThreadSubscribersEmpty: ((threadId: string) => void) | undefined;
 
-	constructor(registry: MethodRegistry, notifications: NotificationRouter, approvals: ApprovalBridge) {
+	constructor(
+		registry: MethodRegistry,
+		notifications: NotificationRouter,
+		approvals: ApprovalBridge,
+		onThreadSubscribersEmpty?: (threadId: string) => void,
+	) {
 		super({ registry });
 		this.notifications = notifications;
 		this.approvals = approvals;
+		this.onThreadSubscribersEmpty = onThreadSubscribersEmpty;
 	}
 
 	override addConnection(input: ConnectionInput): Connection {
@@ -105,8 +113,11 @@ class RoutedServerCore extends ServerCore {
 	}
 
 	override removeConnection(id: ConnectionId): void {
-		this.notifications.removeConnection(id);
+		const emptiedThreadIds = this.notifications.removeConnection(id);
 		super.removeConnection(id);
+		for (const threadId of emptiedThreadIds) {
+			this.onThreadSubscribersEmpty?.(threadId);
+		}
 	}
 
 	override async receive(connectionId: ConnectionId, envelope: ClassifiedIncoming): Promise<void> {
@@ -155,6 +166,10 @@ class ModeTurnThreadEntry implements TurnEngineThreadEntry {
 
 	get id(): string {
 		return this.entry.id;
+	}
+
+	get cwd(): string {
+		return this.entry.cwd;
 	}
 
 	get session(): TurnEngineSession {
@@ -209,9 +224,10 @@ class ModeTurnSession implements TurnEngineSession {
 	}
 
 	subscribe(listener: (event: { readonly type: string }) => void): () => void {
-		return this.session.subscribe((event) => {
-			listener({ type: event.type });
-		});
+		// Pass the full AgentSessionEvent through: the turn engine projects these
+		// into item/* notifications, so stripping payloads here would silence the
+		// entire assistant/tool item stream.
+		return this.session.subscribe(listener);
 	}
 }
 
