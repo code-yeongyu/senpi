@@ -27,6 +27,20 @@ interface ExecResult {
 
 export async function diagnoseMcpConnectFailure(options: McpConnectFailureDiagnosticOptions): Promise<ConnectError> {
 	const diagnostic = await maybeDiagnoseStdioFailure(options);
+	return connectErrorFromDiagnostic(options, diagnostic);
+}
+
+export function diagnoseCapturedMcpConnectFailure(options: McpConnectFailureDiagnosticOptions): ConnectError | null {
+	if (options.config.type !== "stdio") return null;
+	const diagnostic = extractCapturedStderr(options.logger);
+	if (diagnostic.length === 0) return null;
+	return connectErrorFromDiagnostic(options, boundDiagnostic(diagnostic));
+}
+
+function connectErrorFromDiagnostic(
+	options: McpConnectFailureDiagnosticOptions,
+	diagnostic: string | null,
+): ConnectError {
 	const message =
 		diagnostic === null || diagnostic.length === 0
 			? `MCP server ${options.serverName} failed during connect: ${options.cause.message}`

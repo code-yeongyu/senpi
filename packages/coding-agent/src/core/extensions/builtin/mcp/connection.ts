@@ -1,6 +1,6 @@
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { McpServerConfig } from "./config-schema.ts";
-import { diagnoseMcpConnectFailure } from "./diagnose.ts";
+import { diagnoseCapturedMcpConnectFailure, diagnoseMcpConnectFailure } from "./diagnose.ts";
 import { ConnectError } from "./errors.ts";
 import type { McpLogger } from "./log.ts";
 import {
@@ -115,7 +115,6 @@ export class ServerConnection {
 		}
 		this.#generation++;
 		this.#pendingConnect = undefined;
-		this.#lastError = undefined;
 		this.#setState("idle");
 		await this.#disposeOwnedConnections();
 		return this.connect();
@@ -186,6 +185,19 @@ export class ServerConnection {
 			"connection.transport.onclose",
 			() => {
 				if (this.#shutdownConnections.has(connection)) return;
+				if (connection === this.#pendingConnection && this.#state === "connecting") {
+					const closeError = this.#connectError(`MCP server ${this.serverName} transport closed`, "close", true);
+					const capturedError = diagnoseCapturedMcpConnectFailure({
+						config: this.#config,
+						cause: closeError,
+						env: this.#env,
+						logger: this.#logger,
+						serverName: this.serverName,
+					});
+					if (capturedError !== null) this.markDegraded(capturedError);
+					return;
+				}
+				if (connection !== this.#connection && connection !== this.#pendingConnection) return;
 				if (generation === this.#generation && this.#state !== "disabled") {
 					this.markDegraded(this.#connectError(`MCP server ${this.serverName} transport closed`, "close", true));
 				}

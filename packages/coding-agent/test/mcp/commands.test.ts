@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../../src/config.ts";
@@ -216,6 +217,24 @@ describe("/mcp command suite", () => {
 
 		expect(notification(ui, "MCP test wedged failed")?.message).toMatch(/^MCP test wedged failed \(\d+ms\): /);
 		expect(notification(ui, "MCP status")?.message).toContain("MCP status");
+	});
+
+	it("renders redacted pre-handshake stderr in /mcp status after bare EOF", async () => {
+		const root = makeCommandRoot("fatal-status");
+		setConfig(root, {
+			bad: { ...stdioServer(["--fatal-missing-token", "FOO_TOKEN=super-secret-token"]), lifecycle: "eager" },
+		});
+		const { command, extension } = await loadCommand();
+		const ui = createUi();
+		await emitSessionStart(extension, root);
+		await delay(1000);
+
+		await command.handler("status", createCtx(root, ui));
+
+		const message = notification(ui, "MCP status")?.message ?? "";
+		expect(message).toContain("bad enabled");
+		expect(message).toContain("FATAL: missing FOO_TOKEN=<redacted:");
+		expect(message).not.toContain("super-secret-token");
 	});
 });
 
