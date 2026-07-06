@@ -135,4 +135,4 @@ export function getServerEndpointValidationError(config: RawConfig): string | un
 }
 
 export const validateConfig = Compile(ConfigSchema);
-export const defaultSettings: McpSettings = { toolPrefix: "mcp" };
+export const defaultSettings: McpSettings = { searchThreshold: 10, toolPrefix: "mcp" };

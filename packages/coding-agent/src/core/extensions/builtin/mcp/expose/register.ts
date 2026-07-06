@@ -30,11 +30,12 @@ type WarnFn = (message: string) => void;
 export function registerMcpCatalogTools(
 	pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
 	entries: readonly McpToolCatalogEntry[],
+	activeEntries: readonly McpToolCatalogEntry[],
 	warn?: WarnFn,
 ): void {
 	const tools = buildMcpToolDefinitions(entries, warn);
 	const currentActive = pi.getActiveTools().filter((name) => !name.startsWith("mcp_"));
-	const mcpNames = tools.map((tool) => tool.name).sort();
+	const mcpNames = buildActiveToolNames(entries, activeEntries, warn);
 	registerToolsPreservingActiveSet(pi, tools, [...currentActive, ...mcpNames]);
 }
 
@@ -164,4 +165,25 @@ function truncatePreview(value: string): string {
 
 function compareCatalogEntries(left: McpToolCatalogEntry, right: McpToolCatalogEntry): number {
 	return left.server.localeCompare(right.server) || left.tool.localeCompare(right.tool);
+}
+
+function buildActiveToolNames(
+	entries: readonly McpToolCatalogEntry[],
+	activeEntries: readonly McpToolCatalogEntry[],
+	warn?: WarnFn,
+): string[] {
+	const activeKeys = new Set(activeEntries.map(catalogEntryKey));
+	const sorted = [...entries].sort(compareCatalogEntries);
+	const names = buildMcpToolNames(
+		sorted.map((entry) => ({ serverName: entry.server, toolName: entry.tool })),
+		warn,
+	);
+	return sorted
+		.map((entry, index) => (activeKeys.has(catalogEntryKey(entry)) ? (names[index] ?? "") : ""))
+		.filter((name) => name.length > 0)
+		.sort();
+}
+
+function catalogEntryKey(entry: McpToolCatalogEntry): string {
+	return `${entry.server}\0${entry.tool}`;
 }

@@ -3,6 +3,7 @@ import { collectToolCatalog, type McpToolCatalogEntry } from "./catalog.ts";
 import { loadMcpConfig, visitSpawnableMcpServers } from "./config.ts";
 import type { ResolvedMcpConfig, ResolvedMcpServer } from "./config-schema.ts";
 import { ServerConnection, type ServerConnectionState } from "./connection.ts";
+import { computeMcpExposurePolicy } from "./expose/policy.ts";
 import { registerMcpCatalogTools } from "./expose/register.ts";
 import { createMcpLogger, type McpLogger } from "./log.ts";
 
@@ -46,6 +47,11 @@ export interface McpServerCounters {
 	errorCount: number;
 	totalLatencyMs: number;
 	reconnectCount: number;
+}
+
+export interface McpServerExposureStatus {
+	readonly hint?: string;
+	readonly toolCount: number | null;
 }
 
 interface McpConnectionEntry {
@@ -125,6 +131,39 @@ export class McpService {
 		const key = this.#connectionKeysByName.get(name);
 		const lines = key === undefined ? [] : (this.#connections.get(key)?.logger.getRingBuffer() ?? []);
 		return lines.slice(Math.max(0, lines.length - maxLines));
+	}
+
+	async getServerExposureStatus(name: string): Promise<McpServerExposureStatus> {
+		const config = this.#config;
+		if (config === null) return { toolCount: null };
+		const server = config.servers[name];
+		const entry = this.#entryForName(name);
+		if (server?.config === undefined || entry === undefined || entry.connection.state !== "connected") {
+			return { toolCount: null };
+		}
+		const serverConfig = server.config;
+		try {
+			const result = await entry.connection.client.listTools({}, { timeout: 500 });
+			const catalog = result.tools.map((tool) => ({
+				annotations: tool.annotations,
+				connection: entry.connection,
+				description: tool.description,
+				requestTimeoutMs: serverConfig.requestTimeoutMs,
+				schema: tool.inputSchema,
+				server: name,
+				tool: tool.name,
+			}));
+			const policy = computeMcpExposurePolicy(catalog, serverConfig, config.settings);
+			return {
+				hint:
+					policy.filteredEntries.length === 0
+						? "No MCP tools matched includeTools/excludeTools filters."
+						: undefined,
+				toolCount: policy.activeEntries.length,
+			};
+		} catch {
+			return { toolCount: null };
+		}
 	}
 
 	recordCall(name: string, elapsedMs: number, failed: boolean): void {
@@ -207,23 +246,28 @@ export class McpService {
 	): Promise<void> {
 		const config = this.#config;
 		if (config === null) return;
-		const entries: McpToolCatalogEntry[] = [];
+		const registeredEntries: McpToolCatalogEntry[] = [];
+		const activeEntries: McpToolCatalogEntry[] = [];
 		for (const entry of this.#connections.values()) {
 			const server = config.servers[entry.name];
 			if (server?.config === undefined) continue;
-			if (server.config.exposure === "search" || server.config.exposure === "proxy") continue;
 			if (entry.connection.state !== "connected") continue;
-			entries.push(...(await collectToolCatalog(entry.name, entry.connection, server.config)));
+			const entries = await collectToolCatalog(entry.name, entry.connection, server.config);
+			const policy = computeMcpExposurePolicy(entries, server.config, config.settings);
+			for (const warning of policy.warnings) entry.logger.warn(warning);
+			registeredEntries.push(...policy.registeredEntries);
+			activeEntries.push(...policy.activeEntries);
 		}
-		if (entries.length === 0) return;
-		registerMcpCatalogTools(pi, entries, (message) => createMcpLogger("service").warn(message));
+		if (registeredEntries.length === 0) return;
+		registerMcpCatalogTools(pi, registeredEntries, activeEntries, (message) =>
+			createMcpLogger("service").warn(message),
+		);
 	}
 
 	#serverSnapshot(name: string): McpServerSnapshot {
 		const server = this.#config?.servers[name];
 		const connection = this.getConnection(name);
-		const key = this.#connectionKeysByName.get(name);
-		const entry = key === undefined ? undefined : this.#connections.get(key);
+		const entry = this.#entryForName(name);
 		return {
 			name,
 			configState: server?.state ?? "removed",
@@ -236,6 +280,11 @@ export class McpService {
 			uptimeMs: entry === undefined ? null : Date.now() - entry.createdAtMs,
 			counters: entry?.counters ?? { callCount: 0, errorCount: 0, totalLatencyMs: 0, reconnectCount: 0 },
 		};
+	}
+
+	#entryForName(name: string): McpConnectionEntry | undefined {
+		const key = this.#connectionKeysByName.get(name);
+		return key === undefined ? undefined : this.#connections.get(key);
 	}
 }
 

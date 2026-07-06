@@ -155,7 +155,7 @@ function mergeConfigs(...configs: (RawConfig | undefined)[]): RawConfig {
 }
 
 function normalizeSettings(settings: RawConfig["settings"]): McpSettings {
-	return { toolPrefix: settings?.toolPrefix ?? defaultSettings.toolPrefix, ...settings };
+	return { ...defaultSettings, ...settings };
 }
 
 function addTrustedServers(

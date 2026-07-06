@@ -71,7 +71,7 @@ async function notifyStatus(ctx: ExtensionCommandContext): Promise<void> {
 
 async function renderStatus(title: string): Promise<string> {
 	const service = getMcpService();
-	const rows = await buildMcpStatusRows(service.getServerSnapshots(), (name) => service.getConnection(name));
+	const rows = await buildMcpStatusRows(service.getServerSnapshots(), (name) => service.getServerExposureStatus(name));
 	return formatMcpStatus(title, rows);
 }
 
