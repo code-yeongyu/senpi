@@ -61,6 +61,12 @@ export function safeInterval(
 	return timer;
 }
 
+export function safeDelay(delayMs: number): Promise<void> {
+	return new Promise((resolve) => {
+		setTimeout(resolve, delayMs);
+	});
+}
+
 export function safeOn(
 	emitter: EventEmitter,
 	eventName: string | symbol,

@@ -6,6 +6,7 @@ import type { McpServerConfig } from "./config-schema.ts";
 import { AuthError, ConnectError, TimeoutError } from "./errors.ts";
 import type { McpLogger } from "./log.ts";
 import { delay, reapProcessTree } from "./process-tree.ts";
+import { type McpAsyncErrorSink, safeInterval, safeOn, safeTimer } from "./wrap.ts";
 
 export type McpTransportKind = "stdio" | "http";
 
@@ -15,6 +16,7 @@ export type McpTransportConnection = {
 	readonly transport: Transport;
 	readonly transportKind: McpTransportKind;
 	readonly connectTimeoutMs: number;
+	readonly asyncErrorSink: McpAsyncErrorSink;
 	captureRootPid?(): void;
 	getRootPid(): number | null;
 };
@@ -41,14 +43,22 @@ export function createMcpTransport(options: CreateMcpTransportOptions): McpTrans
 export async function connectMcpTransport(connection: McpTransportConnection): Promise<void> {
 	let timedOut = false;
 	const controller = new AbortController();
-	const captureInterval = setInterval(() => captureRootPid(connection), 25);
-	captureInterval.unref();
-	const timeout = setTimeout(() => {
-		timedOut = true;
-		captureRootPid(connection);
-		controller.abort();
-	}, connection.connectTimeoutMs);
-	timeout.unref();
+	const captureInterval = safeInterval(
+		"transport.captureRootPid",
+		25,
+		() => captureRootPid(connection),
+		connection.asyncErrorSink,
+	);
+	const timeout = safeTimer(
+		"transport.connectTimeout",
+		connection.connectTimeoutMs,
+		() => {
+			timedOut = true;
+			captureRootPid(connection);
+			controller.abort();
+		},
+		connection.asyncErrorSink,
+	);
 	try {
 		await connection.client.connect(connection.transport, {
 			signal: controller.signal,
@@ -103,8 +113,9 @@ function createStdioConnection(options: CreateMcpTransportOptions, connectTimeou
 		env: buildStdioEnv(options),
 		stderr: "pipe",
 	});
+	const asyncErrorSink: McpAsyncErrorSink = { logger: options.logger };
 	pipeStderr(transport, options.logger);
-	return createConnection(options.serverName, "stdio", transport, connectTimeoutMs);
+	return createConnection(options.serverName, "stdio", transport, connectTimeoutMs, asyncErrorSink);
 }
 
 function createHttpConnection(options: CreateMcpTransportOptions, connectTimeoutMs: number): McpTransportConnection {
@@ -129,7 +140,7 @@ function createHttpConnection(options: CreateMcpTransportOptions, connectTimeout
 	const transport = new StreamableHTTPClientTransport(url, {
 		requestInit: Object.keys(headers).length === 0 ? undefined : { headers },
 	});
-	return createConnection(options.serverName, "http", transport, connectTimeoutMs);
+	return createConnection(options.serverName, "http", transport, connectTimeoutMs, { logger: options.logger });
 }
 
 function createConnection(
@@ -137,6 +148,7 @@ function createConnection(
 	transportKind: McpTransportKind,
 	transport: Transport,
 	connectTimeoutMs: number,
+	asyncErrorSink: McpAsyncErrorSink,
 ): McpTransportConnection {
 	let lastRootPid: number | null = null;
 	const readRootPid = (): number | null => (transport instanceof StdioClientTransport ? transport.pid : null);
@@ -148,6 +160,7 @@ function createConnection(
 		captureRootPid,
 		client: new Client({ name: "senpi-mcp-client", version: "0.0.0" }),
 		connectTimeoutMs,
+		asyncErrorSink,
 		getRootPid: () => {
 			captureRootPid();
 			return readRootPid() ?? lastRootPid;
@@ -209,18 +222,34 @@ function buildHeaders(options: CreateMcpTransportOptions): Record<string, string
 
 function pipeStderr(transport: StdioClientTransport, logger: McpLogger): void {
 	let pending = "";
-	transport.stderr?.on("data", (chunk: Buffer | string) => {
-		pending += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk;
-		const lines = pending.split(/\r?\n/);
-		pending = lines.pop() ?? "";
-		for (const line of lines) {
-			if (line.length > 0) logger.stderr(line);
-		}
-	});
-	transport.stderr?.on("end", () => {
-		if (pending.length > 0) logger.stderr(pending);
-		pending = "";
-	});
+	const stderr = transport.stderr;
+	if (stderr === undefined || stderr === null) return;
+	const sink: McpAsyncErrorSink = { logger };
+	safeOn(
+		stderr,
+		"data",
+		"transport.stderr.data",
+		(chunk) => {
+			if (!Buffer.isBuffer(chunk) && typeof chunk !== "string") return;
+			pending += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk;
+			const lines = pending.split(/\r?\n/);
+			pending = lines.pop() ?? "";
+			for (const line of lines) {
+				if (line.length > 0) logger.stderr(line);
+			}
+		},
+		sink,
+	);
+	safeOn(
+		stderr,
+		"end",
+		"transport.stderr.end",
+		() => {
+			if (pending.length > 0) logger.stderr(pending);
+			pending = "";
+		},
+		sink,
+	);
 }
 
 async function closeClientAndTransport(connection: McpTransportConnection): Promise<void> {

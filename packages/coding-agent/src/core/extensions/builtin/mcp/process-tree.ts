@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { safeDelay } from "./wrap.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -45,7 +46,7 @@ export function isProcessAlive(pid: number): boolean {
 }
 
 export function delay(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
+	return safeDelay(ms);
 }
 
 async function childPids(parentPid: number): Promise<number[]> {
