@@ -218,6 +218,21 @@ check ━━━━━━━━━━━━━━━━━━━━━━━━�
 ## Focused timeout tests (verbose manual/auxiliary scenario proof)
 $ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/timeouts.test.ts --reporter verbose
 
+## Task 12 append: subprocess timeout cleanup rerun
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/kernels/rb/subprocess-kernel.test.ts test/rb-kernel.test.ts
+
+Result: passed.
+
+Summary:
+Test Files  2 passed (2)
+Tests       9 passed (9)
+
+$ pgrep -fl 'runner\.rb' || true
+
+Result: no output after focused live Ruby cleanup test.
+
+Evidence detail is recorded in .omo/evidence/task-12-fix-subprocess-cleanup.txt.
+
 ## git diff --check scoped files
 $ git diff --check -- packages/senpi-codemode/src/timeouts packages/senpi-codemode/test/timeouts.test.ts .omo/evidence/task-11-senpi-codemode.txt
 .omo/evidence/task-11-senpi-codemode.txt:51: trailing whitespace.

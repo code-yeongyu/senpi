@@ -15,9 +15,35 @@ function hasRuby(): boolean {
 	}
 }
 
+function runnerProcessIds(runnerPath: string): Set<string> {
+	try {
+		const output = execFileSync("pgrep", ["-fl", escapeRegExp(runnerPath)], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+			timeout: 3_000,
+		});
+		return new Set(
+			output
+				.trim()
+				.split("\n")
+				.filter(Boolean)
+				.map((line) => line.split(/\s+/u)[0])
+				.filter((pid) => pid !== undefined),
+		);
+	} catch {
+		return new Set();
+	}
+}
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
 describe("RubyKernel", () => {
+	const runnerPath = join(import.meta.dirname, "..", "src", "kernels", "rb", "runner.rb");
+
 	it("routes tool calls through the authenticated loopback bridge contract", async () => {
-		const runner = await readFile(join(import.meta.dirname, "..", "src", "kernels", "rb", "runner.rb"), "utf8");
+		const runner = await readFile(runnerPath, "utf8");
 		expect(runner).toContain('URI("http://127.0.0.1:#{port}/call")');
 		expect(runner).toContain('request["authorization"] = "Bearer #{token}"');
 		expect(runner).toContain('"callId" => call_id');
@@ -76,4 +102,40 @@ describe("RubyKernel", () => {
 			}
 		},
 	);
+
+	it.skipIf(!hasRuby())("does not leave runner.rb alive after a timeout restart and close", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-rb-kernel-cleanup-"));
+		const server = await startBridgeServer({
+			token: "live-token",
+			onCall: async () => "unexpected",
+			onEmit: async () => {},
+			onCompletion: async () => {
+				throw new Error("unexpected completion");
+			},
+		});
+		const before = runnerProcessIds(runnerPath);
+		try {
+			const kernel = RubyKernel.start({
+				cwd: root,
+				sessionId: "rb-cleanup",
+				connection: { port: server.port, token: server.token },
+			});
+			try {
+				const timedOut = await kernel.run({ cellId: "timeout", code: "sleep 10", timeoutMs: 50 });
+				expect(timedOut).toMatchObject({
+					ok: false,
+					error: { message: "Cell timed out after 50ms" },
+				});
+			} finally {
+				await kernel.close();
+			}
+
+			const after = runnerProcessIds(runnerPath);
+			for (const pid of before) after.delete(pid);
+			expect([...after]).toEqual([]);
+		} finally {
+			await server.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
 });

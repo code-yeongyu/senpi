@@ -14,6 +14,7 @@ export type KernelResult = Extract<KernelToHostMessage, { type: "result" }>;
 export type ToolCallMessage = Extract<KernelToHostMessage, { type: "tool-call" }>;
 
 export interface SubprocessLike {
+	readonly pid?: number;
 	readonly stdin: { write(chunk: string): unknown };
 	readonly stdout: NodeJS.ReadableStream;
 	readonly stderr: NodeJS.ReadableStream;
@@ -42,6 +43,9 @@ export class SubprocessKernel {
 	private process!: SubprocessLike;
 	private readonly options: SubprocessKernelOptions;
 	private readonly onMessage?: (message: KernelToHostMessage) => void;
+	private readonly processes = new Set<SubprocessLike>();
+	private readonly exitPromises = new WeakMap<SubprocessLike, Promise<void>>();
+	private readonly terminatingProcesses = new WeakSet<SubprocessLike>();
 	private readonly pendingRuns = new Map<
 		string,
 		{ readonly resolve: (message: KernelResult) => void; readonly timer: NodeJS.Timeout | null }
@@ -107,11 +111,19 @@ export class SubprocessKernel {
 		if (this.closed) return;
 		this.closed = true;
 		this.send({ type: "close" });
-		this.process.kill("SIGTERM");
+		await Promise.all([...this.processes].map((process) => this.terminateProcess(process)));
 	}
 
 	private attachReaders(): void {
 		const activeProcess = this.process;
+		this.processes.add(activeProcess);
+		const exitPromise = new Promise<void>((resolve) => {
+			activeProcess.once("exit", () => {
+				this.processes.delete(activeProcess);
+				resolve();
+			});
+		});
+		this.exitPromises.set(activeProcess, exitPromise);
 		const stdout = createInterface({ input: this.process.stdout });
 		stdout.on("line", (line) => {
 			if (this.process !== activeProcess) return;
@@ -167,7 +179,7 @@ export class SubprocessKernel {
 		const activeProcess = this.process;
 		this.retiringProcesses.add(activeProcess);
 		this.process = this.spawnProcess();
-		activeProcess.kill("SIGTERM");
+		void this.terminateProcess(activeProcess);
 	}
 
 	private spawnProcess(): SubprocessLike {
@@ -179,6 +191,40 @@ export class SubprocessKernel {
 		this.send({ type: "init", sessionId: this.options.sessionId, connection: this.options.connection });
 		return child;
 	}
+
+	private async terminateProcess(process: SubprocessLike): Promise<void> {
+		if (!this.terminatingProcesses.has(process)) {
+			this.terminatingProcesses.add(process);
+			this.killProcess(process, "SIGTERM");
+		}
+		const exitPromise = this.exitPromises.get(process);
+		if (!exitPromise) return;
+		let forceTimer: NodeJS.Timeout | undefined;
+		try {
+			await Promise.race([
+				exitPromise,
+				new Promise<void>((resolve) => {
+					forceTimer = setTimeout(() => {
+						this.killProcess(process, "SIGKILL");
+						resolve();
+					}, 1_500);
+				}),
+			]);
+			await exitPromise;
+		} finally {
+			if (forceTimer) clearTimeout(forceTimer);
+		}
+	}
+
+	private killProcess(process: SubprocessLike, signal: NodeJS.Signals): void {
+		if (process.pid !== undefined) {
+			try {
+				globalThis.process.kill(-process.pid, signal);
+				return;
+			} catch {}
+		}
+		process.kill(signal);
+	}
 }
 
 function defaultSpawn(
@@ -188,6 +234,7 @@ function defaultSpawn(
 ): SubprocessLike {
 	return nodeSpawn(command, [...args], {
 		cwd: options.cwd,
+		detached: true,
 		env: options.env,
 		stdio: "pipe",
 	}) as ChildProcessWithoutNullStreams;

@@ -14,6 +14,7 @@ class FakeProc extends EventEmitter {
 
 	kill(signal?: NodeJS.Signals): boolean {
 		this.killedSignals.push(signal ?? "SIGTERM");
+		setImmediate(() => this.emit("exit", null, signal ?? "SIGTERM"));
 		return true;
 	}
 }
@@ -65,6 +66,27 @@ class FakePersistentRuntime extends EventEmitter {
 		for (const timer of this.timers) clearTimeout(timer);
 		this.emit("exit", null, signal ?? "SIGTERM");
 		return true;
+	}
+}
+
+class FakeDelayedExitRuntime extends EventEmitter {
+	readonly stdout = new PassThrough();
+	readonly stderr = new PassThrough();
+	readonly killedSignals: string[] = [];
+	readonly stdin = {
+		writes: [] as string[],
+		write: (chunk: string) => {
+			this.stdin.writes.push(chunk);
+		},
+	};
+
+	kill(signal?: NodeJS.Signals): boolean {
+		this.killedSignals.push(signal ?? "SIGTERM");
+		return true;
+	}
+
+	exitNow(signal: NodeJS.Signals = "SIGTERM"): void {
+		this.emit("exit", null, signal);
 	}
 }
 
@@ -187,5 +209,40 @@ describe("SubprocessKernel", () => {
 		expect(afterTimeout).toMatchObject({ ok: true, valueRepr: "nil" });
 		expect(procs).toHaveLength(0);
 		await kernel.close();
+	});
+
+	it("waits for timed-out and restarted subprocesses to exit before close resolves", async () => {
+		const first = new FakeDelayedExitRuntime();
+		const second = new FakeDelayedExitRuntime();
+		const procs = [first, second];
+		const kernel = new SubprocessKernel({
+			command: "ruby",
+			args: ["runner.rb"],
+			spawn: () => {
+				const proc = procs.shift();
+				if (!proc) throw new Error("unexpected spawn");
+				return proc;
+			},
+			sessionId: "session-1",
+			connection: { port: 39001, token: "secret-token" },
+		});
+
+		await kernel.run({ cellId: "timeout", code: "sleep-then-mutate", timeoutMs: 5 });
+		let closed = false;
+		const closePromise = kernel.close().then(() => {
+			closed = true;
+		});
+
+		await new Promise((resolve) => setImmediate(resolve));
+
+		expect(closed).toBe(false);
+		expect(first.killedSignals).toEqual(["SIGTERM"]);
+		expect(second.killedSignals).toEqual(["SIGTERM"]);
+		first.exitNow();
+		await new Promise((resolve) => setImmediate(resolve));
+		expect(closed).toBe(false);
+		second.exitNow();
+		await closePromise;
+		expect(closed).toBe(true);
 	});
 });
