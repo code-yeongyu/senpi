@@ -33,7 +33,7 @@ async function handleMcpCommand(rawArgs: string, ctx: ExtensionCommandContext, p
 		return;
 	}
 	if (subcommand === "add") {
-		await addServer(args.slice(1), ctx);
+		await addServer(args.slice(1), ctx, pi);
 		return;
 	}
 	if (subcommand === "enable" || subcommand === "disable") {
@@ -75,7 +75,11 @@ async function renderStatus(title: string): Promise<string> {
 	return formatMcpStatus(title, rows);
 }
 
-async function addServer(args: readonly string[], ctx: ExtensionCommandContext): Promise<void> {
+async function addServer(
+	args: readonly string[],
+	ctx: ExtensionCommandContext,
+	pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
+): Promise<void> {
 	const [name, ...endpoint] = args;
 	if (!name || endpoint.length === 0) {
 		ctx.ui.notify("Usage: /mcp add <name> <command...|url>", "error");
@@ -92,6 +96,7 @@ async function addServer(args: readonly string[], ctx: ExtensionCommandContext):
 		return;
 	}
 	addGlobalMcpServer(name, server);
+	await getMcpService().attachSession({ type: "session_start", reason: "reload" }, ctx, pi);
 	ctx.ui.notify(`Added MCP server ${name}`);
 }
 

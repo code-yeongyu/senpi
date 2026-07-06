@@ -21,6 +21,7 @@ import { theme } from "../../src/modes/interactive/theme/theme.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 import { toolResultTexts } from "./fixtures/register-call.ts";
 import { cleanupRoots, makeRoot, setConfig, stdioServer, type TestRoot } from "./fixtures/service-lifecycle.ts";
+import { stdioFixtureCommand } from "./fixtures/spawn-fixture.ts";
 
 const cleanupTasks: Array<() => Promise<void>> = [];
 const harnesses: Harness[] = [];
@@ -93,6 +94,36 @@ describe("/mcp command suite", () => {
 		const afterCancel = readFileSync(join(root.agentDir, "mcp.json"), "utf8");
 		expect(afterCancel).toBe(`${JSON.stringify(written, null, 2)}\n`);
 		expect(lastNotification(noUi)?.message).toBe("MCP add cancelled");
+	});
+
+	it("adds and refreshes provider-visible MCP tools from the /mcp add user command path", async () => {
+		makeCommandRoot("add-active-tools");
+		const providerToolNames: string[][] = [];
+		const ui = createUi({ confirmResults: [true] });
+		const harness = await createHarness({
+			extensionFactories: [mcpExtension],
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({ uiContext: ui, mode: "tui" });
+
+		const fixture = stdioFixtureCommand();
+		const addArgs = [fixture.command, ...fixture.args, "--tools", "2"].map((part) => JSON.stringify(part)).join(" ");
+		await harness.session.prompt(`/mcp add fx ${addArgs}`);
+		await harness.session.prompt("/mcp status");
+
+		harness.setResponses([
+			(context) => {
+				providerToolNames.push((context.tools ?? []).map((toolInfo) => toolInfo.name).sort());
+				return fauxAssistantMessage(fauxToolCall("mcp_fx_tool_2", { value: "added" }), { stopReason: "toolUse" });
+			},
+			fauxAssistantMessage("done"),
+		]);
+		await harness.session.prompt("call added MCP tool 2");
+
+		expect(notification(ui, "Added MCP server fx")?.message).toBe("Added MCP server fx");
+		expect(notification(ui, "MCP status")?.message).toContain("fx enabled state=connected");
+		expect(providerToolNames[0]).toEqual(expect.arrayContaining(["mcp_fx_tool_1", "mcp_fx_tool_2"]));
+		expect(toolResultTexts(harness, "mcp_fx_tool_2")).toEqual(["fixture tool_2 value=added mode=alpha"]);
 	});
 
 	it("enables, disables, tails logs, and returns helpful unknown-server errors", async () => {

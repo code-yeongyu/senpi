@@ -1,0 +1,155 @@
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+···x····
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/mcp/commands.test.ts > /mcp command suite > adds and refreshes provider-visible MCP tools from the /mcp add user command path
+AssertionError: expected 'MCP status' to contain 'fx enabled state=connected'
+
+Expected: "fx enabled state=connected"
+Received: "MCP status"
+
+ ❯ test/mcp/commands.test.ts:124:51
+    122|
+    123|   expect(notification(ui, "Added MCP server fx")?.message).toBe("Added…
+    124|   expect(notification(ui, "MCP status")?.message).toContain("fx enable…
+       |                                                   ^
+    125|   expect(providerToolNames[0]).toEqual(expect.arrayContaining(["mcp_fx…
+    126|   expect(toolResultTexts(harness, "mcp_fx_tool_2")).toEqual(["fixture …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 7 passed (8)
+   Start at  23:54:55
+   Duration  7.98s (transform 1.09s, setup 10ms, import 1.74s, tests 6.15s, environment 0ms)
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+········
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  23:55:27
+   Duration  8.55s (transform 1.07s, setup 10ms, import 1.72s, tests 6.73s, environment 0ms)
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+········
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  23:55:51
+   Duration  8.65s (transform 1.12s, setup 11ms, import 1.79s, tests 6.77s, environment 0ms)
+
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1428 files in 732ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 30ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	13.144s
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/bridge/attachqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/extui	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/extui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+
+## Evidence summary: W1 /mcp add refresh blocker
+
+RED:
+- Scenario: user-surface `/mcp add` regression before runtime fix.
+- Invocation: `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/commands.test.ts`
+- Observable: new test failed because `/mcp status` notification was only `MCP status`, proving the add command did not refresh active MCP service/tool state.
+- Artifact: `.omo/evidence/task-13-w1-add-refresh-fix-senpi-mcp-plugin.log`
+
+GREEN:
+- Scenario: same focused `/mcp add` regression after implementation.
+- Invocation: `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/commands.test.ts`
+- Observable: `test/mcp/commands.test.ts` passed, 8 tests passed.
+- Artifact: `.omo/evidence/task-13-w1-add-refresh-fix-senpi-mcp-plugin.log`
+
+Static check:
+- Scenario: full repository check after coding-agent source/test changes.
+- Invocation: `npm run check`
+- Observable: biome, pinned deps, import checks, shrinkwrap/install-lock checks, tsgo, browser smoke, web-ui check, and neo build/vet/test passed.
+- Artifact: `.omo/evidence/task-13-w1-add-refresh-fix-senpi-mcp-plugin.log`
+
+Manual QA:
+- Scenario: isolated session starts with no MCP server, submits `/mcp add fx <stdio fixture --tools 2>`, then `/mcp status`, then a provider turn calls `mcp_fx_tool_2`.
+- Invocation: `npx tsx local-ignore/qa-evidence/20260706-mcp-w1-add-fix/mcp-add-refresh-driver.mts`
+- Observable: status shows `fx enabled state=connected ... tools=2`; provider request tool list includes `mcp_fx_tool_1` and `mcp_fx_tool_2`; tool result is `fixture tool_2 value=manual mode=alpha`; real auth unchanged.
+- Artifacts: `local-ignore/qa-evidence/20260706-mcp-w1-add-fix/driver-run.txt`, `command-transcript.json`, `provider-requests.json`, `events.json`, `summary.json`, `summary-extract.txt`
+
+No direct service attach in manual QA driver:
+- Invocation: `rg 'getMcpService\\(\\)\\.attachSession' local-ignore/qa-evidence/20260706-mcp-w1-add-fix/mcp-add-refresh-driver.mts`
+- Observable: no matches.
+- Artifact: `local-ignore/qa-evidence/20260706-mcp-w1-add-fix/no-direct-attach-grep.txt`
+
+Cleanup:
+- Observable: sandbox removed, real auth unchanged, and no matching manual QA sandbox/fixture/driver processes remain.
+- Artifacts: `local-ignore/qa-evidence/20260706-mcp-w1-add-fix/cleanup-receipt.json`, `orphan-process-scan.txt`
