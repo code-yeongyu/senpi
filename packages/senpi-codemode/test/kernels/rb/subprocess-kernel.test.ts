@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import type { KernelToHostMessage } from "../../../src/bridge/protocol.ts";
+import { decodeBridgeFrame } from "../../../src/bridge/protocol.ts";
 import type { SubprocessSpawn } from "../../../src/kernels/shared/subprocess-kernel.ts";
 import { SubprocessKernel } from "../../../src/kernels/shared/subprocess-kernel.ts";
 
@@ -13,6 +14,56 @@ class FakeProc extends EventEmitter {
 
 	kill(signal?: NodeJS.Signals): boolean {
 		this.killedSignals.push(signal ?? "SIGTERM");
+		return true;
+	}
+}
+
+class FakePersistentRuntime extends EventEmitter {
+	readonly stdout = new PassThrough();
+	readonly stderr = new PassThrough();
+	readonly killedSignals: string[] = [];
+	private readonly timers: NodeJS.Timeout[] = [];
+	private state: number | undefined;
+
+	readonly stdin = {
+		writes: [] as string[],
+		write: (chunk: string) => {
+			this.stdin.writes.push(chunk);
+			const decoded = decodeBridgeFrame(chunk);
+			if (!decoded.ok) return;
+			if (decoded.message.type !== "run") return;
+			const message = decoded.message;
+			if (message.code === "sleep-then-mutate") {
+				this.timers.push(
+					setTimeout(() => {
+						this.state = 99;
+						this.stdout.write(
+							`${JSON.stringify({ type: "result", cellId: message.cellId, ok: true, durationMs: 30 })}\n`,
+						);
+					}, 30),
+				);
+				return;
+			}
+			if (message.code === "read-state") {
+				setImmediate(() => {
+					this.stdout.write(
+						`${JSON.stringify({
+							type: "result",
+							cellId: message.cellId,
+							ok: true,
+							valueRepr: this.state === undefined ? "nil" : String(this.state),
+							durationMs: 1,
+						})}\n`,
+					);
+				});
+			}
+		},
+	};
+
+	kill(signal?: NodeJS.Signals): boolean {
+		this.killedSignals.push(signal ?? "SIGTERM");
+		for (const timer of this.timers) clearTimeout(timer);
+		this.emit("exit", null, signal ?? "SIGTERM");
 		return true;
 	}
 }
@@ -104,6 +155,37 @@ describe("SubprocessKernel", () => {
 		expect(first.killedSignals).toEqual(["SIGTERM"]);
 		expect(second.stdin.writes).toHaveLength(1);
 		expect(JSON.parse(second.stdin.writes[0] ?? "{}")).toMatchObject({ type: "init", sessionId: "session-1" });
+		await kernel.close();
+	});
+
+	it("kills timed-out work before it can mutate future persistent state", async () => {
+		const first = new FakePersistentRuntime();
+		const second = new FakePersistentRuntime();
+		const procs = [first, second];
+		const kernel = new SubprocessKernel({
+			command: "ruby",
+			args: ["runner.rb"],
+			spawn: () => {
+				const proc = procs.shift();
+				if (!proc) throw new Error("unexpected spawn");
+				return proc;
+			},
+			sessionId: "session-1",
+			connection: { port: 39001, token: "secret-token" },
+		});
+
+		const timedOut = await kernel.run({ cellId: "timeout", code: "sleep-then-mutate", timeoutMs: 5 });
+		expect(timedOut).toMatchObject({
+			ok: false,
+			error: { message: "Cell timed out after 5ms" },
+		});
+		expect(first.killedSignals).toEqual(["SIGTERM"]);
+
+		await new Promise((resolve) => setTimeout(resolve, 40));
+		const afterTimeout = await kernel.run({ cellId: "after-timeout", code: "read-state", timeoutMs: 1_000 });
+
+		expect(afterTimeout).toMatchObject({ ok: true, valueRepr: "nil" });
+		expect(procs).toHaveLength(0);
 		await kernel.close();
 	});
 });

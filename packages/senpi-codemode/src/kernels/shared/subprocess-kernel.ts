@@ -46,6 +46,7 @@ export class SubprocessKernel {
 		string,
 		{ readonly resolve: (message: KernelResult) => void; readonly timer: NodeJS.Timeout | null }
 	>();
+	private readonly retiringProcesses = new WeakSet<SubprocessLike>();
 	private readonly pendingCalls: ToolCallMessage[] = [];
 	private readonly callWaiters: ((message: ToolCallMessage) => void)[] = [];
 	private closed = false;
@@ -79,6 +80,7 @@ export class SubprocessKernel {
 								error: { message: `Cell timed out after ${timeoutMs}ms` },
 								durationMs: timeoutMs,
 							});
+							this.restartProcess();
 						}, timeoutMs);
 			this.pendingRuns.set(input.cellId, { resolve, timer });
 		});
@@ -95,11 +97,10 @@ export class SubprocessKernel {
 	}
 
 	async reset(): Promise<void> {
-		this.process.kill("SIGTERM");
+		this.restartProcess();
 		this.pendingRuns.clear();
 		this.pendingCalls.length = 0;
 		this.callWaiters.length = 0;
-		this.process = this.spawnProcess();
 	}
 
 	async close(): Promise<void> {
@@ -112,11 +113,16 @@ export class SubprocessKernel {
 	private attachReaders(): void {
 		const activeProcess = this.process;
 		const stdout = createInterface({ input: this.process.stdout });
-		stdout.on("line", (line) => this.handleLine(`${line}\n`));
+		stdout.on("line", (line) => {
+			if (this.process !== activeProcess) return;
+			this.handleLine(`${line}\n`);
+		});
 		this.process.stderr.on("data", (chunk) => {
+			if (this.process !== activeProcess) return;
 			this.handleMessage({ type: "text", stream: "stderr", data: String(chunk) });
 		});
 		this.process.once("exit", (code, signal) => {
+			if (this.retiringProcesses.has(activeProcess)) return;
 			if (this.process !== activeProcess) return;
 			this.closed = true;
 			const error = { message: `Kernel exited before completing the cell (${signal ?? code ?? "unknown"})` };
@@ -155,6 +161,13 @@ export class SubprocessKernel {
 
 	private send(message: HostToKernelMessage): void {
 		this.process.stdin.write(encodeBridgeFrame(message));
+	}
+
+	private restartProcess(): void {
+		const activeProcess = this.process;
+		this.retiringProcesses.add(activeProcess);
+		this.process = this.spawnProcess();
+		activeProcess.kill("SIGTERM");
 	}
 
 	private spawnProcess(): SubprocessLike {

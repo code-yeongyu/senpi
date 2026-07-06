@@ -1,0 +1,36 @@
+Task 12: fix subprocess timeout mutation blocker
+Date: 2026-07-06
+
+Scope changed:
+- packages/senpi-codemode/src/kernels/shared/subprocess-kernel.ts
+- packages/senpi-codemode/test/kernels/rb/subprocess-kernel.test.ts
+
+Red test captured:
+- Added deterministic FakePersistentRuntime regression for Ruby-style subprocess state:
+  "sleep-then-mutate" times out, old runtime would set state to 99 later, next "read-state" must still return nil.
+- Pre-fix focused run failed with:
+  AssertionError: expected [] to deeply equal [ 'SIGTERM' ]
+  This proved the timed-out subprocess was not killed.
+
+Fix:
+- Timeout path deletes pending run, resolves timeout error, then restarts the subprocess.
+- Restart marks the old subprocess as retired, spawns a fresh subprocess, and sends SIGTERM to the retired subprocess.
+- stdout/stderr/exit handlers ignore retired subprocesses so stale output and expected exits cannot affect the active kernel.
+- reset() now uses the same restart path.
+
+Verification:
+- Command:
+  cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/kernels/rb/subprocess-kernel.test.ts
+  Result: pass, 1 file, 4 tests.
+- Command:
+  npm run check
+  Result: pass.
+- Cleanup receipt:
+  pgrep -fl 'senpi-codemode/src/kernels/rb/runner.rb|packages/senpi-codemode/src/kernels/rb/runner.rb|runner.rb' || true
+  Result: no output, no matching orphan runner process.
+- Scoped LOC:
+  git diff --numstat -- packages/senpi-codemode/src/kernels/shared/subprocess-kernel.ts packages/senpi-codemode/test/kernels/rb/subprocess-kernel.test.ts
+  Result: 16 add / 3 del in shared kernel; 82 add / 0 del in regression test; total changed LOC 101 <= 250.
+
+Notes:
+- A live rb-kernel.test.ts run is currently not a reliable signal in this dirty shared worktree; it times out in the existing tool-call test. The required timeout mutation coverage is provided by the deterministic subprocess regression.
