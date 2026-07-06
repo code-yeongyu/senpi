@@ -16,7 +16,7 @@ import { createRegistry, type MethodRegistry } from "./rpc/registry.ts";
 import { ApprovalBridge, createAppServerUIContext } from "./server/approvals.ts";
 import { NotificationRouter } from "./server/notifications.ts";
 import type { ServerCore } from "./server/server-core.ts";
-import { registerThreadLifecycleHandlers } from "./threads/handlers.ts";
+import { registerThreadLifecycleHandlers, type ThreadLifecycleController } from "./threads/handlers.ts";
 import { ThreadNotFoundError, ThreadRegistry } from "./threads/registry.ts";
 import { TurnLog } from "./threads/turn-log.ts";
 import { createTurnEngine, type TurnEngineApi } from "./threads/turns.ts";
@@ -117,6 +117,7 @@ export async function runAppServerMode(options: AppServerModeOptions): Promise<v
 		await withShutdownDeadline(shutdownTransports({ stdio, unix, websocket, reason }), 5_000);
 		process.exitCode = 0;
 	} finally {
+		runtime.dispose();
 		process.off("SIGINT", handleSignal);
 		process.off("SIGTERM", handleSignal);
 	}
@@ -127,6 +128,7 @@ type AppServerRuntime = {
 	readonly threads: ThreadRegistry;
 	readonly turnLog: TurnLog;
 	readonly turns: TurnEngineApi;
+	readonly dispose: () => void;
 };
 
 function createAppServerRuntime(requestShutdown: (reason: string) => void): AppServerRuntime {
@@ -146,7 +148,10 @@ function createAppServerRuntime(requestShutdown: (reason: string) => void): AppS
 		notifications.toThread(threadId, message);
 		return subscriberCount;
 	});
-	const core = createRoutedServerCore(registry, notifications, approvals);
+	let lifecycle: ThreadLifecycleController | undefined;
+	const core = createRoutedServerCore(registry, notifications, approvals, (threadId) => {
+		lifecycle?.scheduleIdleUnloadForThread(threadId);
+	});
 	threads = new ThreadRegistry({
 		agentDir: getAgentDir(),
 		sessionDir: process.env[ENV_SESSION_DIR],
@@ -161,15 +166,18 @@ function createAppServerRuntime(requestShutdown: (reason: string) => void): AppS
 	});
 	registerTurnHandlers(registry, turns);
 
-	registerThreadLifecycleHandlers(registry, {
+	lifecycle = registerThreadLifecycleHandlers(registry, {
 		threads,
 		turnLog,
 		notifications,
 		idleUnloadMinutes: 30,
+		replayPendingApprovals: (threadId) => {
+			approvals.replayPendingForThread(threadId);
+		},
 	});
 	registerLoadedThreadObjectListHandler(registry, threads);
 
-	return { core, threads, turnLog, turns };
+	return { core, threads, turnLog, turns, dispose: () => lifecycle?.dispose() };
 }
 
 async function createBoundAppServerSession(

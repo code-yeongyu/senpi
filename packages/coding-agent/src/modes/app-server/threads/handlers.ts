@@ -31,14 +31,22 @@ type RuntimeResponseOptions = {
 
 const DEFAULT_IDLE_UNLOAD_MINUTES = 30;
 
+export interface ThreadLifecycleController {
+	/** Schedules the idle-unload countdown for a thread whose last subscriber vanished (e.g. socket close). */
+	scheduleIdleUnloadForThread(threadId: string): void;
+	/** Clears every pending idle-unload timer; used during server shutdown. */
+	dispose(): void;
+}
+
 export function registerThreadLifecycleHandlers(
 	registry: MethodRegistry,
 	options: ThreadLifecycleHandlersOptions,
-): void {
+): ThreadLifecycleController {
 	const handlers = new ThreadLifecycleHandlers(options);
 	for (const [method, handler] of handlers.registrations()) {
 		registry.register(method, { handler, scope: method.startsWith("thread/") ? "thread" : "global" });
 	}
+	return handlers;
 }
 
 class ThreadLifecycleHandlers {
@@ -156,6 +164,7 @@ class ThreadLifecycleHandlers {
 		this.clearIdleTimer(threadId);
 		await this.archiveState.markArchived(this.threads.buildThread(entry));
 		this.threads.unloadThread(threadId);
+		this.notifications.removeThread(threadId);
 		this.notifications.broadcast({ method: "thread/archived", params: { threadId } });
 		return {};
 	}
@@ -166,6 +175,7 @@ class ThreadLifecycleHandlers {
 		this.clearIdleTimer(threadId);
 		await this.archiveState.clearArchived(threadId);
 		await this.threads.deleteThread(threadId);
+		this.notifications.removeThread(threadId);
 		this.notifications.broadcast({ method: "thread/deleted", params: { threadId } });
 		return {};
 	}
@@ -189,6 +199,26 @@ class ThreadLifecycleHandlers {
 		this.notifications.unsubscribe(threadId, id);
 		this.scheduleIdleUnload(entry);
 		return { status: "unsubscribed" };
+	}
+
+	scheduleIdleUnloadForThread(threadId: string): void {
+		let entry: ThreadEntry;
+		try {
+			entry = this.threads.getLoadedThread(threadId);
+		} catch (error) {
+			if (!(error instanceof ThreadNotFoundError)) {
+				throw error;
+			}
+			return;
+		}
+		this.scheduleIdleUnload(entry);
+	}
+
+	dispose(): void {
+		for (const timer of this.idleTimers.values()) {
+			clearTimeout(timer);
+		}
+		this.idleTimers.clear();
 	}
 
 	private runtimeResponse(
@@ -231,6 +261,9 @@ class ThreadLifecycleHandlers {
 			return;
 		}
 		const timer = setTimeout(() => this.unloadIfIdle(entry.id), this.idleUnloadMs);
+		// An idle-unload countdown must never keep the process alive on its own
+		// (graceful shutdown relies on the event loop draining).
+		timer.unref();
 		this.idleTimers.set(entry.id, timer);
 	}
 
@@ -249,6 +282,7 @@ class ThreadLifecycleHandlers {
 			return;
 		}
 		this.threads.unloadThread(threadId);
+		this.notifications.removeThread(threadId);
 		this.notifications.broadcast({ method: "thread/closed", params: { threadId } });
 		this.notifications.broadcast({
 			method: "thread/status/changed",

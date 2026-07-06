@@ -66,6 +66,25 @@ export class ApprovalBridge {
 		return true;
 	}
 
+	/**
+	 * Re-sends every pending approval request for a thread to its current
+	 * subscribers. Wired to thread subscription (resume/start) so a client that
+	 * reconnects mid-approval receives the blocking request again instead of the
+	 * turn hanging forever with nobody able to answer. Duplicate deliveries are
+	 * safe: responses resolve first-responder-wins and late ones are ignored.
+	 */
+	replayPendingForThread(threadId: string): number {
+		let replayed = 0;
+		for (const pending of this.pending.values()) {
+			if (pending.threadId !== threadId) {
+				continue;
+			}
+			this.sendToThreadSubscribers(threadId, pending.request);
+			replayed += 1;
+		}
+		return replayed;
+	}
+
 	cancelPendingForThread(threadId: string): number {
 		let cancelled = 0;
 		for (const [requestId, pending] of Array.from(this.pending.entries())) {

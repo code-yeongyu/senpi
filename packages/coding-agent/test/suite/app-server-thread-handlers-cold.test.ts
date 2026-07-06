@@ -125,4 +125,46 @@ describe("app-server thread cold lifecycle handlers", () => {
 			{ method: "thread/status/changed", params: { threadId, status: { type: "notLoaded" } } },
 		]);
 	});
+
+	it("unloads a thread whose last subscriber vanished on transport close", async () => {
+		vi.useFakeTimers();
+		// Given: a started thread whose only subscriber's socket drops without thread/unsubscribe.
+		const { connection, registry, root, notifications, lifecycle, threads } = await createHarness();
+		const observer = new FakeConnection("conn-observer");
+		notifications.addConnection(observer);
+		const started = await registry.dispatch(connection, { id: 9, method: "thread/start", params: { cwd: root } });
+		const threadId = stringAt(objectAt(responseResult(started), "thread"), "id");
+		observer.received.length = 0;
+
+		// When: the transport reports the closed connection and the idle delay elapses.
+		const emptied = notifications.removeConnection(connection.id);
+		for (const emptiedThreadId of emptied) {
+			lifecycle.scheduleIdleUnloadForThread(emptiedThreadId);
+		}
+		await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+		// Then: the thread is announced closed and no longer loaded.
+		expect(emptied).toEqual([threadId]);
+		expect(observer.received).toEqual([
+			{ method: "thread/closed", params: { threadId } },
+			{ method: "thread/status/changed", params: { threadId, status: { type: "notLoaded" } } },
+		]);
+		expect(threads.listLoaded()).toEqual([]);
+	});
+
+	it("clears pending idle-unload timers on dispose", async () => {
+		vi.useFakeTimers();
+		// Given: a thread with a scheduled idle unload.
+		const { connection, registry, root, lifecycle, threads } = await createHarness();
+		const started = await registry.dispatch(connection, { id: 9, method: "thread/start", params: { cwd: root } });
+		const threadId = stringAt(objectAt(responseResult(started), "thread"), "id");
+		await registry.dispatch(connection, { id: 10, method: "thread/unsubscribe", params: { threadId } });
+
+		// When: the server shuts down before the timer fires.
+		lifecycle.dispose();
+		await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+		// Then: no unload runs after disposal.
+		expect(threads.listLoaded().map((thread) => thread.id)).toEqual([threadId]);
+	});
 });

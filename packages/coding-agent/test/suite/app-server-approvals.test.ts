@@ -200,6 +200,38 @@ describe("app-server approval bridge", () => {
 		await expect(second).resolves.toMatchObject({ allow: true });
 	});
 
+	it("replays pending approvals to thread subscribers without duplicating resolved ones", async () => {
+		// Given: one pending and one already-resolved approval on the same thread.
+		const sent: SentMessage[] = [];
+		const bridge = new ApprovalBridge(createSender(sent, 1));
+		const pending = bridge.requestApproval("thread-a", "commandExecution", {
+			turnId: "turn-1",
+			itemId: "item-1",
+			toolName: "bash",
+			command: "pending",
+		});
+		const resolved = bridge.requestApproval("thread-a", "commandExecution", {
+			turnId: "turn-1",
+			itemId: "item-2",
+			toolName: "bash",
+			command: "resolved",
+		});
+		bridge.resolveResponse({ id: 1, result: { decision: "decline" } });
+		await expect(resolved).resolves.toMatchObject({ allow: false });
+		sent.length = 0;
+
+		// When: a client (re)subscribes to the thread and pending approvals replay.
+		const replayed = bridge.replayPendingForThread("thread-a");
+
+		// Then: only the unresolved request is re-sent, byte-identical id and method.
+		expect(replayed).toBe(1);
+		expect(sent.map((entry) => entry.message)).toEqual([
+			expect.objectContaining({ id: 0, method: "item/commandExecution/requestApproval" }),
+		]);
+		expect(bridge.resolveResponse({ id: 0, result: { decision: "accept" } })).toBe(true);
+		await expect(pending).resolves.toMatchObject({ allow: true });
+	});
+
 	it("records acceptForSession for identical tool and command in the same thread", async () => {
 		// Given: a command allowed for the session.
 		const sent: SentMessage[] = [];

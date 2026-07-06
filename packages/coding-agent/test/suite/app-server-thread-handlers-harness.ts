@@ -11,7 +11,10 @@ import {
 	type RoutableConnection,
 	type RouterNotification,
 } from "../../src/modes/app-server/server/notifications.ts";
-import { registerThreadLifecycleHandlers } from "../../src/modes/app-server/threads/handlers.ts";
+import {
+	registerThreadLifecycleHandlers,
+	type ThreadLifecycleController,
+} from "../../src/modes/app-server/threads/handlers.ts";
 import { ThreadRegistry, type ThreadRegistryOptions } from "../../src/modes/app-server/threads/registry.ts";
 import { TurnLog } from "../../src/modes/app-server/threads/turn-log.ts";
 
@@ -57,6 +60,8 @@ export async function createHarness(options: HarnessOptions = {}): Promise<{
 	readonly root: string;
 	readonly threads: ThreadRegistry;
 	readonly turnLog: TurnLog;
+	readonly notifications: NotificationRouter;
+	readonly lifecycle: ThreadLifecycleController;
 }> {
 	const root = await scratchRoot();
 	return { root, ...createHarnessForRoot(root, options) };
@@ -70,6 +75,8 @@ export function createHarnessForRoot(
 	readonly registry: MethodRegistry;
 	readonly threads: ThreadRegistry;
 	readonly turnLog: TurnLog;
+	readonly notifications: NotificationRouter;
+	readonly lifecycle: ThreadLifecycleController;
 } {
 	const connection = new FakeConnection();
 	const threads = new ThreadRegistry({
@@ -80,13 +87,13 @@ export function createHarnessForRoot(
 	const notifications = new NotificationRouter({ connections: [connection] });
 	const registry = createRegistry();
 	const turnLog = new TurnLog();
-	registerThreadLifecycleHandlers(registry, {
+	const lifecycle = registerThreadLifecycleHandlers(registry, {
 		threads,
 		turnLog,
 		notifications,
 		idleUnloadMinutes: 5,
 	});
-	return { connection, registry, threads, turnLog };
+	return { connection, registry, threads, turnLog, notifications, lifecycle };
 }
 
 export async function writePersistedSession(root: string, threadId: string): Promise<void> {

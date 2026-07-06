@@ -91,15 +91,29 @@ export class NotificationRouter {
 		});
 	}
 
-	removeConnection(connectionId: string): void {
+	/**
+	 * Removes the connection from every thread subscription. Returns the ids of
+	 * threads that lost their last subscriber so the caller can schedule idle
+	 * unloads for them (a dropped socket must not keep sessions loaded forever).
+	 */
+	removeConnection(connectionId: string): string[] {
 		this.connections.delete(connectionId);
+		const emptiedThreadIds: string[] = [];
 		for (const thread of this.threads.values()) {
-			thread.subscribers.delete(connectionId);
+			if (thread.subscribers.delete(connectionId) && thread.subscribers.size === 0) {
+				emptiedThreadIds.push(thread.id);
+			}
 		}
+		return emptiedThreadIds;
 	}
 
 	addThread(thread: RoutableThread): void {
 		this.threads.set(thread.id, thread);
+	}
+
+	/** Drops routing state for an unloaded/deleted thread so the entry (and its session) can be collected. */
+	removeThread(threadId: string): void {
+		this.threads.delete(threadId);
 	}
 
 	subscribe(threadId: string, connectionId: string): void {

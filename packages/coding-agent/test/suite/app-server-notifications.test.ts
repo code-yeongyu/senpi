@@ -206,4 +206,40 @@ describe("app-server notification router", () => {
 			"remoteControl/status/changed",
 		]);
 	});
+
+	it("reports threads that lost their last subscriber when a connection is removed", () => {
+		// Given: connection A is the only subscriber of t1, while t2 keeps another subscriber.
+		const t1 = thread("t1");
+		const t2 = thread("t2");
+		const a = new FakeConnection({ id: "A" });
+		const b = new FakeConnection({ id: "B" });
+		const router = new NotificationRouter({ connections: [a, b], threads: [t1, t2] });
+		router.subscribe("t1", "A");
+		router.subscribe("t2", "A");
+		router.subscribe("t2", "B");
+
+		// When: A's transport closes.
+		const emptied = router.removeConnection("A");
+
+		// Then: only the thread that became subscriber-less is reported.
+		expect(emptied).toEqual(["t1"]);
+		expect(t2.subscribers.has("B")).toBe(true);
+	});
+
+	it("stops routing and queueing for removed threads", () => {
+		// Given: a thread that is unloaded from the router.
+		const entry = thread("t1");
+		const c = new FakeConnection({ id: "C" });
+		const router = new NotificationRouter({ connections: [c], threads: [entry] });
+		router.removeThread("t1");
+
+		// When: terminal traffic arrives for the removed thread and a client tries to subscribe.
+		router.toThread("t1", { method: "turn/completed", params: { threadId: "t1", turn: { id: "turn-1" } } });
+		router.subscribe("t1", "C");
+
+		// Then: nothing is queued on the stale entry and the subscriber receives nothing.
+		expect(entry.queuedTerminalNotifications).toEqual([]);
+		expect(entry.subscribers.size).toBe(0);
+		expect(c.received).toEqual([]);
+	});
 });
