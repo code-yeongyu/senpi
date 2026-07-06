@@ -2,4 +2,4 @@
 
 Typed loader package for Senpi PTY sessions.
 
-The current scaffold exposes `PtySession` and a native loader result. Until host prebuilds are added, `loadPtyNative()` returns `native: null` with a `native-unavailable` diagnostic for the attempted host path.
+The package exposes `PtySession` and a native loader result. `loadPtyNative()` searches the shipped `native/prebuilds/<platform>-<arch>/` package layout and returns the loaded binding when a matching prebuild is present. Unsupported hosts return `native: null` with a `native-unavailable` diagnostic for the attempted host paths.

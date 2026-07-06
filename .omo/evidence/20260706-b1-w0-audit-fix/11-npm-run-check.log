@@ -1,0 +1,418 @@
+$ npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+packages/pty/src/session-types.ts:2:36 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━━━━━━━━━
+
+  ! Several of these imports are unused.
+  
+    1 │ import type { Buffer } from "node:buffer";
+  > 2 │ import type { NativePtyLoadResult, NativePtyUnavailableDiagnostic } from "./native-loader.ts";
+      │                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    3 │ 
+    4 │ export type TerminalSessionBackend = "native" | "pipe-fallback";
+  
+  i Unused imports might be the result of an incomplete refactoring.
+  
+  i Unsafe fix: Remove the unused imports.
+  
+    2 │ import·type·{·NativePtyLoadResult,·NativePtyUnavailableDiagnostic·}·from·"./native-loader.ts";
+      │                                    -------------------------------                            
+
+packages/pty/src/session.ts:8:2 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Several of these imports are unused.
+  
+     6 │ 	exitedOperation,
+     7 │ 	normalizeOperationResult,
+   > 8 │ 	normalizeTerminalExit,
+       │ 	^^^^^^^^^^^^^^^^^^^^^
+     9 │ 	notStartedOperation,
+    10 │ } from "./session-exit.ts";
+  
+  i Unused imports might be the result of an incomplete refactoring.
+  
+  i Unsafe fix: Remove the unused imports.
+  
+      6   6 │     exitedOperation,
+      7   7 │     normalizeOperationResult,
+      8     │ - → normalizeTerminalExit,
+      9   8 │     notStartedOperation,
+     10   9 │   } from "./session-exit.ts";
+  
+
+packages/pty/src/session.ts:258:10 lint/correctness/noUnusedVariables  FIXABLE  ━━━━━━━━━━━━━━━━━━━━
+
+  ! This function normalizeRawTailBytes is unused.
+  
+    256 │ }
+    257 │ 
+  > 258 │ function normalizeRawTailBytes(value: number | undefined): number {
+        │          ^^^^^^^^^^^^^^^^^^^^^
+    259 │ 	if (value === undefined) return DEFAULT_RAW_TAIL_BYTES;
+    260 │ 	if (!Number.isSafeInteger(value) || value < 0) {
+  
+  i Unused variables are often the result of typos, incomplete refactors, or other sources of bugs.
+  
+  i Unsafe fix: If this is intentional, prepend normalizeRawTailBytes with an underscore.
+  
+    256 256 │   }
+    257 257 │   
+    258     │ - function·normalizeRawTailBytes(value:·number·|·undefined):·number·{
+        258 │ + function·_normalizeRawTailBytes(value:·number·|·undefined):·number·{
+    259 259 │   	if (value === undefined) return DEFAULT_RAW_TAIL_BYTES;
+    260 260 │   	if (!Number.isSafeInteger(value) || value < 0) {
+  
+
+packages/pty/src/session.ts:271:10 lint/correctness/noUnusedVariables  FIXABLE  ━━━━━━━━━━━━━━━━━━━━
+
+  ! This function toNativeOptions is unused.
+  
+    269 │ }
+    270 │ 
+  > 271 │ function toNativeOptions(options: TerminalSessionOptions): TerminalSessionNativeOptions {
+        │          ^^^^^^^^^^^^^^^
+    272 │ 	return {
+    273 │ 		command: options.command ?? defaultCommand(),
+  
+  i Unused variables are often the result of typos, incomplete refactors, or other sources of bugs.
+  
+  i Unsafe fix: If this is intentional, prepend toNativeOptions with an underscore.
+  
+    269 269 │   }
+    270 270 │   
+    271     │ - function·toNativeOptions(options:·TerminalSessionOptions):·TerminalSessionNativeOptions·{
+        271 │ + function·_toNativeOptions(options:·TerminalSessionOptions):·TerminalSessionNativeOptions·{
+    272 272 │   	return {
+    273 273 │   		command: options.command ?? defaultCommand(),
+  
+
+packages/pty/src/session.ts:283:10 lint/correctness/noUnusedVariables  FIXABLE  ━━━━━━━━━━━━━━━━━━━━
+
+  ! This function toPipeFallbackOptions is unused.
+  
+    281 │ }
+    282 │ 
+  > 283 │ function toPipeFallbackOptions(options: TerminalSessionOptions): PipeFallbackSessionOptions {
+        │          ^^^^^^^^^^^^^^^^^^^^^
+    284 │ 	return {
+    285 │ 		command: options.command ?? defaultCommand(),
+  
+  i Unused variables are often the result of typos, incomplete refactors, or other sources of bugs.
+  
+  i Unsafe fix: If this is intentional, prepend toPipeFallbackOptions with an underscore.
+  
+    281 281 │   }
+    282 282 │   
+    283     │ - function·toPipeFallbackOptions(options:·TerminalSessionOptions):·PipeFallbackSessionOptions·{
+        283 │ + function·_toPipeFallbackOptions(options:·TerminalSessionOptions):·PipeFallbackSessionOptions·{
+    284 284 │   	return {
+    285 285 │   		command: options.command ?? defaultCommand(),
+  
+
+packages/pty/src/session.ts:293:10 lint/correctness/noUnusedVariables  FIXABLE  ━━━━━━━━━━━━━━━━━━━━
+
+  ! This function getNativeSessionFactory is unused.
+  
+    291 │ }
+    292 │ 
+  > 293 │ function getNativeSessionFactory(loadResult: NativePtyLoadResult): CreateNativeTerminalSession | null {
+        │          ^^^^^^^^^^^^^^^^^^^^^^^
+    294 │ 	if (loadResult.native === null) return null;
+    295 │ 	const create = loadResult.native.createPtySession ?? loadResult.native.startPtySession;
+  
+  i Unused variables are often the result of typos, incomplete refactors, or other sources of bugs.
+  
+  i Unsafe fix: If this is intentional, prepend getNativeSessionFactory with an underscore.
+  
+    291 291 │   }
+    292 292 │   
+    293     │ - function·getNativeSessionFactory(loadResult:·NativePtyLoadResult):·CreateNativeTerminalSession·|·null·{
+        293 │ + function·_getNativeSessionFactory(loadResult:·NativePtyLoadResult):·CreateNativeTerminalSession·|·null·{
+    294 294 │   	if (loadResult.native === null) return null;
+    295 295 │   	const create = loadResult.native.createPtySession ?? loadResult.native.startPtySession;
+  
+
+packages/pty/src/session.ts:336:10 lint/correctness/noUnusedVariables  FIXABLE  ━━━━━━━━━━━━━━━━━━━━
+
+  ! This function normalizeOperationResult is unused.
+  
+    334 │ }
+    335 │ 
+  > 336 │ function normalizeOperationResult(
+        │          ^^^^^^^^^^^^^^^^^^^^^^^^
+    337 │ 	result: TerminalSessionOperationResult | PipeFallbackOperationResult | undefined,
+    338 │ 	defaultNote: string,
+  
+  i Unused variables are often the result of typos, incomplete refactors, or other sources of bugs.
+  
+  i Unsafe fix: If this is intentional, prepend normalizeOperationResult with an underscore.
+  
+    334 334 │   }
+    335 335 │   
+    336     │ - function·normalizeOperationResult(
+        336 │ + function·_normalizeOperationResult(
+    337 337 │   	result: TerminalSessionOperationResult | PipeFallbackOperationResult | undefined,
+    338 338 │   	defaultNote: string,
+  
+
+packages/pty/src/session.ts:345:10 lint/correctness/noUnusedVariables  FIXABLE  ━━━━━━━━━━━━━━━━━━━━
+
+  ! This function notStartedOperation is unused.
+  
+    343 │ }
+    344 │ 
+  > 345 │ function notStartedOperation(operation: string): TerminalSessionOperationResult {
+        │          ^^^^^^^^^^^^^^^^^^^
+    346 │ 	return {
+    347 │ 		ok: false,
+  
+  i Unused variables are often the result of typos, incomplete refactors, or other sources of bugs.
+  
+  i Unsafe fix: If this is intentional, prepend notStartedOperation with an underscore.
+  
+    343 343 │   }
+    344 344 │   
+    345     │ - function·notStartedOperation(operation:·string):·TerminalSessionOperationResult·{
+        345 │ + function·_notStartedOperation(operation:·string):·TerminalSessionOperationResult·{
+    346 346 │   	return {
+    347 347 │   		ok: false,
+  
+
+packages/pty/src/session.ts:353:10 lint/correctness/noUnusedVariables  FIXABLE  ━━━━━━━━━━━━━━━━━━━━
+
+  ! This function exitedOperation is unused.
+  
+    351 │ }
+    352 │ 
+  > 353 │ function exitedOperation(operation: string): TerminalSessionOperationResult {
+        │          ^^^^^^^^^^^^^^^
+    354 │ 	return {
+    355 │ 		ok: false,
+  
+  i Unused variables are often the result of typos, incomplete refactors, or other sources of bugs.
+  
+  i Unsafe fix: If this is intentional, prepend exitedOperation with an underscore.
+  
+    351 351 │   }
+    352 352 │   
+    353     │ - function·exitedOperation(operation:·string):·TerminalSessionOperationResult·{
+        353 │ + function·_exitedOperation(operation:·string):·TerminalSessionOperationResult·{
+    354 354 │   	return {
+    355 355 │   		ok: false,
+  
+
+packages/pty/src/session.ts:258:10 lint/suspicious/noRedeclare ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × 'normalizeRawTailBytes' is redeclared in the same scope.
+  
+    256 │ }
+    257 │ 
+  > 258 │ function normalizeRawTailBytes(value: number | undefined): number {
+        │          ^^^^^^^^^^^^^^^^^^^^^
+    259 │ 	if (value === undefined) return DEFAULT_RAW_TAIL_BYTES;
+    260 │ 	if (!Number.isSafeInteger(value) || value < 0) {
+  
+  i 'normalizeRawTailBytes' is defined here:
+  
+    10 │ } from "./session-exit.ts";
+    11 │ import { getNativeSessionFactory } from "./session-native.ts";
+  > 12 │ import { defaultCommand, normalizeRawTailBytes, toNativeOptions, toPipeFallbackOptions } from "./session-options.ts";
+       │                          ^^^^^^^^^^^^^^^^^^^^^
+    13 │ import type {
+    14 │ 	CreateNativeTerminalSession,
+  
+  i Redeclarations make it unclear which variable a reference points to and can hide earlier declarations.
+  
+  i Remove the duplicate declaration or rename one of the variables.
+  
+
+packages/pty/src/session.ts:266:10 lint/suspicious/noRedeclare ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × 'defaultCommand' is redeclared in the same scope.
+  
+    264 │ }
+    265 │ 
+  > 266 │ function defaultCommand(): string {
+        │          ^^^^^^^^^^^^^^
+    267 │ 	if (process.platform === "win32") return process.env.ComSpec ?? "cmd.exe";
+    268 │ 	return process.env.SHELL ?? "sh";
+  
+  i 'defaultCommand' is defined here:
+  
+    10 │ } from "./session-exit.ts";
+    11 │ import { getNativeSessionFactory } from "./session-native.ts";
+  > 12 │ import { defaultCommand, normalizeRawTailBytes, toNativeOptions, toPipeFallbackOptions } from "./session-options.ts";
+       │          ^^^^^^^^^^^^^^
+    13 │ import type {
+    14 │ 	CreateNativeTerminalSession,
+  
+  i Redeclarations make it unclear which variable a reference points to and can hide earlier declarations.
+  
+  i Remove the duplicate declaration or rename one of the variables.
+  
+
+packages/pty/src/session.ts:271:10 lint/suspicious/noRedeclare ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × 'toNativeOptions' is redeclared in the same scope.
+  
+    269 │ }
+    270 │ 
+  > 271 │ function toNativeOptions(options: TerminalSessionOptions): TerminalSessionNativeOptions {
+        │          ^^^^^^^^^^^^^^^
+    272 │ 	return {
+    273 │ 		command: options.command ?? defaultCommand(),
+  
+  i 'toNativeOptions' is defined here:
+  
+    10 │ } from "./session-exit.ts";
+    11 │ import { getNativeSessionFactory } from "./session-native.ts";
+  > 12 │ import { defaultCommand, normalizeRawTailBytes, toNativeOptions, toPipeFallbackOptions } from "./session-options.ts";
+       │                                                 ^^^^^^^^^^^^^^^
+    13 │ import type {
+    14 │ 	CreateNativeTerminalSession,
+  
+  i Redeclarations make it unclear which variable a reference points to and can hide earlier declarations.
+  
+  i Remove the duplicate declaration or rename one of the variables.
+  
+
+packages/pty/src/session.ts:283:10 lint/suspicious/noRedeclare ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × 'toPipeFallbackOptions' is redeclared in the same scope.
+  
+    281 │ }
+    282 │ 
+  > 283 │ function toPipeFallbackOptions(options: TerminalSessionOptions): PipeFallbackSessionOptions {
+        │          ^^^^^^^^^^^^^^^^^^^^^
+    284 │ 	return {
+    285 │ 		command: options.command ?? defaultCommand(),
+  
+  i 'toPipeFallbackOptions' is defined here:
+  
+    10 │ } from "./session-exit.ts";
+    11 │ import { getNativeSessionFactory } from "./session-native.ts";
+  > 12 │ import { defaultCommand, normalizeRawTailBytes, toNativeOptions, toPipeFallbackOptions } from "./session-options.ts";
+       │                                                                  ^^^^^^^^^^^^^^^^^^^^^
+    13 │ import type {
+    14 │ 	CreateNativeTerminalSession,
+  
+  i Redeclarations make it unclear which variable a reference points to and can hide earlier declarations.
+  
+  i Remove the duplicate declaration or rename one of the variables.
+  
+
+packages/pty/src/session.ts:293:10 lint/suspicious/noRedeclare ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × 'getNativeSessionFactory' is redeclared in the same scope.
+  
+    291 │ }
+    292 │ 
+  > 293 │ function getNativeSessionFactory(loadResult: NativePtyLoadResult): CreateNativeTerminalSession | null {
+        │          ^^^^^^^^^^^^^^^^^^^^^^^
+    294 │ 	if (loadResult.native === null) return null;
+    295 │ 	const create = loadResult.native.createPtySession ?? loadResult.native.startPtySession;
+  
+  i 'getNativeSessionFactory' is defined here:
+  
+     9 │ 	notStartedOperation,
+    10 │ } from "./session-exit.ts";
+  > 11 │ import { getNativeSessionFactory } from "./session-native.ts";
+       │          ^^^^^^^^^^^^^^^^^^^^^^^
+    12 │ import { defaultCommand, normalizeRawTailBytes, toNativeOptions, toPipeFallbackOptions } from "./session-options.ts";
+    13 │ import type {
+  
+  i Redeclarations make it unclear which variable a reference points to and can hide earlier declarations.
+  
+  i Remove the duplicate declaration or rename one of the variables.
+  
+
+packages/pty/src/session.ts:336:10 lint/suspicious/noRedeclare ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × 'normalizeOperationResult' is redeclared in the same scope.
+  
+    334 │ }
+    335 │ 
+  > 336 │ function normalizeOperationResult(
+        │          ^^^^^^^^^^^^^^^^^^^^^^^^
+    337 │ 	result: TerminalSessionOperationResult | PipeFallbackOperationResult | undefined,
+    338 │ 	defaultNote: string,
+  
+  i 'normalizeOperationResult' is defined here:
+  
+    5 │ import {
+    6 │ 	exitedOperation,
+  > 7 │ 	normalizeOperationResult,
+      │ 	^^^^^^^^^^^^^^^^^^^^^^^^
+    8 │ 	normalizeTerminalExit,
+    9 │ 	notStartedOperation,
+  
+  i Redeclarations make it unclear which variable a reference points to and can hide earlier declarations.
+  
+  i Remove the duplicate declaration or rename one of the variables.
+  
+
+packages/pty/src/session.ts:345:10 lint/suspicious/noRedeclare ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × 'notStartedOperation' is redeclared in the same scope.
+  
+    343 │ }
+    344 │ 
+  > 345 │ function notStartedOperation(operation: string): TerminalSessionOperationResult {
+        │          ^^^^^^^^^^^^^^^^^^^
+    346 │ 	return {
+    347 │ 		ok: false,
+  
+  i 'notStartedOperation' is defined here:
+  
+     7 │ 	normalizeOperationResult,
+     8 │ 	normalizeTerminalExit,
+   > 9 │ 	notStartedOperation,
+       │ 	^^^^^^^^^^^^^^^^^^^
+    10 │ } from "./session-exit.ts";
+    11 │ import { getNativeSessionFactory } from "./session-native.ts";
+  
+  i Redeclarations make it unclear which variable a reference points to and can hide earlier declarations.
+  
+  i Remove the duplicate declaration or rename one of the variables.
+  
+
+packages/pty/src/session.ts:353:10 lint/suspicious/noRedeclare ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × 'exitedOperation' is redeclared in the same scope.
+  
+    351 │ }
+    352 │ 
+  > 353 │ function exitedOperation(operation: string): TerminalSessionOperationResult {
+        │          ^^^^^^^^^^^^^^^
+    354 │ 	return {
+    355 │ 		ok: false,
+  
+  i 'exitedOperation' is defined here:
+  
+    4 │ import { PipeFallbackSession, shouldUsePipeFallback } from "./pipe-fallback.ts";
+    5 │ import {
+  > 6 │ 	exitedOperation,
+      │ 	^^^^^^^^^^^^^^^
+    7 │ 	normalizeOperationResult,
+    8 │ 	normalizeTerminalExit,
+  
+  i Redeclarations make it unclear which variable a reference points to and can hide earlier declarations.
+  
+  i Remove the duplicate declaration or rename one of the variables.
+  
+
+Skipped 17 suggested fixes.
+If you wish to apply the suggested (unsafe) fixes, use the command biome check --write --unsafe
+
+Checked 1422 files in 844ms. Fixed 6 files.
+Found 8 errors.
+Found 9 warnings.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some warnings were emitted while running checks.
+  
+
+
+exit=1

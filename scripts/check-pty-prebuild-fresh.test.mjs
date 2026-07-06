@@ -13,7 +13,6 @@ test("fails with the host target name when the vendored prebuild is missing", as
 				builtFile: join(tempDir, "built.node"),
 				host: "darwin-arm64",
 				rootDir: tempDir,
-				skipBuild: true,
 			}),
 			/error: missing vendored prebuild for darwin-arm64/,
 		);
@@ -36,7 +35,6 @@ test("fails with the host target name when the vendored prebuild is stale", asyn
 				builtFile,
 				host: "darwin-arm64",
 				rootDir: tempDir,
-				skipBuild: true,
 			}),
 			/error: stale vendored prebuild for darwin-arm64/,
 		);
@@ -58,7 +56,6 @@ test("passes when the host prebuild matches the rebuilt artifact", async () => {
 			builtFile,
 			host: "darwin-arm64",
 			rootDir: tempDir,
-			skipBuild: true,
 		});
 
 		assert.equal(result.host, "darwin-arm64");

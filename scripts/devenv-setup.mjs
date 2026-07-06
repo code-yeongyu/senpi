@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @allow SIZE_OK: One bootstrap entry point keeps harness setup auditable; split if it grows beyond runtime/deps/native/credential wiring.
 /**
  * Universal, idempotent dev-environment setup for senpi.
  *

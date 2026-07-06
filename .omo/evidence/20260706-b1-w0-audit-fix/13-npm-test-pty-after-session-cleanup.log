@@ -1,0 +1,96 @@
+$ npm test --workspace @earendil-works/pi-pty
+
+> @earendil-works/pi-pty@2026.7.5-2 test
+> vitest --run test
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/packages/pty
+
+ ❯ test/registry.test.ts (0 test)
+ ❯ test/session.test.ts (4 tests | 1 failed) 102ms
+     × wraps injected native sessions and normalizes native exits 4ms
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/registry.test.ts [ test/registry.test.ts ]
+RolldownError: Parse failure: Parse failed with 2 errors:
+Duplicated export 'sessionIdPrefix'
+1: export { isTerminalSessionExited, sessionIdPrefix } from "/src/registry-session.ts";
+                                     ^
+2: export { SessionRegistryCapacityError } from "/src/registry-types.ts";
+3: import { SessionRegistryCapacityError } from "/src/registry-types.ts";
+197:   }
+198: }
+199: export function sessionIdPrefix(command) {
+                     ^
+200:   const parts = command.split(/[\\/]/).filter(Boolean);
+201:   const baseName = parts[parts.length - 1] ?? DEFAULT_COMMAND;Duplicated export 'isTerminalSessionExited'
+1: export { isTerminalSessionExited, sessionIdPrefix } from "/src/registry-session.ts";
+            ^
+2: export { SessionRegistryCapacityError } from "/src/registry-types.ts";
+3: import { SessionRegistryCapacityError } from "/src/registry-types.ts";
+203:   return prefix || "session";
+204: }
+205: export function isTerminalSessionExited(session) {
+                     ^
+206:   if (session.exited === true) return true;
+207:   if (typeof session.isExited === "boolean") return session.isExited;
+At file: /src/registry.ts:1:34
+  File: /src/registry.ts:1:34
+  1  |  export { isTerminalSessionExited, sessionIdPrefix } from "/src/registry-session.ts";
+     |                                    ^
+  2  |  export { SessionRegistryCapacityError } from "/src/registry-types.ts";
+  3  |  import { SessionRegistryCapacityError } from "/src/registry-types.ts";
+ ❯ error ../../node_modules/rolldown/dist/shared/logs-aMKUxRpj.mjs:147:24
+ ❯ normalizeParseError ../../node_modules/rolldown/dist/parse-ast-index.mjs:25:9
+ ❯ wrap ../../node_modules/rolldown/dist/parse-ast-index.mjs:5:39
+ ❯ parseAstAsync ../../node_modules/rolldown/dist/parse-ast-index.mjs:54:9
+ ❯ ssrTransformScript ../../node_modules/vite/dist/node/chunks/node.js:11179:9
+ ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/node.js:24680:64
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/session.test.ts > TerminalSession > wraps injected native sessions and normalizes native exits
+AssertionError: expected { backend: 'pipe-fallback', …(5) } to deeply equal { backend: 'native', …(4) }
+
+- Expected
++ Received
+
+  {
+-   "backend": "native",
++   "backend": "pipe-fallback",
+    "cancelled": true,
++   "error": undefined,
+    "exitCode": 0,
+    "signal": null,
+    "timedOut": false,
+  }
+
+ ❯ test/session.test.ts:149:16
+    147|   expect(kills).toEqual(["SIGTERM"]);
+    148|   expect(Buffer.concat(chunks).toString("utf8")).toBe("native-data");
+    149|   expect(exit).toEqual({ ...nativeExit, cancelled: true });
+       |                ^
+    150|   expect(session.rawTail.toString("utf8")).toBe("native-data");
+    151|  });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed | 3 passed (5)
+      Tests  1 failed | 25 passed (26)
+   Start at  18:59:08
+   Duration  1.70s (transform 148ms, setup 0ms, import 172ms, tests 2.04s, environment 0ms)
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path /Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/packages/pty
+npm error workspace @earendil-works/pi-pty@2026.7.5-2
+npm error location /Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/packages/pty
+npm error command failed
+npm error command sh -c vitest --run test
+
+exit=1

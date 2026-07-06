@@ -1,0 +1,9 @@
+$ npm run check:prebuild --workspace @earendil-works/pi-pty
+
+> @earendil-works/pi-pty@2026.7.5-2 check:prebuild
+> node native/check-prebuild-fresh.mjs
+
+    Finished `release` profile [optimized] target(s) in 0.01s
+fresh native prebuild for darwin-arm64: /Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/packages/pty/native/prebuilds/darwin-arm64/senpi_pty.darwin-arm64.node
+
+exit=0

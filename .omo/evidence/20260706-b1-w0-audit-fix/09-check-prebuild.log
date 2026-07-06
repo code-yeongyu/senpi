@@ -1,0 +1,17 @@
+$ npm run check:prebuild --workspace @earendil-works/pi-pty
+
+> @earendil-works/pi-pty@2026.7.5-2 check:prebuild
+> node native/check-prebuild-fresh.mjs
+
+   Compiling senpi-pty v0.0.0 (/Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/crates/senpi-pty)
+    Finished `release` profile [optimized] target(s) in 0.32s
+error: stale vendored prebuild for darwin-arm64: /Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/packages/pty/native/prebuilds/darwin-arm64/senpi_pty.darwin-arm64.node differs from rebuilt /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/senpi-pty-prebuild-darwin-arm64-XV0lTx/output/senpi_pty.darwin-arm64.node (aarch64-apple-darwin)
+npm error Lifecycle script `check:prebuild` failed with error:
+npm error code 1
+npm error path /Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/packages/pty
+npm error workspace @earendil-works/pi-pty@2026.7.5-2
+npm error location /Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/packages/pty
+npm error command failed
+npm error command sh -c node native/check-prebuild-fresh.mjs
+
+exit=1
