@@ -152,7 +152,7 @@ You do **not** need to install these packages for normal senpi use; their functi
 | [`pi-openai-web-search`](https://github.com/code-yeongyu/pi-openai-web-search) | `openai-web-search` | OpenAI Responses native web search. |
 | [`pi-todotools`](https://github.com/code-yeongyu/pi-todotools) | `todowrite` | `todowrite` / `todoread`, todo sidebar state, workflow prompt guidance, and continuation follow-ups. |
 
-Other builtins such as `permission-system`, `prompt-preset`, `anthropic-bash`, `service-tier`, `tool-pair-guard`, `compaction`, `history-search`, `session-observer`, and `kimi-web-search` are senpi-owned builtin extensions, not installable sibling packages.
+Other builtins such as `permission-system`, `prompt-preset`, `anthropic-bash`, `service-tier`, `tool-pair-guard`, `compaction`, `history-search`, `session-observer`, `websearch`, `webfetch`, `nested-agents-md`, `rules`, and `goal` are senpi-owned builtin extensions, not installable sibling packages.
 
 ## Why "senpi"
 
@@ -194,7 +194,11 @@ In-tree, tightly coupled to senpi internals. Loaded in this exact registration o
 | 12 | [`compaction`](packages/coding-agent/src/core/extensions/builtin/compaction/) | Speculative + emergency compaction policy: degradation monitor, circuit breaker, per-turn cap, todo bridging, checkpoint state, restoration tracker, tool-result truncation | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/compaction/AGENTS.md) · [changes.md](packages/coding-agent/src/core/extensions/builtin/compaction/changes.md) |
 | 13 | [`history-search`](packages/coding-agent/src/core/extensions/builtin/history-search/) | `/history` command — searches prompt history across sessions in an overlay | — |
 | 14 | [`session-observer`](packages/coding-agent/src/core/extensions/builtin/session-observer/) | `/sessions` command — peeks at previous session transcripts in a HUD overlay | — |
-| 15 | [`kimi-web-search`](packages/coding-agent/src/core/extensions/builtin/kimi-web-search/) | `SearchWeb` / `FetchURL` tools backed by the Kimi search/fetch API; toggled via `PI_KIMI_WEB_SEARCH` | — |
+| 15 | [`websearch`](packages/coding-agent/src/core/extensions/builtin/websearch/) | Provider-backed `web_search` tool with config-gated activation, TUI status, and source-aware results | — |
+| 16 | [`webfetch`](packages/coding-agent/src/core/extensions/builtin/webfetch/) | `webfetch` tool for URL content as markdown, text, or HTML with bounded time and size | — |
+| 17 | [`nested-agents-md`](packages/coding-agent/src/core/extensions/builtin/nested-agents-md/) | Auto-injects nearby `AGENTS.md` files when the agent reads from nested directories | — |
+| 18 | [`rules`](packages/coding-agent/src/core/extensions/builtin/rules/) | Auto-discovers project rule files and exposes `/rules` / `/reload-rules` commands | — |
+| 19 | [`goal`](packages/coding-agent/src/core/extensions/builtin/goal/) | Persistent goal tracking tools, footer state, and continuation prompts | — |
 
 > The builtin directories above are new vs upstream `pi-mono` — none exist in `badlogic/pi-mono`. Vendored versions are pinned in [`external-versions.json`](packages/coding-agent/src/core/extensions/builtin/external-versions.json) and synced from the sibling `pi-extensions` checkout with [`sync-builtin-extensions.mjs`](packages/coding-agent/scripts/sync-builtin-extensions.mjs).
 
