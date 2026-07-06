@@ -18,7 +18,7 @@
  *   - packages/agent/src/types.ts                            (base AgentEvent, extended by AgentSessionEvent)
  *   - packages/coding-agent/src/core/extensions/runner.ts    (ExtensionToolHookLifecycleEvent -> tool_hook_status)
  *   - packages/coding-agent/src/core/extensions/types.ts     (SystemPromptChangeEvent -> system_prompt_change)
- *   - packages/coding-agent/src/modes/rpc/rpc-mode.ts        (extension_error emit)
+ *   - packages/coding-agent/src/modes/rpc/connection-handler.ts (extension_error emit)
  *
  * The parse is deliberately narrow: it isolates the specific `export type X =`
  * declaration block, then harvests string-literal discriminants inside it. If a
@@ -103,7 +103,9 @@ const agentSession = read("packages/coding-agent/src/core/agent-session.ts");
 const agentTypes = read("packages/agent/src/types.ts");
 const runner = read("packages/coding-agent/src/core/extensions/runner.ts");
 const extTypes = read("packages/coding-agent/src/core/extensions/types.ts");
-const rpcMode = read("packages/coding-agent/src/modes/rpc/rpc-mode.ts");
+// extension_error is emitted from the per-connection handler (it moved out of
+// rpc-mode.ts when the daemon connection handler was extracted).
+const connectionHandler = read("packages/coding-agent/src/modes/rpc/connection-handler.ts");
 
 // --- Commands (RpcCommand.type) ---
 const commandBody = extractTypeBody(rpcTypes, "RpcCommand");
@@ -136,10 +138,12 @@ const hookEvent = hookBaseMatch ? [hookBaseMatch[1]] : literalsForKey(hookBody, 
 const sysPromptBody = extractInterfaceBody(extTypes, "SystemPromptChangeEvent");
 const sysPromptEvent = literalsForKey(sysPromptBody, "type");
 
-// extension_error is emitted by rpc-mode (not part of AgentSessionEvent), but the
-// Go demux MUST classify it, so the exhaustiveness set includes it.
-const extErrMatch = /output\(\{\s*type:\s*"(extension_error)"/.exec(rpcMode);
-const extErrEvent = extErrMatch ? [extErrMatch[1]] : [];
+// extension_error is emitted by the connection handler (not part of
+// AgentSessionEvent), but the Go demux MUST classify it, so the exhaustiveness
+// set includes it.
+const extErrMatch = /output\(\{\s*type:\s*"(extension_error)"/.exec(connectionHandler);
+if (!extErrMatch) throw new Error("extension_error emit not found in connection-handler.ts");
+const extErrEvent = [extErrMatch[1]];
 
 const events = uniq([
 	...baseEvents,
@@ -150,8 +154,12 @@ const events = uniq([
 ]);
 
 // Sanity floor: if any source drifted so the scan under-collected, fail loudly.
+// 10 extension-UI methods = the 9 renderable-inline methods (select/confirm/
+// input/editor/notify/setStatus/setWidget/setTitle/set_editor_text) plus the
+// additive custom_unsupported notice (task 13/14), which a flagged client sees.
 if (commands.length < 20) throw new Error(`suspiciously few commands: ${commands.length}`);
-if (extensionUIMethods.length !== 9) throw new Error(`expected 9 extension-UI methods, got ${extensionUIMethods.length}: ${extensionUIMethods}`);
+if (extensionUIMethods.length !== 10)
+	throw new Error(`expected 10 extension-UI methods, got ${extensionUIMethods.length}: ${extensionUIMethods}`);
 if (events.length < 15) throw new Error(`suspiciously few events: ${events.length}`);
 
 process.stdout.write(JSON.stringify({ commands, responseCommands, extensionUIMethods, events }, null, 2));

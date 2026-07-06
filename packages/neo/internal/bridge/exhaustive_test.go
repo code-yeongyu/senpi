@@ -69,11 +69,12 @@ func TestExhaustiveResponseCommands(t *testing.T) {
 }
 
 // TestExhaustiveExtensionUIMethods asserts a Go variant exists for each of the
-// 9 RpcExtensionUIRequest.method literals.
+// 10 RpcExtensionUIRequest.method literals: the 9 renderable-inline methods plus
+// the additive custom_unsupported notice (task 13/14).
 func TestExhaustiveExtensionUIMethods(t *testing.T) {
 	u := extractTSUnions(t)
-	if len(u.ExtensionUIMethods) != 9 {
-		t.Fatalf("expected 9 extension-UI methods from TS, got %d: %v", len(u.ExtensionUIMethods), u.ExtensionUIMethods)
+	if len(u.ExtensionUIMethods) != 10 {
+		t.Fatalf("expected 10 extension-UI methods from TS, got %d: %v", len(u.ExtensionUIMethods), u.ExtensionUIMethods)
 	}
 	assertCovered(t, "extensionUIMethods", u.ExtensionUIMethods, KnownExtensionUIMethods())
 }

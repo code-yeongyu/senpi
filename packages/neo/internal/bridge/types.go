@@ -62,6 +62,10 @@ var commandTypes = []string{
 	"get_messages",
 	// Commands
 	"get_commands",
+	// Auth (task 13): login/logout is additive. get_auth_providers, login_api_key
+	// and logout answer synchronously; login_start responds immediately and the
+	// URL + result arrive as auth_login_url / auth_login_end events.
+	"get_auth_providers", "login_start", "login_cancel", "login_api_key", "logout",
 }
 
 // KnownCommandTypes returns the mirrored RpcCommand.type set as a lookup.
@@ -110,6 +114,23 @@ type RPCSessionState struct {
 	AutoCompactionEnabled bool            `json:"autoCompactionEnabled"`
 }
 
+// AuthProvider mirrors rpc-types.ts RpcAuthProvider (get_auth_providers data
+// item): one provider row for the /login and /logout selectors.
+type AuthProvider struct {
+	ID       string     `json:"id"`
+	Name     string     `json:"name"`
+	AuthType string     `json:"authType"`
+	Status   AuthStatus `json:"status"`
+}
+
+// AuthStatus mirrors rpc-types.ts RpcAuthStatus: provider auth status without any
+// credential value (from getProviderAuthStatus).
+type AuthStatus struct {
+	Source     string `json:"source,omitempty"`
+	Label      string `json:"label,omitempty"`
+	Configured bool   `json:"configured"`
+}
+
 // RPCSlashCommand mirrors rpc-types.ts RPCSlashCommand (get_commands data item).
 type RPCSlashCommand struct {
 	Name        string     `json:"name"`
@@ -141,10 +162,14 @@ type ExtensionUIRequest struct {
 	Method string         `json:"method"`
 }
 
-// extensionUIMethods mirrors the 9 RpcExtensionUIRequest.method literals.
+// extensionUIMethods mirrors the RpcExtensionUIRequest.method literals: the 9
+// renderable-inline methods plus the additive custom_unsupported notice (task
+// 13/14), which a capability-flagged client sees before ctx.ui.custom returns
+// undefined.
 var extensionUIMethods = []string{
 	"select", "confirm", "input", "editor", "notify",
 	"setStatus", "setWidget", "setTitle", "set_editor_text",
+	"custom_unsupported",
 }
 
 // KnownExtensionUIMethods returns the mirrored extension-UI method set.
@@ -191,7 +216,9 @@ var eventTypes = []string{
 	"system_prompt_change", // SystemPromptChangeEvent
 	"thinking_level_changed",
 	"auto_retry_start", "auto_retry_end",
-	// --- emitted by rpc-mode.ts:358-360 (not in AgentSessionEvent) ---
+	// --- auth login flow (task 13): additive, event-only completion ---
+	"auth_login_url", "auth_login_end",
+	// --- emitted by the connection handler (not in AgentSessionEvent) ---
 	"extension_error",
 }
 

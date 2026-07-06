@@ -1,0 +1,103 @@
+{
+  "$schema": "./visual-claims.schema.md",
+  "description": "Task-13 (extension-UI bridge rendering + /login /logout dialogs) visual-claims manifest. Registered as a SEPARATE per-task manifest (never appended into the shared visual-claims.json) to avoid the shared-file merge hazard while other Wave-2 tasks run in parallel. Each claim binds one dialog frame as a complete triplet: the .ans is a real tmux capture-pane -e of the internal/ui/extui/qaharness binary (sessions ulw-qa-t13-*), and .html + cell-grid .json are produced by qa/xterm-render.mjs. Line endings were normalized LF->CRLF to match the terminal stream xterm.js consumes. Assertions verify layout + exact grok palette hexes (accent #7aa2f7, success #9ece6a, muted #6c6c6c, border #505058). Triplet paths are relative to this file's directory (packages/neo/qa). Verify with: node packages/neo/qa/xterm-render.mjs verify-manifest packages/neo/qa/visual-claims-task13.json",
+  "claims": [
+    {
+      "id": "task-13-login-provider-list",
+      "task": 13,
+      "title": "/login provider list: OAuthSelectorComponent-parity status indicators — accent-blue bold title + selection arrow, ✓ configured (stored) and ✓ env: <VAR> in success green, • unconfigured in muted",
+      "requiredFrames": ["task13-login-100"],
+      "frames": [
+        {
+          "id": "task13-login-100",
+          "size": "100x9",
+          "state": "login-provider-list",
+          "ans": "triplets/task13-login-100.ans",
+          "html": "triplets/task13-login-100.html",
+          "json": "triplets/task13-login-100.json"
+        }
+      ],
+      "assertions": [
+        { "id": "login-title-glyph", "frame": "task13-login-100", "kind": "cell-glyph", "x": 0, "y": 0, "glyph": "S" },
+        { "id": "login-title-accent", "frame": "task13-login-100", "kind": "cell-fg", "x": 0, "y": 0, "hex": "#7aa2f7" },
+        { "id": "login-arrow-glyph", "frame": "task13-login-100", "kind": "cell-glyph", "x": 0, "y": 1, "glyph": "→" },
+        { "id": "login-arrow-accent", "frame": "task13-login-100", "kind": "cell-fg", "x": 0, "y": 1, "hex": "#7aa2f7" },
+        { "id": "login-configured-check", "frame": "task13-login-100", "kind": "cell-glyph", "x": 12, "y": 1, "glyph": "✓" },
+        { "id": "login-configured-success", "frame": "task13-login-100", "kind": "cell-fg", "x": 12, "y": 1, "hex": "#9ece6a" },
+        { "id": "login-env-check", "frame": "task13-login-100", "kind": "cell-glyph", "x": 9, "y": 2, "glyph": "✓" },
+        { "id": "login-env-success", "frame": "task13-login-100", "kind": "cell-fg", "x": 9, "y": 2, "hex": "#9ece6a" },
+        { "id": "login-unconfigured-bullet", "frame": "task13-login-100", "kind": "cell-glyph", "x": 16, "y": 3, "glyph": "•" },
+        { "id": "login-unconfigured-muted", "frame": "task13-login-100", "kind": "cell-fg", "x": 16, "y": 3, "hex": "#6c6c6c" },
+        { "id": "login-bottom-rule", "frame": "task13-login-100", "kind": "cell-glyph", "x": 0, "y": 5, "glyph": "─" }
+      ]
+    },
+    {
+      "id": "task-13-login-flow-url",
+      "task": 13,
+      "title": "/login flow view (fire-command-then-subscribe): after login_start, the auth_login_url event renders the OAuth URL in accent blue with a Ctrl+click hint — the task-3 request-timeout exemption surface",
+      "requiredFrames": ["task13-login-flow-100"],
+      "frames": [
+        {
+          "id": "task13-login-flow-100",
+          "size": "100x8",
+          "state": "login-flow-auth-url",
+          "ans": "triplets/task13-login-flow-100.ans",
+          "html": "triplets/task13-login-flow-100.html",
+          "json": "triplets/task13-login-flow-100.json"
+        }
+      ],
+      "assertions": [
+        { "id": "flow-title-glyph", "frame": "task13-login-flow-100", "kind": "cell-glyph", "x": 0, "y": 0, "glyph": "L" },
+        { "id": "flow-title-accent", "frame": "task13-login-flow-100", "kind": "cell-fg", "x": 0, "y": 0, "hex": "#7aa2f7" },
+        { "id": "flow-url-glyph", "frame": "task13-login-flow-100", "kind": "cell-glyph", "x": 0, "y": 1, "glyph": "h" },
+        { "id": "flow-url-accent", "frame": "task13-login-flow-100", "kind": "cell-fg", "x": 0, "y": 1, "hex": "#7aa2f7" },
+        { "id": "flow-bottom-rule", "frame": "task13-login-flow-100", "kind": "cell-glyph", "x": 0, "y": 4, "glyph": "─" }
+      ]
+    },
+    {
+      "id": "task-13-select-dialog",
+      "task": 13,
+      "title": "extension_ui_request select: a native fuzzy list with the accent-blue selection cursor (❯) and the ↑/↓ · enter · esc hint footer",
+      "requiredFrames": ["task13-select-80"],
+      "frames": [
+        {
+          "id": "task13-select-80",
+          "size": "80x9",
+          "state": "extui-select",
+          "ans": "triplets/task13-select-80.ans",
+          "html": "triplets/task13-select-80.html",
+          "json": "triplets/task13-select-80.json"
+        }
+      ],
+      "assertions": [
+        { "id": "select-title-glyph", "frame": "task13-select-80", "kind": "cell-glyph", "x": 0, "y": 0, "glyph": "C" },
+        { "id": "select-title-accent", "frame": "task13-select-80", "kind": "cell-fg", "x": 0, "y": 0, "hex": "#7aa2f7" },
+        { "id": "select-cursor-glyph", "frame": "task13-select-80", "kind": "cell-glyph", "x": 0, "y": 1, "glyph": "❯" },
+        { "id": "select-cursor-accent", "frame": "task13-select-80", "kind": "cell-fg", "x": 0, "y": 1, "hex": "#7aa2f7" },
+        { "id": "select-bottom-rule", "frame": "task13-select-80", "kind": "cell-glyph", "x": 0, "y": 5, "glyph": "─" }
+      ]
+    },
+    {
+      "id": "task-13-confirm-dialog",
+      "task": 13,
+      "title": "extension_ui_request confirm: accent-blue bold title, the message line, and the enter/n/esc hint footer",
+      "requiredFrames": ["task13-confirm-80"],
+      "frames": [
+        {
+          "id": "task13-confirm-80",
+          "size": "80x6",
+          "state": "extui-confirm",
+          "ans": "triplets/task13-confirm-80.ans",
+          "html": "triplets/task13-confirm-80.html",
+          "json": "triplets/task13-confirm-80.json"
+        }
+      ],
+      "assertions": [
+        { "id": "confirm-title-glyph", "frame": "task13-confirm-80", "kind": "cell-glyph", "x": 0, "y": 0, "glyph": "A" },
+        { "id": "confirm-title-accent", "frame": "task13-confirm-80", "kind": "cell-fg", "x": 0, "y": 0, "hex": "#7aa2f7" },
+        { "id": "confirm-message-glyph", "frame": "task13-confirm-80", "kind": "cell-glyph", "x": 0, "y": 1, "glyph": "T" },
+        { "id": "confirm-bottom-rule", "frame": "task13-confirm-80", "kind": "cell-glyph", "x": 0, "y": 3, "glyph": "─" }
+      ]
+    }
+  ]
+}
