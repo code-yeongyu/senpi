@@ -21,6 +21,20 @@ describe("provider retry classification", () => {
 		).toBe(true);
 	});
 
+	it("classifies agent-loop stream idle timeouts as retryable", () => {
+		// Emitted by @earendil-works/pi-agent-core when a provider stream stops
+		// delivering events (e.g. a connection that died after a network change).
+		// Must stay retryable so sessions recover instead of surfacing a dead end.
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: "Idle timeout waiting for provider stream after 300000ms",
+				}),
+			),
+		).toBe(true);
+	});
+
 	it("keeps provider limit errors non-retryable", () => {
 		expect(
 			isRetryableAssistantError(

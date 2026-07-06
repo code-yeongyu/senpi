@@ -27,7 +27,7 @@ export interface BranchSummarySettings {
 }
 
 export interface ProviderRetrySettings {
-	timeoutMs?: number;
+	timeoutMs?: number; // SDK request timeout + agent stream idle timeout; defaults to httpIdleTimeoutMs
 	maxRetries?: number; // SDK/provider retry attempts
 	maxRetryDelayMs?: number; // default: 60000 (max server-requested delay before failing)
 }
@@ -900,6 +900,23 @@ export class SettingsManager {
 			maxRetries: this.settings.retry?.provider?.maxRetries,
 			maxRetryDelayMs: this.settings.retry?.provider?.maxRetryDelayMs ?? 60000,
 		};
+	}
+
+	/**
+	 * Idle timeout for the agent loop's provider event reader. Defaults to
+	 * httpIdleTimeoutMs so streams that stop delivering events (e.g. a
+	 * connection that silently died after a network change) fail with a
+	 * retryable idle-timeout error instead of hanging the session forever.
+	 * `retry.provider.timeoutMs` overrides it; an httpIdleTimeoutMs of 0
+	 * ("disabled") disables the reader guard as well.
+	 */
+	getAgentStreamIdleTimeoutMs(): number | undefined {
+		const providerTimeoutMs = this.settings.retry?.provider?.timeoutMs;
+		if (providerTimeoutMs !== undefined) {
+			return providerTimeoutMs;
+		}
+		const httpIdleTimeoutMs = this.getHttpIdleTimeoutMs();
+		return httpIdleTimeoutMs === 0 ? undefined : httpIdleTimeoutMs;
 	}
 
 	getWebSocketConnectTimeoutMs(): number | undefined {

@@ -4483,6 +4483,7 @@ export class InteractiveMode {
 					onHttpIdleTimeoutMsChange: (timeoutMs) => {
 						this.settingsManager.setHttpIdleTimeoutMs(timeoutMs);
 						configureHttpDispatcher(timeoutMs);
+						this.session.agent.timeoutMs = this.settingsManager.getAgentStreamIdleTimeoutMs();
 						this.showStatus(`HTTP idle timeout: ${formatHttpIdleTimeoutMs(timeoutMs)}`);
 					},
 					onThinkingLevelChange: (level) => {

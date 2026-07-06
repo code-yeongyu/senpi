@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Fixed sessions going stale forever when the network dropped and reconnected mid-stream: the agent loop's provider stream idle timeout is now enabled by default (follows `httpIdleTimeoutMs`, default 5 min, `0` disables; `retry.provider.timeoutMs` overrides), so a silently dead connection fails with a retryable idle-timeout error and auto-retry recovers the turn. Previously the guard was off unless `retry.provider.timeoutMs` was set, which left the Bun binary (no undici dispatcher protection) hanging indefinitely.
+
 ### Removed
 
 - Removed the never-functional `pi-codex-app-server` extension and flags; earlier Unreleased entries described unwired scaffolding rather than a usable integration surface.

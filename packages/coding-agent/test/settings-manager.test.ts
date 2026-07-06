@@ -263,6 +263,45 @@ describe("SettingsManager", () => {
 
 			expect(thenRetrySettings.timeoutMs).toBe(12_345);
 		});
+
+		it("should default the agent stream idle timeout to httpIdleTimeoutMs", () => {
+			const givenSettingsPath = join(agentDir, "settings.json");
+			writeFileSync(givenSettingsPath, JSON.stringify({ theme: "dark" }));
+
+			const whenManager = SettingsManager.create(projectDir, agentDir);
+
+			expect(whenManager.getAgentStreamIdleTimeoutMs()).toBe(300_000);
+		});
+
+		it("should follow a custom httpIdleTimeoutMs for the agent stream idle timeout", () => {
+			const givenSettingsPath = join(agentDir, "settings.json");
+			writeFileSync(givenSettingsPath, JSON.stringify({ httpIdleTimeoutMs: 60_000 }));
+
+			const whenManager = SettingsManager.create(projectDir, agentDir);
+
+			expect(whenManager.getAgentStreamIdleTimeoutMs()).toBe(60_000);
+		});
+
+		it("should disable the agent stream idle timeout when httpIdleTimeoutMs is 0", () => {
+			const givenSettingsPath = join(agentDir, "settings.json");
+			writeFileSync(givenSettingsPath, JSON.stringify({ httpIdleTimeoutMs: 0 }));
+
+			const whenManager = SettingsManager.create(projectDir, agentDir);
+
+			expect(whenManager.getAgentStreamIdleTimeoutMs()).toBeUndefined();
+		});
+
+		it("should prefer retry.provider.timeoutMs for the agent stream idle timeout", () => {
+			const givenSettingsPath = join(agentDir, "settings.json");
+			writeFileSync(
+				givenSettingsPath,
+				JSON.stringify({ httpIdleTimeoutMs: 0, retry: { provider: { timeoutMs: 5_000 } } }),
+			);
+
+			const whenManager = SettingsManager.create(projectDir, agentDir);
+
+			expect(whenManager.getAgentStreamIdleTimeoutMs()).toBe(5_000);
+		});
 	});
 
 	describe("project trust", () => {

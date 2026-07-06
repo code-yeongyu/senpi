@@ -113,6 +113,52 @@ describe("createAgentSession stream options", () => {
 		}
 	}
 
+	async function captureAgentIdleTimeout(settings: {
+		httpIdleTimeoutMs?: number;
+		retry?: { provider?: { timeoutMs?: number } };
+	}): Promise<number | undefined> {
+		const model = createModel("openai-completions");
+		const settingsManager = SettingsManager.inMemory(settings);
+		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
+		authStorage.setRuntimeApiKey(model.provider, "test-api-key");
+		const modelRegistry = ModelRegistry.create(authStorage, join(agentDir, "models.json"));
+		const sessionManager = SessionManager.inMemory(cwd);
+
+		const { session } = await createAgentSession({
+			cwd,
+			agentDir,
+			model,
+			authStorage,
+			modelRegistry,
+			settingsManager,
+			sessionManager,
+		});
+
+		try {
+			return session.agent.timeoutMs;
+		} finally {
+			session.dispose();
+		}
+	}
+
+	it("enables the agent stream idle timeout by default", async () => {
+		expect(await captureAgentIdleTimeout({})).toBe(300_000);
+	});
+
+	it("follows httpIdleTimeoutMs for the agent stream idle timeout", async () => {
+		expect(await captureAgentIdleTimeout({ httpIdleTimeoutMs: 60_000 })).toBe(60_000);
+	});
+
+	it("disables the agent stream idle timeout when httpIdleTimeoutMs is 0", async () => {
+		expect(await captureAgentIdleTimeout({ httpIdleTimeoutMs: 0 })).toBeUndefined();
+	});
+
+	it("prefers retry.provider.timeoutMs for the agent stream idle timeout", async () => {
+		expect(await captureAgentIdleTimeout({ httpIdleTimeoutMs: 0, retry: { provider: { timeoutMs: 5_000 } } })).toBe(
+			5_000,
+		);
+	});
+
 	it("forwards httpIdleTimeoutMs as timeoutMs for OpenAI Codex", async () => {
 		const options = await captureStreamOptions("openai-codex-responses", { httpIdleTimeoutMs: 1234 });
 
