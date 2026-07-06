@@ -1,11 +1,6 @@
 import type { ExtensionAPI, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
 import { cachedToolsToCatalogEntries } from "./catalog.ts";
-import {
-	collectServerCatalogForCache,
-	getValidCachedServer,
-	readMcpCatalogCache,
-	writeMcpCachedServer,
-} from "./catalog-cache.ts";
+import { getValidCachedServer, readMcpCatalogCache } from "./catalog-cache.ts";
 import { loadMcpConfig, visitSpawnableMcpServers } from "./config.ts";
 import type { ResolvedMcpConfig, ResolvedMcpServer } from "./config-schema.ts";
 import { ServerConnection } from "./connection.ts";
@@ -25,7 +20,7 @@ import type {
 	McpSessionContext,
 	McpSessionOptions,
 } from "./service-types.ts";
-import { shouldRaceMcpStartup, waitForMcpStartupRace } from "./startup-race.ts";
+import { connectAndRefreshMcpCatalog, raceMcpStartupConnect, shouldRaceMcpStartup } from "./startup-race.ts";
 
 export { registerToolsPreservingActiveSet } from "./active-set.ts";
 
@@ -116,7 +111,7 @@ export class McpService {
 				entry.cachedCatalog,
 				entry.connection,
 				serverConfig.requestTimeoutMs,
-				() => this.#connectAndRefresh(entry, serverConfig),
+				() => connectAndRefreshMcpCatalog(entry, serverConfig),
 			);
 			return getMcpCatalogExposureStatus(catalog, serverConfig, config.settings);
 		}
@@ -196,52 +191,20 @@ export class McpService {
 			this.#connections.set(key, entry);
 			this.#connectionKeysByName.set(name, key);
 			if (shouldRaceMcpStartup(server.config.lifecycle)) {
-				connects.push(this.#raceStartupConnect(entry, server.config, pi, toolRefreshGeneration));
+				connects.push(
+					raceMcpStartupConnect({
+						entry,
+						pi,
+						registerDirectTools: (targetPi) => this.#registerDirectTools(targetPi),
+						serverConfig: server.config,
+						shouldRefreshTools: () => !this.#disposed && this.#toolRefreshGeneration === toolRefreshGeneration,
+					}),
+				);
 			} else if (cachedCatalog === undefined) {
-				connects.push(this.#connectAndRefresh(entry, server.config));
+				connects.push(connectAndRefreshMcpCatalog(entry, server.config));
 			}
 		}
 		await Promise.all(connects);
-	}
-
-	async #raceStartupConnect(
-		entry: McpConnectionEntry,
-		serverConfig: ResolvedMcpServer["config"],
-		pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool"> | undefined,
-		toolRefreshGeneration: number,
-	): Promise<void> {
-		const connect = this.#connectAndRefresh(entry, serverConfig);
-		const result = await waitForMcpStartupRace(connect);
-		if (result === "settled") return;
-		if (pi === undefined) return;
-		void connect.then(() => this.#registerDirectToolsForGeneration(pi, toolRefreshGeneration));
-	}
-
-	async #connect(connection: ServerConnection): Promise<void> {
-		try {
-			await connection.connect();
-		} catch (error) {
-			if (connection.lastError === undefined) {
-				connection.markDegraded(error instanceof Error ? error : new Error(String(error)));
-			}
-		}
-	}
-
-	async #connectAndRefresh(entry: McpConnectionEntry, serverConfig: ResolvedMcpServer["config"]): Promise<void> {
-		if (serverConfig === undefined) return;
-		await this.#connect(entry.connection);
-		if (entry.connection.state !== "connected") return;
-		if (entry.cacheRefreshedAfterConnect) return;
-		entry.cacheRefreshedAfterConnect = true;
-		try {
-			const catalog = await collectServerCatalogForCache(entry.connection, serverConfig, entry.configHash);
-			entry.cachedCatalog = catalog;
-			await writeMcpCachedServer(entry.agentDir, entry.name, catalog);
-		} catch (error) {
-			entry.logger.warn("Failed to refresh MCP catalog cache", {
-				error: error instanceof Error ? error.message : String(error),
-			});
-		}
 	}
 
 	async #registerDirectTools(
@@ -254,26 +217,12 @@ export class McpService {
 			return {
 				cachedCatalog: entry.cachedCatalog,
 				connection: entry.connection,
-				ensureCachedToolConnected: () => this.#connectAndRefresh(entry, serverConfig),
+				ensureCachedToolConnected: () => connectAndRefreshMcpCatalog(entry, serverConfig),
 				logger: entry.logger,
 				name: entry.name,
 			};
 		});
 		await registerDirectMcpTools(pi, config, entries);
-	}
-
-	async #registerDirectToolsForGeneration(
-		pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
-		toolRefreshGeneration: number,
-	): Promise<void> {
-		if (this.#disposed || this.#toolRefreshGeneration !== toolRefreshGeneration) return;
-		try {
-			await this.#registerDirectTools(pi);
-		} catch (error) {
-			createMcpLogger("service").warn("Failed to refresh MCP tools after startup race", {
-				error: error instanceof Error ? error.message : String(error),
-			});
-		}
 	}
 
 	#serverSnapshot(name: string): McpServerSnapshot {
