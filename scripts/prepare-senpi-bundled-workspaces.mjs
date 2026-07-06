@@ -8,10 +8,14 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const bundledWorkspaces = [
 	{ source: "packages/agent", targetName: "pi-agent-core" },
 	{ source: "packages/ai", targetName: "pi-ai" },
+	{ source: "packages/pty", targetName: "pi-pty", requiredFiles: ["package.json", "dist/index.js", "native/index.js"] },
 	{ source: "packages/tui", targetName: "pi-tui" },
 ];
 const internalPackageNames = new Set(bundledWorkspaces.map((workspace) => `@earendil-works/${workspace.targetName}`));
-const bundledWorkspacePackageNames = bundledWorkspaces.map((workspace) => `@earendil-works/${workspace.targetName}`);
+const bundledWorkspacePackageChecks = bundledWorkspaces.map((workspace) => ({
+	packageName: `@earendil-works/${workspace.targetName}`,
+	requiredFiles: workspace.requiredFiles ?? ["package.json", "dist/index.js"],
+}));
 
 function shouldCopyWorkspaceFile(sourceRoot, sourcePath) {
 	const path = relative(sourceRoot, sourcePath);
@@ -21,7 +25,9 @@ function shouldCopyWorkspaceFile(sourceRoot, sourcePath) {
 		path === "README.md" ||
 		path === "CHANGELOG.md" ||
 		path === "dist" ||
-		path.startsWith(`dist/`)
+		path.startsWith(`dist/`) ||
+		path === "native" ||
+		path.startsWith(`native/`)
 	);
 }
 
@@ -68,13 +74,12 @@ export function assertSenpiPackedWorkspaceFiles(packed) {
 	const filePaths = new Set((packed.files ?? []).map((file) => file.path));
 	const missing = [];
 
-	for (const packageName of bundledWorkspacePackageNames) {
+	for (const { packageName, requiredFiles } of bundledWorkspacePackageChecks) {
 		const packageRoot = `package/node_modules/${packageName}`;
 		const dryRunPackageRoot = `node_modules/${packageName}`;
-		for (const [path, dryRunPath] of [
-			[`${packageRoot}/package.json`, `${dryRunPackageRoot}/package.json`],
-			[`${packageRoot}/dist/index.js`, `${dryRunPackageRoot}/dist/index.js`],
-		]) {
+		for (const requiredFile of requiredFiles) {
+			const path = `${packageRoot}/${requiredFile}`;
+			const dryRunPath = `${dryRunPackageRoot}/${requiredFile}`;
 			if (!filePaths.has(path) && !filePaths.has(dryRunPath)) {
 				missing.push(`${path} or ${dryRunPath}`);
 			}

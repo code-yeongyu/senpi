@@ -138,6 +138,9 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/dist/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-ai/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-ai/dist/index.js" },
+				{ path: "package/node_modules/@earendil-works/pi-pty/package.json" },
+				{ path: "package/node_modules/@earendil-works/pi-pty/dist/index.js" },
+				{ path: "package/node_modules/@earendil-works/pi-pty/native/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-tui/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-tui/dist/index.js" },
 			],
@@ -156,6 +159,9 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 				{ path: "node_modules/@earendil-works/pi-agent-core/dist/index.js" },
 				{ path: "node_modules/@earendil-works/pi-ai/package.json" },
 				{ path: "node_modules/@earendil-works/pi-ai/dist/index.js" },
+				{ path: "node_modules/@earendil-works/pi-pty/package.json" },
+				{ path: "node_modules/@earendil-works/pi-pty/dist/index.js" },
+				{ path: "node_modules/@earendil-works/pi-pty/native/index.js" },
 				{ path: "node_modules/@earendil-works/pi-tui/package.json" },
 				{ path: "node_modules/@earendil-works/pi-tui/dist/index.js" },
 			],
@@ -163,5 +169,28 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 
 		// When / Then
 		assert.doesNotThrow(() => assertSenpiPackedWorkspaceFiles(packed));
+	});
+
+	it("rejects senpi package metadata that omits the bundled pty native loader", () => {
+		// Given
+		const packed = {
+			files: [
+				{ path: "package/dist/cli.js" },
+				{ path: "package/node_modules/@earendil-works/pi-agent-core/package.json" },
+				{ path: "package/node_modules/@earendil-works/pi-agent-core/dist/index.js" },
+				{ path: "package/node_modules/@earendil-works/pi-ai/package.json" },
+				{ path: "package/node_modules/@earendil-works/pi-ai/dist/index.js" },
+				{ path: "package/node_modules/@earendil-works/pi-pty/package.json" },
+				{ path: "package/node_modules/@earendil-works/pi-pty/dist/index.js" },
+				{ path: "package/node_modules/@earendil-works/pi-tui/package.json" },
+				{ path: "package/node_modules/@earendil-works/pi-tui/dist/index.js" },
+			],
+		};
+
+		// When / Then
+		assert.throws(
+			() => assertSenpiPackedWorkspaceFiles(packed),
+			/package tarball is missing bundled workspace files: .*@earendil-works\/pi-pty\/native\/index\.js/,
+		);
 	});
 });

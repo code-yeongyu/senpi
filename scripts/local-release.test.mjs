@@ -52,3 +52,13 @@ describe("Bun binary entry", () => {
 		assert.doesNotMatch(entrySource, /import\(["']\.\.\/cli\.ts["']\)/);
 	});
 });
+
+describe("local release package list", () => {
+	it("builds and packs the pty workspace for bundled senpi installs", () => {
+		// Given
+		const scriptSource = readFileSync(join(process.cwd(), "scripts/local-release.mjs"), "utf8");
+
+		// Then
+		assert.match(scriptSource, /directory: "packages\/pty", name: "@earendil-works\/pi-pty"/);
+	});
+});

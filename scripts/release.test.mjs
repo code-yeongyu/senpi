@@ -7,6 +7,13 @@ import {
 	insertUnreleasedBlock,
 	resolveNextUnreleasedSubsections,
 } from "./release-changelog.mjs";
+import { WORKSPACE_PACKAGES } from "./release-packages.mjs";
+
+describe("release package versioning", () => {
+	it("updates the pty workspace during lockstep releases", () => {
+		assert.ok(WORKSPACE_PACKAGES.includes("packages/pty/package.json"));
+	});
+});
 
 describe("release changelog bookkeeping", () => {
 	it("recreates the standard next-cycle section when no previous Unreleased block was captured", () => {
