@@ -1,0 +1,535 @@
+TASK 5 RED PROOF
+Command: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/config.test.ts test/interpreter.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+ ❯ test/interpreter.test.ts (0 test)
+ ❯ test/config.test.ts (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/config.test.ts [ test/config.test.ts ]
+Error: Cannot find module '../src/config/settings.ts' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode/test/config.test.ts
+ ❯ test/config.test.ts:5:1
+      3| import { join } from "node:path";
+      4| import { describe, expect, it } from "vitest";
+      5| import { defaultCodemodeSettings, loadCodemodeSettings } from "../src/…
+       | ^
+      6|
+      7| describe("codemode settings", () => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  test/interpreter.test.ts [ test/interpreter.test.ts ]
+Error: Cannot find module '../src/interpreters/detect.ts' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode/test/interpreter.test.ts
+ ❯ test/interpreter.test.ts:2:1
+      1| import { describe, expect, it } from "vitest";
+      2| import { createInterpreterDetector, getInterpreterAvailability } from …
+       | ^
+      3| import type { ExecFileProbe } from "../src/interpreters/detect.ts";
+      4|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  no tests
+   Start at  15:12:22
+   Duration  134ms (transform 29ms, setup 0ms, import 0ms, tests 0ms, environment 0ms)
+
+
+
+TASK 5 GREEN TEST RUN
+Command: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/config.test.ts test/interpreter.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+ ❯ test/interpreter.test.ts (4 tests | 1 failed) 6ms
+     × falls through per-platform candidates and rejects empty Store-alias output 5ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/interpreter.test.ts > interpreter detection > falls through per-platform candidates and rejects empty Store-alias output
+AssertionError: expected { ok: false } to deeply equal { ok: true, path: 'py -3', …(1) }
+
+- Expected
++ Received
+
+  {
+-   "ok": true,
+-   "path": "py -3",
+-   "version": "3.12.4",
++   "ok": false,
+  }
+
+ ❯ test/interpreter.test.ts:33:37
+     31|   });
+     32|
+     33|   await expect(detector.detect("py")).resolves.toEqual({ ok: true, pat…
+       |                                     ^
+     34|  });
+     35|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 6 passed (7)
+   Start at  15:13:31
+   Duration  197ms (transform 32ms, setup 0ms, import 111ms, tests 16ms, environment 0ms)
+
+
+
+TASK 5 GREEN TEST RUN RETRY
+Command: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/config.test.ts test/interpreter.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  2 passed (2)
+      Tests  7 passed (7)
+   Start at  15:13:55
+   Duration  178ms (transform 30ms, setup 0ms, import 101ms, tests 11ms, environment 0ms)
+
+
+
+TASK 5 REQUIRED ACCEPTANCE COMMAND
+Command: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/config.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  15:14:25
+   Duration  221ms (transform 22ms, setup 0ms, import 103ms, tests 12ms, environment 0ms)
+
+
+
+TASK 5 FULL TARGETED TEST COMMAND
+Command: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/config.test.ts test/interpreter.test.ts
+zsh:cd:8: no such file or directory: packages/senpi-codemode
+
+
+TASK 5 NPM RUN CHECK
+Command: npm run check
+npm error Lifecycle script `check` failed with error:
+npm error workspace @code-yeongyu/senpi-codemode@2026.7.5-2
+npm error location /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+npm error Missing script: "check"
+npm error
+npm error To see a list of scripts, run:
+npm error   npm run --workspace=@code-yeongyu/senpi-codemode@2026.7.5-2
+
+
+TASK 5 GIT DIFF CHECK
+Command: git diff --check -- packages/senpi-codemode/src/config/settings.ts packages/senpi-codemode/src/interpreters/detect.ts packages/senpi-codemode/test/config.test.ts packages/senpi-codemode/test/interpreter.test.ts .omo/evidence/task-5-senpi-codemode.txt
+
+
+TASK 5 MANUAL/AUXILIARY SCENARIO
+Mocked detector scenario is covered by interpreter.test.ts: py/js enabled report available, rb/jl disabled report unavailable; no real Python/Ruby/Julia dependency.
+
+
+TASK 5 CORRECTED REQUIRED VERIFICATION
+Command: (cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/config.test.ts)
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  15:14:38
+   Duration  198ms (transform 16ms, setup 0ms, import 90ms, tests 10ms, environment 0ms)
+
+
+Command: (cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/config.test.ts test/interpreter.test.ts)
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  2 passed (2)
+      Tests  7 passed (7)
+   Start at  15:14:39
+   Duration  224ms (transform 48ms, setup 0ms, import 136ms, tests 14ms, environment 0ms)
+
+
+Command: npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1323 files in 1277ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+packages/senpi-codemode/test/prompt.test.ts(2,33): error TS2307: Cannot find module '../src/prompt/eval-prompt.ts' or its corresponding type declarations.
+
+Command: git diff --check -- packages/senpi-codemode/src/config/settings.ts packages/senpi-codemode/src/interpreters/detect.ts packages/senpi-codemode/test/config.test.ts packages/senpi-codemode/test/interpreter.test.ts .omo/evidence/task-5-senpi-codemode.txt
+
+Manual/auxiliary scenario: interpreter.test.ts uses a mocked detector to prove py/js default enabled behavior is represented while rb/jl are absent/unavailable when disabled; probes do not depend on real local interpreters.
+Adversarial probes: stale_state covered by per-detector cache test; dirty_worktree checked before staging; malformed_input covered by invalid JSON and invalid schema tests; cached detection covered; misleading_success_output covered by empty Windows Store-alias output rejection; hung/long commands/timeouts covered by timeout/missing probe errors returning unavailable; flaky_tests mitigated by injected probes and temp dirs.
+
+
+TASK 5 RERUN NPM RUN CHECK AFTER OUT-OF-SCOPE PROMPT FILE APPEARED
+Command: npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:18:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    17 │ const EVAL_PROMPT_TEMPLATE =
+  > 18 │ 	String.raw`Run one step of code in a persistent kernel.
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  > 19 │ 
+  > 20 │ <instruction>
+  > 21 │ **One eval call = one cell = one logical step.** State persists per language across separate eval calls and tool calls — define helpers, datasets, and clients in one call, then later calls reuse them directly.
+  > 22 │ 
+  > 23 │ Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after ` +
+       │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    24 │ 	"`reset`" +
+    25 │ 	String.raw`, a kernel crash, or a ` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:25:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    23 │ Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after ` +
+    24 │ 	"`reset`" +
+  > 25 │ 	String.raw`, a kernel crash, or a ` +
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    26 │ 	"`NameError`" +
+    27 │ 	String.raw`/` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:27:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    25 │ 	String.raw`, a kernel crash, or a ` +
+    26 │ 	"`NameError`" +
+  > 27 │ 	String.raw`/` +
+       │ 	^^^^^^^^^^^^^
+    28 │ 	"`ReferenceError`" +
+    29 │ 	String.raw` proving the state is gone. Parallelize work *within* a cell with the ` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:29:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    27 │ 	String.raw`/` +
+    28 │ 	"`ReferenceError`" +
+  > 29 │ 	String.raw` proving the state is gone. Parallelize work *within* a cell with the ` +
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    30 │ 	"`parallel(thunks)`" +
+    31 │ 	String.raw` helper, not by batching steps.
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:31:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    29 │ 	String.raw` proving the state is gone. Parallelize work *within* a cell with the ` +
+    30 │ 	"`parallel(thunks)`" +
+  > 31 │ 	String.raw` helper, not by batching steps.
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  > 32 │ 
+  > 33 │ Fields:
+  > 34 │ 
+  > 35 │ - ` +
+       │ ^^^
+    36 │ 	"`language`" +
+    37 │ 	String.raw` — {{#if py}}` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:37:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    35 │ - ` +
+    36 │ 	"`language`" +
+  > 37 │ 	String.raw` — {{#if py}}` +
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^
+    38 │ 	'`"py"` IPython kernel' +
+    39 │ 	String.raw`{{/if}}{{#ifAll py js}}, {{/ifAll}}{{#if js}}` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:39:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    37 │ 	String.raw` — {{#if py}}` +
+    38 │ 	'`"py"` IPython kernel' +
+  > 39 │ 	String.raw`{{/if}}{{#ifAll py js}}, {{/ifAll}}{{#if js}}` +
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    40 │ 	'`"js"` persistent JavaScript VM' +
+    41 │ 	String.raw`{{/if}}{{#if rb}}{{#ifAny py js}}, {{/ifAny}}` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:41:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    39 │ 	String.raw`{{/if}}{{#ifAll py js}}, {{/ifAll}}{{#if js}}` +
+    40 │ 	'`"js"` persistent JavaScript VM' +
+  > 41 │ 	String.raw`{{/if}}{{#if rb}}{{#ifAny py js}}, {{/ifAny}}` +
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    42 │ 	'`"rb"` persistent Ruby kernel' +
+    43 │ 	String.raw`{{/if}}{{#if jl}}{{#ifAny py js rb}}, {{/ifAny}}` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:43:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    41 │ 	String.raw`{{/if}}{{#if rb}}{{#ifAny py js}}, {{/ifAny}}` +
+    42 │ 	'`"rb"` persistent Ruby kernel' +
+  > 43 │ 	String.raw`{{/if}}{{#if jl}}{{#ifAny py js rb}}, {{/ifAny}}` +
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    44 │ 	'`"jl"` persistent Julia kernel' +
+    45 │ 	String.raw`{{/if}}.
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:45:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    43 │ 	String.raw`{{/if}}{{#if jl}}{{#ifAny py js rb}}, {{/ifAny}}` +
+    44 │ 	'`"jl"` persistent Julia kernel' +
+  > 45 │ 	String.raw`{{/if}}.
+       │ 	^^^^^^^^^^^^^^^^^^^
+  > 46 │ - ` +
+       │ ^^^
+    47 │ 	"`code`" +
+    48 │ 	String.raw` — cell body, verbatim. Newlines/quotes JSON-encoded; no fences, no headers.
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:48:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    46 │ - ` +
+    47 │ 	"`code`" +
+  > 48 │ 	String.raw` — cell body, verbatim. Newlines/quotes JSON-encoded; no fences, no headers.
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  > 49 │ - ` +
+       │ ^^^
+    50 │ 	"`title`" +
+    51 │ 	String.raw` (optional) — short transcript label (e.g. ` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:51:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    49 │ - ` +
+    50 │ 	"`title`" +
+  > 51 │ 	String.raw` (optional) — short transcript label (e.g. ` +
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    52 │ 	'`"imports"`' +
+    53 │ 	String.raw`).
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:53:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    51 │ 	String.raw` (optional) — short transcript label (e.g. ` +
+    52 │ 	'`"imports"`' +
+  > 53 │ 	String.raw`).
+       │ 	^^^^^^^^^^^^^
+  > 54 │ - ` +
+       │ ^^^
+    55 │ 	"`timeout`" +
+    56 │ 	String.raw` (optional) — seconds. Raise only for heavy compute or long non-agent tool calls.
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:56:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    54 │ - ` +
+    55 │ 	"`timeout`" +
+  > 56 │ 	String.raw` (optional) — seconds. Raise only for heavy compute or long non-agent tool calls.
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  > 57 │ - ` +
+       │ ^^^
+    58 │ 	"`reset`" +
+    59 │ 	String.raw` (optional) — wipe this language's kernel first.{{#ifAll py js}} Per-language: a ` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:59:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    57 │ - ` +
+    58 │ 	"`reset`" +
+  > 59 │ 	String.raw` (optional) — wipe this language's kernel first.{{#ifAll py js}} Per-language: a ` +
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    60 │ 	"`py`" +
+    61 │ 	String.raw` reset never touches the JS VM.{{/ifAll}}
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:61:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    59 │ 	String.raw` (optional) — wipe this language's kernel first.{{#ifAll py js}} Per-language: a ` +
+    60 │ 	"`py`" +
+  > 61 │ 	String.raw` reset never touches the JS VM.{{/ifAll}}
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  > 62 │ 
+  > 63 │ {{#if py}}Live event loop: use top-level ` +
+       │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    64 │ 	"`await`" +
+    65 │ 	String.raw` directly; ` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:65:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    63 │ {{#if py}}Live event loop: use top-level ` +
+    64 │ 	"`await`" +
+  > 65 │ 	String.raw` directly; ` +
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^
+    66 │ 	"`asyncio.run(...)`" +
+    67 │ 	String.raw` raises "cannot be called from a running event loop".{{/if}}
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:67:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    65 │ 	String.raw` directly; ` +
+    66 │ 	"`asyncio.run(...)`" +
+  > 67 │ 	String.raw` raises "cannot be called from a running event loop".{{/if}}
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  > 68 │ {{#if js}}JS runs under Node.js worker: top-level ` +
+       │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    69 │ 	"`await`" +
+    70 │ 	String.raw`/` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:70:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    68 │ {{#if js}}JS runs under Node.js worker: top-level ` +
+    69 │ 	"`await`" +
+  > 70 │ 	String.raw`/` +
+       │ 	^^^^^^^^^^^^^
+    71 │ 	"`return`" +
+    72 │ 	String.raw` work; ` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:72:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    70 │ 	String.raw`/` +
+    71 │ 	"`return`" +
+  > 72 │ 	String.raw` work; ` +
+       │ 	^^^^^^^^^^^^^^^^^^^
+    73 │ 	"`fetch`" +
+    74 │ 	String.raw`/` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+The number of diagnostics exceeds the limit allowed. Use --max-diagnostics to increase it.
+Diagnostics not shown: 10.
+Checked 1324 files in 1650ms. No fixes applied.
+Found 30 infos.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+packages/senpi-codemode/src/prompt/eval-prompt.ts(134,59): error TS2345: Argument of type 'EnabledLanguages' is not assignable to parameter of type 'Readonly<Record<string, ContextValue>>'.
+  Index signature for type 'string' is missing in type 'EnabledLanguages'.
+
+
+TASK 5 FINAL TARGETED VERIFICATION
+Command: (cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/config.test.ts test/interpreter.test.ts)
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  2 passed (2)
+      Tests  7 passed (7)
+   Start at  15:15:42
+   Duration  362ms (transform 98ms, setup 0ms, import 297ms, tests 14ms, environment 0ms)
+
+
+Command: git diff --check -- packages/senpi-codemode/src/config/settings.ts packages/senpi-codemode/src/interpreters/detect.ts packages/senpi-codemode/test/config.test.ts packages/senpi-codemode/test/interpreter.test.ts .omo/evidence/task-5-senpi-codemode.txt
