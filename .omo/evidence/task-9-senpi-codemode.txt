@@ -1,0 +1,289 @@
+
+## RED proof - py kernel before implementation
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/py-kernel.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+ ❯ test/py-kernel.test.ts (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/py-kernel.test.ts [ test/py-kernel.test.ts ]
+Error: Cannot find module '../src/kernels/py/kernel.ts' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode/test/py-kernel.test.ts
+ ❯ test/py-kernel.test.ts:8:1
+      6| import { decodeBridgeFrame, encodeBridgeFrame } from "../src/bridge/pr…
+      7| import { createInterpreterDetector } from "../src/interpreters/detect.…
+      8| import { PythonKernel, type KernelChild, type KernelSpawnOptions } fro…
+       | ^
+      9|
+     10| class FakeChild implements KernelChild {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  no tests
+   Start at  15:53:10
+   Duration  353ms (transform 19ms, setup 0ms, import 0ms, tests 0ms, environment 0ms)
+
+
+## Focused Python kernel tests - first GREEN attempt
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/py-kernel.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+ ❯ test/py-kernel.test.ts (5 tests | 2 failed) 3863ms
+     × surfaces startup crashes as init failures 15ms
+     × persists state across cells and reset clears it 3134ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/py-kernel.test.ts > PythonKernel transport > surfaces startup crashes as init failures
+AssertionError: promise resolved "PythonKernel{}" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
+- }
++ PythonKernel {}
+
+ ❯ test/py-kernel.test.ts:148:23
+    146|   child.stderr.write("boom\n");
+    147|   child.finish(1, null);
+    148|   await expect(started).rejects.toThrow(/boom|exited/i);
+       |                       ^
+    149|  });
+    150| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  test/py-kernel.test.ts > PythonKernel live > persists state across cells and reset clears it
+AssertionError: expected { type: 'result', …(4) } to match object { ok: true, valueRepr: '2' }
+(6 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "ok": true,
+-   "valueRepr": "2",
++   "ok": false,
+  }
+
+ ❯ test/py-kernel.test.ts:157:41
+    155|   try {
+    156|    await runCell(kernel, "x = 1");
+    157|    await expect(runCell(kernel, "x + 1")).resolves.toMatchObject({ ok:…
+       |                                         ^
+    158|    await kernel.reset();
+    159|    await expect(runCell(kernel, "'x' in globals()")).resolves.toMatchO…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 3 passed (5)
+   Start at  15:54:55
+   Duration  4.09s (transform 27ms, setup 0ms, import 136ms, tests 3.86s, environment 0ms)
+
+
+## Focused Python kernel tests - second attempt
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/py-kernel.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+ ❯ test/py-kernel.test.ts (5 tests | 2 failed) 5331ms
+     × spawns the prelude without leaking bridge secrets through argv 5008ms
+     × surfaces startup crashes as init failures 10ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/py-kernel.test.ts > PythonKernel transport > spawns the prelude without leaking bridge secrets through argv
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/py-kernel.test.ts:116:2
+    114|
+    115| describe("PythonKernel transport", () => {
+    116|  it("spawns the prelude without leaking bridge secrets through argv", …
+       |  ^
+    117|   const child = new FakeChild(false);
+    118|   const spawns: KernelSpawnOptions[] = [];
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  test/py-kernel.test.ts > PythonKernel transport > surfaces startup crashes as init failures
+AssertionError: promise resolved "PythonKernel{}" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
+- }
++ PythonKernel {}
+
+ ❯ test/py-kernel.test.ts:149:23
+    147|   child.stderr.write("boom\n");
+    148|   child.finish(1, null);
+    149|   await expect(started).rejects.toThrow(/boom|exited/i);
+       |                       ^
+    150|  });
+    151| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 3 passed (5)
+   Start at  15:55:46
+   Duration  5.64s (transform 28ms, setup 0ms, import 149ms, tests 5.33s, environment 0ms)
+
+
+## Focused Python kernel tests - GREEN
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/py-kernel.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  15:56:29
+   Duration  1.05s (transform 22ms, setup 0ms, import 117ms, tests 835ms, environment 0ms)
+
+
+## Focused Python kernel tests - post LOC trim
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/py-kernel.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  15:57:55
+   Duration  1.07s (transform 25ms, setup 0ms, import 135ms, tests 835ms, environment 0ms)
+
+
+## Focused Python kernel tests - post LOC trim 2
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/py-kernel.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  15:58:16
+   Duration  1.03s (transform 23ms, setup 0ms, import 124ms, tests 817ms, environment 0ms)
+
+
+## Python masked guarded-skip run
+$ PATH=/tmp/senpi-node-only node ../../node_modules/tsx/dist/cli.mjs ../../node_modules/vitest/dist/cli.js --run test/py-kernel.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  2 passed | 3 skipped (5)
+   Start at  15:58:29
+   Duration  768ms (transform 24ms, setup 0ms, import 151ms, tests 515ms, environment 0ms)
+
+
+## Manual scenario - live state sharing and reset
+$ node --import tsx -e <manual PythonKernel scenario>
+{
+  "first": {
+    "type": "result",
+    "cellId": "manual-1",
+    "ok": true,
+    "durationMs": 0
+  },
+  "second": {
+    "type": "result",
+    "cellId": "manual-2",
+    "ok": true,
+    "durationMs": 0,
+    "valueRepr": "42"
+  },
+  "afterReset": {
+    "type": "result",
+    "cellId": "manual-3",
+    "ok": true,
+    "durationMs": 0,
+    "valueRepr": "False"
+  }
+}
+
+## npm run check
+$ npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1343 files in 750ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 48ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+
+## git diff --check scoped files
+$ git diff --check -- packages/senpi-codemode/src/kernels/py packages/senpi-codemode/test/py-kernel.test.ts .omo/evidence/task-9-senpi-codemode.txt
