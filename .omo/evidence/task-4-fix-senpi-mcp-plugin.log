@@ -1,0 +1,210 @@
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+ ❯ test/mcp/log-redaction.test.ts (7 tests | 2 failed) 31ms
+     × redacts non-bearer authorization header values 3ms
+     × serializes BigInt data without dropping the log entry 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/mcp/log-redaction.test.ts > mcp log redaction > redacts non-bearer authorization header values
+AssertionError: expected 'Authorization: <redacted:0e35f6e9> ab…' not to contain 'abc123'
+
+Expected: "abc123"
+Received: "Authorization: <redacted:0e35f6e9> abc123"
+
+ ❯ test/mcp/log-redaction.test.ts:80:24
+     78|   const redacted = redactMcpLogText(`Authorization: Basic ${secret}`);
+     79|
+     80|   expect(redacted).not.toContain(secret);
+       |                        ^
+     81|   expect(redacted).toBe(`Authorization: Basic ${expectedRedaction(secr…
+     82|  });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  test/mcp/log-redaction.test.ts > mcp log redaction > serializes BigInt data without dropping the log entry
+AssertionError: expected [Function] to not throw an error but 'TypeError: Do not know how to seriali…' was thrown
+
+- Expected:
+undefined
+
++ Received:
+"TypeError: Do not know how to serialize a BigInt"
+
+ ❯ test/mcp/log-redaction.test.ts:87:85
+     85|   const logger = createMcpLogger("bigint-data");
+     86|
+     87|   expect(() => logger.info("numbers", { count: 1n, nested: { values: […
+       |                                                                                     ^
+     88|
+     89|   const ringText = logger.getRingBuffer().join("\n");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 5 passed (7)
+   Start at  12:34:00
+   Duration  183ms (transform 32ms, setup 12ms, import 36ms, tests 31ms, environment 0ms)
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  12:35:12
+   Duration  183ms (transform 33ms, setup 13ms, import 36ms, tests 27ms, environment 0ms)
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  12:35:28
+   Duration  173ms (transform 32ms, setup 12ms, import 36ms, tests 28ms, environment 0ms)
+
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1309 files in 1386ms. Fixed 1 file.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 55ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui	[no test files]
+check:neo: packages/neo build+vet+test passed
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+ ❯ test/mcp/log-redaction.test.ts (7 tests | 1 failed) 30ms
+     × serializes BigInt data without dropping the log entry 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/mcp/log-redaction.test.ts > mcp log redaction > serializes BigInt data without dropping the log entry
+AssertionError: expected '{"timestamp":"2026-07-06T03:37:18.515…' not to contain 'abc123'
+
+Expected: "abc123"
+Received: "{"timestamp":"2026-07-06T03:37:18.515Z","server":"bigint-data","level":"info","severity":6,"channel":"server","message":"request Authorization: Basic <redacted:6ca13d52>","data":{"headers":{"Authorization":"Basic abc123"},"count":"1","nested":{"values":["2"]}}}"
+
+ ❯ test/mcp/log-redaction.test.ts:99:25
+     97|   const fileText = readFileSync(logger.filePath, "utf8");
+     98|   for (const sinkText of [ringText, fileText]) {
+     99|    expect(sinkText).not.toContain(secret);
+       |                         ^
+    100|    expect(sinkText).toContain(expectedRedaction(secret));
+    101|    expect(sinkText).toContain('"count":"1"');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 6 passed (7)
+   Start at  12:37:18
+   Duration  170ms (transform 29ms, setup 12ms, import 32ms, tests 30ms, environment 0ms)
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  12:37:36
+   Duration  160ms (transform 29ms, setup 11ms, import 32ms, tests 25ms, environment 0ms)
+
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1309 files in 1509ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 33ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui	[no test files]
+check:neo: packages/neo build+vet+test passed
+
+# Manual QA artifacts
+manual logger QA: local-ignore/qa-evidence/20260706-mcp-log-task4-fix/manual-qa.txt
+raw secret grep matches: local-ignore/qa-evidence/20260706-mcp-log-task4-fix/grep-raw-abc123.matches (empty)
+combined logger sinks: local-ignore/qa-evidence/20260706-mcp-log-task4-fix/combined-log.txt
+senpi QA CLI smoke: local-ignore/qa-evidence/20260706-mcp-log-task4-fix/senpi-qa-cli-smoke.txt
+cleanup: /tmp/senpi-mcp-log-task4-fix.mts removed; temp QA dir removed; no matching vitest/tsx QA processes

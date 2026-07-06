@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +11,10 @@ import {
 } from "../../src/core/extensions/builtin/mcp/log.ts";
 
 const ORIGINAL_AGENT_DIR = process.env.SENPI_CODING_AGENT_DIR;
+
+function expectedRedaction(secret: string): string {
+	return `<redacted:${createHash("sha256").update(secret).digest("hex").slice(0, 8)}>`;
+}
 
 describe("mcp log redaction", () => {
 	let tempDir: string;
@@ -63,7 +68,39 @@ describe("mcp log redaction", () => {
 https://example.invalid/path?client_secret=${token}`);
 
 		expect(redacted).not.toContain(token);
-		expect(redacted).toContain(`<redacted:${fingerprintSecret(token)}>`);
+		expect(redacted).toContain(expectedRedaction(token));
+		expect(fingerprintSecret(token)).toBe(expectedRedaction(token).slice("<redacted:".length, -1));
+	});
+
+	it("redacts non-bearer authorization header values", () => {
+		const secret = "abc123";
+
+		const redacted = redactMcpLogText(`Authorization: Basic ${secret}`);
+
+		expect(redacted).not.toContain(secret);
+		expect(redacted).toBe(`Authorization: Basic ${expectedRedaction(secret)}`);
+	});
+
+	it("serializes BigInt data without dropping the log entry", () => {
+		const logger = createMcpLogger("bigint-data");
+		const secret = "abc123";
+
+		expect(() =>
+			logger.info("request Authorization: Basic abc123", {
+				headers: { Authorization: `Basic ${secret}` },
+				count: 1n,
+				nested: { values: [2n] },
+			}),
+		).not.toThrow();
+
+		const ringText = logger.getRingBuffer().join("\n");
+		const fileText = readFileSync(logger.filePath, "utf8");
+		for (const sinkText of [ringText, fileText]) {
+			expect(sinkText).not.toContain(secret);
+			expect(sinkText).toContain(expectedRedaction(secret));
+			expect(sinkText).toContain('"count":"1"');
+			expect(sinkText).toContain('"values":["2"]');
+		}
 	});
 
 	it("keeps the last 200 ring buffer lines and rotates the 0600 file at the cap", () => {
@@ -76,7 +113,7 @@ https://example.invalid/path?client_secret=${token}`);
 		const ring = logger.getRingBuffer();
 		expect(ring).toHaveLength(200);
 		expect(ring[0]).toContain("line 060");
-		expect(ring.at(-1)).toContain("line 259");
+		expect(ring[ring.length - 1]).toContain("line 259");
 		expect(existsSync(`${logger.filePath}.1`)).toBe(true);
 		expect(statSync(logger.filePath).size).toBeLessThanOrEqual(640);
 		expect(statSync(logger.filePath).mode & 0o777).toBe(0o600);

@@ -49,10 +49,12 @@ interface McpLogEntry {
 
 const DEFAULT_MAX_FILE_BYTES = 1024 * 1024;
 const MAX_RING_LINES = 200;
-const SENSITIVE_KEY_PATTERN = /(?:^|[_-])(?:api[_-]?key|key|token|secret|password|client_secret|auth)(?:$|[_-])/i;
+const SENSITIVE_KEY_PATTERN =
+	/(?:^|[_-])(?:api[_-]?key|key|token|secret|password|client_secret|auth|authorization)(?:$|[_-])/i;
 const QUERY_SECRET_PATTERN =
 	/([?&][^=\s&"'<>]*(?:key|token|secret|password|client_secret|auth)[^=\s&"'<>]*=)([^&\s"'<>]+)/gi;
-const BEARER_HEADER_PATTERN = /(\bAuthorization\s*:\s*Bearer\s+)(?!<redacted:)([^\s,"'}]+)/gi;
+const AUTHORIZATION_VALUE_PATTERN =
+	/((?:"|')?\bAuthorization(?:"|')?\s*[:=]\s*(?:"|')?(?:[A-Za-z][A-Za-z0-9+.-]*\s+)?)(?!<redacted:)([^"',\s}\]&]+)/gi;
 const BEARER_VALUE_PATTERN = /(\bBearer\s+)(?!<redacted:)([A-Za-z0-9._~+/=-]+)/gi;
 const KEY_VALUE_PATTERN =
 	/((?:"|')?[^"'\s:=,{}]*(?:api[_-]?key|key|token|secret|password|client_secret|auth)[^"'\s:=,{}]*(?:"|')?\s*[:=]\s*(?:"|')?)([^"',\s}\]&]+)/gi;
@@ -71,11 +73,16 @@ export function fingerprintSecret(secret: string): string {
 
 export function redactMcpLogText(text: string): string {
 	return text
-		.replace(BEARER_HEADER_PATTERN, (_match, prefix: string, secret: string) => `${prefix}${redactionFor(secret)}`)
+		.replace(
+			AUTHORIZATION_VALUE_PATTERN,
+			(_match, prefix: string, secret: string) => `${prefix}${redactionFor(secret)}`,
+		)
 		.replace(BEARER_VALUE_PATTERN, (_match, prefix: string, secret: string) => `${prefix}${redactionFor(secret)}`)
 		.replace(QUERY_SECRET_PATTERN, (_match, prefix: string, secret: string) => `${prefix}${redactionFor(secret)}`)
 		.replace(KEY_VALUE_PATTERN, (match: string, prefix: string, secret: string) =>
-			secret.startsWith("<redacted:") ? match : `${prefix}${redactionFor(secret)}`,
+			secret.startsWith("<redacted:") || /\bAuthorization\b/i.test(prefix)
+				? match
+				: `${prefix}${redactionFor(secret)}`,
 		);
 }
 
@@ -205,6 +212,7 @@ class FileMcpLogger implements McpLogger {
 
 function redactMcpLogData(value: unknown, seen: WeakSet<object>): unknown {
 	if (typeof value === "string") return redactMcpLogText(value);
+	if (typeof value === "bigint") return value.toString();
 	if (typeof value !== "object" || value === null) return value;
 	if (seen.has(value)) return "[Circular]";
 	seen.add(value);
