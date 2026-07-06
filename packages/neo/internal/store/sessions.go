@@ -104,11 +104,14 @@ func ScanSessionsWithWarn(agentDir, cwd string, warn func(msg string)) ([]Sessio
 }
 
 // sessionEntry is the minimal decoded shape needed for the picker: type, the
-// session_info name, and the message payload.
+// entry-level timestamp (the activity fallback), the session_info name, and the
+// message payload. Timestamp mirrors SessionEntryBase.timestamp
+// (session-manager.ts:72): an ISO-8601 string present on every non-header entry.
 type sessionEntry struct {
-	Type    string          `json:"type"`
-	Name    string          `json:"name,omitempty"`
-	Message json.RawMessage `json:"message,omitempty"`
+	Type      string          `json:"type"`
+	Timestamp string          `json:"timestamp,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Message   json.RawMessage `json:"message,omitempty"`
 }
 
 // sessionMessage mirrors the message payload: role + content (string or an
@@ -154,7 +157,7 @@ func (acc *sessionAccumulator) feed(line string, typed sessionEntry) (abort bool
 		acc.name = strings.TrimSpace(typed.Name)
 		return false
 	case "message":
-		acc.feedMessage(typed.Message)
+		acc.feedMessage(typed.Message, typed.Timestamp)
 		return false
 	default:
 		return false
@@ -162,14 +165,16 @@ func (acc *sessionAccumulator) feed(line string, typed sessionEntry) (abort bool
 }
 
 // feedMessage counts a message entry and updates activity time + first user
-// message, mirroring the message branch of buildSessionInfo.
-func (acc *sessionAccumulator) feedMessage(raw json.RawMessage) {
+// message, mirroring the message branch of buildSessionInfo. entryTS is the
+// entry-level SessionEntryBase.timestamp used as the activity fallback when the
+// message has no numeric timestamp (session-manager.ts:664).
+func (acc *sessionAccumulator) feedMessage(raw json.RawMessage, entryTS string) {
 	acc.messageCount++
 	msg, ok := decodeMessage(raw)
 	if !ok {
 		return
 	}
-	if act, ok := messageActivityTime(msg); ok {
+	if act, ok := messageActivityTime(msg, entryTS); ok {
 		if !acc.haveActivity || act > acc.lastActivity {
 			acc.lastActivity = act
 			acc.haveActivity = true
@@ -311,16 +316,22 @@ func extractTextContent(content json.RawMessage) string {
 }
 
 // messageActivityTime mirrors getMessageActivityTime (session-manager.ts:
-// 654-666): a numeric message.timestamp (ms) if present; else the entry
-// timestamp is used by the caller. Only user/assistant messages contribute.
-func messageActivityTime(msg sessionMessage) (float64, bool) {
+// 654-666): only user/assistant messages contribute. A numeric message.timestamp
+// (ms) wins; otherwise the entry-level timestamp is parsed as the activity
+// fallback (`new Date(entry.timestamp).getTime()`, line 664) — an unparseable
+// entry timestamp yields (0,false), mirroring Number.isNaN(t) ? undefined.
+func messageActivityTime(msg sessionMessage, entryTS string) (float64, bool) {
 	if msg.Role != "user" && msg.Role != "assistant" {
 		return 0, false
 	}
 	if msg.Timestamp != nil {
 		return *msg.Timestamp, true
 	}
-	return 0, false
+	t := parseISOTime(entryTS)
+	if t.IsZero() {
+		return 0, false
+	}
+	return float64(t.UnixMilli()), true
 }
 
 // computeModified mirrors buildSessionInfo's modified selection: last activity
