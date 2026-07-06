@@ -9,7 +9,7 @@
 		"clean": "shx rm -rf dist",
 		"build": "tsgo -p tsconfig.build.json",
 		"bench:frame-cost": "tsx bench/frame-cost.ts",
-		"test": "node --test --import tsx test/*.test.ts",
+		"test": "node --test --import tsx --test-reporter=dot --test-reporter-destination=stdout test/*.test.ts",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"files": [

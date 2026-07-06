@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- Fixed OpenAI Responses and Azure OpenAI Responses requests to avoid sending `max_output_tokens` values below the provider minimum ([#6265](https://github.com/earendil-works/pi/issues/6265)).
+
 ### Removed
 
 ## [2026.7.5-2] - 2026-07-05

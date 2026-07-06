@@ -285,9 +285,7 @@ function isLegacyKeybindingName(key: string): key is keyof typeof KEYBINDING_NAM
 	return key in KEYBINDING_NAME_MIGRATIONS;
 }
 
-function toKeybindingsConfig(value: unknown): KeybindingsConfig {
-	if (!isRecord(value)) return {};
-
+function toKeybindingsConfig(value: Record<string, unknown>): KeybindingsConfig {
 	const config: KeybindingsConfig = {};
 	for (const [key, binding] of Object.entries(value)) {
 		if (typeof binding === "string") {

@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- Fixed harness session storage short entry ids to use the random tail of the generated uuidv7 instead of the timestamp prefix, which was nearly constant between calls ([#6242](https://github.com/earendil-works/pi/issues/6242)).
+
 ### Removed
 
 ## [2026.7.5-2] - 2026-07-05

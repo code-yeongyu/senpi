@@ -1,0 +1,366 @@
+# Runs the repo's /is prompt against an issue when the `pi-analyze` label is added
+# or when a staff member comments `@issuron analyze` on an issue.
+#
+# Setup required before this works:
+#   1. Create a `pi-analyze` GitHub environment on the repo and add a
+#      `PI_AUTH_JSON` secret containing the contents of a pi auth.json
+#      (~/.pi/agent/auth.json).
+#   2. Create the `pi-analyze` label.
+#   3. Add a repository secret `EARENDIL_ORG_READ_TOKEN` with permission to
+#      read `earendil-works` org membership. The authorization job uses it to
+#      verify that the label actor is an active member of `earendil-works/staff`.
+#   4. Add an environment secret `PI_GIST_TOKEN` on `pi-analyze` with gist
+#      creation permission. The analysis job uses it to upload the exported
+#      session gist.
+#
+# The session runs in a high-entropy checkout directory so the recorded cwd is
+# a unique string. Import the session into a local checkout with the
+# /ir extension command (.pi/extensions/import-repro.ts):
+#   pi "/ir <gist-id | gist-url | pi.dev/session URL>"
+
+name: Issue Analysis
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: issue-analysis-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.verify.outputs.should_run }}
+      extra_instructions: ${{ steps.verify.outputs.extra_instructions }}
+    steps:
+      - name: Verify sender permission
+        id: verify
+        uses: actions/github-script@v7
+        env:
+          ORG_READ_TOKEN: ${{ secrets.EARENDIL_ORG_READ_TOKEN }}
+        with:
+          script: |
+            const ANALYZE_LABEL = 'pi-analyze';
+            const username = context.payload.sender.login;
+            let extraInstructions = '';
+
+            core.setOutput('should_run', 'false');
+            core.setOutput('extra_instructions', '');
+
+            if (context.eventName === 'issues') {
+              if (context.payload.action !== 'labeled' || context.payload.label?.name !== ANALYZE_LABEL) {
+                console.log('Not a pi-analyze label event');
+                return;
+              }
+            } else if (context.eventName === 'issue_comment') {
+              if (context.payload.issue.pull_request) {
+                console.log('Ignoring pull request comment');
+                return;
+              }
+              const body = context.payload.comment.body || '';
+              const match = body.match(/^\s*@issuron\s+analyze\b([\s\S]*)$/i);
+              if (!match) {
+                console.log('Comment is not an @issuron analyze trigger');
+                return;
+              }
+              extraInstructions = match[1].trim();
+            } else {
+              console.log(`Unsupported event: ${context.eventName}`);
+              return;
+            }
+
+            async function removeTriggerLabel() {
+              if (context.eventName !== 'issues') return;
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  name: ANALYZE_LABEL,
+                });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }
+
+            if (!process.env.ORG_READ_TOKEN) {
+              await removeTriggerLabel();
+              core.setFailed('EARENDIL_ORG_READ_TOKEN is not configured; refusing to run issue analysis.');
+              return;
+            }
+
+            try {
+              const response = await fetch(
+                `https://api.github.com/orgs/earendil-works/teams/staff/memberships/${encodeURIComponent(username)}`,
+                {
+                  headers: {
+                    Accept: 'application/vnd.github+json',
+                    Authorization: `Bearer ${process.env.ORG_READ_TOKEN}`,
+                    'X-GitHub-Api-Version': '2022-11-28',
+                  },
+                },
+              );
+
+              if (response.status === 404) {
+                await removeTriggerLabel();
+                core.setFailed(`@${username} is not an active earendil-works/staff member.`);
+                return;
+              }
+
+              if (!response.ok) {
+                const body = await response.text();
+                await removeTriggerLabel();
+                core.setFailed(
+                  `Could not verify earendil-works/staff membership for @${username}: HTTP ${response.status} ${body}`,
+                );
+                return;
+              }
+
+              const membership = await response.json();
+              if (membership.state !== 'active') {
+                await removeTriggerLabel();
+                core.setFailed(`@${username} is not an active earendil-works/staff member.`);
+                return;
+              }
+              console.log(`earendil-works/staff membership for @${username}: ${membership.state}`);
+            } catch (error) {
+              await removeTriggerLabel();
+              core.setFailed(
+                `Could not verify earendil-works/staff membership for @${username}: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+              );
+              return;
+            }
+
+            const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              username,
+            });
+            if (!['admin', 'write'].includes(data.permission)) {
+              await removeTriggerLabel();
+              core.setFailed(
+                `@${username} has '${data.permission}' permission; write or admin is required to trigger issue analysis.`,
+              );
+              return;
+            }
+
+            if (context.eventName === 'issue_comment') {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: [ANALYZE_LABEL],
+              });
+            }
+
+            core.setOutput('should_run', 'true');
+            core.setOutput('extra_instructions', extraInstructions);
+
+  analyze:
+    needs: authorize
+    if: needs.authorize.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    environment: pi-analyze
+    timeout-minutes: 45
+    env:
+      ISSUE_ANALYSIS_MODEL: openai-codex/gpt-5.5
+      ISSUE_ANALYSIS_THINKING: high
+    steps:
+      - name: Create high-entropy working directory name
+        id: workdir
+        run: echo "name=pi-ci-$(openssl rand -hex 16)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: ${{ steps.workdir.outputs.name }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ steps.workdir.outputs.name }}/package-lock.json
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fd-find ripgrep
+          sudo ln -s "$(which fdfind)" /usr/local/bin/fd
+
+      - name: Install dependencies
+        working-directory: ${{ steps.workdir.outputs.name }}
+        run: npm ci --ignore-scripts
+
+      - name: Write auth.json
+        env:
+          PI_AUTH_JSON: ${{ secrets.PI_AUTH_JSON }}
+        run: |
+          if [ -z "$PI_AUTH_JSON" ]; then
+            echo "PI_AUTH_JSON secret is not configured for the pi-analyze environment" >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/pi-agent"
+          printf '%s' "$PI_AUTH_JSON" > "$RUNNER_TEMP/pi-agent/auth.json"
+          chmod 600 "$RUNNER_TEMP/pi-agent/auth.json"
+
+      - name: Run pi /is
+        shell: bash
+        working-directory: ${{ steps.workdir.outputs.name }}
+        env:
+          PI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-agent
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+          EXTRA_INSTRUCTIONS: ${{ needs.authorize.outputs.extra_instructions }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/pi-out/session"
+          prompt="/is $ISSUE_URL"
+          if [ -n "$EXTRA_INSTRUCTIONS" ]; then
+            prompt+=$'\n\nAdditional instructions from @issuron analyze comment:\n'
+            prompt+="$EXTRA_INSTRUCTIONS"
+          fi
+          ./pi-test.sh \
+            -p \
+            --approve \
+            --session-dir "$RUNNER_TEMP/pi-out/session" \
+            --model "$ISSUE_ANALYSIS_MODEL" \
+            --thinking "$ISSUE_ANALYSIS_THINKING" \
+            "$prompt" | tee "$RUNNER_TEMP/pi-out/output.md"
+
+      - name: Export session files
+        id: export_session_files
+        if: always()
+        shell: bash
+        working-directory: ${{ steps.workdir.outputs.name }}
+        env:
+          PI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-agent
+        run: |
+          session_file="$(find "$RUNNER_TEMP/pi-out/session" -type f -name '*.jsonl' | head -n 1)"
+          if [ -z "$session_file" ]; then
+            echo "No session jsonl file found" >&2
+            exit 1
+          fi
+          cp "$session_file" "$RUNNER_TEMP/pi-out/session.jsonl"
+          ./pi-test.sh --no-extensions --export "$RUNNER_TEMP/pi-out/session.jsonl" "$RUNNER_TEMP/pi-out/session.html"
+
+      - name: Upload session gist
+        id: gist
+        if: always() && steps.export_session_files.outcome == 'success'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PI_GIST_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "PI_GIST_TOKEN is not configured" >&2
+            exit 1
+          fi
+          gist_url="$(gh gist create --public=false "$RUNNER_TEMP/pi-out/session.html" "$RUNNER_TEMP/pi-out/session.jsonl")"
+          gist_id="${gist_url##*/}"
+          echo "url=$gist_url" >> "$GITHUB_OUTPUT"
+          echo "id=$gist_id" >> "$GITHUB_OUTPUT"
+          echo "share_url=https://pi.dev/session/#$gist_id" >> "$GITHUB_OUTPUT"
+
+      - name: Comment with session import instructions
+        if: always() && steps.gist.outcome == 'success'
+        uses: actions/github-script@v7
+        env:
+          GIST_URL: ${{ steps.gist.outputs.url }}
+          GIST_ID: ${{ steps.gist.outputs.id }}
+          SHARE_URL: ${{ steps.gist.outputs.share_url }}
+          SESSION_JSONL: ${{ runner.temp }}/pi-out/session.jsonl
+        with:
+          script: |
+            const fs = require('fs');
+
+            function extractLastAgentMessage(sessionPath) {
+              const lines = fs.readFileSync(sessionPath, 'utf8').split(/\r?\n/).filter(Boolean);
+              let lastText = '';
+
+              for (const line of lines) {
+                let entry;
+                try {
+                  entry = JSON.parse(line);
+                } catch {
+                  continue;
+                }
+
+                if (entry.type !== 'message' || entry.message?.role !== 'assistant') continue;
+
+                const content = entry.message.content;
+                const parts = [];
+                if (typeof content === 'string') {
+                  parts.push(content);
+                } else if (Array.isArray(content)) {
+                  for (const block of content) {
+                    if (block?.type === 'text' && typeof block.text === 'string') {
+                      parts.push(block.text);
+                    }
+                  }
+                }
+
+                const text = parts.join('\n\n').trim();
+                if (text) lastText = text;
+              }
+
+              if (!lastText) return '_No assistant output found._';
+              const maxLength = 55000;
+              if (lastText.length <= maxLength) return lastText;
+              return `${lastText.slice(0, maxLength)}\n\n_[truncated]_`;
+            }
+
+            const gistUrl = process.env.GIST_URL;
+            const gistId = process.env.GIST_ID;
+            const shareUrl = process.env.SHARE_URL;
+            const lastAgentMessage = extractLastAgentMessage(process.env.SESSION_JSONL);
+            const body = [
+              'Pi issue analysis finished.',
+              '',
+              `Share URL: ${shareUrl}`,
+              `Gist: ${gistUrl}`,
+              '',
+              'Continue locally from a checkout with:',
+              '',
+              '```sh',
+              `pi "/ir ${gistId}"`,
+              '```',
+              '',
+              '<details>',
+              '<summary>Agent analysis summary</summary>',
+              '',
+              lastAgentMessage,
+              '',
+              '</details>',
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+      - name: Remove trigger label
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                name: 'pi-analyze',
+              });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
