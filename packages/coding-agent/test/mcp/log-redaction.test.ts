@@ -61,6 +61,33 @@ describe("mcp log redaction", () => {
 		}
 	});
 
+	it("redacts Error messages and nested cyclic payloads before writing to ring buffer or file", () => {
+		const logger = createMcpLogger("wave0-error-cyclic");
+		const secret = "wave0-debug-fake-secret-20260706";
+		const payload: { headers: { Authorization: string }; password: string; url: string; self?: unknown } = {
+			headers: { Authorization: `Bearer ${secret}` },
+			password: secret,
+			url: `https://example.test/mcp?api_key=${secret}`,
+		};
+		payload.self = payload;
+		const error = Object.assign(new Error(`request failed for ${secret}`), {
+			detail: `nested payload still included ${secret}`,
+			payload,
+		});
+
+		logger.error("plugin call failed", error);
+
+		const ringText = logger.getRingBuffer().join("\n");
+		const fileText = readFileSync(logger.filePath, "utf8");
+		for (const sinkText of [ringText, fileText]) {
+			expect(sinkText).not.toContain(secret);
+			expect(sinkText).toContain(expectedRedaction(secret));
+			expect(sinkText).toContain('"message":"request failed for <redacted:');
+			expect(sinkText).toContain('"stack":"Error: request failed for <redacted:');
+			expect(sinkText).toContain("[Circular]");
+		}
+	});
+
 	it("masks malformed secret-bearing input", () => {
 		const token = "malformed-token-value";
 		const redacted = redactMcpLogText(`Authorization: Bearer ${token}

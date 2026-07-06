@@ -37,14 +37,9 @@ export interface McpLoggerOptions {
 	maxFileBytes?: number;
 }
 
-interface McpLogEntry {
-	timestamp: string;
-	server: string;
-	level: McpLogLevel;
-	severity: number;
-	channel: McpLogChannel;
-	message: string;
-	data?: unknown;
+interface RedactionContext {
+	readonly seen: WeakSet<object>;
+	readonly secrets: Set<string>;
 }
 
 const DEFAULT_MAX_FILE_BYTES = 1024 * 1024;
@@ -72,17 +67,27 @@ export function fingerprintSecret(secret: string): string {
 }
 
 export function redactMcpLogText(text: string): string {
+	return redactMcpLogTextWithContext(text, { seen: new WeakSet<object>(), secrets: new Set<string>() });
+}
+
+function redactMcpLogTextWithContext(text: string, context: RedactionContext): string {
 	return text
 		.replace(
 			AUTHORIZATION_VALUE_PATTERN,
-			(_match, prefix: string, secret: string) => `${prefix}${redactionFor(secret)}`,
+			(_match, prefix: string, secret: string) => `${prefix}${redactionForSecret(secret, context)}`,
 		)
-		.replace(BEARER_VALUE_PATTERN, (_match, prefix: string, secret: string) => `${prefix}${redactionFor(secret)}`)
-		.replace(QUERY_SECRET_PATTERN, (_match, prefix: string, secret: string) => `${prefix}${redactionFor(secret)}`)
+		.replace(
+			BEARER_VALUE_PATTERN,
+			(_match, prefix: string, secret: string) => `${prefix}${redactionForSecret(secret, context)}`,
+		)
+		.replace(
+			QUERY_SECRET_PATTERN,
+			(_match, prefix: string, secret: string) => `${prefix}${redactionForSecret(secret, context)}`,
+		)
 		.replace(KEY_VALUE_PATTERN, (match: string, prefix: string, secret: string) =>
 			secret.startsWith("<redacted:") || /\bAuthorization\b/i.test(prefix)
 				? match
-				: `${prefix}${redactionFor(secret)}`,
+				: `${prefix}${redactionForSecret(secret, context)}`,
 		);
 }
 
@@ -157,19 +162,19 @@ class FileMcpLogger implements McpLogger {
 	}
 
 	#formatLine(level: string, message: string, data: unknown, channel: McpLogChannel): string {
+		const context: RedactionContext = { seen: new WeakSet<object>(), secrets: new Set<string>() };
 		const mapped = mapMcpLogLevel(level);
-		const entry: McpLogEntry = {
+		const redactedData = data === undefined ? undefined : redactMcpLogData(data, context);
+		const entry = {
 			timestamp: new Date().toISOString(),
 			server: this.#server,
 			level: mapped.level,
 			severity: mapped.severity,
 			channel,
-			message: redactMcpLogText(message),
+			message: redactMcpLogTextWithContext(message, context),
+			data: redactedData,
 		};
-		if (data !== undefined) {
-			entry.data = redactMcpLogData(data, new WeakSet<object>());
-		}
-		return JSON.stringify(entry);
+		return redactKnownSecrets(JSON.stringify(entry), context);
 	}
 
 	#pushRing(line: string): void {
@@ -210,19 +215,34 @@ class FileMcpLogger implements McpLogger {
 	}
 }
 
-function redactMcpLogData(value: unknown, seen: WeakSet<object>): unknown {
-	if (typeof value === "string") return redactMcpLogText(value);
+function redactMcpLogData(value: unknown, context: RedactionContext): unknown {
+	if (typeof value === "string") return redactMcpLogTextWithContext(value, context);
 	if (typeof value === "bigint") return value.toString();
 	if (typeof value !== "object" || value === null) return value;
-	if (seen.has(value)) return "[Circular]";
-	seen.add(value);
-	if (Array.isArray(value)) return value.map((item) => redactMcpLogData(item, seen));
+	if (context.seen.has(value)) return "[Circular]";
+	context.seen.add(value);
+	if (value instanceof Error) return redactMcpLogError(value, context);
+	if (Array.isArray(value)) return value.map((item) => redactMcpLogData(item, context));
+	return redactMcpLogEntries(value, context);
+}
+
+function redactMcpLogError(error: Error, context: RedactionContext): Record<string, unknown> {
+	const redacted = redactMcpLogEntries(error, context);
+	redacted.name = redactMcpLogTextWithContext(error.name, context);
+	redacted.message = redactKnownSecrets(redactMcpLogTextWithContext(error.message, context), context);
+	if (error.stack !== undefined) {
+		redacted.stack = redactKnownSecrets(redactMcpLogTextWithContext(error.stack, context), context);
+	}
+	return redacted;
+}
+
+function redactMcpLogEntries(value: object, context: RedactionContext): Record<string, unknown> {
 	const redacted: Record<string, unknown> = {};
 	for (const [key, item] of Object.entries(value)) {
 		if (SENSITIVE_KEY_PATTERN.test(key)) {
-			redacted[key] = redactionFor(stringifySecretValue(item));
+			redacted[key] = redactionForSecret(stringifySecretValue(item), context);
 		} else {
-			redacted[key] = redactMcpLogData(item, seen);
+			redacted[key] = redactMcpLogData(item, context);
 		}
 	}
 	return redacted;
@@ -240,6 +260,20 @@ function stringifySecretValue(value: unknown): string {
 		return item;
 	});
 	return json ?? String(value);
+}
+
+function redactionForSecret(secret: string, context: RedactionContext): string {
+	if (secret.length > 0 && !secret.startsWith("<redacted:")) {
+		context.secrets.add(secret);
+	}
+	return redactionFor(secret);
+}
+
+function redactKnownSecrets(text: string, context: RedactionContext): string {
+	for (const secret of [...context.secrets].sort((left, right) => right.length - left.length)) {
+		text = text.split(secret).join(redactionFor(secret));
+	}
+	return text;
 }
 
 function redactionFor(secret: string): string {
