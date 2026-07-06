@@ -6,7 +6,7 @@ const require = createRequire(import.meta.url);
 
 export function loadNativePty() {
 	const host = `${process.platform}-${process.arch}`;
-	const attemptedPath = join(dirname(fileURLToPath(import.meta.url)), "prebuilds", host, "pi-pty.node");
+	const attemptedPath = join(dirname(fileURLToPath(import.meta.url)), "prebuilds", host, `senpi_pty.${host}.node`);
 	try {
 		return {
 			native: require(attemptedPath),
