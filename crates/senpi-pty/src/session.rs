@@ -1,7 +1,8 @@
+use crate::session_threads::{spawn_reader, spawn_timeout};
 use crate::signals::{kill_signal, process_group, send_signal, signal_signal};
 use portable_pty::{Child, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use std::fmt::{Display, Formatter};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -267,38 +268,4 @@ impl PtySession {
         }
         send_signal(self.process_group, signal, &mut *self.killer)
     }
-}
-
-fn spawn_reader(
-    mut reader: Box<dyn Read + Send>,
-    mut on_chunk: impl FnMut(&[u8]) + Send + 'static,
-) -> JoinHandle<()> {
-    std::thread::spawn(move || {
-        let mut buffer = [0_u8; 8192];
-        while let Ok(count) = reader.read(&mut buffer) {
-            if count == 0 {
-                break;
-            }
-            on_chunk(&buffer[..count]);
-        }
-    })
-}
-
-fn spawn_timeout(
-    timeout: Duration,
-    finished: Arc<AtomicBool>,
-    cancelled: Arc<AtomicBool>,
-    timed_out: Arc<AtomicBool>,
-    process_group: Option<i32>,
-    mut killer: Box<dyn ChildKiller + Send + Sync>,
-) {
-    std::thread::spawn(move || {
-        std::thread::sleep(timeout);
-        if finished.load(Ordering::SeqCst) {
-            return;
-        }
-        timed_out.store(true, Ordering::SeqCst);
-        cancelled.store(true, Ordering::SeqCst);
-        let _ = send_signal(process_group, kill_signal(), &mut *killer);
-    });
 }

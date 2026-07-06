@@ -1,4 +1,5 @@
 mod session;
+mod session_threads;
 mod signals;
 
 pub use session::{PtyError, PtyExit, PtyResult, PtySession, PtySessionOptions};
