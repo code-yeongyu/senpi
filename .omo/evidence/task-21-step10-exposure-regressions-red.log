@@ -1,0 +1,46 @@
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w2/packages/coding-agent
+
+·········x··x··
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/mcp/commands.test.ts > /mcp command suite > removes and refreshes provider-visible MCP tools when /mcp disables and enables a server
+AssertionError: expected [ 'read', 'bash', 'edit', …(2) ] to not include 'mcp_fx_tool_1'
+ ❯ test/mcp/commands.test.ts:167:52
+    165|
+    166|   await harness.session.prompt("/mcp disable fx");
+    167|   expect(harness.session.getActiveToolNames()).not.toContain("mcp_fx_t…
+       |                                                    ^
+    168|
+    169|   setConfig(root, { fx: stdioServer(["--tools", "2"]) });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  test/mcp/exposure-policy.test.ts > MCP Tier-A exposure policy > treats an includeTools filter matching zero tools as a non-error zero-exposure result
+AssertionError: expected [ 'bash', 'mcp_fx_tool_1' ] to deeply equal [ 'bash' ]
+
+- Expected
++ Received
+
+  [
+    "bash",
++   "mcp_fx_tool_1",
+  ]
+
+ ❯ test/mcp/exposure-policy.test.ts:120:26
+    118|
+    119|   expect(pi.registeredTools).toEqual([]);
+    120|   expect(pi.activeTools).toEqual(["bash"]);
+       |                          ^
+    121|   expect(pi.setActiveCalls).toEqual([["bash"]]);
+    122|   expect(logContains("fx", "0 exposed")).toBe(true);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed | 1 passed (3)
+      Tests  2 failed | 13 passed (15)
+   Start at  07:26:34
+   Duration  9.83s (transform 2.39s, setup 37ms, import 4.89s, tests 10.56s, environment 0ms)
+

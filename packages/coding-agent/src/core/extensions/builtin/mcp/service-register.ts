@@ -6,10 +6,15 @@ import { connectAndRefreshMcpCatalog } from "./startup-race.ts";
 
 type McpToolRegistrar = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">;
 
+export interface McpServiceDirectToolRegistrationOptions {
+	readonly refreshActiveSetWhenEmpty?: boolean;
+}
+
 export async function registerMcpServiceDirectTools(
 	pi: McpToolRegistrar,
 	config: ResolvedMcpConfig,
 	entries: Iterable<McpConnectionEntry>,
+	options: McpServiceDirectToolRegistrationOptions = {},
 ): Promise<void> {
 	await registerDirectMcpTools(
 		pi,
@@ -25,5 +30,6 @@ export async function registerMcpServiceDirectTools(
 				name: entry.name,
 			};
 		}),
+		options,
 	);
 }

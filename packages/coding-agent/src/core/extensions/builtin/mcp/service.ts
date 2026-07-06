@@ -32,6 +32,7 @@ export class McpService {
 	#lastSessionStartReason: SessionStartEvent["reason"] | null = null;
 	#toolRefreshGeneration = 0;
 	#config: ResolvedMcpConfig | null = null;
+	#refreshActiveSetWhenNoTools = false;
 	readonly #connections = new Map<string, McpConnectionEntry>();
 	readonly #connectionKeysByName = new Map<string, string>();
 
@@ -135,6 +136,8 @@ export class McpService {
 		toolRefreshGeneration: number,
 	): Promise<void> {
 		const cache = await readMcpCatalogCache(options.agentDir);
+		const hadConnectionsBeforeSync = this.#connections.size > 0;
+		this.#refreshActiveSetWhenNoTools = Object.keys(config.servers).length > 0 || hadConnectionsBeforeSync;
 		const wanted = new Map<string, ResolvedMcpServer>();
 		visitSpawnableMcpServers(config, (name, server) => {
 			wanted.set(name, server);
@@ -211,7 +214,9 @@ export class McpService {
 	): Promise<void> {
 		const config = this.#config;
 		if (config === null) return;
-		await registerMcpServiceDirectTools(pi, config, this.#connections.values());
+		await registerMcpServiceDirectTools(pi, config, this.#connections.values(), {
+			refreshActiveSetWhenEmpty: this.#refreshActiveSetWhenNoTools,
+		});
 	}
 
 	#serverSnapshot(name: string): McpServerSnapshot {

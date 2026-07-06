@@ -5,7 +5,7 @@ import type { ResolvedMcpConfig } from "../config-schema.ts";
 import type { ServerConnection } from "../connection.ts";
 import { createMcpLogger, type McpLogger } from "../log.ts";
 import { computeMcpExposurePolicy } from "./policy.ts";
-import { registerMcpCatalogTools } from "./register.ts";
+import { type McpCatalogRegistrationOptions, registerMcpCatalogTools } from "./register.ts";
 
 export interface McpDirectRegistrationEntry {
 	readonly name: string;
@@ -20,6 +20,7 @@ export async function registerDirectMcpTools(
 	pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
 	config: ResolvedMcpConfig,
 	entries: Iterable<McpDirectRegistrationEntry>,
+	options: McpCatalogRegistrationOptions = {},
 ): Promise<void> {
 	const registeredEntries: McpToolCatalogEntry[] = [];
 	const activeEntries: McpToolCatalogEntry[] = [];
@@ -47,5 +48,11 @@ export async function registerDirectMcpTools(
 		registeredEntries.push(...policy.registeredEntries);
 		activeEntries.push(...policy.activeEntries);
 	}
-	registerMcpCatalogTools(pi, registeredEntries, activeEntries, (message) => createMcpLogger("service").warn(message));
+	registerMcpCatalogTools(
+		pi,
+		registeredEntries,
+		activeEntries,
+		(message) => createMcpLogger("service").warn(message),
+		options,
+	);
 }

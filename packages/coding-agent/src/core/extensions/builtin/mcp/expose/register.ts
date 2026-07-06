@@ -30,13 +30,18 @@ type McpAgentContent = TextContent | ImageContent;
 type McpToolDefinition = ToolDefinition<TSchema, McpToolDetails | undefined, unknown>;
 type WarnFn = (message: string) => void;
 
+export interface McpCatalogRegistrationOptions {
+	readonly refreshActiveSetWhenEmpty?: boolean;
+}
+
 export function registerMcpCatalogTools(
 	pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
 	entries: readonly McpToolCatalogEntry[],
 	activeEntries: readonly McpToolCatalogEntry[],
 	warn?: WarnFn,
+	options: McpCatalogRegistrationOptions = {},
 ): void {
-	if (entries.length === 0 && activeEntries.length === 0) return;
+	if (entries.length === 0 && activeEntries.length === 0 && options.refreshActiveSetWhenEmpty !== true) return;
 	const tools = buildMcpToolDefinitions(entries, warn);
 	const currentActive = pi.getActiveTools().filter((name) => !name.startsWith("mcp_"));
 	const mcpNames = buildActiveToolNames(entries, activeEntries, warn);

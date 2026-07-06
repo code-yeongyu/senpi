@@ -1,0 +1,8 @@
+[PASS] CLI completed the multi-step loop — code=0
+[PASS] two model turns served (loop iterated) — requests=2
+[PASS] requested MCP fixture tool exists, executed, and fed result back to model — callLog=yes modelSawFixtureResult=true
+[PASS] final assistant text returned
+[PASS] real auth unchanged — /Users/yeongyu/.senpi/agent/auth.json
+evidence: /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w2/local-ignore/qa-evidence/20260707-mcp-w2-step10-exposure-fix
+
+mock-loop.mjs --with-mcp-tool mcp_fx_tool_1 (openai-completions): 5/5 passed
