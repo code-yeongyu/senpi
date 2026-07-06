@@ -160,7 +160,9 @@ export class McpService {
 		try {
 			await connection.connect();
 		} catch (error) {
-			void error;
+			if (connection.lastError === undefined) {
+				connection.markDegraded(error instanceof Error ? error : new Error(String(error)));
+			}
 		}
 	}
 

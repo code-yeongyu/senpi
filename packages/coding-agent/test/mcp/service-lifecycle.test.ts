@@ -143,6 +143,32 @@ describe("McpService session lifecycle", () => {
 		]);
 	});
 
+	it("surfaces transport creation failures in server snapshots without spawning a process", async () => {
+		const root = makeRoot("create-failure", cleanupTasks);
+		setConfig(root, {
+			needsAuth: {
+				type: "http",
+				url: "http://127.0.0.1:1/mcp",
+				auth: "bearer",
+				connectTimeoutMs: 200,
+			},
+		});
+		const service = getMcpService();
+
+		await attach(service, root, "startup");
+
+		expect(service.getConnection("needsAuth")?.getRootPid()).toBeNull();
+		expect(service.getServerSnapshots()).toMatchObject([
+			{
+				name: "needsAuth",
+				configState: "enabled",
+				lifecycleState: "degraded",
+				pid: null,
+				lastError: expect.stringContaining("bearerTokenEnv"),
+			},
+		]);
+	});
+
 	it("disposes all live fixture processes on quit", async () => {
 		const root = makeRoot("quit", cleanupTasks);
 		const firstCounter = join(root.agentDir, "first-spawns.txt");
