@@ -5,6 +5,7 @@
 ### Added
 
 - Added `senpi app-server` mode for Codex-compatible app-server integrations, including stdio, websocket, and websocket-over-UDS transports, multi-session serving, wire approval requests, daemon subcommands, and protocol documentation.
+- Added the built-in MCP extension skeleton and exact-pinned official MCP SDK dependency groundwork.
 
 ### Changed
 

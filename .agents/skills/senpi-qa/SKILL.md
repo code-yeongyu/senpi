@@ -100,13 +100,17 @@ OpenAI and Anthropic (pick with `--api`; default `openai-completions`):
 | `openai-responses` | `openai` | `/v1/responses` · Bearer |
 
 `--self-test` (no `--api`) round-trips all three. `--with-tool` proves the full
-loop (model → bash tool → final text). The loop is hermetic: provider key env
-vars are stripped so only the inline mock key is ever used.
+loop (model → bash tool → final text). `--with-mcp-tool` registers a sandbox
+extension that proxies `mcp_fx_tool_<n>` to the local MCP stdio fixture, then
+asserts the fixture call log exists and the model's second request contains the
+fixture result. The loop is hermetic: provider key env vars are stripped so only
+the inline mock key is ever used.
 
 ```bash
 node .agents/skills/senpi-qa/scripts/mock-loop.mjs --self-test
 node .agents/skills/senpi-qa/scripts/mock-loop.mjs --self-test --api anthropic-messages
 node .agents/skills/senpi-qa/scripts/mock-loop.mjs --with-tool --api openai-responses
+node .agents/skills/senpi-qa/scripts/mock-loop.mjs --with-mcp-tool mcp_fx_tool_1 --tool-args '{"value":"ok"}'
 node .agents/skills/senpi-qa/scripts/mock-loop.mjs --run "summarize this repo" --evidence mock-summary
 ```
 
@@ -128,6 +132,7 @@ node .agents/skills/senpi-qa/scripts/cli-smoke.mjs --self-test
 | `scripts/rpc-drive.mjs --self-test` | `get_state` returns the documented `RpcSessionState`, no API call, auth unchanged |
 | `scripts/mock-loop.mjs --self-test` | scripted marker returns through the real loop via the mock provider; request used the mock model + key; zero real calls; auth unchanged |
 | `scripts/mock-loop.mjs --with-tool` | full loop: two model turns served, bash tool ran, final text returned |
+| `scripts/mock-loop.mjs --with-mcp-tool <tool>` | full loop with a registered sandbox MCP stdio fixture proxy; fails if the requested `mcp_fx_tool_<n>` is not registered, invoked, and fed back to the model |
 | `scripts/tui-smoke.mjs --self-test` | TUI boots, renders, accepts a keystroke, tears down; auth unchanged |
 | `scripts/cli-smoke.mjs --self-test` | `--help`/`--version`/`--list-models` work offline; unknown flag reported; auth unchanged |
 

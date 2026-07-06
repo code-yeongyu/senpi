@@ -103,6 +103,14 @@ function installDeps() {
 	}
 }
 
+function checkWorkspaceDependencyPins() {
+	const codingAgentPackage = JSON.parse(readFileSync(join(ROOT, "packages", "coding-agent", "package.json"), "utf8"));
+	const mcpSdkVersion = codingAgentPackage.dependencies?.["@modelcontextprotocol/sdk"];
+	if (typeof mcpSdkVersion === "string" && !/^\d+\.\d+\.\d+$/.test(mcpSdkVersion)) {
+		warn(`@modelcontextprotocol/sdk should stay exact-pinned; found ${mcpSdkVersion}.`);
+	}
+}
+
 // 3. Credentials: .env.local ----------------------------------------------
 async function ensureEnvLocal() {
 	const envPath = join(ROOT, ".env.local");
@@ -181,6 +189,7 @@ async function main() {
 	log("=== senpi dev environment setup ===");
 	checkRuntime();
 	installDeps();
+	checkWorkspaceDependencyPins();
 	await ensureEnvLocal();
 	ensureClaudeSkills();
 	ensureGitExclude();

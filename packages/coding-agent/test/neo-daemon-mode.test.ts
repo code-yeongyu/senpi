@@ -8,8 +8,8 @@
  * neo-daemon-auth-isolation.test.ts (group e).
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
-import { connect, type Socket } from "node:net";
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { connect, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -21,7 +21,7 @@ import {
 	type NeoDaemonWorkerFactory,
 	runNeoDaemon,
 } from "../src/modes/rpc/neo-daemon-mode.ts";
-import { readNeoDaemonRecord } from "../src/modes/rpc/neo-daemon-registry.ts";
+import { neoDaemonRegistryPath, readNeoDaemonRecord } from "../src/modes/rpc/neo-daemon-registry.ts";
 import type { NeoRuntimeOptions } from "../src/modes/rpc/neo-runtime-options.ts";
 
 interface StubWorkerRecord {
@@ -254,6 +254,10 @@ describe("neo daemon supervisor", () => {
 			cwd,
 			agentDir,
 			idleShutdownMs: 1000,
+			// This test exercises idle-shutdown timing in isolation; the recurring
+			// self-heal timer (an orthogonal concern) is disabled so the single-slot
+			// manual clock tracks only the idle timer. Self-heal has its own tests.
+			selfHealIntervalMs: 0,
 			token: TOKEN,
 			workerFactory: makeStubFactory([]),
 			clock: manual.clock,
@@ -274,6 +278,8 @@ describe("neo daemon supervisor", () => {
 			cwd,
 			agentDir,
 			idleShutdownMs: 1000,
+			// Isolate the idle timer on the single-slot manual clock (see test (d)).
+			selfHealIntervalMs: 0,
 			token: TOKEN,
 			workerFactory: makeStubFactory([]),
 			clock: manual.clock,
@@ -328,5 +334,158 @@ describe("neo daemon supervisor", () => {
 				workerFactory: makeStubFactory([]),
 			}),
 		).rejects.toBeInstanceOf(NeoDaemonAddressInUseError);
+	});
+
+	it("binds over an orphaned socket file with NO registry record (deterministic-path crash recovery)", async () => {
+		// With a deterministic socket path, a daemon that crashed without a clean
+		// shutdown can leave the socket FILE on disk while its registry record was
+		// removed (or never matched). cleanupStaleNeoDaemon keys off the record and
+		// so would miss this leftover — a fresh bind() then hits EADDRINUSE forever.
+		// The daemon's own pre-bind cleanup must unlink the dead socket file first.
+		const orphanServer = createServer();
+		await new Promise<void>((resolve, reject) => {
+			orphanServer.once("error", reject);
+			orphanServer.once("listening", () => resolve());
+			orphanServer.listen(listenPath);
+		});
+		// Emulate a crash: drop the listener without unlinking so the file lingers,
+		// and leave NO registry record for this cwd.
+		await new Promise<void>((resolve) => orphanServer.close(() => resolve()));
+		// The listener's close removes the file, so recreate the leftover to model a
+		// hard crash (SIGKILL) where Node never got to clean up.
+		writeFileSync(listenPath, "");
+		expect(existsSync(listenPath)).toBe(true);
+		expect(readNeoDaemonRecord(agentDir, cwd)).toBeUndefined();
+
+		// A fresh daemon must recover: unlink the dead socket file, then bind.
+		handle = await runNeoDaemon({
+			listenPath,
+			cwd,
+			agentDir,
+			register: true,
+			idleShutdownMs: 0,
+			token: TOKEN,
+			workerFactory: makeStubFactory([]),
+		});
+		const record = readNeoDaemonRecord(agentDir, cwd);
+		expect(record).toMatchObject({ socket: listenPath, pid: process.pid });
+		const client = await openClient(listenPath);
+		client.send({ type: "hello", token: TOKEN, version: 1 });
+		expect(await client.next()).toMatchObject({ type: "welcome", version: 1 });
+		client.end();
+	});
+
+	it("does NOT unlink a socket a LIVE daemon is serving (loser still gets EADDRINUSE)", async () => {
+		// The pre-bind cleanup must distinguish a dead socket file from one a live
+		// daemon is actively serving: connecting to the live one succeeds, so the
+		// loser must leave it alone and lose the bind race rather than yanking the
+		// winner's socket out from under it.
+		handle = await runNeoDaemon({
+			listenPath,
+			cwd,
+			agentDir,
+			register: true,
+			idleShutdownMs: 0,
+			token: TOKEN,
+			workerFactory: makeStubFactory([]),
+		});
+		// A concurrent racer on the SAME path with the winner still live must lose.
+		await expect(
+			runNeoDaemon({
+				listenPath,
+				cwd,
+				agentDir,
+				register: false,
+				idleShutdownMs: 0,
+				token: "loser",
+				workerFactory: makeStubFactory([]),
+			}),
+		).rejects.toBeInstanceOf(NeoDaemonAddressInUseError);
+		// The winner is untouched: still serving, still the registry owner.
+		const record = readNeoDaemonRecord(agentDir, cwd);
+		expect(record).toMatchObject({ socket: listenPath, token: TOKEN, pid: process.pid });
+		const client = await openClient(listenPath);
+		client.send({ type: "hello", token: TOKEN, version: 1 });
+		expect(await client.next()).toMatchObject({ type: "welcome", version: 1 });
+		client.end();
+	});
+
+	it("self-heals a lost registry record on the next accepted connection", async () => {
+		// The recovery-wedge fix: a LIVE daemon whose registry record was lost
+		// (corrupted / removed / SIGKILL of a prior owner) must re-assert its own
+		// record when a fresh client connects, so that client can find + attach.
+		handle = await runNeoDaemon({
+			listenPath,
+			cwd,
+			agentDir,
+			register: true,
+			idleShutdownMs: 0,
+			selfHealIntervalMs: 0, // isolate the on-accept path (no interval timer)
+			token: TOKEN,
+			workerFactory: makeStubFactory([]),
+		});
+		// The daemon registered on listen; now the record is lost while it stays alive.
+		expect(readNeoDaemonRecord(agentDir, cwd)).toMatchObject({ socket: listenPath, token: TOKEN });
+		rmSync(neoDaemonRegistryPath(agentDir, cwd), { force: true });
+		expect(readNeoDaemonRecord(agentDir, cwd)).toBeUndefined();
+
+		// A fresh connection (the client's live-socket poke) triggers the self-heal.
+		const client = await openClient(listenPath);
+		client.send({ type: "hello", token: TOKEN, version: 1 });
+		expect(await client.next()).toMatchObject({ type: "welcome", version: 1 });
+		// The record is back, pointing at THIS daemon with its real token (auth intact).
+		expect(readNeoDaemonRecord(agentDir, cwd)).toMatchObject({
+			version: 1,
+			socket: listenPath,
+			pid: process.pid,
+			token: TOKEN,
+		});
+		client.end();
+	});
+
+	it("self-heals a lost registry record on the recurring interval (injected clock)", async () => {
+		const manual = makeManualClock();
+		handle = await runNeoDaemon({
+			listenPath,
+			cwd,
+			agentDir,
+			register: true,
+			idleShutdownMs: 0, // disable idle so the single-slot clock holds only the self-heal timer
+			selfHealIntervalMs: 5000,
+			token: TOKEN,
+			workerFactory: makeStubFactory([]),
+			clock: manual.clock,
+		});
+		// Self-heal timer armed on listen.
+		expect(manual.armed()).toBe(true);
+		// Lose the record with no new connection; only the interval can restore it.
+		rmSync(neoDaemonRegistryPath(agentDir, cwd), { force: true });
+		expect(readNeoDaemonRecord(agentDir, cwd)).toBeUndefined();
+		// Fire the interval: the record is re-asserted and the timer re-arms.
+		manual.fire();
+		expect(readNeoDaemonRecord(agentDir, cwd)).toMatchObject({ socket: listenPath, token: TOKEN, pid: process.pid });
+		expect(manual.armed()).toBe(true);
+	});
+
+	it("does NOT rewrite an already-correct registry record (idempotent self-heal)", async () => {
+		handle = await runNeoDaemon({
+			listenPath,
+			cwd,
+			agentDir,
+			register: true,
+			idleShutdownMs: 0,
+			selfHealIntervalMs: 0,
+			token: TOKEN,
+			workerFactory: makeStubFactory([]),
+		});
+		const before = statSync(neoDaemonRegistryPath(agentDir, cwd)).mtimeMs;
+		await new Promise((r) => setTimeout(r, 20));
+		// An accept with a valid matching record must NOT rewrite it (no fight).
+		const client = await openClient(listenPath);
+		client.send({ type: "hello", token: TOKEN, version: 1 });
+		await client.next();
+		const after = statSync(neoDaemonRegistryPath(agentDir, cwd)).mtimeMs;
+		expect(after).toBe(before);
+		client.end();
 	});
 });

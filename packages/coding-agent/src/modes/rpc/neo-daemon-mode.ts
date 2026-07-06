@@ -39,6 +39,8 @@ import {
 	cleanupStaleNeoDaemon,
 	NEO_DAEMON_PROTOCOL_VERSION,
 	type NeoDaemonRecord,
+	reassertNeoDaemonRecord,
+	reclaimDeadSocketFile,
 	removeNeoDaemonRecord,
 	writeNeoDaemonRecord,
 } from "./neo-daemon-registry.ts";
@@ -89,6 +91,13 @@ export interface NeoDaemonOptions {
 	readonly register?: boolean;
 	/** Idle shutdown period in ms; 0 disables. Default 30 min (caller supplies). */
 	readonly idleShutdownMs: number;
+	/**
+	 * Registry self-heal interval in ms; 0 disables the recurring re-assert (the
+	 * on-accept re-assert still runs). The daemon periodically re-writes its own
+	 * registry record if it went missing/corrupt, so a lost record repairs itself
+	 * even before the next connection. Default 2000ms (caller may override).
+	 */
+	readonly selfHealIntervalMs?: number;
 	/** Handshake token clients must present. */
 	readonly token: string;
 	/** Protocol version this daemon speaks. Default NEO_DAEMON_PROTOCOL_VERSION. */
@@ -132,6 +141,17 @@ export async function runNeoDaemon(options: NeoDaemonOptions): Promise<NeoDaemon
 	const version = options.version ?? NEO_DAEMON_PROTOCOL_VERSION;
 	const register = options.register ?? true;
 	const clock = options.clock ?? realClock;
+	const selfHealIntervalMs = options.selfHealIntervalMs ?? 2000;
+
+	// The record this daemon owns. It is written once as the last listen step and
+	// re-asserted (self-heal) whenever it is found missing/corrupt — carrying this
+	// daemon's real in-memory token so the healed record still authenticates.
+	const ownRecord: NeoDaemonRecord = {
+		version,
+		socket: options.listenPath,
+		pid: process.pid,
+		token: options.token,
+	};
 
 	// Stale cleanup BEFORE bind so a dead daemon's leftover socket/record does
 	// not block the fresh bind.
@@ -139,6 +159,7 @@ export async function runNeoDaemon(options: NeoDaemonOptions): Promise<NeoDaemon
 
 	const connections = new Set<ConnectionState>();
 	let idleTimer: unknown;
+	let selfHealTimer: unknown;
 	let shuttingDown = false;
 	let resolveClosed!: () => void;
 	const closed = new Promise<void>((resolve) => {
@@ -146,6 +167,32 @@ export async function runNeoDaemon(options: NeoDaemonOptions): Promise<NeoDaemon
 	});
 
 	const server: Server = createServer();
+
+	// Re-assert the registry record iff it is missing or no longer matches this
+	// daemon. No-op when register is false (a bind-race loser never owns the slot)
+	// or the daemon is shutting down (it is about to remove its record).
+	const selfHeal = (): void => {
+		if (!register || shuttingDown) return;
+		reassertNeoDaemonRecord(options.agentDir, options.cwd, ownRecord);
+	};
+
+	const clearSelfHealTimer = (): void => {
+		if (selfHealTimer !== undefined) {
+			clock.clearTimeout(selfHealTimer);
+			selfHealTimer = undefined;
+		}
+	};
+
+	// The clock only exposes one-shot setTimeout, so the recurring self-heal
+	// re-arms itself after each fire until shutdown clears it.
+	const armSelfHealTimer = (): void => {
+		if (!register || selfHealIntervalMs <= 0 || shuttingDown) return;
+		selfHealTimer = clock.setTimeout(() => {
+			selfHeal();
+			selfHealTimer = undefined;
+			armSelfHealTimer();
+		}, selfHealIntervalMs);
+	};
 
 	const clearIdleTimer = (): void => {
 		if (idleTimer !== undefined) {
@@ -167,6 +214,7 @@ export async function runNeoDaemon(options: NeoDaemonOptions): Promise<NeoDaemon
 		if (shuttingDown) return closed;
 		shuttingDown = true;
 		clearIdleTimer();
+		clearSelfHealTimer();
 		// Dispose all live connections (aborts each in-flight turn).
 		const disposals = [...connections].map((c) => c.teardown());
 		await Promise.allSettled(disposals);
@@ -185,6 +233,11 @@ export async function runNeoDaemon(options: NeoDaemonOptions): Promise<NeoDaemon
 
 	async function handleConnection(socket: Socket): Promise<void> {
 		clearIdleTimer();
+		// Self-heal on accept: a fresh client that found a lost/corrupt record but a
+		// LIVE deterministic socket pokes this daemon; re-asserting the record here
+		// lets that client's next poll find it and attach (closes the recovery wedge
+		// even before the recurring interval fires).
+		selfHeal();
 		socket.setNoDelay(true);
 		const abort = new AbortController();
 		const state: ConnectionState = {
@@ -273,6 +326,12 @@ export async function runNeoDaemon(options: NeoDaemonOptions): Promise<NeoDaemon
 		}
 	}
 
+	// A deterministic socket path means a crashed daemon can leave a dead socket
+	// FILE behind with no registry record for cleanupStaleNeoDaemon to key off.
+	// Reclaim such a leftover before bind so we do not hit EADDRINUSE forever; a
+	// socket a LIVE daemon still serves is left intact so we lose the race to it.
+	await reclaimDeadSocketFile(options.listenPath);
+
 	// Bind FIRST (the mutex). Map EADDRINUSE to a typed error so the caller can
 	// attach to the winner.
 	await new Promise<void>((resolve, reject) => {
@@ -295,17 +354,13 @@ export async function runNeoDaemon(options: NeoDaemonOptions): Promise<NeoDaemon
 
 	// Registry self-registration is the LAST listen step.
 	if (register) {
-		const record: NeoDaemonRecord = {
-			version,
-			socket: options.listenPath,
-			pid: process.pid,
-			token: options.token,
-		};
-		writeNeoDaemonRecord(options.agentDir, options.cwd, record);
+		writeNeoDaemonRecord(options.agentDir, options.cwd, ownRecord);
 	}
 
-	// No connections yet: arm the idle timer immediately.
+	// No connections yet: arm the idle timer immediately. Also start the recurring
+	// self-heal so a lost/corrupt record repairs itself even with no new connection.
 	armIdleTimer();
+	armSelfHealTimer();
 
 	return {
 		listenPath: options.listenPath,

@@ -13,6 +13,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { connect } from "node:net";
 import { join } from "node:path";
 import { resolvePath } from "../../utils/paths.ts";
 
@@ -95,6 +96,38 @@ export function writeNeoDaemonRecord(agentDir: string, cwd: string, record: NeoD
 	renameSync(tempPath, finalPath);
 }
 
+/**
+ * Re-assert the daemon's own registry record iff it is missing or does not match
+ * this daemon (version/socket/pid/token). Returns true when a (re-)write happened.
+ *
+ * This is the self-heal that closes the "live daemon owns the deterministic
+ * socket, but its registry record was lost/corrupted (or a SIGKILL left it
+ * missing)" recovery wedge: a fresh client cannot bind a new daemon (the live one
+ * owns the socket) and, with no record, cannot find the live one either. The
+ * daemon calls this on every accepted connection and on a short recurring
+ * interval, so a lost record repairs itself inside the client's attach-poll
+ * window. It NEVER clobbers an already-correct record (idempotent, no write when
+ * the record already points at this daemon), and because there is exactly one
+ * daemon per cwd (the bind mutex), it can never fight another live daemon. The
+ * re-asserted record carries the daemon's real in-memory token, so token auth is
+ * preserved — the client authenticates with the healed token exactly as it would
+ * with the original.
+ */
+export function reassertNeoDaemonRecord(agentDir: string, cwd: string, record: NeoDaemonRecord): boolean {
+	const existing = readNeoDaemonRecord(agentDir, cwd);
+	if (
+		existing &&
+		existing.version === record.version &&
+		existing.socket === record.socket &&
+		existing.pid === record.pid &&
+		existing.token === record.token
+	) {
+		return false; // already correct — do not fight a valid record
+	}
+	writeNeoDaemonRecord(agentDir, cwd, record);
+	return true;
+}
+
 /** Remove the registry record for a cwd (best-effort; missing is fine). */
 export function removeNeoDaemonRecord(agentDir: string, cwd: string): void {
 	const path = neoDaemonRegistryPath(agentDir, cwd);
@@ -145,4 +178,49 @@ export function cleanupStaleNeoDaemon(agentDir: string, cwd: string): boolean {
 	}
 	removeNeoDaemonRecord(agentDir, cwd);
 	return true;
+}
+
+/**
+ * Reclaim a leftover unix-socket file at `listenPath` when NO live daemon is
+ * serving it, so a fresh bind() does not hit EADDRINUSE forever.
+ *
+ * This is the safety net that makes the DETERMINISTIC socket path safe: a daemon
+ * SIGKILLed without a clean shutdown leaves the socket file on disk with its
+ * registry record gone (so {@link cleanupStaleNeoDaemon}, which keys off the
+ * record, misses it). bind() on a leftover unix-socket file throws EADDRINUSE
+ * whether or not anyone is listening, so the fresh daemon must probe the path and
+ * unlink it when it is dead.
+ *
+ * A LIVE daemon serving the socket accepts a connection; we must NOT unlink that
+ * one — the caller then loses the bind race (EADDRINUSE) and attaches to the
+ * winner, which is the intended "bind is the mutex" outcome. We only unlink when
+ * connecting is refused/errors (a dead socket) or the path is a plain file.
+ *
+ * No-op on Windows named pipes (not filesystem paths; the OS reclaims a pipe when
+ * its owner dies) and when nothing exists at the path.
+ */
+export async function reclaimDeadSocketFile(listenPath: string): Promise<void> {
+	if (process.platform === "win32") return;
+	if (!existsSync(listenPath)) return;
+	const alive = await isSocketServed(listenPath);
+	if (alive) return; // a live daemon owns it — let the caller lose the bind race
+	try {
+		rmSync(listenPath, { force: true });
+	} catch {
+		// non-fatal: bind will surface any real problem as EADDRINUSE/EACCES
+	}
+}
+
+/** Whether a unix socket at `path` currently accepts a connection (a live server). */
+function isSocketServed(path: string): Promise<boolean> {
+	return new Promise((resolve) => {
+		const socket = connect(path);
+		const done = (alive: boolean): void => {
+			socket.removeAllListeners();
+			socket.destroy();
+			resolve(alive);
+		};
+		socket.once("connect", () => done(true));
+		socket.once("error", () => done(false));
+	});
 }

@@ -16,66 +16,53 @@
  *   node mock-loop.mjs --self-test                       # all three APIs round-trip
  *   node mock-loop.mjs --self-test --api anthropic-messages
  *   node mock-loop.mjs --with-tool [--api ...]           # full loop: model -> bash -> final text
+ *   node mock-loop.mjs --with-mcp-tool mcp_fx_tool_1 --tool-args '{"value":"ok"}'
  *   node mock-loop.mjs --run "prompt" [--api ...] [--evidence SLUG]
  */
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createChecks, evidenceDir, guardRealAuth, installCleanupHooks, makeSandbox, runCli } from "./lib/common.mjs";
+import {
+	createChecks,
+	evidenceDir,
+	guardRealAuth,
+	installCleanupHooks,
+	makeSandbox,
+	runCli,
+} from "./lib/common.mjs";
 import { startFakeModelServer } from "./lib/fake-model-server.mjs";
+import {
+	ALL_APIS,
+	API_PRESETS,
+	assertMcpFixtureToolName,
+	hermeticEnv,
+	mcpFixtureForToolName,
+	validateMcpFixtureToolResult,
+	writeMcpFixtureExtension,
+	writeMockModelsJson,
+	writeToolEvidence,
+} from "./lib/mock-loop-support.mjs";
 
-/** Per-API: which provider to override, model id, key, auth header, and how to derive baseUrl. */
-const API_PRESETS = {
-	"openai-completions": { provider: "mock", modelId: "mock-model", apiKey: "sk-mock-qa-7f3a", auth: "bearer", path: "/chat/completions", baseUrl: (s) => s.url },
-	"anthropic-messages": { provider: "anthropic", modelId: "mock-claude", apiKey: "sk-ant-mock-7f3a", auth: "x-api-key", path: "/messages", baseUrl: (s) => s.origin },
-	"openai-responses": { provider: "openai", modelId: "mock-gpt", apiKey: "sk-openai-mock-7f3a", auth: "bearer", path: "/responses", baseUrl: (s) => s.url },
-};
-const ALL_APIS = Object.keys(API_PRESETS);
-
-// Real provider keys in the ambient env would otherwise take precedence over the
-// inline models.json key for built-in providers (anthropic/openai), so a real
-// key could reach even the localhost fake. Strip them: the mock loop must be
-// hermetic and use ONLY the inline mock key.
-const PROVIDER_ENV_KEYS = [
-	"ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN", "OPENAI_API_KEY", "AZURE_OPENAI_API_KEY", "DEEPSEEK_API_KEY",
-	"NVIDIA_API_KEY", "GEMINI_API_KEY", "GOOGLE_CLOUD_API_KEY", "GROQ_API_KEY", "CEREBRAS_API_KEY", "XAI_API_KEY",
-	"FIREWORKS_API_KEY", "TOGETHER_API_KEY", "OPENROUTER_API_KEY", "AI_GATEWAY_API_KEY", "ZAI_API_KEY",
-	"ZAI_CODING_CN_API_KEY", "MISTRAL_API_KEY", "MINIMAX_API_KEY", "MINIMAX_CN_API_KEY", "MOONSHOT_API_KEY",
-	"MOONSHOTAI_API_KEY", "KIMI_API_KEY", "OPENCODE_API_KEY", "CLOUDFLARE_API_KEY", "HF_TOKEN",
-];
-
-function hermeticEnv(boxEnv) {
-	const env = { ...boxEnv };
-	for (const k of PROVIDER_ENV_KEYS) delete env[k];
-	return env;
-}
-
-function writeMockModelsJson(agentDir, server, apiName) {
-	const p = API_PRESETS[apiName];
-	const baseUrl = p.baseUrl(server);
-	const config = {
-		providers: {
-			[p.provider]: {
-				baseUrl,
-				apiKey: p.apiKey,
-				api: apiName,
-				models: [
-					{ id: p.modelId, baseUrl, api: apiName, contextWindow: 128000, maxTokens: 4096, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
-				],
-			},
-		},
-	};
-	writeFileSync(join(agentDir, "models.json"), JSON.stringify(config, null, 2));
-}
-
-async function driveTurn({ apiName, turns, prompt, extraArgs = [], timeoutMs = 90000 }) {
+async function driveTurn({ apiName, turns, prompt, extraArgs = [], prepareSandbox, timeoutMs = 90000 }) {
 	const p = API_PRESETS[apiName];
 	const box = makeSandbox(`mock-loop-${apiName}`);
 	const server = await startFakeModelServer({ turns });
 	writeMockModelsJson(box.agentDir, server, apiName);
-	const args = ["--provider", p.provider, "--model", p.modelId, "--no-context-files", "--no-extensions", ...extraArgs, "--print", prompt];
+	const prepared = prepareSandbox ? await prepareSandbox(box) : {};
+	const args = [
+		"--provider",
+		p.provider,
+		"--model",
+		p.modelId,
+		"--no-context-files",
+		"--no-extensions",
+		...(prepared.extraArgs ?? []),
+		...extraArgs,
+		"--print",
+		prompt,
+	];
 	const result = await runCli(args, { env: hermeticEnv(box.env), cwd: box.cwd, timeoutMs });
-	return { box, server, result, preset: p };
+	return { box, server, result, preset: p, prepared };
 }
 
 /** Assert one API round-trips through the real loop via baseUrl override. */
@@ -100,38 +87,68 @@ async function selfTest(onlyApi) {
 	const apis = onlyApi ? [onlyApi] : ALL_APIS;
 	for (const api of apis) await checkApi(checks, api);
 	checks.ok("zero real provider calls (only localhost fake hit)", true, "all baseUrls point at 127.0.0.1");
-	checks.ok("real auth unchanged", (() => {
-		try {
-			return guard.assertUnchanged();
-		} catch {
-			return false;
-		}
-	})(), guard.path);
+	checkRealAuthUnchanged(checks, guard);
 	process.exit(checks.finish() ? 0 : 1);
 }
 
 async function withTool(apiName) {
-	installCleanupHooks();
-	const checks = createChecks(`mock-loop.mjs --with-tool (${apiName})`);
-	const guard = guardRealAuth();
-	const toolMarker = "TOOL-LOOP-OK-22b8";
-	const { box, server, result } = await driveTurn({
+	return withNamedTool({
 		apiName,
-		turns: [{ toolCalls: [{ name: "bash", args: { command: `echo ${toolMarker}` } }] }, { text: `Done: ${toolMarker}` }],
-		prompt: "Run the bash command and report the output.",
+		checkName: `mock-loop.mjs --with-tool (${apiName})`,
+		toolName: "bash",
+		toolArgs: { command: "echo TOOL-LOOP-OK-22b8" },
+		marker: "TOOL-LOOP-OK-22b8",
 		extraArgs: ["--approve"],
+	});
+}
+
+async function withMcpTool(apiName, toolName, toolArgs, evidenceSlug) {
+	assertMcpFixtureToolName(toolName);
+	const fixture = mcpFixtureForToolName(toolName);
+	return withNamedTool({
+		apiName,
+		checkName: `mock-loop.mjs --with-mcp-tool ${toolName} (${apiName})`,
+		toolName,
+		toolArgs,
+		marker: `MCP-TOOL-LOOP-OK:${toolName}:${fixture.resultPrefix}`,
+		extraArgs: ["--approve", "--tools", toolName],
+		prepareSandbox: (box) => writeMcpFixtureExtension(box, { toolName, fixture }),
+		validateToolResult: ({ prepared, server }) => validateMcpFixtureToolResult({ prepared, server }),
+		evidenceSlug,
+	});
+}
+
+async function withNamedTool({
+	apiName,
+	checkName,
+	toolName,
+	toolArgs,
+	marker,
+	extraArgs,
+	prepareSandbox,
+	validateToolResult,
+	evidenceSlug,
+}) {
+	installCleanupHooks();
+	const checks = createChecks(checkName);
+	const guard = guardRealAuth();
+	const { box, server, result, prepared } = await driveTurn({
+		apiName,
+		turns: [{ toolCalls: [{ name: toolName, args: toolArgs }] }, { text: `Done: ${marker}` }],
+		prompt: `Call the ${toolName} tool and report the output.`,
+		extraArgs,
+		prepareSandbox,
 		timeoutMs: 120000,
 	});
 	checks.ok("CLI completed the multi-step loop", !result.timedOut, `code=${result.code}`);
 	checks.ok("two model turns served (loop iterated)", server.requests.length >= 2, `requests=${server.requests.length}`);
-	checks.ok("final assistant text returned", (result.stdout + result.stderr).includes(toolMarker));
-	checks.ok("real auth unchanged", (() => {
-		try {
-			return guard.assertUnchanged();
-		} catch {
-			return false;
-		}
-	})());
+	if (validateToolResult) {
+		const toolResult = validateToolResult({ prepared, server, result });
+		checks.ok(toolResult.name, toolResult.pass, toolResult.detail);
+	}
+	checks.ok("final assistant text returned", (result.stdout + result.stderr).includes(marker));
+	checkRealAuthUnchanged(checks, guard);
+	if (evidenceSlug) writeToolEvidence(evidenceSlug, { apiName, result, server, prepared });
 	if (result.timedOut || server.requests.length < 2) process.stderr.write(`\n--- stderr tail ---\n${result.stderr.slice(-1500)}\n`);
 	await server.stop();
 	box.cleanup();
@@ -166,6 +183,18 @@ if (api && !API_PRESETS[api]) {
 	process.exit(2);
 }
 
+function parseToolArgs() {
+	const raw = flag("--tool-args");
+	if (!raw) return {};
+	try {
+		const parsed = JSON.parse(raw);
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+	} catch (error) {
+		throw new Error(`--tool-args must be a JSON object: invalid JSON (${safeErrorReason(error)})`);
+	}
+	throw new Error("--tool-args must be a JSON object");
+}
+
 if (argv[0] === "--self-test") {
 	selfTest(api).catch((e) => {
 		process.stderr.write(`${e instanceof Error ? e.stack : String(e)}\n`);
@@ -176,6 +205,16 @@ if (argv[0] === "--self-test") {
 		process.stderr.write(`${e instanceof Error ? e.stack : String(e)}\n`);
 		process.exit(1);
 	});
+} else if (argv[0] === "--with-mcp-tool") {
+	Promise.resolve()
+		.then(() => {
+			const toolName = flag("--tool-name") || positionalAfter("--with-mcp-tool") || "mcp_fx_tool_1";
+			return withMcpTool(api || "openai-completions", toolName, parseToolArgs(), flag("--evidence"));
+		})
+		.catch((e) => {
+			process.stderr.write(`${e instanceof Error ? e.stack : String(e)}\n`);
+			process.exit(1);
+		});
 } else if (argv[0] === "--run") {
 	run(argv[1] || "say hello", api || "openai-completions", flag("--evidence")).catch((e) => {
 		process.stderr.write(`${e instanceof Error ? e.stack : String(e)}\n`);
@@ -187,9 +226,37 @@ if (argv[0] === "--self-test") {
 			"senpi-qa Channel 3 — Mock loop (zero real API calls)",
 			"  node mock-loop.mjs --self-test [--api <name>]   round-trip 1 or all 3 wire formats",
 			"  node mock-loop.mjs --with-tool [--api <name>]   full loop with a bash tool call",
+			"  node mock-loop.mjs --with-mcp-tool <tool> [--tool-args JSON]",
 			"  node mock-loop.mjs --run <prompt> [--api <name>]",
 			`  APIs: ${ALL_APIS.join(", ")}`,
 			"",
 		].join("\n"),
 	);
+}
+
+function positionalAfter(command) {
+	const start = argv.indexOf(command);
+	if (start < 0) return undefined;
+	const valuedFlags = new Set(["--api", "--tool-name", "--tool-args", "--evidence"]);
+	for (let index = start + 1; index < argv.length; index++) {
+		const arg = argv[index];
+		if (valuedFlags.has(arg)) {
+			index++;
+			continue;
+		}
+		if (!arg.startsWith("--")) return arg;
+	}
+	return undefined;
+}
+
+function checkRealAuthUnchanged(checks, guard) {
+	try {
+		checks.ok("real auth unchanged", guard.assertUnchanged(), guard.path);
+	} catch (error) {
+		checks.ok("real auth unchanged", false, `credential guard failed at ${guard.path}: ${safeErrorReason(error)}`);
+	}
+}
+
+function safeErrorReason(error) {
+	return error instanceof Error ? error.name : typeof error;
 }

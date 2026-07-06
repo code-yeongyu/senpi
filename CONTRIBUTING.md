@@ -29,12 +29,15 @@ senpi periodically rebases on `upstream/main` (i.e. `badlogic/pi-mono`). To keep
 ## Before Submitting a PR
 
 ```bash
+node scripts/devenv-setup.mjs
 npm run check     # Biome + tsgo + browser-smoke + web-ui check (pre-commit equivalent)
 npm test          # Vitest across workspaces (skips live-API)
 ./pi-test.sh      # Optional: live-API integration suite (env-gated; requires API keys)
 ```
 
 `npm run check` and `npm test` must pass. `./pi-test.sh` is only required when your change touches a provider that the live tests exercise.
+If you touch MCP dependencies, keep `@modelcontextprotocol/sdk` exact-pinned and verify the workspace install with
+`npm ls @modelcontextprotocol/sdk --workspace @code-yeongyu/senpi`.
 
 Do not edit `CHANGELOG.md`. Changelog entries are added by maintainers.
 
