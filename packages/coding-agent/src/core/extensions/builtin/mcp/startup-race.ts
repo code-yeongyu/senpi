@@ -4,6 +4,7 @@ import type { ResolvedMcpServer } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
 import { createMcpLogger } from "./log.ts";
 import type { McpConnectionEntry } from "./service-types.ts";
+import { safeTimer } from "./wrap.ts";
 
 export const MCP_STARTUP_RACE_MS = 250;
 
@@ -75,8 +76,9 @@ export async function waitForMcpStartupRace(
 		return await Promise.race([
 			connect.then(() => "settled" as const),
 			new Promise<"timeout">((resolve) => {
-				timeout = setTimeout(() => resolve("timeout"), deadlineMs);
-				timeout.unref();
+				timeout = safeTimer("startup.race", deadlineMs, () => resolve("timeout"), {
+					logger: createMcpLogger("startup"),
+				});
 			}),
 		]);
 	} finally {

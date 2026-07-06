@@ -36,6 +36,7 @@ export function registerMcpCatalogTools(
 	activeEntries: readonly McpToolCatalogEntry[],
 	warn?: WarnFn,
 ): void {
+	if (entries.length === 0 && activeEntries.length === 0) return;
 	const tools = buildMcpToolDefinitions(entries, warn);
 	const currentActive = pi.getActiveTools().filter((name) => !name.startsWith("mcp_"));
 	const mcpNames = buildActiveToolNames(entries, activeEntries, warn);
