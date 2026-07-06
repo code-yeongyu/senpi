@@ -20,13 +20,16 @@ import { describe, expect, it } from "vitest";
 // output() call).
 
 const thisDir = dirname(fileURLToPath(import.meta.url));
-const rpcModePath = join(thisDir, "..", "..", "src", "modes", "rpc", "rpc-mode.ts");
+// The ctx.ui.custom handler was extracted from rpc-mode.ts into
+// connection-handler.ts by the neo daemon refactor (per-connection handler),
+// so the characterization reads it from its current home.
+const rpcModePath = join(thisDir, "..", "..", "src", "modes", "rpc", "connection-handler.ts");
 
-/** Extract the body of the `async custom() { ... }` method from rpc-mode.ts. */
+/** Extract the body of the `async custom() { ... }` method from connection-handler.ts. */
 function extractCustomBody(source: string): string {
 	const marker = "async custom() {";
 	const start = source.indexOf(marker);
-	if (start === -1) throw new Error("async custom() not found in rpc-mode.ts");
+	if (start === -1) throw new Error("async custom() not found in connection-handler.ts");
 	const bodyStart = start + marker.length;
 	let depth = 1;
 	let index = bodyStart;
