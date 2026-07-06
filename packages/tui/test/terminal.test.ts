@@ -336,3 +336,32 @@ describe("ProcessTerminal dimensions", () => {
 		}
 	});
 });
+
+describe("ProcessTerminal setTitle", () => {
+	function captureSetTitle(title: string): string[] {
+		const writes: string[] = [];
+		const previousWrite = process.stdout.write;
+		process.stdout.write = ((chunk: string | Uint8Array) => {
+			writes.push(String(chunk));
+			return true;
+		}) as typeof process.stdout.write;
+		try {
+			new ProcessTerminal().setTitle(title);
+		} finally {
+			process.stdout.write = previousWrite;
+		}
+		return writes;
+	}
+
+	it("strips control characters so titles cannot escape the OSC sequence", () => {
+		const writes = captureSetTitle("evil\x07\x1b[2Jrest\ntitle\x9c!");
+
+		assert.deepEqual(writes, ["\x1b]0;evil[2Jresttitle!\x07"]);
+	});
+
+	it("passes plain titles through unchanged", () => {
+		const writes = captureSetTitle("pi - my-project");
+
+		assert.deepEqual(writes, ["\x1b]0;pi - my-project\x07"]);
+	});
+});

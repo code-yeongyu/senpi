@@ -1,0 +1,1 @@
+{"id":"req-4","type":"response","command":"switch_session","success":false,"error":"ENOENT: no such file or directory, mkdir '/nonexistent/neo-bridge-fixture'"}

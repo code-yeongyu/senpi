@@ -813,6 +813,8 @@ export class TUI extends Container {
 
 	start(): void {
 		this.stopped = false;
+		this.renderRequested = false;
+		this.inputRenderPending = false;
 		this.#lastCursorVisibility = undefined;
 		this.terminal.start(
 			(data) => this.handleInput(data),
@@ -866,6 +868,8 @@ export class TUI extends Container {
 
 	stop(): void {
 		this.stopped = true;
+		this.renderRequested = false;
+		this.inputRenderPending = false;
 		if (this.renderTimer) {
 			clearTimeout(this.renderTimer);
 			this.renderTimer = undefined;

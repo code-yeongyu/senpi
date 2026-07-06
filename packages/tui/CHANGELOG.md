@@ -2,7 +2,56 @@
 
 ## [Unreleased]
 
+### Added
+
+### Changed
+
 ### Fixed
+
+## [2026.7.5-2] - 2026-07-05
+
+### Added
+
+### Changed
+
+### Fixed
+
+## [2026.7.5] - 2026-07-05
+
+### Added
+
+### Changed
+
+### Fixed
+
+## [2026.7.4] - 2026-07-04
+
+### Added
+
+- Added an opt-in `ProcessTerminal` external stdout guard (`onExternalStdoutWrite`): while the terminal is started, stdout writes not issued by the terminal itself (e.g. `console.log` from libraries or extensions) are forwarded to the handler instead of reaching the screen, preventing differential-render desync and visual corruption.
+
+### Changed
+
+### Fixed
+
+- Fixed render scheduling state leaking across TUI `stop()`/`start()`, which could leave a restarted TUI unable to render passive updates (streaming output, timers) until a keypress or forced redraw.
+- Fixed `setTitle` to strip control characters so session, tool, or extension titles containing BEL/ESC cannot terminate the OSC sequence early and dump the remainder onto the screen.
+
+## [2026.7.3] - 2026-07-03
+
+### Added
+
+- Added multiplexer-aware TUI render policy switches and bounded viewport repaint support for preserving terminal scrollback while keeping the full-frame renderer available.
+
+### Changed
+
+- Improved TUI frame rendering performance with SGR run coalescing, post-frame cursor write coalescing, cached cursor visibility state, and a two-generation width cache.
+
+### Fixed
+
+- Fixed TUI render-path failures to be contained in release builds instead of crashing the process.
+- Fixed SGR state reset handling after row clears and kept over-wide diagnostic output best-effort.
+- Fixed diagnostic log permissions for TUI debug output.
 
 ## [2026.7.2] - 2026-07-02
 

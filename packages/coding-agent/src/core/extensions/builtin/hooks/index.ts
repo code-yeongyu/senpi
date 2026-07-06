@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import type { BeforeAgentStartEventResult, ExtensionAPI, ExtensionContext, LoadedHookSources } from "../../types.ts";
 import { registerHooksCommand } from "./command.ts";
 import { loadHookConfigSources } from "./config-loader.ts";
-import { dispatchHookEvent } from "./dispatcher.ts";
+import { dispatchHookEvent, runningHookHandlersStatusLabel } from "./dispatcher.ts";
 import {
 	buildPostCompactHookInput,
 	buildPreCompactHookInput,
@@ -179,6 +179,10 @@ export default function hooksExtension(pi: ExtensionAPI): void {
 			cwd: ctx.cwd,
 			handlers: state.parsed.executableHandlers,
 			input: buildPreToolUseHookInput(event, ctx),
+			onRunningHandlersChange: (running) => {
+				if (running.length === 0) return;
+				ctx.updateToolHookStatus?.(runningHookHandlersStatusLabel(running));
+			},
 			signal: ctx.signal,
 			trustOptions: { platform: process.platform },
 			trustState: state.trust,
@@ -203,6 +207,10 @@ export default function hooksExtension(pi: ExtensionAPI): void {
 			cwd: ctx.cwd,
 			handlers: state.parsed.executableHandlers,
 			input: buildPostToolUseHookInput(event, ctx),
+			onRunningHandlersChange: (running) => {
+				if (running.length === 0) return;
+				ctx.updateToolHookStatus?.(runningHookHandlersStatusLabel(running));
+			},
 			signal: ctx.signal,
 			trustOptions: { platform: process.platform },
 			trustState: state.trust,

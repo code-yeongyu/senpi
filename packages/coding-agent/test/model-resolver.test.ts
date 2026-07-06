@@ -648,4 +648,43 @@ describe("default model selection", () => {
 		expect(result.model?.provider).toBe("vercel-ai-gateway");
 		expect(result.model?.id).toBe("zai/glm-5.1");
 	});
+
+	test("findInitialModel ignores an unauthenticated saved default", async () => {
+		const savedDeepSeekModel: Model<"anthropic-messages"> = {
+			id: "deepseek-v4-flash",
+			name: "DeepSeek V4 Flash",
+			api: "anthropic-messages",
+			provider: "deepseek",
+			baseUrl: "https://api.deepseek.com",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1 },
+			contextWindow: 128000,
+			maxTokens: 8192,
+		};
+		const localDeepSeekModel: Model<"anthropic-messages"> = {
+			...savedDeepSeekModel,
+			provider: "spark-two",
+			baseUrl: "http://spark-two:8000/v1",
+		};
+		const registry = {
+			find: (provider: string, modelId: string) =>
+				provider === savedDeepSeekModel.provider && modelId === savedDeepSeekModel.id
+					? savedDeepSeekModel
+					: undefined,
+			hasConfiguredAuth: (model: Model<"anthropic-messages">) => model.provider === "spark-two",
+			getAvailable: async () => [localDeepSeekModel],
+		} as unknown as Parameters<typeof findInitialModel>[0]["modelRegistry"];
+
+		const result = await findInitialModel({
+			scopedModels: [],
+			isContinuing: false,
+			defaultProvider: "deepseek",
+			defaultModelId: "deepseek-v4-flash",
+			modelRegistry: registry,
+		});
+
+		expect(result.model?.provider).toBe("spark-two");
+		expect(result.model?.id).toBe("deepseek-v4-flash");
+	});
 });

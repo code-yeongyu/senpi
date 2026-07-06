@@ -1,3 +1,4 @@
+import { stripAnsi } from "../../../../utils/ansi.ts";
 import { type CommandHookRunOptions, type CommandHookRunResult, runCommandHook } from "./command-runner.ts";
 import { matchingHookHandlers } from "./matcher.ts";
 import { type ParsedHookOutput, parseHookOutput } from "./output-parser.ts";
@@ -64,6 +65,7 @@ export type HookDispatchOptions = {
 	readonly envPassthrough?: readonly string[];
 	readonly handlers: readonly ExecutableHookHandler[];
 	readonly input: HookInputWire;
+	readonly onRunningHandlersChange?: (running: readonly ExecutableHookHandler[]) => void;
 	readonly outputPolicy?: HookOutputPolicy;
 	readonly runCommand?: HookCommandRunner;
 	readonly signal?: AbortSignal;
@@ -87,25 +89,41 @@ export async function dispatchHookEvent(options: HookDispatchOptions): Promise<H
 	const selected = selectExecutableHandlers(ordered, options.trustState, options.trustOptions);
 	let nextCompletionIndex = 0;
 	const runner = options.runCommand ?? runCommandHook;
+	const notifyRunningChange = options.onRunningHandlersChange;
+	const runningHandlers: ExecutableHookHandler[] = [];
 	const completed = await Promise.all(
 		selected.runnable.map(async ({ handler, declarationIndex }) => {
-			const run = await runner(handler, options.input, {
-				cwd: options.cwd,
-				...(options.envPassthrough === undefined ? {} : { envPassthrough: options.envPassthrough }),
-				...(options.outputPolicy === undefined ? {} : { outputPolicy: options.outputPolicy }),
-				...(options.signal === undefined ? {} : { signal: options.signal }),
-				...(options.sourceEnv === undefined ? {} : { sourceEnv: options.sourceEnv }),
-			});
-			const parsed = parseHookOutput({
-				event: options.input.event,
-				exitCode: run.exitCode ?? 1,
-				source: handler.source,
-				stderr: run.stderr,
-				stdout: run.stdout,
-			});
-			const completionIndex = nextCompletionIndex;
-			nextCompletionIndex += 1;
-			return { completionIndex, declarationIndex, handler, parsed, run };
+			if (notifyRunningChange !== undefined) {
+				runningHandlers.push(handler);
+				notifyRunningChange([...runningHandlers]);
+			}
+			try {
+				const run = await runner(handler, options.input, {
+					cwd: options.cwd,
+					...(options.envPassthrough === undefined ? {} : { envPassthrough: options.envPassthrough }),
+					...(options.outputPolicy === undefined ? {} : { outputPolicy: options.outputPolicy }),
+					...(options.signal === undefined ? {} : { signal: options.signal }),
+					...(options.sourceEnv === undefined ? {} : { sourceEnv: options.sourceEnv }),
+				});
+				const parsed = parseHookOutput({
+					event: options.input.event,
+					exitCode: run.exitCode ?? 1,
+					source: handler.source,
+					stderr: run.stderr,
+					stdout: run.stdout,
+				});
+				const completionIndex = nextCompletionIndex;
+				nextCompletionIndex += 1;
+				return { completionIndex, declarationIndex, handler, parsed, run };
+			} finally {
+				if (notifyRunningChange !== undefined) {
+					const runningIndex = runningHandlers.indexOf(handler);
+					if (runningIndex !== -1) {
+						runningHandlers.splice(runningIndex, 1);
+					}
+					notifyRunningChange([...runningHandlers]);
+				}
+			}
 		}),
 	);
 	const declarationSummaries = completed
@@ -130,6 +148,27 @@ export async function dispatchHookEvent(options: HookDispatchOptions): Promise<H
 		skipped: selected.skipped,
 		summaries: declarationSummaries,
 	};
+}
+
+export function runningHookHandlersStatusLabel(
+	handlers: readonly ExecutableHookHandler[],
+	platform: NodeJS.Platform = process.platform,
+): string {
+	const label = handlers.map((handler) => hookHandlerStatusLabel(handler, platform)).join(" · ");
+	return label.length <= 79 ? label : `${label.slice(0, 76)}...`;
+}
+
+function hookHandlerStatusLabel(handler: ExecutableHookHandler, platform: NodeJS.Platform): string {
+	const raw =
+		handler.config.statusMessage ??
+		(platform === "win32" && handler.config.commandWindows !== undefined
+			? handler.config.commandWindows
+			: handler.config.command);
+	return stripAnsi(raw)
+		.replace(/[\r\n\t]+/g, " ")
+		.replace(/[\u0000-\u001f\u007f]+/g, "")
+		.replace(/\s+/g, " ")
+		.trim();
 }
 
 function declarationOrdered(handlers: readonly ExecutableHookHandler[]): readonly OrderedHandler[] {

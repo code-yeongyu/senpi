@@ -99,11 +99,25 @@ export interface Terminal {
 	setProgress(active: boolean): void;
 }
 
+export interface ProcessTerminalOptions {
+	/**
+	 * When set, stdout writes not issued by this terminal are hidden from the
+	 * screen while the terminal is started and forwarded to this handler
+	 * instead. External writes (console.log, libraries) would otherwise
+	 * interleave with frames and desynchronize differential rendering.
+	 */
+	onExternalStdoutWrite?: (text: string) => void;
+}
+
 /**
  * Real terminal using process.stdin/stdout
  */
 export class ProcessTerminal implements Terminal {
 	private wasRaw = false;
+	private onExternalStdoutWrite?: (text: string) => void;
+	private originalStdoutWrite?: typeof process.stdout.write;
+	private rawStdoutWrite?: (data: string) => void;
+	private forwardingExternalWrite = false;
 	private inputHandler?: (data: string) => void;
 	private resizeHandler?: () => void;
 	private _kittyProtocolActive = false;
@@ -129,8 +143,64 @@ export class ProcessTerminal implements Terminal {
 		return env;
 	})();
 
+	constructor(options?: ProcessTerminalOptions) {
+		this.onExternalStdoutWrite = options?.onExternalStdoutWrite;
+	}
+
 	get kittyProtocolActive(): boolean {
 		return this._kittyProtocolActive;
+	}
+
+	private rawWrite(data: string): void {
+		if (this.rawStdoutWrite) {
+			this.rawStdoutWrite(data);
+			return;
+		}
+		process.stdout.write(data);
+	}
+
+	private installExternalStdoutGuard(): void {
+		const handler = this.onExternalStdoutWrite;
+		if (!handler || this.originalStdoutWrite) {
+			return;
+		}
+		this.originalStdoutWrite = process.stdout.write;
+		const rawWrite = process.stdout.write.bind(process.stdout);
+		this.rawStdoutWrite = rawWrite;
+
+		process.stdout.write = ((
+			chunk: string | Uint8Array,
+			encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
+			callback?: (error?: Error | null) => void,
+		): boolean => {
+			const cb = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+			const encoding = typeof encodingOrCallback === "string" ? encodingOrCallback : undefined;
+			const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString(encoding);
+			if (this.forwardingExternalWrite) {
+				rawWrite(text);
+				cb?.(null);
+				return true;
+			}
+			this.forwardingExternalWrite = true;
+			try {
+				handler(text);
+			} catch {
+				rawWrite(text);
+			} finally {
+				this.forwardingExternalWrite = false;
+			}
+			cb?.(null);
+			return true;
+		}) as typeof process.stdout.write;
+	}
+
+	private removeExternalStdoutGuard(): void {
+		if (!this.originalStdoutWrite) {
+			return;
+		}
+		process.stdout.write = this.originalStdoutWrite;
+		this.originalStdoutWrite = undefined;
+		this.rawStdoutWrite = undefined;
 	}
 
 	get modifyOtherKeysActive(): boolean {
@@ -138,6 +208,7 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	start(onInput: (data: string) => void, onResize: () => void): void {
+		this.installExternalStdoutGuard();
 		this.inputHandler = onInput;
 		this.resizeHandler = onResize;
 
@@ -149,7 +220,7 @@ export class ProcessTerminal implements Terminal {
 		process.stdin.resume();
 
 		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
-		process.stdout.write("\x1b[?2004h");
+		this.rawWrite("\x1b[?2004h");
 
 		// Set up resize handler immediately
 		process.stdout.on("resize", this.resizeHandler);
@@ -233,7 +304,7 @@ export class ProcessTerminal implements Terminal {
 		}
 		this.keyboardProtocolPushed = true;
 		this.clearKeyboardProtocolNegotiationBuffer();
-		process.stdout.write(KITTY_KEYBOARD_PROTOCOL_QUERY);
+		this.rawWrite(KITTY_KEYBOARD_PROTOCOL_QUERY);
 	}
 
 	private handleKeyboardProtocolNegotiationSequence(
@@ -330,13 +401,13 @@ export class ProcessTerminal implements Terminal {
 
 	private enableModifyOtherKeys(): void {
 		if (this._kittyProtocolActive || this._modifyOtherKeysActive) return;
-		process.stdout.write("\x1b[>4;2m");
+		this.rawWrite("\x1b[>4;2m");
 		this._modifyOtherKeysActive = true;
 	}
 
 	private disableModifyOtherKeys(): void {
 		if (!this._modifyOtherKeysActive) return;
-		process.stdout.write("\x1b[>4;0m");
+		this.rawWrite("\x1b[>4;0m");
 		this._modifyOtherKeysActive = false;
 	}
 
@@ -382,7 +453,7 @@ export class ProcessTerminal implements Terminal {
 		if (shouldDisableKittyProtocol) {
 			// Disable Kitty keyboard protocol first so any late key releases
 			// do not generate new Kitty escape sequences.
-			process.stdout.write("\x1b[<u");
+			this.rawWrite("\x1b[<u");
 			this.keyboardProtocolPushed = false;
 			this._kittyProtocolActive = false;
 			setKittyProtocolActive(false);
@@ -416,18 +487,18 @@ export class ProcessTerminal implements Terminal {
 
 	stop(): void {
 		if (this.clearProgressInterval()) {
-			process.stdout.write(TERMINAL_PROGRESS_CLEAR_SEQUENCE);
+			this.rawWrite(TERMINAL_PROGRESS_CLEAR_SEQUENCE);
 		}
 
 		// Disable bracketed paste mode
-		process.stdout.write("\x1b[?2004l");
+		this.rawWrite("\x1b[?2004l");
 
 		const shouldDisableKittyProtocol = this.keyboardProtocolPushed || this._kittyProtocolActive;
 		this.clearKeyboardProtocolNegotiationBuffer();
 
 		// Disable Kitty keyboard protocol if not already done by drainInput()
 		if (shouldDisableKittyProtocol) {
-			process.stdout.write("\x1b[<u");
+			this.rawWrite("\x1b[<u");
 			this.keyboardProtocolPushed = false;
 			this._kittyProtocolActive = false;
 			setKittyProtocolActive(false);
@@ -460,10 +531,12 @@ export class ProcessTerminal implements Terminal {
 		if (process.stdin.setRawMode) {
 			process.stdin.setRawMode(this.wasRaw);
 		}
+
+		this.removeExternalStdoutGuard();
 	}
 
 	write(data: string): void {
-		process.stdout.write(data);
+		this.rawWrite(data);
 		if (this.writeLogPath) {
 			try {
 				fs.appendFileSync(this.writeLogPath, data, { encoding: "utf8" });
@@ -484,52 +557,55 @@ export class ProcessTerminal implements Terminal {
 	moveBy(lines: number): void {
 		if (lines > 0) {
 			// Move down
-			process.stdout.write(`\x1b[${lines}B`);
+			this.rawWrite(`\x1b[${lines}B`);
 		} else if (lines < 0) {
 			// Move up
-			process.stdout.write(`\x1b[${-lines}A`);
+			this.rawWrite(`\x1b[${-lines}A`);
 		}
 		// lines === 0: no movement
 	}
 
 	hideCursor(): void {
-		process.stdout.write("\x1b[?25l");
+		this.rawWrite("\x1b[?25l");
 	}
 
 	showCursor(): void {
-		process.stdout.write("\x1b[?25h");
+		this.rawWrite("\x1b[?25h");
 	}
 
 	clearLine(): void {
-		process.stdout.write("\x1b[K");
+		this.rawWrite("\x1b[K");
 	}
 
 	clearFromCursor(): void {
-		process.stdout.write("\x1b[J");
+		this.rawWrite("\x1b[J");
 	}
 
 	clearScreen(): void {
-		process.stdout.write("\x1b[2J\x1b[H"); // Clear screen and move to home (1,1)
+		this.rawWrite("\x1b[2J\x1b[H"); // Clear screen and move to home (1,1)
 	}
 
 	setTitle(title: string): void {
-		// OSC 0;title BEL - set terminal window title
-		process.stdout.write(`\x1b]0;${title}\x07`);
+		// OSC 0;title BEL - set terminal window title. Control characters are
+		// stripped so a title cannot terminate the OSC early and leak the rest
+		// onto the screen.
+		const sanitizedTitle = title.replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+		this.rawWrite(`\x1b]0;${sanitizedTitle}\x07`);
 	}
 
 	setProgress(active: boolean): void {
 		if (active) {
 			// OSC 9;4;3 - indeterminate progress
-			process.stdout.write(TERMINAL_PROGRESS_ACTIVE_SEQUENCE);
+			this.rawWrite(TERMINAL_PROGRESS_ACTIVE_SEQUENCE);
 			if (!this.progressInterval) {
 				this.progressInterval = setInterval(() => {
-					process.stdout.write(TERMINAL_PROGRESS_ACTIVE_SEQUENCE);
+					this.rawWrite(TERMINAL_PROGRESS_ACTIVE_SEQUENCE);
 				}, TERMINAL_PROGRESS_KEEPALIVE_MS);
 			}
 		} else {
 			this.clearProgressInterval();
 			// OSC 9;4;0 - clear progress
-			process.stdout.write(TERMINAL_PROGRESS_CLEAR_SEQUENCE);
+			this.rawWrite(TERMINAL_PROGRESS_CLEAR_SEQUENCE);
 		}
 	}
 

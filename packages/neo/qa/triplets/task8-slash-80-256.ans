@@ -1,0 +1,8 @@
+[38;5;242m[48;5;233m─────────────────────────────────────────────────────────────────────────────47─[39m[49m
+[38;5;111m[48;5;233m❯ /quit[39m[49m           Quit the application                                         [38;5;242m[48;5;233m█[39m[49m
+[38;5;111m[48;5;233m  /home[39m[49m           Return to the welcome screen
+[38;5;111m[48;5;233m  /new[39m[49m            Start a new session
+[38;5;111m[48;5;233m  /chat[39m[49m           Start a remote chat session (gateway light-frontend)
+[38;5;111m[48;5;233m  /fork[39m[49m           Branch the current session into a peer agent
+[38;5;111m[48;5;233m  /compact[39m[49m        Compact conversation history
+[38;5;242m[48;5;233m────────────────────────────────────────────────────────────────────────────────[39m[49m

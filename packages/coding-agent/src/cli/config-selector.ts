@@ -3,6 +3,7 @@
  */
 
 import { ProcessTerminal, TUI } from "@earendil-works/pi-tui";
+import { appendHiddenTuiStdout } from "../core/hidden-stdout-log.ts";
 import type { ResolvedPaths } from "../core/package-manager.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
 import { ConfigSelectorComponent } from "../modes/interactive/components/config-selector.ts";
@@ -21,7 +22,7 @@ export async function selectConfig(options: ConfigSelectorOptions): Promise<void
 	initTheme(options.settingsManager.getTheme(), true);
 
 	return new Promise((resolve) => {
-		const ui = new TUI(new ProcessTerminal());
+		const ui = new TUI(new ProcessTerminal({ onExternalStdoutWrite: appendHiddenTuiStdout }));
 		let resolved = false;
 
 		const selector = new ConfigSelectorComponent(

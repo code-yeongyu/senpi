@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+	closeOpenAICodexWebSocketSessions,
 	getOpenAICodexWebSocketDebugStats,
 	resetOpenAICodexWebSocketDebugStats,
 	stream as streamOpenAICodexResponses,
@@ -20,6 +21,7 @@ afterEach(() => {
 	} else {
 		process.env.PI_CODING_AGENT_DIR = originalAgentDir;
 	}
+	closeOpenAICodexWebSocketSessions();
 	resetOpenAICodexWebSocketDebugStats();
 	vi.useRealTimers();
 	vi.restoreAllMocks();
@@ -1496,6 +1498,111 @@ describe("openai-codex streaming", () => {
 		expect(result.stopReason).toBe("error");
 		expect(result.errorMessage).toBe("WebSocket idle timeout after 50ms");
 		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("opens a fresh cached websocket before the backend connection age limit", async () => {
+		vi.useFakeTimers();
+		const startedAt = new Date("2026-07-03T00:00:00Z");
+		vi.setSystemTime(startedAt);
+		const token = mockToken();
+		const sentConnectionIds: number[] = [];
+		let connections = 0;
+
+		class MockWebSocket {
+			static OPEN = 1;
+			static CLOSED = 3;
+			readyState = MockWebSocket.OPEN;
+			private readonly connectionId = ++connections;
+			private listeners = new Map<string, Set<(event: unknown) => void>>();
+
+			constructor(_url: string, _protocols?: string | string[] | { headers?: Record<string, string> }) {
+				queueMicrotask(() => this.dispatch("open", {}));
+			}
+
+			addEventListener(type: string, listener: (event: unknown) => void): void {
+				let listeners = this.listeners.get(type);
+				if (!listeners) {
+					listeners = new Set();
+					this.listeners.set(type, listeners);
+				}
+				listeners.add(listener);
+			}
+
+			removeEventListener(type: string, listener: (event: unknown) => void): void {
+				this.listeners.get(type)?.delete(listener);
+			}
+
+			send(): void {
+				sentConnectionIds.push(this.connectionId);
+				const responseId = `resp_${this.connectionId}`;
+				queueMicrotask(() => {
+					this.dispatch("message", {
+						data: JSON.stringify({
+							type: "response.completed",
+							response: {
+								id: responseId,
+								status: "completed",
+								usage: { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
+							},
+						}),
+					});
+				});
+			}
+
+			close(): void {
+				this.readyState = MockWebSocket.CLOSED;
+			}
+
+			private dispatch(type: string, event: unknown): void {
+				for (const listener of this.listeners.get(type) ?? []) {
+					listener(event);
+				}
+			}
+		}
+
+		vi.stubGlobal("WebSocket", MockWebSocket);
+
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.1-codex",
+			name: "GPT-5.1 Codex",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+		const sessionId = "aged-ws-session";
+		const firstContext: Context = {
+			systemPrompt: "You are a helpful assistant.",
+			messages: [{ role: "user", content: "Say hello", timestamp: 1 }],
+		};
+
+		const first = await streamOpenAICodexResponses(model, firstContext, {
+			apiKey: token,
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+		vi.setSystemTime(new Date(startedAt.getTime() + 56 * 60 * 1000));
+		const secondContext: Context = {
+			systemPrompt: "You are a helpful assistant.",
+			messages: [...firstContext.messages, first, { role: "user", content: "Now finish", timestamp: 2 }],
+		};
+
+		await streamOpenAICodexResponses(model, secondContext, {
+			apiKey: token,
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+
+		expect(connections).toBe(2);
+		expect(sentConnectionIds).toEqual([1, 2]);
+		expect(getOpenAICodexWebSocketDebugStats(sessionId)).toMatchObject({
+			connectionsCreated: 2,
+			connectionsReused: 0,
+		});
 	});
 
 	it("sends only response input deltas in websocket-cached mode", async () => {

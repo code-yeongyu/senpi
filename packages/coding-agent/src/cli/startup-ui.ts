@@ -2,6 +2,7 @@ import { ProcessTerminal, setKeybindings, TUI } from "@earendil-works/pi-tui";
 import { existsSync } from "fs";
 import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, getAgentDir, getSettingsPath, PACKAGE_NAME } from "../config.ts";
 import { areExperimentalFeaturesEnabled } from "../core/experimental.ts";
+import { appendHiddenTuiStdout } from "../core/hidden-stdout-log.ts";
 import { KeybindingsManager } from "../core/keybindings.ts";
 import { DefaultPackageManager, type ResolvedResource } from "../core/package-manager.ts";
 import { SettingsManager } from "../core/settings-manager.ts";
@@ -79,7 +80,10 @@ export async function createStartupTui(settingsManager: SettingsManager): Promis
 	const terminalTheme = detectTerminalBackgroundFromEnv().theme;
 	initTheme(resolveThemeSetting(settingsManager.getThemeSetting(), terminalTheme) ?? terminalTheme);
 	setKeybindings(KeybindingsManager.create());
-	const ui = new TUI(new ProcessTerminal(), settingsManager.getShowHardwareCursor());
+	const ui = new TUI(
+		new ProcessTerminal({ onExternalStdoutWrite: appendHiddenTuiStdout }),
+		settingsManager.getShowHardwareCursor(),
+	);
 	ui.setClearOnShrink(settingsManager.getClearOnShrink());
 	return ui;
 }

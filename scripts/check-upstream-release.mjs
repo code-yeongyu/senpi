@@ -11,7 +11,8 @@
  *      Otherwise -> proceed.
  *
  * Output: human-readable log on stderr; `key=value` lines appended to $GITHUB_OUTPUT when set
- * (proceed, tag, sha, current_tag). Also prints the same pairs to stdout for local runs.
+ * (proceed, tag, sha, upstream_head_sha, current_tag). Also prints the same pairs to stdout for
+ * local runs.
  *
  * Flags:
  *   --force   Always report proceed=true (manual re-run / recovery).
@@ -92,6 +93,10 @@ function resolveTagSha(tag) {
 	return run("git", ["rev-parse", `${tag}^{commit}`]);
 }
 
+function resolveUpstreamHeadSha() {
+	return run("git", ["rev-parse", `${UPSTREAM_REMOTE}/main`]);
+}
+
 function currentPinTag() {
 	try {
 		const parsed = JSON.parse(readFileSync(PIN_PATH, "utf8"));
@@ -123,17 +128,19 @@ function main() {
 	log(`latest upstream release: ${tag}`);
 	const sha = resolveTagSha(tag);
 	log(`resolved ${tag} -> ${sha}`);
+	const upstreamHeadSha = resolveUpstreamHeadSha();
+	log(`resolved ${UPSTREAM_REMOTE}/main -> ${upstreamHeadSha}`);
 
 	if (force) {
 		log("--force set; proceeding regardless of merge state");
-		emit({ proceed: "true", tag, sha, current_tag: currentTag });
+		emit({ proceed: "true", tag, sha, upstream_head_sha: upstreamHeadSha, current_tag: currentTag });
 		return 0;
 	}
 
 	const ancestor = tryRun("git", ["merge-base", "--is-ancestor", sha, "HEAD"]);
 	const alreadyMerged = ancestor.ok;
 	log(alreadyMerged ? `${tag} already merged into HEAD` : `${tag} not yet merged into HEAD`);
-	emit({ proceed: alreadyMerged ? "false" : "true", tag, sha, current_tag: currentTag });
+	emit({ proceed: alreadyMerged ? "false" : "true", tag, sha, upstream_head_sha: upstreamHeadSha, current_tag: currentTag });
 	return 0;
 }
 
