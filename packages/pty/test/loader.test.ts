@@ -2,6 +2,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	getNativePtyCandidatePaths,
+	getNativePtySentinelExport,
 	loadNativePty,
 	type NativePtyBinding,
 	type NativePtyRuntime,
@@ -10,6 +11,8 @@ import {
 
 const moduleDir = path.join(path.sep, "pkg", "dist");
 const execDir = path.join(path.sep, "bundle");
+const packageVersion = "2026.7.5-2";
+const sentinelExport = "__senpiPtyV2026_7_5";
 
 function candidate(runtime: NativePtyRuntime, host: string): string {
 	return path.join(path.sep, "pkg", "native", runtime, "prebuilds", host, `senpi_pty.${host}.node`);
@@ -24,7 +27,10 @@ function missingModuleError(modulePath: string): Error & { code?: string } {
 describe("loadNativePty", () => {
 	it("loads the first host prebuild whose sentinel export is valid", () => {
 		const host = "darwin-arm64";
-		const native: NativePtyBinding = { version: () => "0.0.0" };
+		const native: NativePtyBinding = {
+			PtySession: class PtySession {},
+			[sentinelExport]: () => packageVersion,
+		};
 		const attempted: string[] = [];
 
 		const result = loadNativePty({
@@ -43,6 +49,10 @@ describe("loadNativePty", () => {
 		expect(result.native).toBe(native);
 		expect(result.diagnostic).toBeNull();
 		expect(attempted).toEqual([candidate("node", host)]);
+	});
+
+	it("derives the sentinel export from the package version", () => {
+		expect(getNativePtySentinelExport(packageVersion)).toBe(sentinelExport);
 	});
 
 	it("returns a native-unavailable diagnostic when every candidate is missing", () => {
@@ -77,7 +87,7 @@ describe("loadNativePty", () => {
 		expect(attempted).toEqual(expectedPaths);
 	});
 
-	it("throws a typed sentinel mismatch error when a candidate loads without the sentinel", () => {
+	it("throws a typed sentinel mismatch error when a candidate loads without the versioned sentinel", () => {
 		const host = "darwin-arm64";
 
 		expect(() =>
@@ -87,7 +97,8 @@ describe("loadNativePty", () => {
 				moduleDir,
 				platform: "darwin",
 				requireBinding(modulePath) {
-					if (modulePath === candidate("node", host)) return { notVersion: true };
+					if (modulePath === candidate("node", host))
+						return { PtySession: class PtySession {}, version: () => "0.0.0" };
 					throw missingModuleError(modulePath);
 				},
 				runtime: "node",
@@ -101,7 +112,8 @@ describe("loadNativePty", () => {
 				moduleDir,
 				platform: "darwin",
 				requireBinding(modulePath) {
-					if (modulePath === candidate("node", host)) return { notVersion: true };
+					if (modulePath === candidate("node", host))
+						return { PtySession: class PtySession {}, version: () => "0.0.0" };
 					throw missingModuleError(modulePath);
 				},
 				runtime: "node",
@@ -110,9 +122,29 @@ describe("loadNativePty", () => {
 			if (!(error instanceof NativePtySentinelMismatchError)) throw error;
 			expect(error.code).toBe("native-sentinel-mismatch");
 			expect(error.modulePath).toBe(candidate("node", host));
-			expect(error.expectedExport).toBe("version");
-			expect(error.actualExports).toEqual(["notVersion"]);
+			expect(error.expectedExport).toBe(sentinelExport);
+			expect(error.actualExports).toEqual(["PtySession", "version"]);
 		}
+	});
+
+	it("throws a typed sentinel mismatch error when the versioned sentinel returns the wrong package version", () => {
+		const host = "darwin-arm64";
+
+		expect(() =>
+			loadNativePty({
+				arch: "arm64",
+				execDir,
+				moduleDir,
+				platform: "darwin",
+				requireBinding(modulePath) {
+					if (modulePath === candidate("node", host)) {
+						return { PtySession: class PtySession {}, [sentinelExport]: () => "0.0.0" };
+					}
+					throw missingModuleError(modulePath);
+				},
+				runtime: "node",
+			}),
+		).toThrow(NativePtySentinelMismatchError);
 	});
 
 	it("selects Bun prebuild candidates when the runtime is Bun", () => {

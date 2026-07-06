@@ -43,7 +43,7 @@ describe("PipeFallbackSession", () => {
 	});
 
 	it("selects pipe fallback when SENPI_PTY_FORCE_PIPE=1 even if native is available", async () => {
-		const nativeLoadResult: NativePtyLoadResult = { native: { version: () => "test" }, diagnostic: null };
+		const nativeLoadResult: NativePtyLoadResult = { native: { PtySession: class PtySession {} }, diagnostic: null };
 
 		expect(isPipeFallbackForced({ SENPI_PTY_FORCE_PIPE: "1" })).toBe(true);
 		expect(shouldUsePipeFallback(nativeLoadResult, { SENPI_PTY_FORCE_PIPE: "1" })).toBe(true);
