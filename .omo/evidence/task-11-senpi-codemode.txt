@@ -1,0 +1,479 @@
+Task 11 timeout/watchdog evidence
+
+## RED proof
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/timeouts.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+ ❯ test/timeouts.test.ts (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/timeouts.test.ts [ test/timeouts.test.ts ]
+Error: Cannot find module '../src/timeouts/bridge-timeout.ts' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode/test/timeouts.test.ts
+ ❯ test/timeouts.test.ts:2:1
+      1| import { afterEach, describe, expect, it, vi } from "vitest";
+      2| import { withBridgeTimeoutPause } from "../src/timeouts/bridge-timeout…
+       | ^
+      3| import { IdleTimeout } from "../src/timeouts/idle-timeout.ts";
+      4|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  no tests
+   Start at  15:53:07
+   Duration  118ms (transform 11ms, setup 0ms, import 0ms, tests 0ms, environment 0ms)
+
+
+## Focused timeout tests
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/timeouts.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  15:53:45
+   Duration  118ms (transform 15ms, setup 0ms, import 21ms, tests 5ms, environment 0ms)
+
+
+## npm run check
+$ npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+packages/senpi-codemode/src/kernels/js/context-manager.ts:265:11 lint/correctness/noUnusedPrivateClassMembers  FIXABLE  ━━━━━━━━━━
+
+  ! This private class member is defined but never used.
+
+    263 │ class InlineWorker implements WorkerLike {
+    264 │ 	readonly mode = "inline";
+  > 265 │ 	readonly #moduleUrl: string;
+        │ 	         ^^^^^^^^^^
+    266 │ 	readonly #parallelPoolWidth: number;
+    267 │ 	#handlers: Array<(message: WorkerOutbound) => void> = [];
+
+  i Unsafe fix: Remove unused declaration.
+
+    263 263 │   class InlineWorker implements WorkerLike {
+    264 264 │     readonly mode = "inline";
+    265     │ - → readonly·#moduleUrl:·string;
+    266 265 │     readonly #parallelPoolWidth: number;
+    267 266 │     #handlers: Array<(message: WorkerOutbound) => void> = [];
+
+
+packages/senpi-codemode/src/kernels/js/context-manager.ts:266:11 lint/correctness/noUnusedPrivateClassMembers  FIXABLE  ━━━━━━━━━━
+
+  ! This private class member is defined but never used.
+
+    264 │ 	readonly mode = "inline";
+    265 │ 	readonly #moduleUrl: string;
+  > 266 │ 	readonly #parallelPoolWidth: number;
+        │ 	         ^^^^^^^^^^^^^^^^^^
+    267 │ 	#handlers: Array<(message: WorkerOutbound) => void> = [];
+    268 │
+
+  i Unsafe fix: Remove unused declaration.
+
+    264 264 │     readonly mode = "inline";
+    265 265 │     readonly #moduleUrl: string;
+    266     │ - → readonly·#parallelPoolWidth:·number;
+    267 266 │     #handlers: Array<(message: WorkerOutbound) => void> = [];
+    268 267 │
+
+
+packages/senpi-codemode/src/kernels/js/context-manager.ts:267:2 lint/correctness/noUnusedPrivateClassMembers  FIXABLE  ━━━━━━━━━━
+
+  ! This private class member is defined but never used.
+
+    265 │ 	readonly #moduleUrl: string;
+    266 │ 	readonly #parallelPoolWidth: number;
+  > 267 │ 	#handlers: Array<(message: WorkerOutbound) => void> = [];
+        │ 	^^^^^^^^^
+    268 │
+    269 │ 	constructor(moduleUrl: string, parallelPoolWidth: number) {
+
+  i Unsafe fix: Remove unused declaration.
+
+    265 265 │     readonly #moduleUrl: string;
+    266 266 │     readonly #parallelPoolWidth: number;
+    267     │ - → #handlers:·Array<(message:·WorkerOutbound)·=>·void>·=·[];
+    268 267 │
+    269 268 │     constructor(moduleUrl: string, parallelPoolWidth: number) {
+
+
+packages/senpi-codemode/src/kernels/js/context-manager.ts:274:14 lint/correctness/noUnusedFunctionParameters  FIXABLE  ━━━━━━━━━━
+
+  ! This parameter message is unused.
+
+    272 │ 	}
+    273 │
+  > 274 │ 	postMessage(message: WorkerInbound): void {
+        │ 	            ^^^^^^^
+    275 │
+
+  i Unused parameters might be the result of an incomplete refactoring.
+
+  i Unsafe fix: If this is intentional, prepend message with an underscore.
+
+    272 272 │     }
+    273 273 │
+    274     │ - → postMessage(message:·WorkerInbound):·void·{
+        274 │ + → postMessage(_message:·WorkerInbound):·void·{
+    275 275 │
+
+
+packages/senpi-codemode/test/js-kernel.test.ts:42:10 lint/correctness/noUnusedVariables  FIXABLE  ━━━━━━━━━━
+
+  ! This function firstToolCall is unused.
+
+    40 │ }
+    41 │
+  > 42 │ function firstToolCall(messages: readonly KernelToHostMessage[]): Extract<KernelToHostMessage, { type: "tool-call" }> {
+       │          ^^^^^^^^^^^^^
+    43 │ 	const call = messages.find((message): message is Extract<KernelToHostMessage, { type: "tool-call" }> => {
+    44 │ 		return message.type === "tool-call";
+
+  i Unused variables are often the result of typos, incomplete refactors, or other sources of bugs.
+
+  i Unsafe fix: If this is intentional, prepend firstToolCall with an underscore.
+
+     40  40 │   }
+     41  41 │
+     42     │ - function·firstToolCall(messages:·readonly·KernelToHostMessage[]):·Extract<KernelToHostMessage,·{·type:·"tool-call"·}>·{
+         42 │ + function·_firstToolCall(messages:·readonly·KernelToHostMessage[]):·Extract<KernelToHostMessage,·{·type:·"tool-call"·}>·{
+     43  43 │   	const call = messages.find((message): message is Extract<KernelToHostMessage, { type: "tool-call" }> => {
+     44  44 │   		return message.type === "tool-call";
+
+
+packages/senpi-codemode/src/kernels/js/context-manager.ts:275:1 parse ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × expected `}` but instead the file ends
+
+    274 │ 	postMessage(message: WorkerInbound): void {
+  > 275 │
+        │
+
+  i the file ends here
+
+    274 │ 	postMessage(message: WorkerInbound): void {
+  > 275 │
+        │
+
+
+packages/senpi-codemode/src/kernels/js/context-manager.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Code formatting aborted due to parsing errors. To format code with errors, enable the 'formatter.formatWithErrors' option.
+
+
+packages/senpi-codemode/test/jl-kernel.test.ts:19:14 parse ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × `await` is only allowed within async functions and at the top levels of modules.
+
+    17 │ 	});
+    18 │
+  > 19 │ 	it.skipIf(!(await hasJulia()))("persists state, displays last expression, and calls one host tool", async () => {
+       │ 	            ^^^^^
+    20 │ 		const root = await mkdtemp(join(tmpdir(), "senpi-jl-kernel-"));
+    21 │ 		try {
+
+
+packages/senpi-codemode/test/jl-kernel.test.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Code formatting aborted due to parsing errors. To format code with errors, enable the 'formatter.formatWithErrors' option.
+
+
+packages/senpi-codemode/test/rb-kernel.test.ts:19:14 parse ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × `await` is only allowed within async functions and at the top levels of modules.
+
+    17 │ 	});
+    18 │
+  > 19 │ 	it.skipIf(!(await hasRuby()))("persists state, displays last expression, and calls one host tool", async () => {
+       │ 	            ^^^^^
+    20 │ 		const root = await mkdtemp(join(tmpdir(), "senpi-rb-kernel-"));
+    21 │ 		try {
+
+
+packages/senpi-codemode/test/rb-kernel.test.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Code formatting aborted due to parsing errors. To format code with errors, enable the 'formatter.formatWithErrors' option.
+
+
+Skipped 9 suggested fixes.
+If you wish to apply the suggested (unsafe) fixes, use the command biome check --write --unsafe
+
+Checked 1340 files in 811ms. Fixed 7 files.
+Found 6 errors.
+Found 5 warnings.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some warnings were emitted while running checks.
+
+
+
+## Focused timeout tests (verbose manual/auxiliary scenario proof)
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/timeouts.test.ts --reporter verbose
+
+## git diff --check scoped files
+$ git diff --check -- packages/senpi-codemode/src/timeouts packages/senpi-codemode/test/timeouts.test.ts .omo/evidence/task-11-senpi-codemode.txt
+.omo/evidence/task-11-senpi-codemode.txt:51: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:58: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:60: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:66: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:71: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:77: trailing whitespace.
++    268 │
+.omo/evidence/task-11-senpi-codemode.txt:78: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:80: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:85: trailing whitespace.
++    268 267 │
+.omo/evidence/task-11-senpi-codemode.txt:86: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:91: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:96: trailing whitespace.
++    268 │
+.omo/evidence/task-11-senpi-codemode.txt:98: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:100: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:104: trailing whitespace.
++    268 267 │
+.omo/evidence/task-11-senpi-codemode.txt:106: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:111: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:113: trailing whitespace.
++    273 │
+.omo/evidence/task-11-senpi-codemode.txt:116: trailing whitespace.
++    275 │
+.omo/evidence/task-11-senpi-codemode.txt:117: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:119: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:121: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:123: trailing whitespace.
++    273 273 │
+.omo/evidence/task-11-senpi-codemode.txt:126: trailing whitespace.
++    275 275 │
+.omo/evidence/task-11-senpi-codemode.txt:127: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:132: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:134: trailing whitespace.
++    41 │
+.omo/evidence/task-11-senpi-codemode.txt:139: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:141: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:143: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:145: trailing whitespace.
++     41  41 │
+.omo/evidence/task-11-senpi-codemode.txt:150: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:155: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:157: trailing whitespace.
++  > 275 │
+.omo/evidence/task-11-senpi-codemode.txt:158: trailing whitespace.
++        │
+.omo/evidence/task-11-senpi-codemode.txt:159: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:161: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:163: trailing whitespace.
++  > 275 │
+.omo/evidence/task-11-senpi-codemode.txt:164: trailing whitespace.
++        │
+.omo/evidence/task-11-senpi-codemode.txt:165: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:170: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:175: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:177: trailing whitespace.
++    18 │
+.omo/evidence/task-11-senpi-codemode.txt:182: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:187: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:192: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:194: trailing whitespace.
++    18 │
+.omo/evidence/task-11-senpi-codemode.txt:199: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:204: trailing whitespace.
++
+.omo/evidence/task-11-senpi-codemode.txt:215: trailing whitespace.
++
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+ ✓ test/timeouts.test.ts > codemode timeout infrastructure > interrupts a cell once when active work exceeds the budget 2ms
+ ✓ test/timeouts.test.ts > codemode timeout infrastructure > does not time out while a bridge pause is active 1ms
+ ✓ test/timeouts.test.ts > codemode timeout infrastructure > resumes with the remaining budget after a bridge call releases 0ms
+ ✓ test/timeouts.test.ts > codemode timeout infrastructure > handles multiple sequential pauses without losing active budget 0ms
+ ✓ test/timeouts.test.ts > codemode timeout infrastructure > resumes after bridge failure and still fires once 1ms
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  15:56:11
+   Duration  115ms (transform 14ms, setup 0ms, import 19ms, tests 5ms, environment 0ms)
+
+
+## git diff --check scoped files (rerun)
+$ git diff --check -- packages/senpi-codemode/src/timeouts packages/senpi-codemode/test/timeouts.test.ts .omo/evidence/task-11-senpi-codemode.txt
+
+## Commit attempt
+$ git diff --cached --check && git commit -m "feat: add senpi-codemode timeout controls"
+Running formatting, linting, and type checking...
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1343 files in 710ms. Fixed 1 file.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+packages/senpi-codemode/src/kernels/js/context-manager.ts(97,57): error TS2554: Expected 1 arguments, but got 2.
+❌ Checks failed. Please fix the errors before committing.
+
+## Final status
+AM .omo/evidence/task-11-senpi-codemode.txt
+A  packages/senpi-codemode/src/timeouts/bridge-timeout.ts
+A  packages/senpi-codemode/src/timeouts/idle-timeout.ts
+A  packages/senpi-codemode/test/timeouts.test.ts
+?? .omo/drafts/
+?? .omo/evidence/task-10-senpi-codemode.txt
+?? .omo/evidence/task-6-scope-audit.txt
+?? .omo/evidence/task-6-senpi-codemode-rerun.txt
+?? .omo/evidence/task-6-senpi-codemode.txt
+?? .omo/evidence/task-7-senpi-codemode.txt
+?? .omo/evidence/task-8-senpi-codemode.txt
+?? .omo/evidence/task-9-senpi-codemode.txt
+?? packages/senpi-codemode/src/bridge/http-server.ts
+?? packages/senpi-codemode/src/kernels/
+?? packages/senpi-codemode/test/bridge-server.test.ts
+?? packages/senpi-codemode/test/jl-kernel.test.ts
+?? packages/senpi-codemode/test/js-kernel.test.ts
+?? packages/senpi-codemode/test/kernels/
+?? packages/senpi-codemode/test/py-kernel.test.ts
+?? packages/senpi-codemode/test/rb-kernel.test.ts
+
+## Timeout verification rerun - 2026-07-06
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/timeouts.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  16:04:23
+   Duration  120ms (transform 14ms, setup 0ms, import 19ms, tests 5ms, environment 0ms)
+
+exit_code=0
+
+## Full workspace check rerun - 2026-07-06
+$ npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1343 files in 762ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 34ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+exit_code=0
+
+## Scoped git diff whitespace check rerun - 2026-07-06
+$ git diff --check -- .omo/evidence/task-11-senpi-codemode.txt packages/senpi-codemode/src/timeouts/bridge-timeout.ts packages/senpi-codemode/src/timeouts/idle-timeout.ts packages/senpi-codemode/test/timeouts.test.ts
+exit_code=0
