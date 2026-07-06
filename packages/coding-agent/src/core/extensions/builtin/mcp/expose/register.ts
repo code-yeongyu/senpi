@@ -7,6 +7,7 @@ import type { ExtensionAPI, ToolDefinition } from "../../../types.ts";
 import { registerToolsPreservingActiveSet } from "../active-set.ts";
 import type { McpToolCatalogEntry } from "../catalog.ts";
 import { ToolExecError } from "../errors.ts";
+import { applyMcpOutputGuard } from "../guard/output-guard.ts";
 import { ensureMcpToolCallConnection, withMcpSessionExpiryRetry } from "../health.ts";
 import { runMcpConnectionLifecycleCall } from "../idle.ts";
 import {
@@ -66,7 +67,12 @@ function createMcpToolDefinition(entry: McpToolCatalogEntry, name: string): McpT
 			if (!mapped.ok) {
 				throw new ToolExecError(mapped.error.message, { phase: "call", serverName: entry.server });
 			}
-			const content = toAgentContent(mapped.content);
+			const guarded = await applyMcpOutputGuard(mapped.content, {
+				agentDir: entry.agentDir,
+				outputGuard: entry.outputGuard,
+				server: entry.server,
+			});
+			const content = toAgentContent(guarded);
 			return { content, details: { preview: previewContent(content), server: entry.server, tool: entry.tool } };
 		},
 		renderCall(args, theme) {

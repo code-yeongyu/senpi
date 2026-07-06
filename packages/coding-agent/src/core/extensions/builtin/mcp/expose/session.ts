@@ -11,6 +11,7 @@ export interface McpDirectRegistrationEntry {
 	readonly name: string;
 	readonly connection: ServerConnection;
 	readonly logger: McpLogger;
+	readonly agentDir?: string;
 	readonly cachedCatalog?: McpCachedServerCatalog;
 	readonly ensureCachedToolConnected?: () => Promise<void>;
 }
@@ -28,7 +29,10 @@ export async function registerDirectMcpTools(
 		const catalog =
 			entry.cachedCatalog === undefined
 				? entry.connection.state === "connected"
-					? await collectToolCatalog(entry.name, entry.connection, server.config)
+					? await collectToolCatalog(entry.name, entry.connection, server.config, {
+							agentDir: entry.agentDir,
+							outputGuard: config.settings.outputGuard,
+						})
 					: []
 				: cachedToolsToCatalogEntries(
 						entry.name,
@@ -36,6 +40,7 @@ export async function registerDirectMcpTools(
 						entry.connection,
 						server.config.requestTimeoutMs,
 						entry.ensureCachedToolConnected ?? (() => entry.connection.connect().then(() => undefined)),
+						{ agentDir: entry.agentDir, outputGuard: config.settings.outputGuard },
 					);
 		const policy = computeMcpExposurePolicy(catalog, server.config, config.settings);
 		for (const warning of policy.warnings) entry.logger.warn(warning);

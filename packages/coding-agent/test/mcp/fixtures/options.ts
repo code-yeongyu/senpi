@@ -11,6 +11,7 @@ export interface FixtureOptions {
 	isErrorTool: boolean;
 	hugeSchemaTool: boolean;
 	hugeOutput: { bytes: number; lines: number } | null;
+	binaryOutputTool: boolean;
 	slowToolCallMs: number;
 	cancelLogFile: string | undefined;
 	emitListChanged: boolean;
@@ -36,6 +37,7 @@ export function parseFixtureOptions(argv: readonly string[]): FixtureOptions {
 		isErrorTool: argv.includes("--iserror-tool"),
 		hugeSchemaTool: argv.includes("--huge-schema-tool"),
 		hugeOutput: readHugeOutput(argv),
+		binaryOutputTool: argv.includes("--binary-output-tool"),
 		slowToolCallMs: readIntegerFlag(argv, "--slow-tool-call", 0),
 		cancelLogFile: readStringFlag(argv, "--cancel-log"),
 		emitListChanged: argv.includes("--emit-list-changed"),
@@ -122,6 +124,7 @@ function validateArgs(argv: readonly string[], options: FixtureOptions): void {
 		"--crash-on-start",
 		"--iserror-tool",
 		"--huge-schema-tool",
+		"--binary-output-tool",
 		"--emit-list-changed",
 		"--expire-session",
 		"--always-expire-tool-calls",

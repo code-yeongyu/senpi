@@ -10,6 +10,7 @@ import {
 	getMcpServerExposureStatus,
 	type McpServerExposureStatus,
 } from "./expose/status.ts";
+import { cleanupMcpOutputArtifacts } from "./guard/output-guard.ts";
 import { configureMcpConnectionLifecycle, disposeMcpConnectionLifecycle } from "./idle.ts";
 import { createMcpLogger } from "./log.ts";
 import { buildMcpServerSnapshot } from "./service-snapshot.ts";
@@ -74,6 +75,7 @@ export class McpService {
 		this.#connections.clear();
 		this.#connectionKeysByName.clear();
 		await Promise.all(entries.map((entry) => disposeEntryConnection(entry)));
+		await cleanupMcpOutputArtifacts();
 	}
 
 	isDisposed(): boolean {
@@ -217,6 +219,7 @@ export class McpService {
 		const entries = [...this.#connections.values()].map((entry) => {
 			const serverConfig = config.servers[entry.name]?.config;
 			return {
+				agentDir: entry.agentDir,
 				cachedCatalog: entry.cachedCatalog,
 				connection: entry.connection,
 				ensureCachedToolConnected: () => connectAndRefreshMcpCatalog(entry, serverConfig),

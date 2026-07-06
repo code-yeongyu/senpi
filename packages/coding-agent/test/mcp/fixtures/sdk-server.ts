@@ -131,6 +131,13 @@ function buildTools(options: FixtureOptions): FixtureTool[] {
 			inputSchema: emptyInputSchema(),
 		});
 	}
+	if (options.binaryOutputTool) {
+		tools.push({
+			name: "binary_output_tool",
+			description: "Returns deterministic binary image output",
+			inputSchema: emptyInputSchema(),
+		});
+	}
 	if (options.hugeSchemaTool) {
 		tools.push({
 			name: "huge_schema_tool",
@@ -204,6 +211,11 @@ async function callFixtureTool(
 	}
 	if (name === "huge_output_tool" && options.hugeOutput) {
 		return { content: [{ type: "text", text: hugeOutput(options.hugeOutput.bytes, options.hugeOutput.lines) }] };
+	}
+	if (name === "binary_output_tool" && options.binaryOutputTool) {
+		return {
+			content: [{ type: "image", data: Buffer.alloc(65_536, 0x89).toString("base64"), mimeType: "image/png" }],
+		};
 	}
 	if (!name.startsWith("tool_")) {
 		return { isError: true, content: [{ type: "text", text: `unknown fixture tool: ${name}` }] };

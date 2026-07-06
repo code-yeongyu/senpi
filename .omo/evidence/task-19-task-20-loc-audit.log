@@ -1,0 +1,17 @@
+packages/coding-agent/src/core/extensions/builtin/mcp/catalog.ts pure_loc=60
+packages/coding-agent/src/core/extensions/builtin/mcp/config-schema.ts pure_loc=131
+packages/coding-agent/src/core/extensions/builtin/mcp/connection.ts pure_loc=250
+packages/coding-agent/src/core/extensions/builtin/mcp/diagnose.ts pure_loc=147
+packages/coding-agent/src/core/extensions/builtin/mcp/errors.ts pure_loc=147
+packages/coding-agent/src/core/extensions/builtin/mcp/expose/register.ts pure_loc=185
+packages/coding-agent/src/core/extensions/builtin/mcp/expose/session.ts pure_loc=49
+packages/coding-agent/src/core/extensions/builtin/mcp/guard/output-guard.ts pure_loc=181
+packages/coding-agent/src/core/extensions/builtin/mcp/health.ts pure_loc=85
+packages/coding-agent/src/core/extensions/builtin/mcp/service.ts pure_loc=239
+packages/coding-agent/src/core/extensions/builtin/mcp/startup-race.ts pure_loc=80
+packages/coding-agent/test/mcp/diagnose.test.ts pure_loc=171
+packages/coding-agent/test/mcp/fixtures/http-server.ts pure_loc=127
+packages/coding-agent/test/mcp/fixtures/options.ts pure_loc=136
+packages/coding-agent/test/mcp/fixtures/sdk-server.ts pure_loc=242
+packages/coding-agent/test/mcp/fixtures/stdio-server.ts pure_loc=52
+packages/coding-agent/test/mcp/output-guard.test.ts pure_loc=174
