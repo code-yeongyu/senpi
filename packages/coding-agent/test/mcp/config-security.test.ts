@@ -8,6 +8,10 @@ import {
 import { makeRoot, writeJson, writeRaw } from "./config-test-helpers.ts";
 
 const PROJECT_COMMAND_EXPR = "$" + "{PROJECT_COMMAND}";
+const MISSING_COMMAND_EXPR = "$" + "{MISSING_COMMAND}";
+const EMPTY_COMMAND_DEFAULT_EXPR = "$" + "{EMPTY_COMMAND:-}";
+const MISSING_URL_EXPR = "$" + "{MISSING_URL}";
+const EMPTY_URL_DEFAULT_EXPR = "$" + "{EMPTY_URL:-}";
 
 describe("mcp config security boundaries", () => {
 	it("rejects command substitution syntax without executing config", () => {
@@ -52,6 +56,52 @@ describe("mcp config security boundaries", () => {
 		expect(() => loadMcpConfig({ agentDir: root.agentDir, cwd: root.cwd, projectTrusted: true })).toThrow(
 			new McpConfigValidationError(
 				"Invalid MCP config at mcpServers.missingUrl.url: Required for enabled http server",
+			),
+		);
+	});
+
+	it("rejects enabled stdio servers when interpolation produces an empty command", () => {
+		const root = makeRoot();
+		writeJson(join(root.agentDir, "mcp.json"), {
+			mcpServers: { emptyAfterEnv: { command: MISSING_COMMAND_EXPR } },
+		});
+
+		expect(() => loadMcpConfig({ agentDir: root.agentDir, cwd: root.cwd, env: {}, projectTrusted: true })).toThrow(
+			new McpConfigValidationError(
+				"Invalid MCP config at mcpServers.emptyAfterEnv.command: Required for enabled stdio server",
+			),
+		);
+
+		writeJson(join(root.agentDir, "mcp.json"), {
+			mcpServers: { emptyDefault: { command: EMPTY_COMMAND_DEFAULT_EXPR } },
+		});
+
+		expect(() => loadMcpConfig({ agentDir: root.agentDir, cwd: root.cwd, env: {}, projectTrusted: true })).toThrow(
+			new McpConfigValidationError(
+				"Invalid MCP config at mcpServers.emptyDefault.command: Required for enabled stdio server",
+			),
+		);
+	});
+
+	it("rejects enabled http servers when interpolation produces an empty url", () => {
+		const root = makeRoot();
+		writeJson(join(root.agentDir, "mcp.json"), {
+			mcpServers: { emptyAfterEnv: { type: "http", url: MISSING_URL_EXPR } },
+		});
+
+		expect(() => loadMcpConfig({ agentDir: root.agentDir, cwd: root.cwd, env: {}, projectTrusted: true })).toThrow(
+			new McpConfigValidationError(
+				"Invalid MCP config at mcpServers.emptyAfterEnv.url: Required for enabled http server",
+			),
+		);
+
+		writeJson(join(root.agentDir, "mcp.json"), {
+			mcpServers: { emptyDefault: { type: "http", url: EMPTY_URL_DEFAULT_EXPR } },
+		});
+
+		expect(() => loadMcpConfig({ agentDir: root.agentDir, cwd: root.cwd, env: {}, projectTrusted: true })).toThrow(
+			new McpConfigValidationError(
+				"Invalid MCP config at mcpServers.emptyDefault.url: Required for enabled http server",
 			),
 		);
 	});

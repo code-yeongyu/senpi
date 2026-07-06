@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	createMcpLogger,
@@ -160,6 +160,24 @@ https://example.invalid/path?client_secret=${token}`);
 		expect(existsSync(`${logger.filePath}.1`)).toBe(true);
 		expect(statSync(logger.filePath).size).toBeLessThanOrEqual(640);
 		expect(statSync(logger.filePath).mode & 0o777).toBe(0o600);
+	});
+
+	it("warns and disables the file sink when rotation fails without leaking secrets", () => {
+		const logger = createMcpLogger("rotation-failure", { maxFileBytes: 8 });
+		const secret = "rotation-failure-token";
+		mkdirSync(dirname(logger.filePath), { recursive: true });
+		writeFileSync(logger.filePath, "old line\n", { mode: 0o600 });
+		mkdirSync(`${logger.filePath}.1`);
+
+		expect(() => logger.info(`new Authorization: Bearer ${secret}`)).not.toThrow();
+
+		const ringText = logger.getRingBuffer().join("\n");
+		expect(ringText).not.toContain(secret);
+		expect(ringText).toContain(expectedRedaction(secret));
+		expect(ringText).toContain("new Authorization: Bearer <redacted:");
+		expect(ringText.match(/file sink disabled/g)).toHaveLength(1);
+		expect(readFileSync(logger.filePath, "utf8")).not.toContain(secret);
+		expect(statSync(`${logger.filePath}.1`).isDirectory()).toBe(true);
 	});
 
 	it("maps MCP RFC-5424 levels to severities", () => {

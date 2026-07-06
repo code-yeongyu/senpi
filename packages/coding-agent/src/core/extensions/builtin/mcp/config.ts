@@ -101,7 +101,10 @@ function readTrustedConfig(
 	env: Record<string, string | undefined>,
 	raw = readConfigJson(path, true).raw,
 ): RawConfig | undefined {
-	return interpolateConfig(validateRaw(raw, path), env);
+	const config = interpolateConfig(validateRaw(raw, path), env);
+	const endpointError = config ? getServerEndpointValidationError(config) : undefined;
+	if (endpointError) throw new McpConfigValidationError(`Invalid MCP config at ${endpointError}`);
+	return config;
 }
 
 function readConfigJson(path: string, trusted: boolean): JsonReadResult {

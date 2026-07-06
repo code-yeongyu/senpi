@@ -124,10 +124,10 @@ export function getServerEndpointValidationError(config: RawConfig): string | un
 	for (const [name, server] of Object.entries(config.mcpServers ?? {})) {
 		if (server.enabled === false) continue;
 		const type = server.type ?? (server.url ? "http" : "stdio");
-		if (type === "stdio" && server.command === undefined) {
+		if (type === "stdio" && (server.command === undefined || server.command.trim().length === 0)) {
 			return `mcpServers.${name}.command: Required for enabled stdio server`;
 		}
-		if (type === "http" && server.url === undefined) {
+		if (type === "http" && (server.url === undefined || server.url.trim().length === 0)) {
 			return `mcpServers.${name}.url: Required for enabled http server`;
 		}
 	}

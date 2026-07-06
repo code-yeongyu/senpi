@@ -188,10 +188,9 @@ class FileMcpLogger implements McpLogger {
 				closeSync(fd);
 			}
 			chmodSync(this.filePath, 0o600);
-		} catch (error) {
+		} catch {
 			this.#fileSinkDisabled = true;
-			const reason = error instanceof Error ? error.message : String(error);
-			this.#pushRing(this.#formatLine("warning", `file sink disabled: ${reason}`, undefined, "file"));
+			this.#pushRing(this.#formatLine("warning", "file sink disabled after write failure", undefined, "file"));
 		}
 	}
 
@@ -202,7 +201,9 @@ class FileMcpLogger implements McpLogger {
 			rmSync(`${this.filePath}.1`, { force: true });
 			renameSync(this.filePath, `${this.filePath}.1`);
 			chmodSync(`${this.filePath}.1`, 0o600);
-		} catch {}
+		} catch {
+			throw new Error("log rotation failed");
+		}
 	}
 }
 
