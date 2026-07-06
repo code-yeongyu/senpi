@@ -1,0 +1,190 @@
+{
+  "$schema": "./visual-claims.schema.md",
+  "description": "Task-12 (overlay suite) visual-claims manifest. Registered as a SEPARATE per-task manifest (not appended into the shared visual-claims.json) to avoid the shared-file merge hazard while other Wave-2 tasks run in parallel. Each claim binds a neo overlay frame as a complete triplet (.ans via tmux capture-pane -e in session ulw-qa-t12 + .html + cell-grid .json from qa/xterm-render.mjs) with grid-based assertions verifying grok layout + exact palette hexes: accent-blue #7aa2f7 selection/prompt, green #9ece6a favorite/✓/on, red #f7768e auth-missing, dim #6c6c6c, yellow #e0af68 label, border #505058, base bg #141414 — all drawn from .omo/research/neo-grok/ansi-colors.md. Also covers the failure edges (zero models, empty sessions dir, delete-confirm) and the 256-color no-truecolor fallback. Triplet paths are relative to this file's directory (packages/neo/qa). Verify with: node packages/neo/qa/xterm-render.mjs verify-manifest packages/neo/qa/visual-claims-task12.json",
+  "claims": [
+    {
+      "id": "task-12-model-selector-120",
+      "task": 12,
+      "title": "model selector at 120 cols: → accent-blue selection, * green favorite marker, current ✓ green, [provider] badge, red auth-missing indicator",
+      "requiredFrames": ["t12-model-120"],
+      "frames": [
+        { "id": "t12-model-120", "size": "122x7", "state": "model-selector-current-favorite", "ans": "triplets/t12-model-120.ans", "html": "triplets/t12-model-120.html", "json": "triplets/t12-model-120.json" }
+      ],
+      "assertions": [
+        { "id": "sel-arrow-glyph", "frame": "t12-model-120", "kind": "cell-glyph", "x": 0, "y": 3, "glyph": "→" },
+        { "id": "sel-arrow-blue", "frame": "t12-model-120", "kind": "cell-fg", "x": 0, "y": 3, "hex": "#7aa2f7" },
+        { "id": "fav-star-glyph", "frame": "t12-model-120", "kind": "cell-glyph", "x": 2, "y": 3, "glyph": "*" },
+        { "id": "fav-star-green", "frame": "t12-model-120", "kind": "cell-fg", "x": 2, "y": 3, "hex": "#9ece6a" },
+        { "id": "current-check-glyph", "frame": "t12-model-120", "kind": "cell-glyph", "x": 19, "y": 3, "glyph": "✓" },
+        { "id": "current-check-green", "frame": "t12-model-120", "kind": "cell-fg", "x": 19, "y": 3, "hex": "#9ece6a" },
+        { "id": "auth-missing-glyph", "frame": "t12-model-120", "kind": "cell-glyph", "x": 28, "y": 4, "glyph": "(" },
+        { "id": "auth-missing-red", "frame": "t12-model-120", "kind": "cell-fg", "x": 28, "y": 4, "hex": "#f7768e" },
+        { "id": "top-rule-glyph", "frame": "t12-model-120", "kind": "cell-glyph", "x": 0, "y": 0, "glyph": "─" },
+        { "id": "top-rule-border", "frame": "t12-model-120", "kind": "cell-fg", "x": 0, "y": 0, "hex": "#505058" },
+        { "id": "bottom-rule-glyph", "frame": "t12-model-120", "kind": "cell-glyph", "x": 0, "y": 6, "glyph": "─" }
+      ]
+    },
+    {
+      "id": "task-12-model-selector-256-fallback",
+      "task": 12,
+      "title": "256-color fallback: the model selector renders with NO truecolor cells (ansi256 profile) and does not crash",
+      "requiredFrames": ["t12-model-256"],
+      "frames": [
+        { "id": "t12-model-256", "size": "122x7", "state": "model-selector-ansi256", "ans": "triplets/t12-model-256.ans", "html": "triplets/t12-model-256.html", "json": "triplets/t12-model-256.json" }
+      ],
+      "assertions": [
+        { "id": "no-truecolor-256", "frame": "t12-model-256", "kind": "region-no-truecolor", "x0": 0, "y0": 0, "x1": 46, "y1": 6 }
+      ]
+    },
+    {
+      "id": "task-12-model-selector-empty",
+      "task": 12,
+      "title": "failure edge: zero models renders a 'No models available' notice, bordered, no crash",
+      "requiredFrames": ["t12-model-empty-80"],
+      "frames": [
+        { "id": "t12-model-empty-80", "size": "82x5", "state": "model-selector-empty", "ans": "triplets/t12-model-empty-80.ans", "html": "triplets/t12-model-empty-80.html", "json": "triplets/t12-model-empty-80.json" }
+      ],
+      "assertions": [
+        { "id": "empty-notice-N", "frame": "t12-model-empty-80", "kind": "cell-glyph", "x": 2, "y": 3, "glyph": "N" },
+        { "id": "empty-top-rule", "frame": "t12-model-empty-80", "kind": "cell-glyph", "x": 0, "y": 0, "glyph": "─" }
+      ]
+    },
+    {
+      "id": "task-12-session-picker-120",
+      "task": 12,
+      "title": "session picker at 120 cols: title, sort/filter labels, → accent-blue selected named session over an unnamed one",
+      "requiredFrames": ["t12-session-120"],
+      "frames": [
+        { "id": "t12-session-120", "size": "122x9", "state": "session-picker-recent-all", "ans": "triplets/t12-session-120.ans", "html": "triplets/t12-session-120.html", "json": "triplets/t12-session-120.json" }
+      ],
+      "assertions": [
+        { "id": "sess-title-R", "frame": "t12-session-120", "kind": "cell-glyph", "x": 0, "y": 1, "glyph": "R" },
+        { "id": "sess-title-blue", "frame": "t12-session-120", "kind": "cell-fg", "x": 0, "y": 1, "hex": "#7aa2f7" },
+        { "id": "sess-sort-label", "frame": "t12-session-120", "kind": "cell-glyph", "x": 0, "y": 2, "glyph": "s" },
+        { "id": "sess-sort-dim", "frame": "t12-session-120", "kind": "cell-fg", "x": 0, "y": 2, "hex": "#6c6c6c" },
+        { "id": "sess-sel-arrow", "frame": "t12-session-120", "kind": "cell-glyph", "x": 0, "y": 5, "glyph": "→" },
+        { "id": "sess-sel-blue", "frame": "t12-session-120", "kind": "cell-fg", "x": 0, "y": 5, "hex": "#7aa2f7" },
+        { "id": "sess-top-rule", "frame": "t12-session-120", "kind": "cell-glyph", "x": 0, "y": 0, "glyph": "─" },
+        { "id": "sess-bottom-rule", "frame": "t12-session-120", "kind": "cell-glyph", "x": 0, "y": 8, "glyph": "─" }
+      ]
+    },
+    {
+      "id": "task-12-session-picker-delete-confirm",
+      "task": 12,
+      "title": "session picker delete-confirmation mode: the guarded delete prompt appears in red on the selected row",
+      "requiredFrames": ["t12-session-delete-120"],
+      "frames": [
+        { "id": "t12-session-delete-120", "size": "122x9", "state": "session-picker-delete-confirm", "ans": "triplets/t12-session-delete-120.ans", "html": "triplets/t12-session-delete-120.html", "json": "triplets/t12-session-delete-120.json" }
+      ],
+      "assertions": [
+        { "id": "del-sel-arrow", "frame": "t12-session-delete-120", "kind": "cell-glyph", "x": 0, "y": 5, "glyph": "→" }
+      ]
+    },
+    {
+      "id": "task-12-session-picker-empty",
+      "task": 12,
+      "title": "failure edge: empty sessions dir renders a 'No sessions' notice, bordered, no crash",
+      "requiredFrames": ["t12-session-empty-80"],
+      "frames": [
+        { "id": "t12-session-empty-80", "size": "82x7", "state": "session-picker-empty", "ans": "triplets/t12-session-empty-80.ans", "html": "triplets/t12-session-empty-80.html", "json": "triplets/t12-session-empty-80.json" }
+      ],
+      "assertions": [
+        { "id": "sess-empty-N", "frame": "t12-session-empty-80", "kind": "cell-glyph", "x": 2, "y": 5, "glyph": "N" },
+        { "id": "sess-empty-top-rule", "frame": "t12-session-empty-80", "kind": "cell-glyph", "x": 0, "y": 0, "glyph": "─" }
+      ]
+    },
+    {
+      "id": "task-12-settings-modal-120",
+      "task": 12,
+      "title": "settings modal at 120 cols: bordered, ▸ accent-blue cursor on the selected toggle, green 'on' value, theme submenu › in dim",
+      "requiredFrames": ["t12-settings-120"],
+      "frames": [
+        { "id": "t12-settings-120", "size": "122x9", "state": "settings-modal", "ans": "triplets/t12-settings-120.ans", "html": "triplets/t12-settings-120.html", "json": "triplets/t12-settings-120.json" }
+      ],
+      "assertions": [
+        { "id": "settings-cursor-glyph", "frame": "t12-settings-120", "kind": "cell-glyph", "x": 0, "y": 3, "glyph": "▸" },
+        { "id": "settings-cursor-blue", "frame": "t12-settings-120", "kind": "cell-fg", "x": 0, "y": 3, "hex": "#7aa2f7" },
+        { "id": "settings-on-green", "frame": "t12-settings-120", "kind": "cell-fg", "x": 16, "y": 3, "hex": "#9ece6a" },
+        { "id": "settings-submenu-glyph", "frame": "t12-settings-120", "kind": "cell-glyph", "x": 20, "y": 7, "glyph": "›" },
+        { "id": "settings-submenu-dim", "frame": "t12-settings-120", "kind": "cell-fg", "x": 20, "y": 7, "hex": "#6c6c6c" },
+        { "id": "settings-title-blue", "frame": "t12-settings-120", "kind": "cell-fg", "x": 0, "y": 1, "hex": "#7aa2f7" },
+        { "id": "settings-top-rule", "frame": "t12-settings-120", "kind": "cell-glyph", "x": 0, "y": 0, "glyph": "─" },
+        { "id": "settings-bottom-rule", "frame": "t12-settings-120", "kind": "cell-glyph", "x": 0, "y": 8, "glyph": "─" }
+      ]
+    },
+    {
+      "id": "task-12-theme-selector-80",
+      "task": 12,
+      "title": "theme selector at 80 cols: bordered list of theme names with the current one marked",
+      "requiredFrames": ["t12-theme-80"],
+      "frames": [
+        { "id": "t12-theme-80", "size": "82x5", "state": "theme-selector", "ans": "triplets/t12-theme-80.ans", "html": "triplets/t12-theme-80.html", "json": "triplets/t12-theme-80.json" }
+      ],
+      "assertions": [
+        { "id": "theme-top-rule", "frame": "t12-theme-80", "kind": "cell-glyph", "x": 0, "y": 0, "glyph": "─" },
+        { "id": "theme-top-rule-border", "frame": "t12-theme-80", "kind": "cell-fg", "x": 0, "y": 0, "hex": "#505058" }
+      ]
+    },
+    {
+      "id": "task-12-thinking-selector-80",
+      "task": 12,
+      "title": "thinking selector at 80 cols: bordered list, ❯ selected 'medium' level in accent-blue with its token-budget description",
+      "requiredFrames": ["t12-thinking-80"],
+      "frames": [
+        { "id": "t12-thinking-80", "size": "82x9", "state": "thinking-selector-medium", "ans": "triplets/t12-thinking-80.ans", "html": "triplets/t12-thinking-80.html", "json": "triplets/t12-thinking-80.json" }
+      ],
+      "assertions": [
+        { "id": "thinking-sel-glyph", "frame": "t12-thinking-80", "kind": "cell-glyph", "x": 0, "y": 4, "glyph": "❯" },
+        { "id": "thinking-sel-blue", "frame": "t12-thinking-80", "kind": "cell-fg", "x": 0, "y": 4, "hex": "#7aa2f7" },
+        { "id": "thinking-top-rule", "frame": "t12-thinking-80", "kind": "cell-glyph", "x": 0, "y": 0, "glyph": "─" }
+      ]
+    },
+    {
+      "id": "task-12-trust-prompt-80",
+      "task": 12,
+      "title": "trust prompt at 80 cols: accent-blue title + → selection, saved-decision + current-session lines, green ✓ on the saved option",
+      "requiredFrames": ["t12-trust-80"],
+      "frames": [
+        { "id": "t12-trust-80", "size": "82x11", "state": "trust-prompt-saved-trusted", "ans": "triplets/t12-trust-80.ans", "html": "triplets/t12-trust-80.html", "json": "triplets/t12-trust-80.json" }
+      ],
+      "assertions": [
+        { "id": "trust-title-blue", "frame": "t12-trust-80", "kind": "cell-fg", "x": 0, "y": 0, "hex": "#7aa2f7" },
+        { "id": "trust-sel-arrow", "frame": "t12-trust-80", "kind": "cell-glyph", "x": 0, "y": 6, "glyph": "→" },
+        { "id": "trust-sel-blue", "frame": "t12-trust-80", "kind": "cell-fg", "x": 0, "y": 6, "hex": "#7aa2f7" },
+        { "id": "trust-check-glyph", "frame": "t12-trust-80", "kind": "cell-glyph", "x": 8, "y": 6, "glyph": "✓" },
+        { "id": "trust-check-green", "frame": "t12-trust-80", "kind": "cell-fg", "x": 8, "y": 6, "hex": "#9ece6a" }
+      ]
+    },
+    {
+      "id": "task-12-tree-navigator-120",
+      "task": 12,
+      "title": "tree navigator at 120 cols: indented nodes, → accent-blue selected node, yellow «label» annotation",
+      "requiredFrames": ["t12-tree-120"],
+      "frames": [
+        { "id": "t12-tree-120", "size": "122x8", "state": "tree-navigator-default", "ans": "triplets/t12-tree-120.ans", "html": "triplets/t12-tree-120.html", "json": "triplets/t12-tree-120.json" }
+      ],
+      "assertions": [
+        { "id": "tree-sel-arrow", "frame": "t12-tree-120", "kind": "cell-glyph", "x": 0, "y": 6, "glyph": "→" },
+        { "id": "tree-sel-blue", "frame": "t12-tree-120", "kind": "cell-fg", "x": 0, "y": 6, "hex": "#7aa2f7" },
+        { "id": "tree-label-yellow", "frame": "t12-tree-120", "kind": "cell-fg", "x": 18, "y": 6, "hex": "#e0af68" },
+        { "id": "tree-title-blue", "frame": "t12-tree-120", "kind": "cell-fg", "x": 0, "y": 1, "hex": "#7aa2f7" },
+        { "id": "tree-top-rule", "frame": "t12-tree-120", "kind": "cell-glyph", "x": 0, "y": 0, "glyph": "─" }
+      ]
+    },
+    {
+      "id": "task-12-session-stats-80",
+      "task": 12,
+      "title": "session info/stats at 80 cols: bordered panel with session id, message count, token usage, and model",
+      "requiredFrames": ["t12-stats-80"],
+      "frames": [
+        { "id": "t12-stats-80", "size": "82x11", "state": "session-stats", "ans": "triplets/t12-stats-80.ans", "html": "triplets/t12-stats-80.html", "json": "triplets/t12-stats-80.json" }
+      ],
+      "assertions": [
+        { "id": "stats-title-blue", "frame": "t12-stats-80", "kind": "cell-fg", "x": 0, "y": 1, "hex": "#7aa2f7" },
+        { "id": "stats-id-label-dim", "frame": "t12-stats-80", "kind": "cell-fg", "x": 0, "y": 3, "hex": "#6c6c6c" },
+        { "id": "stats-top-rule", "frame": "t12-stats-80", "kind": "cell-glyph", "x": 0, "y": 0, "glyph": "─" },
+        { "id": "stats-bottom-rule", "frame": "t12-stats-80", "kind": "cell-glyph", "x": 0, "y": 10, "glyph": "─" }
+      ]
+    }
+  ]
+}

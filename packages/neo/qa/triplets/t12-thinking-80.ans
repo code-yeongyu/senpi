@@ -1,0 +1,9 @@
+[38;2;80;80;88m[48;2;20;20;20m────────────────────────────────────────────────────────────────────────────────[39m[49m
+  off[38;2;108;108;108m[48;2;20;20;20m         No reasoning[39m[49m
+  minimal[38;2;108;108;108m[48;2;20;20;20m     Very brief reasoning (~1k tokens)[39m[49m
+  low[38;2;108;108;108m[48;2;20;20;20m         Light reasoning (~2k tokens)[39m[49m
+[38;2;122;162;247m[48;2;20;20;20m❯ medium      Moderate reasoning (~8k tokens)[39m[49m
+  high[38;2;108;108;108m[48;2;20;20;20m        Deep reasoning (~16k tokens)[39m[49m
+  xhigh[38;2;108;108;108m[48;2;20;20;20m       Extended reasoning (~32k tokens or native xhigh effort)[39m[49m
+  max[38;2;108;108;108m[48;2;20;20;20m         Unbounded reasoning (Anthropic native max effort; Opus 4.7)[39m[49m
+[38;2;80;80;88m[48;2;20;20;20m────────────────────────────────────────────────────────────────────────────────[39m[49m
