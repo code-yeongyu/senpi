@@ -7,6 +7,7 @@ import type { ExtensionAPI, ToolDefinition } from "../../../types.ts";
 import { registerToolsPreservingActiveSet } from "../active-set.ts";
 import type { McpToolCatalogEntry } from "../catalog.ts";
 import { ToolExecError } from "../errors.ts";
+import { ensureMcpToolCallConnection } from "../health.ts";
 import {
 	buildMcpToolNames,
 	convertJsonSchemaToTypeBox,
@@ -87,7 +88,8 @@ async function callMcpTool(
 	label: string,
 ): Promise<Awaited<ReturnType<McpToolCatalogEntry["connection"]["client"]["callTool"]>>> {
 	try {
-		await (entry.ensureConnected?.() ?? entry.connection.connect());
+		await ensureMcpToolCallConnection(entry.connection);
+		await entry.ensureConnected?.();
 		return await entry.connection.client.callTool({ name: entry.tool, arguments: args }, undefined, {
 			onprogress: (progress) => {
 				onUpdate?.({

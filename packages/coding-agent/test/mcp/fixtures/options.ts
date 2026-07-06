@@ -2,6 +2,8 @@ export interface FixtureOptions {
 	toolCount: number;
 	slowStartMs: number;
 	spawnCounterFile: string | undefined;
+	pidFile: string | undefined;
+	pingCounterFile: string | undefined;
 	crashOnStart: boolean;
 	crashAfterCalls: number | null;
 	wedge: boolean;
@@ -23,6 +25,8 @@ export function parseFixtureOptions(argv: readonly string[]): FixtureOptions {
 		toolCount: readIntegerFlag(argv, "--tools", 1),
 		slowStartMs: readIntegerFlag(argv, "--slow-start", 0),
 		spawnCounterFile: readStringFlag(argv, "--spawn-counter-file"),
+		pidFile: readStringFlag(argv, "--pid-file"),
+		pingCounterFile: readStringFlag(argv, "--ping-counter-file"),
 		crashOnStart: argv.includes("--crash-on-start"),
 		crashAfterCalls: readOptionalIntegerFlag(argv, "--crash-after"),
 		wedge: argv.includes("--wedge"),
@@ -98,6 +102,8 @@ function validateArgs(argv: readonly string[], options: FixtureOptions): void {
 		"--tools",
 		"--slow-start",
 		"--spawn-counter-file",
+		"--pid-file",
+		"--ping-counter-file",
 		"--crash-after",
 		"--huge-output-tool",
 		"--slow-tool-call",

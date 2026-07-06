@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -16,6 +16,7 @@ import {
 	ListPromptsRequestSchema,
 	ListResourcesRequestSchema,
 	ListToolsRequestSchema,
+	PingRequestSchema,
 	ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { FixtureOptions } from "./options.ts";
@@ -51,6 +52,10 @@ export function createFixtureServer(options: FixtureOptions): Server {
 	const tools = buildTools(options);
 	let calls = 0;
 
+	server.setRequestHandler(PingRequestSchema, () => {
+		incrementCounterFile(options.pingCounterFile);
+		return {};
+	});
 	server.setRequestHandler(ListToolsRequestSchema, (): ListToolsResult => ({ tools }));
 	server.setRequestHandler(CallToolRequestSchema, async (request, extra): Promise<CallToolResult> => {
 		calls++;
@@ -215,6 +220,21 @@ async function callFixtureTool(
 
 function stringArg(value: unknown, fallback: string): string {
 	return typeof value === "string" ? value : fallback;
+}
+
+function incrementCounterFile(counterFile: string | undefined): void {
+	if (counterFile === undefined) return;
+	let current = 0;
+	try {
+		current = Number(readFileSync(counterFile, "utf8").trim()) || 0;
+	} catch (error) {
+		if (!isNodeErrorCode(error, "ENOENT")) throw error;
+	}
+	writeFileSync(counterFile, `${current + 1}\n`);
+}
+
+function isNodeErrorCode(error: unknown, code: string): error is Error & { code: string } {
+	return error instanceof Error && "code" in error && error.code === code;
 }
 
 function hugeOutput(bytes: number, lines: number): string {

@@ -1,0 +1,60 @@
+import type { ServerConnection } from "./connection.ts";
+
+export const MCP_PING_STALE_MS = 30_000;
+export const MCP_PING_TIMEOUT_MS = 2_000;
+
+interface McpHealthState {
+	lastSuccessfulPingAtMs: number | undefined;
+	pendingValidation: Promise<void> | undefined;
+}
+
+const healthByConnection = new WeakMap<ServerConnection, McpHealthState>();
+
+export async function ensureMcpToolCallConnection(connection: ServerConnection): Promise<void> {
+	const health = healthStateFor(connection);
+	if (connection.state !== "connected") {
+		if (connection.state === "idle" || connection.state === "connecting") {
+			await connection.connect();
+		} else {
+			await renewConnection(connection, health);
+			return;
+		}
+	}
+	const lastSuccessfulPingAtMs = health.lastSuccessfulPingAtMs;
+	if (lastSuccessfulPingAtMs !== undefined && Date.now() - lastSuccessfulPingAtMs <= MCP_PING_STALE_MS) {
+		return;
+	}
+	if (health.pendingValidation !== undefined) {
+		await health.pendingValidation;
+		return;
+	}
+	const pendingValidation = pingOrRenew(connection, health).finally(() => {
+		if (health.pendingValidation === pendingValidation) health.pendingValidation = undefined;
+	});
+	health.pendingValidation = pendingValidation;
+	await pendingValidation;
+}
+
+function healthStateFor(connection: ServerConnection): McpHealthState {
+	let health = healthByConnection.get(connection);
+	if (health === undefined) {
+		health = { lastSuccessfulPingAtMs: undefined, pendingValidation: undefined };
+		healthByConnection.set(connection, health);
+	}
+	return health;
+}
+
+async function pingOrRenew(connection: ServerConnection, health: McpHealthState): Promise<void> {
+	try {
+		await connection.client.ping({ timeout: MCP_PING_TIMEOUT_MS });
+		health.lastSuccessfulPingAtMs = Date.now();
+	} catch (error) {
+		connection.markDegraded(error instanceof Error ? error : new Error(String(error)));
+		await renewConnection(connection, health);
+	}
+}
+
+async function renewConnection(connection: ServerConnection, health: McpHealthState): Promise<void> {
+	await connection.renew();
+	health.lastSuccessfulPingAtMs = Date.now();
+}

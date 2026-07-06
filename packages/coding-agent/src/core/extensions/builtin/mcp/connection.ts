@@ -108,6 +108,18 @@ export class ServerConnection {
 		return this.#pendingConnect;
 	}
 
+	async renew(): Promise<Client> {
+		if (this.#state === "disabled") {
+			throw this.#connectError(`MCP server ${this.serverName} is disabled`, "renew");
+		}
+		this.#generation++;
+		this.#pendingConnect = undefined;
+		this.#lastError = undefined;
+		this.#setState("idle");
+		await this.#disposeOwnedConnections();
+		return this.connect();
+	}
+
 	bumpGeneration(): Promise<void> {
 		this.#generation++;
 		this.#pendingConnect = undefined;
