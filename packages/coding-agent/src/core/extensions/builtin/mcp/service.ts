@@ -4,7 +4,7 @@ import { loadMcpConfig, visitSpawnableMcpServers } from "./config.ts";
 import type { ResolvedMcpConfig, ResolvedMcpServer } from "./config-schema.ts";
 import { ServerConnection, type ServerConnectionState } from "./connection.ts";
 import { registerMcpCatalogTools } from "./expose/register.ts";
-import { createMcpLogger } from "./log.ts";
+import { createMcpLogger, type McpLogger } from "./log.ts";
 
 export { registerToolsPreservingActiveSet } from "./active-set.ts";
 
@@ -37,6 +37,15 @@ export interface McpServerSnapshot {
 	generation: number | null;
 	pid: number | null;
 	lastError: string | null;
+	uptimeMs: number | null;
+	counters: McpServerCounters;
+}
+
+export interface McpServerCounters {
+	callCount: number;
+	errorCount: number;
+	totalLatencyMs: number;
+	reconnectCount: number;
 }
 
 interface McpConnectionEntry {
@@ -44,6 +53,9 @@ interface McpConnectionEntry {
 	readonly name: string;
 	readonly configHash: string;
 	readonly connection: ServerConnection;
+	readonly logger: McpLogger;
+	readonly createdAtMs: number;
+	readonly counters: McpServerCounters;
 }
 
 export class McpService {
@@ -109,6 +121,21 @@ export class McpService {
 		return [...names].sort().map((name) => this.#serverSnapshot(name));
 	}
 
+	getLogLines(name: string, maxLines: number): string[] {
+		const key = this.#connectionKeysByName.get(name);
+		const lines = key === undefined ? [] : (this.#connections.get(key)?.logger.getRingBuffer() ?? []);
+		return lines.slice(Math.max(0, lines.length - maxLines));
+	}
+
+	recordCall(name: string, elapsedMs: number, failed: boolean): void {
+		const key = this.#connectionKeysByName.get(name);
+		const entry = key === undefined ? undefined : this.#connections.get(key);
+		if (entry === undefined) return;
+		entry.counters.callCount += 1;
+		entry.counters.totalLatencyMs += elapsedMs;
+		if (failed) entry.counters.errorCount += 1;
+	}
+
 	getSnapshot(): McpServiceSnapshot {
 		return {
 			disposed: this.#disposed,
@@ -142,13 +169,23 @@ export class McpService {
 			if (server.config === undefined || server.configHash === undefined) continue;
 			const key = connectionKey(name, server.configHash);
 			if (this.#connections.has(key)) continue;
+			const logger = createMcpLogger(name, { logDir: options.logDir });
 			const connection = new ServerConnection({
 				config: server.config,
 				env: options.env,
-				logger: createMcpLogger(name, { logDir: options.logDir }),
+				logger,
 				serverName: name,
 			});
-			this.#connections.set(key, { key, name, configHash: server.configHash, connection });
+			const entry = {
+				key,
+				name,
+				configHash: server.configHash,
+				connection,
+				logger,
+				createdAtMs: Date.now(),
+				counters: { callCount: 0, errorCount: 0, totalLatencyMs: 0, reconnectCount: 0 },
+			};
+			this.#connections.set(key, entry);
 			this.#connectionKeysByName.set(name, key);
 			connects.push(this.#connect(connection));
 		}
@@ -185,6 +222,8 @@ export class McpService {
 	#serverSnapshot(name: string): McpServerSnapshot {
 		const server = this.#config?.servers[name];
 		const connection = this.getConnection(name);
+		const key = this.#connectionKeysByName.get(name);
+		const entry = key === undefined ? undefined : this.#connections.get(key);
 		return {
 			name,
 			configState: server?.state ?? "removed",
@@ -194,6 +233,8 @@ export class McpService {
 			generation: connection?.generation ?? null,
 			pid: connection?.getRootPid() ?? null,
 			lastError: connection?.lastError?.message ?? null,
+			uptimeMs: entry === undefined ? null : Date.now() - entry.createdAtMs,
+			counters: entry?.counters ?? { callCount: 0, errorCount: 0, totalLatencyMs: 0, reconnectCount: 0 },
 		};
 	}
 }

@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "../../types.ts";
+import { registerMcpCommands } from "./commands.ts";
 import { createMcpLogger } from "./log.ts";
 import { getMcpService } from "./service.ts";
 import { wrapAsync } from "./wrap.ts";
@@ -12,6 +13,7 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 		},
 	};
 
+	registerMcpCommands(pi);
 	pi.on(
 		"session_start",
 		wrapAsync("mcp.session_start", (event, ctx) => getMcpService().attachSession(event, ctx, pi), sink),
