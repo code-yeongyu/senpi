@@ -24,6 +24,13 @@ export type McpContentBlock =
 	| { type: "resource_link"; uri?: unknown; name?: unknown; description?: unknown; mimeType?: unknown }
 	| Record<string, unknown>;
 
+export type McpMappedContentBlock =
+	| TextContent
+	| ImageContent
+	| { type: "audio"; data: string; mimeType: string }
+	| { type: "resource"; resource: unknown }
+	| { type: "resource_link"; uri: string; name?: string; description?: string; mimeType?: string };
+
 export interface McpToolResultLike {
 	content?: McpContentBlock[];
 	structuredContent?: unknown;
@@ -31,8 +38,8 @@ export interface McpToolResultLike {
 }
 
 export type McpMappedToolResult =
-	| { ok: true; content: Array<TextContent | ImageContent> }
-	| { ok: false; error: { message: string; content: Array<TextContent | ImageContent> } };
+	| { ok: true; content: McpMappedContentBlock[] }
+	| { ok: false; error: { message: string; content: McpMappedContentBlock[] } };
 
 const PERMISSIVE_OBJECT_SCHEMA = { type: "object", properties: {} } as const;
 
@@ -54,11 +61,11 @@ export function convertJsonSchemaToTypeBox(schema: unknown): SchemaConversionRes
 export function prepareOutputSchemaRetry(schema: unknown): OutputSchemaRetryResult {
 	const warnings: string[] = [];
 	const record: Record<string, unknown> = isRecord(schema) ? { ...schema } : { ...PERMISSIVE_OBJECT_SCHEMA };
-	if (Object.hasOwn(record, "$schema")) {
+	if (hasOwn(record, "$schema")) {
 		delete record.$schema;
 		warnings.push("Stripped top-level $schema from MCP outputSchema retry.");
 	}
-	if (Object.hasOwn(record, "additionalProperties")) {
+	if (hasOwn(record, "additionalProperties")) {
 		delete record.additionalProperties;
 		warnings.push("Stripped top-level additionalProperties from MCP outputSchema retry.");
 	}
@@ -73,8 +80,8 @@ export function mapMcpToolResult(result: McpToolResultLike): McpMappedToolResult
 	return { ok: true, content };
 }
 
-function mapMcpContent(result: McpToolResultLike): Array<TextContent | ImageContent> {
-	const content: Array<TextContent | ImageContent> = [];
+function mapMcpContent(result: McpToolResultLike): McpMappedContentBlock[] {
+	const content: McpMappedContentBlock[] = [];
 	for (const block of result.content ?? []) {
 		content.push(mapContentBlock(block));
 	}
@@ -87,17 +94,32 @@ function mapMcpContent(result: McpToolResultLike): Array<TextContent | ImageCont
 	return content;
 }
 
-function mapContentBlock(block: McpContentBlock): TextContent | ImageContent {
+function mapContentBlock(block: McpContentBlock): McpMappedContentBlock {
 	if (block.type === "text") {
 		return { type: "text", text: typeof block.text === "string" ? block.text : stringifyJson(block.text) };
 	}
 	if (block.type === "image" && typeof block.data === "string" && typeof block.mimeType === "string") {
 		return { type: "image", data: block.data, mimeType: block.mimeType };
 	}
+	if (block.type === "audio" && typeof block.data === "string" && typeof block.mimeType === "string") {
+		return { type: "audio", data: block.data, mimeType: block.mimeType };
+	}
+	if (block.type === "resource" && hasOwn(block, "resource")) {
+		return { type: "resource", resource: block.resource };
+	}
+	if (block.type === "resource_link" && typeof block.uri === "string") {
+		return {
+			type: "resource_link",
+			uri: block.uri,
+			...(typeof block.name === "string" ? { name: block.name } : {}),
+			...(typeof block.description === "string" ? { description: block.description } : {}),
+			...(typeof block.mimeType === "string" ? { mimeType: block.mimeType } : {}),
+		};
+	}
 	return { type: "text", text: stringifyJson(block) };
 }
 
-function contentToErrorMessage(content: readonly (TextContent | ImageContent)[]): string {
+function contentToErrorMessage(content: readonly McpMappedContentBlock[]): string {
 	const firstText = content.find((block): block is TextContent => block.type === "text");
 	return firstText?.text.trim() || "MCP tool returned an error result.";
 }
@@ -155,4 +177,8 @@ function stringifyJson(value: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+	return Object.getOwnPropertyDescriptor(value, key) !== undefined;
 }

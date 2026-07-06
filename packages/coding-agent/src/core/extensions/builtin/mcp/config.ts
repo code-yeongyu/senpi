@@ -5,6 +5,7 @@ import type { TLocalizedValidationError } from "typebox/error";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../../../config.ts";
 import {
 	defaultSettings,
+	getServerEndpointValidationError,
 	type LoadMcpConfigOptions,
 	type McpServerConfig,
 	type McpServerSource,
@@ -22,6 +23,11 @@ export class McpConfigValidationError extends Error {
 	}
 }
 
+interface JsonReadResult {
+	raw: unknown;
+	diagnostic?: string;
+}
+
 const trustedEnv = process.env as Record<string, string | undefined>;
 
 export function loadMcpConfig(options: LoadMcpConfigOptions): ResolvedMcpConfig {
@@ -31,13 +37,15 @@ export function loadMcpConfig(options: LoadMcpConfigOptions): ResolvedMcpConfig 
 	const projectPath = join(options.cwd, CONFIG_DIR_NAME, "mcp.json");
 	const claudePath = join(options.cwd, ".mcp.json");
 	const globalConfig = readTrustedConfig(globalPath, env);
-	const projectRaw = readJson(projectPath);
+	const projectRead = readConfigJson(projectPath, options.projectTrusted);
+	const projectRaw = projectRead.raw;
 	const preliminary = mergeConfigs(
 		globalConfig,
 		options.projectTrusted ? validateRaw(projectRaw, projectPath) : undefined,
 	);
 	const shouldImportClaude = preliminary.settings?.importConfigs?.includes("claude") === true;
-	const claudeRaw = shouldImportClaude ? readJson(claudePath) : undefined;
+	const claudeRead = shouldImportClaude ? readConfigJson(claudePath, options.projectTrusted) : { raw: undefined };
+	const claudeRaw = claudeRead.raw;
 	const sources = [
 		{ config: globalConfig, path: globalPath, source: "global" as const, trusted: true },
 		{
@@ -56,6 +64,9 @@ export function loadMcpConfig(options: LoadMcpConfigOptions): ResolvedMcpConfig 
 	];
 	const merged = mergeConfigs(...sources.map((item) => item.config));
 	const result: ResolvedMcpConfig = { diagnostics: [], servers: {}, settings: normalizeSettings(merged.settings) };
+	for (const diagnostic of [projectRead.diagnostic, claudeRead.diagnostic]) {
+		if (diagnostic) result.diagnostics.push(diagnostic);
+	}
 
 	for (const item of sources) {
 		if (item.trusted && item.config?.mcpServers) {
@@ -88,24 +99,30 @@ export function visitSpawnableMcpServers(
 function readTrustedConfig(
 	path: string,
 	env: Record<string, string | undefined>,
-	raw = readJson(path),
+	raw = readConfigJson(path, true).raw,
 ): RawConfig | undefined {
 	return interpolateConfig(validateRaw(raw, path), env);
 }
 
-function readJson(path: string): unknown {
-	if (!existsSync(path)) return undefined;
+function readConfigJson(path: string, trusted: boolean): JsonReadResult {
+	if (!existsSync(path)) return { raw: undefined };
 	try {
-		return JSON.parse(readFileSync(path, "utf-8")) as unknown;
+		return { raw: JSON.parse(readFileSync(path, "utf-8")) as unknown };
 	} catch (error) {
 		const reason = error instanceof Error ? error.message : String(error);
-		throw new McpConfigValidationError(`Invalid MCP config at ${path}: ${reason}`);
+		if (trusted) throw new McpConfigValidationError(`Invalid MCP config at ${path}: ${reason}`);
+		return { raw: undefined, diagnostic: `Blocked untrusted MCP config at ${path}: invalid JSON (${reason})` };
 	}
 }
 
 function validateRaw(raw: unknown, _path: string): RawConfig | undefined {
 	if (raw === undefined) return undefined;
-	if (validateConfig.Check(raw)) return raw as RawConfig;
+	if (validateConfig.Check(raw)) {
+		const config = raw as RawConfig;
+		const endpointError = getServerEndpointValidationError(config);
+		if (endpointError) throw new McpConfigValidationError(`Invalid MCP config at ${endpointError}`);
+		return config;
+	}
 	const error = Array.from(validateConfig.Errors(raw))[0];
 	throw new McpConfigValidationError(`Invalid MCP config at ${formatErrorPath(error)}: ${formatErrorMessage(error)}`);
 }
@@ -164,6 +181,13 @@ function addUntrustedServers(
 	sourcePath: string,
 ): void {
 	for (const name of names) {
+		const existing = result.servers[name];
+		if (existing && existing.state !== "untrusted") {
+			result.diagnostics.push(
+				`Blocked untrusted ${source} MCP server '${name}' from shadowing trusted ${existing.source} server.`,
+			);
+			continue;
+		}
 		result.servers[name] = { name, source, sourcePath, state: "untrusted" };
 	}
 }
@@ -182,10 +206,10 @@ function normalizeServer(server: NonNullable<RawConfig["mcpServers"]>[string]): 
 		connectTimeoutMs: server.connectTimeoutMs ?? 15_000,
 		enabled: server.enabled ?? true,
 		exposure: server.exposure ?? "auto",
-		idleTimeoutMin: server.idleTimeoutMin ?? 30,
+		idleTimeoutMin: server.idleTimeoutMin ?? 10,
 		lifecycle: server.lifecycle ?? "lazy",
 		logLevel: server.logLevel ?? "info",
-		requestTimeoutMs: server.requestTimeoutMs ?? 60_000,
+		requestTimeoutMs: server.requestTimeoutMs ?? 30_000,
 		type,
 		...server,
 	};

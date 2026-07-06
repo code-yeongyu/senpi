@@ -24,7 +24,7 @@ describe("mcp schema compatibility", () => {
 		expect(result.warnings).toEqual([]);
 		expect(JSON.parse(JSON.stringify(result.schema))).toEqual(golden);
 		expect(JSON.stringify(result.schema)).not.toContain('"$schema"');
-		expect(Object.hasOwn(result.schema, "additionalProperties")).toBe(false);
+		expect(Object.getOwnPropertyDescriptor(result.schema, "additionalProperties")).toBeUndefined();
 	});
 
 	it("falls back to a permissive object and warning for unresolvable refs", () => {
@@ -74,9 +74,9 @@ describe("mcp content result mapping", () => {
 			content: [
 				{ type: "text", text: "hello" },
 				{ type: "image", data: "aW1n", mimeType: "image/png" },
-				{ type: "text", text: '{"type":"audio","data":"YXVkaW8=","mimeType":"audio/wav"}' },
-				{ type: "text", text: '{"type":"resource","resource":{"uri":"file:///tmp/a.txt","text":"A"}}' },
-				{ type: "text", text: '{"type":"resource_link","uri":"https://example.test","name":"Example"}' },
+				{ type: "audio", data: "YXVkaW8=", mimeType: "audio/wav" },
+				{ type: "resource", resource: { uri: "file:///tmp/a.txt", text: "A" } },
+				{ type: "resource_link", uri: "https://example.test", name: "Example" },
 				{ type: "text", text: '{"answer":42}' },
 			],
 		});
