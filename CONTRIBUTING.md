@@ -29,11 +29,17 @@ senpi periodically rebases on `upstream/main` (i.e. `badlogic/pi-mono`). To keep
 ## Before Submitting a PR
 
 ```bash
-node scripts/devenv-setup.mjs
+node scripts/devenv-setup.mjs                 # default: npm prebuilds, no Rust toolchain required
+node scripts/devenv-setup.mjs --with-native   # optional: install pinned Rust toolchain and build native Rust workspace
 npm run check     # Biome + tsgo + browser-smoke + web-ui check (pre-commit equivalent)
 npm test          # Vitest across workspaces (skips live-API)
 ./pi-test.sh      # Optional: live-API integration suite (env-gated; requires API keys)
 ```
+
+The default dev setup intentionally avoids global Rust installation and uses checked-in/prebuilt native artifacts where available.
+Use `--with-native` only when working on native Rust code; it reads `rust-toolchain.toml`, uses `rustup` to install the pinned
+toolchain when `rustup` is available, and then runs the Rust native build/check path when a Cargo workspace exists. If Rust is
+missing, the setup prints the exact rustup command to run instead of bootstrapping global tooling silently.
 
 `npm run check` and `npm test` must pass. `./pi-test.sh` is only required when your change touches a provider that the live tests exercise.
 If you touch MCP dependencies, keep `@modelcontextprotocol/sdk` exact-pinned and verify the workspace install with
