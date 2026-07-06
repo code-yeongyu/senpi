@@ -184,6 +184,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: ${{ steps.workdir.outputs.name }}
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -303,6 +304,7 @@ jobs:
             [/sk-(?:proj-)?[A-Za-z0-9_-]{20,}/g, '[REDACTED_API_KEY]'],
             [/sk-ant-[A-Za-z0-9_-]{20,}/g, '[REDACTED_API_KEY]'],
             [/(Bearer\s+)[A-Za-z0-9._~+/=-]{20,}/gi, '$1[REDACTED_TOKEN]'],
+            [/(AUTHORIZATION:\s*basic\s+)[A-Za-z0-9+/=]{20,}/gi, '$1[REDACTED_BASIC_AUTH]'],
             [/("(?:access_token|refresh_token|id_token|api_key|apiKey|key|token|client_secret)"\s*:\s*")[^"]+(")/gi, '$1[REDACTED_SECRET]$2'],
             [/(\\"(?:access_token|refresh_token|id_token|api_key|apiKey|key|token|client_secret)\\"\s*:\s*\\")[^\\"]+(\\")/gi, '$1[REDACTED_SECRET]$2'],
           ];
