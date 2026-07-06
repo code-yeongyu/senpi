@@ -149,6 +149,88 @@ describe("MCP auto reconnect", () => {
 		expect(readNumberFile(counterFile)).toBe(1);
 	});
 
+	it("reconnects and retries a retriable failed-to-send tool call exactly once", async () => {
+		const root = mcpRoot("failed-send-retry");
+		const spawnCounterFile = join(root.agentDir, "spawn-count.txt");
+		const callCounterFile = join(root.agentDir, "call-count.txt");
+		setConfig(root, {
+			fx: stdioServer([
+				"--tools",
+				"1",
+				"--spawn-counter-file",
+				spawnCounterFile,
+				"--call-counter-file",
+				callCounterFile,
+			]),
+		});
+		const pi = capturingPi();
+		await attach(root, pi);
+		const connection = getMcpService().getConnection("fx");
+		if (connection === undefined) throw new Error("missing fx connection");
+		const tool = registeredTool(pi, "mcp_fx_tool_1");
+		const initialGeneration = connection.generation;
+		const firstClient = connection.client;
+		let failedSendAttempts = 0;
+		firstClient.callTool = async () => {
+			failedSendAttempts += 1;
+			throw new Error("transport closed before write");
+		};
+
+		const result = await tool.execute("tc-failed-send", { value: "retried" }, undefined, undefined, testContext());
+
+		expect(textContent(result)).toBe("fixture tool_1 value=retried mode=alpha");
+		expect(failedSendAttempts).toBe(1);
+		expect(connection.generation).toBe(initialGeneration + 1);
+		expect(readNumberFile(spawnCounterFile)).toBe(2);
+		expect(readNumberFile(callCounterFile)).toBe(1);
+	});
+
+	it("surfaces a retriable failed-to-send retry failure without looping", async () => {
+		const root = mcpRoot("failed-send-retry-fails");
+		const spawnCounterFile = join(root.agentDir, "spawn-count.txt");
+		const callCounterFile = join(root.agentDir, "call-count.txt");
+		setConfig(root, {
+			fx: stdioServer([
+				"--tools",
+				"1",
+				"--spawn-counter-file",
+				spawnCounterFile,
+				"--call-counter-file",
+				callCounterFile,
+			]),
+		});
+		const pi = capturingPi();
+		await attach(root, pi);
+		const connection = getMcpService().getConnection("fx");
+		if (connection === undefined) throw new Error("missing fx connection");
+		const tool = registeredTool(pi, "mcp_fx_tool_1");
+		const originalRenew = connection.renew.bind(connection);
+		let firstSendFailures = 0;
+		let retrySendFailures = 0;
+		vi.spyOn(connection, "renew").mockImplementation(async () => {
+			const renewedClient = await originalRenew();
+			renewedClient.callTool = async () => {
+				retrySendFailures += 1;
+				throw new Error("transport closed after reconnect");
+			};
+			return renewedClient;
+		});
+		connection.client.callTool = async () => {
+			firstSendFailures += 1;
+			throw new Error("transport closed before write");
+		};
+
+		await expect(
+			tool.execute("tc-retry-fails", { value: "never" }, undefined, undefined, testContext()),
+		).rejects.toThrow(/ToolExecError: Error: transport closed after reconnect/);
+
+		expect(firstSendFailures).toBe(1);
+		expect(retrySendFailures).toBe(1);
+		expect(connection.renew).toHaveBeenCalledTimes(1);
+		expect(readNumberFile(spawnCounterFile)).toBe(2);
+		expect(readNumberFileOrZero(callCounterFile)).toBe(0);
+	});
+
 	it("sends a queued call exactly once after reconnecting a dead transport", async () => {
 		const root = mcpRoot("queued");
 		const pidFile = join(root.agentDir, "fixture.pid");
@@ -174,6 +256,19 @@ describe("MCP auto reconnect", () => {
 
 function readNumberFile(path: string): number {
 	return Number(readFileSync(path, "utf8").trim());
+}
+
+function readNumberFileOrZero(path: string): number {
+	try {
+		return readNumberFile(path);
+	} catch (error) {
+		if (isNodeErrorCode(error, "ENOENT")) return 0;
+		throw error;
+	}
+}
+
+function isNodeErrorCode(error: unknown, code: string): error is Error & { code: string } {
+	return error instanceof Error && "code" in error && error.code === code;
 }
 
 function reconnectCapableService(): { reconnectServer(name: string): Promise<void> } {

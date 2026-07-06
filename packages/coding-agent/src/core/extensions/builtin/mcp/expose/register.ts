@@ -8,7 +8,7 @@ import { registerToolsPreservingActiveSet } from "../active-set.ts";
 import type { McpToolCatalogEntry } from "../catalog.ts";
 import { ToolExecError } from "../errors.ts";
 import { applyMcpOutputGuard } from "../guard/output-guard.ts";
-import { ensureMcpToolCallConnection, withMcpSessionExpiryRetry } from "../health.ts";
+import { ensureMcpToolCallConnection, withMcpRetriableFailedSendRetry, withMcpSessionExpiryRetry } from "../health.ts";
 import { runMcpConnectionLifecycleCall } from "../idle.ts";
 import {
 	buildMcpToolNames,
@@ -99,15 +99,17 @@ async function callMcpTool(
 			withMcpSessionExpiryRetry(entry.connection, async () => {
 				await ensureMcpToolCallConnection(entry.connection);
 				await entry.ensureConnected?.();
-				return await entry.connection.client.callTool({ name: entry.tool, arguments: args }, undefined, {
-					onprogress: (progress) => {
-						onUpdate?.({
-							content: [{ type: "text", text: formatProgress(label, progress) }],
-							details: { progress, server: entry.server, tool: entry.tool },
-						});
-					},
-					signal,
-					timeout: entry.requestTimeoutMs,
+				return await withMcpRetriableFailedSendRetry(entry.connection, async () => {
+					return await entry.connection.client.callTool({ name: entry.tool, arguments: args }, undefined, {
+						onprogress: (progress) => {
+							onUpdate?.({
+								content: [{ type: "text", text: formatProgress(label, progress) }],
+								details: { progress, server: entry.server, tool: entry.tool },
+							});
+						},
+						signal,
+						timeout: entry.requestTimeoutMs,
+					});
 				});
 			}),
 		);

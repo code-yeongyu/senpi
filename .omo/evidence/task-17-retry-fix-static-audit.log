@@ -1,0 +1,115 @@
+Static audit for TODO17 retry fix
+Changed tracked files audited:
+- packages/coding-agent/src/core/extensions/builtin/mcp/expose/register.ts
+- packages/coding-agent/src/core/extensions/builtin/mcp/health.ts
+- packages/coding-agent/test/mcp/reconnect.test.ts
+
+Forbidden TypeScript / broad retry scan:
+
+Production classifier call-sites:
+packages/coding-agent/src/core/extensions/builtin/mcp/expose/register.ts:11:import { ensureMcpToolCallConnection, withMcpRetriableFailedSendRetry, withMcpSessionExpiryRetry } from "../health.ts";
+packages/coding-agent/src/core/extensions/builtin/mcp/expose/register.ts:99:			withMcpSessionExpiryRetry(entry.connection, async () => {
+packages/coding-agent/src/core/extensions/builtin/mcp/expose/register.ts:100:				await ensureMcpToolCallConnection(entry.connection);
+packages/coding-agent/src/core/extensions/builtin/mcp/expose/register.ts:102:				return await withMcpRetriableFailedSendRetry(entry.connection, async () => {
+packages/coding-agent/src/core/extensions/builtin/mcp/expose/register.ts:103:					return await entry.connection.client.callTool({ name: entry.tool, arguments: args }, undefined, {
+packages/coding-agent/src/core/extensions/builtin/mcp/health.ts:2:import { ConnectError, isMcpSessionExpiredError, isRetriableMcpError, SessionExpiredError } from "./errors.ts";
+packages/coding-agent/src/core/extensions/builtin/mcp/health.ts:14:export async function ensureMcpToolCallConnection(connection: ServerConnection): Promise<void> {
+packages/coding-agent/src/core/extensions/builtin/mcp/health.ts:39:export async function withMcpSessionExpiryRetry<T>(
+packages/coding-agent/src/core/extensions/builtin/mcp/health.ts:48:		await connection.renew();
+packages/coding-agent/src/core/extensions/builtin/mcp/health.ts:60:export async function withMcpRetriableFailedSendRetry<T>(
+packages/coding-agent/src/core/extensions/builtin/mcp/health.ts:69:		await connection.renew();
+packages/coding-agent/src/core/extensions/builtin/mcp/health.ts:101:	await connection.renew();
+packages/coding-agent/src/core/extensions/builtin/mcp/health.ts:106:	return isRetriableMcpError(error) && !isMcpSessionExpiredError(error);
+
+Retry loop shape check:
+			throw expired;
+		}
+	}
+}
+
+export async function withMcpRetriableFailedSendRetry<T>(
+	connection: ServerConnection,
+	operation: () => Promise<T>,
+): Promise<T> {
+	try {
+		return await operation();
+	} catch (error) {
+		if (!isRetriableFailedSendError(error)) throw error;
+		connection.markDegraded(failedSendError(connection, error, true));
+		await connection.renew();
+		try {
+			return await operation();
+		} catch (retryError) {
+			if (isRetriableFailedSendError(retryError)) {
+				connection.markDegraded(failedSendError(connection, retryError, false));
+			}
+			throw retryError;
+		}
+	}
+}
+
+function healthStateFor(connection: ServerConnection): McpHealthState {
+	let health = healthByConnection.get(connection);
+	if (health === undefined) {
+		health = { lastSuccessfulPingAtMs: undefined, pendingValidation: undefined };
+		healthByConnection.set(connection, health);
+	}
+	return health;
+}
+
+async function pingOrRenew(connection: ServerConnection, health: McpHealthState): Promise<void> {
+	try {
+		await connection.client.ping({ timeout: MCP_PING_TIMEOUT_MS });
+		health.lastSuccessfulPingAtMs = Date.now();
+	} catch (error) {
+		connection.markDegraded(error instanceof Error ? error : new Error(String(error)));
+		await renewConnection(connection, health);
+	}
+}
+
+async function renewConnection(connection: ServerConnection, health: McpHealthState): Promise<void> {
+	await connection.renew();
+	health.lastSuccessfulPingAtMs = Date.now();
+}
+
+function isRetriableFailedSendError(error: unknown): boolean {
+	return isRetriableMcpError(error) && !isMcpSessionExpiredError(error);
+}
+
+function failedSendError(connection: ServerConnection, cause: unknown, retriable: boolean): ConnectError {
+	const suffix = retriable
+		? "reconnecting once before retry"
+		: `post-reconnect retry also failed; run /mcp reconnect ${connection.serverName}`;
+	return new ConnectError(`MCP server ${connection.serverName} failed to send tool call; ${suffix}`, {
+		cause,
+		phase: "call",
+		retriable,
+		serverName: connection.serverName,
+	});
+}
+
+function sessionExpiredError(connection: ServerConnection, cause: unknown, retriable: boolean): SessionExpiredError {
+	const suffix = retriable
+		? "reinitializing once"
+		: `reinitialize retry also expired; run /mcp reconnect ${connection.serverName}`;
+	return new SessionExpiredError(`MCP server ${connection.serverName} session expired; ${suffix}`, {
+		cause,
+		phase: "session",
+		retriable,
+		serverName: connection.serverName,
+	});
+
+Evidence secret scan (real-token/private-key markers):
+
+Redaction shape check:
+local-ignore/qa-evidence/20260707-mcp-w2-todo17-retry-fix/failed-send-retry/model-requests.json:5:    "authorization": "<mock-redacted>",
+local-ignore/qa-evidence/20260707-mcp-w2-todo17-retry-fix/failed-send-retry/model-requests.json:6:    "apiKeyHeader": null,
+local-ignore/qa-evidence/20260707-mcp-w2-todo17-retry-fix/failed-send-retry/model-requests.json:28:    "authorization": "<mock-redacted>",
+local-ignore/qa-evidence/20260707-mcp-w2-todo17-retry-fix/failed-send-retry/model-requests.json:29:    "apiKeyHeader": null,
+local-ignore/qa-evidence/20260707-mcp-w2-todo17-retry-fix/inflight-no-duplicate/model-requests.json:5:    "authorization": "<mock-redacted>",
+local-ignore/qa-evidence/20260707-mcp-w2-todo17-retry-fix/inflight-no-duplicate/model-requests.json:6:    "apiKeyHeader": null,
+local-ignore/qa-evidence/20260707-mcp-w2-todo17-retry-fix/inflight-no-duplicate/model-requests.json:28:    "authorization": "<mock-redacted>",
+local-ignore/qa-evidence/20260707-mcp-w2-todo17-retry-fix/inflight-no-duplicate/model-requests.json:29:    "apiKeyHeader": null,
+
+Conclusion:
+No as any, ts-ignore/expect-error, inline import(), enum/namespace/module, infinite retry loop, or real-token/private-key markers found in changed tracked files/evidence. Authorization fields in QA model requests are redacted as <mock-redacted>. Retry wrapper calls isRetriableMcpError at production call path and performs one renew plus one retry only around client.callTool send. Session-expiry and pre-call ping/renew paths remain separate.

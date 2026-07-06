@@ -1,5 +1,5 @@
 import type { ServerConnection } from "./connection.ts";
-import { isMcpSessionExpiredError, SessionExpiredError } from "./errors.ts";
+import { ConnectError, isMcpSessionExpiredError, isRetriableMcpError, SessionExpiredError } from "./errors.ts";
 
 export const MCP_PING_STALE_MS = 30_000;
 export const MCP_PING_TIMEOUT_MS = 2_000;
@@ -57,6 +57,27 @@ export async function withMcpSessionExpiryRetry<T>(
 	}
 }
 
+export async function withMcpRetriableFailedSendRetry<T>(
+	connection: ServerConnection,
+	operation: () => Promise<T>,
+): Promise<T> {
+	try {
+		return await operation();
+	} catch (error) {
+		if (!isRetriableFailedSendError(error)) throw error;
+		connection.markDegraded(failedSendError(connection, error, true));
+		await connection.renew();
+		try {
+			return await operation();
+		} catch (retryError) {
+			if (isRetriableFailedSendError(retryError)) {
+				connection.markDegraded(failedSendError(connection, retryError, false));
+			}
+			throw retryError;
+		}
+	}
+}
+
 function healthStateFor(connection: ServerConnection): McpHealthState {
 	let health = healthByConnection.get(connection);
 	if (health === undefined) {
@@ -79,6 +100,22 @@ async function pingOrRenew(connection: ServerConnection, health: McpHealthState)
 async function renewConnection(connection: ServerConnection, health: McpHealthState): Promise<void> {
 	await connection.renew();
 	health.lastSuccessfulPingAtMs = Date.now();
+}
+
+function isRetriableFailedSendError(error: unknown): boolean {
+	return isRetriableMcpError(error) && !isMcpSessionExpiredError(error);
+}
+
+function failedSendError(connection: ServerConnection, cause: unknown, retriable: boolean): ConnectError {
+	const suffix = retriable
+		? "reconnecting once before retry"
+		: `post-reconnect retry also failed; run /mcp reconnect ${connection.serverName}`;
+	return new ConnectError(`MCP server ${connection.serverName} failed to send tool call; ${suffix}`, {
+		cause,
+		phase: "call",
+		retriable,
+		serverName: connection.serverName,
+	});
 }
 
 function sessionExpiredError(connection: ServerConnection, cause: unknown, retriable: boolean): SessionExpiredError {

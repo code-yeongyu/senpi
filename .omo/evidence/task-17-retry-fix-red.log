@@ -1,0 +1,55 @@
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w2/packages/coding-agent
+
+·····xx·
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/mcp/reconnect.test.ts > MCP auto reconnect > reconnects and retries a retriable failed-to-send tool call exactly once
+ToolExecError: ToolExecError: Error: transport closed before write
+ ❯ callMcpTool src/core/extensions/builtin/mcp/expose/register.ts:115:9
+    113|   );
+    114|  } catch (error) {
+    115|   throw new ToolExecError(`ToolExecError: ${errorLabel(error)}`, {
+       |         ^
+    116|    cause: error,
+    117|    phase: "call",
+ ❯ Object.execute src/core/extensions/builtin/mcp/expose/register.ts:65:19
+ ❯ test/mcp/reconnect.test.ts:179:18
+
+Caused by: Error: transport closed before write
+ ❯ Client.firstClient.callTool test/mcp/reconnect.test.ts:176:10
+ ❯ src/core/extensions/builtin/mcp/expose/register.ts:102:42
+ ❯ withMcpSessionExpiryRetry src/core/extensions/builtin/mcp/health.ts:44:10
+ ❯ runMcpConnectionLifecycleCall src/core/extensions/builtin/mcp/idle.ts:62:10
+ ❯ callMcpTool src/core/extensions/builtin/mcp/expose/register.ts:98:10
+ ❯ Object.execute src/core/extensions/builtin/mcp/expose/register.ts:65:19
+ ❯ test/mcp/reconnect.test.ts:179:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  test/mcp/reconnect.test.ts > MCP auto reconnect > surfaces a retriable failed-to-send retry failure without looping
+AssertionError: expected [Function] to throw error matching /ToolExecError: Error: transport close…/ but got 'ToolExecError: Error: transport close…'
+
+- Expected:
+/ToolExecError: Error: transport closed after reconnect/
+
++ Received:
+"ToolExecError: Error: transport closed before write"
+
+ ❯ test/mcp/reconnect.test.ts:223:103
+    221|   };
+    222|
+    223|   await expect(tool.execute("tc-retry-fails", { value: "never" }, unde…
+       |                                                                                                       ^
+    224|    /ToolExecError: Error: transport closed after reconnect/,
+    225|   );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 6 passed (8)
+   Start at  04:44:14
+   Duration  6.18s (transform 1.04s, setup 10ms, import 1.68s, tests 4.41s, environment 0ms)
+
