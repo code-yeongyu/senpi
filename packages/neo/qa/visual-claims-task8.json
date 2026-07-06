@@ -1,0 +1,111 @@
+{
+  "$schema": "./visual-claims.schema.md",
+  "description": "Task-8 (primitive components) visual-claims manifest. Registered as a SEPARATE per-task manifest (not appended into the shared visual-claims.json) to avoid the shared-file merge hazard while other Wave-1 tasks run in parallel. Each claim binds the grok-styled slash/autocomplete popup and settings-list frames as complete triplets (.ans via tmux capture-pane -e + .html + cell-grid .json from qa/xterm-render.mjs) with grid-based assertions verifying layout + exact palette hexes against the grok captures at 120 and 80 cols, plus the 256-color fallback. Triplet paths are relative to this file's directory (packages/neo/qa). Verify with: node packages/neo/qa/xterm-render.mjs verify-manifest packages/neo/qa/visual-claims-task8.json",
+  "claims": [
+    {
+      "id": "task-8-slash-menu-120-selected",
+      "task": 8,
+      "title": "grok slash menu at 120 cols: ❯-selected row, accent-blue command token, scrollbar block, count marker on the top rule",
+      "requiredFrames": ["task8-slash-120-sel0"],
+      "frames": [
+        {
+          "id": "task8-slash-120-sel0",
+          "size": "140x9",
+          "state": "slash-menu-120-select0",
+          "ans": "triplets/task8-slash-120-sel0.ans",
+          "html": "triplets/task8-slash-120-sel0.html",
+          "json": "triplets/task8-slash-120-sel0.json"
+        }
+      ],
+      "assertions": [
+        { "id": "prompt-glyph", "frame": "task8-slash-120-sel0", "kind": "cell-glyph", "x": 0, "y": 1, "glyph": "❯" },
+        { "id": "prompt-blue", "frame": "task8-slash-120-sel0", "kind": "cell-fg", "x": 0, "y": 1, "hex": "#7aa2f7" },
+        { "id": "slash-token-glyph", "frame": "task8-slash-120-sel0", "kind": "cell-glyph", "x": 2, "y": 1, "glyph": "/" },
+        { "id": "slash-token-blue", "frame": "task8-slash-120-sel0", "kind": "cell-fg", "x": 2, "y": 1, "hex": "#7aa2f7" },
+        { "id": "scrollbar-glyph", "frame": "task8-slash-120-sel0", "kind": "cell-glyph", "x": 119, "y": 1, "glyph": "█" },
+        { "id": "scrollbar-muted", "frame": "task8-slash-120-sel0", "kind": "cell-fg", "x": 119, "y": 1, "hex": "#6c6c6c" },
+        { "id": "top-rule-char", "frame": "task8-slash-120-sel0", "kind": "cell-glyph", "x": 0, "y": 0, "glyph": "─" },
+        { "id": "top-rule-muted", "frame": "task8-slash-120-sel0", "kind": "cell-fg", "x": 0, "y": 0, "hex": "#6c6c6c" },
+        { "id": "count-marker-4", "frame": "task8-slash-120-sel0", "kind": "cell-glyph", "x": 117, "y": 0, "glyph": "4" },
+        { "id": "count-marker-7", "frame": "task8-slash-120-sel0", "kind": "cell-glyph", "x": 118, "y": 0, "glyph": "7" },
+        { "id": "bottom-rule-char-120", "frame": "task8-slash-120-sel0", "kind": "cell-glyph", "x": 0, "y": 7, "glyph": "─" },
+        { "id": "bottom-rule-muted-120", "frame": "task8-slash-120-sel0", "kind": "cell-fg", "x": 0, "y": 7, "hex": "#6c6c6c" },
+        { "id": "bottom-rule-char-mid-120", "frame": "task8-slash-120-sel0", "kind": "cell-glyph", "x": 60, "y": 7, "glyph": "─" }
+      ]
+    },
+    {
+      "id": "task-8-slash-menu-80-reflow",
+      "task": 8,
+      "title": "grok slash menu reflows to 80 cols keeping ❯ prompt, blue command, scrollbar block, and count marker",
+      "requiredFrames": ["task8-slash-80-sel0"],
+      "frames": [
+        {
+          "id": "task8-slash-80-sel0",
+          "size": "100x9",
+          "state": "slash-menu-80-select0",
+          "ans": "triplets/task8-slash-80-sel0.ans",
+          "html": "triplets/task8-slash-80-sel0.html",
+          "json": "triplets/task8-slash-80-sel0.json"
+        }
+      ],
+      "assertions": [
+        { "id": "prompt-glyph-80", "frame": "task8-slash-80-sel0", "kind": "cell-glyph", "x": 0, "y": 1, "glyph": "❯" },
+        { "id": "prompt-blue-80", "frame": "task8-slash-80-sel0", "kind": "cell-fg", "x": 0, "y": 1, "hex": "#7aa2f7" },
+        { "id": "slash-token-blue-80", "frame": "task8-slash-80-sel0", "kind": "cell-fg", "x": 2, "y": 1, "hex": "#7aa2f7" },
+        { "id": "scrollbar-glyph-80", "frame": "task8-slash-80-sel0", "kind": "cell-glyph", "x": 79, "y": 1, "glyph": "█" },
+        { "id": "count-marker-4-80", "frame": "task8-slash-80-sel0", "kind": "cell-glyph", "x": 77, "y": 0, "glyph": "4" },
+        { "id": "count-marker-7-80", "frame": "task8-slash-80-sel0", "kind": "cell-glyph", "x": 78, "y": 0, "glyph": "7" },
+        { "id": "top-rule-char-80", "frame": "task8-slash-80-sel0", "kind": "cell-glyph", "x": 0, "y": 0, "glyph": "─" },
+        { "id": "top-rule-muted-80", "frame": "task8-slash-80-sel0", "kind": "cell-fg", "x": 0, "y": 0, "hex": "#6c6c6c" },
+        { "id": "bottom-rule-char-80", "frame": "task8-slash-80-sel0", "kind": "cell-glyph", "x": 0, "y": 7, "glyph": "─" },
+        { "id": "bottom-rule-muted-80", "frame": "task8-slash-80-sel0", "kind": "cell-fg", "x": 0, "y": 7, "hex": "#6c6c6c" }
+      ]
+    },
+    {
+      "id": "task-8-settings-list-120",
+      "task": 8,
+      "title": "grok settings list body at 120 cols: ▸ cursor on selected row in accent-green",
+      "requiredFrames": ["task8-settings-120"],
+      "frames": [
+        {
+          "id": "task8-settings-120",
+          "size": "140x9",
+          "state": "settings-list-120-select3",
+          "ans": "triplets/task8-settings-120.ans",
+          "html": "triplets/task8-settings-120.html",
+          "json": "triplets/task8-settings-120.json"
+        }
+      ],
+      "assertions": [
+        { "id": "settings-cursor-glyph", "frame": "task8-settings-120", "kind": "cell-glyph", "x": 0, "y": 3, "glyph": "▸" },
+        { "id": "settings-cursor-green", "frame": "task8-settings-120", "kind": "cell-fg", "x": 0, "y": 3, "hex": "#9ece6a" },
+        { "id": "settings-value-col-row0", "frame": "task8-settings-120", "kind": "cell-glyph", "x": 26, "y": 0, "glyph": "o" },
+        { "id": "settings-value-col-row1", "frame": "task8-settings-120", "kind": "cell-glyph", "x": 26, "y": 1, "glyph": "o" },
+        { "id": "settings-value-col-row3", "frame": "task8-settings-120", "kind": "cell-glyph", "x": 26, "y": 3, "glyph": "G" },
+        { "id": "settings-value-col-row5", "frame": "task8-settings-120", "kind": "cell-glyph", "x": 26, "y": 5, "glyph": "1" },
+        { "id": "settings-value-col-muted", "frame": "task8-settings-120", "kind": "cell-fg", "x": 26, "y": 0, "hex": "#6c6c6c" },
+        { "id": "settings-expandable-glyph", "frame": "task8-settings-120", "kind": "cell-glyph", "x": 38, "y": 3, "glyph": "›" },
+        { "id": "settings-expandable-muted", "frame": "task8-settings-120", "kind": "cell-fg", "x": 38, "y": 3, "hex": "#6c6c6c" }
+      ]
+    },
+    {
+      "id": "task-8-slash-menu-256-fallback",
+      "task": 8,
+      "title": "256-color fallback: the slash menu renders with NO truecolor cells (TERM=xterm-256color) and does not crash",
+      "requiredFrames": ["task8-slash-80-256"],
+      "frames": [
+        {
+          "id": "task8-slash-80-256",
+          "size": "100x9",
+          "state": "slash-menu-80-ansi256",
+          "ans": "triplets/task8-slash-80-256.ans",
+          "html": "triplets/task8-slash-80-256.html",
+          "json": "triplets/task8-slash-80-256.json"
+        }
+      ],
+      "assertions": [
+        { "id": "no-truecolor-256", "frame": "task8-slash-80-256", "kind": "region-no-truecolor", "x0": 0, "y0": 0, "x1": 79, "y1": 7 }
+      ]
+    }
+  ]
+}
