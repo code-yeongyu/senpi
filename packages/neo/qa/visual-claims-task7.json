@@ -1,0 +1,147 @@
+{
+  "description": "Task 7 (markdown renderer) visual claims. Frames are captured from the internal/ui/markdown qaharness through a real pseudo-terminal (script(1)/node-pty equivalent) and rendered to the xterm.js cell grid. Every color assertion targets a grok palette token from internal/theme (grok-night): AccentBlue #7aa2f7, AccentGreen #9ece6a, AccentYellow #e0af68, AccentCyan #3a95ab, TextMuted #6c6c6c, TextSecondary #c8c8c8, TextDim #585858. Assertions run against the parsed cell grid, never raw escape strings.",
+  "claims": [
+    {
+      "id": "task-7-markdown-happy-grok-styling",
+      "task": 7,
+      "title": "Fixture reply (heading + bold/inline-code + link + list + width-aware table + highlighted fenced code) renders with grok palette colors and grok box-drawing table borders.",
+      "requiredFrames": ["task7-happy-90x24"],
+      "frames": [
+        {
+          "id": "task7-happy-90x24",
+          "size": "90x24",
+          "state": "happy-markdown-reply",
+          "ans": "triplets/task7-happy-90.ans",
+          "html": "triplets/task7-happy-90.html",
+          "json": "triplets/task7-happy-90.grid.json"
+        }
+      ],
+      "assertions": [
+        {
+          "id": "heading-accent-blue",
+          "kind": "cell-fg",
+          "frame": "task7-happy-90x24",
+          "x": 0,
+          "y": 0,
+          "hex": "#7aa2f7"
+        },
+        {
+          "id": "heading-glyph-D",
+          "kind": "cell-glyph",
+          "frame": "task7-happy-90x24",
+          "x": 0,
+          "y": 0,
+          "glyph": "D"
+        },
+        {
+          "id": "list-bullet-accent-blue",
+          "kind": "cell-fg",
+          "frame": "task7-happy-90x24",
+          "x": 0,
+          "y": 4,
+          "hex": "#7aa2f7"
+        },
+        {
+          "id": "fence-border-text-muted",
+          "kind": "cell-fg",
+          "frame": "task7-happy-90x24",
+          "x": 0,
+          "y": 14,
+          "hex": "#6c6c6c"
+        },
+        {
+          "id": "code-keyword-accent-blue",
+          "kind": "cell-fg",
+          "frame": "task7-happy-90x24",
+          "x": 2,
+          "y": 15,
+          "hex": "#7aa2f7"
+        },
+        {
+          "id": "table-top-border-glyph",
+          "kind": "cell-glyph",
+          "frame": "task7-happy-90x24",
+          "x": 0,
+          "y": 6,
+          "glyph": "┌"
+        },
+        {
+          "id": "table-junction-glyph-present",
+          "kind": "glyph-present",
+          "frame": "task7-happy-90x24",
+          "glyph": "┼"
+        },
+        {
+          "id": "code-block-colors-subset-of-grok-palette",
+          "kind": "region-fg-subset",
+          "frame": "task7-happy-90x24",
+          "x0": 0,
+          "y0": 14,
+          "x1": 89,
+          "y1": 18,
+          "palette": [
+            "#7aa2f7",
+            "#9ece6a",
+            "#e0af68",
+            "#3a95ab",
+            "#6c6c6c",
+            "#c8c8c8",
+            "#585858"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "task-7-markdown-unclosed-fence-stabilizes",
+      "task": 7,
+      "title": "An UNCLOSED fence still terminates with a synthetic ``` border (partial-fence stabilization) and colors stay within the grok palette — the visible half of the failure scenario.",
+      "requiredFrames": ["task7-failviz-90x12"],
+      "frames": [
+        {
+          "id": "task7-failviz-90x12",
+          "size": "90x12",
+          "state": "unclosed-fence-stabilized",
+          "ans": "triplets/task7-failviz-90.ans",
+          "html": "triplets/task7-failviz-90.html",
+          "json": "triplets/task7-failviz-90.grid.json"
+        }
+      ],
+      "assertions": [
+        {
+          "id": "open-fence-border-text-muted",
+          "kind": "cell-fg",
+          "frame": "task7-failviz-90x12",
+          "x": 0,
+          "y": 2,
+          "hex": "#6c6c6c"
+        },
+        {
+          "id": "synthetic-close-fence-border-text-muted",
+          "kind": "cell-fg",
+          "frame": "task7-failviz-90x12",
+          "x": 0,
+          "y": 5,
+          "hex": "#6c6c6c"
+        },
+        {
+          "id": "failviz-colors-subset-of-grok-palette",
+          "kind": "region-fg-subset",
+          "frame": "task7-failviz-90x12",
+          "x0": 0,
+          "y0": 0,
+          "x1": 89,
+          "y1": 5,
+          "palette": [
+            "#7aa2f7",
+            "#9ece6a",
+            "#e0af68",
+            "#3a95ab",
+            "#6c6c6c",
+            "#c8c8c8",
+            "#585858"
+          ]
+        }
+      ]
+    }
+  ]
+}
