@@ -13,6 +13,7 @@ import {
 	TimeoutError,
 	ToolExecError,
 } from "../../src/core/extensions/builtin/mcp/errors.ts";
+import { createMcpLogger } from "../../src/core/extensions/builtin/mcp/log.ts";
 import type { McpErrorLogger } from "../../src/core/extensions/builtin/mcp/wrap.ts";
 import { safeInterval, safeOn, safeTimer, wrapAsync } from "../../src/core/extensions/builtin/mcp/wrap.ts";
 
@@ -106,11 +107,36 @@ describe("mcp async wrappers", () => {
 		expect(notifications).toEqual(["MCP unit.wrap failed: wrapped boom"]);
 	});
 
+	it("records wrapped error messages through the production MCP logger", async () => {
+		const logDir = await mkdtemp(path.join(tmpdir(), "senpi-mcp-prod-logger-"));
+		tempDirs.push(logDir);
+		const logger = createMcpLogger("prod-probe", { logDir });
+		const wrapped = wrapAsync(
+			"prod.scope",
+			async () => {
+				throw new Error("prod boom");
+			},
+			{ logger },
+		);
+
+		await wrapped();
+
+		const ringText = logger.getRingBuffer().join("\n");
+		const fileText = await readFile(logger.filePath, "utf8");
+		expect(ringText).toContain("prod.scope");
+		expect(ringText).toContain("prod boom");
+		expect(fileText).toContain("prod.scope");
+		expect(fileText).toContain("prod boom");
+	});
+
 	it("keeps a child process alive when a wrapped timer callback throws", async () => {
 		const result = await runChildScript("wrapped-timer", [
 			`import { safeTimer } from ${JSON.stringify(pathToFileURL(path.join(mcpSourceRoot, "wrap.ts")).href)};`,
 			"const logs = [];",
-			"const logger = { error(scope, error) { logs.push(scope + ':' + (error instanceof Error ? error.message : String(error))); } };",
+			"const logger = { error(scope, data) {",
+			"  const message = data && typeof data === 'object' && 'message' in data ? data.message : String(data);",
+			"  logs.push(scope + ':' + message);",
+			"} };",
 			"safeTimer('child.timer', 0, () => { throw new Error('timer boom'); }, { logger });",
 			"globalThis.setTimeout(() => {",
 			"  console.log(JSON.stringify({ logs }));",
@@ -208,8 +234,15 @@ describe("mcp async source guard", () => {
 class MemoryLogger implements McpErrorLogger {
 	readonly entries: Array<{ scope: string; message: string }> = [];
 
-	error(scope: string, error: Error): void {
-		this.entries.push({ scope, message: error.message });
+	error(scope: string, data?: unknown): void {
+		let message = String(data);
+		if (data instanceof Error) {
+			message = data.message;
+		} else if (typeof data === "object" && data !== null && "message" in data) {
+			const maybeMessage = data.message;
+			if (typeof maybeMessage === "string") message = maybeMessage;
+		}
+		this.entries.push({ scope, message });
 	}
 }
 

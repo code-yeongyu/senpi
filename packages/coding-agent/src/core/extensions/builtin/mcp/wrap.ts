@@ -7,7 +7,7 @@ import type { EventEmitter } from "node:events";
 type MaybePromise<T> = T | Promise<T>;
 
 export interface McpErrorLogger {
-	error(scope: string, error: Error): void;
+	error(message: string, data?: unknown): void;
 }
 
 export interface McpAsyncErrorSink {
@@ -87,11 +87,26 @@ export async function reportMcpAsyncError(scope: string, error: unknown, sink: M
 
 function logError(scope: string, error: Error, logger: McpErrorLogger): void {
 	try {
-		logger.error(scope, error);
+		logger.error(scope, serializeError(error));
 	} catch (loggerError) {
 		console.error(`MCP ${scope} logger failed`, loggerError);
 		console.error(`MCP ${scope} original error`, error);
 	}
+}
+
+interface SerializedError {
+	name: string;
+	message: string;
+	stack?: string;
+}
+
+function serializeError(error: Error): SerializedError {
+	const serialized: SerializedError = {
+		name: error.name,
+		message: error.message,
+	};
+	if (error.stack) serialized.stack = error.stack;
+	return serialized;
 }
 
 function normalizeError(error: unknown): Error {
