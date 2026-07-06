@@ -90,6 +90,9 @@ export type PackageSource =
 			hooks?: string[];
 	  };
 
+/** Default neo shared-daemon idle shutdown period: 30 minutes. */
+export const DEFAULT_NEO_DAEMON_IDLE_SHUTDOWN_MS = 30 * 60 * 1000;
+
 export interface Settings {
 	lastChangelogVersion?: string;
 	defaultProvider?: string;
@@ -140,6 +143,16 @@ export interface Settings {
 	httpProxy?: string; // Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
+	neoDaemon?: NeoDaemonSettings; // neo (Go TUI) shared daemon tuning
+}
+
+export interface NeoDaemonSettings {
+	/**
+	 * Idle shutdown period for the neo shared daemon, in milliseconds. The daemon
+	 * exits after this long with zero connections. 0 disables idle shutdown.
+	 * Default: 30 minutes.
+	 */
+	idleShutdownMs?: number;
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -858,6 +871,18 @@ export class SettingsManager {
 
 	getHttpIdleTimeoutMs(): number {
 		return parseTimeoutSetting(this.settings.httpIdleTimeoutMs, "httpIdleTimeoutMs") ?? DEFAULT_HTTP_IDLE_TIMEOUT_MS;
+	}
+
+	/**
+	 * Idle shutdown period (ms) for the neo shared daemon. Defaults to 30 minutes.
+	 * A value of 0 disables idle shutdown. Invalid values fall back to the default.
+	 */
+	getNeoDaemonIdleShutdownMs(): number {
+		const value = this.settings.neoDaemon?.idleShutdownMs;
+		if (value === undefined || !Number.isFinite(value) || value < 0) {
+			return DEFAULT_NEO_DAEMON_IDLE_SHUTDOWN_MS;
+		}
+		return Math.floor(value);
 	}
 
 	setHttpIdleTimeoutMs(timeoutMs: number): void {

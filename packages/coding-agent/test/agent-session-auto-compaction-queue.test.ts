@@ -248,13 +248,10 @@ describe("AgentSession auto-compaction queue resume", () => {
 	it("should trigger threshold compaction for error messages using last successful usage", async () => {
 		const model = session.model!;
 
-		// Usage near the model's context limit so threshold compaction triggers.
-		// Derived from the model's actual contextWindow rather than a hardcoded 200K, so
-		// the assertion stays correct when the generated model catalog updates the window
-		// (Claude Sonnet 4.5 grew from 200K to 1M). shouldCompact fires when the context
-		// tokens exceed contextWindow - reserveTokens (default 16384), so sit 8K under the
-		// window — above the threshold for any window size.
-		const nearLimitTokens = model.contextWindow - 8_000;
+		// A successful assistant message with token usage just over the compaction threshold.
+		// Compute this from the selected model so generated catalog context-window changes do not break the test.
+		const compactionSettings = settingsManager.getCompactionSettings();
+		const thresholdTokens = (model.contextWindow ?? 200_000) - compactionSettings.reserveTokens + 1;
 		const successfulAssistant: AssistantMessage = {
 			role: "assistant",
 			content: [{ type: "text", text: "large successful response" }],
@@ -262,11 +259,11 @@ describe("AgentSession auto-compaction queue resume", () => {
 			provider: model.provider,
 			model: model.id,
 			usage: {
-				input: nearLimitTokens,
-				output: 0,
+				input: thresholdTokens - 10_000,
+				output: 10_000,
 				cacheRead: 0,
 				cacheWrite: 0,
-				totalTokens: nearLimitTokens,
+				totalTokens: thresholdTokens,
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			},
 			stopReason: "stop",

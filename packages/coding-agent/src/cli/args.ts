@@ -48,6 +48,20 @@ export interface Args {
 	offline?: boolean;
 	verbose?: boolean;
 	projectTrustOverride?: boolean;
+	/** Launch the neo (Go-native) TUI instead of the classic TUI. */
+	neo?: boolean;
+	/** Force the neo per-instance stdio transport (implies neo). */
+	neoIsolated?: boolean;
+	/** Dev-only override path to the neo binary (hidden from help). */
+	neoBin?: string;
+	/**
+	 * Run the neo shared daemon, listening for JSONL RPC connections on the given
+	 * unix socket (POSIX) or named-pipe (Windows) path. Hidden from help — this is
+	 * an internal handoff target the neo client spawns, not a user-facing flag.
+	 */
+	neoListen?: string;
+	/** Self-register into the neo daemon registry when listening (daemon-internal). */
+	neoRegister?: boolean;
 	messages: string[];
 	fileArgs: string[];
 	/** Unknown flags (potentially extension flags) - map of flag name to value */
@@ -185,7 +199,16 @@ export function parseArgs(args: string[]): Args {
 		} else if (arg === "--offline") {
 			result.offline = true;
 		} else if (arg === "--neo") {
-			result.diagnostics.push({ type: "error", message: "Unknown option: --neo" });
+			result.neo = true;
+		} else if (arg === "--neo-isolated") {
+			result.neo = true;
+			result.neoIsolated = true;
+		} else if (arg === "--neo-bin" && i + 1 < args.length) {
+			result.neoBin = args[++i];
+		} else if (arg === "--listen" && i + 1 < args.length) {
+			result.neoListen = args[++i];
+		} else if (arg === "--register") {
+			result.neoRegister = true;
 		} else if (arg.startsWith("@")) {
 			result.fileArgs.push(arg.slice(1)); // Remove @ prefix
 		} else if (arg.startsWith("--")) {
@@ -283,6 +306,9 @@ ${chalk.bold("Options:")}
   --approve, -a                  Trust project-local files for this run
   --no-approve, -na              Ignore project-local files for this run
   --offline                      Disable startup network operations (same as PI_OFFLINE=1)
+  --neo                          Launch the neo (Go-native) TUI instead of the classic TUI
+                                 (piped stdin falls back to classic print mode)
+  --neo-isolated                 Like --neo, but use a per-instance backend (no shared daemon)
   --help, -h                     Show this help
   --version, -v                  Show version number
 

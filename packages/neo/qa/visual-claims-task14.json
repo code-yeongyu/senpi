@@ -1,0 +1,130 @@
+{
+  "$schema": "./visual-claims.schema.md",
+  "description": "Task-14 (native ports of the 5 builtin ctx.ui.custom extensions) visual-claims manifest. Registered as a SEPARATE per-task manifest (never appended into the shared visual-claims.json) to avoid the shared-file merge hazard while other Wave-2 tasks run in parallel. Each claim binds one feature's overlay frame as a complete triplet (.ans via tmux capture-pane -e in session ulw-qa-t14 + .html + cell-grid .json from qa/xterm-render.mjs) with grid-based assertions verifying layout + exact grok palette hexes (accent #7aa2f7, success #9ece6a, error #f7768e, warning #e0af68, muted #6c6c6c). The .ans files are real tmux captures of the internal/ui/builtinext/qaharness binary; line endings were normalized LF->CRLF to match the terminal stream xterm.js consumes. Triplet paths are relative to this file's directory (packages/neo/qa). Verify with: node packages/neo/qa/xterm-render.mjs verify-manifest packages/neo/qa/visual-claims-task14.json",
+  "claims": [
+    {
+      "id": "task-14-history-search-cross-session",
+      "task": 14,
+      "title": "history-search (ctrl+r): the fuzzy overlay finds seeded prompts across BOTH fixture sessions on a 'deploy' query — title, count marker, search input line, and a selected list row",
+      "requiredFrames": ["task14-history-120"],
+      "frames": [
+        {
+          "id": "task14-history-120",
+          "size": "120x36",
+          "state": "history-search-query-deploy",
+          "ans": "triplets/task14-history-120.ans",
+          "html": "triplets/task14-history-120.html",
+          "json": "triplets/task14-history-120.json"
+        }
+      ],
+      "assertions": [
+        { "id": "hist-title-glyph", "frame": "task14-history-120", "kind": "cell-glyph", "x": 1, "y": 0, "glyph": "S" },
+        { "id": "hist-title-accent", "frame": "task14-history-120", "kind": "cell-fg", "x": 1, "y": 0, "hex": "#7aa2f7" },
+        { "id": "hist-count-glyph-3", "frame": "task14-history-120", "kind": "cell-glyph", "x": 23, "y": 0, "glyph": "3" },
+        { "id": "hist-count-dim", "frame": "task14-history-120", "kind": "cell-fg", "x": 23, "y": 0, "hex": "#585858" },
+        { "id": "hist-search-prompt", "frame": "task14-history-120", "kind": "cell-glyph", "x": 0, "y": 1, "glyph": ">" },
+        { "id": "hist-selected-cursor", "frame": "task14-history-120", "kind": "cell-glyph", "x": 0, "y": 2, "glyph": "❯" },
+        { "id": "hist-bottom-rule", "frame": "task14-history-120", "kind": "cell-glyph", "x": 0, "y": 6, "glyph": "─" }
+      ]
+    },
+    {
+      "id": "task-14-session-observer-tail",
+      "task": 14,
+      "title": "session-observer (ctrl+s): the HUD viewer tails an actively-growing session file — title path/shortId, status line, the tailed transcript entries (3 appended progress steps), the accent-blue selection cursor, and the observe/close footer",
+      "requiredFrames": ["task14-observer-90"],
+      "frames": [
+        {
+          "id": "task14-observer-90",
+          "size": "90x24",
+          "state": "session-observer-viewer-tailing-grown-file",
+          "ans": "triplets/task14-observer-90.ans",
+          "html": "triplets/task14-observer-90.html",
+          "json": "triplets/task14-observer-90.json"
+        }
+      ],
+      "assertions": [
+        { "id": "obs-title-glyph", "frame": "task14-observer-90", "kind": "cell-glyph", "x": 1, "y": 0, "glyph": "S" },
+        { "id": "obs-title-accent", "frame": "task14-observer-90", "kind": "cell-fg", "x": 1, "y": 0, "hex": "#7aa2f7" },
+        { "id": "obs-cursor-glyph", "frame": "task14-observer-90", "kind": "cell-glyph", "x": 1, "y": 12, "glyph": "▶" },
+        { "id": "obs-cursor-accent", "frame": "task14-observer-90", "kind": "cell-fg", "x": 1, "y": 12, "hex": "#7aa2f7" },
+        { "id": "obs-response-label", "frame": "task14-observer-90", "kind": "cell-glyph", "x": 3, "y": 6, "glyph": "R" },
+        { "id": "obs-response-muted", "frame": "task14-observer-90", "kind": "cell-fg", "x": 3, "y": 6, "hex": "#6c6c6c" },
+        { "id": "obs-tailed-step3", "frame": "task14-observer-90", "kind": "cell-glyph", "x": 5, "y": 13, "glyph": "p" },
+        { "id": "obs-top-rule", "frame": "task14-observer-90", "kind": "cell-glyph", "x": 0, "y": 2, "glyph": "─" }
+      ]
+    },
+    {
+      "id": "task-14-files-browser",
+      "task": 14,
+      "title": "files browser (/files): the picker shows R/W/E operation glyphs in muted/success/warning hues with the newest-first path list and the paging help hint",
+      "requiredFrames": ["task14-files-90"],
+      "frames": [
+        {
+          "id": "task14-files-90",
+          "size": "90x24",
+          "state": "files-picker",
+          "ans": "triplets/task14-files-90.ans",
+          "html": "triplets/task14-files-90.html",
+          "json": "triplets/task14-files-90.json"
+        }
+      ],
+      "assertions": [
+        { "id": "files-title-glyph", "frame": "task14-files-90", "kind": "cell-glyph", "x": 1, "y": 0, "glyph": "S" },
+        { "id": "files-title-accent", "frame": "task14-files-90", "kind": "cell-fg", "x": 1, "y": 0, "hex": "#7aa2f7" },
+        { "id": "files-R-glyph", "frame": "task14-files-90", "kind": "cell-glyph", "x": 2, "y": 1, "glyph": "R" },
+        { "id": "files-R-muted", "frame": "task14-files-90", "kind": "cell-fg", "x": 2, "y": 1, "hex": "#6c6c6c" },
+        { "id": "files-E-warning", "frame": "task14-files-90", "kind": "cell-fg", "x": 3, "y": 1, "hex": "#e0af68" },
+        { "id": "files-W-glyph", "frame": "task14-files-90", "kind": "cell-glyph", "x": 2, "y": 2, "glyph": "W" },
+        { "id": "files-W-success", "frame": "task14-files-90", "kind": "cell-fg", "x": 2, "y": 2, "hex": "#9ece6a" }
+      ]
+    },
+    {
+      "id": "task-14-diff-viewer",
+      "task": 14,
+      "title": "diff viewer (/diff): the picker shows per-status color codes (M warning / A success / D error / ? muted) parsed from git status --porcelain, with the paging help hint",
+      "requiredFrames": ["task14-diff-90"],
+      "frames": [
+        {
+          "id": "task14-diff-90",
+          "size": "90x24",
+          "state": "diff-picker",
+          "ans": "triplets/task14-diff-90.ans",
+          "html": "triplets/task14-diff-90.html",
+          "json": "triplets/task14-diff-90.json"
+        }
+      ],
+      "assertions": [
+        { "id": "diff-title-glyph", "frame": "task14-diff-90", "kind": "cell-glyph", "x": 1, "y": 0, "glyph": "S" },
+        { "id": "diff-M-glyph", "frame": "task14-diff-90", "kind": "cell-glyph", "x": 2, "y": 1, "glyph": "M" },
+        { "id": "diff-M-warning", "frame": "task14-diff-90", "kind": "cell-fg", "x": 2, "y": 1, "hex": "#e0af68" },
+        { "id": "diff-A-success", "frame": "task14-diff-90", "kind": "cell-fg", "x": 2, "y": 2, "hex": "#9ece6a" },
+        { "id": "diff-D-error", "frame": "task14-diff-90", "kind": "cell-fg", "x": 2, "y": 3, "hex": "#f7768e" },
+        { "id": "diff-Q-muted", "frame": "task14-diff-90", "kind": "cell-fg", "x": 2, "y": 4, "hex": "#6c6c6c" }
+      ]
+    },
+    {
+      "id": "task-14-custom-unsupported-notice",
+      "task": 14,
+      "title": "third-party ctx.ui.custom notice dialog: 'this extension UI requires the classic TUI: <name>' with a warning-hue title and the extension name in accent blue",
+      "requiredFrames": ["task14-notice-90"],
+      "frames": [
+        {
+          "id": "task14-notice-90",
+          "size": "90x24",
+          "state": "custom-unsupported-notice",
+          "ans": "triplets/task14-notice-90.ans",
+          "html": "triplets/task14-notice-90.html",
+          "json": "triplets/task14-notice-90.json"
+        }
+      ],
+      "assertions": [
+        { "id": "notice-title-glyph", "frame": "task14-notice-90", "kind": "cell-glyph", "x": 1, "y": 0, "glyph": "E" },
+        { "id": "notice-title-warning", "frame": "task14-notice-90", "kind": "cell-fg", "x": 1, "y": 0, "hex": "#e0af68" },
+        { "id": "notice-body-glyph", "frame": "task14-notice-90", "kind": "cell-glyph", "x": 1, "y": 1, "glyph": "t" },
+        { "id": "notice-extname-glyph", "frame": "task14-notice-90", "kind": "cell-glyph", "x": 45, "y": 1, "glyph": "a" },
+        { "id": "notice-extname-accent", "frame": "task14-notice-90", "kind": "cell-fg", "x": 45, "y": 1, "hex": "#7aa2f7" },
+        { "id": "notice-bottom-rule", "frame": "task14-notice-90", "kind": "cell-glyph", "x": 0, "y": 3, "glyph": "─" }
+      ]
+    }
+  ]
+}

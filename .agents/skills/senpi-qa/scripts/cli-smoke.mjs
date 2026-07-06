@@ -26,6 +26,8 @@ async function selfTest() {
 		`code=${help.code}`,
 	);
 
+	checks.ok("--help lists the --neo launcher flag", help.code === 0 && help.stdout.includes("--neo"), `code=${help.code}`);
+
 	const version = await runCli(["--version"], opts);
 	checks.ok("--version prints a version", version.code === 0 && /\d+\.\d+/.test(version.stdout), version.stdout.trim());
 
@@ -36,7 +38,9 @@ async function selfTest() {
 		`lines=${models.stdout.split("\n").filter((l) => l.trim()).length}`,
 	);
 
-	const bad = await runCli(["--neo"], opts);
+	// Use a genuinely unknown SHORT option: unknown long (--foo) flags are routed to
+	// the extension-flag channel by design, but an unknown short option must error.
+	const bad = await runCli(["-zzz"], opts);
 	checks.ok(
 		"unknown option is reported, not silently ignored",
 		(bad.stdout + bad.stderr).includes("Unknown option"),
