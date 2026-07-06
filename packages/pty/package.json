@@ -1,0 +1,49 @@
+{
+	"name": "@earendil-works/pi-pty",
+	"private": true,
+	"version": "2026.7.5-2",
+	"description": "Typed PTY session loader for Senpi persistent terminals",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./native": {
+			"types": "./native/index.d.ts",
+			"import": "./native/index.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"dist",
+		"native",
+		"README.md"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsgo -p tsconfig.build.json",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"keywords": [
+		"pty",
+		"terminal",
+		"persistent-terminal",
+		"typescript"
+	],
+	"author": "Earendil Works",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/earendil-works/pi.git",
+		"directory": "packages/pty"
+	},
+	"engines": {
+		"node": ">=24.0.0"
+	},
+	"devDependencies": {
+		"@types/node": "25.9.1"
+	}
+}

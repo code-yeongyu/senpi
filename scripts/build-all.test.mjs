@@ -30,6 +30,7 @@ describe("build-all", () => {
 		// Then
 		assert.deepEqual(flattened, [
 			"packages/tui",
+			"packages/pty",
 			"packages/ai",
 			"packages/agent",
 			"packages/coding-agent",
@@ -40,6 +41,37 @@ describe("build-all", () => {
 		assert.ok(index("packages/coding-agent") > index("packages/agent"));
 		assert.ok(index("packages/web-ui") > index("packages/agent"));
 		assert.ok(index("packages/orchestrator") > index("packages/coding-agent"));
+	});
+
+	it("builds pty beside tui in the first native-adjacent phase", () => {
+		// Given
+		const packageJson = JSON.parse(readFileSync(join(root, "packages/pty/package.json"), "utf8"));
+		const phaseOne = BUILD_PHASES[0];
+
+		// Then
+		assert.equal(packageJson.name, "@earendil-works/pi-pty");
+		assert.deepEqual(phaseOne, ["packages/tui", "packages/pty", "packages/ai"]);
+	});
+
+	it("wires the pty package export surface for workspace imports", () => {
+		// Given
+		const rootPackageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+		const packageJson = JSON.parse(readFileSync(join(root, "packages/pty/package.json"), "utf8"));
+
+		// Then
+		assert.ok(rootPackageJson.workspaces.includes("packages/pty"));
+		assert.equal(packageJson.main, "./dist/index.js");
+		assert.equal(packageJson.types, "./dist/index.d.ts");
+		assert.deepEqual(packageJson.exports["."], {
+			types: "./dist/index.d.ts",
+			import: "./dist/index.js",
+		});
+		assert.deepEqual(packageJson.exports["./native"], {
+			types: "./native/index.d.ts",
+			import: "./native/index.js",
+		});
+		assert.ok(packageJson.files.includes("dist"));
+		assert.ok(packageJson.files.includes("native"));
 	});
 
 	it("strips pnpm-only npm config from child environments", () => {
