@@ -5,6 +5,13 @@ export type {
 	NativePtyLoadResult,
 	NativePtyUnavailableDiagnostic,
 } from "./native-loader.ts";
+export {
+	detectNativePtyRuntime,
+	getNativePtyCandidatePaths,
+	getNativePtyHost,
+	type NativePtyRuntime,
+	NativePtySentinelMismatchError,
+} from "./native-loader.ts";
 
 export interface PtySessionOptions {
 	readonly command?: string;
