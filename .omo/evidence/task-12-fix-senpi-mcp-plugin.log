@@ -1,0 +1,89 @@
+TODO 12 gate-review blocker fix
+Date: 2026-07-06
+Branch: code-yeongyu/senpi-mcp-plugin-w1
+Base HEAD: 2058e4e24 feat(coding-agent): /mcp command suite v1
+
+Scope:
+- Fixed only TODO 12 gate-review blockers from `.omo/evidence/todo-12-senpi-mcp-plugin-gate-review.md`.
+- Did not edit `.omo/plans/senpi-mcp-plugin.md`.
+- Did not edit `.omo/start-work/ledger.jsonl`.
+- Did not touch TODO 11 files or implement exposure policy.
+- Did not stage unrelated legacy `.omo/evidence/*` files.
+
+Fixes:
+- `packages/coding-agent/src/core/extensions/builtin/mcp/status.ts`
+  - Made the `tools/list` status-rendering boundary explicit.
+  - `/mcp status` keeps rendering if tool-count reads fail and reports `tools=?`.
+  - Non-`Error` rejections are normalized before the display-only unavailable-count helper.
+- `packages/coding-agent/test/mcp/commands.test.ts`
+  - Removed `as unknown as ExtensionCommandContext`.
+  - Built a real command context through `ExtensionRunner.createCommandContext()`.
+  - Expanded the test UI double to satisfy `ExtensionUIContext` without `any` or double assertions.
+
+Fresh verification:
+- Scenario: `/mcp` command suite, including panel/status, add confirm yes/no, enable/disable, logs, reconnect stub, unknown server, live fixture test, wedged timeout responsiveness.
+  - Invocation: `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/commands.test.ts`
+  - Observable: exit 0; 1 file passed; 6 tests passed.
+  - Artifact: `local-ignore/qa-evidence/20260706-mcp-w1-task12/commands-fix-final.txt`
+- Scenario: MCP extension load/service lifecycle/register-call dependency regressions.
+  - Invocation: `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/extension-load.test.ts test/mcp/service-lifecycle.test.ts test/mcp/register-call.test.ts`
+  - Observable: exit 0; 3 files passed; 19 tests passed.
+  - Artifact: `local-ignore/qa-evidence/20260706-mcp-w1-task12/dependency-regressions-fix-final.txt`
+- Scenario: full repo check after code changes.
+  - Invocation: `npm run check`
+  - Observable: exit 0.
+  - Artifact: `local-ignore/qa-evidence/20260706-mcp-w1-task12/npm-run-check-fix.txt`
+
+Source scans:
+- Banned pattern scan:
+  - Invocation: `rg -n "as unknown as|as any|: any|import\\(|await import|enum |namespace |module |@ts-ignore|@ts-expect-error|~/.senpi|\\.senpi/agent" <TODO 12 source/test files>`
+  - Observable: exit 1; no matches.
+- TODO 11/W2 creep scan:
+  - Invocation: `rg -n "TODO 11|exposure policy|exposurePolicy|policy" <TODO 12 source/test files>`
+  - Observable: exit 1; no matches.
+- Catch/type-escape scan:
+  - Invocation: `rg -n "as unknown as ExtensionCommandContext|catch \\{|catch \\([^)]*\\)" packages/coding-agent/src/core/extensions/builtin/mcp/status.ts packages/coding-agent/test/mcp/commands.test.ts`
+  - Observable: one intended catch at `status.ts:62`; no `as unknown as ExtensionCommandContext`.
+
+LOC:
+- `commands.ts`: 165 pure LOC.
+- `config-edit.ts`: 56 pure LOC.
+- `status.ts`: 62 pure LOC.
+- `index.ts`: 23 pure LOC.
+- `service.ts`: 226 pure LOC.
+- `commands.test.ts`: 244 pure LOC.
+- `extension-load.test.ts`: 106 pure LOC.
+
+Manual QA matrix:
+- Artifact: `local-ignore/qa-evidence/20260706-mcp-w1-task12/INDEX.md`.
+- Existing manual artifacts validated non-empty:
+  - `manual-mcp-panel.txt`: 1776 bytes.
+  - `manual-wedged-test.txt`: 8015 bytes.
+  - `manual-responsive-status.txt`: 8396 bytes.
+  - `manual-auth-proof.txt`: 326 bytes.
+  - `manual-cleanup.txt`: 125 bytes.
+
+Adversarial classes:
+- malformed_input: PASS via focused command test.
+- stale_state: PASS via wedged manual status counters.
+- dirty_worktree: PASS pending final explicit staging; unrelated untracked evidence remains unstaged.
+- hung_or_long_commands: PASS via bounded wedged evidence and non-fatal status tool-count read.
+- flaky_tests: PASS via focused and dependency reruns.
+- misleading_success_output: PASS via explicit slop review and manual matrix artifacts.
+- prompt_injection: PASS; text rendering only, no execution path added.
+- cancel_resume: PASS via confirm=false add test.
+- repeated_interruptions: N/A for this fix pass.
+
+Risks:
+- `/mcp reconnect` remains the intentional W2 stub.
+- `commands.test.ts` is in the 200-250 pure LOC warning band and should be split before future growth.
+
+Pre-commit staging:
+- Invocation: `git diff --staged --name-only && git diff --staged --stat`
+- Staged paths:
+  - `.omo/evidence/task-12-fix-senpi-mcp-plugin.log`
+  - `.omo/evidence/todo-12-code-quality-slop-review.md`
+  - `packages/coding-agent/src/core/extensions/builtin/mcp/status.ts`
+  - `packages/coding-agent/test/mcp/commands.test.ts`
+- Staged stat:
+  - 4 files changed, 281 insertions(+), 16 deletions(-).

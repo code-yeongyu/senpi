@@ -1,30 +1,42 @@
 export interface FixtureOptions {
 	toolCount: number;
 	slowStartMs: number;
+	spawnCounterFile: string | undefined;
+	crashOnStart: boolean;
 	crashAfterCalls: number | null;
 	wedge: boolean;
 	isErrorTool: boolean;
+	hugeSchemaTool: boolean;
 	hugeOutput: { bytes: number; lines: number } | null;
+	slowToolCallMs: number;
+	cancelLogFile: string | undefined;
 	emitListChanged: boolean;
 	instructions: string | undefined;
 	port: number;
 	expireSession: boolean;
 	bearerToken: string | undefined;
+	spawnGrandchild: boolean;
 }
 
 export function parseFixtureOptions(argv: readonly string[]): FixtureOptions {
 	const options: FixtureOptions = {
 		toolCount: readIntegerFlag(argv, "--tools", 1),
 		slowStartMs: readIntegerFlag(argv, "--slow-start", 0),
+		spawnCounterFile: readStringFlag(argv, "--spawn-counter-file"),
+		crashOnStart: argv.includes("--crash-on-start"),
 		crashAfterCalls: readOptionalIntegerFlag(argv, "--crash-after"),
 		wedge: argv.includes("--wedge"),
 		isErrorTool: argv.includes("--iserror-tool"),
+		hugeSchemaTool: argv.includes("--huge-schema-tool"),
 		hugeOutput: readHugeOutput(argv),
+		slowToolCallMs: readIntegerFlag(argv, "--slow-tool-call", 0),
+		cancelLogFile: readStringFlag(argv, "--cancel-log"),
 		emitListChanged: argv.includes("--emit-list-changed"),
 		instructions: readStringFlag(argv, "--instructions"),
 		port: readIntegerFlag(argv, "--port", 0),
 		expireSession: argv.includes("--expire-session"),
 		bearerToken: readStringFlag(argv, "--bearer"),
+		spawnGrandchild: argv.includes("--spawn-grandchild"),
 	};
 	validateArgs(argv, options);
 	return options;
@@ -85,13 +97,24 @@ function validateArgs(argv: readonly string[], options: FixtureOptions): void {
 	const valued = new Set([
 		"--tools",
 		"--slow-start",
+		"--spawn-counter-file",
 		"--crash-after",
 		"--huge-output-tool",
+		"--slow-tool-call",
+		"--cancel-log",
 		"--instructions",
 		"--port",
 		"--bearer",
 	]);
-	const bare = new Set(["--wedge", "--iserror-tool", "--emit-list-changed", "--expire-session"]);
+	const bare = new Set([
+		"--wedge",
+		"--crash-on-start",
+		"--iserror-tool",
+		"--huge-schema-tool",
+		"--emit-list-changed",
+		"--expire-session",
+		"--spawn-grandchild",
+	]);
 	for (let index = 0; index < argv.length; index++) {
 		const arg = argv[index];
 		if (valued.has(arg)) {

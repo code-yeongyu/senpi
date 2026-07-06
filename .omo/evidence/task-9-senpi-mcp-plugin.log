@@ -1,0 +1,72 @@
+TODO 9: MCP process-owned service lifecycle
+
+Worktree: /Users/yeongyu/local-workspaces/senpi-wt/senpi-mcp-plugin
+Branch: code-yeongyu/senpi-mcp-plugin-w1
+Evidence directory: local-ignore/qa-evidence/20260706-mcp-w1-task9
+
+Scope verified:
+- packages/coding-agent/src/core/extensions/builtin/mcp/index.ts
+- packages/coding-agent/src/core/extensions/builtin/mcp/service.ts
+- packages/coding-agent/test/mcp/service-lifecycle.test.ts
+- packages/coding-agent/test/mcp/fixtures/service-lifecycle.ts
+
+Behavior summarized:
+- MCP builtin lifecycle handlers are wrapped through the existing async guard path.
+- McpService now owns process-backed server connections across session starts.
+- Session shutdown with reason "new" keeps matching server connections alive.
+- Session shutdown with reason "reload" or "quit" disposes process-owned connections.
+- Config-hash changes replace only the changed server connection.
+- Disabled and untrusted project servers are not spawned.
+- Tool registration preserves the intended active tool set after MCP tools auto-register.
+
+RED evidence:
+- local-ignore/qa-evidence/20260706-mcp-w1-task9/red-service-lifecycle.txt
+  - Scenario: new service lifecycle regression suite before implementation.
+  - Invocation: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/service-lifecycle.test.ts
+  - Observable: 7 failing tests; missing getConnection/registerToolsPreservingActiveSet behavior.
+
+GREEN evidence:
+- local-ignore/qa-evidence/20260706-mcp-w1-task9/green-service-lifecycle.txt
+  - Scenario: focused TODO 9 service lifecycle regression suite.
+  - Invocation: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/service-lifecycle.test.ts
+  - Observable: 1 file passed, 7 tests passed.
+- local-ignore/qa-evidence/20260706-mcp-w1-task9/green-service-lifecycle-rerun-after-check.txt
+  - Scenario: focused service lifecycle rerun after full check.
+  - Invocation: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/service-lifecycle.test.ts
+  - Observable: 1 file passed, 7 tests passed.
+- local-ignore/qa-evidence/20260706-mcp-w1-task9/green-extension-load.txt
+  - Scenario: MCP extension load coverage.
+  - Invocation: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/extension-load.test.ts
+  - Observable: 1 file passed, 4 tests passed.
+- local-ignore/qa-evidence/20260706-mcp-w1-task9/green-connection.txt
+  - Scenario: MCP connection coverage.
+  - Invocation: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/connection.test.ts
+  - Observable: 1 file passed, 6 tests passed.
+- local-ignore/qa-evidence/20260706-mcp-w1-task9/npm-run-check.txt
+  - Scenario: repository check after TODO 9 changes.
+  - Invocation: npm run check
+  - Observable: check exited 0; shrinkwrap/install lock checks passed; tsgo passed; web UI and neo checks passed. Biome reported "Fixed 4 files" during this captured run.
+
+Manual QA evidence:
+- local-ignore/qa-evidence/20260706-mcp-w1-task9/manual-qa-mock-loop-mcp-tool.txt
+  - Scenario: real CLI mock-loop with registered MCP stdio fixture tool.
+  - Invocation: node .agents/skills/senpi-qa/scripts/mock-loop.mjs --with-mcp-tool mcp_fx_tool_1 --tool-args '{"value":"ok"}'
+  - Observable: 5/5 passed; two model turns served; fixture tool executed; model saw fixture result; real auth unchanged.
+- local-ignore/qa-evidence/20260706-mcp-w1-task9/manual-qa-service-lifecycle-script.txt
+  - Scenario: auxiliary process lifecycle script.
+  - Invocation: npx tsx local-ignore/qa-evidence/20260706-mcp-w1-task9/service-lifecycle-qa.ts
+  - Observable: same-config session switch kept PIDs, config edit respawned only changed server, reload respawned both, quit left zero live connections/snapshots.
+
+Cleanup receipt:
+- local-ignore/qa-evidence/20260706-mcp-w1-task9/cleanup-process-sweep.txt
+  - Invocation: ps -axo pid=,command= | rg "packages/coding-agent/test/mcp/fixtures/(stdio|http)-server\.ts" | rg -v "rg " || true
+  - Observable: no fixture process output.
+
+Adversarial classes covered:
+- Session churn without config changes leaking or respawning fixture processes.
+- Reload/quit shutdown failing to dispose spawned child processes.
+- One-server config changes causing unrelated server churn.
+- Disabled or untrusted project servers spawning unexpectedly.
+- MCP tool auto-registration mutating active tool state.
+- Mock-loop MCP tool execution failing to feed tool output back into the model turn.
+- Full repository quality gates drifting after focused lifecycle changes.

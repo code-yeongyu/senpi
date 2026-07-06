@@ -18,7 +18,7 @@ describe("mcp builtin extension load", () => {
 		const extension = await loadMcpBuiltinExtension();
 
 		expect(extension.tools.size).toBe(0);
-		expect(extension.commands.size).toBe(0);
+		expect([...extension.commands.keys()]).toEqual(["mcp"]);
 		expect(extension.flags.size).toBe(0);
 		expect(extension.handlers.get("session_start")).toHaveLength(1);
 		expect(extension.handlers.get("session_shutdown")).toHaveLength(1);

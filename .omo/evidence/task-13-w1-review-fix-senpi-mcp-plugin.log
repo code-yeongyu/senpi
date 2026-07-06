@@ -1,0 +1,670 @@
+# Task 13 W1 MCP review fix evidence
+
+Started: 2026-07-06T23:26:36+09:00
+Worktree: /Users/yeongyu/local-workspaces/senpi-wt/senpi-mcp-plugin
+Branch: code-yeongyu/senpi-mcp-plugin-w1
+Review report: .omo/evidence/w1-mcp-implementation-code-review.md
+
+## Initial state
+
+- `git status --short --branch` showed branch `code-yeongyu/senpi-mcp-plugin-w1...origin/code-yeongyu/senpi-mcp-plugin-w1` and many unrelated untracked `.omo/evidence/*` files before this task.
+- Node runtime: `v26.0.0`.
+- No Node inspector listener was observed on TCP 9229.
+
+## RED phase
+
+Pending.
+
+## RED command
+cwd: packages/coding-agent
+command: npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/connection.test.ts test/mcp/commands.test.ts
+2026-07-06T23:27:55+09:00
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+······xx·x·····
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/mcp/commands.test.ts > /mcp command suite > removes and refreshes provider-visible MCP tools when /mcp disables and enables a server
+TypeError: ctx.getActiveTools is not a function
+ ❯ test/mcp/commands.test.ts:129:14
+    127|   const ctx = createCtx(root, ui);
+    128|
+    129|   expect(ctx.getActiveTools()).toContain("mcp_fx_tool_1");
+       |              ^
+    130|   expect(ctx.getAllTools().map((toolInfo) => toolInfo.name)).toContain…
+    131|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  test/mcp/connection.test.ts > ServerConnection state machine > disposes an in-flight wedged connect before the connect timeout leaks a fixture process
+AssertionError: expected [Function] to throw error matching /failed during connect|closed|superse…/i but got 'MCP server dispose-pending timed out …'
+
+- Expected:
+/failed during connect|closed|superseded/i
+
++ Received:
+"MCP server dispose-pending timed out during connect after 2000ms"
+
+ ❯ test/mcp/connection.test.ts:96:23
+     94|   await connection.dispose();
+     95|   const disposeElapsedMs = Date.now() - disposeStartedAt;
+     96|   await expect(pending).rejects.toThrow(/failed during connect|closed|…
+       |                       ^
+     97|
+     98|   expect(disposeElapsedMs).toBeLessThan(1500);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  test/mcp/connection.test.ts > ServerConnection state machine > disables an in-flight wedged connect before the connect timeout leaks a fixture process
+AssertionError: expected [Function] to throw error matching /failed during connect|closed|superse…/i but got 'MCP server disable-pending timed out …'
+
+- Expected:
+/failed during connect|closed|superseded/i
+
++ Received:
+"MCP server disable-pending timed out during connect after 2000ms"
+
+ ❯ test/mcp/connection.test.ts:120:23
+    118|   await connection.disable();
+    119|   const disableElapsedMs = Date.now() - disableStartedAt;
+    120|   await expect(pending).rejects.toThrow(/failed during connect|closed|…
+       |                       ^
+    121|
+    122|   expect(disableElapsedMs).toBeLessThan(1500);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  3 failed | 12 passed (15)
+   Start at  23:27:56
+   Duration  8.06s (transform 1.17s, setup 32ms, import 2.19s, tests 12.04s, environment 0ms)
+
+exit_code=1
+
+## RED command rerun after test-harness correction
+cwd: packages/coding-agent
+command: npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/connection.test.ts test/mcp/commands.test.ts
+2026-07-06T23:29:05+09:00
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+·····x·x·x·····
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/mcp/commands.test.ts > /mcp command suite > removes and refreshes provider-visible MCP tools when /mcp disables and enables a server
+AssertionError: the given combination of arguments (undefined and string) is invalid for this assertion. You can use an array, a map, an object, a set, a string, or a weakset instead of a string
+ ❯ test/mcp/commands.test.ts:140:32
+    138|   harness.setResponses([fauxAssistantMessage("initial")]);
+    139|   await harness.session.prompt("initial MCP tool payload");
+    140|   expect(providerToolNames[0]).toContain("mcp_fx_tool_1");
+       |                                ^
+    141|   expect(harness.session.getActiveToolNames()).toContain("mcp_fx_tool_…
+    142|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  test/mcp/connection.test.ts > ServerConnection state machine > disposes an in-flight wedged connect before the connect timeout leaks a fixture process
+AssertionError: expected [Function] to throw error matching /failed during connect|closed|superse…/i but got 'MCP server dispose-pending timed out …'
+
+- Expected:
+/failed during connect|closed|superseded/i
+
++ Received:
+"MCP server dispose-pending timed out during connect after 2000ms"
+
+ ❯ test/mcp/connection.test.ts:96:23
+     94|   await connection.dispose();
+     95|   const disposeElapsedMs = Date.now() - disposeStartedAt;
+     96|   await expect(pending).rejects.toThrow(/failed during connect|closed|…
+       |                       ^
+     97|
+     98|   expect(disposeElapsedMs).toBeLessThan(1500);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  test/mcp/connection.test.ts > ServerConnection state machine > disables an in-flight wedged connect before the connect timeout leaks a fixture process
+AssertionError: expected [Function] to throw error matching /failed during connect|closed|superse…/i but got 'MCP server disable-pending timed out …'
+
+- Expected:
+/failed during connect|closed|superseded/i
+
++ Received:
+"MCP server disable-pending timed out during connect after 2000ms"
+
+ ❯ test/mcp/connection.test.ts:120:23
+    118|   await connection.disable();
+    119|   const disableElapsedMs = Date.now() - disableStartedAt;
+    120|   await expect(pending).rejects.toThrow(/failed during connect|closed|…
+       |                       ^
+    121|
+    122|   expect(disableElapsedMs).toBeLessThan(1500);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  3 failed | 12 passed (15)
+   Start at  23:29:06
+   Duration  8.47s (transform 1.42s, setup 72ms, import 2.58s, tests 12.12s, environment 0ms)
+
+exit_code=1
+
+## RED command final before production fix
+cwd: packages/coding-agent
+command: npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/connection.test.ts test/mcp/commands.test.ts
+2026-07-06T23:29:51+09:00
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+······x·xx·····
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/mcp/commands.test.ts > /mcp command suite > removes and refreshes provider-visible MCP tools when /mcp disables and enables a server
+AssertionError: expected [ 'read', 'bash', 'edit', …(2) ] to not include 'mcp_fx_tool_1'
+ ❯ test/mcp/commands.test.ts:146:52
+    144|
+    145|   await harness.session.prompt("/mcp disable fx");
+    146|   expect(harness.session.getActiveToolNames()).not.toContain("mcp_fx_t…
+       |                                                    ^
+    147|
+    148|   setConfig(root, { fx: stdioServer(["--tools", "2"]) });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  test/mcp/connection.test.ts > ServerConnection state machine > disposes an in-flight wedged connect before the connect timeout leaks a fixture process
+AssertionError: expected [Function] to throw error matching /failed during connect|closed|superse…/i but got 'MCP server dispose-pending timed out …'
+
+- Expected:
+/failed during connect|closed|superseded/i
+
++ Received:
+"MCP server dispose-pending timed out during connect after 2000ms"
+
+ ❯ test/mcp/connection.test.ts:96:23
+     94|   await connection.dispose();
+     95|   const disposeElapsedMs = Date.now() - disposeStartedAt;
+     96|   await expect(pending).rejects.toThrow(/failed during connect|closed|…
+       |                       ^
+     97|
+     98|   expect(disposeElapsedMs).toBeLessThan(1500);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  test/mcp/connection.test.ts > ServerConnection state machine > disables an in-flight wedged connect before the connect timeout leaks a fixture process
+AssertionError: expected [Function] to throw error matching /failed during connect|closed|superse…/i but got 'MCP server disable-pending timed out …'
+
+- Expected:
+/failed during connect|closed|superseded/i
+
++ Received:
+"MCP server disable-pending timed out during connect after 2000ms"
+
+ ❯ test/mcp/connection.test.ts:120:23
+    118|   await connection.disable();
+    119|   const disableElapsedMs = Date.now() - disableStartedAt;
+    120|   await expect(pending).rejects.toThrow(/failed during connect|closed|…
+       |                       ^
+    121|
+    122|   expect(disableElapsedMs).toBeLessThan(1500);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  3 failed | 12 passed (15)
+   Start at  23:29:52
+   Duration  8.08s (transform 1.16s, setup 25ms, import 2.15s, tests 12.10s, environment 0ms)
+
+exit_code=1
+
+## GREEN focused MCP command
+cwd: packages/coding-agent
+command: npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/connection.test.ts test/mcp/service-lifecycle.test.ts test/mcp/commands.test.ts test/mcp/register-call.test.ts
+2026-07-06T23:31:07+09:00
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+·x···················x········
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/mcp/commands.test.ts > /mcp command suite > enables, disables, tails logs, and returns helpful unknown-server errors
+AssertionError: expected undefined to be 'Disabled MCP server fx' // Object.is equality
+
+- Expected:
+"Disabled MCP server fx"
+
++ Received:
+undefined
+
+ ❯ test/mcp/commands.test.ts:115:63
+    113|   await command.handler("test missing", createCtx(root, ui));
+    114|
+    115|   expect(notification(ui, "Disabled MCP server fx")?.message).toBe("Di…
+       |                                                               ^
+    116|   expect(notification(ui, "Enabled MCP server fx")?.message).toBe("Ena…
+    117|   expect(notification(ui, '"channel":"stderr"')?.message).toContain("s…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  test/mcp/connection.test.ts > ServerConnection state machine > keeps stale slow-start connect results from overwriting a newer reload generation
+AssertionError: expected [Function] to throw error matching /superseded/i but got 'MCP server stale failed during connec…'
+
+- Expected:
+/superseded/i
+
++ Received:
+"MCP server stale failed during connect: Not connected"
+
+ ❯ test/mcp/connection.test.ts:66:23
+     64|   const pending = connection.connect();
+     65|   await connection.bumpGeneration();
+     66|   await expect(pending).rejects.toThrow(/superseded/i);
+       |                       ^
+     67|
+     68|   expect(connection.state).toBe("idle");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed | 2 passed (4)
+      Tests  2 failed | 28 passed (30)
+   Start at  23:31:08
+   Duration  8.55s (transform 2.32s, setup 52ms, import 4.70s, tests 12.55s, environment 0ms)
+
+exit_code=1
+
+## GREEN focused MCP command rerun
+cwd: packages/coding-agent
+command: npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/connection.test.ts test/mcp/service-lifecycle.test.ts test/mcp/commands.test.ts test/mcp/register-call.test.ts
+2026-07-06T23:32:03+09:00
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+··x···························
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/mcp/connection.test.ts > ServerConnection state machine > keeps stale slow-start connect results from overwriting a newer reload generation
+Error: ENOENT: no such file or directory, open '/var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/senpi-mcp-connection-stale-HsNHEU/spawns.txt'
+ ❯ readCounter test/mcp/connection.test.ts:235:14
+    233|
+    234| async function readCounter(file: string): Promise<number> {
+    235|  const raw = await readFile(file, "utf8");
+       |              ^
+    236|  return Number(raw.trim());
+    237| }
+ ❯ test/mcp/connection.test.ts:70:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 3 passed (4)
+      Tests  1 failed | 29 passed (30)
+   Start at  23:32:03
+   Duration  8.28s (transform 2.28s, setup 49ms, import 4.24s, tests 12.65s, environment 0ms)
+
+exit_code=1
+
+## GREEN focused MCP command rerun 2
+cwd: packages/coding-agent
+command: npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/connection.test.ts test/mcp/service-lifecycle.test.ts test/mcp/commands.test.ts test/mcp/register-call.test.ts
+2026-07-06T23:32:29+09:00
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+······························
+
+ Test Files  4 passed (4)
+      Tests  30 passed (30)
+   Start at  23:32:30
+   Duration  8.10s (transform 2.12s, setup 45ms, import 3.97s, tests 12.56s, environment 0ms)
+
+exit_code=0
+
+## npm run check
+cwd: repo root
+command: npm run check
+2026-07-06T23:32:53+09:00
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1428 files in 872ms. Fixed 1 file.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+packages/coding-agent/test/mcp/commands.test.ts(224,10): error TS2339: Property 'registerTool' does not exist on type 'ExtensionRuntime'.
+exit_code=1
+
+## GREEN focused MCP command after check fix
+cwd: packages/coding-agent
+command: npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/connection.test.ts test/mcp/service-lifecycle.test.ts test/mcp/commands.test.ts test/mcp/register-call.test.ts
+2026-07-06T23:33:54+09:00
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+······························
+
+ Test Files  4 passed (4)
+      Tests  30 passed (30)
+   Start at  23:33:54
+   Duration  8.11s (transform 2.11s, setup 52ms, import 3.98s, tests 12.61s, environment 0ms)
+
+exit_code=0
+
+## npm run check rerun
+cwd: repo root
+command: npm run check
+2026-07-06T23:34:09+09:00
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1428 files in 822ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 33ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	13.200s
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/bridge/attachqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/extui	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/extui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+exit_code=0
+## senpi-qa RPC scenarios A+B
+command: node /tmp/senpi-mcp-w1-rpc-qa.mjs
+2026-07-06T23:37:04+09:00
+senpi-qa Channel 1 — Remote RPC
+  node rpc-drive.mjs --self-test            verify get_state round-trips (no API)
+  node rpc-drive.mjs --state               print live RpcSessionState
+  node rpc-drive.mjs --prompt <msg> ...    drive a real turn (needs a model)
+PASS senpi MCP W1 RPC QA evidence=/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/local-ignore/qa-evidence/20260706-mcp-w1-fix
+exit_code=0
+## cleanup receipt
+2026-07-06T23:38:11+09:00
+remove temp QA script: /tmp/senpi-mcp-w1-rpc-qa.mjs
+temp_script_removed=yes
+debug_journal_exclude_removed=yes
+debug_journal_removed=yes
+fixture processes containing task counters:
+/bin/zsh -lc set -o pipefail\012{\012  echo "## cleanup receipt"\012  date -Iseconds\012  echo "remove temp QA script: /tmp/senpi-mcp-w1-rpc-qa.mjs"\012  rm -f /tmp/senpi-mcp-w1-rpc-qa.mjs\012  test ! -e /tmp/senpi-mcp-w1-rpc-qa.mjs && echo "temp_script_removed=yes"\012  exclude_path=$(git rev-parse --git-path info/exclude)\012  tmp_exclude=$(mktemp)\012  sed '/^\.debug-journal\.md$/d' "$exclude_path" > "$tmp_exclude"\012  mv "$tmp_exclude" "$exclude_path"\012  ! grep -qx '.debug-journal.md' "$exclude_path" && echo "debug_journal_exclude_removed=yes"\012  test ! -e .debug-journal.md && echo "debug_journal_removed=yes"\012  echo "fixture processes containing task counters:"\012  ps -axo command= | rg 'senpi-mcp-connection-(dispose-pending|disable-pending|stale)|wedged-spawns|stdio-server.ts.*mcp-w1-scenario' || true\012  echo "node inspector listeners:"\012  lsof -iTCP:9229 -sTCP:LISTEN -nP 2>/dev/null || true\012  echo "git status short branch:"\012  git status --short --branch\012} 2>&1 | tee local-ignore/qa-evidence/20260706-mcp-w1-fix/cleanup-receipt.txt | tee -a .omo/evidence/task-13-w1-review-fix-senpi-mcp-plugin.log
+/bin/zsh -lc set -o pipefail\012{\012  echo "## cleanup receipt"\012  date -Iseconds\012  echo "remove temp QA script: /tmp/senpi-mcp-w1-rpc-qa.mjs"\012  rm -f /tmp/senpi-mcp-w1-rpc-qa.mjs\012  test ! -e /tmp/senpi-mcp-w1-rpc-qa.mjs && echo "temp_script_removed=yes"\012  exclude_path=$(git rev-parse --git-path info/exclude)\012  tmp_exclude=$(mktemp)\012  sed '/^\.debug-journal\.md$/d' "$exclude_path" > "$tmp_exclude"\012  mv "$tmp_exclude" "$exclude_path"\012  ! grep -qx '.debug-journal.md' "$exclude_path" && echo "debug_journal_exclude_removed=yes"\012  test ! -e .debug-journal.md && echo "debug_journal_removed=yes"\012  echo "fixture processes containing task counters:"\012  ps -axo command= | rg 'senpi-mcp-connection-(dispose-pending|disable-pending|stale)|wedged-spawns|stdio-server.ts.*mcp-w1-scenario' || true\012  echo "node inspector listeners:"\012  lsof -iTCP:9229 -sTCP:LISTEN -nP 2>/dev/null || true\012  echo "git status short branch:"\012  git status --short --branch\012} 2>&1 | tee local-ignore/qa-evidence/20260706-mcp-w1-fix/cleanup-receipt.txt | tee -a .omo/evidence/task-13-w1-review-fix-senpi-mcp-plugin.log
+rg senpi-mcp-connection-(dispose-pending|disable-pending|stale)|wedged-spawns|stdio-server.ts.*mcp-w1-scenario
+node inspector listeners:
+git status short branch:
+## code-yeongyu/senpi-mcp-plugin-w1...origin/code-yeongyu/senpi-mcp-plugin-w1
+ M packages/coding-agent/src/core/extensions/builtin/mcp/commands.ts
+ M packages/coding-agent/src/core/extensions/builtin/mcp/connection.ts
+ M packages/coding-agent/test/mcp/commands.test.ts
+ M packages/coding-agent/test/mcp/connection.test.ts
+?? .omo/evidence/pr-140-w1-mcp-security-code-review.md
+?? .omo/evidence/pr-140-w1-replacement-code-review.md
+?? .omo/evidence/task-10-stop-hook-verification-1.md
+?? .omo/evidence/task-11-stop-hook-verification-1.md
+?? .omo/evidence/task-11-stop-hook-verification-2-cleanup.txt
+?? .omo/evidence/task-11-stop-hook-verification-2-exposure-policy.txt
+?? .omo/evidence/task-11-stop-hook-verification-2.md
+?? .omo/evidence/task-11-stop-hook-verification-2.raw.txt
+?? .omo/evidence/task-11-stop-hook-verification-3-cleanup.txt
+?? .omo/evidence/task-11-stop-hook-verification-3-exposure-policy.txt
+?? .omo/evidence/task-11-stop-hook-verification-3.md
+?? .omo/evidence/task-11-stop-hook-verification-3.raw.txt
+?? .omo/evidence/task-11-stop-hook-verification-4-cleanup.txt
+?? .omo/evidence/task-11-stop-hook-verification-4-exposure-policy.txt
+?? .omo/evidence/task-11-stop-hook-verification-4.md
+?? .omo/evidence/task-11-stop-hook-verification-4.raw.txt
+?? .omo/evidence/task-12-fix-stop-hook-verification-1.md
+?? .omo/evidence/task-12-stop-hook-verification-1.md
+?? .omo/evidence/task-12-stop-hook-verification-2.md
+?? .omo/evidence/task-12-stop-hook-verification-3.md
+?? .omo/evidence/task-12-stop-hook-verification-4.md
+?? .omo/evidence/task-13-stop-hook-verification-1.md
+?? .omo/evidence/task-13-stop-hook-verification-2.md
+?? .omo/evidence/task-2-stop-hook-verification-2.md
+?? .omo/evidence/task-2-stop-hook-verification-3.md
+?? .omo/evidence/task-2-stop-hook-verification.md
+?? .omo/evidence/task-3-stop-hook-verification-2.md
+?? .omo/evidence/task-3-stop-hook-verification-3.md
+?? .omo/evidence/task-3-stop-hook-verification-4.md
+?? .omo/evidence/task-3-stop-hook-verification-5.md
+?? .omo/evidence/task-3-stop-hook-verification-6.md
+?? .omo/evidence/task-3-stop-hook-verification.md
+?? .omo/evidence/task-6-split-stop-hook-verification-1.md
+?? .omo/evidence/task-6-split-stop-hook-verification-2.md
+?? .omo/evidence/task-6-split-stop-hook-verification-3.md
+?? .omo/evidence/task-7-fix-stop-hook-verification-2-rerun.md
+?? .omo/evidence/task-7-fix-stop-hook-verification-2.md
+?? .omo/evidence/task-7-fix-stop-hook-verification-3.md
+?? .omo/evidence/task-7-fix-stop-hook-verification.md
+?? .omo/evidence/task-7-loc-fix-stop-hook-verification-2.md
+?? .omo/evidence/task-7-loc-fix-stop-hook-verification-3.md
+?? .omo/evidence/task-7-loc-fix-stop-hook-verification.md
+?? .omo/evidence/task-7-stop-hook-verification-2.md
+?? .omo/evidence/task-7-stop-hook-verification-3.md
+?? .omo/evidence/task-7-stop-hook-verification-4.md
+?? .omo/evidence/task-7-stop-hook-verification-5.md
+?? .omo/evidence/task-7-stop-hook-verification.md
+?? .omo/evidence/task-8-fix-stop-hook-verification-1.md
+?? .omo/evidence/task-8-fix-stop-hook-verification-2.md
+?? .omo/evidence/task-8-fix-stop-hook-verification-3.md
+?? .omo/evidence/task-8-gate-fix-stop-hook-verification-1.md
+?? .omo/evidence/task-8-gate-fix-stop-hook-verification-2.md
+?? .omo/evidence/task-8-gate-fix-stop-hook-verification-3.md
+?? .omo/evidence/task-8-stop-hook-verification-2.md
+?? .omo/evidence/task-8-stop-hook-verification-3.md
+?? .omo/evidence/task-8-stop-hook-verification.md
+?? .omo/evidence/task-9-stop-hook-verification-2.md
+?? .omo/evidence/task-9-stop-hook-verification.md
+?? .omo/evidence/todo-10-senpi-mcp-plugin-gate-review.md
+?? .omo/evidence/todo-11-senpi-mcp-plugin-gate-review.md
+?? .omo/evidence/todo-11-senpi-mcp-plugin-rereview.md
+?? .omo/evidence/todo-12-senpi-mcp-plugin-gate-review.md
+?? .omo/evidence/todo-12-senpi-mcp-plugin-rereview.md
+?? .omo/evidence/todo-13-senpi-mcp-plugin-gate-review.md
+?? .omo/evidence/todo-13-senpi-mcp-plugin-rereview.md
+?? .omo/evidence/todo-2-senpi-mcp-plugin-gate-review-reconstruction.md
+?? .omo/evidence/todo-3-senpi-mcp-plugin-rereview-gate-review.md
+?? .omo/evidence/todo-4-redaction-fix-rereview-gate-review.md
+?? .omo/evidence/todo-4-senpi-mcp-plugin-final-rereview-gate-review.md
+?? .omo/evidence/todo-4-senpi-mcp-plugin-gate-review.md
+?? .omo/evidence/todo-5-code-quality-slop-review.md
+?? .omo/evidence/todo-5-senpi-mcp-plugin-gate-review.md
+?? .omo/evidence/todo-6-senpi-mcp-plugin-final-rereview-gate-review.md
+?? .omo/evidence/todo-6-senpi-mcp-plugin-gate-review.md
+?? .omo/evidence/todo-6-senpi-mcp-plugin-rereview-gate-review.md
+?? .omo/evidence/todo-7-current-head-code-quality-slop-review.md
+?? .omo/evidence/todo-7-senpi-mcp-plugin-async-guard-fix-gate-review.md
+?? .omo/evidence/todo-7-senpi-mcp-plugin-gate-review.md
+?? .omo/evidence/todo-7-senpi-mcp-plugin-loc-fix-final-gate-review.md
+?? .omo/evidence/todo-8-current-head-code-quality-slop-review.md
+?? .omo/evidence/todo-8-senpi-mcp-plugin-gate-review.md
+?? .omo/evidence/todo-8-senpi-mcp-plugin-rereview.md
+?? .omo/evidence/todo-9-code-quality-slop-review.md
+?? .omo/evidence/todo-9-senpi-mcp-plugin-gate-review.md
+?? .omo/evidence/todo-9-senpi-mcp-plugin-rereview.md
+?? .omo/evidence/w1-mcp-implementation-code-review.md
+?? .omo/evidence/w1-mcp-implementation-gate-review.md
+?? .omo/evidence/w1-qa-review-pr140/
+?? .omo/evidence/wave0-context-fix-executor.md
+?? .omo/evidence/wave0-context-fix-stop-hook-verification-2.md
+?? .omo/evidence/wave0-context-fix-stop-hook-verification-3.md
+?? .omo/evidence/wave0-context-fix-stop-hook-verification.md
+?? .omo/evidence/wave0-debugging-audit.md
+?? .omo/evidence/wave0-debugging-journal.md
+?? .omo/evidence/wave0-evidence-fix-executor.md
+?? .omo/evidence/wave0-evidence-fix-inventory.md
+?? .omo/evidence/wave0-evidence-fix-jsonl-validation.md
+?? .omo/evidence/wave0-final-code-quality-fix-executor.md
+?? .omo/evidence/wave0-final-code-quality-fix-stop-hook-verification-2.md
+?? .omo/evidence/wave0-final-code-quality-fix-stop-hook-verification-3.md
+?? .omo/evidence/wave0-final-code-quality-fix-stop-hook-verification.md
+?? .omo/evidence/wave0-final-hygiene-fix-executor.md
+?? .omo/evidence/wave0-final-hygiene-fix-stop-hook-verification-2.md
+?? .omo/evidence/wave0-final-hygiene-fix-stop-hook-verification-3.md
+?? .omo/evidence/wave0-final-hygiene-fix-stop-hook-verification.md
+?? .omo/evidence/wave0-final-programming-audit-fix-executor.md
+?? .omo/evidence/wave0-final-programming-audit-fix-stop-hook-verification-2.md
+?? .omo/evidence/wave0-final-programming-audit-fix-stop-hook-verification-3.md
+?? .omo/evidence/wave0-final-programming-audit-fix-stop-hook-verification.md
+?? .omo/evidence/wave0-final-test-support-audit-fix-executor.md
+?? .omo/evidence/wave0-final-test-support-audit-fix-stop-hook-verification.md
+?? .omo/evidence/wave0-final-verification-definitive.md
+?? .omo/evidence/wave0-final-verification-final.md
+?? .omo/evidence/wave0-final-verification-post-programming.md
+?? .omo/evidence/wave0-final-verification-rerun.md
+?? .omo/evidence/wave0-final-verification.md
+?? .omo/evidence/wave0-logger-debug-fix-executor.md
+?? .omo/evidence/wave0-logger-debug-fix-stop-hook-verification-2.md
+?? .omo/evidence/wave0-logger-debug-fix-stop-hook-verification.md
+?? .omo/evidence/wave0-mock-loop-loc-fix-executor.md
+?? .omo/evidence/wave0-mock-loop-loc-fix-stop-hook-verification-2.md
+?? .omo/evidence/wave0-mock-loop-loc-fix-stop-hook-verification-3.md
+?? .omo/evidence/wave0-mock-loop-loc-fix-stop-hook-verification.md
+?? .omo/evidence/wave0-mock-loop-mcp-tool-fix-executor.md
+?? .omo/evidence/wave0-mock-loop-mcp-tool-fix-stop-hook-verification-2.md
+?? .omo/evidence/wave0-mock-loop-mcp-tool-fix-stop-hook-verification.md
+?? .omo/evidence/wave0-post-merge-verification.md
+?? .omo/evidence/wave0-review-code-quality-definitive.md
+?? .omo/evidence/wave0-review-code-quality-final.md
+?? .omo/evidence/wave0-review-code-quality-post-programming.md
+?? .omo/evidence/wave0-review-code-quality-rerun.md
+?? .omo/evidence/wave0-review-code-quality.md
+?? .omo/evidence/wave0-review-context-mining.md
+?? .omo/evidence/wave0-review-goal-constraints-definitive.md
+?? .omo/evidence/wave0-review-goal-constraints-final.md
+?? .omo/evidence/wave0-review-goal-constraints-post-programming.md
+?? .omo/evidence/wave0-review-goal-constraints-rerun.md
+?? .omo/evidence/wave0-review-goal-constraints.md
+?? .omo/evidence/wave0-review-qa-evidence-final.md
+?? .omo/evidence/wave0-review-qa-evidence-rerun.md
+?? .omo/evidence/wave0-review-qa-evidence.md
+?? .omo/evidence/wave0-review-security-definitive.md
+?? .omo/evidence/wave0-review-security-final.md
+?? .omo/evidence/wave0-review-security-post-programming.md
+?? .omo/evidence/wave0-review-security-rerun.md
+?? .omo/evidence/wave0-review-security.md
+?? .omo/evidence/wave0-service-lifecycle-fix-executor.md
+?? .omo/evidence/wave0-service-lifecycle-fix-stop-hook-verification-2.md
+?? .omo/evidence/wave0-service-lifecycle-fix-stop-hook-verification.md
+?? .omo/evidence/wave0-wrap-security-fix-executor.md
+?? .omo/evidence/wave0-wrap-security-fix-stop-hook-verification-2.md
+?? .omo/evidence/wave0-wrap-security-fix-stop-hook-verification.md
+
+## filtered orphan/process sweep
+2026-07-06T23:38:41+09:00
+command: ps -axo pid=,command= | rg 'senpi-mcp-connection-(dispose-pending|disable-pending|stale)|wedged-spawns|stdio-server.ts.*mcp-w1-scenario' | rg -v 'rg |ps -axo|filtered orphan' || true
+orphan_fixture_processes=none
+command: test ! -e /tmp/senpi-mcp-w1-rpc-qa.mjs
+temp_script_absent=yes
+command: test ! -e .debug-journal.md
+debug_journal_absent=yes
+
+## Evidence summary
+completed_at: 2026-07-06T23:39:02+09:00
+changed_files:
+- packages/coding-agent/src/core/extensions/builtin/mcp/connection.ts
+- packages/coding-agent/src/core/extensions/builtin/mcp/commands.ts
+- packages/coding-agent/test/mcp/connection.test.ts
+- packages/coding-agent/test/mcp/commands.test.ts
+- .omo/evidence/task-13-w1-review-fix-senpi-mcp-plugin.log
+red_evidence: this log, sections 'RED command final before production fix' exit_code=1; failures were stale MCP active tool after /mcp disable and pending connect resolving only at timeout.
+green_evidence: this log, section 'GREEN focused MCP command after check fix' exit_code=0 with 4 test files and 30 tests passed.
+check_evidence: this log, section 'npm run check rerun' exit_code=0.
+manual_qa_artifacts:
+- local-ignore/qa-evidence/20260706-mcp-w1-fix/summary.json
+- local-ignore/qa-evidence/20260706-mcp-w1-fix/rpc-scenario-a.json
+- local-ignore/qa-evidence/20260706-mcp-w1-fix/rpc-scenario-a-requests.json
+- local-ignore/qa-evidence/20260706-mcp-w1-fix/rpc-scenario-a-events.jsonl
+- local-ignore/qa-evidence/20260706-mcp-w1-fix/rpc-scenario-b.json
+- local-ignore/qa-evidence/20260706-mcp-w1-fix/rpc-scenario-b-events.jsonl
+- local-ignore/qa-evidence/20260706-mcp-w1-fix/rpc-qa-output.txt
+- local-ignore/qa-evidence/20260706-mcp-w1-fix/cleanup-receipt.txt
+manual_qa_observables: scenario A initial provider payload included mcp_fx_tool_1, disabled payload excluded mcp_fx_tool_1, re-enabled payload included mcp_fx_tool_1 and mcp_fx_tool_2, and model saw fixture tool_2 result; scenario B pending dispose elapsed 126ms, state disabled, no fixture process after dispose.
+auth_isolation: summary.json records /Users/yeongyu/.senpi/agent/auth.json unchanged=true.
+cleanup_receipt: local-ignore/qa-evidence/20260706-mcp-w1-fix/cleanup-receipt.txt records temp script removed, debug journal removed, exclude entry removed, no orphan fixture process, no inspector listener.
+adversarial_classes:
+- stale_state: covered by disable provider-payload removal and pending connection disposal tests/QA.
+- dirty_worktree: initial and cleanup git status recorded; many unrelated untracked .omo/evidence files preserved.
+- hung_or_long_commands: pending connect uses bounded fixture waits and dispose elapsed assertion; tests and QA use bounded timeouts.
+- misleading_success_output: provider payloads, fixture result echo, child process sweep, and auth hash are asserted in saved artifacts.
+- repeated_interruptions/cancel_resume: dispose/disable during pending connect covered by regressions and RPC QA extension.
+- malformed_input/prompt_injection/flaky_tests: N/A for user-controlled prompt content; deterministic fake model, temp sandbox, fixture counters, and bounded polling used.
+residual_risks: non-blocking review items intentionally not addressed: toolPrefix, catch-and-swallow cleanup, source-inspection test, security WATCH items.

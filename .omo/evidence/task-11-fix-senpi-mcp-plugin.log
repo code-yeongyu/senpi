@@ -1,0 +1,64 @@
+# TODO 11 gate blocker fix log
+
+timestamp_utc: 2026-07-06T12:33:00Z
+worktree: `/Users/yeongyu/local-workspaces/senpi-wt/senpi-mcp-plugin`
+base_head: `57827e3fe95afa402c85a8e65c2957d90118e7a2`
+scope: TODO 11 gate blockers only
+
+## Fix summary
+
+- Fixed stale active MCP tools when policy filtering registers zero tools.
+- Added a regression that starts with `["bash", "mcp_fx_tool_1"]`, applies `includeTools: ["missing_*"]`, and asserts active tools become `["bash"]` with `setActiveTools([["bash"]])`.
+- Extracted session direct-registration aggregation to `packages/coding-agent/src/core/extensions/builtin/mcp/expose/session.ts`.
+- Extracted exposure-status calculation to `packages/coding-agent/src/core/extensions/builtin/mcp/expose/status.ts`.
+- Reduced `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts` to 242 pure LOC.
+
+## Evidence
+
+- RED stale-state scenario: `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/exposure-policy.test.ts`
+  - Observable: failed assertion showed active tools remained `["bash","mcp_fx_tool_1"]`.
+  - Artifact: `local-ignore/qa-evidence/20260706-mcp-w1-task11/red-stale-active-cleanup.txt`.
+- GREEN stale-state scenario: same focused test command after fix.
+  - Observable: 1 file passed, 5 tests passed, exit 0.
+  - Artifact: `local-ignore/qa-evidence/20260706-mcp-w1-task11/green-exposure-policy.txt`.
+- MCP regression batch: `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/register-call.test.ts test/mcp/commands.test.ts test/mcp/service-lifecycle.test.ts`.
+  - Observable: 3 files passed, 21 tests passed, exit 0.
+  - Artifact: `local-ignore/qa-evidence/20260706-mcp-w1-task11/mcp-regression-batch.txt`.
+- Root check: `npm run check`.
+  - Observable: biome, pinned deps, imports, shrinkwrap, install lock, `tsgo --noEmit`, browser smoke, web UI check, and neo build/vet/test passed; exit 0.
+  - Artifact: `local-ignore/qa-evidence/20260706-mcp-w1-task11/npm-run-check-fix.txt`.
+- Manual QA driver: `npx tsx local-ignore/qa-evidence/20260706-mcp-w1-task11/manual-exposure-status-driver.ts`.
+  - Observable: include-filter status reported `tools=2`; zero-match status reported `tools=0` and hint; real auth unchanged; exit 0.
+  - Artifact: `local-ignore/qa-evidence/20260706-mcp-w1-task11/manual-exposure-status-fix.txt`.
+- senpi QA isolation self-check: `node .agents/skills/senpi-qa/scripts/lib/common.mjs --self-check`.
+  - Observable: 9/9 passed, real auth unchanged, exit 0.
+  - Artifact: `local-ignore/qa-evidence/20260706-mcp-w1-task11/senpi-qa-common-self-check-fix.txt`.
+- Pure LOC scan: shell `awk` pure-line scan over touched MCP files.
+  - Observable: `service.ts 242`, `expose/session.ts 31`, `expose/status.ts 34`; all touched files under 250 pure LOC.
+  - Artifact: `local-ignore/qa-evidence/20260706-mcp-w1-task11/pure-loc-after-fix.txt`.
+- Static/slop scans: `rg` over touched files for forbidden TS patterns, hardcoded paths, and scope drift.
+  - Observable: no forbidden TS pattern matches, no hardcoded path matches, only pre-existing `pending-W4` test assertions in scope scan.
+  - Artifact: `local-ignore/qa-evidence/20260706-mcp-w1-task11/static-scans-fix.txt`.
+- Cleanup sweep: targeted `ps` scan plus `tmux list-sessions`.
+  - Observable: no fixture processes; one pre-existing `ulw-dr` tmux session.
+  - Artifact: `local-ignore/qa-evidence/20260706-mcp-w1-task11/cleanup-receipt-fix.txt`.
+
+## Dirty worktree handling
+
+- Preserved unrelated untracked `.omo/evidence/*` files.
+- Did not edit `.omo/plans/senpi-mcp-plugin.md` or `.omo/start-work/ledger.jsonl`.
+- Exact staged files will be recorded before commit in:
+  - `local-ignore/qa-evidence/20260706-mcp-w1-task11/staged-stat-fix.txt`
+  - `local-ignore/qa-evidence/20260706-mcp-w1-task11/staged-diff-fix.patch`
+
+## Adversarial classes
+
+- stale_state: fixed and proven by RED/GREEN focused regression artifacts.
+- misleading_success_output: raw RED, GREEN, regression, check, manual QA, LOC, scan, and cleanup artifacts recorded.
+- dirty_worktree: unrelated untracked files preserved; staging will use explicit paths only.
+- malformed_input: zero-match `includeTools: ["missing_*"]` covered by regression and manual status driver.
+- hung_or_long_commands: all commands completed with bounded test/driver invocations; cleanup scan found no fixture processes.
+- flaky_tests: focused exposure-policy test will be rerun after commit.
+- prompt_injection: no new execution path for tool names, descriptions, or globs; touched code treats them as data.
+- cancel_resume: N/A; no cancellation/resume path changed.
+- repeated_interruptions: N/A; no interruption occurred.

@@ -1,3 +1,6 @@
+import { appendFileSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import type {
 	CallToolResult,
@@ -16,6 +19,8 @@ import {
 	ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { FixtureOptions } from "./options.ts";
+
+const fixturesDir = dirname(fileURLToPath(import.meta.url));
 
 interface JsonSchemaObject {
 	type: "object";
@@ -47,8 +52,12 @@ export function createFixtureServer(options: FixtureOptions): Server {
 	let calls = 0;
 
 	server.setRequestHandler(ListToolsRequestSchema, (): ListToolsResult => ({ tools }));
-	server.setRequestHandler(CallToolRequestSchema, async (request): Promise<CallToolResult> => {
+	server.setRequestHandler(CallToolRequestSchema, async (request, extra): Promise<CallToolResult> => {
 		calls++;
+		if (options.slowToolCallMs > 0) {
+			await sendProgress(extra, request.params.name);
+			await delayToolCall(options, request.params.name, extra.signal);
+		}
 		const result = await callFixtureTool(request.params.name, request.params.arguments ?? {}, options);
 		if (options.emitListChanged) {
 			await server.sendToolListChanged();
@@ -117,6 +126,13 @@ function buildTools(options: FixtureOptions): FixtureTool[] {
 			inputSchema: emptyInputSchema(),
 		});
 	}
+	if (options.hugeSchemaTool) {
+		tools.push({
+			name: "huge_schema_tool",
+			description: "Carries the nasty JSON Schema corpus fixture",
+			inputSchema: readHugeSchema(),
+		});
+	}
 	return tools;
 }
 
@@ -139,6 +155,38 @@ function richInputSchema(): JsonSchemaObject {
 
 function emptyInputSchema(): JsonSchemaObject {
 	return { type: "object", properties: {}, required: [] };
+}
+
+function readHugeSchema(): JsonSchemaObject {
+	return JSON.parse(readFileSync(join(fixturesDir, "schema", "nasty-input.schema.json"), "utf8")) as JsonSchemaObject;
+}
+
+async function sendProgress(
+	extra: Parameters<Parameters<Server["setRequestHandler"]>[1]>[1],
+	toolName: string,
+): Promise<void> {
+	const progressToken = extra._meta?.progressToken;
+	if (progressToken === undefined) return;
+	await extra.sendNotification({
+		method: "notifications/progress",
+		params: { progress: 1, progressToken, total: 2, message: `running ${toolName}` },
+	});
+}
+
+function delayToolCall(options: FixtureOptions, toolName: string, signal: AbortSignal): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(resolve, options.slowToolCallMs);
+		const onAbort = (): void => {
+			clearTimeout(timer);
+			if (options.cancelLogFile !== undefined) appendFileSync(options.cancelLogFile, `cancelled ${toolName}\n`);
+			reject(new Error(`cancelled ${toolName}`));
+		};
+		if (signal.aborted) {
+			onAbort();
+			return;
+		}
+		signal.addEventListener("abort", onAbort, { once: true });
+	});
 }
 
 async function callFixtureTool(

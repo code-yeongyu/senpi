@@ -1,0 +1,99 @@
+# TODO 13 gate blocker fix evidence
+
+Date: 2026-07-06
+Worktree: `/Users/yeongyu/local-workspaces/senpi-wt/senpi-mcp-plugin`
+Branch: `code-yeongyu/senpi-mcp-plugin-w1`
+
+## Scope
+
+Fixed only the TODO 13 gate blockers from `.omo/evidence/todo-13-senpi-mcp-plugin-gate-review.md`:
+
+1. `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts` catch-without-narrowing.
+2. Missing TODO 13 code-quality/slop report.
+
+No W2/TODO14 behavior, plan file, or ledger file was modified.
+
+## Source fix
+
+Changed `before_agent_start` error handling in `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`:
+
+- Non-`Error` throwables are rethrown.
+- `Error` instances continue through `reportMcpAsyncError("mcp.before_agent_start", error, sink)` and preserve the existing fallback return.
+
+Binary observable:
+
+- `bun run /Users/yeongyu/.agents/skills/programming/scripts/typescript/check-no-excuse-rules.ts packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`
+- Result: `No violations in 1 file(s).`, `EXIT_CODE: 0`
+- Artifact: `local-ignore/qa-evidence/20260706-mcp-w1/task13-fix-no-excuse-index.txt`
+
+Pure LOC:
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: 50 pure LOC, under the 250 limit.
+
+LSP:
+
+- `mcp__lsp.diagnostics` on `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: no diagnostics found.
+
+## Required verification
+
+Focused instructions test:
+
+- Invocation: `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/instructions.test.ts`
+- Binary observable: 1 file passed, 5 tests passed, `EXIT_CODE: 0`
+- Artifact: `local-ignore/qa-evidence/20260706-mcp-w1/task13-fix-instructions-test.txt`
+
+Relevant MCP regression tests:
+
+- Invocation: `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/register-call.test.ts test/mcp/commands.test.ts test/mcp/service-lifecycle.test.ts test/mcp/exposure-policy.test.ts`
+- Binary observable: 4 files passed, 26 tests passed, `EXIT_CODE: 0`
+- Artifact: `local-ignore/qa-evidence/20260706-mcp-w1/task13-fix-relevant-mcp-tests.txt`
+
+Repo check:
+
+- Invocation: `npm run check`
+- Binary observable: completed with `EXIT_CODE: 0`
+- Artifact: `local-ignore/qa-evidence/20260706-mcp-w1/task13-fix-npm-run-check.txt`
+
+Real MCP W1 surface:
+
+- Invocation: `node local-ignore/qa-evidence/20260706-mcp-w1/task13-w1-driver.mjs`
+- Binary observable: driver `EXIT_CODE: 0`; `task13-w1-results.json` has steps 1-9 all `pass: true`
+- Artifacts:
+  - `local-ignore/qa-evidence/20260706-mcp-w1/task13-fix-w1-driver-rerun.txt`
+  - `local-ignore/qa-evidence/20260706-mcp-w1/task13-w1-results.json`
+  - `local-ignore/qa-evidence/20260706-mcp-w1/step01-zero-config.txt`
+  - `local-ignore/qa-evidence/20260706-mcp-w1/step03-everything-echo.txt`
+  - `local-ignore/qa-evidence/20260706-mcp-w1/step04-everything-progress.txt`
+  - `local-ignore/qa-evidence/20260706-mcp-w1/step05-fixture-iserror.txt`
+  - `local-ignore/qa-evidence/20260706-mcp-w1/step09-instructions-payload.txt`
+
+Senpi QA helper probe:
+
+- Invocation: `node .agents/skills/senpi-qa/scripts/mock-loop.mjs --with-mcp-tool mcp_fx_tool_1 --tool-args '{"value":"ok"}'`
+- Binary observable: helper exited 1 with `callLog=no modelSawFixtureResult=false`; real auth unchanged.
+- Artifact: `local-ignore/qa-evidence/20260706-mcp-w1/task13-fix-senpi-qa-mock-loop-mcp-tool.txt`
+- Conclusion: preserved as a non-gating helper limitation matching the prior gate review. The built-in MCP path is covered by the W1 driver rerun above.
+
+## Existing RED/GREEN evidence
+
+Raw RED/GREEN artifacts from TODO 13 were verified in the existing W1 evidence index:
+
+- RED: `local-ignore/qa-evidence/20260706-mcp-w1/task13-red-instructions.txt`
+- GREEN instructions: `local-ignore/qa-evidence/20260706-mcp-w1/task13-green-instructions-rerun.txt`
+- GREEN relevant MCP tests: `local-ignore/qa-evidence/20260706-mcp-w1/task13-green-relevant-mcp-tests-rerun.txt`
+- W1 index: `local-ignore/qa-evidence/20260706-mcp-w1/INDEX.md`
+
+This fix reran the current focused GREEN paths and `npm run check` under `task13-fix-*` artifacts.
+
+## Cleanup
+
+Cleanup scans:
+
+- `local-ignore/qa-evidence/20260706-mcp-w1/task13-fix-cleanup-scan.txt`
+  - Broad task-owned scan returned transient PIDs `39060` and `39078`.
+- `local-ignore/qa-evidence/20260706-mcp-w1/task13-fix-cleanup-ps.txt`
+  - `ps -p 39060,39078 -o pid,ppid,command` returned no live processes.
+- `local-ignore/qa-evidence/20260706-mcp-w1/task13-fix-cleanup-receipt.txt`
+  - Narrow server/fixture scan `pgrep -af '[@]modelcontextprotocol/server-everything|fixtures/[s]tdio-server.ts' || true` returned no matches and `EXIT_CODE: 0`.
+
+Cleanup conclusion: no live task-owned `server-everything` or MCP fixture stdio-server processes remained.
