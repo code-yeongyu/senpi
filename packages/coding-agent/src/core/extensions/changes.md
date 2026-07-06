@@ -1,5 +1,27 @@
 # Core Extensions Changes
 
+## 2026-07-06 - MCP builtin extension skeleton
+
+### What changed
+
+- Added builtin extension id `mcp` at the end of the builtin registration list, with a no-op lifecycle skeleton and
+  official MCP SDK wrap point.
+
+### Why
+
+- MCP support needs to ship as a builtin extension so future server lifecycle, tool exposure, and provider-payload
+  handling stay out of the high-conflict core session runtime.
+
+### Why extension system couldn't handle this alone
+
+- This is the builtin extension registration itself. The skeleton uses existing extension lifecycle hooks and does not
+  add new public extension API surface.
+
+### Expected merge conflict zones
+
+- LOW: `builtin/index.ts` registration order near the final builtin entries.
+- LOW: `builtin/mcp/` as later MCP implementation phases fill in the skeleton.
+
 ## 2026-07-02 - Extension entry renderer sync
 
 ### What changed

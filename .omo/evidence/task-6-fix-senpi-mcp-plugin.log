@@ -1,0 +1,158 @@
+# Task 6 Fix Evidence
+
+## Initial state
+Worktree: /Users/yeongyu/local-workspaces/senpi-wt/senpi-mcp-plugin
+Branch: code-yeongyu/senpi-mcp-plugin
+
+## RED focused test
+Command: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/wrap.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+ ❯ test/mcp/wrap.test.ts (9 tests | 1 failed) 550ms
+     × records wrapped error messages through the production MCP logger 7ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/mcp/wrap.test.ts > mcp async wrappers > records wrapped error messages through the production MCP logger
+AssertionError: expected '{"timestamp":"2026-07-06T03:36:39.052…' to contain 'prod boom'
+
+Expected: "prod boom"
+Received: "{"timestamp":"2026-07-06T03:36:39.052Z","server":"prod-probe","level":"error","severity":3,"channel":"server","message":"prod.scope","data":{}}"
+
+ ❯ test/mcp/wrap.test.ts:127:20
+    125|   const fileText = await readFile(logger.filePath, "utf8");
+    126|   expect(ringText).toContain("prod.scope");
+    127|   expect(ringText).toContain("prod boom");
+       |                    ^
+    128|   expect(fileText).toContain("prod.scope");
+    129|   expect(fileText).toContain("prod boom");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 8 passed (9)
+   Start at  12:36:38
+   Duration  787ms (transform 44ms, setup 14ms, import 96ms, tests 550ms, environment 0ms)
+
+
+## RED focused test rerun with pipefail
+Command: cd packages/coding-agent && set -o pipefail; npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/wrap.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+ ❯ test/mcp/wrap.test.ts (9 tests | 1 failed) 503ms
+     × records wrapped error messages through the production MCP logger 7ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/mcp/wrap.test.ts > mcp async wrappers > records wrapped error messages through the production MCP logger
+AssertionError: expected '{"timestamp":"2026-07-06T03:36:52.959…' to contain 'prod boom'
+
+Expected: "prod boom"
+Received: "{"timestamp":"2026-07-06T03:36:52.959Z","server":"prod-probe","level":"error","severity":3,"channel":"server","message":"prod.scope","data":{}}"
+
+ ❯ test/mcp/wrap.test.ts:127:20
+    125|   const fileText = await readFile(logger.filePath, "utf8");
+    126|   expect(ringText).toContain("prod.scope");
+    127|   expect(ringText).toContain("prod boom");
+       |                    ^
+    128|   expect(fileText).toContain("prod.scope");
+    129|   expect(fileText).toContain("prod boom");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 8 passed (9)
+   Start at  12:36:52
+   Duration  701ms (transform 39ms, setup 12ms, import 87ms, tests 503ms, environment 0ms)
+
+
+## GREEN focused test
+Command: cd packages/coding-agent && set -o pipefail; npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/wrap.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  12:37:37
+   Duration  667ms (transform 35ms, setup 12ms, import 76ms, tests 489ms, environment 0ms)
+
+
+## Manual QA production logger safeTimer probe
+Command: node node_modules/tsx/dist/cli.mjs /tmp/todo6-prod-logger-probe.mjs
+{"ok":true,"uncaught":null,"ring":["{\"timestamp\":\"2026-07-06T03:38:11.375Z\",\"server\":\"prod-probe\",\"level\":\"error\",\"severity\":3,\"channel\":\"server\",\"message\":\"prod.scope\",\"data\":{\"name\":\"Error\",\"message\":\"prod boom\",\"stack\":\"Error: prod boom\\n    at safeTimer.logger.logger (file:///private/tmp/todo6-prod-logger-probe.mjs:19:9)\\n    at <anonymous> (/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts:27:10)\\n    at Timeout._onTimeout (/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts:42:8)\\n    at listOnTimeout (node:internal/timers:605:17)\\n    at process.processTimers (node:internal/timers:541:7)\"}}"],"fileText":"{\"timestamp\":\"2026-07-06T03:38:11.375Z\",\"server\":\"prod-probe\",\"level\":\"error\",\"severity\":3,\"channel\":\"server\",\"message\":\"prod.scope\",\"data\":{\"name\":\"Error\",\"message\":\"prod boom\",\"stack\":\"Error: prod boom\\n    at safeTimer.logger.logger (file:///private/tmp/todo6-prod-logger-probe.mjs:19:9)\\n    at <anonymous> (/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts:27:10)\\n    at Timeout._onTimeout (/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts:42:8)\\n    at listOnTimeout (node:internal/timers:605:17)\\n    at process.processTimers (node:internal/timers:541:7)\"}}\n"}
+
+## senpi-qa mock-loop
+Command: node .agents/skills/senpi-qa/scripts/mock-loop.mjs --self-test
+[PASS] openai-completions: baseUrl override round-trips through the real loop — code=0 marker=true path=/v1/chat/completions auth=true
+[PASS] anthropic-messages: baseUrl override round-trips through the real loop — code=0 marker=true path=/v1/messages auth=true
+[PASS] openai-responses: baseUrl override round-trips through the real loop — code=0 marker=true path=/v1/responses auth=true
+[PASS] zero real provider calls (only localhost fake hit) — all baseUrls point at 127.0.0.1
+[PASS] real auth unchanged — /Users/yeongyu/.senpi/agent/auth.json
+
+mock-loop.mjs --self-test: 5/5 passed
+
+## npm run check
+Command: npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1309 files in 739ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 44ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui	[no test files]
+check:neo: packages/neo build+vet+test passed
+
+## LSP diagnostics
+Command: mcp__lsp.diagnostics on changed files
+wrap.test.ts: No diagnostics found
+wrap.ts: LSP server reported Node type-resolution diagnostics on pre-existing node:events/NodeJS timer lines; npm run check/tsgo passed. Diagnostics were not on the changed logger serialization lines.
+
+## Cleanup receipts
+Command: test temp probe removed and scan for leftover probe/mock/test commands
+temp probe removed
+no leftover matching processes

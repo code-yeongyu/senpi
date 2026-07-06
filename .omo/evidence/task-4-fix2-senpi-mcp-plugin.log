@@ -1,0 +1,63 @@
+Task: Fix second rejected todo 4 BigInt-sensitive-key logger bug.
+
+Scenario: Focused RED regression for BigInt and cyclic object nested below a sensitive auth key.
+Invocation: `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/log-redaction.test.ts`
+Observable: 1 failed test; thrown error was `TypeError: Do not know how to serialize a BigInt`.
+Artifact: `local-ignore/qa-evidence/20260706-mcp-log-task4-fix2/red-focused.log`
+
+Scenario: Minimal production fix at the sensitive-key serialization seam.
+Invocation: edit `packages/coding-agent/src/core/extensions/builtin/mcp/log.ts`.
+Observable: `stringifySecretValue()` now serializes BigInt as strings and cyclic object references as `[Circular]` before hashing/redaction.
+Artifact: `packages/coding-agent/src/core/extensions/builtin/mcp/log.ts`
+
+Scenario: Focused GREEN regression.
+Invocation: `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/log-redaction.test.ts`
+Observable: 1 test file passed; 8 tests passed.
+Artifact: `local-ignore/qa-evidence/20260706-mcp-log-task4-fix2/green-focused.log`
+
+Scenario: Repeat focused GREEN run for flaky-test/misleading-success guard.
+Invocation: `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/log-redaction.test.ts`
+Observable: 1 test file passed; 8 tests passed.
+Artifact: `local-ignore/qa-evidence/20260706-mcp-log-task4-fix2/green-focused-repeat.log`
+
+Scenario: Manual MCP logger probe for sensitive-key BigInt and Basic Authorization.
+Invocation: `npx tsx local-ignore/qa-evidence/20260706-mcp-log-task4-fix2/manual-qa.mjs`
+Observable: logger call completed without throwing; Basic Authorization redacted; sensitive `auth` object containing BigInt redacted; raw probe secret absent from captured sinks.
+Artifacts:
+- `local-ignore/qa-evidence/20260706-mcp-log-task4-fix2/manual-qa-run.log`
+- `local-ignore/qa-evidence/20260706-mcp-log-task4-fix2/manual-qa.txt`
+- `local-ignore/qa-evidence/20260706-mcp-log-task4-fix2/combined-log.txt`
+- `local-ignore/qa-evidence/20260706-mcp-log-task4-fix2/grep-raw-<redacted:fixture-secret>.matches` (0 bytes)
+
+Scenario: Mandatory senpi-qa real CLI mock loop.
+Invocation: `node .agents/skills/senpi-qa/scripts/mock-loop.mjs --self-test`
+Observable: 5/5 passed; openai-completions, anthropic-messages, and openai-responses baseUrl overrides round-tripped through the real CLI loop; zero real provider calls; real auth unchanged.
+Artifact: `local-ignore/qa-evidence/20260706-mcp-log-task4-fix2/senpi-qa-mock-loop.log`
+
+Scenario: Project check.
+Invocation: `npm run check`
+Observable: biome, pinned deps, TS imports, shrinkwrap, install lock, tsgo, browser/web UI checks, and neo build/vet/test passed.
+Artifact: `local-ignore/qa-evidence/20260706-mcp-log-task4-fix2/npm-run-check.log`
+
+Scenario: Post-fix programming/remove-ai-slops/overfit review.
+Invocation: manual review against loaded `programming`, TypeScript, logging, code-smells, and `remove-ai-slops` instructions.
+Observable: PASS with explicit coverage; no escape hatches, no raw secret leak, no oversized file defect, no overfit test shape.
+Artifact: `.omo/evidence/todo-4-postfix-code-quality-slop-review.md`
+
+Cleanup:
+- Temporary runtime log directory from manual QA was removed by the script.
+- No background processes were started.
+- Evidence scripts/artifacts are retained under `local-ignore/qa-evidence/20260706-mcp-log-task4-fix2/`.
+
+Adversarial results:
+- sensitive_key_bigint_data: PASS.
+- cyclic_sensitive_object: PASS.
+- basic_authorization_redaction: PASS.
+- raw_secret_grep: PASS, captured logger sinks contain no raw probe secret.
+- misleading_success_output: PASS, RED and GREEN artifacts both captured.
+- dirty/stale state: PASS, unrelated pre-existing untracked evidence files were not staged.
+- flaky tests: PASS, focused suite passed twice after fix.
+- irrelevant classes: N/A, no provider/network/real-token path was touched.
+
+Risks:
+- `log.ts` remains in the 200-250 pure LOC warning band; future redaction/logger growth should consider extracting serialization helpers.

@@ -1,0 +1,63 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"additionalProperties": false,
+	"properties": {
+		"mode": {
+			"type": "string",
+			"enum": ["fast", "safe"]
+		},
+		"target": {
+			"oneOf": [
+				{
+					"type": "string",
+					"format": "uri"
+				},
+				{
+					"type": "object",
+					"required": ["id"],
+					"properties": {
+						"id": {
+							"type": "string",
+							"minLength": 3,
+							"maxLength": 40
+						}
+					}
+				}
+			]
+		},
+		"count": {
+			"type": "integer",
+			"minimum": 1,
+			"maximum": 10
+		},
+		"tags": {
+			"anyOf": [
+				{
+					"type": "array",
+					"items": {
+						"type": ["string", "null"]
+					}
+				},
+				{
+					"const": "all"
+				}
+			]
+		},
+		"refValue": {
+			"$ref": "#/$defs/refValue"
+		}
+	},
+	"required": ["mode", "target"],
+	"$defs": {
+		"refValue": {
+			"type": "object",
+			"properties": {
+				"enabled": {
+					"type": "boolean"
+				}
+			},
+			"required": ["enabled"]
+		}
+	}
+}

@@ -1,0 +1,67 @@
+{
+	"type": "object",
+	"properties": {
+		"mode": {
+			"type": "string",
+			"enum": ["fast", "safe"]
+		},
+		"target": {
+			"oneOf": [
+				{
+					"type": "string",
+					"format": "uri"
+				},
+				{
+					"type": "object",
+					"required": ["id"],
+					"properties": {
+						"id": {
+							"type": "string",
+							"minLength": 3,
+							"maxLength": 40
+						}
+					}
+				}
+			]
+		},
+		"count": {
+			"type": "integer",
+			"minimum": 1,
+			"maximum": 10
+		},
+		"tags": {
+			"anyOf": [
+				{
+					"type": "array",
+					"items": {
+						"type": ["string", "null"]
+					}
+				},
+				{
+					"const": "all"
+				}
+			]
+		},
+		"refValue": {
+			"type": "object",
+			"properties": {
+				"enabled": {
+					"type": "boolean"
+				}
+			},
+			"required": ["enabled"]
+		}
+	},
+	"required": ["mode", "target"],
+	"$defs": {
+		"refValue": {
+			"type": "object",
+			"properties": {
+				"enabled": {
+					"type": "boolean"
+				}
+			},
+			"required": ["enabled"]
+		}
+	}
+}

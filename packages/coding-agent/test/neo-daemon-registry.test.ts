@@ -16,6 +16,7 @@ import {
 	neoDaemonCwdKey,
 	neoDaemonRegistryPath,
 	readNeoDaemonRecord,
+	reassertNeoDaemonRecord,
 	removeNeoDaemonRecord,
 	writeNeoDaemonRecord,
 } from "../src/modes/rpc/neo-daemon-registry.ts";
@@ -96,5 +97,35 @@ describe("neo daemon registry", () => {
 		removeNeoDaemonRecord(agentDir, cwd);
 		removeNeoDaemonRecord(agentDir, cwd); // no throw
 		expect(readNeoDaemonRecord(agentDir, cwd)).toBeUndefined();
+	});
+
+	it("reassertNeoDaemonRecord rewrites a missing record and reports it (self-heal)", () => {
+		const record = { version: 1, socket: "/tmp/heal.sock", pid: process.pid, token: "heal-tok" };
+		// Missing → written.
+		expect(reassertNeoDaemonRecord(agentDir, cwd, record)).toBe(true);
+		expect(readNeoDaemonRecord(agentDir, cwd)).toEqual(record);
+	});
+
+	it("reassertNeoDaemonRecord rewrites a corrupt/mismatched record", () => {
+		const record = { version: 1, socket: "/tmp/heal.sock", pid: process.pid, token: "heal-tok" };
+		// Corrupt JSON on disk → rewritten.
+		mkdirSync(join(agentDir, "neo-daemon"), { recursive: true });
+		writeFileSync(neoDaemonRegistryPath(agentDir, cwd), "{ corrupt");
+		expect(reassertNeoDaemonRecord(agentDir, cwd, record)).toBe(true);
+		expect(readNeoDaemonRecord(agentDir, cwd)).toEqual(record);
+		// A record for a DIFFERENT socket/token/pid → rewritten to this daemon's.
+		writeNeoDaemonRecord(agentDir, cwd, { version: 1, socket: "/tmp/other.sock", pid: 999999, token: "other" });
+		expect(reassertNeoDaemonRecord(agentDir, cwd, record)).toBe(true);
+		expect(readNeoDaemonRecord(agentDir, cwd)).toEqual(record);
+	});
+
+	it("reassertNeoDaemonRecord is a no-op when the record already matches (never fights a valid record)", () => {
+		const record = { version: 1, socket: "/tmp/heal.sock", pid: process.pid, token: "heal-tok" };
+		writeNeoDaemonRecord(agentDir, cwd, record);
+		const path = neoDaemonRegistryPath(agentDir, cwd);
+		const before = statSync(path).mtimeMs;
+		// Matching record → no write, returns false.
+		expect(reassertNeoDaemonRecord(agentDir, cwd, record)).toBe(false);
+		expect(statSync(path).mtimeMs).toBe(before);
 	});
 });

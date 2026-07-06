@@ -1,0 +1,44 @@
+Task: todo 6 post-fix slop blocker, split MCP wrapper tests under 250 pure LOC.
+Date: 2026-07-06
+Worktree: /Users/yeongyu/local-workspaces/senpi-wt/senpi-mcp-plugin
+
+Change:
+- Split `packages/coding-agent/test/mcp/wrap.test.ts`.
+- Added `packages/coding-agent/test/mcp/wrap-async.test.ts`.
+- No runtime source files changed.
+
+No RED:
+- Not applicable for this post-fix because the change is test-only refactoring with unchanged assertions.
+- Existing production logger regression remains present and passing in `wrap-async.test.ts`.
+
+LOC evidence:
+- Command: `wc -l packages/coding-agent/test/mcp/wrap.test.ts packages/coding-agent/test/mcp/wrap-async.test.ts`
+- Command: pure LOC count excluding blank and `//` comment-only lines.
+- Result: `wrap.test.ts` 108 total / 97 pure LOC.
+- Result: `wrap-async.test.ts` 194 total / 172 pure LOC.
+- Artifact: `local-ignore/qa-evidence/20260706-mcp-task-6-split/loc.txt`
+
+Focused tests:
+- Command: `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/wrap.test.ts test/mcp/wrap-async.test.ts`
+- Result: 2 test files passed, 9 tests passed.
+- Artifact: `local-ignore/qa-evidence/20260706-mcp-task-6-split/focused-wrap-tests.txt`
+
+Production logger regression:
+- Command: `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/wrap-async.test.ts -t "records wrapped error messages through the production MCP logger" --reporter verbose`
+- Result: selected test passed; it asserts `prod.scope` and `prod boom` in ring buffer and file output.
+- Artifact: `local-ignore/qa-evidence/20260706-mcp-task-6-split/prod-logger-focused-test.txt`
+
+Manual QA gate:
+- Command: `node .agents/skills/senpi-qa/scripts/mock-loop.mjs --with-tool --evidence mcp-task-6-split`
+- Result: 4/4 passed; CLI completed multi-step loop, two model turns served, final assistant text returned, real auth unchanged.
+- Artifact: `local-ignore/qa-evidence/20260706-mcp-task-6-split/mock-loop-with-tool.txt`
+
+Full check:
+- Command: `npm run check`
+- Result: exited 0; biome, pinned deps, import checks, shrinkwrap/install-lock checks, tsgo, browser/web-ui checks, and neo build/vet/test passed.
+- Artifact: `local-ignore/qa-evidence/20260706-mcp-task-6-split/npm-run-check.txt`
+
+Cleanup:
+- No long-running processes left by the focused tests or mock-loop QA.
+- Test child-script temp directories are removed by `afterEach`.
+- Evidence files under `local-ignore/qa-evidence/20260706-mcp-task-6-split/` are non-empty and intentionally untracked.

@@ -10,6 +10,7 @@ import gptApplyPatchExtension from "./gpt-apply-patch/index.ts";
 import historySearchExtension from "./history-search/index.ts";
 import hooksExtension from "./hooks/index.ts";
 import importReproExtension from "./import-repro.ts";
+import mcpExtension from "./mcp/index.ts";
 import nestedAgentsMdExtension from "./nested-agents-md/index.ts";
 import openaiWebSearchExtension from "./openai-web-search/index.ts";
 import permissionSystemExtension from "./permission-system/index.ts";
@@ -63,4 +64,6 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "rules", factory: piRulesExtension },
 	{ id: "goal", factory: goalExtension },
 	{ id: "pi-codex-app-server", factory: piCodexAppServerExtension },
+	// Keep MCP last so its eventual provider-payload tap observes all co-resident builtin mutations.
+	{ id: "mcp", factory: mcpExtension },
 ];

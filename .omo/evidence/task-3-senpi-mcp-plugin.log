@@ -1,0 +1,375 @@
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+ ❯ test/mcp/config.test.ts (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/mcp/config.test.ts [ test/mcp/config.test.ts ]
+Error: Cannot find module '../../src/core/extensions/builtin/mcp/config.ts' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent/test/mcp/config.test.ts
+ ❯ test/mcp/config.test.ts:5:1
+      3| import { dirname, join } from "node:path";
+      4| import { describe, expect, it, vi } from "vitest";
+      5| import {
+       | ^
+      6|  loadMcpConfig,
+      7|  McpConfigValidationError,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  no tests
+   Start at  12:18:29
+   Duration  174ms (transform 17ms, setup 13ms, import 0ms, tests 0ms, environment 0ms)
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+ ❯ test/mcp/config.test.ts (8 tests | 2 failed) 11ms
+     × does not import .mcp.json unless claude import is enabled 3ms
+     × reports validation failures with exact JSON paths 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/mcp/config.test.ts > mcp config > does not import .mcp.json unless claude import is enabled
+AssertionError: expected { config: { args: [], …(9) }, …(6) } to be undefined
+
+- Expected:
+undefined
+
++ Received:
+{
+  "config": {
+    "args": [],
+    "command": "claude",
+    "connectTimeoutMs": 15000,
+    "enabled": true,
+    "exposure": "auto",
+    "idleTimeoutMin": 30,
+    "lifecycle": "lazy",
+    "logLevel": "info",
+    "requestTimeoutMs": 60000,
+    "type": "stdio",
+  },
+  "configHash": "159f772ee1835561f4deef6ff11fff384d5373f14179ac23d64af31d1423c6d3",
+  "name": "claudeOnly",
+  "source": "claude",
+  "sourcePath": "/var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/senpi-mcp-config-iqNXWD/project/.mcp.json",
+  "state": "enabled",
+  "transport": "stdio",
+}
+
+ ❯ test/mcp/config.test.ts:90:37
+     88|   const result = loadMcpConfig({ agentDir: root.agentDir, cwd: root.cw…
+     89|
+     90|   expect(result.servers.claudeOnly).toBeUndefined();
+       |                                     ^
+     91|  });
+     92|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  test/mcp/config.test.ts > mcp config > reports validation failures with exact JSON paths
+AssertionError: expected a thrown error to be McpConfigValidationError: Invalid MCP con…
+
+- Expected
++ Received
+
+  McpConfigValidationError {
+-   "message": "Invalid MCP config at mcpServers.x.args: Expected array",
++   "message": "Invalid MCP config at mcpServers.x.args: must be array",
+    "name": "McpConfigValidationError",
+  }
+
+ ❯ test/mcp/config.test.ts:99:97
+     97|   });
+     98|
+     99|   expect(() => loadMcpConfig({ agentDir: root.agentDir, cwd: root.cwd,…
+       |                                                                                                 ^
+    100|    new McpConfigValidationError("Invalid MCP config at mcpServers.x.ar…
+    101|   );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 6 passed (8)
+   Start at  12:19:50
+   Duration  207ms (transform 30ms, setup 11ms, import 93ms, tests 11ms, environment 0ms)
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  12:20:07
+   Duration  210ms (transform 31ms, setup 11ms, import 98ms, tests 8ms, environment 0ms)
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  12:21:58
+   Duration  394ms (transform 69ms, setup 28ms, import 220ms, tests 11ms, environment 0ms)
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  12:22:26
+   Duration  247ms (transform 43ms, setup 12ms, import 118ms, tests 11ms, environment 0ms)
+
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1309 files in 1131ms. Fixed 1 file.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 68ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui	[no test files]
+check:neo: packages/neo build+vet+test passed
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  12:23:26
+   Duration  453ms (transform 90ms, setup 19ms, import 228ms, tests 10ms, environment 0ms)
+
+
+## Manual QA happy: three-layer normalized merge
+$ npx tsx /tmp/senpi-mcp-config-qa.ts happy
+{
+  "settings": {
+    "toolPrefix": "project",
+    "importConfigs": [
+      "claude"
+    ],
+    "nativeToolSearch": false
+  },
+  "servers": {
+    "globalOnly": {
+      "args": [],
+      "headers": {
+        "Authorization": "Bearer [REDACTED_FIXTURE_TOKEN]"
+      },
+      "source": "global",
+      "state": "enabled",
+      "transport": "http"
+    },
+    "shared": {
+      "args": [
+        "[REDACTED_FIXTURE_TOKEN]"
+      ],
+      "command": "project-shared",
+      "source": "project",
+      "state": "enabled",
+      "transport": "stdio"
+    },
+    "claudeOnly": {
+      "args": [
+        "claude-default"
+      ],
+      "command": "claude",
+      "source": "claude",
+      "state": "enabled",
+      "transport": "stdio"
+    }
+  }
+}
+
+## Manual QA failure: invalid project args string
+$ npx tsx /tmp/senpi-mcp-config-qa.ts failure
+Invalid MCP config at mcpServers.x.args: Expected array
+exit_status=2
+
+## Manual QA failure rerun: invalid project args string
+$ npx tsx /tmp/senpi-mcp-config-qa.ts failure
+Invalid MCP config at mcpServers.x.args: Expected array
+exit_status=2
+
+## Cleanup
+removed /tmp/senpi-mcp-config-qa.ts
+cleanup_verified=/tmp/senpi-mcp-config-qa.ts absent
+
+## senpi-qa CLI smoke self-test
+$ node .agents/skills/senpi-qa/scripts/cli-smoke.mjs --self-test
+[PASS] --help prints usage with flags — code=0
+[PASS] --version prints a version — 2026.7.5-2
+[PASS] --list-models lists built-in models offline (no API) — lines=1033
+[PASS] unknown option is reported, not silently ignored — code=1
+[PASS] real auth unchanged — /Users/yeongyu/.senpi/agent/auth.json
+
+cli-smoke.mjs --self-test: 5/5 passed
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1309 files in 4s. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 185ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui	[no test files]
+check:neo: packages/neo build+vet+test passed
+$ npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/config.test.ts (iteration 1)
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  12:26:25
+   Duration  923ms (transform 89ms, setup 85ms, import 400ms, tests 30ms, environment 0ms)
+
+$ npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/config.test.ts (iteration 2)
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  12:26:28
+   Duration  522ms (transform 145ms, setup 64ms, import 282ms, tests 11ms, environment 0ms)
+
+$ npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/config.test.ts (iteration 3)
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  12:26:30
+   Duration  444ms (transform 75ms, setup 48ms, import 193ms, tests 12ms, environment 0ms)
+
+
+## Flaky-test probe: focused config test x3
+$ cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/config.test.ts (iteration 1)
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  12:26:38
+   Duration  235ms (transform 37ms, setup 14ms, import 110ms, tests 10ms, environment 0ms)
+
+$ cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/config.test.ts (iteration 2)
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  12:26:39
+   Duration  244ms (transform 38ms, setup 13ms, import 115ms, tests 11ms, environment 0ms)
+
+$ cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/config.test.ts (iteration 3)
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  12:26:40
+   Duration  249ms (transform 39ms, setup 13ms, import 120ms, tests 12ms, environment 0ms)
+
+
+## Adversarial probes
+malformed_input: PASS - config.test covers invalid args path and command substitution rejection; manual failure QA exits nonzero naming mcpServers.x.args.
+prompt_injection/security: PASS - config.test covers untrusted project server blocked before interpolation and visitSpawnableMcpServers skips it.
+stale_state: PASS - config.test covers stable configHash under key reorder.
+dirty_worktree: PRESENT - unrelated MCP/senpi-qa files exist; only todo 3 files will be staged.
+misleading_success_output: PASS - evidence includes RED failure text, GREEN test output, manual QA snapshots, nonzero failure status, and check output.
+flaky_tests: PASS - focused config test passed 3 consecutive iterations.
+cancel_resume: N/A.
+repeated_interruptions: N/A.
+
+## Dirty worktree receipt before commit
+$ git status --short
+?? packages/coding-agent/src/core/extensions/builtin/mcp/config-schema.ts
+?? packages/coding-agent/src/core/extensions/builtin/mcp/config.ts
+?? packages/coding-agent/test/mcp/config.test.ts

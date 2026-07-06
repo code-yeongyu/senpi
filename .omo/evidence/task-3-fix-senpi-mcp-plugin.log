@@ -1,0 +1,156 @@
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+ ❯ test/mcp/config.test.ts (11 tests | 3 failed) 12ms
+     × validates and round-trips keep-alive server lifecycle 2ms
+     × validates and round-trips boolean directTools 1ms
+     × validates and round-trips output guard maxLines 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/mcp/config.test.ts > mcp config > validates and round-trips keep-alive server lifecycle
+McpConfigValidationError: Invalid MCP config at mcpServers.keepAlive.lifecycle: must be equal to constant
+ ❯ validateRaw src/core/extensions/builtin/mcp/config.ts:110:8
+    108|  if (validateConfig.Check(raw)) return raw as RawConfig;
+    109|  const error = Array.from(validateConfig.Errors(raw))[0];
+    110|  throw new McpConfigValidationError(`Invalid MCP config at ${formatErr…
+       |        ^
+    111| }
+    112|
+ ❯ readTrustedConfig src/core/extensions/builtin/mcp/config.ts:93:27
+ ❯ loadMcpConfig src/core/extensions/builtin/mcp/config.ts:33:23
+ ❯ test/mcp/config.test.ts:205:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  test/mcp/config.test.ts > mcp config > validates and round-trips boolean directTools
+McpConfigValidationError: Invalid MCP config at mcpServers.direct.directTools: Expected array
+ ❯ validateRaw src/core/extensions/builtin/mcp/config.ts:110:8
+    108|  if (validateConfig.Check(raw)) return raw as RawConfig;
+    109|  const error = Array.from(validateConfig.Errors(raw))[0];
+    110|  throw new McpConfigValidationError(`Invalid MCP config at ${formatErr…
+       |        ^
+    111| }
+    112|
+ ❯ readTrustedConfig src/core/extensions/builtin/mcp/config.ts:93:27
+ ❯ loadMcpConfig src/core/extensions/builtin/mcp/config.ts:33:23
+ ❯ test/mcp/config.test.ts:224:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  test/mcp/config.test.ts > mcp config > validates and round-trips output guard maxLines
+McpConfigValidationError: Invalid MCP config at settings.outputGuard: must not have additional properties
+ ❯ validateRaw src/core/extensions/builtin/mcp/config.ts:110:8
+    108|  if (validateConfig.Check(raw)) return raw as RawConfig;
+    109|  const error = Array.from(validateConfig.Errors(raw))[0];
+    110|  throw new McpConfigValidationError(`Invalid MCP config at ${formatErr…
+       |        ^
+    111| }
+    112|
+ ❯ readTrustedConfig src/core/extensions/builtin/mcp/config.ts:93:27
+ ❯ loadMcpConfig src/core/extensions/builtin/mcp/config.ts:33:23
+ ❯ test/mcp/config.test.ts:244:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 8 passed (11)
+   Start at  12:40:07
+   Duration  225ms (transform 34ms, setup 11ms, import 108ms, tests 12ms, environment 0ms)
+
+
+=== GREEN focused config test ===
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+
+ Test Files  1 passed (1)
+      Tests  11 passed (11)
+   Start at  12:40:49
+   Duration  215ms (transform 34ms, setup 12ms, import 103ms, tests 10ms, environment 0ms)
+
+
+=== Manual QA artifact ===
+{
+  "status": "PASS",
+  "cwd": "/var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/senpi-mcp-config-manual-85936/project",
+  "home": "/var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/senpi-mcp-config-manual-85936/home",
+  "outputGuard": {
+    "maxBytes": 2048,
+    "maxLines": 17,
+    "maxTokens": 512
+  },
+  "server": {
+    "directTools": true,
+    "lifecycle": "keep-alive",
+    "state": "enabled",
+    "transport": "stdio"
+  }
+}
+
+=== senpi-qa mock-loop artifact summary ===
+[PASS] openai-completions: baseUrl override round-trips through the real loop — code=0 marker=true path=/v1/chat/completions auth=true
+[PASS] anthropic-messages: baseUrl override round-trips through the real loop — code=0 marker=true path=/v1/messages auth=true
+[PASS] openai-responses: baseUrl override round-trips through the real loop — code=0 marker=true path=/v1/responses auth=true
+[PASS] zero real provider calls (only localhost fake hit) — all baseUrls point at 127.0.0.1
+[PASS] real auth unchanged — /Users/yeongyu/.senpi/agent/auth.json
+
+mock-loop.mjs --self-test: 5/5 passed
+
+=== npm run check summary ===
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 43ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui	[no test files]
+check:neo: packages/neo build+vet+test passed
+
+=== Focused rerun artifact ===
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin/packages/coding-agent
+
+
+ Test Files  1 passed (1)
+      Tests  11 passed (11)
+   Start at  12:42:08
+   Duration  226ms (transform 34ms, setup 11ms, import 106ms, tests 12ms, environment 0ms)
+
+
+=== Cleanup ===
+cleanup: removed /tmp/senpi-mcp-config-manual-qa.mts
+
+=== Adversarial probes ===
+malformed_input: PASS - existing invalid args test still passes in focused suite; new valid keep-alive/directTools/maxLines cases pass.
+stale_state: PASS - focused suite rerun after npm run check passed.
+dirty_worktree: PASS - pre-existing staged/unstaged task-6 and wrap files observed and left untouched; only task-owned paths will be staged.
+misleading_success_output: PASS - initial tee pipeline masked RED exit; reran with set -o pipefail and captured real exit 1 before fix.
+flaky_tests: PASS - focused config test passed on GREEN and post-check rerun.
+irrelevant classes: N/A - no network, auth, provider, or UI rendering change in this schema-only fix.
+
+=== Command manifest ===
+RED: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/config.test.ts (with set -o pipefail, output in this log)
+GREEN: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/config.test.ts (with set -o pipefail, output in this log)
+Manual QA: HOME=/tmp/senpi-mcp-config-manual-home npx tsx /tmp/senpi-mcp-config-manual-qa.mts -> local-ignore/qa-evidence/20260706-mcp-config-todo3-fix/manual-config-normalization.txt
+senpi QA: node .agents/skills/senpi-qa/scripts/mock-loop.mjs --self-test --evidence mcp-config-todo3-fix -> local-ignore/qa-evidence/20260706-mcp-config-todo3-fix/mock-loop-self-test.txt
+Check: npm run check -> local-ignore/qa-evidence/20260706-mcp-config-todo3-fix/npm-run-check.txt
+Flake rerun: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/config.test.ts -> local-ignore/qa-evidence/20260706-mcp-config-todo3-fix/focused-config-rerun.txt

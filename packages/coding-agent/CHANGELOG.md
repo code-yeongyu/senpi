@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added the built-in MCP extension skeleton and exact-pinned official MCP SDK dependency groundwork.
+
 ### Changed
 
 ### Fixed

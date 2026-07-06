@@ -250,6 +250,11 @@ func (c *Client) failAll(err error) {
 	}
 }
 
+// Done returns a channel closed when the client's read loop has stopped (the
+// transport ended or the child/daemon connection dropped). The recovery loop
+// waits on it to detect a disconnect and trigger reconnect/respawn.
+func (c *Client) Done() <-chan struct{} { return c.done }
+
 // Close stops the client and closes the underlying transport.
 func (c *Client) Close() error {
 	return c.transport.Close()
