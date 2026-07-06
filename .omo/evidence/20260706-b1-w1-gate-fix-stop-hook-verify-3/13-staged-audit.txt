@@ -1,0 +1,19 @@
+
+$ git diff --staged --check
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-3/04-cargo-test-senpi-pty-locked.txt:35: new blank line at EOF.
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-3/06-npm-test-pi-pty.txt:14: new blank line at EOF.
+
+$ git diff --staged --name-status
+A	.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-3/01-state-and-commits.txt
+A	.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-3/02-loc-check.txt
+A	.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-3/03-evidence-presence.txt
+A	.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-3/04-cargo-test-senpi-pty-locked.txt
+A	.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-3/05-cargo-clippy-senpi-pty-all-targets.txt
+A	.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-3/06-npm-test-pi-pty.txt
+A	.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-3/07-npm-check-prebuild-pi-pty.txt
+A	.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-3/08-npm-run-check.txt
+A	.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-3/09-node-raw-native-lifecycle.txt
+A	.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-3/10-node-public-create-terminal-session.txt
+A	.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-3/11-cleanup-receipt.txt
+A	.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-3/12-evidence-audit-before-staging.txt
+A	.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-3/SUMMARY.md
