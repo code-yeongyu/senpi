@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMcpLogger } from "../../src/core/extensions/builtin/mcp/log.ts";
 import type { McpErrorLogger } from "../../src/core/extensions/builtin/mcp/wrap.ts";
 import { safeInterval, safeOn, safeTimer, wrapAsync } from "../../src/core/extensions/builtin/mcp/wrap.ts";
@@ -65,6 +65,38 @@ describe("mcp async wrappers", () => {
 		expect(ringText).toContain("prod boom");
 		expect(fileText).toContain("prod.scope");
 		expect(fileText).toContain("prod boom");
+	});
+
+	it("does not print raw secret-bearing errors when fallback logging handles logger failure", async () => {
+		const originalSecret = "wrap-secret-original-123";
+		const loggerSecret = "wrap-secret-logger-456";
+		const stderrLines: string[] = [];
+		const consoleError = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+			stderrLines.push(args.map(formatUnknownForTest).join(" "));
+		});
+		const logger: McpErrorLogger = {
+			error() {
+				throw new Error(`logger failed Authorization: Basic ${loggerSecret}`);
+			},
+		};
+		const wrapped = wrapAsync(
+			"fallback.secret",
+			() => {
+				throw {
+					headers: { Authorization: `Bearer ${originalSecret}` },
+					url: `https://example.test/mcp?api_key=${originalSecret}`,
+				};
+			},
+			{ logger },
+		);
+
+		await wrapped();
+		consoleError.mockRestore();
+
+		const stderrText = stderrLines.join("\n");
+		expect(stderrText).not.toContain(originalSecret);
+		expect(stderrText).not.toContain(loggerSecret);
+		expect(stderrText).toContain("MCP fallback.secret logger failed");
 	});
 
 	it("keeps a child process alive when a wrapped timer callback throws", async () => {
@@ -158,6 +190,16 @@ class MemoryLogger implements McpErrorLogger {
 			if (typeof maybeMessage === "string") message = maybeMessage;
 		}
 		this.entries.push({ scope, message });
+	}
+}
+
+function formatUnknownForTest(value: unknown): string {
+	if (value instanceof Error) return `${value.name}: ${value.message}\n${value.stack ?? ""}`;
+	if (typeof value === "string") return value;
+	try {
+		return JSON.stringify(value);
+	} catch {
+		return String(value);
 	}
 }
 

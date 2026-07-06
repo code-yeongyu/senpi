@@ -3,6 +3,7 @@ export { Server } from "@modelcontextprotocol/sdk/server/index.js";
 export type { CallToolResult, ListToolsResult } from "@modelcontextprotocol/sdk/types.js";
 
 import type { EventEmitter } from "node:events";
+import { redactMcpLogText } from "./log.ts";
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -88,9 +89,9 @@ export async function reportMcpAsyncError(scope: string, error: unknown, sink: M
 function logError(scope: string, error: Error, logger: McpErrorLogger): void {
 	try {
 		logger.error(scope, serializeError(error));
-	} catch (loggerError) {
-		console.error(`MCP ${scope} logger failed`, loggerError);
-		console.error(`MCP ${scope} original error`, error);
+	} catch {
+		const redactedScope = redactMcpLogText(scope);
+		console.error(`MCP ${redactedScope} logger failed; suppressed async error details`);
 	}
 }
 
