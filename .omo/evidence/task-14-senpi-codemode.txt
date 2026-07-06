@@ -1,0 +1,717 @@
+
+===== RED proof: extension.test.ts before task 14 implementation =====
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/extension.test.ts [ test/extension.test.ts ]
+Error: Cannot find module '/src/completion/handler.ts' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode/test/extension.test.ts
+ ❯ test/extension.test.ts:4:1
+      2| import { afterEach, describe, expect, it, vi } from "vitest";
+      3| import senpiCodemode from "../src/index.ts";
+      4| import { createCompletionHandler } from "../src/completion/handler.ts";
+       | ^
+      5| import type { CodemodeSessionManager } from "../src/extension/session-…
+      6| import type { EvalKernelRunInput } from "../src/tool/types.ts";
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  no tests
+   Start at  17:17:28
+   Duration  119ms (transform 17ms, setup 0ms, import 0ms, tests 0ms, environment 0ms)
+
+
+===== GREEN: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/extension.test.ts =====
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+········
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  17:25:36
+   Duration  2.74s (transform 1.64s, setup 0ms, import 2.59s, tests 55ms, environment 0ms)
+
+
+===== CHECK: npm run check =====
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1353 files in 2s. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+packages/senpi-codemode/src/completion/handler.ts(57,4): error TS2322: Type 'string[]' is not assignable to type 'string'.
+packages/senpi-codemode/src/index.ts(31,4): error TS2322: Type 'SessionManagerProxy' is not assignable to type 'EvalKernelManager'.
+  Types of property 'getKernel' are incompatible.
+    Type '(language: "jl" | "js" | "py" | "rb", onMessage: (message: EvalKernelRunInput) => void) => Promise<EvalKernel>' is not assignable to type '(language: "jl" | "js" | "py" | "rb", onMessage: (message: { type: "ready"; } | { type: "init-failed"; error: { name?: string | undefined; message: string; stack?: string | undefined; code?: string | undefined; }; } | ... 7 more ... | { ...; }) => void) => Promise<...>'.
+      Types of parameters 'onMessage' and 'onMessage' are incompatible.
+        Types of parameters 'message' and 'message' are incompatible.
+          Type 'EvalKernelRunInput' is not assignable to type '{ type: "ready"; } | { type: "init-failed"; error: { name?: string | undefined; message: string; stack?: string | undefined; code?: string | undefined; }; } | { type: "text"; stream: "stderr" | "stdout"; data: string; } | ... 6 more ... | { ...; }'.
+            Type 'EvalKernelRunInput' is missing the following properties from type '{ type: "result"; cellId: string; ok: false; error: { name?: string | undefined; message: string; stack?: string | undefined; code?: string | undefined; }; durationMs: number; }': type, ok, error, durationMs
+packages/senpi-codemode/src/index.ts(54,8): error TS2416: Property 'getKernel' in type 'SessionManagerProxy' is not assignable to the same property in base type 'CodemodeSessionManager'.
+  Type '(language: "jl" | "js" | "py" | "rb", onMessage: (message: EvalKernelRunInput) => void) => Promise<EvalKernel>' is not assignable to type '(language: "jl" | "js" | "py" | "rb", onMessage: (message: { type: "ready"; } | { type: "init-failed"; error: { name?: string | undefined; message: string; stack?: string | undefined; code?: string | undefined; }; } | ... 7 more ... | { ...; }) => void) => Promise<...>'.
+    Types of parameters 'onMessage' and 'onMessage' are incompatible.
+      Types of parameters 'message' and 'message' are incompatible.
+        Type 'EvalKernelRunInput' is not assignable to type '{ type: "ready"; } | { type: "init-failed"; error: { name?: string | undefined; message: string; stack?: string | undefined; code?: string | undefined; }; } | { type: "text"; stream: "stderr" | "stdout"; data: string; } | ... 6 more ... | { ...; }'.
+          Type 'EvalKernelRunInput' is missing the following properties from type '{ type: "result"; cellId: string; ok: false; error: { name?: string | undefined; message: string; stack?: string | undefined; code?: string | undefined; }; durationMs: number; }': type, ok, error, durationMs
+
+===== GREEN RERUN: extension.test.ts after type fixes =====
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+········
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  17:29:01
+   Duration  6.07s (transform 3.04s, setup 0ms, import 5.81s, tests 98ms, environment 0ms)
+
+
+===== CHECK RERUN: npm run check after type fixes =====
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1353 files in 1781ms. Fixed 2 files.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 163ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+
+===== FAILURE SCENARIO: shutdown mid-run aborts fake cell without unhandled rejection =====
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+-------·
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 7 skipped (8)
+   Start at  17:29:39
+   Duration  2.96s (transform 1.73s, setup 0ms, import 2.81s, tests 23ms, environment 0ms)
+
+
+===== SCOPED DIFF CHECK =====
+diff --git a/packages/senpi-codemode/src/index.ts b/packages/senpi-codemode/src/index.ts
+index 3001ac927..42cded457 100644
+--- a/packages/senpi-codemode/src/index.ts
++++ b/packages/senpi-codemode/src/index.ts
+@@ -1,5 +1,112 @@
+-import type { ExtensionAPI } from "@code-yeongyu/senpi";
++import type { ExtensionAPI, ExtensionContext } from "@code-yeongyu/senpi";
++import type { KernelToHostMessage } from "./bridge/protocol.ts";
++import { type CompletionRequest, type CompletionResult, createCompletionHandler } from "./completion/handler.ts";
++import { type CodemodeSettings, loadCodemodeSettings } from "./config/settings.ts";
++import {
++	type CodemodeSessionManager,
++	type CreateCodemodeSessionManagerOptions,
++	createCodemodeSessionManager,
++} from "./extension/session-manager.ts";
++import {
++	createInterpreterDetector,
++	getInterpreterAvailability,
++	type InterpreterAvailability,
++} from "./interpreters/detect.ts";
++import { createEvalTool } from "./tool/eval-tool.ts";
++import type { EvalKernel, EvalLanguage } from "./tool/types.ts";
++import { evalLanguageOrder } from "./tool/types.ts";
+ 
+-export default function senpiCodemode(pi: ExtensionAPI): void {
+-	void pi;
++export interface SenpiCodemodeOptions {
++	readonly createSessionManager?: (
++		options: CreateCodemodeSessionManagerOptions,
++	) => CodemodeSessionManager | Promise<CodemodeSessionManager>;
++	readonly complete?: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>;
++}
++
++export default function senpiCodemode(pi: ExtensionAPI, options: SenpiCodemodeOptions = {}): void {
++	const manager = new SessionManagerProxy();
++	const complete = options.complete ?? ((request, ctx) => createCompletionHandler()(ctx)(request));
++	pi.registerTool(
++		createEvalTool({
++			enabledLanguages: { py: true, js: true, rb: true, jl: true },
++			kernelManager: manager,
++			cellTimeoutSeconds: 30,
++			executeTool: (toolName, params, executeOptions) => pi.executeTool(toolName, params, executeOptions),
++			complete,
++		}),
++	);
++
++	pi.on("session_start", async (event, ctx) => {
++		await manager.replace(await createManager(pi, ctx, event, complete, options));
++	});
++	pi.on("session_shutdown", async () => manager.dispose());
++	pi.on("session_before_switch", async () => manager.dispose());
++	pi.on("session_before_fork", async () => manager.dispose());
++}
++
++class SessionManagerProxy implements CodemodeSessionManager {
++	#current: CodemodeSessionManager | undefined;
++
++	async replace(next: CodemodeSessionManager): Promise<void> {
++		await this.dispose();
++		this.#current = next;
++	}
++
++	async getKernel(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): Promise<EvalKernel> {
++		if (!this.#current) throw new Error("codemode session has not started");
++		return await this.#current.getKernel(language, onMessage);
++	}
++
++	async complete(request: CompletionRequest, ctx: ExtensionContext): Promise<CompletionResult> {
++		if (!this.#current) throw new Error("codemode session has not started");
++		return await this.#current.complete(request, ctx);
++	}
++
++	setContext(ctx: ExtensionContext): void {
++		this.#current?.setContext?.(ctx);
++	}
++
++	async dispose(): Promise<void> {
++		const current = this.#current;
++		this.#current = undefined;
++		await current?.dispose();
++	}
++}
++
++async function createManager(
++	pi: ExtensionAPI,
++	ctx: ExtensionContext,
++	event: unknown,
++	complete: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>,
++	options: SenpiCodemodeOptions,
++): Promise<CodemodeSessionManager> {
++	const loaded = await loadCodemodeSettings({ cwd: ctx.cwd });
++	const availability = await getInterpreterAvailability(loaded.settings, createInterpreterDetector());
++	const create = options.createSessionManager ?? createCodemodeSessionManager;
++	return await create({
++		sessionId: sessionIdFrom(event),
++		cwd: ctx.cwd,
++		settings: loaded.settings,
++		availability,
++		executeTool: (toolName, params, executeOptions) => pi.executeTool(toolName, params, executeOptions),
++		complete,
++	});
++}
++
++function sessionIdFrom(event: unknown): string {
++	if (typeof event === "object" && event !== null && "sessionId" in event && typeof event.sessionId === "string") {
++		return event.sessionId;
++	}
++	return crypto.randomUUID();
++}
++
++export function enabledLanguagesFrom(
++	settings: CodemodeSettings,
++	availability: InterpreterAvailability,
++): Record<EvalLanguage, boolean> {
++	const enabled = {} as Record<EvalLanguage, boolean>;
++	for (const language of evalLanguageOrder) {
++		enabled[language] = settings.languages[language] && availability[language].detected.ok;
++	}
++	return enabled;
+ }
+diff --git a/packages/senpi-codemode/src/kernels/jl/kernel.ts b/packages/senpi-codemode/src/kernels/jl/kernel.ts
+index c5e1bf8ac..c3fa98ddc 100644
+--- a/packages/senpi-codemode/src/kernels/jl/kernel.ts
++++ b/packages/senpi-codemode/src/kernels/jl/kernel.ts
+@@ -1,5 +1,5 @@
+ import { join } from "node:path";
+-import type { BridgeConnectionConfig } from "../../bridge/protocol.ts";
++import type { BridgeConnectionConfig, KernelToHostMessage } from "../../bridge/protocol.ts";
+ import { SubprocessKernel, type SubprocessSpawn } from "../shared/subprocess-kernel.ts";
+ 
+ export interface JuliaKernelStartOptions {
+@@ -8,6 +8,7 @@ export interface JuliaKernelStartOptions {
+ 	readonly connection: BridgeConnectionConfig;
+ 	readonly command?: string;
+ 	readonly spawn?: SubprocessSpawn;
++	readonly onMessage?: (message: KernelToHostMessage) => void;
+ }
+ 
+ export class JuliaKernel extends SubprocessKernel {
+@@ -19,6 +20,7 @@ export class JuliaKernel extends SubprocessKernel {
+ 			sessionId: options.sessionId,
+ 			connection: options.connection,
+ 			spawn: options.spawn,
++			onMessage: options.onMessage,
+ 		});
+ 	}
+ }
+diff --git a/packages/senpi-codemode/src/kernels/py/kernel.ts b/packages/senpi-codemode/src/kernels/py/kernel.ts
+index d191fbbb7..2b3f0b1f4 100644
+--- a/packages/senpi-codemode/src/kernels/py/kernel.ts
++++ b/packages/senpi-codemode/src/kernels/py/kernel.ts
+@@ -99,6 +99,8 @@ export class PythonKernel {
+ 		await this.#spawn();
+ 	}
+ 
++	deliverToolReply(): void {}
++
+ 	async close(): Promise<void> {
+ 		const child = this.#child;
+ 		if (!child) return;
+diff --git a/packages/senpi-codemode/src/kernels/rb/kernel.ts b/packages/senpi-codemode/src/kernels/rb/kernel.ts
+index 9f84f9a4f..db72a7f31 100644
+--- a/packages/senpi-codemode/src/kernels/rb/kernel.ts
++++ b/packages/senpi-codemode/src/kernels/rb/kernel.ts
+@@ -1,5 +1,5 @@
+ import { join } from "node:path";
+-import type { BridgeConnectionConfig } from "../../bridge/protocol.ts";
++import type { BridgeConnectionConfig, KernelToHostMessage } from "../../bridge/protocol.ts";
+ import { SubprocessKernel, type SubprocessSpawn } from "../shared/subprocess-kernel.ts";
+ 
+ export interface RubyKernelStartOptions {
+@@ -8,6 +8,7 @@ export interface RubyKernelStartOptions {
+ 	readonly connection: BridgeConnectionConfig;
+ 	readonly command?: string;
+ 	readonly spawn?: SubprocessSpawn;
++	readonly onMessage?: (message: KernelToHostMessage) => void;
+ }
+ 
+ export class RubyKernel extends SubprocessKernel {
+@@ -19,6 +20,7 @@ export class RubyKernel extends SubprocessKernel {
+ 			sessionId: options.sessionId,
+ 			connection: options.connection,
+ 			spawn: options.spawn,
++			onMessage: options.onMessage,
+ 		});
+ 	}
+ }
+diff --git a/packages/senpi-codemode/src/tool/eval-tool.ts b/packages/senpi-codemode/src/tool/eval-tool.ts
+index 88a969b47..e60ae771d 100644
+--- a/packages/senpi-codemode/src/tool/eval-tool.ts
++++ b/packages/senpi-codemode/src/tool/eval-tool.ts
+@@ -1,5 +1,6 @@
+-import type { AgentToolResult, AgentToolUpdateCallback, ToolDefinition } from "@code-yeongyu/senpi";
++import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext, ToolDefinition } from "@code-yeongyu/senpi";
+ import type { KernelToHostMessage } from "../bridge/protocol.ts";
++import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
+ import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncateTail } from "../host-sdk.ts";
+ import { buildEvalPrompt } from "../prompt/eval-prompt.ts";
+ import { renderEvalCall, renderEvalResult } from "./render.ts";
+@@ -26,6 +27,7 @@ export interface CreateEvalToolOptions {
+ 	readonly kernelManager: EvalKernelManager;
+ 	readonly cellTimeoutSeconds: number;
+ 	readonly executeTool: ExecuteTool;
++	readonly complete?: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>;
+ }
+ 
+ interface CellState {
+@@ -57,7 +59,7 @@ export function createEvalTool(
+ 		parameters,
+ 		renderCall: renderEvalCall,
+ 		renderResult: renderEvalResult,
+-		async execute(toolCallId, params, signal, onUpdate) {
++		async execute(toolCallId, params, signal, onUpdate, ctx) {
+ 			if (!languages.includes(params.language)) {
+ 				throw new Error(
+ 					`Unsupported eval language "${params.language}". Enabled languages: ${languages.join(", ")}`,
+@@ -78,8 +80,11 @@ export function createEvalTool(
+ 			};
+ 			const kernel = await options.kernelManager.getKernel(
+ 				params.language,
+-				(message) => void handleMessage(message, kernel, state, options.executeTool),
++				(message) => void handleMessage(message, kernel, state, options.executeTool, options.complete, ctx),
+ 			);
++			if ("setContext" in options.kernelManager && typeof options.kernelManager.setContext === "function") {
++				options.kernelManager.setContext(ctx);
++			}
+ 			if (params.reset) await kernel.reset();
+ 			const timeoutMs = Math.floor((params.timeout ?? options.cellTimeoutSeconds) * 1000);
+ 			const result = await kernel.run({ cellId: toolCallId, code: params.code, timeoutMs });
+@@ -94,6 +99,8 @@ async function handleMessage(
+ 	kernel: EvalKernel,
+ 	state: CellState,
+ 	executeTool: ExecuteTool,
++	complete: CreateEvalToolOptions["complete"],
++	ctx: ExtensionContext,
+ ): Promise<void> {
+ 	if (message.type === "text") {
+ 		state.output += message.data;
+@@ -117,7 +124,7 @@ async function handleMessage(
+ 		return;
+ 	}
+ 	if (message.type === "tool-call") {
+-		const pending = handleToolCall(message, kernel, state, executeTool);
++		const pending = handleToolCall(message, kernel, state, executeTool, complete, ctx);
+ 		state.pendingBridgeCalls.push(pending);
+ 		await pending;
+ 	}
+@@ -128,6 +135,8 @@ async function handleToolCall(
+ 	kernel: EvalKernel,
+ 	state: CellState,
+ 	executeTool: ExecuteTool,
++	complete: CreateEvalToolOptions["complete"],
++	ctx: ExtensionContext,
+ ): Promise<void> {
+ 	if (message.toolName === "eval") {
+ 		const error = "recursive eval is not allowed";
+@@ -135,6 +144,10 @@ async function handleToolCall(
+ 		kernel.deliverToolReply({ type: "tool-reply", callId: message.callId, ok: false, error: { message: error } });
+ 		return;
+ 	}
++	if (message.toolName === "completion" && complete) {
++		await handleCompletionCall(message, kernel, state, complete, ctx);
++		return;
++	}
+ 	try {
+ 		const result = await executeTool(message.toolName, message.args, { signal: state.signal });
+ 		state.toolCalls.push({ name: message.toolName, ok: !toolResultIsError(result) });
+@@ -157,6 +170,43 @@ async function handleToolCall(
+ 	emitUpdate(state, false);
+ }
+ 
++async function handleCompletionCall(
++	message: Extract<KernelToHostMessage, { type: "tool-call" }>,
++	kernel: EvalKernel,
++	state: CellState,
++	complete: NonNullable<CreateEvalToolOptions["complete"]>,
++	ctx: ExtensionContext,
++): Promise<void> {
++	try {
++		const value = await complete(toCompletionRequest(message.args), ctx);
++		state.toolCalls.push({ name: message.toolName, ok: true });
++		kernel.deliverToolReply({ type: "tool-reply", callId: message.callId, ok: true, value });
++	} catch (error) {
++		const messageText = errorMessage(error);
++		state.toolCalls.push({ name: message.toolName, ok: false, error: messageText });
++		kernel.deliverToolReply({
++			type: "tool-reply",
++			callId: message.callId,
++			ok: false,
++			error: { message: messageText },
++		});
++	}
++	emitUpdate(state, false);
++}
++
++function toCompletionRequest(value: unknown): CompletionRequest {
++	if (typeof value === "object" && value !== null && "prompt" in value && typeof value.prompt === "string") {
++		return {
++			prompt: value.prompt,
++			opts: "opts" in value ? value.opts : undefined,
++			model: "model" in value && typeof value.model === "string" ? value.model : undefined,
++			system: "system" in value && typeof value.system === "string" ? value.system : undefined,
++			schema: "schema" in value ? value.schema : undefined,
++		};
++	}
++	throw new Error("completion() received invalid arguments");
++}
++
+ function marshalToolResult(result: AgentToolResult<unknown>): unknown {
+ 	const texts: string[] = [];
+ 	const images: Array<{ mimeType: string; dataBase64: string }> = [];
+
+===== PURE LOC CHECK (nonblank, non-comment) =====
+packages/senpi-codemode/src/index.ts 100
+packages/senpi-codemode/src/completion/handler.ts 109
+packages/senpi-codemode/src/extension/session-manager.ts 114
+packages/senpi-codemode/src/kernels/py/kernel.ts 231
+packages/senpi-codemode/src/kernels/rb/kernel.ts 24
+packages/senpi-codemode/src/kernels/jl/kernel.ts 24
+packages/senpi-codemode/src/tool/eval-tool.ts 271
+
+===== GREEN RERUN: extension.test.ts after LOC split =====
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+········
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  17:30:15
+   Duration  2.39s (transform 1.35s, setup 0ms, import 2.23s, tests 50ms, environment 0ms)
+
+
+===== CHECK RERUN: npm run check after LOC split =====
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1354 files in 856ms. Fixed 1 file.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 34ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+
+===== PURE LOC CHECK RERUN =====
+packages/senpi-codemode/src/index.ts 100
+packages/senpi-codemode/src/completion/handler.ts 109
+packages/senpi-codemode/src/completion/tool-bridge.ts 39
+packages/senpi-codemode/src/extension/session-manager.ts 114
+packages/senpi-codemode/src/kernels/py/kernel.ts 231
+packages/senpi-codemode/src/kernels/rb/kernel.ts 24
+packages/senpi-codemode/src/kernels/jl/kernel.ts 24
+packages/senpi-codemode/src/tool/eval-tool.ts 241
+packages/senpi-codemode/test/extension.test.ts 241
+
+===== FINAL GREEN: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/extension.test.ts =====
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+········
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  17:30:34
+   Duration  1.94s (transform 1.06s, setup 0ms, import 1.80s, tests 50ms, environment 0ms)
+
+
+===== GREEN: factory.test.ts updated for task 14 registration =====
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+·
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  17:31:36
+   Duration  2.84s (transform 1.75s, setup 0ms, import 2.74s, tests 4ms, environment 0ms)
+
+
+===== FINAL GREEN AFTER FACTORY TEST UPDATE: extension.test.ts =====
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+········
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  17:31:40
+   Duration  3.83s (transform 2.24s, setup 0ms, import 3.57s, tests 79ms, environment 0ms)
+
+
+===== FINAL CHECK AFTER FACTORY TEST UPDATE: npm run check =====
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1354 files in 1828ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 38ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+
+===== FINAL PURE LOC CHECK INCLUDING FACTORY TEST =====
+packages/senpi-codemode/src/index.ts 100
+packages/senpi-codemode/src/completion/handler.ts 109
+packages/senpi-codemode/src/completion/tool-bridge.ts 39
+packages/senpi-codemode/src/extension/session-manager.ts 114
+packages/senpi-codemode/src/kernels/py/kernel.ts 231
+packages/senpi-codemode/src/kernels/rb/kernel.ts 24
+packages/senpi-codemode/src/kernels/jl/kernel.ts 24
+packages/senpi-codemode/src/tool/eval-tool.ts 241
+packages/senpi-codemode/test/extension.test.ts 241
+packages/senpi-codemode/test/factory.test.ts 20
+
+===== FINAL SCOPED STATUS =====
+ M packages/senpi-codemode/src/index.ts
+ M packages/senpi-codemode/src/kernels/jl/kernel.ts
+ M packages/senpi-codemode/src/kernels/py/kernel.ts
+ M packages/senpi-codemode/src/kernels/rb/kernel.ts
+ M packages/senpi-codemode/src/tool/eval-tool.ts
+ M packages/senpi-codemode/test/factory.test.ts
+?? .omo/evidence/task-14-senpi-codemode.txt
+?? packages/senpi-codemode/src/completion/
+?? packages/senpi-codemode/src/extension/
+?? packages/senpi-codemode/test/extension.test.ts

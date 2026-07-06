@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { BridgeConnectionConfig } from "../../bridge/protocol.ts";
+import type { BridgeConnectionConfig, KernelToHostMessage } from "../../bridge/protocol.ts";
 import { SubprocessKernel, type SubprocessSpawn } from "../shared/subprocess-kernel.ts";
 
 export interface RubyKernelStartOptions {
@@ -8,6 +8,7 @@ export interface RubyKernelStartOptions {
 	readonly connection: BridgeConnectionConfig;
 	readonly command?: string;
 	readonly spawn?: SubprocessSpawn;
+	readonly onMessage?: (message: KernelToHostMessage) => void;
 }
 
 export class RubyKernel extends SubprocessKernel {
@@ -19,6 +20,7 @@ export class RubyKernel extends SubprocessKernel {
 			sessionId: options.sessionId,
 			connection: options.connection,
 			spawn: options.spawn,
+			onMessage: options.onMessage,
 		});
 	}
 }

@@ -1,5 +1,7 @@
-import type { AgentToolResult, AgentToolUpdateCallback, ToolDefinition } from "@code-yeongyu/senpi";
+import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext, ToolDefinition } from "@code-yeongyu/senpi";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
+import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
+import { handleCompletionToolCall } from "../completion/tool-bridge.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncateTail } from "../host-sdk.ts";
 import { buildEvalPrompt } from "../prompt/eval-prompt.ts";
 import { renderEvalCall, renderEvalResult } from "./render.ts";
@@ -26,6 +28,7 @@ export interface CreateEvalToolOptions {
 	readonly kernelManager: EvalKernelManager;
 	readonly cellTimeoutSeconds: number;
 	readonly executeTool: ExecuteTool;
+	readonly complete?: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>;
 }
 
 interface CellState {
@@ -57,7 +60,7 @@ export function createEvalTool(
 		parameters,
 		renderCall: renderEvalCall,
 		renderResult: renderEvalResult,
-		async execute(toolCallId, params, signal, onUpdate) {
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			if (!languages.includes(params.language)) {
 				throw new Error(
 					`Unsupported eval language "${params.language}". Enabled languages: ${languages.join(", ")}`,
@@ -78,8 +81,11 @@ export function createEvalTool(
 			};
 			const kernel = await options.kernelManager.getKernel(
 				params.language,
-				(message) => void handleMessage(message, kernel, state, options.executeTool),
+				(message) => void handleMessage(message, kernel, state, options.executeTool, options.complete, ctx),
 			);
+			if ("setContext" in options.kernelManager && typeof options.kernelManager.setContext === "function") {
+				options.kernelManager.setContext(ctx);
+			}
 			if (params.reset) await kernel.reset();
 			const timeoutMs = Math.floor((params.timeout ?? options.cellTimeoutSeconds) * 1000);
 			const result = await kernel.run({ cellId: toolCallId, code: params.code, timeoutMs });
@@ -94,6 +100,8 @@ async function handleMessage(
 	kernel: EvalKernel,
 	state: CellState,
 	executeTool: ExecuteTool,
+	complete: CreateEvalToolOptions["complete"],
+	ctx: ExtensionContext,
 ): Promise<void> {
 	if (message.type === "text") {
 		state.output += message.data;
@@ -117,7 +125,7 @@ async function handleMessage(
 		return;
 	}
 	if (message.type === "tool-call") {
-		const pending = handleToolCall(message, kernel, state, executeTool);
+		const pending = handleToolCall(message, kernel, state, executeTool, complete, ctx);
 		state.pendingBridgeCalls.push(pending);
 		await pending;
 	}
@@ -128,11 +136,21 @@ async function handleToolCall(
 	kernel: EvalKernel,
 	state: CellState,
 	executeTool: ExecuteTool,
+	complete: CreateEvalToolOptions["complete"],
+	ctx: ExtensionContext,
 ): Promise<void> {
 	if (message.toolName === "eval") {
 		const error = "recursive eval is not allowed";
 		state.toolCalls.push({ name: message.toolName, ok: false, error });
 		kernel.deliverToolReply({ type: "tool-reply", callId: message.callId, ok: false, error: { message: error } });
+		return;
+	}
+	if (message.toolName === "completion" && complete) {
+		const result = await handleCompletionToolCall({ message, kernel, complete, ctx });
+		state.toolCalls.push(
+			result.ok ? { name: message.toolName, ok: true } : { name: message.toolName, ok: false, error: result.error },
+		);
+		emitUpdate(state, false);
 		return;
 	}
 	try {

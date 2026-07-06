@@ -99,6 +99,8 @@ export class PythonKernel {
 		await this.#spawn();
 	}
 
+	deliverToolReply(): void {}
+
 	async close(): Promise<void> {
 		const child = this.#child;
 		if (!child) return;
