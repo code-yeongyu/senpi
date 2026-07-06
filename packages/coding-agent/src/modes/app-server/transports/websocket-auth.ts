@@ -24,12 +24,20 @@ export async function resolveWebSocketListenerAuth(options: {
 	const path = auth?.kind === "token-file" ? auth.path : defaultTokenPath;
 	if (path === undefined) return { kind: "off" };
 	const token = auth?.kind === "token-file" ? await readTokenFile(path) : await ensureTokenFile(path);
+	// Fail closed: an empty token would authorize any `Authorization: Bearer `
+	// request. Never start a listener with a blank expected token.
+	if (token.length === 0) {
+		throw new Error(`app-server ws auth token file is empty: ${path}`);
+	}
 	stderr.write(`${tokenLogLabel}: ${path}\n`);
 	return { kind: "bearer", token, path };
 }
 
 export function isWebSocketRequestAuthorized(request: IncomingMessage, auth: ResolvedWebSocketListenerAuth): boolean {
 	if (auth.kind === "off") return true;
+	// Defense in depth: an empty expected token must never authorize anything,
+	// regardless of how it was produced.
+	if (auth.token.length === 0) return false;
 	const header = request.headers.authorization;
 	if (typeof header !== "string" || !header.startsWith("Bearer ")) return false;
 	return tokensEqual(header.slice("Bearer ".length), auth.token);
@@ -41,7 +49,10 @@ async function readTokenFile(path: string): Promise<string> {
 
 async function ensureTokenFile(path: string): Promise<string> {
 	try {
-		return await readTokenFile(path);
+		const existing = await readTokenFile(path);
+		// A truncated/empty auto-managed token file (e.g. a crashed prior write)
+		// self-heals by regenerating rather than failing the daemon startup.
+		if (existing.length > 0) return existing;
 	} catch (error: unknown) {
 		if (!isNodeErrorCode(error, "ENOENT")) throw error;
 	}

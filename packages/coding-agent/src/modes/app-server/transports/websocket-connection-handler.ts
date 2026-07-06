@@ -65,6 +65,13 @@ export function createAppServerWebSocketConnectionHandler(options: {
 					terminateOnTransportError(websocket, error);
 				});
 			});
+			websocket.on("error", (error: unknown) => {
+				// A socket-level error with no listener throws and can crash the
+				// server; isolate the fault to this connection instead.
+				const message = error instanceof Error ? error.message : String(error);
+				process.stderr.write(`app-server websocket connection error: ${message}\n`);
+				websocket.terminate();
+			});
 			websocket.on("close", () => {
 				connections.delete(websocket);
 				options.core.removeConnection(connectionId);
