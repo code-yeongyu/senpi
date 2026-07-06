@@ -8,8 +8,8 @@
  * neo-daemon-auth-isolation.test.ts (group e).
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
-import { connect, type Socket } from "node:net";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { connect, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -328,5 +328,79 @@ describe("neo daemon supervisor", () => {
 				workerFactory: makeStubFactory([]),
 			}),
 		).rejects.toBeInstanceOf(NeoDaemonAddressInUseError);
+	});
+
+	it("binds over an orphaned socket file with NO registry record (deterministic-path crash recovery)", async () => {
+		// With a deterministic socket path, a daemon that crashed without a clean
+		// shutdown can leave the socket FILE on disk while its registry record was
+		// removed (or never matched). cleanupStaleNeoDaemon keys off the record and
+		// so would miss this leftover — a fresh bind() then hits EADDRINUSE forever.
+		// The daemon's own pre-bind cleanup must unlink the dead socket file first.
+		const orphanServer = createServer();
+		await new Promise<void>((resolve, reject) => {
+			orphanServer.once("error", reject);
+			orphanServer.once("listening", () => resolve());
+			orphanServer.listen(listenPath);
+		});
+		// Emulate a crash: drop the listener without unlinking so the file lingers,
+		// and leave NO registry record for this cwd.
+		await new Promise<void>((resolve) => orphanServer.close(() => resolve()));
+		// The listener's close removes the file, so recreate the leftover to model a
+		// hard crash (SIGKILL) where Node never got to clean up.
+		writeFileSync(listenPath, "");
+		expect(existsSync(listenPath)).toBe(true);
+		expect(readNeoDaemonRecord(agentDir, cwd)).toBeUndefined();
+
+		// A fresh daemon must recover: unlink the dead socket file, then bind.
+		handle = await runNeoDaemon({
+			listenPath,
+			cwd,
+			agentDir,
+			register: true,
+			idleShutdownMs: 0,
+			token: TOKEN,
+			workerFactory: makeStubFactory([]),
+		});
+		const record = readNeoDaemonRecord(agentDir, cwd);
+		expect(record).toMatchObject({ socket: listenPath, pid: process.pid });
+		const client = await openClient(listenPath);
+		client.send({ type: "hello", token: TOKEN, version: 1 });
+		expect(await client.next()).toMatchObject({ type: "welcome", version: 1 });
+		client.end();
+	});
+
+	it("does NOT unlink a socket a LIVE daemon is serving (loser still gets EADDRINUSE)", async () => {
+		// The pre-bind cleanup must distinguish a dead socket file from one a live
+		// daemon is actively serving: connecting to the live one succeeds, so the
+		// loser must leave it alone and lose the bind race rather than yanking the
+		// winner's socket out from under it.
+		handle = await runNeoDaemon({
+			listenPath,
+			cwd,
+			agentDir,
+			register: true,
+			idleShutdownMs: 0,
+			token: TOKEN,
+			workerFactory: makeStubFactory([]),
+		});
+		// A concurrent racer on the SAME path with the winner still live must lose.
+		await expect(
+			runNeoDaemon({
+				listenPath,
+				cwd,
+				agentDir,
+				register: false,
+				idleShutdownMs: 0,
+				token: "loser",
+				workerFactory: makeStubFactory([]),
+			}),
+		).rejects.toBeInstanceOf(NeoDaemonAddressInUseError);
+		// The winner is untouched: still serving, still the registry owner.
+		const record = readNeoDaemonRecord(agentDir, cwd);
+		expect(record).toMatchObject({ socket: listenPath, token: TOKEN, pid: process.pid });
+		const client = await openClient(listenPath);
+		client.send({ type: "hello", token: TOKEN, version: 1 });
+		expect(await client.next()).toMatchObject({ type: "welcome", version: 1 });
+		client.end();
 	});
 });

@@ -1,7 +1,7 @@
 package bridge
 
 import (
-	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -220,34 +220,35 @@ func cleanupStaleRecord(agentDir, cwd string) {
 	_ = os.Remove(path)
 }
 
-// chooseSocketPath derives a fresh socket path for a spawned daemon. The unix
-// domain socket path must fit sun_path (~104 bytes on macOS, 108 on Linux), and
-// the agent dir (which the registry lives under) can be arbitrarily deep, so the
-// socket goes in the OS temp dir under a short name instead — the daemon binds
-// and registers this exact path, and the registry record carries it so clients
-// find it. On Windows it is a named-pipe path in the flat pipe namespace.
+// chooseSocketPath derives the socket path for a spawned daemon DETERMINISTICALLY
+// from the resolved cwd. This is load-bearing for the spawn race: the plan's
+// "bind is the mutex" protocol only engages if every concurrent racer in one cwd
+// targets the SAME --listen path, so exactly one daemon wins bind() and the rest
+// get EADDRINUSE and attach to the winner (neo-daemon-mode.ts). A random per-
+// client path would let every racer bind its own socket, leaving N daemons.
+//
+// The name is a fixed-length hash of the same resolved-cwd string the registry
+// key uses (NeoDaemonCwdKey), so it is identical across processes, collision-
+// resistant, and short. The unix domain socket path must fit sun_path (~104
+// bytes on macOS, 108 on Linux) and the agent dir can be arbitrarily deep, so
+// the socket goes in the OS temp dir under this short hashed name instead — the
+// daemon binds and registers this exact path, and the registry record carries it
+// so clients find it. On Windows it is a named-pipe path in the flat namespace.
 func chooseSocketPath(cwd string) (string, error) {
-	var suffix [6]byte
-	if _, err := rand.Read(suffix[:]); err != nil {
-		return "", err
-	}
-	id := hex.EncodeToString(suffix[:])
+	h := neoDaemonCwdSocketHash(cwd)
 	if runtime.GOOS == "windows" {
 		// Named pipes live in a flat namespace, not the filesystem.
-		return `\\.\pipe\senpi-neo-` + neoDaemonCwdShortKey(cwd) + "-" + id, nil
+		return `\\.\pipe\senpi-neo-` + h, nil
 	}
-	return filepath.Join(os.TempDir(), "senpi-neo-"+id+".sock"), nil
+	return filepath.Join(os.TempDir(), "senpi-neo-"+h+".sock"), nil
 }
 
-// neoDaemonCwdShortKey is a short, filesystem-safe fragment of the cwd for a
-// named-pipe name (Windows pipe names have length limits too). It is not the
-// registry key — that stays the full NeoDaemonCwdKey.
-func neoDaemonCwdShortKey(cwd string) string {
-	sum := hex.EncodeToString([]byte(cwd))
-	if len(sum) > 16 {
-		return sum[:16]
-	}
-	return sum
+// neoDaemonCwdSocketHash is the first 16 hex chars (8 bytes / 64 bits) of the
+// SHA-256 of the resolved cwd — enough entropy to be collision-resistant across
+// the cwds one machine hosts while keeping the socket path well under sun_path.
+func neoDaemonCwdSocketHash(cwd string) string {
+	sum := sha256.Sum256([]byte(cwd))
+	return hex.EncodeToString(sum[:])[:16]
 }
 
 // remaining is the time left until deadline (never negative).

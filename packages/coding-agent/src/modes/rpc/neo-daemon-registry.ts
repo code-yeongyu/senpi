@@ -13,6 +13,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { connect } from "node:net";
 import { join } from "node:path";
 import { resolvePath } from "../../utils/paths.ts";
 
@@ -145,4 +146,49 @@ export function cleanupStaleNeoDaemon(agentDir: string, cwd: string): boolean {
 	}
 	removeNeoDaemonRecord(agentDir, cwd);
 	return true;
+}
+
+/**
+ * Reclaim a leftover unix-socket file at `listenPath` when NO live daemon is
+ * serving it, so a fresh bind() does not hit EADDRINUSE forever.
+ *
+ * This is the safety net that makes the DETERMINISTIC socket path safe: a daemon
+ * SIGKILLed without a clean shutdown leaves the socket file on disk with its
+ * registry record gone (so {@link cleanupStaleNeoDaemon}, which keys off the
+ * record, misses it). bind() on a leftover unix-socket file throws EADDRINUSE
+ * whether or not anyone is listening, so the fresh daemon must probe the path and
+ * unlink it when it is dead.
+ *
+ * A LIVE daemon serving the socket accepts a connection; we must NOT unlink that
+ * one — the caller then loses the bind race (EADDRINUSE) and attaches to the
+ * winner, which is the intended "bind is the mutex" outcome. We only unlink when
+ * connecting is refused/errors (a dead socket) or the path is a plain file.
+ *
+ * No-op on Windows named pipes (not filesystem paths; the OS reclaims a pipe when
+ * its owner dies) and when nothing exists at the path.
+ */
+export async function reclaimDeadSocketFile(listenPath: string): Promise<void> {
+	if (process.platform === "win32") return;
+	if (!existsSync(listenPath)) return;
+	const alive = await isSocketServed(listenPath);
+	if (alive) return; // a live daemon owns it — let the caller lose the bind race
+	try {
+		rmSync(listenPath, { force: true });
+	} catch {
+		// non-fatal: bind will surface any real problem as EADDRINUSE/EACCES
+	}
+}
+
+/** Whether a unix socket at `path` currently accepts a connection (a live server). */
+function isSocketServed(path: string): Promise<boolean> {
+	return new Promise((resolve) => {
+		const socket = connect(path);
+		const done = (alive: boolean): void => {
+			socket.removeAllListeners();
+			socket.destroy();
+			resolve(alive);
+		};
+		socket.once("connect", () => done(true));
+		socket.once("error", () => done(false));
+	});
 }

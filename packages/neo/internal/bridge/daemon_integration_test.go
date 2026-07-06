@@ -5,6 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -195,10 +198,15 @@ func TestIntegrationSpawnRealDaemon(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		_ = conn.Close()
-		// The client spawned a detached daemon; kill it so no orphan survives.
+		// The client spawned a detached daemon; kill it AND remove its socket file
+		// so no orphan process or leftover socket survives (SIGKILL skips the
+		// daemon's own cleanup, and the path is deterministic now).
 		if rec, _ := ReadNeoDaemonRecord(sb.agentDir, sb.cwd); rec != nil {
 			if p, perr := os.FindProcess(rec.PID); perr == nil {
 				_ = p.Kill()
+			}
+			if rec.Socket != "" {
+				_ = os.Remove(rec.Socket)
 			}
 		}
 	})
@@ -214,4 +222,147 @@ func indexByte(s string, b byte) int {
 		}
 	}
 	return -1
+}
+
+// TestIntegrationConcurrentSpawnRaceExactlyOneDaemon is the real-process proof
+// for the deterministic-socket fix: N clients cold-start concurrently in ONE cwd
+// via the real AttachOrSpawn path (which execs real `node <cli> --listen <path>
+// --register` daemons). Because chooseSocketPath is now deterministic, every
+// racer passes the SAME --listen path, so the OS bind() arbitrates and exactly
+// ONE daemon survives while the losers exit NEO_DAEMON_ADDRESS_IN_USE_EXIT and
+// attach to the winner. Liveness is counted by lsof -U on the deterministic
+// socket path (the daemon supervisor retitles its process to "senpi", so an argv
+// grep would miss it — only the socket holder count is authoritative).
+func TestIntegrationConcurrentSpawnRaceExactlyOneDaemon(t *testing.T) {
+	if _, err := exec.LookPath("lsof"); err != nil {
+		t.Skip("lsof not on PATH; needed to count live daemons by socket holder")
+	}
+	sb := newDaemonSandbox(t)
+	t.Setenv("SENPI_NEO_CLI_PATH", sb.cliCmd[0]+" "+sb.cliCmd[1]+" "+sb.cliCmd[2]+" "+sb.cliCmd[3]+" "+sb.cliCmd[4])
+	for _, kv := range sb.env {
+		if i := indexByte(kv, '='); i > 0 {
+			t.Setenv(kv[:i], kv[i+1:])
+		}
+	}
+
+	// The deterministic path all racers will converge on. Reap any daemon holding
+	// it at the end so no orphan survives (kill by socket holder, not by pid, since
+	// the losers may have exited already and the winner retitled to "senpi").
+	socket, err := chooseSocketPath(sb.cwd)
+	if err != nil {
+		t.Fatalf("chooseSocketPath: %v", err)
+	}
+	reap := func() {
+		for _, pid := range socketHolderPIDs(t, socket) {
+			if p, perr := os.FindProcess(pid); perr == nil {
+				_ = p.Kill()
+			}
+		}
+		_ = os.Remove(socket)
+	}
+	t.Cleanup(reap)
+
+	const clients = 3
+	var wg sync.WaitGroup
+	conns := make([]*DaemonConn, clients)
+	errs := make([]error, clients)
+	for i := 0; i < clients; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			conn, cerr := AttachOrSpawn(AttachConfig{
+				AgentDir:       sb.agentDir,
+				Cwd:            sb.cwd,
+				RuntimeOptions: NeoRuntimeOptions{Model: strPtr("mock-claude")},
+				Timeout:        90 * time.Second,
+			})
+			conns[idx], errs[idx] = conn, cerr
+		}(i)
+	}
+	wg.Wait()
+
+	attached := 0
+	for i := 0; i < clients; i++ {
+		if errs[i] != nil {
+			dumpDaemonLog(t, sb.agentDir)
+			t.Fatalf("client %d AttachOrSpawn failed: %v", i, errs[i])
+		}
+		if conns[i] != nil {
+			attached++
+			t.Cleanup(func(c *DaemonConn) func() { return func() { _ = c.Close() } }(conns[i]))
+		}
+	}
+	if attached != clients {
+		t.Fatalf("expected all %d clients attached, got %d", clients, attached)
+	}
+
+	// Every racer targeted the deterministic path, so exactly ONE daemon should
+	// hold the socket. Poll briefly to let any bind-losers finish exiting.
+	var holders []int
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		holders = socketHolderPIDs(t, socket)
+		if len(holders) == 1 {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if len(holders) != 1 {
+		dumpDaemonLog(t, sb.agentDir)
+		t.Fatalf("expected exactly 1 live daemon holding %s, got %d (pids %v)", socket, len(holders), holders)
+	}
+
+	// The registry winner must be that single live daemon, and all clients share it.
+	rec, rerr := ReadNeoDaemonRecord(sb.agentDir, sb.cwd)
+	if rerr != nil || rec == nil {
+		t.Fatalf("expected a registry record after race, got %v (err %v)", rec, rerr)
+	}
+	if rec.Socket != socket {
+		t.Fatalf("registry socket %q != deterministic path %q", rec.Socket, socket)
+	}
+	if rec.PID != holders[0] {
+		t.Fatalf("registry pid %d != live daemon pid %d", rec.PID, holders[0])
+	}
+	for i := 0; i < clients; i++ {
+		if conns[i].Record.Socket != socket {
+			t.Fatalf("client %d attached to %q, not the shared daemon %q", i, conns[i].Record.Socket, socket)
+		}
+	}
+}
+
+// socketHolderPIDs returns the pids of processes holding the given unix-domain
+// socket path open, via `lsof -U`. This is the authoritative live-daemon count
+// because the neo daemon supervisor retitles its process to "senpi".
+func socketHolderPIDs(t *testing.T, socket string) []int {
+	t.Helper()
+	out, _ := exec.Command("lsof", "-U", "-Fpn").Output()
+	var pids []int
+	var curPID int
+	for _, line := range strings.Split(string(out), "\n") {
+		if line == "" {
+			continue
+		}
+		switch line[0] {
+		case 'p':
+			if n, err := strconv.Atoi(line[1:]); err == nil {
+				curPID = n
+			} else {
+				curPID = 0
+			}
+		case 'n':
+			if curPID != 0 && strings.Contains(line[1:], socket) {
+				pids = appendUniqueInt(pids, curPID)
+			}
+		}
+	}
+	return pids
+}
+
+func appendUniqueInt(s []int, v int) []int {
+	for _, x := range s {
+		if x == v {
+			return s
+		}
+	}
+	return append(s, v)
 }

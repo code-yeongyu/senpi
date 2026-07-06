@@ -266,32 +266,97 @@ func TestAttachOrSpawn_CorruptRegistryRepairsAndRespawns(t *testing.T) {
 	}
 }
 
-// --- Race: two clients spawn simultaneously → exactly one daemon --------------
+// --- Race: N clients spawn simultaneously → exactly one daemon ----------------
+
+// bindMutexSpawner models the REAL "bind is the mutex" daemon protocol
+// (neo-daemon-mode.ts: bind FIRST, register as the LAST listen step, a bind
+// loser gets EADDRINUSE and never registers). It arbitrates purely on the
+// socket path each spawn requests — exactly as the OS unix-domain bind() does:
+//
+//   - the FIRST spawn to target a given path "wins": it binds a real listener on
+//     that path and writes the registry record;
+//   - any later spawn targeting the SAME path loses (EADDRINUSE) and does NOT
+//     register — matching the launcher exiting NEO_DAEMON_ADDRESS_IN_USE_EXIT;
+//   - a spawn targeting a DIFFERENT path would wrongly win and register there,
+//     which is precisely the divergence the random-path bug produced.
+//
+// Because arbitration is by path, this fake CANNOT converge unless the client
+// makes all racers compute the SAME deterministic path. It records every path it
+// saw so the test can assert determinism directly.
+type bindMutexSpawner struct {
+	t        *testing.T
+	agentDir string
+	cwd      string
+	token    string
+	mu       sync.Mutex
+	bound    map[string]*scriptedDaemon // socket path -> winning daemon
+	paths    []string                   // every path any racer requested
+}
+
+func newBindMutexSpawner(t *testing.T, agentDir, cwd, token string) *bindMutexSpawner {
+	return &bindMutexSpawner{t: t, agentDir: agentDir, cwd: cwd, token: token, bound: map[string]*scriptedDaemon{}}
+}
+
+func (s *bindMutexSpawner) spawn(req SpawnRequest) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.paths = append(s.paths, req.Socket)
+	if _, taken := s.bound[req.Socket]; taken {
+		// Bind loser: EADDRINUSE. The launcher exits 75 without registering; the
+		// spawner still returns nil and the client re-reads the winner's record.
+		return nil
+	}
+	// The real daemon reclaims a dead leftover socket file before bind (see
+	// reclaimDeadSocketFile). Model that so a socket file orphaned by an earlier
+	// run does not wedge the winner's listen.
+	_ = os.Remove(req.Socket)
+	// Bind winner: bind a real listener on the requested path and register LAST.
+	ln, err := net.Listen("unix", req.Socket)
+	if err != nil {
+		return fmt.Errorf("bind winner listen %q: %w", req.Socket, err)
+	}
+	s.t.Cleanup(func() { _ = os.Remove(req.Socket) })
+	d := &scriptedDaemon{
+		agentDir: s.agentDir, cwd: s.cwd, socket: req.Socket, token: s.token, version: NeoDaemonProtocolVersion,
+		ln: ln, hellos: make(chan NeoHelloMessage, 8),
+	}
+	go d.serve(ln)
+	s.t.Cleanup(d.stop)
+	d.register(s.t, os.Getpid())
+	s.bound[req.Socket] = d
+	return nil
+}
+
+func (s *bindMutexSpawner) distinctPaths() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	seen := map[string]struct{}{}
+	var out []string
+	for _, p := range s.paths {
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	return out
+}
+
+func (s *bindMutexSpawner) liveDaemonCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.bound)
+}
 
 func TestAttachOrSpawn_RaceExactlyOneDaemon(t *testing.T) {
 	agentDir := t.TempDir()
-	cwd := "/proj/race"
+	// The socket path is derived from the cwd, so use a per-run unique cwd to keep
+	// concurrent test runs from colliding on the same deterministic socket file.
+	cwd := t.TempDir()
 
-	// One shared scripted daemon models the bind-mutex winner: only the FIRST
-	// spawn call actually binds+registers; a second concurrent spawn observes
-	// EADDRINUSE (models: it does nothing, the loser just re-reads the registry).
-	d := newScriptedDaemon(t, agentDir, cwd, "tok-race", NeoDaemonProtocolVersion)
-	var spawnCount atomic.Int64
-	var bindOnce sync.Once
+	sp := newBindMutexSpawner(t, agentDir, cwd, "tok-race")
 
-	spawn := func(req SpawnRequest) error {
-		spawnCount.Add(1)
-		bindOnce.Do(func() {
-			d.socket = req.Socket
-			relistenScripted(t, d)
-			d.register(t, os.Getpid())
-		})
-		// A losing spawn "exits" with the in-use signal; the client retries the
-		// registry, which the winner has now written.
-		return nil
-	}
-
-	const clients = 2
+	const clients = 4
 	var wg sync.WaitGroup
 	results := make([]*DaemonConn, clients)
 	errs := make([]error, clients)
@@ -302,13 +367,20 @@ func TestAttachOrSpawn_RaceExactlyOneDaemon(t *testing.T) {
 			res, err := AttachOrSpawn(AttachConfig{
 				AgentDir: agentDir,
 				Cwd:      cwd,
-				Spawn:    spawn,
+				Spawn:    sp.spawn,
 				Timeout:  4 * time.Second,
 			})
 			results[idx], errs[idx] = res, err
 		}(i)
 	}
 	wg.Wait()
+
+	// Every racer must have computed the SAME deterministic socket path — this is
+	// the invariant that lets the bind() actually arbitrate the race. With the old
+	// random-path code this fails here (N distinct paths).
+	if paths := sp.distinctPaths(); len(paths) != 1 {
+		t.Fatalf("racers diverged on socket path: %d distinct paths %v (want 1)", len(paths), paths)
+	}
 
 	attached := 0
 	for i := 0; i < clients; i++ {
@@ -324,7 +396,12 @@ func TestAttachOrSpawn_RaceExactlyOneDaemon(t *testing.T) {
 		t.Fatalf("expected all %d clients attached, got %d", clients, attached)
 	}
 
-	// Exactly one registry record, one pid.
+	// Exactly one daemon won the bind, so exactly one live daemon exists.
+	if live := sp.liveDaemonCount(); live != 1 {
+		t.Fatalf("expected exactly 1 live daemon after race, got %d", live)
+	}
+
+	// Exactly one registry record, pointing at this process (the winner).
 	rec, err := ReadNeoDaemonRecord(agentDir, cwd)
 	if err != nil || rec == nil {
 		t.Fatalf("expected a single registry record after race, got %v (err %v)", rec, err)

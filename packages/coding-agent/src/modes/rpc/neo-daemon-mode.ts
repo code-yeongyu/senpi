@@ -39,6 +39,7 @@ import {
 	cleanupStaleNeoDaemon,
 	NEO_DAEMON_PROTOCOL_VERSION,
 	type NeoDaemonRecord,
+	reclaimDeadSocketFile,
 	removeNeoDaemonRecord,
 	writeNeoDaemonRecord,
 } from "./neo-daemon-registry.ts";
@@ -272,6 +273,12 @@ export async function runNeoDaemon(options: NeoDaemonOptions): Promise<NeoDaemon
 			}
 		}
 	}
+
+	// A deterministic socket path means a crashed daemon can leave a dead socket
+	// FILE behind with no registry record for cleanupStaleNeoDaemon to key off.
+	// Reclaim such a leftover before bind so we do not hit EADDRINUSE forever; a
+	// socket a LIVE daemon still serves is left intact so we lose the race to it.
+	await reclaimDeadSocketFile(options.listenPath);
 
 	// Bind FIRST (the mutex). Map EADDRINUSE to a typed error so the caller can
 	// attach to the winner.
