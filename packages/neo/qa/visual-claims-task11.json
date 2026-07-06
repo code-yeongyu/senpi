@@ -1,0 +1,202 @@
+{
+  "$schema": "./visual-claims.schema.md",
+  "description": "Task-11 (slash commands + autocomplete + bash mode) visual-claims manifest. Separate per-task manifest (not merged into the shared visual-claims.json) to avoid the shared-file merge hazard while other Wave-2 tasks run in parallel. Each claim binds a real tmux capture-pane -e frame of the internal/ui/slash qaharness as a complete triplet (.ans + .html + cell-grid .json from qa/xterm-render.mjs) with grid-based assertions verifying the grok slash-menu palette (accent-blue #7aa2f7 command token, muted #6c6c6c rule/scrollbar), the bash execution block (green #9ece6a $ prompt for `!`, dim #585858 for `!!`, error #f7768e status), and the unknown-command inline error color. Colors derive from internal/theme (grok captures), not implementation output. Triplet paths are relative to this file's directory (packages/neo/qa). Verify with: node packages/neo/qa/xterm-render.mjs verify-manifest packages/neo/qa/visual-claims-task11.json",
+  "claims": [
+    {
+      "id": "task-11-slash-menu-mo-120",
+      "task": 11,
+      "title": "slash menu after typing /mo at 120 cols: grok popup with top-rule count marker (22), ❯ prompt + /model command token in accent-blue, muted scrollbar block at the right edge",
+      "requiredFrames": ["t11-slash-mo-120"],
+      "frames": [
+        {
+          "id": "t11-slash-mo-120",
+          "size": "140x5",
+          "state": "slash-menu-mo-filter-120",
+          "ans": "triplets/t11-slash-mo-120.ans",
+          "html": "triplets/t11-slash-mo-120.html",
+          "json": "triplets/t11-slash-mo-120.json"
+        }
+      ],
+      "assertions": [
+        { "id": "top-rule-glyph", "frame": "t11-slash-mo-120", "kind": "cell-glyph", "x": 0, "y": 0, "glyph": "─" },
+        { "id": "top-rule-muted", "frame": "t11-slash-mo-120", "kind": "cell-fg", "x": 0, "y": 0, "hex": "#6c6c6c" },
+        { "id": "count-marker-2a", "frame": "t11-slash-mo-120", "kind": "cell-glyph", "x": 117, "y": 0, "glyph": "2" },
+        { "id": "count-marker-2b", "frame": "t11-slash-mo-120", "kind": "cell-glyph", "x": 118, "y": 0, "glyph": "2" },
+        { "id": "prompt-glyph", "frame": "t11-slash-mo-120", "kind": "cell-glyph", "x": 0, "y": 1, "glyph": "❯" },
+        { "id": "prompt-blue", "frame": "t11-slash-mo-120", "kind": "cell-fg", "x": 0, "y": 1, "hex": "#7aa2f7" },
+        { "id": "slash-token-glyph", "frame": "t11-slash-mo-120", "kind": "cell-glyph", "x": 2, "y": 1, "glyph": "/" },
+        { "id": "slash-token-blue", "frame": "t11-slash-mo-120", "kind": "cell-fg", "x": 2, "y": 1, "hex": "#7aa2f7" },
+        { "id": "scrollbar-glyph", "frame": "t11-slash-mo-120", "kind": "cell-glyph", "x": 119, "y": 1, "glyph": "█" },
+        { "id": "scrollbar-muted", "frame": "t11-slash-mo-120", "kind": "cell-fg", "x": 119, "y": 1, "hex": "#6c6c6c" },
+        { "id": "bottom-rule-glyph", "frame": "t11-slash-mo-120", "kind": "cell-glyph", "x": 0, "y": 4, "glyph": "─" },
+        { "id": "bottom-rule-muted", "frame": "t11-slash-mo-120", "kind": "cell-fg", "x": 0, "y": 4, "hex": "#6c6c6c" }
+      ]
+    },
+    {
+      "id": "task-11-slash-menu-mo-80-reflow",
+      "task": 11,
+      "title": "slash menu after /mo reflows to 80 cols keeping the ❯ prompt, accent-blue command token, and muted scrollbar block",
+      "requiredFrames": ["t11-slash-mo-80"],
+      "frames": [
+        {
+          "id": "t11-slash-mo-80",
+          "size": "100x5",
+          "state": "slash-menu-mo-filter-80",
+          "ans": "triplets/t11-slash-mo-80.ans",
+          "html": "triplets/t11-slash-mo-80.html",
+          "json": "triplets/t11-slash-mo-80.json"
+        }
+      ],
+      "assertions": [
+        { "id": "prompt-glyph-80", "frame": "t11-slash-mo-80", "kind": "cell-glyph", "x": 0, "y": 1, "glyph": "❯" },
+        { "id": "prompt-blue-80", "frame": "t11-slash-mo-80", "kind": "cell-fg", "x": 0, "y": 1, "hex": "#7aa2f7" },
+        { "id": "slash-token-blue-80", "frame": "t11-slash-mo-80", "kind": "cell-fg", "x": 2, "y": 1, "hex": "#7aa2f7" },
+        { "id": "scrollbar-glyph-80", "frame": "t11-slash-mo-80", "kind": "cell-glyph", "x": 79, "y": 1, "glyph": "█" },
+        { "id": "scrollbar-muted-80", "frame": "t11-slash-mo-80", "kind": "cell-fg", "x": 79, "y": 1, "hex": "#6c6c6c" },
+        { "id": "top-rule-muted-80", "frame": "t11-slash-mo-80", "kind": "cell-fg", "x": 0, "y": 0, "hex": "#6c6c6c" },
+        { "id": "bottom-rule-glyph-80", "frame": "t11-slash-mo-80", "kind": "cell-glyph", "x": 0, "y": 4, "glyph": "─" }
+      ]
+    },
+    {
+      "id": "task-11-slash-menu-model-exact",
+      "task": 11,
+      "title": "slash menu with /model typed: the exact-match /model is the sole/first entry, accent-blue command token",
+      "requiredFrames": ["t11-slash-model-120"],
+      "frames": [
+        {
+          "id": "t11-slash-model-120",
+          "size": "140x4",
+          "state": "slash-menu-model-exact-120",
+          "ans": "triplets/t11-slash-model-120.ans",
+          "html": "triplets/t11-slash-model-120.html",
+          "json": "triplets/t11-slash-model-120.json"
+        }
+      ],
+      "assertions": [
+        { "id": "model-prompt-glyph", "frame": "t11-slash-model-120", "kind": "cell-glyph", "x": 0, "y": 1, "glyph": "❯" },
+        { "id": "model-prompt-blue", "frame": "t11-slash-model-120", "kind": "cell-fg", "x": 0, "y": 1, "hex": "#7aa2f7" },
+        { "id": "model-slash-glyph", "frame": "t11-slash-model-120", "kind": "cell-glyph", "x": 2, "y": 1, "glyph": "/" },
+        { "id": "model-slash-blue", "frame": "t11-slash-model-120", "kind": "cell-fg", "x": 2, "y": 1, "hex": "#7aa2f7" },
+        { "id": "model-bottom-rule", "frame": "t11-slash-model-120", "kind": "cell-glyph", "x": 0, "y": 3, "glyph": "─" }
+      ]
+    },
+    {
+      "id": "task-11-at-file-completion",
+      "task": 11,
+      "title": "@file completion popup after typing '@': the REAL fd walker (driven in tmux ulw-qa-t11fix against a temp tree) ranks entries, rendered in the grok popup with the @mention token in accent-blue (#7aa2f7), directories ranked first (@src/), muted (#6c6c6c) top/bottom rules + count marker (3) + scrollbar block",
+      "requiredFrames": ["t11-at-file-80"],
+      "frames": [
+        {
+          "id": "t11-at-file-80",
+          "size": "100x5",
+          "state": "at-file-mention-empty-query-80",
+          "ans": "triplets/t11-at-file-80.ans",
+          "html": "triplets/t11-at-file-80.html",
+          "json": "triplets/t11-at-file-80.json"
+        }
+      ],
+      "assertions": [
+        { "id": "at-top-rule-glyph", "frame": "t11-at-file-80", "kind": "cell-glyph", "x": 0, "y": 0, "glyph": "─" },
+        { "id": "at-top-rule-muted", "frame": "t11-at-file-80", "kind": "cell-fg", "x": 0, "y": 0, "hex": "#6c6c6c" },
+        { "id": "at-count-marker-3", "frame": "t11-at-file-80", "kind": "cell-glyph", "x": 78, "y": 0, "glyph": "3" },
+        { "id": "at-prompt-glyph", "frame": "t11-at-file-80", "kind": "cell-glyph", "x": 0, "y": 1, "glyph": "❯" },
+        { "id": "at-prompt-blue", "frame": "t11-at-file-80", "kind": "cell-fg", "x": 0, "y": 1, "hex": "#7aa2f7" },
+        { "id": "at-mention-glyph", "frame": "t11-at-file-80", "kind": "cell-glyph", "x": 2, "y": 1, "glyph": "@" },
+        { "id": "at-mention-blue", "frame": "t11-at-file-80", "kind": "cell-fg", "x": 2, "y": 1, "hex": "#7aa2f7" },
+        { "id": "at-file-name-blue", "frame": "t11-at-file-80", "kind": "cell-fg", "x": 3, "y": 1, "hex": "#7aa2f7" },
+        { "id": "at-scrollbar-glyph", "frame": "t11-at-file-80", "kind": "cell-glyph", "x": 79, "y": 1, "glyph": "█" },
+        { "id": "at-scrollbar-muted", "frame": "t11-at-file-80", "kind": "cell-fg", "x": 79, "y": 1, "hex": "#6c6c6c" },
+        { "id": "at-dir-mention-glyph", "frame": "t11-at-file-80", "kind": "cell-glyph", "x": 2, "y": 3, "glyph": "@" },
+        { "id": "at-dir-mention-blue", "frame": "t11-at-file-80", "kind": "cell-fg", "x": 2, "y": 3, "hex": "#7aa2f7" },
+        { "id": "at-bottom-rule-glyph", "frame": "t11-at-file-80", "kind": "cell-glyph", "x": 0, "y": 4, "glyph": "─" },
+        { "id": "at-bottom-rule-muted", "frame": "t11-at-file-80", "kind": "cell-fg", "x": 0, "y": 4, "hex": "#6c6c6c" }
+      ]
+    },
+    {
+      "id": "task-11-bash-run-streaming",
+      "task": 11,
+      "title": "!ls bash block mid-stream: green (#9ece6a) $ prompt + green border, muted (#6c6c6c) streaming output body",
+      "requiredFrames": ["t11-bash-run-80"],
+      "frames": [
+        {
+          "id": "t11-bash-run-80",
+          "size": "100x6",
+          "state": "bash-run-streaming-80",
+          "ans": "triplets/t11-bash-run-80.ans",
+          "html": "triplets/t11-bash-run-80.html",
+          "json": "triplets/t11-bash-run-80.json"
+        }
+      ],
+      "assertions": [
+        { "id": "bash-top-border-glyph", "frame": "t11-bash-run-80", "kind": "cell-glyph", "x": 0, "y": 0, "glyph": "─" },
+        { "id": "bash-top-border-green", "frame": "t11-bash-run-80", "kind": "cell-fg", "x": 0, "y": 0, "hex": "#9ece6a" },
+        { "id": "bash-prompt-glyph", "frame": "t11-bash-run-80", "kind": "cell-glyph", "x": 0, "y": 1, "glyph": "$" },
+        { "id": "bash-prompt-green", "frame": "t11-bash-run-80", "kind": "cell-fg", "x": 0, "y": 1, "hex": "#9ece6a" },
+        { "id": "bash-output-muted", "frame": "t11-bash-run-80", "kind": "cell-fg", "x": 0, "y": 2, "hex": "#6c6c6c" },
+        { "id": "bash-bottom-border-green", "frame": "t11-bash-run-80", "kind": "cell-fg", "x": 0, "y": 5, "hex": "#9ece6a" }
+      ]
+    },
+    {
+      "id": "task-11-bash-error-status",
+      "task": 11,
+      "title": "failed bash block: (exit 2) status rendered in the error color (#f7768e)",
+      "requiredFrames": ["t11-bash-err-80"],
+      "frames": [
+        {
+          "id": "t11-bash-err-80",
+          "size": "100x5",
+          "state": "bash-error-exit2-80",
+          "ans": "triplets/t11-bash-err-80.ans",
+          "html": "triplets/t11-bash-err-80.html",
+          "json": "triplets/t11-bash-err-80.json"
+        }
+      ],
+      "assertions": [
+        { "id": "err-status-paren", "frame": "t11-bash-err-80", "kind": "cell-glyph", "x": 0, "y": 3, "glyph": "(" },
+        { "id": "err-status-color", "frame": "t11-bash-err-80", "kind": "cell-fg", "x": 0, "y": 3, "hex": "#f7768e" },
+        { "id": "err-prompt-green", "frame": "t11-bash-err-80", "kind": "cell-fg", "x": 0, "y": 1, "hex": "#9ece6a" }
+      ]
+    },
+    {
+      "id": "task-11-bash-excluded-dim",
+      "task": 11,
+      "title": "!! excluded-from-context bash block: dim (#585858) $ prompt + dim border (vs the green ! variant)",
+      "requiredFrames": ["t11-bash-excl-80"],
+      "frames": [
+        {
+          "id": "t11-bash-excl-80",
+          "size": "100x4",
+          "state": "bash-excluded-dim-80",
+          "ans": "triplets/t11-bash-excl-80.ans",
+          "html": "triplets/t11-bash-excl-80.html",
+          "json": "triplets/t11-bash-excl-80.json"
+        }
+      ],
+      "assertions": [
+        { "id": "excl-top-border-dim", "frame": "t11-bash-excl-80", "kind": "cell-fg", "x": 0, "y": 0, "hex": "#585858" },
+        { "id": "excl-prompt-glyph", "frame": "t11-bash-excl-80", "kind": "cell-glyph", "x": 0, "y": 1, "glyph": "$" },
+        { "id": "excl-prompt-dim", "frame": "t11-bash-excl-80", "kind": "cell-fg", "x": 0, "y": 1, "hex": "#585858" }
+      ]
+    },
+    {
+      "id": "task-11-unknown-command-error",
+      "task": 11,
+      "title": "unknown /xyzcmd inline error: grok-style error text in the error color (#f7768e)",
+      "requiredFrames": ["t11-unknown-80"],
+      "frames": [
+        {
+          "id": "t11-unknown-80",
+          "size": "100x1",
+          "state": "unknown-command-error-80",
+          "ans": "triplets/t11-unknown-80.ans",
+          "html": "triplets/t11-unknown-80.html",
+          "json": "triplets/t11-unknown-80.json"
+        }
+      ],
+      "assertions": [
+        { "id": "unknown-first-glyph", "frame": "t11-unknown-80", "kind": "cell-glyph", "x": 0, "y": 0, "glyph": "U" },
+        { "id": "unknown-error-color", "frame": "t11-unknown-80", "kind": "cell-fg", "x": 0, "y": 0, "hex": "#f7768e" }
+      ]
+    }
+  ]
+}
