@@ -9,6 +9,7 @@ import goalExtension from "./goal/index.ts";
 import gptApplyPatchExtension from "./gpt-apply-patch/index.ts";
 import historySearchExtension from "./history-search/index.ts";
 import hooksExtension from "./hooks/index.ts";
+import importReproExtension from "./import-repro.ts";
 import nestedAgentsMdExtension from "./nested-agents-md/index.ts";
 import openaiWebSearchExtension from "./openai-web-search/index.ts";
 import permissionSystemExtension from "./permission-system/index.ts";
@@ -54,6 +55,7 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "tool-pair-guard", factory: toolPairGuardExtension },
 	{ id: "compaction", factory: compactionExtension },
 	{ id: "history-search", factory: historySearchExtension },
+	{ id: "import-repro", factory: importReproExtension },
 	{ id: "session-observer", factory: sessionObserverExtension },
 	{ id: "websearch", factory: websearchExtension },
 	{ id: "webfetch", factory: webfetchExtension },

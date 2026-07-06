@@ -13,6 +13,8 @@ export default defineConfig({
 		environment: "node",
 		testTimeout: 30000,
 		setupFiles: ["./test/setup.ts"],
+		reporters: process.env.GITHUB_ACTIONS ? ["dot", "github-actions"] : ["dot"],
+		silent: "passed-only",
 		server: {
 			deps: {
 				external: [/@silvia-odwyer\/photon-node/],
