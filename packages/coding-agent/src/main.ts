@@ -12,6 +12,7 @@ import { type Args, type Mode, parseArgs, printHelp } from "./cli/args.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
+import { runNeoLauncher } from "./cli/neo/launch.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { selectSession } from "./cli/session-picker.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
@@ -605,6 +606,19 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "interactive" && !parsed.help && parsed.listModels === undefined && shouldRunFirstTimeSetup()) {
 		await showFirstTimeSetup(startupSettingsManager);
 		time("firstTimeSetup");
+	}
+
+	// Neo (Go TUI) handoff. Dispatch EARLY — after the version/export/list-models
+	// fast-paths and first-time setup, but BEFORE any runtime or extension loading —
+	// so the launcher process never constructs an AgentSessionRuntime or loads
+	// extensions (that work belongs to the neo daemon's rpc connection). Runtime
+	// flags are forwarded to the Go binary as argv. Two carve-outs stay classic:
+	//   - `--help` shows classic help (which now lists --neo).
+	//   - Piped stdin resolves appMode to "print", so a TTY-less --neo falls through
+	//     to the classic print-mode path here instead of launching the TUI.
+	if (parsed.neo && !parsed.help && appMode === "interactive") {
+		const exitCode = await runNeoLauncher(parsed);
+		process.exit(exitCode);
 	}
 
 	// Decide the final runtime cwd before creating cwd-bound runtime services.

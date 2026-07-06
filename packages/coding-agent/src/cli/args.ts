@@ -47,6 +47,12 @@ export interface Args {
 	offline?: boolean;
 	verbose?: boolean;
 	projectTrustOverride?: boolean;
+	/** Launch the neo (Go-native) TUI instead of the classic TUI. */
+	neo?: boolean;
+	/** Force the neo per-instance stdio transport (implies neo). */
+	neoIsolated?: boolean;
+	/** Dev-only override path to the neo binary (hidden from help). */
+	neoBin?: string;
 	messages: string[];
 	fileArgs: string[];
 	/** Unknown flags (potentially extension flags) - map of flag name to value */
@@ -184,7 +190,12 @@ export function parseArgs(args: string[]): Args {
 		} else if (arg === "--offline") {
 			result.offline = true;
 		} else if (arg === "--neo") {
-			result.diagnostics.push({ type: "error", message: "Unknown option: --neo" });
+			result.neo = true;
+		} else if (arg === "--neo-isolated") {
+			result.neo = true;
+			result.neoIsolated = true;
+		} else if (arg === "--neo-bin" && i + 1 < args.length) {
+			result.neoBin = args[++i];
 		} else if (arg.startsWith("@")) {
 			result.fileArgs.push(arg.slice(1)); // Remove @ prefix
 		} else if (arg.startsWith("--")) {
@@ -278,6 +289,9 @@ ${chalk.bold("Options:")}
   --approve, -a                  Trust project-local files for this run
   --no-approve, -na              Ignore project-local files for this run
   --offline                      Disable startup network operations (same as PI_OFFLINE=1)
+  --neo                          Launch the neo (Go-native) TUI instead of the classic TUI
+                                 (piped stdin falls back to classic print mode)
+  --neo-isolated                 Like --neo, but use a per-instance backend (no shared daemon)
   --help, -h                     Show this help
   --version, -v                  Show version number
 
