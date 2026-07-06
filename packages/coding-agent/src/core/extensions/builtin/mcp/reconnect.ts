@@ -126,7 +126,7 @@ async function runReconnectAttempt(state: McpReconnectState, generation: number,
 		const failure = error instanceof Error ? error : new Error(String(error));
 		if (state.connection.state !== "suspended") {
 			const visibleFailure =
-				isSupersededConnectFailure(failure) && state.connection.lastError !== undefined
+				isGenericReconnectFailure(failure) && state.connection.lastError !== undefined
 					? state.connection.lastError
 					: failure;
 			state.connection.markDegraded(visibleFailure);
@@ -136,8 +136,8 @@ async function runReconnectAttempt(state: McpReconnectState, generation: number,
 	}
 }
 
-function isSupersededConnectFailure(error: Error): boolean {
-	return error.message.includes("connect was superseded");
+function isGenericReconnectFailure(error: Error): boolean {
+	return error.message.includes("connect was superseded") || error.message.includes("transport closed");
 }
 
 function breakerShouldOpen(state: McpReconnectState, now: number): boolean {
