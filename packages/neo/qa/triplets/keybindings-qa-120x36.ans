@@ -1,0 +1,10 @@
+== task-6 keybinding manager QA ==
+PASS HAPPY shift+tab raw=true msg=true -> app.thinking.cycle
+PASS HAPPY ctrl+o    raw=true msg=true -> app.tools.expand
+PASS HAPPY ctrl+r    raw=true msg=true -> app.history.search
+PASS HAPPY scope ctrl+p editor=[app.model.cycleForward] models=[app.models.toggleProvider]
+FIXTURE wrote malformed keybindings.json in sandbox neo-keys-qa-3642867714
+PASS FAILURE malformed -> defaults (app.tools.expand=[ctrl+o] app.thinking.cycle=[shift+tab])
+PASS OVERRIDE app.tools.expand flipped to ctrl+x
+VERDICT PASS
+CLEANUP removed sandbox neo-keys-qa-3642867714
