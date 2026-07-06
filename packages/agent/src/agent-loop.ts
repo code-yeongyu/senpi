@@ -303,6 +303,20 @@ async function streamAssistantResponse(
 	let partialMessage: AssistantMessage | null = null;
 	let addedPartial = false;
 
+	// Dedicated controller for the provider request so the loop can tear the
+	// request down itself (idle timeout), not only when the caller aborts.
+	const requestAbortController = new AbortController();
+	let detachCallerAbort: (() => void) | undefined;
+	if (signal !== undefined) {
+		if (signal.aborted) {
+			requestAbortController.abort(signal.reason);
+		} else {
+			const onCallerAbort = () => requestAbortController.abort(signal.reason);
+			signal.addEventListener("abort", onCallerAbort, { once: true });
+			detachCallerAbort = () => signal.removeEventListener("abort", onCallerAbort);
+		}
+	}
+
 	try {
 		// Apply context transform if configured (AgentMessage[] → AgentMessage[])
 		let messages = context.messages;
@@ -329,11 +343,16 @@ async function streamAssistantResponse(
 		const response = await streamFunction(config.model, llmContext, {
 			...config,
 			apiKey: resolvedApiKey,
-			signal,
+			signal: requestAbortController.signal,
 		});
 
 		const iterator = response[Symbol.asyncIterator]();
-		const eventReader = createAssistantEventReader(iterator, config.timeoutMs, signal);
+		const eventReader = createAssistantEventReader(
+			iterator,
+			config.timeoutMs,
+			requestAbortController.signal,
+			(error) => requestAbortController.abort(error),
+		);
 		try {
 			while (true) {
 				const next = await eventReader.next();
@@ -411,6 +430,8 @@ async function streamAssistantResponse(
 		}
 		await emit({ type: "message_end", message: finalMessage });
 		return finalMessage;
+	} finally {
+		detachCallerAbort?.();
 	}
 }
 
@@ -425,6 +446,7 @@ function createAssistantEventReader(
 	iterator: AsyncIterator<AssistantMessageEvent>,
 	timeoutMs: number | undefined,
 	signal: AbortSignal | undefined,
+	onIdleTimeout?: (error: StreamIdleTimeoutError) => void,
 ): AssistantEventReader {
 	const idleTimeoutMs =
 		typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : undefined;
@@ -449,7 +471,7 @@ function createAssistantEventReader(
 				void iterator.return?.();
 				return Promise.reject(new Error("Request was aborted"));
 			}
-			return readNextAssistantEvent(iterator, idleTimeoutMs, abortPromise);
+			return readNextAssistantEvent(iterator, idleTimeoutMs, abortPromise, onIdleTimeout);
 		},
 		dispose: () => removeAbortListener?.(),
 	};
@@ -459,6 +481,7 @@ async function readNextAssistantEvent(
 	iterator: AsyncIterator<AssistantMessageEvent>,
 	idleTimeoutMs: number | undefined,
 	abortPromise: Promise<typeof ABORTED> | undefined,
+	onIdleTimeout?: (error: StreamIdleTimeoutError) => void,
 ): Promise<IteratorResult<AssistantMessageEvent>> {
 	if (idleTimeoutMs === undefined && abortPromise === undefined) {
 		return iterator.next();
@@ -479,8 +502,12 @@ async function readNextAssistantEvent(
 
 		if (idleTimeoutMs !== undefined) {
 			timeout = setTimeout(() => {
+				const error = new StreamIdleTimeoutError(idleTimeoutMs);
 				void iterator.return?.();
-				settle(() => reject(new StreamIdleTimeoutError(idleTimeoutMs)));
+				settle(() => reject(error));
+				// Abort after settling so the failure surfaces as an idle timeout,
+				// not as a generic abort, while the dead request still gets torn down.
+				onIdleTimeout?.(error);
 			}, idleTimeoutMs);
 		}
 

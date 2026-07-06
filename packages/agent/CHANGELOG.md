@@ -9,6 +9,7 @@
 ### Fixed
 
 - Fixed harness session storage short entry ids to use the random tail of the generated uuidv7 instead of the timestamp prefix, which was nearly constant between calls ([#6242](https://github.com/earendil-works/pi/issues/6242)).
+- Fixed the agent loop leaving the provider request dangling when the stream idle timeout fires: the loop now passes a per-request abort signal to the stream function and aborts it on idle timeout, so dead connections (e.g. after a network drop and reconnect) are torn down instead of leaking.
 
 ### Removed
 

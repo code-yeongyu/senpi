@@ -302,6 +302,63 @@ describe("agentLoop with AgentMessage", () => {
 		]);
 	});
 
+	it("should abort the provider request when the stream stays idle past timeoutMs", async () => {
+		const context: AgentContext = {
+			systemPrompt: "You are helpful.",
+			messages: [],
+			tools: [],
+		};
+		const userPrompt: AgentMessage = createUserMessage("Hello");
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			timeoutMs: 20,
+		};
+
+		let requestSignal: AbortSignal | undefined;
+		const stream = agentLoop([userPrompt], context, config, undefined, (_model, _context, options) => {
+			requestSignal = options?.signal;
+			return new HangingAssistantStream();
+		});
+
+		const { messages } = await collectAgentEvents(stream, 500);
+		const assistantMessage = messages.find((message): message is AssistantMessage => message.role === "assistant");
+		expect(assistantMessage?.stopReason).toBe("error");
+		expect(requestSignal?.aborted).toBe(true);
+		expect(String(requestSignal?.reason)).toContain("Idle timeout waiting for provider stream after 20ms");
+	});
+
+	it("should abort the provider request signal when the caller aborts mid-stream", async () => {
+		const context: AgentContext = {
+			systemPrompt: "You are helpful.",
+			messages: [],
+			tools: [],
+		};
+		const userPrompt: AgentMessage = createUserMessage("Hello");
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+		const controller = new AbortController();
+
+		let requestSignal: AbortSignal | undefined;
+		const stream = agentLoop([userPrompt], context, config, controller.signal, (_model, _context, options) => {
+			requestSignal = options?.signal;
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				const partial = createAssistantMessage([{ type: "text", text: "partial answer" }]);
+				mockStream.push({ type: "start", partial });
+				controller.abort();
+			});
+			return mockStream;
+		});
+
+		const { messages } = await collectAgentEvents(stream, 500);
+		const assistantMessage = messages.find((message): message is AssistantMessage => message.role === "assistant");
+		expect(assistantMessage?.stopReason).toBe("aborted");
+		expect(requestSignal?.aborted).toBe(true);
+	});
+
 	it("should register one abort listener while reading a provider stream", async () => {
 		const context: AgentContext = {
 			systemPrompt: "You are helpful.",
