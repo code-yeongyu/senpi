@@ -30,7 +30,7 @@ export async function connectAndRefreshMcpCatalog(
 	serverConfig: ResolvedMcpServer["config"],
 ): Promise<void> {
 	if (serverConfig === undefined) return;
-	await connectMcpServer(entry.connection);
+	await connectMcpServer(entry.connection, entry.logger);
 	if (entry.connection.state !== "connected") return;
 	if (entry.cacheRefreshedAfterConnect) return;
 	entry.cacheRefreshedAfterConnect = true;
@@ -45,13 +45,13 @@ export async function connectAndRefreshMcpCatalog(
 	}
 }
 
-async function connectMcpServer(connection: ServerConnection): Promise<void> {
+async function connectMcpServer(connection: ServerConnection, logger?: McpConnectionEntry["logger"]): Promise<void> {
 	try {
 		await connection.connect();
 	} catch (error) {
-		if (connection.lastError === undefined) {
-			connection.markDegraded(error instanceof Error ? error : new Error(String(error)));
-		}
+		const failure = error instanceof Error ? error : new Error(String(error));
+		if (connection.lastError === undefined) connection.markDegraded(failure);
+		logger?.warn(failure.message);
 	}
 }
 

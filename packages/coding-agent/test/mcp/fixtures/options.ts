@@ -4,6 +4,7 @@ export interface FixtureOptions {
 	spawnCounterFile: string | undefined;
 	pidFile: string | undefined;
 	pingCounterFile: string | undefined;
+	fatalMissingToken: string | undefined;
 	crashOnStart: boolean;
 	crashAfterCalls: number | null;
 	wedge: boolean;
@@ -16,6 +17,7 @@ export interface FixtureOptions {
 	instructions: string | undefined;
 	port: number;
 	expireSession: boolean;
+	alwaysExpireToolCalls: boolean;
 	bearerToken: string | undefined;
 	spawnGrandchild: boolean;
 }
@@ -27,6 +29,7 @@ export function parseFixtureOptions(argv: readonly string[]): FixtureOptions {
 		spawnCounterFile: readStringFlag(argv, "--spawn-counter-file"),
 		pidFile: readStringFlag(argv, "--pid-file"),
 		pingCounterFile: readStringFlag(argv, "--ping-counter-file"),
+		fatalMissingToken: readStringFlag(argv, "--fatal-missing-token"),
 		crashOnStart: argv.includes("--crash-on-start"),
 		crashAfterCalls: readOptionalIntegerFlag(argv, "--crash-after"),
 		wedge: argv.includes("--wedge"),
@@ -39,6 +42,7 @@ export function parseFixtureOptions(argv: readonly string[]): FixtureOptions {
 		instructions: readStringFlag(argv, "--instructions"),
 		port: readIntegerFlag(argv, "--port", 0),
 		expireSession: argv.includes("--expire-session"),
+		alwaysExpireToolCalls: argv.includes("--always-expire-tool-calls"),
 		bearerToken: readStringFlag(argv, "--bearer"),
 		spawnGrandchild: argv.includes("--spawn-grandchild"),
 	};
@@ -104,6 +108,7 @@ function validateArgs(argv: readonly string[], options: FixtureOptions): void {
 		"--spawn-counter-file",
 		"--pid-file",
 		"--ping-counter-file",
+		"--fatal-missing-token",
 		"--crash-after",
 		"--huge-output-tool",
 		"--slow-tool-call",
@@ -119,6 +124,7 @@ function validateArgs(argv: readonly string[], options: FixtureOptions): void {
 		"--huge-schema-tool",
 		"--emit-list-changed",
 		"--expire-session",
+		"--always-expire-tool-calls",
 		"--spawn-grandchild",
 	]);
 	for (let index = 0; index < argv.length; index++) {

@@ -1,4 +1,4 @@
-export type McpErrorKind = "connect" | "protocol" | "tool_exec" | "auth" | "timeout";
+export type McpErrorKind = "connect" | "protocol" | "tool_exec" | "auth" | "timeout" | "session_expired";
 
 export interface McpErrorOptions {
 	readonly cause?: unknown;
@@ -61,12 +61,19 @@ export class TimeoutError extends McpError {
 	}
 }
 
+export class SessionExpiredError extends McpError {
+	constructor(message: string, options: McpErrorOptions = {}) {
+		super("session_expired", "SessionExpiredError", message, options);
+	}
+}
+
 const RETRIABLE_STATUS_CODES = new Set([404, 502, 503]);
 const RETRIABLE_NUMERIC_CODES = new Set([-32001]);
 const RETRIABLE_TEXT = ["econnrefused", "connection refused", "transport closed"];
 
 export function isRetriableMcpError(error: unknown): boolean {
 	if (error instanceof McpError && error.retriable === true) return true;
+	if (isMcpSessionExpiredError(error)) return true;
 
 	const seen = new Set<unknown>();
 	if (hasRetriableNumericSignal(error, seen)) return true;
@@ -74,6 +81,19 @@ export function isRetriableMcpError(error: unknown): boolean {
 	const text = collectText(error, new Set()).join(" ").toLowerCase();
 	if (RETRIABLE_TEXT.some((needle) => text.includes(needle))) return true;
 	return /\b(?:404|502|503)\b/.test(text);
+}
+
+export function isMcpSessionExpiredError(error: unknown): boolean {
+	const seen = new Set<unknown>();
+	if (hasSessionExpiredNumericSignal(error, seen)) return true;
+	const text = collectText(error, new Set()).join(" ").toLowerCase();
+	return (
+		/\b404\b/.test(text) ||
+		(text.includes("-32000") && text.includes("session")) ||
+		text.includes("session expired") ||
+		text.includes("session not found") ||
+		text.includes("mcp-session-id")
+	);
 }
 
 function hasRetriableNumericSignal(value: unknown, seen: Set<unknown>): boolean {
@@ -93,6 +113,30 @@ function hasRetriableNumericSignal(value: unknown, seen: Set<unknown>): boolean 
 	return (
 		hasRetriableNumericSignal(getProperty(value, "response"), seen) ||
 		hasRetriableNumericSignal(getProperty(value, "cause"), seen)
+	);
+}
+
+function hasSessionExpiredNumericSignal(value: unknown, seen: Set<unknown>): boolean {
+	if (typeof value !== "object" || value === null) return false;
+	if (seen.has(value)) return false;
+	seen.add(value);
+
+	const code = numberFromUnknown(getProperty(value, "code"));
+	if (code === -32001) return true;
+	if (code === -32000) {
+		const message = getProperty(value, "message");
+		if (typeof message === "string" && message.toLowerCase().includes("session")) return true;
+	}
+
+	const status = numberFromUnknown(getProperty(value, "status"));
+	if (status === 404) return true;
+
+	const statusCode = numberFromUnknown(getProperty(value, "statusCode"));
+	if (statusCode === 404) return true;
+
+	return (
+		hasSessionExpiredNumericSignal(getProperty(value, "response"), seen) ||
+		hasSessionExpiredNumericSignal(getProperty(value, "cause"), seen)
 	);
 }
 

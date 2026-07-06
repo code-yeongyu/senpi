@@ -8,6 +8,10 @@ async function main(): Promise<void> {
 	const options = parseFixtureOptions(process.argv.slice(2));
 	recordSpawn(options.spawnCounterFile);
 	recordPid(options.pidFile);
+	if (options.fatalMissingToken !== undefined) {
+		process.stderr.write(`FATAL: missing ${options.fatalMissingToken}\n`);
+		process.exit(1);
+	}
 	if (options.crashOnStart) {
 		process.stderr.write("stdio fixture crash-on-start\n");
 		process.exit(42);

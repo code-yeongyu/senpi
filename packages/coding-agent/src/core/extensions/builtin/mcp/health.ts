@@ -1,4 +1,5 @@
 import type { ServerConnection } from "./connection.ts";
+import { isMcpSessionExpiredError, SessionExpiredError } from "./errors.ts";
 
 export const MCP_PING_STALE_MS = 30_000;
 export const MCP_PING_TIMEOUT_MS = 2_000;
@@ -35,6 +36,27 @@ export async function ensureMcpToolCallConnection(connection: ServerConnection):
 	await pendingValidation;
 }
 
+export async function withMcpSessionExpiryRetry<T>(
+	connection: ServerConnection,
+	operation: () => Promise<T>,
+): Promise<T> {
+	try {
+		return await operation();
+	} catch (error) {
+		if (!isMcpSessionExpiredError(error)) throw error;
+		connection.markDegraded(sessionExpiredError(connection, error, true));
+		await connection.renew();
+		try {
+			return await operation();
+		} catch (retryError) {
+			if (!isMcpSessionExpiredError(retryError)) throw retryError;
+			const expired = sessionExpiredError(connection, retryError, false);
+			connection.markSuspended(expired);
+			throw expired;
+		}
+	}
+}
+
 function healthStateFor(connection: ServerConnection): McpHealthState {
 	let health = healthByConnection.get(connection);
 	if (health === undefined) {
@@ -57,4 +79,16 @@ async function pingOrRenew(connection: ServerConnection, health: McpHealthState)
 async function renewConnection(connection: ServerConnection, health: McpHealthState): Promise<void> {
 	await connection.renew();
 	health.lastSuccessfulPingAtMs = Date.now();
+}
+
+function sessionExpiredError(connection: ServerConnection, cause: unknown, retriable: boolean): SessionExpiredError {
+	const suffix = retriable
+		? "reinitializing once"
+		: `reinitialize retry also expired; run /mcp reconnect ${connection.serverName}`;
+	return new SessionExpiredError(`MCP server ${connection.serverName} session expired; ${suffix}`, {
+		cause,
+		phase: "session",
+		retriable,
+		serverName: connection.serverName,
+	});
 }

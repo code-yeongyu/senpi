@@ -38,6 +38,10 @@ async function main(): Promise<void> {
 				writeJson(res, 404, { error: "fixture session expired" });
 				return;
 			}
+			if (options.alwaysExpireToolCalls && isToolCallRequest(body)) {
+				writeJson(res, 404, { error: "fixture tool call session expired" });
+				return;
+			}
 			await entry.transport.handleRequest(req, res, body);
 			const id = entry.transport.sessionId;
 			if (id && !entry.expired) sessions.set(id, entry);
@@ -90,6 +94,10 @@ function createOrFindSession(
 	const id = transport.sessionId;
 	if (id) sessions.set(id, entry);
 	return entry;
+}
+
+function isToolCallRequest(body: unknown): boolean {
+	return typeof body === "object" && body !== null && "method" in body && body.method === "tools/call";
 }
 
 function isCountedSessionRequest(body: unknown): boolean {

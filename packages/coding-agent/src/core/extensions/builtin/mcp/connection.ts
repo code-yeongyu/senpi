@@ -1,5 +1,6 @@
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { McpServerConfig } from "./config-schema.ts";
+import { diagnoseMcpConnectFailure } from "./diagnose.ts";
 import { ConnectError } from "./errors.ts";
 import type { McpLogger } from "./log.ts";
 import {
@@ -203,13 +204,13 @@ export class ServerConnection {
 			if (generation !== this.#generation || this.#state === "disabled") {
 				throw this.#connectError(`MCP server ${this.serverName} connect was superseded`, "connect", true);
 			}
-			const normalized = error instanceof Error ? error : new Error(String(error));
-			const connectError = this.#connectError(
-				`MCP server ${this.serverName} failed during connect: ${normalized.message}`,
-				"connect",
-				true,
-				normalized,
-			);
+			const connectError = await diagnoseMcpConnectFailure({
+				config: this.#config,
+				cause: error instanceof Error ? error : new Error(String(error)),
+				env: this.#env,
+				logger: this.#logger,
+				serverName: this.serverName,
+			});
 			this.markDegraded(connectError);
 			throw connectError;
 		}
