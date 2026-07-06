@@ -1,0 +1,252 @@
+Task 13 evidence
+
+
+## RED proof
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/eval-tool.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+ ❯ test/eval-tool.test.ts (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/eval-tool.test.ts [ test/eval-tool.test.ts ]
+Error: Cannot find module '../src/tool/eval-tool.ts' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode/test/eval-tool.test.ts
+ ❯ test/eval-tool.test.ts:4:1
+      2| import { describe, expect, it, vi } from "vitest";
+      3| import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
+      4| import { createEvalTool, type EvalKernel, type EvalKernelManager } fro…
+       | ^
+      5|
+      6| class FakeKernel implements EvalKernel {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  no tests
+   Start at  16:57:50
+   Duration  134ms (transform 14ms, setup 0ms, import 0ms, tests 0ms, environment 0ms)
+
+
+## GREEN focused test
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/eval-tool.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+······
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  17:08:39
+   Duration  1.82s (transform 1.07s, setup 0ms, import 1.73s, tests 6ms, environment 0ms)
+
+
+## npm run check
+$ npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1349 files in 900ms. Fixed 1 file.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 34ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+
+## Final focused rerun after formatting
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/eval-tool.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+······
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  17:09:42
+   Duration  2.33s (transform 1.27s, setup 0ms, import 2.20s, tests 7ms, environment 0ms)
+
+
+## QA failure scenario: blocked executeTool does not kill kernel
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/eval-tool.test.ts -t "surfaces blocked executeTool errors without killing the kernel"
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+-----·
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 5 skipped (6)
+   Start at  17:09:45
+   Duration  2.20s (transform 1.07s, setup 0ms, import 2.10s, tests 3ms, environment 0ms)
+
+
+## Scoped status and LOC
+$ git status --short -- packages/senpi-codemode/src/host-sdk.ts packages/senpi-codemode/src/tool packages/senpi-codemode/test/eval-tool.test.ts packages/senpi-codemode/test/eval packages/senpi-codemode/vitest.config.ts .omo/evidence/task-13-senpi-codemode.txt
+?? .omo/evidence/task-13-senpi-codemode.txt
+?? packages/senpi-codemode/src/host-sdk.ts
+?? packages/senpi-codemode/src/tool/
+?? packages/senpi-codemode/test/eval-tool.test.ts
+?? packages/senpi-codemode/test/eval/
+?? packages/senpi-codemode/vitest.config.ts
+
+$ wc -l packages/senpi-codemode/src/tool/*.ts packages/senpi-codemode/src/host-sdk.ts packages/senpi-codemode/vitest.config.ts packages/senpi-codemode/test/eval-tool.test.ts packages/senpi-codemode/test/eval/fakes.ts
+     239 packages/senpi-codemode/src/tool/eval-tool.ts
+      77 packages/senpi-codemode/src/tool/render.ts
+      85 packages/senpi-codemode/src/tool/types.ts
+       1 packages/senpi-codemode/src/host-sdk.ts
+      28 packages/senpi-codemode/vitest.config.ts
+     222 packages/senpi-codemode/test/eval-tool.test.ts
+      75 packages/senpi-codemode/test/eval/fakes.ts
+     727 total
+
+## Final npm run check after test split
+$ npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1349 files in 963ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 33ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+
+## Scoped staged diff check
+$ git diff --cached --stat -- <task files>
+ .omo/evidence/task-13-senpi-codemode.txt       | 230 ++++++++++++++++++++++++
+ packages/senpi-codemode/src/host-sdk.ts        |   1 +
+ packages/senpi-codemode/src/tool/eval-tool.ts  | 239 +++++++++++++++++++++++++
+ packages/senpi-codemode/src/tool/render.ts     |  77 ++++++++
+ packages/senpi-codemode/src/tool/types.ts      |  85 +++++++++
+ packages/senpi-codemode/test/eval-tool.test.ts | 222 +++++++++++++++++++++++
+ packages/senpi-codemode/test/eval/fakes.ts     |  75 ++++++++
+ packages/senpi-codemode/vitest.config.ts       |  28 +++
+ 8 files changed, 957 insertions(+)
+
+$ git status --short -- <task files>
+AM .omo/evidence/task-13-senpi-codemode.txt
+A  packages/senpi-codemode/src/host-sdk.ts
+A  packages/senpi-codemode/src/tool/eval-tool.ts
+A  packages/senpi-codemode/src/tool/render.ts
+A  packages/senpi-codemode/src/tool/types.ts
+A  packages/senpi-codemode/test/eval-tool.test.ts
+A  packages/senpi-codemode/test/eval/fakes.ts
+A  packages/senpi-codemode/vitest.config.ts
