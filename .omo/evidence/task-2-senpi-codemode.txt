@@ -432,3 +432,39 @@ check:neo: go vet ./...
 check:neo: go test ./...
 ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	0.381s
 ?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+
+
+## TODO 2 LEFTOVER FINALIZATION
+
+Date: 2026-07-06
+Worktree: /Users/yeongyu/local-workspaces/senpi-wt/senpi-codemode
+
+Inspected:
+- AGENTS.md and packages/coding-agent/AGENTS.md.
+- .omo/plans/senpi-codemode.md todo 2 block.
+- Current diffs for packages/coding-agent/src/core/changes.md and packages/coding-agent/test/extensions-runner.test.ts.
+
+Decision:
+- packages/coding-agent/src/core/changes.md is required because todo 2 explicitly requires a core/changes.md entry for the executeTool core bridge.
+- packages/coding-agent/test/extensions-runner.test.ts is required because ExtensionActions now requires executeTool; without the fake core stub, the extension runner test/check surface is incomplete.
+- Both files are todo-2 follow-up scope and should be committed atomically with this evidence.
+
+Command:
+cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/extensions-runner.test.ts test/execute-tool.test.ts
+
+Result:
+PASS, exit 0.
+Test Files: 2 passed (2).
+Tests: 51 passed (51).
+
+Command:
+npm run check
+
+Result:
+FAIL, exit 1.
+The command reached check:pinned-deps and failed on an out-of-scope dirty package:
+Direct external dependencies must use exact versions:
+  packages/senpi-codemode/package.json: devDependencies.@code-yeongyu/senpi must be pinned, found *
+
+Scope note:
+- The failing package-lock/package packages/senpi-codemode state is outside the allowed write/stage scope for this finalization task, so it was left untouched.

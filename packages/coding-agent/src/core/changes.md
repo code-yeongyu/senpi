@@ -1,5 +1,20 @@
 # changes
 
+## executeTool active-tool bridge (2026-07-06)
+
+### What changed
+
+- `agent-session.ts`: added the core implementation for `pi.executeTool()`, including active-tool resolution, shared agent-loop argument preflight, synthetic `codemode-*` tool call ids, hook block handling, and post-result rewrites.
+- Extracted the existing `beforeToolCall` and `afterToolCall` hook bodies into shared helpers used by both normal agent-loop dispatch and `executeTool()`.
+
+### Why extension system couldn't handle this
+
+- Extensions can observe and register tools, but only the session owns the active wrapped tool instances, the agent-event queue, and the hook/permission pipeline needed to execute subcalls with the same semantics as model tool calls.
+
+### Expected merge conflict zones
+
+- HIGH: `agent-session.ts` around `_installAgentToolHooks()`, `getActiveToolNames()`, and extension `bindCore()` wiring.
+
 ## Upstream session, auth, and model-resolution sync (2026-07-02)
 
 ### What changed
