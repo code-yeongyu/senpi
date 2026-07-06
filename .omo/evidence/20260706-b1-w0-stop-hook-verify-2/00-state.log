@@ -1,0 +1,13 @@
+timestamp=2026-07-06T19:22:28+0900
+/Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1
+feat/persistent-terminal-runtime
+f2cae3281 docs(pty): record W0 stop-hook verification
+baf83df69 fix(pty): address W1 native audit blockers
+ed67974a8 fix(coding-agent): require bundled pty native prebuild
+9bedfb2b8 fix(pty): align native prebuild loading with packaged layout
+95dfedee9 fix(ai): restore cli executable bit
+f4410d69d fix(pty): address W2 runtime audit blockers
+commit_9bed_exists_exit=0
+commit_f2ca_exists_exit=0
+previous_doneclaim_nonempty_exit=0
+previous_current_head_check_nonempty_exit=0

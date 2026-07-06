@@ -1,0 +1,9 @@
+{
+  "exports": [
+    "PtySession",
+    "__senpiPtyV2026_7_5",
+    "startPtySession",
+    "version"
+  ]
+}
+exit=0

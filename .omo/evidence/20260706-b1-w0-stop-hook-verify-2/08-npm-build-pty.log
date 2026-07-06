@@ -1,0 +1,5 @@
+
+> @earendil-works/pi-pty@2026.7.5-2 build
+> tsgo -p tsconfig.build.json
+
+exit=0
