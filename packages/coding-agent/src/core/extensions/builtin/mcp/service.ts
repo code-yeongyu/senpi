@@ -33,6 +33,10 @@ export class McpService {
 		this.#sessionContext = null;
 	}
 
+	isDisposed(): boolean {
+		return this.#disposed;
+	}
+
 	getSnapshot(): McpServiceSnapshot {
 		return {
 			disposed: this.#disposed,
@@ -48,7 +52,9 @@ export class McpService {
 let service: McpService | null = null;
 
 export function getMcpService(): McpService {
-	service ??= new McpService();
+	if (service === null || service.isDisposed()) {
+		service = new McpService();
+	}
 	return service;
 }
 

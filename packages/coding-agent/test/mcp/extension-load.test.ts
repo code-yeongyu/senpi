@@ -66,10 +66,11 @@ describe("mcp builtin extension load", () => {
 
 			await emitSessionStart(recorded.events, "startup");
 			await emitSessionStart(recorded.events, "resume");
+			const serviceBeforeShutdown = getMcpService();
 			await emitSessionShutdown(recorded.events, reason);
 			await emitSessionShutdown(recorded.events, reason);
 
-			expect(getMcpService().getSnapshot()).toMatchObject({
+			expect(serviceBeforeShutdown.getSnapshot()).toMatchObject({
 				disposed: true,
 				disposeCount: 1,
 				lastDisposeReason: reason,
@@ -79,6 +80,35 @@ describe("mcp builtin extension load", () => {
 			});
 			resetMcpServiceForTests();
 		}
+	});
+
+	it("creates a usable singleton for a new session after reload disposal", async () => {
+		const recorded = createRecordedExtensionApi();
+		getMcpBuiltinEntry().factory(recorded.api);
+
+		await emitSessionStart(recorded.events, "startup");
+		const serviceBeforeReload = getMcpService();
+		await emitSessionShutdown(recorded.events, "reload");
+
+		expect(serviceBeforeReload.getSnapshot()).toMatchObject({
+			disposed: true,
+			disposeCount: 1,
+			lastDisposeReason: "reload",
+			hasSessionContext: false,
+		});
+
+		await emitSessionStart(recorded.events, "reload");
+		const serviceAfterReload = getMcpService();
+
+		expect(serviceAfterReload).not.toBe(serviceBeforeReload);
+		expect(serviceAfterReload.getSnapshot()).toMatchObject({
+			disposed: false,
+			disposeCount: 0,
+			lastDisposeReason: null,
+			lastSessionStartReason: "reload",
+			sessionStartCount: 1,
+			hasSessionContext: true,
+		});
 	});
 });
 
