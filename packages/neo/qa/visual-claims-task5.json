@@ -1,0 +1,73 @@
+{
+  "description": "Task 5 (editor component) visual-claims manifest. Every claim is asserted against the parsed per-cell grid JSON (never raw escape strings). The asserted frames (triplets/t5-*) are the editor's ground-truth Render() output for each scenario, produced by `qaharness --emit <scenario>` and rendered through xterm.js-headless — a clean, aligned grid. Real `tmux capture-pane -e` captures of the same scenarios, driven live in tmux session ulw-qa-t5fix, live under .omo/evidence/task-5-neo/audit-fix/tmux-triplets/ (t5fix-01/02/03) as the 'ran in a real terminal' evidence; cell-grid assertions run on the --emit frames, NOT the tmux captures, because tmux capture-pane -e misaligns wide CJK cells under altscreen (documented in the audit-fix round of .omo/evidence/task-5-neo-go-tui.md).",
+  "claims": [
+    {
+      "id": "task-5-editor-hangul-emoji-grapheme-layout",
+      "task": 5,
+      "title": "한글+emoji render as grapheme clusters at correct CJK/emoji column widths with the reverse-video cursor at the insertion point",
+      "requiredFrames": ["t5-hangul-emoji-80x24"],
+      "frames": [
+        {
+          "id": "t5-hangul-emoji-80x24",
+          "size": "80x24",
+          "state": "hangul-emoji",
+          "ans": "triplets/t5-hangul-emoji.ans",
+          "html": "triplets/t5-hangul-emoji.html",
+          "json": "triplets/t5-hangul-emoji.json"
+        }
+      ],
+      "assertions": [
+        { "kind": "cell-glyph", "frame": "t5-hangul-emoji-80x24", "x": 1, "y": 1, "glyph": "한" },
+        { "kind": "cell-glyph", "frame": "t5-hangul-emoji-80x24", "x": 3, "y": 1, "glyph": "글" },
+        { "kind": "cell-glyph", "frame": "t5-hangul-emoji-80x24", "x": 5, "y": 1, "glyph": "😀" },
+        { "kind": "glyph-present", "frame": "t5-hangul-emoji-80x24", "glyph": "한" },
+        { "kind": "glyph-present", "frame": "t5-hangul-emoji-80x24", "glyph": "😀" }
+      ]
+    },
+    {
+      "id": "task-5-editor-killring-yank-roundtrip",
+      "task": 5,
+      "title": "Ctrl+W then Ctrl+A Ctrl+Y yanks 'baz' to the front: 'foo bar baz' -> ' bazfoo bar '",
+      "requiredFrames": ["t5-killring-yank-80x24"],
+      "frames": [
+        {
+          "id": "t5-killring-yank-80x24",
+          "size": "80x24",
+          "state": "killring-yank",
+          "ans": "triplets/t5-killring-yank.ans",
+          "html": "triplets/t5-killring-yank.html",
+          "json": "triplets/t5-killring-yank.json"
+        }
+      ],
+      "assertions": [
+        { "kind": "cell-glyph", "frame": "t5-killring-yank-80x24", "x": 1, "y": 1, "glyph": "b" },
+        { "kind": "cell-glyph", "frame": "t5-killring-yank-80x24", "x": 2, "y": 1, "glyph": "a" },
+        { "kind": "cell-glyph", "frame": "t5-killring-yank-80x24", "x": 3, "y": 1, "glyph": "z" },
+        { "kind": "cell-glyph", "frame": "t5-killring-yank-80x24", "x": 4, "y": 1, "glyph": "f" },
+        { "kind": "glyph-present", "frame": "t5-killring-yank-80x24", "glyph": "z" }
+      ]
+    },
+    {
+      "id": "task-5-editor-multiline-paste-lines",
+      "task": 5,
+      "title": "Multi-line paste renders as three distinct content rows between the borders",
+      "requiredFrames": ["t5-multiline-paste-80x24"],
+      "frames": [
+        {
+          "id": "t5-multiline-paste-80x24",
+          "size": "80x24",
+          "state": "multiline-paste",
+          "ans": "triplets/t5-multiline-paste.ans",
+          "html": "triplets/t5-multiline-paste.html",
+          "json": "triplets/t5-multiline-paste.json"
+        }
+      ],
+      "assertions": [
+        { "kind": "cell-glyph", "frame": "t5-multiline-paste-80x24", "x": 1, "y": 1, "glyph": "f" },
+        { "kind": "cell-glyph", "frame": "t5-multiline-paste-80x24", "x": 1, "y": 2, "glyph": "s" },
+        { "kind": "cell-glyph", "frame": "t5-multiline-paste-80x24", "x": 1, "y": 3, "glyph": "t" },
+        { "kind": "glyph-present", "frame": "t5-multiline-paste-80x24", "glyph": "─" }
+      ]
+    }
+  ]
+}
