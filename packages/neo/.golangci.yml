@@ -1,0 +1,72 @@
+# golangci-lint v2 configuration for packages/neo.
+# The tool is not installed on developer machines; CI runs it. This file is
+# kept as valid YAML matching the v2 schema (https://golangci-lint.run).
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  # Start from a clean set and enable exactly what we want, so the strict
+  # baseline does not drift when the tool ships new default linters.
+  default: none
+  enable:
+    - errcheck # unchecked errors are bugs waiting to happen
+    - govet # go vet's suspicious-construct analyzers
+    - ineffassign # assignments never read
+    - revive # golint successor: style + correctness rules
+    - staticcheck # the broad correctness/simplification suite
+    - unused # dead code: unused funcs, vars, consts, types
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    govet:
+      enable-all: true
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: var-declaration
+        - name: var-naming
+    staticcheck:
+      checks:
+        - all
+  exclusions:
+    generated: lax
+    rules:
+      # Test files may use dot-imports and blank imports more freely, and the
+      # exported-symbol doc rule is noisy for _test packages.
+      - path: _test\.go
+        linters:
+          - revive
+      # Build-tagged blank-import anchors intentionally import for side effects.
+      - path: (deps|winpipe_windows)\.go
+        text: "blank-imports"
+        linters:
+          - revive
+
+formatters:
+  enable:
+    - gofumpt # stricter gofmt
+    - goimports # group + sort imports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/code-yeongyu/senpi/packages/neo
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

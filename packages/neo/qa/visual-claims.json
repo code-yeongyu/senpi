@@ -1,0 +1,157 @@
+{
+  "$schema": "./visual-claims.schema.md",
+  "description": "Visual-claims manifest for the neo grok TUI. Each claim registers the frames (size x state) that must exist as complete triplets (.ans + .html + cell-grid .json) and the grid-based assertions that must PASS. `verify-manifest` (qa/xterm-render.mjs) FAILS when any registered claim is missing a frame, missing a triplet leg, or has no PASSING grid-based assertion. Triplet paths are relative to this manifest's directory (packages/neo/qa). Task 2 registers its own theme claims below; later tasks (9-14, 20, 21, F3) append their claims here.",
+  "claims": [
+    {
+      "id": "task-2-theme-surfaces-truecolor",
+      "task": 2,
+      "title": "grok-night surfaces + text tiers render at exact capture hexes (truecolor)",
+      "requiredFrames": ["theme-sample-truecolor-120x8"],
+      "frames": [
+        {
+          "id": "theme-sample-truecolor-120x8",
+          "size": "120x8",
+          "state": "theme-sample-truecolor",
+          "ans": "triplets/theme-sample-truecolor-120x8.ans",
+          "html": "triplets/theme-sample-truecolor-120x8.html",
+          "json": "triplets/theme-sample-truecolor-120x8.json"
+        }
+      ],
+      "assertions": [
+        {
+          "id": "base-surface-bg",
+          "frame": "theme-sample-truecolor-120x8",
+          "kind": "cell-bg",
+          "x": 2,
+          "y": 0,
+          "hex": "#141414"
+        },
+        {
+          "id": "primary-text-fg",
+          "frame": "theme-sample-truecolor-120x8",
+          "kind": "cell-fg",
+          "x": 2,
+          "y": 0,
+          "hex": "#e1e1e1"
+        },
+        {
+          "id": "primary-text-glyph",
+          "frame": "theme-sample-truecolor-120x8",
+          "kind": "cell-glyph",
+          "x": 2,
+          "y": 0,
+          "glyph": "m"
+        }
+      ]
+    },
+    {
+      "id": "task-2-theme-accents-and-glyphs-truecolor",
+      "task": 2,
+      "title": "grok tool-row glyphs (┃ ◆), spinner (⠹) and accents render at exact capture hexes",
+      "requiredFrames": ["theme-sample-truecolor-120x8"],
+      "frames": [
+        {
+          "id": "theme-sample-truecolor-120x8",
+          "size": "120x8",
+          "state": "theme-sample-truecolor",
+          "ans": "triplets/theme-sample-truecolor-120x8.ans",
+          "html": "triplets/theme-sample-truecolor-120x8.html",
+          "json": "triplets/theme-sample-truecolor-120x8.json"
+        }
+      ],
+      "assertions": [
+        {
+          "id": "event-marker-glyph",
+          "frame": "theme-sample-truecolor-120x8",
+          "kind": "cell-glyph",
+          "x": 15,
+          "y": 1,
+          "glyph": "◆"
+        },
+        {
+          "id": "event-marker-green",
+          "frame": "theme-sample-truecolor-120x8",
+          "kind": "cell-fg",
+          "x": 15,
+          "y": 1,
+          "hex": "#9ece6a"
+        },
+        {
+          "id": "tool-guide-glyph",
+          "frame": "theme-sample-truecolor-120x8",
+          "kind": "cell-glyph",
+          "x": 30,
+          "y": 2,
+          "glyph": "┃"
+        },
+        {
+          "id": "tool-guide-green",
+          "frame": "theme-sample-truecolor-120x8",
+          "kind": "cell-fg",
+          "x": 30,
+          "y": 2,
+          "hex": "#9ece6a"
+        },
+        {
+          "id": "spinner-braille-glyph",
+          "frame": "theme-sample-truecolor-120x8",
+          "kind": "cell-glyph",
+          "x": 45,
+          "y": 3,
+          "glyph": "⠹"
+        },
+        {
+          "id": "accent-green-ok",
+          "frame": "theme-sample-truecolor-120x8",
+          "kind": "cell-fg",
+          "x": 73,
+          "y": 4,
+          "hex": "#9ece6a"
+        },
+        {
+          "id": "input-border-faint",
+          "frame": "theme-sample-truecolor-120x8",
+          "kind": "cell-fg",
+          "x": 104,
+          "y": 5,
+          "hex": "#505058"
+        },
+        {
+          "id": "prompt-glyph",
+          "frame": "theme-sample-truecolor-120x8",
+          "kind": "cell-glyph",
+          "x": 104,
+          "y": 5,
+          "glyph": "❯"
+        }
+      ]
+    },
+    {
+      "id": "task-2-theme-256-fallback-no-truecolor",
+      "task": 2,
+      "title": "256-color fallback: the same panel renders with no truecolor cells (TERM=xterm) and does not crash",
+      "requiredFrames": ["theme-sample-ansi256-80x8"],
+      "frames": [
+        {
+          "id": "theme-sample-ansi256-80x8",
+          "size": "80x8",
+          "state": "theme-sample-ansi256",
+          "ans": "triplets/theme-sample-ansi256-80x8.ans",
+          "html": "triplets/theme-sample-ansi256-80x8.html",
+          "json": "triplets/theme-sample-ansi256-80x8.json"
+        }
+      ],
+      "assertions": [
+        {
+          "id": "no-truecolor-anywhere",
+          "frame": "theme-sample-ansi256-80x8",
+          "kind": "region-no-truecolor",
+          "x0": 0,
+          "y0": 0,
+          "x1": 79,
+          "y1": 7
+        }
+      ]
+    }
+  ]
+}
