@@ -694,3 +694,112 @@ dirty_worktree: checked before staging; unrelated existing files are left untouc
 misleading_success_output: commands record explicit exit status lines.
 hung_long_commands: verification commands were bounded by harness waits and completed.
 flaky_tests: focused prompt test rerun multiple times after edits.
+
+
+=== Independent final verification 2026-07-06T06:24:35Z ===
+Command: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/prompt.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  15:24:36
+   Duration  121ms (transform 17ms, setup 0ms, import 24ms, tests 4ms, environment 0ms)
+
+zsh:5: read-only variable: status
+
+## Corrected focused prompt test wrapper
+Command: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/prompt.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  15:24:49
+   Duration  466ms (transform 354ms, setup 0ms, import 363ms, tests 4ms, environment 0ms)
+
+Exit status: 0
+
+## Independent root check
+Command: npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1324 files in 3s. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 190ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+Exit status: 0
+
+## Independent scoped diff whitespace check
+Command: git diff --check -- packages/senpi-codemode/src/prompt/eval-prompt.ts packages/senpi-codemode/test/prompt.test.ts packages/senpi-codemode/test/__snapshots__/prompt.test.ts.snap .omo/evidence/task-4-senpi-codemode.txt
+Exit status: 0
+
+## Independent excluded-surface source grep
+Command: rg -n "agent\(|budget|output\(|local://|Bun" packages/senpi-codemode/src/prompt packages/senpi-codemode/test/__snapshots__/prompt.test.ts.snap
+Exit status: 1 (1 means no matches)
+
+Excluded-surface note: broad grep for plain output only hits renderer-internal local variable names in eval-prompt.ts and test/evidence assertion text; the model-facing prompt and snapshots contain no agent(), budget, output(), local://, or Bun API surface.
