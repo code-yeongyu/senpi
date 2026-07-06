@@ -1,0 +1,3 @@
+^DSTRESS lines_in=10000 rendered_lines=10003 iterations=5 slowest=59.952ms avg=11.997ms budget=250ms within_budget=true crash=false
+FIRST_LINE "```go"
+LAST_LINE  "```"
