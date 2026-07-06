@@ -1,4 +1,5 @@
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import type { McpCachedServerCatalog } from "./catalog-cache.ts";
 import type { McpServerConfig } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
 import { collectAllPages } from "./expose/pagination.ts";
@@ -13,6 +14,7 @@ export interface McpToolCatalogEntry {
 	annotations?: ListedTool["annotations"];
 	requestTimeoutMs: number;
 	connection: ServerConnection;
+	ensureConnected?: () => Promise<void>;
 }
 
 export async function collectToolCatalog(
@@ -28,6 +30,25 @@ export async function collectToolCatalog(
 		connection,
 		description: tool.description,
 		requestTimeoutMs: config.requestTimeoutMs,
+		schema: tool.inputSchema,
+		server,
+		tool: tool.name,
+	}));
+}
+
+export function cachedToolsToCatalogEntries(
+	server: string,
+	catalog: McpCachedServerCatalog,
+	connection: ServerConnection,
+	requestTimeoutMs: number,
+	ensureConnected: () => Promise<void>,
+): McpToolCatalogEntry[] {
+	return catalog.tools.map((tool) => ({
+		annotations: tool.annotations,
+		connection,
+		description: tool.description,
+		ensureConnected,
+		requestTimeoutMs,
 		schema: tool.inputSchema,
 		server,
 		tool: tool.name,

@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "../../../types.ts";
-import { collectToolCatalog, type McpToolCatalogEntry } from "../catalog.ts";
+import { cachedToolsToCatalogEntries, collectToolCatalog, type McpToolCatalogEntry } from "../catalog.ts";
+import type { McpCachedServerCatalog } from "../catalog-cache.ts";
 import type { ResolvedMcpConfig } from "../config-schema.ts";
 import type { ServerConnection } from "../connection.ts";
 import { createMcpLogger, type McpLogger } from "../log.ts";
@@ -10,6 +11,8 @@ export interface McpDirectRegistrationEntry {
 	readonly name: string;
 	readonly connection: ServerConnection;
 	readonly logger: McpLogger;
+	readonly cachedCatalog?: McpCachedServerCatalog;
+	readonly ensureCachedToolConnected?: () => Promise<void>;
 }
 
 export async function registerDirectMcpTools(
@@ -22,8 +25,18 @@ export async function registerDirectMcpTools(
 	for (const entry of entries) {
 		const server = config.servers[entry.name];
 		if (server?.config === undefined) continue;
-		if (entry.connection.state !== "connected") continue;
-		const catalog = await collectToolCatalog(entry.name, entry.connection, server.config);
+		const catalog =
+			entry.cachedCatalog === undefined
+				? entry.connection.state === "connected"
+					? await collectToolCatalog(entry.name, entry.connection, server.config)
+					: []
+				: cachedToolsToCatalogEntries(
+						entry.name,
+						entry.cachedCatalog,
+						entry.connection,
+						server.config.requestTimeoutMs,
+						entry.ensureCachedToolConnected ?? (() => entry.connection.connect().then(() => undefined)),
+					);
 		const policy = computeMcpExposurePolicy(catalog, server.config, config.settings);
 		for (const warning of policy.warnings) entry.logger.warn(warning);
 		registeredEntries.push(...policy.registeredEntries);

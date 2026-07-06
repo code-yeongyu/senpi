@@ -87,6 +87,7 @@ async function callMcpTool(
 	label: string,
 ): Promise<Awaited<ReturnType<McpToolCatalogEntry["connection"]["client"]["callTool"]>>> {
 	try {
+		await (entry.ensureConnected?.() ?? entry.connection.connect());
 		return await entry.connection.client.callTool({ name: entry.tool, arguments: args }, undefined, {
 			onprogress: (progress) => {
 				onUpdate?.({

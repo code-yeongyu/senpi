@@ -1,62 +1,32 @@
-import type { ExtensionAPI, ExtensionContext, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
+import type { ExtensionAPI, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
+import { cachedToolsToCatalogEntries } from "./catalog.ts";
+import {
+	collectServerCatalogForCache,
+	getValidCachedServer,
+	readMcpCatalogCache,
+	writeMcpCachedServer,
+} from "./catalog-cache.ts";
 import { loadMcpConfig, visitSpawnableMcpServers } from "./config.ts";
 import type { ResolvedMcpConfig, ResolvedMcpServer } from "./config-schema.ts";
-import { ServerConnection, type ServerConnectionState } from "./connection.ts";
+import { ServerConnection } from "./connection.ts";
 import { registerDirectMcpTools } from "./expose/session.ts";
-import { getMcpServerExposureStatus, type McpServerExposureStatus } from "./expose/status.ts";
-import { createMcpLogger, type McpLogger } from "./log.ts";
+import {
+	getMcpCatalogExposureStatus,
+	getMcpServerExposureStatus,
+	type McpServerExposureStatus,
+} from "./expose/status.ts";
+import { createMcpLogger } from "./log.ts";
+import { buildMcpServerSnapshot } from "./service-snapshot.ts";
+import type {
+	McpConnectionEntry,
+	McpDisposeReason,
+	McpServerSnapshot,
+	McpServiceSnapshot,
+	McpSessionContext,
+	McpSessionOptions,
+} from "./service-types.ts";
 
 export { registerToolsPreservingActiveSet } from "./active-set.ts";
-
-type McpDisposeReason = Extract<SessionShutdownEvent["reason"], "quit" | "reload">;
-type McpSessionContext = Pick<ExtensionContext, "cwd" | "isProjectTrusted">;
-
-export interface McpSessionOptions {
-	readonly agentDir?: string;
-	readonly env?: Record<string, string | undefined>;
-	readonly logDir?: string;
-	readonly projectTrusted?: boolean;
-}
-
-export interface McpServiceSnapshot {
-	disposed: boolean;
-	disposeCount: number;
-	lastDisposeReason: McpDisposeReason | null;
-	sessionStartCount: number;
-	lastSessionStartReason: SessionStartEvent["reason"] | null;
-	hasSessionContext: boolean;
-	connectionCount: number;
-}
-
-export interface McpServerSnapshot {
-	name: string;
-	configState: ResolvedMcpServer["state"] | "removed";
-	configHash: string | null;
-	sourcePath: string | null;
-	lifecycleState: ServerConnectionState | "not_spawned";
-	generation: number | null;
-	pid: number | null;
-	lastError: string | null;
-	uptimeMs: number | null;
-	counters: McpServerCounters;
-}
-
-export interface McpServerCounters {
-	callCount: number;
-	errorCount: number;
-	totalLatencyMs: number;
-	reconnectCount: number;
-}
-
-interface McpConnectionEntry {
-	readonly key: string;
-	readonly name: string;
-	readonly configHash: string;
-	readonly connection: ServerConnection;
-	readonly logger: McpLogger;
-	readonly createdAtMs: number;
-	readonly counters: McpServerCounters;
-}
 
 export class McpService {
 	#disposed = false;
@@ -85,7 +55,7 @@ export class McpService {
 			projectTrusted: options.projectTrusted ?? ctx.isProjectTrusted(),
 		});
 		this.#config = config;
-		await this.#syncFromConfig(config, options);
+		await this.#syncFromConfig(config, options, event.reason !== "reload");
 		if (_pi !== undefined) await this.#registerDirectTools(_pi);
 	}
 
@@ -132,10 +102,21 @@ export class McpService {
 		if (config === null) return { toolCount: null };
 		const server = config.servers[name];
 		const entry = this.#entryForName(name);
-		if (server?.config === undefined || entry === undefined || entry.connection.state !== "connected") {
+		if (server?.config === undefined || entry === undefined) {
 			return { toolCount: null };
 		}
 		const serverConfig = server.config;
+		if (entry.cachedCatalog !== undefined && entry.connection.state !== "connected") {
+			const catalog = cachedToolsToCatalogEntries(
+				name,
+				entry.cachedCatalog,
+				entry.connection,
+				serverConfig.requestTimeoutMs,
+				() => this.#connectAndRefresh(entry, serverConfig),
+			);
+			return getMcpCatalogExposureStatus(catalog, serverConfig, config.settings);
+		}
+		if (entry.connection.state !== "connected") return { toolCount: null };
 		return getMcpServerExposureStatus(name, entry.connection, serverConfig, config.settings);
 	}
 
@@ -160,7 +141,8 @@ export class McpService {
 		};
 	}
 
-	async #syncFromConfig(config: ResolvedMcpConfig, options: McpSessionOptions): Promise<void> {
+	async #syncFromConfig(config: ResolvedMcpConfig, options: McpSessionOptions, useCache: boolean): Promise<void> {
+		const cache = await readMcpCatalogCache(options.agentDir);
 		const wanted = new Map<string, ResolvedMcpServer>();
 		visitSpawnableMcpServers(config, (name, server) => {
 			wanted.set(name, server);
@@ -168,7 +150,7 @@ export class McpService {
 		const disposals: Promise<void>[] = [];
 		for (const entry of this.#connections.values()) {
 			const server = wanted.get(entry.name);
-			const key = server?.configHash === undefined ? undefined : connectionKey(entry.name, server.configHash);
+			const key = server?.configHash === undefined ? undefined : `${entry.name}\0${server.configHash}`;
 			if (key === entry.key) continue;
 			this.#connections.delete(entry.key);
 			this.#connectionKeysByName.delete(entry.name);
@@ -179,7 +161,7 @@ export class McpService {
 		const connects: Promise<void>[] = [];
 		for (const [name, server] of wanted) {
 			if (server.config === undefined || server.configHash === undefined) continue;
-			const key = connectionKey(name, server.configHash);
+			const key = `${name}\0${server.configHash}`;
 			if (this.#connections.has(key)) continue;
 			const logger = createMcpLogger(name, { logDir: options.logDir });
 			const connection = new ServerConnection({
@@ -188,7 +170,11 @@ export class McpService {
 				logger,
 				serverName: name,
 			});
-			const entry = {
+			const cachedCatalog = useCache ? getValidCachedServer(cache, name, server.configHash) : undefined;
+			const entry: McpConnectionEntry = {
+				agentDir: options.agentDir,
+				cacheRefreshedAfterConnect: false,
+				cachedCatalog,
 				key,
 				name,
 				configHash: server.configHash,
@@ -199,7 +185,7 @@ export class McpService {
 			};
 			this.#connections.set(key, entry);
 			this.#connectionKeysByName.set(name, key);
-			connects.push(this.#connect(connection));
+			if (cachedCatalog === undefined) connects.push(this.#connectAndRefresh(entry, server.config));
 		}
 		await Promise.all(connects);
 	}
@@ -214,35 +200,57 @@ export class McpService {
 		}
 	}
 
+	async #connectAndRefresh(entry: McpConnectionEntry, serverConfig: ResolvedMcpServer["config"]): Promise<void> {
+		if (serverConfig === undefined) return;
+		await this.#connect(entry.connection);
+		if (entry.connection.state !== "connected") return;
+		if (entry.cacheRefreshedAfterConnect) return;
+		entry.cacheRefreshedAfterConnect = true;
+		try {
+			const catalog = await collectServerCatalogForCache(entry.connection, serverConfig, entry.configHash);
+			entry.cachedCatalog = catalog;
+			await writeMcpCachedServer(entry.agentDir, entry.name, catalog);
+		} catch (error) {
+			entry.logger.warn("Failed to refresh MCP catalog cache", {
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+
 	async #registerDirectTools(
 		pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
 	): Promise<void> {
 		const config = this.#config;
 		if (config === null) return;
-		await registerDirectMcpTools(pi, config, this.#connections.values());
+		const entries = [...this.#connections.values()].map((entry) => {
+			const serverConfig = config.servers[entry.name]?.config;
+			return {
+				cachedCatalog: entry.cachedCatalog,
+				connection: entry.connection,
+				ensureCachedToolConnected: () => this.#connectAndRefresh(entry, serverConfig),
+				logger: entry.logger,
+				name: entry.name,
+			};
+		});
+		await registerDirectMcpTools(pi, config, entries);
 	}
 
 	#serverSnapshot(name: string): McpServerSnapshot {
-		const server = this.#config?.servers[name];
-		const connection = this.getConnection(name);
-		const entry = this.#entryForName(name);
-		return {
+		return buildMcpServerSnapshot(
 			name,
-			configState: server?.state ?? "removed",
-			configHash: server?.configHash ?? null,
-			sourcePath: server?.sourcePath ?? null,
-			lifecycleState: connection?.state ?? "not_spawned",
-			generation: connection?.generation ?? null,
-			pid: connection?.getRootPid() ?? null,
-			lastError: connection?.lastError?.message ?? null,
-			uptimeMs: entry === undefined ? null : Date.now() - entry.createdAtMs,
-			counters: entry?.counters ?? { callCount: 0, errorCount: 0, totalLatencyMs: 0, reconnectCount: 0 },
-		};
+			this.#config?.servers[name],
+			this.getConnection(name),
+			this.#entryForName(name),
+		);
 	}
 
 	#entryForName(name: string): McpConnectionEntry | undefined {
 		const key = this.#connectionKeysByName.get(name);
 		return key === undefined ? undefined : this.#connections.get(key);
+	}
+
+	getCachedInstructions(name: string): string | undefined {
+		return this.#entryForName(name)?.cachedCatalog?.instructions;
 	}
 }
 
@@ -261,8 +269,4 @@ export function shouldDisposeMcpService(reason: SessionShutdownEvent["reason"]):
 
 export function resetMcpServiceForTests(): void {
 	service = null;
-}
-
-function connectionKey(name: string, configHash: string): string {
-	return `${name}\0${configHash}`;
 }
