@@ -96,6 +96,38 @@ export function writeNeoDaemonRecord(agentDir: string, cwd: string, record: NeoD
 	renameSync(tempPath, finalPath);
 }
 
+/**
+ * Re-assert the daemon's own registry record iff it is missing or does not match
+ * this daemon (version/socket/pid/token). Returns true when a (re-)write happened.
+ *
+ * This is the self-heal that closes the "live daemon owns the deterministic
+ * socket, but its registry record was lost/corrupted (or a SIGKILL left it
+ * missing)" recovery wedge: a fresh client cannot bind a new daemon (the live one
+ * owns the socket) and, with no record, cannot find the live one either. The
+ * daemon calls this on every accepted connection and on a short recurring
+ * interval, so a lost record repairs itself inside the client's attach-poll
+ * window. It NEVER clobbers an already-correct record (idempotent, no write when
+ * the record already points at this daemon), and because there is exactly one
+ * daemon per cwd (the bind mutex), it can never fight another live daemon. The
+ * re-asserted record carries the daemon's real in-memory token, so token auth is
+ * preserved — the client authenticates with the healed token exactly as it would
+ * with the original.
+ */
+export function reassertNeoDaemonRecord(agentDir: string, cwd: string, record: NeoDaemonRecord): boolean {
+	const existing = readNeoDaemonRecord(agentDir, cwd);
+	if (
+		existing &&
+		existing.version === record.version &&
+		existing.socket === record.socket &&
+		existing.pid === record.pid &&
+		existing.token === record.token
+	) {
+		return false; // already correct — do not fight a valid record
+	}
+	writeNeoDaemonRecord(agentDir, cwd, record);
+	return true;
+}
+
 /** Remove the registry record for a cwd (best-effort; missing is fine). */
 export function removeNeoDaemonRecord(agentDir: string, cwd: string): void {
 	const path = neoDaemonRegistryPath(agentDir, cwd);

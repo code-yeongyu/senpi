@@ -153,10 +153,36 @@ func AttachOrSpawn(cfg AttachConfig) (*DaemonConn, error) {
 			conn.Path = PathSpawned
 			return conn, nil
 		}
+		// Recover the "live daemon owns the deterministic socket, but the registry
+		// record for this cwd is lost/corrupt" wedge: the spawn we just fired lost
+		// the bind race to the live daemon (EADDRINUSE) and never registered, so
+		// polling an empty registry alone would hang until the timeout. When the
+		// deterministic socket is LIVE, poke it — the daemon re-asserts its own
+		// registry record on accept (self-heal, neo-daemon-mode.ts), so the next
+		// poll finds the healed record (carrying the daemon's real token) and
+		// attaches. A dead/absent socket is a no-op; the spawned daemon is still
+		// coming up and the ordinary poll handles it.
+		pokeDeterministicSocketIfLive(socket)
 		time.Sleep(pollInterval)
 	}
 	return nil, fmt.Errorf("%w after %s (cwd %s)", ErrAttachTimeout, timeout, cfg.Cwd)
 }
+
+// pokeDeterministicSocketIfLive opens (and immediately closes) a connection to the
+// deterministic socket to trigger a live daemon's on-accept registry self-heal.
+// It is a bounded, best-effort probe: a dead/absent socket errors out fast and is
+// ignored, so a spawned-but-not-yet-listening daemon (the ordinary spawn path) is
+// unaffected. It never sends a hello, so it cannot spawn a worker or alter daemon
+// state beyond the record re-assertion the accept itself drives.
+func pokeDeterministicSocketIfLive(socket string) {
+	conn, err := dialNeoSocket(socket, socketProbeTimeout)
+	if err != nil {
+		return
+	}
+	_ = conn.Close()
+}
+
+const socketProbeTimeout = 250 * time.Millisecond
 
 // tryAttachExisting reads the registry and, if the record is healthy (live pid,
 // matching version), dials + handshakes. It returns (conn, true) on success. A
