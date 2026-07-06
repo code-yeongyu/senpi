@@ -1,0 +1,41 @@
+$ /opt/homebrew/Cellar/node/26.0.0/bin/node /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/senpi-local-release-pack-AF482V/large-pack-output.mjs
+▶ local-release command runner
+  ✔ captures large npm pack JSON output (57.279625ms)
+✔ local-release command runner (57.783958ms)
+▶ Bun binary entry
+  ✔ routes directly to the full CLI instead of the Node wrapper (0.222ms)
+✔ Bun binary entry (0.267375ms)
+▶ local release package list
+  ✖ builds and packs the pty workspace for bundled senpi installs (1335.622417ms)
+✖ local release package list (1335.712916ms)
+ℹ tests 3
+ℹ suites 3
+ℹ pass 2
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1460.911791
+
+✖ failing tests:
+
+test at scripts/local-release.test.mjs:58:2
+✖ builds and packs the pty workspace for bundled senpi installs (1335.622417ms)
+  AssertionError [ERR_ASSERTION]: expected local-release to build packages/pty
+      at TestContext.<anonymous> (file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/scripts/local-release.test.mjs:90:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at node:internal/test_runner/test:1617:71
+      at node:internal/per_context/primordials:466:82
+      at new Promise (<anonymous>)
+      at new SafePromise (node:internal/per_context/primordials:435:3)
+      at node:internal/per_context/primordials:466:9
+      at Array.map (<anonymous>) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

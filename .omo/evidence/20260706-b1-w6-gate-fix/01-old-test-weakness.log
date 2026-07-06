@@ -1,0 +1,3 @@
+old local-release regex assertion: PASS on source where packages/pty is only a comment
+old release constant-membership assertion: PASS while pty package version remains 0.0.0
+behavior-focused replacement must observe build/pack calls and package.json version mutation

@@ -1,0 +1,4 @@
+No matches found for old implementation-mirroring patterns:
+- readFileSync(...local-release.mjs)
+- WORKSPACE_PACKAGES.includes
+- assert.match(scriptSource...)
