@@ -1,0 +1,29 @@
+
+ RUN  v4.1.9 /private/tmp/train-b-terminal/packages/coding-agent
+
+------x
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/mcp/idle.test.ts > MCP idle lifecycle > keep-alive pings every 30 seconds and recovers a killed fixture without suspension
+Error: condition timed out
+ ❯ waitFor test/mcp/idle.test.ts:228:8
+    226|   await delay(25);
+    227|  }
+    228|  throw new Error("condition timed out");
+       |        ^
+    229| }
+    230|
+ ❯ test/mcp/idle.test.ts:183:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 6 skipped (7)
+   Start at  23:03:42
+   Duration  28.08s (transform 5.25s, setup 37ms, import 7.36s, tests 20.54s, environment 0ms)
+
+real 29.03
+user 5.34
+sys 2.27

@@ -1,0 +1,5 @@
+--- FAIL: TestRecovery_DaemonDeadRespawnsAndResumes (4.01s)
+    recovery_test.go:247: did not recover after SIGKILL: bridge: recovery timed out; snapshot={Status:reconnecting InFlightTurnAborted:true LastEntryID: ResumedLeafID: Reconnects:0}
+FAIL
+FAIL	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	4.437s
+FAIL

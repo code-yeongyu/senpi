@@ -1,0 +1,10 @@
+
+ RUN  v4.1.9 /private/tmp/train-b-terminal/packages/coding-agent
+
+------·
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 6 skipped (7)
+   Start at  23:09:11
+   Duration  5.04s (transform 2.97s, setup 19ms, import 4.22s, tests 703ms, environment 0ms)
+

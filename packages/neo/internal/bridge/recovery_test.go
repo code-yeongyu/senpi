@@ -235,13 +235,19 @@ func TestRecovery_DaemonDeadRespawnsAndResumes(t *testing.T) {
 
 	sess.MarkTurnInFlight()
 
-	// Simulate SIGKILL: stop the first daemon's listener, drop its conns, and
-	// overwrite the registry with a dead-pid record so recovery must respawn.
+	// Simulate SIGKILL. Ordering is load-bearing: stop the first daemon's listener
+	// and overwrite the registry with a dead-pid record BEFORE dropping the live
+	// connection. Dropping the connection is what wakes the recovery loop, so the
+	// dead-pid record must already be on disk when the loop performs its first
+	// registry read — otherwise the loop races the test's write and can observe the
+	// still-live record (dead socket, live pid), skip the stale-record cleanup, and
+	// then have its freshly respawned daemon's record clobbered by the late write,
+	// wedging recovery until the deadline (a flake, not a product bug).
 	d1.stop()
-	d1.dropConnections()
 	writeRecordAtomically(t, agentDir, cwd, NeoDaemonRecord{
 		Version: NeoDaemonProtocolVersion, Socket: d1.socket, PID: 4_000_000_000, Token: "tok-1",
 	})
+	d1.dropConnections()
 
 	if err := sess.WaitRecovered(4 * time.Second); err != nil {
 		t.Fatalf("did not recover after SIGKILL: %v; snapshot=%+v", err, sess.Snapshot())
