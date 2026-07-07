@@ -189,6 +189,23 @@ for platform in "${PLATFORMS[@]}"; do
     cp -r ../../node_modules/@mariozechner/clipboard "$OUTPUT_DIR/$platform/node_modules/@mariozechner/"
     cp -r ../../node_modules/@mariozechner/$clipboard_native_package "$OUTPUT_DIR/$platform/node_modules/@mariozechner/"
 
+    # Copy the persistent-terminal PTY native prebuild next to the compiled binary at the
+    # sidecar path its loader probes: native/prebuilds/<platform>-<arch>/senpi_pty.<host>.node.
+    # (bun --compile does not embed .node files.) When the prebuild is absent the runtime
+    # uses the child_process pipe fallback, so a missing prebuild must not fail the build.
+    case "$platform" in
+        windows-x64) pty_host="win32-x64" ;;
+        windows-arm64) pty_host="win32-arm64" ;;
+        *) pty_host="$platform" ;;
+    esac
+    pty_native_src="../pty/native/prebuilds/$pty_host/senpi_pty.$pty_host.node"
+    if [[ -f "$pty_native_src" ]]; then
+        mkdir -p "$OUTPUT_DIR/$platform/native/prebuilds/$pty_host"
+        cp "$pty_native_src" "$OUTPUT_DIR/$platform/native/prebuilds/$pty_host/"
+    else
+        echo "  (no pi-pty prebuild for $pty_host — archive uses pipe fallback)"
+    fi
+
     # Copy terminal input native helpers next to compiled binaries.
     if [[ "$platform" == darwin-* ]]; then
         mkdir -p "$OUTPUT_DIR/$platform/native/darwin/prebuilds/$platform"

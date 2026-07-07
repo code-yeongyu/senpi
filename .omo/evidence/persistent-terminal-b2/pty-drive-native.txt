@@ -1,0 +1,10 @@
+backend: native
+[PASS] A: wait_for sees READY_MARK
+[PASS] B: bash_input steers a live session (STEER_42)
+[PASS] C: screen snapshot captures output
+[PASS] C: resize reflows to 100x30
+[PASS] D: registry tracks the live session
+[PASS] D: teardown removes all sessions (no orphans)
+[PASS] auth.json sha256 unchanged
+
+pty-drive self-test: 7/7 passed

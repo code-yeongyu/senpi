@@ -44,6 +44,13 @@ export interface TerminalSettings {
 	imageWidthCells?: number; // default: 60 (preferred inline image width in terminal cells)
 	clearOnShrink?: boolean; // default: false (clear empty rows when content shrinks)
 	showTerminalProgress?: boolean; // default: false (OSC 9;4 terminal progress indicators)
+	// Persistent-terminal tool suite (builtin `terminal` extension) config.
+	defaultCols?: number; // default: 120 (PTY width for new sessions)
+	defaultRows?: number; // default: 40 (PTY height for new sessions)
+	scrollback?: number; // default: 10000 (xterm scrollback lines per session)
+	maxSessions?: number; // default: 32 (concurrent background sessions before LRU-exited pruning)
+	timeoutAction?: "background" | "kill"; // default: "background" (fate of a foreground timeout)
+	notify?: "wake" | "next-turn" | "off"; // default: "wake" (async completion wake behavior)
 }
 
 export interface ImageSettings {

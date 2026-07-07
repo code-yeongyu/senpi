@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getModel } from "@earendil-works/pi-ai/compat";
@@ -21,6 +21,9 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 		tempDir = join(tmpdir(), `pi-no-builtin-tools-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		agentDir = join(tempDir, "agent");
 		mkdirSync(agentDir, { recursive: true });
+		// The `terminal` builtin registers a PTY `bash` + companion tools; this regression is
+		// about the no-builtin-tools feature, not the terminal suite, so keep it out of scope.
+		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ disabledBuiltinExtensions: ["terminal"] }));
 	});
 
 	afterEach(() => {

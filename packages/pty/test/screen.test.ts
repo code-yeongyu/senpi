@@ -125,5 +125,8 @@ describe("TerminalScreen", () => {
 		} finally {
 			xterm.Terminal.prototype.write = originalWrite;
 		}
-	});
+		// 1200 awaited xterm feeds are well under the 5s default on POSIX runners
+		// but exceed it on the slower Windows CI runner; give this long-session
+		// case explicit headroom rather than weakening the scrollback coverage.
+	}, 30000);
 });

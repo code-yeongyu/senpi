@@ -1,5 +1,46 @@
 # Core Extensions Changes
 
+## 2026-07-07 - Persistent-terminal builtin extension
+
+### What changed
+
+- Added builtin extension id `terminal` in `builtin/index.ts`, registered AFTER `bash-timeout` and
+  `anthropic-bash`. It swaps the core `bash` for a PTY-backed `bash` (adds `run_in_background`, `cols`,
+  `rows`, mode-aware `timeout`) and registers four snake_case companion tools — `bash_output`
+  (`wait_for`/`filter`/`view:screen`), `bash_input` (stdin + named keys), `bash_resize`, `kill_bash` —
+  backed by the new `@earendil-works/pi-pty` package (native ConPTY/portable-pty + `@xterm/headless`
+  screen, with a child_process pipe fallback).
+- The extension is MUTUALLY EXCLUSIVE with `anthropic-bash`: on `session_start` AND `model_select` it
+  re-evaluates `isAnthropicBashEnabled() && model.api === "anthropic-messages"` and deactivates the
+  companions (one-line notice) so none dangle when native Anthropic bash strips/replaces `bash`; when
+  the condition clears it re-activates the PTY `bash` + companions. It injects a prompt section on
+  `before_agent_start` (skipped while stepped aside) and tears the manager down on `session_shutdown`.
+- `builtin/permission-system/parsers.ts`: registered a `bash_input` parser that classifies it in the
+  `bash` permission class (via its `input` field), because writing stdin to a live shell is arbitrary
+  command execution and must not be bypassable under `read-only`/`ask` presets.
+
+### Why
+
+- senpi lacked Claude-Code-shaped persistent/background terminal sessions (stdin steering, resize, live
+  screen snapshot, `wait_for` subscription, clean tree-kill). Shipping it as a builtin extension keeps
+  the PTY runtime, tool surface, and provider-exclusion logic out of the high-conflict core session
+  runtime, reusing the gpt-apply-patch tool-swap and bash-timeout injection precedents.
+
+### Why extension system couldn't handle this alone
+
+- The mutual-exclusion swap must restore the ORIGINAL core `bash` definition (extension tools override
+  base tools by name in `_refreshToolRegistry`), and `bash_input` permission gating must live in the
+  builtin permission parser registry — both are builtin/registration surfaces, not user-extension
+  surface. Shell-kind resolution for non-bash shells lives in core `utils/shell.ts` (see
+  `utils/changes.md`).
+
+### Expected merge conflict zones
+
+- MEDIUM: `builtin/index.ts` registration array near `bash-timeout` / `anthropic-bash` (other trains
+  insert builtins here). Resolution: keep `terminal` after both.
+- LOW: `builtin/permission-system/parsers.ts` `registry.register` block (see its own `changes.md`).
+- LOW: `builtin/terminal/**` self-contained sources.
+
 ## 2026-07-07 - MCP W1 builtin implementation
 
 ### What changed

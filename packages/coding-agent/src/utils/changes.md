@@ -1,5 +1,28 @@
 # changes
 
+## Shell resolution for persistent terminals (2026-07-07)
+
+### What changed
+
+- `shell.ts`: `getShellConfig` honors `SENPI_GIT_BASH_PATH` (checked before Windows Git-Bash
+  probing) and resolves an explicit shell path by KIND — `cmd.exe` → `/c`, PowerShell/pwsh →
+  `-NoProfile -Command`, bash/sh → `-c`/`-s`. New exports: `resolveShellKind`, `GIT_BASH_PATH_ENV`,
+  `ShellKind`, and a `kind` field on `ShellConfig`.
+
+### Why
+
+- The persistent-terminal builtin (`terminal`) resolves the shell + args + transport via this
+  helper and passes them into `@earendil-works/pi-pty`, so non-bash shells (cmd, PowerShell)
+  and a user-pinned Git Bash spawn correctly on Windows.
+
+### Why extension system couldn't handle this
+
+- Shell resolution is a core utility shared by `core/tools/bash.ts` and the terminal extension.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `getShellConfig` resolution order and `ShellConfig` shape.
+
 ## Pinned update changelog links (2026-06-29)
 
 ### What changed

@@ -3,6 +3,7 @@ import {
 	SessionRegistry,
 	SessionRegistryCapacityError,
 	type SessionRegistrySession,
+	sessionIdPrefix,
 	type TrackedDetachedChild,
 } from "../src/registry.ts";
 
@@ -105,6 +106,10 @@ describe("SessionRegistry", () => {
 	it("stops all sessions and tracked detached children idempotently", async () => {
 		const killed: string[] = [];
 		const registry = new SessionRegistry<MockTerminalSession>({
+			// Pin the platform so the detached-child kill target is deterministic
+			// regardless of the host OS: POSIX kills the negated process group
+			// (-201), while win32 has no process groups and kills the raw pid.
+			platform: "linux",
 			createSession({ command }) {
 				return new MockTerminalSession(command, [
 					{
@@ -202,5 +207,53 @@ describe("SessionRegistry", () => {
 
 		expect(registry.get(ended.id)?.state).toBe("exited");
 		expect(killed).toEqual(["301:SIGTERM", "302:SIGTERM"]);
+	});
+
+	it("preserves `this` when stopping a session whose waitExit is a class method", async () => {
+		// Regression: the registry must invoke waitExit via the session object, not a detached
+		// reference, or class-based sessions (e.g. pi-pty TerminalSession) crash on `this`.
+		class ThisBoundSession implements SessionRegistrySession {
+			readonly command = "bash";
+			private stopped = false;
+			private exitHandler: (() => void) | null = null;
+			get isExited(): boolean {
+				return this.stopped;
+			}
+			stop(): void {
+				this.stopped = true;
+				this.exitHandler?.();
+			}
+			waitExit(): Promise<void> {
+				// Touching `this` throws a TypeError if called unbound.
+				if (this.stopped) return Promise.resolve();
+				return Promise.resolve();
+			}
+			onExit(handler: () => void): () => void {
+				this.exitHandler = handler;
+				return () => {
+					this.exitHandler = null;
+				};
+			}
+		}
+
+		const registry = new SessionRegistry<ThisBoundSession>();
+		const entry = await registry.create({ command: "bash", session: new ThisBoundSession() });
+		await expect(registry.stop(entry.id)).resolves.toBe(true);
+		expect(registry.get(entry.id)?.state).toBe("exited");
+	});
+});
+
+describe("sessionIdPrefix", () => {
+	it("derives 'bash' from POSIX and Windows shell paths alike", () => {
+		expect(sessionIdPrefix("/bin/bash")).toBe("bash");
+		// Windows shell paths carry a `.exe` extension and backslash separators; the
+		// prefix must still collapse to `bash` so ids stay `bash_N` cross-platform.
+		expect(sessionIdPrefix("C:\\Program Files\\Git\\bin\\bash.exe")).toBe("bash");
+	});
+
+	it("strips executable extensions for other Windows shells", () => {
+		expect(sessionIdPrefix("C:\\Windows\\System32\\cmd.exe")).toBe("cmd");
+		expect(sessionIdPrefix("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")).toBe("powershell");
+		expect(sessionIdPrefix("pwsh.exe")).toBe("pwsh");
 	});
 });

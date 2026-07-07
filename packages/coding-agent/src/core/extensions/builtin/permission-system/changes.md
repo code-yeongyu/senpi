@@ -67,3 +67,11 @@ Following pi-mono's extension-first philosophy. All permission logic is in the e
 ### Expected merge conflict zones
 - `parsers.ts` edit-tool parsing logic
 - `index.ts` request metadata extraction
+
+## bash_input gated as bash-class command execution (2026-07-07)
+
+- `parsers.ts`: the persistent-terminal `bash_input` tool writes arbitrary stdin to a live
+  shell = arbitrary command execution, so it is parsed off its `input` field into the SAME
+  `bash` permission class (shared `parseBashLikePermission` helper). Otherwise read-only/ask
+  presets would be bypassable by steering a background session. `kill_bash`/`bash_resize`/
+  `bash_output` fall back to their own tool-named (session-control/read) permissions.
