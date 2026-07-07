@@ -1,30 +1,33 @@
 # packages/coding-agent/src/core/extensions/builtin
 
-19 in-tree extensions. Each is the canonical answer to "can senpi do X without core changes?". Registration order matters.
+22 in-tree extensions. Each is the canonical answer to "can senpi do X without core changes?". Registration order matters.
 
 ## INVENTORY (registration order from `builtin/index.ts`)
 
 | # | ID | Path | Role |
 |---|-----|------|------|
-| 1 | `permission-system` | `permission-system/` | Full opencode-style permission port: rules, JSONL storage, prompts |
-| 2 | `gpt-apply-patch` | `gpt-apply-patch/` | Codex-style `apply_patch` tool with rich render + freeform grammar |
-| 3 | `prompt-preset` | `prompt-preset/` | Per-model system prompts (gpt-5.x, claude-opus-4-{5,6,7}, kimi-k2-{6,7}) |
-| 4 | `todowrite` | `todotools/` | Plan/task tools; synced from `../pi-extensions/pi-todotools` |
-| 5 | `redraws` | `redraws.ts` | Force-redraw event hooks for stable streaming visuals |
-| 6 | `anthropic-web-search` | `anthropic-web-search/` | Anthropic-native web search tool |
-| 7 | `anthropic-bash` | `anthropic-bash/` | Anthropic-native bash tool variant |
-| 8 | `openai-web-search` | `openai-web-search/` | OpenAI-native web search |
-| 9 | `service-tier` | `service-tier.ts` | Per-model service-tier (e.g., priority-tier mapping) |
-| 10 | `bash-timeout` | `bash-timeout/` | Bash tool timeout + handlers |
-| 11 | `tool-pair-guard` | `tool-pair-guard/` | Repairs orphaned tool_use/tool_result pairs (compaction safety) |
-| 12 | `compaction` | `compaction/` | Plugsuit-style speculative + emergency compaction with restoration |
-| 13 | `history-search` | `history-search/` | Cross-session transcript search overlay (indexes session files) |
-| 14 | `session-observer` | `session-observer/` | `/sessions` command — peek at previous session transcripts in a HUD |
-| 15 | `websearch` | `websearch/` | Provider-backed `web_search` tool + `/websearch` (providers incl. kimi); vendored from `../pi-extensions/pi-websearch` |
-| 16 | `webfetch` | `webfetch/` | `webfetch` tool (md/text/html, gated by `PI_WEBFETCH`); vendored from `../pi-extensions/pi-webfetch` |
-| 17 | `nested-agents-md` | `nested-agents-md/` | Auto-injects nearby `AGENTS.md` + `/nested-agents`; vendored from `../pi-extensions/pi-nested-agents-md` |
-| 18 | `rules` | `rules/` | Rule-file discovery + `/rules`/`/reload-rules`; vendored from `../pi-extensions/pi-rules` |
-| 19 | `goal` | `goal/` | Budget-free goal tools + `/goal`; vendored from `../pi-extensions/pi-goal` |
+| 1 | `hooks` | `hooks/` | Settings-configured lifecycle command hooks (PreToolUse/PostToolUse-style) with trust hashing + live status |
+| 2 | `permission-system` | `permission-system/` | Full opencode-style permission port: rules, JSONL storage, prompts |
+| 3 | `gpt-apply-patch` | `gpt-apply-patch/` | Codex-style `apply_patch` tool with rich render + freeform grammar |
+| 4 | `prompt-preset` | `prompt-preset/` | Per-model system prompts (gpt-5.x, claude-opus-4-{5,6,7}, kimi-k2-{6,7}) |
+| 5 | `todowrite` | `todotools/` | Plan/task tools; synced from `../pi-extensions/pi-todotools` |
+| 6 | `redraws` | `redraws.ts` | Force-redraw event hooks for stable streaming visuals |
+| 7 | `anthropic-web-search` | `anthropic-web-search/` | Anthropic-native web search tool |
+| 8 | `anthropic-bash` | `anthropic-bash/` | Anthropic-native bash tool variant |
+| 9 | `openai-web-search` | `openai-web-search/` | OpenAI-native web search |
+| 10 | `service-tier` | `service-tier.ts` | Per-model service-tier (e.g., priority-tier mapping) |
+| 11 | `bash-timeout` | `bash-timeout/` | Bash tool timeout + handlers |
+| 12 | `tool-pair-guard` | `tool-pair-guard/` | Repairs orphaned tool_use/tool_result pairs (compaction safety) |
+| 13 | `compaction` | `compaction/` | Plugsuit-style speculative + emergency compaction with restoration |
+| 14 | `history-search` | `history-search/` | Cross-session transcript search overlay (indexes session files) |
+| 15 | `import-repro` | `import-repro.ts` | `/ir` command — import an issue-analysis CI session gist and switch to it |
+| 16 | `session-observer` | `session-observer/` | `/sessions` command — peek at previous session transcripts in a HUD |
+| 17 | `websearch` | `websearch/` | Provider-backed `web_search` tool + `/websearch` (providers incl. kimi); vendored from `../pi-extensions/pi-websearch` |
+| 18 | `webfetch` | `webfetch/` | `webfetch` tool (md/text/html, gated by `PI_WEBFETCH`); vendored from `../pi-extensions/pi-webfetch` |
+| 19 | `nested-agents-md` | `nested-agents-md/` | Auto-injects nearby `AGENTS.md` + `/nested-agents`; vendored from `../pi-extensions/pi-nested-agents-md` |
+| 20 | `rules` | `rules/` | Rule-file discovery + `/rules`/`/reload-rules`; vendored from `../pi-extensions/pi-rules` |
+| 21 | `goal` | `goal/` | Budget-free goal tools + `/goal`; vendored from `../pi-extensions/pi-goal` |
+| 22 | `mcp` | `mcp/` | Built-in MCP client: `mcpServers` config, stdio/http transports, `/mcp` commands, tool exposure policy — see `mcp/changes.md` |
 
 Plus 4 **global default extensions** (resolved fast-path): `diff`, `files`, `prompt-url-widget`, `tps` (in `globalDefaultExtensionFactories`).
 

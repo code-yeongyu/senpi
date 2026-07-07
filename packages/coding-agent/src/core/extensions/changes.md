@@ -1,5 +1,30 @@
 # Core Extensions Changes
 
+## 2026-07-07 - MCP W1 builtin implementation
+
+### What changed
+
+- The `mcp` builtin skeleton is now the full W1 implementation: TypeBox-validated config discovery/merge (global,
+  project, imported Claude configs), stdio + StreamableHTTP transports, a per-server connection state machine, a
+  process-owned service lifecycle (`lazy` / `eager` / `keep-alive`), end-to-end tool registration with spec-correct
+  call semantics, the `/mcp` command suite, tool exposure policy (`auto` / `direct` / `search` / `proxy`), server
+  instructions injection, and secret-redacting per-server logging. Per-module details: `builtin/mcp/changes.md`.
+
+### Why
+
+- W1 turns the registered no-op skeleton into working MCP support while keeping every moving part inside the builtin
+  extension boundary.
+
+### Why extension system couldn't handle this alone
+
+- It did: W1 uses only the public `pi.*` API (`registerTool`, `registerCommand`, `session_start`,
+  `before_agent_start`, `session_shutdown`). No `types.ts` or `runner.ts` change was needed.
+
+### Expected merge conflict zones
+
+- LOW: `builtin/index.ts` registration order near the final builtin entries.
+- NONE: `types.ts` (untouched by MCP W1); `builtin/mcp/` does not exist upstream.
+
 ## 2026-07-06 - MCP builtin extension skeleton
 
 ### What changed
@@ -21,6 +46,33 @@
 
 - LOW: `builtin/index.ts` registration order near the final builtin entries.
 - LOW: `builtin/mcp/` as later MCP implementation phases fill in the skeleton.
+
+## 2026-07-04 - Tool hook status `update` phase and `ctx.updateToolHookStatus()`
+
+### What changed
+
+- `types.ts`: tool hook lifecycle events gained an `update` phase, and tool-hook-capable event contexts gained an
+  optional `updateToolHookStatus(statusMessage)` method so `tool_call` / `tool_result` handlers can publish live
+  status text while a hook runs.
+- `runner.ts`: dispatches the update-phase status events to the host.
+- `builtin/hooks/`: the dispatcher forwards configured command-hook `statusMessage` values (previously parsed and
+  trust-hashed but never rendered) through the new update phase, so the TUI hook row shows the live hook identity
+  instead of a static per-extension guess.
+- `docs/extensions.md` documents the new API; rendering side is in `modes/interactive/changes.md`.
+
+### Why
+
+- Users could not tell which hook was running or what it was doing during `Running PreToolUse/PostToolUse hook` rows.
+
+### Why extension system couldn't handle this alone
+
+- This is a public extension API addition: the event union, context method, and runner emit helper all live in the
+  extension system itself.
+
+### Expected merge conflict zones
+
+- MEDIUM: `types.ts` around the tool hook lifecycle event union and context method declarations.
+- LOW: `runner.ts` emit helpers; `builtin/hooks/dispatcher.ts` status forwarding.
 
 ## 2026-07-02 - Extension entry renderer sync
 

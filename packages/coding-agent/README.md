@@ -530,7 +530,7 @@ See [docs/app-server.md](docs/app-server.md) for activation, framing, and method
 
 Pi is aggressively extensible so it doesn't have to dictate your workflow. Features that other tools bake in can be built with [extensions](#extensions), [skills](#skills), or installed from third-party [pi packages](#pi-packages). This keeps the core minimal while letting you shape pi to fit how you work.
 
-**No MCP.** Build CLI tools with READMEs (see [Skills](#skills)), or build an extension that adds MCP support. [Why?](https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/)
+**MCP as a builtin extension, not core.** Upstream pi ships no MCP ([why?](https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/)); this fork adds MCP support as a builtin extension — configure servers under `mcpServers` and manage them with `/mcp`. Prefer CLI tools with READMEs (see [Skills](#skills)) when they fit; MCP is there when a server is the right integration.
 
 **No sub-agents.** There's many ways to do this. Spawn pi instances via tmux, or build your own with [extensions](#extensions), or install a package that does it your way.
 

@@ -1,5 +1,31 @@
 # Changes
 
+## 2026-07-06 - Stream idle timeout aborts the dangling provider request
+
+### What changed and why
+
+- The idle-timeout reader rejected the turn but left the underlying provider request dangling:
+  `iterator.return()` is a no-op on `EventStream`, so a silently dead connection (network drop + reconnect) kept its
+  socket and stream alive forever.
+- The agent loop now owns a per-request `AbortController`, propagates caller aborts into it through a single listener,
+  and aborts it with `StreamIdleTimeoutError` when the reader times out, tearing the request down so auto-retry can
+  recover the turn.
+
+### Files modified
+
+- `packages/agent/src/agent-loop.ts`
+- `packages/agent/test/agent-loop.test.ts`
+
+### Why the extension system could not handle this
+
+- Stream lifetime and abort propagation live inside the agent loop's provider-request plumbing, upstream of any
+  coding-agent extension hook.
+
+### Expected merge conflict zones on next upstream sync
+
+- MEDIUM: `packages/agent/src/agent-loop.ts` around provider stream creation, idle-timeout reading, and abort-signal
+  wiring.
+
 ## 2026-07-02 - Upstream harness timeout and compaction serialization sync
 
 ### What changed and why
