@@ -1,0 +1,9 @@
+# Cleanup Receipt
+
+$ test ! -e /tmp/w1-public-pty-probe.mts
+removed: /tmp/w1-public-pty-probe.mts
+
+$ ps -axo pid=,command= | awk <W1 QA process filter>
+no matching W1 QA processes remain
+
+No tmux or browser sessions were started for this W1 gate fix.

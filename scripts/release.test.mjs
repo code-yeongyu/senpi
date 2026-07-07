@@ -1,12 +1,65 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { afterEach, describe, it } from "node:test";
 import {
 	DEFAULT_UNRELEASED_SUBSECTIONS,
 	buildUnreleasedBlock,
 	insertUnreleasedBlock,
 	resolveNextUnreleasedSubsections,
 } from "./release-changelog.mjs";
+import { applyWorkspaceVersions } from "./release-packages.mjs";
+
+let tempDir;
+
+afterEach(() => {
+	if (tempDir) {
+		rmSync(tempDir, { recursive: true, force: true });
+		tempDir = undefined;
+	}
+});
+
+describe("release package versioning", () => {
+	it("updates the pty workspace during lockstep releases", () => {
+		// Given
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-release-versioning-"));
+		for (const file of [
+			"packages/ai/package.json",
+			"packages/agent/package.json",
+			"packages/coding-agent/package.json",
+			"packages/orchestrator/package.json",
+			"packages/pty/package.json",
+			"packages/tui/package.json",
+			"packages/web-ui/package.json",
+		]) {
+			writeJson(join(tempDir, file), { name: file, version: "0.0.0" });
+		}
+		const previousCwd = process.cwd();
+		const logs = [];
+
+		try {
+			// When
+			process.chdir(tempDir);
+			applyWorkspaceVersions("2099.1.2", false, (message) => logs.push(message), assert.fail);
+		} finally {
+			process.chdir(previousCwd);
+		}
+
+		// Then
+		const ptyPackage = JSON.parse(
+			readFileSync(join(tempDir, "packages", "pty", "package.json"), "utf8"),
+		);
+		assert.equal(ptyPackage.version, "2099.1.2");
+		assert.ok(logs.includes("  packages/pty/package.json: 0.0.0 -> 2099.1.2"));
+	});
+});
+
+function writeJson(path, value) {
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, `${JSON.stringify(value, undefined, "\t")}\n`);
+}
 
 describe("release changelog bookkeeping", () => {
 	it("recreates the standard next-cycle section when no previous Unreleased block was captured", () => {

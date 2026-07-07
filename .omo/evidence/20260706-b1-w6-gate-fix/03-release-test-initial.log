@@ -1,0 +1,17 @@
+▶ release package versioning
+  ✔ updates the pty workspace during lockstep releases (3.011958ms)
+✔ release package versioning (3.480584ms)
+▶ release changelog bookkeeping
+  ✔ recreates the standard next-cycle section when no previous Unreleased block was captured (0.503416ms)
+  ✔ preserves captured subsection shape when a previous Unreleased block existed (0.223708ms)
+  ✔ inserts the next-cycle section before the stamped release header (0.203667ms)
+  ✔ restores the next-cycle section after the title when no release header was stamped (0.106292ms)
+✔ release changelog bookkeeping (1.4395ms)
+ℹ tests 5
+ℹ suites 2
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 75.18375

@@ -1,0 +1,16 @@
+$ npm test --workspace @earendil-works/pi-pty
+
+> @earendil-works/pi-pty@2026.7.5-2 test
+> vitest --run test
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/packages/pty
+
+
+ Test Files  5 passed (5)
+      Tests  30 passed (30)
+   Start at  18:56:23
+   Duration  1.80s (transform 133ms, setup 0ms, import 180ms, tests 2.13s, environment 0ms)
+
+
+exit=0

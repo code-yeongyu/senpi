@@ -1,0 +1,4 @@
+$ node --input-type=module -e <loadPtyNative public probe>
+{"exports":["PtySession","__senpiPtyV2026_7_5","startPtySession","version"],"ptySessionType":"function"}
+
+exit=0

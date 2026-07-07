@@ -1,0 +1,7 @@
+Task-owned process scan after final tests:
+44972 /bin/zsh -lc {\012  echo 'Task-owned process scan after final tests:'\012  ps -axo pid=,command= | rg 'senpi-local-release-flow|senpi-release-versioning|old-test-weakness|node --test scripts/(local-release|release)\.test' || true\012  echo\012  echo 'tmux sessions present (not task-owned):'\012  tmux list-sessions 2>/dev/null || true\012} 2>&1 | tee .omo/evidence/20260706-b1-w6-gate-fix/16-cleanup-scan-final.log
+44982 /bin/zsh -lc {\012  echo 'Task-owned process scan after final tests:'\012  ps -axo pid=,command= | rg 'senpi-local-release-flow|senpi-release-versioning|old-test-weakness|node --test scripts/(local-release|release)\.test' || true\012  echo\012  echo 'tmux sessions present (not task-owned):'\012  tmux list-sessions 2>/dev/null || true\012} 2>&1 | tee .omo/evidence/20260706-b1-w6-gate-fix/16-cleanup-scan-final.log
+44985 rg senpi-local-release-flow|senpi-release-versioning|old-test-weakness|node --test scripts/(local-release|release)\.test
+
+tmux sessions present (not task-owned):
+ulw-dr: 1 windows (created Mon Jul  6 19:48:01 2026)

@@ -1,0 +1,15 @@
+$ npm run build --workspace @earendil-works/pi-pty
+
+> @earendil-works/pi-pty@2026.7.5-2 build
+> tsgo -p tsconfig.build.json
+
+src/loader.ts(84,2): error TS2559: Type 'ProcessVersions' has no properties in common with type '{ readonly bun?: unknown; }'.
+npm error Lifecycle script `build` failed with error:
+npm error code 2
+npm error path /Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/packages/pty
+npm error workspace @earendil-works/pi-pty@2026.7.5-2
+npm error location /Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/packages/pty
+npm error command failed
+npm error command sh -c tsgo -p tsconfig.build.json
+
+exit=2

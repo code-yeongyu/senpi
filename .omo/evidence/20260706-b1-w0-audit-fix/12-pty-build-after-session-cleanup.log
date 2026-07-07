@@ -1,0 +1,48 @@
+$ npm run build --workspace @earendil-works/pi-pty
+
+> @earendil-works/pi-pty@2026.7.5-2 build
+> tsgo -p tsconfig.build.json
+
+src/registry.ts(1,35): error TS2440: Import declaration conflicts with local declaration of 'defaultKillProcess'.
+src/registry.ts(3,2): error TS2440: Import declaration conflicts with local declaration of 'isTerminalSessionExited'.
+src/registry.ts(4,2): error TS2440: Import declaration conflicts with local declaration of 'sessionIdPrefix'.
+src/registry.ts(5,2): error TS2440: Import declaration conflicts with local declaration of 'stopTerminalSession'.
+src/registry.ts(17,10): error TS2323: Cannot redeclare exported variable 'isTerminalSessionExited'.
+src/registry.ts(17,10): error TS2484: Export declaration conflicts with exported declaration of 'isTerminalSessionExited'.
+src/registry.ts(17,35): error TS2323: Cannot redeclare exported variable 'sessionIdPrefix'.
+src/registry.ts(17,35): error TS2484: Export declaration conflicts with exported declaration of 'sessionIdPrefix'.
+src/registry.ts(40,78): error TS2304: Cannot find name 'MaybePromise'.
+src/registry.ts(41,57): error TS2304: Cannot find name 'TerminalSessionSignal'.
+src/registry.ts(43,29): error TS2304: Cannot find name 'ProcessPlatform'.
+src/registry.ts(207,22): error TS2304: Cannot find name 'DEFAULT_SIGNAL'.
+src/registry.ts(213,30): error TS2304: Cannot find name 'DEFAULT_SIGNAL'.
+src/registry.ts(265,17): error TS2323: Cannot redeclare exported variable 'sessionIdPrefix'.
+src/registry.ts(275,17): error TS2323: Cannot redeclare exported variable 'isTerminalSessionExited'.
+src/registry.ts(296,22): error TS2304: Cannot find name 'DEFAULT_SIGNAL'.
+src/registry.ts(299,43): error TS2304: Cannot find name 'DEFAULT_SIGNAL'.
+src/registry.ts(302,80): error TS2304: Cannot find name 'TrackedDetachedChild'.
+src/registry.ts(306,46): error TS2304: Cannot find name 'TrackedDetachedChild'.
+src/registry.ts(312,44): error TS2304: Cannot find name 'TrackedDetachedChild'.
+src/registry.ts(312,76): error TS2304: Cannot find name 'ProcessPlatform'.
+src/registry.ts(322,53): error TS2304: Cannot find name 'TerminalSessionSignal'.
+src/registry.ts(334,31): error TS2304: Cannot find name 'ProcessLike'.
+src/registry.ts(338,22): error TS2304: Cannot find name 'ProcessLike'.
+src/session.ts(127,4): error TS2322: Type 'PipeFallbackSession' is not assignable to type 'TerminalSessionHandle'.
+  Types of property 'kill' are incompatible.
+    Type '(signal?: Signals) => PipeFallbackOperationResult' is not assignable to type '(signal?: string | undefined) => TerminalSessionOperationResult | undefined'.
+      Types of parameters 'signal' and 'signal' are incompatible.
+        Type 'string | undefined' is not assignable to type 'Signals | undefined'.
+          Type 'string' is not assignable to type 'Signals | undefined'.
+src/session.ts(132,41): error TS2531: Object is possibly 'null'.
+src/session.ts(133,34): error TS2531: Object is possibly 'null'.
+src/session.ts(135,43): error TS2345: Argument of type 'TerminalSessionHandle | null' is not assignable to parameter of type 'TerminalSessionHandle'.
+  Type 'null' is not assignable to type 'TerminalSessionHandle'.
+npm error Lifecycle script `build` failed with error:
+npm error code 2
+npm error path /Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/packages/pty
+npm error workspace @earendil-works/pi-pty@2026.7.5-2
+npm error location /Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/packages/pty
+npm error command failed
+npm error command sh -c tsgo -p tsconfig.build.json
+
+exit=2

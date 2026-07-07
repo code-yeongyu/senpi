@@ -1,0 +1,327 @@
+[
+  {
+    "id": "@earendil-works/pi-pty@2026.7.5-2",
+    "name": "@earendil-works/pi-pty",
+    "version": "2026.7.5-2",
+    "size": 407056,
+    "unpackedSize": 1131490,
+    "shasum": "ef94fadae7f127e1fec51308a511a839797a3059",
+    "integrity": "sha512-mVV5nnPcu1wygJ4Bg7y+EYDXu6NcKmK6j/9ImLF37xZ8odl5VAhSZx4CoNi6OM2kHou56pZOR1v1JlQRA88OTA==",
+    "filename": "earendil-works-pi-pty-2026.7.5-2.tgz",
+    "files": [
+      {
+        "path": "README.md",
+        "size": 402,
+        "mode": 420
+      },
+      {
+        "path": "dist/index.d.ts",
+        "size": 1606,
+        "mode": 420
+      },
+      {
+        "path": "dist/index.d.ts.map",
+        "size": 1092,
+        "mode": 420
+      },
+      {
+        "path": "dist/index.js",
+        "size": 656,
+        "mode": 420
+      },
+      {
+        "path": "dist/index.js.map",
+        "size": 2315,
+        "mode": 420
+      },
+      {
+        "path": "dist/loader.d.ts",
+        "size": 2022,
+        "mode": 420
+      },
+      {
+        "path": "dist/loader.d.ts.map",
+        "size": 1812,
+        "mode": 420
+      },
+      {
+        "path": "dist/loader.js",
+        "size": 4718,
+        "mode": 420
+      },
+      {
+        "path": "dist/loader.js.map",
+        "size": 10616,
+        "mode": 420
+      },
+      {
+        "path": "dist/native-loader.d.ts",
+        "size": 395,
+        "mode": 420
+      },
+      {
+        "path": "dist/native-loader.d.ts.map",
+        "size": 337,
+        "mode": 420
+      },
+      {
+        "path": "dist/native-loader.js",
+        "size": 189,
+        "mode": 420
+      },
+      {
+        "path": "dist/native-loader.js.map",
+        "size": 623,
+        "mode": 420
+      },
+      {
+        "path": "dist/pipe-fallback.d.ts",
+        "size": 2402,
+        "mode": 420
+      },
+      {
+        "path": "dist/pipe-fallback.d.ts.map",
+        "size": 2276,
+        "mode": 420
+      },
+      {
+        "path": "dist/pipe-fallback.js",
+        "size": 6921,
+        "mode": 420
+      },
+      {
+        "path": "dist/pipe-fallback.js.map",
+        "size": 14923,
+        "mode": 420
+      },
+      {
+        "path": "dist/registry-detached.d.ts",
+        "size": 473,
+        "mode": 420
+      },
+      {
+        "path": "dist/registry-detached.d.ts.map",
+        "size": 464,
+        "mode": 420
+      },
+      {
+        "path": "dist/registry-detached.js",
+        "size": 1848,
+        "mode": 420
+      },
+      {
+        "path": "dist/registry-detached.js.map",
+        "size": 4076,
+        "mode": 420
+      },
+      {
+        "path": "dist/registry-session.d.ts",
+        "size": 549,
+        "mode": 420
+      },
+      {
+        "path": "dist/registry-session.d.ts.map",
+        "size": 479,
+        "mode": 420
+      },
+      {
+        "path": "dist/registry-session.js",
+        "size": 1550,
+        "mode": 420
+      },
+      {
+        "path": "dist/registry-session.js.map",
+        "size": 3357,
+        "mode": 420
+      },
+      {
+        "path": "dist/registry-types.d.ts",
+        "size": 3592,
+        "mode": 420
+      },
+      {
+        "path": "dist/registry-types.d.ts.map",
+        "size": 3776,
+        "mode": 420
+      },
+      {
+        "path": "dist/registry-types.js",
+        "size": 374,
+        "mode": 420
+      },
+      {
+        "path": "dist/registry-types.js.map",
+        "size": 4057,
+        "mode": 420
+      },
+      {
+        "path": "dist/registry.d.ts",
+        "size": 2004,
+        "mode": 420
+      },
+      {
+        "path": "dist/registry.d.ts.map",
+        "size": 1623,
+        "mode": 420
+      },
+      {
+        "path": "dist/registry.js",
+        "size": 8056,
+        "mode": 420
+      },
+      {
+        "path": "dist/registry.js.map",
+        "size": 17548,
+        "mode": 420
+      },
+      {
+        "path": "dist/screen.d.ts",
+        "size": 984,
+        "mode": 420
+      },
+      {
+        "path": "dist/screen.d.ts.map",
+        "size": 1105,
+        "mode": 420
+      },
+      {
+        "path": "dist/screen.js",
+        "size": 5476,
+        "mode": 420
+      },
+      {
+        "path": "dist/screen.js.map",
+        "size": 11879,
+        "mode": 420
+      },
+      {
+        "path": "dist/session-exit.d.ts",
+        "size": 863,
+        "mode": 420
+      },
+      {
+        "path": "dist/session-exit.d.ts.map",
+        "size": 631,
+        "mode": 420
+      },
+      {
+        "path": "dist/session-exit.js",
+        "size": 3808,
+        "mode": 420
+      },
+      {
+        "path": "dist/session-exit.js.map",
+        "size": 8680,
+        "mode": 420
+      },
+      {
+        "path": "dist/session-native.d.ts",
+        "size": 296,
+        "mode": 420
+      },
+      {
+        "path": "dist/session-native.d.ts.map",
+        "size": 291,
+        "mode": 420
+      },
+      {
+        "path": "dist/session-native.js",
+        "size": 3486,
+        "mode": 420
+      },
+      {
+        "path": "dist/session-native.js.map",
+        "size": 8178,
+        "mode": 420
+      },
+      {
+        "path": "dist/session-options.d.ts",
+        "size": 688,
+        "mode": 420
+      },
+      {
+        "path": "dist/session-options.d.ts.map",
+        "size": 544,
+        "mode": 420
+      },
+      {
+        "path": "dist/session-options.js",
+        "size": 1313,
+        "mode": 420
+      },
+      {
+        "path": "dist/session-options.js.map",
+        "size": 3047,
+        "mode": 420
+      },
+      {
+        "path": "dist/session-types.d.ts",
+        "size": 2574,
+        "mode": 420
+      },
+      {
+        "path": "dist/session-types.d.ts.map",
+        "size": 2684,
+        "mode": 420
+      },
+      {
+        "path": "dist/session-types.js",
+        "size": 52,
+        "mode": 420
+      },
+      {
+        "path": "dist/session-types.js.map",
+        "size": 2730,
+        "mode": 420
+      },
+      {
+        "path": "dist/session.d.ts",
+        "size": 2539,
+        "mode": 420
+      },
+      {
+        "path": "dist/session.d.ts.map",
+        "size": 2049,
+        "mode": 420
+      },
+      {
+        "path": "dist/session.js",
+        "size": 7368,
+        "mode": 420
+      },
+      {
+        "path": "dist/session.js.map",
+        "size": 16028,
+        "mode": 420
+      },
+      {
+        "path": "native/check-prebuild-fresh.mjs",
+        "size": 5194,
+        "mode": 420
+      },
+      {
+        "path": "native/index.d.ts",
+        "size": 587,
+        "mode": 420
+      },
+      {
+        "path": "native/index.js",
+        "size": 812,
+        "mode": 420
+      },
+      {
+        "path": "native/prebuilds/darwin-arm64/senpi_pty.darwin-arm64.node",
+        "size": 929152,
+        "mode": 493
+      },
+      {
+        "path": "package.json",
+        "size": 1321,
+        "mode": 420
+      }
+    ],
+    "entryCount": 62,
+    "bundled": []
+  }
+]
+exit=0

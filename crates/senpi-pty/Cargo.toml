@@ -1,0 +1,18 @@
+[package]
+name = "senpi-pty"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+libc = "=0.2.174"
+napi.workspace = true
+napi-derive.workspace = true
+portable-pty.workspace = true
+
+[build-dependencies]
+napi-build.workspace = true

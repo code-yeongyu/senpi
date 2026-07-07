@@ -1,0 +1,47 @@
+timestamp=2026-07-06T19:28:38+0900
+pwd=/Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1
+branch=feat/persistent-terminal-runtime
+
+recent_commits:
+957e11fae docs(pty): record W0 stop-hook re-verification
+f2cae3281 docs(pty): record W0 stop-hook verification
+baf83df69 fix(pty): address W1 native audit blockers
+ed67974a8 fix(coding-agent): require bundled pty native prebuild
+9bedfb2b8 fix(pty): align native prebuild loading with packaged layout
+95dfedee9 fix(ai): restore cli executable bit
+f4410d69d fix(pty): address W2 runtime audit blockers
+da2d2d766 chore(pty): expose prebuild freshness script
+
+head_fuller:
+commit 957e11fae75c37220e31a8153bde7fbec9bd0ed5
+Author:     YeonGyu-Kim <code.yeon.gyu@gmail.com>
+AuthorDate: Mon Jul 6 19:26:57 2026 +0900
+Commit:     YeonGyu-Kim <code.yeon.gyu@gmail.com>
+CommitDate: Mon Jul 6 19:26:57 2026 +0900
+
+    docs(pty): record W0 stop-hook re-verification
+
+.omo/evidence/20260706-b1-w0-stop-hook-verify-2/00-state.log
+.omo/evidence/20260706-b1-w0-stop-hook-verify-2/01-check-prebuild.log
+.omo/evidence/20260706-b1-w0-stop-hook-verify-2/02-node-loader.log
+.omo/evidence/20260706-b1-w0-stop-hook-verify-2/02b-node-loader-corrected.log
+.omo/evidence/20260706-b1-w0-stop-hook-verify-2/02c-node-public-loadPtyNative.log
+.omo/evidence/20260706-b1-w0-stop-hook-verify-2/03-bun-loader.log
+.omo/evidence/20260706-b1-w0-stop-hook-verify-2/03b-bun-loader-corrected.log
+.omo/evidence/20260706-b1-w0-stop-hook-verify-2/03c-bun-public-loadPtyNative.log
+.omo/evidence/20260706-b1-w0-stop-hook-verify-2/04-npm-pack-dry-run.log
+.omo/evidence/20260706-b1-w0-stop-hook-verify-2/04a-pack-native-paths.log
+.omo/evidence/20260706-b1-w0-stop-hook-verify-2/05-cargo-clippy.log
+.omo/evidence/20260706-b1-w0-stop-hook-verify-2/06-cargo-test-senpi-pty.log
+.omo/evidence/20260706-b1-w0-stop-hook-verify-2/07-npm-test-pty.log
+.omo/evidence/20260706-b1-w0-stop-hook-verify-2/08-npm-build-pty.log
+.omo/evidence/20260706-b1-w0-stop-hook-verify-2/09-npm-run-check.log
+.omo/evidence/20260706-b1-w0-stop-hook-verify-2/10-cleanup.log
+.omo/evidence/20260706-b1-w0-stop-hook-verify-2/11-final-artifact-audit.log
+.omo/evidence/20260706-b1-w0-stop-hook-verify-2/DONECLAIM.md
+
+relevant_status:
+commit_9bedfb2b8_exists_exit=0
+commit_f2cae3281_exists_exit=0
+commit_957e11fae_exists_exit=0
+previous_doneclaim_nonempty_exit=0

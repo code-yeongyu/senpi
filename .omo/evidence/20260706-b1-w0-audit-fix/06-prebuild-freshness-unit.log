@@ -1,0 +1,14 @@
+$ node --test scripts/check-pty-prebuild-fresh.test.mjs
+✔ fails with the host target name when the vendored prebuild is missing (3.054ms)
+✔ fails with the host target name when the vendored prebuild is stale (3.018084ms)
+✔ passes when the host prebuild matches the rebuilt artifact (2.247042ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 74.553584
+
+exit=0

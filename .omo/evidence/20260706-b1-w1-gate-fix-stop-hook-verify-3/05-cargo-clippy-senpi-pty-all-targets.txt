@@ -1,0 +1,5 @@
+$ cargo clippy -p senpi-pty --all-targets --locked -- -D warnings
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.15s

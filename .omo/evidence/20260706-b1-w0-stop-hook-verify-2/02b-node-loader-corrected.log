@@ -1,0 +1,12 @@
+file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/[eval1]:1
+import { loadPtyNative } from './packages/pty/dist/loader.js'; const native = loadPtyNative(); const exports = Object.keys(native).sort(); console.log(JSON.stringify({ exports }, null, 2)); for (const key of ['PtySession', '__senpiPtyV2026_7_5', 'startPtySession', 'version']) { if (!exports.includes(key)) throw new Error('missing native export ' + key); }
+         ^^^^^^^^^^^^^
+SyntaxError: The requested module './packages/pty/dist/loader.js' does not provide an export named 'loadPtyNative'
+    at #asyncInstantiate (node:internal/modules/esm/module_job:326:21)
+    at async ModuleJob.run (node:internal/modules/esm/module_job:429:5)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:249:26)
+    at async ModuleLoader.executeModuleJob (node:internal/modules/esm/loader:246:20)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+
+Node.js v26.0.0
+exit=1

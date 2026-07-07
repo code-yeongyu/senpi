@@ -1,0 +1,12 @@
+$ npx vitest --run packages/pty/test/loader.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1
+
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  18:56:12
+   Duration  113ms (transform 14ms, setup 0ms, import 20ms, tests 4ms, environment 0ms)
+
+
+exit=0

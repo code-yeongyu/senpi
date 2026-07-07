@@ -1,0 +1,6 @@
+$ awk pure LOC check for crates/senpi-pty/src/*.rs
+ 189 crates/senpi-pty/src/lib.rs
+ 243 crates/senpi-pty/src/session.rs
+ 181 crates/senpi-pty/src/session_tests.rs
+  39 crates/senpi-pty/src/session_threads.rs
+  58 crates/senpi-pty/src/signals.rs

@@ -1,0 +1,297 @@
+name: Native Prebuilds
+
+on:
+  workflow_dispatch:
+    inputs:
+      native_package_dir:
+        description: 'Directory containing the native package Cargo.toml and package.json'
+        required: false
+        type: string
+        default: crates/senpi-pty
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/native-prebuilds.yml'
+      - 'Cargo.toml'
+      - 'crates/senpi-pty/**'
+      - 'packages/pty/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/native-prebuilds.yml'
+      - 'Cargo.toml'
+      - 'crates/senpi-pty/**'
+      - 'packages/pty/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-prebuilds-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_ZIGBUILD_VERSION: 0.23.0
+  NAPI_CLI_VERSION: 3.7.2
+  NODE_VERSION: '24'
+  ZIG_VERSION: 0.14.1
+
+jobs:
+  build:
+    name: Build ${{ matrix.artifact }}
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.best_effort }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # cross_compile gates the on-runner test/probe steps (target arch != runner arch).
+          # napi_cross_compile passes --cross-compile to napi, which requires zig (or
+          # cargo-xwin); darwin cross builds use Apple's native toolchain instead, so they
+          # keep napi_cross_compile false.
+          - artifact: native-prebuild-win32-x64
+            runner: windows-latest
+            napi_target: x86_64-pc-windows-msvc
+            rust_target: x86_64-pc-windows-msvc
+            node_platform: win32
+            node_arch: x64
+            cross_compile: false
+            napi_cross_compile: false
+            linux: false
+            best_effort: false
+          - artifact: native-prebuild-win32-arm64
+            runner: windows-latest
+            napi_target: aarch64-pc-windows-msvc
+            rust_target: aarch64-pc-windows-msvc
+            node_platform: win32
+            node_arch: arm64
+            cross_compile: true
+            napi_cross_compile: true
+            linux: false
+            best_effort: true
+          - artifact: native-prebuild-darwin-x64
+            runner: macos-latest
+            napi_target: x86_64-apple-darwin
+            rust_target: x86_64-apple-darwin
+            node_platform: darwin
+            node_arch: x64
+            cross_compile: true
+            napi_cross_compile: false
+            linux: false
+            best_effort: false
+          - artifact: native-prebuild-darwin-arm64
+            runner: macos-latest
+            napi_target: aarch64-apple-darwin
+            rust_target: aarch64-apple-darwin
+            node_platform: darwin
+            node_arch: arm64
+            cross_compile: false
+            napi_cross_compile: false
+            linux: false
+            best_effort: false
+          - artifact: native-prebuild-linux-x64
+            runner: ubuntu-latest
+            napi_target: x86_64-unknown-linux-gnu.2.17
+            rust_target: x86_64-unknown-linux-gnu
+            node_platform: linux
+            node_arch: x64
+            cross_compile: true
+            napi_cross_compile: true
+            linux: true
+            best_effort: false
+          - artifact: native-prebuild-linux-arm64
+            runner: ubuntu-latest
+            napi_target: aarch64-unknown-linux-gnu.2.17
+            rust_target: aarch64-unknown-linux-gnu
+            node_platform: linux
+            node_arch: arm64
+            cross_compile: true
+            napi_cross_compile: true
+            linux: true
+            best_effort: false
+
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      NATIVE_PACKAGE_DIR: ${{ github.event.inputs.native_package_dir || 'crates/senpi-pty' }}
+      NAPI_TARGET: ${{ matrix.napi_target }}
+      RUST_TARGET: ${{ matrix.rust_target }}
+      NODE_PLATFORM: ${{ matrix.node_platform }}
+      NODE_ARCH: ${{ matrix.node_arch }}
+      NAPI_CROSS_COMPILE: ${{ matrix.napi_cross_compile }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Setup Rust target
+        run: |
+          set -euo pipefail
+
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add "${RUST_TARGET}"
+
+      - name: Setup Zig and cargo-zigbuild
+        if: ${{ matrix.linux }}
+        run: |
+          set -euo pipefail
+
+          sudo apt-get update
+          sudo apt-get install -y curl xz-utils
+
+          case "$(uname -m)" in
+            x86_64)
+              zig_arch="x86_64"
+              ;;
+            aarch64|arm64)
+              zig_arch="aarch64"
+              ;;
+            *)
+              echo "::error::Unsupported runner architecture for Zig: $(uname -m)"
+              exit 1
+              ;;
+          esac
+
+          # Zig 0.14.1 renamed release tarballs from zig-<os>-<arch> to zig-<arch>-<os>.
+          zig_dir="zig-${zig_arch}-linux-${ZIG_VERSION}"
+          curl -fsSLO "https://ziglang.org/download/${ZIG_VERSION}/${zig_dir}.tar.xz"
+          tar -xf "${zig_dir}.tar.xz"
+          echo "${PWD}/${zig_dir}" >> "${GITHUB_PATH}"
+
+          cargo install cargo-zigbuild --locked --version "${CARGO_ZIGBUILD_VERSION}"
+
+      - name: Rust lifecycle tests
+        if: ${{ !matrix.cross_compile }}
+        run: |
+          set -euo pipefail
+
+          cargo test -p senpi-pty --target "${RUST_TARGET}" --locked
+
+      - name: Rust manual PTY QA
+        if: ${{ !matrix.cross_compile }}
+        run: |
+          set -euo pipefail
+
+          cargo test -p senpi-pty --target "${RUST_TARGET}" --test manual_qa -- --nocapture
+
+      - name: Build native prebuild
+        run: |
+          set -euo pipefail
+
+          output_dir="${RUNNER_TEMP}/native-prebuild-output"
+          target_dir="${RUNNER_TEMP}/native-prebuild-target"
+
+          test -f "${NATIVE_PACKAGE_DIR}/Cargo.toml"
+          test -f "${NATIVE_PACKAGE_DIR}/package.json"
+
+          # @napi-rs/cli 3.7.2 resolves the built artifact from
+          # <target-dir>/<napi-target>/release, but cargo-zigbuild strips the glibc-version suffix
+          # (e.g. ".2.17") from the target before invoking cargo, so cargo actually writes the
+          # artifact to <target-dir>/<plain-triple>/release. That mismatch makes napi's post-build
+          # copy fail with "Internal Error: Failed to copy artifact" even though the compile
+          # succeeded (napi-rs/napi-rs#3176). Bridge the two directory names with a symlink so
+          # napi's copy step resolves. Only glibc-suffixed targets contain a '.'; plain triples
+          # already build into the directory napi expects.
+          if [[ "${NAPI_TARGET}" == *.* ]]; then
+            plain_triple="${NAPI_TARGET%%.*}"
+            mkdir -p "${target_dir}"
+            ln -sfn "${plain_triple}" "${target_dir}/${NAPI_TARGET}"
+          fi
+
+          args=(
+            build
+            --manifest-path "${NATIVE_PACKAGE_DIR}/Cargo.toml"
+            --package-json-path "${NATIVE_PACKAGE_DIR}/package.json"
+            --target "${NAPI_TARGET}"
+            --target-dir "${target_dir}"
+            --output-dir "${output_dir}"
+            --release
+            --strip
+            --platform
+          )
+
+          if [[ "${NAPI_CROSS_COMPILE}" == "true" ]]; then
+            args+=(--cross-compile)
+          fi
+
+          npm exec --yes --package "@napi-rs/cli@${NAPI_CLI_VERSION}" -- napi "${args[@]}" -- --locked
+
+      - name: Node native load and lifecycle probe
+        if: ${{ !matrix.cross_compile }}
+        run: |
+          set -euo pipefail
+
+          output_dir="${RUNNER_TEMP}/native-prebuild-output"
+          # macOS runners ship bash 3.2, which lacks mapfile/readarray.
+          node_files=()
+          while IFS= read -r node_file; do
+            node_files+=("${node_file}")
+          done < <(find "${output_dir}" -type f -name '*.node' | sort)
+          if [[ "${#node_files[@]}" -eq 0 ]]; then
+            echo "::error::expected one .node file for lifecycle probe, found none"
+            exit 1
+          fi
+          if [[ "${#node_files[@]}" -ne 1 ]]; then
+            echo "::error::expected one .node file for lifecycle probe, found ${#node_files[@]}"
+            printf '%s\n' "${node_files[@]}"
+            exit 1
+          fi
+
+          node scripts/probe-native-pty-lifecycle.mjs "${node_files[0]}"
+
+      - name: Stage artifact
+        run: |
+          set -euo pipefail
+
+          artifact_dir="${RUNNER_TEMP}/native-prebuild-artifact"
+          output_dir="${RUNNER_TEMP}/native-prebuild-output"
+
+          mkdir -p "${artifact_dir}"
+          # macOS runners ship bash 3.2, which lacks mapfile/readarray.
+          node_files=()
+          while IFS= read -r node_file; do
+            node_files+=("${node_file}")
+          done < <(find "${output_dir}" -type f -name '*.node' | sort)
+
+          if [[ "${#node_files[@]}" -eq 0 ]]; then
+            echo "::error::napi build did not produce a .node file for ${NAPI_TARGET}"
+            exit 1
+          fi
+          if [[ "${#node_files[@]}" -ne 1 ]]; then
+            echo "::error::expected one .node file for ${NAPI_TARGET}, found ${#node_files[@]}"
+            printf '%s\n' "${node_files[@]}"
+            exit 1
+          fi
+
+          cp "${node_files[0]}" "${artifact_dir}/"
+          {
+            echo "artifact=${{ matrix.artifact }}"
+            echo "napi_target=${NAPI_TARGET}"
+            echo "rust_target=${RUST_TARGET}"
+            echo "node_platform=${NODE_PLATFORM}"
+            echo "node_arch=${NODE_ARCH}"
+            echo "file=$(basename "${node_files[0]}")"
+          } > "${artifact_dir}/manifest.txt"
+
+      - name: Upload native prebuild
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.temp }}/native-prebuild-artifact/*
+          if-no-files-found: error
+          retention-days: 14

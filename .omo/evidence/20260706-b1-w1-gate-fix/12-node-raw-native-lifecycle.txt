@@ -1,0 +1,22 @@
+$ node scripts/probe-native-pty-lifecycle.mjs packages/pty/native/prebuilds/darwin-arm64/senpi_pty.darwin-arm64.node
+{
+  "nativePath": "/Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/packages/pty/native/prebuilds/darwin-arm64/senpi_pty.darwin-arm64.node",
+  "exports": [
+    "PtySession",
+    "__senpiPtyV2026_7_5",
+    "startPtySession",
+    "version"
+  ],
+  "methods": [
+    "write",
+    "resize",
+    "kill",
+    "waitExit"
+  ],
+  "output": "senpi-native-probe\r\nsenpi-native-probe\r\n",
+  "exit": {
+    "cancelled": true,
+    "timedOut": false,
+    "exitCode": 1
+  }
+}

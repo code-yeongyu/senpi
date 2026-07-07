@@ -1,0 +1,8 @@
+$ cargo fmt -p senpi-pty --check
+Diff in /Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/crates/senpi-pty/src/session.rs:1:
+-use crate::signals::{kill_signal, process_group, send_signal, signal_signal};
+ use crate::session_threads::{spawn_reader, spawn_timeout};
++use crate::signals::{kill_signal, process_group, send_signal, signal_signal};
+ use portable_pty::{Child, ChildKiller, CommandBuilder, MasterPty, PtySize};
+ use std::fmt::{Display, Formatter};
+ use std::io::Write;

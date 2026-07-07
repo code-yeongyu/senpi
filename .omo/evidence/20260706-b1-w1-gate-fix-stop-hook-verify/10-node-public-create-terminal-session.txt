@@ -1,0 +1,28 @@
+$ npx tsx /tmp/w1-stop-hook-public-pty-probe.mts
+{
+  "backend": "native",
+  "exports": [
+    "PtySession",
+    "__senpiPtyV2026_7_5",
+    "startPtySession",
+    "version"
+  ],
+  "methods": [
+    "write",
+    "resize",
+    "kill",
+    "waitExit"
+  ],
+  "output": "senpi-stop-hook-native-probe\r\nsenpi-stop-hook-native-probe\r\n",
+  "kill": {
+    "ok": true,
+    "note": "Sent SIGTERM to terminal session."
+  },
+  "exit": {
+    "backend": "native",
+    "exitCode": 1,
+    "signal": null,
+    "cancelled": true,
+    "timedOut": false
+  }
+}

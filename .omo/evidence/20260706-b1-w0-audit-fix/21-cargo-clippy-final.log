@@ -1,0 +1,6 @@
+$ cargo clippy --workspace --all-targets -- -D warnings
+    Blocking waiting for file lock on build directory
+    Checking senpi-pty v0.0.0 (/Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/crates/senpi-pty)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.79s
+
+exit=0

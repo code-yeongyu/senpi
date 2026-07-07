@@ -1,0 +1,53 @@
+$ git log -1 --oneline
+04e55140e fix(pty): split native session helpers
+
+$ git show --stat --oneline --summary HEAD
+04e55140e fix(pty): split native session helpers
+ .../00-git-status-before.txt                       |  65 +++++++++
+ .../01-baseline-cargo-test.txt                     |  32 +++++
+ .../02-cargo-fmt-check-post-split.txt              |   8 ++
+ .../03-post-split-cargo-test.txt                   |  33 +++++
+ .../20260706-b1-w1-gate-fix/04-rust-split-diff.txt |  63 +++++++++
+ .../05-cargo-fmt-check-after-rustfmt.txt           |   1 +
+ .../06-loc-check-post-split.txt                    |   6 +
+ .../07-cargo-test-senpi-pty-locked.txt             |  32 +++++
+ .../08-cargo-clippy-senpi-pty-all-targets.txt      |   2 +
+ .../20260706-b1-w1-gate-fix/09-npm-test-pi-pty.txt |  13 ++
+ .../10-npm-check-prebuild-pi-pty.txt               |   7 +
+ .../10a-update-native-prebuild.txt                 |   3 +
+ .../20260706-b1-w1-gate-fix/11-npm-run-check.txt   |  72 ++++++++++
+ .../12-node-raw-native-lifecycle.txt               |  22 ++++
+ ...node-public-create-terminal-session-current.txt |  28 ++++
+ .../14-git-status-before-staging.txt               |  73 +++++++++++
+ .../15-owned-diff-before-staging.txt               |  69 ++++++++++
+ .../20260706-b1-w1-gate-fix/16-staged-audit.txt    | 146 +++++++++++++++++++++
+ .../20260706-b1-w1-gate-fix/CLEANUP-RECEIPT.md     |   9 ++
+ .../20260706-b1-w1-gate-fix/W1-MANUAL-QA-MATRIX.md |  36 +++++
+ .../W1-NATIVE-CORE-SLOP-REVIEW.md                  |  30 +++++
+ crates/senpi-pty/src/lib.rs                        |   1 +
+ crates/senpi-pty/src/session.rs                    |  37 +-----
+ crates/senpi-pty/src/session_threads.rs            |  41 ++++++
+ .../darwin-arm64/senpi_pty.darwin-arm64.node       | Bin 929152 -> 929296 bytes
+ 25 files changed, 794 insertions(+), 35 deletions(-)
+ create mode 100644 .omo/evidence/20260706-b1-w1-gate-fix/00-git-status-before.txt
+ create mode 100644 .omo/evidence/20260706-b1-w1-gate-fix/01-baseline-cargo-test.txt
+ create mode 100644 .omo/evidence/20260706-b1-w1-gate-fix/02-cargo-fmt-check-post-split.txt
+ create mode 100644 .omo/evidence/20260706-b1-w1-gate-fix/03-post-split-cargo-test.txt
+ create mode 100644 .omo/evidence/20260706-b1-w1-gate-fix/04-rust-split-diff.txt
+ create mode 100644 .omo/evidence/20260706-b1-w1-gate-fix/05-cargo-fmt-check-after-rustfmt.txt
+ create mode 100644 .omo/evidence/20260706-b1-w1-gate-fix/06-loc-check-post-split.txt
+ create mode 100644 .omo/evidence/20260706-b1-w1-gate-fix/07-cargo-test-senpi-pty-locked.txt
+ create mode 100644 .omo/evidence/20260706-b1-w1-gate-fix/08-cargo-clippy-senpi-pty-all-targets.txt
+ create mode 100644 .omo/evidence/20260706-b1-w1-gate-fix/09-npm-test-pi-pty.txt
+ create mode 100644 .omo/evidence/20260706-b1-w1-gate-fix/10-npm-check-prebuild-pi-pty.txt
+ create mode 100644 .omo/evidence/20260706-b1-w1-gate-fix/10a-update-native-prebuild.txt
+ create mode 100644 .omo/evidence/20260706-b1-w1-gate-fix/11-npm-run-check.txt
+ create mode 100644 .omo/evidence/20260706-b1-w1-gate-fix/12-node-raw-native-lifecycle.txt
+ create mode 100644 .omo/evidence/20260706-b1-w1-gate-fix/13-node-public-create-terminal-session-current.txt
+ create mode 100644 .omo/evidence/20260706-b1-w1-gate-fix/14-git-status-before-staging.txt
+ create mode 100644 .omo/evidence/20260706-b1-w1-gate-fix/15-owned-diff-before-staging.txt
+ create mode 100644 .omo/evidence/20260706-b1-w1-gate-fix/16-staged-audit.txt
+ create mode 100644 .omo/evidence/20260706-b1-w1-gate-fix/CLEANUP-RECEIPT.md
+ create mode 100644 .omo/evidence/20260706-b1-w1-gate-fix/W1-MANUAL-QA-MATRIX.md
+ create mode 100644 .omo/evidence/20260706-b1-w1-gate-fix/W1-NATIVE-CORE-SLOP-REVIEW.md
+ create mode 100644 crates/senpi-pty/src/session_threads.rs

@@ -1,0 +1,49 @@
+$ rsync tracked files + Cargo.lock into temp && cargo build -p senpi-pty --locked
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+   Compiling proc-macro2 v1.0.106
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.46
+   Compiling libc v0.2.174
+   Compiling cfg-if v1.0.4
+   Compiling napi-build v2.3.2
+   Compiling futures-sink v0.3.32
+   Compiling futures-core v0.3.32
+   Compiling thiserror v1.0.69
+   Compiling cfg_aliases v0.1.1
+   Compiling memchr v2.8.2
+   Compiling futures-io v0.3.32
+   Compiling pin-project-lite v0.2.17
+   Compiling futures-task v0.3.32
+   Compiling slab v0.4.12
+   Compiling nix v0.28.0
+   Compiling anyhow v1.0.103
+   Compiling futures-channel v0.3.32
+   Compiling bitflags v2.13.0
+   Compiling unicode-segmentation v1.13.3
+   Compiling libloading v0.9.0
+   Compiling napi v3.10.3
+   Compiling ctor v1.0.8
+   Compiling semver v1.0.28
+   Compiling napi-sys v3.2.2
+   Compiling senpi-pty v0.0.0 (/private/var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/tmp.aQTZeAjbTv/crates/senpi-pty)
+   Compiling nohash-hasher v0.2.0
+   Compiling rustc-hash v2.1.3
+   Compiling convert_case v0.11.0
+   Compiling downcast-rs v1.2.1
+   Compiling log v0.4.33
+   Compiling shell-words v1.1.1
+   Compiling syn v2.0.118
+   Compiling serial2 v0.2.37
+   Compiling napi-derive-backend v5.1.1
+   Compiling futures-macro v0.3.32
+   Compiling thiserror-impl v1.0.69
+   Compiling futures-util v0.3.32
+   Compiling napi-derive v3.5.9
+   Compiling filedescriptor v0.8.3
+   Compiling portable-pty v0.9.0
+   Compiling futures-executor v0.3.32
+   Compiling futures v0.3.32
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.27s
+
+exit=0

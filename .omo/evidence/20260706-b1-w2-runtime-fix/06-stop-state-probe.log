@@ -1,0 +1,13 @@
+{
+  "afterStop": {
+    "state": "stopping",
+    "exitedAt": null,
+    "sessionExited": false,
+    "stopped": true
+  },
+  "afterExit": {
+    "state": "exited",
+    "exitedAtIsNumber": true,
+    "sessionExited": true
+  }
+}
