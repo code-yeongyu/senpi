@@ -130,6 +130,7 @@ function providerEntryFromObject(raw: JsonObject): SearchProviderEntry | null {
 	const allowedDomains = isStringArray(rawAllowedDomains) ? rawAllowedDomains : undefined;
 	const blockedDomains = isStringArray(rawBlockedDomains) ? rawBlockedDomains : undefined;
 	const userLocation = optionalLocation(raw.userLocation);
+	const timeoutMs = optionalNumber(raw.timeoutMs);
 	const priority = optionalNumber(raw.priority);
 	const weight = optionalNumber(raw.weight);
 
@@ -144,6 +145,7 @@ function providerEntryFromObject(raw: JsonObject): SearchProviderEntry | null {
 	if (allowedDomains) config.allowedDomains = allowedDomains;
 	if (blockedDomains) config.blockedDomains = blockedDomains;
 	if (userLocation) config.userLocation = userLocation;
+	if (timeoutMs !== undefined) config.timeoutMs = timeoutMs;
 	if (priority !== undefined) config.priority = priority;
 	if (weight !== undefined) config.weight = weight;
 
@@ -187,6 +189,10 @@ export function validateProviderConfig(config: SearchProviderEntry): ProviderVal
 
 	if (config.weight !== undefined && config.weight <= 0) {
 		return { ok: false, reason: "invalid_config", message: "Provider weight must be greater than 0." };
+	}
+
+	if (config.timeoutMs !== undefined && config.timeoutMs <= 0) {
+		return { ok: false, reason: "invalid_config", message: "Provider timeoutMs must be greater than 0." };
 	}
 
 	if (config.baseUrl && !isAllowedProviderBaseUrl(config.baseUrl)) {

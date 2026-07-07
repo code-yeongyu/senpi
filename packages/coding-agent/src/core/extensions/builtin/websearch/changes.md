@@ -1,12 +1,15 @@
 # changes.md — websearch (vendored)
 
-Vendored from [`code-yeongyu/pi-websearch`](https://github.com/code-yeongyu/pi-websearch) (see `external-versions.json`).
+Vendored from [`code-yeongyu/pi-websearch`](https://github.com/code-yeongyu/pi-websearch) at `0b9b44e83eef46121758f22965aadf59544faccf`.
 
 ## Senpi adaptations vs upstream
 
-- Imports rewritten by `scripts/vendor-transform.mjs`: `@mariozechner/pi-{ai,tui}` -> `@earendil-works/pi-{ai,tui}`; `@mariozechner/pi-coding-agent` symbols -> `../../types.ts` (and `Theme` -> `modes/interactive/theme/theme.ts`); relative `.js` import suffixes -> `.ts`.
-- No behavior changes. Registers the `web_search` tool unconditionally and defers to provider-native web search (`anthropic-web-search` / `openai-web-search` inject at request level, so there is no tool-registry name clash).
+- Imports rewritten manually for the senpi source tree:
+  - `@mariozechner/pi-tui` -> `@earendil-works/pi-tui`
+  - `@mariozechner/pi-coding-agent` type/tool imports -> senpi local `../../types.ts` / `../../../types.ts`
+  - relative `.js` import suffixes -> `.ts`
+- No behavior changes versus upstream. The `web_search` tool is registered unconditionally; native provider search bypass remains upstream's provider-based check (`openai` / `anthropic`) so Anthropic-protocol third-party providers such as `kimi-coding` can still use the provider-backed tool.
 
 ## Conflict zones
 
-Re-vendoring overwrites these files; this is a MANUAL_PACKAGES entry in `scripts/sync-builtin-extensions.mjs` (metadata only, no auto file-sync). Port upstream changes by re-running the transform, then re-check `npm run check`.
+Re-vendoring overwrites `index.ts` and the `websearch/` directory. There is no active auto-vendor script in this branch; re-vendor by copying upstream `src/index.ts` + `src/websearch/`, applying the import/suffix transforms above, then running the senpi checks.
