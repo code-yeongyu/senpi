@@ -209,7 +209,16 @@ describe("MCP idle lifecycle", () => {
 			},
 		});
 		const pi = capturingPi();
-		await attach(root, pi);
+		// This test's contract is "an ESTABLISHED keep-alive server survives a crash":
+		// the fixture must be fully exposed (connected + tool registered) before the
+		// kill. Killing earlier races the one-shot startup exposure path
+		// (raceMcpStartupConnect → registerDirectTools): if the crash lands mid
+		// initial catalog collection, reconnect restores the connection and catalog
+		// cache but nothing re-registers direct tools into the session, so recovery
+		// legitimately never surfaces the tool (observed on CI as toolRegistered=false
+		// with a clean degraded→connected transition). That startup-crash window is a
+		// separate product scenario, not this test's.
+		await attachReady(root, pi, "mcp_fx_tool_1");
 		const connection = getMcpService().getConnection("fx");
 		const states: string[] = [];
 		connection?.onStateChange((event) => {
