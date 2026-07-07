@@ -1,14 +1,15 @@
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { OAuthClientInformationFull, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
+import type { OAuthClientInformationFull } from "@modelcontextprotocol/sdk/shared/auth.js";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../../../../../config.ts";
 
 // URL-bound OAuth credential record persisted at
 // <agentDir>/mcp-auth/<sha256(serverUrl)>/tokens.json (dir 0700, file 0600).
 export interface McpStoredAuth {
-	tokens?: OAuthTokens;
+	accessToken?: string;
+	refreshToken?: string;
 	clientInfo?: OAuthClientInformationFull;
 	codeVerifier?: string;
 	resource?: string;

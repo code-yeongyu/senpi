@@ -7,7 +7,7 @@ import {
 } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { OAuthFlowError } from "./oauth-errors.ts";
-import { type McpOAuthProvider, tokenExpiresAt } from "./oauth-provider.ts";
+import type { McpOAuthProvider } from "./oauth-provider.ts";
 import { assertS256Supported } from "./oauth-refresh.ts";
 
 export interface OAuthFlowOptions {
@@ -125,7 +125,7 @@ export async function clientCredentialsGrant(
 		resource: new URL(provider.serverUrl),
 		fetchFn: options.fetchFn,
 	});
-	await provider.store.update((current) => ({ ...(current ?? {}), tokens, expiresAt: tokenExpiresAt(tokens) }));
+	await provider.saveTokens(tokens);
 }
 
 export async function logout(provider: McpOAuthProvider): Promise<void> {

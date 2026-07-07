@@ -7,7 +7,12 @@ import type { AuthorizationServerMetadata, OAuthTokens } from "@modelcontextprot
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { safeDelay } from "../wrap.ts";
 import { isInvalidGrant, isTransientTokenError, OAuthFlowError } from "./oauth-errors.ts";
-import { type McpOAuthProvider, REFRESH_LEEWAY_MS, tokenExpiresAt } from "./oauth-provider.ts";
+import {
+	type McpOAuthProvider,
+	mergeTokensIntoStoredAuth,
+	REFRESH_LEEWAY_MS,
+	storedAuthToTokens,
+} from "./oauth-provider.ts";
 import type { McpStoredAuth } from "./token-store.ts";
 
 export interface RefreshManagerOptions {
@@ -18,7 +23,7 @@ export interface RefreshManagerOptions {
 }
 
 export function isTokenStale(record: McpStoredAuth | undefined, now: number): boolean {
-	const token = record?.tokens?.access_token;
+	const token = record?.accessToken;
 	if (token === undefined || token.length === 0) return true;
 	if (record?.expiresAt === undefined) return false;
 	return record.expiresAt - now <= REFRESH_LEEWAY_MS;
@@ -49,8 +54,8 @@ export class McpRefreshManager {
 
 	async ensureFresh(): Promise<OAuthTokens | undefined> {
 		const record = this.#provider.store.read();
-		if (record?.tokens?.access_token === undefined) return undefined;
-		if (!isTokenStale(record, Date.now())) return record.tokens;
+		if (record?.accessToken === undefined) return undefined;
+		if (!isTokenStale(record, Date.now())) return storedAuthToTokens(record);
 		return this.refresh();
 	}
 
@@ -66,10 +71,11 @@ export class McpRefreshManager {
 	#refreshLocked(): Promise<OAuthTokens> {
 		return this.#provider.store.withLock(async () => {
 			const current = this.#provider.store.readUnlocked();
-			if (current?.tokens?.access_token !== undefined && !isTokenStale(current, Date.now())) {
-				return current.tokens;
+			if (current?.accessToken !== undefined && !isTokenStale(current, Date.now())) {
+				const tokens = storedAuthToTokens(current);
+				if (tokens !== undefined) return tokens;
 			}
-			const refreshToken = current?.tokens?.refresh_token;
+			const refreshToken = current?.refreshToken;
 			if (current === undefined || refreshToken === undefined) {
 				throw new OAuthFlowError("needs_auth", `MCP server ${this.#provider.serverName} has no refresh token`, {
 					serverName: this.#provider.serverName,
@@ -98,12 +104,16 @@ export class McpRefreshManager {
 					resource,
 					fetchFn: this.#options.fetchFn,
 				});
-				this.#provider.store.writeUnlocked({ ...current, tokens, expiresAt: tokenExpiresAt(tokens) });
+				this.#provider.store.writeUnlocked(mergeTokensIntoStoredAuth(current, tokens, this.#provider.serverUrl));
 				return tokens;
 			} catch (error) {
 				if (isInvalidGrant(error)) {
 					// Terminal: drop credentials so the next use forces a clean re-auth.
-					this.#provider.store.writeUnlocked({ ...current, tokens: undefined, expiresAt: undefined });
+					const next: McpStoredAuth = { ...current };
+					delete next.accessToken;
+					delete next.refreshToken;
+					delete next.expiresAt;
+					this.#provider.store.writeUnlocked(next);
 					throw new OAuthFlowError(
 						"invalid_grant",
 						`MCP server ${this.#provider.serverName} refresh rejected (invalid_grant); credentials cleared, re-authentication required.`,

@@ -69,8 +69,8 @@ describe("McpOAuthProvider + flows", () => {
 		const redirect = await followAuthorize(authUrl);
 		await completeAuthorization(provider, redirect);
 
-		expect(store.read()?.tokens?.access_token).toMatch(/^SENTINEL_AT_/);
-		expect(store.read()?.tokens?.refresh_token).toMatch(/^SENTINEL_RT_/);
+		expect(store.read()?.accessToken).toMatch(/^SENTINEL_AT_/);
+		expect(store.read()?.refreshToken).toMatch(/^SENTINEL_RT_/);
 		const log = await fixture.getLog();
 		const tokenReq = log.requests.find((entry) => entry.grantType === "authorization_code");
 		expect(tokenReq?.resource).toContain("/mcp");
@@ -121,12 +121,15 @@ describe("McpOAuthProvider + flows", () => {
 		const agentDir = await makeAgentDir();
 		const { store, provider } = makeProvider(agentDir, fixture.mcpUrl, { clientId: "static-client" });
 		await store.write({
-			tokens: { access_token: "AT_old", refresh_token: "RT_UNKNOWN", token_type: "Bearer", expires_in: 60 },
+			accessToken: "AT_old",
+			refreshToken: "RT_UNKNOWN",
 			expiresAt: Date.now() + 60_000,
+			resource: fixture.mcpUrl,
 		});
 		const manager = new McpRefreshManager(provider);
 		await expect(manager.ensureFresh()).rejects.toMatchObject({ oauthKind: "invalid_grant", terminal: true });
-		expect(store.read()?.tokens).toBeUndefined();
+		expect(store.read()?.accessToken).toBeUndefined();
+		expect(store.read()?.refreshToken).toBeUndefined();
 	});
 
 	it("retries a transient token endpoint failure without clearing credentials (needs_auth NOT set)", async () => {
@@ -134,13 +137,15 @@ describe("McpOAuthProvider + flows", () => {
 		const agentDir = await makeAgentDir();
 		const { store, provider } = makeProvider(agentDir, fixture.mcpUrl, { clientId: "static-client" });
 		await store.write({
-			tokens: { access_token: "AT_old", refresh_token: "RT_TRANSIENT", token_type: "Bearer", expires_in: 60 },
+			accessToken: "AT_old",
+			refreshToken: "RT_TRANSIENT",
 			expiresAt: Date.now() + 60_000,
+			resource: fixture.mcpUrl,
 		});
 		const manager = new McpRefreshManager(provider, { maxRetries: 2, retryDelayMs: 5 });
 		await expect(manager.ensureFresh()).rejects.toMatchObject({ oauthKind: "transient", terminal: false });
 		// Credentials preserved for the next attempt.
-		expect(store.read()?.tokens?.refresh_token).toBe("RT_TRANSIENT");
+		expect(store.read()?.refreshToken).toBe("RT_TRANSIENT");
 		const log = await fixture.getLog();
 		expect(log.tokenHits).toBeGreaterThanOrEqual(3);
 	});

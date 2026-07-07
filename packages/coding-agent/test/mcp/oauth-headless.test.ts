@@ -92,7 +92,7 @@ describe("headless oauth flows", () => {
 
 		const redirect = await followAuthorize(authUrl);
 		await runAuthComplete(harness.deps, redirect);
-		expect(harness.store.read()?.tokens?.access_token).toMatch(/^SENTINEL_AT_/);
+		expect(harness.store.read()?.accessToken).toMatch(/^SENTINEL_AT_/);
 	});
 
 	it("rejects auth-complete when the code verifier no longer matches (continuity enforced)", async () => {
@@ -104,7 +104,7 @@ describe("headless oauth flows", () => {
 		// Tamper the stored PKCE verifier: exchange must fail.
 		await harness.store.update((current) => ({ ...current, codeVerifier: "tampered-verifier" }));
 		await expect(runAuthComplete(harness.deps, redirect)).rejects.toThrow();
-		expect(harness.store.read()?.tokens).toBeUndefined();
+		expect(harness.store.read()?.accessToken).toBeUndefined();
 	});
 
 	it("gives an actionable error for a malformed pasted redirect URL", async () => {
@@ -122,7 +122,7 @@ describe("headless oauth flows", () => {
 			oauth: { flow: "client_credentials", clientId: "m2m-client" },
 		});
 		await runAuth(harness.deps);
-		expect(harness.store.read()?.tokens?.access_token).toMatch(/^SENTINEL_AT_/);
+		expect(harness.store.read()?.accessToken).toMatch(/^SENTINEL_AT_/);
 		expect(harness.browsered).toHaveLength(0);
 		expect(harness.notes.at(-1)?.message).toContain("client_credentials");
 	});
@@ -133,7 +133,7 @@ describe("headless oauth flows", () => {
 		const harness = makeHarness(dir, fixture.mcpUrl);
 		const redirect = await followAuthorize(await runAuthStart(harness.deps));
 		await runAuthComplete(harness.deps, redirect);
-		expect(harness.store.read()?.tokens).toBeDefined();
+		expect(harness.store.read()?.accessToken).toBeDefined();
 		await runLogout(harness.deps);
 		expect(harness.store.read()).toBeUndefined();
 	});

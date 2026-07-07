@@ -31,6 +31,35 @@ export function tokenExpiresAt(tokens: OAuthTokens, now = Date.now()): number | 
 	return now + tokens.expires_in * 1000;
 }
 
+export function storedAuthToTokens(record: McpStoredAuth | undefined, now = Date.now()): OAuthTokens | undefined {
+	if (record?.accessToken === undefined || record.accessToken.length === 0) return undefined;
+	const expiresIn =
+		record.expiresAt === undefined ? undefined : Math.max(0, Math.ceil((record.expiresAt - now) / 1000));
+	return {
+		access_token: record.accessToken,
+		refresh_token: record.refreshToken,
+		token_type: "Bearer",
+		...(expiresIn === undefined ? {} : { expires_in: expiresIn }),
+	};
+}
+
+export function mergeTokensIntoStoredAuth(
+	current: McpStoredAuth | undefined,
+	tokens: OAuthTokens,
+	serverUrl: string,
+): McpStoredAuth {
+	const next: McpStoredAuth = {
+		...(current ?? {}),
+		accessToken: tokens.access_token,
+		resource: current?.resource ?? serverUrl,
+	};
+	const refreshToken = tokens.refresh_token ?? current?.refreshToken;
+	if (refreshToken !== undefined) next.refreshToken = refreshToken;
+	const expiresAt = tokenExpiresAt(tokens);
+	if (expiresAt !== undefined) next.expiresAt = expiresAt;
+	return next;
+}
+
 // Implements the SDK OAuthClientProvider backed by the URL-bound token store.
 // All persistence goes through the store so tokens survive process restarts and
 // stay lockable across processes.
@@ -90,11 +119,11 @@ export class McpOAuthProvider implements OAuthClientProvider {
 	}
 
 	tokens(): OAuthTokens | undefined {
-		return this.#store.read()?.tokens;
+		return storedAuthToTokens(this.#store.read());
 	}
 
 	async saveTokens(tokens: OAuthTokens): Promise<void> {
-		await this.#store.update((current) => ({ ...(current ?? {}), tokens, expiresAt: tokenExpiresAt(tokens) }));
+		await this.#store.update((current) => mergeTokensIntoStoredAuth(current, tokens, this.serverUrl));
 		this.#logFingerprint("saveTokens", tokens.access_token);
 	}
 
@@ -131,8 +160,9 @@ export class McpOAuthProvider implements OAuthClientProvider {
 			if (current === undefined) return current;
 			const next: McpStoredAuth = { ...current };
 			if (scope === "tokens") {
-				next.tokens = undefined;
-				next.expiresAt = undefined;
+				delete next.accessToken;
+				delete next.refreshToken;
+				delete next.expiresAt;
 			}
 			if (scope === "verifier") next.codeVerifier = undefined;
 			if (scope === "client") next.clientInfo = undefined;
