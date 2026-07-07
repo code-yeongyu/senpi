@@ -1,6 +1,7 @@
 // Test worker for the refresh-race proof. Two of these run as separate OS
 // processes against one shared token store + one fixture IdP. A file barrier
 // releases both at once so a concurrent refresh is forced.
+import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { McpOAuthProvider } from "../../../src/core/extensions/builtin/mcp/auth/oauth-provider.ts";
@@ -38,11 +39,16 @@ async function main(): Promise<void> {
 
 	try {
 		const tokens = await manager.refresh();
-		process.stdout.write(`${JSON.stringify({ tag, ok: true, refresh: tokens.refresh_token })}\n`);
+		const refreshHash = tokens.refresh_token === undefined ? undefined : tokenFingerprint(tokens.refresh_token);
+		process.stdout.write(`${JSON.stringify({ tag, ok: true, refreshHash })}\n`);
 	} catch (error) {
 		const kind = (error as { oauthKind?: string }).oauthKind ?? "error";
 		process.stdout.write(`${JSON.stringify({ tag, ok: false, kind })}\n`);
 	}
+}
+
+function tokenFingerprint(token: string): string {
+	return createHash("sha256").update(token).digest("hex").slice(0, 16);
 }
 
 main().catch((error: unknown) => {
