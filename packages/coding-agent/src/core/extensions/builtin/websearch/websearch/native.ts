@@ -13,6 +13,7 @@ export type NativeAuthResult =
 
 export interface NativeModelRegistry {
 	getApiKeyAndHeaders(model: NativeModelInfo): Promise<NativeAuthResult>;
+	getAvailable?(): NativeModelInfo[];
 }
 
 interface NativeProviderMapping {
@@ -74,6 +75,7 @@ function buildEndpointUrl(baseUrl: string, resource: string): string {
 export async function buildNativeEntry(
 	model: NativeModelInfo | undefined,
 	modelRegistry: NativeModelRegistry | undefined,
+	id = "native",
 ): Promise<SearchProviderEntry | null> {
 	if (!model || !modelRegistry) return null;
 
@@ -86,11 +88,51 @@ export async function buildNativeEntry(
 	if (!auth.ok || !auth.apiKey) return null;
 
 	return {
-		id: "native",
+		id,
 		provider: mapping.provider,
 		apiKey: auth.apiKey,
 		baseUrl,
 		model: model.id,
 		priority: -1,
 	};
+}
+
+function nativeEntryKey(entry: SearchProviderEntry): string {
+	return `${entry.provider}:${entry.baseUrl ?? ""}:${entry.model ?? ""}`;
+}
+
+function stableIdPart(value: string): string {
+	return (
+		value
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, "-")
+			.replace(/^-+|-+$/g, "") || "model"
+	);
+}
+
+function discoveredNativeEntryId(entry: SearchProviderEntry): string {
+	return `native-${entry.provider}-${stableIdPart(entry.model ?? "model")}`;
+}
+
+export async function buildNativeEntries(
+	model: NativeModelInfo | undefined,
+	modelRegistry: NativeModelRegistry | undefined,
+): Promise<SearchProviderEntry[]> {
+	if (!modelRegistry) return [];
+
+	const entries: SearchProviderEntry[] = [];
+	const activeEntry = await buildNativeEntry(model, modelRegistry);
+	if (activeEntry) entries.push(activeEntry);
+
+	const seen = new Set(entries.map(nativeEntryKey));
+	const availableModels = modelRegistry.getAvailable?.() ?? [];
+	for (const availableModel of availableModels) {
+		const entry = await buildNativeEntry(availableModel, modelRegistry, "native-discovered");
+		if (!entry) continue;
+		const key = nativeEntryKey(entry);
+		if (seen.has(key)) continue;
+		seen.add(key);
+		entries.push({ ...entry, id: discoveredNativeEntryId(entry) });
+	}
+	return entries;
 }

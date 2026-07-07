@@ -1,15 +1,7 @@
-import type { SearchResultItem } from "./types.ts";
-
-function result(title: string | undefined, url: string | undefined, snippet?: string): SearchResultItem | null {
-	if (!title || !url) return null;
-	const item: SearchResultItem = { title, url };
-	if (snippet) item.snippet = snippet;
-	return item;
-}
-
-function collect(items: Array<SearchResultItem | null>, max = 50): SearchResultItem[] {
-	return items.filter((item): item is SearchResultItem => item !== null).slice(0, max);
-}
+import { providerUrl } from "../provider-endpoints.ts";
+import type { BuiltSearchRequest, JsonObject, SearchResultItem } from "../types.ts";
+import type { BuildContext, ProviderModule } from "./shared.ts";
+import { appendDomainFilters, collect, getString, result } from "./shared.ts";
 
 function htmlDecode(value: string): string {
 	return value
@@ -42,7 +34,7 @@ function duckDuckGoResultUrl(rawHref: string): string | undefined {
 	return redirected ?? absoluteHref;
 }
 
-export function normalizeDuckDuckGoHtml(html: string): SearchResultItem[] {
+function normalizeDuckDuckGoHtml(html: string): SearchResultItem[] {
 	const matches = [...html.matchAll(/<a\b[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g)];
 	const snippets = [...html.matchAll(/<a\b[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/g)].map(
 		(match) => stripHtml(match[1] ?? ""),
@@ -55,3 +47,14 @@ export function normalizeDuckDuckGoHtml(html: string): SearchResultItem[] {
 		}),
 	);
 }
+
+export const duckDuckGoHtmlProvider: ProviderModule = {
+	buildRequest({ config, request, allowedDomains, blockedDomains }: BuildContext): BuiltSearchRequest {
+		const url = new URL(providerUrl(config));
+		url.searchParams.set("q", appendDomainFilters(request.query, allowedDomains, blockedDomains));
+		return { url: url.toString(), init: { method: "GET", headers: { Accept: "text/html" } } };
+	},
+	normalizeResponse(data: JsonObject): SearchResultItem[] {
+		return normalizeDuckDuckGoHtml(getString(data.html) ?? "");
+	},
+};
