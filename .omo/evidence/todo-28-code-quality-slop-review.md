@@ -23,7 +23,7 @@ Scope reviewed:
 - No unscoped secret scan: final scan explicitly covers all tracked TODO28 `.omo` evidence plus the local runtime artifact bundle.
 
 Secret safety:
-- No raw secret leakage: final raw scan checks raw sentinel access/refresh tokens, bearer credentials, authorization header values, cookies, and API key values.
+- No raw secret leakage: final raw scan checks raw sentinel access/refresh tokens, bearer credentials, authorization header values, browser credential headers, and API key values.
 - Real `~/.senpi/agent/auth.json` was snapshotted and verified unchanged.
 - Real `~/.senpi/agent/mcp-auth` remained absent.
 - Provider credential env vars were stripped for senpi-qa helpers, `npm run check`, build precondition, and full `npm test`.
