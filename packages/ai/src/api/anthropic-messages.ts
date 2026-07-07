@@ -343,6 +343,24 @@ function isReplayableAnthropicProviderNativeBlock(raw: unknown): raw is ContentB
 	return isRecord(raw) && typeof raw.type === "string" && REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES.has(raw.type);
 }
 
+function stripEncryptedContentFromWebSearchResult(raw: Record<string, unknown>): Record<string, unknown> {
+	const { encrypted_content: _encryptedContent, ...rest } = raw;
+	return rest;
+}
+
+function sanitizeReplayableAnthropicProviderNativeBlock(raw: unknown): ContentBlockParam | undefined {
+	if (!isReplayableAnthropicProviderNativeBlock(raw)) return undefined;
+	if (!isRecord(raw) || raw.type !== "web_search_tool_result" || !Array.isArray(raw.content)) return raw;
+
+	return {
+		...raw,
+		content: raw.content.map((item) => {
+			if (!isRecord(item) || item.type !== "web_search_result") return item;
+			return stripEncryptedContentFromWebSearchResult(item);
+		}),
+	} as ContentBlockParam;
+}
+
 function isSameAnthropicModel(message: AssistantMessage, model: Model<"anthropic-messages">): boolean {
 	return message.provider === model.provider && message.api === model.api && message.model === model.id;
 }
@@ -1643,8 +1661,9 @@ function convertMessages(
 						input: block.arguments ?? {},
 					});
 				} else if (block.type === "providerNative") {
-					if (isSameModel && isReplayableAnthropicProviderNativeBlock(block.raw)) {
-						blocks.push(block.raw);
+					if (isSameModel) {
+						const replayableBlock = sanitizeReplayableAnthropicProviderNativeBlock(block.raw);
+						if (replayableBlock) blocks.push(replayableBlock);
 					}
 				}
 			}

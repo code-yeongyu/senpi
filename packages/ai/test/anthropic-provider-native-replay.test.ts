@@ -131,7 +131,11 @@ describe("Anthropic provider-native replay", () => {
 		const assistantPayload = payload.messages?.find((message) => message.role === "assistant");
 		expect(assistantPayload?.content).toEqual([
 			serverToolUse,
-			webSearchToolResult,
+			{
+				type: "web_search_tool_result",
+				tool_use_id: "srvu_1",
+				content: [{ type: "web_search_result", title: "Example", url: "https://example.com" }],
+			},
 			{ type: "thinking", thinking: "protected thinking", signature: "sig_1" },
 			{ type: "text", text: "kept" },
 			{ type: "tool_use", id: "toolu_1", name: "read", input: { path: "README.md" } },
@@ -300,7 +304,11 @@ describe("Anthropic provider-native replay", () => {
 		const assistantPayload = payload.messages?.find((message) => message.role === "assistant");
 		expect(assistantPayload?.content).toEqual([
 			pairedUse,
-			pairedResult,
+			{
+				type: "web_search_tool_result",
+				tool_use_id: "srvu_paired",
+				content: [{ type: "web_search_result", title: "A", url: "https://a.example" }],
+			},
 			fallbackBlock,
 			{ type: "thinking", thinking: "served", signature: "sig_post" },
 			{ type: "tool_use", id: "toolu_post", name: "read", input: { path: "README.md" } },
