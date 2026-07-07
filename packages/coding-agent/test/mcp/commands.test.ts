@@ -1,24 +1,16 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../../src/config.ts";
-import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { createEventBus } from "../../src/core/event-bus.ts";
 import mcpExtension from "../../src/core/extensions/builtin/mcp/index.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
 import { createExtensionRuntime, loadExtensionFromFactory } from "../../src/core/extensions/loader.ts";
-import { ExtensionRunner } from "../../src/core/extensions/runner.ts";
-import type {
-	Extension,
-	ExtensionCommandContext,
-	ExtensionUIContext,
-	SessionStartEvent,
-} from "../../src/core/extensions/types.ts";
-import { ModelRegistry } from "../../src/core/model-registry.ts";
-import { SessionManager } from "../../src/core/session-manager.ts";
-import { theme } from "../../src/modes/interactive/theme/theme.ts";
+import type { Extension, SessionStartEvent } from "../../src/core/extensions/types.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
+import { createCtx, createUi, lastNotification, normalize, notification } from "./fixtures/commands.ts";
 import { toolResultTexts } from "./fixtures/register-call.ts";
 import { cleanupRoots, makeRoot, setConfig, stdioServer, type TestRoot } from "./fixtures/service-lifecycle.ts";
 import { stdioFixtureCommand } from "./fixtures/spawn-fixture.ts";
@@ -146,9 +138,7 @@ describe("/mcp command suite", () => {
 		expect(notification(ui, "Disabled MCP server fx")?.message).toBe("Disabled MCP server fx");
 		expect(notification(ui, "Enabled MCP server fx")?.message).toBe("Enabled MCP server fx");
 		expect(notification(ui, '"channel":"stderr"')?.message).toContain("stdio fixture ready");
-		expect(notification(ui, "MCP reconnect for fx is not available until W2.")?.message).toBe(
-			"MCP reconnect for fx is not available until W2.",
-		);
+		expect(notification(ui, "MCP reconnect fx connected")?.message).toBe("MCP reconnect fx connected");
 		expect(notification(ui, "Unknown MCP server: missing")?.message).toBe(
 			"Unknown MCP server: missing\nKnown MCP servers: fx",
 		);
@@ -228,6 +218,24 @@ describe("/mcp command suite", () => {
 		expect(notification(ui, "MCP test wedged failed")?.message).toMatch(/^MCP test wedged failed \(\d+ms\): /);
 		expect(notification(ui, "MCP status")?.message).toContain("MCP status");
 	});
+
+	it("renders redacted pre-handshake stderr in /mcp status after bare EOF", async () => {
+		const root = makeCommandRoot("fatal-status");
+		setConfig(root, {
+			bad: { ...stdioServer(["--fatal-missing-token", "FOO_TOKEN=super-secret-token"]), lifecycle: "eager" },
+		});
+		const { command, extension } = await loadCommand();
+		const ui = createUi();
+		await emitSessionStart(extension, root);
+		await delay(1000);
+
+		await command.handler("status", createCtx(root, ui));
+
+		const message = notification(ui, "MCP status")?.message ?? "";
+		expect(message).toContain("bad enabled");
+		expect(message).toContain("FATAL: missing FOO_TOKEN=<redacted:");
+		expect(message).not.toContain("super-secret-token");
+	});
 });
 
 function makeCommandRoot(slug: string): TestRoot {
@@ -260,103 +268,4 @@ async function emitSessionStart(extension: Extension, root: TestRoot): Promise<v
 	for (const handler of extension.handlers.get("session_start") ?? []) {
 		await handler(event, { cwd: root.cwd, isProjectTrusted: () => true });
 	}
-}
-
-interface UiCall {
-	message: string;
-	type: "info" | "warning" | "error";
-}
-
-interface SelectCall {
-	title: string;
-	options: string[];
-}
-
-interface TestUi extends ExtensionUIContext {
-	notifications: UiCall[];
-	selectCalls: SelectCall[];
-	confirmCalls: Array<{ title: string; message: string }>;
-	customCalls: number;
-}
-
-function createUi(options: { confirmResults?: boolean[]; selectResult?: string | undefined } = {}): TestUi {
-	const notifications: UiCall[] = [];
-	const selectCalls: SelectCall[] = [];
-	const confirmCalls: Array<{ title: string; message: string }> = [];
-	const confirmResults = [...(options.confirmResults ?? [])];
-	return {
-		notifications,
-		selectCalls,
-		confirmCalls,
-		customCalls: 0,
-		async select(title, selectOptions) {
-			selectCalls.push({ title, options: [...selectOptions] });
-			return options.selectResult;
-		},
-		async confirm(title, message) {
-			confirmCalls.push({ title, message });
-			return confirmResults.shift() ?? false;
-		},
-		async custom<T>(): Promise<T> {
-			this.customCalls += 1;
-			throw new Error("custom UI is not used by /mcp command tests");
-		},
-		notify(message, type = "info") {
-			notifications.push({ message, type });
-		},
-		input: async () => undefined,
-		onTerminalInput: () => () => {},
-		setStatus: () => {},
-		setWorkingMessage: () => {},
-		setWorkingVisible: () => {},
-		setWorkingIndicator: () => {},
-		setHiddenThinkingLabel: () => {},
-		setWidget: () => {},
-		setFooter: () => {},
-		setHeader: () => {},
-		setTitle: () => {},
-		pasteToEditor: () => {},
-		setEditorText: () => {},
-		getEditorText: () => "",
-		editor: async () => undefined,
-		addAutocompleteProvider: () => {},
-		setEditorComponent: () => {},
-		getEditorComponent: () => undefined,
-		theme,
-		getAllThemes: () => [],
-		getTheme: () => undefined,
-		setTheme: () => ({ success: false, error: "UI not available" }),
-		getToolsExpanded: () => false,
-		setToolsExpanded: () => {},
-	};
-}
-
-function createCtx(root: TestRoot, ui: TestUi): ExtensionCommandContext {
-	const runner = new ExtensionRunner(
-		[],
-		createExtensionRuntime(),
-		root.cwd,
-		SessionManager.inMemory(),
-		ModelRegistry.create(AuthStorage.create(join(root.agentDir, "auth.json"))),
-	);
-	runner.setUIContext(ui, "tui");
-	return runner.createCommandContext();
-}
-
-function normalize(value: string | undefined, root: TestRoot): string {
-	if (value === undefined) return "";
-	return value
-		.split(root.agentDir)
-		.join("<agentDir>")
-		.split(root.cwd)
-		.join("<cwd>")
-		.replace(/uptime=\d+(?:\.\d+)?s/g, "uptime=<1s");
-}
-
-function lastNotification(ui: TestUi): UiCall | undefined {
-	return ui.notifications[ui.notifications.length - 1];
-}
-
-function notification(ui: TestUi, fragment: string): UiCall | undefined {
-	return ui.notifications.find((item) => item.message.includes(fragment));
 }

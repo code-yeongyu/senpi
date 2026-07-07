@@ -7,6 +7,11 @@ import { createFixtureServer } from "./sdk-server.ts";
 async function main(): Promise<void> {
 	const options = parseFixtureOptions(process.argv.slice(2));
 	recordSpawn(options.spawnCounterFile);
+	recordPid(options.pidFile);
+	if (options.fatalMissingToken !== undefined) {
+		process.stderr.write(`FATAL: missing ${options.fatalMissingToken}\n`);
+		process.exit(1);
+	}
 	if (options.crashOnStart) {
 		process.stderr.write("stdio fixture crash-on-start\n");
 		process.exit(42);
@@ -35,6 +40,11 @@ function recordSpawn(counterFile: string | undefined): void {
 		if (!isNodeErrorCode(error, "ENOENT")) throw error;
 	}
 	writeFileSync(counterFile, `${current + 1}\n`);
+}
+
+function recordPid(pidFile: string | undefined): void {
+	if (pidFile === undefined) return;
+	writeFileSync(pidFile, `${process.pid}\n`);
 }
 
 function isNodeErrorCode(error: unknown, code: string): error is Error & { code: string } {

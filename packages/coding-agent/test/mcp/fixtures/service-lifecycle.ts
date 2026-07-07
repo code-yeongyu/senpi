@@ -88,6 +88,15 @@ export async function readCounter(file: string): Promise<number> {
 	return Number(raw.trim());
 }
 
+export async function waitForCondition(assertion: () => boolean | Promise<boolean>, timeoutMs: number): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if (await assertion()) return;
+		await new Promise((resolve) => setTimeout(resolve, 25));
+	}
+	throw new Error("condition timed out");
+}
+
 export async function assertAlive(pid: number): Promise<void> {
 	await execFileAsync("kill", ["-0", String(pid)]);
 }

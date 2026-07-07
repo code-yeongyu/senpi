@@ -1,0 +1,9 @@
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w2/packages/coding-agent
+
+·······································
+
+ Test Files  5 passed (5)
+      Tests  39 passed (39)
+   Start at  03:44:57
+   Duration  8.70s (transform 1.45s, setup 56ms, import 2.53s, tests 13.41s, environment 0ms)

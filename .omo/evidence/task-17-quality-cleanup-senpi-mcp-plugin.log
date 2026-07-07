@@ -1,0 +1,34 @@
+TODO17 quality cleanup evidence summary
+
+Task: TODO17 quality gate cleanup after retry-fix.
+Branch/worktree: code-yeongyu/senpi-mcp-plugin-w2 at /Users/yeongyu/local-workspaces/senpi-wt/senpi-mcp-plugin-w2.
+
+Changes:
+- Extracted reconnect test helpers into packages/coding-agent/test/mcp/fixtures/reconnect.ts.
+- Removed reconnect.test.ts `as unknown as` helper and used typed getMcpService().reconnectServer().
+- Narrowed polling catch handling in the extracted helper with `instanceof Error`.
+- Removed blank-line-at-EOF whitespace from committed TODO17 evidence logs.
+- Added TODO17-specific code-quality/slop review artifact.
+
+Verification artifacts:
+- .omo/evidence/task-17-quality-cleanup-no-excuse.log: no violations in 14 TODO17 TypeScript files.
+- .omo/evidence/task-17-quality-cleanup-loc.log: every TODO17 TypeScript file <=250 pure LOC; reconnect.test.ts=225, fixtures/reconnect.ts=48.
+- .omo/evidence/task-17-quality-cleanup-reconnect.log: focused reconnect suite passed, 8 tests.
+- .omo/evidence/task-17-quality-cleanup-impacted.log: impacted MCP suite passed, 7 files and 50 tests.
+- .omo/evidence/task-17-quality-cleanup-diff-check.log: git diff --check HEAD~2 passed.
+- .omo/evidence/task-17-quality-cleanup-check.log: npm run check passed.
+- .omo/evidence/task-17-quality-cleanup-manual-qa-integrity.log: no-new-runtime-QA decision with prior real CLI QA artifacts verified non-empty, markers present, cleanup receipts and auth unchanged markers present.
+
+Manual QA references:
+- local-ignore/qa-evidence/20260707-mcp-w2-todo17/
+- local-ignore/qa-evidence/20260707-mcp-w2-todo17-retry-fix/
+
+Adversarial classes:
+- stale_state: current worktree verified after retry-fix commits; fresh tests/checks passed.
+- dirty_worktree: unrelated untracked stop-hook and gate-review files left unstaged.
+- misleading_success_output: captured command logs and QA marker integrity checks, not pass claims only.
+- flaky_tests/hung_or_long_commands: focused and impacted suites completed successfully; no hung commands.
+- prompt_injection/secret leakage: no raw secret-bearing logs added; prior QA uses localhost fake provider and cleanup receipts.
+- malformed_input: command parser/runtime behavior unchanged; impacted commands test suite passed.
+- repeated_interruptions/no-duplicate preservation: prior QA markers verify no duplicate in-flight execution and failed-send retry once.
+- cancel_resume: not applicable; cancellation/resume paths unchanged.

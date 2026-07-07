@@ -18,8 +18,10 @@ function buildMcpInstructionsBlock(service: McpService): string {
 	const blocks: string[] = [];
 	for (const snapshot of service.getServerSnapshots()) {
 		const connection = service.getConnection(snapshot.name);
-		if (connection?.state !== "connected") continue;
-		const instructions = connection.client.getInstructions();
+		const instructions =
+			connection?.state === "connected"
+				? connection.client.getInstructions()
+				: service.getCachedInstructions(snapshot.name);
 		if (instructions === undefined || instructions.length === 0) continue;
 		blocks.push(formatInstructionsBlock(snapshot.name, instructions));
 	}

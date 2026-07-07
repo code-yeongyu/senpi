@@ -1,0 +1,14 @@
+COMMAND: touched TS pure LOC and forbidden syntax audit
+packages/coding-agent/src/core/extensions/builtin/mcp/service.ts pure_loc=233
+packages/coding-agent/src/core/extensions/builtin/mcp/service-register.ts pure_loc=27
+packages/coding-agent/src/core/extensions/builtin/mcp/service-exposure.ts pure_loc=31
+packages/coding-agent/src/core/extensions/builtin/mcp/reconnect.ts pure_loc=154
+packages/coding-agent/src/core/extensions/builtin/mcp/commands.ts pure_loc=181
+packages/coding-agent/src/core/extensions/builtin/mcp/idle.ts pure_loc=133
+packages/coding-agent/test/mcp/reconnect.test.ts pure_loc=187
+packages/coding-agent/test/mcp/commands.test.ts pure_loc=214
+packages/coding-agent/test/mcp/fixtures/commands.ts pure_loc=100
+packages/coding-agent/test/mcp/fixtures/options.ts pure_loc=142
+packages/coding-agent/test/mcp/fixtures/sdk-server.ts pure_loc=247
+
+Forbidden syntax search:

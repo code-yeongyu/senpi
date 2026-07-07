@@ -49,7 +49,7 @@ async function handleMcpCommand(rawArgs: string, ctx: ExtensionCommandContext, p
 		return;
 	}
 	if (subcommand === "reconnect") {
-		reconnectStub(args[1] ?? "", ctx);
+		await reconnectServer(args[1] ?? "", ctx, pi);
 		return;
 	}
 	ctx.ui.notify(`Unknown /mcp subcommand: ${subcommand}`, "error");
@@ -141,9 +141,21 @@ function showLogs(name: string, ctx: ExtensionCommandContext): void {
 	ctx.ui.notify(lines.length === 0 ? `MCP logs for ${name}: (empty)` : lines.join("\n"));
 }
 
-function reconnectStub(name: string, ctx: ExtensionCommandContext): void {
+async function reconnectServer(
+	name: string,
+	ctx: ExtensionCommandContext,
+	pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
+): Promise<void> {
 	if (!ensureKnown(name, ctx)) return;
-	ctx.ui.notify(`MCP reconnect for ${name} is not available until W2.`, "warning");
+	try {
+		const service = getMcpService();
+		await service.reconnectServer(name);
+		await service.attachSession({ type: "session_start", reason: "reload" }, ctx, pi);
+		ctx.ui.notify(`MCP reconnect ${name} connected`);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		ctx.ui.notify(`MCP reconnect ${name} failed: ${message}`, "error");
+	}
 }
 
 function ensureKnown(name: string, ctx: ExtensionCommandContext): boolean {

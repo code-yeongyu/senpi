@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -16,6 +16,7 @@ import {
 	ListPromptsRequestSchema,
 	ListResourcesRequestSchema,
 	ListToolsRequestSchema,
+	PingRequestSchema,
 	ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { FixtureOptions } from "./options.ts";
@@ -51,12 +52,21 @@ export function createFixtureServer(options: FixtureOptions): Server {
 	const tools = buildTools(options);
 	let calls = 0;
 
+	server.setRequestHandler(PingRequestSchema, () => {
+		incrementCounterFile(options.pingCounterFile);
+		return {};
+	});
 	server.setRequestHandler(ListToolsRequestSchema, (): ListToolsResult => ({ tools }));
 	server.setRequestHandler(CallToolRequestSchema, async (request, extra): Promise<CallToolResult> => {
 		calls++;
+		incrementCounterFile(options.callCounterFile);
 		if (options.slowToolCallMs > 0) {
 			await sendProgress(extra, request.params.name);
 			await delayToolCall(options, request.params.name, extra.signal);
+		}
+		if (options.crashDuringToolCall) {
+			setTimeout(() => process.exit(42), 1).unref();
+			await new Promise<never>(() => undefined);
 		}
 		const result = await callFixtureTool(request.params.name, request.params.arguments ?? {}, options);
 		if (options.emitListChanged) {
@@ -123,6 +133,13 @@ function buildTools(options: FixtureOptions): FixtureTool[] {
 		tools.push({
 			name: "huge_output_tool",
 			description: "Returns deterministic huge output",
+			inputSchema: emptyInputSchema(),
+		});
+	}
+	if (options.binaryOutputTool) {
+		tools.push({
+			name: "binary_output_tool",
+			description: "Returns deterministic binary image output",
 			inputSchema: emptyInputSchema(),
 		});
 	}
@@ -200,6 +217,11 @@ async function callFixtureTool(
 	if (name === "huge_output_tool" && options.hugeOutput) {
 		return { content: [{ type: "text", text: hugeOutput(options.hugeOutput.bytes, options.hugeOutput.lines) }] };
 	}
+	if (name === "binary_output_tool" && options.binaryOutputTool) {
+		return {
+			content: [{ type: "image", data: Buffer.alloc(65_536, 0x89).toString("base64"), mimeType: "image/png" }],
+		};
+	}
 	if (!name.startsWith("tool_")) {
 		return { isError: true, content: [{ type: "text", text: `unknown fixture tool: ${name}` }] };
 	}
@@ -215,6 +237,21 @@ async function callFixtureTool(
 
 function stringArg(value: unknown, fallback: string): string {
 	return typeof value === "string" ? value : fallback;
+}
+
+function incrementCounterFile(counterFile: string | undefined): void {
+	if (counterFile === undefined) return;
+	let current = 0;
+	try {
+		current = Number(readFileSync(counterFile, "utf8").trim()) || 0;
+	} catch (error) {
+		if (!isNodeErrorCode(error, "ENOENT")) throw error;
+	}
+	writeFileSync(counterFile, `${current + 1}\n`);
+}
+
+function isNodeErrorCode(error: unknown, code: string): error is Error & { code: string } {
+	return error instanceof Error && "code" in error && error.code === code;
 }
 
 function hugeOutput(bytes: number, lines: number): string {

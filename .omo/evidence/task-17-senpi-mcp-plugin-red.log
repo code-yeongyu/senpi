@@ -1,0 +1,52 @@
+COMMAND: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/reconnect.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w2/packages/coding-agent
+
+xxx··
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/mcp/reconnect.test.ts > MCP auto reconnect > reconnects after an unexpected close with jittered backoff
+Error: condition timed out
+ ❯ waitFor test/mcp/reconnect.test.ts:149:8
+    147|  }
+    148|  if (lastError instanceof Error) throw lastError;
+    149|  throw new Error("condition timed out");
+       |        ^
+    150| }
+    151|
+ ❯ test/mcp/reconnect.test.ts:41:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  test/mcp/reconnect.test.ts > MCP auto reconnect > opens the circuit after five reconnect attempts in thirty seconds
+Error: condition timed out
+ ❯ waitFor test/mcp/reconnect.test.ts:149:8
+    147|  }
+    148|  if (lastError instanceof Error) throw lastError;
+    149|  throw new Error("condition timed out");
+       |        ^
+    150| }
+    151|
+ ❯ test/mcp/reconnect.test.ts:54:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  test/mcp/reconnect.test.ts > MCP auto reconnect > manual reconnect resets the circuit breaker and reconnects immediately
+Error: condition timed out
+ ❯ waitFor test/mcp/reconnect.test.ts:149:8
+    147|  }
+    148|  if (lastError instanceof Error) throw lastError;
+    149|  throw new Error("condition timed out");
+       |        ^
+    150| }
+    151|
+ ❯ test/mcp/reconnect.test.ts:73:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 2 passed (5)
+   Start at  04:16:47
+   Duration  18.91s (transform 1.08s, setup 11ms, import 1.72s, tests 17.09s, environment 0ms)

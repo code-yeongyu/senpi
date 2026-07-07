@@ -1,0 +1,46 @@
+TODO17 retriable failed-to-send retry fix evidence summary
+
+Implementation:
+- packages/coding-agent/src/core/extensions/builtin/mcp/health.ts now exposes withMcpRetriableFailedSendRetry(), which calls isRetriableMcpError in production, excludes session-expiry errors handled by the existing session wrapper, marks the connection degraded, renews once, retries once, and surfaces the retry error without looping.
+- packages/coding-agent/src/core/extensions/builtin/mcp/expose/register.ts wraps only the client.callTool send in withMcpRetriableFailedSendRetry(), leaving pre-call ping/renew establishment bounded by existing health semantics.
+- packages/coding-agent/test/mcp/reconnect.test.ts adds real-fixture regressions for successful failed-to-send retry and retry failure without looping, while keeping the existing in-flight no-duplicate test.
+
+TDD red evidence:
+- Command: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/reconnect.test.ts
+- Artifact: .omo/evidence/task-17-retry-fix-red.log
+- Observable: new failed-send tests failed with ToolExecError: transport closed before write, proving no reconnect/retry production path existed.
+
+Green evidence:
+- Focused command: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/reconnect.test.ts
+- Artifact: .omo/evidence/task-17-retry-fix-green-reconnect.log
+- Observable: 1 file passed, 8 tests passed.
+- Impacted command: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/connection.test.ts test/mcp/ping-on-call.test.ts test/mcp/idle.test.ts test/mcp/commands.test.ts test/mcp/service-lifecycle.test.ts test/mcp/register-call.test.ts test/mcp/reconnect.test.ts
+- Artifact: .omo/evidence/task-17-retry-fix-green-impacted.log
+- Observable: 7 files passed, 50 tests passed.
+- Repo check command: npm run check
+- Artifact: .omo/evidence/task-17-retry-fix-check.log
+- Observable: exit 0, including tsgo --noEmit, browser/web-ui checks, and check:neo build/vet/test.
+
+Manual QA:
+- Command: node /tmp/todo17-mcp-retry-qa.mjs
+- Evidence root: local-ignore/qa-evidence/20260707-mcp-w2-todo17-retry-fix/
+- Failed-send observable: failed-send-retry/summary.json shows exitCode=0, finalMarkerSeen=true, fixturePayloadSeen=true, sendAttempts=2, injectedFailures=1, spawnCounter=2, callCounter=1, requestCount=2. send-attempts.jsonl shows first callTool attempt, injected transport-closed failure before server execution, and one post-reconnect callTool attempt.
+- In-flight negative observable: inflight-no-duplicate/summary.json shows exitCode=0, finalMarkerSeen=true, toolErrorSurfaced=true, callCounter=1, requestCount=2.
+- Cleanup observable: cleanup-receipt.txt shows realAuthUnchanged=true, retrySandboxRemoved=true, inflightSandboxRemoved=true, retryFixturePidDead=true, inflightFixturePidDead=true.
+
+Static/slop audit:
+- Artifact: .omo/evidence/task-17-retry-fix-static-audit.log
+- Observable: no as any, ts-ignore/expect-error, inline import(), enum/namespace/module, infinite retry loop, or real-token/private-key markers in changed tracked files/evidence; authorization fields redacted as <mock-redacted>.
+
+Adversarial classes:
+- stale_state: retry uses entry.connection.current client after connection.renew(), and QA spawnCounter=2 plus fixturePayloadSeen proves the retried call used the renewed server, not the stale disposed client.
+- dirty_worktree: unrelated untracked .omo/evidence/*stop-hook* and todo17 gate-review files existed before work and were left untouched/uncommitted.
+- misleading_success_output: evidence uses payload, model request, send-attempt log, spawn counter, and server call counter, not pass counts only.
+- flaky_tests/timing-sensitive: tests use deterministic injected send failures and existing fixture counters; no blind sleeps added.
+- hung_or_long_commands: QA run is bounded by runCli timeout; cleanup receipt proves sandbox removal and fixture pids dead; reconnect timers remain safe/unref through existing code.
+- malformed_input: /mcp reconnect command handling was not touched; impacted commands.test.ts passed.
+- cancel/resume: tool abort/cancel semantics were not changed; impacted register-call.test.ts passed.
+- repeated_interruptions: in-flight crash negative remains covered by unit test and manual QA, both showing callCounter=1.
+- prompt_injection: fixture/server error text is treated as model-visible data only; no command execution from server-provided text.
+
+Conclusion: TODO17 gate blocker fixed and proven for exactly one post-reconnect retry of a retriable failed-to-send MCP call, while preserving no auto-retry for in-flight transport death.

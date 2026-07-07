@@ -7,6 +7,9 @@ import type { ExtensionAPI, ToolDefinition } from "../../../types.ts";
 import { registerToolsPreservingActiveSet } from "../active-set.ts";
 import type { McpToolCatalogEntry } from "../catalog.ts";
 import { ToolExecError } from "../errors.ts";
+import { applyMcpOutputGuard } from "../guard/output-guard.ts";
+import { ensureMcpToolCallConnection, withMcpRetriableFailedSendRetry, withMcpSessionExpiryRetry } from "../health.ts";
+import { runMcpConnectionLifecycleCall } from "../idle.ts";
 import {
 	buildMcpToolNames,
 	convertJsonSchemaToTypeBox,
@@ -27,12 +30,18 @@ type McpAgentContent = TextContent | ImageContent;
 type McpToolDefinition = ToolDefinition<TSchema, McpToolDetails | undefined, unknown>;
 type WarnFn = (message: string) => void;
 
+export interface McpCatalogRegistrationOptions {
+	readonly refreshActiveSetWhenEmpty?: boolean;
+}
+
 export function registerMcpCatalogTools(
 	pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
 	entries: readonly McpToolCatalogEntry[],
 	activeEntries: readonly McpToolCatalogEntry[],
 	warn?: WarnFn,
+	options: McpCatalogRegistrationOptions = {},
 ): void {
+	if (entries.length === 0 && activeEntries.length === 0 && options.refreshActiveSetWhenEmpty !== true) return;
 	const tools = buildMcpToolDefinitions(entries, warn);
 	const currentActive = pi.getActiveTools().filter((name) => !name.startsWith("mcp_"));
 	const mcpNames = buildActiveToolNames(entries, activeEntries, warn);
@@ -64,7 +73,12 @@ function createMcpToolDefinition(entry: McpToolCatalogEntry, name: string): McpT
 			if (!mapped.ok) {
 				throw new ToolExecError(mapped.error.message, { phase: "call", serverName: entry.server });
 			}
-			const content = toAgentContent(mapped.content);
+			const guarded = await applyMcpOutputGuard(mapped.content, {
+				agentDir: entry.agentDir,
+				outputGuard: entry.outputGuard,
+				server: entry.server,
+			});
+			const content = toAgentContent(guarded);
 			return { content, details: { preview: previewContent(content), server: entry.server, tool: entry.tool } };
 		},
 		renderCall(args, theme) {
@@ -87,18 +101,26 @@ async function callMcpTool(
 	label: string,
 ): Promise<Awaited<ReturnType<McpToolCatalogEntry["connection"]["client"]["callTool"]>>> {
 	try {
-		return await entry.connection.client.callTool({ name: entry.tool, arguments: args }, undefined, {
-			onprogress: (progress) => {
-				onUpdate?.({
-					content: [{ type: "text", text: formatProgress(label, progress) }],
-					details: { progress, server: entry.server, tool: entry.tool },
+		return await runMcpConnectionLifecycleCall(entry.connection, () =>
+			withMcpSessionExpiryRetry(entry.connection, async () => {
+				await ensureMcpToolCallConnection(entry.connection);
+				await entry.ensureConnected?.();
+				return await withMcpRetriableFailedSendRetry(entry.connection, async () => {
+					return await entry.connection.client.callTool({ name: entry.tool, arguments: args }, undefined, {
+						onprogress: (progress) => {
+							onUpdate?.({
+								content: [{ type: "text", text: formatProgress(label, progress) }],
+								details: { progress, server: entry.server, tool: entry.tool },
+							});
+						},
+						signal,
+						timeout: entry.requestTimeoutMs,
+					});
 				});
-			},
-			signal,
-			timeout: entry.requestTimeoutMs,
-		});
+			}),
+		);
 	} catch (error) {
-		throw new ToolExecError(`ToolExecError: ${errorMessage(error)}`, {
+		throw new ToolExecError(`ToolExecError: ${errorLabel(error)}`, {
 			cause: error,
 			phase: "call",
 			serverName: entry.server,
@@ -149,8 +171,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
+function errorLabel(error: unknown): string {
+	return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
 function formatProgress(label: string, progress: Progress): string {
