@@ -1,0 +1,16 @@
+/Users/yeongyu/.bash_profile: line 3: /usr/local/bin/gog.bash: No such file or directory
+COMMAND: artifact integrity check for prior TODO17 real CLI QA bundles
+non_empty=true local-ignore/qa-evidence/20260707-mcp-w2-todo17/INDEX.md bytes=     721
+non_empty=true local-ignore/qa-evidence/20260707-mcp-w2-todo17/cleanup-receipt.txt bytes=     317
+non_empty=true local-ignore/qa-evidence/20260707-mcp-w2-todo17/scenario1-status-suspended.json bytes=    4000
+non_empty=true local-ignore/qa-evidence/20260707-mcp-w2-todo17/scenario1-rpc-events.json bytes=   32067
+non_empty=true local-ignore/qa-evidence/20260707-mcp-w2-todo17/scenario2-rpc-events.json bytes=   40205
+non_empty=true local-ignore/qa-evidence/20260707-mcp-w2-todo17/scenario2-call-counter.txt bytes=       2
+non_empty=true local-ignore/qa-evidence/20260707-mcp-w2-todo17-retry-fix/INDEX.md bytes=     462
+non_empty=true local-ignore/qa-evidence/20260707-mcp-w2-todo17-retry-fix/qa-driver-output.txt bytes=     276
+non_empty=true local-ignore/qa-evidence/20260707-mcp-w2-todo17-retry-fix/cleanup-receipt.txt bytes=     254
+non_empty=true local-ignore/qa-evidence/20260707-mcp-w2-todo17-retry-fix/failed-send-retry/summary.json bytes=     334
+non_empty=true local-ignore/qa-evidence/20260707-mcp-w2-todo17-retry-fix/failed-send-retry/send-attempts.jsonl bytes=     210
+non_empty=true local-ignore/qa-evidence/20260707-mcp-w2-todo17-retry-fix/inflight-no-duplicate/summary.json bytes=     214
+markers_ok=true
+manual_qa_decision=no-new-runtime-QA; runtime code unchanged; prior real CLI QA integrity verified

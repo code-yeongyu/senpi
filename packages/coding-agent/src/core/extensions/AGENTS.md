@@ -15,7 +15,7 @@ extensions/
 │                        # exposes `bindCore()` to wire `pi.*` stubs to real implementations.
 ├── wrapper.ts           # 30-line wrapper utility used to track extension origin per UI message
 ├── index.ts             # Re-exports from runner/loader/types
-├── builtin/             # 15 builtin extensions + 4 global defaults — see builtin/AGENTS.md
+├── builtin/             # 22 builtin extensions + 4 global defaults — see builtin/AGENTS.md
 └── changes.md           # Fork tracker — DENSE. Every public-API change must add a section.
 ```
 

@@ -1,0 +1,52 @@
+TODO17 auto-reconnect evidence
+
+Automated verification:
+- Baseline characterization:
+  - Command: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/commands.test.ts
+  - Observable: current /mcp reconnect stub warning was present before implementation.
+  - Artifact: .omo/evidence/task-17-senpi-mcp-plugin-baseline.log
+- RED:
+  - Command: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/reconnect.test.ts
+  - Observable: 3 failures for missing auto-reconnect/breaker/manual reconnect behavior; no syntax/import failure.
+  - Artifact: .omo/evidence/task-17-senpi-mcp-plugin-red.log
+- GREEN focused:
+  - Command: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/reconnect.test.ts
+  - Observable: 6 tests passed, covering jittered timer, breaker, manual reconnect reset, in-flight no-duplicate, queued post-reconnect send.
+  - Artifact: .omo/evidence/task-17-senpi-mcp-plugin-green-reconnect.log
+- GREEN impacted:
+  - Command: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/connection.test.ts test/mcp/ping-on-call.test.ts test/mcp/idle.test.ts test/mcp/commands.test.ts test/mcp/service-lifecycle.test.ts test/mcp/register-call.test.ts
+  - Observable: 42 tests passed.
+  - Artifact: .omo/evidence/task-17-senpi-mcp-plugin-green-impacted.log
+- Static/check:
+  - Command: npm run check
+  - Observable: biome, pinned deps, import checks, shrinkwrap/install-lock, tsgo, browser/web-ui checks, neo build/vet/test all passed.
+  - Artifact: .omo/evidence/task-17-senpi-mcp-plugin-check.log
+- LOC and forbidden TypeScript syntax audit:
+  - Observable: every touched TS file <=250 pure LOC except commands.test.ts now 214 after helper split; no enum/namespace/parameter property/inline import matches.
+  - Artifact: .omo/evidence/task-17-senpi-mcp-plugin-static-audit.log
+
+Manual QA:
+- Harness: custom senpi-qa driver using .agents/skills/senpi-qa/scripts/lib/common.mjs, real source CLI via --mode rpc, isolated SENPI_CODING_AGENT_DIR and SENPI_CODING_AGENT_SESSION_DIR, localhost fake model server, no real provider calls.
+- Evidence root: local-ignore/qa-evidence/20260707-mcp-w2-todo17/
+- Happy/recovery scenario:
+  - Invocation: real RPC CLI with MCP fixture wrapper initially failing until breaker opens; /mcp status polled; wrapper flipped healthy; /mcp reconnect fx; model calls mcp_fx_tool_1.
+  - Binary observable: /mcp status captured state=suspended and reconnects=5 with breaker message; post-reconnect MCP tool result contains "fixture tool_1 value=restored mode=alpha"; final assistant marker RECOVERED-PAYLOAD-OK captured.
+  - Artifacts: scenario1-status-suspended.json, scenario1-rpc-events.json, scenario1-model-requests.json.
+- Failure/at-least-once scenario:
+  - Invocation: real RPC CLI with fixture --crash-during-tool-call --call-counter-file; model calls mcp_fx_tool_1, then a follow-up prompt.
+  - Binary observable: model-visible ToolExecError captured; subsequent prompt returned RESPONSIVE-AFTER-SUSPENSION-OK; scenario2-call-counter.txt contains exactly 1.
+  - Artifacts: scenario2-rpc-events.json, scenario2-model-requests.json, scenario2-call-counter.txt.
+- Cleanup:
+  - Observable: real auth hash unchanged, sandbox dirs removed, process sweep found no lingering MCP fixture processes.
+  - Artifact: cleanup-receipt.txt.
+
+Adversarial classes:
+- stale_state: generation guard in reconnect timers; fake-timer test asserts stale/controlled timer behavior; service shouldReconnect rejects stale entries.
+- dirty_worktree: unrelated untracked stop-hook evidence left untouched; stage exact files only.
+- hung_or_long_commands: reconnect timers use safeTimer and unref; manual QA process exited; cleanup sweep clean.
+- flaky_tests: jitter test pins RNG with fake timers; breaker test pins RNG to deterministic zero jitter; focused rerun passed.
+- misleading_success_output: recovery proof uses real post-reconnect fixture payload, not counters only.
+- malformed_input: existing unknown /mcp reconnect target path preserved in commands.test.ts; manual reconnect failure reports actionable error.
+- prompt_injection: server stderr/error strings are captured as data in status/tool result; no command execution from server text.
+- cancel_resume: no reconnect command cancellation path exists; abort semantics remain covered by register-call tests and were not changed.
+- repeated_interruptions: manual QA runs repeated crash/reconnect loops and records no lingering fixture processes.

@@ -23,6 +23,84 @@
 
 - LOW: `getShellConfig` resolution order and `ShellConfig` shape.
 
+## Pinned update changelog links (2026-06-29)
+
+### What changed
+
+- `version-check.ts`: update notes link to the changelog anchored at the specific released version instead of a
+  floating link that could drift after later releases.
+
+### Why
+
+- "What's new" links in the update notice must show the notes for the version being offered.
+
+### Why extension system couldn't handle this
+
+- Update-notice construction is a startup core utility.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `version-check.ts` release-notes URL formatting.
+
+## Drain delayed child stdout (2026-06-28)
+
+### What changed
+
+- `child-process.ts`: output collection keeps reading delayed descendant stdout after the parent process exits,
+  instead of resolving at parent exit and truncating late output (upstream issue #5303).
+
+### Why
+
+- Commands whose descendants hold the pipe past parent exit lost trailing output in tool results.
+
+### Why extension system couldn't handle this
+
+- Child process stream collection is shared core utility code under the bash tool.
+
+### Expected merge conflict zones on next upstream sync
+
+- MEDIUM: `child-process.ts` stream-drain/exit-resolution ordering (upstream fixed the same class of bug in
+  #5753; expect overlapping hunks).
+
+## Output hot-path fast paths (2026-06-13)
+
+### What changed
+
+- `shell.ts`: `sanitizeBinaryOutput()` returns the input string immediately when it contains no unsafe display
+  characters, skipping the per-code-point filter on the (dominant) clean case. RPC-side batching is in
+  `../modes/rpc/changes.md` 2026-06-13.
+
+### Why
+
+- Output sanitization showed up on streaming hot paths for large tool outputs.
+
+### Why extension system couldn't handle this
+
+- Sanitization runs inside shared output utilities used by core tools.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `shell.ts` around `sanitizeBinaryOutput()`.
+
+## Shared path shortening for the /sessions HUD (2026-05-24)
+
+### What changed
+
+- `paths.ts`: `shortenPath()` (`~/…` shortening) is shared by the fork's `/sessions` session-observer HUD picker
+  (builtin `session-observer`).
+
+### Why
+
+- The picker lists sessions across `~/.senpi/agent/sessions/` cwd-subdirs and needs consistent short display paths.
+
+### Why extension system couldn't handle this
+
+- The helper lives in shared utils so core and builtins format paths identically.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `paths.ts` helper exports.
+
 ## Senpi-branded outbound identity (2026-05-11)
 
 ### What changed

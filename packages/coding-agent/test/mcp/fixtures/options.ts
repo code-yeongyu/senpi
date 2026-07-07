@@ -2,18 +2,25 @@ export interface FixtureOptions {
 	toolCount: number;
 	slowStartMs: number;
 	spawnCounterFile: string | undefined;
+	callCounterFile: string | undefined;
+	pidFile: string | undefined;
+	pingCounterFile: string | undefined;
+	fatalMissingToken: string | undefined;
 	crashOnStart: boolean;
 	crashAfterCalls: number | null;
+	crashDuringToolCall: boolean;
 	wedge: boolean;
 	isErrorTool: boolean;
 	hugeSchemaTool: boolean;
 	hugeOutput: { bytes: number; lines: number } | null;
+	binaryOutputTool: boolean;
 	slowToolCallMs: number;
 	cancelLogFile: string | undefined;
 	emitListChanged: boolean;
 	instructions: string | undefined;
 	port: number;
 	expireSession: boolean;
+	alwaysExpireToolCalls: boolean;
 	bearerToken: string | undefined;
 	spawnGrandchild: boolean;
 }
@@ -23,18 +30,25 @@ export function parseFixtureOptions(argv: readonly string[]): FixtureOptions {
 		toolCount: readIntegerFlag(argv, "--tools", 1),
 		slowStartMs: readIntegerFlag(argv, "--slow-start", 0),
 		spawnCounterFile: readStringFlag(argv, "--spawn-counter-file"),
+		callCounterFile: readStringFlag(argv, "--call-counter-file"),
+		pidFile: readStringFlag(argv, "--pid-file"),
+		pingCounterFile: readStringFlag(argv, "--ping-counter-file"),
+		fatalMissingToken: readStringFlag(argv, "--fatal-missing-token"),
 		crashOnStart: argv.includes("--crash-on-start"),
 		crashAfterCalls: readOptionalIntegerFlag(argv, "--crash-after"),
+		crashDuringToolCall: argv.includes("--crash-during-tool-call"),
 		wedge: argv.includes("--wedge"),
 		isErrorTool: argv.includes("--iserror-tool"),
 		hugeSchemaTool: argv.includes("--huge-schema-tool"),
 		hugeOutput: readHugeOutput(argv),
+		binaryOutputTool: argv.includes("--binary-output-tool"),
 		slowToolCallMs: readIntegerFlag(argv, "--slow-tool-call", 0),
 		cancelLogFile: readStringFlag(argv, "--cancel-log"),
 		emitListChanged: argv.includes("--emit-list-changed"),
 		instructions: readStringFlag(argv, "--instructions"),
 		port: readIntegerFlag(argv, "--port", 0),
 		expireSession: argv.includes("--expire-session"),
+		alwaysExpireToolCalls: argv.includes("--always-expire-tool-calls"),
 		bearerToken: readStringFlag(argv, "--bearer"),
 		spawnGrandchild: argv.includes("--spawn-grandchild"),
 	};
@@ -98,6 +112,10 @@ function validateArgs(argv: readonly string[], options: FixtureOptions): void {
 		"--tools",
 		"--slow-start",
 		"--spawn-counter-file",
+		"--call-counter-file",
+		"--pid-file",
+		"--ping-counter-file",
+		"--fatal-missing-token",
 		"--crash-after",
 		"--huge-output-tool",
 		"--slow-tool-call",
@@ -109,10 +127,13 @@ function validateArgs(argv: readonly string[], options: FixtureOptions): void {
 	const bare = new Set([
 		"--wedge",
 		"--crash-on-start",
+		"--crash-during-tool-call",
 		"--iserror-tool",
 		"--huge-schema-tool",
+		"--binary-output-tool",
 		"--emit-list-changed",
 		"--expire-session",
+		"--always-expire-tool-calls",
 		"--spawn-grandchild",
 	]);
 	for (let index = 0; index < argv.length; index++) {

@@ -1,0 +1,16 @@
+/Users/yeongyu/.bash_profile: line 3: /usr/local/bin/gog.bash: No such file or directory
+COMMAND: pure LOC audit over TODO17 touched TS files
+187 packages/coding-agent/src/core/extensions/builtin/mcp/commands.ts
+187 packages/coding-agent/src/core/extensions/builtin/mcp/expose/register.ts
+119 packages/coding-agent/src/core/extensions/builtin/mcp/health.ts
+133 packages/coding-agent/src/core/extensions/builtin/mcp/idle.ts
+154 packages/coding-agent/src/core/extensions/builtin/mcp/reconnect.ts
+ 31 packages/coding-agent/src/core/extensions/builtin/mcp/service-exposure.ts
+ 27 packages/coding-agent/src/core/extensions/builtin/mcp/service-register.ts
+223 packages/coding-agent/src/core/extensions/builtin/mcp/service.ts
+214 packages/coding-agent/test/mcp/commands.test.ts
+100 packages/coding-agent/test/mcp/fixtures/commands.ts
+142 packages/coding-agent/test/mcp/fixtures/options.ts
+247 packages/coding-agent/test/mcp/fixtures/sdk-server.ts
+ 48 packages/coding-agent/test/mcp/fixtures/reconnect.ts
+225 packages/coding-agent/test/mcp/reconnect.test.ts

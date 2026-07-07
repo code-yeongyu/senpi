@@ -5,7 +5,18 @@
 ### Added
 
 - Added `senpi app-server` mode for Codex-compatible app-server integrations, including stdio, websocket, and websocket-over-UDS transports, multi-session serving, wire approval requests, daemon subcommands, and protocol documentation.
-- Added the built-in MCP extension skeleton and exact-pinned official MCP SDK dependency groundwork.
+- Added built-in MCP support as a builtin extension: `mcpServers` config (global, project, and imported Claude
+  Desktop configs) with TypeBox validation and env interpolation, `stdio` and streamable `http` transports, bearer
+  and OAuth (code / client-credentials) auth, server lifecycles (`lazy` / `eager` / `keep-alive`) with idle shutdown,
+  spec-correct tool registration with exposure policies (`auto` / `direct` / `search` / `proxy`) and
+  include/exclude filtering, server instructions injection into the system prompt, secret-redacting per-server logs,
+  and the `/mcp` command suite (`status`, `add`, `enable`/`disable`, `test`, `logs`, `reconnect`). Uses the
+  exact-pinned official MCP SDK.
+- Added auth RPC commands for external UIs: `get_auth_providers`, `login_start`, `login_cancel`, `login_api_key`,
+  and `logout`, with OAuth completion delivered via `auth_login_url` / `auth_login_end` session events.
+- Added the neo TUI launch handoff (`--neo`, `--neo-isolated`, `--neo-bin`) and the shared neo daemon
+  (`--listen <socket>`: supervisor with atomic registry, token+version handshake, per-connection worker processes,
+  and idle shutdown via `neoDaemon.idleShutdownMs`).
 - Added a convention guard that rejects senpi-defined PascalCase tool names in core and builtin extension tool registrations.
 - Added the persistent-terminal tool suite (built-in `terminal` extension): the `bash` tool is now PTY-backed with `run_in_background`, `cols`, and `rows`, plus companion tools `bash_output` (with `wait_for`/`filter`/`view:"screen"`), `bash_input` (stdin + named keys), `bash_resize`, and `kill_bash`. Backed by `@earendil-works/pi-pty` (native ConPTY on Windows, `child_process` pipe fallback otherwise). Adds `SENPI_GIT_BASH_PATH` + shell-kind resolution (cmd `/c`, PowerShell `-NoProfile -Command`), `terminal.*` settings, idle-guarded async completion wake, and permission-gates `bash_input` in the `bash` class. See `docs/terminal-tools.md`.
 

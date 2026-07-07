@@ -8,6 +8,18 @@ export interface McpServerExposureStatus {
 	readonly toolCount: number | null;
 }
 
+export function getMcpCatalogExposureStatus(
+	catalog: readonly McpToolCatalogEntry[],
+	serverConfig: McpServerConfig,
+	settings: McpSettings,
+): McpServerExposureStatus {
+	const policy = computeMcpExposurePolicy(catalog, serverConfig, settings);
+	return {
+		hint: policy.filteredEntries.length === 0 ? "No MCP tools matched includeTools/excludeTools filters." : undefined,
+		toolCount: policy.activeEntries.length,
+	};
+}
+
 export async function getMcpServerExposureStatus(
 	name: string,
 	connection: ServerConnection,
@@ -25,12 +37,7 @@ export async function getMcpServerExposureStatus(
 			server: name,
 			tool: tool.name,
 		}));
-		const policy = computeMcpExposurePolicy(catalog, serverConfig, settings);
-		return {
-			hint:
-				policy.filteredEntries.length === 0 ? "No MCP tools matched includeTools/excludeTools filters." : undefined,
-			toolCount: policy.activeEntries.length,
-		};
+		return getMcpCatalogExposureStatus(catalog, serverConfig, settings);
 	} catch {
 		return { toolCount: null };
 	}

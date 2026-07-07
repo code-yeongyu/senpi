@@ -1,0 +1,56 @@
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w2/packages/coding-agent
+
+xxx
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/mcp/diagnose.test.ts > MCP failure diagnosis > adds pre-handshake stderr to typed connection errors with token-like values redacted
+AssertionError: expected 'MCP server fatal failed during connec…' to contain 'FATAL: missing FOO_TOKEN=<redacted:'
+
+Expected: "FATAL: missing FOO_TOKEN=<redacted:"
+Received: "MCP server fatal failed during connect: MCP server fatal failed during connect: MCP error -32000: Connection closed"
+
+ ❯ test/mcp/diagnose.test.ts:40:25
+     38|   const error = await captureError(() => connection.connect());
+     39|
+     40|   expect(error.message).toContain("FATAL: missing FOO_TOKEN=<redacted:…
+       |                         ^
+     41|   expect(error.message).not.toContain("super-secret-token");
+     42|   expect(connection.lastError?.message).toBe(error.message);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  test/mcp/diagnose.test.ts > MCP failure diagnosis > bounds empty-stderr diagnostic reruns at 5s for wedged commands
+AssertionError: expected 'MCP server wedge failed during connec…' to contain 'diagnostic rerun timed out after 5000…'
+
+Expected: "diagnostic rerun timed out after 5000ms"
+Received: "MCP server wedge failed during connect: MCP server wedge failed during connect: MCP error -32000: Connection closed"
+
+ ❯ test/mcp/diagnose.test.ts:59:25
+     57|   const elapsedMs = performance.now() - started;
+     58|
+     59|   expect(error.message).toContain("diagnostic rerun timed out after 50…
+       |                         ^
+     60|   expect(elapsedMs).toBeGreaterThanOrEqual(4800);
+     61|   expect(elapsedMs).toBeLessThan(7000);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  test/mcp/diagnose.test.ts > MCP failure diagnosis > reinitializes once for HTTP session expiry and surfaces a typed error when the retry also expires
+TypeError: withMcpSessionExpiryRetry is not a function
+ ❯ test/mcp/diagnose.test.ts:77:24
+     75|   await connection.connect();
+     76|   await connection.client.listTools({}, { timeout: 2000 });
+     77|   const result = await withMcpSessionExpiryRetry(connection, () =>
+       |                        ^
+     78|    connection.client.callTool({ name: "tool_1", arguments: { value: "a…
+     79|     timeout: 2000,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed (3)
+   Start at  03:04:44
+   Duration  1.19s (transform 45ms, setup 10ms, import 89ms, tests 1.01s, environment 0ms)
