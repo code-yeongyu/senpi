@@ -1,0 +1,17 @@
+=== TASK 30 — zero-dep BM25 tool-search engine ===
+Date: 2026-07-07T16:37:17Z
+Constants: k1=0.9 b=0.4; field weights name=3 server=2 desc=1; exact-name short-circuit before BM25.
+
+=== RED (module absent) ===
+Pre-implementation import of bm25.ts failed -> 'Test Files 1 failed (1), Tests no tests'.
+
+=== GREEN ===
+
+ Test Files  1 passed (1)
+      Tests  14 passed (14)
+   Start at  01:37:19
+   Duration  150ms (transform 22ms, setup 13ms, import 17ms, tests 43ms, environment 0ms)
+
+
+=== perf number (5k-tool corpus, <10ms bound) ===
+5k-corpus search elapsed=1.705ms results=10 top=mcp_s0_tool-number-0
