@@ -1,0 +1,63 @@
+TODO22 expiry fix evidence
+Worktree: /Users/yeongyu/local-workspaces/senpi-wt/senpi-mcp-plugin-w3
+Branch: code-yeongyu/senpi-mcp-plugin-w3
+Evidence bundle: local-ignore/qa-evidence/20260708-mcp-w3-todo22-expiry-fix/
+
+Issue fixed:
+- mergeTokensIntoStoredAuth previously preserved a stale persisted expiresAt when a later OAuth token response omitted expires_in.
+- The adapter now deletes expiresAt when tokenExpiresAt(tokens) is undefined.
+
+Changed files:
+- packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts
+- packages/coding-agent/test/mcp/token-store.test.ts
+- .omo/evidence/task-22-fix-senpi-mcp-plugin.log
+
+RED:
+- Scenario: overwrite an existing expiring persisted MCP OAuth credential with saveTokens({ access_token, token_type }) lacking expires_in.
+- Invocation: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/token-store.test.ts
+- Binary observable: exit 1; new test failed because tokens.json still had an own expiresAt property.
+- Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo22-expiry-fix/red-token-store.txt
+
+GREEN:
+- Scenario: same focused token-store/provider persisted-shape regression after adapter fix.
+- Invocation: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/token-store.test.ts
+- Binary observable: exit 0; Test Files 1 passed; Tests 8 passed.
+- Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo22-expiry-fix/green-token-store.txt
+
+Impacted auth tests:
+- Scenario: OAuth provider/headless/race auth behavior remains intact after expiry adapter change.
+- Invocation: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/oauth-provider.test.ts test/mcp/oauth-headless.test.ts test/mcp/oauth-race.test.ts
+- Binary observable: exit 0; Test Files 3 passed; Tests 14 passed.
+- Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo22-expiry-fix/green-impacted-auth.txt
+
+Check:
+- Scenario: full repository check after code changes.
+- Invocation: npm run check
+- Binary observable: exit 0; biome/checks/tsgo/shrinkwrap/install-lock/browser/web-ui/neo all passed. Biome formatted the new test assertion only.
+- Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo22-expiry-fix/npm-run-check.txt
+
+Manual CLI/data surface QA:
+- Scenario: isolated MCP token store starts with tokens.json containing expiresAt, then McpOAuthProvider.saveTokens receives a token response without expires_in.
+- Invocation: npx tsx local-ignore/qa-evidence/20260708-mcp-w3-todo22-expiry-fix/manual-expiry-proof.ts
+- Binary observable: exit 0; initial.hasExpiresAt true; final.json contains accessToken/resource/refreshToken only; final.hasExpiresAt false; final.storeExpiresAt undefined.
+- Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo22-expiry-fix/manual-expiry-proof.txt
+- Cleanup receipt: same artifact records cleanup.agentDirExists false for the temp auth root.
+
+senpi QA harness:
+- Scenario: deterministic source CLI agent loop through mock providers, auth unchanged.
+- Invocation: node .agents/skills/senpi-qa/scripts/mock-loop.mjs --self-test
+- Binary observable: exit 0; 5/5 passed; real auth unchanged.
+- Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo22-expiry-fix/senpi-qa-mock-loop-self-test.txt
+- Scenario: source CLI help/version/list-models/offline error handling, auth unchanged.
+- Invocation: node .agents/skills/senpi-qa/scripts/cli-smoke.mjs --self-test
+- Binary observable: exit 0; 6/6 passed; real auth unchanged.
+- Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo22-expiry-fix/senpi-qa-cli-smoke-self-test.txt
+
+Prior TODO22 evidence preserved by reference:
+- local-ignore/qa-evidence/20260708-mcp-w3-todo22/
+- .omo/evidence/subagent-stop-22-todo22-verification.md
+
+Adversarial notes:
+- Verified the RED failed before the production fix for the exact stale-expiresAt condition.
+- Verified the fix does not drop an existing refresh token when the token response omits refresh_token.
+- Left unrelated untracked .omo/evidence files untouched.

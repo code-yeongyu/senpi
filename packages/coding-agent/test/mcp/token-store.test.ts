@@ -87,6 +87,34 @@ describe("McpTokenStore", () => {
 		expect(store.read()?.accessToken).toBe("AT");
 	});
 
+	it("clears stale expiresAt when saved OAuth tokens omit expires_in", async () => {
+		const agentDir = await makeAgentDir();
+		const store = new McpTokenStore({ agentDir, serverName: "linear", serverUrl: "https://mcp.linear.app/mcp" });
+		const provider = new McpOAuthProvider({
+			serverName: "linear",
+			serverUrl: "https://mcp.linear.app/mcp",
+			store,
+			redirectUrl: "http://127.0.0.1:8123/callback",
+		});
+		await provider.saveTokens({
+			access_token: "AT_old",
+			refresh_token: "RT",
+			expires_in: 60,
+			token_type: "Bearer",
+		});
+		expect(store.read()?.expiresAt).toBeDefined();
+
+		await provider.saveTokens({
+			access_token: "AT_new",
+			token_type: "Bearer",
+		});
+
+		const record = JSON.parse(readFileSync(store.tokensPath, "utf-8"));
+		expect(record).toMatchObject({ accessToken: "AT_new", refreshToken: "RT" });
+		expect(Object.hasOwn(record, "expiresAt")).toBe(false);
+		expect(store.read()?.expiresAt).toBeUndefined();
+	});
+
 	it("hashes a path-traversal server name to a safe hex dir inside mcp-auth", async () => {
 		const agentDir = await makeAgentDir();
 		const store = new McpTokenStore({ agentDir, serverName: "../evil", serverUrl: "../evil" });

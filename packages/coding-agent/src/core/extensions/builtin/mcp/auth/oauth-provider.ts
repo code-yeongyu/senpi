@@ -57,6 +57,7 @@ export function mergeTokensIntoStoredAuth(
 	if (refreshToken !== undefined) next.refreshToken = refreshToken;
 	const expiresAt = tokenExpiresAt(tokens);
 	if (expiresAt !== undefined) next.expiresAt = expiresAt;
+	else delete next.expiresAt;
 	return next;
 }
 
