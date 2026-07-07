@@ -30,6 +30,7 @@ interface RaceArtifact {
 	storeCleared: boolean;
 	initialRefreshHash?: string;
 	storedRefreshHash?: string;
+	postRaceFailureKinds?: string[];
 	results: WorkerResult[];
 	requests: IdpFixtureLogRequest[];
 }
@@ -94,6 +95,9 @@ interface WorkerResult {
 	ok: boolean;
 	refreshHash?: string;
 	kind?: string;
+	postRaceOk?: boolean;
+	postRaceKind?: string;
+	postRaceRefreshHash?: string;
 }
 
 async function runWorkers(agentDir: string, mcpUrl: string, disableLock: boolean): Promise<WorkerResult[]> {
@@ -167,11 +171,13 @@ describe("cross-process refresh race", () => {
 		const results = await runWorkers(agentDir, fixture.mcpUrl, true);
 		const log = await fixture.getLog();
 		const stored = new McpTokenStore({ agentDir, serverName: "race", serverUrl: fixture.mcpUrl }).read();
+		const postRaceFailureKinds = results.map((result) => result.postRaceKind);
 
-		expect(log.tokenHits - before).toBe(2);
+		expect(log.tokenHits - before).toBeGreaterThanOrEqual(2);
 		expect(log.familyInvalidated).toBe(true);
-		// At least one process is left needing re-auth (invalid_grant).
 		expect(results.some((result) => result.ok === false && result.kind === "invalid_grant")).toBe(true);
+		expect(results.every((result) => result.postRaceOk === false)).toBe(true);
+		expect(postRaceFailureKinds.every((kind) => kind === "invalid_grant" || kind === "needs_auth")).toBe(true);
 		expect(stored).toBeUndefined();
 		raceArtifacts.push({
 			scenario: "lock-off",
@@ -181,6 +187,7 @@ describe("cross-process refresh race", () => {
 			familyInvalidated: log.familyInvalidated,
 			storeCleared: stored === undefined,
 			storedRefreshHash: stored?.refreshToken === undefined ? undefined : tokenFingerprint(stored.refreshToken),
+			postRaceFailureKinds: postRaceFailureKinds.filter((kind): kind is string => kind !== undefined),
 			results,
 			requests: log.requests,
 		});

@@ -10,11 +10,12 @@ import { McpTokenStore } from "../../../src/core/extensions/builtin/mcp/auth/tok
 
 async function main(): Promise<void> {
 	const [agentDir, mcpUrl, barrierFile, tag, disableLock] = process.argv.slice(2);
+	const lockDisabled = disableLock === "1";
 	const store = new McpTokenStore({
 		agentDir,
 		serverName: "race",
 		serverUrl: mcpUrl ?? "",
-		disableLock: disableLock === "1",
+		disableLock: lockDisabled,
 	});
 	const provider = new McpOAuthProvider({
 		serverName: "race",
@@ -37,13 +38,48 @@ async function main(): Promise<void> {
 	}
 	await sleep(20);
 
+	const first = await refreshAttempt(manager);
+	if (!lockDisabled) {
+		process.stdout.write(`${JSON.stringify({ tag, ...first })}\n`);
+		return;
+	}
+
+	appendFileSync(barrierFile ?? "", `${tag}:after\n`);
+	for (let i = 0; i < 200; i++) {
+		if (
+			readFileSync(barrierFile ?? "", "utf8")
+				.trim()
+				.split("\n")
+				.filter((line) => line.endsWith(":after")).length >= 2
+		)
+			break;
+		await sleep(10);
+	}
+	await sleep(20);
+	const postRace = await refreshAttempt(manager);
+	process.stdout.write(
+		`${JSON.stringify({
+			tag,
+			...first,
+			postRaceOk: postRace.ok,
+			postRaceKind: postRace.kind,
+			postRaceRefreshHash: postRace.refreshHash,
+		})}\n`,
+	);
+}
+
+async function refreshAttempt(manager: McpRefreshManager): Promise<{
+	ok: boolean;
+	refreshHash?: string;
+	kind?: string;
+}> {
 	try {
 		const tokens = await manager.refresh();
 		const refreshHash = tokens.refresh_token === undefined ? undefined : tokenFingerprint(tokens.refresh_token);
-		process.stdout.write(`${JSON.stringify({ tag, ok: true, refreshHash })}\n`);
+		return { ok: true, refreshHash };
 	} catch (error) {
 		const kind = (error as { oauthKind?: string }).oauthKind ?? "error";
-		process.stdout.write(`${JSON.stringify({ tag, ok: false, kind })}\n`);
+		return { ok: false, kind };
 	}
 }
 
