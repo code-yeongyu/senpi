@@ -160,7 +160,10 @@ describe("MCP idle lifecycle", () => {
 				// Loaded CI runners can boot the fixture subprocess slower than the fast
 				// 2s fixture default; give reconnect attempts headroom so recovery is not
 				// starved into repeated connect timeouts under a parallel spawn storm.
-				connectTimeoutMs: 10_000,
+				// 10s was still exhausted on GitHub-hosted runners (recovery timed out
+				// while every attempt lost the race), so give a single respawn+connect
+				// enough room to win under load.
+				connectTimeoutMs: 25_000,
 				lifecycle: "keep-alive",
 			},
 		});
@@ -189,7 +192,7 @@ describe("MCP idle lifecycle", () => {
 				connection.getRootPid() === currentPid &&
 				pi.toolDefinitions.has("mcp_fx_tool_1")
 			);
-		}, 45_000);
+		}, 60_000);
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 		const result = await tool.execute("tc-keep-alive", { value: "recovered" }, undefined, undefined, testContext());
 
