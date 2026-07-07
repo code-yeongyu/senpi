@@ -6,6 +6,7 @@ import {
 	getMcpLifecycleDebugSnapshot,
 	runMcpConnectionLifecycleCall,
 } from "../../src/core/extensions/builtin/mcp/idle.ts";
+import { getMcpReconnectDebugSnapshot } from "../../src/core/extensions/builtin/mcp/reconnect.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
 import {
 	attach,
@@ -257,6 +258,16 @@ describe("MCP idle lifecycle", () => {
 			},
 			() => connection?.state === "suspended",
 			90_000,
+			() => {
+				const snapshot = connection === undefined ? null : getMcpReconnectDebugSnapshot(connection);
+				return [
+					`state=${connection?.state} generation=${connection?.generation} lastError=${connection?.lastError?.message}`,
+					`transitions=[${states.join(" -> ")}]`,
+					`reconnect: attemptsInWindow=${snapshot?.attemptsInWindow} timerHasRef=${snapshot?.timerHasRef}`,
+					`pidFile=${readOptionalNumberFile(pidFile)} firstPid=${firstPid} pings=${readOptionalNumberFile(pingCounterFile)}`,
+					`toolRegistered=${pi.toolDefinitions.has("mcp_fx_tool_1")}`,
+				].join("\n");
+			},
 		);
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 		const result = await tool.execute("tc-keep-alive", { value: "recovered" }, undefined, undefined, testContext());
@@ -299,13 +310,19 @@ async function waitFor(assertion: () => boolean, timeoutMs: number): Promise<voi
 // Wait for a reconnect-driven recovery outcome. Unlike waitFor, this fails fast
 // when the reconnect circuit breaker opens ("suspended") instead of burning the
 // whole deadline, so an unrecoverable fixture surfaces as a breaker failure rather
-// than an opaque timeout.
-async function waitForRecovery(recovered: () => boolean, suspended: () => boolean, timeoutMs: number): Promise<void> {
+// than an opaque timeout; either failure carries a full lifecycle diagnostic dump.
+async function waitForRecovery(
+	recovered: () => boolean,
+	suspended: () => boolean,
+	timeoutMs: number,
+	diagnostics: () => string,
+): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
 		if (recovered()) return;
-		if (suspended()) throw new Error("reconnect circuit breaker opened before recovery (state=suspended)");
+		if (suspended())
+			throw new Error(`reconnect circuit breaker opened before recovery (state=suspended)\n${diagnostics()}`);
 		await delay(25);
 	}
-	throw new Error("keep-alive recovery timed out");
+	throw new Error(`keep-alive recovery timed out\n${diagnostics()}`);
 }
