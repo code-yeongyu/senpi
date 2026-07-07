@@ -180,7 +180,6 @@ export class ServerConnection {
 						serverName: this.serverName,
 					});
 					if (capturedError !== null) this.markDegraded(capturedError);
-					else if (this.#lastError === undefined) this.markDegraded(closeError);
 					return;
 				}
 				if (connection !== this.#connection && connection !== this.#pendingConnection) return;
