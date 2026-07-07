@@ -9,13 +9,11 @@ import type { McpLogger } from "./log.ts";
 import { delay, reapProcessTree } from "./process-tree.ts";
 import { type McpAsyncErrorSink, safeInterval, safeOn, safeTimer } from "./wrap.ts";
 
-export type McpTransportKind = "stdio" | "http";
-
 export type McpTransportConnection = {
 	readonly serverName: string;
 	readonly client: Client;
 	readonly transport: Transport;
-	readonly transportKind: McpTransportKind;
+	readonly transportKind: "stdio" | "http";
 	readonly connectTimeoutMs: number;
 	readonly asyncErrorSink: McpAsyncErrorSink;
 	captureRootPid?(): void;
@@ -32,14 +30,13 @@ export type CreateMcpTransportOptions = {
 };
 
 const SHUTDOWN_GRACE_MS = 100,
-	SHUTDOWN_TERM_WAIT_MS = 400;
-const SHUTDOWN_FINAL_WAIT_MS = 500,
+	SHUTDOWN_TERM_WAIT_MS = 400,
+	SHUTDOWN_FINAL_WAIT_MS = 500,
 	SHUTDOWN_CLOSE_WAIT_MS = 400;
 
 export function createMcpTransport(options: CreateMcpTransportOptions): McpTransportConnection {
-	const connectTimeoutMs = options.config.connectTimeoutMs ?? 15_000;
-	if (options.config.type === "stdio") return createStdioConnection(options, connectTimeoutMs);
-	return createHttpConnection(options, connectTimeoutMs);
+	if (options.config.type === "stdio") return createStdioConnection(options, options.config.connectTimeoutMs);
+	return createHttpConnection(options, options.config.connectTimeoutMs);
 }
 
 export async function connectMcpTransport(connection: McpTransportConnection): Promise<void> {
@@ -67,7 +64,7 @@ export async function connectMcpTransport(connection: McpTransportConnection): P
 			timeout: connection.connectTimeoutMs,
 		});
 	} catch (error) {
-		await shutdownMcpTransport(connection).catch((shutdownError: unknown) => ignoreShutdownError(shutdownError));
+		await shutdownMcpTransport(connection).catch(() => undefined);
 		if (timedOut) {
 			throw new TimeoutError(
 				`MCP server ${connection.serverName} timed out during connect after ${connection.connectTimeoutMs}ms`,
@@ -101,8 +98,7 @@ export async function shutdownMcpTransport(connection: McpTransportConnection): 
 }
 
 function createStdioConnection(options: CreateMcpTransportOptions, connectTimeoutMs: number): McpTransportConnection {
-	const command = options.config.command;
-	if (command === undefined || command.trim().length === 0) {
+	if (options.config.command === undefined || options.config.command.trim().length === 0) {
 		throw new ConnectError(`MCP server ${options.serverName} stdio command is required`, {
 			phase: "create",
 			serverName: options.serverName,
@@ -110,19 +106,17 @@ function createStdioConnection(options: CreateMcpTransportOptions, connectTimeou
 	}
 	const transport = new StdioClientTransport({
 		args: options.config.args,
-		command,
+		command: options.config.command,
 		cwd: options.config.cwd,
 		env: buildStdioEnv(options),
 		stderr: "pipe",
 	});
-	const asyncErrorSink: McpAsyncErrorSink = { logger: options.logger };
 	pipeStderr(transport, options.logger);
-	return createConnection(options.serverName, "stdio", transport, connectTimeoutMs, asyncErrorSink);
+	return createConnection(options.serverName, "stdio", transport, connectTimeoutMs, { logger: options.logger });
 }
 
 function createHttpConnection(options: CreateMcpTransportOptions, connectTimeoutMs: number): McpTransportConnection {
-	const rawUrl = options.config.url;
-	if (rawUrl === undefined || rawUrl.trim().length === 0) {
+	if (options.config.url === undefined || options.config.url.trim().length === 0) {
 		throw new ConnectError(`MCP server ${options.serverName} HTTP URL is required`, {
 			phase: "create",
 			serverName: options.serverName,
@@ -130,7 +124,7 @@ function createHttpConnection(options: CreateMcpTransportOptions, connectTimeout
 	}
 	let url: URL;
 	try {
-		url = new URL(rawUrl);
+		url = new URL(options.config.url);
 	} catch (error) {
 		throw new ConnectError(`MCP server ${options.serverName} HTTP URL is invalid: ${errorMessage(error)}`, {
 			cause: error,
@@ -148,7 +142,7 @@ function createHttpConnection(options: CreateMcpTransportOptions, connectTimeout
 
 function createConnection(
 	serverName: string,
-	transportKind: McpTransportKind,
+	transportKind: "stdio" | "http",
 	transport: Transport,
 	connectTimeoutMs: number,
 	asyncErrorSink: McpAsyncErrorSink,
@@ -204,7 +198,10 @@ function definedEnv(env: Record<string, string | undefined> | undefined): Record
 
 function buildHeaders(options: CreateMcpTransportOptions): Record<string, string> {
 	const headers = { ...(options.config.headers ?? {}) };
-	if (options.config.auth !== "bearer") return headers;
+	const shouldAttachBearer =
+		options.config.auth === "bearer" ||
+		(options.config.auth === undefined && options.config.bearerTokenEnv !== undefined);
+	if (!shouldAttachBearer) return headers;
 	const envName = options.config.bearerTokenEnv;
 	if (envName === undefined || envName.trim().length === 0) {
 		throw new AuthError(`MCP server ${options.serverName} bearer auth requires bearerTokenEnv`, {
@@ -257,22 +254,16 @@ function pipeStderr(transport: StdioClientTransport, logger: McpLogger): void {
 
 async function closeClientAndTransport(connection: McpTransportConnection): Promise<void> {
 	if (isTerminableHttpTransport(connection.transport)) {
-		await connection.transport.terminateSession().catch((error: unknown) => ignoreShutdownError(error));
+		await connection.transport.terminateSession().catch(() => undefined);
 	}
-	await connection.transport.close().catch((error: unknown) => ignoreShutdownError(error));
-	await connection.client.close().catch((error: unknown) => ignoreShutdownError(error));
+	await connection.transport.close().catch(() => undefined);
+	await connection.client.close().catch(() => undefined);
 }
 
-function isTerminableHttpTransport(transport: Transport): transport is Transport & TerminableHttpTransport {
-	return typeof (transport as Partial<TerminableHttpTransport>).terminateSession === "function";
-}
-
-interface TerminableHttpTransport {
-	terminateSession(): Promise<void>;
+function isTerminableHttpTransport(
+	transport: Transport,
+): transport is Transport & { terminateSession(): Promise<void> } {
+	return typeof (transport as Partial<{ terminateSession(): Promise<void> }>).terminateSession === "function";
 }
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
-
-function ignoreShutdownError(error: unknown): void {
-	void error;
-}
