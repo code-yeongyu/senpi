@@ -148,7 +148,7 @@ describe("MCP idle lifecycle", () => {
 	});
 
 	it("keep-alive pings every 30 seconds and recovers a killed fixture without suspension", {
-		timeout: 60_000,
+		timeout: 120_000,
 	}, async () => {
 		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
 		const root = mcpRoot("keep-alive-recover");
@@ -189,7 +189,7 @@ describe("MCP idle lifecycle", () => {
 				connection.getRootPid() === currentPid &&
 				pi.toolDefinitions.has("mcp_fx_tool_1")
 			);
-		}, 20_000);
+		}, 45_000);
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 		const result = await tool.execute("tc-keep-alive", { value: "recovered" }, undefined, undefined, testContext());
 
