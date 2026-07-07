@@ -1,0 +1,197 @@
+diff --git a/scripts/local-release.test.mjs b/scripts/local-release.test.mjs
+index 64d663659..c199391c0 100644
+--- a/scripts/local-release.test.mjs
++++ b/scripts/local-release.test.mjs
+@@ -1,8 +1,9 @@
+ #!/usr/bin/env node
+ import assert from "node:assert/strict";
+-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
++import { spawnSync } from "node:child_process";
++import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+ import { tmpdir } from "node:os";
+-import { join } from "node:path";
++import { delimiter, dirname, join, sep } from "node:path";
+ import { afterEach, describe, it } from "node:test";
+ import { run } from "./local-release.mjs";
+ 
+@@ -56,9 +57,104 @@ describe("Bun binary entry", () => {
+ describe("local release package list", () => {
+ 	it("builds and packs the pty workspace for bundled senpi installs", () => {
+ 		// Given
+-		const scriptSource = readFileSync(join(process.cwd(), "scripts/local-release.mjs"), "utf8");
++		tempDir = mkdtempSync(join(tmpdir(), "senpi-local-release-flow-"));
++		const repoRoot = join(tempDir, "repo");
++		const outDir = join(tempDir, "out");
++		const fakeNpmLog = join(tempDir, "fake-npm.jsonl");
++		const fakeNpm = join(tempDir, "bin", "npm");
++		writeFakeNpm(fakeNpm);
++		writeLocalReleaseFixture(repoRoot);
++
++		// When
++		const result = spawnSync(
++			process.execPath,
++			[join(process.cwd(), "scripts", "local-release.mjs"), "--skip-check", "--skip-install", "--out", outDir],
++			{
++				cwd: repoRoot,
++				encoding: "utf8",
++				env: {
++					...process.env,
++					PATH: `${dirname(fakeNpm)}${delimiter}${process.env.PATH ?? ""}`,
++					SENPI_FAKE_NPM_LOG: fakeNpmLog,
++				},
++			},
++		);
+ 
+ 		// Then
+-		assert.match(scriptSource, /directory: "packages\/pty", name: "@earendil-works\/pi-pty"/);
++		assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
++		const ptyDirectorySuffix = `${sep}packages${sep}pty`;
++		const npmCalls = readFileSync(fakeNpmLog, "utf8")
++			.trim()
++			.split("\n")
++			.map((line) => JSON.parse(line));
++		assert.ok(
++			npmCalls.some((call) => call.cwd.endsWith(ptyDirectorySuffix) && call.args.join(" ") === "run build"),
++			"expected local-release to build packages/pty",
++		);
++		assert.ok(
++			npmCalls.some((call) => call.cwd.endsWith(ptyDirectorySuffix) && call.args[0] === "pack"),
++			"expected local-release to pack packages/pty",
++		);
++		assert.equal(existsSync(join(outDir, "tarballs", "earendil-works-pi-pty-0.0.0.tgz")), true);
+ 	});
+ });
++
++function writeJson(path, value) {
++	mkdirSync(dirname(path), { recursive: true });
++	writeFileSync(path, `${JSON.stringify(value, undefined, "\t")}\n`);
++}
++
++function writeFakeNpm(path) {
++	mkdirSync(dirname(path), { recursive: true });
++	writeFileSync(
++		path,
++		[
++			"#!/usr/bin/env node",
++			'import { mkdirSync, readFileSync, writeFileSync } from "node:fs";',
++			'import { join } from "node:path";',
++			"const args = process.argv.slice(2);",
++			"if (process.env.SENPI_FAKE_NPM_LOG) {",
++			"  writeFileSync(process.env.SENPI_FAKE_NPM_LOG, `${JSON.stringify({ cwd: process.cwd(), args })}\\n`, { flag: 'a' });",
++			"}",
++			"if (args[0] === 'pack') {",
++			"  const destination = args[args.indexOf('--pack-destination') + 1];",
++			"  const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'));",
++			"  const filename = `${pkg.name.replace(/^@/, '').replaceAll('/', '-')}-${pkg.version}.tgz`;",
++			"  mkdirSync(destination, { recursive: true });",
++			"  writeFileSync(join(destination, filename), 'fake tarball');",
++			"  process.stdout.write(JSON.stringify([{ filename, files: [] }]));",
++			"}",
++			"",
++		].join("\n"),
++	);
++	chmodSync(path, 0o755);
++}
++
++function writeLocalReleaseFixture(repoRoot) {
++	writeJson(join(repoRoot, "package.json"), { name: "senpi-monorepo", private: true });
++	writeJson(join(repoRoot, "packages", "coding-agent", "npm-shrinkwrap.json"), {
++		lockfileVersion: 3,
++		packages: {},
++	});
++	for (const [directory, name] of [
++		["packages/ai", "@earendil-works/pi-ai"],
++		["packages/pty", "@earendil-works/pi-pty"],
++		["packages/tui", "@earendil-works/pi-tui"],
++		["packages/agent", "@earendil-works/pi-agent-core"],
++		["packages/coding-agent", "@code-yeongyu/senpi"],
++		["packages/orchestrator", "@code-yeongyu/senpi-orchestrator"],
++	]) {
++		writeJson(join(repoRoot, directory, "package.json"), { name, version: "0.0.0" });
++		mkdirSync(join(repoRoot, directory, "dist"), { recursive: true });
++		writeFileSync(join(repoRoot, directory, "dist", "index.js"), "");
++	}
++
++	const nativeTarget = `${process.platform}-${process.arch}`;
++	mkdirSync(join(repoRoot, "packages", "pty", "native"), { recursive: true });
++	writeFileSync(join(repoRoot, "packages", "pty", "native", "index.js"), "");
++	mkdirSync(join(repoRoot, "packages", "pty", "native", "prebuilds", nativeTarget), { recursive: true });
++	writeFileSync(
++		join(repoRoot, "packages", "pty", "native", "prebuilds", nativeTarget, `senpi_pty.${nativeTarget}.node`),
++		"",
++	);
++}
+diff --git a/scripts/release.test.mjs b/scripts/release.test.mjs
+index f42a6720d..b11008a91 100644
+--- a/scripts/release.test.mjs
++++ b/scripts/release.test.mjs
+@@ -1,20 +1,66 @@
+ #!/usr/bin/env node
+ import assert from "node:assert/strict";
+-import { describe, it } from "node:test";
++import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { dirname, join } from "node:path";
++import { afterEach, describe, it } from "node:test";
+ import {
+ 	DEFAULT_UNRELEASED_SUBSECTIONS,
+ 	buildUnreleasedBlock,
+ 	insertUnreleasedBlock,
+ 	resolveNextUnreleasedSubsections,
+ } from "./release-changelog.mjs";
+-import { WORKSPACE_PACKAGES } from "./release-packages.mjs";
++import { applyWorkspaceVersions } from "./release-packages.mjs";
++
++let tempDir;
++
++afterEach(() => {
++	if (tempDir) {
++		rmSync(tempDir, { recursive: true, force: true });
++		tempDir = undefined;
++	}
++});
+ 
+ describe("release package versioning", () => {
+ 	it("updates the pty workspace during lockstep releases", () => {
+-		assert.ok(WORKSPACE_PACKAGES.includes("packages/pty/package.json"));
++		// Given
++		tempDir = mkdtempSync(join(tmpdir(), "senpi-release-versioning-"));
++		for (const file of [
++			"packages/ai/package.json",
++			"packages/agent/package.json",
++			"packages/coding-agent/package.json",
++			"packages/orchestrator/package.json",
++			"packages/pty/package.json",
++			"packages/tui/package.json",
++			"packages/web-ui/package.json",
++		]) {
++			writeJson(join(tempDir, file), { name: file, version: "0.0.0" });
++		}
++		const previousCwd = process.cwd();
++		const logs = [];
++
++		try {
++			// When
++			process.chdir(tempDir);
++			applyWorkspaceVersions("2099.1.2", false, (message) => logs.push(message), assert.fail);
++		} finally {
++			process.chdir(previousCwd);
++		}
++
++		// Then
++		const ptyPackage = JSON.parse(
++			readFileSync(join(tempDir, "packages", "pty", "package.json"), "utf8"),
++		);
++		assert.equal(ptyPackage.version, "2099.1.2");
++		assert.ok(logs.includes("  packages/pty/package.json: 0.0.0 -> 2099.1.2"));
+ 	});
+ });
+ 
++function writeJson(path, value) {
++	mkdirSync(dirname(path), { recursive: true });
++	writeFileSync(path, `${JSON.stringify(value, undefined, "\t")}\n`);
++}
++
+ describe("release changelog bookkeeping", () => {
+ 	it("recreates the standard next-cycle section when no previous Unreleased block was captured", () => {
+ 		// Given

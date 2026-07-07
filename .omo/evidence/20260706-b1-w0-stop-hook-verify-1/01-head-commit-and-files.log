@@ -1,0 +1,60 @@
+$ git log -1 --oneline && git show --name-only --format=fuller HEAD
+9bedfb2b8 fix(pty): align native prebuild loading with packaged layout
+commit 9bedfb2b8f7cf0a0f7848b3dfc1191ff7b35c12e
+Author:     YeonGyu-Kim <code.yeon.gyu@gmail.com>
+AuthorDate: Mon Jul 6 19:07:57 2026 +0900
+Commit:     YeonGyu-Kim <code.yeon.gyu@gmail.com>
+CommitDate: Mon Jul 6 19:07:57 2026 +0900
+
+    fix(pty): align native prebuild loading with packaged layout
+
+.omo/evidence/20260706-b1-w0-audit-fix/00-code-review-slop-evidence.md
+.omo/evidence/20260706-b1-w0-audit-fix/00-script-smoke.log
+.omo/evidence/20260706-b1-w0-audit-fix/01-pty-build.log
+.omo/evidence/20260706-b1-w0-audit-fix/02-node-public-loader-probe.log
+.omo/evidence/20260706-b1-w0-audit-fix/02b-node-public-loader-probe-final.log
+.omo/evidence/20260706-b1-w0-audit-fix/03-bun-public-loader-probe.log
+.omo/evidence/20260706-b1-w0-audit-fix/03b-bun-public-loader-probe-final.log
+.omo/evidence/20260706-b1-w0-audit-fix/04-cargo-clippy.log
+.omo/evidence/20260706-b1-w0-audit-fix/05-loader-focused-vitest.log
+.omo/evidence/20260706-b1-w0-audit-fix/06-prebuild-freshness-unit.log
+.omo/evidence/20260706-b1-w0-audit-fix/07-cargo-test-senpi-pty.log
+.omo/evidence/20260706-b1-w0-audit-fix/08-npm-test-pty.log
+.omo/evidence/20260706-b1-w0-audit-fix/09-check-prebuild.log
+.omo/evidence/20260706-b1-w0-audit-fix/09a-check-prebuild-update.log
+.omo/evidence/20260706-b1-w0-audit-fix/09b-check-prebuild-final.log
+.omo/evidence/20260706-b1-w0-audit-fix/10-npm-pack-dry-run.log
+.omo/evidence/20260706-b1-w0-audit-fix/10b-npm-pack-dry-run-final.log
+.omo/evidence/20260706-b1-w0-audit-fix/11-npm-run-check.log
+.omo/evidence/20260706-b1-w0-audit-fix/12-pty-build-after-session-cleanup.log
+.omo/evidence/20260706-b1-w0-audit-fix/13-npm-test-pty-after-session-cleanup.log
+.omo/evidence/20260706-b1-w0-audit-fix/14-pty-build-after-registry-cleanup.log
+.omo/evidence/20260706-b1-w0-audit-fix/15-npm-test-pty-after-registry-cleanup.log
+.omo/evidence/20260706-b1-w0-audit-fix/16-pty-build-final.log
+.omo/evidence/20260706-b1-w0-audit-fix/17-npm-test-pty-final.log
+.omo/evidence/20260706-b1-w0-audit-fix/18-pty-build-after-runtime-type.log
+.omo/evidence/20260706-b1-w0-audit-fix/19-node-public-loader-probe-final2.log
+.omo/evidence/20260706-b1-w0-audit-fix/20-bun-public-loader-probe-final2.log
+.omo/evidence/20260706-b1-w0-audit-fix/21-cargo-clippy-final.log
+.omo/evidence/20260706-b1-w0-audit-fix/22-cargo-test-final.log
+.omo/evidence/20260706-b1-w0-audit-fix/23-npm-test-pty-final2.log
+.omo/evidence/20260706-b1-w0-audit-fix/24-pty-build-final2.log
+.omo/evidence/20260706-b1-w0-audit-fix/25-check-prebuild-final2.log
+.omo/evidence/20260706-b1-w0-audit-fix/25a-check-prebuild-update-final2.log
+.omo/evidence/20260706-b1-w0-audit-fix/25b-check-prebuild-final3.log
+.omo/evidence/20260706-b1-w0-audit-fix/26-npm-pack-dry-run-final2.log
+.omo/evidence/20260706-b1-w0-audit-fix/27-node-public-loader-probe-final3.log
+.omo/evidence/20260706-b1-w0-audit-fix/28-bun-public-loader-probe-final3.log
+.omo/evidence/20260706-b1-w0-audit-fix/29-npm-pack-dry-run-final3.log
+.omo/evidence/20260706-b1-w0-audit-fix/30-fresh-copy-cargo-build-locked.log
+.omo/evidence/20260706-b1-w0-audit-fix/31-npm-run-check-final.log
+.omo/evidence/20260706-b1-w0-audit-fix/DONECLAIM.md
+.omo/plans/persistent-terminal-tool.md
+Cargo.lock
+crates/senpi-pty/src/lib.rs
+packages/pty/README.md
+packages/pty/native/prebuilds/darwin-arm64/senpi_pty.darwin-arm64.node
+scripts/check-pty-prebuild-fresh.test.mjs
+scripts/devenv-setup.mjs
+
+exit=0

@@ -38,12 +38,17 @@ describe("sync-versions", () => {
 				name: "@earendil-works/pi-tui",
 				version: "2026.5.19",
 			});
+			writePackage(packagesDir, "pty", {
+				name: "@earendil-works/pi-pty",
+				version: "2026.5.19",
+			});
 			writePackage(packagesDir, "web-ui", {
 				name: "@earendil-works/pi-web-ui",
 				version: "2026.5.19",
 				dependencies: {
 					"@earendil-works/pi-agent-core": "^0.74.0",
 					"@earendil-works/pi-ai": "^0.74.0",
+					"@earendil-works/pi-pty": "^0.74.0",
 					"@earendil-works/pi-tui": "^0.74.0",
 				},
 			});
@@ -53,6 +58,7 @@ describe("sync-versions", () => {
 				dependencies: {
 					"@earendil-works/pi-agent-core": "^0.74.0",
 					"@earendil-works/pi-ai": "^0.74.0",
+					"@earendil-works/pi-pty": "^0.74.0",
 					"@earendil-works/pi-tui": "^0.74.0",
 				},
 			});
@@ -68,6 +74,7 @@ describe("sync-versions", () => {
 			assert.deepEqual(senpiPackage.dependencies, {
 				"@earendil-works/pi-agent-core": "^2026.5.19",
 				"@earendil-works/pi-ai": "^2026.5.19",
+				"@earendil-works/pi-pty": "^2026.5.19",
 				"@earendil-works/pi-tui": "^2026.5.19",
 			});
 		} finally {

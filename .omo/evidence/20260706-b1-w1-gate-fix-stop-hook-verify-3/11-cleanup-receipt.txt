@@ -1,0 +1,7 @@
+$ test ! -e /tmp/w1-stop-hook-public-pty-probe-3.mts
+removed: /tmp/w1-stop-hook-public-pty-probe-3.mts
+
+$ ps -axo pid=,command= | awk <W1 QA process filter>
+no matching W1 QA processes remain
+
+No tmux or browser sessions were started for this third stop-hook verification.

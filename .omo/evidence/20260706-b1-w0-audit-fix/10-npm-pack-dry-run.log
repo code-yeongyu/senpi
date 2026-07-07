@@ -1,0 +1,189 @@
+$ npm pack --dry-run --workspace @earendil-works/pi-pty --json
+[
+  {
+    "id": "@earendil-works/pi-pty@2026.7.5-2",
+    "name": "@earendil-works/pi-pty",
+    "version": "2026.7.5-2",
+    "size": 250974,
+    "unpackedSize": 711009,
+    "shasum": "e6d1dc1547b5682c24fcce8cd13ce997b63ecfb5",
+    "integrity": "sha512-ETqcThzty4prrEPxXk9ECao6XNZqnpc2Q26do3oCJLFP3z6tt4RGGsLbbQlyrUw67tuDTLaKSKTsqXTq+AF7zg==",
+    "filename": "earendil-works-pi-pty-2026.7.5-2.tgz",
+    "files": [
+      {
+        "path": "README.md",
+        "size": 402,
+        "mode": 420
+      },
+      {
+        "path": "dist/index.d.ts",
+        "size": 1179,
+        "mode": 420
+      },
+      {
+        "path": "dist/index.d.ts.map",
+        "size": 835,
+        "mode": 420
+      },
+      {
+        "path": "dist/index.js",
+        "size": 534,
+        "mode": 420
+      },
+      {
+        "path": "dist/index.js.map",
+        "size": 1765,
+        "mode": 420
+      },
+      {
+        "path": "dist/loader.d.ts",
+        "size": 1997,
+        "mode": 420
+      },
+      {
+        "path": "dist/loader.d.ts.map",
+        "size": 1792,
+        "mode": 420
+      },
+      {
+        "path": "dist/loader.js",
+        "size": 4523,
+        "mode": 420
+      },
+      {
+        "path": "dist/loader.js.map",
+        "size": 10226,
+        "mode": 420
+      },
+      {
+        "path": "dist/native-loader.d.ts",
+        "size": 395,
+        "mode": 420
+      },
+      {
+        "path": "dist/native-loader.d.ts.map",
+        "size": 337,
+        "mode": 420
+      },
+      {
+        "path": "dist/native-loader.js",
+        "size": 189,
+        "mode": 420
+      },
+      {
+        "path": "dist/native-loader.js.map",
+        "size": 623,
+        "mode": 420
+      },
+      {
+        "path": "dist/pipe-fallback.d.ts",
+        "size": 2402,
+        "mode": 420
+      },
+      {
+        "path": "dist/pipe-fallback.d.ts.map",
+        "size": 2276,
+        "mode": 420
+      },
+      {
+        "path": "dist/pipe-fallback.js",
+        "size": 6921,
+        "mode": 420
+      },
+      {
+        "path": "dist/pipe-fallback.js.map",
+        "size": 14923,
+        "mode": 420
+      },
+      {
+        "path": "dist/registry.d.ts",
+        "size": 4622,
+        "mode": 420
+      },
+      {
+        "path": "dist/registry.d.ts.map",
+        "size": 4496,
+        "mode": 420
+      },
+      {
+        "path": "dist/registry.js",
+        "size": 10831,
+        "mode": 420
+      },
+      {
+        "path": "dist/registry.js.map",
+        "size": 26005,
+        "mode": 420
+      },
+      {
+        "path": "dist/screen.d.ts",
+        "size": 984,
+        "mode": 420
+      },
+      {
+        "path": "dist/screen.d.ts.map",
+        "size": 1105,
+        "mode": 420
+      },
+      {
+        "path": "dist/screen.js",
+        "size": 5476,
+        "mode": 420
+      },
+      {
+        "path": "dist/screen.js.map",
+        "size": 11879,
+        "mode": 420
+      },
+      {
+        "path": "dist/session.d.ts",
+        "size": 4318,
+        "mode": 420
+      },
+      {
+        "path": "dist/session.d.ts.map",
+        "size": 4178,
+        "mode": 420
+      },
+      {
+        "path": "dist/session.js",
+        "size": 12203,
+        "mode": 420
+      },
+      {
+        "path": "dist/session.js.map",
+        "size": 28716,
+        "mode": 420
+      },
+      {
+        "path": "native/check-prebuild-fresh.mjs",
+        "size": 5194,
+        "mode": 420
+      },
+      {
+        "path": "native/index.d.ts",
+        "size": 587,
+        "mode": 420
+      },
+      {
+        "path": "native/index.js",
+        "size": 812,
+        "mode": 420
+      },
+      {
+        "path": "native/prebuilds/darwin-arm64/senpi_pty.darwin-arm64.node",
+        "size": 537056,
+        "mode": 493
+      },
+      {
+        "path": "package.json",
+        "size": 1228,
+        "mode": 420
+      }
+    ],
+    "entryCount": 34,
+    "bundled": []
+  }
+]
+
+exit=0

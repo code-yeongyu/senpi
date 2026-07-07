@@ -1,0 +1,85 @@
+$ find .omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify -maxdepth 1 -type f -print | sort
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify/01-state-and-commit.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify/02-evidence-presence.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify/03-loc-check.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify/04-cargo-test-senpi-pty-locked.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify/05-cargo-clippy-senpi-pty-all-targets.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify/06-npm-test-pi-pty.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify/07-npm-check-prebuild-pi-pty.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify/08-npm-run-check.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify/09-node-raw-native-lifecycle.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify/10-node-public-create-terminal-session.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify/11-cleanup-receipt.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify/12-git-status-after-verify.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify/SUMMARY.md
+
+$ empty file scan
+
+$ git status --short
+?? .omo/evidence/20260706-b1-audit-w0-foundations.md
+?? .omo/evidence/20260706-b1-audit-w1-native-core-retry.md
+?? .omo/evidence/20260706-b1-audit-w1-native-core.md
+?? .omo/evidence/20260706-b1-audit-w2-runtime-retry.md
+?? .omo/evidence/20260706-b1-audit-w2-runtime.md
+?? .omo/evidence/20260706-b1-audit-w6-packaging-retry.md
+?? .omo/evidence/20260706-b1-audit-w6-packaging.md
+?? .omo/evidence/20260706-b1-final-audit-w0.md
+?? .omo/evidence/20260706-b1-final-audit-w6.md
+?? .omo/evidence/20260706-b1-final-verification-qa/
+?? .omo/evidence/20260706-b1-todo1-stop-hook-2/
+?? .omo/evidence/20260706-b1-todo1-stop-hook-3/
+?? .omo/evidence/20260706-b1-todo1-stop-hook/
+?? .omo/evidence/20260706-b1-todo13-stop-hook-verify-2/
+?? .omo/evidence/20260706-b1-todo13-stop-hook-verify-3/
+?? .omo/evidence/20260706-b1-todo13-stop-hook-verify/
+?? .omo/evidence/20260706-b1-todo15-stop-hook-verify-2/
+?? .omo/evidence/20260706-b1-todo15-stop-hook-verify-3/
+?? .omo/evidence/20260706-b1-todo15-stop-hook-verify/
+?? .omo/evidence/20260706-b1-todo30-stop-hook-verify-2/
+?? .omo/evidence/20260706-b1-todo30-stop-hook-verify-3/
+?? .omo/evidence/20260706-b1-todo30-stop-hook-verify/
+?? .omo/evidence/20260706-b1-todo31-stop-hook-verify-2/
+?? .omo/evidence/20260706-b1-todo31-stop-hook-verify-3/
+?? .omo/evidence/20260706-b1-todo31-stop-hook-verify/
+?? .omo/evidence/20260706-b1-todo9-stop-hook-verify-2/
+?? .omo/evidence/20260706-b1-todo9-stop-hook-verify-3/
+?? .omo/evidence/20260706-b1-todo9-stop-hook-verify/
+?? .omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify/
+?? .omo/evidence/20260706-b1-w1-gate-fix/17-git-status-after-commit.txt
+?? .omo/evidence/20260706-b1-w1-gate-fix/18-commit-receipt.txt
+?? .omo/evidence/20260706-b1-w2-runtime-stop-hook-verify-2/
+?? .omo/evidence/20260706-b1-w2-runtime-stop-hook-verify-3/
+?? .omo/evidence/20260706-b1-w2-runtime-stop-hook-verify/
+?? .omo/evidence/20260706-b1-w6-packaging-stop-hook-2/
+?? .omo/evidence/20260706-b1-w6-packaging-stop-hook-3/
+?? .omo/evidence/20260706-b1-w6-packaging-stop-hook/
+?? .omo/evidence/20260706-check-prebuild-stop-hook-verify/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-11-loader-stop-hook-2/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-11-loader-stop-hook-3/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-11-loader-stop-hook/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-12-gate-fix-stop-hook-verify-2/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-12-gate-fix-stop-hook-verify-3/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-12-gate-fix-stop-hook-verify/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-12-gate-review.md
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-12-stop-hook-verification-2/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-12-stop-hook-verification-3/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-12-stop-hook-verification/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-14-screen-model-fix/summary.md
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-14-stop-hook-verification-1/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-14-stop-hook-verification-2/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-14-stop-hook-verification-3/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-2-stop-hook-verification-2/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-2-stop-hook-verification-3/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-2-stop-hook-verification/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-3-native-workflow-stop-hook-2/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-3-native-workflow-stop-hook-3/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-3-native-workflow-stop-hook/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-4-infra-sync-stop-hook-2/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-4-infra-sync-stop-hook-3/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-4-infra-sync-stop-hook/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-6-7-stop-hook-2/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-6-7-stop-hook-3/
+?? .omo/evidence/20260706-persistent-terminal-b1/todo-6-7-stop-hook/
+?? .omo/evidence/20260706-w1-native-audit-stop-hook-verify-1/
+?? .omo/evidence/20260706-w1-native-audit-stop-hook-verify-2/
+?? .omo/evidence/20260706-w1-native-audit-stop-hook-verify-3/

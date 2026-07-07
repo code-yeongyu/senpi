@@ -1,0 +1,4 @@
+SyntaxError: Export named 'loadPtyNative' not found in module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/packages/pty/dist/loader.js'.
+
+Bun v1.3.14 (macOS arm64)
+exit=1

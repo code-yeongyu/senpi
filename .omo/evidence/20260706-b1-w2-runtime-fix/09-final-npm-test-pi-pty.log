@@ -1,0 +1,12 @@
+
+> @earendil-works/pi-pty@2026.7.5-2 test
+> vitest --run test
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/packages/pty
+
+
+ Test Files  5 passed (5)
+      Tests  31 passed (31)
+   Start at  19:03:28
+   Duration  1.72s (transform 158ms, setup 0ms, import 208ms, tests 2.05s, environment 0ms)

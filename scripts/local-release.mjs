@@ -9,6 +9,7 @@ import { prepareSenpiBundledWorkspaces } from "./prepare-senpi-bundled-workspace
 
 const packages = [
 	{ directory: "packages/ai", name: "@earendil-works/pi-ai" },
+	{ directory: "packages/pty", name: "@earendil-works/pi-pty" },
 	{ directory: "packages/tui", name: "@earendil-works/pi-tui" },
 	{ directory: "packages/agent", name: "@earendil-works/pi-agent-core" },
 	{ directory: "packages/senpi-codemode", name: "@code-yeongyu/senpi-codemode" },

@@ -1,0 +1,5 @@
+$ command -v bun && bun --eval <loadPtyNative public probe>
+/Users/yeongyu/.bun/bin/bun
+{"exports":["PtySession","__senpiPtyV2026_7_5","startPtySession","version"],"ptySessionType":"function"}
+
+exit=0

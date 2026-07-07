@@ -1,0 +1,6 @@
+$ git log -3 --oneline && git status --short -- packages/pty/native/prebuilds/darwin-arm64/senpi_pty.darwin-arm64.node
+baf83df69 fix(pty): address W1 native audit blockers
+ed67974a8 fix(coding-agent): require bundled pty native prebuild
+9bedfb2b8 fix(pty): align native prebuild loading with packaged layout
+
+exit=0

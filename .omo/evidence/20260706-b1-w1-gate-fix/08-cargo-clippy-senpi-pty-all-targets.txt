@@ -1,0 +1,2 @@
+$ cargo clippy -p senpi-pty --all-targets --locked -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s

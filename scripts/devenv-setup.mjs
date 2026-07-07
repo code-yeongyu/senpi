@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @allow SIZE_OK: One bootstrap entry point keeps harness setup auditable; split if it grows beyond runtime/deps/native/credential wiring.
 /**
  * Universal, idempotent dev-environment setup for senpi.
  *
@@ -10,7 +11,9 @@
  * Safe to run repeatedly: every step checks before it acts.
  *
  * Flags:
+ *   --help         show this help
  *   --no-install   skip `npm install` steps (just wire config + .env.local)
+ *   --with-native run optional Rust native setup/build using rust-toolchain.toml
  *   --quiet        less chatter
  */
 
@@ -24,12 +27,41 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const args = new Set(process.argv.slice(2));
 const QUIET = args.has("--quiet");
 const NO_INSTALL = args.has("--no-install");
+const WITH_NATIVE = args.has("--with-native");
 const isWindows = process.platform === "win32";
+const VALID_ARGS = new Set(["--help", "--no-install", "--quiet", "--with-native"]);
 
 const log = (msg) => {
 	if (!QUIET) process.stdout.write(`${msg}\n`);
 };
 const warn = (msg) => process.stdout.write(`! ${msg}\n`);
+const fail = (msg) => {
+	warn(msg);
+	process.exit(1);
+};
+
+function printHelp() {
+	process.stdout.write(`Usage: node scripts/devenv-setup.mjs [--no-install] [--with-native] [--quiet]
+
+Default setup uses npm prebuilt artifacts and does not require Rust.
+
+Options:
+  --no-install     Skip npm install steps; still wire config and .env.local.
+  --with-native   Install the pinned Rust toolchain with rustup when available,
+                  then build/check native Rust workspace files if present.
+  --quiet         Reduce setup output.
+  --help          Show this help.
+`);
+}
+
+if (args.has("--help")) {
+	printHelp();
+	process.exit(0);
+}
+
+for (const arg of args) {
+	if (!VALID_ARGS.has(arg)) fail(`Unknown option: ${arg}. Run with --help for usage.`);
+}
 
 // The provider keys senpi reads (see packages/ai/src/env-api-keys.ts). The first
 // one present in the environment is what we seed .env.local with.
@@ -56,6 +88,10 @@ function hasCmd(cmd) {
 function npm(cwd, npmArgs) {
 	const bin = isWindows ? "npm.cmd" : "npm";
 	execFileSync(bin, npmArgs, { cwd, stdio: "inherit" });
+}
+
+function run(cmd, cmdArgs, options = {}) {
+	execFileSync(cmd, cmdArgs, { stdio: "inherit", ...options });
 }
 
 // 1. Runtime prerequisites -------------------------------------------------
@@ -101,6 +137,61 @@ function installDeps() {
 			warn("senpi-qa skill deps failed to install (node-pty native build). TUI QA falls back to tmux on POSIX.");
 		}
 	}
+}
+
+function readRustToolchain() {
+	const toolchainPath = join(ROOT, "rust-toolchain.toml");
+	if (!existsSync(toolchainPath)) {
+		return undefined;
+	}
+	const text = readFileSync(toolchainPath, "utf8");
+	const channel = text.match(/^\s*channel\s*=\s*"([^"]+)"/m)?.[1];
+	const profile = text.match(/^\s*profile\s*=\s*"([^"]+)"/m)?.[1] ?? "minimal";
+	const componentsText = text.match(/^\s*components\s*=\s*\[([^\]]*)\]/m)?.[1] ?? "";
+	const components = Array.from(componentsText.matchAll(/"([^"]+)"/g), (match) => match[1]);
+	return { channel, profile, components };
+}
+
+function ensureRustToolchain() {
+	const toolchain = readRustToolchain();
+	if (!toolchain?.channel) {
+		fail("Native setup requested, but rust-toolchain.toml is missing or has no channel.");
+	}
+	if (!hasCmd("rustup")) {
+		if (hasCmd("cargo") && hasCmd("rustc")) {
+			warn("rustup not found; using existing cargo/rustc. Install rustup to enforce rust-toolchain.toml exactly.");
+			return;
+		}
+		fail(
+			`Native setup requested, but Rust is not available. Install rustup, then run: rustup toolchain install ${toolchain.channel} --profile ${toolchain.profile}`,
+		);
+	}
+
+	const installArgs = ["toolchain", "install", toolchain.channel, "--profile", toolchain.profile];
+	for (const component of toolchain.components) {
+		installArgs.push("--component", component);
+	}
+	log(`Installing pinned Rust toolchain from rust-toolchain.toml (${toolchain.channel})...`);
+	run("rustup", installArgs, { cwd: ROOT });
+}
+
+function buildNativeRust() {
+	if (!WITH_NATIVE) {
+		log("Skipping Rust native setup (default prebuilt/no-Rust path). Use --with-native to opt in.");
+		return;
+	}
+
+	ensureRustToolchain();
+
+	if (!existsSync(join(ROOT, "Cargo.toml"))) {
+		log("No root Cargo.toml found; Rust toolchain is ready, native Rust build skipped.");
+		return;
+	}
+
+	log("Building native Rust workspace...");
+	run("cargo", ["build", "--workspace", "--all-targets"], { cwd: ROOT });
+	run("cargo", ["fmt", "--all", "--", "--check"], { cwd: ROOT });
+	run("cargo", ["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"], { cwd: ROOT });
 }
 
 function checkWorkspaceDependencyPins() {
@@ -189,6 +280,7 @@ async function main() {
 	log("=== senpi dev environment setup ===");
 	checkRuntime();
 	installDeps();
+	buildNativeRust();
 	checkWorkspaceDependencyPins();
 	await ensureEnvLocal();
 	ensureClaudeSkills();

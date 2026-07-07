@@ -1,0 +1,18 @@
+$ /opt/homebrew/Cellar/node/26.0.0/bin/node /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/senpi-local-release-pack-6uG84T/large-pack-output.mjs
+▶ local-release command runner
+  ✔ captures large npm pack JSON output (58.892875ms)
+✔ local-release command runner (59.397625ms)
+▶ Bun binary entry
+  ✔ routes directly to the full CLI instead of the Node wrapper (0.246791ms)
+✔ Bun binary entry (0.293583ms)
+▶ local release package list
+  ✔ builds and packs the pty workspace for bundled senpi installs (1191.434208ms)
+✔ local release package list (1191.529167ms)
+ℹ tests 3
+ℹ suites 3
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1325.255333

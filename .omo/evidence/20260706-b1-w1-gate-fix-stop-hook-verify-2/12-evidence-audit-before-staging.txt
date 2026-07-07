@@ -1,0 +1,19 @@
+$ find .omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-2 -maxdepth 1 -type f -print | sort
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-2/01-state-and-commits.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-2/02-loc-check.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-2/03-evidence-presence.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-2/04-cargo-test-senpi-pty-locked.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-2/05-cargo-clippy-senpi-pty-all-targets.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-2/06-npm-test-pi-pty.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-2/07-npm-check-prebuild-pi-pty.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-2/08-npm-run-check.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-2/09-node-raw-native-lifecycle.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-2/10-node-public-create-terminal-session.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-2/11-cleanup-receipt.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-2/12-evidence-audit-before-staging.txt
+.omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-2/SUMMARY.md
+
+$ empty file scan
+
+$ git status --short -- .omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-2
+?? .omo/evidence/20260706-b1-w1-gate-fix-stop-hook-verify-2/

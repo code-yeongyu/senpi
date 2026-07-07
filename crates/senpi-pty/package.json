@@ -1,0 +1,23 @@
+{
+  "name": "@earendil-works/senpi-pty-native",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./senpi_pty.node",
+  "scripts": {
+    "build": "napi build --platform"
+  },
+  "napi": {
+    "binaryName": "senpi_pty",
+    "targets": [
+      "aarch64-apple-darwin",
+      "x86_64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-pc-windows-msvc",
+      "aarch64-pc-windows-msvc"
+    ]
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "3.7.2"
+  }
+}

@@ -1,0 +1,95 @@
+$ npm test --workspace @earendil-works/pi-pty
+
+> @earendil-works/pi-pty@2026.7.5-2 test
+> vitest --run test
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/packages/pty
+
+ ❯ test/loader.test.ts (7 tests | 1 failed) 7ms
+     × loads the first host prebuild whose sentinel export is valid 4ms
+ ❯ test/registry.test.ts (5 tests | 1 failed) 6ms
+     × keeps a stopped-but-live session in stopping state until exit is observed 3ms
+ ❯ test/session.test.ts (4 tests | 1 failed) 100ms
+     × wraps injected native sessions and normalizes native exits 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/loader.test.ts > loadNativePty > loads the first host prebuild whose sentinel export is valid
+AssertionError: expected { …(2) } to be { …(2) } // Object.is equality
+
+If it should pass with deep equality, replace "toBe" with "toStrictEqual"
+
+Expected: { …(2) }
+Received: serializes to the same string
+
+
+Compared values have no visual difference.
+
+ ❯ test/loader.test.ts:58:25
+     56|   });
+     57|
+     58|   expect(result.native).toBe(native);
+       |                         ^
+     59|   expect(result.diagnostic).toBeNull();
+     60|   expect(attempted).toEqual([candidate(host)]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  test/registry.test.ts > SessionRegistry > keeps a stopped-but-live session in stopping state until exit is observed
+AssertionError: expected 'exited' to be 'stopping' // Object.is equality
+
+Expected: "stopping"
+Received: "exited"
+
+ ❯ test/registry.test.ts:165:27
+    163|
+    164|   expect(session.stopCalled).toBe(true);
+    165|   expect(stopping?.state).toBe("stopping");
+       |                           ^
+    166|   expect(stopping?.exitedAt).toBeNull();
+    167|   expect(exited?.state).toBe("exited");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  test/session.test.ts > TerminalSession > wraps injected native sessions and normalizes native exits
+AssertionError: expected { backend: 'pipe-fallback', …(5) } to deeply equal { backend: 'native', …(4) }
+
+- Expected
++ Received
+
+  {
+-   "backend": "native",
++   "backend": "pipe-fallback",
+    "cancelled": true,
++   "error": undefined,
+    "exitCode": 0,
+    "signal": null,
+    "timedOut": false,
+  }
+
+ ❯ test/session.test.ts:149:16
+    147|   expect(kills).toEqual(["SIGTERM"]);
+    148|   expect(Buffer.concat(chunks).toString("utf8")).toBe("native-data");
+    149|   expect(exit).toEqual({ ...nativeExit, cancelled: true });
+       |                ^
+    150|   expect(session.rawTail.toString("utf8")).toBe("native-data");
+    151|  });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  3 failed | 2 passed (5)
+      Tests  3 failed | 28 passed (31)
+   Start at  19:00:49
+   Duration  1.75s (transform 151ms, setup 0ms, import 205ms, tests 2.08s, environment 0ms)
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path /Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/packages/pty
+npm error workspace @earendil-works/pi-pty@2026.7.5-2
+npm error location /Volumes/mengmotaStorage/local-workspaces/senpi-wt/persistent-terminal-b1/packages/pty
+npm error command failed
+npm error command sh -c vitest --run test
+
+exit=1

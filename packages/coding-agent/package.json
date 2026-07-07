@@ -47,6 +47,7 @@
 		"@code-yeongyu/senpi-codemode": "^2026.7.5-2",
 		"@earendil-works/pi-agent-core": "^2026.7.5-2",
 		"@earendil-works/pi-ai": "^2026.7.5-2",
+		"@earendil-works/pi-pty": "^2026.7.5-2",
 		"@earendil-works/pi-tui": "^2026.7.5-2",
 		"@mistralai/mistralai": "2.2.6",
 		"@modelcontextprotocol/sdk": "1.29.0",
@@ -85,6 +86,7 @@
 		"@code-yeongyu/senpi-codemode",
 		"@earendil-works/pi-agent-core",
 		"@earendil-works/pi-ai",
+		"@earendil-works/pi-pty",
 		"@earendil-works/pi-tui"
 	],
 	"overrides": {
@@ -134,6 +136,7 @@
 		"@code-yeongyu/senpi-codemode",
 		"@earendil-works/pi-agent-core",
 		"@earendil-works/pi-ai",
+		"@earendil-works/pi-pty",
 		"@earendil-works/pi-tui"
 	]
 }
