@@ -30,7 +30,14 @@ import type {
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
 import { prepareAgentToolCall } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@earendil-works/pi-ai/compat";
+import type {
+	AssistantMessage,
+	ImageContent,
+	Message,
+	Model,
+	SimpleStreamOptions,
+	TextContent,
+} from "@earendil-works/pi-ai/compat";
 import {
 	cleanupSessionResources,
 	isContextOverflow,
@@ -1631,6 +1638,7 @@ export class AgentSession {
 				model,
 				auth,
 				sessionId: this.sessionId,
+				baseOptions: this._buildSessionTitleBaseOptions(),
 				signal: abortController.signal,
 				streamFn: this.agent.streamFn,
 			});
@@ -1663,6 +1671,17 @@ export class AgentSession {
 	private abortSessionTitleGeneration(): void {
 		this._sessionTitleAbortController?.abort();
 		this._sessionTitleAbortController = undefined;
+	}
+
+	private _buildSessionTitleBaseOptions(): SimpleStreamOptions {
+		return {
+			onPayload: this.agent.onPayload,
+			onResponse: this.agent.onResponse,
+			transport: this.agent.transport,
+			thinkingBudgets: this.agent.thinkingBudgets,
+			timeoutMs: this.agent.timeoutMs,
+			maxRetryDelayMs: this.agent.maxRetryDelayMs,
+		};
 	}
 
 	/**

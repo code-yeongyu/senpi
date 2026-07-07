@@ -206,6 +206,33 @@ describe("agent session auto title", () => {
 		await expect(sessionName).resolves.toBe("Aliased Priority Task");
 	});
 
+	it("forwards provider request hooks to title generation", async () => {
+		const onPayloadCalls: string[] = [];
+		const harness = await createHarness({
+			onPayload: (payload) => {
+				onPayloadCalls.push(JSON.stringify(payload));
+			},
+		});
+		harnesses.push(harness);
+		harness.session.agent.streamFn = async (model, context, options) => {
+			await options?.onPayload?.({ systemPrompt: context.systemPrompt, messages: context.messages }, model);
+			return streamSimple(model, context, options);
+		};
+		harness.setResponses([
+			fauxAssistantMessage("turn complete"),
+			fauxAssistantMessage("<title>Hooked Title</title>"),
+		]);
+
+		const sessionName = waitForSessionName(harness);
+		await harness.session.prompt("fix the OAuth login button on mobile");
+		await waitForCallCount(harness, 2);
+
+		expect(harness.faux.getCallLog()[1]?.options?.onPayload).toBeTypeOf("function");
+		expect(onPayloadCalls).toHaveLength(2);
+		expect(onPayloadCalls[1]).toContain("Generate a concise title");
+		await expect(sessionName).resolves.toBe("Hooked Title");
+	});
+
 	it("does not stack title requests while one is already running", async () => {
 		const titleResponse = createDeferred<ReturnType<typeof fauxAssistantMessage>>();
 		const harness = await createHarness();

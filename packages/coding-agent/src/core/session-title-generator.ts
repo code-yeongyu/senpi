@@ -21,6 +21,7 @@ interface GenerateSessionTitleOptions {
 	readonly model: Model<Api>;
 	readonly auth: SessionTitleAuth;
 	readonly sessionId: string;
+	readonly baseOptions?: SimpleStreamOptions;
 	readonly signal?: AbortSignal;
 	readonly streamFn?: StreamFn;
 }
@@ -89,6 +90,7 @@ function buildTitleContext(firstPrompt: string): Context {
 
 function buildTitleOptions(options: GenerateSessionTitleOptions): SimpleStreamOptions {
 	const titleOptions: SimpleStreamOptions = {
+		...options.baseOptions,
 		sessionId: options.sessionId,
 		cacheRetention: options.model.cacheRetention === "none" ? "none" : "short",
 		maxTokens: 64,
