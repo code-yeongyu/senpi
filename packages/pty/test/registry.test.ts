@@ -105,6 +105,10 @@ describe("SessionRegistry", () => {
 	it("stops all sessions and tracked detached children idempotently", async () => {
 		const killed: string[] = [];
 		const registry = new SessionRegistry<MockTerminalSession>({
+			// Pin the platform so the detached-child kill target is deterministic
+			// regardless of the host OS: POSIX kills the negated process group
+			// (-201), while win32 has no process groups and kills the raw pid.
+			platform: "linux",
 			createSession({ command }) {
 				return new MockTerminalSession(command, [
 					{
