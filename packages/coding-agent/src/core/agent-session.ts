@@ -231,6 +231,7 @@ export interface AgentSessionConfig {
 	extensionRunnerRef?: { current?: ExtensionRunner };
 	/** Session start event metadata emitted when extensions bind to this runtime. */
 	sessionStartEvent?: SessionStartEvent;
+	autoTitleSessions?: boolean;
 }
 
 type SessionModelEntry = { model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier };
@@ -377,6 +378,7 @@ export class AgentSession {
 
 	private _sessionTitleAbortController: AbortController | undefined = undefined;
 	private _sessionTitlePromise: Promise<void> | undefined = undefined;
+	private readonly _autoTitleSessions: boolean;
 
 	// Retry state
 	private _retryAbortController: AbortController | undefined = undefined;
@@ -442,6 +444,7 @@ export class AgentSession {
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
+		this._autoTitleSessions = config.autoTitleSessions ?? false;
 
 		const initialModel = this.agent.state.model;
 		if (initialModel) {
@@ -1611,7 +1614,7 @@ export class AgentSession {
 	}
 
 	private _startSessionTitleGeneration(firstPrompt: string): void {
-		if (this.sessionManager.getSessionName() || shouldSkipSessionTitle(firstPrompt)) {
+		if (!this._autoTitleSessions || this.sessionManager.getSessionName() || shouldSkipSessionTitle(firstPrompt)) {
 			return;
 		}
 		if (this._sessionTitleAbortController !== undefined) {

@@ -28,6 +28,7 @@ type FakeSession = {
 	subscribe: ReturnType<typeof vi.fn>;
 	prompt: ReturnType<typeof vi.fn>;
 	reload: ReturnType<typeof vi.fn>;
+	waitForSettledSessionWork: ReturnType<typeof vi.fn>;
 };
 
 type FakeRuntimeHost = {
@@ -92,6 +93,7 @@ function createRuntimeHost(messages: AssistantMessage | Message[]): FakeRuntimeH
 		subscribe: vi.fn(() => () => {}),
 		prompt: vi.fn(async () => {}),
 		reload: vi.fn(async () => {}),
+		waitForSettledSessionWork: vi.fn(async () => {}),
 	};
 
 	return {

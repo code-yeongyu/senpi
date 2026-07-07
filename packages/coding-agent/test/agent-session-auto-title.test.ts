@@ -7,7 +7,7 @@ import {
 } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import { createHarness, getAssistantTexts, type Harness } from "./suite/harness.ts";
+import { createHarness, getAssistantTexts, type Harness, type HarnessOptions } from "./suite/harness.ts";
 
 interface Deferred<T> {
 	readonly promise: Promise<T>;
@@ -32,6 +32,10 @@ function waitForSessionName(harness: Harness): Promise<string | undefined> {
 			resolve(event.name);
 		});
 	});
+}
+
+function createAutoTitleHarness(options: HarnessOptions = {}): Promise<Harness> {
+	return createHarness({ ...options, persistSession: true, autoTitleSessions: true });
 }
 
 function waitForTitleError(harness: Harness): Promise<string> {
@@ -74,7 +78,7 @@ describe("agent session auto title", () => {
 			}
 			return fauxAssistantMessage("turn complete");
 		};
-		const harness = await createHarness();
+		const harness = await createAutoTitleHarness();
 		harnesses.push(harness);
 		harness.setResponses([titleOrTurn, titleOrTurn]);
 
@@ -105,7 +109,7 @@ describe("agent session auto title", () => {
 			parameters: Type.Object({}),
 			execute: async () => ({ content: [{ type: "text", text: "tool observed" }], details: {} }),
 		};
-		const harness = await createHarness({ tools: [tool] });
+		const harness = await createAutoTitleHarness({ tools: [tool] });
 		harnesses.push(harness);
 		harness.session.setActiveToolsByName(["probe"]);
 		harness.setResponses([
@@ -134,7 +138,7 @@ describe("agent session auto title", () => {
 	});
 
 	it("defers title generation for low-signal greetings", async () => {
-		const harness = await createHarness();
+		const harness = await createAutoTitleHarness();
 		harnesses.push(harness);
 		harness.setResponses([fauxAssistantMessage("hello")]);
 
@@ -146,7 +150,7 @@ describe("agent session auto title", () => {
 	});
 
 	it("reports title generation errors without blocking the user turn", async () => {
-		const harness = await createHarness();
+		const harness = await createAutoTitleHarness();
 		harnesses.push(harness);
 		const titleError = waitForTitleError(harness);
 		harness.setResponses([
@@ -162,7 +166,7 @@ describe("agent session auto title", () => {
 	});
 
 	it("respects models that disable prompt caching", async () => {
-		const harness = await createHarness();
+		const harness = await createAutoTitleHarness();
 		harnesses.push(harness);
 		harness.models[0].cacheRetention = "none";
 		harness.setResponses([
@@ -179,7 +183,7 @@ describe("agent session auto title", () => {
 	});
 
 	it("runs title generation through the session stream function", async () => {
-		const harness = await createHarness();
+		const harness = await createAutoTitleHarness();
 		harnesses.push(harness);
 		harness.session.agent.streamFn = (model, context, options) => {
 			const streamOptions = {
@@ -208,7 +212,7 @@ describe("agent session auto title", () => {
 
 	it("forwards provider request hooks to title generation", async () => {
 		const onPayloadCalls: string[] = [];
-		const harness = await createHarness({
+		const harness = await createAutoTitleHarness({
 			onPayload: (payload) => {
 				onPayloadCalls.push(JSON.stringify(payload));
 			},
@@ -235,7 +239,7 @@ describe("agent session auto title", () => {
 
 	it("does not stack title requests while one is already running", async () => {
 		const titleResponse = createDeferred<ReturnType<typeof fauxAssistantMessage>>();
-		const harness = await createHarness();
+		const harness = await createAutoTitleHarness();
 		harnesses.push(harness);
 		harness.setResponses([
 			fauxAssistantMessage("first turn complete"),
@@ -257,7 +261,7 @@ describe("agent session auto title", () => {
 	});
 
 	it("ignores malformed title responses without a title marker", async () => {
-		const harness = await createHarness();
+		const harness = await createAutoTitleHarness();
 		harnesses.push(harness);
 		harness.setResponses([fauxAssistantMessage("turn complete"), fauxAssistantMessage("Fix OAuth Login")]);
 
@@ -269,7 +273,7 @@ describe("agent session auto title", () => {
 	});
 
 	it("does not overwrite an existing session name", async () => {
-		const harness = await createHarness();
+		const harness = await createAutoTitleHarness();
 		harnesses.push(harness);
 		harness.session.setSessionName("Manual Name");
 		harness.setResponses([fauxAssistantMessage("turn complete")]);
@@ -281,7 +285,7 @@ describe("agent session auto title", () => {
 	});
 
 	it("strips terminal control sequences before persisting generated titles", async () => {
-		const harness = await createHarness();
+		const harness = await createAutoTitleHarness();
 		harnesses.push(harness);
 		harness.setResponses([
 			fauxAssistantMessage("turn complete"),
