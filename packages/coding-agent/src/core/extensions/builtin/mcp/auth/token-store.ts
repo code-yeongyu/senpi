@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { OAuthClientInformationFull } from "@modelcontextprotocol/sdk/shared/auth.js";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../../../../../config.ts";
@@ -12,6 +13,7 @@ export interface McpStoredAuth {
 	refreshToken?: string;
 	clientInfo?: OAuthClientInformationFull;
 	codeVerifier?: string;
+	discoveryState?: OAuthDiscoveryState;
 	resource?: string;
 	// Absolute expiry (epoch ms) derived from tokens.expires_in at save time.
 	expiresAt?: number;
@@ -91,7 +93,7 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 		try {
 			const next = mutate(this.read());
 			if (next === undefined) {
-				this.#removeTokens();
+				this.#removeRecord();
 			} else {
 				this.#writeAtomic(next);
 				this.#writeIndex();
@@ -124,7 +126,7 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 
 	writeUnlocked(record: TRecord | undefined): void {
 		if (record === undefined) {
-			this.#removeTokens();
+			this.#removeRecord();
 			return;
 		}
 		this.#writeAtomic(record);
@@ -172,6 +174,11 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 
 	#removeTokens(): void {
 		rmSync(this.tokensPath, { force: true });
+	}
+
+	#removeRecord(): void {
+		this.#removeTokens();
+		removeIndexEntry(this.rootDir, this.serverName, this.#hash);
 	}
 
 	#writeIndex(): void {

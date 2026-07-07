@@ -2,6 +2,7 @@ import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.
 import {
 	discoverOAuthServerInfo,
 	fetchToken,
+	type OAuthDiscoveryState,
 	type OAuthServerInfo,
 	auth as sdkAuth,
 } from "@modelcontextprotocol/sdk/client/auth.js";
@@ -132,9 +133,21 @@ export async function logout(provider: McpOAuthProvider): Promise<void> {
 	await provider.store.clear();
 }
 
-function discover(provider: McpOAuthProvider, options: OAuthFlowOptions): Promise<OAuthServerInfo> {
+async function discover(provider: McpOAuthProvider, options: OAuthFlowOptions): Promise<OAuthServerInfo> {
 	if (options.discover !== undefined) return options.discover(provider.serverUrl);
-	return discoverOAuthServerInfo(provider.serverUrl, { fetchFn: options.fetchFn });
+	const cached = provider.discoveryState();
+	if (cached !== undefined) return cached;
+	const info = await discoverOAuthServerInfo(provider.serverUrl, { fetchFn: options.fetchFn });
+	await provider.saveDiscoveryState(toDiscoveryState(info));
+	return info;
+}
+
+function toDiscoveryState(info: OAuthServerInfo): OAuthDiscoveryState {
+	return {
+		authorizationServerUrl: info.authorizationServerUrl,
+		authorizationServerMetadata: info.authorizationServerMetadata,
+		resourceMetadata: info.resourceMetadata,
+	};
 }
 
 function parseRedirect(input: string, serverName: string): { code: string; state: string | undefined } {

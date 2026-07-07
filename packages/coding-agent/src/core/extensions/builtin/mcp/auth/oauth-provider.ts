@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
+import type { OAuthClientProvider, OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
 import type {
 	OAuthClientInformationFull,
 	OAuthClientInformationMixed,
@@ -119,6 +119,14 @@ export class McpOAuthProvider implements OAuthClientProvider {
 		await this.#store.update((current) => ({ ...(current ?? {}), clientInfo: info }));
 	}
 
+	async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
+		await this.#store.update((current) => ({ ...(current ?? {}), discoveryState: state }));
+	}
+
+	discoveryState(): OAuthDiscoveryState | undefined {
+		return this.#store.read()?.discoveryState;
+	}
+
 	tokens(): OAuthTokens | undefined {
 		return storedAuthToTokens(this.#store.read());
 	}
@@ -167,6 +175,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
 			}
 			if (scope === "verifier") next.codeVerifier = undefined;
 			if (scope === "client") next.clientInfo = undefined;
+			if (scope === "discovery") next.discoveryState = undefined;
 			return next;
 		});
 	}

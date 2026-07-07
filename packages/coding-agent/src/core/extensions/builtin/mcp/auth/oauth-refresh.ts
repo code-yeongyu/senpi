@@ -109,11 +109,7 @@ export class McpRefreshManager {
 			} catch (error) {
 				if (isInvalidGrant(error)) {
 					// Terminal: drop credentials so the next use forces a clean re-auth.
-					const next: McpStoredAuth = { ...current };
-					delete next.accessToken;
-					delete next.refreshToken;
-					delete next.expiresAt;
-					this.#provider.store.writeUnlocked(next);
+					this.#provider.store.writeUnlocked(undefined);
 					throw new OAuthFlowError(
 						"invalid_grant",
 						`MCP server ${this.#provider.serverName} refresh rejected (invalid_grant); credentials cleared, re-authentication required.`,

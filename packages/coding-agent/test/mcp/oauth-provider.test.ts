@@ -99,6 +99,20 @@ describe("McpOAuthProvider + flows", () => {
 		expect(log.registerHits).toBe(0);
 	});
 
+	it("persists discovery state and reuses it for a later auth start", async () => {
+		const fixture = await idp();
+		const agentDir = await makeAgentDir();
+		const first = makeProvider(agentDir, fixture.mcpUrl);
+
+		await beginAuthorization(first.provider);
+		const afterFirst = (await fixture.getLog()).discoveryHits;
+		const second = makeProvider(agentDir, fixture.mcpUrl);
+		await beginAuthorization(second.provider);
+		const afterSecond = (await fixture.getLog()).discoveryHits;
+
+		expect(afterSecond).toBe(afterFirst);
+	});
+
 	it("refreshes exactly once under 10 parallel callers when near expiry", async () => {
 		const fixture = await idp();
 		const agentDir = await makeAgentDir();
@@ -123,13 +137,18 @@ describe("McpOAuthProvider + flows", () => {
 		await store.write({
 			accessToken: "AT_old",
 			refreshToken: "RT_UNKNOWN",
+			clientInfo: {
+				client_id: "old-client",
+				client_secret: "old-secret",
+				redirect_uris: ["http://127.0.0.1:8123/callback"],
+			},
+			codeVerifier: "old-verifier",
 			expiresAt: Date.now() + 60_000,
 			resource: fixture.mcpUrl,
 		});
 		const manager = new McpRefreshManager(provider);
 		await expect(manager.ensureFresh()).rejects.toMatchObject({ oauthKind: "invalid_grant", terminal: true });
-		expect(store.read()?.accessToken).toBeUndefined();
-		expect(store.read()?.refreshToken).toBeUndefined();
+		expect(store.read()).toBeUndefined();
 	});
 
 	it("retries a transient token endpoint failure without clearing credentials (needs_auth NOT set)", async () => {

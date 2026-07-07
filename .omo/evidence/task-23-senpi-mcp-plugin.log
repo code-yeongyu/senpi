@@ -1,13 +1,81 @@
-=== TODO 23 oauth provider/refresh evidence  2026-07-07T12:11:29Z ===
---- vitest test/mcp/oauth-provider.test.ts (GREEN) ---
- Test Files  1 passed (1)
-      Tests  6 passed (6)
-   Duration  926ms (transform 47ms, setup 11ms, import 91ms, tests 762ms, environment 0ms)
---- HAPPY: full code+PKCE flow vs fixture IdP; request log (secrets are SENTINEL_* by design, access token never logged in full) ---
-authorize URL has S256: S256
-authorize URL has resource: http://127.0.0.1:53634/mcp
-stored access token (fingerprint-safe prefix): SENTINEL_AT_...
-refresh token present: true
-IdP request log: [{"method":"POST","path":"/token","grantType":"authorization_code","resource":"http://127.0.0.1:53634/mcp"}]
-discoveryHits: 6 tokenHits: 1 registerHits(DCR): 1
---- FAILURE: token endpoint 500 -> bounded retries (tokenHits>=3), needs_auth NOT set (kind=transient, terminal=false); covered by vitest case above ---
+TODO23 DoneClaim evidence log
+
+Scope:
+- Worktree: /Users/yeongyu/local-workspaces/senpi-wt/senpi-mcp-plugin-w3
+- Branch: code-yeongyu/senpi-mcp-plugin-w3
+- Todo: 23. OAuthClientProvider — PKCE, discovery, registration priority, refresh
+
+Changed files:
+- packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth.ts
+- packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts
+- packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-refresh.ts
+- packages/coding-agent/src/core/extensions/builtin/mcp/auth/token-store.ts
+- packages/coding-agent/test/mcp/oauth-provider.test.ts
+- .omo/evidence/task-23-senpi-mcp-plugin.log
+
+Implementation:
+- Added SDK OAuth discovery-state persistence/reuse through McpOAuthProvider.saveDiscoveryState()/discoveryState().
+- Made TODO23 S256 preflight use cached discovery state, avoiding duplicate discovery and preserving callback-leg AS binding.
+- Added discoveryState to the TODO22 token store record.
+- Changed terminal invalid_grant/invalid_token refresh handling to drop the full credential record, not just access/refresh fields.
+- Tightened token-store undefined writes so they remove the index entry as well as tokens.json.
+
+RED:
+- Scenario: missing discovery-state persistence and partial invalid_grant credential clearing.
+- Invocation: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/oauth-provider.test.ts
+- Observable: 2 focused failures before implementation: discoveryHits 8 vs 4; store retained clientInfo/codeVerifier/resource after invalid_grant.
+- Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo23/red-oauth-provider.txt
+
+GREEN / checks:
+- Scenario: TODO23 acceptance vs fixture IdP.
+  Invocation: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/oauth-provider.test.ts
+  Observable: 1 test file passed, 7 tests passed.
+  Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo23/oauth-provider-green.txt
+- Scenario: impacted token/auth tests.
+  Invocation: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/token-store.test.ts test/mcp/oauth-headless.test.ts test/mcp/oauth-race.test.ts
+  Observable: 3 test files passed, 16 tests passed.
+  Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo23/impacted-auth-tests.txt
+- Scenario: TypeScript no-excuse scan on changed TS files.
+  Invocation: bun run /Users/yeongyu/.agents/skills/programming/scripts/typescript/check-no-excuse-rules.ts packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth.ts packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-refresh.ts packages/coding-agent/src/core/extensions/builtin/mcp/auth/token-store.ts packages/coding-agent/test/mcp/oauth-provider.test.ts
+  Observable: No violations in 5 files.
+  Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo23/no-excuse-scan.txt
+- Scenario: repository static/build gate after code changes.
+  Invocation: npm run check
+  Observable: exited 0; biome, pinned deps, shrinkwrap, install-lock, tsgo, browser/web-ui checks, neo build/vet/test passed.
+  Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo23/npm-run-check.txt
+
+Manual QA:
+- Happy scenario: fixture IdP full code+PKCE flow, RFC 8707 resource in authorize/token/refresh, CIMD over DCR, expiry-5min refresh under 10 parallel callers.
+  Invocation: npx tsx /tmp/todo23-oauth-manual.mts
+  Observable: S256 challenge method; resource present in authorize and token request; exactly 1 refresh request under 10 parallel callers; CIMD registerHits=0.
+  Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo23/manual-fixture-idp-log-redacted.json
+- Failure scenario: token endpoint 500/transient path.
+  Invocation: npx tsx /tmp/todo23-oauth-manual.mts
+  Observable: transient500.kind="transient"; storePreserved=true; needsAuthSet=false.
+  Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo23/manual-fixture-idp-log-redacted.json
+- senpi QA harness / auth isolation:
+  Invocation: node .agents/skills/senpi-qa/scripts/lib/common.mjs --self-check; node .agents/skills/senpi-qa/scripts/cli-smoke.mjs --self-test
+  Observable: common self-check 9/9 passed; CLI smoke 6/6 passed; real /Users/yeongyu/.senpi/agent/auth.json unchanged.
+  Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo23/senpi-qa-selfcheck-cli-smoke.txt
+
+Cleanup:
+- Invocation: rm -f /tmp/todo23-oauth-manual.mts && test ! -e /tmp/todo23-oauth-manual.mts
+- Observable: removed /tmp/todo23-oauth-manual.mts.
+- Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo23/cleanup-receipt.txt
+
+UltraQA probes:
+- malformed_input: malformed redirect URL and S256-absent metadata paths covered by oauth-provider tests.
+- stale_state: persisted discovery state reuse and single-use OAuth state covered by oauth-provider/headless/callback test surfaces; TODO23 added discovery reuse.
+- dirty_worktree: git status checked before edit and before final; unrelated untracked evidence preserved.
+- hung_or_long_commands: all commands bounded by test runner/script timeouts; no hung sessions observed.
+- flaky_tests: focused and impacted tests rerun green after RED; no retry needed.
+- misleading_success_output: manual fixture IdP request-log artifact validates payload details beyond dot output.
+- prompt_injection: N/A for TODO23; no model-visible server metadata changed.
+- cancel_resume: N/A; callback cancellation belongs to TODO24/25.
+- repeated_interruptions: N/A; no interrupted auth flow state changed beyond persisted discovery.
+
+Risks:
+- OAuth callback/headless user-flow UX remains owned by TODO24/TODO25; TODO23 verifies provider/store/refresh semantics only.
+- CIMD fixture uses an HTTP clientMetadataUrl as a local test stand-in; production SDK URL validation behavior remains under the installed SDK.
+
+Ready for independent gate review: yes.
