@@ -1,0 +1,306 @@
+
+> test
+> npm run test:scripts && npm run test --workspaces --if-present
+
+
+> test:scripts
+> node --test scripts/*.test.mjs
+
+▶ archiveUpstreamAgentReport
+  ✔ copies and removes an untracked report without dirtying the branch (171.275917ms)
+  ✔ removes a committed report from the final branch tree with a cleanup commit (250.451041ms)
+✔ archiveUpstreamAgentReport (422.383625ms)
+▶ build-all
+  ✔ uses an explicit package manager override (0.70975ms)
+  ✔ keeps dependent packages in later parallel phases (0.133875ms)
+  ✔ builds pty beside tui in the first native-adjacent phase (0.143625ms)
+  ✔ wires the pty package export surface for workspace imports (0.29175ms)
+  ✔ strips pnpm-only npm config from child environments (0.116792ms)
+  ✔ keeps generated model catalog updates out of ordinary ai builds (0.21225ms)
+✔ build-all (2.688625ms)
+✔ fails with the host target name when the vendored prebuild is missing (3.632042ms)
+✔ fails with the host target name when the vendored prebuild is stale (8.436583ms)
+✔ passes when the host prebuild matches the rebuilt artifact (7.00625ms)
+[check-upstream] latest upstream release: v0.80.3
+[check-upstream] resolved v0.80.3 -> a23abe4a695df8b69b613f73e9fdda2a8af894d4
+[check-upstream] resolved upstream/main -> 2b00dade7cec918aefb025c8b7a4fa304a30acdd
+[check-upstream] --force set; proceeding regardless of merge state
+▶ upstream release detector outputs
+  ✔ preserves the release tag sha and emits upstream/main head separately on forced runs (1599.940333ms)
+✔ upstream release detector outputs (2265.203833ms)
+▶ create-root-senpi-wrapper
+  ✔ writes a launch-only wrapper when the root is a gitless snapshot (1.668917ms)
+  ✔ does NOT write a global shim by default in a git checkout (opt-in only) (0.638375ms)
+  ✔ writes a global shim only when SENPI_WRITE_GLOBAL_SHIM=1 in a non-CI git checkout (0.802125ms)
+  ✔ replaces an existing global symlink instead of following it (2.71525ms)
+✔ create-root-senpi-wrapper (6.72075ms)
+$ /opt/homebrew/Cellar/node/26.4.0/bin/node /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-local-release-pack-B63FLu/large-pack-output.mjs
+▶ local-release command runner
+  ✔ captures large npm pack JSON output (47.218667ms)
+✔ local-release command runner (47.74625ms)
+▶ Bun binary entry
+  ✔ routes directly to the full CLI instead of the Node wrapper (0.220916ms)
+✔ Bun binary entry (0.276291ms)
+▶ local release package list
+  ✔ builds and packs the pty workspace for bundled senpi installs (1089.034583ms)
+✔ local release package list (1089.129958ms)
+▶ prepareSenpiBundledWorkspaces
+  ✔ copies the loader-visible host pty prebuild into coding-agent node_modules (25.514875ms)
+  ✔ fails before bundling pty when the host prebuild is missing (7.906416ms)
+✔ prepareSenpiBundledWorkspaces (34.562958ms)
+▶ directNodeModulesPackageName
+  ✔ extracts only direct package names (0.399125ms)
+✔ directNodeModulesPackageName (0.939625ms)
+▶ copyPublishDependencies
+  ✔ copies direct publish dependencies and skips internal workspaces and missing optional packages (14.29025ms)
+  ✔ throws when a required publish dependency is not installed (1.378416ms)
+✔ copyPublishDependencies (15.778667ms)
+▶ assertSenpiPackedWorkspaceFiles
+  ✔ rejects senpi package metadata that omits bundled workspace files (0.429292ms)
+  ✔ accepts senpi package metadata that includes bundled workspace entrypoints (0.214875ms)
+  ✔ accepts npm dry-run package metadata with unprefixed paths (0.680791ms)
+  ✔ rejects senpi package metadata that omits the bundled pty native loader (0.1495ms)
+  ✔ rejects senpi package metadata that omits the bundled host pty prebuild (0.244792ms)
+  ✔ defines the all-OS native artifact ingestion contract without requiring fake local binaries (0.219625ms)
+  ✔ publishes the supported native target list through package checks (0.396ms)
+✔ assertSenpiPackedWorkspaceFiles (2.630333ms)
+▶ release package versioning
+  ✔ updates the pty workspace during lockstep releases (6.970583ms)
+✔ release package versioning (7.534334ms)
+▶ release changelog bookkeeping
+  ✔ recreates the standard next-cycle section when no previous Unreleased block was captured (0.29425ms)
+  ✔ preserves captured subsection shape when a previous Unreleased block existed (0.503375ms)
+  ✔ inserts the next-cycle section before the stamped release header (0.28125ms)
+  ✔ restores the next-cycle section after the title when no release header was stamped (0.206125ms)
+✔ release changelog bookkeeping (1.5235ms)
+▶ sync-versions
+  ✔ keeps senpi source dependencies on local workspace versions (43.783834ms)
+✔ sync-versions (44.261709ms)
+▶ upstream release worthiness
+  ✔ detects package changelog entries under Unreleased (0.77425ms)
+  ✔ skips empty Unreleased sections (0.50775ms)
+  ✔ releases when any package changelog has an Unreleased entry (0.307042ms)
+  ✔ allows explicit forced release (0.166958ms)
+✔ upstream release worthiness (3.362584ms)
+ℹ tests 41
+ℹ suites 15
+ℹ pass 41
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2318.185417
+
+> @earendil-works/pi-agent-core@2026.7.5-2 test
+> vitest --run
+
+
+ RUN  v4.1.8 /private/tmp/fix-142-codemode/packages/agent
+
+···················································································································································································
+
+ Test Files  16 passed (16)
+      Tests  179 passed (179)
+   Start at  17:21:40
+   Duration  982ms (transform 2.74s, setup 0ms, import 5.49s, tests 900ms, environment 1ms)
+
+
+> @earendil-works/pi-ai@2026.7.5-2 test
+> vitest --run
+
+
+ RUN  v4.1.9 /private/tmp/fix-142-codemode/packages/ai
+
+························································································································································-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------··················-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------······················--··--------------------------·······················································································---········-------------------------------------····················································································----·············································----······················································---------······················----·········-------------------·····-----------···············································---·····----------···················-··········-······························-·····---··············-·---------------------------------------------------------------······--··························-···
+
+ Test Files  93 passed | 25 skipped (118)
+      Tests  674 passed | 731 skipped (1405)
+   Start at  17:21:41
+   Duration  6.28s (transform 7.44s, setup 0ms, import 27.13s, tests 12.77s, environment 6ms)
+
+
+> @code-yeongyu/senpi@2026.7.5-2 test
+> vitest --run
+
+
+ RUN  v4.1.9 /private/tmp/fix-142-codemode/packages/coding-agent
+
+·············From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783412509262-iy4llk5v2np/remote
+   da5caed..f8f16c5  main       -> origin/main
+app-server stdio closed: test complete
+app-server stdio closed: stdin ended
+HEAD is now at f8f16c5 Second commit
+···········From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783412509872-he6fji3iwte/remote
+   37b0cca..41a4267  main       -> origin/main
+HEAD is now at 41a4267 Fourth commit
+··················From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783412511795-js8gg0gcyvd/remote
+   4a99f9c..eaf8567  main       -> origin/main
+HEAD is now at eaf8567 Commit to keep
+·······From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783412511795-js8gg0gcyvd/remote
+ + eaf8567...d98b498 main       -> origin/main  (forced update)
+····HEAD is now at d98b498 Rewritten commit
+····Installing ./packages/local-package...
+Installing /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/pi-package-commands-1783412513216-157qrql00ki/local-package/...
+Removing /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/pi-package-commands-1783412513216-157qrql00ki/local-package/...
+····················From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783412513274-v8o525s4nsk/remote
+   38e3ed2..03223ac  main       -> origin/main
+···HEAD is now at 03223ac Commit B
+············Updating npm:fake-package...
+From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783412513274-v8o525s4nsk/remote
+ + 03223ac...77c145b main       -> origin/main  (forced update)
+·······HEAD is now at 77c145b New commit replacing A and B
+·······················Installing /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/pi-package-commands-1783412515434-xlfwklocw5m/local-package...
+··········································From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783412514999-modhmm3p84/remote
+   da9df9a..2ba036d  main       -> origin/main
+··········HEAD is now at 2ba036d v3
+················From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783412514999-modhmm3p84/remote
+ + 2ba036d...16b5806 main       -> origin/main  (forced update)
+HEAD is now at 16b5806 Rewrite B
+·npm error code ETARGET
+npm error notarget No matching version found for nonexistent-package@1.0.0.
+npm error notarget In most cases you or one of your dependencies are requesting a package version that doesn't exist.
+npm error A complete log of this run can be found in: /Users/yeongyu/.npm/_logs/2026-07-07T08_21_56_281Z-debug-0.log
+·Cloning into '/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/pm-test-1783412516959-t8ie7chs0hi/agent/git/github.com/nonexistent/repo'...
+······From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783412516843-1axr9qv94qf/remote
+ * branch            1845a8e3249b3ab9bb364bc5b67ad46f4e5cd990 -> FETCH_HEAD
+·········remote: Repository not found.
+fatal: repository 'https://github.com/nonexistent/repo/' not found
+·····························································From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783412517500-0mfu0qitu1oo/remote
+ * tag               v2         -> FETCH_HEAD
+···········································HEAD is now at 4d2c2ad Second commit
+·····From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783412517500-0mfu0qitu1oo/remote
+ * tag               v2         -> FETCH_HEAD
+···HEAD is now at 4d2c2ad Second commit
+·····················································································From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783412519189-sf5htc1lzl/remote
+   b129cf3..26fb571  main       -> origin/main
+···········HEAD is now at 26fb571 Second commit
+····························································································································································································································································································································································································································x·····································································································································································································································································app-server websocket token: /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-ws-auth-6F2slE/ws-token
+··················································································································································································································································································································································································································································································································app-server unix socket websocket token: /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-daemon-probe-27uF4p/ws-token
+······················································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································--········-----------------------------···
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/footer-data-provider.test.ts > FooterDataProvider reftable branch detection > updates the cached branch when the reftable directory changes
+Error: Timed out waiting for condition
+ ❯ waitFor test/footer-data-provider.test.ts:84:10
+     82|  while (!condition()) {
+     83|   if (Date.now() - startedAt > timeoutMs) {
+     84|    throw new Error("Timed out waiting for condition");
+       |          ^
+     85|   }
+     86|   await new Promise((resolve) => setTimeout(resolve, 10));
+ ❯ test/footer-data-provider.test.ts:226:4
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 351 passed | 4 skipped (356)
+      Tests  1 failed | 3219 passed | 31 skipped (3251)
+   Start at  17:21:48
+   Duration  32.89s (transform 22.51s, setup 2.08s, import 240.89s, tests 211.18s, environment 21ms)
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path /private/tmp/fix-142-codemode/packages/coding-agent
+npm error workspace @code-yeongyu/senpi@2026.7.5-2
+npm error location /private/tmp/fix-142-codemode/packages/coding-agent
+npm error command failed
+npm error command sh -c vitest --run
+
+
+> @code-yeongyu/senpi-orchestrator@2026.7.5-2 test
+> node --test --import tsx test/*.test.ts
+
+▶ orchestrator config paths
+  ✔ stores orchestrator state under the senpi config directory by default (0.416209ms)
+  ✔ uses SENPI_ORCHESTRATOR_DIR as the complete state directory override (0.093292ms)
+  ✔ uses SENPI_CONFIG_DIR as the parent config directory override (0.086167ms)
+✔ orchestrator config paths (1.019334ms)
+ℹ tests 3
+ℹ suites 1
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 110.67825
+
+> @earendil-works/pi-pty@2026.7.5-2 test
+> vitest --run test
+
+
+ RUN  v4.1.9 /private/tmp/fix-142-codemode/packages/pty
+
+
+ Test Files  5 passed (5)
+      Tests  31 passed (31)
+   Start at  17:22:21
+   Duration  1.73s (transform 297ms, setup 0ms, import 361ms, tests 2.35s, environment 0ms)
+
+
+> @code-yeongyu/senpi-codemode@2026.7.5-2 test
+> npx tsx ../../node_modules/vitest/dist/cli.js --run test/
+
+
+ RUN  v4.1.9 /private/tmp/fix-142-codemode/packages/senpi-codemode
+
+·····························-···············································
+
+ Test Files  15 passed (15)
+      Tests  76 passed | 1 skipped (77)
+   Start at  17:22:24
+   Duration  2.62s (transform 5.04s, setup 0ms, import 9.28s, tests 2.62s, environment 1ms)
+
+
+> @earendil-works/pi-tui@2026.7.5-2 test
+> node --test --import tsx --test-reporter=dot --test-reporter-destination=stdout test/*.test.ts
+
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....

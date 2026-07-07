@@ -1,0 +1,22 @@
+# Todo 17 — V3 gate: assembly + constraint-lock quality (executor audit)
+
+VERDICT: APPROVE (after fixing 3 runtime defects the tests did not catch — see task-18).
+
+1. Hard-constraint lock is NON-VACUOUS:
+   - test/suite/codemode-bridge.test.ts (coding-agent, 4/4 PASS) asserts: demo_tool
+     executed exactly once with {q:"hi"}; tool_call hook observed toolName+args;
+     tool_result rewrite ("demo:hi:rewritten") visible in the cell's returned value;
+     block path -> execute NOT called, "denied" surfaced; permission "ask"+deny ->
+     tool-reply {ok:false}, cell completes without hanging; disabledBuiltinExtensions
+     + --exclude-tools both remove eval.
+   - CLI-level confirmation: mock-loop S3/S4 reproduce the same through the real CLI.
+2. Bundling cycle-free: no static import/require of @code-yeongyu/senpi-codemode in
+   coding-agent/src (only a package-NAME string in resource-loader.ts for
+   loader-mediated jiti resolution). getActiveBuiltinExtensionIds gates it via
+   enabled/disabledBuiltinExtensions; --no-extensions does NOT disable it (verified
+   by codemode-bridge disable test + mock-loop S8).
+3. Docs: executeTool documented in core/changes.md, extensions/changes.md, and
+   docs/extensions.md (grep-confirmed).
+4. LOC ceiling: every NEW packages/senpi-codemode/src file is <=250 pure LOC. The
+   only files over 250 are pre-existing coding-agent core modules (agent-session,
+   runner, types, loader, resource-loader) that received minimal sanctioned edits.

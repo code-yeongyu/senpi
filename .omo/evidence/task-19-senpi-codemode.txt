@@ -1,0 +1,11 @@
+# Todo 19 — full workspace test suite
+Command: npm test (root) — node --test scripts + npm run test --workspaces
+Result: scripts 41 pass; pi-agent-core 16 files pass; pi-ai 93 files pass (25 skip); coding-agent 351 pass / 1 FLAKY-FAIL / 4 skip; orchestrator 3 pass; pi-pty 5 files pass; senpi-codemode 15 files 76 pass (1 jl skip); pi-tui pass.
+Only failure: test/footer-data-provider.test.ts 'reftable branch detection > updates the cached branch when the reftable directory changes' — waitFor timeout under full-suite parallel load (git-reftable fs-polling test, unrelated to codemode; only senpi-codemode was touched).
+Isolation proof: npx vitest run test/footer-data-provider.test.ts -> 8/8 PASS (see below). Load-induced flake, not a defect.
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  17:24:39
+   Duration  2.33s (transform 20ms, setup 9ms, import 18ms, tests 2.25s, environment 0ms)
+

@@ -1,0 +1,10 @@
+
+ RUN  v4.1.9 /private/tmp/fix-142-codemode/packages/coding-agent
+
+·································
+
+ Test Files  4 passed (4)
+      Tests  33 passed (33)
+   Start at  16:45:16
+   Duration  2.44s (transform 3.42s, setup 55ms, import 6.77s, tests 985ms, environment 0ms)
+

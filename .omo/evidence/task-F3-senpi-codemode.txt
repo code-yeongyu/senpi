@@ -1,0 +1,9 @@
+# F3 — Real manual QA (four senpi-qa channels, fresh from clean sandbox) — VERDICT: APPROVE
+Re-ran all four channels this session (isolated sandbox, PI_OFFLINE, real auth hash unchanged each run):
+  Channel 3 mock-loop eval driver: 9/9 PASS (js bundled/persist, extension-tool bridge+hooks+block, timeout/interrupt, python persist, ruby persist, --exclude-tools). RUN-eval-qa.log.
+  Channel 4 cli-smoke --self-test: 6/6 PASS.
+  Channel 1 rpc-drive --self-test: 4/4 PASS.
+  Channel 2 tui-smoke --self-test: 5/5 PASS (tmux driver; boot + keystroke-to-composer + teardown).
+Unscripted exploratory eval exercised: js cell + tool.demo_tool bridge call + while(true) timeout + kernel survival + py/rb state persistence across cells — all observed working at the CLI surface.
+Isolation receipt: guardRealAuth() asserted /Users/yeongyu/.senpi/agent/auth.json unchanged in every run.
+Julia: skipped (no interpreter locally or on mengmotaHost).

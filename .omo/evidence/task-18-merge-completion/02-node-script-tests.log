@@ -1,0 +1,84 @@
+▶ archiveUpstreamAgentReport
+  ✔ copies and removes an untracked report without dirtying the branch (136.568958ms)
+  ✔ removes a committed report from the final branch tree with a cleanup commit (223.029584ms)
+✔ archiveUpstreamAgentReport (360.161958ms)
+▶ build-all
+  ✔ uses an explicit package manager override (1.056417ms)
+  ✔ keeps dependent packages in later parallel phases (0.115667ms)
+  ✔ builds pty beside tui in the first native-adjacent phase (0.326708ms)
+  ✔ wires the pty package export surface for workspace imports (0.211166ms)
+  ✔ strips pnpm-only npm config from child environments (0.083667ms)
+  ✔ keeps generated model catalog updates out of ordinary ai builds (0.151208ms)
+✔ build-all (3.268041ms)
+✔ fails with the host target name when the vendored prebuild is missing (4.219125ms)
+✔ fails with the host target name when the vendored prebuild is stale (8.764834ms)
+✔ passes when the host prebuild matches the rebuilt artifact (5.355792ms)
+[check-upstream] latest upstream release: v0.80.3
+[check-upstream] resolved v0.80.3 -> a23abe4a695df8b69b613f73e9fdda2a8af894d4
+[check-upstream] resolved upstream/main -> 2b00dade7cec918aefb025c8b7a4fa304a30acdd
+[check-upstream] --force set; proceeding regardless of merge state
+▶ upstream release detector outputs
+  ✔ preserves the release tag sha and emits upstream/main head separately on forced runs (1623.230583ms)
+✔ upstream release detector outputs (2438.019167ms)
+▶ create-root-senpi-wrapper
+  ✔ writes a launch-only wrapper when the root is a gitless snapshot (1.765042ms)
+  ✔ does NOT write a global shim by default in a git checkout (opt-in only) (0.464916ms)
+  ✔ writes a global shim only when SENPI_WRITE_GLOBAL_SHIM=1 in a non-CI git checkout (0.537292ms)
+  ✔ replaces an existing global symlink instead of following it (2.177833ms)
+✔ create-root-senpi-wrapper (5.619542ms)
+$ /opt/homebrew/Cellar/node/26.4.0/bin/node /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-local-release-pack-5Pku87/large-pack-output.mjs
+▶ local-release command runner
+  ✔ captures large npm pack JSON output (49.872125ms)
+✔ local-release command runner (50.27275ms)
+▶ Bun binary entry
+  ✔ routes directly to the full CLI instead of the Node wrapper (0.237834ms)
+✔ Bun binary entry (0.297875ms)
+▶ local release package list
+  ✔ builds and packs the pty workspace for bundled senpi installs (928.595792ms)
+✔ local release package list (928.711458ms)
+▶ prepareSenpiBundledWorkspaces
+  ✔ copies the loader-visible host pty prebuild into coding-agent node_modules (22.799708ms)
+  ✔ fails before bundling pty when the host prebuild is missing (7.971208ms)
+✔ prepareSenpiBundledWorkspaces (32.029833ms)
+▶ directNodeModulesPackageName
+  ✔ extracts only direct package names (0.454792ms)
+✔ directNodeModulesPackageName (1.363708ms)
+▶ copyPublishDependencies
+  ✔ copies direct publish dependencies and skips internal workspaces and missing optional packages (13.893416ms)
+  ✔ throws when a required publish dependency is not installed (2.344125ms)
+✔ copyPublishDependencies (16.444166ms)
+▶ assertSenpiPackedWorkspaceFiles
+  ✔ rejects senpi package metadata that omits bundled workspace files (0.565459ms)
+  ✔ accepts senpi package metadata that includes bundled workspace entrypoints (0.277042ms)
+  ✔ accepts npm dry-run package metadata with unprefixed paths (0.777917ms)
+  ✔ rejects senpi package metadata that omits the bundled pty native loader (0.476375ms)
+  ✔ rejects senpi package metadata that omits the bundled host pty prebuild (0.282042ms)
+  ✔ defines the all-OS native artifact ingestion contract without requiring fake local binaries (0.199792ms)
+  ✔ publishes the supported native target list through package checks (0.520625ms)
+✔ assertSenpiPackedWorkspaceFiles (3.607708ms)
+▶ release package versioning
+  ✔ updates the pty workspace during lockstep releases (7.525375ms)
+✔ release package versioning (8.160625ms)
+▶ release changelog bookkeeping
+  ✔ recreates the standard next-cycle section when no previous Unreleased block was captured (0.296209ms)
+  ✔ preserves captured subsection shape when a previous Unreleased block existed (0.332291ms)
+  ✔ inserts the next-cycle section before the stamped release header (0.16475ms)
+  ✔ restores the next-cycle section after the title when no release header was stamped (0.24775ms)
+✔ release changelog bookkeeping (1.34975ms)
+▶ sync-versions
+  ✔ keeps senpi source dependencies on local workspace versions (43.268167ms)
+✔ sync-versions (43.688417ms)
+▶ upstream release worthiness
+  ✔ detects package changelog entries under Unreleased (0.777667ms)
+  ✔ skips empty Unreleased sections (0.521916ms)
+  ✔ releases when any package changelog has an Unreleased entry (0.090875ms)
+  ✔ allows explicit forced release (0.0735ms)
+✔ upstream release worthiness (2.854833ms)
+ℹ tests 41
+ℹ suites 15
+ℹ pass 41
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2492.906708

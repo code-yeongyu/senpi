@@ -1,0 +1,6 @@
+# F2 — Code quality review — VERDICT: APPROVE
+- 250 pure-LOC ceiling: every NEW packages/senpi-codemode/src file <=250. Only pre-existing coding-agent core modules (agent-session/runner/types/loader/resource-loader) exceed 250 and received minimal sanctioned edits (not new files).
+- no `any` in packages/senpi-codemode/src (grep clean: no `: any`, `as any`, `<any>`).
+- Typed errors / erasable-TS: package builds under tsgo --noEmit (npm run check green); no enums/namespaces (erasableSyntaxOnly enforced by root config).
+- changes.md/CHANGELOG completeness: core/changes.md + extensions/changes.md + docs/extensions.md carry executeTool; senpi-codemode CHANGELOG [Unreleased] Added + Fixed entries; packages/agent CHANGELOG entry present.
+- Slop: fixes are minimal (TDZ hoist, per-cell dispatcher, $stdout redirect); no dead code / redundant wrappers introduced.
