@@ -1,0 +1,18 @@
+^D[PASS] 0: foreground echo returns output (native)
+[PASS] 0: background NOT using pipe fallback (native PTY)
+[PASS] 1: background returns a bash_id
+[PASS] 1: bash_output wait_for resolves on READY_MARK
+[PASS] 2: python REPL bash_input print(6*7) -> 42
+[PASS] 3: view:screen renders pre-resize width W=80
+[PASS] 3: bash_resize reports 132x40
+[PASS] 3: view:screen reflows to W=132 after resize
+   [dbg] scenario4 ids: bash_6 bash_7; a.err=undefined b.err=undefined
+   [dbg] pgrep -fl "957920": "96703 sleep 957920\n96704 sleep 957920"
+[PASS] 4: live background sleep processes exist before kill
+[PASS] 4: kill_bash all leaves NO orphan processes
+[PASS] 5: foreground sleep 300 timeout:2 killed at ~2s
+[PASS] 5: timeout message surfaced
+[PASS] 6: background return latency < 1s (not blocked on timeout)
+[PASS] 6: background session still running (not killed by injected timeout)
+
+native-tool-drive: 14/14 passed

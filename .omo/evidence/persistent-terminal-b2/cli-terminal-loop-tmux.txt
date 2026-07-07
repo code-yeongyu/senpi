@@ -1,0 +1,9 @@
+[PASS] CLI completed the multi-step loop — code=0 timedOut=false
+[PASS] three model turns served (loop iterated) — requests=3
+[PASS] turn-2 payload shows a background bash_id (PTY bash ran in CLI) — req2 has bash_id=true
+[PASS] turn-3 payload shows wait_for-resolved marker output — req3 hasMarker=true
+[PASS] final assistant text returned via CLI — hasFinal=true
+[PASS] real auth.json sha256 unchanged
+
+cli-terminal-loop.mjs — full CLI PTY terminal agent loop: 6/6 passed
+finished-rc=0

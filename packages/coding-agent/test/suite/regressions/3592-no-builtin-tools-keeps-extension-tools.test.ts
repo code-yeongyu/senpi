@@ -21,12 +21,13 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 		tempDir = join(tmpdir(), `pi-no-builtin-tools-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		agentDir = join(tempDir, "agent");
 		mkdirSync(agentDir, { recursive: true });
-		// The bundled codemode extension is default-on and contributes an `eval` tool. Disable it via
-		// the real global-settings mechanism so this regression's tool-name assertions stay scoped to
-		// the built-in defaults and the inline extension it registers.
+		// The bundled codemode extension (contributes an `eval` tool) and the terminal builtin
+		// (PTY `bash` + companion tools) are both default-on. Disable both via the real
+		// global-settings mechanism so this regression's tool-name assertions stay scoped to the
+		// built-in defaults and the inline extension it registers.
 		writeFileSync(
 			join(agentDir, "settings.json"),
-			`${JSON.stringify({ disabledBuiltinExtensions: ["codemode"] })}\n`,
+			`${JSON.stringify({ disabledBuiltinExtensions: ["codemode", "terminal"] })}\n`,
 		);
 	});
 

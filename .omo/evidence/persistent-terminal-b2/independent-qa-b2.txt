@@ -1,0 +1,56 @@
+PR-B2 INDEPENDENT QA (Stage 2) — persistent-terminal builtin tool suite
+Host: darwin arm64 (macOS). Node v26.4.0, Bun 1.3.14, cargo present, tmux present.
+Branch: feat/persistent-terminal-b2. Base: origin/main #143 merge 858741a2b.
+
+All results below were reproduced independently by the QA stage (not copied from
+the implementer's committed evidence).
+
+1) senpi-qa Channel 5 pty-drive --self-test (real pi-pty runtime):
+   - native backend .......... 7/7 PASS
+   - pipe fallback (--force-pipe) 7/7 PASS
+   - Bun (bun pty-drive --self-test, native) 7/7 PASS  [proves native .node loads under Bun]
+
+2) native-tool-drive.mjs (real NATIVE PTY through the real compiled tool factories):
+   14/14 PASS — fg echo, bg bash_id, bash_output wait_for READY, python REPL bash_input->42,
+   view:screen W=80 -> bash_resize 132x40 -> reflow W=132, kill_bash all + OS pgrep orphan poll
+   (0 orphans), fg sleep 300 timeout:2 killed ~2s, bg return latency <1s not blocked by injected
+   120s bash-timeout + session still alive.
+
+3) cli-terminal-loop.mjs (NEW — full CLI-process agent loop, extensions ENABLED, spawned senpi
+   binary from source, zero-token fake model):
+   6/6 PASS — terminal builtin registers PTY bash + companions in the real CLI process; scripted
+   model turn calls bash{run_in_background} -> bash_output{wait_for} -> final text; turn-2 payload
+   carries the background bash_id, turn-3 payload carries the wait_for-resolved marker, final text
+   returned via CLI, real auth.json sha256 unchanged.
+   Also re-run inside a REAL tmux pane (forced bash): 6/6 PASS, rc=0 (see cli-terminal-loop-tmux.txt).
+
+4) vitest suites (independent re-run):
+   - packages/coding-agent: terminal-extension.test.ts + terminal-settings-notify.test.ts +
+     shell-config-kind.test.ts = 18/18 PASS (real AgentSession registration; anthropic-bash mutual
+     exclusion static + dynamic model-switch; pipe execution fg/bg+wait_for/kill/missing/resize;
+     bash_input permission gating in the bash class).
+   - packages/pty: 32/32 PASS (loader/session/screen/registry + registry this-binding regression).
+
+5) Gate: `npm run check` = RC 0 (biome, pinned-deps, ts-imports, shrinkwrap, install-lock,
+   tsgo --noEmit, browser-smoke, web-ui, packages/neo go build+vet+test).
+
+6) Code-quality (F2 spot checks):
+   - LOC ceiling: every new terminal/pty src file <= 234 pure LOC (ceiling 250). Max registry.ts 234.
+   - No `: any` / `as any` in new terminal/pty src.
+   - bash_input named-key map is PTY control-sequence encoding (ctrl+c -> 0x03), not editor keybindings.
+
+7) Scope-fidelity (F1/F4 spot checks):
+   - Surface = snake_case CC-close: bash + bash_output/bash_input/bash_resize/kill_bash.
+   - C7 grep-clean: no senpi-defined PascalCase tool `name:` registrations; only provider-fixed
+     hook_event_name values remain (explicitly KEEP per plan todo 27).
+   - Must-NOT-Have absent: pi-pty deps = {@xterm/headless} only (no ssh/tmux/node-pty/mcp);
+     no attach overlay; terminal prompt.ts correctly advises AGAINST tmux.
+   - changes.md coverage: extensions/changes.md terminal entry + utils/changes.md shell entry present.
+
+Windows: proven only via CI (terminal-cross-os job on windows-latest runs pty + terminal-extension
+suites via pipe fallback; native ConPTY lifecycle via the Native Prebuilds cargo job). PENDING-CI —
+PR not yet opened at this stage, so no branch CI run exists yet.
+
+Known remaining scope gap (NOT a regression): plan todo 24 (render.ts custom live-tail TUI
+renderer) is undelivered; terminal tool results render via the default tool renderer (functional
+output — bash_id, deltas, exit status — is shown). Flagged for a follow-up, not blocking function.

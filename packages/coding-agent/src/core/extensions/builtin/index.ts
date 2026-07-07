@@ -20,6 +20,7 @@ import redrawsExtension from "./redraws.ts";
 import piRulesExtension from "./rules/index.ts";
 import serviceTierExtension from "./service-tier.ts";
 import sessionObserverExtension from "./session-observer/index.ts";
+import terminalExtension from "./terminal/index.ts";
 import todowriteExtension from "./todotools/index.ts";
 import toolPairGuardExtension from "./tool-pair-guard/index.ts";
 import tpsExtension from "./tps.ts";
@@ -52,6 +53,9 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "openai-web-search", factory: openaiWebSearchExtension },
 	{ id: "service-tier", factory: serviceTierExtension },
 	{ id: "bash-timeout", factory: bashTimeoutExtension },
+	// Terminal follows bash-timeout so its injected default reaches the PTY bash, and follows
+	// anthropic-bash so mutual-exclusion (companion step-aside) is evaluated after it registers.
+	{ id: "terminal", factory: terminalExtension },
 	{ id: "tool-pair-guard", factory: toolPairGuardExtension },
 	{ id: "compaction", factory: compactionExtension },
 	{ id: "history-search", factory: historySearchExtension },
