@@ -5,7 +5,7 @@ use std::fmt::{Display, Formatter};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -98,13 +98,14 @@ pub struct PtyExit {
 
 pub struct PtySession {
     master: Option<Box<dyn MasterPty + Send>>,
-    writer: Option<Box<dyn Write + Send>>,
+    writer: Arc<Mutex<Option<Box<dyn Write + Send>>>>,
     child: Option<Box<dyn Child + Send + Sync>>,
     killer: Box<dyn ChildKiller + Send + Sync>,
     reader_thread: Option<JoinHandle<()>>,
     finished: Arc<AtomicBool>,
     cancelled: Arc<AtomicBool>,
     timed_out: Arc<AtomicBool>,
+    user_wrote: Arc<AtomicBool>,
     process_group: Option<i32>,
     exit: Option<PtyExit>,
 }
@@ -151,7 +152,33 @@ impl PtySession {
         let finished = Arc::new(AtomicBool::new(false));
         let cancelled = Arc::new(AtomicBool::new(false));
         let timed_out = Arc::new(AtomicBool::new(false));
-        let reader_thread = spawn_reader(reader, move |chunk| on_chunk(chunk));
+        let writer = Arc::new(Mutex::new(Some(writer)));
+        let user_wrote = Arc::new(AtomicBool::new(false));
+
+        // On Windows, portable-pty's ConPTY is created with PSEUDOCONSOLE_INHERIT_CURSOR, so it
+        // emits a DSR cursor-position query (ESC[6n) at startup and withholds the child's output
+        // until a terminal answers it. A raw byte pipe has no terminal, so the reader answers the
+        // startup handshake itself (see answer_conpty_cursor_query); the window closes on the first
+        // consumer write so later DSR queries pass through to the consumer.
+        #[cfg(windows)]
+        let reader_writer = Arc::clone(&writer);
+        #[cfg(windows)]
+        let reader_user_wrote = Arc::clone(&user_wrote);
+        #[cfg(windows)]
+        let mut dsr_tail: Vec<u8> = Vec::new();
+        #[cfg(windows)]
+        let mut dsr_answered_initial = false;
+        let reader_thread = spawn_reader(reader, move |chunk| {
+            #[cfg(windows)]
+            answer_conpty_cursor_query(
+                chunk,
+                &mut dsr_tail,
+                &mut dsr_answered_initial,
+                &reader_writer,
+                &reader_user_wrote,
+            );
+            on_chunk(chunk);
+        });
 
         if let Some(timeout) = opts.timeout {
             spawn_timeout(
@@ -166,13 +193,14 @@ impl PtySession {
 
         Ok(Self {
             master: Some(pair.master),
-            writer: Some(writer),
+            writer,
             child: Some(child),
             killer,
             reader_thread: Some(reader_thread),
             finished,
             cancelled,
             timed_out,
+            user_wrote,
             process_group,
             exit: None,
         })
@@ -182,8 +210,13 @@ impl PtySession {
         if self.finished.load(Ordering::SeqCst) {
             return Err(PtyError::new("pty session is closed"));
         }
-        let writer = self
+        // The first consumer write closes the ConPTY cursor-query auto-answer window.
+        self.user_wrote.store(true, Ordering::SeqCst);
+        let mut guard = self
             .writer
+            .lock()
+            .map_err(|_| PtyError::new("pty writer lock poisoned"))?;
+        let writer = guard
             .as_mut()
             .ok_or_else(|| PtyError::new("pty session is closed"))?;
         writer.write_all(bytes)?;
@@ -227,7 +260,9 @@ impl PtySession {
             .ok_or_else(|| PtyError::new("pty session is closed"))?;
         let status = child.wait()?;
         self.finished.store(true, Ordering::SeqCst);
-        self.writer.take();
+        if let Ok(mut guard) = self.writer.lock() {
+            guard.take();
+        }
         // Drop the PTY master before joining the reader thread. On Windows the ConPTY output pipe
         // never reaches EOF just because the child exited; only closing the pseudo console (by
         // dropping the master) unblocks the reader's pending read, so joining first would hang
@@ -275,5 +310,51 @@ impl PtySession {
             return Err(PtyError::new("pty session is closed"));
         }
         send_signal(self.process_group, signal, &mut *self.killer)
+    }
+}
+
+/// Answer ConPTY's startup DSR cursor-position query so the child's withheld output is released.
+///
+/// portable-pty 0.9's ConPTY is created with PSEUDOCONSOLE_INHERIT_CURSOR, which makes it emit
+/// `ESC[6n` at startup and hold back the child's output until a terminal replies with a
+/// cursor-position report. senpi-pty is a raw byte pipe with no terminal attached, so it answers the
+/// startup handshake on the consumer's behalf. The reply window is bounded: the very first query is
+/// always answered (so a consumer that writes immediately cannot race past the handshake), and
+/// further queries are answered only until the first consumer write — afterwards DSR queries pass
+/// through untouched so a consumer that is itself a terminal owns the exchange.
+#[cfg(windows)]
+fn answer_conpty_cursor_query(
+    chunk: &[u8],
+    tail: &mut Vec<u8>,
+    answered_initial: &mut bool,
+    writer: &Arc<Mutex<Option<Box<dyn Write + Send>>>>,
+    user_wrote: &Arc<AtomicBool>,
+) {
+    const DSR_CURSOR_QUERY: &[u8] = b"\x1b[6n";
+    const CPR_RESPONSE: &[u8] = b"\x1b[1;1R";
+
+    // Prepend the few bytes carried from the previous read so a query split across reads is still
+    // detected, then keep the trailing bytes that could start the next boundary-straddling match.
+    let mut window = std::mem::take(tail);
+    window.extend_from_slice(chunk);
+    let seen = window
+        .windows(DSR_CURSOR_QUERY.len())
+        .any(|candidate| candidate == DSR_CURSOR_QUERY);
+    let keep = DSR_CURSOR_QUERY.len() - 1;
+    *tail = if window.len() > keep {
+        window[window.len() - keep..].to_vec()
+    } else {
+        window
+    };
+
+    if !seen || (*answered_initial && user_wrote.load(Ordering::SeqCst)) {
+        return;
+    }
+    *answered_initial = true;
+    if let Ok(mut guard) = writer.lock() {
+        if let Some(writer) = guard.as_mut() {
+            let _ = writer.write_all(CPR_RESPONSE);
+            let _ = writer.flush();
+        }
     }
 }

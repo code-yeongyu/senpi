@@ -94,26 +94,19 @@ fn manual_windows_cmd_lifecycle_transcript() {
     );
 
     session.resize(100, 30).unwrap();
-    // portable-pty 0.9.0's ConPTY sets PSEUDOCONSOLE_INHERIT_CURSOR, so on startup ConPTY emits a
-    // DSR cursor-position query (ESC[6n) and withholds cmd.exe's rendered prompt until a terminal
-    // answers it. On a headless CI runner nothing answers, so we stand in for the terminal and reply
-    // with a cursor-position report, which is what a real consumer would do. See wezterm/wezterm#6783.
-    let mut cursor_queries_answered = 0_usize;
-    windows_drive(
-        &mut session,
+    // The session answers ConPTY's startup cursor-position query itself (see session.rs), so the
+    // withheld prompt is released without the test standing in for a terminal. Just wait for it.
+    windows_wait(
         &output,
         Duration::from_secs(60),
         "initial cmd.exe prompt",
-        &mut cursor_queries_answered,
         |text| text.contains('>'),
     );
     session.write(b"echo manual-windows-round-trip\r\n").unwrap();
-    windows_drive(
-        &mut session,
+    windows_wait(
         &output,
         Duration::from_secs(30),
         "manual-windows-round-trip output",
-        &mut cursor_queries_answered,
         |text| text.contains("manual-windows-round-trip"),
     );
     eprintln!("windows bytes: {:?}", text(&output));
@@ -157,41 +150,21 @@ fn wait_until(timeout: Duration, what: &str, mut predicate: impl FnMut() -> bool
     assert!(predicate(), "timed out after {timeout:?} waiting for {what}");
 }
 
-// ESC[6n is ConPTY's DSR cursor-position query; ESC[1;1R is a terminal's cursor-position report.
+/// Wait until `ready` holds, or panic with forensic evidence (bytes received, lossy transcript, hex
+/// head) on timeout so a Windows CI failure is diagnostic rather than opaque. ConPTY's startup
+/// cursor-position query is answered by the session itself, so this only observes output.
 #[cfg(windows)]
-const DSR_CURSOR_QUERY: &str = "\u{1b}[6n";
-#[cfg(windows)]
-const CPR_RESPONSE: &[u8] = b"\x1b[1;1R";
-
-/// Drive a Windows ConPTY session until `ready` holds, answering every ConPTY cursor-position query
-/// so its withheld output is released. On timeout it panics with forensic evidence (bytes received,
-/// lossy transcript, hex head, queries answered) so a CI failure is diagnostic rather than opaque.
-#[cfg(windows)]
-fn windows_drive(
-    session: &mut PtySession,
-    output: &Arc<Mutex<Vec<u8>>>,
-    timeout: Duration,
-    what: &str,
-    cursor_queries_answered: &mut usize,
-    ready: impl Fn(&str) -> bool,
-) {
+fn windows_wait(output: &Arc<Mutex<Vec<u8>>>, timeout: Duration, what: &str, ready: impl Fn(&str) -> bool) {
     let deadline = std::time::Instant::now() + timeout;
     loop {
-        let transcript = text(output);
-        if ready(&transcript) {
+        if ready(&text(output)) {
             return;
-        }
-        // Answer each query exactly once, including any ConPTY repeats after the startup one.
-        let queries_seen = transcript.matches(DSR_CURSOR_QUERY).count();
-        while *cursor_queries_answered < queries_seen {
-            let _ = session.write(CPR_RESPONSE);
-            *cursor_queries_answered += 1;
         }
         if std::time::Instant::now() >= deadline {
             let raw = output.lock().unwrap();
             panic!(
                 "timed out after {timeout:?} waiting for {what}: received {} bytes; \
-                 answered {cursor_queries_answered} cursor queries; lossy={:?}; hex_head=[{}]",
+                 lossy={:?}; hex_head=[{}]",
                 raw.len(),
                 String::from_utf8_lossy(&raw),
                 windows_hex_head(&raw, 256),
