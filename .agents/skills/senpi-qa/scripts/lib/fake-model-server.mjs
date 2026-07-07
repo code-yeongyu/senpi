@@ -18,8 +18,13 @@ import { pathToFileURL } from "node:url";
 const isMain = import.meta.url === pathToFileURL(process.argv[1] || "").href;
 
 /**
- * @param {{ port?: number, turns?: Array<{text?:string, toolCalls?:Array<{id?:string,name:string,args:object}>}> }} opts
+ * @param {{ port?: number, turns?: Array<{text?:string, chunks?:number, chunkDelayMs?:number, toolCalls?:Array<{id?:string,name:string,args:object}>}> }} opts
  * @returns {Promise<{url:string, origin:string, port:number, requests:object[], stop:()=>Promise<void>}>}
+ *
+ * A turn's `text` is emitted as ONE delta by default. Set `chunks` (>1) to split
+ * it into that many text deltas so streaming has an in-flight window (abort/steer
+ * QA); `chunkDelayMs` spaces those deltas apart. Both absent = byte-identical
+ * single-delta behavior.
  */
 export function startFakeModelServer({ port = 0, turns = [{ text: "OK" }] } = {}) {
 	const requests = [];
@@ -85,6 +90,49 @@ function sseHead(res) {
 	res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
 }
 
+/** Split a string into `n` contiguous pieces that concatenate back to the original. */
+function splitIntoChunks(text, n) {
+	const chars = Array.from(text);
+	if (chars.length === 0) return [""];
+	const count = Math.max(1, Math.min(n, chars.length));
+	const base = Math.floor(chars.length / count);
+	let rem = chars.length % count;
+	const pieces = [];
+	let idx = 0;
+	for (let i = 0; i < count; i++) {
+		const take = base + (rem > 0 ? 1 : 0);
+		if (rem > 0) rem--;
+		pieces.push(chars.slice(idx, idx + take).join(""));
+		idx += take;
+	}
+	return pieces;
+}
+
+/**
+ * Emit a turn's text via `emitDelta`, then run `done`. Without `chunks` this is a
+ * single synchronous `emitDelta(turn.text)` (byte-identical to legacy behavior);
+ * with `chunks` > 1 the text is split into that many deltas written `chunkDelayMs`
+ * apart, and `done` runs after the last one so the response closes in order.
+ */
+function emitTextDeltas(turn, emitDelta, done) {
+	if (!turn.text) return done();
+	const n = Number.isInteger(turn.chunks) && turn.chunks > 1 ? turn.chunks : 0;
+	if (!n) {
+		emitDelta(turn.text);
+		return done();
+	}
+	const pieces = splitIntoChunks(turn.text, n);
+	const delay = Number.isFinite(turn.chunkDelayMs) ? turn.chunkDelayMs : 0;
+	let i = 0;
+	const tick = () => {
+		emitDelta(pieces[i]);
+		i++;
+		if (i < pieces.length) setTimeout(tick, delay);
+		else done();
+	};
+	tick();
+}
+
 // --- OpenAI chat completions ---------------------------------------------
 function writeCompletionsSse(res, turn, modelId) {
 	sseHead(res);
@@ -98,12 +146,13 @@ function writeCompletionsSse(res, turn, modelId) {
 		function: { name: tc.name, arguments: JSON.stringify(tc.args ?? {}) },
 	}));
 	send({ role: "assistant", content: "" });
-	if (turn.text) send({ content: turn.text });
-	if (tcs.length) send({ tool_calls: tcs });
-	send({}, tcs.length ? "tool_calls" : "stop");
-	res.write(`data: ${JSON.stringify({ ...base, choices: [], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } })}\n\n`);
-	res.write("data: [DONE]\n\n");
-	res.end();
+	emitTextDeltas(turn, (t) => send({ content: t }), () => {
+		if (tcs.length) send({ tool_calls: tcs });
+		send({}, tcs.length ? "tool_calls" : "stop");
+		res.write(`data: ${JSON.stringify({ ...base, choices: [], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } })}\n\n`);
+		res.write("data: [DONE]\n\n");
+		res.end();
+	});
 }
 
 // --- Anthropic Messages ---------------------------------------------------
@@ -114,22 +163,28 @@ function writeAnthropicSse(res, turn, modelId) {
 		message: { id: "msg_mock", type: "message", role: "assistant", model: modelId, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } },
 	});
 	let index = 0;
+	const afterText = () => {
+		for (const tc of turn.toolCalls || []) {
+			ev("content_block_start", { index, content_block: { type: "tool_use", id: tc.id || `toolu_${index}`, name: tc.name, input: {} } });
+			ev("content_block_delta", { index, delta: { type: "input_json_delta", partial_json: JSON.stringify(tc.args ?? {}) } });
+			ev("content_block_stop", { index });
+			index++;
+		}
+		const stopReason = (turn.toolCalls || []).length ? "tool_use" : "end_turn";
+		ev("message_delta", { delta: { stop_reason: stopReason, stop_sequence: null }, usage: { output_tokens: 1 } });
+		ev("message_stop", {});
+		res.end();
+	};
 	if (turn.text) {
 		ev("content_block_start", { index, content_block: { type: "text", text: "" } });
-		ev("content_block_delta", { index, delta: { type: "text_delta", text: turn.text } });
-		ev("content_block_stop", { index });
-		index++;
+		emitTextDeltas(turn, (t) => ev("content_block_delta", { index, delta: { type: "text_delta", text: t } }), () => {
+			ev("content_block_stop", { index });
+			index++;
+			afterText();
+		});
+	} else {
+		afterText();
 	}
-	for (const tc of turn.toolCalls || []) {
-		ev("content_block_start", { index, content_block: { type: "tool_use", id: tc.id || `toolu_${index}`, name: tc.name, input: {} } });
-		ev("content_block_delta", { index, delta: { type: "input_json_delta", partial_json: JSON.stringify(tc.args ?? {}) } });
-		ev("content_block_stop", { index });
-		index++;
-	}
-	const stopReason = (turn.toolCalls || []).length ? "tool_use" : "end_turn";
-	ev("message_delta", { delta: { stop_reason: stopReason, stop_sequence: null }, usage: { output_tokens: 1 } });
-	ev("message_stop", {});
-	res.end();
 }
 
 // --- OpenAI Responses -----------------------------------------------------
@@ -141,31 +196,41 @@ function writeResponsesSse(res, turn, modelId) {
 	ev("response.created", { response: { id: respId, object: "response", status: "in_progress", model: modelId, output: [] } });
 	let outputIndex = 0;
 	const outputItems = [];
+	const afterText = () => {
+		emitToolCalls();
+		ev("response.completed", {
+			response: { id: respId, object: "response", status: "completed", model: modelId, output: outputItems, usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } },
+		});
+		res.end();
+	};
 	if (turn.text) {
 		const itemId = "msg_mock";
 		ev("response.output_item.added", { output_index: outputIndex, item: { id: itemId, type: "message", status: "in_progress", role: "assistant", content: [] } });
 		ev("response.content_part.added", { item_id: itemId, output_index: outputIndex, content_index: 0, part: { type: "output_text", text: "", annotations: [] } });
-		ev("response.output_text.delta", { item_id: itemId, output_index: outputIndex, content_index: 0, delta: turn.text });
-		const item = { id: itemId, type: "message", status: "completed", role: "assistant", content: [{ type: "output_text", text: turn.text, annotations: [] }] };
-		ev("response.output_item.done", { output_index: outputIndex, item });
-		outputItems.push(item);
-		outputIndex++;
+		emitTextDeltas(turn, (t) => ev("response.output_text.delta", { item_id: itemId, output_index: outputIndex, content_index: 0, delta: t }), () => {
+			const item = { id: itemId, type: "message", status: "completed", role: "assistant", content: [{ type: "output_text", text: turn.text, annotations: [] }] };
+			ev("response.output_item.done", { output_index: outputIndex, item });
+			outputItems.push(item);
+			outputIndex++;
+			afterText();
+		});
+	} else {
+		afterText();
 	}
-	for (const tc of turn.toolCalls || []) {
-		const itemId = `fc_${outputIndex}`;
-		const callId = tc.id || `call_${outputIndex}`;
-		const argStr = JSON.stringify(tc.args ?? {});
-		ev("response.output_item.added", { output_index: outputIndex, item: { id: itemId, type: "function_call", status: "in_progress", call_id: callId, name: tc.name, arguments: "" } });
-		ev("response.function_call_arguments.delta", { item_id: itemId, output_index: outputIndex, delta: argStr });
-		const item = { id: itemId, type: "function_call", status: "completed", call_id: callId, name: tc.name, arguments: argStr };
-		ev("response.output_item.done", { output_index: outputIndex, item });
-		outputItems.push(item);
-		outputIndex++;
+
+	function emitToolCalls() {
+		for (const tc of turn.toolCalls || []) {
+			const itemId = `fc_${outputIndex}`;
+			const callId = tc.id || `call_${outputIndex}`;
+			const argStr = JSON.stringify(tc.args ?? {});
+			ev("response.output_item.added", { output_index: outputIndex, item: { id: itemId, type: "function_call", status: "in_progress", call_id: callId, name: tc.name, arguments: "" } });
+			ev("response.function_call_arguments.delta", { item_id: itemId, output_index: outputIndex, delta: argStr });
+			const item = { id: itemId, type: "function_call", status: "completed", call_id: callId, name: tc.name, arguments: argStr };
+			ev("response.output_item.done", { output_index: outputIndex, item });
+			outputItems.push(item);
+			outputIndex++;
+		}
 	}
-	ev("response.completed", {
-		response: { id: respId, object: "response", status: "completed", model: modelId, output: outputItems, usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } },
-	});
-	res.end();
 }
 
 // --- self-test ------------------------------------------------------------
