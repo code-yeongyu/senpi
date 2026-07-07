@@ -84,6 +84,7 @@ export interface CreateAgentSessionOptions {
 	settingsManager?: SettingsManager;
 	/** Session start event metadata for extension runtime startup. */
 	sessionStartEvent?: SessionStartEvent;
+	autoTitleSessions?: boolean;
 }
 
 /** Result from createAgentSession */
@@ -411,6 +412,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		excludedToolNames,
 		extensionRunnerRef,
 		sessionStartEvent: options.sessionStartEvent,
+		autoTitleSessions: options.autoTitleSessions,
 	});
 	const extensionsResult = resourceLoader.getExtensions();
 

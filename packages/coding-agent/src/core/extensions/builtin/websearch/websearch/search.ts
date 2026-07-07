@@ -9,9 +9,8 @@ import type {
 	WebsearchConfig,
 } from "./types.ts";
 
-export { formatSearchText } from "./search-format.ts";
-
 const MAX_ERROR_DETAIL_LENGTH = 500;
+const DEFAULT_PROVIDER_TIMEOUT_MS = 60_000;
 
 function isJsonObject(value: unknown): value is JsonObject {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -41,6 +40,44 @@ function extractErrorDetail(payload: unknown, bodyText: string): string {
 function httpErrorMessage(status: number, payload: unknown, bodyText: string): string {
 	const detail = extractErrorDetail(payload, bodyText);
 	return detail ? `Search failed with HTTP ${status}: ${detail}` : `Search failed with HTTP ${status}`;
+}
+
+function abortReason(signal: AbortSignal): unknown {
+	return signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
+}
+
+function timeoutMsFor(config: SearchProviderEntry): number {
+	return Math.max(1, Math.trunc(config.timeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS));
+}
+
+function providerTimeoutMessage(timeoutMs: number): string {
+	return `Search timed out after ${timeoutMs}ms`;
+}
+
+function searchAbortSignal(
+	outerSignal: AbortSignal | undefined,
+	timeoutMs: number,
+): { signal: AbortSignal; cleanup: () => void } {
+	if (outerSignal?.aborted) throw abortReason(outerSignal);
+
+	const controller = new AbortController();
+	const timeout = setTimeout(() => {
+		controller.abort(new DOMException(providerTimeoutMessage(timeoutMs), "TimeoutError"));
+	}, timeoutMs);
+	const onAbort = () => controller.abort(outerSignal ? abortReason(outerSignal) : undefined);
+	outerSignal?.addEventListener("abort", onAbort, { once: true });
+
+	return {
+		signal: controller.signal,
+		cleanup: () => {
+			clearTimeout(timeout);
+			outerSignal?.removeEventListener("abort", onAbort);
+		},
+	};
+}
+
+function noResultsMessage(config: SearchProviderEntry, request: SearchRequest): string {
+	return `Search provider ${entryLabel(config)} returned no results for "${request.query}".`;
 }
 
 export interface SearchRoutingState {
@@ -114,15 +151,19 @@ async function performProviderSearch(
 ): Promise<SearchDetails> {
 	const startedAt = Date.now();
 	const built = buildSearchRequest(config, request);
+	const timeoutMs = timeoutMsFor(config);
+	const abort = searchAbortSignal(signal, timeoutMs);
 	let response: Response;
 	try {
 		const init: RequestInit = {
 			...built.init,
+			signal: abort.signal,
 		};
 		if (built.body !== undefined) init.body = JSON.stringify(built.body);
-		if (signal !== undefined) init.signal = signal;
 		response = await fetch(built.url, init);
 	} catch (error) {
+		abort.cleanup();
+		if (signal?.aborted) throw abortReason(signal);
 		const details: SearchDetails = {
 			provider: config.provider,
 			query: request.query,
@@ -138,8 +179,21 @@ async function performProviderSearch(
 	let bodyText = "";
 	try {
 		bodyText = await response.text();
-	} catch {
-		bodyText = "";
+	} catch (error) {
+		abort.cleanup();
+		if (signal?.aborted) throw abortReason(signal);
+		const details: SearchDetails = {
+			provider: config.provider,
+			query: request.query,
+			results: [],
+			durationMs: Date.now() - startedAt,
+			truncated: false,
+			error: error instanceof Error ? error.message : "Search response read failed",
+		};
+		if (config.id !== undefined) details.entryId = config.id;
+		return details;
+	} finally {
+		abort.cleanup();
 	}
 	let payload: unknown = {};
 	if (config.provider === "duckduckgo-html") {
@@ -166,13 +220,15 @@ async function performProviderSearch(
 
 	const results = normalizeSearchResponse(config.provider, payload);
 	const max = request.maxResults;
+	const limitedResults = results.slice(0, max);
 	const details: SearchDetails = {
 		provider: config.provider,
 		query: request.query,
-		results: results.slice(0, max),
+		results: limitedResults,
 		durationMs: Date.now() - startedAt,
 		truncated: results.length > max,
 	};
+	if (limitedResults.length === 0) details.error = noResultsMessage(config, request);
 	if (config.id !== undefined) details.entryId = config.id;
 	return details;
 }
@@ -257,4 +313,32 @@ export async function performSearch(
 		attempts,
 		error: `All configured search providers failed: ${attempts.map((attempt) => `${entryLabel(attempt)} ${attempt.error ?? "failed"}`).join("; ")}`,
 	};
+}
+
+export function formatSearchText(details: SearchDetails): string {
+	if (details.error) return details.error;
+	if (details.results.length === 0) return `No web search results found for "${details.query}".`;
+
+	const route = details.strategy
+		? ` via ${details.entryId ? `${details.provider}/${details.entryId}` : details.provider} (${details.strategy})`
+		: ` via ${details.provider}`;
+	const lines = [`Web search results for "${details.query}"${route}:`, ""];
+	if (details.attempts && details.attempts.length > 0) {
+		lines.push(
+			`Routing attempts: ${details.attempts
+				.map(
+					(attempt) =>
+						`${entryLabel(attempt)} ${attempt.error ? `failed: ${attempt.error}` : `${attempt.resultsCount} result${attempt.resultsCount === 1 ? "" : "s"}`}`,
+				)
+				.join(" -> ")}`,
+			"",
+		);
+	}
+	for (const [index, item] of details.results.entries()) {
+		lines.push(`${index + 1}. ${item.title}`);
+		lines.push(`   ${item.url}`);
+		if (item.snippet) lines.push(`   ${item.snippet}`);
+	}
+	lines.push("", "REMINDER: Include relevant sources from the URLs above in the final answer.");
+	return lines.join("\n");
 }

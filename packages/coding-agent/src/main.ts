@@ -150,6 +150,7 @@ async function prepareInitialMessage(
 ): Promise<{
 	initialMessage?: string;
 	initialImages?: ImageContent[];
+	initialTitlePrompt?: string;
 }> {
 	if (parsed.fileArgs.length === 0) {
 		return buildInitialMessage({ parsed, stdinContent });
@@ -800,6 +801,7 @@ export async function main(args: string[], options?: MainOptions) {
 			excludeTools: sessionOptions.excludeTools,
 			noTools: sessionOptions.noTools,
 			customTools: sessionOptions.customTools,
+			autoTitleSessions: appMode === "interactive" && !sessionManager.hasContextMessages(),
 		});
 		const cliThinkingOverride = parsed.thinking !== undefined || cliThinkingFromModel;
 		if (created.session.model && cliThinkingOverride) {
@@ -842,7 +844,7 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 	time("readPipedStdin");
 
-	const { initialMessage, initialImages } = await prepareInitialMessage(
+	const { initialMessage, initialImages, initialTitlePrompt } = await prepareInitialMessage(
 		parsed,
 		settingsManager.getImageAutoResize(),
 		stdinContent,
@@ -887,6 +889,7 @@ export async function main(args: string[], options?: MainOptions) {
 			autoTrustOnReloadCwd,
 			initialMessage,
 			initialImages,
+			initialTitlePrompt,
 			initialMessages: parsed.messages,
 			verbose: parsed.verbose,
 		});

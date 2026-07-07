@@ -11,6 +11,7 @@ export interface InitialMessageInput {
 export interface InitialMessageResult {
 	initialMessage?: string;
 	initialImages?: ImageContent[];
+	initialTitlePrompt?: string;
 }
 
 /**
@@ -31,6 +32,9 @@ export function buildInitialMessage({
 		parts.push(fileText);
 	}
 
+	const hasPrivateInitialContext =
+		stdinContent !== undefined || fileText !== undefined || (fileImages !== undefined && fileImages.length > 0);
+	const titlePrompt = hasPrivateInitialContext ? undefined : parsed.messages[0];
 	if (parsed.messages.length > 0) {
 		parts.push(parsed.messages[0]);
 		parsed.messages.shift();
@@ -39,5 +43,6 @@ export function buildInitialMessage({
 	return {
 		initialMessage: parts.length > 0 ? parts.join("") : undefined,
 		initialImages: fileImages && fileImages.length > 0 ? fileImages : undefined,
+		initialTitlePrompt: titlePrompt,
 	};
 }
