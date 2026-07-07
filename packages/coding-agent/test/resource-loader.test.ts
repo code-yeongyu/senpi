@@ -25,6 +25,13 @@ describe("DefaultResourceLoader", () => {
 		cwd = join(tempDir, "project");
 		mkdirSync(agentDir, { recursive: true });
 		mkdirSync(cwd, { recursive: true });
+		// The bundled codemode extension is default-on everywhere. Disable it through the real
+		// global-settings mechanism so these tests stay isolated to the extensions they create,
+		// matching the disabledBuiltinExtensions convention used in codemode-bridge.test.ts.
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			`${JSON.stringify({ disabledBuiltinExtensions: ["codemode"] })}\n`,
+		);
 		originalHome = process.env.HOME;
 		process.env.HOME = tempDir;
 	});
