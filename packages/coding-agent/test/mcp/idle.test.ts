@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadMcpConfig } from "../../src/core/extensions/builtin/mcp/config.ts";
@@ -15,7 +15,7 @@ import {
 	testContext,
 	textContent,
 } from "./fixtures/register-call.ts";
-import { cleanupRoots, setConfig, stdioServer, type TestRoot } from "./fixtures/service-lifecycle.ts";
+import { cleanupRoots, setConfig, stdioServer, type TestRoot, waitForCondition } from "./fixtures/service-lifecycle.ts";
 import { assertProcessDead } from "./fixtures/spawn-fixture.ts";
 
 const cleanupTasks: Array<() => Promise<void>> = [];
@@ -73,6 +73,10 @@ describe("MCP idle lifecycle", () => {
 		const pi = capturingPi();
 
 		await attach(root, pi);
+		await waitForCondition(
+			() => getMcpService().getConnection("fx")?.state === "connected" && existsSync(pidFile),
+			2500,
+		);
 		const pid = readNumberFile(pidFile);
 
 		expect(getMcpService().getServerSnapshots()).toMatchObject([{ name: "fx", lifecycleState: "connected" }]);
@@ -161,6 +165,7 @@ describe("MCP idle lifecycle", () => {
 		connection?.onStateChange((event) => {
 			states.push(event.state);
 		});
+		await waitForCondition(() => existsSync(pidFile), 2500);
 		const firstPid = readNumberFile(pidFile);
 		process.kill(firstPid, "SIGKILL");
 		await assertProcessDead(firstPid);
@@ -169,7 +174,7 @@ describe("MCP idle lifecycle", () => {
 			connection === undefined ? undefined : getMcpLifecycleDebugSnapshot(connection)?.keepAliveTimerHasRef,
 		).toBe(false);
 		await vi.advanceTimersByTimeAsync(30_000);
-		await waitFor(() => readNumberFile(pidFile) !== firstPid, 1500);
+		await waitFor(() => readNumberFile(pidFile) !== firstPid && pi.toolDefinitions.has("mcp_fx_tool_1"), 1500);
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 		const result = await tool.execute("tc-keep-alive", { value: "recovered" }, undefined, undefined, testContext());
 

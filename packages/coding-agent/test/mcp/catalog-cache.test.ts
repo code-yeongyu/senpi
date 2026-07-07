@@ -12,6 +12,7 @@ import {
 	setConfig,
 	stdioServer,
 	type TestRoot,
+	waitForCondition,
 } from "./fixtures/service-lifecycle.ts";
 
 const cleanupTasks: Array<() => Promise<void>> = [];
@@ -104,9 +105,10 @@ describe("MCP disk metadata cache", () => {
 
 		await attach(root, pi);
 
+		await waitForCondition(() => pi.activeTools.includes("mcp_fx_tool_2"), 2500);
 		expect(await readCounter(counterFile)).toBe(1);
-		expect(pi.registeredTools).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
-		expect(pi.registeredTools).not.toContain("mcp_fx_stale_cached");
+		expect(pi.activeTools).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
+		expect(pi.activeTools).not.toContain("mcp_fx_stale_cached");
 		const cache = await readCache(root);
 		expect(cache.servers.fx.tools.map((tool) => tool.name)).toEqual(["tool_1", "tool_2"]);
 	});

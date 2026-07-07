@@ -50,8 +50,14 @@ Verification artifacts:
 - senpi QA: `final-senpi-qa-mock-loop-self-test.txt`.
 - Cleanup: `final-cleanup-receipts.txt`, `chaos-current-diff/cleanup-receipt.txt`.
 
-Residual risk:
-- Fresh TODO21 chaos scenarios 1-9 passed under `chaos-current-diff/INDEX.md`.
-- The driver step 10 broad `npm test` failed in rotating unrelated timing tests. Direct reruns of the failed MCP files and the unrelated footer-data-provider file passed. The scoped required tests, `npm run check`, no-excuse, pure LOC, and senpi mock-loop QA all pass on the final diff.
+Follow-up full-suite stabilization:
+- The out-of-scope `packages/coding-agent/test/footer-data-provider.test.ts` timeout drift was removed.
+- MCP-only wait stabilization was kept in `catalog-cache.test.ts`, `idle.test.ts`, and `startup-race.test.ts` because eager and keep-alive registration are asynchronous after the current MCP startup-race fixes.
+- Focused MCP tests passed: `local-ignore/qa-evidence/20260707-mcp-w2-todo21-full-test-green/focused-mcp-tests.txt`.
+- Full root `npm test` passed with provider env stripped and `PI_NO_LOCAL_LLM=1`: `local-ignore/qa-evidence/20260707-mcp-w2-todo21-full-test-green/root-npm-test-final.txt`.
+- `npm run check`, exact no-excuse gate command, pure LOC, senpi mock-loop QA, and cleanup receipts passed under `local-ignore/qa-evidence/20260707-mcp-w2-todo21-full-test-green/`.
 
-Final status: CLEAN FOR TODO21 QUALITY BLOCKERS WITH BROAD-SUITE FLAKE NOTED.
+Residual risk:
+- None identified in the current evidence set.
+
+Final status: CLEAN FOR TODO21 QUALITY BLOCKERS AND FULL ROOT TEST GATE.

@@ -22,12 +22,13 @@ afterEach(async () => {
 });
 
 describe("MCP startup race", () => {
-	it("characterizes fast eager startup by registering live tools before attach returns", async () => {
+	it("eventually registers live tools when an eager server starts without cache", async () => {
 		const root = makeStartupRoot("fast-eager");
 		setConfig(root, { fx: { ...stdioServer(["--tools", "2"]), lifecycle: "eager" } });
 		const pi = capturingPi();
 
 		await attach(root, pi);
+		await waitFor(() => pi.registeredTools.length === 2, 2500);
 
 		expect(pi.registeredTools).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
 		expect(getMcpService().getServerSnapshots()).toMatchObject([
