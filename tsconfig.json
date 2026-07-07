@@ -55,6 +55,12 @@
 			"@earendil-works/pi-tui/*": [
 				"./packages/tui/src/*"
 			],
+			"@earendil-works/pi-pty": [
+				"./packages/pty/src/index.ts"
+			],
+			"@earendil-works/pi-pty/*": [
+				"./packages/pty/src/*"
+			],
 			"@earendil-works/pi-web-ui": [
 				"./packages/web-ui/src/index.ts"
 			],

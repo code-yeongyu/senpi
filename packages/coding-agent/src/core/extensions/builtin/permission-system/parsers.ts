@@ -101,34 +101,43 @@ export class ParserRegistry {
 export function createBuiltinParserRegistry(): ParserRegistry {
 	const registry = new ParserRegistry();
 
-	registry.register("bash", (_toolName, input, cwd) => {
-		const command = getString(input, "command");
-		if (!command) {
-			return [fallbackPermissionRequest("bash")];
-		}
+	// bash_input writes arbitrary stdin to a live shell session = arbitrary command execution,
+	// so it MUST be gated in the SAME `bash` permission class (via the `input` field), else
+	// read-only/ask presets would be bypassable through a persistent session. The steering/read
+	// tools (bash_output/kill_bash/bash_resize) fall back to their own tool-named permissions.
+	const parseBashLikePermission =
+		(commandKey: string): ToolPermissionParser =>
+		(_toolName, input, cwd) => {
+			const command = getString(input, commandKey);
+			if (!command) {
+				return [fallbackPermissionRequest("bash")];
+			}
 
-		const tokens = command.split(/\s+/).filter(Boolean);
-		const prefix = BashArity.prefix(tokens).join(" ");
-		const always = prefix ? [prefix, `${prefix} *`] : ["*"];
-		const requests: PermissionRequest[] = [
-			{
-				permission: "bash",
-				patterns: [prefix || command],
-				always,
-			},
-		];
+			const tokens = command.split(/\s+/).filter(Boolean);
+			const prefix = BashArity.prefix(tokens).join(" ");
+			const always = prefix ? [prefix, `${prefix} *`] : ["*"];
+			const requests: PermissionRequest[] = [
+				{
+					permission: "bash",
+					patterns: [prefix || command],
+					always,
+				},
+			];
 
-		const externalPaths = extractExternalPaths(command, cwd);
-		if (externalPaths.length > 0) {
-			requests.push({
-				permission: "external_directory",
-				patterns: externalPaths,
-				always: externalPaths.map((externalPath) => toParentDirectoryPattern(externalPath, "file")),
-			});
-		}
+			const externalPaths = extractExternalPaths(command, cwd);
+			if (externalPaths.length > 0) {
+				requests.push({
+					permission: "external_directory",
+					patterns: externalPaths,
+					always: externalPaths.map((externalPath) => toParentDirectoryPattern(externalPath, "file")),
+				});
+			}
 
-		return requests;
-	});
+			return requests;
+		};
+
+	registry.register("bash", parseBashLikePermission("command"));
+	registry.register("bash_input", parseBashLikePermission("input"));
 
 	const editParser: ToolPermissionParser = () => {
 		return [fallbackPermissionRequest("edit")];

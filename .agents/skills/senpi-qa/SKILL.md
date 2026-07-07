@@ -51,6 +51,7 @@ auto-removed, a free port is allocatable, and the real auth file is untouched.
 | Interactive TUI, keybindings, rendering, composer | Channel 2 (TUI smoke) | `references/tui-driving.md` |
 | Anything where you want a full agent turn with ZERO tokens | Channel 3 (mock loop) | `references/mock-loop.md` |
 | CLI flags, `--help`, `--print`, model listing | Channel 4 (CLI smoke) | — |
+| Persistent terminal tools / `packages/pty` / PTY sessions | Channel 5 (pty-drive) | — |
 | Added a provider / auth path | Channel 3 + 4, and update `references/env-vars.md` | `references/credential-injection.md` |
 
 When in doubt, run the channel closest to your change AND Channel 3 (mock loop):
@@ -123,6 +124,19 @@ handling.
 node .agents/skills/senpi-qa/scripts/cli-smoke.mjs --self-test
 ```
 
+### Channel 5 — Persistent terminal / PTY (`scripts/pty-drive.mjs`)
+
+Drives the real `@earendil-works/pi-pty` runtime that backs the built-in `terminal`
+tools (`bash` / `bash_output` / `bash_input` / `bash_resize` / `kill_bash`) through the
+canonical scenarios: background command + `wait_for`, stdin steering, screen snapshot +
+resize reflow, and registry teardown with no orphans. Uses native PTY when a host
+prebuild is present, else the pipe fallback (`--force-pipe` forces it).
+
+```bash
+node .agents/skills/senpi-qa/scripts/pty-drive.mjs --self-test --evidence terminal
+node .agents/skills/senpi-qa/scripts/pty-drive.mjs --self-test --force-pipe
+```
+
 ## Scripts index (each is its own regression test)
 
 | Script | `--self-test` / `--self-check` asserts |
@@ -135,6 +149,7 @@ node .agents/skills/senpi-qa/scripts/cli-smoke.mjs --self-test
 | `scripts/mock-loop.mjs --with-mcp-tool <tool>` | full loop with a registered sandbox MCP stdio fixture proxy; fails if the requested `mcp_fx_tool_<n>` is not registered, invoked, and fed back to the model |
 | `scripts/tui-smoke.mjs --self-test` | TUI boots, renders, accepts a keystroke, tears down; auth unchanged |
 | `scripts/cli-smoke.mjs --self-test` | `--help`/`--version`/`--list-models` work offline; unknown flag reported; auth unchanged |
+| `scripts/pty-drive.mjs --self-test` | PTY runtime backing the `terminal` tools: background `wait_for`, stdin steering, screen snapshot + resize, registry teardown (no orphans); auth unchanged |
 
 Run the whole suite:
 

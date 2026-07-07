@@ -3,11 +3,19 @@ import { delimiter } from "node:path";
 import { spawn, spawnSync } from "child_process";
 import { getBinDir } from "../config.ts";
 
+/** Family of a resolved shell executable, used to pick invocation arguments. */
+export type ShellKind = "bash" | "sh" | "cmd" | "powershell";
+
 export interface ShellConfig {
 	shell: string;
 	args: string[];
 	commandTransport?: "argv" | "stdin";
+	/** Detected shell family. Lets PTY callers pass the right command transport per shell. */
+	kind?: ShellKind;
 }
+
+/** Environment variable that overrides shell resolution with an explicit bash path (Windows-first). */
+export const GIT_BASH_PATH_ENV = "SENPI_GIT_BASH_PATH";
 
 /**
  * Find bash executable on PATH (cross-platform)
@@ -17,8 +25,43 @@ function isLegacyWslBashPath(path: string): boolean {
 	return /^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/.test(normalized);
 }
 
+/** Classify a shell executable by its basename so non-bash shells get correct args. */
+export function resolveShellKind(shellPath: string): ShellKind {
+	const base = shellPath
+		.replace(/\\/g, "/")
+		.split("/")
+		.pop()
+		?.toLowerCase()
+		.replace(/\.exe$/, "");
+	if (base === "cmd") return "cmd";
+	if (base === "powershell" || base === "pwsh") return "powershell";
+	if (base === "sh") return "sh";
+	return "bash";
+}
+
 function getBashShellConfig(shell: string): ShellConfig {
-	return isLegacyWslBashPath(shell) ? { shell, args: ["-s"], commandTransport: "stdin" } : { shell, args: ["-c"] };
+	return isLegacyWslBashPath(shell)
+		? { shell, args: ["-s"], commandTransport: "stdin", kind: "bash" }
+		: { shell, args: ["-c"], kind: "bash" };
+}
+
+/**
+ * Build a ShellConfig for an explicit shell path, honoring the shell KIND so
+ * cmd.exe uses `/c`, PowerShell uses `-NoProfile -Command`, and bash/sh use
+ * `-c` (or WSL bash `-s` via stdin).
+ */
+function getShellConfigForPath(shellPath: string): ShellConfig {
+	const kind = resolveShellKind(shellPath);
+	switch (kind) {
+		case "cmd":
+			return { shell: shellPath, args: ["/c"], kind };
+		case "powershell":
+			return { shell: shellPath, args: ["-NoProfile", "-Command"], kind };
+		case "sh":
+			return { shell: shellPath, args: ["-c"], kind };
+		default:
+			return getBashShellConfig(shellPath);
+	}
 }
 
 function findBashOnPath(): string | null {
@@ -68,13 +111,22 @@ export function getShellConfig(customShellPath?: string): ShellConfig {
 	// 1. Check user-specified shell path
 	if (customShellPath) {
 		if (existsSync(customShellPath)) {
-			return getBashShellConfig(customShellPath);
+			return getShellConfigForPath(customShellPath);
 		}
 		throw new Error(`Custom shell path not found: ${customShellPath}`);
 	}
 
+	// 2. SENPI_GIT_BASH_PATH override wins over platform probing.
+	const gitBashOverride = process.env[GIT_BASH_PATH_ENV];
+	if (gitBashOverride) {
+		if (existsSync(gitBashOverride)) {
+			return getShellConfigForPath(gitBashOverride);
+		}
+		throw new Error(`${GIT_BASH_PATH_ENV} points to a missing shell: ${gitBashOverride}`);
+	}
+
 	if (process.platform === "win32") {
-		// 2. Try Git Bash in known locations
+		// 3. Try Git Bash in known locations
 		const paths: string[] = [];
 		const programFiles = process.env.ProgramFiles;
 		if (programFiles) {

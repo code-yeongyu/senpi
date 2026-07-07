@@ -204,6 +204,19 @@ export class PipeFallbackSession {
 		if (this.child === null) {
 			return { ok: false, code: "not_started", note: "Cannot kill pipe fallback session: session has not started." };
 		}
+		const pid = this.child.pid;
+		if (process.platform === "win32" && pid !== undefined) {
+			// On Windows child.kill() TerminateProcess-es only the direct child, leaving
+			// grandchildren (e.g. `sleep` under `bash.exe -c`) alive and holding the stdout
+			// pipe open — so 'close' never fires and waitExit() hangs teardown. taskkill /T /F
+			// terminates the whole tree so the pipe EOFs and the session settles.
+			try {
+				spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+				return { ok: true, note: `Terminated child_process pipe fallback process tree (pid ${pid}).` };
+			} catch {
+				// Fall through to the direct kill if taskkill is unavailable.
+			}
+		}
 		this.child.kill(signal);
 		return { ok: true, note: `Sent ${signal} to child_process pipe fallback session.` };
 	}
