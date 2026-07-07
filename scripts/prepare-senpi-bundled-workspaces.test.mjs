@@ -140,6 +140,9 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 				{ path: "package/node_modules/@earendil-works/pi-ai/dist/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-tui/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-tui/dist/index.js" },
+				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/package.json" },
+				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/src/index.ts" },
+				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/src/kernels/py/prelude.py" },
 			],
 		};
 
@@ -158,6 +161,9 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 				{ path: "node_modules/@earendil-works/pi-ai/dist/index.js" },
 				{ path: "node_modules/@earendil-works/pi-tui/package.json" },
 				{ path: "node_modules/@earendil-works/pi-tui/dist/index.js" },
+				{ path: "node_modules/@code-yeongyu/senpi-codemode/package.json" },
+				{ path: "node_modules/@code-yeongyu/senpi-codemode/src/index.ts" },
+				{ path: "node_modules/@code-yeongyu/senpi-codemode/src/kernels/py/prelude.py" },
 			],
 		};
 
