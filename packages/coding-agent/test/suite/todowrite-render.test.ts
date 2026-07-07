@@ -81,7 +81,7 @@ describe("todowrite renderer", () => {
 		expect(rendered).toContain("Show todo");
 		expect(rendered).toContain("contents - expect visible rows");
 		expect(rendered).toContain("[ ] packages/coding-agent/test/suite/todowrite-render.test.ts: Add regression");
-		expect(rendered).not.toBe("todowrite 2 item(s)");
+		expect(rendered).not.toContain("item(s)");
 	});
 
 	it("sanitizes multiline and control-character todo content in the call title", async () => {
