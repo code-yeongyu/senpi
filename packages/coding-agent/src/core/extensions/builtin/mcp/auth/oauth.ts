@@ -7,7 +7,7 @@ import {
 	auth as sdkAuth,
 } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { OAuthFlowError } from "./oauth-errors.ts";
+import { isInvalidGrant, OAuthFlowError } from "./oauth-errors.ts";
 import type { McpOAuthProvider } from "./oauth-provider.ts";
 import { assertS256Supported } from "./oauth-refresh.ts";
 
@@ -68,11 +68,25 @@ export async function finishAuthorization(
 	code: string,
 	options: OAuthFlowOptions = {},
 ): Promise<void> {
-	const result = await sdkAuth(provider, {
-		serverUrl: provider.serverUrl,
-		authorizationCode: code,
-		fetchFn: options.fetchFn,
-	});
+	let result: Awaited<ReturnType<typeof sdkAuth>>;
+	try {
+		result = await sdkAuth(provider, {
+			serverUrl: provider.serverUrl,
+			authorizationCode: code,
+			fetchFn: options.fetchFn,
+		});
+	} catch (error) {
+		if (isInvalidGrant(error) || isRejectedAuthorizationCode(error)) {
+			await provider.invalidateCredentials("tokens");
+			await provider.invalidateCredentials("verifier");
+			throw new OAuthFlowError(
+				"expired_code",
+				`MCP server ${provider.serverName} authorization code was rejected or expired; restart with /mcp auth-start ${provider.serverName}.`,
+				{ cause: error, serverName: provider.serverName },
+			);
+		}
+		throw error;
+	}
 	if (result !== "AUTHORIZED") {
 		throw new OAuthFlowError("needs_auth", `MCP server ${provider.serverName} did not complete authorization.`, {
 			serverName: provider.serverName,
@@ -174,4 +188,13 @@ function parseRedirect(input: string, serverName: string): { code: string; state
 		);
 	}
 	return { code, state: url.searchParams.get("state") ?? undefined };
+}
+
+function isRejectedAuthorizationCode(error: unknown): boolean {
+	const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+	return (
+		message.includes("authorization code invalid") ||
+		(message.includes("authorization code") && message.includes("used")) ||
+		message.includes("pkce verification failed")
+	);
 }

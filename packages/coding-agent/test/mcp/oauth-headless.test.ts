@@ -9,9 +9,15 @@ import {
 	runAuthStart,
 	runLogout,
 } from "../../src/core/extensions/builtin/mcp/auth/commands-auth.ts";
+import { resolveServerAuth } from "../../src/core/extensions/builtin/mcp/auth/context.ts";
 import type { McpOAuthProvider } from "../../src/core/extensions/builtin/mcp/auth/oauth-provider.ts";
 import { McpTokenStore } from "../../src/core/extensions/builtin/mcp/auth/token-store.ts";
+import type { McpToolCatalogEntry } from "../../src/core/extensions/builtin/mcp/catalog.ts";
 import type { McpServerConfig } from "../../src/core/extensions/builtin/mcp/config-schema.ts";
+import { ServerConnection } from "../../src/core/extensions/builtin/mcp/connection.ts";
+import { buildMcpToolDefinitions } from "../../src/core/extensions/builtin/mcp/expose/register.ts";
+import { createMcpLogger } from "../../src/core/extensions/builtin/mcp/log.ts";
+import { testContext } from "./fixtures/register-call.ts";
 import { type IdpFixture, spawnOAuthIdp } from "./fixtures/spawn-idp.ts";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -80,6 +86,27 @@ async function followAuthorize(url: string): Promise<string> {
 	return location;
 }
 
+async function redeemCodeDirectly(
+	baseUrl: string,
+	resource: string,
+	redirect: string,
+	verifier: string,
+): Promise<void> {
+	const url = new URL(redirect);
+	const code = url.searchParams.get("code");
+	if (code === null) throw new Error("expected authorization code");
+	const response = await fetch(`${baseUrl}/token`, {
+		body: new URLSearchParams({
+			code,
+			code_verifier: verifier,
+			grant_type: "authorization_code",
+			resource,
+		}),
+		method: "POST",
+	});
+	if (!response.ok) throw new Error(`direct redemption failed: ${response.status}`);
+}
+
 describe("headless oauth flows", () => {
 	it("auth-start prints an authorize URL with S256 + resource; auth-complete stores tokens", async () => {
 		const fixture = await idp();
@@ -115,6 +142,20 @@ describe("headless oauth flows", () => {
 		await expect(runAuthComplete(harness.deps, "not-a-url")).rejects.toMatchObject({ name: "OAuthFlowError" });
 	});
 
+	it("gives retry guidance for a one-use authorization code without writing an access token", async () => {
+		const fixture = await idp();
+		const dir = await agentDir();
+		const harness = makeHarness(dir, fixture.mcpUrl);
+		const authUrl = await runAuthStart(harness.deps);
+		const redirect = await followAuthorize(authUrl);
+		const codeVerifier = harness.store.read()?.codeVerifier;
+		if (codeVerifier === undefined) throw new Error("expected stored PKCE verifier");
+		await redeemCodeDirectly(fixture.baseUrl, fixture.mcpUrl, redirect, codeVerifier);
+
+		await expect(runAuthComplete(harness.deps, redirect)).rejects.toThrow(/restart.*\/mcp auth-start fix/i);
+		expect(harness.store.read()?.accessToken).toBeUndefined();
+	});
+
 	it("client_credentials grant stores a token without any listener", async () => {
 		const fixture = await idp();
 		const dir = await agentDir();
@@ -124,7 +165,7 @@ describe("headless oauth flows", () => {
 		await runAuth(harness.deps);
 		expect(harness.store.read()?.accessToken).toMatch(/^SENTINEL_AT_/);
 		expect(harness.browsered).toHaveLength(0);
-		expect(harness.notes.at(-1)?.message).toContain("client_credentials");
+		expect(lastNote(harness.notes)?.message).toContain("client_credentials");
 	});
 
 	it("logout clears credentials so the next use needs auth again", async () => {
@@ -143,9 +184,40 @@ describe("headless oauth flows", () => {
 		const dir = await agentDir();
 		const harness = makeHarness(dir, fixture.mcpUrl, { hasUI: false });
 		await runAuth(harness.deps);
-		const last = harness.notes.at(-1);
+		const last = lastNote(harness.notes);
 		expect(last?.type).toBe("error");
 		expect(last?.message).toContain("/mcp auth-start");
 		expect(harness.browsered).toHaveLength(0);
 	});
+
+	it("reports the headless auth-start flow when an auth-required tool is called without UI", async () => {
+		const fixture = await idp();
+		const dir = await agentDir();
+		const config = makeHarness(dir, fixture.mcpUrl, { hasUI: false }).deps.config;
+		const authPlan = resolveServerAuth({ agentDir: dir, config, serverName: "fix" });
+		const connection = new ServerConnection({
+			authProvider: authPlan.provider,
+			config,
+			logger: createMcpLogger("fix"),
+			serverName: "fix",
+		});
+		cleanups.push(() => connection.dispose());
+		const entry: McpToolCatalogEntry = {
+			connection,
+			requestTimeoutMs: config.requestTimeoutMs,
+			schema: { type: "object" },
+			server: "fix",
+			tool: "secure_tool",
+		};
+		const [tool] = buildMcpToolDefinitions([entry]);
+		if (tool === undefined) throw new Error("expected MCP tool definition");
+
+		await expect(tool.execute("tc-auth", {}, undefined, undefined, testContext())).rejects.toThrow(
+			/\/mcp auth-start fix/,
+		);
+	});
 });
+
+function lastNote(notes: readonly { message: string; type: string }[]): { message: string; type: string } | undefined {
+	return notes[notes.length - 1];
+}
