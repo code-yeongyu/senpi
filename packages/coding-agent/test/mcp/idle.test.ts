@@ -174,7 +174,16 @@ describe("MCP idle lifecycle", () => {
 			connection === undefined ? undefined : getMcpLifecycleDebugSnapshot(connection)?.keepAliveTimerHasRef,
 		).toBe(false);
 		await vi.advanceTimersByTimeAsync(30_000);
-		await waitFor(() => readNumberFile(pidFile) !== firstPid && pi.toolDefinitions.has("mcp_fx_tool_1"), 1500);
+		await waitFor(() => {
+			const currentPid = readOptionalNumberFile(pidFile);
+			return (
+				currentPid !== null &&
+				currentPid !== firstPid &&
+				connection?.state === "connected" &&
+				connection.getRootPid() === currentPid &&
+				pi.toolDefinitions.has("mcp_fx_tool_1")
+			);
+		}, 5000);
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 		const result = await tool.execute("tc-keep-alive", { value: "recovered" }, undefined, undefined, testContext());
 
@@ -189,6 +198,15 @@ describe("MCP idle lifecycle", () => {
 
 function readNumberFile(path: string): number {
 	return Number(readFileSync(path, "utf8").trim());
+}
+
+function readOptionalNumberFile(path: string): number | null {
+	try {
+		const value = readNumberFile(path);
+		return Number.isFinite(value) ? value : null;
+	} catch {
+		return null;
+	}
 }
 
 function delay(ms: number): Promise<void> {
