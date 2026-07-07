@@ -1,0 +1,15 @@
+=== RED: runner.jl at 4cde4aefb (pre-fix), julia 1.12.6 present ===
+julia version 1.12.6
+--- vitest jl-kernel (pre-fix) ---
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  test/jl-kernel.test.ts > JuliaKernel > persists state, displays last expression, and calls one host tool through the bridge
+Error: Kernel is closed
+     65|   if (this.closed) throw new Error("Kernel is closed");
+ ❯ test/jl-kernel.test.ts:59:37
+      Tests  1 failed | 2 passed (3)
+--- direct runner drive stderr (pre-fix) ---
+[ERR] ERROR: [ERR] LoadError: [ERR] MethodError: [ERR] no method matching [ERR] write(::IOBuffer, ::Char)[ERR] 
+You may have intended to import [ERR] Base[ERR] .write[ERR] 
+The function `write` exists, but no method is defined for this combination of argument types.[ERR] 
+  write(!Matched::AbstractString, ::Any)
+[EXIT] code=1 signal=null

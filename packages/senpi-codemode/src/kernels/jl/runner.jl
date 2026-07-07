@@ -5,20 +5,23 @@ using Sockets
 const senpi_connection = Dict{String, Any}()
 
 function senpi_escape(text::AbstractString)
+    # NOTE: prelude.jl defines Main-level `write`/`read` helpers for user cells,
+    # which shadow Base within Main. Runner infrastructure must qualify Base calls
+    # explicitly (Base.write/Base.read) or it crashes with a MethodError.
     out = IOBuffer()
     for c in text
         if c == '"'
-            write(out, "\\\"")
+            Base.write(out, "\\\"")
         elseif c == '\\'
-            write(out, "\\\\")
+            Base.write(out, "\\\\")
         elseif c == '\n'
-            write(out, "\\n")
+            Base.write(out, "\\n")
         elseif c == '\r'
-            write(out, "\\r")
+            Base.write(out, "\\r")
         elseif c == '\t'
-            write(out, "\\t")
+            Base.write(out, "\\t")
         else
-            write(out, c)
+            Base.write(out, c)
         end
     end
     return String(take!(out))
@@ -43,19 +46,19 @@ function senpi_json(value)
     end
 end
 
-function senpi_parse_string(line::String, field::String)
+function senpi_parse_string(line::AbstractString, field::AbstractString)
     m = match(Regex("\"" * field * "\"\\s*:\\s*\"((?:\\\\.|[^\"])*)\""), line)
     m === nothing && return nothing
     return replace(m.captures[1], "\\n" => "\n", "\\\"" => "\"", "\\\\" => "\\")
 end
 
-function senpi_parse_bool(line::String, field::String)
+function senpi_parse_bool(line::AbstractString, field::AbstractString)
     m = match(Regex("\"" * field * "\"\\s*:\\s*(true|false)"), line)
     m === nothing && return nothing
     return m.captures[1] == "true"
 end
 
-function senpi_parse_json_value(line::String)
+function senpi_parse_json_value(line::AbstractString)
     value = senpi_parse_string(line, "value")
     value !== nothing && return value
     m = match(r""""value"\s*:\s*(true|false)""", line)
@@ -68,7 +71,7 @@ function senpi_parse_json_value(line::String)
     return nothing
 end
 
-function senpi_parse_error_message(line::String)
+function senpi_parse_error_message(line::AbstractString)
     message = senpi_parse_string(line, "message")
     return message === nothing ? line : message
 end
@@ -98,9 +101,9 @@ function senpi_call_tool(name::String, args)
             "",
             body,
         ], "\r\n")
-        write(socket, request)
+        Base.write(socket, request)
         flush(socket)
-        response = read(socket, String)
+        response = Base.read(socket, String)
         parts = split(response, "\r\n\r\n"; limit=2)
         response_body = length(parts) == 2 ? parts[2] : response
         if senpi_parse_bool(response_body, "ok") == true
