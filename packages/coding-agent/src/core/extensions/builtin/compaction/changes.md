@@ -1,5 +1,24 @@
 # Builtin compaction extension changes
 
+## Running token total for emergency prune trimming (2026-06-16)
+
+- `speculative.ts` prunes the compaction budget with a running token total instead of re-tokenizing the retained
+  window on every trim step, cutting emergency-prune cost on long sessions (benchmarked in
+  `bench/compaction-trim.ts` against `bench/baseline/compaction-trim-baseline.json`).
+- This stays in the builtin extension because trim policy and its cost model are extension-owned compaction policy.
+
+Expected upstream conflict zones: `builtin/compaction/speculative.ts` around budget accounting and trim loops.
+
+## Honor the runtime restorationEnabled setting (2026-06-10)
+
+- `index.ts` reads `ctx.getCompactionSettings().restorationEnabled` at gate time instead of the compile-time
+  `DEFAULT_COMPACTION_SETTINGS.restorationEnabled` constant (hardcoded `true`), so disabling
+  `compaction.restorationEnabled` in settings actually turns post-compact context restoration off. Previously the
+  setting was parsed by settings-manager but never consumed.
+
+Expected upstream conflict zones: `builtin/compaction/index.ts` around the restoration gate and
+`getCompactionSettings()` call sites.
+
 ## Speculative compaction invalidation on abort and model switch (2026-05-23)
 
 - `index.ts` now invalidates the in-memory speculative compaction job on `model_select` and on assistant

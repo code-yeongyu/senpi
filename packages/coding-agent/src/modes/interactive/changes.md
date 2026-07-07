@@ -1,5 +1,47 @@
 # changes
 
+## live hook identity in tool hook status rows (2026-07-04)
+
+### What changed
+
+- `interactive-mode.ts`: the `Running PreToolUse/PostToolUse hook` row renders live status text published through the
+  new tool-hook `update` phase (`ctx.updateToolHookStatus()`, see `core/extensions/changes.md` 2026-07-04) instead of
+  a static per-extension guess like `running builtin:hooks`.
+
+### Why
+
+- Users could not tell which hook was running or what it was doing; command-hook `statusMessage` configs were parsed
+  but never rendered live.
+
+### Why extension system couldn't handle this
+
+- The hook status row is InteractiveMode's built-in UI; extensions publish status, the mode renders it.
+
+### Expected merge conflict zones
+
+- LOW/MED: `interactive-mode.ts` hook status row rendering and ticker lifecycle.
+
+## external stdout/stderr guards while the TUI is active (2026-07-04)
+
+### What changed
+
+- `interactive-mode.ts`: wires the `ProcessTerminal` external stdout guard (hidden writes go redacted to the debug
+  log via `core/hidden-stdout-log.ts`) and the stderr guard (`interactive-stderr-guard.ts`, fork-only) so no stray
+  library/extension output reaches the screen while the TUI owns the terminal.
+
+### Why
+
+- External writes interleaved with frames and permanently desynchronized differential rendering (TUI-side guard in
+  `packages/tui/src/changes.md` 2026-07-04; startup-dialog wiring in `cli/changes.md` 2026-07-04).
+
+### Why extension system couldn't handle this
+
+- Terminal stream ownership during interactive mode is the mode's own lifecycle concern.
+
+### Expected merge conflict zones
+
+- LOW: `interactive-mode.ts` TUI start/stop wiring; `interactive-stderr-guard.ts` (fork-only).
+
 ## hook-status ticker unref (2026-07-03)
 
 ### What changed

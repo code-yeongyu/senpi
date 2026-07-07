@@ -5,6 +5,23 @@ Persistent per-thread goal tracking as an in-tree builtin. Ports the standalone
 `pi-goal` extension into senpi with no dependency on it, file-based persistence,
 codex-aligned tool naming, and the budget concept removed.
 
+## Continuation halts on aborts and terminal turns (2026-06-21)
+
+### What changed
+- `continuation.ts`: goal continuation no longer re-prompts after a tool call was aborted, and stops after terminal
+  turns instead of nudging a finished conversation.
+- `index.ts` split registration into `command-registration.ts` / `tool-registration.ts` alongside the continuation
+  fix.
+
+### Why
+- Continuation nudges after a user abort or a terminal turn fought the user's intent and could loop the session.
+
+### Why extension system couldn't handle this differently
+- Continuation is this builtin's own `pi.*`-API logic; no core change involved.
+
+### Expected merge conflict zones on next upstream sync
+- NONE upstream (fork-native builtin); internal file split only matters for future vendored pi-goal syncs.
+
 ## Initial port — budget-free, file-based goal builtin (2026-06-15)
 
 ### What changed

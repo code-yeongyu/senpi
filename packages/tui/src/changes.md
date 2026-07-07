@@ -1,5 +1,31 @@
 # TUI delta rendering fork changes
 
+## 2026-07-04: terminal ownership and restart hardening
+
+### What changed
+
+- `packages/tui/src/terminal.ts` (+ `index.ts` export): `ProcessTerminal` accepts `onExternalStdoutWrite`. While
+  started, `process.stdout.write` is patched so writes not issued by the terminal itself are forwarded to the handler
+  instead of reaching the screen; the terminal's own output goes through the captured raw writer. External writes
+  previously interleaved with frames, scrolled the viewport, and permanently desynchronized differential rendering.
+  Passthrough restores on `stop()`, and a throwing handler falls back to raw stdout so output is never lost.
+- `packages/tui/src/terminal.ts`: `setTitle` strips C0/C1 control characters before emitting OSC 0 — an embedded
+  BEL/ESC in session, tool, or extension titles terminated the sequence early and dumped the remainder as raw output.
+- `packages/tui/src/tui.ts`: `renderRequested` and `inputRenderPending` are reset in both `stop()` and `start()`.
+  A render requested within the pending window (nextTick or the 16ms throttle) or while stopped left
+  `renderRequested` set, so every plain `requestRender()` after restart silently no-oped until a keypress.
+
+### Why this cannot be expressed externally
+
+- stdout ownership, OSC emission, and render-scheduling flags are `ProcessTerminal`/`TUI` internals; components and
+  extensions cannot patch process streams or reset private scheduler state safely.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/tui/src/terminal.ts` around `start()`/`stop()` stream handling and `setTitle`.
+- LOW: `packages/tui/src/tui.ts` `stop()`/`start()` scheduling-state resets.
+- LOW: `packages/tui/test/external-stdout-guard.test.ts`, `packages/tui/test/terminal.test.ts`.
+
 ## 2026-07-03: TUI rendering excellence gates
 
 ### What changed

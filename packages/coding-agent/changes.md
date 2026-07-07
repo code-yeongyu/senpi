@@ -1,5 +1,49 @@
 # Local fork changes
 
+## 2026-07-07 — pi-pty workspace dependency groundwork
+
+- Changed:
+  - `package.json` (+ `npm-shrinkwrap.json`, `install-lock/package-lock.json`): added the fork's
+    `@earendil-works/pi-pty` workspace package to `dependencies` and `bundledDependencies`.
+- Why: groundwork for the persistent-terminal tool; the native PTY runtime (`packages/pty`, `crates/senpi-pty`) is
+  fork-native and ships bundled like the other workspace packages.
+- What changed: dependency wiring only; no coding-agent runtime files consume it yet.
+- Why the extension system could not handle this: bundled workspace dependencies are package-level release surface.
+- Merge-conflict risk: low. `dependencies` / `bundledDependencies` lists in `package.json`.
+
+## 2026-07-07 — MCP W1 package surface (dependency, tests, fixtures)
+
+- Changed:
+  - `package.json` (+ `npm-shrinkwrap.json`, `install-lock/package-lock.json`): exact-pinned
+    `@modelcontextprotocol/sdk` dependency.
+  - `test/mcp/**`: MCP test fixtures with chaos knobs (`stdio-server.ts`, `http-server.ts`, `sdk-server.ts`,
+    `spawn-fixture.ts`, schema goldens) and suites covering config/security, transport, connection, service
+    lifecycle, registration/call semantics, exposure policy, `/mcp` commands, instructions injection, log redaction,
+    and async wrap behavior.
+- Why: the MCP W1 builtin (see `src/core/extensions/builtin/mcp/changes.md`) needs deterministic, token-free
+  end-to-end coverage against real stdio/http servers, including failure injection.
+- What changed: fork-only test/fixture surface plus the pinned SDK dependency; no runtime files outside
+  `builtin/mcp/` and `builtin/index.ts`.
+- Why the extension system could not handle this: package dependencies and the test harness are package-level
+  surfaces.
+- Merge-conflict risk: low. `test/mcp/` does not exist upstream; the dependency pin only conflicts if upstream ever
+  adopts the MCP SDK.
+
+## 2026-07-06 — app-server and neo docs/test surface
+
+- Changed:
+  - `docs/app-server.md`, `docs/neo.md`: protocol/activation documentation for the fork's app-server mode and the neo
+    daemon (process-isolation rationale included).
+  - App-server test suites (transports, thread lifecycle, approvals, projection, daemon supervision) and neo test
+    suites (`neo-daemon-mode`, `neo-auth-rpc`, `neo-args-parse`, `neo-argv`, registry self-heal, spawn-race
+    convergence).
+- Why: both features are fork-native modes (see `src/changes.md`, `src/modes/rpc/changes.md`); docs and tests pin
+  their wire contracts and daemon semantics.
+- What changed: documentation and test additions only at the package root; runtime changes are tracked in the
+  per-directory changes.md files.
+- Why the extension system could not handle this: package docs and the test harness are package-level surfaces.
+- Merge-conflict risk: low. The docs and suites are fork-only files.
+
 ## 2026-07-02 — upstream extension renderer docs and regression sync
 
 - Changed:

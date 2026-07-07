@@ -1,5 +1,49 @@
 # changes
 
+## Neo launch handoff and daemon dispatch (2026-07-06)
+
+### What changed
+
+- `main.ts`: `--neo` / `--neo-isolated` (+ hidden `--neo-bin`) dispatch to the neo Go TUI launcher (`cli/neo/`),
+  spawning the per-platform binary with inherited stdio, forwarded signals, and propagated exit code/signal. Dispatch
+  sits after the version/export fast-paths and first-time setup, before any `AgentSessionRuntime` construction or
+  extension loading, so the launcher stays thin.
+- `main.ts`: `--listen <path>` dispatches to the neo daemon supervisor (see `modes/rpc/changes.md` 2026-07-06). The
+  `NeoRuntimeOptions` field list is gated by a generated extraction test over `main.ts` `parsed.*` reads, so new
+  runtime-relevant flags fail the test until threaded through.
+
+### Why
+
+- The neo TUI is a separate Go binary; senpi remains the single user-facing entrypoint and must hand off cleanly.
+
+### Why extension system couldn't handle this
+
+- Mode dispatch happens in `main()` before extensions load.
+
+### Expected merge conflict zones on next upstream sync
+
+- MEDIUM: `main.ts` mode-dispatch ordering around startup fast-paths.
+
+## App-server mode dispatch (2026-07-02)
+
+### What changed
+
+- `main.ts`: added dispatch for the fork's `senpi app-server` subcommand into `modes/app-server/` (transports,
+  daemon supervision, thread lifecycle), hardened on 2026-07-03 with review fixes (entrypoint split, archive-state
+  handling). Arg plumbing is in `cli/changes.md`; the mode directory itself does not exist upstream.
+
+### Why
+
+- Codex-compatible app-server clients need a first-class mode entrypoint next to interactive/print/rpc.
+
+### Why extension system couldn't handle this
+
+- Modes are dispatched from `main()` before extension loading; a wire-protocol server cannot be an extension.
+
+### Expected merge conflict zones on next upstream sync
+
+- MEDIUM: `main.ts` around mode selection and subcommand routing.
+
 ## Public model resolution SDK exports (2026-07-02)
 
 ### What changed

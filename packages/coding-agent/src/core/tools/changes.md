@@ -21,6 +21,28 @@
 
 - LOW: timeout schema/parsing and validation branches in `bash.ts`.
 
+## shared diff renderer for file mutation tools (2026-05-17)
+
+### What changed
+
+- `diff-render.ts` (fork-only): one rich diff renderer — row backgrounds, line numbers, syntax highlighting, inline
+  change emphasis — shared by file-mutation tool previews.
+- `edit.ts` / `write.ts`: `renderResult` previews route through the shared renderer; the gpt-apply-patch builtin
+  consumes the same renderer (see `extensions/builtin/gpt-apply-patch/changes.md` 2026-05-17).
+
+### Why
+
+- edit, write, and apply_patch each rendered diffs differently, so identical changes looked different per tool.
+
+### Why extension system couldn't handle this
+
+- Built-in tool renderers live in `core/tools/`; a shared renderer for them must too.
+
+### Expected merge conflict zones on next upstream sync
+
+- MEDIUM: `edit.ts` / `write.ts` `renderResult` bodies.
+- LOW: `diff-render.ts` (fork-only file).
+
 ## bash tool elapsed display (2026-05-15)
 
 ### What changed

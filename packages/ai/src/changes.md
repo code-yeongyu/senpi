@@ -1,5 +1,37 @@
 # AI Source Changes
 
+## 2026-07-06 - Anthropic server-side fallback replay contract
+
+### What changed and why
+
+- The server-side fallback beta (`server-side-fallback-2026-06-01`) emits a `fallback` content block mid-response when
+  the serving model falls back (e.g. a `claude-fable-5` refusal replaced by the fallback model). Three fixes
+  (2026-07-02 → 2026-07-06) make replaying such turns conform to the beta's contract:
+  - `fallback` was added to `REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES`; dropping it on same-model replay mutated the
+    latest assistant message's block sequence and the API rejected the next request of the turn with a 400
+    `thinking … cannot be modified` error, wedging the session.
+  - Blocks emitted before the final `fallback` marker belong to the discarded attempt and are now omitted on replay;
+    replaying them verbatim left pre-boundary `tool_use` blocks without matching `tool_result`s, rejected with 400
+    `tool_use ids were found without tool_result blocks`.
+  - An unpaired pre-boundary `server_tool_use` (fallback interrupted the declined attempt before the server tool's
+    result arrived) is also dropped; paired server-tool blocks and text still replay verbatim.
+
+### Files modified
+
+- `api/anthropic-messages.ts`
+- `test/anthropic-provider-native-replay.test.ts`
+
+### Why the higher-level extension system couldn't handle this alone
+
+- Provider-native block replay filtering happens inside the Anthropic message transformer before any coding-agent
+  extension can rewrite provider payloads.
+
+### Expected merge conflict zones
+
+- MEDIUM: `api/anthropic-messages.ts` around `REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES` and the assistant-turn
+  replay/filter path.
+- LOW: `test/anthropic-provider-native-replay.test.ts` fixtures if upstream restructures replay tests.
+
 ## 2026-07-02 - Upstream provider metadata and Codex SSE transport sync
 
 ### What changed and why

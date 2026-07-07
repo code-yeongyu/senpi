@@ -31,6 +31,134 @@
 
 - HIGH: `agent-session.ts` around `_installAgentToolHooks()`, `getActiveToolNames()`, and extension `bindCore()` wiring.
 
+## Neo auth RPC core surface (2026-07-06)
+
+### What changed
+
+- `auth-providers.ts` (fork-only): shared auth-provider list module — the single source of truth across the classic
+  TUI `/login` flow and the RPC auth commands.
+- `agent-session.ts`: emits `auth_login_url` / `auth_login_end` as `AgentSessionEvent`s so interactive OAuth
+  round-trips can complete out-of-band of a single RPC request; reuses `AuthStorage.login` callbacks unchanged.
+
+### Why
+
+- The neo Go TUI logs in over RPC (see `modes/rpc/changes.md`); login completion cannot fit inside the 30s RPC
+  request timeout, so the terminal result must arrive as session events.
+
+### Why extension system couldn't handle this
+
+- Auth storage, login callbacks, and session event emission are core session services.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` around session event union and emission sites.
+- LOW: `auth-providers.ts` (fork-only file).
+
+## Provider stream idle timeout enabled by default (2026-07-06)
+
+### What changed
+
+- `sdk.ts`: the agent's stream idle timeout now defaults to `httpIdleTimeoutMs` (300s default) instead of being off
+  unless `retry.provider.timeoutMs` was set.
+- `settings-manager.ts`: `httpIdleTimeoutMs` participates in the default resolution; `0` disables, and
+  `retry.provider.timeoutMs` still overrides.
+
+### Why
+
+- Sessions went stale forever when the network dropped and reconnected mid-stream: the dead connection never errors.
+  Node runs were eventually rescued by the undici dispatcher body timeout, but the Bun binary has no such protection
+  and hung indefinitely. With the guard on by default, a silently dead connection fails with a retryable idle-timeout
+  error and auto-retry recovers the turn (abort-side fix in `packages/agent/src/changes.md` 2026-07-06).
+
+### Why extension system couldn't handle this
+
+- Stream option defaults are resolved in core SDK/settings plumbing before extensions see a request.
+
+### Expected merge conflict zones
+
+- LOW: `sdk.ts` stream-option assembly; `settings-manager.ts` retry/timeout resolution.
+
+## External stdout/stderr guards while a TUI owns the terminal (2026-07-04)
+
+### What changed
+
+- `hidden-stdout-log.ts` (fork-only): hidden external stdout writes are redacted and appended to the debug log.
+- `output-guard.ts` / `sensitive-output.ts`: stderr writes are likewise hidden and redacted while a TUI owns the
+  terminal, matching the interactive stderr guard.
+- Wiring: interactive mode, startup dialogs, and the config selector (see `modes/interactive/changes.md` and
+  `cli/changes.md`); the TUI-side hook is `ProcessTerminal.onExternalStdoutWrite` (`packages/tui/src/changes.md`
+  2026-07-04).
+
+### Why
+
+- A stray `console.log` from a library or extension corrupted the trust dialog and permanently desynchronized
+  differential rendering.
+
+### Why extension system couldn't handle this
+
+- Redaction and debug-log routing for hidden writes are core services shared by every TUI surface.
+
+### Expected merge conflict zones
+
+- LOW: `hidden-stdout-log.ts`, `output-guard.ts`, `sensitive-output.ts` (fork-heavy files).
+
+## Persist truncated bash output contents (2026-07-03)
+
+### What changed
+
+- `bash-executor.ts`: when bash output is truncated for the model context, the truncated contents are still persisted
+  so the session record keeps the full output.
+
+### Why
+
+- Truncation previously dropped the overflow entirely; transcripts and session replays lost output that the user's
+  terminal had shown.
+
+### Why extension system couldn't handle this
+
+- Output truncation happens inside the built-in bash executor before tool results reach extension hooks.
+
+### Expected merge conflict zones
+
+- LOW: `bash-executor.ts` truncation/persistence path.
+
+## Await available-model lookups (2026-07-03)
+
+### What changed
+
+- `model-resolver.ts`: available-model lookups are properly awaited instead of racing an unresolved promise.
+
+### Why
+
+- The fork's model-resolution flow could observe an empty model list mid-startup.
+
+### Why extension system couldn't handle this
+
+- Startup model resolution runs before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: `model-resolver.ts` async lookup call sites.
+
+## App-server app-mode plumbing (2026-07-02)
+
+### What changed
+
+- `project-trust.ts`: `AppMode` gained `"app-server"` so project-trust resolution covers the fork's app-server mode
+  (mode itself lives in `modes/app-server/`, dispatch in `src/changes.md` 2026-07-02).
+
+### Why
+
+- App-server sessions must honor the same project-trust gating as interactive/rpc modes.
+
+### Why extension system couldn't handle this
+
+- Trust gating is evaluated in core before a mode starts.
+
+### Expected merge conflict zones
+
+- LOW: `project-trust.ts` `AppMode` union.
+
 ## Upstream session, auth, and model-resolution sync (2026-07-02)
 
 ### What changed
