@@ -23,10 +23,10 @@ Scope reviewed:
 
 - malformed_input: existing fixture tests still cover no-S256 refusal and invalid refresh-token behavior through impacted auth tests.
 - stale_state: lock-on proves one refresh request and shared store convergence; lock-off proves refresh-token reuse triggers family invalidation, then forces both worker processes through a post-race refresh check that returns `invalid_grant` or `needs_auth` and clears the shared store.
-- dirty_worktree: unrelated untracked `.omo/evidence/subagent-stop-*` files were not edited or staged.
+- dirty_worktree: tracked TODO27 cleanup files are committed together; unrelated pre-existing untracked `.omo/evidence/subagent-stop-*` files were not edited or staged.
 - hung_or_long_commands: worker processes use a 20s `execFile` timeout; tests use 30s test timeouts; cleanup receipt records no live IdP pids and no temp agent dirs.
 - flaky_tests: focused race and impacted auth test suites passed after final edits.
-- misleading_success_output: local JSON artifacts carry request logs and worker/store observables; `.omo/evidence/task-27-senpi-mcp-plugin.log` carries command transcripts.
+- misleading_success_output: local JSON artifacts carry request logs and worker/store observables; `.omo/evidence/task-27-senpi-mcp-plugin.log` and `.omo/evidence/task-27-fix-senpi-mcp-plugin.log` carry command transcripts, with the gate cleanup transcript in `.omo/evidence/task-27-gate-fix-senpi-mcp-plugin.log`.
 - prompt_injection: N/A; fixture data is protocol traffic and is not fed to prompts.
 - cancel_resume/repeated_interruptions: N/A; this implementation was completed in one uninterrupted local turn.
 

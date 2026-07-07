@@ -1,9 +1,9 @@
-TODO27 fix verification log
-worktree: /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3
-started: 2026-07-08T06:52:51+0900
-
+TODO27 gate-fix verification log
+worktree: /Users/yeongyu/local-workspaces/senpi-wt/senpi-mcp-plugin-w3
+started: 2026-07-08T07:01:44+0900
 
 COMMAND: cd packages/coding-agent && TODO27_RACE_ARTIFACT_DIR=../../local-ignore/qa-evidence/20260708-mcp-w3-todo27 npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/oauth-race.test.ts
+
 
  RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent
 
@@ -11,11 +11,12 @@ COMMAND: cd packages/coding-agent && TODO27_RACE_ARTIFACT_DIR=../../local-ignore
 
  Test Files  1 passed (1)
       Tests  2 passed (2)
-   Start at  06:52:59
-   Duration  998ms (transform 44ms, setup 10ms, import 90ms, tests 816ms, environment 0ms)
+   Start at  07:01:59
+   Duration  1.01s (transform 48ms, setup 11ms, import 96ms, tests 824ms, environment 0ms)
 
 
 COMMAND: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/oauth-provider.test.ts test/mcp/oauth-headless.test.ts test/mcp/token-store.test.ts test/mcp/auth-modes.test.ts test/mcp/oauth-race.test.ts
+
 
  RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent
 
@@ -23,16 +24,17 @@ COMMAND: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.
 
  Test Files  5 passed (5)
       Tests  34 passed (34)
-   Start at  06:53:07
-   Duration  3.69s (transform 1.43s, setup 56ms, import 2.38s, tests 5.67s, environment 0ms)
+   Start at  07:02:08
+   Duration  3.68s (transform 1.44s, setup 61ms, import 2.40s, tests 5.66s, environment 0ms)
 
 
 COMMAND: npm run check
 
+
 > check
 > biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
 
-Checked 1549 files in 738ms. No fixes applied.
+Checked 1549 files in 746ms. No fixes applied.
 
 > check:pinned-deps
 > node scripts/check-pinned-deps.mjs
@@ -70,14 +72,14 @@ check:neo: go test ./...
 ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
 ok  	github.com/code-yeongyu/senpi/packages/neo/internal/app	(cached)
 ?   	github.com/code-yeongyu/senpi/packages/neo/internal/app/qaharness	[no test files]
-ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	15.564s
 ?   	github.com/code-yeongyu/senpi/packages/neo/internal/bridge/attachqa	[no test files]
 ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
 ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
 ?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
 ?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
-ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
-ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	3.195s
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	0.673s
 ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
 ?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
 ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
@@ -94,7 +96,7 @@ ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
 ?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
 ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
 ?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
-ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	0.953s
 ?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
 ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
 ?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
@@ -102,19 +104,21 @@ ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminali
 check:neo: packages/neo build+vet+test passed
 
 COMMAND: node .agents/skills/senpi-qa/scripts/lib/common.mjs --self-check
+
 [PASS] repo root resolves — /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3
 [PASS] tsx entry present — /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/tsx/dist/cli.mjs
-[PASS] sandbox isolates agent + session dirs — /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/self-check-yEfV6I
+[PASS] sandbox isolates agent + session dirs — /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/self-check-3idfhr
 [PASS] real auth snapshot taken — sha256=209517649905…
-[PASS] free port allocatable — 53213
+[PASS] free port allocatable — 55035
 [PASS] evidence dir creatable under local-ignore — /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/local-ignore/qa-evidence/20260708-self-check
 [PASS] ansi stripping
-[PASS] sandbox removed on cleanup — /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/self-check-yEfV6I
+[PASS] sandbox removed on cleanup — /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/self-check-3idfhr
 [PASS] real auth unchanged — /Users/yeongyu/.senpi/agent/auth.json
 
 common.mjs --self-check: 9/9 passed
 
 COMMAND: node .agents/skills/senpi-qa/scripts/mock-loop.mjs --self-test
+
 [PASS] openai-completions: baseUrl override round-trips through the real loop — code=0 marker=true path=/v1/chat/completions auth=true
 [PASS] anthropic-messages: baseUrl override round-trips through the real loop — code=0 marker=true path=/v1/messages auth=true
 [PASS] openai-responses: baseUrl override round-trips through the real loop — code=0 marker=true path=/v1/responses auth=true

@@ -56,6 +56,9 @@ async function main(): Promise<void> {
 		await sleep(10);
 	}
 	await sleep(20);
+	await store.update((current) =>
+		current === undefined ? undefined : { ...current, expiresAt: Date.now() + 60_000 },
+	);
 	const postRace = await refreshAttempt(manager);
 	process.stdout.write(
 		`${JSON.stringify({
