@@ -1,4 +1,4 @@
-STEP 9: secret audit: grep logs+evidence for SENTINEL_AT_ tokens
+STEP 9: secret audit: grep logs+evidence for sentinel access-token strings
 VERDICT: PASS
 
 grep of /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-w3-gate-lDhetv/agent/logs/mcp and /private/tmp/train-c-w3-auth/.omo/evidence/task-28-senpi-mcp-plugin (excluding 0600 tokens.json credential store):

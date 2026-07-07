@@ -1,0 +1,16 @@
+{
+  "id": 5,
+  "invocation": "tmux TUI: /mcp auth-start oauth -> curl/fetch authorize redirect -> /mcp auth-complete oauth <redirect> -> /mcp test oauth",
+  "observations": {
+    "authUrlRendered": true,
+    "authCompleteCommandSent": true,
+    "connectedMarker": true,
+    "transcript": "local-ignore/qa-evidence/20260708-mcp-w3-todo28/step-05-tmux-transcript.txt",
+    "authFlowTranscript": "local-ignore/qa-evidence/20260708-mcp-w3-todo28/step-05-auth-flow-transcript.txt",
+    "authorizeUrlFingerprint": "e49ecd42",
+    "redirectUrlFingerprint": "f5bd64e5"
+  },
+  "surface": "tmux/TUI transcript",
+  "title": "Headless paste flow end-to-end in TUI",
+  "verdict": "PASS"
+}

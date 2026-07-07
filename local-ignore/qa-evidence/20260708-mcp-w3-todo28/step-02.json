@@ -1,0 +1,16 @@
+{
+  "id": 2,
+  "invocation": "runAuthStart -> curl/fetch redirect:manual -> runAuthComplete -> MCP tool call",
+  "observations": {
+    "authorizationRedirected": "<redacted>",
+    "browserOpenAttempts": 0,
+    "state": "connected",
+    "tokenHitsBefore": 0,
+    "tokenHitsAfter": 1,
+    "toolText": "fixture tool_1 value=after-auth mode=alpha",
+    "tokenFingerprint": "837297ea"
+  },
+  "surface": "CLI/data surface: browser-less OAuth command runners + curl-follow + MCP tool bridge",
+  "title": "/mcp auth browser-less loop -> connected -> tool call OK",
+  "verdict": "PASS"
+}

@@ -1,4 +1,4 @@
 STEP 4: expire access token -> transparent refresh
 VERDICT: PASS
 
-refreshed access token prefix=SENTINEL_AT_...; token-endpoint hits +1 (exactly one refresh)
+refreshed access token prefix=<sentinel-access-prefix-redacted>; token-endpoint hits +1 (exactly one refresh)

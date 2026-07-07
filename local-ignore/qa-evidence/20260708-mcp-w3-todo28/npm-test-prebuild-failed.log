@@ -1,0 +1,1209 @@
+
+> test
+> npm run test:scripts && npm run test --workspaces --if-present
+
+
+> test:scripts
+> node --test scripts/*.test.mjs
+
+▶ archiveUpstreamAgentReport
+  ✔ copies and removes an untracked report without dirtying the branch (130.340125ms)
+  ✔ removes a committed report from the final branch tree with a cleanup commit (183.93625ms)
+✔ archiveUpstreamAgentReport (315.106459ms)
+▶ build-all
+  ✔ uses an explicit package manager override (1.005333ms)
+  ✔ keeps dependent packages in later parallel phases (0.100959ms)
+  ✔ builds pty beside tui in the first native-adjacent phase (0.174833ms)
+  ✔ wires the pty package export surface for workspace imports (0.150209ms)
+  ✔ strips pnpm-only npm config from child environments (0.069709ms)
+  ✔ keeps generated model catalog updates out of ordinary ai builds (0.500666ms)
+✔ build-all (2.6325ms)
+✔ fails with the host target name when the vendored prebuild is missing (5.977958ms)
+✔ fails with the host target name when the vendored prebuild is stale (11.775167ms)
+✔ passes when the host prebuild matches the rebuilt artifact (4.366667ms)
+[check-upstream] latest upstream release: v0.80.3
+[check-upstream] resolved v0.80.3 -> a23abe4a695df8b69b613f73e9fdda2a8af894d4
+[check-upstream] resolved upstream/main -> 351efc828b6fc5250fa50d6b32b20b0f0cb22cb4
+[check-upstream] --force set; proceeding regardless of merge state
+▶ upstream release detector outputs
+  ✔ preserves the release tag sha and emits upstream/main head separately on forced runs (1398.146917ms)
+✔ upstream release detector outputs (2582.56325ms)
+▶ create-root-senpi-wrapper
+  ✔ writes a launch-only wrapper when the root is a gitless snapshot (1.559167ms)
+  ✔ does NOT write a global shim by default in a git checkout (opt-in only) (0.307916ms)
+  ✔ writes a global shim only when SENPI_WRITE_GLOBAL_SHIM=1 in a non-CI git checkout (0.42675ms)
+  ✔ replaces an existing global symlink instead of following it (1.417833ms)
+✔ create-root-senpi-wrapper (4.367958ms)
+$ /opt/homebrew/Cellar/node/26.0.0/bin/node /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/senpi-local-release-pack-8rjweZ/large-pack-output.mjs
+▶ local-release command runner
+  ✔ captures large npm pack JSON output (66.143541ms)
+✔ local-release command runner (66.680875ms)
+▶ Bun binary entry
+  ✔ routes directly to the full CLI instead of the Node wrapper (0.237541ms)
+✔ Bun binary entry (0.2905ms)
+▶ local release package list
+  ✔ builds and packs the pty workspace for bundled senpi installs (1523.223291ms)
+✔ local release package list (1523.301458ms)
+▶ prepareSenpiBundledWorkspaces
+  ✔ copies the loader-visible host pty prebuild into coding-agent node_modules (15.394167ms)
+  ✔ fails before bundling pty when the host prebuild is missing (7.098084ms)
+✔ prepareSenpiBundledWorkspaces (23.108208ms)
+▶ directNodeModulesPackageName
+  ✔ extracts only direct package names (0.475542ms)
+✔ directNodeModulesPackageName (0.993875ms)
+▶ copyPublishDependencies
+  ✔ copies direct publish dependencies and skips internal workspaces and missing optional packages (13.040458ms)
+  ✔ throws when a required publish dependency is not installed (1.342458ms)
+✔ copyPublishDependencies (14.472916ms)
+▶ assertSenpiPackedWorkspaceFiles
+  ✔ rejects senpi package metadata that omits bundled workspace files (0.35875ms)
+  ✔ accepts senpi package metadata that includes bundled workspace entrypoints (0.1555ms)
+  ✔ accepts npm dry-run package metadata with unprefixed paths (0.126708ms)
+  ✔ rejects senpi package metadata that omits the bundled pty native loader (0.305542ms)
+  ✔ rejects senpi package metadata that omits the bundled host pty prebuild (0.162375ms)
+  ✔ defines the all-OS native artifact ingestion contract without requiring fake local binaries (0.203375ms)
+  ✔ publishes the supported native target list through package checks (0.707792ms)
+✔ assertSenpiPackedWorkspaceFiles (2.2095ms)
+▶ release package versioning
+  ✔ updates the pty workspace during lockstep releases (4.830625ms)
+✔ release package versioning (6.027917ms)
+▶ release changelog bookkeeping
+  ✔ recreates the standard next-cycle section when no previous Unreleased block was captured (0.89775ms)
+  ✔ preserves captured subsection shape when a previous Unreleased block existed (0.264125ms)
+  ✔ inserts the next-cycle section before the stamped release header (0.809209ms)
+  ✔ restores the next-cycle section after the title when no release header was stamped (0.106625ms)
+✔ release changelog bookkeeping (2.204ms)
+▶ sync-versions
+  ✔ keeps senpi source dependencies on local workspace versions (62.160292ms)
+✔ sync-versions (62.716ms)
+▶ upstream release worthiness
+  ✔ detects package changelog entries under Unreleased (0.556375ms)
+  ✔ skips empty Unreleased sections (0.64975ms)
+  ✔ releases when any package changelog has an Unreleased entry (0.059625ms)
+  ✔ allows explicit forced release (0.048958ms)
+✔ upstream release worthiness (1.89125ms)
+ℹ tests 41
+ℹ suites 15
+ℹ pass 41
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2656.852333
+
+> @earendil-works/pi-agent-core@2026.7.5-2 test
+> vitest --run
+
+
+ RUN  v4.1.8 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/agent
+
+···················································································································································································
+
+ Test Files  16 passed (16)
+      Tests  179 passed (179)
+   Start at  07:31:13
+   Duration  751ms (transform 2.27s, setup 0ms, import 3.53s, tests 933ms, environment 1ms)
+
+
+> @earendil-works/pi-ai@2026.7.5-2 test
+> vitest --run
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/ai
+
+························································································································---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------···························--·······-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------······················································----------------------------------------------------···········-················································---------------------------------·················································---······----················································----··································----················--·······························---------·······························----·······················-----------·-------------------································································-------------···················-·······························-·········-················---···········-·---------------------------------------------------------------·············-········
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/codex-apply-patch-wire-schema.test.ts [ test/codex-apply-patch-wire-schema.test.ts ]
+Error: Failed to resolve entry for package "@earendil-works/pi-tui". The package may have incorrect main/module/exports specified in its package.json.
+ ❯ ../coding-agent/src/core/extensions/builtin/gpt-apply-patch/tool.ts:1:1
+      1| import { Box, Container, Spacer, Text } from "@earendil-works/pi-tui";
+       | ^
+      2| import type { AgentToolResult, ToolRenderContext } from "../../types.t…
+      3| import { defineTool } from "../../types.ts";
+ ❯ ../coding-agent/src/core/extensions/builtin/gpt-apply-patch/extension.ts:2:1
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 93 passed | 24 skipped (118)
+      Tests  678 passed | 726 skipped (1404)
+   Start at  07:31:14
+   Duration  30.58s (transform 5.05s, setup 0ms, import 21.31s, tests 41.76s, environment 7ms)
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/ai
+npm error workspace @earendil-works/pi-ai@2026.7.5-2
+npm error location /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/ai
+npm error command failed
+npm error command sh -c vitest --run
+
+
+> @code-yeongyu/senpi@2026.7.5-2 test
+> vitest --run
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent
+
+············································································································································································································································································································································································································································npm error code ETARGET
+npm error notarget No matching version found for nonexistent-package@1.0.0.
+npm error notarget In most cases you or one of your dependencies are requesting a package version that doesn't exist.
+npm error A complete log of this run can be found in: /Users/yeongyu/.npm/_logs/2026-07-07T22_31_46_725Z-debug-0.log
+Cloning into '/var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/pm-test-1783463507259-4zguqlih2se/agent/git/github.com/nonexistent/repo'...
+···········································································································································remote: Repository not found.
+fatal: repository 'https://github.com/nonexistent/repo/' not found
+···············································································································································································································································From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463507967-xkx3p8cg3e9/remote
+   736ef6d..05b3ab0  main       -> origin/main
+HEAD is now at 05b3ab0 Second commit
+----------------·····················Installing ./packages/local-package...
+Installing /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/pi-package-commands-1783463508883-sva5zvszt8c/local-package/...
+Removing /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/pi-package-commands-1783463508883-sva5zvszt8c/local-package/...
+············································································································································From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463508585-cdworghkub/remote
+   736ef6d..2b03d78  main       -> origin/main
+·······HEAD is now at 2b03d78 Fourth commit
+····························································Updating npm:fake-package...
+·······································Installing /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/pi-package-commands-1783463509994-pejdp5oie9/local-package...
+······························································································································································································································From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463510192-f4bga59m6r/remote
+   a994e55..6e71cf8  main       -> origin/main
+············HEAD is now at 6e71cf8 Commit to keep
+·············································································From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463510192-f4bga59m6r/remote
+ + 6e71cf8...c2e7261 main       -> origin/main  (forced update)
+···HEAD is now at c2e7261 Rewritten commit
+···································································From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463511211-d2z1xpsl06t/remote
+   d1142e9..b0133b5  main       -> origin/main
+·······HEAD is now at b0133b5 Commit B
+················----------From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463511211-d2z1xpsl06t/remote
+ + b0133b5...9f5ab9d main       -> origin/main  (forced update)
+·············HEAD is now at 9f5ab9d New commit replacing A and B
+·················································From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463512414-2lv99of0pw/remote
+   6ec53a2..c8c9204  main       -> origin/main
+········HEAD is now at c8c9204 v3
+·························································From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463512414-2lv99of0pw/remote
+ + c8c9204...5567db7 main       -> origin/main  (forced update)
+··········HEAD is now at 5567db7 Rewrite B
+···················································From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463513642-ddyzeawo5h/remote
+ * branch            bb5de84a8c316fdfea8f5ca280500411500df4df -> FETCH_HEAD
+···node:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/main.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
+    at #resolve (node:internal/modules/esm/loader:682:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:252:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js'
+}
+
+Node.js v26.0.0
+··From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463514238-pz7d1ptc7d/remote
+ * tag               v2         -> FETCH_HEAD
+·····HEAD is now at a942e84 Second commit
+····From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463514238-pz7d1ptc7d/remote
+ * tag               v2         -> FETCH_HEAD
+HEAD is now at a942e84 Second commit
+·············································node:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/main.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
+    at #resolve (node:internal/modules/esm/loader:682:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:252:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js'
+}
+
+Node.js v26.0.0
+x·················From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463515501-0l9b41weah8s/remote
+   e88141a..fa338f1  main       -> origin/main
+·····································HEAD is now at fa338f1 Second commit
+·······································································node:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/main.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
+    at #resolve (node:internal/modules/esm/loader:682:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:252:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js'
+}
+
+Node.js v26.0.0
+····x························································································node:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/main.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
+    at #resolve (node:internal/modules/esm/loader:682:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:252:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js'
+}
+
+Node.js v26.0.0
+x···································································x········································node:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/main.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
+    at #resolve (node:internal/modules/esm/loader:682:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:252:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js'
+}
+
+Node.js v26.0.0
+················app-server websocket token: /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/senpi-app-server-ws-auth-OVpTJV/ws-token
+··········································x···············································node:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/main.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
+    at #resolve (node:internal/modules/esm/loader:682:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:252:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js'
+}
+
+Node.js v26.0.0
+····app-server stdio closed: test complete
+app-server stdio closed: stdin ended
+······························x··············node:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/main.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
+    at #resolve (node:internal/modules/esm/loader:682:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:252:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js'
+}
+
+Node.js v26.0.0
+····················································x·······x·x····························xnode:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/main.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
+    at #resolve (node:internal/modules/esm/loader:682:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:252:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js'
+}
+
+Node.js v26.0.0
+········································x··node:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/main.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
+    at #resolve (node:internal/modules/esm/loader:682:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:252:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js'
+}
+
+Node.js v26.0.0
+····························································x···········node:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/main.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
+    at #resolve (node:internal/modules/esm/loader:682:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:252:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js'
+}
+
+Node.js v26.0.0
+···········································································································xnode:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/main.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
+    at #resolve (node:internal/modules/esm/loader:682:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:252:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js'
+}
+
+Node.js v26.0.0
+·····································x········node:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/main.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
+    at #resolve (node:internal/modules/esm/loader:682:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:252:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js'
+}
+
+Node.js v26.0.0
+·······················································x·········xx··x··········xxnode:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/main.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
+    at #resolve (node:internal/modules/esm/loader:682:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:252:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js'
+}
+
+Node.js v26.0.0
+x·······················x··············x········---·······················x··············node:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/main.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
+    at #resolve (node:internal/modules/esm/loader:682:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:252:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js'
+}
+
+Node.js v26.0.0
+············x··································xx··········································x········xnode:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/main.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
+    at #resolve (node:internal/modules/esm/loader:682:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:252:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js'
+}
+
+Node.js v26.0.0
+··························--x··········x···················x···············x···············node:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/main.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
+    at #resolve (node:internal/modules/esm/loader:682:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:252:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js'
+}
+
+Node.js v26.0.0
+················································x······node:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/main.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
+    at #resolve (node:internal/modules/esm/loader:682:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:252:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js'
+}
+
+Node.js v26.0.0
+·······················································································x·····················································································································x················································app-server unix socket websocket token: /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/senpi-daemon-probe-4DMGVp/ws-token
+·································x·························································
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 37 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/extension-load-diagnostics.test.ts > extension load diagnostics > downgrades extension load failures to startup warnings
+AssertionError: expected [ { …(2) }, { …(2) } ] to have a length of 1 but got 2
+
+- Expected
++ Received
+
+- 1
++ 2
+
+ ❯ test/extension-load-diagnostics.test.ts:53:27
+     51|   const services = await createAgentSessionServices({ cwd: projectDir,…
+     52|   const extensionErrors = services.resourceLoader.getExtensions().erro…
+     53|   expect(extensionErrors).toHaveLength(1);
+       |                           ^
+     54|
+     55|   const diagnostics = collectExtensionLoadDiagnostics(extensionErrors);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/37]⎯
+
+ FAIL  test/extensions-upstream-package-alias.test.ts > upstream package name alias for extension loader > resolves runtime imports from @code-yeongyu/senpi
+AssertionError: expected [ { …(2) } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ test/extensions-upstream-package-alias.test.ts:49:25
+     47|   // register the tool, proving the alias maps the upstream name
+     48|   // to the senpi runtime
+     49|   expect(result.errors).toHaveLength(0);
+       |                         ^
+     50|   expect(result.extensions).toHaveLength(1);
+     51|   expect(result.extensions[0]?.tools.has("upstream_aliased_tool")).toB…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/37]⎯
+
+ FAIL  test/extensions-upstream-package-alias.test.ts > upstream package name alias for extension loader > resolves runtime imports from the upstream @mariozechner package names
+AssertionError: expected [ { …(2) } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ test/extensions-upstream-package-alias.test.ts:84:25
+     82|   // then it must load without falling through to an extension-local
+     83|   // @mariozechner/pi-coding-agent install.
+     84|   expect(result.errors).toHaveLength(0);
+       |                         ^
+     85|   expect(result.extensions).toHaveLength(1);
+     86|   expect(result.extensions[0]?.tools.has("mario_aliased_tool")).toBe(t…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/37]⎯
+
+ FAIL  test/extensions-upstream-package-alias.test.ts > upstream package name alias for extension loader > resolves runtime imports from the upstream @earendil-works coding agent package
+AssertionError: [
+  {
+    "path": "/var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/pi-upstream-alias-Q9gHaf/extensions/earendil-coding-agent-import.ts",
+    "error": "Failed to load extension: No \"exports\" main defined in /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-pty/package.json"
+  }
+]: expected [ { …(2) } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ test/extensions-upstream-package-alias.test.ts:106:65
+    104|   // then it must load without "Cannot find module" errors and register
+    105|   // the renderer from the aliased runtime package
+    106|   expect(result.errors, JSON.stringify(result.errors, null, 2)).toHave…
+       |                                                                 ^
+    107|   expect(result.extensions).toHaveLength(1);
+    108|   expect(result.extensions[0]?.messageRenderers.has("earendil_alias_re…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/37]⎯
+
+ FAIL  test/rpc.test.ts > RPC mode > should get state
+ FAIL  test/rpc.test.ts > RPC mode > should save messages to session file
+ FAIL  test/rpc.test.ts > RPC mode > should handle manual compaction
+ FAIL  test/rpc.test.ts > RPC mode > should execute bash command
+ FAIL  test/rpc.test.ts > RPC mode > should add bash output to context
+ FAIL  test/rpc.test.ts > RPC mode > should include bash output in LLM context
+ FAIL  test/rpc.test.ts > RPC mode > should set and get thinking level
+ FAIL  test/rpc.test.ts > RPC mode > should cycle thinking level
+ FAIL  test/rpc.test.ts > RPC mode > should get available models
+ FAIL  test/rpc.test.ts > RPC mode > should get session stats
+ FAIL  test/rpc.test.ts > RPC mode > should create new session
+ FAIL  test/rpc.test.ts > RPC mode > should export to HTML
+ FAIL  test/rpc.test.ts > RPC mode > should get last assistant text
+ FAIL  test/rpc.test.ts > RPC mode > should get session entries with since cursor
+ FAIL  test/rpc.test.ts > RPC mode > should get session tree
+ FAIL  test/rpc.test.ts > RPC mode > should retain pre-compaction entries in get_entries
+ FAIL  test/rpc.test.ts > RPC mode > should set and get session name
+Error: Agent process exited (code=1 signal=null). Stderr: node:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/main.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
+    at #resolve (node:internal/modules/esm/loader:682:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:252:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js'
+}
+
+Node.js v26.0.0
+
+ ❯ RpcClient.createProcessExitError src/modes/rpc/rpc-client.ts:521:10
+    519|
+    520|  private createProcessExitError(code: number | null, signal: NodeJS.Si…
+    521|   return new Error(`Agent process exited (code=${code} signal=${signal…
+       |          ^
+    522|  }
+    523|
+ ❯ ChildProcess.<anonymous> src/modes/rpc/rpc-client.ts:108:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/37]⎯
+
+ FAIL  test/session-file-invalid.test.ts > --session invalid file handling > prints a friendly error and preserves non-session file content
+AssertionError: expected 'node:internal/modules/esm/resolve:271…' to contain 'Error: Session file is not a valid pi…'
+
+- Expected
++ Received
+
+- Error: Session file is not a valid pi session: /private/var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/pi-session-file-invalid-xFrcUw/not-a-session.log
++ node:internal/modules/esm/resolve:271
++     throw new ERR_MODULE_NOT_FOUND(
++           ^
++
++ Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/main.ts
++     at finalizeResolution (node:internal/modules/esm/resolve:271:11)
++     at moduleResolve (node:internal/modules/esm/resolve:861:10)
++     at defaultResolve (node:internal/modules/esm/resolve:988:11)
++     at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
++     at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
++     at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
++     at #resolve (node:internal/modules/esm/loader:682:17)
++     at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
++     at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33)
++     at ModuleJob.link (node:internal/modules/esm/module_job:252:17) {
++   code: 'ERR_MODULE_NOT_FOUND',
++   url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js'
++ }
++
++ Node.js v26.0.0
++
+
+ ❯ test/session-file-invalid.test.ts:60:25
+     58|
+     59|   expect(result.code).toBe(1);
+     60|   expect(result.stderr).toContain(`Error: Session file is not a valid …
+       |                         ^
+     61|   expect(result.stderr).not.toContain("SessionManager.open");
+     62|   expect(result.stderr).not.toContain("at ");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/37]⎯
+
+ FAIL  test/session-id-readonly.test.ts > --session-id read-only commands > does not reserve a session for --help
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ test/session-id-readonly.test.ts:107:23
+    105|   const result = await runCli(["--session-id", "read-only-help", "--he…
+    106|
+    107|   expect(result.code).toBe(0);
+       |                       ^
+    108|   expect(hasSessionWithId(join(result.agentDir, "sessions"), "read-onl…
+    109|  });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/37]⎯
+
+ FAIL  test/session-id-readonly.test.ts > --session-id read-only commands > allows --no-session with --session-id
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ test/session-id-readonly.test.ts:114:23
+    112|   const result = await runCli(["--no-session", "--session-id", "epheme…
+    113|
+    114|   expect(result.code).toBe(0);
+       |                       ^
+    115|   expect(hasSessionWithId(join(result.agentDir, "sessions"), "ephemera…
+    116|  });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/37]⎯
+
+ FAIL  test/session-id-readonly.test.ts > --session-id read-only commands > does not reserve a session for --list-models
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ test/session-id-readonly.test.ts:121:23
+    119|   const result = await runCli(["--session-id", "read-only-models", "--…
+    120|
+    121|   expect(result.code).toBe(0);
+       |                       ^
+    122|   expect(hasSessionWithId(join(result.agentDir, "sessions"), "read-onl…
+    123|  });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/37]⎯
+
+ FAIL  test/session-id-readonly.test.ts > --session-id read-only commands > rejects an existing fork target session id
+AssertionError: expected 'node:internal/modules/esm/resolve:271…' to contain 'Session already exists with id \'exis…'
+
+- Expected
++ Received
+
+- Session already exists with id 'existing-id'
++ node:internal/modules/esm/resolve:271
++     throw new ERR_MODULE_NOT_FOUND(
++           ^
++
++ Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/main.ts
++     at finalizeResolution (node:internal/modules/esm/resolve:271:11)
++     at moduleResolve (node:internal/modules/esm/resolve:861:10)
++     at defaultResolve (node:internal/modules/esm/resolve:988:11)
++     at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
++     at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
++     at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
++     at #resolve (node:internal/modules/esm/loader:682:17)
++     at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
++     at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33)
++     at ModuleJob.link (node:internal/modules/esm/module_job:252:17) {
++   code: 'ERR_MODULE_NOT_FOUND',
++   url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js'
++ }
++
++ Node.js v26.0.0
++
+
+ ❯ test/session-id-readonly.test.ts:136:25
+    134|
+    135|   expect(result.code).toBe(1);
+    136|   expect(result.stderr).toContain("Session already exists with id 'exi…
+       |                         ^
+    137|  });
+    138| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/37]⎯
+
+ FAIL  test/session-id-readonly.test.ts > --session-id validation > rejects ids invalid under SessionManager rules without stack traces
+AssertionError: expected 'node:internal/modules/esm/resolve:271…' to contain 'Session id must be non-empty'
+
+- Expected
++ Received
+
+- Session id must be non-empty
++ node:internal/modules/esm/resolve:271
++     throw new ERR_MODULE_NOT_FOUND(
++           ^
++
++ Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/main.ts
++     at finalizeResolution (node:internal/modules/esm/resolve:271:11)
++     at moduleResolve (node:internal/modules/esm/resolve:861:10)
++     at defaultResolve (node:internal/modules/esm/resolve:988:11)
++     at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
++     at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
++     at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
++     at #resolve (node:internal/modules/esm/loader:682:17)
++     at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
++     at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33)
++     at ModuleJob.link (node:internal/modules/esm/module_job:252:17) {
++   code: 'ERR_MODULE_NOT_FOUND',
++   url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js'
++ }
++
++ Node.js v26.0.0
++
+
+ ❯ test/session-id-readonly.test.ts:146:26
+    144|
+    145|    expect(result.code).toBe(1);
+    146|    expect(result.stderr).toContain("Session id must be non-empty");
+       |                          ^
+    147|    expect(result.stderr).not.toContain("SessionManager.create");
+    148|   }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/37]⎯
+
+ FAIL  test/startup-session-name.test.ts > startup session name > sets --name on the selected session before runtime model validation
+AssertionError: expected [] to deeply equal [ 'CLI Named Session' ]
+
+- Expected
++ Received
+
+- [
+-   "CLI Named Session",
+- ]
++ []
+
+ ❯ test/startup-session-name.test.ts:131:50
+    129|   expect(result.code).toBe(1);
+    130|   expect(result.signal).toBeNull();
+    131|   expect(readSessionInfoNames(dirs.sessionFile)).toEqual(["CLI Named S…
+       |                                                  ^
+    132|  });
+    133|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/37]⎯
+
+ FAIL  test/startup-session-name.test.ts > startup session name > rejects empty --name values without appending session metadata
+AssertionError: expected 'node:internal/modules/esm/resolve:271…' to contain '--name requires a non-empty value'
+
+- Expected
++ Received
+
+- --name requires a non-empty value
++ node:internal/modules/esm/resolve:271
++     throw new ERR_MODULE_NOT_FOUND(
++           ^
++
++ Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/main.ts
++     at finalizeResolution (node:internal/modules/esm/resolve:271:11)
++     at moduleResolve (node:internal/modules/esm/resolve:861:10)
++     at defaultResolve (node:internal/modules/esm/resolve:988:11)
++     at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
++     at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
++     at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
++     at #resolve (node:internal/modules/esm/loader:682:17)
++     at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
++     at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33)
++     at ModuleJob.link (node:internal/modules/esm/module_job:252:17) {
++   code: 'ERR_MODULE_NOT_FOUND',
++   url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-ai/dist/index.js'
++ }
++
++ Node.js v26.0.0
++
+
+ ❯ test/startup-session-name.test.ts:143:25
+    141|   expect(result.code).toBe(1);
+    142|   expect(result.signal).toBeNull();
+    143|   expect(result.stderr).toContain("--name requires a non-empty value");
+       |                         ^
+    144|   expect(readSessionInfoNames(dirs.sessionFile)).toEqual([]);
+    145|  });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/37]⎯
+
+ FAIL  test/stdout-cleanliness.test.ts > stdout cleanliness in non-interactive modes > prints plain --help to stdout when stdout is redirected
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ test/stdout-cleanliness.test.ts:94:23
+     92|   const result = await runCli(["--help"]);
+     93|
+     94|   expect(result.code).toBe(0);
+       |                       ^
+     95|   expect(result.stdout).toContain("Usage:");
+     96|   expect(result.stderr).not.toContain("Usage:");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/37]⎯
+
+ FAIL  test/stdout-cleanliness.test.ts > stdout cleanliness in non-interactive modes > keeps stdout empty for --mode json --help while routing trusted startup chatter to stderr
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ test/stdout-cleanliness.test.ts:102:23
+    100|   const result = await runCli(["--mode", "json", "--help", "--approve"…
+    101|
+    102|   expect(result.code).toBe(0);
+       |                       ^
+    103|   expect(result.stdout).toBe("");
+    104|   expect(result.stderr).toContain("changed 1 package in 471ms");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/37]⎯
+
+ FAIL  test/stdout-cleanliness.test.ts > stdout cleanliness in non-interactive modes > keeps stdout empty for -p --help while routing trusted startup chatter to stderr
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ test/stdout-cleanliness.test.ts:112:23
+    110|   const result = await runCli(["-p", "--help", "--approve"]);
+    111|
+    112|   expect(result.code).toBe(0);
+       |                       ^
+    113|   expect(result.stdout).toBe("");
+    114|   expect(result.stderr).toContain("changed 1 package in 471ms");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/37]⎯
+
+ FAIL  test/stdout-cleanliness.test.ts > stdout cleanliness in non-interactive modes > ignores untrusted project package installs for help
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ test/stdout-cleanliness.test.ts:122:23
+    120|   const result = await runCli(["-p", "--help"]);
+    121|
+    122|   expect(result.code).toBe(0);
+       |                       ^
+    123|   expect(result.stdout).toBe("");
+    124|   expect(result.stderr).not.toContain("changed 1 package in 471ms");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/37]⎯
+
+ FAIL  test/suite/codemode-bridge.test.ts > bundled codemode bridge > routes JS eval tool calls through extension tools and hooks
+AssertionError: expected "vi.fn()" to be called once with arguments: [ { q: 'hi' } ]
+
+Number of calls: 0
+
+ ❯ test/suite/codemode-bridge.test.ts:134:26
+    132|   try {
+    133|    const output = await runEvalTurn(harness, 'return await tool.demo_t…
+    134|    expect(state.execute).toHaveBeenCalledExactlyOnceWith({ q: "hi" });
+       |                          ^
+    135|    expect(state.toolCallObservations).toEqual([{ toolName: "demo_tool"…
+    136|    expect(output).toContain("demo:hi:rewritten");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/37]⎯
+
+ FAIL  test/suite/codemode-bridge.test.ts > bundled codemode bridge > returns a bridge-visible error when a tool_call hook blocks execution
+AssertionError: expected [] to deeply equal [ { toolName: 'demo_tool', …(1) } ]
+
+- Expected
++ Received
+
+- [
+-   {
+-     "input": {
+-       "q": "blocked",
+-     },
+-     "toolName": "demo_tool",
+-   },
+- ]
++ []
+
+ ❯ test/suite/codemode-bridge.test.ts:156:39
+    154|
+    155|    expect(state.execute).not.toHaveBeenCalled();
+    156|    expect(state.toolCallObservations).toEqual([{ toolName: "demo_tool"…
+       |                                       ^
+    157|    expect(output).toContain("denied");
+    158|   } finally {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/37]⎯
+
+ FAIL  test/suite/codemode-bridge.test.ts > bundled codemode bridge > completes without hanging when permission ask is denied inside the bridge
+AssertionError: expected "vi.fn()" to be called at least once
+ ❯ test/suite/codemode-bridge.test.ts:212:29
+    210|    const output = await runEvalTurn(harness, 'return await tool.demo_t…
+    211|
+    212|    expect(uiContext.select).toHaveBeenCalled();
+       |                             ^
+    213|    expect(state.execute).not.toHaveBeenCalled();
+    214|    expect(output).toContain("rejected");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/37]⎯
+
+ FAIL  test/suite/regressions/2791-fswatch-error-crash.test.ts > issue #2791 fs.watch error event crashes process > process should survive an error event on the theme FSWatcher
+AssertionError: Child crashed (exit 1). stderr: node:internal/modules/esm/resolve:201
+  const resolvedOption = FSLegacyMainResolve(pkgPath, packageConfig.main, baseStringified);
+                         ^
+
+Error: Cannot find package '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/@earendil-works/pi-tui/dist/index.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent/src/modes/interactive/theme/theme.ts
+    at legacyMainResolve (node:internal/modules/esm/resolve:201:26)
+    at packageResolve (node:internal/modules/esm/resolve:774:12)
+    at moduleResolve (node:internal/modules/esm/resolve:855:18)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:749:52)
+    at #resolve (node:internal/modules/esm/loader:682:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:602:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:162:33) {
+  code: 'ERR_MODULE_NOT_FOUND'
+}
+
+Node.js v26.0.0: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ test/suite/regressions/2791-fswatch-error-crash.test.ts:107:82
+    105|   }
+    106|
+    107|   expect(exitCode, `Child crashed (exit ${exitCode}). stderr: ${stderr…
+       |                                                                                  ^
+    108|  });
+    109| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/37]⎯
+
+
+ Test Files  9 failed | 360 passed | 4 skipped (373)
+      Tests  37 failed | 3289 passed | 31 skipped (3357)
+   Start at  07:31:45
+   Duration  36.75s (transform 17.24s, setup 2.33s, import 230.60s, tests 192.83s, environment 25ms)
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent
+npm error workspace @code-yeongyu/senpi@2026.7.5-2
+npm error location /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent
+npm error command failed
+npm error command sh -c vitest --run
+
+
+> @code-yeongyu/senpi-orchestrator@2026.7.5-2 test
+> node --test --import tsx test/*.test.ts
+
+▶ orchestrator config paths
+  ✔ stores orchestrator state under the senpi config directory by default (0.529375ms)
+  ✔ uses SENPI_ORCHESTRATOR_DIR as the complete state directory override (0.096166ms)
+  ✔ uses SENPI_CONFIG_DIR as the parent config directory override (0.095ms)
+✔ orchestrator config paths (1.127667ms)
+ℹ tests 3
+ℹ suites 1
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 163.793125
+
+> @earendil-works/pi-pty@2026.7.5-2 test
+> vitest --run test
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/pty
+
+
+ Test Files  5 passed (5)
+      Tests  34 passed (34)
+   Start at  07:32:23
+   Duration  1.77s (transform 149ms, setup 0ms, import 198ms, tests 2.07s, environment 0ms)
+
+
+> @code-yeongyu/senpi-codemode@2026.7.5-2 test
+> npx tsx ../../node_modules/vitest/dist/cli.js --run test/
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/senpi-codemode
+
+······················-·······································
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/eval-tool.test.ts [ test/eval-tool.test.ts ]
+ FAIL  test/extension.test.ts [ test/extension.test.ts ]
+ FAIL  test/factory.test.ts [ test/factory.test.ts ]
+Error: Failed to resolve entry for package "@earendil-works/pi-pty". The package may have incorrect main/module/exports specified in its package.json.
+ ❯ ../coding-agent/src/core/extensions/builtin/terminal/manager.ts:1:1
+      1| import {
+       | ^
+      2|  SessionRegistry,
+      3|  SessionRegistryCapacityError,
+ ❯ ../coding-agent/src/core/extensions/builtin/terminal/extension.ts:5:1
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+
+ Test Files  3 failed | 12 passed (15)
+      Tests  61 passed | 1 skipped (62)
+   Start at  07:32:25
+   Duration  1.65s (transform 3.13s, setup 0ms, import 1.50s, tests 2.29s, environment 1ms)
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/senpi-codemode
+npm error workspace @code-yeongyu/senpi-codemode@2026.7.5-2
+npm error location /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/senpi-codemode
+npm error command failed
+npm error command sh -c npx tsx ../../node_modules/vitest/dist/cli.js --run test/
+
+
+> @earendil-works/pi-tui@2026.7.5-2 test
+> node --test --import tsx --test-reporter=dot --test-reporter-destination=stdout test/*.test.ts
+
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....

@@ -1,0 +1,11 @@
+{
+  "id": 1,
+  "invocation": "npx tsx local-ignore/qa-evidence/20260708-mcp-w3-todo28/todo28-auth-e2e-driver.mts (step 1)",
+  "observations": {
+    "state": "needs_auth",
+    "error": "ToolExecError: AuthError: MCP server oauth needs OAuth. Run senpi interactive, then /mcp auth-start oauth and /mcp auth-complete oauth <redirect-url>."
+  },
+  "surface": "CLI/data surface: real ServerConnection + MCP tool bridge against OAuth HTTP fixture",
+  "title": "/mcp add OAuth HTTP fixture -> first tool call -> needs_auth hint",
+  "verdict": "PASS"
+}

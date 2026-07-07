@@ -1,0 +1,14 @@
+{
+  "id": 3,
+  "invocation": "dispose/recreate ServerConnection with same sandbox token store -> MCP tool call",
+  "observations": {
+    "state": "connected",
+    "storeHit": true,
+    "tokenHitsAfterRestart": 1,
+    "tokenHitsBeforeRestart": 1,
+    "toolText": "fixture tool_1 value=restart-hit mode=alpha"
+  },
+  "surface": "CLI/data surface: restarted source connection using persisted sandbox store",
+  "title": "Restart senpi -> token reused, no re-auth",
+  "verdict": "PASS"
+}

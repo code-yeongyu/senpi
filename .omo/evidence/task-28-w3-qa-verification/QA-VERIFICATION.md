@@ -50,7 +50,7 @@ carry RED-first markers before GREEN (22:1R/3G, 23:2R/3G, 24:5R/3G, 25:8R/6G,
 ## QA observation (non-blocking, no product defect)
 
 The todo-28 gate `step 9` (secret audit) greps `getMcpLogDir()` for
-`SENTINEL_AT_` tokens; in the isolated gate run that directory is not created
+sentinel access-token strings; in the isolated gate run that directory is not created
 (the authed flows log to the ring buffer / per-agentDir dirs), so grep emits
 `No such file or directory` and the step passes vacuously rather than by
 scanning produced logs. This is a harness-strength nit, NOT a redaction defect:

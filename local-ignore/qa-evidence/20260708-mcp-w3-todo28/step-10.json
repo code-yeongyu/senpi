@@ -1,0 +1,22 @@
+{
+  "id": 10,
+  "invocation": "npm run check; npm run build; npm test after build precondition",
+  "observations": {
+    "checkLog": "local-ignore/qa-evidence/20260708-mcp-w3-todo28/npm-run-check.log",
+    "buildPrereqLog": "local-ignore/qa-evidence/20260708-mcp-w3-todo28/npm-run-build-prereq.log",
+    "prebuildFailureLog": "local-ignore/qa-evidence/20260708-mcp-w3-todo28/npm-test-prebuild-failed.log",
+    "postBuildTestLog": "local-ignore/qa-evidence/20260708-mcp-w3-todo28/npm-test-after-build.log",
+    "buildEvidence": "npm-run-build-prereq.log reaches [build-all] phase 4 packages/orchestrator and exits without an error marker",
+    "testEvidence": [
+      "Test Files 16 passed (16); Tests 179 passed (179)",
+      "Test Files 94 passed | 24 skipped (118); Tests 679 passed | 726 skipped (1405)",
+      "Test Files 369 passed | 4 skipped (373); Tests 3326 passed | 31 skipped (3357)",
+      "Test Files 5 passed (5); Tests 34 passed (34)",
+      "Test Files 15 passed (15); Tests 76 passed | 1 skipped (77)"
+    ],
+    "prebuildFailurePreserved": true
+  },
+  "surface": "CLI surface",
+  "title": "npm run check + build precondition + full npm test green",
+  "verdict": "PASS"
+}

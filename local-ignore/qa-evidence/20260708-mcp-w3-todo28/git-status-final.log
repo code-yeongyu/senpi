@@ -1,0 +1,78 @@
+ M .omo/evidence/task-28-senpi-mcp-plugin/INDEX.md
+ M .omo/evidence/task-28-senpi-mcp-plugin/gate-driver.mjs
+ M .omo/evidence/task-28-senpi-mcp-plugin/results.json
+ M .omo/evidence/task-28-senpi-mcp-plugin/step-04.txt
+ M .omo/evidence/task-28-senpi-mcp-plugin/step-05.txt
+ M .omo/evidence/task-28-senpi-mcp-plugin/step-09.txt
+ M .omo/evidence/task-28-w3-qa-verification/QA-VERIFICATION.md
+ M .omo/evidence/task-28-w3-qa-verification/gate-reproduction.txt
+ M .omo/evidence/todo-28-code-quality-slop-review.md
+?? .omo/evidence/subagent-stop-22-split-commit-verification-2.md
+?? .omo/evidence/subagent-stop-22-split-commit-verification.md
+?? .omo/evidence/subagent-stop-22-task-17-quality-cleanup-verification-2.md
+?? .omo/evidence/subagent-stop-22-task-17-quality-cleanup-verification.md
+?? .omo/evidence/subagent-stop-22-task-21-step10-coding-agent-verification-2.md
+?? .omo/evidence/subagent-stop-22-task-21-step10-coding-agent-verification-3.md
+?? .omo/evidence/subagent-stop-22-task-21-step10-coding-agent-verification-4.md
+?? .omo/evidence/subagent-stop-22-task-21-step10-coding-agent-verification-5.md
+?? .omo/evidence/subagent-stop-22-task-21-step10-coding-agent-verification-6.md
+?? .omo/evidence/subagent-stop-22-task-21-step10-coding-agent-verification.md
+?? .omo/evidence/subagent-stop-22-todo21-quality-fix-verification.md
+?? .omo/evidence/subagent-stop-22-todo22-expiry-fix-verification-2.md
+?? .omo/evidence/subagent-stop-22-todo22-expiry-fix-verification-3.md
+?? .omo/evidence/subagent-stop-22-todo22-expiry-fix-verification.md
+?? .omo/evidence/subagent-stop-22-todo22-verification-2.md
+?? .omo/evidence/subagent-stop-22-todo22-verification-3.md
+?? .omo/evidence/subagent-stop-22-todo22-verification.md
+?? .omo/evidence/subagent-stop-22-todo23-verification-2.md
+?? .omo/evidence/subagent-stop-22-todo23-verification-3.md
+?? .omo/evidence/subagent-stop-22-todo23-verification.md
+?? .omo/evidence/subagent-stop-22-todo24-fix-verification-2.md
+?? .omo/evidence/subagent-stop-22-todo24-fix-verification-3.md
+?? .omo/evidence/subagent-stop-22-todo24-fix-verification.md
+?? .omo/evidence/subagent-stop-22-todo24-verification-2.md
+?? .omo/evidence/subagent-stop-22-todo24-verification-3.md
+?? .omo/evidence/subagent-stop-22-todo24-verification.md
+?? .omo/evidence/subagent-stop-22-todo25-verification-2.md
+?? .omo/evidence/subagent-stop-22-todo25-verification-3.md
+?? .omo/evidence/subagent-stop-22-todo25-verification.md
+?? .omo/evidence/subagent-stop-22-todo26-verification-2.md
+?? .omo/evidence/subagent-stop-22-todo26-verification.md
+?? .omo/evidence/subagent-stop-22-todo27-fix-verification.md
+?? .omo/evidence/subagent-stop-22-todo27-gate-fix-verification-2.md
+?? .omo/evidence/subagent-stop-22-todo27-verification-2.md
+?? .omo/evidence/subagent-stop-22-todo27-verification.md
+?? .omo/evidence/task-16-stop-hook-verification-2.md
+?? .omo/evidence/task-16-stop-hook-verification-3.md
+?? .omo/evidence/task-16-stop-hook-verification.md
+?? .omo/evidence/task-17-retry-fix-stop-hook-verification-2.md
+?? .omo/evidence/task-17-retry-fix-stop-hook-verification-3.md
+?? .omo/evidence/task-17-retry-fix-stop-hook-verification.md
+?? .omo/evidence/task-17-stop-hook-verification-2.md
+?? .omo/evidence/task-17-stop-hook-verification-3.md
+?? .omo/evidence/task-17-stop-hook-verification.md
+?? .omo/evidence/task-21-ai-test-env-strip-note.md
+?? .omo/evidence/task-21-driver-repair-note.md
+?? .omo/evidence/task-21-step10-final-doneclaim.md
+?? .omo/evidence/task-21-step6-stop-hook-verification-2.md
+?? .omo/evidence/task-21-step6-stop-hook-verification-3.md
+?? .omo/evidence/task-21-step6-stop-hook-verification.md
+?? .omo/evidence/todo-14-stop-hook-verification-2.md
+?? .omo/evidence/todo-14-stop-hook-verification.md
+?? .omo/evidence/todo-22-code-quality-slop-rereview.md
+?? .omo/evidence/todo-22-code-quality-slop-review.md
+?? .omo/evidence/todo-23-code-quality-slop-review.md
+?? .omo/evidence/todo21-senpi-mcp-plugin-final-gate-review.md
+?? .omo/evidence/todo22-senpi-mcp-plugin-final-gate-review.md
+?? .omo/evidence/todo22-senpi-mcp-plugin-gate-review.md
+?? .omo/evidence/todo23-senpi-mcp-plugin-final-gate-review.md
+?? .omo/evidence/todo23-senpi-mcp-plugin-gate-review.md
+?? .omo/evidence/todo24-senpi-mcp-plugin-final-gate-review.md
+?? .omo/evidence/todo24-senpi-mcp-plugin-gate-review.md
+?? .omo/evidence/todo25-senpi-mcp-plugin-gate-review.md
+?? .omo/evidence/todo25-supplemental-qa.md
+?? .omo/evidence/todo26-senpi-mcp-plugin-final-gate-review.md
+?? .omo/evidence/todo26-senpi-mcp-plugin-final-rereview.md
+?? .omo/evidence/todo27-senpi-mcp-plugin-final-gate-review.md
+?? .omo/evidence/todo27-senpi-mcp-plugin-final-rereview.md
+?? .omo/evidence/todo28-senpi-mcp-plugin-final-gate-review.md
