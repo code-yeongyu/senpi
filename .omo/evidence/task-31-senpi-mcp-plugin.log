@@ -1,0 +1,19 @@
+=== TASK 31 — mcp_search tool + promotion engine ===
+Date: 2026-07-07T16:45:58Z
+
+RED: before setActiveTools-union promotion, turn-2 provider payload would still expose only [mcp_search] and the searched tool would be uncallable. The turn-2 assertion (promoted tools present) is the behavioral gate.
+
+=== GREEN (harness two-turn promotion + zero-token inactive + rehydrate) ===
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  01:46:00
+   Duration  11.44s (transform 9.68s, setup 18ms, import 11.27s, tests 15ms, environment 0ms)
+
+
+=== two-turn transcript (from assertions) ===
+turn1 provider tools = [mcp_search]                 (inactive catalog tools = 0 payload contribution)
+mcp_search({query:'library documentation'}) -> activates mcp_docs_get-library-docs, mcp_docs_resolve-library-id
+turn2 provider tools = [mcp_docs_get-library-docs, mcp_docs_resolve-library-id, mcp_search]  (mcp_fs_read-file still absent)
+turn2 model calls mcp_docs_get-library-docs -> callable (fixture text returned)
+rehydrateActiveToolsFromHistory(real transcript) -> [mcp_docs_get-library-docs, mcp_docs_resolve-library-id]
