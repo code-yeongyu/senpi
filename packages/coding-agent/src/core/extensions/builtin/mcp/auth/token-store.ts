@@ -26,6 +26,9 @@ export interface TokenStoreOptions {
 	serverUrl: string;
 	agentDir?: string;
 	lock?: TokenStoreLockOptions;
+	// Test-only escape hatch: skip the cross-process lock so the refresh-race
+	// control case can demonstrate the token-family invalidation it prevents.
+	disableLock?: boolean;
 }
 
 const AUTH_ROOT = "mcp-auth";
@@ -54,6 +57,7 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 	readonly #agentDir: string;
 	readonly #hash: string;
 	readonly #lock: Required<TokenStoreLockOptions>;
+	readonly #disableLock: boolean;
 
 	constructor(options: TokenStoreOptions) {
 		this.serverName = options.serverName;
@@ -61,6 +65,7 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 		this.#agentDir = options.agentDir ?? getAgentDir();
 		this.#hash = hashServerUrl(options.serverUrl);
 		this.#lock = { ...DEFAULT_LOCK, ...options.lock };
+		this.#disableLock = options.disableLock ?? false;
 	}
 
 	get rootDir(): string {
@@ -142,6 +147,7 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 
 	async #acquire(): Promise<() => Promise<void>> {
 		this.#ensureDir();
+		if (this.#disableLock) return () => Promise.resolve();
 		try {
 			return await lockfile.lock(this.dir, {
 				lockfilePath: this.lockPath,
