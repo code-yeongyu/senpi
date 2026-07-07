@@ -203,4 +203,37 @@ describe("SessionRegistry", () => {
 		expect(registry.get(ended.id)?.state).toBe("exited");
 		expect(killed).toEqual(["301:SIGTERM", "302:SIGTERM"]);
 	});
+
+	it("preserves `this` when stopping a session whose waitExit is a class method", async () => {
+		// Regression: the registry must invoke waitExit via the session object, not a detached
+		// reference, or class-based sessions (e.g. pi-pty TerminalSession) crash on `this`.
+		class ThisBoundSession implements SessionRegistrySession {
+			readonly command = "bash";
+			private stopped = false;
+			private exitHandler: (() => void) | null = null;
+			get isExited(): boolean {
+				return this.stopped;
+			}
+			stop(): void {
+				this.stopped = true;
+				this.exitHandler?.();
+			}
+			waitExit(): Promise<void> {
+				// Touching `this` throws a TypeError if called unbound.
+				if (this.stopped) return Promise.resolve();
+				return Promise.resolve();
+			}
+			onExit(handler: () => void): () => void {
+				this.exitHandler = handler;
+				return () => {
+					this.exitHandler = null;
+				};
+			}
+		}
+
+		const registry = new SessionRegistry<ThisBoundSession>();
+		const entry = await registry.create({ command: "bash", session: new ThisBoundSession() });
+		await expect(registry.stop(entry.id)).resolves.toBe(true);
+		expect(registry.get(entry.id)?.state).toBe("exited");
+	});
 });

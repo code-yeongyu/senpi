@@ -23,6 +23,7 @@ export function isTerminalSessionExited(session: SessionRegistrySession): boolea
 }
 
 export async function stopTerminalSession(session: SessionRegistrySession): Promise<void> {
+	// Call through `session` so class methods keep their `this` binding.
 	if (session.stop) {
 		await session.stop();
 		return;
@@ -36,8 +37,9 @@ export async function stopTerminalSession(session: SessionRegistrySession): Prom
 
 export async function waitForTerminalSessionExit(session: SessionRegistrySession): Promise<boolean> {
 	if (isTerminalSessionExited(session)) return true;
-	const wait = session.waitExit ?? session.wait;
-	if (!wait) return false;
-	await wait();
+	// Invoke via the session object (not a detached reference) so `this` is preserved.
+	if (session.waitExit) await session.waitExit();
+	else if (session.wait) await session.wait();
+	else return false;
 	return isTerminalSessionExited(session);
 }
