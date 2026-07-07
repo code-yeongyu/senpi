@@ -1,0 +1,14 @@
+    235|   expect(message).toContain("bad enabled");
+    236|   expect(message).toContain("FATAL: missing FOO_TOKEN=<redacted:");
+       |                   ^
+    237|   expect(message).not.toContain("super-secret-token");
+    238|  });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 33 passed (34)
+      Tests  1 failed | 225 passed (226)
+   Start at  02:47:16
+   Duration  20.24s (transform 72.16s, setup 817ms, import 128.24s, tests 81.99s, environment 3ms)
+

@@ -1,0 +1,8 @@
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 33 passed (34)
+      Tests  1 failed | 225 passed (226)
+   Start at  02:50:12
+   Duration  23.40s (transform 81.81s, setup 919ms, import 142.63s, tests 96.96s, environment 4ms)
+

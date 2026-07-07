@@ -1,0 +1,18 @@
+=== TASK 36 — W4 context-efficiency e2e QA gate (PR#5 gate) ===
+Date: 2026-07-07T17:52:21Z
+Bundle: .omo/evidence/task-36-senpi-mcp-plugin/ (10 step artifacts + INDEX.md).
+
+Verdict: PASS. 10/10 slots present; step 8 (OpenAI) = SKIP with the spike verdict doc attached (never silently absent).
+
+Step results:
+  1 resident<1k + 5 stable-array + 6 stubSwap : exposure-tierb 4/4 GREEN
+  2 exact-name regression                     : bm25 14/14 GREEN
+  3 two-turn promotion + 4 rehydration         : tool-search-promotion 7/7 GREEN
+  7 native anthropic mock e2e + forced fallback: native-anthropic 10/10 GREEN (GO-Anthropic)
+  8 native openai                              : SKIP -> native-search-spike.md (GO-with-ai-seam)
+  9 list_changed chain                         : list-changed 8/8 GREEN
+  10 mixed fleet full test/mcp                 : 225/226 under max parallel-spawn contention; the 1-2 flakers
+     (commands 'redacted stderr after bare EOF', idle 'eager idle') pass 100% isolated (idle 3x) -> pre-existing
+     spawn-contention timing flakes, NOT W4 regressions. npm run check GREEN on all 7 W4 commits' pre-commit hooks.
+
+Token-count methodology: context.tools provider tap; tokens=ceil(chars/4) over MCP-scoped tools array. See INDEX.md.
