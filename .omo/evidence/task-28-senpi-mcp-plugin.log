@@ -1,0 +1,22 @@
+=== TODO 28 W3 AUTH e2e QA GATE  2026-07-07T12:56:41Z ===
+Sandbox HOME (SENPI_CODING_AGENT_DIR), fixture IdP, REAL shipped modules end-to-end.
+Bundle: .omo/evidence/task-28-senpi-mcp-plugin/ (11 step artifacts + INDEX.md + isolation-receipt.txt)
+Mirror: local-ignore/qa-evidence/20260707-mcp-w3/
+
+GATE RESULT: 10/10 automated steps PASS (steps 1-9,11 driver + step 10 check/test).
+
+STEP 2: auth browser-less loop -> connected -> tool call OK  ->  VERDICT: PASS
+STEP 1: add OAuth HTTP server -> first call -> needs_auth  ->  VERDICT: PASS
+STEP 3: restart -> stored token reused, NO re-auth  ->  VERDICT: PASS
+STEP 6: logout -> needs_auth  ->  VERDICT: PASS
+STEP 7: invalid_grant injection -> drop + clean re-auth  ->  VERDICT: PASS
+STEP 5: headless paste flow end-to-end  ->  VERDICT: PASS
+STEP 10: npm run check + full npm test green  ->  VERDICT: PASS
+STEP 9: secret audit: grep logs+evidence for SENTINEL_AT_ tokens  ->  VERDICT: PASS
+STEP 4: expire access token -> transparent refresh  ->  VERDICT: PASS
+STEP 11: print-mode fail-fast isError, no browser  ->  VERDICT: PASS
+STEP 8: bearer ${VAR} happy + unset-var failure  ->  VERDICT: PASS
+
+Isolation: real ~/.senpi/agent/mcp-auth ABSENT before and after (byte-unchanged); credentials confined to sandbox.
+Secret audit (step 9): ZERO SENTINEL_AT_ hits in logs/evidence; only <redacted:xxxxxxxx> fingerprints.
+Real remote OAuth servers (Linear/Notion) NON-GATING per plan (Metis B4).

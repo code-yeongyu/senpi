@@ -1,0 +1,25 @@
+=== TODO 22 token-store evidence  2026-07-07T11:57:10Z ===
+SDK @modelcontextprotocol/sdk 1.29.0 ; proper-lockfile 4.1.2 ; node 26.4.0
+
+--- vitest test/mcp/token-store.test.ts (GREEN): modes, path-traversal hash, 2-proc 50x RMW race, clear(), lock-held ---
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Duration  296ms (transform 35ms, setup 13ms, import 40ms, tests 162ms, environment 0ms)
+
+--- HAPPY: store tree modes (dir 0700, files 0600) ---
+total 8
+drwx------@ 4 yeongyu  wheel  128 Jul  7 20:57 .
+drwx------@ 3 yeongyu  wheel   96 Jul  7 20:57 ..
+drwx------@ 3 yeongyu  wheel   96 Jul  7 20:57 fb39103c7d2edac291c92d23247e0a7d90470b1b349c07b146aba4ee2c81591f
+-rw-------@ 1 yeongyu  wheel   83 Jul  7 20:57 index.json
+total 8
+drwx------@ 3 yeongyu  wheel   96 Jul  7 20:57 .
+drwx------@ 4 yeongyu  wheel  128 Jul  7 20:57 ..
+-rw-------@ 1 yeongyu  wheel  159 Jul  7 20:57 tokens.json
+
+--- FAILURE: lock held by SIGSTOP-frozen holder -> second writer fails fast, names lock path, no corruption ---
+holder locked then SIGSTOP'd (frozen, cannot release)
+second writer blocked -> LockAcquireError
+error names lock path: true
+message: Could not acquire MCP auth lock at /tmp/mcp-t22-301j/mcp-auth/699aa02fda4acb0f8ba05e6d4827cb9b0bd507e09fa8ea889fae9eb6bb8f23df/tokens.json.lock: Lock file is already being held
+no corruption; record intact -> seed

@@ -1,0 +1,5 @@
+STEP 8: bearer ${VAR} happy + unset-var failure
+VERDICT: PASS
+
+with env: connected + 1 tools
+unset var: actionable error -> "MCP server bearer bearer token env GATE_TOKEN is not set"

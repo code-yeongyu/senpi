@@ -1,0 +1,10 @@
+
+ RUN  v4.1.9 /private/tmp/train-c-w3-auth/packages/coding-agent
+
+············································
+
+ Test Files  7 passed (7)
+      Tests  44 passed (44)
+   Start at  22:06:04
+   Duration  1.58s (transform 300ms, setup 97ms, import 759ms, tests 4.28s, environment 1ms)
+

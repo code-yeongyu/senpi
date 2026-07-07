@@ -1,0 +1,14 @@
+### gate-driver reproduction ###
+STEP 1 PASS: add OAuth HTTP server -> first call -> needs_auth
+STEP 2 PASS: auth browser-less loop -> connected -> tool call OK
+STEP 3 PASS: restart -> stored token reused, NO re-auth
+STEP 4 PASS: expire access token -> transparent refresh
+STEP 5 PASS: headless paste flow end-to-end
+STEP 6 PASS: logout -> needs_auth
+STEP 7 PASS: invalid_grant injection -> drop + clean re-auth
+STEP 8 PASS: bearer ${VAR} happy + unset-var failure
+grep: /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-w3-gate-VenwRp/agent/logs/mcp: No such file or directory
+STEP 9 PASS: secret audit: grep logs+evidence for SENTINEL_AT_ tokens
+STEP 11 PASS: print-mode fail-fast isError, no browser
+
+GATE STEPS: 10/10 PASS

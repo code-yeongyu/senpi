@@ -1,4 +1,7 @@
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { OAuthFlowError } from "./auth/oauth-errors.ts";
+import type { McpOAuthProvider } from "./auth/oauth-provider.ts";
 import type {
 	ServerConnectionListener,
 	ServerConnectionOptions,
@@ -29,6 +32,7 @@ export class ServerConnection {
 	readonly #logger: McpLogger;
 	readonly #env: Record<string, string | undefined> | undefined;
 	readonly #config: ServerConnectionOptions["config"];
+	readonly #authProvider: McpOAuthProvider | undefined;
 	#state: ServerConnectionState;
 	#generation = 0;
 	#connection: McpTransportConnection | undefined;
@@ -44,6 +48,7 @@ export class ServerConnection {
 		this.#config = options.config;
 		this.#logger = options.logger;
 		this.#env = options.env;
+		this.#authProvider = options.authProvider;
 		this.#state = options.config.enabled ? "idle" : "disabled";
 	}
 
@@ -155,6 +160,7 @@ export class ServerConnection {
 
 	#createTransportConnection(generation: number): McpTransportConnection {
 		const connection = createMcpTransport({
+			authProvider: this.#authProvider,
 			config: this.#config,
 			env: this.#env,
 			logger: this.#logger,
@@ -194,6 +200,11 @@ export class ServerConnection {
 			await this.#shutdown(connection);
 			if (generation !== this.#generation || this.#state === "disabled") {
 				throw this.#connectError(`MCP server ${this.serverName} connect was superseded`, "connect", true);
+			}
+			if (isNeedsAuthError(error)) {
+				const authError = error instanceof Error ? error : new Error(String(error));
+				this.markNeedsAuth(authError);
+				throw authError;
 			}
 			const connectError = await diagnoseMcpConnectFailure({
 				config: this.#config,
@@ -277,4 +288,14 @@ export class ServerConnection {
 	get #sink(): McpAsyncErrorSink {
 		return { logger: this.#logger };
 	}
+}
+
+function isNeedsAuthError(error: unknown, depth = 0): boolean {
+	if (error instanceof UnauthorizedError) return true;
+	if (error instanceof OAuthFlowError) return error.terminal;
+	// connectMcpTransport wraps the SDK error in a ConnectError; unwrap the cause.
+	if (depth < 5 && error !== null && typeof error === "object" && "cause" in error) {
+		return isNeedsAuthError((error as { cause?: unknown }).cause, depth + 1);
+	}
+	return false;
 }

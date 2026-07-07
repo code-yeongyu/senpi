@@ -1,10 +1,25 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "../../types.ts";
+import { handleMcpAuthCommand } from "./auth/commands-auth-dispatch.ts";
 import { addGlobalMcpServer, setGlobalMcpServerEnabled } from "./config-edit.ts";
 import type { McpServerConfig } from "./config-schema.ts";
 import { getMcpService } from "./service.ts";
 import { buildMcpStatusRows, formatMcpStatus } from "./status.ts";
 
-const SUBCOMMANDS = ["status", "add", "enable", "disable", "test", "logs", "reconnect"] as const;
+const SUBCOMMANDS = [
+	"status",
+	"add",
+	"enable",
+	"disable",
+	"test",
+	"logs",
+	"reconnect",
+	"auth",
+	"auth-start",
+	"auth-complete",
+	"logout",
+] as const;
+
+const AUTH_SUBCOMMANDS = new Set(["auth", "auth-start", "auth-complete", "logout"]);
 
 export function registerMcpCommands(pi: ExtensionAPI): void {
 	pi.registerCommand("mcp", {
@@ -26,6 +41,10 @@ async function handleMcpCommand(rawArgs: string, ctx: ExtensionCommandContext, p
 	const subcommand = args[0] ?? "";
 	if (subcommand === "") {
 		await showPanel(ctx);
+		return;
+	}
+	if (AUTH_SUBCOMMANDS.has(subcommand)) {
+		await handleMcpAuthCommand(subcommand, args.slice(1), ctx, pi);
 		return;
 	}
 	if (subcommand === "status") {

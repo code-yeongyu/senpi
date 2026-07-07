@@ -1,0 +1,6 @@
+W3-auth PR revalidation after merging origin/main (8b62b3498)
+Merge: clean, no conflicts
+npm run check: EXIT 0 (biome+tsgo+shrinkwrap+install-lock+neo go build/vet/test)
+vitest test/mcp: 28 files, 177 tests passed
+vitest full coding-agent: 366 files passed / 4 skipped, 3302 passed / 31 skipped
+Date: 2026-07-07

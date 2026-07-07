@@ -1,0 +1,4 @@
+STEP 5: headless paste flow end-to-end
+VERDICT: PASS
+
+paste flow stored token prefix=SENTINEL_AT_...
