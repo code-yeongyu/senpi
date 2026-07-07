@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { detectLiteralBearerWarnings, resolveAuthMode } from "../../src/core/extensions/builtin/mcp/auth/context.ts";
+import {
+	detectLiteralBearerWarnings,
+	resolveAuthMode,
+	resolveServerAuth,
+} from "../../src/core/extensions/builtin/mcp/auth/context.ts";
 import type { McpServerConfig } from "../../src/core/extensions/builtin/mcp/config-schema.ts";
+import { ServerConnection } from "../../src/core/extensions/builtin/mcp/connection.ts";
 import { createMcpLogger } from "../../src/core/extensions/builtin/mcp/log.ts";
 import {
 	connectMcpTransport,
@@ -109,6 +114,23 @@ describe("mcp auth mode autodetect (#158)", () => {
 			baseHttp("https://x/mcp", { headers: { Authorization: envRef } }),
 		);
 		expect(interpolated).toHaveLength(0);
+	});
+
+	it("marks an unauthenticated OAuth server as needs_auth (not degraded)", async () => {
+		const idp = await spawnOAuthIdp();
+		cleanups.push(idp.cleanup);
+		const dir = `${process.env.SENPI_CODING_AGENT_DIR}/needs-auth-${Date.now()}`;
+		const config = baseHttp(idp.mcpUrl);
+		const plan = resolveServerAuth({ agentDir: dir, config, serverName: "na" });
+		const connection = new ServerConnection({
+			serverName: "na",
+			config,
+			logger: createMcpLogger("na"),
+			authProvider: plan.provider,
+		});
+		await connection.connect().catch(() => undefined);
+		expect(connection.state).toBe("needs_auth");
+		await connection.dispose();
 	});
 
 	it("logs auth material as fingerprints only, never the raw token", () => {

@@ -1,0 +1,4 @@
+STEP 7: invalid_grant injection -> drop + clean re-auth
+VERDICT: PASS
+
+refresh kind=invalid_grant; credentials dropped=true; re-auth succeeded=true

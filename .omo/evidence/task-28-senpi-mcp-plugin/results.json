@@ -1,0 +1,52 @@
+[
+  {
+    "step": 1,
+    "title": "add OAuth HTTP server -> first call -> needs_auth",
+    "verdict": "PASS"
+  },
+  {
+    "step": 2,
+    "title": "auth browser-less loop -> connected -> tool call OK",
+    "verdict": "PASS"
+  },
+  {
+    "step": 3,
+    "title": "restart -> stored token reused, NO re-auth",
+    "verdict": "PASS"
+  },
+  {
+    "step": 4,
+    "title": "expire access token -> transparent refresh",
+    "verdict": "PASS"
+  },
+  {
+    "step": 5,
+    "title": "headless paste flow end-to-end",
+    "verdict": "PASS"
+  },
+  {
+    "step": 6,
+    "title": "logout -> needs_auth",
+    "verdict": "PASS"
+  },
+  {
+    "step": 7,
+    "title": "invalid_grant injection -> drop + clean re-auth",
+    "verdict": "PASS"
+  },
+  {
+    "step": 8,
+    "title": "bearer ${VAR} happy + unset-var failure",
+    "verdict": "PASS"
+  },
+  {
+    "step": 9,
+    "title": "secret audit: grep logs+evidence for SENTINEL_AT_ tokens",
+    "verdict": "PASS"
+  },
+  {
+    "step": 11,
+    "title": "print-mode fail-fast isError, no browser",
+    "verdict": "PASS"
+  }
+]

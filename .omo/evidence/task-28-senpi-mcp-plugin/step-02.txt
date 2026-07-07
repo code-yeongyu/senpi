@@ -1,0 +1,6 @@
+STEP 2: auth browser-less loop -> connected -> tool call OK
+VERDICT: PASS
+
+auth-start URL S256=S256
+state=connected, tools listed=1
+notes=["Open this URL, approve, then run /mcp au","MCP server fixture-oauth authorized"]

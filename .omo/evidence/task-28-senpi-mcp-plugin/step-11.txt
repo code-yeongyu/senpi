@@ -1,0 +1,4 @@
+STEP 11: print-mode fail-fast isError, no browser
+VERDICT: PASS
+
+hasUI=false -> notify type=error; mentions auth-start=true; browser attempts=0

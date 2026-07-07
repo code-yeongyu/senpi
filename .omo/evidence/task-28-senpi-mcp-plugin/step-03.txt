@@ -1,0 +1,4 @@
+STEP 3: restart -> stored token reused, NO re-auth
+VERDICT: PASS
+
+reconnected state=connected; token-endpoint hits unchanged (1 -> 1) => no new authorization

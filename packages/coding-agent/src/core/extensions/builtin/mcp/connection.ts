@@ -290,8 +290,12 @@ export class ServerConnection {
 	}
 }
 
-function isNeedsAuthError(error: unknown): boolean {
+function isNeedsAuthError(error: unknown, depth = 0): boolean {
 	if (error instanceof UnauthorizedError) return true;
 	if (error instanceof OAuthFlowError) return error.terminal;
+	// connectMcpTransport wraps the SDK error in a ConnectError; unwrap the cause.
+	if (depth < 5 && error !== null && typeof error === "object" && "cause" in error) {
+		return isNeedsAuthError((error as { cause?: unknown }).cause, depth + 1);
+	}
 	return false;
 }

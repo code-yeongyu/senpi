@@ -7,6 +7,10 @@ import { McpTokenStore } from "./token-store.ts";
 
 export type ServerAuthMode = "none" | "bearer" | "oauth";
 
+// Placeholder loopback redirect for background (non-interactive) connects; the
+// real callback URL is supplied by /mcp auth. Never actually dereferenced.
+const BACKGROUND_REDIRECT = "http://127.0.0.1:0/callback";
+
 export interface ServerAuthDeps {
 	serverName: string;
 	config: McpServerConfig;
@@ -43,7 +47,10 @@ export function resolveServerAuth(deps: ServerAuthDeps): ServerAuthPlan {
 		serverName: deps.serverName,
 		serverUrl,
 		store,
-		redirectUrl: deps.redirectUrl,
+		// A redirect URL must be present so the SDK selects the authorization-code
+		// flow and raises UnauthorizedError (-> needs_auth) on a token-less connect,
+		// rather than falling through to a client_credentials token request.
+		redirectUrl: deps.redirectUrl ?? BACKGROUND_REDIRECT,
 		scopes: deps.config.oauth?.scopes,
 		clientId: deps.config.oauth?.clientId,
 		clientMetadataUrl: deps.config.oauth?.clientMetadataUrl,

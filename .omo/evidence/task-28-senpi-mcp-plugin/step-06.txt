@@ -1,0 +1,4 @@
+STEP 6: logout -> needs_auth
+VERDICT: PASS
+
+after logout: tokens cleared=true; next connect state=needs_auth

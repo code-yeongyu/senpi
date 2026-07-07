@@ -6,6 +6,62 @@ extension. Fork-native: upstream pi-mono deliberately ships no MCP support, so
 every file under `builtin/mcp/` is fork-owned. Uses the exact-pinned official
 `@modelcontextprotocol/sdk` and the public `pi.*` extension API only.
 
+## W3 implementation — OAuth 2.1 + token store + bearer/header auth (2026-07-07)
+
+### What changed
+- New `builtin/mcp/auth/` subtree implementing spec §7 auth end-to-end:
+  - `token-store.ts`: URL-bound credential store at
+    `<agentDir>/mcp-auth/<sha256(serverUrl)>/tokens.json` (dir 0700, file 0600),
+    atomic tmp+rename writes, cross-process `proper-lockfile` read-modify-write
+    (`update`/`withLock`/`writeUnlocked`), `index.json` name→hash map, and
+    `clear()`. No keychain (headless-first).
+  - `oauth-provider.ts`: SDK `OAuthClientProvider` backed by the store — PKCE
+    verifier + client info + tokens persistence, single-use CSRF `state`,
+    RFC 8707 `validateResourceURL`, `invalidateCredentials`, token fingerprint
+    logging.
+  - `oauth-refresh.ts`: preemptive refresh at expiry−5min with in-process
+    single-flight + cross-process lock; `assertS256Supported` (typed refusal);
+    `invalid_grant`→drop→needs_auth vs transient→bounded-retry distinction.
+  - `oauth.ts`: discovery (RFC 9728→8414→OIDC) + S256 pre-flight refusal,
+    `beginAuthorization`/`completeAuthorization`/`finishAuthorization`,
+    `clientCredentialsGrant`, `logout`.
+  - `callback.ts`: lazy 127.0.0.1 loopback listener (OS or fixed port with
+    fail-fast on conflict), single-use state, 5-min unref'd timeout,
+    `openCallbackChannel` with `oauthCallbackUrl` override → zero listeners.
+  - `context.ts`: `resolveAuthMode` (#158 autodetect: headers/explicit disable
+    OAuth), `resolveServerAuth` provider factory, `detectLiteralBearerWarnings`.
+  - `commands-auth.ts` + `commands-auth-dispatch.ts`: `/mcp auth`,
+    `auth-start`, `auth-complete <redirect-url>`, `logout`, client_credentials;
+    non-UI callers fail fast with a headless hint (no browser).
+  - `oauth-errors.ts`: typed `OAuthFlowError` (terminal vs transient kinds).
+- Wired into existing extension files: `transport.ts` (attach `authProvider`
+  to the HTTP transport; inject `OAUTH_ACCESS_TOKEN` for stdio OAuth),
+  `connection.ts` (map `UnauthorizedError`/terminal `OAuthFlowError` →
+  `needs_auth` by unwrapping the wrapped connect cause), `service.ts` +
+  `service-types.ts` (build the auth plan per server, store it on the
+  connection entry, expose `getAuthTarget`/`getPendingAuth`),
+  `connection-types.ts` (`authProvider` option), `commands.ts` (auth
+  subcommands).
+
+### Why
+- Spec §7 requires OAuth 2.1 (PKCE S256, RFC 8707, discovery, headless flows)
+  with a 0600 file token store and a cross-process refresh lock so concurrent
+  senpi processes never trigger refresh-token-family invalidation.
+
+### Why extension system couldn't handle this alone
+- Not applicable — implemented entirely with the SDK + public `pi.*` API; no
+  core-tree edits outside `builtin/mcp/`.
+
+### Expected merge conflict zones
+- `builtin/mcp/transport.ts` — LOW (added `authProvider` option + stdio env
+  injection; additive).
+- `builtin/mcp/connection.ts` / `connection-types.ts` — LOW (added optional
+  `authProvider` + a needs_auth branch in the connect catch).
+- `builtin/mcp/service.ts` / `service-types.ts` — LOW/MEDIUM (auth-plan
+  construction in the connection-creation loop + new accessors).
+- `builtin/mcp/commands.ts` — LOW (added auth subcommands to the dispatch).
+- `builtin/mcp/changes.md` — LOW (union of entries).
+
 ## W1 implementation — config, transports, service, tools, commands (2026-07-07)
 
 ### What changed
