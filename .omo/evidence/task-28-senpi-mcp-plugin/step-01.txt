@@ -1,0 +1,5 @@
+STEP 1: add OAuth HTTP server -> first call -> needs_auth
+VERDICT: PASS
+
+connection state after unauthenticated connect: needs_auth
+needs_auth toast hint: "Run /mcp auth fixture-oauth"

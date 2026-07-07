@@ -1,0 +1,11 @@
+=== TODO 24 loopback callback evidence  2026-07-07T12:14:39Z ===
+--- vitest test/mcp/oauth-callback.test.ts (GREEN): no-listener-before-start, valid loop, wrong/replayed state 400, timeout teardown, fixed-port conflict fail-fast, override zero-listeners ---
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Duration  217ms (transform 18ms, setup 10ms, import 21ms, tests 128ms, environment 0ms)
+HAPPY: callback listening at http://127.0.0.1:54972/callback
+HAPPY: opened authorize URL, redirect_uri = http://127.0.0.1:54972/callback
+HAPPY: loopback received code (len 29) + valid state; state single-use OK
+HAPPY: exchanged -> access token stored: SENTINEL_AT_...
+FAILURE: first flow holds fixed port 54977
+FAILURE: second flow rejected -> needs_auth: MCP server fix callback listener failed: port 54977 is already in use (another senpi auth flow may be running); free it or configure a different callback.

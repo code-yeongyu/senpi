@@ -1,0 +1,16 @@
+STEP 10: npm run check + full npm test green
+VERDICT: PASS
+
+npm run check (repo root): PASS
+  - biome check --error-on-warnings .  -> clean
+  - check:pinned-deps / check:ts-imports / check:shrinkwrap / check:install-lock -> up to date
+  - tsgo --noEmit -> clean
+  - web-ui check + check:neo (go build/vet/test) -> passed
+
+Full coding-agent vitest suite (after `npm run build` so spawned-CLI child tests
+resolve built workspace deps): 3283 passed, 31 skipped / 3315 (one pre-existing
+non-MCP flake, green on re-run). MCP suite stable: 177/177 across repeated runs.
+
+Note: the spawned-CLI tests (rpc/session/stdout/startup) require the workspace to
+be built first (vitest src-aliases apply only in-process, not to child processes);
+they are green after `npm run build`. None are touched by the W3 auth changes.

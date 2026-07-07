@@ -1,0 +1,17 @@
+=== TODO 27 fixture IdP + refresh-race proof  2026-07-07T12:20:49Z ===
+--- vitest test/mcp/oauth-race.test.ts (GREEN) ---
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Duration  1.29s (transform 88ms, setup 24ms, import 241ms, tests 913ms, environment 0ms)
+
+PROOF: two separate service processes share one token store + one fixture IdP,
+forced simultaneous refresh via a file barrier (fixture --rotate-refresh).
+
+--- HAPPY (lock ON): exactly ONE token-endpoint hit, both processes end with the SAME rotated refresh token, family intact ---
+  IdP tokenHits delta == 1 ; familyInvalidated == false ; results[0].refresh == results[1].refresh  (asserted GREEN above)
+
+--- FAILURE control (lock OFF, disableLock via test flag): reuse detected -> family invalidation -> a process left needs_auth ---
+  IdP tokenHits delta == 2 ; familyInvalidated == true ; one worker kind=invalid_grant  (asserted GREEN above)
+
+This is the evidence the cross-process lock design works: the fixture detects the
+refresh-token-reuse bug class (SDK #1760) and the lock prevents it.

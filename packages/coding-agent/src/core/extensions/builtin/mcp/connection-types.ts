@@ -1,3 +1,4 @@
+import type { McpOAuthProvider } from "./auth/oauth-provider.ts";
 import type { McpServerConfig } from "./config-schema.ts";
 import type { McpLogger } from "./log.ts";
 
@@ -31,6 +32,7 @@ export interface ServerConnectionOptions {
 	readonly config: McpServerConfig;
 	readonly logger: McpLogger;
 	readonly env?: Record<string, string | undefined>;
+	readonly authProvider?: McpOAuthProvider;
 }
 
 export type ServerConnectionListener<TEvent> = (event: TEvent) => void | Promise<void>;

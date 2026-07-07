@@ -1,0 +1,11 @@
+
+ RUN  v4.1.9 /private/tmp/train-c-w3-auth/packages/coding-agent
+
+·················································································································································································
+
+ Test Files  28 passed (28)
+      Tests  177 passed (177)
+   Start at  22:22:41
+   Duration  11.72s (transform 22.14s, setup 239ms, import 39.72s, tests 50.24s, environment 2ms)
+
+VITEST MCP EXIT: 0

@@ -1,0 +1,3 @@
+SENPI_CODING_AGENT_DIR sandbox = /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-w3-gate-lDhetv/agent
+real ~/.senpi/agent/mcp-auth exists: false (expected: false — all credentials landed in the sandbox)
+real ~/.senpi/agent/auth.json exists: true (untouched by MCP OAuth; separate store)

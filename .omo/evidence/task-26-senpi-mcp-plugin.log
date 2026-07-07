@@ -1,0 +1,14 @@
+=== TODO 26 bearer/header auth + OAuth autodetect + fingerprint logging  2026-07-07T12:31:23Z ===
+--- vitest test/mcp/auth-modes.test.ts (GREEN) ---
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Duration  1.18s (transform 57ms, setup 13ms, import 163ms, tests 933ms, environment 0ms)
+
+Asserted:
+  - resolveAuthMode: auth:oauth->oauth; bare http+url->oauth; headers present->none (#158); auth:false->none; bearerTokenEnv->bearer; stdio->none
+  - header-auth server (context7-style, http-server fixture --bearer) connects + lists tools with NO authProvider attached
+  - headers server pointed at the OAuth IdP fixture => IdP discoveryHits==0 and request log EMPTY (no DCR/discovery)
+  - bearerTokenEnv resolved at connect time: correct env connects, changed env value is rejected by server (per-connect resolution)
+  - FAILURE: bearerTokenEnv names an unset var => AuthError at connect naming the var ('MISSING_VAR is not set'), not a mid-call mystery
+  - literal 'Bearer sk-live-...' in headers => startup WARN suggesting ${ENV_VAR}; ${VAR} form => no warning
+  - log scan: raw token absent, only <redacted:xxxxxxxx> 8-char sha256 fingerprints present

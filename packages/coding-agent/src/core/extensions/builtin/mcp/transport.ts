@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { McpOAuthProvider } from "./auth/oauth-provider.ts";
 import type { McpServerConfig } from "./config-schema.ts";
 import { AuthError, ConnectError, TimeoutError } from "./errors.ts";
 import type { McpLogger } from "./log.ts";
@@ -26,6 +27,8 @@ export type CreateMcpTransportOptions = {
 	readonly config: McpServerConfig;
 	readonly logger: McpLogger;
 	readonly env?: Record<string, string | undefined>;
+	// Present only when OAuth is the resolved auth mode for this server.
+	readonly authProvider?: McpOAuthProvider;
 };
 
 const SHUTDOWN_GRACE_MS = 100,
@@ -137,6 +140,7 @@ function createHttpConnection(options: CreateMcpTransportOptions, connectTimeout
 	}
 	const headers = buildHeaders(options);
 	const transport = new StreamableHTTPClientTransport(url, {
+		authProvider: options.authProvider,
 		requestInit: Object.keys(headers).length === 0 ? undefined : { headers },
 	});
 	return createConnection(options.serverName, "http", transport, connectTimeoutMs, { logger: options.logger });
@@ -179,11 +183,15 @@ function trackStdioStart(transport: StdioClientTransport, captureRootPid: () => 
 }
 
 function buildStdioEnv(options: CreateMcpTransportOptions): Record<string, string> {
-	return {
+	const env: Record<string, string> = {
 		...getDefaultEnvironment(),
 		...definedEnv(options.env),
 		...(options.config.env ?? {}),
 	};
+	// OMP pattern: hand stdio OAuth servers the current access token via env.
+	const accessToken = options.authProvider?.tokens()?.access_token;
+	if (accessToken !== undefined && accessToken.length > 0) env.OAUTH_ACCESS_TOKEN = accessToken;
+	return env;
 }
 
 function definedEnv(env: Record<string, string | undefined> | undefined): Record<string, string> {

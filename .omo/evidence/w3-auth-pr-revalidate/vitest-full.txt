@@ -1,0 +1,62 @@
+
+ RUN  v4.1.9 /private/tmp/train-c-w3-auth/packages/coding-agent
+
+···············From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783430583671-qzjsi6imqfp/remote
+   34a5728..398c098  main       -> origin/main
+HEAD is now at 398c098 Second commit
+·app-server stdio closed: test complete
+app-server stdio closed: stdin ended
+·············From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783430584296-1pg0sjzrnru/remote
+   bce0a24..d837960  main       -> origin/main
+·HEAD is now at d837960 Fourth commit
+·····································From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783430586001-vrw1waaq59/remote
+   cf892a3..270341b  main       -> origin/main
+···············HEAD is now at 270341b Commit to keep
+···················From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783430586001-vrw1waaq59/remote
+ + 270341b...9c943c0 main       -> origin/main  (forced update)
+HEAD is now at 9c943c0 Rewritten commit
+·····npm error code ETARGET
+npm error notarget No matching version found for nonexistent-package@1.0.0.
+npm error notarget In most cases you or one of your dependencies are requesting a package version that doesn't exist.
+npm error A complete log of this run can be found in: /Users/yeongyu/.npm/_logs/2026-07-07T13_23_06_693Z-debug-0.log
+Cloning into '/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/pm-test-1783430587164-5ra5d5i4c2h/agent/git/github.com/nonexistent/repo'...
+········From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783430586947-4h2ia1pr42e/remote
+   b3e2909..a7621dc  main       -> origin/main
+·HEAD is now at a7621dc Commit B
+···remote: Repository not found.
+fatal: repository 'https://github.com/nonexistent/repo/' not found
+From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783430586947-4h2ia1pr42e/remote
+ + a7621dc...dc4d1f3 main       -> origin/main  (forced update)
+···································HEAD is now at dc4d1f3 New commit replacing A and B
+·······················································From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783430587960-i27n5zlakr/remote
+   0418628..f264c50  main       -> origin/main
+HEAD is now at f264c50 v3
+········From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783430587960-i27n5zlakr/remote
+ + f264c50...fd960c3 main       -> origin/main  (forced update)
+·HEAD is now at fd960c3 Rewrite B
+··················From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783430589137-gaejffmkfig/remote
+ * branch            888e6da8fe20159bf92cd424f0927fc3c7137c22 -> FETCH_HEAD
+···············································From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783430589661-uspv2wvas5l/remote
+ * tag               v2         -> FETCH_HEAD
+··HEAD is now at e169930 Second commit
+From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783430589661-uspv2wvas5l/remote
+ * tag               v2         -> FETCH_HEAD
+······HEAD is now at e169930 Second commit
+···························································································································From /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/git-update-test-1783430591084-rflvdaedp1s/remote
+   3b7dc64..d13d6ba  main       -> origin/main
+······HEAD is now at d13d6ba Second commit
+···························································································································Installing ./packages/local-package...
+Installing /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/pi-package-commands-1783430592356-rs2gfy8n6vj/local-package/...
+Removing /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/pi-package-commands-1783430592356-rs2gfy8n6vj/local-package/...
+···Updating npm:fake-package...
+··········Installing /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/pi-package-commands-1783430592522-6i9x8wz91ta/local-package...
+····················································································································································································································································································································································································································································································································································································································app-server websocket token: /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-ws-auth-VGvqFK/ws-token
+························································································································································································································································································································································································································································································································································································app-server unix socket websocket token: /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-daemon-probe-6qcIAn/ws-token
+······················································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································--·························-----------------------------
+
+ Test Files  366 passed | 4 skipped (370)
+      Tests  3302 passed | 31 skipped (3333)
+   Start at  22:23:02
+   Duration  26.59s (transform 17.92s, setup 1.89s, import 235.12s, tests 167.38s, environment 23ms)
+
+VITEST FULL EXIT: 0

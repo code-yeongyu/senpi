@@ -1,0 +1,7 @@
+[PASS] openai-completions: baseUrl override round-trips through the real loop — code=0 marker=true path=/v1/chat/completions auth=true
+[PASS] anthropic-messages: baseUrl override round-trips through the real loop — code=0 marker=true path=/v1/messages auth=true
+[PASS] openai-responses: baseUrl override round-trips through the real loop — code=0 marker=true path=/v1/responses auth=true
+[PASS] zero real provider calls (only localhost fake hit) — all baseUrls point at 127.0.0.1
+[PASS] real auth unchanged — /Users/yeongyu/.senpi/agent/auth.json
+
+mock-loop.mjs --self-test: 5/5 passed

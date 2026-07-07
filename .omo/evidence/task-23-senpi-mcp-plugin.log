@@ -1,0 +1,13 @@
+=== TODO 23 oauth provider/refresh evidence  2026-07-07T12:11:29Z ===
+--- vitest test/mcp/oauth-provider.test.ts (GREEN) ---
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Duration  926ms (transform 47ms, setup 11ms, import 91ms, tests 762ms, environment 0ms)
+--- HAPPY: full code+PKCE flow vs fixture IdP; request log (secrets are SENTINEL_* by design, access token never logged in full) ---
+authorize URL has S256: S256
+authorize URL has resource: http://127.0.0.1:53634/mcp
+stored access token (fingerprint-safe prefix): SENTINEL_AT_...
+refresh token present: true
+IdP request log: [{"method":"POST","path":"/token","grantType":"authorization_code","resource":"http://127.0.0.1:53634/mcp"}]
+discoveryHits: 6 tokenHits: 1 registerHits(DCR): 1
+--- FAILURE: token endpoint 500 -> bounded retries (tokenHits>=3), needs_auth NOT set (kind=transient, terminal=false); covered by vitest case above ---
