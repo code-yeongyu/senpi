@@ -1,0 +1,134 @@
+TODO26 gate-review blocker fix log
+
+Scope:
+- Fixed only the evidence bundle blocker and explicit slop-checklist coverage blocker from `.omo/evidence/todo26-senpi-mcp-plugin-final-gate-review.md`.
+- No product code or tests were edited.
+
+Commands and evidence:
+- `git status --short --branch`
+  - Observed branch `code-yeongyu/senpi-mcp-plugin-w3...origin/main [ahead 7]`.
+  - Observed unrelated untracked `.omo/evidence/subagent-stop-*` and older evidence files; left untouched.
+- `sed -n` reads of final gate review, slop review, TODO26 QA index, manual QA summary, manual QA command, literal-warning artifacts, and task-26 log.
+  - Confirmed missing `local-ignore/qa-evidence/20260708-mcp-w3-todo26/header-happy.log` was the indexed artifact blocker.
+- `find ... -name header-happy.log -o -name todo26-manual-qa.mjs`
+  - No recoverable original `header-happy.log` or deleted manual QA driver was found before interruption of the broad cache search.
+- `rg -n "header-happy|happy_header_log|literal-warning|OAuth|discoveryHits|93dedbe2|redacted" .omo/evidence local-ignore/qa-evidence/20260708-mcp-w3-todo26 -g '!subagent-stop-*'`
+  - Found existing provenance for the header-happy scenario in `manual-qa-command.txt`, `manual-qa-summary.txt`, and `idp-request-log.json`.
+- Created `local-ignore/qa-evidence/20260708-mcp-w3-todo26/header-happy.log` as a provenance-restored artifact from existing task evidence only. It explicitly states that no original runtime log bytes were recoverable and does not invent MCP runtime transcript lines.
+- Updated `local-ignore/qa-evidence/20260708-mcp-w3-todo26/INDEX.md` to describe the restored artifact accurately.
+- Expanded `.omo/evidence/todo-26-code-quality-slop-review.md` with explicit checklist coverage for `any`, inline imports, non-erasable TS, unwrapped async/catch-swallow, secret logging, SDK misuse, dead config fields, module LOC >250, naming/convention drift, hollow/mock-only tests, and TODO27 scope creep.
+
+Verification recorded in this log:
+- `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/auth-modes.test.ts test/mcp/config.test.ts test/mcp/log-redaction.test.ts`
+- `npm run check`
+- File-existence/internal-reference check for every `local-ignore/qa-evidence/20260708-mcp-w3-todo26/INDEX.md` artifact reference.
+- Raw token/sentinel scan of TODO26 evidence/local bundle.
+
+## Verification: focused MCP auth/config/log tests
+COMMAND: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/auth-modes.test.ts test/mcp/config.test.ts test/mcp/log-redaction.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent
+
+····························
+
+ Test Files  3 passed (3)
+      Tests  28 passed (28)
+   Start at  06:18:16
+   Duration  1.89s (transform 132ms, setup 38ms, import 317ms, tests 1.70s, environment 0ms)
+
+
+## Verification: npm run check
+COMMAND: npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1549 files in 749ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 29ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/app	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	14.870s
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/bridge/attachqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/extui	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/extui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+
+## Verification: INDEX artifact section references (scoped pass)
+COMMAND: awk Artifacts section from INDEX.md, extract .txt/.json/.log refs, assert each file exists in bundle
+PASS artifact_ref_exists local-ignore/qa-evidence/20260708-mcp-w3-todo26/header-happy.log
+PASS artifact_ref_exists local-ignore/qa-evidence/20260708-mcp-w3-todo26/idp-request-log.json
+PASS artifact_ref_exists local-ignore/qa-evidence/20260708-mcp-w3-todo26/literal-warning-ring.log
+PASS artifact_ref_exists local-ignore/qa-evidence/20260708-mcp-w3-todo26/literal-warning.log
+PASS artifact_ref_exists local-ignore/qa-evidence/20260708-mcp-w3-todo26/manual-qa-command.txt
+PASS artifact_ref_exists local-ignore/qa-evidence/20260708-mcp-w3-todo26/manual-qa-summary.txt
+PASS artifact_ref_exists local-ignore/qa-evidence/20260708-mcp-w3-todo26/senpi-qa-cli-smoke.txt
+PASS artifact_ref_exists local-ignore/qa-evidence/20260708-mcp-w3-todo26/senpi-qa-common.txt
+PASS artifact_ref_exists local-ignore/qa-evidence/20260708-mcp-w3-todo26/senpi-qa-mock-loop.txt
+
+## Verification: raw token and sentinel scan
+COMMAND: generate known TODO26 sentinel patterns in /tmp, then rg -l -f patterns over task evidence and local bundle; fail on any filename hit
+PASS raw_token_sentinel_scan_no_matches
+PASS bearer_like_scan_no_matches
+
+## Cleanup receipt
+COMMAND: test ! -e /tmp/todo26-sentinel-patterns.txt && test ! -e /tmp/todo26-bearer-scan.out
+PASS tmp_scan_files_removed
