@@ -94,12 +94,28 @@ export async function clientCredentialsGrant(
 			},
 		);
 	}
+	const requestedScope = provider.scopes?.join(" ");
+	// Explicit delegate: spreading the class instance would drop its getters.
 	const credentialsProvider: OAuthClientProvider = {
-		...(provider as OAuthClientProvider),
+		get redirectUrl() {
+			return undefined;
+		},
+		get clientMetadata() {
+			return { ...provider.clientMetadata, scope: requestedScope };
+		},
 		clientInformation: () => clientInformation,
+		tokens: () => undefined,
+		saveTokens: () => undefined,
+		redirectToAuthorization: () => undefined,
+		saveCodeVerifier: () => undefined,
+		codeVerifier: () => {
+			throw new OAuthFlowError("no_verifier", "client_credentials has no PKCE verifier", {
+				serverName: provider.serverName,
+			});
+		},
 		prepareTokenRequest(scope?: string) {
 			const params = new URLSearchParams({ grant_type: "client_credentials" });
-			const requested = scope ?? provider.scopes?.join(" ");
+			const requested = scope ?? requestedScope;
 			if (requested !== undefined && requested.length > 0) params.set("scope", requested);
 			return params;
 		},

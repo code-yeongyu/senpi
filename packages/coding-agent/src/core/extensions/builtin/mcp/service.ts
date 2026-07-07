@@ -2,7 +2,7 @@ import type { ExtensionAPI, SessionShutdownEvent, SessionStartEvent } from "../.
 import { detectLiteralBearerWarnings, resolveServerAuth } from "./auth/context.ts";
 import { getValidCachedServer, readMcpCatalogCache } from "./catalog-cache.ts";
 import { loadMcpConfig, visitSpawnableMcpServers } from "./config.ts";
-import type { ResolvedMcpConfig, ResolvedMcpServer } from "./config-schema.ts";
+import type { McpServerConfig, ResolvedMcpConfig, ResolvedMcpServer } from "./config-schema.ts";
 import { ServerConnection } from "./connection.ts";
 import type { McpServerExposureStatus } from "./expose/status.ts";
 import { cleanupMcpOutputArtifacts } from "./guard/output-guard.ts";
@@ -33,6 +33,9 @@ export class McpService {
 	#lastSessionStartReason: SessionStartEvent["reason"] | null = null;
 	#toolRefreshGeneration = 0;
 	#config: ResolvedMcpConfig | null = null;
+	#authAgentDir: string | undefined;
+	#authEnv: Record<string, string | undefined> | undefined;
+	readonly #pendingAuth = new Map<string, import("./auth/oauth-provider.ts").McpOAuthProvider>();
 	#refreshActiveSetWhenNoTools = false;
 	readonly #connections = new Map<string, McpConnectionEntry>();
 	readonly #connectionKeysByName = new Map<string, string>();
@@ -53,6 +56,8 @@ export class McpService {
 			projectTrusted: options.projectTrusted ?? ctx.isProjectTrusted(),
 		});
 		this.#config = config;
+		this.#authAgentDir = options.agentDir;
+		this.#authEnv = options.env;
 		const toolRefreshGeneration = this.#toolRefreshGeneration + 1;
 		this.#toolRefreshGeneration = toolRefreshGeneration;
 		await this.#syncFromConfig(config, options, event.reason !== "reload", _pi, toolRefreshGeneration);
@@ -242,6 +247,25 @@ export class McpService {
 	#entryForName(name: string): McpConnectionEntry | undefined {
 		const key = this.#connectionKeysByName.get(name);
 		return key === undefined ? undefined : this.#connections.get(key);
+	}
+
+	getPendingAuth(): Map<string, import("./auth/oauth-provider.ts").McpOAuthProvider> {
+		return this.#pendingAuth;
+	}
+
+	getAuthTarget(
+		name: string,
+	):
+		| { config: McpServerConfig; agentDir?: string; env?: Record<string, string | undefined>; callbackUrl?: string }
+		| undefined {
+		const server = this.#config?.servers[name];
+		if (server?.config === undefined) return undefined;
+		return {
+			config: server.config,
+			agentDir: this.#authAgentDir,
+			env: this.#authEnv,
+			callbackUrl: this.#config?.settings.oauthCallbackUrl,
+		};
 	}
 
 	getCachedInstructions(name: string): string | undefined {

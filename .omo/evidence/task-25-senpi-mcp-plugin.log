@@ -1,0 +1,21 @@
+=== TODO 25 headless flows (paste + client_credentials)  2026-07-07T12:41:22Z ===
+--- vitest test/mcp/oauth-headless.test.ts (GREEN) ---
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Duration  877ms (transform 47ms, setup 10ms, import 95ms, tests 715ms, environment 0ms)
+
+--- /mcp command suite still GREEN after adding auth/auth-start/auth-complete/logout subcommands ---
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+
+Asserted:
+  - /mcp auth-start prints an authorize URL containing S256 challenge + RFC 8707 resource
+  - /mcp auth-complete <redirect-url> exchanges via the SAME stored PKCE verifier -> tokens stored
+  - verifier continuity: a tampered stored verifier makes auth-complete FAIL (no partial credential)
+  - malformed pasted URL -> actionable OAuthFlowError (paste the full http://127.0.0.1/... address)
+  - client_credentials grant stores a token with ZERO local listeners, no browser attempt
+  - /mcp logout clears credentials so the next use needs auth again
+  - non-UI mode: /mcp auth FAILS FAST with an isError naming the headless flow (auth-start/auth-complete), no browser, no hang
+
+Slash subcommands wired in commands.ts -> auth/commands-auth-dispatch.ts (tsgo clean; /mcp command suite regression-free).
+Full paste-flow-in-TUI (send-keys) real-surface proof is captured in the W3 gate (task-28, step 5).
