@@ -21,45 +21,21 @@ type Announcement struct {
 	Body    string
 }
 
-// WelcomeContent is everything the welcome card renders. The braille Logo rows
-// are supplied by the caller (production neo passes its own art; the golden
-// tests pass the capture-derived grok logo so the frame matches the capture
-// geometry — goldens derive from captures, never from implementation output).
-// When Logo is empty a default capture-derived logo is used.
+// WelcomeContent is everything the text-only welcome card renders.
 type WelcomeContent struct {
 	Title        string
 	Version      string
 	Announcement Announcement
 	Menu         []MenuEntry
-	Logo         []string // braille rows, each LogoWidth cells wide
-}
-
-// LogoWidth is the fixed cell width of a welcome logo row (matches the grok
-// capture's 14-cell braille block).
-const LogoWidth = 14
-
-// grokLogoRows is the braille logo transcribed VERBATIM from
-// .omo/research/neo-grok/captures/120x36_01_startup.txt (the card interior, 7
-// rows × 14 cells). It is the default fixture logo; production neo overrides it
-// via WelcomeContent.Logo.
-var grokLogoRows = []string{
-	"⠀⠀⠀⠀⠀⠀⣀⣀⡀⠀⠀⠀⢀⠄",
-	"⠀⠀⠀⣠⣾⠿⠛⠛⠛⠛⢀⡴⠁⠀",
-	"⠀⠀⣼⡟⠁⠀⠀⠀⢀⡴⠻⣿⡀⠀",
-	"⠀⠀⣿⡇⠀⠀⠀⠔⠁⠀⠀⣿⡇⠀",
-	"⠀⠀⢹⣷⠀⠀⠀⠀⠀⢀⣴⡿⠀⠀",
-	"⠀⢀⠞⠁⠠⢶⣶⣶⣶⠿⠋⠀⠀⠀",
-	"⠐⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀",
 }
 
 // welcomeReflowWidth is the width below which the welcome collapses from the
-// large bordered logo card to the compact centered layout. The 120x36 capture
-// draws the card; the 80x24 capture uses the compact form.
+// bordered text card to the compact centered layout. The 120x36 capture draws
+// the card; the 80x24 capture uses the compact form.
 const welcomeReflowWidth = 100
 
-// Welcome renders the startup welcome. It reflows exactly like the grok
-// captures: at wide widths a bordered card with the braille logo on the left and
-// a right column (title+version, announcement, menu); at narrow widths a
+// Welcome renders the startup welcome. It reflows at wide widths to a bordered
+// text-only card (title+version, announcement, menu); at narrow widths it uses a
 // compact centered menu + announcement with the version pinned bottom-right.
 type Welcome struct {
 	th      *theme.Theme
@@ -68,9 +44,6 @@ type Welcome struct {
 
 // NewWelcome builds a welcome bound to a theme + content.
 func NewWelcome(th *theme.Theme, content WelcomeContent) *Welcome {
-	if len(content.Logo) == 0 {
-		content.Logo = grokLogoRows
-	}
 	return &Welcome{th: th, content: content}
 }
 
@@ -83,27 +56,13 @@ func (w *Welcome) Render(width int) []string {
 	return w.renderCompact(width)
 }
 
-// renderWide draws the bordered logo card. Layout (matching the capture):
-//
-//	╭────────…────────╮
-//	│                 │
-//	│  <logo row 0>   <title>  <version>          │
-//	│  <logo row 1>                                │
-//	│  <logo row 2>   <announcement heading>       │
-//	│  <logo row 3>   <announcement body>          │
-//	│  <logo row 4>                                │
-//	│  <logo row 5>   <menu entry>          <key>  │
-//	│  <logo row 6>   <menu entry>          <key>  │
-//	│                 <menu entry>                 │
-//	│                 <menu entry>          <key>  │
-//	│                 …                            │
-//	╰────────…────────╯
+// renderWide draws the bordered text card.
 func (w *Welcome) renderWide(width int) []string {
 	th := w.th
 	const leftMargin = 3
 	// Card spans width - leftMargin; interior = card - 2 borders.
 	cardWidth := width - leftMargin
-	if cardWidth < LogoWidth+10 {
+	if cardWidth < 20 {
 		return w.renderCompact(width)
 	}
 	interior := cardWidth - 2 // inside the │ … │
@@ -114,40 +73,18 @@ func (w *Welcome) renderWide(width int) []string {
 	top := marginPad + border("╭"+horiz+"╮")
 	bottom := marginPad + border("╰"+horiz+"╯")
 
-	// Right-column content lines (plain), one per logo row + trailing menu rows.
 	rightLines := w.rightColumnLines()
-
-	logo := w.content.Logo
-	logoStyle := th.TextMuted() // #6c6c6c-ish braille glyph tone (capture ~#707070)
-
-	// number of body rows = max(logo rows, right lines)
-	rows := len(logo)
-	if len(rightLines) > rows {
-		rows = len(rightLines)
+	const horizontalPadding = 2
+	contentWidth := interior - horizontalPadding*2
+	if contentWidth < 1 {
+		contentWidth = 1
 	}
 
-	// gap between logo block and right column.
-	const gap = 3
-	rightWidth := interior - LogoWidth - gap
-	if rightWidth < 1 {
-		rightWidth = 1
-	}
-
-	body := make([]string, 0, rows+4)
+	body := make([]string, 0, len(rightLines)+4)
 	// top interior padding blank row.
 	body = append(body, cardLine(border, "", interior, marginPad))
-	for i := 0; i < rows; i++ {
-		var logoCell string
-		if i < len(logo) {
-			logoCell = logoStyle.Render(padLogo(logo[i]))
-		} else {
-			logoCell = spacesN(LogoWidth)
-		}
-		var right string
-		if i < len(rightLines) {
-			right = rightLines[i]
-		}
-		content := logoCell + spacesN(gap) + w.padRight(right, rightWidth)
+	for _, right := range rightLines {
+		content := spacesN(horizontalPadding) + w.padRight(right, contentWidth) + spacesN(horizontalPadding)
 		body = append(body, cardLine(border, content, interior, marginPad))
 	}
 	// bottom interior padding blank row.
@@ -297,16 +234,6 @@ func (w *Welcome) renderCompact(width int) []string {
 	versionColored := th.TextPrimary().Bold(true).Render(c.Title) + "  " + th.TextMuted().Render(c.Version)
 	out = append(out, spacesN(lead)+versionColored)
 	return out
-}
-
-// padLogo pads a logo row to exactly LogoWidth cells (braille blanks are U+2800
-// which are single-width; the capture rows are already 14 runes / 14 cells).
-func padLogo(row string) string {
-	vw := ui.VisibleWidth(row)
-	if vw >= LogoWidth {
-		return row
-	}
-	return row + spacesN(LogoWidth-vw)
 }
 
 // padVisible pads s (which may contain SGR) to exactly width visible cells,

@@ -5,13 +5,13 @@
     {
       "id": "task-10-welcome-wide-card",
       "task": 10,
-      "title": "welcome at 120: bordered braille-logo card (#333333 border), title #e1e1e1 bold + version #6c6c6c, announcement heading #e0af68 bold, menu labels #e1e1e1 bold + key hints #505058, braille logo #6c6c6c",
+      "title": "welcome at 120: bordered text-only card (#333333 border), title #e1e1e1 bold + version #6c6c6c, announcement heading #e0af68 bold, menu labels #e1e1e1 bold + key hints #505058, no logo region",
       "requiredFrames": ["task10-welcome-120"],
       "frames": [
         {
           "id": "task10-welcome-120",
-          "size": "120x13",
-          "state": "welcome-wide-bordered-card",
+          "size": "120x14",
+          "state": "welcome-wide-text-only-card",
           "ans": "triplets/task10-welcome-120.ans",
           "html": "triplets/task10-welcome-120.html",
           "json": "triplets/task10-welcome-120.json"
@@ -22,16 +22,16 @@
         { "id": "card-top-left-border", "frame": "task10-welcome-120", "kind": "cell-fg", "x": 3, "y": 0, "hex": "#333333" },
         { "id": "card-bottom-left", "frame": "task10-welcome-120", "kind": "cell-glyph", "x": 3, "y": 12, "glyph": "╰" },
         { "id": "card-bottom-left-border", "frame": "task10-welcome-120", "kind": "cell-fg", "x": 3, "y": 12, "hex": "#333333" },
-        { "id": "title-glyph", "frame": "task10-welcome-120", "kind": "cell-glyph", "x": 21, "y": 2, "glyph": "G" },
-        { "id": "title-primary", "frame": "task10-welcome-120", "kind": "cell-fg", "x": 21, "y": 2, "hex": "#e1e1e1" },
-        { "id": "version-muted", "frame": "task10-welcome-120", "kind": "cell-fg", "x": 38, "y": 2, "hex": "#6c6c6c" },
-        { "id": "announce-glyph", "frame": "task10-welcome-120", "kind": "cell-glyph", "x": 21, "y": 4, "glyph": "C" },
-        { "id": "announce-yellow", "frame": "task10-welcome-120", "kind": "cell-fg", "x": 21, "y": 4, "hex": "#e0af68" },
-        { "id": "menu-glyph", "frame": "task10-welcome-120", "kind": "cell-glyph", "x": 21, "y": 7, "glyph": "N" },
-        { "id": "menu-primary", "frame": "task10-welcome-120", "kind": "cell-fg", "x": 21, "y": 7, "hex": "#e1e1e1" },
-        { "id": "menu-key-faint", "frame": "task10-welcome-120", "kind": "cell-fg", "x": 113, "y": 7, "hex": "#505058" },
-        { "id": "logo-braille-muted", "frame": "task10-welcome-120", "kind": "cell-fg", "x": 10, "y": 2, "hex": "#6c6c6c" },
-        { "id": "welcome-bg", "frame": "task10-welcome-120", "kind": "cell-bg", "x": 21, "y": 2, "hex": "#141414" }
+        { "id": "title-glyph", "frame": "task10-welcome-120", "kind": "cell-glyph", "x": 6, "y": 2, "glyph": "G" },
+        { "id": "title-primary", "frame": "task10-welcome-120", "kind": "cell-fg", "x": 6, "y": 2, "hex": "#e1e1e1" },
+        { "id": "version-muted", "frame": "task10-welcome-120", "kind": "cell-fg", "x": 23, "y": 2, "hex": "#6c6c6c" },
+        { "id": "announce-glyph", "frame": "task10-welcome-120", "kind": "cell-glyph", "x": 6, "y": 4, "glyph": "C" },
+        { "id": "announce-yellow", "frame": "task10-welcome-120", "kind": "cell-fg", "x": 6, "y": 4, "hex": "#e0af68" },
+        { "id": "menu-glyph", "frame": "task10-welcome-120", "kind": "cell-glyph", "x": 6, "y": 7, "glyph": "N" },
+        { "id": "menu-primary", "frame": "task10-welcome-120", "kind": "cell-fg", "x": 6, "y": 7, "hex": "#e1e1e1" },
+        { "id": "menu-key-faint", "frame": "task10-welcome-120", "kind": "cell-fg", "x": 111, "y": 7, "hex": "#505058" },
+        { "id": "old-logo-region-now-title", "frame": "task10-welcome-120", "kind": "cell-glyph", "x": 6, "y": 2, "glyph": "G" },
+        { "id": "welcome-bg", "frame": "task10-welcome-120", "kind": "cell-bg", "x": 6, "y": 2, "hex": "#141414" }
       ]
     },
     {

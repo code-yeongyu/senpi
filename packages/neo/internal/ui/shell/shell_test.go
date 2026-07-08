@@ -476,10 +476,9 @@ func TestBellPolicy(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Welcome card reflow (plan task 10 acceptance: golden frames at 120x36 +
-// 80x24). At 120: a bordered card with the braille logo on the left and a right
-// column (title+version, announcement, menu). At 80: no border card — compact
-// centered menu + announcement, and the version at the bottom-right.
+// Welcome card reflow. At 120: a bordered text-only card with no logo region.
+// At 80: no border card — compact centered menu + announcement, and the version
+// at the bottom-right.
 // ---------------------------------------------------------------------------
 
 func welcomeContent() WelcomeContent {
@@ -499,24 +498,40 @@ func welcomeContent() WelcomeContent {
 	}
 }
 
-func TestWelcomeWideHasBorderedCard(t *testing.T) {
+func TestWelcomeWideIsTextOnlyCard(t *testing.T) {
 	th := loadTheme(t)
 	w := NewWelcome(th, welcomeContent())
-	out := joinPlain(w.Render(120))
+	lines := w.Render(120)
+	out := joinPlain(lines)
 	// bordered card corners present.
 	if !strings.Contains(out, "╭") || !strings.Contains(out, "╮") ||
 		!strings.Contains(out, "╰") || !strings.Contains(out, "╯") {
 		t.Errorf("wide welcome missing card border:\n%s", out)
 	}
-	// braille logo present (any braille block glyph).
-	if !strings.ContainsAny(out, "⣀⣾⡟⣿⢹⣷⢶⣶") {
-		t.Errorf("wide welcome missing braille logo:\n%s", out)
+	if strings.ContainsAny(out, "⣀⣾⡟⣿⢹⣷⢶⣶") {
+		t.Errorf("wide welcome should not render the logo glyphs:\n%s", out)
 	}
 	for _, want := range []string{"Grok Build Beta", "0.2.82 [stable]", "Composer 2.5 is here!", "New worktree", "ctrl+w", "Quit", "ctrl+q"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("wide welcome missing %q:\n%s", want, out)
 		}
 	}
+	for _, line := range lines {
+		plain := ui.StripANSI(line)
+		if !strings.Contains(plain, "Grok Build Beta") {
+			continue
+		}
+		textStart := strings.Index(plain, "Grok Build Beta")
+		borderStart := strings.Index(plain, "│")
+		if borderStart < 0 {
+			t.Fatalf("title line missing card border: %q", plain)
+		}
+		if gutter := textStart - borderStart - 1; gutter > 4 {
+			t.Errorf("wide welcome left gutter = %d, want <= 4 (no logo-width reserved area):\n%s", gutter, out)
+		}
+		return
+	}
+	t.Fatalf("title line not found:\n%s", out)
 }
 
 func TestWelcomeNarrowIsCompactNoBorder(t *testing.T) {

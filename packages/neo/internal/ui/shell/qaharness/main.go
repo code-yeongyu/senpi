@@ -6,7 +6,7 @@
 //
 // Scenes (verbatim task-10 QA):
 //
-//	welcome   - the startup welcome card: bordered braille-logo card at wide
+//	welcome   - the startup welcome card: bordered text-only card at wide
 //	            widths, compact centered text + version bottom-right at narrow.
 //	footer    - the input footer HUD (cwd/tokens/context + model:thinking).
 //	status    - the working/retry/compaction/branchSummary status stack.
