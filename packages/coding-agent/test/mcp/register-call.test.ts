@@ -15,6 +15,7 @@ import {
 	testContext,
 	textContent,
 	toolResultTexts,
+	withoutMcpUtilityTools,
 } from "./fixtures/register-call.ts";
 import { cleanupRoots, setConfig, stdioServer } from "./fixtures/service-lifecycle.ts";
 
@@ -44,14 +45,14 @@ describe("MCP catalog + registerTool bridge", () => {
 
 		await attach(root, pi);
 
-		expect(pi.registeredTools).toEqual([
+		expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual([
 			"mcp_fx_tool_1",
 			"mcp_fx_tool_2",
 			"mcp_fx_tool_3",
 			"mcp_fx_tool_4",
 			"mcp_fx_tool_5",
 		]);
-		expect(pi.activeTools).toEqual(pi.registeredTools);
+		expect(withoutMcpUtilityTools(pi.activeTools)).toEqual(withoutMcpUtilityTools(pi.registeredTools));
 	});
 
 	it("runs a model turn through the registered MCP tool and returns fixture payload", async () => {

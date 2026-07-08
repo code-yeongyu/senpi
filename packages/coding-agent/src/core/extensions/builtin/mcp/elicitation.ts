@@ -13,6 +13,8 @@
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { ExtensionUIContext } from "../../types.ts";
+import { createMcpLogger } from "./log.ts";
+import { safeTimer } from "./wrap.ts";
 
 /** Declared empty on purpose: maximum server compatibility (form mode only). */
 export const MCP_CLIENT_ELICITATION_CAPABILITY = { elicitation: {} } as const;
@@ -61,9 +63,11 @@ export async function runElicitationForm(
 	requestedSchema: { properties?: Record<string, ElicitProperty>; required?: string[] },
 	timeoutMs: number = MCP_ELICITATION_TIMEOUT_MS,
 ): Promise<ElicitationResponse> {
-	let timer: ReturnType<typeof setTimeout> | undefined;
+	let timer: NodeJS.Timeout | undefined;
 	const timeout = new Promise<ElicitationResponse>((resolve) => {
-		timer = setTimeout(() => resolve({ action: "cancel" }), timeoutMs);
+		timer = safeTimer("mcp.elicitation.timeout", timeoutMs, () => resolve({ action: "cancel" }), {
+			logger: createMcpLogger("elicitation"),
+		});
 	});
 	try {
 		return await Promise.race([collectForm(ui, message, requestedSchema), timeout]);

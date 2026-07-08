@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
-import { attach, capturingPi, mcpRoot as makeMcpRoot } from "./fixtures/register-call.ts";
+import { attach, capturingPi, mcpRoot as makeMcpRoot, withoutMcpUtilityTools } from "./fixtures/register-call.ts";
 import { cleanupRoots, setConfig, stdioServer } from "./fixtures/service-lifecycle.ts";
 
 const cleanupTasks: Array<() => Promise<void>> = [];
@@ -35,13 +35,17 @@ describe("MCP Tier-A exposure policy", () => {
 		setConfig(includeRoot, { fx: { ...stdioServer(["--tools", "5"]), includeTools: ["tool_[13]"] } });
 		const includePi = capturingPi();
 		await attach(includeRoot, includePi);
-		expect(includePi.activeTools).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_3"]);
+		expect(withoutMcpUtilityTools(includePi.activeTools)).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_3"]);
 
 		const excludeRoot = mcpRoot("exclude-only");
 		setConfig(excludeRoot, { fx: { ...stdioServer(["--tools", "5"]), excludeTools: ["tool_[24]"] } });
 		const excludePi = capturingPi();
 		await attach(excludeRoot, excludePi);
-		expect(excludePi.activeTools).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_3", "mcp_fx_tool_5"]);
+		expect(withoutMcpUtilityTools(excludePi.activeTools)).toEqual([
+			"mcp_fx_tool_1",
+			"mcp_fx_tool_3",
+			"mcp_fx_tool_5",
+		]);
 
 		const bothRoot = mcpRoot("include-exclude");
 		setConfig(bothRoot, {
@@ -49,13 +53,18 @@ describe("MCP Tier-A exposure policy", () => {
 		});
 		const bothPi = capturingPi();
 		await attach(bothRoot, bothPi);
-		expect(bothPi.activeTools).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
+		expect(withoutMcpUtilityTools(bothPi.activeTools)).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
 
 		const starRoot = mcpRoot("star");
 		setConfig(starRoot, { fx: { ...stdioServer(["--tools", "5"]), excludeTools: ["tool_5"], includeTools: ["*"] } });
 		const starPi = capturingPi();
 		await attach(starRoot, starPi);
-		expect(starPi.activeTools).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2", "mcp_fx_tool_3", "mcp_fx_tool_4"]);
+		expect(withoutMcpUtilityTools(starPi.activeTools)).toEqual([
+			"mcp_fx_tool_1",
+			"mcp_fx_tool_2",
+			"mcp_fx_tool_3",
+			"mcp_fx_tool_4",
+		]);
 	});
 
 	it("flips at the threshold boundary: 10 filtered tools direct, 11 filtered tools -> search mode", async () => {
@@ -63,17 +72,19 @@ describe("MCP Tier-A exposure policy", () => {
 		setConfig(tenRoot, { fx: stdioServer(["--tools", "10"]) });
 		const tenPi = capturingPi();
 		await attach(tenRoot, tenPi);
-		expect(tenPi.registeredTools).toEqual(toolNames(10));
-		expect(tenPi.activeTools).toEqual(toolNames(10));
+		expect(withoutMcpUtilityTools(tenPi.registeredTools)).toEqual(toolNames(10));
+		expect(withoutMcpUtilityTools(tenPi.activeTools)).toEqual(toolNames(10));
 
 		const elevenRoot = mcpRoot("threshold-11");
 		setConfig(elevenRoot, { fx: stdioServer(["--tools", "11"]) });
 		const elevenPi = capturingPi();
 		await attach(elevenRoot, elevenPi);
 		// All 11 tools are registered (catalog present) plus mcp_search...
-		expect([...elevenPi.registeredTools].sort()).toEqual([...toolNames(11), "mcp_search"].sort());
+		expect([...withoutMcpUtilityTools(elevenPi.registeredTools)].sort()).toEqual(
+			[...toolNames(11), "mcp_search"].sort(),
+		);
 		// ...but only mcp_search is active: the 11 tools cost zero tokens until promoted.
-		expect(elevenPi.activeTools).toEqual(["mcp_search"]);
+		expect(withoutMcpUtilityTools(elevenPi.activeTools)).toEqual(["mcp_search"]);
 		// The W1 pending-W4 warning fallback is gone.
 		expect(logContains("fx", "pending-W4")).toBe(false);
 	});
@@ -92,8 +103,14 @@ describe("MCP Tier-A exposure policy", () => {
 		await attach(root, pi);
 
 		// Search mode keeps directTools active alongside the always-active mcp_search.
-		expect(pi.activeTools).toEqual(["bash", "mcp_fx_tool_1", "mcp_fx_tool_12", "mcp_fx_tool_2", "mcp_search"]);
-		expect(pi.setActiveCalls[pi.setActiveCalls.length - 1]).toEqual([
+		expect(withoutMcpUtilityTools(pi.activeTools)).toEqual([
+			"bash",
+			"mcp_fx_tool_1",
+			"mcp_fx_tool_12",
+			"mcp_fx_tool_2",
+			"mcp_search",
+		]);
+		expect(withoutMcpUtilityTools(pi.setActiveCalls[pi.setActiveCalls.length - 1])).toEqual([
 			"bash",
 			"mcp_fx_tool_1",
 			"mcp_fx_tool_12",
@@ -109,8 +126,8 @@ describe("MCP Tier-A exposure policy", () => {
 
 		await attach(root, pi);
 
-		expect([...pi.registeredTools].sort()).toEqual([...toolNames(30), "mcp_search"].sort());
-		expect(pi.activeTools).toEqual(["mcp_search"]);
+		expect([...withoutMcpUtilityTools(pi.registeredTools)].sort()).toEqual([...toolNames(30), "mcp_search"].sort());
+		expect(withoutMcpUtilityTools(pi.activeTools)).toEqual(["mcp_search"]);
 		expect(logContains("fx", "pending-W4")).toBe(false);
 	});
 
@@ -121,9 +138,9 @@ describe("MCP Tier-A exposure policy", () => {
 
 		await attach(root, pi);
 
-		expect(pi.registeredTools).toEqual([]);
-		expect(pi.activeTools).toEqual(["bash"]);
-		expect(pi.setActiveCalls).toEqual([["bash"]]);
+		expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual([]);
+		expect(withoutMcpUtilityTools(pi.activeTools)).toEqual(["bash"]);
+		expect(pi.setActiveCalls.map((call) => withoutMcpUtilityTools(call))).toEqual([["bash"]]);
 		expect(logContains("fx", "0 exposed")).toBe(true);
 	});
 });

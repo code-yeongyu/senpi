@@ -14,6 +14,7 @@ import {
 	registeredTool,
 	testContext,
 	textContent,
+	withoutMcpUtilityTools,
 } from "./fixtures/register-call.ts";
 import { cleanupRoots, setConfig, stdioServer, type TestRoot } from "./fixtures/service-lifecycle.ts";
 
@@ -40,9 +41,9 @@ describe("tier-C proxy mode", () => {
 		const pi = capturingPi();
 		await attach(root, pi);
 
-		const mcpActive = pi.getActiveTools().filter((name) => name.startsWith("mcp_"));
+		const mcpActive = withoutMcpUtilityTools(pi.getActiveTools()).filter((name) => name.startsWith("mcp_"));
 		expect(mcpActive).toEqual(["mcp_fx"]);
-		expect(pi.registeredTools.filter((name) => name.startsWith("mcp_fx_"))).toEqual([]);
+		expect(withoutMcpUtilityTools(pi.registeredTools).filter((name) => name.startsWith("mcp_fx_"))).toEqual([]);
 
 		const gateway = registeredTool(pi, "mcp_fx");
 		const search = await gateway.execute(

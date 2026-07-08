@@ -19,6 +19,9 @@
         "create_goal",
         "update_goal",
         "get_goal",
+        "eval",
+        "mcp_list_resources",
+        "mcp_read_resource",
         "mcp_search"
       ],
       [
@@ -37,6 +40,7 @@
         "create_goal",
         "update_goal",
         "get_goal",
+        "eval",
         "mcp_fx_tool_1",
         "mcp_fx_tool_10",
         "mcp_fx_tool_11",
@@ -47,6 +51,8 @@
         "mcp_fx_tool_16",
         "mcp_fx_tool_17",
         "mcp_fx_tool_7",
+        "mcp_list_resources",
+        "mcp_read_resource",
         "mcp_search"
       ],
       [
@@ -65,6 +71,7 @@
         "create_goal",
         "update_goal",
         "get_goal",
+        "eval",
         "mcp_fx_tool_1",
         "mcp_fx_tool_10",
         "mcp_fx_tool_11",
@@ -75,10 +82,12 @@
         "mcp_fx_tool_16",
         "mcp_fx_tool_17",
         "mcp_fx_tool_7",
+        "mcp_list_resources",
+        "mcp_read_resource",
         "mcp_search"
       ]
     ],
-    "approxTokens": 135,
+    "approxTokens": 304,
     "finalSearchCallsInMessages": 1
   },
   "session2": {
@@ -100,6 +109,7 @@
       "create_goal",
       "update_goal",
       "get_goal",
+      "eval",
       "mcp_fx_tool_1",
       "mcp_fx_tool_10",
       "mcp_fx_tool_11",
@@ -110,6 +120,8 @@
       "mcp_fx_tool_16",
       "mcp_fx_tool_17",
       "mcp_fx_tool_7",
+      "mcp_list_resources",
+      "mcp_read_resource",
       "mcp_search"
     ],
     "wireToolNamesPerTurn": [
@@ -129,6 +141,7 @@
         "create_goal",
         "update_goal",
         "get_goal",
+        "eval",
         "mcp_fx_tool_1",
         "mcp_fx_tool_10",
         "mcp_fx_tool_11",
@@ -139,6 +152,8 @@
         "mcp_fx_tool_16",
         "mcp_fx_tool_17",
         "mcp_fx_tool_7",
+        "mcp_list_resources",
+        "mcp_read_resource",
         "mcp_search"
       ],
       [
@@ -157,6 +172,7 @@
         "create_goal",
         "update_goal",
         "get_goal",
+        "eval",
         "mcp_fx_tool_1",
         "mcp_fx_tool_10",
         "mcp_fx_tool_11",
@@ -167,6 +183,8 @@
         "mcp_fx_tool_16",
         "mcp_fx_tool_17",
         "mcp_fx_tool_7",
+        "mcp_list_resources",
+        "mcp_read_resource",
         "mcp_search"
       ]
     ],

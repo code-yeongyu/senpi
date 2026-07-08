@@ -123,3 +123,9 @@ export async function expectFileToContain(path: string, needle: string): Promise
 	}
 	throw lastError instanceof Error ? lastError : new Error(`file did not contain ${needle}: ${path}`);
 }
+
+/** Strip the todo-39 resource utility tools so exact-list assertions written
+ * before they existed keep pinning only the server-derived catalog. */
+export function withoutMcpUtilityTools(names: readonly string[]): string[] {
+	return names.filter((name) => name !== "mcp_list_resources" && name !== "mcp_read_resource");
+}

@@ -12,7 +12,7 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
-import { mcpRoot as makeMcpRoot, mcpExtensionFor } from "./fixtures/register-call.ts";
+import { mcpRoot as makeMcpRoot, mcpExtensionFor, withoutMcpUtilityTools } from "./fixtures/register-call.ts";
 import type { TestRoot } from "./fixtures/service-lifecycle.ts";
 import { cleanupRoots, stdioServer } from "./fixtures/service-lifecycle.ts";
 
@@ -71,7 +71,7 @@ describe("todo32 tier-B: searchThreshold flip", () => {
 		let tenTools: string[] = [];
 		ten.setResponses([
 			(context) => {
-				tenTools = names(toolShapes(context));
+				tenTools = withoutMcpUtilityTools(names(toolShapes(context)));
 				return fauxAssistantMessage("ok");
 			},
 		]);
@@ -85,7 +85,7 @@ describe("todo32 tier-B: searchThreshold flip", () => {
 		let elevenTools: string[] = [];
 		eleven.setResponses([
 			(context) => {
-				elevenTools = names(toolShapes(context));
+				elevenTools = withoutMcpUtilityTools(names(toolShapes(context)));
 				return fauxAssistantMessage("ok");
 			},
 		]);
@@ -102,7 +102,7 @@ describe("todo32 tier-B: exposure override matrix", () => {
 		let directTools: string[] = [];
 		direct.setResponses([
 			(context) => {
-				directTools = names(toolShapes(context));
+				directTools = withoutMcpUtilityTools(names(toolShapes(context)));
 				return fauxAssistantMessage("ok");
 			},
 		]);
@@ -116,7 +116,7 @@ describe("todo32 tier-B: exposure override matrix", () => {
 		let searchTools: string[] = [];
 		search.setResponses([
 			(context) => {
-				searchTools = names(toolShapes(context));
+				searchTools = withoutMcpUtilityTools(names(toolShapes(context)));
 				return fauxAssistantMessage("ok");
 			},
 		]);
@@ -135,8 +135,10 @@ describe("todo32 tier-B: resident token cost", () => {
 		harness.setResponses([
 			(context) => {
 				const shapes = toolShapes(context);
-				residentNames = names(shapes);
-				residentJson = JSON.stringify(context.tools ?? []);
+				residentNames = withoutMcpUtilityTools(names(shapes));
+				residentJson = JSON.stringify(
+					(context.tools ?? []).filter((tool) => withoutMcpUtilityTools([tool.name]).length > 0),
+				);
 				return fauxAssistantMessage("ok");
 			},
 		]);

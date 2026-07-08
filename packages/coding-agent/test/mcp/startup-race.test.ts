@@ -6,7 +6,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadMcpConfig } from "../../src/core/extensions/builtin/mcp/config.ts";
 import { ConnectError, ToolExecError } from "../../src/core/extensions/builtin/mcp/errors.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
-import { capturingPi, registeredTool, testContext, textContent } from "./fixtures/register-call.ts";
+import {
+	capturingPi,
+	registeredTool,
+	testContext,
+	textContent,
+	withoutMcpUtilityTools,
+} from "./fixtures/register-call.ts";
 import { cleanupRoots, makeRoot, setConfig, stdioServer, type TestRoot } from "./fixtures/service-lifecycle.ts";
 
 const cleanupTasks: Array<() => Promise<void>> = [];
@@ -28,9 +34,9 @@ describe("MCP startup race", () => {
 		const pi = capturingPi();
 
 		await attach(root, pi);
-		await waitFor(() => pi.registeredTools.length === 2, 2500);
+		await waitFor(() => withoutMcpUtilityTools(pi.registeredTools).length === 2, 2500);
 
-		expect(pi.registeredTools).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
+		expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
 		expect(getMcpService().getServerSnapshots()).toMatchObject([
 			{ name: "fx", lifecycleState: "connected", configState: "enabled" },
 		]);
@@ -45,8 +51,8 @@ describe("MCP startup race", () => {
 		const elapsedMs = await timedAttach(root, pi);
 
 		expect(elapsedMs).toBeLessThan(300);
-		expect(pi.activeTools).toEqual(["mcp_fx_tool_1"]);
-		expect(pi.registeredTools).toEqual(["mcp_fx_tool_1"]);
+		expect(withoutMcpUtilityTools(pi.activeTools)).toEqual(["mcp_fx_tool_1"]);
+		expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual(["mcp_fx_tool_1"]);
 		expect(getMcpService().getServerSnapshots()).toMatchObject([
 			{ name: "fx", lifecycleState: "connecting", configState: "enabled" },
 		]);
@@ -61,7 +67,7 @@ describe("MCP startup race", () => {
 		const elapsedMs = await timedAttach(root, pi);
 
 		expect(elapsedMs).toBeLessThan(300);
-		expect(pi.activeTools).toEqual(["mcp_fx_tool_1"]);
+		expect(withoutMcpUtilityTools(pi.activeTools)).toEqual(["mcp_fx_tool_1"]);
 		expect(getMcpService().getServerSnapshots()).toMatchObject([
 			{ name: "fx", lifecycleState: "connecting", configState: "enabled" },
 		]);
@@ -74,11 +80,11 @@ describe("MCP startup race", () => {
 		const pi = capturingPi();
 
 		await attach(root, pi);
-		expect(pi.activeTools).toEqual(["mcp_fx_tool_1"]);
+		expect(withoutMcpUtilityTools(pi.activeTools)).toEqual(["mcp_fx_tool_1"]);
 
-		await waitFor(() => pi.activeTools.includes("mcp_fx_tool_2"), 2500);
+		await waitFor(() => withoutMcpUtilityTools(pi.activeTools).includes("mcp_fx_tool_2"), 2500);
 
-		expect(pi.activeTools).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
+		expect(withoutMcpUtilityTools(pi.activeTools)).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
 		const tool = registeredTool(pi, "mcp_fx_tool_2");
 		const result = await tool.execute("tc-hot-swap", { value: "late" }, undefined, undefined, testContext());
 		expect(textContent(result)).toBe("fixture tool_2 value=late mode=alpha");
@@ -93,10 +99,10 @@ describe("MCP startup race", () => {
 		const pi = capturingPi();
 
 		await attach(root, pi);
-		const before = JSON.stringify(pi.activeTools);
+		const before = JSON.stringify(withoutMcpUtilityTools(pi.activeTools));
 
 		await waitFor(() => getMcpService().getConnection("fx")?.state === "connected", 2500);
-		const after = JSON.stringify(pi.activeTools);
+		const after = JSON.stringify(withoutMcpUtilityTools(pi.activeTools));
 
 		expect(after).toBe(before);
 		expect(before).toBe(JSON.stringify(["mcp_fx_tool_1", "mcp_fx_tool_2"]));
@@ -122,7 +128,7 @@ describe("MCP startup race", () => {
 
 		expect(attachElapsedMs).toBeLessThan(300);
 		expect(callElapsedMs).toBeLessThan(30_000);
-		expect(pi.activeTools).toEqual(["mcp_fx_tool_1"]);
+		expect(withoutMcpUtilityTools(pi.activeTools)).toEqual(["mcp_fx_tool_1"]);
 	});
 });
 

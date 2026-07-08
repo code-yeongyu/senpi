@@ -4,7 +4,14 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadMcpConfig } from "../../src/core/extensions/builtin/mcp/config.ts";
 import { getMcpService, McpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
-import { attach, capturingPi, registeredTool, testContext, textContent } from "./fixtures/register-call.ts";
+import {
+	attach,
+	capturingPi,
+	registeredTool,
+	testContext,
+	textContent,
+	withoutMcpUtilityTools,
+} from "./fixtures/register-call.ts";
 import {
 	cleanupRoots,
 	makeRoot,
@@ -38,7 +45,7 @@ describe("MCP disk metadata cache", () => {
 
 		await attach(root, pi);
 
-		expect(pi.registeredTools).toEqual(["mcp_fx_tool_1"]);
+		expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual(["mcp_fx_tool_1"]);
 		await expect(readCounter(counterFile)).rejects.toMatchObject({ code: "ENOENT" });
 
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
@@ -57,7 +64,7 @@ describe("MCP disk metadata cache", () => {
 
 		await attach(root, pi);
 
-		expect(pi.registeredTools).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
+		expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
 		expect(await readCounter(counterFile)).toBe(1);
 		const cache = await readCache(root);
 		expect(cache.servers.fx.tools.map((tool) => tool.name)).toEqual(["tool_1", "tool_2"]);
@@ -72,7 +79,7 @@ describe("MCP disk metadata cache", () => {
 
 		await attach(root, pi);
 
-		expect(pi.registeredTools).toEqual(["mcp_fx_tool_1"]);
+		expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual(["mcp_fx_tool_1"]);
 		const cache = await readCache(root);
 		expect(cache.servers.fx.tools.map((tool) => tool.name)).toEqual(["tool_1"]);
 	});
@@ -86,8 +93,8 @@ describe("MCP disk metadata cache", () => {
 
 		await attach(root, pi);
 
-		expect(pi.registeredTools).toEqual(["mcp_fx_tool_1"]);
-		expect(pi.registeredTools).not.toContain("mcp_fx_fake_999");
+		expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual(["mcp_fx_tool_1"]);
+		expect(withoutMcpUtilityTools(pi.registeredTools)).not.toContain("mcp_fx_fake_999");
 		expect(await readCounter(counterFile)).toBe(1);
 		const cache = await readCache(root);
 		expect(cache.servers.fx.configHash).toBe(configHash(root, "fx"));
@@ -105,10 +112,10 @@ describe("MCP disk metadata cache", () => {
 
 		await attach(root, pi);
 
-		await waitForCondition(() => pi.activeTools.includes("mcp_fx_tool_2"), 2500);
+		await waitForCondition(() => withoutMcpUtilityTools(pi.activeTools).includes("mcp_fx_tool_2"), 2500);
 		expect(await readCounter(counterFile)).toBe(1);
-		expect(pi.activeTools).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
-		expect(pi.activeTools).not.toContain("mcp_fx_stale_cached");
+		expect(withoutMcpUtilityTools(pi.activeTools)).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
+		expect(withoutMcpUtilityTools(pi.activeTools)).not.toContain("mcp_fx_stale_cached");
 		const cache = await readCache(root);
 		expect(cache.servers.fx.tools.map((tool) => tool.name)).toEqual(["tool_1", "tool_2"]);
 	});
