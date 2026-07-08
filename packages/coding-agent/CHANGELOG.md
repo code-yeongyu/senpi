@@ -34,6 +34,7 @@
 
 ### Fixed
 
+- Fixed context-overflow recovery for configured upstream model aliases, so a selected alias such as `gpt-5.5-fast` can auto-compact and retry when the provider reports the wire model `gpt-5.5`.
 - Fixed the built-in `todowrite` tool call row to show the actual todo items instead of only an item count.
 - Fixed sessions going stale forever when the network dropped and reconnected mid-stream: the agent loop's provider stream idle timeout is now enabled by default (follows `httpIdleTimeoutMs`, default 5 min, `0` disables; `retry.provider.timeoutMs` overrides), so a silently dead connection fails with a retryable idle-timeout error and auto-retry recovers the turn. Previously the guard was off unless `retry.provider.timeoutMs` was set, which left the Bun binary (no undici dispatcher protection) hanging indefinitely.
 

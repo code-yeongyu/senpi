@@ -1,5 +1,21 @@
 # changes
 
+## Upstream model context overflow recovery (2026-07-08)
+
+### What changed
+
+- `model-registry.ts`: exposed configured `upstreamModelId` metadata synchronously so session-control code can compare selected aliases with provider-reported wire model ids without resolving credentials.
+- `agent-session.ts`: overflow recovery now treats a context-window error from the configured upstream model id as the same current-model source, preserving the existing stale/unrelated model guard.
+
+### Why extension system couldn't handle this
+
+- Provider context-overflow recovery happens inside the core session compaction gate before extensions can safely decide whether to retry the active turn.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` around `_checkCompaction()` overflow eligibility.
+- LOW: `model-registry.ts` around model request metadata accessors.
+
 ## Bundled codemode extension loading (2026-07-06)
 
 ### What changed

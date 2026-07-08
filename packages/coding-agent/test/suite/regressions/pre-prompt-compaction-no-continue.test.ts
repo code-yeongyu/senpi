@@ -72,4 +72,62 @@ describe("pre-prompt compaction regression", () => {
 		expect(getUserTexts(harness)).toContain("next prompt");
 		expect(harness.faux.state.callCount).toBe(1);
 	});
+
+	it("compacts upstream model alias overflow before a dot retry", async () => {
+		const harness = await createHarness({
+			api: "openai-responses",
+			provider: "quotio-openai",
+			upstreamModelId: "gpt-5.5",
+			models: [{ id: "gpt-5.5-fast", contextWindow: 272_000, maxTokens: 128_000 }],
+			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => ({
+						compaction: {
+							summary: "upstream alias pre-prompt summary",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+							details: {},
+						},
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		const now = Date.now();
+		const model = harness.getModel();
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "read /tmp/h2.jpg" }],
+			timestamp: now - 1000,
+		});
+		const overflowAssistant: AssistantMessage = {
+			...fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage:
+					"Error Code context_too_large: Your input exceeds the context window of this model. Please adjust your input and try again.",
+				timestamp: now - 500,
+			}),
+			api: model.api,
+			provider: model.provider,
+			model: "gpt-5.5",
+			usage: createUsage(0),
+		};
+		harness.sessionManager.appendMessage(overflowAssistant);
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		harness.setResponses([fauxAssistantMessage("recovered after compaction")]);
+		const continueSpy = vi.spyOn(harness.session.agent, "continue");
+
+		await expect(harness.session.prompt(".")).resolves.toBeUndefined();
+
+		expect(continueSpy).not.toHaveBeenCalled();
+		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({
+			reason: "overflow",
+			aborted: false,
+			willRetry: true,
+		});
+		expect(getUserTexts(harness)).toContain(".");
+		expect(harness.faux.state.callCount).toBe(1);
+	});
 });

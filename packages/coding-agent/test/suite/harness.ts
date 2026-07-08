@@ -73,6 +73,7 @@ export interface HarnessOptions {
 	resourceLoader?: ResourceLoader;
 	extensionFactories?: Array<ExtensionFactory | CreateTestExtensionsResultInput>;
 	withConfiguredAuth?: boolean;
+	upstreamModelId?: string;
 	onPayload?: (payload: unknown) => void;
 	persistSession?: boolean;
 	autoTitleSessions?: boolean;
@@ -140,6 +141,10 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 				contextWindow: registeredModel.contextWindow,
 				maxTokens: registeredModel.maxTokens,
 				baseUrl: registeredModel.baseUrl,
+				upstreamModelId:
+					registeredModel.id === model.id && options.upstreamModelId !== undefined
+						? options.upstreamModelId
+						: undefined,
 			})),
 		});
 	}
