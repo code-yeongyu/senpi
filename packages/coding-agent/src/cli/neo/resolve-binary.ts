@@ -19,7 +19,10 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { neoBinaryRequirePath, neoPackageName, resolveNeoTarget } from "./platform.ts";
 
-type NeoRequire = (id: string) => string;
+/** A resolver exposing `require.resolve` semantics (a path, not a loaded module). */
+interface NeoResolver {
+	resolve(id: string): string;
+}
 
 const moduleRequire = createRequire(import.meta.url);
 const executableDirRequire = createRequire(pathToFileURL(join(dirname(process.execPath), "package.json")).href);
@@ -38,7 +41,7 @@ export interface ResolveNeoBinaryOptions {
 	/** Overridable for tests: defaults to process.arch. */
 	readonly nodeArch?: string;
 	/** Overridable for tests: resolution roots tried in order. */
-	readonly requires?: readonly NeoRequire[];
+	readonly requires?: readonly NeoResolver[];
 }
 
 export function resolveNeoBinary(options: ResolveNeoBinaryOptions = {}): NeoBinaryResolution {
@@ -65,7 +68,9 @@ export function resolveNeoBinary(options: ResolveNeoBinaryOptions = {}): NeoBina
 	const requirePath = neoBinaryRequirePath(target);
 	for (const requireNeo of requires) {
 		try {
-			return { ok: true, path: requireNeo(requirePath), source: "package" };
+			// require.resolve returns the binary's path; calling require() would try
+			// to LOAD the native binary as a module and always throw.
+			return { ok: true, path: requireNeo.resolve(requirePath), source: "package" };
 		} catch {
 			// Try the next resolution root.
 		}
