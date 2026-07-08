@@ -337,6 +337,16 @@ function estimateMessagesTokens(messages: AgentMessage[]): number {
 	return tokens;
 }
 
+function isSameOverflowSource(
+	message: AssistantMessage,
+	model: Model<Api>,
+	upstreamModelId: string | undefined,
+): boolean {
+	if (message.provider !== model.provider) return false;
+	if (message.model === model.id) return true;
+	return message.model === upstreamModelId;
+}
+
 // ============================================================================
 // Constants
 // ============================================================================
@@ -2487,7 +2497,8 @@ export class AgentSession {
 		// to a larger-context model (e.g. codex) - the overflow error from the old model
 		// shouldn't trigger compaction for the new model.
 		const sameModel =
-			this.model && assistantMessage.provider === this.model.provider && assistantMessage.model === this.model.id;
+			this.model &&
+			isSameOverflowSource(assistantMessage, this.model, this._modelRegistry.getUpstreamModelId(this.model));
 
 		// Skip compaction checks if this assistant message is older than the latest
 		// compaction boundary. This prevents a stale pre-compaction usage/error

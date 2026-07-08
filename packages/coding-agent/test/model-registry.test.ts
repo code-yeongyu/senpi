@@ -939,9 +939,15 @@ describe("ModelRegistry", () => {
 			expect(normal).toBeDefined();
 			expect(priority).toBeDefined();
 
-			const normalAuth = await registry.getApiKeyAndHeaders(normal!);
-			const priorityAuth = await registry.getApiKeyAndHeaders(priority!);
+			if (!normal || !priority) {
+				throw new Error("Expected custom upstream models to be registered");
+			}
 
+			const normalAuth = await registry.getApiKeyAndHeaders(normal);
+			const priorityAuth = await registry.getApiKeyAndHeaders(priority);
+
+			expect(registry.getUpstreamModelId(normal)).toBeUndefined();
+			expect(registry.getUpstreamModelId(priority)).toBe("gpt-5.5");
 			expect(normalAuth).toMatchObject({ ok: true });
 			expect(priorityAuth).toMatchObject({
 				ok: true,

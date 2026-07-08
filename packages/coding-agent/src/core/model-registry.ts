@@ -792,6 +792,10 @@ export class ModelRegistry {
 		return this.models.find((m) => m.provider === provider && m.id === modelId);
 	}
 
+	getUpstreamModelId(model: Model<Api>): string | undefined {
+		return this.modelRequestUpstreamIds.get(this.getModelRequestKey(model.provider, model.id));
+	}
+
 	/**
 	 * Get API key for a model.
 	 */

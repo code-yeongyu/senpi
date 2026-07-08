@@ -1,0 +1,15 @@
+# Task 5 QA evidence summary
+
+Real CLI/RPC QA was run from the isolated worktree with senpi-qa scripts. Full raw artifacts are under `local-ignore/qa-evidence/20260708-auto-compact-context-too-large/` and are intentionally not committed.
+
+- RPC self-test: `local-ignore/qa-evidence/20260708-auto-compact-context-too-large/senpi-qa-rpc-self-test.txt`
+  - PASS: `get_state` returned documented shape; no real provider API required; real `/Users/yeongyu/.senpi/agent/auth.json` unchanged.
+- OpenAI Responses mock loop: `local-ignore/qa-evidence/20260708-auto-compact-context-too-large/senpi-qa-mock-loop-openai-responses.txt`
+  - PASS: baseUrl override round-tripped through the real loop against localhost `/v1/responses`; zero real provider calls; real auth unchanged.
+- CLI smoke: `local-ignore/qa-evidence/20260708-auto-compact-context-too-large/senpi-qa-cli-smoke.txt`
+  - PASS: `--help`, `--version`, offline `--list-models`, and unknown flag behavior; real auth unchanged.
+- Bug-specific fixture fallback: focused Vitest integration covers the upstream alias overflow path and pre-prompt dot retry deterministically without real providers.
+  - `local-ignore/qa-evidence/20260708-auto-compact-context-too-large/focused-tests-after-check-fix.txt`
+  - `local-ignore/qa-evidence/20260708-auto-compact-context-too-large/green-pre-prompt-upstream-overflow.txt`
+
+Cleanup receipt: senpi-qa scripts use isolated temp sandboxes and self-report auth unchanged; this task spawned no persistent server, browser, tmux session, or container.
