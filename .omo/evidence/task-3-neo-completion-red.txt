@@ -1,0 +1,46 @@
+=== RED run (todo 3) ===
+$ date -u: 2026-07-08T04:24:10Z
+$ cd packages/neo && go test ./internal/app/... -run TestTranscript && go test ./internal/ui/transcript/...
+# github.com/code-yeongyu/senpi/packages/neo/internal/app_test [github.com/code-yeongyu/senpi/packages/neo/internal/app.test]
+internal/app/transcript_test.go:26:65: undefined: app.Transcript
+internal/app/transcript_test.go:29:19: undefined: app.NewTranscript
+internal/app/transcript_test.go:74:55: undefined: app.EventApplied
+internal/app/transcript_test.go:162:86: undefined: app.EventApplied
+internal/app/transcript_test.go:199:12: undefined: app.NewTranscript
+internal/app/transcript_test.go:253:16: undefined: app.EventUnknown
+internal/app/transcript_test.go:269:18: undefined: app.EventUnknown
+internal/app/transcript_test.go:294:55: undefined: app.EventApplied
+FAIL	github.com/code-yeongyu/senpi/packages/neo/internal/app [build failed]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app/qaharness	[no test files]
+FAIL
+exit: 1
+
+=== RED run (second half standalone; the && above short-circuited) ===
+$ cd packages/neo && go test ./internal/ui/transcript/...
+# github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript [github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript.test]
+internal/ui/transcript/feed_streaming_test.go:113:3: unknown field Partial in struct literal of type FeedEvent
+internal/ui/transcript/feed_streaming_test.go:195:3: unknown field CustomType in struct literal of type FeedMessage
+internal/ui/transcript/feed_streaming_test.go:196:3: unknown field Display in struct literal of type FeedMessage
+internal/ui/transcript/feed_streaming_test.go:201:3: unknown field CustomType in struct literal of type FeedMessage
+internal/ui/transcript/feed_streaming_test.go:202:3: unknown field Display in struct literal of type FeedMessage
+internal/ui/transcript/feed_streaming_test.go:207:3: unknown field Summary in struct literal of type FeedMessage
+internal/ui/transcript/feed_streaming_test.go:211:3: unknown field Summary in struct literal of type FeedMessage
+internal/ui/transcript/feed_streaming_test.go:212:3: unknown field TokensBefore in struct literal of type FeedMessage
+internal/ui/transcript/feed_streaming_test.go:267:7: feed.SetToolsExpanded undefined (type *Feed has no field or method SetToolsExpanded)
+internal/ui/transcript/feed_streaming_test.go:282:7: feed.SetHideThinking undefined (type *Feed has no field or method SetHideThinking)
+internal/ui/transcript/feed_streaming_test.go:282:7: too many errors
+FAIL	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript [build failed]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	0.444s
+FAIL
+exit: 1
+
+=== GREEN run ===
+$ date -u: 2026-07-08T04:28:09Z
+$ cd packages/neo && go test ./internal/app/... -run TestTranscript && go test ./internal/ui/transcript/...
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/app	0.708s
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+exit: 0

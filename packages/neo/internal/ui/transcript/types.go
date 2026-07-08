@@ -12,6 +12,11 @@
 // layer, passed in as text).
 package transcript
 
+import (
+	"bytes"
+	"encoding/json"
+)
+
 // MessageContent is one block of a message's content array. It mirrors the
 // pi-ai content union sufficiently for rendering: text / thinking / toolCall /
 // providerNative / image.
@@ -80,12 +85,52 @@ type SkillBlock struct {
 	Content string
 }
 
-// FeedMessage is a role-tagged message applied to the Feed via message_end.
+// FeedMessage is a role-tagged message applied to the Feed via message_start /
+// message_update / message_end. Beyond user/assistant it carries the fields the
+// custom / branchSummary / compactionSummary roles render (messages.ts shapes).
 type FeedMessage struct {
 	Role         string           `json:"role"`
 	Content      []MessageContent `json:"content"`
 	StopReason   string           `json:"stopReason,omitempty"`
 	ErrorMessage string           `json:"errorMessage,omitempty"`
+
+	// custom role (CustomMessage): extension-authored entries render only when
+	// Display is true, labeled by CustomType.
+	CustomType string `json:"customType,omitempty"`
+	Display    bool   `json:"display,omitempty"`
+
+	// branchSummary / compactionSummary roles.
+	Summary      string `json:"summary,omitempty"`
+	TokensBefore int    `json:"tokensBefore,omitempty"`
+}
+
+// UnmarshalJSON decodes the message content union: custom messages may carry a
+// plain string (`content: string | blocks`, messages.ts CustomMessage) which is
+// normalized into a single text block so every renderer sees []MessageContent.
+func (m *FeedMessage) UnmarshalJSON(data []byte) error {
+	type alias FeedMessage
+	var aux struct {
+		alias
+		Content json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*m = FeedMessage(aux.alias)
+	m.Content = nil
+	raw := bytes.TrimSpace(aux.Content)
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	if raw[0] == '"' {
+		var text string
+		if err := json.Unmarshal(raw, &text); err != nil {
+			return err
+		}
+		m.Content = []MessageContent{{Type: "text", Text: text}}
+		return nil
+	}
+	return json.Unmarshal(raw, &m.Content)
 }
 
 // FeedEvent is a decoded stream event the Feed consumes. It carries only the
@@ -103,6 +148,10 @@ type FeedEvent struct {
 	ToolArgs   map[string]any  `json:"toolArgs,omitempty"`
 	Result     *FeedToolResult `json:"result,omitempty"`
 	HookCount  int             `json:"hookCount,omitempty"`
+
+	// tool_execution_update: the streamed partial result shown while the tool is
+	// still pending (replaced by Result on tool_execution_end).
+	Partial *FeedToolResult `json:"partialResult,omitempty"`
 }
 
 // FeedToolResult is a tool result carried on a tool_execution_end event.
