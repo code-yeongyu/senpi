@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -17,6 +17,7 @@ import type { McpServerConfig } from "../../src/core/extensions/builtin/mcp/conf
 import { ServerConnection } from "../../src/core/extensions/builtin/mcp/connection.ts";
 import { buildMcpToolDefinitions } from "../../src/core/extensions/builtin/mcp/expose/register.ts";
 import { createMcpLogger } from "../../src/core/extensions/builtin/mcp/log.ts";
+import { McpService } from "../../src/core/extensions/builtin/mcp/service.ts";
 import { registerMcpServiceDirectTools } from "../../src/core/extensions/builtin/mcp/service-register.ts";
 import type { McpConnectionEntry } from "../../src/core/extensions/builtin/mcp/service-types.ts";
 import { connectAndRefreshMcpCatalog } from "../../src/core/extensions/builtin/mcp/startup-race.ts";
@@ -108,6 +109,18 @@ async function redeemCodeDirectly(
 		method: "POST",
 	});
 	if (!response.ok) throw new Error(`direct redemption failed: ${response.status}`);
+}
+
+async function poisonRefreshToken(harness: Harness): Promise<void> {
+	await harness.store.update((current) => ({
+		...current,
+		expiresAt: Date.now() + 60_000,
+		refreshToken: "RT_UNKNOWN",
+	}));
+}
+
+async function writeMcpConfig(dir: string, config: McpServerConfig): Promise<void> {
+	await writeFile(join(dir, "mcp.json"), `${JSON.stringify({ mcpServers: { fix: config } }, null, 2)}\n`);
 }
 
 describe("headless oauth flows", () => {
@@ -316,6 +329,102 @@ describe("headless oauth flows", () => {
 		expect(afterCalls.familyInvalidated).toBe(false);
 		expect(textContent(first)).toBe("fixture tool_1 value=one mode=alpha");
 		expect(textContent(second)).toBe("fixture tool_1 value=two mode=alpha");
+	});
+
+	it("marks needs_auth with auth-start guidance when catalog refresh sees revoked refresh credentials", async () => {
+		const fixture = await idp();
+		const dir = await agentDir();
+		const harness = makeHarness(dir, fixture.mcpUrl);
+		const redirect = await followAuthorize(await runAuthStart(harness.deps));
+		await runAuthComplete(harness.deps, redirect);
+		await poisonRefreshToken(harness);
+		const authPlan = resolveServerAuth({ agentDir: dir, config: harness.deps.config, serverName: "fix" });
+		const connection = new ServerConnection({
+			authProvider: authPlan.provider,
+			config: harness.deps.config,
+			logger: createMcpLogger("fix"),
+			serverName: "fix",
+		});
+		cleanups.push(() => connection.dispose());
+		const entry: McpConnectionEntry = {
+			agentDir: dir,
+			authPlan,
+			cacheRefreshedAfterConnect: false,
+			configHash: "runtime-invalid-refresh",
+			connection,
+			counters: { callCount: 0, errorCount: 0, reconnectCount: 0, totalLatencyMs: 0 },
+			createdAtMs: Date.now(),
+			key: "fix\0runtime-invalid-refresh",
+			logger: createMcpLogger("fix"),
+			name: "fix",
+		};
+
+		await expect(connectAndRefreshMcpCatalog(entry, harness.deps.config)).rejects.toThrow(/\/mcp auth-start fix/);
+
+		expect(connection.state).toBe("needs_auth");
+		expect(connection.lastError?.message).toMatch(/\/mcp auth-start fix/);
+		expect(entry.cachedCatalog).toBeUndefined();
+		expect(harness.store.read()).toBeUndefined();
+	});
+
+	it("keeps attachSession alive with needs_auth guidance when startup refresh sees revoked credentials", async () => {
+		const fixture = await idp();
+		const dir = await agentDir();
+		const harness = makeHarness(dir, fixture.mcpUrl);
+		const redirect = await followAuthorize(await runAuthStart(harness.deps));
+		await runAuthComplete(harness.deps, redirect);
+		await poisonRefreshToken(harness);
+		await writeMcpConfig(dir, harness.deps.config);
+		const service = new McpService();
+		cleanups.push(() => service.dispose("quit"));
+		const pi = capturingPi();
+
+		await service.attachSession(
+			{ type: "session_start", reason: "startup" },
+			{ cwd: dir, isProjectTrusted: () => true },
+			pi,
+			{ agentDir: dir },
+		);
+
+		expect(service.getServerSnapshots()).toMatchObject([
+			{
+				lastError: expect.stringMatching(/\/mcp auth-start fix/),
+				lifecycleState: "needs_auth",
+				name: "fix",
+			},
+		]);
+		expect(pi.registeredTools).toEqual([]);
+		expect(harness.store.read()).toBeUndefined();
+	});
+
+	it("surfaces auth-start guidance on manual reconnect when refresh credentials were rotated away", async () => {
+		const fixture = await idp();
+		const dir = await agentDir();
+		const harness = makeHarness(dir, fixture.mcpUrl);
+		const redirect = await followAuthorize(await runAuthStart(harness.deps));
+		await runAuthComplete(harness.deps, redirect);
+		await writeMcpConfig(dir, harness.deps.config);
+		const service = new McpService();
+		cleanups.push(() => service.dispose("quit"));
+		await service.attachSession(
+			{ type: "session_start", reason: "startup" },
+			{ cwd: dir, isProjectTrusted: () => true },
+			capturingPi(),
+			{ agentDir: dir },
+		);
+		expect(service.getConnection("fix")?.state).toBe("connected");
+		await poisonRefreshToken(harness);
+
+		await expect(service.reconnectServer("fix")).rejects.toThrow(/\/mcp auth-start fix/);
+
+		expect(service.getServerSnapshots()).toMatchObject([
+			{
+				lastError: expect.stringMatching(/\/mcp auth-start fix/),
+				lifecycleState: "needs_auth",
+				name: "fix",
+			},
+		]);
+		expect(harness.store.read()).toBeUndefined();
 	});
 });
 

@@ -136,13 +136,17 @@ async function ensureFreshAuth(
 	try {
 		await ensureFresh();
 	} catch (error) {
-		if (isNeedsAuthError(error)) {
-			const authError = error instanceof Error ? error : new Error(String(error));
-			connection.markNeedsAuth(authError);
-			throw headlessAuthError(connection, authError);
-		}
+		const authError = markMcpConnectionNeedsAuth(connection, error);
+		if (authError !== undefined) throw authError;
 		throw error;
 	}
+}
+
+export function markMcpConnectionNeedsAuth(connection: ServerConnection, error: unknown): AuthError | undefined {
+	if (!isNeedsAuthError(error)) return undefined;
+	const authError = headlessAuthError(connection, error);
+	connection.markNeedsAuth(authError);
+	return authError;
 }
 
 function isRetriableFailedSendError(error: unknown): boolean {

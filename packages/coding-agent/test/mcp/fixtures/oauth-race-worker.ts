@@ -124,11 +124,18 @@ async function runtimeAttempt(
 		const refreshHash = stored?.refreshToken === undefined ? undefined : tokenFingerprint(stored.refreshToken);
 		return { ok: true, refreshHash };
 	} catch (error) {
-		const kind = (error as { oauthKind?: string }).oauthKind ?? "error";
+		const kind = oauthKind(error) ?? "error";
 		return { ok: false, kind };
 	} finally {
 		await connection.dispose();
 	}
+}
+
+function oauthKind(error: unknown, depth = 0): string | undefined {
+	if (depth > 5 || typeof error !== "object" || error === null) return undefined;
+	const kind = (error as { oauthKind?: unknown }).oauthKind;
+	if (typeof kind === "string") return kind;
+	return oauthKind((error as { cause?: unknown }).cause, depth + 1);
 }
 
 function tokenFingerprint(token: string): string {

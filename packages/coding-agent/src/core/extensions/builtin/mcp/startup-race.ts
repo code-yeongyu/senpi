@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "../../types.ts";
 import { collectServerCatalogForCache, writeMcpCachedServer } from "./catalog-cache.ts";
 import type { ResolvedMcpServer } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
+import { markMcpConnectionNeedsAuth } from "./health.ts";
 import { createMcpLogger } from "./log.ts";
 import type { McpConnectionEntry } from "./service-types.ts";
 import { safeTimer } from "./wrap.ts";
@@ -20,7 +21,10 @@ interface RaceMcpStartupConnectOptions {
 }
 
 export async function raceMcpStartupConnect(options: RaceMcpStartupConnectOptions): Promise<void> {
-	const connect = connectAndRefreshMcpCatalog(options.entry, options.serverConfig);
+	const connect = ignoreStartupNeedsAuth(
+		options.entry,
+		connectAndRefreshMcpCatalog(options.entry, options.serverConfig),
+	);
 	const result = await waitForMcpStartupRace(connect);
 	if (result === "settled" || options.pi === undefined) return;
 	void connect.then(() => refreshMcpToolsAfterStartupRace(options));
@@ -31,7 +35,16 @@ export async function connectAndRefreshMcpCatalog(
 	serverConfig: ResolvedMcpServer["config"],
 ): Promise<void> {
 	if (serverConfig === undefined) return;
-	await entry.authPlan?.refresh?.ensureFresh();
+	try {
+		await entry.authPlan?.refresh?.ensureFresh();
+	} catch (error) {
+		const authError = markMcpConnectionNeedsAuth(entry.connection, error);
+		if (authError !== undefined) {
+			entry.logger.warn(authError.message);
+			throw authError;
+		}
+		throw error;
+	}
 	await connectMcpServer(entry.connection, entry.logger);
 	if (entry.connection.state !== "connected") return;
 	if (entry.cacheRefreshedAfterConnect) return;
@@ -54,6 +67,15 @@ async function connectMcpServer(connection: ServerConnection, logger?: McpConnec
 		const failure = error instanceof Error ? error : new Error(String(error));
 		if (connection.lastError === undefined) connection.markDegraded(failure);
 		logger?.warn(failure.message);
+	}
+}
+
+export async function ignoreStartupNeedsAuth(entry: McpConnectionEntry, connect: Promise<void>): Promise<void> {
+	try {
+		await connect;
+	} catch (error) {
+		if (entry.connection.state === "needs_auth") return;
+		throw error;
 	}
 }
 
