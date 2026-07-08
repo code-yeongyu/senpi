@@ -1,0 +1,15 @@
+=== RUN   TestRunIsolatedIsNotScaffold
+    main_test.go:129: run(--isolated) still prints the scaffold string; got:
+        "senpi-neo dev (github.com/code-yeongyu/senpi/packages/neo)\nsenpi-neo: interactive TUI not yet implemented (scaffold)\n"
+--- FAIL: TestRunIsolatedIsNotScaffold (0.00s)
+FAIL
+FAIL	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	0.418s
+FAIL
+
+===== GREEN (after implementation) =====
+=== RUN   TestRunIsolatedIsNotScaffold
+senpi-neo: could not start the senpi backend: bridge: start isolated transport: bridge: SENPI_NEO_CLI_PATH is not set; cannot spawn neo daemon (use --isolated)
+--- PASS: TestRunIsolatedIsNotScaffold (0.00s)
+PASS
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	0.247s
+EXIT=

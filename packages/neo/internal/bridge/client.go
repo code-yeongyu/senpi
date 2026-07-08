@@ -173,6 +173,32 @@ func (c *Client) clearPending(id string) {
 	c.mu.Unlock()
 }
 
+// SendRaw serializes v as a strict JSONL line and writes it to the transport
+// WITHOUT allocating a req_N id or awaiting a correlated response. It is the seam
+// the extension-UI responder uses to send an extension_ui_response carrying the
+// ORIGINAL request id (never a req_N command id) — a shape the request/response
+// correlation path cannot express. Writing on a closed client returns the close
+// error rather than a broken-pipe panic.
+func (c *Client) SendRaw(v any) error {
+	c.mu.Lock()
+	if c.closed {
+		err := c.closeErr
+		c.mu.Unlock()
+		if err == nil {
+			err = ErrClientClosed
+		}
+		return err
+	}
+	c.mu.Unlock()
+
+	line, err := serializeValue(v)
+	if err != nil {
+		return err
+	}
+	_, err = c.writer.Write(line)
+	return err
+}
+
 // readLoop consumes stdout lines, correlates responses, and fans out events. A
 // malformed (non-JSON) line is dropped, matching rpc-client.ts.
 func (c *Client) readLoop() {

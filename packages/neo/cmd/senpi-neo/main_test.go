@@ -113,3 +113,22 @@ func TestThemeSampleUnknownProfile(t *testing.T) {
 		t.Fatalf("run(--theme-sample banana) exit = %d, want 2", code)
 	}
 }
+
+// TestRunIsolatedIsNotScaffold pins the real launch path: `--isolated` must no
+// longer print the scaffold placeholder. With no SENPI_NEO_CLI_PATH the isolated
+// connect fails deterministically (bridge.ErrNoCLIPath, no child spawn), so run
+// must map that to a nonzero exit rather than the old scaffold "return 0".
+func TestRunIsolatedIsNotScaffold(t *testing.T) {
+	t.Setenv("SENPI_CODING_AGENT_DIR", t.TempDir()) // never read the real ~/.senpi
+	t.Setenv("SENPI_NEO_CLI_PATH", "")              // force ErrNoCLIPath — deterministic, hermetic
+
+	var out bytes.Buffer
+	code := run([]string{"--isolated"}, &out)
+
+	if strings.Contains(out.String(), "not yet implemented") {
+		t.Fatalf("run(--isolated) still prints the scaffold string; got:\n%q", out.String())
+	}
+	if code == 0 {
+		t.Fatalf("run(--isolated) with no CLI path should fail with a nonzero exit code, got 0")
+	}
+}

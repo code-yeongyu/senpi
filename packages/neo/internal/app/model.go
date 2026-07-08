@@ -4,11 +4,13 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/code-yeongyu/senpi/packages/neo/internal/bridge"
 	"github.com/code-yeongyu/senpi/packages/neo/internal/theme"
 	"github.com/code-yeongyu/senpi/packages/neo/internal/ui"
 	"github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor"
 	"github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings"
 	"github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell"
+	"github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash"
 	"github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript"
 )
 
@@ -55,8 +57,10 @@ type AbortRequested struct{}
 
 // Model is the neo TUI's root bubbletea model. It owns the theme, the keybinding
 // manager, the shell region set, the editor, and the transcript feed, and
-// composes them into one frame each render. Overlays (todo 5) and the bridge
-// session (todo 2) attach through the fields/interface stubbed here.
+// composes them into one frame each render. The interactive assembly (assemble.go)
+// attaches the live bridge collaborators (session, transcript translator, shell
+// wire, input router, overlay stack, recovery); the presentational welcome scene
+// (NewModel + NewProgram) leaves them nil and every route is nil-safe.
 type Model struct {
 	theme    *theme.Theme
 	keys     *keybindings.Manager
@@ -64,6 +68,33 @@ type Model struct {
 	editor   *editor.Editor
 	feed     *transcript.Feed
 	overlays OverlayStack
+
+	// Interactive collaborators — nil in the presentational welcome scene.
+	ref       *clientRef // live client + session adapter (swapped on recovery)
+	program   programSender
+	xscript   *Transcript
+	wire      *ShellWire
+	recovery  *Recovery
+	router    *Router
+	extui     *ExtUI
+	requester *overlayRequester
+	opts      bridge.NeoRuntimeOptions
+
+	// Overlay open-on-response context + local-overlay build state.
+	pendingOverlay OverlayKind
+	overlayCtx     overlayBuildContext
+	// pendingFollow is the composite post-step (clipboard/gist/import) a routed
+	// RPC (/copy, /share, /import) runs when its response lands.
+	pendingFollow slash.NativeKind
+
+	// submits collects editor OnSubmit lines during a single key handling so the
+	// route step can classify them off the editor's synchronous callback.
+	submits []string
+
+	// initialInputsSent guards the launch-input delivery so a recovery re-bootstrap
+	// never re-sends the initial prompt.
+	initialInputsSent bool
+	exitCode          int
 
 	width  int
 	height int
@@ -101,70 +132,23 @@ func NewModel(deps Deps) *Model {
 	}
 }
 
-// Init implements tea.Model. The skeleton needs no startup command; bubbletea
-// delivers the initial tea.WindowSizeMsg on its own.
-func (m *Model) Init() tea.Cmd { return nil }
-
-// Update implements tea.Model.
-func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch v := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width, m.height = v.Width, v.Height
-		m.editor.SetViewport(v.Width, v.Height)
-		return m, nil
-	case tea.KeyboardEnhancementsMsg:
-		// The terminal answered the KeyboardEnhancements request declared by the
-		// View. When it supports key disambiguation, flip the matcher onto its
-		// Kitty-protocol path so app chords resolve exactly as classic does.
-		if v.SupportsKeyDisambiguation() {
-			keybindings.SetKittyProtocolActive(true)
-		}
-		return m, nil
-	case tea.KeyPressMsg:
-		return m.handleKey(v)
-	case tea.PasteMsg:
-		m.editor.Update(msg)
-		return m, nil
+// Init implements tea.Model. The presentational scene needs no startup command;
+// the interactive assembly overrides this via initCmd so Bootstrap fans out on
+// launch (assemble.go binds it before Run).
+func (m *Model) Init() tea.Cmd {
+	if m.ref == nil {
+		return nil
 	}
-	return m, nil
+	_, session := m.ref.get()
+	if session == nil {
+		return nil
+	}
+	// Bootstrap first; InitialInputs is deferred to the BootstrapMsg handler so the
+	// launch prompt lands after the session snapshot (plan todo 9 ordering).
+	return session.Bootstrap()
 }
 
-// handleKey routes a key press. An active overlay (or, when none is open, the
-// overlay-launching chords) claims the key first; then the app-level chords
-// (interrupt, exit) resolve through the Manager; everything else is forwarded to
-// the focused editor.
-func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	raw := editor.KeyToRaw(tea.Key(msg))
-
-	// Overlay capture: an active modal owns key input (esc/cancel restores the
-	// saved editor text); when inactive the stack still claims the model/thinking
-	// cycle + open-selector chords. Any key it does not claim falls through.
-	if m.overlays != nil {
-		if res := m.overlays.HandleKey(raw); res.Handled {
-			if res.Restore {
-				m.editor.SetText(res.RestoreText)
-			}
-			return m, res.Cmd
-		}
-	}
-
-	// app.interrupt aborts the in-flight turn (todo 2 consumes AbortRequested).
-	if m.keys.Matches(raw, actionInterrupt) {
-		return m, emitAbort
-	}
-	// app.exit quits, but only when the editor is empty — matching the classic
-	// ctrl+d-on-empty semantics (a non-empty editor keeps ctrl+d for the editor's
-	// own delete-forward binding).
-	if m.keys.Matches(raw, actionExit) && m.editor.GetText() == "" {
-		return m, tea.Quit
-	}
-
-	m.editor.Update(msg)
-	return m, nil
-}
-
-// emitAbort is the tea.Cmd that publishes an AbortRequested message.
-func emitAbort() tea.Msg { return AbortRequested{} }
+// The interactive Update loop, key routing, and message handlers live in route.go.
 
 // View implements tea.Model, composing the frame per the shell region order
 // (shell/shell.go): welcome header, transcript, above-editor regions, the editor
@@ -178,8 +162,11 @@ func (m *Model) View() tea.View {
 	}
 
 	var lines []string
-	lines = append(lines, m.shell.Header(width)...)      // welcome (pre-first-turn only)
-	lines = append(lines, m.feed.Render(width)...)       // transcript
+	lines = append(lines, m.shell.Header(width)...) // welcome (pre-first-turn only)
+	lines = append(lines, m.feed.Render(width)...)  // transcript
+	if bash := m.bashLines(width); len(bash) > 0 {
+		lines = append(lines, bash...) // `!`-command block (idle placement)
+	}
 	lines = append(lines, m.shell.AboveEditor(width)...) // widgets + status + pending
 
 	editorOriginY := len(lines)
@@ -198,15 +185,37 @@ func (m *Model) View() tea.View {
 // newView wraps content in a tea.View, requesting keyboard enhancements via the
 // View field (bubbletea v2 has no program option for this) and NOT enabling the
 // alternate screen. Basic key disambiguation is on by default; requesting
-// alternate keys lets chords like shift+enter disambiguate when supported.
+// alternate keys lets chords like shift+enter disambiguate when supported. The
+// window title is the shell wire's readable title (plain text — bubbletea owns
+// the OSC escape); the presentational scene leaves it unset.
 func (m *Model) newView(content string, cursor *tea.Cursor) tea.View {
 	v := tea.NewView(content)
 	v.KeyboardEnhancements.ReportAlternateKeys = true
+	if m.wire != nil {
+		v.WindowTitle = m.wire.WindowTitle()
+	}
 	if cursor != nil {
 		v.Cursor = cursor
 	}
 	return v
 }
+
+// bashLines renders the router's most recent `!`-command block (nil before any
+// bash command, or in the presentational scene).
+func (m *Model) bashLines(width int) []string {
+	if m.router == nil {
+		return nil
+	}
+	if b := m.router.BashBlock(); b != nil {
+		return b.Render(width)
+	}
+	return nil
+}
+
+// ExitCode reports the process exit code the launcher should re-raise. It is 0
+// for a clean quit and set to the recovery loop's fatal code (1) when the backend
+// exited unrecoverably.
+func (m *Model) ExitCode() int { return m.exitCode }
 
 // hintLine renders the bottom shortcut hint, resolving every key display through
 // the Manager (no literal key strings), and truncates it to the frame width.

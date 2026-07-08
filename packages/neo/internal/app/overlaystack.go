@@ -71,6 +71,11 @@ type OverlayKeyResult struct {
 	RestoreText string
 	Handled     bool
 	Restore     bool
+	// OpenKind names the overlay an inactive-scope chord just requested a fetch
+	// for (e.g. ctrl+l → OverlayModel). The main wiring records it as the pending
+	// open so the fetch response builds + pushes that overlay. OverlayNone means
+	// the key opened no overlay.
+	OpenKind OverlayKind
 }
 
 // overlayEntry is one pushed overlay plus the editor text saved when it opened.
@@ -179,7 +184,7 @@ func (m *Manager) handleInactive(raw string) OverlayKeyResult {
 		case "app.thinking.cycle":
 			return m.emit(bridge.Command{Type: "cycle_thinking_level"})
 		case "app.model.select":
-			return OverlayKeyResult{Handled: true, Cmd: m.Open(OverlayModel)}
+			return OverlayKeyResult{Handled: true, Cmd: m.Open(OverlayModel), OpenKind: OverlayModel}
 		}
 	}
 	return OverlayKeyResult{Handled: false}
