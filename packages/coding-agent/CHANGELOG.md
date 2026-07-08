@@ -4,6 +4,13 @@
 
 ### Added
 
+- Added MCP skills-carry support: a skill can ship MCP servers via an `mcp.json` sidecar or SKILL.md `mcp:` frontmatter; their tools stay hidden (zero payload cost) until the skill loads.
+- Added the opt-in MCP proxy exposure tier (`exposure:"proxy"`): one `mcp_<server>` gateway tool with search/describe/call ops.
+- Added MCP resources: `mcp_list_resources`/`mcp_read_resource` utility tools, `@mcp:<server>/<uri>` prompt mentions, and resource-update subscriptions.
+- Added MCP prompts as slash commands (`/mcp:<server>:<prompt>`) with argument collection and editor injection.
+- Added MCP elicitation (form mode) with sequential input dialogs, clean declines in non-interactive runs, and a bounded cancel timeout.
+- Added MCP server log routing (RFC-5424 levels onto the per-server logger, `logLevel` filtering, burst capping) and user documentation at `docs/mcp.md`.
+
 - Added automatic title generation for unnamed sessions from the first meaningful user prompt, using the active model in a cached forked request.
 - Added the `pi.executeTool()` extension API so extension code can run active tools through the normal validation, permission, `tool_call`, and `tool_result` pipeline.
 

@@ -45,6 +45,7 @@ For the full first-run flow, see [Quickstart](quickstart.md).
 
 - [Extensions](extensions.md) - TypeScript modules for tools, commands, events, custom UI, and builtin command hooks.
 - [Skills](skills.md) - Agent Skills for reusable on-demand capabilities.
+- [MCP](mcp.md) - built-in Model Context Protocol client: servers, context-efficient tool exposure, resources, prompts, auth.
 - [Prompt templates](prompt-templates.md) - reusable prompts that expand from slash commands.
 - [Themes](themes.md) - built-in and custom terminal themes.
 - [Senpi packages](packages.md) - bundle and share extensions, skills, prompts, and themes.

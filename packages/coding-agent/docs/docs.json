@@ -61,6 +61,10 @@
 					"path": "skills.md"
 				},
 				{
+					"title": "MCP",
+					"path": "mcp.md"
+				},
+				{
 					"title": "Prompt Templates",
 					"path": "prompt-templates.md"
 				},
