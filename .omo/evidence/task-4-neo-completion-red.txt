@@ -1,0 +1,131 @@
+=== RED 2026-07-08T04:25:52Z ===
+$ cd packages/neo && go test ./internal/app/... -run TestInput
+# github.com/code-yeongyu/senpi/packages/neo/internal/app_test [github.com/code-yeongyu/senpi/packages/neo/internal/app.test]
+internal/app/input_test.go:91:17: undefined: app.Router
+internal/app/input_test.go:106:11: undefined: app.NewRouter
+internal/app/input_test.go:148:17: undefined: app.RouteKind
+internal/app/input_test.go:155:18: undefined: app.RouteNone
+internal/app/input_test.go:160:18: undefined: app.RouteOverlay
+internal/app/input_test.go:166:19: undefined: app.RouteOverlay
+internal/app/input_test.go:171:19: undefined: app.RouteRPC
+internal/app/input_test.go:177:18: undefined: app.RouteNative
+internal/app/input_test.go:184:19: undefined: app.RoutePrompt
+internal/app/input_test.go:191:18: undefined: app.RouteUnknown
+internal/app/input_test.go:191:18: too many errors
+FAIL	github.com/code-yeongyu/senpi/packages/neo/internal/app [build failed]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app/qaharness	[no test files]
+FAIL
+exit: 1
+
+=== GREEN 2026-07-08T04:28:04Z ===
+$ cd packages/neo && go test ./internal/app/... -run TestInput -v
+=== RUN   TestInputSubmitRoutingTable
+=== RUN   TestInputSubmitRoutingTable/empty_input_is_ignored
+=== RUN   TestInputSubmitRoutingTable/builtin_overlay_slash_command_idle
+=== RUN   TestInputSubmitRoutingTable/builtin_overlay_slash_command_during_streaming
+=== RUN   TestInputSubmitRoutingTable/builtin_rpc_slash_command
+=== RUN   TestInputSubmitRoutingTable/builtin_native_slash_command
+=== RUN   TestInputSubmitRoutingTable/known_dynamic_command_routes_to_prompt_even_while_streaming
+=== RUN   TestInputSubmitRoutingTable/unknown_slash_command_with_known_set_surfaces_inline_error
+=== RUN   TestInputSubmitRoutingTable/unknown_slash_command_without_dynamic_knowledge_falls_through_to_prompt
+=== RUN   TestInputSubmitRoutingTable/bang_runs_bash
+=== RUN   TestInputSubmitRoutingTable/double_bang_runs_bash_excluded_from_context
+=== RUN   TestInputSubmitRoutingTable/bare_bang_is_a_prompt
+=== RUN   TestInputSubmitRoutingTable/plain_text_idle_prompts
+=== RUN   TestInputSubmitRoutingTable/plain_text_during_streaming_enqueues_steer
+--- PASS: TestInputSubmitRoutingTable (0.00s)
+    --- PASS: TestInputSubmitRoutingTable/empty_input_is_ignored (0.00s)
+    --- PASS: TestInputSubmitRoutingTable/builtin_overlay_slash_command_idle (0.00s)
+    --- PASS: TestInputSubmitRoutingTable/builtin_overlay_slash_command_during_streaming (0.00s)
+    --- PASS: TestInputSubmitRoutingTable/builtin_rpc_slash_command (0.00s)
+    --- PASS: TestInputSubmitRoutingTable/builtin_native_slash_command (0.00s)
+    --- PASS: TestInputSubmitRoutingTable/known_dynamic_command_routes_to_prompt_even_while_streaming (0.00s)
+    --- PASS: TestInputSubmitRoutingTable/unknown_slash_command_with_known_set_surfaces_inline_error (0.00s)
+    --- PASS: TestInputSubmitRoutingTable/unknown_slash_command_without_dynamic_knowledge_falls_through_to_prompt (0.00s)
+    --- PASS: TestInputSubmitRoutingTable/bang_runs_bash (0.00s)
+    --- PASS: TestInputSubmitRoutingTable/double_bang_runs_bash_excluded_from_context (0.00s)
+    --- PASS: TestInputSubmitRoutingTable/bare_bang_is_a_prompt (0.00s)
+    --- PASS: TestInputSubmitRoutingTable/plain_text_idle_prompts (0.00s)
+    --- PASS: TestInputSubmitRoutingTable/plain_text_during_streaming_enqueues_steer (0.00s)
+=== RUN   TestInputUnknownCommandNotice
+--- PASS: TestInputUnknownCommandNotice (0.00s)
+=== RUN   TestInputBuiltinAcceptance
+=== RUN   TestInputBuiltinAcceptance/settings
+=== RUN   TestInputBuiltinAcceptance/model
+=== RUN   TestInputBuiltinAcceptance/favorite-models
+=== RUN   TestInputBuiltinAcceptance/export
+=== RUN   TestInputBuiltinAcceptance/import
+=== RUN   TestInputBuiltinAcceptance/share
+=== RUN   TestInputBuiltinAcceptance/copy
+=== RUN   TestInputBuiltinAcceptance/name
+=== RUN   TestInputBuiltinAcceptance/session
+=== RUN   TestInputBuiltinAcceptance/changelog
+=== RUN   TestInputBuiltinAcceptance/hotkeys
+=== RUN   TestInputBuiltinAcceptance/fork
+=== RUN   TestInputBuiltinAcceptance/clone
+=== RUN   TestInputBuiltinAcceptance/tree
+=== RUN   TestInputBuiltinAcceptance/trust
+=== RUN   TestInputBuiltinAcceptance/login
+=== RUN   TestInputBuiltinAcceptance/logout
+=== RUN   TestInputBuiltinAcceptance/new
+=== RUN   TestInputBuiltinAcceptance/compact
+=== RUN   TestInputBuiltinAcceptance/resume
+=== RUN   TestInputBuiltinAcceptance/reload
+=== RUN   TestInputBuiltinAcceptance/quit
+--- PASS: TestInputBuiltinAcceptance (0.00s)
+    --- PASS: TestInputBuiltinAcceptance/settings (0.00s)
+    --- PASS: TestInputBuiltinAcceptance/model (0.00s)
+    --- PASS: TestInputBuiltinAcceptance/favorite-models (0.00s)
+    --- PASS: TestInputBuiltinAcceptance/export (0.00s)
+    --- PASS: TestInputBuiltinAcceptance/import (0.00s)
+    --- PASS: TestInputBuiltinAcceptance/share (0.00s)
+    --- PASS: TestInputBuiltinAcceptance/copy (0.00s)
+    --- PASS: TestInputBuiltinAcceptance/name (0.00s)
+    --- PASS: TestInputBuiltinAcceptance/session (0.00s)
+    --- PASS: TestInputBuiltinAcceptance/changelog (0.00s)
+    --- PASS: TestInputBuiltinAcceptance/hotkeys (0.00s)
+    --- PASS: TestInputBuiltinAcceptance/fork (0.00s)
+    --- PASS: TestInputBuiltinAcceptance/clone (0.00s)
+    --- PASS: TestInputBuiltinAcceptance/tree (0.00s)
+    --- PASS: TestInputBuiltinAcceptance/trust (0.00s)
+    --- PASS: TestInputBuiltinAcceptance/login (0.00s)
+    --- PASS: TestInputBuiltinAcceptance/logout (0.00s)
+    --- PASS: TestInputBuiltinAcceptance/new (0.00s)
+    --- PASS: TestInputBuiltinAcceptance/compact (0.00s)
+    --- PASS: TestInputBuiltinAcceptance/resume (0.00s)
+    --- PASS: TestInputBuiltinAcceptance/reload (0.00s)
+    --- PASS: TestInputBuiltinAcceptance/quit (0.00s)
+=== RUN   TestInputFollowUpActionQueuesDuringStreaming
+--- PASS: TestInputFollowUpActionQueuesDuringStreaming (0.00s)
+=== RUN   TestInputFollowUpActionIdleActsAsSubmit
+--- PASS: TestInputFollowUpActionIdleActsAsSubmit (0.00s)
+=== RUN   TestInputDequeueRestoresAllQueuedMessages
+--- PASS: TestInputDequeueRestoresAllQueuedMessages (0.00s)
+=== RUN   TestInputDequeueEmptyQueueNotice
+--- PASS: TestInputDequeueEmptyQueueNotice (0.00s)
+=== RUN   TestInputQueueFlushOnAgentEndOnly
+--- PASS: TestInputQueueFlushOnAgentEndOnly (0.00s)
+=== RUN   TestInputAgentEndDropsConsumedSteering
+--- PASS: TestInputAgentEndDropsConsumedSteering (0.00s)
+=== RUN   TestInputAgentEndEmptyQueueIsNil
+--- PASS: TestInputAgentEndEmptyQueueIsNil (0.00s)
+=== RUN   TestInputSyncSteeringPreservesLocalFollowUps
+--- PASS: TestInputSyncSteeringPreservesLocalFollowUps (0.00s)
+=== RUN   TestInputBashLifecycle
+--- PASS: TestInputBashLifecycle (0.00s)
+=== RUN   TestInputBashFailureAndCancelStatus
+--- PASS: TestInputBashFailureAndCancelStatus (0.00s)
+=== RUN   TestInputBashBusyRejectsSecondCommand
+--- PASS: TestInputBashBusyRejectsSecondCommand (0.00s)
+=== RUN   TestInputInterruptAbortsRunningBash
+--- PASS: TestInputInterruptAbortsRunningBash (0.00s)
+=== RUN   TestInputBashResultIgnoresOtherCommands
+--- PASS: TestInputBashResultIgnoresOtherCommands (0.00s)
+=== RUN   TestInputAutocompleteProviderWiring
+--- PASS: TestInputAutocompleteProviderWiring (0.00s)
+=== RUN   TestInputHistoryRecording
+--- PASS: TestInputHistoryRecording (0.00s)
+PASS
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/app	0.210s
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app/qaharness	[no test files]
+exit: 0
