@@ -38,17 +38,18 @@ var ErrNoCLIPath = fmt.Errorf("bridge: %s is not set; cannot spawn neo daemon (u
 // NEO_DAEMON_ADDRESS_IN_USE_EXIT (75); that is not an error here — the caller
 // simply finds the winner's record on the next poll.
 func SpawnDaemonDetached(req SpawnRequest) error {
-	cliCmd := os.Getenv(EnvNeoCLIPath)
-	if strings.TrimSpace(cliCmd) == "" {
-		return ErrNoCLIPath
+	// Resolve through the SAME node-fallback the isolated path uses
+	// (resolveCLICommand): a single bare CLI token like `.../src/cli.ts` runs as
+	// `node <cli>`, not exec'd directly (which fails "permission denied" — a .ts is
+	// not an executable). A full `<node> <pre...> <cli>` command is preserved as-is.
+	node, pre, cli, err := resolveCLICommand()
+	if err != nil {
+		return err
 	}
-	fields := splitCommand(cliCmd)
-	if len(fields) == 0 {
-		return ErrNoCLIPath
-	}
-
-	args := append(fields[1:], "--listen", req.Socket, "--register")
-	cmd := exec.Command(fields[0], args...)
+	args := make([]string, 0, len(pre)+4)
+	args = append(args, pre...)
+	args = append(args, cli, "--listen", req.Socket, "--register")
+	cmd := exec.Command(node, args...)
 	cmd.Dir = req.Cwd
 
 	// Detach stdio so the daemon never touches the client's terminal.

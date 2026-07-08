@@ -54,6 +54,7 @@ func (m *Model) handleBootstrap(msg BootstrapMsg) tea.Cmd {
 	if m.wire != nil {
 		m.wire.HandleBootstrap(msg)
 	}
+	m.noteSessionID(msg)
 	m.refreshOverlayCtx(msg)
 	if m.router != nil && msg.Commands.Success {
 		m.router.WireAutocomplete(decodeCommands(msg.Commands.Data), m.requester.cwd, "")
@@ -105,6 +106,19 @@ func (m *Model) refreshOverlayCtxFromResult(msg CommandResultMsg) {
 		return // null cycle result (nowhere to go) keeps the current snapshot
 	}
 	m.overlayCtx.currentModel = mm.Provider + "/" + mm.ID
+}
+
+// noteSessionID feeds the bootstrap get_state session id to the recovery loop so
+// a daemon respawn resumes the SAME session. session_info_changed keeps it fresh
+// (route.go), and get_state is the authoritative source at connect/resume time.
+func (m *Model) noteSessionID(msg BootstrapMsg) {
+	if m.recovery == nil || !msg.State.Success {
+		return
+	}
+	var st bridge.RPCSessionState
+	if json.Unmarshal(msg.State.Data, &st) == nil && st.SessionID != "" {
+		m.recovery.NoteSessionID(st.SessionID)
+	}
 }
 
 // refreshOverlayCtx folds the get_state snapshot into the overlay build context.

@@ -161,7 +161,7 @@ func TestRecoveryDaemonResumesSameSession(t *testing.T) {
 	rec := app.NewRecovery(app.RecoveryConfig{
 		Mode:        bridge.TransportDaemon,
 		Replay:      replay,
-		Reattach:    func() (bridge.Transport, error) { return script.ft, nil },
+		Reattach:    func(string) (bridge.Transport, error) { return script.ft, nil },
 		MaxAttempts: 3,
 		BackoffMin:  time.Millisecond,
 		BackoffMax:  4 * time.Millisecond,
@@ -252,7 +252,7 @@ func TestRecoveryDaemonDropMidResumeRetries(t *testing.T) {
 	rec := app.NewRecovery(app.RecoveryConfig{
 		Mode:   bridge.TransportDaemon,
 		Replay: replay,
-		Reattach: func() (bridge.Transport, error) {
+		Reattach: func(string) (bridge.Transport, error) {
 			attempt++
 			if attempt == 1 {
 				return dropping.ft, nil
@@ -305,7 +305,7 @@ func TestRecoveryDaemonRetriesAreCapped(t *testing.T) {
 	rec := app.NewRecovery(app.RecoveryConfig{
 		Mode:   bridge.TransportDaemon,
 		Replay: replay,
-		Reattach: func() (bridge.Transport, error) {
+		Reattach: func(string) (bridge.Transport, error) {
 			attempts++
 			return nil, errors.New("daemon unreachable")
 		},
@@ -354,7 +354,7 @@ func TestRecoveryDaemonRetriesAreCapped(t *testing.T) {
 func TestRecoveryIsolatedExitIsFatalQuitSignal(t *testing.T) {
 	rec := app.NewRecovery(app.RecoveryConfig{
 		Mode: bridge.TransportIsolated,
-		Reattach: func() (bridge.Transport, error) {
+		Reattach: func(string) (bridge.Transport, error) {
 			t.Errorf("isolated mode must never reattach")
 			return nil, errors.New("unreachable")
 		},
@@ -388,5 +388,58 @@ func TestRecoveryIsolatedExitIsFatalQuitSignal(t *testing.T) {
 	}
 	if dup := rec.HandleClientClosed(app.ClientClosedMsg{Err: bridge.ErrClientClosed}); dup != nil {
 		t.Fatalf("post-fatal drop report must be ignored")
+	}
+}
+
+// TestRecoveryReattachResumesNotedSession asserts the recovery reattach carries
+// the session id noted during normal operation, so a respawned daemon resumes
+// the SAME session (regression: without it, the respawned worker auto-created a
+// fresh session and resume's get_entries{since:<old-leaf>} failed to the cap).
+func TestRecoveryReattachResumesNotedSession(t *testing.T) {
+	script := newResumeScript("e9", `[{"id":"e2","type":"message"}]`, 0)
+	var gotSession string
+	rec := app.NewRecovery(app.RecoveryConfig{
+		Mode:   bridge.TransportDaemon,
+		Replay: &fakeReplay{},
+		Reattach: func(sessionID string) (bridge.Transport, error) {
+			gotSession = sessionID
+			return script.ft, nil
+		},
+		MaxAttempts: 2,
+		BackoffMin:  time.Millisecond,
+		BackoffMax:  time.Millisecond,
+		Sleep:       (&sleepRecorder{}).sleep,
+	})
+	rec.NoteEntryID("e1")
+	rec.NoteSessionID("sess-abc")
+
+	cmd := rec.HandleClientClosed(app.ClientClosedMsg{Err: bridge.ErrClientClosed})
+	if cmd == nil {
+		t.Fatalf("daemon drop must start a recovery command")
+	}
+	if _, ok := cmd().(app.RecoveryResumedMsg); !ok {
+		t.Fatalf("expected a resume")
+	}
+	if gotSession != "sess-abc" {
+		t.Fatalf("reattach must receive the noted session id, got %q", gotSession)
+	}
+}
+
+// TestDaemonReattachInjectsSessionID asserts DaemonReattach pins the runtime
+// options' session id to the resumed session before attach-or-spawn, so the
+// respawned daemon worker loads that exact session (`--session-id`).
+func TestDaemonReattachInjectsSessionID(t *testing.T) {
+	var seen bridge.AttachConfig
+	restore := app.SetAttachOrSpawnForTest(func(cfg bridge.AttachConfig) (*bridge.DaemonConn, error) {
+		seen = cfg
+		return nil, errors.New("stop after capture")
+	})
+	defer restore()
+
+	reattach := app.DaemonReattach(&bridge.DaemonConn{AgentDir: "/a", Cwd: "/c"}, nil, bridge.NeoRuntimeOptions{}, time.Second)
+	_, _ = reattach("sess-xyz")
+
+	if seen.RuntimeOptions.SessionID == nil || *seen.RuntimeOptions.SessionID != "sess-xyz" {
+		t.Fatalf("DaemonReattach must set RuntimeOptions.SessionID to the resumed session, got %v", seen.RuntimeOptions.SessionID)
 	}
 }

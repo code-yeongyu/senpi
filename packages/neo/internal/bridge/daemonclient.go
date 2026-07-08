@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -99,13 +101,34 @@ func (c *DaemonConn) Close() error {
 }
 
 const (
-	defaultAttachTimeout = 10 * time.Second
+	// defaultAttachTimeout gives a freshly-spawned daemon time to bind + register
+	// + accept the first handshake. A compiled dist daemon does this in well under
+	// a second; a dev daemon running the CLI from uncompiled TypeScript loads its
+	// full runtime and, under machine load, can take several seconds — so the
+	// default is generous (a fast daemon still attaches on the first poll, paying
+	// no penalty). Override with EnvNeoAttachTimeoutMS for slower/faster hosts.
+	defaultAttachTimeout = 30 * time.Second
 	defaultPollInterval  = 50 * time.Millisecond
 )
+
+// EnvNeoAttachTimeoutMS overrides defaultAttachTimeout (milliseconds) for the
+// daemon attach-or-spawn deadline. Unset/invalid falls back to the default.
+const EnvNeoAttachTimeoutMS = "SENPI_NEO_ATTACH_TIMEOUT_MS"
 
 // ErrAttachTimeout is returned when a spawned daemon does not register + accept a
 // handshake within the configured timeout.
 var ErrAttachTimeout = errors.New("bridge: attach-or-spawn timed out")
+
+// attachTimeoutDefault resolves the default attach timeout, honoring
+// EnvNeoAttachTimeoutMS when it parses to a positive duration.
+func attachTimeoutDefault() time.Duration {
+	if v := strings.TrimSpace(os.Getenv(EnvNeoAttachTimeoutMS)); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil && ms > 0 {
+			return time.Duration(ms) * time.Millisecond
+		}
+	}
+	return defaultAttachTimeout
+}
 
 // AttachOrSpawn implements the plan task-17 attach-or-spawn client:
 //
@@ -124,7 +147,7 @@ func AttachOrSpawn(cfg AttachConfig) (*DaemonConn, error) {
 	}
 	timeout := cfg.Timeout
 	if timeout <= 0 {
-		timeout = defaultAttachTimeout
+		timeout = attachTimeoutDefault()
 	}
 	pollInterval := cfg.PollInterval
 	if pollInterval <= 0 {

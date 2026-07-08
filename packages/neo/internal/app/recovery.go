@@ -75,9 +75,13 @@ type TranscriptReplayer interface {
 	ReplayEntries(entries []ResumedEntry)
 }
 
-// ReattachFunc re-establishes the daemon transport after a drop. Production uses
-// DaemonReattach; tests inject scripted transports.
-type ReattachFunc func() (bridge.Transport, error)
+// ReattachFunc re-establishes the daemon transport after a drop, resuming the
+// given session id (the session live before the drop) so the respawned daemon's
+// worker loads the SAME session from disk rather than auto-creating a new one.
+// An empty sessionID means "no specific session captured yet" (falls back to the
+// original launch options). Production uses DaemonReattach; tests inject scripted
+// transports.
+type ReattachFunc func(sessionID string) (bridge.Transport, error)
 
 // RecoveryResumedMsg is emitted after a successful reconnect + resume. The old
 // client is dead: the consumer must adopt Client (rewire the session adapter).
@@ -165,6 +169,7 @@ type Recovery struct {
 	turnLive    bool
 	abortedTurn bool
 	lastEntryID string
+	sessionID   string
 	reconnects  int
 	notice      string
 	exitCode    int
@@ -208,18 +213,41 @@ func NewRecovery(cfg RecoveryConfig) *Recovery {
 	return r
 }
 
+// attachOrSpawn indirects bridge.AttachOrSpawn so tests can capture the resolved
+// AttachConfig (e.g. the injected session id) without a real daemon. Production
+// binds it to the real attach-or-spawn client.
+var attachOrSpawn = bridge.AttachOrSpawn
+
+// SetAttachOrSpawnForTest swaps the attach-or-spawn indirection and returns a
+// restore func. Test-only seam (exported for the external app_test package).
+func SetAttachOrSpawnForTest(fn func(bridge.AttachConfig) (*bridge.DaemonConn, error)) func() {
+	prev := attachOrSpawn
+	attachOrSpawn = fn
+	return func() { attachOrSpawn = prev }
+}
+
 // DaemonReattach builds the production ReattachFunc from the original
 // attachment's metadata (bridge.ConnectResult.Daemon). bridge.AttachOrSpawn is
 // the existing transport-level recovery — reconnect when the daemon is alive
 // (including the lost-record self-heal) and respawn via the daemon spawn path
 // when it is dead — so the app layer wraps it rather than duplicating any of it.
 func DaemonReattach(conn *bridge.DaemonConn, capabilities []string, options bridge.NeoRuntimeOptions, timeout time.Duration) ReattachFunc {
-	return func() (bridge.Transport, error) {
-		fresh, err := bridge.AttachOrSpawn(bridge.AttachConfig{
+	return func(sessionID string) (bridge.Transport, error) {
+		// Resume the SAME session: pin the reattach's runtime options to the live
+		// session id so the respawned daemon's worker loads that session from disk
+		// (`--session-id <id>` "creating it if missing") instead of auto-creating a
+		// new one — without which resume's get_entries{since:<old-leaf>} runs against
+		// a fresh empty session and fails on every attempt.
+		opts := options
+		if sessionID != "" {
+			id := sessionID
+			opts.SessionID = &id
+		}
+		fresh, err := attachOrSpawn(bridge.AttachConfig{
 			AgentDir:       conn.AgentDir,
 			Cwd:            conn.Cwd,
 			Capabilities:   capabilities,
-			RuntimeOptions: options,
+			RuntimeOptions: opts,
 			Timeout:        timeout,
 		})
 		if err != nil {
@@ -253,6 +281,18 @@ func (r *Recovery) NoteEntryID(id string) {
 	}
 	r.mu.Lock()
 	r.lastEntryID = id
+	r.mu.Unlock()
+}
+
+// NoteSessionID records the active session id (from bootstrap get_state and
+// session_info_changed events). A daemon respawn reattaches resuming this exact
+// session so the reloaded entries match the pre-drop transcript.
+func (r *Recovery) NoteSessionID(id string) {
+	if id == "" {
+		return
+	}
+	r.mu.Lock()
+	r.sessionID = id
 	r.mu.Unlock()
 }
 
@@ -308,19 +348,20 @@ func (r *Recovery) HandleClientClosed(msg ClientClosedMsg) tea.Cmd {
 		r.notice = abortedTurnNotice
 	}
 	lastEntry := r.lastEntryID
+	sessionID := r.sessionID
 	r.mu.Unlock()
 
 	if aborted {
 		r.replay.MarkTurnAborted(abortedTurnNotice)
 	}
-	return func() tea.Msg { return r.reconnectAndResume(lastEntry, aborted) }
+	return func() tea.Msg { return r.reconnectAndResume(lastEntry, sessionID, aborted) }
 }
 
 // reconnectAndResume runs the bounded daemon recovery: reattach (the bridge path
 // reconnects or respawns), then resume the SAME session and replay its entries.
 // A failed attempt backs off (doubling, capped at backoffMax) until maxAttempts,
 // then the failure surfaces as the fatal quit signal.
-func (r *Recovery) reconnectAndResume(lastEntry string, aborted bool) tea.Msg {
+func (r *Recovery) reconnectAndResume(lastEntry, sessionID string, aborted bool) tea.Msg {
 	if r.reattach == nil {
 		return r.fail(errors.New("recovery: daemon mode requires a Reattach func"))
 	}
@@ -336,7 +377,7 @@ func (r *Recovery) reconnectAndResume(lastEntry string, aborted bool) tea.Msg {
 			}
 		}
 
-		transport, err := r.reattach()
+		transport, err := r.reattach(sessionID)
 		if err != nil {
 			lastErr = err
 			continue

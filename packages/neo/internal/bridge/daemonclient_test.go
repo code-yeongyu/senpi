@@ -444,3 +444,18 @@ func relistenScripted(t *testing.T, d *scriptedDaemon) {
 	go d.serve(ln)
 	t.Cleanup(d.stop)
 }
+
+func TestAttachTimeoutDefaultHonorsEnv(t *testing.T) {
+	t.Setenv(EnvNeoAttachTimeoutMS, "1234")
+	if got := attachTimeoutDefault(); got != 1234*time.Millisecond {
+		t.Fatalf("env override: got %v want 1.234s", got)
+	}
+	t.Setenv(EnvNeoAttachTimeoutMS, "garbage")
+	if got := attachTimeoutDefault(); got != defaultAttachTimeout {
+		t.Fatalf("invalid env must fall back to default, got %v", got)
+	}
+	t.Setenv(EnvNeoAttachTimeoutMS, "")
+	if got := attachTimeoutDefault(); got != defaultAttachTimeout {
+		t.Fatalf("unset env must use default, got %v", got)
+	}
+}
