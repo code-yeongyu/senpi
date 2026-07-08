@@ -41,11 +41,11 @@ import (
 // Update goroutine.
 
 // Overlay kinds owned by the extension-UI layer, allocated after the manager's
-// ten built-in kinds so they never collide.
+// twelve built-in kinds (OverlayModel..OverlayObserver) so they never collide.
 const (
 	// OverlayExtUI hosts an extension dialog (select/confirm/input/editor) or
 	// the custom_unsupported notice.
-	OverlayExtUI OverlayKind = OverlayStats + 1 + iota
+	OverlayExtUI OverlayKind = OverlayObserver + 1 + iota
 	// OverlayLogin hosts the /login /logout dialog and its api-key prompt.
 	OverlayLogin
 )

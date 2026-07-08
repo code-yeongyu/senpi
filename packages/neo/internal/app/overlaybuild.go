@@ -2,11 +2,13 @@ package app
 
 import (
 	"encoding/json"
+	"path/filepath"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/code-yeongyu/senpi/packages/neo/internal/bridge"
 	"github.com/code-yeongyu/senpi/packages/neo/internal/store"
+	"github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext"
 	"github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays"
 	"github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash"
 )
@@ -48,8 +50,34 @@ func (m *Model) openAppOverlay(kind OverlayKind, savedText string) tea.Cmd {
 		return m.pushLocal(kind, overlays.NewTrustSelector(overlays.TrustOptions{CWD: m.requester.cwd}), savedText)
 	case OverlayHotkeys:
 		return m.pushLocal(kind, overlays.NewHotkeysView(m.keys), savedText)
+	case OverlayHistory:
+		// The indexer tolerates missing/corrupt session files per-file (a missing
+		// dir yields zero entries, no error); only a hard scan error surfaces, as an
+		// honest notice rather than an empty overlay.
+		entries, err := builtinext.IndexSessions(m.builtinextSessionsRoot())
+		if err != nil {
+			return m.noticeCmd("history search unavailable: " + err.Error())
+		}
+		return m.pushLocal(kind, NewHistoryOverlay(entries, m.theme, m.keys), savedText)
+	case OverlayObserver:
+		sessions, err := builtinext.ScanSessionHudEntries(m.builtinextSessionsRoot(), "")
+		if err != nil {
+			return m.noticeCmd("session observer unavailable: " + err.Error())
+		}
+		return m.pushLocal(kind, NewObserverOverlay(sessions, m.theme, m.keys), savedText)
 	}
 	return nil
+}
+
+// builtinextSessionsRoot resolves the cross-cwd sessions root the history/observer
+// ports scan: the default <agentDir>/sessions when the current cwd's session dir
+// lives under it (the standard layout), else an isolated custom dir
+// (ResolveSearchRoot, history-search/index.ts:10-22).
+func (m *Model) builtinextSessionsRoot() string {
+	agentDir, cwd := m.requester.agentDir, m.requester.cwd
+	defaultRoot := filepath.Join(agentDir, "sessions")
+	current := store.SessionDirForCwd(agentDir, cwd)
+	return builtinext.ResolveSearchRoot(current, defaultRoot)
 }
 
 // pushLocal pushes an immediately-built overlay through the manager.

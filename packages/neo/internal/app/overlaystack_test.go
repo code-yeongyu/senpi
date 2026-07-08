@@ -9,6 +9,7 @@ import (
 	"github.com/code-yeongyu/senpi/packages/neo/internal/app"
 	"github.com/code-yeongyu/senpi/packages/neo/internal/bridge"
 	"github.com/code-yeongyu/senpi/packages/neo/internal/store"
+	"github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext"
 	"github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings"
 	"github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays"
 )
@@ -265,10 +266,24 @@ func TestOverlayCommandEmissionTable(t *testing.T) {
 			build: func() app.Overlay { return overlays.NewSessionStats(overlays.SessionStats{SessionID: "s1"}) },
 			key:   "\n", // read-only: enter emits nothing
 		},
+		{
+			name: "history", kind: app.OverlayHistory,
+			build: func() app.Overlay {
+				return app.NewHistoryOverlay([]builtinext.HistoryEntry{{Text: "deploy production release", SessionID: "a", Timestamp: 1_000}}, parityTheme(t), overlayKB(t))
+			},
+			key: "\n", // confirm selects a prompt into the editor: no RPC/file-op
+		},
+		{
+			name: "observer", kind: app.OverlayObserver,
+			build: func() app.Overlay {
+				return app.NewObserverOverlay([]builtinext.SessionHudEntry{{ID: "s", ShortID: "s", Path: "/nonexistent/s.jsonl", LastUserText: "hi"}}, parityTheme(t), overlayKB(t))
+			},
+			key: "\x1b", // esc closes the picker: no RPC/file-op
+		},
 	}
 
-	if len(cases) != 10 {
-		t.Fatalf("expected all 10 overlay kinds, got %d", len(cases))
+	if len(cases) != 12 {
+		t.Fatalf("expected all 12 overlay kinds, got %d", len(cases))
 	}
 
 	for _, tc := range cases {

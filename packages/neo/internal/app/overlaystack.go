@@ -43,8 +43,11 @@ type Requester interface {
 	FileOp(op string, fields map[string]any) tea.Cmd
 }
 
-// OverlayKind enumerates the ten modal overlays the manager can host. The zero
-// value OverlayNone means no overlay (ActiveKind on an empty stack).
+// OverlayKind enumerates the twelve modal overlays the manager can host. The zero
+// value OverlayNone means no overlay (ActiveKind on an empty stack). OverlayHistory
+// and OverlayObserver are the two builtinext ports (history search ctrl+r, session
+// observer ctrl+s); they read local session-dir data, so openAppOverlay builds +
+// pushes them immediately like the other local-data overlays.
 type OverlayKind int
 
 const (
@@ -59,6 +62,8 @@ const (
 	OverlayTrust
 	OverlayHotkeys
 	OverlayStats
+	OverlayHistory
+	OverlayObserver
 )
 
 // OverlayKeyResult is what HandleKey reports back to the Model's key router.
@@ -163,7 +168,16 @@ func (m *Manager) handleActive(raw string) OverlayKeyResult {
 	case overlays.OutcomeSelect:
 		cmd := m.dispatch(out)
 		m.pop()
-		return OverlayKeyResult{Handled: true, Cmd: cmd, Restore: true, RestoreText: saved}
+		// A terminal select normally restores the pre-open editor text. The history
+		// overlay is the exception: selecting a prompt sets the editor to that prompt
+		// (history-search/index.ts:53), which it signals via a non-empty Outcome
+		// RestoreText. Every RPC/file-op overlay leaves RestoreText empty, so they
+		// keep the pre-open restore.
+		restore := saved
+		if out.RestoreText != "" {
+			restore = out.RestoreText
+		}
+		return OverlayKeyResult{Handled: true, Cmd: cmd, Restore: true, RestoreText: restore}
 	default: // OutcomeNone: consumed, overlay stays open.
 		return OverlayKeyResult{Handled: true}
 	}

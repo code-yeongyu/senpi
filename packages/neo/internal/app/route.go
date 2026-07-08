@@ -17,6 +17,14 @@ import (
 // Every collaborator is nil in the presentational welcome scene, so each route is
 // nil-safe.
 
+// Registry ids for the two builtinext overlay-launch chords (ctrl+r / ctrl+s by
+// default). These are action ids resolved through the keybinding Manager, never
+// raw key strings, so user rebindings apply.
+const (
+	actionHistorySearch   = "app.history.search"
+	actionSessionsObserve = "app.sessions.observe"
+)
+
 // Update implements tea.Model.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
@@ -104,6 +112,26 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.pendingOverlay = res.OpenKind
 			}
 			return m, res.Cmd
+		}
+	}
+
+	// Builtinext overlay-launch chords: history search (ctrl+r) and session observer
+	// (ctrl+s) open their local overlays from the session dir, matching classic
+	// senpi's onAction("app.history.search")/onAction("app.sessions.observe")
+	// (interactive-mode.ts:2850/2857). Only reachable when no overlay is active — an
+	// active overlay consumes the key in the m.overlays block above — and only in
+	// the assembled TUI, where the ExtUI hosts the overlay Manager.
+	if m.extui != nil {
+		for _, bx := range []struct {
+			action string
+			kind   OverlayKind
+		}{
+			{actionHistorySearch, OverlayHistory},
+			{actionSessionsObserve, OverlayObserver},
+		} {
+			if m.keys.Matches(raw, bx.action) {
+				return m, m.openAppOverlay(bx.kind, m.editorText())
+			}
 		}
 	}
 
