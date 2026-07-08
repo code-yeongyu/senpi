@@ -372,3 +372,37 @@ func TestInterruptDuringBashIssuesAbortBash(t *testing.T) {
 	}
 	t.Fatalf("escape during running bash did not execute the AbortBash command")
 }
+
+// TestModelSwitchRefreshesOverlayContext proves a successful set_model /
+// cycle_model round-trip re-points the overlay build context, so reopening the
+// /model selector marks the NEW model current (live QA regression: after
+// switching to mock-b the reopened selector still ✓-marked mock-a — the backend
+// had switched; only this client-side snapshot was stale). thinking_level_changed
+// must likewise refresh the thinking snapshot.
+func TestModelSwitchRefreshesOverlayContext(t *testing.T) {
+	th := testTheme(t)
+	m := &Model{theme: th, feed: transcript.NewFeed(transcript.NewRenderTheme(th))}
+	m.overlayCtx.currentModel = "mock/mock-a"
+	m.overlayCtx.thinkingLevel = "off"
+
+	m.Update(CommandResultMsg{
+		Command:  "set_model",
+		Response: bridge.Response{Success: true, Data: json.RawMessage(`{"id":"mock-b","provider":"mock","reasoning":false,"contextWindow":128000}`)},
+	})
+	if got := m.overlayCtx.currentModel; got != "mock/mock-b" {
+		t.Fatalf("set_model result did not refresh overlayCtx.currentModel: %q", got)
+	}
+
+	m.Update(CommandResultMsg{
+		Command:  "cycle_model",
+		Response: bridge.Response{Success: true, Data: json.RawMessage(`{"id":"mock-a","provider":"mock"}`)},
+	})
+	if got := m.overlayCtx.currentModel; got != "mock/mock-a" {
+		t.Fatalf("cycle_model result did not refresh overlayCtx.currentModel: %q", got)
+	}
+
+	m.Update(EventMsg{Event: bridge.Event{Type: "thinking_level_changed", Payload: json.RawMessage(`{"type":"thinking_level_changed","level":"high"}`)}})
+	if got := m.overlayCtx.thinkingLevel; got != "high" {
+		t.Fatalf("thinking_level_changed did not refresh overlayCtx.thinkingLevel: %q", got)
+	}
+}

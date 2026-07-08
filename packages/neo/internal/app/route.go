@@ -201,6 +201,18 @@ func (m *Model) handleEvent(msg EventMsg) tea.Cmd {
 		}
 	}
 
+	// Keep the overlay build context current for events that change what a
+	// reopened overlay marks selected (no RPC event carries model switches, but
+	// thinking_level_changed does — a stale snapshot ✓-marks the wrong level).
+	if ev.Type == "thinking_level_changed" {
+		var p struct {
+			Level string `json:"level"`
+		}
+		if decodeEventPayload(ev, &p); p.Level != "" {
+			m.overlayCtx.thinkingLevel = p.Level
+		}
+	}
+
 	var cmds []tea.Cmd
 	if m.xscript != nil {
 		m.xscript.HandleEvent(msg)

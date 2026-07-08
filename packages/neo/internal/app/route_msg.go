@@ -21,6 +21,7 @@ func (m *Model) handleCommandResult(msg CommandResultMsg) tea.Cmd {
 	if m.router != nil && m.router.HandleBashResult(msg) {
 		return nil
 	}
+	m.refreshOverlayCtxFromResult(msg)
 	statsConsumed := m.wire != nil && m.wire.HandleCommandResult(msg)
 
 	var cmds []tea.Cmd
@@ -83,6 +84,27 @@ func decodeCommands(data json.RawMessage) []bridge.RPCSlashCommand {
 	var bare []bridge.RPCSlashCommand
 	_ = json.Unmarshal(data, &bare)
 	return bare
+}
+
+// refreshOverlayCtxFromResult keeps the overlay build context current across the
+// round-trips that change what "current" means: no RPC event carries model
+// switches, so a reopened /model selector would ✓-mark the OLD model from the
+// bootstrap-era snapshot (the backend had switched; only this view was stale).
+func (m *Model) refreshOverlayCtxFromResult(msg CommandResultMsg) {
+	if msg.Err != nil || !msg.Response.Success {
+		return
+	}
+	if msg.Command != "set_model" && msg.Command != "cycle_model" {
+		return
+	}
+	var mm struct {
+		ID       string `json:"id"`
+		Provider string `json:"provider"`
+	}
+	if len(msg.Response.Data) == 0 || json.Unmarshal(msg.Response.Data, &mm) != nil || mm.ID == "" || mm.Provider == "" {
+		return // null cycle result (nowhere to go) keeps the current snapshot
+	}
+	m.overlayCtx.currentModel = mm.Provider + "/" + mm.ID
 }
 
 // refreshOverlayCtx folds the get_state snapshot into the overlay build context.
