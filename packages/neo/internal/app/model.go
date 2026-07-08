@@ -30,9 +30,9 @@ const (
 )
 
 // OverlayStack is the overlay-manager contract the frame consults. Todo 5
-// implements it (internal/app/overlaystack.go); the skeleton holds it as an
-// interface so an active modal can capture the frame and key input. A nil stack
-// — this todo's default — means no overlay is ever active.
+// implements it (internal/app/overlaystack.go, *Manager); the Model holds it as
+// an interface so an active modal can capture the frame and key input. A nil
+// stack means no overlay is ever active.
 type OverlayStack interface {
 	// Active reports whether a modal overlay is currently open and capturing the
 	// frame + key input.
@@ -40,6 +40,12 @@ type OverlayStack interface {
 	// Render draws the active overlay's frame lines at the terminal size. Only
 	// called when Active reports true.
 	Render(width, height int) []string
+	// HandleKey routes a raw key through the overlay stack: to the active overlay
+	// when one is open (scope-switched via the keybinding Manager contexts), or to
+	// the overlay-launching editor-scope chords when inactive. The result tells
+	// the Model whether the key was consumed, what command to run, and whether to
+	// restore the saved editor text after an overlay closed.
+	HandleKey(raw string) OverlayKeyResult
 }
 
 // AbortRequested is emitted when the user triggers app.interrupt. The session
@@ -123,10 +129,24 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleKey routes a key press. App-level chords (interrupt, exit) resolve
-// through the Manager first; everything else is forwarded to the focused editor.
+// handleKey routes a key press. An active overlay (or, when none is open, the
+// overlay-launching chords) claims the key first; then the app-level chords
+// (interrupt, exit) resolve through the Manager; everything else is forwarded to
+// the focused editor.
 func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	raw := editor.KeyToRaw(tea.Key(msg))
+
+	// Overlay capture: an active modal owns key input (esc/cancel restores the
+	// saved editor text); when inactive the stack still claims the model/thinking
+	// cycle + open-selector chords. Any key it does not claim falls through.
+	if m.overlays != nil {
+		if res := m.overlays.HandleKey(raw); res.Handled {
+			if res.Restore {
+				m.editor.SetText(res.RestoreText)
+			}
+			return m, res.Cmd
+		}
+	}
 
 	// app.interrupt aborts the in-flight turn (todo 2 consumes AbortRequested).
 	if m.keys.Matches(raw, actionInterrupt) {
