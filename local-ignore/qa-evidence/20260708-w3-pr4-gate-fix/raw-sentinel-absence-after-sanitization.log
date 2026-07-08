@@ -1,0 +1,11 @@
+{
+  "generated_at": "2026-07-08T00:10:20.408Z",
+  "scope_file": "local-ignore/qa-evidence/20260708-w3-pr4-gate-fix/raw-sentinel-absence-scope-after-sanitization.txt",
+  "files_scanned": 240,
+  "tracked_w3_reports_included": 20,
+  "local_ignore_w3_files_included": 220,
+  "pattern": "SENTINEL_(AT|RT)_[A-Za-z0-9_-]+",
+  "match_count": 0,
+  "verdict": "PASS",
+  "matching_files": []
+}

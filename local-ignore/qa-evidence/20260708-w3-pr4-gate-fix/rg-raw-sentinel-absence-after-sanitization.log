@@ -1,0 +1,5 @@
+command=xargs rg -l -I "SENTINEL_(AT|RT)_[A-Za-z0-9_-]+" < raw-sentinel-absence-scope-after-sanitization.txt
+scope=local-ignore/qa-evidence/20260708-w3-pr4-gate-fix/raw-sentinel-absence-scope-after-sanitization.txt
+files_scanned=240
+match_count=0
+verdict=PASS
