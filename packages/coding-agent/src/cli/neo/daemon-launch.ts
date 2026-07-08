@@ -9,6 +9,7 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir, getPackageDir } from "../../config.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
@@ -96,7 +97,7 @@ export async function runNeoDaemonLauncher(parsed: Args, deps: NeoDaemonLauncher
  * executable, e.g. the tsx loader chain in dev) overrides the default built
  * `dist/rpc-entry.js` entry. This mirrors the `SENPI_NEO_BIN` dev override.
  */
-function resolveWorkerBaseArgs(): string[] {
+export function resolveWorkerBaseArgs(): string[] {
 	const override = process.env.SENPI_NEO_WORKER_ARGS;
 	if (override) {
 		try {
@@ -108,5 +109,17 @@ function resolveWorkerBaseArgs(): string[] {
 			// fall through to the default entry
 		}
 	}
-	return [join(getPackageDir(), "dist", "rpc-entry.js")];
+	const pkgDir = getPackageDir();
+	const distEntry = join(pkgDir, "dist", "rpc-entry.js");
+	// Production ships a built dist; a dev checkout run from src may not have one
+	// (or it is stale). When dist/rpc-entry.js is absent, fall back to the src
+	// entry (node runs .ts natively) so daemon workers execute the SAME source as
+	// the supervisor rather than failing to spawn / running stale code.
+	if (!existsSync(distEntry)) {
+		const srcEntry = join(pkgDir, "src", "rpc-entry.ts");
+		if (existsSync(srcEntry)) {
+			return [srcEntry];
+		}
+	}
+	return [distEntry];
 }
