@@ -4,9 +4,12 @@ import type { McpCachedServerCatalog } from "../catalog-cache.ts";
 import type { ResolvedMcpConfig } from "../config-schema.ts";
 import type { ServerConnection } from "../connection.ts";
 import { createMcpLogger, type McpLogger } from "../log.ts";
+import { createMcpResourceTools, type McpResourceServer } from "../resources.ts";
 import { computeMcpExposurePolicy } from "./policy.ts";
 import type { McpCatalogRegistrationOptions } from "./register.ts";
 import { type McpTierBRegistration, registerMcpTierBTools } from "./tier-b.ts";
+
+export type McpSessionRegistration = McpTierBRegistration & { resourceServers: McpResourceServer[] };
 
 export interface McpDirectRegistrationEntry {
 	readonly name: string;
@@ -23,11 +26,12 @@ export async function registerDirectMcpTools(
 	config: ResolvedMcpConfig,
 	entries: Iterable<McpDirectRegistrationEntry>,
 	options: McpCatalogRegistrationOptions = {},
-): Promise<McpTierBRegistration | undefined> {
+): Promise<McpSessionRegistration | undefined> {
 	const registeredEntries: McpToolCatalogEntry[] = [];
 	const activeEntries: McpToolCatalogEntry[] = [];
 	let searchMode = false;
 	const proxyGateways: { server: string; entries: McpToolCatalogEntry[] }[] = [];
+	const resourceServers: McpResourceServer[] = [];
 	for (const entry of entries) {
 		const server = config.servers[entry.name];
 		if (server?.config === undefined) continue;
@@ -52,6 +56,17 @@ export async function registerDirectMcpTools(
 							outputGuard: config.settings.outputGuard,
 						},
 					);
+		const cachedResources = entry.cachedCatalog?.resources ?? [];
+		if (cachedResources.length > 0) {
+			resourceServers.push({
+				agentDir: entry.agentDir,
+				connection: entry.connection,
+				outputGuard: config.settings.outputGuard,
+				requestTimeoutMs: server.config.requestTimeoutMs,
+				resources: cachedResources,
+				server: entry.name,
+			});
+		}
 		const policy = computeMcpExposurePolicy(catalog, server.config, config.settings);
 		for (const warning of policy.warnings) entry.logger.warn(warning);
 		if (policy.mode === "search") searchMode = true;
@@ -69,9 +84,11 @@ export async function registerDirectMcpTools(
 	) {
 		return undefined;
 	}
-	return registerMcpTierBTools(
+	const utilityTools = resourceServers.length > 0 ? createMcpResourceTools(() => resourceServers) : [];
+	const registration = registerMcpTierBTools(
 		pi,
-		{ activeEntries, proxyGateways, registeredEntries, searchMode, settings: config.settings },
+		{ activeEntries, proxyGateways, registeredEntries, searchMode, settings: config.settings, utilityTools },
 		(message) => createMcpLogger("service").warn(message),
 	);
+	return { ...registration, resourceServers };
 }

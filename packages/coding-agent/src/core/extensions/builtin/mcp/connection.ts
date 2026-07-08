@@ -13,6 +13,7 @@ import { diagnoseCapturedMcpConnectFailure, diagnoseMcpConnectFailure } from "./
 import { ConnectError } from "./errors.ts";
 import type { McpLogger } from "./log.ts";
 import { subscribeMcpListChanged } from "./notifications.ts";
+import { subscribeMcpResourceUpdated } from "./resources.ts";
 import {
 	connectMcpTransport,
 	createMcpTransport,
@@ -227,6 +228,9 @@ export class ServerConnection {
 		// Subscribe to list_changed on the fresh client (even if the server never
 		// declared the capability) so dynamic catalog updates reach the service.
 		subscribeMcpListChanged(connection.client, () => this.markToolsChanged());
+		// Resource updates ride the same refresh path: the service re-collects the
+		// catalog (tools AND resources) on tools-changed.
+		subscribeMcpResourceUpdated(connection.client, () => this.markToolsChanged());
 		this.#setState("connected");
 		this.markToolsChanged();
 		return connection.client;

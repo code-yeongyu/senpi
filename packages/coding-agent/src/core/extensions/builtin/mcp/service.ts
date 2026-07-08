@@ -6,8 +6,8 @@ import { loadMcpConfig, resolveSkillMcpServer, visitSpawnableMcpServers } from "
 import type { McpServerConfig, ResolvedMcpConfig, ResolvedMcpServer } from "./config-schema.ts";
 import { ServerConnection } from "./connection.ts";
 import { mapMcpCatalogNames } from "./expose/register.ts";
+import type { McpSessionRegistration } from "./expose/session.ts";
 import type { McpServerExposureStatus } from "./expose/status.ts";
-import type { McpTierBRegistration } from "./expose/tier-b.ts";
 import { cleanupMcpOutputArtifacts } from "./guard/output-guard.ts";
 import { markMcpConnectionNeedsAuth } from "./health.ts";
 import { configureMcpConnectionLifecycle, disposeMcpConnectionLifecycle } from "./idle.ts";
@@ -19,6 +19,7 @@ import {
 	formatMcpListChangedDelta,
 } from "./notifications.ts";
 import { configureMcpReconnect, disposeMcpReconnect, reconnectMcpNow } from "./reconnect.ts";
+import type { McpResourceServer } from "./resources.ts";
 import { getMcpServiceExposureStatus } from "./service-exposure.ts";
 import { registerMcpServiceDirectTools } from "./service-register.ts";
 import { buildMcpServerSnapshot } from "./service-snapshot.ts";
@@ -52,7 +53,7 @@ export class McpService {
 	#authEnv: Record<string, string | undefined> | undefined;
 	readonly #pendingAuth = new Map<string, import("./auth/oauth-provider.ts").McpOAuthProvider>();
 	#refreshActiveSetWhenNoTools = false;
-	#tierBRegistration: McpTierBRegistration | undefined;
+	#tierBRegistration: McpSessionRegistration | undefined;
 	#historyScanned = false;
 	#sessionOptions: McpSessionOptions = {};
 	#pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool"> | undefined;
@@ -132,6 +133,11 @@ export class McpService {
 	 * used by the skills loader to compute activation targets. */
 	getTierBSearchable(): ReadonlyArray<{ name: string; toolName: string; server: string }> {
 		return this.#tierBRegistration?.searchable ?? [];
+	}
+
+	/** Connected servers that list resources (todo 39), for mention expansion. */
+	getMcpResourceServers(): readonly McpResourceServer[] {
+		return this.#tierBRegistration?.resourceServers ?? [];
 	}
 
 	/** Reveal skill-owned tools (todo 37): activation is effective the next

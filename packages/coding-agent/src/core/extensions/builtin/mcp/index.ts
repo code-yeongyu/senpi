@@ -4,6 +4,7 @@ import { AnthropicNativeToolSearchAdapter } from "./expose/native-search.ts";
 import { MCP_SEARCH_TOOL_NAME } from "./expose/tool-search.ts";
 import { injectMcpInstructions, refreshMcpInstructionsForSession } from "./instructions.ts";
 import { createMcpLogger } from "./log.ts";
+import { expandMcpResourceMentions } from "./resources.ts";
 import { getMcpService } from "./service.ts";
 import {
 	parseSkillMcpDeclarations,
@@ -65,9 +66,20 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 		const targets = skillActivationTargets(skillDecls, skillName, registered);
 		if (targets.length > 0) service.activateSkillMcpTools(targets);
 	};
-	pi.on("input", (event) => {
+	pi.on("input", async (event, ctx) => {
 		const match = /^\s*\/skill:([A-Za-z0-9._-]+)/.exec(event.text);
 		if (match) revealSkill(match[1]);
+		// @mcp:<server>/<uri> mention expansion (todo 39): recognized mentions are
+		// inlined via the sanctioned input transform; failures pass through
+		// untouched with a one-line notice so submission is never blocked.
+		if (event.text.includes("@mcp:")) {
+			const expansion = await expandMcpResourceMentions(event.text, () => getMcpService().getMcpResourceServers());
+			for (const notice of expansion.notices) {
+				createMcpLogger("resources").warn(notice);
+				void ctx.ui?.notify?.(notice, "warning");
+			}
+			if (expansion.changed) return { action: "transform", text: expansion.text };
+		}
 		return undefined;
 	});
 	pi.on("tool_call", (event) => {

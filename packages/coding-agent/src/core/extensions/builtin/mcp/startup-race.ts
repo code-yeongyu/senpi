@@ -4,6 +4,7 @@ import type { ResolvedMcpServer } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
 import { markMcpConnectionNeedsAuth } from "./health.ts";
 import { createMcpLogger } from "./log.ts";
+import { ensureMcpResourceSubscriptions } from "./resources.ts";
 import type { McpConnectionEntry } from "./service-types.ts";
 import { safeTimer } from "./wrap.ts";
 
@@ -53,6 +54,9 @@ export async function connectAndRefreshMcpCatalog(
 		const catalog = await collectServerCatalogForCache(entry.connection, serverConfig, entry.configHash);
 		entry.cachedCatalog = catalog;
 		await writeMcpCachedServer(entry.agentDir, entry.name, catalog);
+		// Per-resource subscriptions (todo 39): only when the server declares
+		// resources.subscribe; best-effort, failures are non-fatal.
+		await ensureMcpResourceSubscriptions(entry.connection.client, catalog.resources ?? []);
 	} catch (error) {
 		entry.logger.warn("Failed to refresh MCP catalog cache", {
 			error: error instanceof Error ? error.message : String(error),

@@ -42,6 +42,8 @@ export interface McpTierBRegistrationInput {
 	readonly searchMode: boolean;
 	/** Tier-C proxy servers (todo 38): one always-active gateway tool each. */
 	readonly proxyGateways?: readonly { server: string; entries: readonly McpToolCatalogEntry[] }[];
+	/** Always-active utility tools (todo 39: mcp_list_resources/mcp_read_resource). */
+	readonly utilityTools?: readonly McpToolDefinition[];
 	readonly settings: McpSettings;
 }
 
@@ -80,6 +82,10 @@ export function registerMcpTierBTools(
 	const gatewayNames: string[] = [];
 	for (const gateway of input.proxyGateways ?? []) {
 		const tool = createMcpProxyTool(gateway.server, gateway.entries);
+		pi.registerTool(tool);
+		gatewayNames.push(tool.name);
+	}
+	for (const tool of input.utilityTools ?? []) {
 		pi.registerTool(tool);
 		gatewayNames.push(tool.name);
 	}

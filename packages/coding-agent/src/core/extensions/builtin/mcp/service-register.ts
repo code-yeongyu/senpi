@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "../../types.ts";
 import type { ResolvedMcpConfig } from "./config-schema.ts";
+import type { McpSessionRegistration } from "./expose/session.ts";
 import { registerDirectMcpTools } from "./expose/session.ts";
-import type { McpTierBRegistration } from "./expose/tier-b.ts";
 import type { McpConnectionEntry } from "./service-types.ts";
 import { connectAndRefreshMcpCatalog } from "./startup-race.ts";
 
@@ -16,7 +16,7 @@ export async function registerMcpServiceDirectTools(
 	config: ResolvedMcpConfig,
 	entries: Iterable<McpConnectionEntry>,
 	options: McpServiceDirectToolRegistrationOptions = {},
-): Promise<McpTierBRegistration | undefined> {
+): Promise<McpSessionRegistration | undefined> {
 	return await registerDirectMcpTools(
 		pi,
 		config,
