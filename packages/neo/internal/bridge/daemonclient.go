@@ -45,6 +45,17 @@ type SpawnRequest struct {
 	// AgentDir / Cwd identify the daemon's registry slot.
 	AgentDir string
 	Cwd      string
+	// AgentDirEnvName is the env var the daemon reads to resolve its agent dir
+	// (store.Config.AgentDirEnvName(), e.g. "SENPI_CODING_AGENT_DIR"). The spawner
+	// sets it to AgentDir in the daemon's env so the daemon registers into EXACTLY
+	// the dir the client polls — never relying on ambient inheritance, which can
+	// silently diverge (daemon registers to ~/.senpi while the client polls a
+	// sandbox, or vice versa). Empty leaves the env untouched.
+	AgentDirEnvName string
+	// SessionDirEnvName / SessionDir similarly pin the daemon's session dir so its
+	// workers resume sessions from the same place the client used. Empty skips it.
+	SessionDirEnvName string
+	SessionDir        string
 }
 
 // Spawner launches the daemon supervisor detached. It returns nil once the child
@@ -57,6 +68,11 @@ type Spawner func(SpawnRequest) error
 type AttachConfig struct {
 	// AgentDir is the resolved senpi agent dir (store.Config.AgentDir()).
 	AgentDir string
+	// AgentDirEnvName / SessionDirEnvName + SessionDir pin the spawned daemon's
+	// dirs explicitly (see SpawnRequest) so it registers where the client polls.
+	AgentDirEnvName   string
+	SessionDirEnvName string
+	SessionDir        string
 	// Cwd is the client's working directory. It is used raw for the registry key;
 	// callers should pass an already-resolved absolute path (the daemon resolves
 	// the same cwd, so the keys match).
@@ -167,7 +183,14 @@ func AttachOrSpawn(cfg AttachConfig) (*DaemonConn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bridge: choose socket path: %w", err)
 	}
-	if err := cfg.Spawn(SpawnRequest{Socket: socket, AgentDir: cfg.AgentDir, Cwd: cfg.Cwd}); err != nil {
+	if err := cfg.Spawn(SpawnRequest{
+		Socket:            socket,
+		AgentDir:          cfg.AgentDir,
+		Cwd:               cfg.Cwd,
+		AgentDirEnvName:   cfg.AgentDirEnvName,
+		SessionDirEnvName: cfg.SessionDirEnvName,
+		SessionDir:        cfg.SessionDir,
+	}); err != nil {
 		return nil, fmt.Errorf("bridge: spawn daemon: %w", err)
 	}
 

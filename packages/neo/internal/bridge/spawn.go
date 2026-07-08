@@ -52,6 +52,20 @@ func SpawnDaemonDetached(req SpawnRequest) error {
 	cmd := exec.Command(node, args...)
 	cmd.Dir = req.Cwd
 
+	// Pin the daemon's agent/session dirs EXPLICITLY (never rely on ambient
+	// inheritance): the client polls req.AgentDir for the registry record, so the
+	// daemon must register into that exact dir. Without this, a detached daemon
+	// whose inherited env lacks the override resolves the agent dir to ~/.senpi
+	// and registers there, while the client polls the sandbox — the record is
+	// never found and attach-or-spawn times out even though the daemon is healthy.
+	cmd.Env = os.Environ()
+	if req.AgentDirEnvName != "" && req.AgentDir != "" {
+		cmd.Env = append(cmd.Env, req.AgentDirEnvName+"="+req.AgentDir)
+	}
+	if req.SessionDirEnvName != "" && req.SessionDir != "" {
+		cmd.Env = append(cmd.Env, req.SessionDirEnvName+"="+req.SessionDir)
+	}
+
 	// Detach stdio so the daemon never touches the client's terminal.
 	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
 	if err == nil {

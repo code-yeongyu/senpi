@@ -17,6 +17,12 @@ type ConnectConfig struct {
 	GOOS string
 	// AgentDir is the resolved senpi agent dir.
 	AgentDir string
+	// AgentDirEnvName / SessionDirEnvName + SessionDir let the daemon spawner pin
+	// the daemon's dirs explicitly (store env var names + values) so a spawned
+	// daemon registers where this client polls. Empty falls back to inheritance.
+	AgentDirEnvName   string
+	SessionDirEnvName string
+	SessionDir        string
 	// Cwd is the client's resolved absolute working directory.
 	Cwd string
 	// Capabilities are client capability opt-ins forwarded in the handshake
@@ -81,12 +87,15 @@ func Connect(cfg ConnectConfig) (*ConnectResult, error) {
 	}
 
 	conn, err := AttachOrSpawn(AttachConfig{
-		AgentDir:       cfg.AgentDir,
-		Cwd:            cfg.Cwd,
-		Capabilities:   cfg.Capabilities,
-		RuntimeOptions: options,
-		Spawn:          cfg.spawn,
-		Timeout:        cfg.Timeout,
+		AgentDir:          cfg.AgentDir,
+		AgentDirEnvName:   cfg.AgentDirEnvName,
+		SessionDirEnvName: cfg.SessionDirEnvName,
+		SessionDir:        cfg.SessionDir,
+		Cwd:               cfg.Cwd,
+		Capabilities:      cfg.Capabilities,
+		RuntimeOptions:    options,
+		Spawn:             cfg.spawn,
+		Timeout:           cfg.Timeout,
 	})
 	if err != nil {
 		return nil, err

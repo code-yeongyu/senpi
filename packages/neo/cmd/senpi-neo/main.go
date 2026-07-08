@@ -94,8 +94,13 @@ func launch(args []string, _ io.Writer) int {
 		NeoArgv:      args,
 		GOOS:         runtime.GOOS,
 		AgentDir:     agentDir,
-		Cwd:          cwd,
-		Capabilities: neoCapabilities,
+		// Pin the daemon's dirs explicitly so a spawned daemon registers into the
+		// SAME agent dir this client polls (never via ambient inheritance).
+		AgentDirEnvName:   cfg.AgentDirEnvName(),
+		SessionDirEnvName: cfg.SessionDirEnvName(),
+		SessionDir:        os.Getenv(cfg.SessionDirEnvName()),
+		Cwd:               cwd,
+		Capabilities:      neoCapabilities,
 	})
 	if err != nil {
 		return fail("could not start the senpi backend: " + connectHint(err))

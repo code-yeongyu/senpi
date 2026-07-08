@@ -29,6 +29,17 @@ func (c Config) envAgentDirName() string {
 	return strings.ToUpper(c.AppName) + "_CODING_AGENT_DIR"
 }
 
+// AgentDirEnvName exposes the agent-dir env var name (e.g. SENPI_CODING_AGENT_DIR)
+// so callers spawning a subprocess can pin it explicitly rather than relying on
+// ambient inheritance.
+func (c Config) AgentDirEnvName() string { return c.envAgentDirName() }
+
+// SessionDirEnvName exposes the session-dir env var name (e.g.
+// SENPI_CODING_AGENT_SESSION_DIR), mirroring config.ts ENV_SESSION_DIR.
+func (c Config) SessionDirEnvName() string {
+	return strings.ToUpper(c.AppName) + "_CODING_AGENT_SESSION_DIR"
+}
+
 // AgentDir resolves the agent config directory, mirroring getAgentDir
 // (config.ts:514-521): the env override wins (tilde/relative-expanded), else
 // <home>/<configDirName>/agent.
