@@ -1,0 +1,7 @@
+=== GREEN capture ===
+julia version 1.12.6
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+--- full codemode suite ---
+ Test Files  15 passed (15)
+      Tests  77 passed (77)

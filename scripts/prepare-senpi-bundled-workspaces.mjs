@@ -27,17 +27,26 @@ export function nativePrebuildFile(target) {
 }
 
 const bundledWorkspaces = [
-	{ source: "packages/agent", targetName: "pi-agent-core" },
-	{ source: "packages/ai", targetName: "pi-ai" },
+	{ source: "packages/agent", packageName: "@earendil-works/pi-agent-core", targetParts: ["@earendil-works", "pi-agent-core"], sourceOnly: false },
+	{ source: "packages/ai", packageName: "@earendil-works/pi-ai", targetParts: ["@earendil-works", "pi-ai"], sourceOnly: false },
 	{
 		source: "packages/pty",
-		targetName: "pi-pty",
+		packageName: "@earendil-works/pi-pty",
+		targetParts: ["@earendil-works", "pi-pty"],
+		sourceOnly: false,
 		requiredFiles: ["package.json", "dist/index.js", "native/index.js"],
 		nativePrebuild: true,
 	},
-	{ source: "packages/tui", targetName: "pi-tui" },
+	{ source: "packages/tui", packageName: "@earendil-works/pi-tui", targetParts: ["@earendil-works", "pi-tui"], sourceOnly: false },
+	{
+		source: "packages/senpi-codemode",
+		packageName: "@code-yeongyu/senpi-codemode",
+		targetParts: ["@code-yeongyu", "senpi-codemode"],
+		sourceOnly: true,
+		requiredFiles: ["package.json", "src/index.ts", "src/kernels/py/prelude.py"],
+	},
 ];
-const internalPackageNames = new Set(bundledWorkspaces.map((workspace) => `@earendil-works/${workspace.targetName}`));
+const internalPackageNames = new Set(bundledWorkspaces.map((workspace) => workspace.packageName));
 
 function requiredFilesForWorkspace(workspace, nativeTargets) {
 	const requiredFiles = [...(workspace.requiredFiles ?? ["package.json", "dist/index.js"])];
@@ -49,22 +58,24 @@ function requiredFilesForWorkspace(workspace, nativeTargets) {
 
 export function bundledWorkspacePackageChecks(nativeTargets = [nativePrebuildTarget()]) {
 	return bundledWorkspaces.map((workspace) => ({
-		packageName: `@earendil-works/${workspace.targetName}`,
+		packageName: workspace.packageName,
 		requiredFiles: requiredFilesForWorkspace(workspace, nativeTargets),
 	}));
 }
 
-function shouldCopyWorkspaceFile(sourceRoot, sourcePath) {
+function shouldCopyWorkspaceFile(sourceRoot, sourcePath, sourceOnly = false) {
 	const path = relative(sourceRoot, sourcePath);
 	return (
 		path === "" ||
 		path === "package.json" ||
 		path === "README.md" ||
 		path === "CHANGELOG.md" ||
+		path === "LICENSE" ||
 		path === "dist" ||
 		path.startsWith(`dist/`) ||
 		path === "native" ||
-		path.startsWith(`native/`)
+		path.startsWith(`native/`) ||
+		(sourceOnly && (path === "src" || path.startsWith("src/")))
 	);
 }
 
@@ -131,12 +142,12 @@ export function assertSenpiPackedWorkspaceFiles(packed, options = {}) {
 
 export function prepareSenpiBundledWorkspaces(repoRoot = root) {
 	copyPublishDependencies(repoRoot);
-	const codingAgentNodeModules = join(repoRoot, "packages/coding-agent/node_modules/@earendil-works");
+	const codingAgentNodeModules = join(repoRoot, "packages/coding-agent/node_modules");
 
 	for (const workspace of bundledWorkspaces) {
 		const sourceRoot = join(repoRoot, workspace.source);
 		const distPath = join(sourceRoot, "dist");
-		if (!existsSync(distPath)) {
+		if (!workspace.sourceOnly && !existsSync(distPath)) {
 			throw new Error(`Missing ${distPath}. Run npm run build before preparing bundled workspaces.`);
 		}
 
@@ -144,17 +155,18 @@ export function prepareSenpiBundledWorkspaces(repoRoot = root) {
 		for (const requiredFile of requiredFiles) {
 			const requiredPath = join(sourceRoot, requiredFile);
 			if (!existsSync(requiredPath)) {
-				const packageName = `@earendil-works/${workspace.targetName}`;
-				throw new Error(`Missing ${requiredPath}. ${packageName} cannot be bundled without loader-visible package files.`);
+				throw new Error(
+					`Missing ${requiredPath}. ${workspace.packageName} cannot be bundled without loader-visible package files.`,
+				);
 			}
 		}
 
-		const targetRoot = join(codingAgentNodeModules, workspace.targetName);
+		const targetRoot = join(codingAgentNodeModules, ...workspace.targetParts);
 		rmSync(targetRoot, { recursive: true, force: true });
 		mkdirSync(dirname(targetRoot), { recursive: true });
 		cpSync(sourceRoot, targetRoot, {
 			recursive: true,
-			filter: (sourcePath) => shouldCopyWorkspaceFile(sourceRoot, sourcePath),
+			filter: (sourcePath) => shouldCopyWorkspaceFile(sourceRoot, sourcePath, workspace.sourceOnly),
 		});
 	}
 }

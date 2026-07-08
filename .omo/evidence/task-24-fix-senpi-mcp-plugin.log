@@ -1,0 +1,83 @@
+TODO24 MCP OAuth callback gate blocker fix
+
+Worktree: /Users/yeongyu/local-workspaces/senpi-wt/senpi-mcp-plugin-w3
+Branch: code-yeongyu/senpi-mcp-plugin-w3
+Base TODO24 commit reviewed: 8f30eaba11d64e9f7d2e32a49cdf6e67539d0e1e
+Gate reject report read: .omo/evidence/todo24-senpi-mcp-plugin-gate-review.md
+
+Changed files:
+- packages/coding-agent/src/core/extensions/builtin/mcp/auth/commands-auth.ts
+- packages/coding-agent/src/core/extensions/builtin/mcp/config-schema.ts
+- packages/coding-agent/test/mcp/oauth-callback.test.ts
+
+Implementation summary:
+- Added per-server oauth.callbackPort config schema support.
+- Wired runAuth/runInteractive to pass the configured fixed callback port only for pre-registered clientId flows.
+- Kept OS-assigned loopback ports for DCR/default dynamic registration, CIMD, and callback URL override.
+- Changed callback URL override runAuth behavior to open authorization, persist the provider in pending, create zero local listener, and complete through /mcp auth-complete paste flow.
+- Strengthened timeout coverage with active server-handle baseline assertions plus port-closed proof.
+
+RED evidence:
+- Invocation: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/oauth-callback.test.ts
+- Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo24-fix/red-oauth-callback.txt
+- Observable: 3 expected failures:
+  - fixed pre-registered runAuth used a different OS-assigned redirect port.
+  - busy fixed port fell through to browser open instead of actionable conflict.
+  - override runAuth rejected through waitForCode instead of pending paste completion.
+
+GREEN evidence:
+- Invocation: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/oauth-callback.test.ts
+- Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo24-fix/green-oauth-callback-final.txt
+- Observable: 1 test file, 10 tests passed.
+
+Impacted OAuth tests:
+- Invocation: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/oauth-provider.test.ts test/mcp/oauth-headless.test.ts test/mcp/oauth-race.test.ts
+- Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo24-fix/impacted-oauth-tests-final.txt
+- Observable: 3 test files, 15 tests passed.
+
+Full check:
+- Invocation: npm run check
+- Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo24-fix/npm-run-check-final.txt
+- Observable: PASS; Biome checked 1549 files with "No fixes applied"; tsgo/check scripts/shrinkwrap/install-lock/browser smoke/web UI/neo build+vet+test all passed.
+
+Manual QA:
+- Invocation: npx tsx local-ignore/qa-evidence/20260708-mcp-w3-todo24-fix/manual-todo24-fix-qa.ts
+- Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo24-fix/manual-todo24-fix-qa-final.txt
+- Observables:
+  - curl-follow loopback happy path: authorize_status HTTP/1.1 302 Found, callback_status HTTP/1.1 200 OK, token_store_access_token_present true, token_store_refresh_token_present true.
+  - duplicate auth rejection/no port fight: second_auth_error "authorization is already in progress", browser_flow_count_after_second 1, duplicate_first_flow_completed true.
+  - fixed-port busy conflict: fixed_port_busy_error includes "port <port> is already in use (another senpi auth flow may be running); free it or configure a different callback.", fixed_port_busy_browser_count 0.
+  - override full-flow zero-listener/paste wait: override_port_open_after_auth false, override_pending_after_auth true, override_port_open_after_complete false, override_token_present true.
+  - timeout teardown handle/baseline: timeout_port_open_after_start true, timeout_error "authorization timed out after 5 minutes", timeout_port_open_after_timeout false, timeout_handle_after 0 <= timeout_handle_baseline 1.
+  - cleanup receipts: cleanup_happy_agent_dir_removed, cleanup_duplicate_agent_dir_removed, cleanup_fixed-busy_agent_dir_removed, cleanup_override_agent_dir_removed, cleanup_timeout_server_closed true.
+
+senpi QA / auth isolation:
+- Invocation: node .agents/skills/senpi-qa/scripts/lib/common.mjs --self-check
+- Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo24-fix/senpi-qa-common-self-check.txt
+- Observable: 9/9 passed; real auth unchanged at /Users/yeongyu/.senpi/agent/auth.json.
+- Invocation: node .agents/skills/senpi-qa/scripts/cli-smoke.mjs --self-test
+- Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo24-fix/senpi-qa-cli-smoke.txt
+- Observable: 6/6 passed; real auth unchanged.
+- Invocation: node .agents/skills/senpi-qa/scripts/mock-loop.mjs --self-test
+- Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo24-fix/senpi-qa-mock-loop.txt
+- Observable: 5/5 passed; zero real provider calls, real auth unchanged.
+
+Static/code-quality evidence:
+- Invocation: targeted no-excuse-style rg scan over changed TS files
+- Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo24-fix/targeted-static-scan.txt
+- Observable: no matches for any/as any/as unknown, ts-ignore/ts-expect-error, enum, namespace/module syntax, dynamic imports, console.log, debugger, throw literals, or empty catch in changed TS files.
+- Invocation: pure LOC scan
+- Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo24-fix/loc-check.txt
+- Observable: callback.ts 164, commands-auth.ts 165, config-schema.ts 132, oauth-callback.test.ts 235; all below 250 pure LOC.
+- Invocation: git diff --check on changed TS files
+- Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo24-fix/git-diff-check.txt
+- Observable: PASS, no whitespace errors.
+
+Cleanup:
+- All manual QA temp agent dirs were removed in-script.
+- The timeout callback server was explicitly closed.
+- senpi QA self-check proved sandbox cleanup and real auth file unchanged.
+- local-ignore QA artifacts are intentionally untracked and gitignored.
+
+Readiness:
+- Ready for TODO24 gate rereview after commit.

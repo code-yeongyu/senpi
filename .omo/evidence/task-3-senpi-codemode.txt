@@ -1,0 +1,196 @@
+## RED proof
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/bridge-protocol.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+ ❯ test/bridge-protocol.test.ts (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/bridge-protocol.test.ts [ test/bridge-protocol.test.ts ]
+Error: Cannot find module '../src/bridge/protocol.ts' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode/test/bridge-protocol.test.ts
+ ❯ test/bridge-protocol.test.ts:2:1
+      1| import { describe, expect, it } from "vitest";
+      2| import {
+       | ^
+      3|  BRIDGE_FRAME_MAX_BYTES,
+      4|  decodeBridgeFrame,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  no tests
+   Start at  15:12:12
+   Duration  139ms (transform 13ms, setup 0ms, import 0ms, tests 0ms, environment 0ms)
+
+
+## End RED proof
+
+## GREEN targeted bridge test
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/bridge-protocol.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  15:13:53
+   Duration  176ms (transform 14ms, setup 0ms, import 82ms, tests 5ms, environment 0ms)
+
+
+## npm run check
+$ npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1323 files in 859ms. Fixed 7 files.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+packages/senpi-codemode/test/prompt.test.ts(2,33): error TS2307: Cannot find module '../src/prompt/eval-prompt.ts' or its corresponding type declarations.
+
+## Scoped bridge test rerun after check formatting
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/bridge-protocol.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  15:14:45
+   Duration  238ms (transform 17ms, setup 0ms, import 95ms, tests 5ms, environment 0ms)
+
+
+## git diff --check scoped files
+$ git diff --check -- packages/senpi-codemode/src/bridge/protocol.ts packages/senpi-codemode/test/bridge-protocol.test.ts .omo/evidence/task-3-senpi-codemode.txt
+
+## Pure LOC count
+$ awk 'NF &&  !~ /^\/\// { count++ } END { print FILENAME, count }' packages/senpi-codemode/src/bridge/protocol.ts packages/senpi-codemode/test/bridge-protocol.test.ts
+packages/senpi-codemode/src/bridge/protocol.ts 164
+packages/senpi-codemode/test/bridge-protocol.test.ts 81
+
+## Staged diff check
+$ git diff --cached --check -- packages/senpi-codemode/src/bridge/protocol.ts packages/senpi-codemode/test/bridge-protocol.test.ts .omo/evidence/task-3-senpi-codemode.txt
+
+## Commit attempt
+$ git commit -m "feat: add senpi-codemode bridge protocol"
+Commit hook failed because unrelated untracked prompt todo files are included in full npm run check. Key failures: packages/senpi-codemode/src/prompt/eval-prompt.ts lint/type errors and packages/senpi-codemode/test/prompt.test.ts missing module in the earlier check. No hook bypass was used.
+
+## Final staged status
+$ git status --short
+AM .omo/evidence/task-3-senpi-codemode.txt
+A  packages/senpi-codemode/src/bridge/protocol.ts
+A  packages/senpi-codemode/test/bridge-protocol.test.ts
+?? .omo/drafts/
+?? .omo/evidence/task-4-senpi-codemode.txt
+?? .omo/evidence/task-5-senpi-codemode.txt
+?? packages/senpi-codemode/src/config/
+?? packages/senpi-codemode/src/interpreters/
+?? packages/senpi-codemode/src/prompt/
+?? packages/senpi-codemode/test/config.test.ts
+?? packages/senpi-codemode/test/interpreter.test.ts
+?? packages/senpi-codemode/test/prompt.test.ts
+
+## Last commit before task-3 commit attempt
+349ef7c00 feat: scaffold @code-yeongyu/senpi-codemode workspace package
+
+## Post-todo-5 verification (2026-07-06T06:25:18Z)
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/bridge-protocol.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  15:25:19
+   Duration  205ms (transform 25ms, setup 0ms, import 101ms, tests 6ms, environment 0ms)
+
+
+$ npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1324 files in 1275ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 45ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+
+$ git diff --check -- packages/senpi-codemode/src/bridge/protocol.ts packages/senpi-codemode/test/bridge-protocol.test.ts .omo/evidence/task-3-senpi-codemode.txt

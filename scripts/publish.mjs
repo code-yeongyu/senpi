@@ -10,8 +10,10 @@ const packages = [
 	{ directory: "packages/agent", name: "@earendil-works/pi-agent-core" },
 	{ directory: "packages/tui", name: "@earendil-works/pi-tui" },
 	{ directory: "packages/orchestrator", name: "@code-yeongyu/senpi-orchestrator" },
+	{ directory: "packages/senpi-codemode", name: "@code-yeongyu/senpi-codemode" },
 	{ directory: "packages/coding-agent", name: "@code-yeongyu/senpi" },
 ];
+const sourceOnlyPackages = new Set(["@code-yeongyu/senpi-codemode"]);
 
 const dryRun = process.argv.includes("--dry-run");
 const unknownArgs = process.argv.slice(2).filter((arg) => arg !== "--dry-run");
@@ -47,7 +49,8 @@ function readPackageJson(directory) {
 }
 
 function assertBuildOutputExists(directory) {
-	if (!existsSync(join(directory, "dist"))) {
+	const packageJson = readPackageJson(directory);
+	if (!sourceOnlyPackages.has(packageJson.name) && !existsSync(join(directory, "dist"))) {
 		throw new Error(`${directory}/dist does not exist. Run npm run build before publishing.`);
 	}
 }
@@ -55,8 +58,17 @@ function assertBuildOutputExists(directory) {
 function validatePack(directory) {
 	const result = run("npm", ["pack", "--dry-run", "--ignore-scripts", "--json"], { capture: true, cwd: directory });
 	const packed = JSON.parse(result.stdout)[0];
+	const packageJson = readPackageJson(directory);
 	if (directory === "packages/coding-agent") {
 		assertSenpiPackedWorkspaceFiles(packed);
+	}
+	if (sourceOnlyPackages.has(packageJson.name)) {
+		const filePaths = new Set((packed.files ?? []).map((file) => file.path));
+		for (const requiredPath of ["package/src/index.ts", "package/README.md", "package/CHANGELOG.md", "package/LICENSE"]) {
+			if (!filePaths.has(requiredPath)) {
+				throw new Error(`${packageJson.name} package tarball is missing ${requiredPath}`);
+			}
+		}
 	}
 	console.log(`  ${packed.filename}: ${packed.files.length} files, ${packed.size} bytes packed, ${packed.unpackedSize} bytes unpacked`);
 }

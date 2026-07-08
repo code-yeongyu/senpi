@@ -87,7 +87,7 @@ describe("mcp auth mode autodetect (#158)", () => {
 		const token = "env-token-1";
 		const fixture = await spawnHttpFixture(["--bearer", token, "--tools", "1"]);
 		cleanups.push(fixture.cleanup);
-		const config = baseHttp(fixture.url, { auth: "bearer", bearerTokenEnv: "MCP_TOKEN" });
+		const config = baseHttp(fixture.url, { bearerTokenEnv: "MCP_TOKEN" });
 		const ok = await connect(config, { MCP_TOKEN: token });
 		expect((await ok.client.listTools({}, { timeout: 3000 })).tools.length).toBeGreaterThan(0);
 		// A different env value is rejected by the server -> proves per-connect resolution.
@@ -99,6 +99,13 @@ describe("mcp auth mode autodetect (#158)", () => {
 		expect(() => createMcpTransport({ config, env: {}, logger: createMcpLogger("srv"), serverName: "srv" })).toThrow(
 			/MISSING_VAR is not set/,
 		);
+	});
+
+	it("lets explicit auth false override bearerTokenEnv", () => {
+		const config = baseHttp("https://x/mcp", { auth: false, bearerTokenEnv: "MISSING_VAR" });
+		const connection = createMcpTransport({ config, env: {}, logger: createMcpLogger("srv"), serverName: "srv" });
+		connections.push(connection);
+		expect(connection.transportKind).toBe("http");
 	});
 
 	it("warns on a literal secret in headers and suggests an env var placeholder", () => {

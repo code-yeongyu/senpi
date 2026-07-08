@@ -1,0 +1,13 @@
+{
+  "id": 4,
+  "invocation": "OAuth fixture --expire-access-sec 1 -> connect/call through auth provider",
+  "observations": {
+    "state": "connected",
+    "tokenHitsAfter": 2,
+    "tokenHitsBefore": 1,
+    "toolText": "fixture tool_1 value=refresh-hit mode=alpha"
+  },
+  "surface": "CLI/data surface: expiring fixture + refresh manager through real connection",
+  "title": "Expire access token -> transparent refresh on tool call",
+  "verdict": "PASS"
+}

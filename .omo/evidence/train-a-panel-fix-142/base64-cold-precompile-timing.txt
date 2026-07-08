@@ -1,0 +1,5 @@
+# Cold Julia depot: 'using Base64' triggers a serial precompile (the removed startup spike)
+Precompiling packages...
+   1267.8 ms  ✓ Base64 (serial)
+  1 dependency successfully precompiled in 1 seconds
+precompiled base64encode: aGk=

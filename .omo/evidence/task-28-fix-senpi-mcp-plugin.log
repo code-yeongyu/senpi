@@ -1,0 +1,33 @@
+TODO28 gate-fix consistency check
+timestamp=2026-07-07T22:54:23Z
+command=node -e <step10/index/log consistency checker>
+PASS: step10 verdict PASS
+PASS: index 11/11 PASS
+PASS: index step 10 PASS
+PASS: build phase 4 orchestrator
+PASS: test 16 files pass
+PASS: test 94 files pass
+PASS: test 369 files pass
+PASS: test 5 files pass
+PASS: test 15 files pass
+
+Final raw-token scan command/output
+command=node - <<NODE > local-ignore/qa-evidence/20260708-mcp-w3-todo28/final-raw-token-scan.log (scope listed in artifact)
+scope=.omo/evidence/task-28-senpi-mcp-plugin.log,.omo/evidence/task-28-fix-senpi-mcp-plugin.log,.omo/evidence/todo-28-code-quality-slop-review.md,.omo/evidence/task-28-senpi-mcp-plugin,.omo/evidence/task-28-w3-qa-verification,local-ignore/qa-evidence/20260708-mcp-w3-todo28
+excluded=local-ignore/qa-evidence/20260708-mcp-w3-todo28/todo28-auth-e2e-driver.mts (ignored local driver source contains fixture setup and scan regex source, not runtime output or committed/tracked evidence)
+files_scanned=49
+match_count=0
+verdict=PASS
+matches=[]
+
+Step 5/11 evidence consistency command/output
+command=rg -n "auth-start|auth-complete|MCP test oauth ok|is_error|needs OAuth|browserOpenAttempts" step artifacts
+local-ignore/qa-evidence/20260708-mcp-w3-todo28/step-11.json:12:    "browserOpenAttempts": 0,
+local-ignore/qa-evidence/20260708-mcp-w3-todo28/step-11-model-requests.json:60:            "content": "ToolExecError: AuthError: MCP server oauth needs OAuth. Run senpi interactive, then /mcp auth-start oauth and /mcp auth-complete oauth <redirect-url>.",
+local-ignore/qa-evidence/20260708-mcp-w3-todo28/step-11-model-requests.json:61:            "is_error": true,
+local-ignore/qa-evidence/20260708-mcp-w3-todo28/step-05-auth-flow-transcript.txt:5:ACTION send-keys: /mcp auth-start oauth
+local-ignore/qa-evidence/20260708-mcp-w3-todo28/step-05-auth-flow-transcript.txt:6:PANE after auth-start:
+local-ignore/qa-evidence/20260708-mcp-w3-todo28/step-05-auth-flow-transcript.txt:19: Open this URL, approve, then run /mcp auth-complete oauth <redirect-url>:
+local-ignore/qa-evidence/20260708-mcp-w3-todo28/step-05-auth-flow-transcript.txt:48:ACTION send-keys: /mcp auth-complete oauth http://127.0.0.1:<port>/callback?code=<redacted>&state=<redacted>
+local-ignore/qa-evidence/20260708-mcp-w3-todo28/step-05-auth-flow-transcript.txt:49:PANE after auth-complete:
+local-ignore/qa-evidence/20260708-mcp-w3-todo28/step-05-auth-flow-transcript.txt:101: MCP test oauth ok (7ms): 1 tools

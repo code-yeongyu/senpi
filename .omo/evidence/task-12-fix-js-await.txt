@@ -1,0 +1,64 @@
+Task 12: fix JS kernel bare top-level await support
+Date: 2026-07-06
+
+RED focused test before implementation:
+Command:
+cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/js-kernel.test.ts
+
+Output excerpt:
+FAIL  test/js-kernel.test.ts > JavaScriptKernel > supports bare top-level await
+AssertionError: expected { type: 'result', ... } to match object { ok: true, valueRepr: '42' }
+- Expected
++ Received
+  {
+-   "ok": true,
+-   "valueRepr": "42",
++   "ok": false,
+  }
+Test Files  1 failed (1)
+Tests  1 failed | 9 passed (10)
+
+Implementation:
+- packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js wraps no-return snippets containing await in an async IIFE that returns the awaited expression.
+- Existing return-containing snippets still use the existing async IIFE path, preserving return await tool behavior.
+
+GREEN focused test after implementation:
+Command:
+cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/js-kernel.test.ts
+
+Output:
+Test Files  1 passed (1)
+Tests  10 passed (10)
+
+Direct scenario output:
+Command:
+cd packages/senpi-codemode && npx tsx -e "import { JavaScriptKernel } from './src/kernels/js/context-manager.ts'; void (async () => { const kernel = new JavaScriptKernel({ sessionId: 'direct-await', cwd: process.cwd(), parallelPoolWidth: 2 }); try { const result = await kernel.run({ cellId: 'direct-await-cell', code: 'await Promise.resolve(42)', timeoutMs: 2000 }); console.log(JSON.stringify(result)); } finally { await kernel.close(); } })();"
+
+Output:
+{"type":"result","cellId":"direct-await-cell","ok":true,"valueRepr":"42","durationMs":4}
+
+npm run check:
+Command:
+npm run check
+
+Output excerpt:
+packages/senpi-codemode/test/py-kernel.test.ts:1:8 lint/correctness/noUnusedImports
+! This import is unused.
+> 1 | import { once } from "node:events";
+Found 1 warning.
+
+Result:
+Failed on an out-of-scope py-kernel warning. Per task scope, py/rb/jl files were not edited.
+
+Scoped diff and LOC:
+Command:
+git diff --check -- packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js packages/senpi-codemode/test/js-kernel.test.ts
+Result: passed with no output.
+
+Command:
+git diff --numstat -- packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js packages/senpi-codemode/test/js-kernel.test.ts
+Output:
+1	0	packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js
+7	0	packages/senpi-codemode/test/js-kernel.test.ts
+
+Total scoped LOC delta: 8 added lines, 0 deleted lines, <=250.

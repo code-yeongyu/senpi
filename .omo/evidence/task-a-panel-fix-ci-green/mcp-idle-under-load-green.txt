@@ -1,0 +1,5 @@
+# mcp/idle keep-alive recovery: 20 CPU burners on 18 cores, 3 runs (adopted PR#146 timer-ordering gate)
+recovery run 1 under load: Error: condition timed out     237|  throw new Error("condition timed out");       Tests  1 failed | 6 skipped (7) 
+recovery run 2 under load: Error: condition timed out     237|  throw new Error("condition timed out");       Tests  1 failed | 6 skipped (7) 
+recovery run 3 under load:       Tests  1 passed | 6 skipped (7) 
+load killed

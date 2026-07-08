@@ -1,5 +1,13 @@
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
+import { OAuthFlowError } from "./auth/oauth-errors.ts";
 import type { ServerConnection } from "./connection.ts";
-import { ConnectError, isMcpSessionExpiredError, isRetriableMcpError, SessionExpiredError } from "./errors.ts";
+import {
+	AuthError,
+	ConnectError,
+	isMcpSessionExpiredError,
+	isRetriableMcpError,
+	SessionExpiredError,
+} from "./errors.ts";
 
 export const MCP_PING_STALE_MS = 30_000;
 export const MCP_PING_TIMEOUT_MS = 2_000;
@@ -11,11 +19,24 @@ interface McpHealthState {
 
 const healthByConnection = new WeakMap<ServerConnection, McpHealthState>();
 
-export async function ensureMcpToolCallConnection(connection: ServerConnection): Promise<void> {
+export type McpEnsureFreshAuth = () => Promise<unknown>;
+
+export async function ensureMcpToolCallConnection(
+	connection: ServerConnection,
+	ensureFresh?: McpEnsureFreshAuth,
+): Promise<void> {
+	await ensureFreshAuth(connection, ensureFresh);
 	const health = healthStateFor(connection);
 	if (connection.state !== "connected") {
 		if (connection.state === "idle" || connection.state === "connecting") {
-			await connection.connect();
+			try {
+				await connection.connect();
+			} catch (error) {
+				if (isNeedsAuthError(error)) throw headlessAuthError(connection, error);
+				throw error;
+			}
+		} else if (connection.state === "needs_auth") {
+			throw headlessAuthError(connection);
 		} else {
 			await renewConnection(connection, health);
 			return;
@@ -98,8 +119,34 @@ async function pingOrRenew(connection: ServerConnection, health: McpHealthState)
 }
 
 async function renewConnection(connection: ServerConnection, health: McpHealthState): Promise<void> {
-	await connection.renew();
+	try {
+		await connection.renew();
+	} catch (error) {
+		if (isNeedsAuthError(error)) throw headlessAuthError(connection, error);
+		throw error;
+	}
 	health.lastSuccessfulPingAtMs = Date.now();
+}
+
+async function ensureFreshAuth(
+	connection: ServerConnection,
+	ensureFresh: McpEnsureFreshAuth | undefined,
+): Promise<void> {
+	if (ensureFresh === undefined) return;
+	try {
+		await ensureFresh();
+	} catch (error) {
+		const authError = markMcpConnectionNeedsAuth(connection, error);
+		if (authError !== undefined) throw authError;
+		throw error;
+	}
+}
+
+export function markMcpConnectionNeedsAuth(connection: ServerConnection, error: unknown): AuthError | undefined {
+	if (!isNeedsAuthError(error)) return undefined;
+	const authError = headlessAuthError(connection, error);
+	connection.markNeedsAuth(authError);
+	return authError;
 }
 
 function isRetriableFailedSendError(error: unknown): boolean {
@@ -128,4 +175,20 @@ function sessionExpiredError(connection: ServerConnection, cause: unknown, retri
 		retriable,
 		serverName: connection.serverName,
 	});
+}
+
+function headlessAuthError(connection: ServerConnection, cause?: unknown): AuthError {
+	return new AuthError(
+		`MCP server ${connection.serverName} needs OAuth. Run senpi interactive, then /mcp auth-start ${connection.serverName} and /mcp auth-complete ${connection.serverName} <redirect-url>.`,
+		{ cause, phase: "auth", serverName: connection.serverName },
+	);
+}
+
+function isNeedsAuthError(error: unknown, depth = 0): boolean {
+	if (error instanceof UnauthorizedError) return true;
+	if (error instanceof OAuthFlowError) return error.terminal;
+	if (depth < 5 && error !== null && typeof error === "object" && "cause" in error) {
+		return isNeedsAuthError(error.cause, depth + 1);
+	}
+	return false;
 }

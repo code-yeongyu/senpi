@@ -1,0 +1,36 @@
+
+Prompt preset: claude-opus-4-8
+
+[Prompts]
+  /is, /sa, /wr
+
+[Extensions]
+  anthropic-bash, anthropic-web-search, bash-timeout, compaction, diff.js, files.js, goal, gpt-apply-patch, history-search, hooks,
+import-repro, mcp, nested-agents-md, openai-web-search, permission-system, prompt-preset, prompt-url-widget.js, redraws, rules,
+service-tier, session-observer, src, terminal, todo, tool-pair-guard, tps.js, webfetch, websearch
+
+
+ MCP test oauth ok (7ms): 1 tools
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3 • code-yeongyu/senpi-mcp-plugin-w3 • 0/1,000,000 (0.0%) (auto)  claud
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

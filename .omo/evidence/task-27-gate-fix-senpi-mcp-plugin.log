@@ -1,0 +1,132 @@
+TODO27 gate-fix verification log
+worktree: /Users/yeongyu/local-workspaces/senpi-wt/senpi-mcp-plugin-w3
+started: 2026-07-08T07:01:44+0900
+
+COMMAND: cd packages/coding-agent && TODO27_RACE_ARTIFACT_DIR=../../local-ignore/qa-evidence/20260708-mcp-w3-todo27 npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/oauth-race.test.ts
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent
+
+··
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  07:01:59
+   Duration  1.01s (transform 48ms, setup 11ms, import 96ms, tests 824ms, environment 0ms)
+
+
+COMMAND: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/oauth-provider.test.ts test/mcp/oauth-headless.test.ts test/mcp/token-store.test.ts test/mcp/auth-modes.test.ts test/mcp/oauth-race.test.ts
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent
+
+··································
+
+ Test Files  5 passed (5)
+      Tests  34 passed (34)
+   Start at  07:02:08
+   Duration  3.68s (transform 1.44s, setup 61ms, import 2.40s, tests 5.66s, environment 0ms)
+
+
+COMMAND: npm run check
+
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1549 files in 746ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 29ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/app	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	15.564s
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/bridge/attachqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	3.195s
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	0.673s
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/extui	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/extui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	0.953s
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+
+COMMAND: node .agents/skills/senpi-qa/scripts/lib/common.mjs --self-check
+
+[PASS] repo root resolves — /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3
+[PASS] tsx entry present — /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/tsx/dist/cli.mjs
+[PASS] sandbox isolates agent + session dirs — /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/self-check-3idfhr
+[PASS] real auth snapshot taken — sha256=209517649905…
+[PASS] free port allocatable — 55035
+[PASS] evidence dir creatable under local-ignore — /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/local-ignore/qa-evidence/20260708-self-check
+[PASS] ansi stripping
+[PASS] sandbox removed on cleanup — /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/self-check-3idfhr
+[PASS] real auth unchanged — /Users/yeongyu/.senpi/agent/auth.json
+
+common.mjs --self-check: 9/9 passed
+
+COMMAND: node .agents/skills/senpi-qa/scripts/mock-loop.mjs --self-test
+
+[PASS] openai-completions: baseUrl override round-trips through the real loop — code=0 marker=true path=/v1/chat/completions auth=true
+[PASS] anthropic-messages: baseUrl override round-trips through the real loop — code=0 marker=true path=/v1/messages auth=true
+[PASS] openai-responses: baseUrl override round-trips through the real loop — code=0 marker=true path=/v1/responses auth=true
+[PASS] zero real provider calls (only localhost fake hit) — all baseUrls point at 127.0.0.1
+[PASS] real auth unchanged — /Users/yeongyu/.senpi/agent/auth.json
+
+mock-loop.mjs --self-test: 5/5 passed
+
+COMMAND: rg -n "SENTINEL_(AT|RT)_[A-Za-z0-9_-]+" .omo/evidence/task-27*.log .omo/evidence/todo-27-code-quality-slop-review.md .omo/evidence/subagent-stop-22-todo27-verification-3.md local-ignore/qa-evidence/20260708-mcp-w3-todo27
+
+RESULT: raw sentinel scan found no matches (rg exit 1 expected for no matches).

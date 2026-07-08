@@ -1,0 +1,57 @@
+Task 12: fix JS await cell last-expression capture
+Date: 2026-07-06
+
+RED coverage:
+Command: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/js-kernel.test.ts
+Result before evaluator fix: failed.
+Observed failure: test/js-kernel.test.ts > JavaScriptKernel > captures the last expression after awaited statements.
+Expected ok/valueRepr 42, received ok false for exact cell:
+const y = await Promise.resolve(41)
+y + 1
+Other JS kernel tests passed in that RED run: 10 passed, 1 failed.
+
+Implementation:
+Changed packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js.
+The worker now wraps user code in an async IIFE and captures the final top-level expression statement.
+Explicit return cells still run as the user wrote them inside the async IIFE.
+Persistent state rewrite remains in place: top-level const/let/var assignment is rewritten to globalThis.<name> assignment.
+Worker helper LOC check: wc -l packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js => 88 lines, under 250.
+
+GREEN scoped test:
+Command: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/js-kernel.test.ts
+Result: passed.
+Output summary: Test Files 1 passed (1); Tests 11 passed (11).
+
+Full check:
+Command: npm run check
+Result: passed.
+Output summary:
+- biome check --write --error-on-warnings .: Checked 1343 files. No fixes applied.
+- check:pinned-deps: passed.
+- check:ts-imports: passed.
+- check:shrinkwrap: packages/coding-agent/npm-shrinkwrap.json is up to date.
+- check:install-lock:coding-agent: packages/coding-agent/install-lock is up to date.
+- web-ui check and example tsgo: passed.
+- check:neo build/vet/test: passed.
+
+Direct scenario:
+Command: npx tsx /tmp/senpi-js-last-expression-scenario.ts
+Driver imported JavaScriptKernel from the worktree and ran:
+const y = await Promise.resolve(41)
+y + 1
+Output:
+{"mode":"worker","result":{"type":"result","cellId":"direct-scenario","ok":true,"valueRepr":"42","durationMs":3}}
+
+Scoped diff checks:
+Command: git diff --check -- packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js packages/senpi-codemode/test/js-kernel.test.ts
+Result: passed with no output.
+
+Command: git diff -- packages/senpi-codemode/test/js-kernel.test.ts packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js
+Scoped files changed:
+- packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js
+- packages/senpi-codemode/test/js-kernel.test.ts
+
+Out-of-scope dirty files present and not staged by this task:
+- packages/senpi-codemode/src/kernels/shared/subprocess-kernel.ts
+- packages/senpi-codemode/test/kernels/rb/subprocess-kernel.test.ts
+- existing untracked .omo/drafts/ and unrelated evidence files

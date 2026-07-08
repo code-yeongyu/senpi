@@ -1,0 +1,70 @@
+[
+  {
+    "method": "POST",
+    "url": "/v1/messages",
+    "authorization": null,
+    "apiKeyHeader": "<redacted>",
+    "model": "mock-claude",
+    "stream": true,
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Call the OAuth MCP tool once.",
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "method": "POST",
+    "url": "/v1/messages",
+    "authorization": null,
+    "apiKeyHeader": "<redacted>",
+    "model": "mock-claude",
+    "stream": true,
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Call the OAuth MCP tool once."
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "toolu_0",
+            "name": "mcp_oauth_tool_1",
+            "input": {
+              "value": "print-mode"
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_0",
+            "content": "ToolExecError: AuthError: MCP server oauth needs OAuth. Run senpi interactive, then /mcp auth-start oauth and /mcp auth-complete oauth <redirect-url>.",
+            "is_error": true,
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ]
+      }
+    ]
+  }
+]

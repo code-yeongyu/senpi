@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added an exported `prepareAgentToolCall` helper so host integrations can reuse agent-loop tool argument preparation and schema validation.
+
 ### Changed
 
 ### Fixed

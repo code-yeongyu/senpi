@@ -3,10 +3,12 @@
  *
  * The launcher forwards every runtime-relevant flag so the Go TUI (and, through
  * it, the daemon connection) reconstructs the same runtime the classic path
- * would have built. Initial inputs — positional messages, @file mentions, and
- * image paths — are forwarded RAW (no expansion here); the daemon expands them
- * with the connection's cwd. @file args are re-prefixed with `@` to match the
- * tokens the Go arg parser expects.
+ * would have built. Initial inputs — positional messages and @file mentions —
+ * are forwarded RAW (no expansion here). Launch-time @file/image expansion is NOT
+ * yet implemented on the daemon side: the plain positional text is delivered as a
+ * `prompt` command, and the Go TUI surfaces a one-line non-fatal notice for any
+ * @file arg instead of sending it as an unexpanded `@`-literal. @file args are
+ * still re-prefixed with `@` to match the tokens the Go arg parser expects.
  */
 
 import type { Args } from "../args.ts";

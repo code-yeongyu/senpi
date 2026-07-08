@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToolExecError } from "../../src/core/extensions/builtin/mcp/errors.ts";
+import { disposeMcpReconnect } from "../../src/core/extensions/builtin/mcp/reconnect.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
 import {
 	attach,
@@ -85,6 +86,16 @@ describe("MCP ping-on-call health", () => {
 		});
 		const pi = capturingPi();
 		await attach(root, pi);
+		// This test's contract is the STALE-CALL PING path only: exactly one renewal
+		// attempt, surfaced as a bounded typed error. The background reconnect
+		// controller independently reacts to the SIGKILL's "degraded" transition on
+		// its own real 500ms+ backoff timers and would respawn the (fail-mode)
+		// wrapper too — whether the attempts file reads 2 or 3 then depends purely
+		// on how slow this process is relative to that backoff (the CI flake).
+		// Detach the controller so the unit under test is the only actor; it has
+		// its own coverage in reconnect tests.
+		const connection = getMcpService().getConnection("fx");
+		if (connection !== undefined) disposeMcpReconnect(connection);
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 
 		await tool.execute("tc-first", { value: "first" }, undefined, undefined, testContext());

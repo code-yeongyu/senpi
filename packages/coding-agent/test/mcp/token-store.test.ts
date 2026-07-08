@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import lockfile from "proper-lockfile";
 import { afterEach, describe, expect, it } from "vitest";
+import { McpOAuthProvider } from "../../src/core/extensions/builtin/mcp/auth/oauth-provider.ts";
 import {
 	hashServerUrl,
 	LockAcquireError,
@@ -32,11 +33,23 @@ describe("McpTokenStore", () => {
 	it("persists a record with 0700 dir and 0600 file, plus an index entry", async () => {
 		const agentDir = await makeAgentDir();
 		const store = new McpTokenStore({ agentDir, serverName: "linear", serverUrl: "https://mcp.linear.app/mcp" });
-		await store.write({ tokens: { access_token: "AT", token_type: "Bearer" }, resource: "https://mcp.linear.app" });
+		await store.write({
+			accessToken: "AT",
+			refreshToken: "RT",
+			expiresAt: 123,
+			clientInfo: { client_id: "client", redirect_uris: [] },
+			resource: "https://mcp.linear.app",
+		});
 
 		expect(statSync(store.dir).mode & 0o777).toBe(0o700);
 		expect(statSync(store.tokensPath).mode & 0o777).toBe(0o600);
-		expect(store.read()?.tokens?.access_token).toBe("AT");
+		expect(store.read()).toMatchObject({
+			accessToken: "AT",
+			refreshToken: "RT",
+			expiresAt: 123,
+			clientInfo: { client_id: "client", redirect_uris: [] },
+			resource: "https://mcp.linear.app",
+		});
 
 		const index = JSON.parse(readFileSync(join(agentDir, "mcp-auth", "index.json"), "utf-8"));
 		expect(index.linear).toBe(hashServerUrl("https://mcp.linear.app/mcp"));
@@ -48,6 +61,58 @@ describe("McpTokenStore", () => {
 		await store.update(() => ({ codeVerifier: "v1" }));
 		await store.update((current) => ({ ...current, resource: "https://s.example" }));
 		expect(store.read()).toMatchObject({ codeVerifier: "v1", resource: "https://s.example" });
+	});
+
+	it("persists OAuth tokens as a URL-bound credential record, not SDK token JSON", async () => {
+		const agentDir = await makeAgentDir();
+		const store = new McpTokenStore({ agentDir, serverName: "linear", serverUrl: "https://mcp.linear.app/mcp" });
+		const provider = new McpOAuthProvider({
+			serverName: "linear",
+			serverUrl: "https://mcp.linear.app/mcp",
+			store,
+			redirectUrl: "http://127.0.0.1:8123/callback",
+		});
+
+		await provider.saveTokens({
+			access_token: "AT",
+			refresh_token: "RT",
+			expires_in: 60,
+			token_type: "Bearer",
+		});
+
+		const record = JSON.parse(readFileSync(store.tokensPath, "utf-8"));
+		expect(record).toMatchObject({ accessToken: "AT", refreshToken: "RT", resource: "https://mcp.linear.app/mcp" });
+		expect(record.tokens).toBeUndefined();
+		expect(record.access_token).toBeUndefined();
+		expect(store.read()?.accessToken).toBe("AT");
+	});
+
+	it("clears stale expiresAt when saved OAuth tokens omit expires_in", async () => {
+		const agentDir = await makeAgentDir();
+		const store = new McpTokenStore({ agentDir, serverName: "linear", serverUrl: "https://mcp.linear.app/mcp" });
+		const provider = new McpOAuthProvider({
+			serverName: "linear",
+			serverUrl: "https://mcp.linear.app/mcp",
+			store,
+			redirectUrl: "http://127.0.0.1:8123/callback",
+		});
+		await provider.saveTokens({
+			access_token: "AT_old",
+			refresh_token: "RT",
+			expires_in: 60,
+			token_type: "Bearer",
+		});
+		expect(store.read()?.expiresAt).toBeDefined();
+
+		await provider.saveTokens({
+			access_token: "AT_new",
+			token_type: "Bearer",
+		});
+
+		const record = JSON.parse(readFileSync(store.tokensPath, "utf-8"));
+		expect(record).toMatchObject({ accessToken: "AT_new", refreshToken: "RT" });
+		expect(Object.hasOwn(record, "expiresAt")).toBe(false);
+		expect(store.read()?.expiresAt).toBeUndefined();
 	});
 
 	it("hashes a path-traversal server name to a safe hex dir inside mcp-auth", async () => {
@@ -65,7 +130,7 @@ describe("McpTokenStore", () => {
 	it("clear() removes all traces including the index entry", async () => {
 		const agentDir = await makeAgentDir();
 		const store = new McpTokenStore({ agentDir, serverName: "gone", serverUrl: "https://gone.example/mcp" });
-		await store.write({ tokens: { access_token: "AT", token_type: "Bearer" } });
+		await store.write({ accessToken: "AT", resource: "https://gone.example/mcp" });
 		expect(existsSync(store.dir)).toBe(true);
 		await store.clear();
 		expect(existsSync(store.dir)).toBe(false);

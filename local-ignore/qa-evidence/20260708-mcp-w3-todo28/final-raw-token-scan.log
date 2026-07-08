@@ -1,0 +1,6 @@
+scope=.omo/evidence/task-28-senpi-mcp-plugin.log,.omo/evidence/task-28-fix-senpi-mcp-plugin.log,.omo/evidence/todo-28-code-quality-slop-review.md,.omo/evidence/task-28-senpi-mcp-plugin,.omo/evidence/task-28-w3-qa-verification,local-ignore/qa-evidence/20260708-mcp-w3-todo28
+excluded=local-ignore/qa-evidence/20260708-mcp-w3-todo28/todo28-auth-e2e-driver.mts (ignored local driver source contains fixture setup and scan regex source, not runtime output or committed/tracked evidence)
+files_scanned=49
+match_count=0
+verdict=PASS
+matches=[]

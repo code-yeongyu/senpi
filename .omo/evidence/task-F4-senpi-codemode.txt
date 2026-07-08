@@ -1,0 +1,12 @@
+# F4 — Scope fidelity — VERDICT: APPROVE
+- Excluded scope ABSENT in packages/senpi-codemode/src: grep -rnE '\bagent\(|\bbudget\b|\boutput\(|local://|INTENT_FIELD|Bun\.' -> zero real hits. No subagent runner, no output store, no token-budget subsystem.
+- No static import/require of @code-yeongyu/senpi-codemode in coding-agent/src (loader-mediated via package-name string in resource-loader.ts only).
+- Core diff limited to sanctioned surface (git diff main...HEAD --stat):
+    packages/agent/src/agent-loop.ts (+CHANGELOG) = sanctioned arg-preflight helper export
+    coding-agent/src/core/agent-session.ts = executeTool + _installAgentToolHooks closure extraction
+    coding-agent/src/core/extensions/{types,runner,loader,index}.ts = executeTool API + bundled loading wiring
+    coding-agent/src/core/resource-loader.ts = bundled codemode loading
+    coding-agent/src/core/{changes.md, extensions/changes.md} = docs
+    scripts/{check-pinned-deps, generate-coding-agent-shrinkwrap, local-release, prepare-senpi-bundled-workspaces, publish, release-packages}.mjs (+ tests) = enumerated todo-15 publish/release edits
+  No other upstream-parity refactors. No models.generated.ts hand edits.
+- This session's fix commit (23e2eed78) touched ONLY packages/senpi-codemode (no core/scope expansion).

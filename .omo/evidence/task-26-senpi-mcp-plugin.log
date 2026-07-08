@@ -1,14 +1,452 @@
-=== TODO 26 bearer/header auth + OAuth autodetect + fingerprint logging  2026-07-07T12:31:23Z ===
---- vitest test/mcp/auth-modes.test.ts (GREEN) ---
- Test Files  1 passed (1)
-      Tests  7 passed (7)
-   Duration  1.18s (transform 57ms, setup 13ms, import 163ms, tests 933ms, environment 0ms)
+TODO26 RED: bearerTokenEnv without explicit auth must attach Authorization header
 
-Asserted:
-  - resolveAuthMode: auth:oauth->oauth; bare http+url->oauth; headers present->none (#158); auth:false->none; bearerTokenEnv->bearer; stdio->none
-  - header-auth server (context7-style, http-server fixture --bearer) connects + lists tools with NO authProvider attached
-  - headers server pointed at the OAuth IdP fixture => IdP discoveryHits==0 and request log EMPTY (no DCR/discovery)
-  - bearerTokenEnv resolved at connect time: correct env connects, changed env value is rejected by server (per-connect resolution)
-  - FAILURE: bearerTokenEnv names an unset var => AuthError at connect naming the var ('MISSING_VAR is not set'), not a mid-call mystery
-  - literal 'Bearer sk-live-...' in headers => startup WARN suggesting ${ENV_VAR}; ${VAR} form => no warning
-  - log scan: raw token absent, only <redacted:xxxxxxxx> 8-char sha256 fingerprints present
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent
+
+···x····
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/mcp/auth-modes.test.ts > mcp auth mode autodetect (#158) > resolves bearerTokenEnv at connect time (env change is picked up)
+ConnectError: MCP server srv failed during connect: Streamable HTTP error: Error POSTing to endpoint: {"error":"missing fixture bearer token"}
+ ❯ connectMcpTransport src/core/extensions/builtin/mcp/transport.ts:77:9
+     75|    );
+     76|   }
+     77|   throw new ConnectError(`MCP server ${connection.serverName} failed d…
+       |         ^
+     78|    cause: error,
+     79|    phase: "connect",
+ ❯ connect test/mcp/auth-modes.test.ts:48:2
+ ❯ test/mcp/auth-modes.test.ts:91:14
+
+Caused by: Error: Streamable HTTP error: Error POSTing to endpoint: {"error":"missing fixture bearer token"}
+ ❯ StreamableHTTPClientTransport.send ../../node_modules/@modelcontextprotocol/sdk/dist/esm/client/streamableHttp.js:364:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { code: 401 }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 7 passed (8)
+   Start at  05:59:54
+   Duration  1.68s (transform 54ms, setup 10ms, import 104ms, tests 1.48s, environment 0ms)
+
+
+TODO26 GREEN: focused auth-modes acceptance
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent
+
+·········
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  06:00:42
+   Duration  1.80s (transform 56ms, setup 12ms, import 106ms, tests 1.59s, environment 0ms)
+
+
+TODO26 IMPACTED: config/log/transport/oauth/auth cluster
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent
+
+·····································································
+
+ Test Files  9 passed (9)
+      Tests  69 passed (69)
+   Start at  06:01:15
+   Duration  3.81s (transform 1.78s, setup 120ms, import 3.09s, tests 8.68s, environment 0ms)
+
+
+TODO26 GREEN after transport LOC cleanup: auth/transport cluster
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent
+
+··············
+
+ Test Files  2 passed (2)
+      Tests  14 passed (14)
+   Start at  06:02:10
+   Duration  2.35s (transform 96ms, setup 21ms, import 201ms, tests 3.77s, environment 0ms)
+
+
+TODO26 CHECK: npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1549 files in 737ms. Fixed 1 file.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 29ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/app	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	14.524s
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/bridge/attachqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/extui	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/extui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+
+TODO26 GREEN after final transport cleanup: auth/transport cluster
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent
+
+··············
+
+ Test Files  2 passed (2)
+      Tests  14 passed (14)
+   Start at  06:03:10
+   Duration  2.35s (transform 93ms, setup 22ms, import 197ms, tests 3.78s, environment 0ms)
+
+
+TODO26 CHECK repeat after final source shape
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1549 files in 754ms. Fixed 1 file.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 28ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/app	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/bridge/attachqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/extui	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/extui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+
+TODO26 GREEN after LOC final: auth/transport cluster
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent
+
+··············
+
+ Test Files  2 passed (2)
+      Tests  14 passed (14)
+   Start at  06:03:51
+   Duration  2.34s (transform 93ms, setup 21ms, import 198ms, tests 3.77s, environment 0ms)
+
+
+TODO26 CHECK final after LOC edit
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1549 files in 741ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 29ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/app	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/bridge/attachqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/extui	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/extui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+
+TODO26 GREEN after terminable inline: auth/transport cluster
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent
+
+··············
+
+ Test Files  2 passed (2)
+      Tests  14 passed (14)
+   Start at  06:04:50
+   Duration  2.33s (transform 94ms, setup 21ms, import 196ms, tests 3.74s, environment 0ms)
+
+
+TODO26 CHECK final after terminable inline
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1549 files in 794ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 29ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/app	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/bridge/attachqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/extui	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/extui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+COMMAND: npx tsx /tmp/todo26-manual-qa.mjs local-ignore/qa-evidence/20260708-mcp-w3-todo26
+happy_header_connect=PASS tools=1
+happy_header_log=local-ignore/qa-evidence/20260708-mcp-w3-todo26/header-happy.log
+zero_oauth_traffic=PASS discoveryHits=0 requests=0
+bearer_env_connect_time=PASS
+unset_bearerTokenEnv=PASS message=MCP server unset-env bearer token env MISSING_MANUAL_TOKEN is not set
+literal_warning=PASS warning=MCP server literal-warning header 'Authorization' appears to contain a literal secret (fp 93dedbe2); use ${ENV_VAR} so the token stays out of the config file.
+log_scan=PASS raw_token_absent fingerprints_present
+COMMAND: node .agents/skills/senpi-qa/scripts/lib/common.mjs --self-check
+[PASS] repo root resolves — /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3
+[PASS] tsx entry present — /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/tsx/dist/cli.mjs
+[PASS] sandbox isolates agent + session dirs — /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/self-check-wpbTOZ
+[PASS] real auth snapshot taken — sha256=209517649905…
+[PASS] free port allocatable — 59329
+[PASS] evidence dir creatable under local-ignore — /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/local-ignore/qa-evidence/20260708-self-check
+[PASS] ansi stripping
+[PASS] sandbox removed on cleanup — /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/self-check-wpbTOZ
+[PASS] real auth unchanged — /Users/yeongyu/.senpi/agent/auth.json
+
+common.mjs --self-check: 9/9 passed
+COMMAND: node .agents/skills/senpi-qa/scripts/cli-smoke.mjs --self-test
+[PASS] --help prints usage with flags — code=0
+[PASS] --help lists the --neo launcher flag — code=0
+[PASS] --version prints a version — 2026.7.5-2
+[PASS] --list-models lists built-in models offline (no API) — lines=1033
+[PASS] unknown option is reported, not silently ignored — code=1
+[PASS] real auth unchanged — /Users/yeongyu/.senpi/agent/auth.json
+
+cli-smoke.mjs --self-test: 6/6 passed
+COMMAND: node .agents/skills/senpi-qa/scripts/mock-loop.mjs --self-test
+[PASS] openai-completions: baseUrl override round-trips through the real loop — code=0 marker=true path=/v1/chat/completions auth=true
+[PASS] anthropic-messages: baseUrl override round-trips through the real loop — code=0 marker=true path=/v1/messages auth=true
+[PASS] openai-responses: baseUrl override round-trips through the real loop — code=0 marker=true path=/v1/responses auth=true
+[PASS] zero real provider calls (only localhost fake hit) — all baseUrls point at 127.0.0.1
+[PASS] real auth unchanged — /Users/yeongyu/.senpi/agent/auth.json
+
+mock-loop.mjs --self-test: 5/5 passed
+
+TODO26 STATIC/SECRET/CLEANUP RECEIPTS
+COMMAND: rg forbidden TS escape hatches in changed TS files
+COMMAND: raw secret scan in task evidence and local QA bundle
+COMMAND: fingerprint scan in task evidence and local QA bundle
+.omo/evidence/task-26-senpi-mcp-plugin.log:408:literal_warning=PASS warning=MCP server literal-warning header 'Authorization' appears to contain a literal secret (fp 93dedbe2); use ${ENV_VAR} so the token stays out of the config file.
+local-ignore/qa-evidence/20260708-mcp-w3-todo26/manual-qa-summary.txt:6:literal_warning=PASS warning=MCP server literal-warning header 'Authorization' appears to contain a literal secret (fp 93dedbe2); use ${ENV_VAR} so the token stays out of the config file.
+local-ignore/qa-evidence/20260708-mcp-w3-todo26/manual-qa-command.txt:7:literal_warning=PASS warning=MCP server literal-warning header 'Authorization' appears to contain a literal secret (fp 93dedbe2); use ${ENV_VAR} so the token stays out of the config file.
+local-ignore/qa-evidence/20260708-mcp-w3-todo26/INDEX.md:17:- Fingerprint scan found only `fp 93dedbe2` / `<redacted:...>`-style markers.
+COMMAND: cleanup receipt
+removed /tmp/todo26-manual-qa.mjs
+COMMAND: pure LOC changed source/test
+     249
+     136

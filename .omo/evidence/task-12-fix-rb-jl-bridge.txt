@@ -1,0 +1,34 @@
+# task-12 fix rb/jl bridge evidence
+
+Scope: packages/senpi-codemode Ruby and Julia kernels/tests only.
+
+Red test capture:
+- Added deterministic runner contract tests first. Before runner fixes, focused run failed because rb/jl runner sources still contained direct stdout JSONL `"type" => "tool-call"` / `Dict("type" => "tool-call")` and did not contain loopback `/call` bridge usage.
+- Red focused output included failures in `test/rb-kernel.test.ts > routes tool calls through the authenticated loopback bridge contract` and `test/jl-kernel.test.ts > routes tool calls through the authenticated loopback bridge contract`.
+- Ruby live test also timed out while waiting for the old direct `nextToolCall` path against the new bridge expectation.
+
+Implementation:
+- Ruby runner stores `message["connection"]` on init and uses stdlib `net/http` POST to `http://127.0.0.1:<port>/call` with `Authorization: Bearer <token>` and body `{callId, toolName, args}`.
+- Julia runner stores parsed init port/token and uses stdlib `Sockets` to POST to `/call` on 127.0.0.1 with `Authorization: Bearer <token>` and body `{callId, toolName, args}`.
+- Direct JSONL tool-call emission/reply handling was removed from rb/jl runners.
+
+Verification:
+1. `cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/rb-kernel.test.ts test/jl-kernel.test.ts`
+   Result: PASS. Test Files 2 passed. Tests 5 passed, 1 skipped.
+   Evidence detail: Ruby is installed at `/usr/bin/ruby` (`ruby 2.6.10p210`), so the Ruby live `startBridgeServer` test ran and observed the bridge `onCall` handler receive `toolName: echo` with `{ value: 41 }`. Julia is not installed, so the Julia live interpreter test was guarded/skipped; the deterministic Julia runner bridge contract test ran and passed.
+
+2. `npm run check`
+   Result: PASS. Biome, pinned deps, TS import checks, shrinkwrap/install-lock checks, tsgo, browser/web UI checks, and neo build/vet/test passed.
+
+3. `git diff --check -- packages/senpi-codemode/src/kernels/rb/runner.rb packages/senpi-codemode/src/kernels/jl/runner.jl packages/senpi-codemode/test/rb-kernel.test.ts packages/senpi-codemode/test/jl-kernel.test.ts`
+   Result: PASS, no whitespace errors.
+
+4. Scoped LOC:
+   `git diff --numstat -- <scoped files>`
+   - jl runner: +55/-24
+   - rb runner: +23/-16
+   - jl test: +55/-28
+   - rb test: +50/-27
+   Shortstat: 4 files changed, 183 insertions(+), 95 deletions(-); net +88 LOC, under 250.
+
+Secret safety: no bearer token values from live services or secret-bearing logs recorded; only test token literals are present.

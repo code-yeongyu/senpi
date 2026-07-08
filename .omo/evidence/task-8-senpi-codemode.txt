@@ -1,0 +1,190 @@
+
+## RED proof - bridge server tests before implementation
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/bridge-server.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+ ❯ test/bridge-server.test.ts (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/bridge-server.test.ts [ test/bridge-server.test.ts ]
+Error: Cannot find module '../src/bridge/http-server.ts' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode/test/bridge-server.test.ts
+ ❯ test/bridge-server.test.ts:4:1
+      2| import { createServer } from "node:net";
+      3| import { describe, expect, it } from "vitest";
+      4| import { startBridgeServer, type BridgeHttpEmitEvent } from "../src/br…
+       | ^
+      5|
+      6| async function postJson(port: number, path: string, token: string, bod…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  no tests
+   Start at  15:53:46
+   Duration  119ms (transform 12ms, setup 0ms, import 0ms, tests 0ms, environment 0ms)
+
+exit=1
+
+## GREEN attempt - focused bridge server tests
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/bridge-server.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+ ❯ test/bridge-server.test.ts (7 tests | 2 failed) 38ms
+     × validates routes and request bodies with typed transport errors 3ms
+     × returns protocol-level errors for handler failures 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/bridge-server.test.ts > bridge HTTP server > validates routes and request bodies with typed transport errors
+TypeError: fetch failed
+Caused by: SocketError: other side closed
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { code: 'UND_ERR_SOCKET', socket: { localAddress: '127.0.0.1', localPort: 50276, remoteAddress: '127.0.0.1', remotePort: 50275, remoteFamily: 'IPv4', timeout: undefined, bytesWritten: 604, bytesRead: 276 } }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  test/bridge-server.test.ts > bridge HTTP server > returns protocol-level errors for handler failures
+AssertionError: expected { ok: false, …(1) } to deeply equal { ok: false, error: { …(2) } }
+
+- Expected
++ Received
+
+  {
+    "error": {
+      "message": "tool failed",
+      "name": "Error",
++     "stack": "Error: tool failed
++     at Object.onCall (/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode/test/bridge-server.test.ts:110:11)
++     at dispatchCall (/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode/src/bridge/http-server.ts:128:43)
++     at handleRequest (/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode/src/bridge/http-server.ts:115:42)
++     at processTicksAndRejections (node:internal/process/task_queues:104:5)",
+    },
+    "ok": false,
+  }
+
+ ❯ test/bridge-server.test.ts:122:32
+    120|    });
+    121|    expect(response.status).toBe(200);
+    122|    await expect(response.json()).resolves.toEqual({
+       |                                ^
+    123|     ok: false,
+    124|     error: { message: "tool failed", name: "Error" },
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 5 passed (7)
+   Start at  15:54:47
+   Duration  244ms (transform 23ms, setup 0ms, import 110ms, tests 38ms, environment 0ms)
+
+exit=1
+
+## GREEN retry - focused bridge server tests
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/bridge-server.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  15:55:08
+   Duration  231ms (transform 19ms, setup 0ms, import 104ms, tests 36ms, environment 0ms)
+
+exit=0
+
+## npm run check
+$ npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1343 files in 1661ms. Fixed 1 file.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 63ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+exit=0
+
+## Manual HTTP scenario
+$ node --import tsx /tmp/task8-bridge-manual.mjs
+listening host=127.0.0.1 port=51842 tokenLength=12
+/call token=invalid status=401 body={"ok":false,"error":{"code":"unauthorized","message":"Bridge authorization failed"}}
+/call token=valid status=200 body={"ok":true,"value":{"callId":"manual-2","toolName":"echo","args":{"q":"hi"}}}
+close=ok
+afterClose=fetch failed
+exit=0
+
+## git diff --check scoped files
+$ git diff --check -- packages/senpi-codemode/src/bridge/http-server.ts packages/senpi-codemode/test/bridge-server.test.ts .omo/evidence/task-8-senpi-codemode.txt
+exit=0
+
+## git diff --check scoped files after intent-to-add
+$ git diff --check -- packages/senpi-codemode/src/bridge/http-server.ts packages/senpi-codemode/test/bridge-server.test.ts .omo/evidence/task-8-senpi-codemode.txt
+exit=0
+
+## git diff --cached --check scoped files
+$ git diff --cached --check -- packages/senpi-codemode/src/bridge/http-server.ts packages/senpi-codemode/test/bridge-server.test.ts .omo/evidence/task-8-senpi-codemode.txt
+exit=0

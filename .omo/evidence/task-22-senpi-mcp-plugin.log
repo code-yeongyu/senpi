@@ -1,25 +1,131 @@
-=== TODO 22 token-store evidence  2026-07-07T11:57:10Z ===
-SDK @modelcontextprotocol/sdk 1.29.0 ; proper-lockfile 4.1.2 ; node 26.4.0
+TODO22: Token store -- 0600 files, cross-process lock, atomic writes
 
---- vitest test/mcp/token-store.test.ts (GREEN): modes, path-traversal hash, 2-proc 50x RMW race, clear(), lock-held ---
- Test Files  1 passed (1)
-      Tests  6 passed (6)
-   Duration  296ms (transform 35ms, setup 13ms, import 40ms, tests 162ms, environment 0ms)
+Worktree: /Users/yeongyu/local-workspaces/senpi-wt/senpi-mcp-plugin-w3
+Branch: code-yeongyu/senpi-mcp-plugin-w3
+Date: 2026-07-08
 
---- HAPPY: store tree modes (dir 0700, files 0600) ---
-total 8
-drwx------@ 4 yeongyu  wheel  128 Jul  7 20:57 .
-drwx------@ 3 yeongyu  wheel   96 Jul  7 20:57 ..
-drwx------@ 3 yeongyu  wheel   96 Jul  7 20:57 fb39103c7d2edac291c92d23247e0a7d90470b1b349c07b146aba4ee2c81591f
--rw-------@ 1 yeongyu  wheel   83 Jul  7 20:57 index.json
-total 8
-drwx------@ 3 yeongyu  wheel   96 Jul  7 20:57 .
-drwx------@ 4 yeongyu  wheel  128 Jul  7 20:57 ..
--rw-------@ 1 yeongyu  wheel  159 Jul  7 20:57 tokens.json
+Changed behavior:
+- MCP OAuth credentials now persist as the URL-bound flat record shape:
+  { accessToken, refreshToken?, expiresAt, clientInfo, resource }.
+- SDK OAuthTokens remain an in-memory boundary type only; McpOAuthProvider and
+  McpRefreshManager translate to/from the persisted flat shape.
+- Existing token-store guarantees are preserved: getAgentDir-derived path,
+  mcp-auth/<sha256(serverUrl)>/tokens.json, directory 0700, file 0600,
+  atomic tmp+rename writes, proper-lockfile read-modify-write locks, and
+  index.json server-name -> hash mapping.
 
---- FAILURE: lock held by SIGSTOP-frozen holder -> second writer fails fast, names lock path, no corruption ---
-holder locked then SIGSTOP'd (frozen, cannot release)
-second writer blocked -> LockAcquireError
-error names lock path: true
-message: Could not acquire MCP auth lock at /tmp/mcp-t22-301j/mcp-auth/699aa02fda4acb0f8ba05e6d4827cb9b0bd507e09fa8ea889fae9eb6bb8f23df/tokens.json.lock: Lock file is already being held
-no corruption; record intact -> seed
+RED:
+- Scenario: Provider saveTokens should not persist SDK-shaped tokens JSON.
+- Invocation:
+  cd packages/coding-agent &&
+  npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/token-store.test.ts
+- Observable: expected flat { accessToken, refreshToken, resource }, received
+  { tokens: { access_token, refresh_token, token_type, expires_in }, expiresAt }.
+- Artifact:
+  local-ignore/qa-evidence/20260708-mcp-w3-todo22/red-token-store-vitest.txt
+
+GREEN / tests:
+- Acceptance scenario: token store modes, traversal-safe hash, locked RMW race,
+  clear removes server traces, lock error names lock path, flat credential shape.
+- Invocation:
+  cd packages/coding-agent &&
+  npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/token-store.test.ts
+- Observable: 1 file passed, 7 tests passed.
+- Artifact:
+  local-ignore/qa-evidence/20260708-mcp-w3-todo22/final-token-store-vitest.txt
+
+- Impacted auth scenario: authorization-code, client_credentials, headless,
+  logout, invalid_grant, transient refresh, and cross-process refresh race.
+- Invocation:
+  cd packages/coding-agent &&
+  npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/oauth-provider.test.ts test/mcp/oauth-headless.test.ts test/mcp/oauth-race.test.ts
+- Observable: 3 files passed, 14 tests passed.
+- Artifact:
+  local-ignore/qa-evidence/20260708-mcp-w3-todo22/impacted-auth-vitest.txt
+
+- Static/check scenario: full repo check after code changes.
+- Invocation:
+  npm run check
+- Observable: biome, pinned deps, import checks, shrinkwrap checks, tsgo,
+  browser/web-ui checks, and neo build/vet/test passed.
+- Artifact:
+  local-ignore/qa-evidence/20260708-mcp-w3-todo22/npm-run-check.txt
+
+Manual QA:
+- Happy filesystem scenario:
+  npx tsx /tmp/senpi-todo22-token-store-qa.mts
+  using isolated SENPI_CODING_AGENT_DIR under mkdtemp.
+- Observable:
+  rootDir=<sandbox>/agent/mcp-auth, dir=<sha256(serverUrl)>, tokensPath=tokens.json;
+  ls -la showed mcp-auth and token directory drwx------, tokens.json -rw-------;
+  Node stat proof recorded root=0700, dir=0700, tokens=0600;
+  tokens.json parsed as flat { accessToken, refreshToken, expiresAt, clientInfo, resource }.
+- Artifact:
+  local-ignore/qa-evidence/20260708-mcp-w3-todo22/manual-token-store-qa.txt
+
+- Failure lock scenario:
+  Same script spawned a Node holder that acquired proper-lockfile on the token
+  directory then SIGSTOP'd itself. A second writer with retries=0 failed.
+- Observable:
+  LockAcquireError message named the exact tokens.json.lock path; post-failure
+  tokens.json parsed as valid JSON and retained accessToken=MANUAL_AT.
+- Artifact:
+  local-ignore/qa-evidence/20260708-mcp-w3-todo22/manual-token-store-qa.txt
+
+- Auth isolation:
+  Same script hashed /Users/yeongyu/.senpi/agent/auth.json before/after.
+- Observable:
+  sha256 before == after:
+  209517649905332ad32411733f098dbc85d7f620e3df5d156720a623b5e052bd
+- Artifact:
+  local-ignore/qa-evidence/20260708-mcp-w3-todo22/manual-token-store-qa.txt
+
+senpi-qa:
+- Harness isolation self-check:
+  node .agents/skills/senpi-qa/scripts/lib/common.mjs --self-check
+  Observable: 9/9 passed, real auth unchanged.
+  Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo22/senpi-qa-common-self-check.txt
+- Real CLI smoke:
+  node .agents/skills/senpi-qa/scripts/cli-smoke.mjs --self-test
+  Observable: 6/6 passed, real auth unchanged.
+  Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo22/senpi-qa-cli-smoke.txt
+
+Cleanup receipts:
+- Temporary QA script /tmp/senpi-todo22-token-store-qa.mts removed.
+- Manual QA sandbox recorded sandboxExists=false.
+- Prefix glob for senpi-todo22-qa-* found no leftover sandbox dirs.
+- Bounded ps status scan found no stopped Node process after SIGSTOP holder cleanup.
+- Artifact: local-ignore/qa-evidence/20260708-mcp-w3-todo22/cleanup-receipt.txt
+- Note: two broad process-command scans hung and were interrupted; the bounded
+  process-state scan completed and is the cleanup evidence used.
+
+UltraQA classes:
+- malformed_input: path traversal server name "../evil" hashes to a safe
+  sha256 directory under mcp-auth; malformed old SDK disk shape rejected by
+  RED/GREEN flat-shape assertion.
+- stale_state: clear() removes the server credential directory and index entry;
+  invalid_grant refresh clears accessToken/refreshToken while preserving
+  non-token state needed for re-auth.
+- dirty_worktree: initial status had unrelated untracked .omo/evidence files;
+  left untouched. Only TODO22 tracked paths plus this evidence log were edited.
+- hung_or_long_commands: npm run check completed; two cleanup broad process scans
+  hung, were interrupted, and replaced with bounded checks. No test command hung.
+- flaky_tests: focused token-store command rerun after npm run check; impacted
+  auth tests passed once after fix.
+- misleading_success_output: manual QA parsed tokens.json after failure and
+  checked modes via stat, not logs alone.
+- prompt_injection: not applicable; token-store filesystem/auth persistence only,
+  no model-visible content or prompt assembly.
+- cancel_resume: not applicable; no session resume/cancellation behavior touched.
+- repeated_interruptions: not applicable; no interrupted app sessions or resumed
+  user turns in this TODO22 flow.
+
+Risks:
+- The persisted shape intentionally no longer stores SDK token_type/scope/id_token.
+  Provider.tokens reconstructs token_type="Bearer" for SDK callers. Current tests
+  cover existing MCP OAuth fixture behavior and refresh races.
+- clear() leaves an empty mcp-auth/index.json file when other server entries could
+  exist; it removes the target server entry and credential dir, which is the
+  server-specific trace required here.
+
+Ready for independent gate review: yes.

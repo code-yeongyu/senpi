@@ -1,0 +1,19 @@
+{
+  "id": 11,
+  "invocation": "source senpi --print with mock model calling mcp_oauth_tool_1 against auth-needed server",
+  "observations": {
+    "code": 0,
+    "timedOut": false,
+    "finalMarker": true,
+    "modelRequests": 2,
+    "modelRequestsArtifact": "local-ignore/qa-evidence/20260708-mcp-w3-todo28/step-11-model-requests.json",
+    "toolResultIsError": true,
+    "toolResultContainedHint": true,
+    "browserOpenAttempts": 0,
+    "stdoutTail": "PRINT_MODE_AUTH_NEEDED_OK\n",
+    "stderrTail": ""
+  },
+  "surface": "CLI print mode + mock provider + MCP auth fixture",
+  "title": "Print-mode auth-needed server -> clean fail-fast isError, no hang, no browser",
+  "verdict": "PASS"
+}

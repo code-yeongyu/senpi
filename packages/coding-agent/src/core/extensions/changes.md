@@ -41,6 +41,40 @@
 - LOW: `builtin/permission-system/parsers.ts` `registry.register` block (see its own `changes.md`).
 - LOW: `builtin/terminal/**` self-contained sources.
 
+## 2026-07-06 - Bundled codemode extension
+
+### What changed
+
+- `@code-yeongyu/senpi-codemode` is loaded as a default-on builtin-adjacent extension from its package manifest.
+- `disabledBuiltinExtensions: ["codemode"]` disables the bundled extension, while `--no-extensions` only disables user extension discovery.
+- Interactive permission prompts raised by tools called inside codemode bridge cells suspend the cell until the prompt resolves; denial returns an error reply to the kernel instead of hanging.
+
+### Why
+
+- Codemode must be available by default while still using the normal extension loader, active-tool filtering, hook pipeline, and permission system.
+
+### Expected merge conflict zones
+
+- MEDIUM: `resource-loader.ts` around builtin-adjacent extension ordering and package shadowing.
+
+## 2026-07-06 - Extension executeTool API
+
+### What changed
+
+- Added `pi.executeTool(toolName, params, options?)` plus exported option, result, update-callback, and typed error aliases.
+- `executeTool` resolves only from the active session tool set, runs the same argument preflight as the agent loop, emits `tool_call` and `tool_result` hooks, and executes the wrapped registered tool with extension context intact.
+- Bridge subcalls intentionally do not emit `tool_execution_start`, `tool_execution_update`, or `tool_execution_end` UI events. Callers should stream their parent tool UI through the supplied `onUpdate` callback.
+
+### Why
+
+- Codemode kernels need to call built-in and extension-registered tools without bypassing permissions, hook mutation/blocking, result rewriting, or extension-scoped execution context.
+
+### Expected merge conflict zones
+
+- HIGH: `types.ts` around `ExtensionAPI` and action handler types.
+- MEDIUM: `loader.ts` and `runner.ts` around `bindCore` action wiring.
+- MEDIUM: `agent-session.ts` around tool hook installation and active tool dispatch.
+
 ## 2026-07-07 - MCP W1 builtin implementation
 
 ### What changed

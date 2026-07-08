@@ -1,0 +1,2 @@
+# senpi_base64 (pure-Base) vs Base64.base64encode byte-exactness
+ALL_MATCH (13 cases)

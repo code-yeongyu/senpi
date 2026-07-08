@@ -1,0 +1,8 @@
+[PASS] --help prints usage with flags — code=0
+[PASS] --help lists the --neo launcher flag — code=0
+[PASS] --version prints a version — 2026.7.5-2
+[PASS] --list-models lists built-in models offline (no API) — lines=1033
+[PASS] unknown option is reported, not silently ignored — code=1
+[PASS] real auth unchanged — /Users/yeongyu/.senpi/agent/auth.json
+
+cli-smoke.mjs --self-test: 6/6 passed

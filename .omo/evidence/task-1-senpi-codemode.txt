@@ -1,0 +1,1694 @@
+Task 1 senpi-codemode evidence
+Timestamp: 2026-07-06T14:49:12+09:00
+Repository: /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode
+
+READ/STATE SUMMARY
+- Read root AGENTS.md, todo 1 block, root/package tsconfig exemplars, package exemplars, LICENSE.
+- External exemplar missing: /Users/yeongyu/local-workspaces/pi-extensions/pi-sandbox/package.json (cat failed: No such file or directory).
+- Existing unrelated untracked path before edits: .omo/drafts/
+
+COMMAND: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/
+node:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/node_modules/vitest/dist/cli.js' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode/
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:700:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:717:38)
+    at nextStep (node:internal/modules/customization_hooks:189:26)
+    at resolveBaseSync (file:///Users/yeongyu/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/register-D5KIhaFJ.mjs:2:9115)
+    at resolveDirectorySync (file:///Users/yeongyu/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/register-D5KIhaFJ.mjs:2:10328)
+    at resolveTsPathsSync (file:///Users/yeongyu/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/register-D5KIhaFJ.mjs:2:11560)
+    at resolve (file:///Users/yeongyu/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/register-D5KIhaFJ.mjs:2:13343) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/node_modules/vitest/dist/cli.js'
+}
+
+Node.js v26.0.0
+
+DEPENDENCY HYDRATION (pre-production, no lifecycle scripts)
+COMMAND: npm install --ignore-scripts
+npm warn deprecated prebuild-install@7.1.3: No longer maintained. Please contact the author of the relevant native addon; alternatives are available.
+npm warn deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+
+added 457 packages, and audited 469 packages in 5s
+
+85 packages are looking for funding
+  run `npm fund` for details
+
+2 critical severity vulnerabilities
+
+To address all issues, run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+
+EXIT_STATUS: 0
+
+RED PROOF (missing production stub)
+COMMAND: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+No test files found, exiting with code 1
+
+filter: test/
+include: **/*.{test,spec}.?(c|m)[jt]s?(x)
+exclude:  **/node_modules/**, **/.git/**
+
+
+EXIT_STATUS: 1
+
+RED PROOF (correct worktree, missing production stub)
+COMMAND: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+ ❯ test/factory.test.ts (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/factory.test.ts [ test/factory.test.ts ]
+Error: Cannot find module '../src/index.ts' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode/test/factory.test.ts
+ ❯ test/factory.test.ts:2:1
+      1| import { describe, expect, it } from "vitest";
+      2| import senpiCodemode from "../src/index.ts";
+       | ^
+      3| import type { ExtensionAPI } from "@code-yeongyu/senpi";
+      4|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  no tests
+   Start at  14:50:39
+   Duration  117ms (transform 10ms, setup 0ms, import 0ms, tests 0ms, environment 0ms)
+
+
+EXIT_STATUS: 1
+
+LOCKFILE REFRESH
+COMMAND: npm install --package-lock-only --ignore-scripts
+
+up to date, audited 471 packages in 605ms
+
+85 packages are looking for funding
+  run `npm fund` for details
+
+2 critical severity vulnerabilities
+
+To address all issues, run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+
+EXIT_STATUS: 0
+
+VERIFY 1: package factory test
+COMMAND: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  14:51:41
+   Duration  296ms (transform 13ms, setup 0ms, import 20ms, tests 2ms, environment 0ms)
+
+
+EXIT_STATUS: 0
+
+VERIFY 2: root npm run check
+COMMAND: npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1316 files in 986ms. Fixed 2 files.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+packages/coding-agent/test/execute-tool.test.ts(42,10): error TS2769: No overload matches this call.
+  The last overload gave the following error.
+    Argument of type '"tool_call"' is not assignable to parameter of type '"input"'.
+packages/coding-agent/test/execute-tool.test.ts(56,37): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(69,37): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(88,5): error TS2322: Type 'Mock<() => Promise<{ content: { type: string; text: string; }[]; details: {}; }>>' is not assignable to type '(toolCallId: string, params: object, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<{}> | undefined, ctx: ExtensionContext) => Promise<...>'.
+  Type 'Promise<{ content: { type: string; text: string; }[]; details: {}; }>' is not assignable to type 'Promise<AgentToolResult<{}>>'.
+    Type '{ content: { type: string; text: string; }[]; details: {}; }' is not assignable to type 'AgentToolResult<{}>'.
+      Types of property 'content' are incompatible.
+        Type '{ type: string; text: string; }[]' is not assignable to type '(ImageContent | TextContent)[]'.
+          Type '{ type: string; text: string; }' is not assignable to type 'ImageContent | TextContent'.
+            Type '{ type: string; text: string; }' is not assignable to type 'TextContent'.
+              Types of property 'type' are incompatible.
+                Type 'string' is not assignable to type '"text"'.
+packages/coding-agent/test/execute-tool.test.ts(94,29): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(124,37): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(149,29): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(153,29): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(184,22): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(213,5): error TS2322: Type 'Mock<() => Promise<{ content: { type: string; text: string; }[]; details: {}; }>>' is not assignable to type '(toolCallId: string, params: { required: string; }, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<{}> | undefined, ctx: ExtensionContext) => Promise<...>'.
+  Type 'Promise<{ content: { type: string; text: string; }[]; details: {}; }>' is not assignable to type 'Promise<AgentToolResult<{}>>'.
+    Type '{ content: { type: string; text: string; }[]; details: {}; }' is not assignable to type 'AgentToolResult<{}>'.
+      Types of property 'content' are incompatible.
+        Type '{ type: string; text: string; }[]' is not assignable to type '(ImageContent | TextContent)[]'.
+          Type '{ type: string; text: string; }' is not assignable to type 'ImageContent | TextContent'.
+            Type '{ type: string; text: string; }' is not assignable to type 'TextContent'.
+              Types of property 'type' are incompatible.
+                Type 'string' is not assignable to type '"text"'.
+packages/coding-agent/test/execute-tool.test.ts(219,29): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(261,43): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(307,39): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+
+EXIT_STATUS: 1
+
+VERIFY 3: manifest pi.extensions check
+COMMAND: node -e "const p=require('./packages/senpi-codemode/package.json'); if(!p.pi.extensions) process.exit(1)"
+
+EXIT_STATUS: 0
+
+VERIFY 1B: package factory test after formatting
+COMMAND: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  14:52:50
+   Duration  112ms (transform 12ms, setup 0ms, import 17ms, tests 2ms, environment 0ms)
+
+
+EXIT_STATUS: 0
+
+FAILURE SCENARIO: enum probe should make root check fail
+COMMAND: npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1316 files in 865ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+packages/coding-agent/test/execute-tool.test.ts(42,10): error TS2769: No overload matches this call.
+  The last overload gave the following error.
+    Argument of type '"tool_call"' is not assignable to parameter of type '"input"'.
+packages/coding-agent/test/execute-tool.test.ts(56,37): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(69,37): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(88,5): error TS2322: Type 'Mock<() => Promise<{ content: { type: string; text: string; }[]; details: {}; }>>' is not assignable to type '(toolCallId: string, params: object, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<{}> | undefined, ctx: ExtensionContext) => Promise<...>'.
+  Type 'Promise<{ content: { type: string; text: string; }[]; details: {}; }>' is not assignable to type 'Promise<AgentToolResult<{}>>'.
+    Type '{ content: { type: string; text: string; }[]; details: {}; }' is not assignable to type 'AgentToolResult<{}>'.
+      Types of property 'content' are incompatible.
+        Type '{ type: string; text: string; }[]' is not assignable to type '(ImageContent | TextContent)[]'.
+          Type '{ type: string; text: string; }' is not assignable to type 'ImageContent | TextContent'.
+            Type '{ type: string; text: string; }' is not assignable to type 'TextContent'.
+              Types of property 'type' are incompatible.
+                Type 'string' is not assignable to type '"text"'.
+packages/coding-agent/test/execute-tool.test.ts(94,29): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(124,37): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(149,29): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(153,29): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(184,22): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(213,5): error TS2322: Type 'Mock<() => Promise<{ content: { type: string; text: string; }[]; details: {}; }>>' is not assignable to type '(toolCallId: string, params: { required: string; }, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<{}> | undefined, ctx: ExtensionContext) => Promise<...>'.
+  Type 'Promise<{ content: { type: string; text: string; }[]; details: {}; }>' is not assignable to type 'Promise<AgentToolResult<{}>>'.
+    Type '{ content: { type: string; text: string; }[]; details: {}; }' is not assignable to type 'AgentToolResult<{}>'.
+      Types of property 'content' are incompatible.
+        Type '{ type: string; text: string; }[]' is not assignable to type '(ImageContent | TextContent)[]'.
+          Type '{ type: string; text: string; }' is not assignable to type 'ImageContent | TextContent'.
+            Type '{ type: string; text: string; }' is not assignable to type 'TextContent'.
+              Types of property 'type' are incompatible.
+                Type 'string' is not assignable to type '"text"'.
+packages/coding-agent/test/execute-tool.test.ts(219,29): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(261,43): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(307,39): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/senpi-codemode/src/index.ts(3,6): error TS1294: This syntax is not allowed when 'erasableSyntaxOnly' is enabled.
+
+EXIT_STATUS: 1
+
+FAILURE SCENARIO REVERT CHECK: enum removed, root check rerun
+COMMAND: npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1316 files in 809ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+packages/coding-agent/test/execute-tool.test.ts(57,37): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(70,37): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(89,5): error TS2322: Type 'Mock<() => Promise<{ content: { type: string; text: string; }[]; details: {}; }>>' is not assignable to type '(toolCallId: string, params: object, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<{}> | undefined, ctx: ExtensionContext) => Promise<...>'.
+  Type 'Promise<{ content: { type: string; text: string; }[]; details: {}; }>' is not assignable to type 'Promise<AgentToolResult<{}>>'.
+    Type '{ content: { type: string; text: string; }[]; details: {}; }' is not assignable to type 'AgentToolResult<{}>'.
+      Types of property 'content' are incompatible.
+        Type '{ type: string; text: string; }[]' is not assignable to type '(ImageContent | TextContent)[]'.
+          Type '{ type: string; text: string; }' is not assignable to type 'ImageContent | TextContent'.
+            Type '{ type: string; text: string; }' is not assignable to type 'TextContent'.
+              Types of property 'type' are incompatible.
+                Type 'string' is not assignable to type '"text"'.
+packages/coding-agent/test/execute-tool.test.ts(95,29): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(125,37): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(150,29): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(154,29): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(185,22): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(214,5): error TS2322: Type 'Mock<() => Promise<{ content: { type: string; text: string; }[]; details: {}; }>>' is not assignable to type '(toolCallId: string, params: { required: string; }, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<{}> | undefined, ctx: ExtensionContext) => Promise<...>'.
+  Type 'Promise<{ content: { type: string; text: string; }[]; details: {}; }>' is not assignable to type 'Promise<AgentToolResult<{}>>'.
+    Type '{ content: { type: string; text: string; }[]; details: {}; }' is not assignable to type 'AgentToolResult<{}>'.
+      Types of property 'content' are incompatible.
+        Type '{ type: string; text: string; }[]' is not assignable to type '(ImageContent | TextContent)[]'.
+          Type '{ type: string; text: string; }' is not assignable to type 'ImageContent | TextContent'.
+            Type '{ type: string; text: string; }' is not assignable to type 'TextContent'.
+              Types of property 'type' are incompatible.
+                Type 'string' is not assignable to type '"text"'.
+packages/coding-agent/test/execute-tool.test.ts(220,29): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(262,43): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+packages/coding-agent/test/execute-tool.test.ts(308,39): error TS2339: Property 'executeTool' does not exist on type 'ExtensionAPI'.
+
+EXIT_STATUS: 1
+
+VERIFY 4: package-local tsgo noEmit
+COMMAND: npx tsgo -p packages/senpi-codemode/tsconfig.json --noEmit
+packages/senpi-codemode/tsconfig.json(5,3): error TS5102: Option 'baseUrl' has been removed. Please remove it from your configuration.
+  Use '"paths": {"*": ["../../*"]}' instead.
+packages/senpi-codemode/tsconfig.json(8,5): error TS5090: Non-relative paths are not allowed. Did you forget a leading './'?
+packages/senpi-codemode/tsconfig.json(11,5): error TS5090: Non-relative paths are not allowed. Did you forget a leading './'?
+
+EXIT_STATUS: 1
+
+VERIFY 5: git diff whitespace check
+COMMAND: git diff --check -- packages/senpi-codemode package-lock.json .omo/evidence/task-1-senpi-codemode.txt
+
+EXIT_STATUS: 0
+
+VERIFY 4B: package-local tsgo noEmit after tsconfig path fix
+COMMAND: npx tsgo -p packages/senpi-codemode/tsconfig.json --noEmit
+packages/coding-agent/src/cli/args.ts(5,36): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/cli/config-selector.ts(5,38): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/cli/file-processor.ts(6,35): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/cli/initial-message.ts(1,35): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/cli/list-models.ts(5,33): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/cli/list-models.ts(6,29): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/cli/list-models.ts(45,56): error TS7006: Parameter 'm' implicitly has an 'any' type.
+packages/coding-agent/src/cli/session-picker.ts(5,32): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/cli/startup-ui.ts(1,54): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/agent-session-services.ts(2,36): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/agent-session-services.ts(3,28): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/agent-session.ts(27,8): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/agent-session.ts(28,82): error TS2307: Cannot find module '@earendil-works/pi-ai/compat' or its corresponding type declarations.
+packages/coding-agent/src/core/agent-session.ts(36,8): error TS2307: Cannot find module '@earendil-works/pi-ai/compat' or its corresponding type declarations.
+packages/coding-agent/src/core/agent-session.ts(496,40): error TS7031: Binding element 'toolCall' implicitly has an 'any' type.
+packages/coding-agent/src/core/agent-session.ts(496,50): error TS7031: Binding element 'args' implicitly has an 'any' type.
+packages/coding-agent/src/core/agent-session.ts(519,39): error TS7031: Binding element 'toolCall' implicitly has an 'any' type.
+packages/coding-agent/src/core/agent-session.ts(519,49): error TS7031: Binding element 'args' implicitly has an 'any' type.
+packages/coding-agent/src/core/agent-session.ts(519,55): error TS7031: Binding element 'result' implicitly has an 'any' type.
+packages/coding-agent/src/core/agent-session.ts(519,63): error TS7031: Binding element 'isError' implicitly has an 'any' type.
+packages/coding-agent/src/core/agent-session.ts(553,50): error TS7006: Parameter 'turn' implicitly has an 'any' type.
+packages/coding-agent/src/core/agent-session.ts(553,56): error TS7006: Parameter 'signal' implicitly has an 'any' type.
+packages/coding-agent/src/core/agent-session.ts(797,38): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/core/agent-session.ts(798,26): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/core/agent-session.ts(1006,38): error TS7006: Parameter 't' implicitly has an 'any' type.
+packages/coding-agent/src/core/agent-session.ts(2669,4): error TS2741: Property 'executeTool' is missing in type '{ sendMessage: <T = unknown>(message: Pick<CustomMessage<T>, "content" | "customType" | "details" | "display">, options: { triggerTurn?: boolean | undefined; deliverAs?: "followUp" | ... 2 more ... | undefined; } | undefined) => void; ... 12 more ...; setThinkingLevel: (level: ThinkingLevel) => void; }' but required in type 'ExtensionActions'.
+packages/coding-agent/src/core/agent-session.ts(3546,47): error TS7006: Parameter 'm' implicitly has an 'any' type.
+packages/coding-agent/src/core/agent-session.ts(3547,52): error TS7006: Parameter 'm' implicitly has an 'any' type.
+packages/coding-agent/src/core/agent-session.ts(3548,46): error TS7006: Parameter 'm' implicitly has an 'any' type.
+packages/coding-agent/src/core/agent-session.ts(3560,47): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/core/auth-storage.ts(15,8): error TS2307: Cannot find module '@earendil-works/pi-ai/compat' or its corresponding type declarations.
+packages/coding-agent/src/core/auth-storage.ts(16,69): error TS2307: Cannot find module '@earendil-works/pi-ai/oauth' or its corresponding type declarations.
+packages/coding-agent/src/core/compaction/branch-summarization.ts(9,45): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/compaction/branch-summarization.ts(10,49): error TS2307: Cannot find module '@earendil-works/pi-ai/compat' or its corresponding type declarations.
+packages/coding-agent/src/core/compaction/branch-summarization.ts(11,32): error TS2307: Cannot find module '@earendil-works/pi-ai/compat' or its corresponding type declarations.
+packages/coding-agent/src/core/compaction/branch-summarization.ts(421,12): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/core/compaction/branch-summarization.ts(422,9): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/core/compaction/compaction.ts(8,60): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/compaction/compaction.ts(9,83): error TS2307: Cannot find module '@earendil-works/pi-ai/compat' or its corresponding type declarations.
+packages/coding-agent/src/core/compaction/compaction.ts(10,32): error TS2307: Cannot find module '@earendil-works/pi-ai/compat' or its corresponding type declarations.
+packages/coding-agent/src/core/compaction/compaction.ts(287,56): error TS2366: Function lacks ending return statement and return type does not include 'undefined'.
+packages/coding-agent/src/core/compaction/compaction.ts(670,12): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/core/compaction/compaction.ts(671,9): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/core/compaction/compaction.ts(942,12): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/core/compaction/compaction.ts(943,9): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/core/compaction/utils.ts(5,35): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/compaction/utils.ts(6,30): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/compaction/utils.ts(126,17): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/core/compaction/utils.ts(127,14): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/core/compaction/utils.ts(160,14): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/core/compaction/utils.ts(161,11): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/core/defaults.ts(1,36): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/export-html/index.ts(1,33): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/export-html/index.ts(268,29): error TS7006: Parameter 't' implicitly has an 'any' type.
+packages/coding-agent/src/core/export-html/tool-renderer.ts(8,48): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/export-html/tool-renderer.ts(9,32): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/anthropic-bash/index.ts(1,26): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/anthropic-web-search/index.ts(1,26): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/compaction/checkpoint-state.ts(1,36): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction.ts(21,35): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction.ts(22,85): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction.ts(363,42): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction.ts(443,76): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction.ts(445,47): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction.ts(495,43): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/compaction/index.ts(2,35): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts(1,35): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts(11,8): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts(12,30): error TS2307: Cannot find module '@earendil-works/pi-ai/compat' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts(352,10): error TS2322: Type 'AgentMessage' is not assignable to type 'never'.
+packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts(675,16): error TS7006: Parameter 'payload' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/compaction/repair-tool-pairs.ts(1,43): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/compaction/restoration-tracker.ts(1,35): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/compaction/restoration-tracker.ts(286,14): error TS7006: Parameter 'content' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/compaction/restoration-tracker.ts(287,11): error TS7006: Parameter 'content' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts(1,35): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts(8,8): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts(9,24): error TS2307: Cannot find module '@earendil-works/pi-ai/compat' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts(69,12): error TS7006: Parameter 'content' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts(70,9): error TS7006: Parameter 'content' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/compaction/tool-truncation.ts(1,38): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/compaction/tool-truncation.ts(2,48): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/compaction/tool-truncation.ts(54,73): error TS7006: Parameter 'block' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/compaction/tool-truncation.ts(69,73): error TS7006: Parameter 'block' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/diff.ts(8,79): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/diff.ts(176,23): error TS7006: Parameter 't' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/diff.ts(177,21): error TS7006: Parameter 't' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/diff.ts(178,20): error TS7006: Parameter 't' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/diff.ts(179,19): error TS7006: Parameter 't' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/diff.ts(180,16): error TS7006: Parameter 't' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/diff.ts(182,28): error TS7006: Parameter 'item' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/diff.ts(187,37): error TS7006: Parameter 'item' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/diff.ts(199,15): error TS7006: Parameter 'w' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/diff.ts(201,20): error TS7006: Parameter 'data' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/files.ts(8,79): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/files.ts(167,23): error TS7006: Parameter 't' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/files.ts(168,21): error TS7006: Parameter 't' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/files.ts(169,20): error TS7006: Parameter 't' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/files.ts(170,19): error TS7006: Parameter 't' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/files.ts(171,16): error TS7006: Parameter 't' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/files.ts(173,28): error TS7006: Parameter 'item' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/files.ts(178,37): error TS7006: Parameter 'item' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/files.ts(190,15): error TS7006: Parameter 'w' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/files.ts(192,20): error TS7006: Parameter 'data' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/goal/continuation.ts(1,35): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/goal/continuation.ts(53,31): error TS7006: Parameter 'content' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/extension.ts(1,33): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/streaming-render.ts(1,46): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/tool.ts(1,46): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/tool.ts(46,12): error TS7006: Parameter 'block' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/tool.ts(47,9): error TS7006: Parameter 'block' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/tool.ts(48,12): error TS7006: Parameter 'value' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/history-search/filter.ts(1,28): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/history-search/overlay.ts(2,37): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/history-search/overlay.ts(3,85): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/history-search/overlay.ts(106,21): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/history-search/overlay.ts(107,19): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/history-search/overlay.ts(108,18): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/history-search/overlay.ts(109,17): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/history-search/overlay.ts(110,14): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/history-search/overlay.ts(112,20): error TS7006: Parameter 'item' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/history-search/overlay.ts(131,8): error TS2339: Property 'clear' does not exist on type 'HistorySearchOverlay'.
+packages/coding-agent/src/core/extensions/builtin/history-search/overlay.ts(132,8): error TS2339: Property 'addChild' does not exist on type 'HistorySearchOverlay'.
+packages/coding-agent/src/core/extensions/builtin/history-search/overlay.ts(133,8): error TS2339: Property 'addChild' does not exist on type 'HistorySearchOverlay'.
+packages/coding-agent/src/core/extensions/builtin/history-search/overlay.ts(134,8): error TS2339: Property 'addChild' does not exist on type 'HistorySearchOverlay'.
+packages/coding-agent/src/core/extensions/builtin/history-search/overlay.ts(135,8): error TS2339: Property 'addChild' does not exist on type 'HistorySearchOverlay'.
+packages/coding-agent/src/core/extensions/builtin/history-search/overlay.ts(136,8): error TS2339: Property 'addChild' does not exist on type 'HistorySearchOverlay'.
+packages/coding-agent/src/core/extensions/builtin/history-search/overlay.ts(139,8): error TS2339: Property 'addChild' does not exist on type 'HistorySearchOverlay'.
+packages/coding-agent/src/core/extensions/builtin/hooks/stop-adapter.ts(1,35): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/hooks/tool-adapter.ts(1,48): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/nested-agents-md/index.ts(1,34): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/openai-web-search/index.ts(1,56): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/openai-web-search/index.ts(47,3): error TS2741: Property 'compat' is missing in type '{ api: string; baseUrl: string; }' but required in type 'OpenAiWebSearchModel'.
+packages/coding-agent/src/core/extensions/builtin/prompt-preset/presets.ts(1,33): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/prompt-url-widget.ts(1,33): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/redraws.ts(7,22): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/service-tier.ts(1,26): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/session-observer/overlay-format.ts(1,31): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/session-observer/overlay.ts(10,8): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/session-observer/overlay.ts(82,11): error TS4112: This member cannot have an 'override' modifier because its containing class 'SessionHudOverlay' does not extend another class.
+packages/coding-agent/src/core/extensions/builtin/session-observer/overlay.ts(110,21): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/session-observer/overlay.ts(111,19): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/session-observer/overlay.ts(112,18): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/session-observer/overlay.ts(113,17): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/session-observer/overlay.ts(114,14): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/session-observer/overlay.ts(116,20): error TS7006: Parameter 'item' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/session-observer/overlay.ts(122,8): error TS2339: Property 'clear' does not exist on type 'SessionHudOverlay'.
+packages/coding-agent/src/core/extensions/builtin/session-observer/overlay.ts(123,8): error TS2339: Property 'addChild' does not exist on type 'SessionHudOverlay'.
+packages/coding-agent/src/core/extensions/builtin/session-observer/overlay.ts(130,8): error TS2339: Property 'addChild' does not exist on type 'SessionHudOverlay'.
+packages/coding-agent/src/core/extensions/builtin/session-observer/overlay.ts(131,8): error TS2339: Property 'addChild' does not exist on type 'SessionHudOverlay'.
+packages/coding-agent/src/core/extensions/builtin/session-observer/overlay.ts(132,8): error TS2339: Property 'addChild' does not exist on type 'SessionHudOverlay'.
+packages/coding-agent/src/core/extensions/builtin/session-observer/overlay.ts(133,8): error TS2339: Property 'addChild' does not exist on type 'SessionHudOverlay'.
+packages/coding-agent/src/core/extensions/builtin/session-observer/text.ts(1,48): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/session-observer/text.ts(2,33): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/session-observer/transcript-entries.ts(1,50): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/session-observer/transcript-format.ts(1,50): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/session-observer/transcript-format.ts(2,46): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/session-observer/transcript-format.ts(18,71): error TS7006: Parameter 'line' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/session-observer/transcript-format.ts(23,12): error TS7006: Parameter 'part' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/session-observer/transcript-format.ts(24,9): error TS7006: Parameter 'part' implicitly has an 'any' type.
+packages/coding-agent/src/core/extensions/builtin/session-observer/transcript.ts(1,40): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/session-observer/types.ts(1,36): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/todotools/tools/todoread.ts(1,22): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/todotools/tools/todowrite.ts(1,22): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/renderers.ts(1,39): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/tool.ts(1,28): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/builtin/websearch/websearch/renderers.ts(1,22): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/loader.ts(10,38): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/loader.ts(11,37): error TS2307: Cannot find module '@earendil-works/pi-ai/compat' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/loader.ts(12,36): error TS2307: Cannot find module '@earendil-works/pi-ai/oauth' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/loader.ts(13,28): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/loader.ts(14,32): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/runner.ts(6,35): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/runner.ts(7,42): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/runner.ts(8,28): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/types.ts(17,8): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/types.ts(31,8): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/types.ts(42,8): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/extensions/wrapper.ts(8,32): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/keybindings.ts(8,8): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/keybindings.ts(62,16): error TS2664: Invalid module name in augmentation, module '@earendil-works/pi-tui' cannot be found.
+packages/coding-agent/src/core/keybindings.ts(368,8): error TS2339: Property 'setUserBindings' does not exist on type 'KeybindingsManager'.
+packages/coding-agent/src/core/keybindings.ts(372,15): error TS2339: Property 'getResolvedBindings' does not exist on type 'KeybindingsManager'.
+packages/coding-agent/src/core/messages.ts(8,35): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/messages.ts(9,57): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/messages.ts(79,16): error TS2664: Invalid module name in augmentation, module '@earendil-works/pi-agent-core' cannot be found.
+packages/coding-agent/src/core/messages.ts(204,12): error TS2322: Type 'AgentMessage' is not assignable to type 'never'.
+packages/coding-agent/src/core/model-registry.ts(21,8): error TS2307: Cannot find module '@earendil-works/pi-ai/compat' or its corresponding type declarations.
+packages/coding-agent/src/core/model-registry.ts(22,60): error TS2307: Cannot find module '@earendil-works/pi-ai/oauth' or its corresponding type declarations.
+packages/coding-agent/src/core/model-registry.ts(512,34): error TS7006: Parameter 'provider' implicitly has an 'any' type.
+packages/coding-agent/src/core/model-registry.ts(1005,68): error TS7006: Parameter 'p' implicitly has an 'any' type.
+packages/coding-agent/src/core/model-registry.ts(1153,15): error TS7006: Parameter 'model' implicitly has an 'any' type.
+packages/coding-agent/src/core/model-registry.ts(1153,22): error TS7006: Parameter 'context' implicitly has an 'any' type.
+packages/coding-agent/src/core/model-registry.ts(1153,31): error TS7006: Parameter 'options' implicitly has an 'any' type.
+packages/coding-agent/src/core/model-resolver.ts(5,36): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/model-resolver.ts(6,74): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/provider-attribution.ts(1,50): error TS2307: Cannot find module '@earendil-works/pi-ai/compat' or its corresponding type declarations.
+packages/coding-agent/src/core/sdk.ts(2,62): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/sdk.ts(3,66): error TS2307: Cannot find module '@earendil-works/pi-ai/compat' or its corresponding type declarations.
+packages/coding-agent/src/core/sdk.ts(318,20): error TS7006: Parameter 'model' implicitly has an 'any' type.
+packages/coding-agent/src/core/sdk.ts(318,27): error TS7006: Parameter 'context' implicitly has an 'any' type.
+packages/coding-agent/src/core/sdk.ts(318,36): error TS7006: Parameter 'options' implicitly has an 'any' type.
+packages/coding-agent/src/core/sdk.ts(353,21): error TS7006: Parameter 'payload' implicitly has an 'any' type.
+packages/coding-agent/src/core/sdk.ts(353,30): error TS7006: Parameter '_model' implicitly has an 'any' type.
+packages/coding-agent/src/core/sdk.ts(360,22): error TS7006: Parameter 'response' implicitly has an 'any' type.
+packages/coding-agent/src/core/sdk.ts(360,32): error TS7006: Parameter '_model' implicitly has an 'any' type.
+packages/coding-agent/src/core/sdk.ts(372,28): error TS7006: Parameter 'messages' implicitly has an 'any' type.
+packages/coding-agent/src/core/session-manager.ts(1,35): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/session-manager.ts(2,57): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/session-manager.ts(649,12): error TS7006: Parameter 'block' implicitly has an 'any' type.
+packages/coding-agent/src/core/session-manager.ts(650,9): error TS7006: Parameter 'block' implicitly has an 'any' type.
+packages/coding-agent/src/core/settings-manager.ts(1,32): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/thinking-levels.ts(1,36): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/thinking-levels.ts(2,33): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/tools/bash.ts(3,32): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/tools/bash.ts(4,50): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/tools/bash.ts(247,12): error TS2339: Property 'detachAll' does not exist on type 'BashResultRenderComponent'.
+packages/coding-agent/src/core/tools/bash.ts(266,14): error TS2339: Property 'addChild' does not exist on type 'BashResultRenderComponent'.
+packages/coding-agent/src/core/tools/bash.ts(268,14): error TS2339: Property 'addChild' does not exist on type 'BashResultRenderComponent'.
+packages/coding-agent/src/core/tools/bash.ts(307,13): error TS2339: Property 'addChild' does not exist on type 'BashResultRenderComponent'.
+packages/coding-agent/src/core/tools/bash.ts(313,13): error TS2339: Property 'addChild' does not exist on type 'BashResultRenderComponent'.
+packages/coding-agent/src/core/tools/bash.ts(488,14): error TS2339: Property 'invalidate' does not exist on type 'BashResultRenderComponent'.
+packages/coding-agent/src/core/tools/edit.ts(1,32): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/tools/edit.ts(2,46): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/tools/find.ts(2,32): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/tools/find.ts(3,22): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/tools/grep.ts(3,32): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/tools/grep.ts(4,22): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/tools/index.ts(71,32): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/tools/ls.ts(2,32): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/tools/ls.ts(3,22): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/tools/read.ts(2,32): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/tools/read.ts(3,60): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/tools/read.ts(4,22): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/tools/render-utils.ts(3,48): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/core/tools/render-utils.ts(4,79): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/tools/tool-definition-wrapper.ts(1,32): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/tools/tool-definition-wrapper.ts(17,13): error TS7006: Parameter 'toolCallId' implicitly has an 'any' type.
+packages/coding-agent/src/core/tools/tool-definition-wrapper.ts(17,25): error TS7006: Parameter 'params' implicitly has an 'any' type.
+packages/coding-agent/src/core/tools/tool-definition-wrapper.ts(17,33): error TS7006: Parameter 'signal' implicitly has an 'any' type.
+packages/coding-agent/src/core/tools/tool-definition-wrapper.ts(17,41): error TS7006: Parameter 'onUpdate' implicitly has an 'any' type.
+packages/coding-agent/src/core/tools/write.ts(1,32): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/core/tools/write.ts(2,33): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/core/tools/write.ts(264,14): error TS2339: Property 'setText' does not exist on type 'WriteCallRenderComponent'.
+packages/coding-agent/src/main.ts(9,51): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/armin.ts(5,37): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/assistant-message.ts(1,39): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/assistant-message.ts(2,71): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/assistant-message.ts(44,8): error TS2339: Property 'addChild' does not exist on type 'AssistantMessageComponent'.
+packages/coding-agent/src/modes/interactive/components/assistant-message.ts(51,11): error TS4112: This member cannot have an 'override' modifier because its containing class 'AssistantMessageComponent' does not extend another class.
+packages/coding-agent/src/modes/interactive/components/assistant-message.ts(97,11): error TS4112: This member cannot have an 'override' modifier because its containing class 'AssistantMessageComponent' does not extend another class.
+packages/coding-agent/src/modes/interactive/components/assistant-message.ts(129,5): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/assistant-message.ts(151,13): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/assistant-message.ts(183,8): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/assistant-message.ts(197,46): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/bash-execution.ts(5,59): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/bash-execution.ts(51,8): error TS2339: Property 'addChild' does not exist on type 'BashExecutionComponent'.
+packages/coding-agent/src/modes/interactive/components/bash-execution.ts(54,8): error TS2339: Property 'addChild' does not exist on type 'BashExecutionComponent'.
+packages/coding-agent/src/modes/interactive/components/bash-execution.ts(58,8): error TS2339: Property 'addChild' does not exist on type 'BashExecutionComponent'.
+packages/coding-agent/src/modes/interactive/components/bash-execution.ts(67,5): error TS7006: Parameter 'spinner' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/bash-execution.ts(68,5): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/bash-execution.ts(74,8): error TS2339: Property 'addChild' does not exist on type 'BashExecutionComponent'.
+packages/coding-agent/src/modes/interactive/components/bash-execution.ts(85,11): error TS4112: This member cannot have an 'override' modifier because its containing class 'BashExecutionComponent' does not extend another class.
+packages/coding-agent/src/modes/interactive/components/bordered-loader.ts(1,78): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/bordered-loader.ts(16,8): error TS2339: Property 'addChild' does not exist on type 'BorderedLoader'.
+packages/coding-agent/src/modes/interactive/components/bordered-loader.ts(20,6): error TS7006: Parameter 's' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/bordered-loader.ts(21,6): error TS7006: Parameter 's' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/bordered-loader.ts(28,6): error TS7006: Parameter 's' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/bordered-loader.ts(29,6): error TS7006: Parameter 's' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/bordered-loader.ts(33,8): error TS2339: Property 'addChild' does not exist on type 'BorderedLoader'.
+packages/coding-agent/src/modes/interactive/components/bordered-loader.ts(35,9): error TS2339: Property 'addChild' does not exist on type 'BorderedLoader'.
+packages/coding-agent/src/modes/interactive/components/bordered-loader.ts(36,9): error TS2339: Property 'addChild' does not exist on type 'BorderedLoader'.
+packages/coding-agent/src/modes/interactive/components/bordered-loader.ts(38,8): error TS2339: Property 'addChild' does not exist on type 'BorderedLoader'.
+packages/coding-agent/src/modes/interactive/components/bordered-loader.ts(39,8): error TS2339: Property 'addChild' does not exist on type 'BorderedLoader'.
+packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts(1,65): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts(16,16): error TS7006: Parameter 't' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts(27,11): error TS4112: This member cannot have an 'override' modifier because its containing class 'BranchSummaryMessageComponent' does not extend another class.
+packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts(33,8): error TS2339: Property 'clear' does not exist on type 'BranchSummaryMessageComponent'.
+packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts(36,8): error TS2339: Property 'addChild' does not exist on type 'BranchSummaryMessageComponent'.
+packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts(37,8): error TS2339: Property 'addChild' does not exist on type 'BranchSummaryMessageComponent'.
+packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts(41,9): error TS2339: Property 'addChild' does not exist on type 'BranchSummaryMessageComponent'.
+packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts(47,9): error TS2339: Property 'addChild' does not exist on type 'BranchSummaryMessageComponent'.
+packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts(1,65): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts(32,16): error TS7006: Parameter 't' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts(43,11): error TS4112: This member cannot have an 'override' modifier because its containing class 'CompactionSummaryMessageComponent' does not extend another class.
+packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts(49,8): error TS2339: Property 'clear' does not exist on type 'CompactionSummaryMessageComponent'.
+packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts(54,8): error TS2339: Property 'addChild' does not exist on type 'CompactionSummaryMessageComponent'.
+packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts(55,8): error TS2339: Property 'addChild' does not exist on type 'CompactionSummaryMessageComponent'.
+packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts(60,9): error TS2339: Property 'addChild' does not exist on type 'CompactionSummaryMessageComponent'.
+packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts(67,9): error TS2339: Property 'addChild' does not exist on type 'CompactionSummaryMessageComponent'.
+packages/coding-agent/src/modes/interactive/components/config-selector.ts(17,8): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/config-selector.ts(607,8): error TS2339: Property 'addChild' does not exist on type 'ConfigSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/config-selector.ts(608,8): error TS2339: Property 'addChild' does not exist on type 'ConfigSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/config-selector.ts(609,8): error TS2339: Property 'addChild' does not exist on type 'ConfigSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/config-selector.ts(610,8): error TS2339: Property 'addChild' does not exist on type 'ConfigSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/config-selector.ts(611,8): error TS2339: Property 'addChild' does not exist on type 'ConfigSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/config-selector.ts(618,8): error TS2339: Property 'addChild' does not exist on type 'ConfigSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/config-selector.ts(621,8): error TS2339: Property 'addChild' does not exist on type 'ConfigSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/config-selector.ts(622,8): error TS2339: Property 'addChild' does not exist on type 'ConfigSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/countdown-timer.ts(5,26): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/custom-editor.ts(1,72): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/custom-editor.ts(37,24): error TS2339: Property 'matches' does not exist on type 'KeybindingsManager'.
+packages/coding-agent/src/modes/interactive/components/custom-editor.ts(45,24): error TS2339: Property 'matches' does not exist on type 'KeybindingsManager'.
+packages/coding-agent/src/modes/interactive/components/custom-editor.ts(46,14): error TS2339: Property 'isShowingAutocomplete' does not exist on type 'CustomEditor'.
+packages/coding-agent/src/modes/interactive/components/custom-editor.ts(60,24): error TS2339: Property 'matches' does not exist on type 'KeybindingsManager'.
+packages/coding-agent/src/modes/interactive/components/custom-editor.ts(61,13): error TS2339: Property 'getText' does not exist on type 'CustomEditor'.
+packages/coding-agent/src/modes/interactive/components/custom-editor.ts(71,80): error TS2339: Property 'matches' does not exist on type 'KeybindingsManager'.
+packages/coding-agent/src/modes/interactive/components/custom-entry.ts(1,32): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/custom-entry.ts(2,46): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/custom-entry.ts(35,11): error TS4112: This member cannot have an 'override' modifier because its containing class 'CustomEntryComponent' does not extend another class.
+packages/coding-agent/src/modes/interactive/components/custom-entry.ts(41,8): error TS2339: Property 'clear' does not exist on type 'CustomEntryComponent'.
+packages/coding-agent/src/modes/interactive/components/custom-entry.ts(49,31): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/custom-entry.ts(59,8): error TS2339: Property 'addChild' does not exist on type 'CustomEntryComponent'.
+packages/coding-agent/src/modes/interactive/components/custom-entry.ts(60,8): error TS2339: Property 'addChild' does not exist on type 'CustomEntryComponent'.
+packages/coding-agent/src/modes/interactive/components/custom-message.ts(1,34): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/custom-message.ts(2,32): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/custom-message.ts(3,76): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/custom-message.ts(30,8): error TS2339: Property 'addChild' does not exist on type 'CustomMessageComponent'.
+packages/coding-agent/src/modes/interactive/components/custom-message.ts(33,29): error TS7006: Parameter 't' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/custom-message.ts(45,11): error TS4112: This member cannot have an 'override' modifier because its containing class 'CustomMessageComponent' does not extend another class.
+packages/coding-agent/src/modes/interactive/components/custom-message.ts(53,9): error TS2339: Property 'removeChild' does not exist on type 'CustomMessageComponent'.
+packages/coding-agent/src/modes/interactive/components/custom-message.ts(56,8): error TS2339: Property 'removeChild' does not exist on type 'CustomMessageComponent'.
+packages/coding-agent/src/modes/interactive/components/custom-message.ts(65,11): error TS2339: Property 'addChild' does not exist on type 'CustomMessageComponent'.
+packages/coding-agent/src/modes/interactive/components/custom-message.ts(74,8): error TS2339: Property 'addChild' does not exist on type 'CustomMessageComponent'.
+packages/coding-agent/src/modes/interactive/components/daxnuts.ts(7,37): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/dynamic-border.ts(1,32): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/earendil-announcement.ts(2,48): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/earendil-announcement.ts(31,8): error TS2339: Property 'addChild' does not exist on type 'EarendilAnnouncementComponent'.
+packages/coding-agent/src/modes/interactive/components/earendil-announcement.ts(32,8): error TS2339: Property 'addChild' does not exist on type 'EarendilAnnouncementComponent'.
+packages/coding-agent/src/modes/interactive/components/earendil-announcement.ts(33,8): error TS2339: Property 'addChild' does not exist on type 'EarendilAnnouncementComponent'.
+packages/coding-agent/src/modes/interactive/components/earendil-announcement.ts(34,8): error TS2339: Property 'addChild' does not exist on type 'EarendilAnnouncementComponent'.
+packages/coding-agent/src/modes/interactive/components/earendil-announcement.ts(35,8): error TS2339: Property 'addChild' does not exist on type 'EarendilAnnouncementComponent'.
+packages/coding-agent/src/modes/interactive/components/earendil-announcement.ts(36,8): error TS2339: Property 'addChild' does not exist on type 'EarendilAnnouncementComponent'.
+packages/coding-agent/src/modes/interactive/components/earendil-announcement.ts(40,9): error TS2339: Property 'addChild' does not exist on type 'EarendilAnnouncementComponent'.
+packages/coding-agent/src/modes/interactive/components/earendil-announcement.ts(44,24): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/earendil-announcement.ts(48,9): error TS2339: Property 'addChild' does not exist on type 'EarendilAnnouncementComponent'.
+packages/coding-agent/src/modes/interactive/components/earendil-announcement.ts(51,8): error TS2339: Property 'addChild' does not exist on type 'EarendilAnnouncementComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-editor.ts(19,8): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/extension-editor.ts(61,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionEditorComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-editor.ts(62,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionEditorComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-editor.ts(65,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionEditorComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-editor.ts(66,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionEditorComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-editor.ts(77,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionEditorComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-editor.ts(79,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionEditorComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-editor.ts(90,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionEditorComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-editor.ts(92,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionEditorComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-editor.ts(95,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionEditorComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-editor.ts(107,24): error TS2339: Property 'matches' does not exist on type 'KeybindingsManager'.
+packages/coding-agent/src/modes/interactive/components/extension-input.ts(5,90): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/extension-input.ts(47,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionInputComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-input.ts(48,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionInputComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-input.ts(51,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionInputComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-input.ts(52,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionInputComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-input.ts(64,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionInputComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-input.ts(65,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionInputComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-input.ts(66,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionInputComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-input.ts(69,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionInputComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-input.ts(70,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionInputComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-selector.ts(6,67): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/extension-selector.ts(44,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-selector.ts(45,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-selector.ts(48,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-selector.ts(49,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-selector.ts(61,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-selector.ts(62,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-selector.ts(63,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-selector.ts(74,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/extension-selector.ts(75,8): error TS2339: Property 'addChild' does not exist on type 'ExtensionSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/favorite-models-selector.ts(1,44): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/favorite-models-selector.ts(12,8): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/favorite-models-selector.ts(93,8): error TS2339: Property 'addChild' does not exist on type 'FavoriteModelsSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/favorite-models-selector.ts(94,8): error TS2339: Property 'addChild' does not exist on type 'FavoriteModelsSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/favorite-models-selector.ts(95,8): error TS2339: Property 'addChild' does not exist on type 'FavoriteModelsSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/favorite-models-selector.ts(96,8): error TS2339: Property 'addChild' does not exist on type 'FavoriteModelsSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/favorite-models-selector.ts(106,8): error TS2339: Property 'addChild' does not exist on type 'FavoriteModelsSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/favorite-models-selector.ts(110,8): error TS2339: Property 'addChild' does not exist on type 'FavoriteModelsSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/favorite-models-selector.ts(111,8): error TS2339: Property 'addChild' does not exist on type 'FavoriteModelsSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/favorite-models-selector.ts(115,8): error TS2339: Property 'addChild' does not exist on type 'FavoriteModelsSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/favorite-models-selector.ts(118,8): error TS2339: Property 'addChild' does not exist on type 'FavoriteModelsSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/favorite-models-selector.ts(120,8): error TS2339: Property 'addChild' does not exist on type 'FavoriteModelsSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/favorite-models-selector.ts(122,8): error TS2339: Property 'addChild' does not exist on type 'FavoriteModelsSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/favorite-models-selector.ts(124,8): error TS2339: Property 'addChild' does not exist on type 'FavoriteModelsSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/favorite-models-selector.ts(173,33): error TS7006: Parameter 'i' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/first-time-setup.ts(1,57): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/first-time-setup.ts(50,8): error TS2339: Property 'clear' does not exist on type 'FirstTimeSetupComponent'.
+packages/coding-agent/src/modes/interactive/components/first-time-setup.ts(51,8): error TS2339: Property 'addChild' does not exist on type 'FirstTimeSetupComponent'.
+packages/coding-agent/src/modes/interactive/components/first-time-setup.ts(52,8): error TS2339: Property 'addChild' does not exist on type 'FirstTimeSetupComponent'.
+packages/coding-agent/src/modes/interactive/components/first-time-setup.ts(53,8): error TS2339: Property 'addChild' does not exist on type 'FirstTimeSetupComponent'.
+packages/coding-agent/src/modes/interactive/components/first-time-setup.ts(54,8): error TS2339: Property 'addChild' does not exist on type 'FirstTimeSetupComponent'.
+packages/coding-agent/src/modes/interactive/components/first-time-setup.ts(55,8): error TS2339: Property 'addChild' does not exist on type 'FirstTimeSetupComponent'.
+packages/coding-agent/src/modes/interactive/components/first-time-setup.ts(58,8): error TS2339: Property 'addChild' does not exist on type 'FirstTimeSetupComponent'.
+packages/coding-agent/src/modes/interactive/components/first-time-setup.ts(61,9): error TS2339: Property 'addChild' does not exist on type 'FirstTimeSetupComponent'.
+packages/coding-agent/src/modes/interactive/components/first-time-setup.ts(62,9): error TS2339: Property 'addChild' does not exist on type 'FirstTimeSetupComponent'.
+packages/coding-agent/src/modes/interactive/components/first-time-setup.ts(63,9): error TS2339: Property 'addChild' does not exist on type 'FirstTimeSetupComponent'.
+packages/coding-agent/src/modes/interactive/components/first-time-setup.ts(69,9): error TS2339: Property 'addChild' does not exist on type 'FirstTimeSetupComponent'.
+packages/coding-agent/src/modes/interactive/components/first-time-setup.ts(70,9): error TS2339: Property 'addChild' does not exist on type 'FirstTimeSetupComponent'.
+packages/coding-agent/src/modes/interactive/components/first-time-setup.ts(80,9): error TS2339: Property 'addChild' does not exist on type 'FirstTimeSetupComponent'.
+packages/coding-agent/src/modes/interactive/components/first-time-setup.ts(87,8): error TS2339: Property 'addChild' does not exist on type 'FirstTimeSetupComponent'.
+packages/coding-agent/src/modes/interactive/components/first-time-setup.ts(88,8): error TS2339: Property 'addChild' does not exist on type 'FirstTimeSetupComponent'.
+packages/coding-agent/src/modes/interactive/components/first-time-setup.ts(99,8): error TS2339: Property 'addChild' does not exist on type 'FirstTimeSetupComponent'.
+packages/coding-agent/src/modes/interactive/components/first-time-setup.ts(100,8): error TS2339: Property 'addChild' does not exist on type 'FirstTimeSetupComponent'.
+packages/coding-agent/src/modes/interactive/components/first-time-setup.ts(108,9): error TS2339: Property 'addChild' does not exist on type 'FirstTimeSetupComponent'.
+packages/coding-agent/src/modes/interactive/components/footer.ts(2,63): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/keybinding-hints.ts(5,61): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/login-dialog.ts(1,61): error TS2307: Cannot find module '@earendil-works/pi-ai/oauth' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/login-dialog.ts(2,90): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/login-dialog.ts(41,50): error TS7006: Parameter 'p' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/login-dialog.ts(46,8): error TS2339: Property 'addChild' does not exist on type 'LoginDialogComponent'.
+packages/coding-agent/src/modes/interactive/components/login-dialog.ts(49,8): error TS2339: Property 'addChild' does not exist on type 'LoginDialogComponent'.
+packages/coding-agent/src/modes/interactive/components/login-dialog.ts(53,8): error TS2339: Property 'addChild' does not exist on type 'LoginDialogComponent'.
+packages/coding-agent/src/modes/interactive/components/login-dialog.ts(71,8): error TS2339: Property 'addChild' does not exist on type 'LoginDialogComponent'.
+packages/coding-agent/src/modes/interactive/components/login-dialog.ts(79,72): error TS7006: Parameter 'child' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/model-favorites.ts(1,28): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/model-selector.ts(1,44): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/model-selector.ts(11,8): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/model-selector.ts(104,8): error TS2339: Property 'addChild' does not exist on type 'ModelSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/model-selector.ts(105,8): error TS2339: Property 'addChild' does not exist on type 'ModelSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/model-selector.ts(110,9): error TS2339: Property 'addChild' does not exist on type 'ModelSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/model-selector.ts(112,9): error TS2339: Property 'addChild' does not exist on type 'ModelSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/model-selector.ts(115,9): error TS2339: Property 'addChild' does not exist on type 'ModelSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/model-selector.ts(117,8): error TS2339: Property 'addChild' does not exist on type 'ModelSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/model-selector.ts(118,8): error TS2339: Property 'addChild' does not exist on type 'ModelSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/model-selector.ts(125,8): error TS2339: Property 'addChild' does not exist on type 'ModelSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/model-selector.ts(138,8): error TS2339: Property 'addChild' does not exist on type 'ModelSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/model-selector.ts(140,8): error TS2339: Property 'addChild' does not exist on type 'ModelSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/model-selector.ts(144,8): error TS2339: Property 'addChild' does not exist on type 'ModelSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/model-selector.ts(146,8): error TS2339: Property 'addChild' does not exist on type 'ModelSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/model-selector.ts(149,8): error TS2339: Property 'addChild' does not exist on type 'ModelSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/model-selector.ts(253,47): error TS7031: Binding element 'id' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/model-selector.ts(253,51): error TS7031: Binding element 'provider' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/model-selector.ts(253,61): error TS7031: Binding element 'model' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/oauth-selector.ts(9,8): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/oauth-selector.ts(65,8): error TS2339: Property 'addChild' does not exist on type 'OAuthSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/oauth-selector.ts(66,8): error TS2339: Property 'addChild' does not exist on type 'OAuthSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/oauth-selector.ts(70,8): error TS2339: Property 'addChild' does not exist on type 'OAuthSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/oauth-selector.ts(71,8): error TS2339: Property 'addChild' does not exist on type 'OAuthSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/oauth-selector.ts(80,8): error TS2339: Property 'addChild' does not exist on type 'OAuthSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/oauth-selector.ts(81,8): error TS2339: Property 'addChild' does not exist on type 'OAuthSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/oauth-selector.ts(85,8): error TS2339: Property 'addChild' does not exist on type 'OAuthSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/oauth-selector.ts(87,8): error TS2339: Property 'addChild' does not exist on type 'OAuthSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/oauth-selector.ts(90,8): error TS2339: Property 'addChild' does not exist on type 'OAuthSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/oauth-selector.ts(98,45): error TS7006: Parameter 'provider' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/session-selector-search.ts(1,28): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/session-selector.ts(15,8): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/session-selector.ts(563,24): error TS2339: Property 'matches' does not exist on type 'KeybindingsManager'.
+packages/coding-agent/src/modes/interactive/components/session-selector.ts(736,8): error TS2339: Property 'clear' does not exist on type 'SessionSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/session-selector.ts(737,8): error TS2339: Property 'addChild' does not exist on type 'SessionSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/session-selector.ts(738,8): error TS2339: Property 'addChild' does not exist on type 'SessionSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/session-selector.ts(739,8): error TS2339: Property 'addChild' does not exist on type 'SessionSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/session-selector.ts(741,9): error TS2339: Property 'addChild' does not exist on type 'SessionSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/session-selector.ts(742,9): error TS2339: Property 'addChild' does not exist on type 'SessionSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/session-selector.ts(744,8): error TS2339: Property 'addChild' does not exist on type 'SessionSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/session-selector.ts(745,8): error TS2339: Property 'addChild' does not exist on type 'SessionSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/session-selector.ts(746,8): error TS2339: Property 'addChild' does not exist on type 'SessionSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/session-selector.ts(786,32): error TS7006: Parameter 'value' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(1,36): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(2,32): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(14,8): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(141,5): error TS7006: Parameter 'id' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(141,9): error TS7006: Parameter 'newValue' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(152,8): error TS2339: Property 'addChild' does not exist on type 'WarningSettingsSubmenu'.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(175,8): error TS2339: Property 'addChild' does not exist on type 'SelectSubmenu'.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(179,9): error TS2339: Property 'addChild' does not exist on type 'SelectSubmenu'.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(180,9): error TS2339: Property 'addChild' does not exist on type 'SelectSubmenu'.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(184,8): error TS2339: Property 'addChild' does not exist on type 'SelectSubmenu'.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(200,31): error TS7006: Parameter 'item' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(207,41): error TS7006: Parameter 'item' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(212,8): error TS2339: Property 'addChild' does not exist on type 'SelectSubmenu'.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(215,8): error TS2339: Property 'addChild' does not exist on type 'SelectSubmenu'.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(216,8): error TS2339: Property 'addChild' does not exist on type 'SelectSubmenu'.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(308,8): error TS2339: Property 'clear' does not exist on type 'ThemeSubmenu'.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(309,8): error TS2339: Property 'addChild' does not exist on type 'ThemeSubmenu'.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(354,15): error TS7006: Parameter 'currentValue' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(354,29): error TS7006: Parameter 'done' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(372,15): error TS7006: Parameter 'currentValue' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(372,29): error TS7006: Parameter 'done' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(405,5): error TS7006: Parameter 'id' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(572,15): error TS7006: Parameter '_currentValue' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(572,30): error TS7006: Parameter 'done' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(587,15): error TS7006: Parameter 'currentValue' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(587,29): error TS7006: Parameter 'done' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(609,15): error TS7006: Parameter 'currentValue' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(609,29): error TS7006: Parameter 'done' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(723,8): error TS2339: Property 'addChild' does not exist on type 'SettingsSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(729,5): error TS7006: Parameter 'id' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(729,9): error TS7006: Parameter 'newValue' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(819,8): error TS2339: Property 'addChild' does not exist on type 'SettingsSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/settings-selector.ts(820,8): error TS2339: Property 'addChild' does not exist on type 'SettingsSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/show-images-selector.ts(1,86): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/show-images-selector.ts(25,8): error TS2339: Property 'addChild' does not exist on type 'ShowImagesSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/show-images-selector.ts(33,31): error TS7006: Parameter 'item' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/show-images-selector.ts(41,8): error TS2339: Property 'addChild' does not exist on type 'ShowImagesSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/show-images-selector.ts(44,8): error TS2339: Property 'addChild' does not exist on type 'ShowImagesSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts(1,57): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts(17,16): error TS7006: Parameter 't' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts(28,11): error TS4112: This member cannot have an 'override' modifier because its containing class 'SkillInvocationMessageComponent' does not extend another class.
+packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts(34,8): error TS2339: Property 'clear' does not exist on type 'SkillInvocationMessageComponent'.
+packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts(39,9): error TS2339: Property 'addChild' does not exist on type 'SkillInvocationMessageComponent'.
+packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts(41,9): error TS2339: Property 'addChild' does not exist on type 'SkillInvocationMessageComponent'.
+packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts(52,9): error TS2339: Property 'addChild' does not exist on type 'SkillInvocationMessageComponent'.
+packages/coding-agent/src/modes/interactive/components/status-indicator.ts(1,79): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/status-indicator.ts(24,8): error TS2339: Property 'stop' does not exist on type 'StatusIndicator'.
+packages/coding-agent/src/modes/interactive/components/status-indicator.ts(58,10): error TS2339: Property 'setMessage' does not exist on type 'RetryStatusIndicator'.
+packages/coding-agent/src/modes/interactive/components/theme-selector.ts(1,86): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/theme-selector.ts(35,8): error TS2339: Property 'addChild' does not exist on type 'ThemeSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/theme-selector.ts(46,31): error TS7006: Parameter 'item' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/theme-selector.ts(54,40): error TS7006: Parameter 'item' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/theme-selector.ts(58,8): error TS2339: Property 'addChild' does not exist on type 'ThemeSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/theme-selector.ts(61,8): error TS2339: Property 'addChild' does not exist on type 'ThemeSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/thinking-selector.ts(1,36): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/thinking-selector.ts(2,86): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/thinking-selector.ts(42,8): error TS2339: Property 'addChild' does not exist on type 'ThinkingSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/thinking-selector.ts(58,31): error TS7006: Parameter 'item' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/thinking-selector.ts(66,8): error TS2339: Property 'addChild' does not exist on type 'ThinkingSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/thinking-selector.ts(69,8): error TS2339: Property 'addChild' does not exist on type 'ThinkingSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/tool-execution.ts(1,38): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/tool-execution.ts(2,96): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/tool-execution.ts(94,8): error TS2339: Property 'addChild' does not exist on type 'ToolExecutionComponent'.
+packages/coding-agent/src/modes/interactive/components/tool-execution.ts(104,9): error TS2339: Property 'addChild' does not exist on type 'ToolExecutionComponent'.
+packages/coding-agent/src/modes/interactive/components/tool-execution.ts(106,9): error TS2339: Property 'addChild' does not exist on type 'ToolExecutionComponent'.
+packages/coding-agent/src/modes/interactive/components/tool-execution.ts(222,51): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/tool-execution.ts(255,11): error TS4112: This member cannot have an 'override' modifier because its containing class 'ToolExecutionComponent' does not extend another class.
+packages/coding-agent/src/modes/interactive/components/tool-execution.ts(262,11): error TS4112: This member cannot have an 'override' modifier because its containing class 'ToolExecutionComponent' does not extend another class.
+packages/coding-agent/src/modes/interactive/components/tool-execution.ts(385,9): error TS2339: Property 'removeChild' does not exist on type 'ToolExecutionComponent'.
+packages/coding-agent/src/modes/interactive/components/tool-execution.ts(389,9): error TS2339: Property 'removeChild' does not exist on type 'ToolExecutionComponent'.
+packages/coding-agent/src/modes/interactive/components/tool-execution.ts(394,52): error TS7006: Parameter 'c' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/tool-execution.ts(405,11): error TS2339: Property 'addChild' does not exist on type 'ToolExecutionComponent'.
+packages/coding-agent/src/modes/interactive/components/tool-execution.ts(414,11): error TS2339: Property 'addChild' does not exist on type 'ToolExecutionComponent'.
+packages/coding-agent/src/modes/interactive/components/tool-execution.ts(425,32): error TS2345: Argument of type 'ToolExecutionResult | undefined' is not assignable to parameter of type '{ content: { type: string; text?: string | undefined; data?: string | undefined; mimeType?: string | undefined; }[]; } | undefined'.
+  Type 'ToolExecutionResult' is not assignable to type '{ content: { type: string; text?: string | undefined; data?: string | undefined; mimeType?: string | undefined; }[]; } | undefined'.
+    Property 'content' is missing in type 'ToolExecutionResult' but required in type '{ content: { type: string; text?: string | undefined; data?: string | undefined; mimeType?: string | undefined; }[]; }'.
+packages/coding-agent/src/modes/interactive/components/tree-selector.ts(14,8): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/tree-selector.ts(1271,56): error TS7006: Parameter 'line' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/components/tree-selector.ts(1342,8): error TS2339: Property 'addChild' does not exist on type 'TreeSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/tree-selector.ts(1343,8): error TS2339: Property 'addChild' does not exist on type 'TreeSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/tree-selector.ts(1344,8): error TS2339: Property 'addChild' does not exist on type 'TreeSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/tree-selector.ts(1345,8): error TS2339: Property 'addChild' does not exist on type 'TreeSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/tree-selector.ts(1346,8): error TS2339: Property 'addChild' does not exist on type 'TreeSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/tree-selector.ts(1347,8): error TS2339: Property 'addChild' does not exist on type 'TreeSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/tree-selector.ts(1348,8): error TS2339: Property 'addChild' does not exist on type 'TreeSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/tree-selector.ts(1349,8): error TS2339: Property 'addChild' does not exist on type 'TreeSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/tree-selector.ts(1350,8): error TS2339: Property 'addChild' does not exist on type 'TreeSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/tree-selector.ts(1351,8): error TS2339: Property 'addChild' does not exist on type 'TreeSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/tree-selector.ts(1352,8): error TS2339: Property 'addChild' does not exist on type 'TreeSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/trust-selector.ts(1,57): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/trust-selector.ts(52,8): error TS2339: Property 'addChild' does not exist on type 'TrustSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/trust-selector.ts(53,8): error TS2339: Property 'addChild' does not exist on type 'TrustSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/trust-selector.ts(54,8): error TS2339: Property 'addChild' does not exist on type 'TrustSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/trust-selector.ts(55,8): error TS2339: Property 'addChild' does not exist on type 'TrustSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/trust-selector.ts(56,8): error TS2339: Property 'addChild' does not exist on type 'TrustSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/trust-selector.ts(57,8): error TS2339: Property 'addChild' does not exist on type 'TrustSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/trust-selector.ts(67,8): error TS2339: Property 'addChild' does not exist on type 'TrustSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/trust-selector.ts(70,8): error TS2339: Property 'addChild' does not exist on type 'TrustSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/trust-selector.ts(73,8): error TS2339: Property 'addChild' does not exist on type 'TrustSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/trust-selector.ts(74,8): error TS2339: Property 'addChild' does not exist on type 'TrustSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/trust-selector.ts(75,8): error TS2339: Property 'addChild' does not exist on type 'TrustSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/trust-selector.ts(86,8): error TS2339: Property 'addChild' does not exist on type 'TrustSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/trust-selector.ts(87,8): error TS2339: Property 'addChild' does not exist on type 'TrustSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/user-message-selector.ts(1,90): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/user-message-selector.ts(122,8): error TS2339: Property 'addChild' does not exist on type 'UserMessageSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/user-message-selector.ts(123,8): error TS2339: Property 'addChild' does not exist on type 'UserMessageSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/user-message-selector.ts(124,8): error TS2339: Property 'addChild' does not exist on type 'UserMessageSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/user-message-selector.ts(131,8): error TS2339: Property 'addChild' does not exist on type 'UserMessageSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/user-message-selector.ts(132,8): error TS2339: Property 'addChild' does not exist on type 'UserMessageSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/user-message-selector.ts(133,8): error TS2339: Property 'addChild' does not exist on type 'UserMessageSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/user-message-selector.ts(140,8): error TS2339: Property 'addChild' does not exist on type 'UserMessageSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/user-message-selector.ts(143,8): error TS2339: Property 'addChild' does not exist on type 'UserMessageSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/user-message-selector.ts(144,8): error TS2339: Property 'addChild' does not exist on type 'UserMessageSelectorComponent'.
+packages/coding-agent/src/modes/interactive/components/user-message.ts(1,62): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/components/user-message.ts(30,8): error TS2339: Property 'clear' does not exist on type 'UserMessageComponent'.
+packages/coding-agent/src/modes/interactive/components/user-message.ts(44,8): error TS2339: Property 'addChild' does not exist on type 'UserMessageComponent'.
+packages/coding-agent/src/modes/interactive/components/user-message.ts(47,11): error TS4112: This member cannot have an 'override' modifier because its containing class 'UserMessageComponent' does not extend another class.
+packages/coding-agent/src/modes/interactive/components/visual-truncate.ts(6,22): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(10,35): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(20,8): error TS2307: Cannot find module '@earendil-works/pi-ai/compat' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(31,8): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(49,8): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(197,8): error TS2339: Property 'setText' does not exist on type 'ExpandableText'.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(624,26): error TS7006: Parameter 'item' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(683,22): error TS2339: Property 'setAutocompleteProvider' does not exist on type 'CustomEditor'.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(738,39): error TS2339: Property 'getKeys' does not exist on type 'KeybindingsManager'.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(1760,22): error TS2339: Property 'setPaddingX' does not exist on type 'CustomEditor'.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(1761,22): error TS2339: Property 'setAutocompleteMaxVisible' does not exist on type 'CustomEditor'.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(2035,31): error TS2339: Property 'setMessage' does not exist on type 'StatusIndicator'.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(2049,10): error TS7006: Parameter 'frame' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(2049,17): error TS7006: Parameter 'elapsedMs' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(2051,24): error TS7006: Parameter 'message' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(2051,33): error TS7006: Parameter 'animationElapsedMs' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(2082,31): error TS2339: Property 'setMessage' does not exist on type 'StatusIndicator'.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(2125,31): error TS2339: Property 'setIndicator' does not exist on type 'StatusIndicator'.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(2629,44): error TS2339: Property 'onSubmit' does not exist on type 'CustomEditor'.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(2630,44): error TS2339: Property 'onChange' does not exist on type 'CustomEditor'.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(2637,48): error TS2339: Property 'borderColor' does not exist on type 'CustomEditor'.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(2640,46): error TS2339: Property 'getPaddingX' does not exist on type 'CustomEditor'.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(2682,23): error TS2339: Property 'setText' does not exist on type 'CustomEditor'.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(2876,22): error TS2339: Property 'onChange' does not exist on type 'CustomEditor'.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(2913,22): error TS2339: Property 'onSubmit' does not exist on type 'CustomEditor'.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(3449,31): error TS7006: Parameter 'content' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(3596,11): error TS2322: Type 'AgentMessage' is not assignable to type 'never'.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(4544,26): error TS2339: Property 'setPaddingX' does not exist on type 'CustomEditor'.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(4568,26): error TS2339: Property 'setAutocompleteMaxVisible' does not exist on type 'CustomEditor'.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(5123,56): error TS7006: Parameter 'provider' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(5124,63): error TS7006: Parameter 'provider' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(5132,43): error TS2345: Argument of type 'Set<unknown>' is not assignable to parameter of type 'ReadonlySet<string>'.
+  Types of property 'forEach' are incompatible.
+    Type '(callbackfn: (value: unknown, value2: unknown, set: Set<unknown>) => void, thisArg?: any) => void' is not assignable to type '(callbackfn: (value: string, value2: string, set: ReadonlySet<string>) => void, thisArg?: any) => void'.
+      Types of parameters 'callbackfn' and 'callbackfn' are incompatible.
+        Types of parameters 'value' and 'value' are incompatible.
+          Type 'unknown' is not assignable to type 'string'.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(5411,39): error TS7006: Parameter 'option' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(5417,35): error TS7006: Parameter 'option' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(5434,11): error TS7006: Parameter 'provider' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(5497,20): error TS7006: Parameter 'info' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(5594,23): error TS2339: Property 'setPaddingX' does not exist on type 'CustomEditor'.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(5595,23): error TS2339: Property 'setAutocompleteMaxVisible' does not exist on type 'CustomEditor'.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(6044,21): error TS7006: Parameter 'line' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/interactive-mode.ts(6044,27): error TS7006: Parameter 'idx' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/theme/theme-controller.ts(1,26): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/interactive/theme/theme-controller.ts(34,40): error TS7006: Parameter 'terminalTheme' implicitly has an 'any' type.
+packages/coding-agent/src/modes/interactive/theme/theme.ts(10,8): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/modes/print-mode.ts(9,35): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/modes/print-mode.ts(132,49): error TS7006: Parameter 'message' implicitly has an 'any' type.
+packages/coding-agent/src/modes/provider-native-rendering.ts(1,62): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/modes/rpc/rpc-client.ts(8,62): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/modes/rpc/rpc-client.ts(9,35): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/modes/rpc/rpc-types.ts(8,50): error TS2307: Cannot find module '@earendil-works/pi-agent-core' or its corresponding type declarations.
+packages/coding-agent/src/modes/rpc/rpc-types.ts(9,42): error TS2307: Cannot find module '@earendil-works/pi-ai' or its corresponding type declarations.
+packages/coding-agent/src/package-manager-cli.ts(1,46): error TS2307: Cannot find module '@earendil-works/pi-tui' or its corresponding type declarations.
+packages/coding-agent/src/package-manager-cli.ts(36,12): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/package-manager-cli.ts(37,9): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/package-manager-cli.ts(38,12): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/package-manager-cli.ts(39,9): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/package-manager-cli.ts(40,14): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/package-manager-cli.ts(41,20): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/package-manager-cli.ts(42,10): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/package-manager-cli.ts(43,16): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/package-manager-cli.ts(44,7): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/package-manager-cli.ts(45,15): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/package-manager-cli.ts(46,9): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/package-manager-cli.ts(47,11): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/package-manager-cli.ts(48,18): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/package-manager-cli.ts(49,14): error TS7006: Parameter 'text' implicitly has an 'any' type.
+packages/coding-agent/src/package-manager-cli.ts(392,10): error TS7006: Parameter 'line' implicitly has an 'any' type.
+packages/coding-agent/src/utils/syntax-highlight.ts(1,18): error TS7016: Could not find a declaration file for module 'highlight.js/lib/index.js'. '/Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/node_modules/highlight.js/lib/index.js' implicitly has an 'any' type.
+  Try `npm i --save-dev @types/highlight.js` if it exists or add a new declaration (.d.ts) file containing `declare module 'highlight.js/lib/index.js';`
+
+EXIT_STATUS: 1
+
+VERIFY 1C: final package factory test after tsconfig adjustment
+COMMAND: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  14:54:52
+   Duration  105ms (transform 10ms, setup 0ms, import 15ms, tests 2ms, environment 0ms)
+
+
+EXIT_STATUS: 0
+
+VERIFY 2B: root npm run check after final package edits
+COMMAND: npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+packages/coding-agent/src/core/agent-session.ts:27:2 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━
+
+  ! Several of these imports are unused.
+
+    25 │ 	AgentToolCall,
+    26 │ 	AgentToolResult,
+  > 27 │ 	AgentToolUpdateCallback,
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^
+    28 │ 	PrepareNextTurnContext,
+    29 │ 	ThinkingLevel,
+
+  i Unused imports might be the result of an incomplete refactoring.
+
+  i Unsafe fix: Remove the unused imports.
+
+      25   25 │     AgentToolCall,
+      26   26 │     AgentToolResult,
+      27      │ - → AgentToolUpdateCallback,
+      28   27 │     PrepareNextTurnContext,
+      29   28 │     ThinkingLevel,
+
+
+packages/coding-agent/src/core/agent-session.ts:31:8 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━
+
+  ! This import is unused.
+
+    29 │ 	ThinkingLevel,
+    30 │ } from "@earendil-works/pi-agent-core";
+  > 31 │ import { prepareAgentToolCall } from "@earendil-works/pi-agent-core";
+       │        ^^^^^^^^^^^^^^^^^^^^^^^^
+    32 │ import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@earendil-works/pi-ai/compat";
+    33 │ import {
+
+  i Unused imports might be the result of an incomplete refactoring.
+
+  i Unsafe fix: Remove the unused imports.
+
+      29   29 │   	ThinkingLevel,
+      30   30 │   } from "@earendil-works/pi-agent-core";
+      31      │ - import·{·prepareAgentToolCall·}·from·"@earendil-works/pi-agent-core";
+      32   31 │   import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@earendil-works/pi-ai/compat";
+      33   32 │   import {
+
+
+packages/coding-agent/src/core/agent-session.ts:65:2 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━
+
+  ! Several of these imports are unused.
+
+    63 │ import {
+    64 │ 	type ContextUsage,
+  > 65 │ 	ExecuteToolError,
+       │ 	^^^^^^^^^^^^^^^^^
+  > 66 │ 	type ExecuteToolOptions,
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^
+    67 │ 	type ExtensionCommandContextActions,
+    68 │ 	type ExtensionErrorListener,
+
+  i Unused imports might be the result of an incomplete refactoring.
+
+  i Unsafe fix: Remove the unused imports.
+
+      63   63 │   import {
+      64   64 │     type ContextUsage,
+      65      │ - → ExecuteToolError,
+      66      │ - → type·ExecuteToolOptions,
+      67   65 │     type ExtensionCommandContextActions,
+      68   66 │     type ExtensionErrorListener,
+
+
+Skipped 6 suggested fixes.
+If you wish to apply the suggested (unsafe) fixes, use the command biome check --write --unsafe
+
+Checked 1316 files in 864ms. Fixed 1 file.
+Found 3 warnings.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some warnings were emitted while running checks.
+
+
+
+EXIT_STATUS: 1
+
+CLEANUP / STATUS EVIDENCE
+COMMAND: git -C /Users/yeongyu/local-workspaces/senpi status --short -- packages/senpi-codemode
+
+COMMAND: git status --short --branch
+## feat/senpi-codemode...origin/main
+ M package-lock.json
+ M packages/agent/src/agent-loop.ts
+ M packages/coding-agent/src/core/agent-session.ts
+ M packages/coding-agent/src/core/extensions/index.ts
+ M packages/coding-agent/src/core/extensions/loader.ts
+ M packages/coding-agent/src/core/extensions/runner.ts
+ M packages/coding-agent/src/core/extensions/types.ts
+?? .omo/drafts/
+?? .omo/evidence/task-1-senpi-codemode.txt
+?? .omo/evidence/task-2-senpi-codemode.txt
+?? packages/coding-agent/test/execute-tool.test.ts
+?? packages/senpi-codemode/
+
+COMMAND: git diff --check -- packages/senpi-codemode package-lock.json .omo/evidence/task-1-senpi-codemode.txt
+
+ADVERSARIAL CLASS PROBES
+- stale_state: live plan/source reread performed before edits; todo 1 block captured; package exemplars read from current worktree.
+- dirty_worktree: initial status had unrelated .omo/drafts/; later concurrent todo-2 files appeared in packages/agent and packages/coding-agent and were avoided.
+- hung/long_commands: npm install, vitest, npm run check commands completed with recorded exit statuses; no command left running.
+- misleading_success_output: full outputs appended to this evidence file; root check failures include exact TypeScript/Biome diagnostics, not summarized tails.
+- flaky_tests: package factory test passed on initial green run and again after formatting/tsconfig edits.
+- network/secret/billing classes: not applicable; no provider APIs, paid tokens, secrets, or external service credentials used.
+- destructive_git: not applicable; no reset/checkout/stash/clean/git add -A/git add . used.
+
+SCOPE NOTE
+- package-local src import from @code-yeongyu/senpi is import type only; no runtime SDK import added.
+- devDependency @code-yeongyu/senpi is pinned to 2026.7.5-2 so current check-pinned-deps accepts this package; peerDependency remains *.
+
+HOOK RECHECK 2026-07-06T05:57:20Z
+COMMAND: git status --short --branch
+## feat/senpi-codemode...origin/main
+ M package-lock.json
+ M packages/agent/src/agent-loop.ts
+ M packages/coding-agent/src/core/agent-session.ts
+ M packages/coding-agent/src/core/extensions/index.ts
+ M packages/coding-agent/src/core/extensions/loader.ts
+ M packages/coding-agent/src/core/extensions/runner.ts
+ M packages/coding-agent/src/core/extensions/types.ts
+?? .omo/drafts/
+?? .omo/evidence/task-1-senpi-codemode.txt
+?? .omo/evidence/task-2-senpi-codemode.txt
+?? packages/coding-agent/test/execute-tool.test.ts
+?? packages/senpi-codemode/
+
+COMMAND: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  14:57:21
+   Duration  108ms (transform 10ms, setup 0ms, import 16ms, tests 2ms, environment 0ms)
+
+
+EXIT_STATUS: 0
+
+COMMAND: node -e "const p=require('./packages/senpi-codemode/package.json'); if(!p.pi.extensions) process.exit(1)"
+
+EXIT_STATUS: 0
+
+COMMAND: git diff --check -- packages/senpi-codemode package-lock.json .omo/evidence/task-1-senpi-codemode.txt
+
+EXIT_STATUS: 0
+
+HOOK RECHECK ROOT CHECK
+COMMAND: npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+packages/coding-agent/src/core/agent-session.ts:1073:7 lint/suspicious/noImplicitAnyLet ━━━━━━━━━━━━
+
+  × This variable implicitly has the any type.
+
+    1071 │ 		};
+    1072 │
+  > 1073 │ 		let prepared;
+         │ 		    ^^^^^^^^
+    1074 │ 		try {
+    1075 │ 			prepared = prepareAgentToolCall(tool, toolCall);
+
+  i Variable declarations without type annotation and initialization implicitly have the any type. Declare a type or initialize the variable with some value.
+
+
+Checked 1316 files in 718ms. Fixed 2 files.
+Found 1 error.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while applying fixes.
+
+
+
+EXIT_STATUS: 1
+
+COMMIT GATE RECHECK
+COMMAND: git diff --name-only && git diff --staged --name-only && git status --short --branch
+package-lock.json
+packages/agent/CHANGELOG.md
+packages/agent/src/agent-loop.ts
+packages/coding-agent/src/core/agent-session.ts
+packages/coding-agent/src/core/changes.md
+packages/coding-agent/src/core/extensions/changes.md
+packages/coding-agent/src/core/extensions/index.ts
+packages/coding-agent/src/core/extensions/loader.ts
+packages/coding-agent/src/core/extensions/runner.ts
+packages/coding-agent/src/core/extensions/types.ts
+## feat/senpi-codemode...origin/main
+ M package-lock.json
+ M packages/agent/CHANGELOG.md
+ M packages/agent/src/agent-loop.ts
+ M packages/coding-agent/src/core/agent-session.ts
+ M packages/coding-agent/src/core/changes.md
+ M packages/coding-agent/src/core/extensions/changes.md
+ M packages/coding-agent/src/core/extensions/index.ts
+ M packages/coding-agent/src/core/extensions/loader.ts
+ M packages/coding-agent/src/core/extensions/runner.ts
+ M packages/coding-agent/src/core/extensions/types.ts
+?? .omo/drafts/
+?? .omo/evidence/task-1-senpi-codemode.txt
+?? .omo/evidence/task-2-senpi-codemode.txt
+?? packages/coding-agent/test/execute-tool.test.ts
+?? packages/senpi-codemode/
+
+JUDGMENT
+- Commit not attempted: root npm run check is the pre-commit gate and currently fails on unrelated todo-2 changes outside allowed write scope.
+- Task-owned files remain unstaged; no git add -A / git add . / no-verify bypass used.
+
+HOOK RECHECK 2 2026-07-06T05:59:00Z
+COMMAND: git status --short --branch
+## feat/senpi-codemode...origin/main
+ M package-lock.json
+ M packages/agent/CHANGELOG.md
+ M packages/agent/src/agent-loop.ts
+ M packages/coding-agent/docs/extensions.md
+ M packages/coding-agent/src/core/agent-session.ts
+ M packages/coding-agent/src/core/changes.md
+ M packages/coding-agent/src/core/extensions/changes.md
+ M packages/coding-agent/src/core/extensions/index.ts
+ M packages/coding-agent/src/core/extensions/loader.ts
+ M packages/coding-agent/src/core/extensions/runner.ts
+ M packages/coding-agent/src/core/extensions/types.ts
+?? .omo/drafts/
+?? .omo/evidence/task-1-senpi-codemode.txt
+?? .omo/evidence/task-2-senpi-codemode.txt
+?? packages/coding-agent/test/execute-tool.test.ts
+?? packages/senpi-codemode/
+
+COMMAND: ls -l .omo/evidence/task-1-senpi-codemode.txt && wc -l .omo/evidence/task-1-senpi-codemode.txt
+-rw-r--r--  1 yeongyu  staff  133971 Jul  6 14:59 .omo/evidence/task-1-senpi-codemode.txt
+    1239 .omo/evidence/task-1-senpi-codemode.txt
+
+COMMAND: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  14:59:01
+   Duration  127ms (transform 12ms, setup 0ms, import 17ms, tests 2ms, environment 0ms)
+
+
+EXIT_STATUS: 0
+
+COMMAND: node -e "const p=require('./packages/senpi-codemode/package.json'); if(!p.pi.extensions) process.exit(1)"
+
+EXIT_STATUS: 0
+
+COMMAND: git diff --check -- packages/senpi-codemode package-lock.json .omo/evidence/task-1-senpi-codemode.txt
+
+EXIT_STATUS: 0
+
+HOOK RECHECK 2 ROOT CHECK
+COMMAND: npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1316 files in 1690ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+packages/coding-agent/test/execute-tool.test.ts(92,5): error TS2322: Type 'Mock<() => Promise<{ content: { type: string; text: string; }[]; details: {}; }>>' is not assignable to type '(toolCallId: string, params: object, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<{}> | undefined, ctx: ExtensionContext) => Promise<...>'.
+  Type 'Promise<{ content: { type: string; text: string; }[]; details: {}; }>' is not assignable to type 'Promise<AgentToolResult<{}>>'.
+    Type '{ content: { type: string; text: string; }[]; details: {}; }' is not assignable to type 'AgentToolResult<{}>'.
+      Types of property 'content' are incompatible.
+        Type '{ type: string; text: string; }[]' is not assignable to type '(ImageContent | TextContent)[]'.
+          Type '{ type: string; text: string; }' is not assignable to type 'ImageContent | TextContent'.
+            Type '{ type: string; text: string; }' is not assignable to type 'TextContent'.
+              Types of property 'type' are incompatible.
+                Type 'string' is not assignable to type '"text"'.
+packages/coding-agent/test/execute-tool.test.ts(217,5): error TS2322: Type 'Mock<() => Promise<{ content: { type: string; text: string; }[]; details: {}; }>>' is not assignable to type '(toolCallId: string, params: { required: string; }, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<{}> | undefined, ctx: ExtensionContext) => Promise<...>'.
+  Type 'Promise<{ content: { type: string; text: string; }[]; details: {}; }>' is not assignable to type 'Promise<AgentToolResult<{}>>'.
+    Type '{ content: { type: string; text: string; }[]; details: {}; }' is not assignable to type 'AgentToolResult<{}>'.
+      Types of property 'content' are incompatible.
+        Type '{ type: string; text: string; }[]' is not assignable to type '(ImageContent | TextContent)[]'.
+          Type '{ type: string; text: string; }' is not assignable to type 'ImageContent | TextContent'.
+            Type '{ type: string; text: string; }' is not assignable to type 'TextContent'.
+              Types of property 'type' are incompatible.
+                Type 'string' is not assignable to type '"text"'.
+packages/coding-agent/test/extensions-runner.test.ts(71,8): error TS2741: Property 'executeTool' is missing in type '{ sendMessage: () => void; sendUserMessage: () => void; appendEntry: () => void; setSessionName: () => void; getSessionName: () => undefined; setLabel: () => void; getActiveTools: () => never[]; getAllTools: () => never[]; ... 5 more ...; setThinkingLevel: () => void; }' but required in type 'ExtensionActions'.
+
+EXIT_STATUS: 1
+
+HOOK RECHECK 2 COMMIT GATE JUDGMENT
+COMMAND: git status --short --branch && git diff --staged --name-only && git diff --name-only
+## feat/senpi-codemode...origin/main
+ M package-lock.json
+ M packages/agent/CHANGELOG.md
+ M packages/agent/src/agent-loop.ts
+ M packages/coding-agent/docs/extensions.md
+ M packages/coding-agent/src/core/agent-session.ts
+ M packages/coding-agent/src/core/changes.md
+ M packages/coding-agent/src/core/extensions/changes.md
+ M packages/coding-agent/src/core/extensions/index.ts
+ M packages/coding-agent/src/core/extensions/loader.ts
+ M packages/coding-agent/src/core/extensions/runner.ts
+ M packages/coding-agent/src/core/extensions/types.ts
+ M packages/coding-agent/test/extensions-runner.test.ts
+?? .omo/drafts/
+?? .omo/evidence/task-1-senpi-codemode.txt
+?? .omo/evidence/task-2-senpi-codemode.txt
+?? packages/coding-agent/test/execute-tool.test.ts
+?? packages/senpi-codemode/
+package-lock.json
+packages/agent/CHANGELOG.md
+packages/agent/src/agent-loop.ts
+packages/coding-agent/docs/extensions.md
+packages/coding-agent/src/core/agent-session.ts
+packages/coding-agent/src/core/changes.md
+packages/coding-agent/src/core/extensions/changes.md
+packages/coding-agent/src/core/extensions/index.ts
+packages/coding-agent/src/core/extensions/loader.ts
+packages/coding-agent/src/core/extensions/runner.ts
+packages/coding-agent/src/core/extensions/types.ts
+packages/coding-agent/test/extensions-runner.test.ts
+
+JUDGMENT
+- Todo-1 package-local test, manifest probe, and diff check passed in hook recheck 2.
+- Required root npm run check failed on unrelated todo-2 files: packages/coding-agent/test/execute-tool.test.ts and packages/coding-agent/test/extensions-runner.test.ts, plus todo-2 product/docs files are dirty.
+- Commit remains blocked because pre-commit runs npm run check and no-verify/bypass is forbidden.
+- No files staged; no unrelated work modified or reverted.
+
+HOOK RECHECK 3 2026-07-06T06:00:32Z
+COMMAND: git status --short --branch
+## feat/senpi-codemode...origin/main
+ M package-lock.json
+ M packages/agent/CHANGELOG.md
+ M packages/agent/src/agent-loop.ts
+ M packages/coding-agent/docs/extensions.md
+ M packages/coding-agent/src/core/agent-session.ts
+ M packages/coding-agent/src/core/changes.md
+ M packages/coding-agent/src/core/extensions/changes.md
+ M packages/coding-agent/src/core/extensions/index.ts
+ M packages/coding-agent/src/core/extensions/loader.ts
+ M packages/coding-agent/src/core/extensions/runner.ts
+ M packages/coding-agent/src/core/extensions/types.ts
+ M packages/coding-agent/test/extensions-runner.test.ts
+?? .omo/drafts/
+?? .omo/evidence/task-1-senpi-codemode.txt
+?? .omo/evidence/task-2-senpi-codemode.txt
+?? packages/coding-agent/test/execute-tool.test.ts
+?? packages/senpi-codemode/
+
+COMMAND: git diff --staged --name-only && git diff --name-only
+package-lock.json
+packages/agent/CHANGELOG.md
+packages/agent/src/agent-loop.ts
+packages/coding-agent/docs/extensions.md
+packages/coding-agent/src/core/agent-session.ts
+packages/coding-agent/src/core/changes.md
+packages/coding-agent/src/core/extensions/changes.md
+packages/coding-agent/src/core/extensions/index.ts
+packages/coding-agent/src/core/extensions/loader.ts
+packages/coding-agent/src/core/extensions/runner.ts
+packages/coding-agent/src/core/extensions/types.ts
+packages/coding-agent/test/extensions-runner.test.ts
+
+COMMAND: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  15:00:36
+   Duration  143ms (transform 25ms, setup 0ms, import 34ms, tests 2ms, environment 0ms)
+
+
+EXIT_STATUS: 0
+
+COMMAND: node -e "const p=require('./packages/senpi-codemode/package.json'); if(!p.pi.extensions) process.exit(1)"
+
+EXIT_STATUS: 0
+
+COMMAND: git diff --check -- packages/senpi-codemode package-lock.json .omo/evidence/task-1-senpi-codemode.txt
+
+EXIT_STATUS: 0
+
+HOOK RECHECK 3 ROOT CHECK
+COMMAND: npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1316 files in 2s. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+
+TODO 1 FINALIZATION
+Timestamp: 2026-07-06T15:06:15+0900
+Current HEAD: b06572f74
+Current branch: feat/senpi-codemode
+
+SCAFFOLD INSPECTION
+packages/senpi-codemode/CHANGELOG.md
+packages/senpi-codemode/LICENSE
+packages/senpi-codemode/README.md
+packages/senpi-codemode/package.json
+packages/senpi-codemode/src/index.ts
+packages/senpi-codemode/test/factory.test.ts
+packages/senpi-codemode/tsconfig.json
+
+Package metadata check: version/type/pi/files/scripts/deps verified against todo 1 after package.json devDependency correction.
+Enum failure scenario: already captured above with TS1294 and source reverted; no rerun needed.
+
+COMMAND: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  15:06:16
+   Duration  114ms (transform 11ms, setup 0ms, import 16ms, tests 2ms, environment 0ms)
+
+EXIT_STATUS: 0
+
+COMMAND: node -e "const p=require('./packages/senpi-codemode/package.json'); if(!p.pi.extensions) process.exit(1)"
+EXIT_STATUS: 0
+
+COMMAND: npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1316 files in 956ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+Direct external dependencies must use exact versions:
+  packages/senpi-codemode/package.json: devDependencies.@code-yeongyu/senpi must be pinned, found *
+EXIT_STATUS: 1
+
+COMMAND: git diff --check -- packages/senpi-codemode package-lock.json .omo/evidence/task-1-senpi-codemode.txt
+EXIT_STATUS: 0
+
+TODO 1 FINALIZATION RERUN AFTER PINNED-DEPS CORRECTION
+Timestamp: 2026-07-06T15:06:39+0900
+Correction: restored devDependencies.@code-yeongyu/senpi to exact lockstep version because current check:pinned-deps requires pinned devDependency specs for @code-yeongyu packages until todo 15 expands internal-prefix handling.
+
+COMMAND: npm install --package-lock-only --ignore-scripts
+
+up to date, audited 471 packages in 491ms
+
+85 packages are looking for funding
+  run `npm fund` for details
+
+2 critical severity vulnerabilities
+
+To address all issues, run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+EXIT_STATUS: 0
+
+COMMAND: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  15:06:41
+   Duration  115ms (transform 14ms, setup 0ms, import 21ms, tests 2ms, environment 0ms)
+
+EXIT_STATUS: 0
+
+COMMAND: node -e "const p=require('./packages/senpi-codemode/package.json'); if(!p.pi.extensions) process.exit(1)"
+EXIT_STATUS: 0
+
+COMMAND: npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1316 files in 769ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 35ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+EXIT_STATUS: 0
+
+COMMAND: git diff --check -- packages/senpi-codemode package-lock.json .omo/evidence/task-1-senpi-codemode.txt
+EXIT_STATUS: 0
+
+TODO 1 FINALIZATION RERUN AFTER TODO-2 LEFTOVER COMMIT CLEARED
+Timestamp: 2026-07-06T15:07:27+0900
+Current HEAD: 0490a82bf
+Reason: unrelated todo-2 leftover worker committed after the prior green run; rerunning todo-1 acceptance checks on the final base.
+
+COMMAND: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  15:07:28
+   Duration  112ms (transform 11ms, setup 0ms, import 16ms, tests 2ms, environment 0ms)
+
+EXIT_STATUS: 0
+
+COMMAND: node -e "const p=require('./packages/senpi-codemode/package.json'); if(!p.pi.extensions) process.exit(1)"
+EXIT_STATUS: 0
+
+COMMAND: npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1316 files in 889ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 38ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+EXIT_STATUS: 0
+
+COMMAND: git diff --check -- packages/senpi-codemode package-lock.json .omo/evidence/task-1-senpi-codemode.txt
+EXIT_STATUS: 0
+
+ADVERSARIAL NOTES
+stale_state: applicable; HEAD advanced from b06572f74 to 0490a82bf during finalization, so checks were rerun on 0490a82bf.
+dirty_worktree: applicable; unrelated .omo/drafts/ remains untracked and was not staged; scoped status reviewed before commit.
+hung/long commands: not applicable; all commands completed normally.
+misleading_success_output: applicable; first rerun package/manifest/diff checks succeeded but root check failed on pinned-deps, so metadata was corrected and checks rerun.
+flaky_tests: not applicable; package test was stable across reruns.
+other adversarial scenarios: not applicable.
+
+TODO 1 FINALIZATION EVIDENCE WHITESPACE CLEANUP
+Timestamp: 2026-07-06T15:08:26+0900
+Action: removed trailing whitespace from captured evidence output only.
+
+COMMAND: git diff --check -- packages/senpi-codemode package-lock.json .omo/evidence/task-1-senpi-codemode.txt
+EXIT_STATUS: 0

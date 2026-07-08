@@ -162,6 +162,24 @@ describe("mcp config", () => {
 		});
 	});
 
+	it("rejects OAuth callbackPort values outside integer TCP port range", () => {
+		const root = makeRoot();
+		writeJson(join(root.agentDir, "mcp.json"), {
+			mcpServers: {
+				badPort: {
+					type: "http",
+					url: "https://auth.example/mcp",
+					auth: "oauth",
+					oauth: { clientId: "client-id", callbackPort: 65_536 },
+				},
+			},
+		});
+
+		expect(() => loadMcpConfig({ agentDir: root.agentDir, cwd: root.cwd, projectTrusted: true })).toThrow(
+			/callbackPort/,
+		);
+	});
+
 	it("validates and round-trips keep-alive server lifecycle", () => {
 		const root = makeRoot();
 		writeJson(join(root.agentDir, "mcp.json"), {

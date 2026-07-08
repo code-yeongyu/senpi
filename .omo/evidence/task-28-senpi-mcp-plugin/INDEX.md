@@ -16,7 +16,7 @@ Real remote OAuth servers (Linear/Notion) are explicitly NON-GATING.
 | 6 | logout -> needs_auth | PASS | step-06.txt |
 | 7 | invalid_grant injection -> drop + clean re-auth | PASS | step-07.txt |
 | 8 | bearer ${VAR} happy + unset-var failure | PASS | step-08.txt |
-| 9 | secret audit: grep logs+evidence for SENTINEL_AT_ tokens | PASS | step-09.txt |
+| 9 | secret audit: grep logs+evidence for sentinel access-token strings | PASS | step-09.txt |
 | 11 | print-mode fail-fast isError, no browser | PASS | step-11.txt |
 | 10 | npm run check + full npm test green | PASS | step-10.txt |
 
@@ -28,7 +28,7 @@ See isolation-receipt.txt — real ~/.senpi/agent/mcp-auth remained ABSENT
 (byte-unchanged); all credentials landed in the sandbox agentDir.
 
 ## Secret audit (step 9)
-grep of sandbox logs + evidence for SENTINEL_AT_* access tokens => ZERO hits
+grep of sandbox logs + evidence for sentinel access-token strings => ZERO hits
 outside the 0600 tokens.json credential store; logs carry only
 <redacted:xxxxxxxx> 8-char sha256 fingerprints.
 

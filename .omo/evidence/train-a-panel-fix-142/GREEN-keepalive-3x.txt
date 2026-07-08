@@ -1,0 +1,10 @@
+# keep-alive deterministic fix: 3/3 stable local runs (macOS arm64, Julia present)
+--- run 1 ---
+ Test Files  1 passed (1)
+      Tests  1 passed | 6 skipped (7)
+--- run 2 ---
+ Test Files  1 passed (1)
+      Tests  1 passed | 6 skipped (7)
+--- run 3 ---
+ Test Files  1 passed (1)
+      Tests  1 passed | 6 skipped (7)

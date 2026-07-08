@@ -1,0 +1,421 @@
+## RED proof - initial focused Ruby/Julia kernel tests
+Mon Jul  6 06:52:47 UTC 2026
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+No test files found, exiting with code 1
+
+filter: test/rb-kernel.test.ts, test/jl-kernel.test.ts
+include: **/*.{test,spec}.?(c|m)[jt]s?(x)
+exclude:  **/node_modules/**, **/.git/**
+
+
+## RED proof - contract tests after adding tests before implementation settled
+Mon Jul  6 06:54:40 UTC 2026
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+ ❯ test/rb-kernel.test.ts (0 test)
+ ❯ test/jl-kernel.test.ts (0 test)
+ ❯ test/kernels/subprocess-kernel.test.ts (2 tests | 2 failed) 3ms
+     × sends bridge init over stdin without leaking port or token into argv 3ms
+     × runs queued cells and round-trips tool replies 0ms
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/jl-kernel.test.ts [ test/jl-kernel.test.ts ]
+Error: Transform failed with 1 error:
+
+[31m[PARSE_ERROR] [0m`await` is only allowed within async functions and at the top levels of modules
+    [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m test/jl-kernel.test.ts:19:14 [38;5;246m][0m
+    [38;5;246m│[0m
+ [38;5;246m19 │[0m [38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249mi[0m[38;5;249mt[0m[38;5;249m.[0m[38;5;249ms[0m[38;5;249mk[0m[38;5;249mi[0m[38;5;249mp[0m[38;5;249mI[0m[38;5;249mf[0m[38;5;249m([0m[38;5;249m![0m[38;5;249m([0mawait[38;5;249m [0m[38;5;249mh[0m[38;5;249ma[0m[38;5;249ms[0m[38;5;249mJ[0m[38;5;249mu[0m[38;5;249ml[0m[38;5;249mi[0m[38;5;249ma[0m[38;5;249m([0m[38;5;249m)[0m[38;5;249m)[0m[38;5;249m)[0m[38;5;249m([0m[38;5;249m"[0m[38;5;249mp[0m[38;5;249me[0m[38;5;249mr[0m[38;5;249ms[0m[38;5;249mi[0m[38;5;249ms[0m[38;5;249mt[0m[38;5;249ms[0m[38;5;249m [0m[38;5;249ms[0m[38;5;249mt[0m[38;5;249ma[0m[38;5;249mt[0m[38;5;249me[0m[38;5;249m,[0m[38;5;249m [0m[38;5;249md[0m[38;5;249mi[0m[38;5;249ms[0m[38;5;249mp[0m[38;5;249ml[0m[38;5;249ma[0m[38;5;249my[0m[38;5;249ms[0m[38;5;249m [0m[38;5;249ml[0m[38;5;249ma[0m[38;5;249ms[0m[38;5;249mt[0m[38;5;249m [0m[38;5;249me[0m[38;5;249mx[0m[38;5;249mp[0m[38;5;249mr[0m[38;5;249me[0m[38;5;249ms[0m[38;5;249ms[0m[38;5;249mi[0m[38;5;249mo[0m[38;5;249mn[0m[38;5;249m,[0m[38;5;249m [0m[38;5;249ma[0m[38;5;249mn[0m[38;5;249md[0m[38;5;249m [0m[38;5;249mc[0m[38;5;249ma[0m[38;5;249ml[0m[38;5;249ml[0m[38;5;249ms[0m[38;5;249m [0m[38;5;249mo[0m[38;5;249mn[0m[38;5;249me[0m[38;5;249m [0m[38;5;249mh[0m[38;5;249mo[0m[38;5;249ms[0m[38;5;249mt[0m[38;5;249m [0m[38;5;249mt[0m[38;5;249mo[0m[38;5;249mo[0m[38;5;249ml[0m[38;5;249m"[0m[38;5;249m,[0m[38;5;249m [0m[38;5;249ma[0m[38;5;249ms[0m[38;5;249my[0m[38;5;249mn[0m[38;5;249mc[0m[38;5;249m [0m[38;5;249m([0m[38;5;249m)[0m[38;5;249m [0m[38;5;249m=[0m[38;5;249m>[0m[38;5;249m [0m[38;5;249m{[0m
+ [38;5;240m   │[0m                 ──┬──  
+ [38;5;240m   │[0m                   ╰──── 
+ [38;5;240m   │[0m 
+ [38;5;240m   │[0m [38;5;115mHelp[0m: Either remove this `await` or add the `async` keyword to the enclosing function
+[38;5;246m────╯[0m
+
+  Plugin: vite:oxc
+  File: /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode/test/jl-kernel.test.ts
+ ❯ transformWithOxc ../../node_modules/vite/dist/node/chunks/node.js:3344:19
+ ❯ TransformPluginContext.transform ../../node_modules/vite/dist/node/chunks/node.js:3415:26
+ ❯ EnvironmentPluginContainer.transform ../../node_modules/vite/dist/node/chunks/node.js:30387:51
+ ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/node.js:24646:26
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  test/rb-kernel.test.ts [ test/rb-kernel.test.ts ]
+Error: Transform failed with 1 error:
+
+[31m[PARSE_ERROR] [0m`await` is only allowed within async functions and at the top levels of modules
+    [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m test/rb-kernel.test.ts:19:14 [38;5;246m][0m
+    [38;5;246m│[0m
+ [38;5;246m19 │[0m [38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249mi[0m[38;5;249mt[0m[38;5;249m.[0m[38;5;249ms[0m[38;5;249mk[0m[38;5;249mi[0m[38;5;249mp[0m[38;5;249mI[0m[38;5;249mf[0m[38;5;249m([0m[38;5;249m![0m[38;5;249m([0mawait[38;5;249m [0m[38;5;249mh[0m[38;5;249ma[0m[38;5;249ms[0m[38;5;249mR[0m[38;5;249mu[0m[38;5;249mb[0m[38;5;249my[0m[38;5;249m([0m[38;5;249m)[0m[38;5;249m)[0m[38;5;249m)[0m[38;5;249m([0m[38;5;249m"[0m[38;5;249mp[0m[38;5;249me[0m[38;5;249mr[0m[38;5;249ms[0m[38;5;249mi[0m[38;5;249ms[0m[38;5;249mt[0m[38;5;249ms[0m[38;5;249m [0m[38;5;249ms[0m[38;5;249mt[0m[38;5;249ma[0m[38;5;249mt[0m[38;5;249me[0m[38;5;249m,[0m[38;5;249m [0m[38;5;249md[0m[38;5;249mi[0m[38;5;249ms[0m[38;5;249mp[0m[38;5;249ml[0m[38;5;249ma[0m[38;5;249my[0m[38;5;249ms[0m[38;5;249m [0m[38;5;249ml[0m[38;5;249ma[0m[38;5;249ms[0m[38;5;249mt[0m[38;5;249m [0m[38;5;249me[0m[38;5;249mx[0m[38;5;249mp[0m[38;5;249mr[0m[38;5;249me[0m[38;5;249ms[0m[38;5;249ms[0m[38;5;249mi[0m[38;5;249mo[0m[38;5;249mn[0m[38;5;249m,[0m[38;5;249m [0m[38;5;249ma[0m[38;5;249mn[0m[38;5;249md[0m[38;5;249m [0m[38;5;249mc[0m[38;5;249ma[0m[38;5;249ml[0m[38;5;249ml[0m[38;5;249ms[0m[38;5;249m [0m[38;5;249mo[0m[38;5;249mn[0m[38;5;249me[0m[38;5;249m [0m[38;5;249mh[0m[38;5;249mo[0m[38;5;249ms[0m[38;5;249mt[0m[38;5;249m [0m[38;5;249mt[0m[38;5;249mo[0m[38;5;249mo[0m[38;5;249ml[0m[38;5;249m"[0m[38;5;249m,[0m[38;5;249m [0m[38;5;249ma[0m[38;5;249ms[0m[38;5;249my[0m[38;5;249mn[0m[38;5;249mc[0m[38;5;249m [0m[38;5;249m([0m[38;5;249m)[0m[38;5;249m [0m[38;5;249m=[0m[38;5;249m>[0m[38;5;249m [0m[38;5;249m{[0m
+ [38;5;240m   │[0m                 ──┬──  
+ [38;5;240m   │[0m                   ╰──── 
+ [38;5;240m   │[0m 
+ [38;5;240m   │[0m [38;5;115mHelp[0m: Either remove this `await` or add the `async` keyword to the enclosing function
+[38;5;246m────╯[0m
+
+  Plugin: vite:oxc
+  File: /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode/test/rb-kernel.test.ts
+ ❯ transformWithOxc ../../node_modules/vite/dist/node/chunks/node.js:3344:19
+ ❯ TransformPluginContext.transform ../../node_modules/vite/dist/node/chunks/node.js:3415:26
+ ❯ EnvironmentPluginContainer.transform ../../node_modules/vite/dist/node/chunks/node.js:30387:51
+ ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/node.js:24646:26
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/kernels/subprocess-kernel.test.ts > SubprocessKernel > sends bridge init over stdin without leaking port or token into argv
+TypeError: input.resume is not a function
+ ❯ SubprocessKernel.attachReaders src/kernels/shared/subprocess-kernel.ts:94:18
+     92|
+     93|  private attachReaders(): void {
+     94|   const stdout = createInterface({ input: this.process.stdout });
+       |                  ^
+     95|   stdout.on("line", (line) => this.handleLine(`${line}\n`));
+     96|   this.process.stderr.on("data", (chunk) => {
+ ❯ new SubprocessKernel src/kernels/shared/subprocess-kernel.ts:53:8
+ ❯ test/kernels/subprocess-kernel.test.ts:28:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  test/kernels/subprocess-kernel.test.ts > SubprocessKernel > runs queued cells and round-trips tool replies
+TypeError: input.resume is not a function
+ ❯ SubprocessKernel.attachReaders src/kernels/shared/subprocess-kernel.ts:94:18
+     92|
+     93|  private attachReaders(): void {
+     94|   const stdout = createInterface({ input: this.process.stdout });
+       |                  ^
+     95|   stdout.on("line", (line) => this.handleLine(`${line}\n`));
+     96|   this.process.stderr.on("data", (chunk) => {
+ ❯ new SubprocessKernel src/kernels/shared/subprocess-kernel.ts:53:8
+ ❯ test/kernels/subprocess-kernel.test.ts:51:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  3 failed (3)
+      Tests  2 failed (2)
+   Start at  15:54:41
+   Duration  218ms (transform 48ms, setup 0ms, import 119ms, tests 3ms, environment 0ms)
+
+
+## Focused Ruby/Julia kernel tests - iteration 1
+Mon Jul  6 06:55:02 UTC 2026
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+ ❯ test/rb-kernel.test.ts (2 tests | 1 failed) 76ms
+     × persists state, displays last expression, and calls one host tool 74ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/rb-kernel.test.ts > RubyKernel > persists state, displays last expression, and calls one host tool
+Error: Kernel is closed
+ ❯ RubyKernel.run src/kernels/shared/subprocess-kernel.ts:58:26
+     56|
+     57|  run(input: KernelRunInput): Promise<KernelResult> {
+     58|   if (this.closed) throw new Error("Kernel is closed");
+       |                          ^
+     59|   const message: HostToKernelMessage = {
+     60|    type: "run",
+ ❯ test/rb-kernel.test.ts:35:36
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  1 failed | 4 passed | 1 skipped (6)
+   Start at  15:55:02
+   Duration  297ms (transform 59ms, setup 0ms, import 328ms, tests 82ms, environment 0ms)
+
+
+## Focused Ruby/Julia kernel tests - iteration 2
+Mon Jul  6 06:55:22 UTC 2026
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  3 passed (3)
+      Tests  5 passed | 1 skipped (6)
+   Start at  15:55:23
+   Duration  264ms (transform 57ms, setup 0ms, import 306ms, tests 69ms, environment 0ms)
+
+
+## Focused Ruby/Julia kernel tests - reset iteration
+Mon Jul  6 06:56:57 UTC 2026
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+ ❯ test/rb-kernel.test.ts (2 tests | 1 failed) 5013ms
+     × persists state, displays last expression, and calls one host tool 5011ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/rb-kernel.test.ts > RubyKernel > persists state, displays last expression, and calls one host tool
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/rb-kernel.test.ts:24:22
+     22|  });
+     23|
+     24|  it.skipIf(!hasRuby())("persists state, displays last expression, and …
+       |                      ^
+     25|   const root = await mkdtemp(join(tmpdir(), "senpi-rb-kernel-"));
+     26|   try {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  1 failed | 5 passed | 1 skipped (7)
+   Start at  15:56:58
+   Duration  5.23s (transform 57ms, setup 0ms, import 317ms, tests 5.02s, environment 0ms)
+
+
+## Focused Ruby/Julia kernel tests - timeout/reset iteration
+Mon Jul  6 06:58:24 UTC 2026
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+ ❯ test/rb-kernel.test.ts (2 tests | 1 failed) 3074ms
+     × persists state, displays last expression, and calls one host tool 3071ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/rb-kernel.test.ts > RubyKernel > persists state, displays last expression, and calls one host tool
+AssertionError: expected { type: 'result', …(4) } to match object { ok: true }
+(5 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "ok": true,
++   "ok": false,
+  }
+
+ ❯ test/rb-kernel.test.ts:39:19
+     37|     await kernel.reset();
+     38|     const reset = await kernel.run({ cellId: "reset", code: "defined?(…
+     39|     expect(reset).toMatchObject({ ok: true });
+       |                   ^
+     40|     if (reset.ok) expect(reset.valueRepr).toBeUndefined();
+     41|     await kernel.run({ cellId: "set-again", code: "$answer = 41", time…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  1 failed | 5 passed | 1 skipped (7)
+   Start at  15:58:24
+   Duration  3.30s (transform 63ms, setup 0ms, import 320ms, tests 3.08s, environment 0ms)
+
+
+## Focused Ruby/Julia kernel tests - GREEN
+Mon Jul  6 06:59:08 UTC 2026
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  3 passed (3)
+      Tests  6 passed | 1 skipped (7)
+   Start at  15:59:09
+   Duration  321ms (transform 59ms, setup 0ms, import 307ms, tests 129ms, environment 0ms)
+
+
+## Interpreter availability for manual/auxiliary scenario
+Mon Jul  6 06:59:19 UTC 2026
+/usr/bin/ruby
+ruby 2.6.10p210 (2022-04-12 revision 67958) [universal.arm64e-darwin25]
+Ruby live smoke covered persistence/reset/tool-call in focused tests when ruby is present. Julia live smoke guarded/skipped when julia is absent; mocked transport/prelude tests still run.
+
+## Plan acceptance command - rb/jl kernel tests
+Mon Jul  6 06:59:31 UTC 2026
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  2 passed (2)
+      Tests  3 passed | 1 skipped (4)
+   Start at  15:59:31
+   Duration  296ms (transform 38ms, setup 0ms, import 200ms, tests 103ms, environment 0ms)
+
+
+## npm run check
+Mon Jul  6 06:59:49 UTC 2026
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1343 files in 1237ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 43ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+
+## git diff --check scoped files
+Mon Jul  6 07:00:10 UTC 2026
+
+## LOC check for new pure source files
+Mon Jul  6 07:00:26 UTC 2026
+     181 packages/senpi-codemode/src/kernels/shared/subprocess-kernel.ts
+      24 packages/senpi-codemode/src/kernels/rb/kernel.ts
+      76 packages/senpi-codemode/src/kernels/rb/runner.rb
+      57 packages/senpi-codemode/src/kernels/rb/prelude.rb
+      24 packages/senpi-codemode/src/kernels/jl/kernel.ts
+     113 packages/senpi-codemode/src/kernels/jl/runner.jl
+      50 packages/senpi-codemode/src/kernels/jl/prelude.jl
+     525 total
+
+## Focused Ruby/Julia kernel tests - after scope move
+Mon Jul  6 07:01:08 UTC 2026
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  3 passed (3)
+      Tests  6 passed | 1 skipped (7)
+   Start at  16:01:09
+   Duration  324ms (transform 60ms, setup 0ms, import 366ms, tests 109ms, environment 0ms)
+
+
+## npm run check - after scope move
+Mon Jul  6 07:01:09 UTC 2026
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1343 files in 790ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 40ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+
+## git diff --check scoped files - after scope move
+Mon Jul  6 07:01:18 UTC 2026
+
+## task-12 rb/jl bridge follow-up
+Recorded fix evidence in .omo/evidence/task-12-fix-rb-jl-bridge.txt. Focused rb/jl tests passed (5 passed, 1 Julia live skip because Julia unavailable); npm run check passed; scoped net LOC +88.

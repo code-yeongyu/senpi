@@ -285,6 +285,7 @@ I regularly publish my own `pi-mono` work sessions here:
 | **[@earendil-works/pi-ai](packages/ai)** | Unified multi-provider LLM API with text streaming, tool calling, OAuth helpers, and image generation |
 | **[@earendil-works/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
 | **[senpi](packages/coding-agent)** | Interactive coding agent CLI, rebranded as senpi |
+| **[@code-yeongyu/senpi-codemode](packages/senpi-codemode)** | Source-only codemode extension package with settings, kernel, bridge, and prelude building blocks |
 | **[@earendil-works/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
 | **[@earendil-works/pi-web-ui](packages/web-ui)** | Web UI components for AI chat interfaces (private, not published) |
 

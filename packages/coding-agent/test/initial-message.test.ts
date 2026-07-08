@@ -20,6 +20,7 @@ describe("buildInitialMessage", () => {
 		});
 
 		expect(result.initialMessage).toBe("README contents\nSummarize the text given");
+		expect(result.initialTitlePrompt).toBeUndefined();
 		expect(parsed.messages).toEqual([]);
 	});
 
@@ -31,6 +32,7 @@ describe("buildInitialMessage", () => {
 		});
 
 		expect(result.initialMessage).toBe("README contents");
+		expect(result.initialTitlePrompt).toBeUndefined();
 		expect(parsed.messages).toEqual([]);
 	});
 
@@ -43,6 +45,28 @@ describe("buildInitialMessage", () => {
 		});
 
 		expect(result.initialMessage).toBe("stdin\nfile\nExplain it");
+		expect(result.initialTitlePrompt).toBeUndefined();
 		expect(parsed.messages).toEqual(["Second message"]);
+	});
+
+	test("uses the first CLI message as the title prompt when no private context is merged", () => {
+		const parsed = createArgs(["Explain the architecture"]);
+		const result = buildInitialMessage({ parsed });
+
+		expect(result.initialMessage).toBe("Explain the architecture");
+		expect(result.initialTitlePrompt).toBe("Explain the architecture");
+		expect(parsed.messages).toEqual([]);
+	});
+
+	test("does not title from a prompt that includes file text", () => {
+		const parsed = createArgs(["Summarize this"]);
+		const result = buildInitialMessage({
+			parsed,
+			fileText: "private file contents\n",
+		});
+
+		expect(result.initialMessage).toBe("private file contents\nSummarize this");
+		expect(result.initialTitlePrompt).toBeUndefined();
+		expect(parsed.messages).toEqual([]);
 	});
 });

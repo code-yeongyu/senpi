@@ -11,6 +11,7 @@
 			"dependencies": {
 				"@anthropic-ai/sdk": "0.91.1",
 				"@aws-sdk/client-bedrock-runtime": "3.1048.0",
+				"@code-yeongyu/senpi-codemode": "^2026.7.5-2",
 				"@earendil-works/pi-agent-core": "^2026.7.5-2",
 				"@earendil-works/pi-ai": "^2026.7.5-2",
 				"@earendil-works/pi-pty": "^2026.7.5-2",
@@ -550,6 +551,21 @@
 			},
 			"bin": {
 				"specificity": "bin/cli.js"
+			}
+		},
+		"node_modules/@code-yeongyu/senpi-codemode": {
+			"version": "2026.7.5-2",
+			"inBundle": true,
+			"license": "MIT",
+			"dependencies": {
+				"@earendil-works/pi-ai": "^2026.7.5-2",
+				"typebox": "1.1.38"
+			},
+			"peerDependencies": {
+				"@code-yeongyu/senpi": "*"
+			},
+			"engines": {
+				"node": ">=24.0.0"
 			}
 		},
 		"node_modules/@csstools/color-helpers": {

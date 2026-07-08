@@ -1,0 +1,17 @@
+# TODO26 header-happy provenance restoration
+
+The original TODO26 manual QA output referenced this path, but the separate
+runtime log file was absent from the bundle at final gate review. No original
+runtime log bytes were recoverable, so this file does not reconstruct or invent
+MCP log lines.
+
+Existing task evidence for the referenced scenario:
+- `manual-qa-command.txt` records `happy_header_connect=PASS tools=1`.
+- `manual-qa-summary.txt` records the same `happy_header_connect=PASS tools=1`.
+- `idp-request-log.json` records `discoveryHits=0`, `registerHits=0`, and
+  `requests=[]`, proving zero OAuth traffic for the header-auth fixture.
+
+Restored artifact status:
+happy_header_connect=PASS tools=1
+zero_oauth_traffic=PASS discoveryHits=0 registerHits=0 requests=0
+source_artifacts=manual-qa-command.txt,manual-qa-summary.txt,idp-request-log.json

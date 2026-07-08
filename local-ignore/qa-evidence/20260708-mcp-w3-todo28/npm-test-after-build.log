@@ -1,0 +1,282 @@
+
+> test
+> npm run test:scripts && npm run test --workspaces --if-present
+
+
+> test:scripts
+> node --test scripts/*.test.mjs
+
+▶ archiveUpstreamAgentReport
+  ✔ copies and removes an untracked report without dirtying the branch (125.99625ms)
+  ✔ removes a committed report from the final branch tree with a cleanup commit (183.160083ms)
+✔ archiveUpstreamAgentReport (310.06ms)
+▶ build-all
+  ✔ uses an explicit package manager override (1.034333ms)
+  ✔ keeps dependent packages in later parallel phases (0.104917ms)
+  ✔ builds pty beside tui in the first native-adjacent phase (0.178417ms)
+  ✔ wires the pty package export surface for workspace imports (0.157333ms)
+  ✔ strips pnpm-only npm config from child environments (0.071333ms)
+  ✔ keeps generated model catalog updates out of ordinary ai builds (0.186084ms)
+✔ build-all (2.91625ms)
+✔ fails with the host target name when the vendored prebuild is missing (4.9525ms)
+✔ fails with the host target name when the vendored prebuild is stale (10.218584ms)
+✔ passes when the host prebuild matches the rebuilt artifact (5.169916ms)
+[check-upstream] latest upstream release: v0.80.3
+[check-upstream] resolved v0.80.3 -> a23abe4a695df8b69b613f73e9fdda2a8af894d4
+[check-upstream] resolved upstream/main -> 351efc828b6fc5250fa50d6b32b20b0f0cb22cb4
+[check-upstream] --force set; proceeding regardless of merge state
+▶ upstream release detector outputs
+  ✔ preserves the release tag sha and emits upstream/main head separately on forced runs (1337.130833ms)
+✔ upstream release detector outputs (1810.251292ms)
+▶ create-root-senpi-wrapper
+  ✔ writes a launch-only wrapper when the root is a gitless snapshot (1.102458ms)
+  ✔ does NOT write a global shim by default in a git checkout (opt-in only) (0.17075ms)
+  ✔ writes a global shim only when SENPI_WRITE_GLOBAL_SHIM=1 in a non-CI git checkout (0.144125ms)
+  ✔ replaces an existing global symlink instead of following it (1.467333ms)
+✔ create-root-senpi-wrapper (3.486959ms)
+$ /opt/homebrew/Cellar/node/26.0.0/bin/node /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/senpi-local-release-pack-opzc92/large-pack-output.mjs
+▶ local-release command runner
+  ✔ captures large npm pack JSON output (65.795416ms)
+✔ local-release command runner (66.681083ms)
+▶ Bun binary entry
+  ✔ routes directly to the full CLI instead of the Node wrapper (0.237708ms)
+✔ Bun binary entry (0.289916ms)
+▶ local release package list
+  ✔ builds and packs the pty workspace for bundled senpi installs (1282.972333ms)
+✔ local release package list (1283.054041ms)
+▶ prepareSenpiBundledWorkspaces
+  ✔ copies the loader-visible host pty prebuild into coding-agent node_modules (15.932583ms)
+  ✔ fails before bundling pty when the host prebuild is missing (6.828541ms)
+✔ prepareSenpiBundledWorkspaces (23.369542ms)
+▶ directNodeModulesPackageName
+  ✔ extracts only direct package names (0.471167ms)
+✔ directNodeModulesPackageName (0.98275ms)
+▶ copyPublishDependencies
+  ✔ copies direct publish dependencies and skips internal workspaces and missing optional packages (12.705666ms)
+  ✔ throws when a required publish dependency is not installed (0.896583ms)
+✔ copyPublishDependencies (13.684542ms)
+▶ assertSenpiPackedWorkspaceFiles
+  ✔ rejects senpi package metadata that omits bundled workspace files (0.345916ms)
+  ✔ accepts senpi package metadata that includes bundled workspace entrypoints (0.180792ms)
+  ✔ accepts npm dry-run package metadata with unprefixed paths (0.101708ms)
+  ✔ rejects senpi package metadata that omits the bundled pty native loader (0.124791ms)
+  ✔ rejects senpi package metadata that omits the bundled host pty prebuild (0.09ms)
+  ✔ defines the all-OS native artifact ingestion contract without requiring fake local binaries (0.154041ms)
+  ✔ publishes the supported native target list through package checks (0.725208ms)
+✔ assertSenpiPackedWorkspaceFiles (1.893667ms)
+▶ release package versioning
+  ✔ updates the pty workspace during lockstep releases (5.236667ms)
+✔ release package versioning (5.770584ms)
+▶ release changelog bookkeeping
+  ✔ recreates the standard next-cycle section when no previous Unreleased block was captured (0.586458ms)
+  ✔ preserves captured subsection shape when a previous Unreleased block existed (0.61875ms)
+  ✔ inserts the next-cycle section before the stamped release header (0.194125ms)
+  ✔ restores the next-cycle section after the title when no release header was stamped (0.101333ms)
+✔ release changelog bookkeeping (1.6325ms)
+▶ sync-versions
+  ✔ keeps senpi source dependencies on local workspace versions (61.939584ms)
+✔ sync-versions (62.473542ms)
+▶ upstream release worthiness
+  ✔ detects package changelog entries under Unreleased (0.534667ms)
+  ✔ skips empty Unreleased sections (0.656833ms)
+  ✔ releases when any package changelog has an Unreleased entry (0.061583ms)
+  ✔ allows explicit forced release (0.046208ms)
+✔ upstream release worthiness (1.885959ms)
+ℹ tests 41
+ℹ suites 15
+ℹ pass 41
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1883.776333
+
+> @earendil-works/pi-agent-core@2026.7.5-2 test
+> vitest --run
+
+
+ RUN  v4.1.8 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/agent
+
+···················································································································································································
+
+ Test Files  16 passed (16)
+      Tests  179 passed (179)
+   Start at  07:33:51
+   Duration  751ms (transform 2.17s, setup 0ms, import 3.46s, tests 718ms, environment 1ms)
+
+
+> @earendil-works/pi-ai@2026.7.5-2 test
+> vitest --run
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/ai
+
+···································································--·······················································-·································································-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------········································--················································································································································································································································································································································································································································----------·-------------------·····---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------······-···-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------·····
+
+ Test Files  94 passed | 24 skipped (118)
+      Tests  679 passed | 726 skipped (1405)
+   Start at  07:33:52
+   Duration  27.40s (transform 6.06s, setup 0ms, import 36.09s, tests 40.89s, environment 13ms)
+
+
+> @code-yeongyu/senpi@2026.7.5-2 test
+> vitest --run
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent
+
+······From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463661208-z0ws34sher/remote
+   cade561..2d16ce6  main       -> origin/main
+HEAD is now at 2d16ce6 Second commit
+······From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463662069-eopcf2d4k/remote
+   8b2125a..b8a33f4  main       -> origin/main
+HEAD is now at b8a33f4 Fourth commit
+····From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463664847-p4we70roik/remote
+   b55dd0c..d1c719b  main       -> origin/main
+HEAD is now at d1c719b Commit to keep
+·From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463664847-p4we70roik/remote
+ + d1c719b...4a3b6aa main       -> origin/main  (forced update)
+···HEAD is now at 4a3b6aa Rewritten commit
+··············From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463666451-0f6dwf6nnaei/remote
+   976e78c..54c48a1  main       -> origin/main
+··HEAD is now at 54c48a1 Commit B
+·····From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463666451-0f6dwf6nnaei/remote
+ + 54c48a1...486ceff main       -> origin/main  (forced update)
+app-server stdio closed: test complete
+app-server stdio closed: stdin ended
+····HEAD is now at 486ceff New commit replacing A and B
+···········From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463668490-2baebudiyt9/remote
+   869e9c5..da73e47  main       -> origin/main
+··HEAD is now at da73e47 v3
+·····From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463668490-2baebudiyt9/remote
+ + da73e47...0d2ef67 main       -> origin/main  (forced update)
+··HEAD is now at 0d2ef67 Rewrite B
+······From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463670919-br660akb59k/remote
+ * branch            8f61a04eb623e7bb946ef856e2f9d23246139851 -> FETCH_HEAD
+··········From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463671878-w7psax9txg/remote
+ * tag               v2         -> FETCH_HEAD
+HEAD is now at bc43877 Second commit
+·From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463671878-w7psax9txg/remote
+ * tag               v2         -> FETCH_HEAD
+·HEAD is now at bc43877 Second commit
+··················From /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/git-update-test-1783463674605-yw7vyetra0h/remote
+   e848636..59b97be  main       -> origin/main
+HEAD is now at 59b97be Second commit
+····························Installing ./packages/local-package...
+Installing /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/pi-package-commands-1783463678582-6j5dg9sze6d/local-package/...
+Removing /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/pi-package-commands-1783463678582-6j5dg9sze6d/local-package/...
+···················Updating npm:fake-package...
+···········Installing /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/pi-package-commands-1783463679886-lctgkj7q6ap/local-package...
+···················································································npm error code ETARGET
+npm error notarget No matching version found for nonexistent-package@1.0.0.
+npm error notarget In most cases you or one of your dependencies are requesting a package version that doesn't exist.
+npm error A complete log of this run can be found in: /Users/yeongyu/.npm/_logs/2026-07-07T22_34_41_787Z-debug-0.log
+·Cloning into '/var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/pm-test-1783463682215-ip8ntb4vnp/agent/git/github.com/nonexistent/repo'...
+·············remote: Repository not found.
+fatal: repository 'https://github.com/nonexistent/repo/' not found
+·····································································································································································································································································································································································································································································································································································································································································································································································································································································································································································app-server websocket token: /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/senpi-app-server-ws-auth-9v8AHl/ws-token
+··························································································app-server unix socket websocket token: /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/senpi-daemon-probe-ded8PL/ws-token
+·················································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································--··············-----------------------------
+
+ Test Files  369 passed | 4 skipped (373)
+      Tests  3326 passed | 31 skipped (3357)
+   Start at  07:34:20
+   Duration  68.30s (transform 24.49s, setup 3.95s, import 420.27s, tests 363.80s, environment 42ms)
+
+
+> @code-yeongyu/senpi-orchestrator@2026.7.5-2 test
+> node --test --import tsx test/*.test.ts
+
+▶ orchestrator config paths
+  ✔ stores orchestrator state under the senpi config directory by default (0.668292ms)
+  ✔ uses SENPI_ORCHESTRATOR_DIR as the complete state directory override (0.134625ms)
+  ✔ uses SENPI_CONFIG_DIR as the parent config directory override (0.133125ms)
+✔ orchestrator config paths (1.602541ms)
+ℹ tests 3
+ℹ suites 1
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 180.687083
+
+> @earendil-works/pi-pty@2026.7.5-2 test
+> vitest --run test
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/pty
+
+
+ Test Files  5 passed (5)
+      Tests  34 passed (34)
+   Start at  07:35:29
+   Duration  1.77s (transform 174ms, setup 0ms, import 234ms, tests 2.16s, environment 0ms)
+
+
+> @code-yeongyu/senpi-codemode@2026.7.5-2 test
+> npx tsx ../../node_modules/vitest/dist/cli.js --run test/
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/senpi-codemode
+
+·············································-·······························
+
+ Test Files  15 passed (15)
+      Tests  76 passed | 1 skipped (77)
+   Start at  07:35:31
+   Duration  2.45s (transform 4.56s, setup 0ms, import 8.18s, tests 2.34s, environment 1ms)
+
+
+> @earendil-works/pi-tui@2026.7.5-2 test
+> node --test --import tsx --test-reporter=dot --test-reporter-destination=stdout test/*.test.ts
+
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....

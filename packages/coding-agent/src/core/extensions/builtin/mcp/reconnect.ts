@@ -124,7 +124,7 @@ async function runReconnectAttempt(state: McpReconnectState, generation: number,
 		state.backoffIndex = 0;
 	} catch (error) {
 		const failure = error instanceof Error ? error : new Error(String(error));
-		if (state.connection.state !== "suspended") {
+		if (state.connection.state !== "suspended" && state.connection.state !== "needs_auth") {
 			const visibleFailure =
 				isGenericReconnectFailure(failure) && state.connection.lastError !== undefined
 					? state.connection.lastError

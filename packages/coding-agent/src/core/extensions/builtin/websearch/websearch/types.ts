@@ -30,6 +30,7 @@ export interface SearchProviderConfig {
 	allowedDomains?: string[];
 	blockedDomains?: string[];
 	userLocation?: SearchUserLocation;
+	timeoutMs?: number;
 }
 
 export interface SearchProviderEntry extends SearchProviderConfig {

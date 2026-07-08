@@ -1,0 +1,346 @@
+
+## RED proof - js kernel tests before implementation
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+ ❯ test/js-kernel.test.ts (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/js-kernel.test.ts [ test/js-kernel.test.ts ]
+Error: Cannot find module '../src/kernels/js/context-manager.ts' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode/test/js-kernel.test.ts
+ ❯ test/js-kernel.test.ts:7:1
+      5| import { describe, expect, it } from "vitest";
+      6| import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
+      7| import { JavaScriptKernel, type JavaScriptKernelMode } from "../src/ke…
+       | ^
+      8|
+      9| interface CapturedRun {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  no tests
+   Start at  15:51:49
+   Duration  136ms (transform 22ms, setup 0ms, import 0ms, tests 0ms, environment 0ms)
+
+
+## Focused JS kernel tests
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  15:55:35
+   Duration  860ms (transform 26ms, setup 0ms, import 30ms, tests 742ms, environment 0ms)
+
+
+## npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+packages/senpi-codemode/test/js-kernel.test.ts:42:10 lint/correctness/noUnusedVariables  FIXABLE  ━━━━━━━━━━
+
+  ! This function firstToolCall is unused.
+  
+    40 │ }
+    41 │ 
+  > 42 │ function firstToolCall(messages: readonly KernelToHostMessage[]): Extract<KernelToHostMessage, { type: "tool-call" }> {
+       │          ^^^^^^^^^^^^^
+    43 │ 	const call = messages.find((message): message is Extract<KernelToHostMessage, { type: "tool-call" }> => {
+    44 │ 		return message.type === "tool-call";
+  
+  i Unused variables are often the result of typos, incomplete refactors, or other sources of bugs.
+  
+  i Unsafe fix: If this is intentional, prepend firstToolCall with an underscore.
+  
+     40  40 │   }
+     41  41 │   
+     42     │ - function·firstToolCall(messages:·readonly·KernelToHostMessage[]):·Extract<KernelToHostMessage,·{·type:·"tool-call"·}>·{
+         42 │ + function·_firstToolCall(messages:·readonly·KernelToHostMessage[]):·Extract<KernelToHostMessage,·{·type:·"tool-call"·}>·{
+     43  43 │   	const call = messages.find((message): message is Extract<KernelToHostMessage, { type: "tool-call" }> => {
+     44  44 │   		return message.type === "tool-call";
+  
+
+Skipped 1 suggested fixes.
+If you wish to apply the suggested (unsafe) fixes, use the command biome check --write --unsafe
+
+Checked 1342 files in 856ms. Fixed 2 files.
+Found 1 warning.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some warnings were emitted while running checks.
+  
+
+
+## Focused JS kernel tests after warning fix
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  15:55:55
+   Duration  853ms (transform 26ms, setup 0ms, import 29ms, tests 735ms, environment 0ms)
+
+
+## npm run check after warning fix
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1342 files in 810ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+Relative .js imports are not allowed in non-declaration .ts files:
+  packages/senpi-codemode/src/kernels/js/context-manager.ts:3:57: ./worker-core.js
+
+## Focused JS kernel tests after inline split
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  15:57:39
+   Duration  910ms (transform 26ms, setup 0ms, import 27ms, tests 773ms, environment 0ms)
+
+
+## npm run check after inline split
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1343 files in 1503ms. Fixed 1 file.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 45ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+
+## git diff --check scoped files
+
+## pure LOC check for new JS kernel files
+packages/senpi-codemode/src/kernels/js/context-manager.ts 222
+packages/senpi-codemode/src/kernels/js/inline-worker.ts 162
+packages/senpi-codemode/src/kernels/js/prelude.ts 13
+packages/senpi-codemode/src/kernels/js/worker-core.d.ts 14
+packages/senpi-codemode/src/kernels/js/worker-core.js 76
+packages/senpi-codemode/src/kernels/js/worker-entry.js 20
+packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js 14
+packages/senpi-codemode/src/kernels/js/worker-runtime.js 120
+packages/senpi-codemode/test/js-kernel.test.ts 204
+
+## Manual scenario: state, reset, and tool-call emission without host execution
+{"first":{"type":"result","cellId":"manual-1","ok":true,"valueRepr":"40","durationMs":3},"second":{"type":"result","cellId":"manual-2","ok":true,"valueRepr":"42","durationMs":4},"reset":{"type":"result","cellId":"manual-3","ok":true,"valueRepr":"\"undefined\"","durationMs":2},"toolCall":{"type":"tool-call","callId":"js-b296e233-2f6f-4fe5-bc56-7e6c6a850395","toolName":"fake_host_tool","args":{"ok":true}},"toolResult":{"type":"result","cellId":"manual-4","ok":true,"valueRepr":"\"host replied\"","durationMs":3},"messageTypes":["ready","result","result","ready","result","tool-call","result"]}
+
+## Final focused JS kernel tests
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  15:58:41
+   Duration  855ms (transform 25ms, setup 0ms, import 26ms, tests 735ms, environment 0ms)
+
+
+## Final npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1343 files in 734ms. Fixed 1 file.
+
+## Task 12 append - JS kernel bare top-level await
+
+RED focused test before implementation:
+Command: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/js-kernel.test.ts
+Output excerpt:
+FAIL  test/js-kernel.test.ts > JavaScriptKernel > supports bare top-level await
+AssertionError: expected { type: 'result', ... } to match object { ok: true, valueRepr: '42' }
+Received ok: false
+Test Files  1 failed (1)
+Tests  1 failed | 9 passed (10)
+
+GREEN focused test after implementation:
+Command: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/js-kernel.test.ts
+Output: Test Files  1 passed (1); Tests  10 passed (10)
+
+Direct scenario:
+Command: cd packages/senpi-codemode && npx tsx -e "import { JavaScriptKernel } from './src/kernels/js/context-manager.ts'; void (async () => { const kernel = new JavaScriptKernel({ sessionId: 'direct-await', cwd: process.cwd(), parallelPoolWidth: 2 }); try { const result = await kernel.run({ cellId: 'direct-await-cell', code: 'await Promise.resolve(42)', timeoutMs: 2000 }); console.log(JSON.stringify(result)); } finally { await kernel.close(); } })();"
+Output: {"type":"result","cellId":"direct-await-cell","ok":true,"valueRepr":"42","durationMs":4}
+
+npm run check:
+Failed on existing out-of-scope warning:
+packages/senpi-codemode/test/py-kernel.test.ts:1:8 lint/correctness/noUnusedImports
+Per task scope, py/rb/jl files were not edited.
+
+Scoped diff:
+git diff --check passed with no output.
+git diff --numstat:
+1	0	packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js
+7	0	packages/senpi-codemode/test/js-kernel.test.ts
+Total scoped LOC delta: 8 added lines, 0 deleted lines, <=250.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 39ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+
+## Final git diff --check scoped files
+
+## 2026-07-06 Task 12 rerun blocker addendum: JS const-await last-expression capture
+
+RED coverage:
+Command: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/js-kernel.test.ts
+Result before evaluator fix: failed on the new exact regression cell.
+Failing test: JavaScriptKernel > captures the last expression after awaited statements.
+Cell:
+const y = await Promise.resolve(41)
+y + 1
+Expected ok true with valueRepr "42"; observed ok false.
+
+GREEN verification:
+Command: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/js-kernel.test.ts
+Result: Test Files 1 passed (1); Tests 11 passed (11).
+
+Command: npm run check
+Result: passed.
+Summary: biome check, pinned deps, TS import check, shrinkwrap check, coding-agent install lock check, tsgo --noEmit, browser/web UI checks, and check:neo all exited 0.
+
+Direct worker-mode scenario:
+Command: npx tsx /tmp/senpi-js-last-expression-scenario.ts
+Output:
+{"mode":"worker","result":{"type":"result","cellId":"direct-scenario","ok":true,"valueRepr":"42","durationMs":3}}
+
+Scoped diff/LOC:
+Command: git diff --check -- packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js packages/senpi-codemode/test/js-kernel.test.ts
+Result: passed with no output.
+Command: wc -l packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js
+Result: 88 lines, under 250.

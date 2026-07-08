@@ -1,0 +1,57 @@
+{
+	"name": "@code-yeongyu/senpi-codemode",
+	"version": "2026.7.5-2",
+	"description": "Source-only senpi extension package for codemode evaluation tools",
+	"type": "module",
+	"main": "./src/index.ts",
+	"types": "./src/index.ts",
+	"exports": {
+		".": "./src/index.ts",
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"src",
+		"README.md",
+		"CHANGELOG.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"test": "npx tsx ../../node_modules/vitest/dist/cli.js --run test/",
+		"clean": "node -e \"\"",
+		"build": "node -e \"\""
+	},
+	"pi": {
+		"extensions": [
+			"./src/index.ts"
+		]
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"dependencies": {
+		"@earendil-works/pi-ai": "^2026.7.5-2",
+		"typebox": "1.1.38"
+	},
+	"peerDependencies": {
+		"@code-yeongyu/senpi": "*"
+	},
+	"devDependencies": {
+		"@code-yeongyu/senpi": "2026.7.5-2"
+	},
+	"keywords": [
+		"senpi",
+		"pi",
+		"extension",
+		"codemode"
+	],
+	"author": "Yeongyu Kim",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/code-yeongyu/senpi.git",
+		"directory": "packages/senpi-codemode"
+	},
+	"engines": {
+		"node": ">=24.0.0"
+	}
+}

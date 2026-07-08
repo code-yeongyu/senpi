@@ -1,0 +1,18 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"paths": {
+			"@code-yeongyu/senpi": [
+				"../../packages/coding-agent/src/index.ts"
+			],
+			"@code-yeongyu/senpi/*": [
+				"../../packages/coding-agent/src/*"
+			]
+		}
+	},
+	"include": [
+		"src/**/*.ts",
+		"test/**/*.ts"
+	]
+}

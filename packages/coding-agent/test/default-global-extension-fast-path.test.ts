@@ -34,6 +34,13 @@ describe("default global extension fast path", () => {
 		process.env.SENPI_CODING_AGENT_DIR = agentDir;
 		mkdirSync(cwd, { recursive: true });
 		mkdirSync(join(agentDir, "extensions"), { recursive: true });
+		// The bundled codemode extension is default-on and loads through jiti. Disable it via the
+		// real global-settings mechanism so this fast-path test only observes jiti calls for the
+		// default global shims it exercises, not the bundled extension.
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			`${JSON.stringify({ disabledBuiltinExtensions: ["codemode"] })}\n`,
+		);
 		jitiMock.createJiti.mockReturnValue({ import: jitiMock.importExtension });
 	});
 

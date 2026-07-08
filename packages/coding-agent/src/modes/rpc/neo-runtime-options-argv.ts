@@ -6,8 +6,10 @@
  * classic argv into neo argv; here the daemon turns the connection's
  * NeoRuntimeOptions back into classic runtime-construction argv for its worker
  * process. Initial inputs (messages / fileArgs) are intentionally NOT emitted —
- * an rpc worker does not consume them as an initial prompt; they are expanded
- * separately (see expandNeoInitialInputs) and delivered as a `prompt` command.
+ * an rpc worker does not consume them as an initial prompt. The plain positional
+ * `messages` text is delivered separately as a `prompt` command; launch-time
+ * @file expansion is not yet implemented, so `fileArgs` are surfaced as a
+ * one-line non-fatal notice in the Go TUI rather than expanded.
  */
 
 import type { NeoRuntimeOptions } from "./neo-runtime-options.ts";

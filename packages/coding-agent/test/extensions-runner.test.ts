@@ -75,6 +75,7 @@ describe("ExtensionRunner", () => {
 		setSessionName: () => {},
 		getSessionName: () => undefined,
 		setLabel: () => {},
+		executeTool: async <TDetails = unknown>() => ({ content: [], details: undefined as TDetails }),
 		getActiveTools: () => [],
 		getAllTools: () => [],
 		setActiveTools: () => {},

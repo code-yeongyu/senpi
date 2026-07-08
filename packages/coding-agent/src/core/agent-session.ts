@@ -22,10 +22,23 @@ import type {
 	AgentMessage,
 	AgentState,
 	AgentTool,
+	AgentToolCall,
+	AgentToolResult,
+	AgentToolUpdateCallback,
+	PreparedAgentToolCall,
 	PrepareNextTurnContext,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@earendil-works/pi-ai/compat";
+import { prepareAgentToolCall } from "@earendil-works/pi-agent-core";
+import type {
+	Api,
+	AssistantMessage,
+	ImageContent,
+	Message,
+	Model,
+	SimpleStreamOptions,
+	TextContent,
+} from "@earendil-works/pi-ai/compat";
 import {
 	cleanupSessionResources,
 	isContextOverflow,
@@ -58,6 +71,8 @@ import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import type { ServiceTier } from "./extensions/builtin/service-tier.ts";
 import {
 	type ContextUsage,
+	ExecuteToolError,
+	type ExecuteToolOptions,
 	type ExtensionCommandContextActions,
 	type ExtensionErrorListener,
 	type ExtensionMode,
@@ -103,6 +118,7 @@ import {
 	getLatestCompactionEntry,
 	type SessionHeader,
 } from "./session-manager.ts";
+import { generateSessionTitle, shouldSkipSessionTitle } from "./session-title-generator.ts";
 import { SessionWorkBarrier } from "./session-work-barrier.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
@@ -216,6 +232,7 @@ export interface AgentSessionConfig {
 	extensionRunnerRef?: { current?: ExtensionRunner };
 	/** Session start event metadata emitted when extensions bind to this runtime. */
 	sessionStartEvent?: SessionStartEvent;
+	autoTitleSessions?: boolean;
 }
 
 type SessionModelEntry = { model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier };
@@ -274,6 +291,7 @@ export interface PromptOptions {
 	source?: InputSource;
 	/** Internal hook used by RPC mode to observe prompt preflight acceptance or rejection. */
 	preflightResult?: (success: boolean) => void;
+	sessionTitlePrompt?: string | false;
 }
 
 /** Result from cycleModel() */
@@ -360,6 +378,10 @@ export class AgentSession {
 	// Branch summarization state
 	private _branchSummaryAbortController: AbortController | undefined = undefined;
 
+	private _sessionTitleAbortController: AbortController | undefined = undefined;
+	private _sessionTitlePromise: Promise<void> | undefined = undefined;
+	private readonly _autoTitleSessions: boolean;
+
 	// Retry state
 	private _retryAbortController: AbortController | undefined = undefined;
 	private _retryAttempt = 0;
@@ -424,6 +446,7 @@ export class AgentSession {
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
+		this._autoTitleSessions = config.autoTitleSessions ?? false;
 
 		const initialModel = this.agent.state.model;
 		if (initialModel) {
@@ -500,53 +523,66 @@ export class AgentSession {
 	 */
 	private _installAgentToolHooks(): void {
 		this.agent.beforeToolCall = async ({ toolCall, args }) => {
-			const runner = this._extensionRunner;
-			if (!runner.hasHandlers("tool_call")) {
-				return undefined;
-			}
-
-			await this._agentEventQueue;
-
-			try {
-				return await runner.emitToolCall({
-					type: "tool_call",
-					toolName: toolCall.name,
-					toolCallId: toolCall.id,
-					input: args as Record<string, unknown>,
-				});
-			} catch (err) {
-				if (err instanceof Error) {
-					throw err;
-				}
-				throw new Error(`Extension failed, blocking execution: ${String(err)}`);
-			}
+			return this._emitBeforeToolCallHooks(toolCall, args);
 		};
 
 		this.agent.afterToolCall = async ({ toolCall, args, result, isError }) => {
-			const runner = this._extensionRunner;
-			if (!runner.hasHandlers("tool_result")) {
-				return undefined;
-			}
+			return this._emitAfterToolCallHooks(toolCall, args, result, isError);
+		};
+	}
 
-			const hookResult = await runner.emitToolResult({
-				type: "tool_result",
+	private async _emitBeforeToolCallHooks(toolCall: AgentToolCall, args: unknown) {
+		const runner = this._extensionRunner;
+		if (!runner.hasHandlers("tool_call")) {
+			return undefined;
+		}
+
+		await this._agentEventQueue;
+
+		try {
+			return await runner.emitToolCall({
+				type: "tool_call",
 				toolName: toolCall.name,
 				toolCallId: toolCall.id,
 				input: args as Record<string, unknown>,
-				content: result.content,
-				details: result.details,
-				isError,
 			});
-
-			if (!hookResult) {
-				return undefined;
+		} catch (err) {
+			if (err instanceof Error) {
+				throw err;
 			}
+			throw new Error(`Extension failed, blocking execution: ${String(err)}`);
+		}
+	}
 
-			return {
-				content: hookResult.content,
-				details: hookResult.details,
-				isError: hookResult.isError ?? isError,
-			};
+	private async _emitAfterToolCallHooks(
+		toolCall: AgentToolCall,
+		args: unknown,
+		result: AgentToolResult<unknown>,
+		isError: boolean,
+	) {
+		const runner = this._extensionRunner;
+		if (!runner.hasHandlers("tool_result")) {
+			return undefined;
+		}
+
+		const hookResult = await runner.emitToolResult({
+			type: "tool_result",
+			toolName: toolCall.name,
+			toolCallId: toolCall.id,
+			input: args as Record<string, unknown>,
+			content: result.content,
+			details: result.details,
+			isError,
+		});
+
+		if (!hookResult) {
+			return undefined;
+		}
+
+		return {
+			content: hookResult.content,
+			details: hookResult.details,
+			isError: hookResult.isError ?? isError,
 		};
 	}
 
@@ -602,6 +638,15 @@ export class AgentSession {
 
 	private async _waitForSettledSessionWork(): Promise<void> {
 		await this._sessionWorkBarrier.waitForSettled(() => this._agentEventQueue);
+	}
+
+	async waitForSettledSessionWork(): Promise<void> {
+		await this._waitForSettledSessionWork();
+		const titlePromise = this._sessionTitlePromise;
+		if (titlePromise !== undefined) {
+			await titlePromise;
+		}
+		await this._waitForSettledSessionWork();
 	}
 
 	private _modelSelectionChangesContext(previousModel: Model<any> | undefined, nextModel: Model<any>): boolean {
@@ -952,6 +997,7 @@ export class AgentSession {
 			this.abortRetry();
 			this.abortCompaction();
 			this.abortBranchSummary();
+			this.abortSessionTitleGeneration();
 			this.abortBash();
 			this.agent.abort();
 		} catch {
@@ -1027,6 +1073,85 @@ export class AgentSession {
 
 	getToolDefinition(name: string): ToolDefinition | undefined {
 		return this._toolDefinitions.get(name)?.definition;
+	}
+
+	async executeTool<TDetails = unknown>(
+		toolName: string,
+		params: unknown,
+		options?: ExecuteToolOptions<TDetails>,
+	): Promise<AgentToolResult<TDetails>> {
+		const activeTools = this.getActiveToolNames();
+		const tool = this.agent.state.tools.find((candidate) => candidate.name === toolName);
+		if (!tool) {
+			const knownToolNames = new Set(this._toolDefinitions.keys());
+			const code = knownToolNames.has(toolName) ? "inactive_tool" : "unknown_tool";
+			const activeList = activeTools.length > 0 ? activeTools.join(", ") : "(none)";
+			throw new ExecuteToolError(
+				code,
+				toolName,
+				code === "inactive_tool"
+					? `Tool ${toolName} is registered but inactive. Active tools: ${activeList}`
+					: `Unknown tool ${toolName}. Active tools: ${activeList}`,
+				activeTools,
+			);
+		}
+
+		const toolCall: AgentToolCall = {
+			type: "toolCall",
+			id: `codemode-${randomUUID()}`,
+			name: toolName,
+			arguments: params as Record<string, unknown>,
+		};
+
+		let prepared: PreparedAgentToolCall;
+		try {
+			prepared = prepareAgentToolCall(tool, toolCall);
+		} catch (err) {
+			throw new ExecuteToolError(
+				"invalid_params",
+				toolName,
+				err instanceof Error ? err.message : String(err),
+				activeTools,
+			);
+		}
+
+		const beforeResult = await this._emitBeforeToolCallHooks(prepared.toolCall, prepared.args);
+		if (beforeResult?.block) {
+			throw new ExecuteToolError(
+				"blocked",
+				toolName,
+				beforeResult.reason || "Tool execution was blocked",
+				activeTools,
+			);
+		}
+
+		let result: AgentToolResult<unknown>;
+		let isError = false;
+		try {
+			result = await prepared.tool.execute(
+				prepared.toolCall.id,
+				prepared.args as never,
+				options?.signal,
+				options?.onUpdate as AgentToolUpdateCallback<unknown> | undefined,
+			);
+		} catch (err) {
+			result = {
+				content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }],
+				details: {},
+			};
+			isError = true;
+		}
+		const hookResult = await this._emitAfterToolCallHooks(prepared.toolCall, prepared.args, result, isError);
+
+		if (!hookResult) {
+			return result as AgentToolResult<TDetails>;
+		}
+
+		return {
+			content: hookResult.content ?? result.content,
+			details: (hookResult.details ?? result.details) as TDetails,
+			terminate: result.terminate,
+		};
 	}
 
 	/**
@@ -1233,6 +1358,7 @@ export class AgentSession {
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 		const preflightResult = options?.preflightResult;
 		let messages: AgentMessage[] | undefined;
+		let titlePrompt: string | undefined;
 
 		try {
 			// Handle extension commands first (execute immediately, even during streaming)
@@ -1272,6 +1398,7 @@ export class AgentSession {
 				expandedText = this._expandSkillCommand(expandedText);
 				expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 			}
+			titlePrompt = options?.sessionTitlePrompt === false ? undefined : (options?.sessionTitlePrompt ?? text);
 
 			// If streaming, queue via steer() or followUp() based on option
 			if (this.isStreaming) {
@@ -1382,6 +1509,9 @@ export class AgentSession {
 		} else {
 			await this.agent.waitForIdle();
 		}
+		if (titlePrompt !== undefined) {
+			this._startSessionTitleGeneration(titlePrompt);
+		}
 	}
 
 	/**
@@ -1483,6 +1613,80 @@ export class AgentSession {
 		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 
 		await this._queueFollowUp(expandedText, images);
+	}
+
+	private _startSessionTitleGeneration(firstPrompt: string): void {
+		if (!this._autoTitleSessions || this.sessionManager.getSessionName() || shouldSkipSessionTitle(firstPrompt)) {
+			return;
+		}
+		if (this._sessionTitleAbortController !== undefined) {
+			return;
+		}
+		const model = this.model;
+		if (!model) {
+			return;
+		}
+		const abortController = new AbortController();
+		this._sessionTitleAbortController = abortController;
+		this._sessionTitlePromise = this._generateSessionTitle(firstPrompt, model, abortController);
+	}
+
+	private async _generateSessionTitle(
+		firstPrompt: string,
+		model: Model<Api>,
+		abortController: AbortController,
+	): Promise<void> {
+		try {
+			const auth = await this._getCompactionRequestAuth(model);
+			const title = await generateSessionTitle({
+				firstPrompt,
+				model,
+				auth,
+				sessionId: this.sessionId,
+				baseOptions: this._buildSessionTitleBaseOptions(),
+				signal: abortController.signal,
+				streamFn: this.agent.streamFn,
+			});
+			if (abortController.signal.aborted) {
+				return;
+			}
+			if (title && !this.sessionManager.getSessionName()) {
+				this.setSessionName(title);
+			}
+		} catch (error) {
+			if (abortController.signal.aborted) {
+				return;
+			}
+			const message = error instanceof Error ? error.message : String(error);
+			this._extensionRunner.emitError({
+				extensionPath: "<runtime>",
+				event: "session_title_generation",
+				error: message,
+			});
+		} finally {
+			if (this._sessionTitleAbortController === abortController) {
+				this._sessionTitleAbortController = undefined;
+			}
+			if (this._sessionTitlePromise !== undefined) {
+				this._sessionTitlePromise = undefined;
+			}
+		}
+	}
+
+	private abortSessionTitleGeneration(): void {
+		this._sessionTitleAbortController?.abort();
+		this._sessionTitleAbortController = undefined;
+	}
+
+	private _buildSessionTitleBaseOptions(): SimpleStreamOptions {
+		return {
+			onPayload: this.agent.onPayload,
+			onResponse: this.agent.onResponse,
+			transport: this.agent.transport,
+			thinkingBudgets: this.agent.thinkingBudgets,
+			timeoutMs: this.agent.timeoutMs,
+			maxRetryDelayMs: this.agent.maxRetryDelayMs,
+		};
 	}
 
 	/**
@@ -1619,6 +1823,7 @@ export class AgentSession {
 			streamingBehavior: options?.deliverAs,
 			images,
 			source: "extension",
+			sessionTitlePrompt: false,
 		});
 	}
 
@@ -2707,6 +2912,7 @@ export class AgentSession {
 				setLabel: (entryId, label) => {
 					this.sessionManager.appendLabelChange(entryId, label);
 				},
+				executeTool: (toolName, params, options) => this.executeTool(toolName, params, options),
 				getActiveTools: () => this.getActiveToolNames(),
 				getAllTools: () => this.getAllTools(),
 				setActiveTools: (toolNames) => this.setActiveToolsByName(toolNames),

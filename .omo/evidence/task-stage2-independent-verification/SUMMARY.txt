@@ -1,0 +1,58 @@
+# TRAIN A STAGE 2 — independent verification of codemode todos 17-19 + F1-F4
+
+Branch feat/senpi-codemode @ eba4b3509 (PR #142). Stage-1 teammate had already
+implemented, QA'd, committed evidence (task-17/18/19/F1-F4), and pushed with CI
+green ("Check and test" SUCCESS). This stage RE-RAN the plan's verification
+surfaces INDEPENDENTLY (F3 mandate: fresh re-run, not reusing artifacts) rather
+than trusting the committed logs. All results below were produced fresh on this
+machine (2026-07-07).
+
+## Real-surface proof — fresh live-CLI eval run (driver.mjs + demo-ext.mjs here)
+Reproduces the USER HARD CONSTRAINT through the REAL CLI (isolated sandbox, mock
+model, zero tokens), NOT reusing the stage-1 artifacts:
+  S1 JS eval cell `await tool.demo_tool({q:'freshqa'})` -> extension-registered
+     tool executed via the loopback bridge; tool_call hook fired with {q:freshqa};
+     tool_result hook fired; rewritten value ("demo:freshqa:rewritten") rode the
+     eval cell return back to the model (verified in fake-server request #2).  PASS
+  S2 Python eval cell -> real py subprocess kernel executed + tool bridge dispatch
+     ("demo:pyfresh" reached the model in request #2).                           PASS
+  fresh-eval-qa: 2/2 passed; real ~/.senpi/agent/auth.json unchanged.
+  tool-calls.jsonl (this dir) is the live hook/execute trace from the run.
+  NOTE: driver.mjs paths are machine-local (/tmp/fix-142-codemode) — point-in-time.
+
+## Committed constraint lock (re-run)
+  packages/coding-agent test/suite/codemode-bridge.test.ts .......... 4/4 PASS
+  (harness + faux provider: demo_tool once, tool_call args, tool_result rewrite,
+   block path -> execute NOT called; disable surfaces.)
+
+## Kernel real execution (re-run) — packages/senpi-codemode
+  15 files, 76 pass / 1 skipped. Only skip = jl-kernel (Julia absent).
+  python3 (/opt/homebrew/bin/python3) + ruby (/usr/bin/ruby) PRESENT, so the
+  py-kernel + rb-kernel LIVE (interpreter-guarded) tests RAN — real Python and
+  Ruby cell execution through the bridge, not mocked.
+
+## senpi-qa four channels (--self-test, re-run)
+  mock-loop.mjs  5/5   (3 wire formats round-trip; auth unchanged)
+  rpc-drive.mjs  4/4   (get_state RpcSessionState shape; offline)
+  cli-smoke.mjs  6/6   (--version 2026.7.5-2 / --list-models offline / unknown-opt)
+  tui-smoke.mjs  5/5   (tmux boot/render/keystroke/teardown)
+
+## Full gates (re-run on tip)
+  npm run check .................. EXIT 0 (biome + tsgo + pinned-deps + neo go build/vet/test)
+  node --test scripts/*.test.mjs .. 41 pass / 0 fail
+  (Full coding-agent vitest 351-pass already green in CI on this exact tip.)
+
+## Merge integrity — unified bundledWorkspaces schema keeps BOTH capabilities
+  scripts/prepare-senpi-bundled-workspaces.mjs:
+   - codemode: sourceOnly:true, targetParts:[@code-yeongyu,senpi-codemode],
+     requiredFiles:[package.json, src/index.ts, src/kernels/py/prelude.py];
+     shouldCopyWorkspaceFile copies src/** for sourceOnly packages.
+   - pty: requiredFiles:[package.json,dist/index.js,native/index.js],
+     nativePrebuild:true; bundledWorkspacePackageChecks(nativeTargets) exported.
+
+## Julia — explicit skip (caveat)
+  which julia MISSING on this machine AND on mengmotaHost (ssh checked). jl kernel
+  is default-off and interpreter-guarded (hasJulia()/detect('jl')); jl-kernel.test.ts
+  is the sole skipped test. No Julia surface could be exercised anywhere available.
+
+VERDICT: todos 17-19 + F1-F4 independently confirmed. PR #142 CI green on tip.

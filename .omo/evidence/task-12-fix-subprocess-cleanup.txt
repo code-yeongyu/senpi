@@ -1,0 +1,65 @@
+Task 12 subprocess timeout cleanup evidence
+
+## RED proof
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/kernels/rb/subprocess-kernel.test.ts -t "waits for timed-out and restarted subprocesses"
+
+Result: failed before the subprocess cleanup fix.
+
+Key failure:
+AssertionError: expected true to be false
+test/kernels/rb/subprocess-kernel.test.ts:238
+
+Meaning: after timeout restart, kernel.close() resolved while the retired and restarted subprocess fakes had not emitted exit.
+
+## Fix
+- packages/senpi-codemode/src/kernels/shared/subprocess-kernel.ts tracks every spawned subprocess until exit.
+- close() now sends close, terminates every active/retired subprocess, and awaits exit.
+- timeout restart termination is idempotent.
+- default subprocess spawn uses a detached process group so group termination can clean descendants.
+
+## Focused tests
+$ cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/kernels/rb/subprocess-kernel.test.ts test/rb-kernel.test.ts
+
+Result: passed.
+
+Summary:
+Test Files  2 passed (2)
+Tests       9 passed (9)
+
+## npm run check
+$ npm run check
+
+Result: passed.
+
+Summary:
+- biome check --write --error-on-warnings .
+- check:pinned-deps
+- check:ts-imports
+- check:shrinkwrap
+- check:install-lock:coding-agent
+- tsgo --noEmit
+- browser smoke checks
+- check:neo go build/vet/test
+
+## Cleanup receipt
+$ pgrep -fl 'runner\.rb' || true
+
+Result: no output after focused live Ruby cleanup test.
+
+The live regression in packages/senpi-codemode/test/rb-kernel.test.ts also snapshots pgrep before starting runner.rb, runs a Ruby cell that times out, calls kernel.close(), then verifies no new runner.rb pid remains.
+
+## Scoped diff / LOC
+$ git diff --stat -- packages/senpi-codemode/src/kernels/shared/subprocess-kernel.ts packages/senpi-codemode/test/kernels/rb/subprocess-kernel.test.ts packages/senpi-codemode/test/rb-kernel.test.ts
+
+Result:
+packages/senpi-codemode/src/kernels/shared/subprocess-kernel.ts   | 52 +++++++++++++++++-
+packages/senpi-codemode/test/kernels/rb/subprocess-kernel.test.ts | 57 +++++++++++++++++++
+packages/senpi-codemode/test/rb-kernel.test.ts                    | 64 +++++++++++++++++++++-
+3 files changed, 170 insertions(+), 3 deletions(-)
+
+$ git diff --numstat -- packages/senpi-codemode/src/kernels/shared/subprocess-kernel.ts packages/senpi-codemode/test/kernels/rb/subprocess-kernel.test.ts packages/senpi-codemode/test/rb-kernel.test.ts
+
+Result:
+50  2  packages/senpi-codemode/src/kernels/shared/subprocess-kernel.ts
+57  0  packages/senpi-codemode/test/kernels/rb/subprocess-kernel.test.ts
+63  1  packages/senpi-codemode/test/rb-kernel.test.ts

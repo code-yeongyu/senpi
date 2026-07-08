@@ -1369,6 +1369,16 @@ export interface ExtensionAPI {
 	/** Execute a shell command. */
 	exec(command: string, args: string[], options?: ExecOptions): Promise<ExecResult>;
 
+	/**
+	 * Execute an active tool through the same validation, tool_call, permission, and
+	 * tool_result pipeline used by model-dispatched tool calls.
+	 */
+	executeTool<TDetails = unknown>(
+		toolName: string,
+		params: unknown,
+		options?: ExecuteToolOptions<TDetails>,
+	): Promise<ExecuteToolResult<TDetails>>;
+
 	/** Get the list of currently active tool names. */
 	getActiveTools(): string[];
 
@@ -1581,6 +1591,37 @@ export type SetSessionNameHandler = (name: string) => void;
 
 export type GetSessionNameHandler = () => string | undefined;
 
+export type ExecuteToolUpdateCallback<T = unknown> = AgentToolUpdateCallback<T>;
+
+export interface ExecuteToolOptions<TDetails = unknown> {
+	signal?: AbortSignal;
+	onUpdate?: ExecuteToolUpdateCallback<TDetails>;
+}
+
+export type ExecuteToolResult<TDetails = unknown> = AgentToolResult<TDetails>;
+
+export type ExecuteToolErrorCode = "unknown_tool" | "inactive_tool" | "invalid_params" | "blocked";
+
+export class ExecuteToolError extends Error {
+	readonly code: ExecuteToolErrorCode;
+	readonly toolName: string;
+	readonly activeTools: string[];
+
+	constructor(code: ExecuteToolErrorCode, toolName: string, message: string, activeTools: string[]) {
+		super(message);
+		this.name = "ExecuteToolError";
+		this.code = code;
+		this.toolName = toolName;
+		this.activeTools = activeTools;
+	}
+}
+
+export type ExecuteToolHandler = <TDetails = unknown>(
+	toolName: string,
+	params: unknown,
+	options?: ExecuteToolOptions<TDetails>,
+) => Promise<ExecuteToolResult<TDetails>>;
+
 export type GetActiveToolsHandler = () => string[];
 
 /** Tool info with name, description, parameter schema, prompt guidelines, and source metadata. */
@@ -1637,6 +1678,7 @@ export interface ExtensionActions {
 	setSessionName: SetSessionNameHandler;
 	getSessionName: GetSessionNameHandler;
 	setLabel: SetLabelHandler;
+	executeTool: ExecuteToolHandler;
 	getActiveTools: GetActiveToolsHandler;
 	getAllTools: GetAllToolsHandler;
 	setActiveTools: SetActiveToolsHandler;

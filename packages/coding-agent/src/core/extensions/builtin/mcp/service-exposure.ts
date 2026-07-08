@@ -24,6 +24,7 @@ export async function getMcpServiceExposureStatus(
 			entry.connection,
 			serverConfig.requestTimeoutMs,
 			() => connectAndRefreshMcpCatalog(entry, serverConfig),
+			{ ensureFresh: () => entry.authPlan?.refresh?.ensureFresh().then(() => undefined) ?? Promise.resolve() },
 		);
 		return getMcpCatalogExposureStatus(catalog, serverConfig, config.settings);
 	}

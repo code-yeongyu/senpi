@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import chalk from "chalk";
@@ -78,7 +79,34 @@ const VENDORED_BUILTIN_EXTENSION_PACKAGES: ReadonlyArray<{ builtinId: string; pa
 	{ builtinId: "bash-timeout", packageName: "pi-bash-timeout" },
 	{ builtinId: "openai-web-search", packageName: "pi-openai-web-search" },
 	{ builtinId: "todowrite", packageName: "pi-todotools" },
+	{ builtinId: "codemode", packageName: "@code-yeongyu/senpi-codemode" },
 ];
+const require = createRequire(import.meta.url);
+
+const bundledBuiltinExtensions: ReadonlyArray<{ id: string; resolvePackage: () => string }> = [
+	{
+		id: "codemode",
+		resolvePackage: () =>
+			resolveBundledPackageJson("@code-yeongyu/senpi-codemode/package.json", "senpi-codemode/package.json"),
+	},
+];
+
+function resolveBundledPackageJson(packageSpecifier: string, workspaceRelativePath: string): string {
+	const packageRoot = getPackageDir();
+	const runningFromSource = fileURLToPath(import.meta.url).includes(`${sep}src${sep}core${sep}resource-loader.`);
+	const workspacePath = resolve(packageRoot, "..", workspaceRelativePath);
+	if (runningFromSource && existsSync(workspacePath)) {
+		return workspacePath;
+	}
+	try {
+		return require.resolve(packageSpecifier);
+	} catch (error) {
+		if (existsSync(workspacePath)) {
+			return workspacePath;
+		}
+		throw error;
+	}
+}
 
 function isGeneratedGlobalDefaultExtensionShim(content: string): boolean {
 	return LEGACY_GENERATED_GLOBAL_EXTENSION_BANNERS.some((banner) => content.startsWith(banner));
@@ -1038,6 +1066,15 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 			activeBuiltinExtensionIds.add(builtinExtension.id);
 		}
+		for (const bundledExtension of bundledBuiltinExtensions) {
+			if (enabledBuiltinExtensionSet && !enabledBuiltinExtensionSet.has(bundledExtension.id)) {
+				continue;
+			}
+			if (disabledBuiltinExtensions.has(bundledExtension.id)) {
+				continue;
+			}
+			activeBuiltinExtensionIds.add(bundledExtension.id);
+		}
 
 		return activeBuiltinExtensionIds;
 	}
@@ -1191,6 +1228,37 @@ export class DefaultResourceLoader implements ResourceLoader {
 			}
 		}
 
+		const bundledExtensionPaths: string[] = [];
+		for (const bundledExtension of bundledBuiltinExtensions) {
+			if (!activeBuiltinExtensionIds.has(bundledExtension.id)) {
+				continue;
+			}
+			try {
+				const packageJsonPath = bundledExtension.resolvePackage();
+				const entries = this.resolvePackageExtensionEntries(packageJsonPath);
+				if (entries.length === 0) {
+					errors.push({
+						path: `<builtin:${bundledExtension.id}>`,
+						error: `Bundled extension package does not declare pi.extensions: ${packageJsonPath}`,
+					});
+					continue;
+				}
+				bundledExtensionPaths.push(...entries);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : "package resolution failed";
+				errors.push({
+					path: `<builtin:${bundledExtension.id}>`,
+					error: `Bundled extension unavailable: ${message}`,
+				});
+			}
+		}
+
+		if (bundledExtensionPaths.length > 0) {
+			const bundledResult = await loadExtensions(bundledExtensionPaths, this.cwd, this.eventBus, runtime);
+			extensions.push(...bundledResult.extensions);
+			errors.push(...bundledResult.errors);
+		}
+
 		for (const [index, factory] of this.extensionFactories.entries()) {
 			const extensionPath = `<inline:${index + 1}>`;
 			try {
@@ -1203,6 +1271,18 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 
 		return { extensions, errors };
+	}
+
+	private resolvePackageExtensionEntries(packageJsonPath: string): string[] {
+		const packageJson: { pi?: { extensions?: unknown } } = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
+		const extensions = packageJson.pi?.extensions;
+		if (!Array.isArray(extensions)) {
+			return [];
+		}
+		const packageRoot = resolve(packageJsonPath, "..");
+		return extensions
+			.filter((extensionPath): extensionPath is string => typeof extensionPath === "string")
+			.map((extensionPath) => resolve(packageRoot, extensionPath));
 	}
 
 	private dedupePrompts(prompts: PromptTemplate[]): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] } {

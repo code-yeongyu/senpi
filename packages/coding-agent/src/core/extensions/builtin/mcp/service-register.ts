@@ -26,6 +26,7 @@ export async function registerMcpServiceDirectTools(
 				agentDir: entry.agentDir,
 				cachedCatalog: entry.cachedCatalog,
 				connection: entry.connection,
+				ensureFresh: () => entry.authPlan?.refresh?.ensureFresh().then(() => undefined) ?? Promise.resolve(),
 				ensureCachedToolConnected: () => connectAndRefreshMcpCatalog(entry, serverConfig),
 				logger: entry.logger,
 				name: entry.name,

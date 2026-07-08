@@ -1,0 +1,11 @@
+{
+  "id": 8,
+  "invocation": "HTTP bearer-auth fixture with bearerTokenEnv TODO28_BEARER, then same config with empty env",
+  "observations": {
+    "happyToolCount": 1,
+    "unsetError": "MCP server bearer-credential:<redacted> token env TODO28_bearer-credential:<redacted> not set"
+  },
+  "surface": "CLI/data surface: transport factory + HTTP fixture",
+  "title": "bearer-auth server with env placeholder + unset-var failure",
+  "verdict": "PASS"
+}

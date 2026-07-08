@@ -1,21 +1,125 @@
-=== TODO 25 headless flows (paste + client_credentials)  2026-07-07T12:41:22Z ===
---- vitest test/mcp/oauth-headless.test.ts (GREEN) ---
- Test Files  1 passed (1)
-      Tests  6 passed (6)
-   Duration  877ms (transform 47ms, setup 10ms, import 95ms, tests 715ms, environment 0ms)
+# TODO25 Done Evidence: Headless flows — paste + client_credentials
 
---- /mcp command suite still GREEN after adding auth/auth-start/auth-complete/logout subcommands ---
- Test Files  1 passed (1)
-      Tests  9 passed (9)
+Worktree: `/Users/yeongyu/local-workspaces/senpi-wt/senpi-mcp-plugin-w3`
+Branch: `code-yeongyu/senpi-mcp-plugin-w3`
+Evidence bundle: `local-ignore/qa-evidence/20260708-mcp-w3-todo25/`
 
-Asserted:
-  - /mcp auth-start prints an authorize URL containing S256 challenge + RFC 8707 resource
-  - /mcp auth-complete <redirect-url> exchanges via the SAME stored PKCE verifier -> tokens stored
-  - verifier continuity: a tampered stored verifier makes auth-complete FAIL (no partial credential)
-  - malformed pasted URL -> actionable OAuthFlowError (paste the full http://127.0.0.1/... address)
-  - client_credentials grant stores a token with ZERO local listeners, no browser attempt
-  - /mcp logout clears credentials so the next use needs auth again
-  - non-UI mode: /mcp auth FAILS FAST with an isError naming the headless flow (auth-start/auth-complete), no browser, no hang
+## Changed Files
 
-Slash subcommands wired in commands.ts -> auth/commands-auth-dispatch.ts (tsgo clean; /mcp command suite regression-free).
-Full paste-flow-in-TUI (send-keys) real-surface proof is captured in the W3 gate (task-28, step 5).
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth.ts`
+- `packages/coding-agent/src/core/extensions/builtin/mcp/health.ts`
+- `packages/coding-agent/test/mcp/oauth-headless.test.ts`
+- `.omo/evidence/task-25-senpi-mcp-plugin.log`
+- `.omo/evidence/todo-25-code-quality-slop-review.md`
+
+## Implementation
+
+- Converted terminal authorization-code exchange failures (`invalid_grant`, used/expired code, PKCE failure) into actionable retry guidance: restart with `/mcp auth-start <server>`.
+- Cleared access/refresh token fields and PKCE verifier on rejected authorization-code exchange so no partial credential is left behind.
+- Converted auth-required MCP tool execution failures into fast `AuthError` guidance naming the headless flow: run `senpi` interactive, `/mcp auth-start <server>`, then `/mcp auth-complete <server> <redirect-url>`.
+- Added focused regressions for real tool execution without UI and one-use pasted code replay.
+
+## RED Commands
+
+- `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/oauth-headless.test.ts`
+  - Artifact: `local-ignore/qa-evidence/20260708-mcp-w3-todo25/red-toolcall.log`
+  - Observable: failed because auth-required tool execution returned generic `Unauthorized` instead of `/mcp auth-start fix`.
+- Same invocation.
+  - Artifact: `local-ignore/qa-evidence/20260708-mcp-w3-todo25/red-one-use.log`
+  - Observable: failed because one-use code replay returned raw `authorization code invalid or used` instead of retry guidance.
+
+## GREEN / Check Commands
+
+- `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/oauth-headless.test.ts`
+  - Artifact: `local-ignore/qa-evidence/20260708-mcp-w3-todo25/green-oauth-headless-final.log`
+  - Observable: 1 file passed, 8 tests passed.
+- `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/oauth-provider.test.ts`
+  - Artifact: `local-ignore/qa-evidence/20260708-mcp-w3-todo25/green-oauth-provider.log`
+  - Observable: 7 tests passed.
+- `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/oauth-callback.test.ts`
+  - Artifact: `local-ignore/qa-evidence/20260708-mcp-w3-todo25/green-oauth-callback.log`
+  - Observable: 10 tests passed.
+- `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/auth-modes.test.ts`
+  - Artifact: `local-ignore/qa-evidence/20260708-mcp-w3-todo25/green-auth-modes.log`
+  - Observable: 8 tests passed.
+- `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/register-call.test.ts`
+  - Artifact: `local-ignore/qa-evidence/20260708-mcp-w3-todo25/green-register-call.log`
+  - Observable: 7 tests passed.
+- `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/oauth-race.test.ts`
+  - Artifact: `local-ignore/qa-evidence/20260708-mcp-w3-todo25/green-oauth-race.log`
+  - Observable: 2 tests passed.
+- `cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/token-store.test.ts`
+  - Artifact: `local-ignore/qa-evidence/20260708-mcp-w3-todo25/green-token-store.log`
+  - Observable: 8 tests passed.
+- `npm run check`
+  - Artifact: `local-ignore/qa-evidence/20260708-mcp-w3-todo25/npm-run-check.log`
+  - Observable: biome, pinned deps, TS imports, shrinkwrap, install-lock, tsgo, browser smoke, web-ui check, and neo build/vet/test passed.
+
+## Manual QA Commands
+
+- `bash /tmp/todo25-tmux-flow.sh`
+  - Artifact: `local-ignore/qa-evidence/20260708-mcp-w3-todo25/tui-flow-command.log`
+  - Surface: real tmux TUI.
+  - Scenario: `/mcp auth-start fix` printed URL; fixture authorize redirect was pasted to `/mcp auth-complete fix <redirect-url>`; `/mcp test fix` reached connected/test surface.
+  - Observable: `PASS: TUI auth-start/auth-complete paste flow reached connected/test surface`.
+- `npx tsx /tmp/todo25-headless-manual.ts`
+  - Artifact: `local-ignore/qa-evidence/20260708-mcp-w3-todo25/manual-headless-command.log`
+  - Scenario: expired/one-use code.
+  - Observable: retry guidance contained `/mcp auth-start fix`, `partial_access_token=false`.
+  - Scenario: `client_credentials`.
+  - Observable: `token_stored=true browser_attempts=0 grant_seen=true`.
+  - Scenario: logout.
+  - Observable: `store_empty=true`.
+
+## senpi-qa Commands
+
+- `node .agents/skills/senpi-qa/scripts/lib/common.mjs --self-check`
+  - Artifact: `local-ignore/qa-evidence/20260708-mcp-w3-todo25/senpi-qa-common-self-check.log`
+  - Observable: 9/9 passed, real auth unchanged.
+- `node .agents/skills/senpi-qa/scripts/cli-smoke.mjs --self-test`
+  - Artifact: `local-ignore/qa-evidence/20260708-mcp-w3-todo25/senpi-qa-cli-smoke.log`
+  - Observable: 6/6 passed, real auth unchanged.
+- `node .agents/skills/senpi-qa/scripts/mock-loop.mjs --with-mcp-tool mcp_fx_tool_1 --tool-args '{"value":"todo25"}'`
+  - Artifact: `local-ignore/qa-evidence/20260708-mcp-w3-todo25/senpi-qa-mock-loop-mcp.log`
+  - Observable: 5/5 passed, MCP fixture tool executed and fed result back to model, real auth unchanged.
+- `node .agents/skills/senpi-qa/scripts/tui-smoke.mjs --self-test --driver tmux --evidence mcp-w3-todo25-tui-smoke`
+  - Artifact: `local-ignore/qa-evidence/20260708-mcp-w3-todo25/senpi-qa-tui-smoke.log`
+  - Observable: 5/5 passed, real auth unchanged.
+
+## Additional Static / Diagnostics
+
+- LSP diagnostics: no diagnostics for changed `.ts` files.
+- No-excuse/static scan command:
+  - `rg -n "as any|as unknown|@ts-ignore|@ts-expect-error|\\bany\\b|enum\\b|console\\.log|debugger|TODO|FIXME|catch \\{\\}|catch \\([^)]*\\) \\{\\s*\\}" packages/coding-agent/src/core/extensions/builtin/mcp/health.ts packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth.ts packages/coding-agent/test/mcp/oauth-headless.test.ts`
+  - Observable: only benign substring/comment hits (`client_credentials`, `authorization` comment), no banned constructs.
+- Pure LOC:
+  - `health.ts`: 148
+  - `oauth.ts`: 182
+  - `oauth-headless.test.ts`: 203 (warning band; still below 250).
+
+## Cleanup Receipts
+
+- Removed temporary files: `/tmp/todo25-tmux-flow.sh`, `/tmp/todo25-headless-manual.ts`.
+- Process sweep: no TODO25 tmux/idp processes remained.
+- Tmux sweep: only pre-existing `ulw-dr` session remained.
+- Auth isolation: `real-auth-before.txt` and `real-auth-after.txt` have identical SHA-256 `209517649905332ad32411733f098dbc85d7f620e3df5d156720a623b5e052bd`.
+
+## UltraQA Probe Classes
+
+- malformed_input: malformed redirect URL regression remains covered.
+- stale_state: verifier mismatch and one-use code replay covered.
+- dirty_worktree: status inspected before/after; unrelated untracked evidence left untouched.
+- hung_or_long_commands: TUI and fixture scripts used bounded waits; no residual processes.
+- flaky_tests: focused and adjacent suites rerun after formatting.
+- misleading_success_output: command outputs archived; failed first TUI extraction recorded and followed by passing rerun.
+- cancel_resume/repeated_interruptions: no cancellation path changed; auth retry state covered by stale_state cases.
+- prompt_injection: N/A; no prompt surface changed.
+
+## Risks
+
+- `oauth-headless.test.ts` is 203 pure LOC. It is under the 250 hard limit but in the warning band; next meaningful expansion should split shared OAuth harness helpers out.
+- Real remote OAuth providers were not used; TODO25 acceptance is fixture-based per plan.
+
+## Readiness
+
+Ready for independent gate review.

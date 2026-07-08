@@ -1,11 +1,159 @@
-=== TODO 24 loopback callback evidence  2026-07-07T12:14:39Z ===
---- vitest test/mcp/oauth-callback.test.ts (GREEN): no-listener-before-start, valid loop, wrong/replayed state 400, timeout teardown, fixed-port conflict fail-fast, override zero-listeners ---
+## RED acceptance
+$ cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/oauth-callback.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent
+
+··x····x
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/mcp/oauth-callback.test.ts > LoopbackCallbackServer > requires a state parameter even when the validator is permissive
+AssertionError: expected 200 to be 400 // Object.is equality
+
+- Expected
++ Received
+
+- 400
++ 200
+
+ ❯ test/mcp/oauth-callback.test.ts:130:27
+    128|   });
+    129|   const response = await fetch(`${redirectUrl}?code=abc`);
+    130|   expect(response.status).toBe(400);
+       |                           ^
+    131|   await new Promise((resolve) => setTimeout(resolve, 50));
+    132|   expect(settled).toBe(false);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  test/mcp/oauth-callback.test.ts > LoopbackCallbackServer > rejects a second concurrent auth for the same server without opening another browser flow
+Error: Test timed out in 30000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/mcp/oauth-callback.test.ts:183:2
+    181|  });
+    182|
+    183|  it("rejects a second concurrent auth for the same server without open…
+       |  ^
+    184|   const fixture = await idp();
+    185|   const dir = await agentDir();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 6 passed (8)
+   Start at  04:52:25
+   Duration  30.37s (transform 49ms, setup 11ms, import 110ms, tests 30.16s, environment 0ms)
+
+
+## GREEN acceptance
+$ cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/oauth-callback.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent
+
+(node:65147) PromiseRejectionHandledWarning: Promise rejection was handled asynchronously (rejection id: 1)
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:65147) PromiseRejectionHandledWarning: Promise rejection was handled asynchronously (rejection id: 2)
+········
+⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯
+
+Vitest caught 2 unhandled errors during the test run.
+This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+OAuthFlowError: MCP server s authorization state did not match (possible CSRF or a stale/replayed link); restart the auth flow.
+ ❯ LoopbackCallbackServer.#handle src/core/extensions/builtin/mcp/auth/callback.ts:173:5
+    171|    res.writeHead(400, { "content-type": "text/html" }).end(FAILURE_HTM…
+    172|    void this.#fail(
+    173|     new OAuthFlowError(
+       |     ^
+    174|      "state_mismatch",
+    175|      `MCP server ${this.#options.serverName} authorization state did n…
+ ❯ Server.<anonymous> src/core/extensions/builtin/mcp/auth/callback.ts:96:50
+ ❯ Server.emit node:events:509:20
+ ❯ parserOnIncoming node:_http_server:1314:12
+ ❯ HTTPParser.parserOnHeadersComplete node:_http_common:125:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { kind: 'auth', phase: undefined, retriable: undefined, serverName: 's', oauthKind: 'state_mismatch', terminal: true }
+This error originated in "test/mcp/oauth-callback.test.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "requires a state parameter even when the validator is permissive". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+OAuthFlowError: MCP server s authorization state did not match (possible CSRF or a stale/replayed link); restart the auth flow.
+ ❯ LoopbackCallbackServer.#handle src/core/extensions/builtin/mcp/auth/callback.ts:173:5
+    171|    res.writeHead(400, { "content-type": "text/html" }).end(FAILURE_HTM…
+    172|    void this.#fail(
+    173|     new OAuthFlowError(
+       |     ^
+    174|      "state_mismatch",
+    175|      `MCP server ${this.#options.serverName} authorization state did n…
+ ❯ Server.<anonymous> src/core/extensions/builtin/mcp/auth/callback.ts:96:50
+ ❯ Server.emit node:events:509:20
+ ❯ parserOnIncoming node:_http_server:1314:12
+ ❯ HTTPParser.parserOnHeadersComplete node:_http_common:125:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { kind: 'auth', phase: undefined, retriable: undefined, serverName: 's', oauthKind: 'state_mismatch', terminal: true }
+This error originated in "test/mcp/oauth-callback.test.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "rejects a wrong/replayed state with 400 and does NOT complete the flow". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+
+
  Test Files  1 passed (1)
-      Tests  6 passed (6)
-   Duration  217ms (transform 18ms, setup 10ms, import 21ms, tests 128ms, environment 0ms)
-HAPPY: callback listening at http://127.0.0.1:54972/callback
-HAPPY: opened authorize URL, redirect_uri = http://127.0.0.1:54972/callback
-HAPPY: loopback received code (len 29) + valid state; state single-use OK
-HAPPY: exchanged -> access token stored: SENTINEL_AT_...
-FAILURE: first flow holds fixed port 54977
-FAILURE: second flow rejected -> needs_auth: MCP server fix callback listener failed: port 54977 is already in use (another senpi auth flow may be running); free it or configure a different callback.
+      Tests  8 passed (8)
+     Errors  2 errors
+   Start at  04:54:10
+   Duration  505ms (transform 50ms, setup 11ms, import 111ms, tests 299ms, environment 0ms)
+
+
+## GREEN acceptance clean rerun
+$ cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/oauth-callback.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent
+
+········
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  04:54:26
+   Duration  507ms (transform 49ms, setup 10ms, import 109ms, tests 305ms, environment 0ms)
+
+
+## GREEN acceptance after early waiter cleanup
+$ cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/oauth-callback.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent
+
+········
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  04:55:00
+   Duration  484ms (transform 49ms, setup 10ms, import 109ms, tests 283ms, environment 0ms)
+
+
+## Additional verification artifacts
+GREEN impacted OAuth tests: local-ignore/qa-evidence/20260708-mcp-w3-todo24/impacted-oauth-tests.txt
+GREEN npm run check: local-ignore/qa-evidence/20260708-mcp-w3-todo24/npm-run-check.txt
+GREEN targeted static scan: local-ignore/qa-evidence/20260708-mcp-w3-todo24/targeted-static-scan.txt
+GREEN LOC check: local-ignore/qa-evidence/20260708-mcp-w3-todo24/loc-check.txt
+GREEN manual curl-follow loopback + duplicate auth rejection: local-ignore/qa-evidence/20260708-mcp-w3-todo24/manual-loopback-qa.txt
+GREEN senpi-qa common self-check: local-ignore/qa-evidence/20260708-mcp-w3-todo24/senpi-qa-common-self-check.txt
+GREEN senpi-qa CLI smoke: local-ignore/qa-evidence/20260708-mcp-w3-todo24/senpi-qa-cli-smoke.txt
+
+## FINAL acceptance after repository check formatting
+$ cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/mcp/oauth-callback.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/packages/coding-agent
+
+········
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  04:57:06
+   Duration  495ms (transform 50ms, setup 10ms, import 112ms, tests 291ms, environment 0ms)

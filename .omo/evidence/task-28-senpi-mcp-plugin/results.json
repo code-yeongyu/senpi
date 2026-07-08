@@ -41,7 +41,7 @@
   },
   {
     "step": 9,
-    "title": "secret audit: grep logs+evidence for SENTINEL_AT_ tokens",
+    "title": "secret audit: grep logs+evidence for sentinel access-token strings",
     "verdict": "PASS"
   },
   {

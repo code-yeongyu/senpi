@@ -25,8 +25,10 @@
  *
  * Values mirror the classic `Args` shape for the runtime-relevant subset. All
  * fields are optional: an omitted field means "classic default" for that flag.
- * Initial inputs (`messages`, `fileArgs`) are forwarded RAW and expanded by the
- * daemon-side handler with the client's cwd (image auto-resize included).
+ * Initial inputs (`messages`, `fileArgs`) are forwarded RAW. Launch-time
+ * @file/image expansion is NOT yet implemented daemon-side: only the plain
+ * positional `messages` text is delivered (as a `prompt` command); `fileArgs`
+ * surface a one-line non-fatal notice in the Go TUI instead of being expanded.
  */
 export interface NeoRuntimeOptions {
 	// Provider / model / thinking / auth.

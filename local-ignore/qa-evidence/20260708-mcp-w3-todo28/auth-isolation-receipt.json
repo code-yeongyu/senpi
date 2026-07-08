@@ -1,0 +1,10 @@
+{
+  "realAuthPath": "/Users/yeongyu/.senpi/agent/auth.json",
+  "realAuthBefore": "209517649905332ad32411733f098dbc85d7f620e3df5d156720a623b5e052bd",
+  "realAuthAfterUnchanged": true,
+  "realMcpAuthBefore": "ABSENT",
+  "realMcpAuthAfter": "ABSENT",
+  "realMcpAuthUnchanged": true,
+  "sandboxAgentDir": "/var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/todo28-auth-e2e-EXayjY/agent",
+  "sandboxTokenStoreExists": true
+}

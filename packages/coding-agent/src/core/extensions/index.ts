@@ -59,6 +59,11 @@ export type {
 	EntryRenderOptions,
 	ExecOptions,
 	ExecResult,
+	ExecuteToolErrorCode,
+	ExecuteToolHandler,
+	ExecuteToolOptions,
+	ExecuteToolResult,
+	ExecuteToolUpdateCallback,
 	Extension,
 	ExtensionActions,
 	// API
@@ -175,6 +180,7 @@ export type {
 // Type guards
 export {
 	defineTool,
+	ExecuteToolError,
 	isBashToolResult,
 	isEditToolResult,
 	isFindToolResult,

@@ -141,6 +141,7 @@ function writeLocalReleaseFixture(repoRoot) {
 		["packages/pty", "@earendil-works/pi-pty"],
 		["packages/tui", "@earendil-works/pi-tui"],
 		["packages/agent", "@earendil-works/pi-agent-core"],
+		["packages/senpi-codemode", "@code-yeongyu/senpi-codemode"],
 		["packages/coding-agent", "@code-yeongyu/senpi"],
 		["packages/orchestrator", "@code-yeongyu/senpi-orchestrator"],
 	]) {
@@ -157,4 +158,9 @@ function writeLocalReleaseFixture(repoRoot) {
 		join(repoRoot, "packages", "pty", "native", "prebuilds", nativeTarget, `senpi_pty.${nativeTarget}.node`),
 		"",
 	);
+
+	// senpi-codemode is bundled source-only; prepareSenpiBundledWorkspaces requires its loader-visible sources.
+	mkdirSync(join(repoRoot, "packages", "senpi-codemode", "src", "kernels", "py"), { recursive: true });
+	writeFileSync(join(repoRoot, "packages", "senpi-codemode", "src", "index.ts"), "");
+	writeFileSync(join(repoRoot, "packages", "senpi-codemode", "src", "kernels", "py", "prelude.py"), "");
 }

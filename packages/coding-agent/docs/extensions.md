@@ -2077,6 +2077,41 @@ Typical `sourceInfo.source` values:
 - `sdk` for tools passed via `createAgentSession({ customTools })`
 - extension source metadata for tools registered by extensions
 
+### pi.executeTool(name, params, options?)
+
+Execute an active tool from extension code using the same wrapped pipeline as a model-dispatched tool call.
+
+```typescript
+const result = await pi.executeTool("read", { path: "README.md" }, {
+  onUpdate: (partial) => {
+    // Forward partial AgentToolResult updates into your parent tool UI.
+  },
+});
+```
+
+`params` are prepared and validated against the target tool schema before `tool_call` handlers run. If validation fails, `executeTool` rejects with `ExecuteToolError` code `invalid_params`, the tool is not executed, and no `tool_call` hook fires.
+
+Only active tools can run. Registered but inactive tools reject with code `inactive_tool`; unknown names reject with code `unknown_tool`. Both errors include `toolName` and `activeTools`.
+
+When pre-tool hooks block, `executeTool` rejects with code `blocked` and the hook reason. When hooks mutate `event.input`, the executed tool sees the mutated arguments. `tool_result` hooks can replace the returned content, details, or error state before the promise resolves.
+
+The optional `signal` and `onUpdate` are forwarded directly to the tool execution callback. Bridge-invoked calls emit `tool_call` and `tool_result` extension events, but do not emit `tool_execution_start`, `tool_execution_update`, or `tool_execution_end` UI events; they are subcalls of the parent extension/tool UI.
+
+The SDK exports `ExecuteToolOptions<TDetails>`, `ExecuteToolResult<TDetails>`, `ExecuteToolUpdateCallback<TDetails>`, `ExecuteToolError`, and `ExecuteToolErrorCode`. `ExecuteToolResult<TDetails>` is the normal `AgentToolResult<TDetails>` returned by the wrapped tool after `tool_result` hooks have run.
+
+```typescript
+try {
+  const result = await pi.executeTool("bash", { command: "pwd" });
+  ctx.ui.notify(result.content);
+} catch (error) {
+  if (error instanceof ExecuteToolError && error.code === "blocked") {
+    ctx.ui.notify(error.message, "warning");
+  } else {
+    throw error;
+  }
+}
+```
+
 ### pi.setModel(model)
 
 Set the current model. Returns `false` if no API key is available for the model. See [models.md](models.md) for configuring custom models.

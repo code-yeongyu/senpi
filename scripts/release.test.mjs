@@ -31,6 +31,7 @@ describe("release package versioning", () => {
 			"packages/coding-agent/package.json",
 			"packages/orchestrator/package.json",
 			"packages/pty/package.json",
+			"packages/senpi-codemode/package.json",
 			"packages/tui/package.json",
 			"packages/web-ui/package.json",
 		]) {

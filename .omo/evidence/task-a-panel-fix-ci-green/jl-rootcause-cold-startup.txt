@@ -1,0 +1,7 @@
+# Julia cold-depot startup cost breakdown (Julia 1.12.6, same version as ubuntu-latest CI runner)
+## base startup + Sockets (in sysimage, no precompile):
+JULIA_DEPOT_PATH=$D julia --startup-file=no --history-file=no --color=no   -e  0.18s user 0.06s system 140% cpu 0.172 total
+## + using Base64 (NOT in sysimage -> serial precompile on cold depot):
+Precompiling packages...
+   1302.0 ms  ✓ Base64 (serial)
+JULIA_DEPOT_PATH=$D julia --startup-file=no --history-file=no --color=no   -e  1.09s user 0.26s system 27% cpu 4.914 total

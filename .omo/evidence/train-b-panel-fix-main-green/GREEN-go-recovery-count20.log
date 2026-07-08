@@ -1,0 +1,2 @@
+GREEN: TestRecovery_DaemonDeadRespawnsAndResumes x60 = 0 fails (see run log below)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	0.485s

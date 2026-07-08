@@ -743,25 +743,25 @@ function isSequentialToolCall(currentContext: AgentContext, toolCall: AgentToolC
 type PreparedToolCall = {
 	kind: "prepared";
 	toolCall: AgentToolCall;
-	tool: AgentTool<any>;
+	tool: AgentTool;
 	args: unknown;
 };
 
 type ImmediateToolCallOutcome = {
 	kind: "immediate";
 	toolCall: AgentToolCall;
-	result: AgentToolResult<any>;
+	result: AgentToolResult<unknown>;
 	isError: boolean;
 };
 
 type ExecutedToolCallOutcome = {
-	result: AgentToolResult<any>;
+	result: AgentToolResult<unknown>;
 	isError: boolean;
 };
 
 type FinalizedToolCallOutcome = {
 	toolCall: AgentToolCall;
-	result: AgentToolResult<any>;
+	result: AgentToolResult<unknown>;
 	isError: boolean;
 };
 
@@ -769,7 +769,13 @@ function shouldTerminateToolBatch(finalizedCalls: FinalizedToolCallOutcome[]): b
 	return finalizedCalls.length > 0 && finalizedCalls.every((finalized) => finalized.result.terminate === true);
 }
 
-function prepareToolCallArguments(tool: AgentTool<any>, toolCall: AgentToolCall): AgentToolCall {
+export interface PreparedAgentToolCall {
+	toolCall: AgentToolCall;
+	tool: AgentTool;
+	args: unknown;
+}
+
+export function prepareAgentToolCallArguments(tool: AgentTool, toolCall: AgentToolCall): AgentToolCall {
 	if (!tool.prepareArguments) {
 		return toolCall;
 	}
@@ -779,7 +785,16 @@ function prepareToolCallArguments(tool: AgentTool<any>, toolCall: AgentToolCall)
 	}
 	return {
 		...toolCall,
-		arguments: preparedArguments as Record<string, any>,
+		arguments: preparedArguments as Record<string, unknown>,
+	};
+}
+
+export function prepareAgentToolCall(tool: AgentTool, toolCall: AgentToolCall): PreparedAgentToolCall {
+	const preparedToolCall = prepareAgentToolCallArguments(tool, toolCall);
+	return {
+		toolCall: preparedToolCall,
+		tool,
+		args: validateToolArguments(tool, preparedToolCall),
 	};
 }
 
@@ -801,13 +816,13 @@ async function prepareToolCall(
 	}
 
 	try {
-		const preparedToolCall = prepareToolCallArguments(tool, toolCall);
-		const validatedArgs = validateToolArguments(tool, preparedToolCall);
+		const preparedToolCall = prepareAgentToolCall(tool, toolCall);
+		const validatedArgs = preparedToolCall.args;
 		if (config.beforeToolCall) {
 			const beforeResult = await config.beforeToolCall(
 				{
 					assistantMessage,
-					toolCall,
+					toolCall: preparedToolCall.toolCall,
 					args: validatedArgs,
 					context: currentContext,
 				},
@@ -840,7 +855,7 @@ async function prepareToolCall(
 		}
 		return {
 			kind: "prepared",
-			toolCall,
+			toolCall: preparedToolCall.toolCall,
 			tool,
 			args: validatedArgs,
 		};
@@ -942,7 +957,7 @@ async function finalizeExecutedToolCall(
 	};
 }
 
-function createErrorToolResult(message: string): AgentToolResult<any> {
+function createErrorToolResult(message: string): AgentToolResult<unknown> {
 	return {
 		content: [{ type: "text", text: message }],
 		details: {},

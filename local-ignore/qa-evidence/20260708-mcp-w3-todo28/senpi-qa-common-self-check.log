@@ -1,0 +1,11 @@
+[PASS] repo root resolves — /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3
+[PASS] tsx entry present — /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/node_modules/tsx/dist/cli.mjs
+[PASS] sandbox isolates agent + session dirs — /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/self-check-W89o6A
+[PASS] real auth snapshot taken — sha256=209517649905…
+[PASS] free port allocatable — 60794
+[PASS] evidence dir creatable under local-ignore — /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-mcp-plugin-w3/local-ignore/qa-evidence/20260708-self-check
+[PASS] ansi stripping
+[PASS] sandbox removed on cleanup — /var/folders/h6/w548ypzn1k78_xqndn63y7xc0000gn/T/self-check-W89o6A
+[PASS] real auth unchanged — /Users/yeongyu/.senpi/agent/auth.json
+
+common.mjs --self-check: 9/9 passed

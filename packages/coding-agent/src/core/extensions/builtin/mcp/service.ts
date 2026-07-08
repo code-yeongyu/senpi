@@ -9,6 +9,7 @@ import { mapMcpCatalogNames } from "./expose/register.ts";
 import type { McpServerExposureStatus } from "./expose/status.ts";
 import type { McpTierBRegistration } from "./expose/tier-b.ts";
 import { cleanupMcpOutputArtifacts } from "./guard/output-guard.ts";
+import { markMcpConnectionNeedsAuth } from "./health.ts";
 import { configureMcpConnectionLifecycle, disposeMcpConnectionLifecycle } from "./idle.ts";
 import { createMcpLogger } from "./log.ts";
 import {
@@ -29,7 +30,12 @@ import type {
 	McpSessionContext,
 	McpSessionOptions,
 } from "./service-types.ts";
-import { connectAndRefreshMcpCatalog, raceMcpStartupConnect, shouldRaceMcpStartup } from "./startup-race.ts";
+import {
+	connectAndRefreshMcpCatalog,
+	ignoreStartupNeedsAuth,
+	raceMcpStartupConnect,
+	shouldRaceMcpStartup,
+} from "./startup-race.ts";
 
 export { registerToolsPreservingActiveSet } from "./active-set.ts";
 
@@ -226,6 +232,16 @@ export class McpService {
 				reconnect: async () => {
 					entry.counters.reconnectCount += 1;
 					entry.cacheRefreshedAfterConnect = false;
+					try {
+						await entry.authPlan?.refresh?.ensureFresh();
+					} catch (error) {
+						const authError = markMcpConnectionNeedsAuth(entry.connection, error);
+						if (authError !== undefined) {
+							entry.logger.warn(authError.message);
+							throw authError;
+						}
+						throw error;
+					}
 					await entry.connection.renew();
 					await connectAndRefreshMcpCatalog(entry, server.config);
 				},
@@ -245,7 +261,7 @@ export class McpService {
 					}),
 				);
 			} else if (cachedCatalog === undefined) {
-				connects.push(connectAndRefreshMcpCatalog(entry, server.config));
+				connects.push(ignoreStartupNeedsAuth(entry, connectAndRefreshMcpCatalog(entry, server.config)));
 			}
 		}
 		await Promise.all(connects);

@@ -1,0 +1,11 @@
+{
+  "id": 6,
+  "invocation": "runLogout -> MCP tool call against same OAuth fixture",
+  "observations": {
+    "state": "needs_auth",
+    "error": "ToolExecError: AuthError: MCP server oauth needs OAuth. Run senpi interactive, then /mcp auth-start oauth and /mcp auth-complete oauth <redirect-url>."
+  },
+  "surface": "CLI/data surface: logout command runner + MCP tool bridge",
+  "title": "/mcp logout -> needs_auth again",
+  "verdict": "PASS"
+}

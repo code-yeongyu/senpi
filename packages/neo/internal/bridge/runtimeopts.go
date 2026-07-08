@@ -52,7 +52,10 @@ type NeoRuntimeOptions struct {
 	// Unknown flags (extension flags): name -> bool|string.
 	UnknownFlags map[string]any `json:"unknownFlags,omitempty"`
 
-	// Initial inputs — forwarded RAW; the daemon expands @file/image paths per cwd.
+	// Initial inputs — forwarded RAW. Launch-time @file/image expansion is NOT yet
+	// implemented daemon-side: only the plain positional Messages text is delivered
+	// (as a `prompt` command); FileArgs surface a one-line non-fatal notice in the
+	// Go TUI (internal/app.initialFileArgNotice) instead of being expanded.
 	Messages []string `json:"messages,omitempty"`
 	FileArgs []string `json:"fileArgs,omitempty"`
 }

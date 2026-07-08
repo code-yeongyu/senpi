@@ -1,0 +1,249 @@
+## RED proof: thrown executeTool result hook before implementation
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/coding-agent
+
+----x
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/execute-tool-hooks.test.ts > pi.executeTool hook dispatch > runs tool_result hooks for thrown tools and returns the rewritten result
+Error: raw failure
+ ❯ Object.execute test/execute-tool-hooks.test.ts:145:12
+    143|     parameters: Type.Object({}),
+    144|     execute: async () => {
+    145|      throw new Error("raw failure");
+       |            ^
+    146|     },
+    147|    });
+ ❯ Object.execute src/core/tools/tool-definition-wrapper.ts:18:15
+ ❯ AgentSession.executeTool src/core/agent-session.ts:1096:38
+ ❯ test/execute-tool-hooks.test.ts:162:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 4 skipped (5)
+   Start at  15:41:18
+   Duration  1.77s (transform 1.03s, setup 15ms, import 1.65s, tests 9ms, environment 0ms)
+
+
+## Focused execute-tool tests after implementation
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/coding-agent
+
+··········
+
+ Test Files  2 passed (2)
+      Tests  10 passed (10)
+   Start at  15:41:58
+   Duration  1.81s (transform 2.05s, setup 23ms, import 3.39s, tests 28ms, environment 0ms)
+
+
+## npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+packages/coding-agent/test/execute-tool.test.ts:7:10 lint/correctness/noUnusedVariables  FIXABLE  ━━━━━━━━━━
+
+  ! This function textOf is unused.
+  
+    5 │ import { createHarness } from "./suite/harness.ts";
+    6 │ 
+  > 7 │ function textOf(result: { content: Array<{ type: string; text?: string }> }): string {
+      │          ^^^^^^
+    8 │ 	return result.content
+    9 │ 		.filter((part): part is { type: "text"; text: string } => part.type === "text")
+  
+  i Unused variables are often the result of typos, incomplete refactors, or other sources of bugs.
+  
+  i Unsafe fix: If this is intentional, prepend textOf with an underscore.
+  
+      5   5 │   import { createHarness } from "./suite/harness.ts";
+      6   6 │   
+      7     │ - function·textOf(result:·{·content:·Array<{·type:·string;·text?:·string·}>·}):·string·{
+          7 │ + function·_textOf(result:·{·content:·Array<{·type:·string;·text?:·string·}>·}):·string·{
+      8   8 │   	return result.content
+      9   9 │   		.filter((part): part is { type: "text"; text: string } => part.type === "text")
+  
+
+Skipped 1 suggested fixes.
+If you wish to apply the suggested (unsafe) fixes, use the command biome check --write --unsafe
+
+Checked 1325 files in 707ms. No fixes applied.
+Found 1 warning.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some warnings were emitted while running checks.
+  
+
+
+## Focused execute-tool tests after cleanup
+
+## any / ts-ignore scan
+packages/coding-agent/src/core/agent-session.ts:194:	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>;
+packages/coding-agent/src/core/agent-session.ts:196:	favoriteModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>;
+packages/coding-agent/src/core/agent-session.ts:222:type SessionModelEntry = { model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier };
+packages/coding-agent/src/core/agent-session.ts:282:	model: Model<any>;
+packages/coding-agent/src/core/agent-session.ts:450:	private async _getRequiredRequestAuth(model: Model<any>): Promise<{
+packages/coding-agent/src/core/agent-session.ts:478:	private async _getCompactionRequestAuth(model: Model<any>): Promise<{
+packages/coding-agent/src/core/agent-session.ts:621:	private _modelSelectionChangesContext(previousModel: Model<any> | undefined, nextModel: Model<any>): boolean {
+packages/coding-agent/src/core/agent-session.ts:993:	get model(): Model<any> | undefined {
+packages/coding-agent/src/core/agent-session.ts:1011:	/** Current effective system prompt (includes any per-turn extension modifications) */
+packages/coding-agent/src/core/agent-session.ts:1188:	get scopedModels(): ReadonlyArray<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }> {
+packages/coding-agent/src/core/agent-session.ts:1194:		scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>,
+packages/coding-agent/src/core/agent-session.ts:1201:		model: Model<any>;
+packages/coding-agent/src/core/agent-session.ts:1210:		favoriteModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>,
+packages/coding-agent/src/core/agent-session.ts:1385:			// Flush any pending bash messages before the new prompt
+packages/coding-agent/src/core/agent-session.ts:1412:			// Build messages array (custom message if any, then user message)
+packages/coding-agent/src/core/agent-session.ts:1426:			// Inject any pending "nextTurn" messages as context alongside the user message
+packages/coding-agent/src/core/agent-session.ts:1784:		nextModel: Model<any>,
+packages/coding-agent/src/core/agent-session.ts:1785:		previousModel: Model<any> | undefined,
+packages/coding-agent/src/core/agent-session.ts:1829:	async setModel(model: Model<any>): Promise<SystemPromptChangeEvent | undefined> {
+packages/coding-agent/src/core/agent-session.ts:1854:	 * Uses favorite models, constrained by any global model narrowing.
+packages/coding-agent/src/core/agent-session.ts:3253:	 * Wait for any in-progress retry to complete.
+
+## LOC check after split
+packages/coding-agent/test/execute-tool-hooks.test.ts      156
+packages/coding-agent/test/execute-tool.test.ts      195
+packages/agent/src/agent-loop.ts      853
+packages/coding-agent/src/core/agent-session.ts     3258
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/coding-agent
+
+··········
+
+ Test Files  2 passed (2)
+      Tests  10 passed (10)
+   Start at  15:42:26
+   Duration  1.87s (transform 2.13s, setup 23ms, import 3.49s, tests 31ms, environment 0ms)
+
+
+## npm run check after cleanup
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1325 files in 734ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 37ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+
+## senpi-qa mock-loop with tool
+[PASS] CLI completed the multi-step loop — code=0
+[PASS] two model turns served (loop iterated) — requests=2
+[PASS] final assistant text returned
+[PASS] real auth unchanged
+
+mock-loop.mjs --with-tool (openai-completions): 4/4 passed
+
+## Final any / ts-ignore scan
+packages/coding-agent/src/core/agent-session.ts:194:	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>;
+packages/coding-agent/src/core/agent-session.ts:196:	favoriteModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>;
+packages/coding-agent/src/core/agent-session.ts:222:type SessionModelEntry = { model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier };
+packages/coding-agent/src/core/agent-session.ts:282:	model: Model<any>;
+packages/coding-agent/src/core/agent-session.ts:450:	private async _getRequiredRequestAuth(model: Model<any>): Promise<{
+packages/coding-agent/src/core/agent-session.ts:478:	private async _getCompactionRequestAuth(model: Model<any>): Promise<{
+packages/coding-agent/src/core/agent-session.ts:621:	private _modelSelectionChangesContext(previousModel: Model<any> | undefined, nextModel: Model<any>): boolean {
+packages/coding-agent/src/core/agent-session.ts:993:	get model(): Model<any> | undefined {
+packages/coding-agent/src/core/agent-session.ts:1011:	/** Current effective system prompt (includes any per-turn extension modifications) */
+packages/coding-agent/src/core/agent-session.ts:1188:	get scopedModels(): ReadonlyArray<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }> {
+packages/coding-agent/src/core/agent-session.ts:1194:		scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>,
+packages/coding-agent/src/core/agent-session.ts:1201:		model: Model<any>;
+packages/coding-agent/src/core/agent-session.ts:1210:		favoriteModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>,
+packages/coding-agent/src/core/agent-session.ts:1385:			// Flush any pending bash messages before the new prompt
+packages/coding-agent/src/core/agent-session.ts:1412:			// Build messages array (custom message if any, then user message)
+packages/coding-agent/src/core/agent-session.ts:1426:			// Inject any pending "nextTurn" messages as context alongside the user message
+packages/coding-agent/src/core/agent-session.ts:1784:		nextModel: Model<any>,
+packages/coding-agent/src/core/agent-session.ts:1785:		previousModel: Model<any> | undefined,
+packages/coding-agent/src/core/agent-session.ts:1829:	async setModel(model: Model<any>): Promise<SystemPromptChangeEvent | undefined> {
+packages/coding-agent/src/core/agent-session.ts:1854:	 * Uses favorite models, constrained by any global model narrowing.
+packages/coding-agent/src/core/agent-session.ts:3253:	 * Wait for any in-progress retry to complete.
+
+## Final LOC check
+packages/coding-agent/test/execute-tool-hooks.test.ts 
+Scan explanation: agent-loop.ts and execute-tool*.test.ts have no hits. Remaining agent-session.ts hits are pre-existing Model<any> generic annotations and comments/prose containing the word any; no as any, @ts-ignore, or @ts-expect-error hits remain in the touched implementation/test paths.
+     156
+packages/coding-agent/test/execute-tool.test.ts      195
+packages/agent/src/agent-loop.ts      853
+packages/coding-agent/src/core/agent-session.ts     3258
+
+## Final focused execute-tool tests
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/coding-agent
+
+··········
+
+ Test Files  2 passed (2)
+      Tests  10 passed (10)
+   Start at  15:43:17
+   Duration  1.84s (transform 2.06s, setup 25ms, import 3.41s, tests 29ms, environment 0ms)
+
+Command: node .agents/skills/senpi-qa/scripts/mock-loop.mjs --with-tool --api openai-completions
+[PASS] CLI completed the multi-step loop — code=0
+[PASS] two model turns served (loop iterated) — requests=2
+[PASS] final assistant text returned
+[PASS] real auth unchanged
+
+mock-loop.mjs --with-tool (openai-completions): 4/4 passed

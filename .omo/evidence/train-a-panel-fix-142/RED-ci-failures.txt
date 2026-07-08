@@ -1,0 +1,18 @@
+# RED: CI "Check and test" failures on feat/senpi-codemode tip 65e1bf3dd and its ancestors
+# Source: GitHub Actions run 28868894186 (commit fd1c1fe57), job 85628584092, step "Test"
+
+## Failure 1 — jl-kernel (codemode's own feature)
+FAIL test/jl-kernel.test.ts > JuliaKernel > persists state, displays last expression, and calls one host tool through the bridge
+AssertionError: expected { type: 'result', cellId: 'get', …(3) } to match object { ok: true, valueRepr: '42' }
+-   "ok": true,
+-   "valueRepr": "42",
++   "ok": false,
+  test/jl-kernel.test.ts:60:24
+
+## Failure 2 — MCP keep-alive (shared/train-c test, inherited via origin/main merge)
+FAIL test/mcp/idle.test.ts > MCP idle lifecycle > keep-alive pings every 30 seconds and recovers a killed fixture without suspension
+Error: condition timed out
+ ❯ waitFor test/mcp/idle.test.ts:231:8
+ ❯ test/mcp/idle.test.ts:186:3
+
+## History: of the 7 most recent runs before this fix, 4 FAILED / interleaved 2 success — flaky, not reliably green.

@@ -1,0 +1,48 @@
+Task 12: fix Python bridge contract
+Date: 2026-07-06
+Worktree: /Users/yeongyu/local-workspaces/senpi-wt/senpi-codemode
+
+Root cause:
+- packages/senpi-codemode/src/kernels/py/prelude.py sent old HTTP bodies to the loopback bridge:
+  - tool call: { kind: "tool", toolName, args } to /call
+  - completion: { kind: "completion", prompt, options } to /call
+- packages/senpi-codemode/src/bridge/http-server.ts expects:
+  - /call { callId, toolName, args }
+  - /completion { prompt, opts }
+
+RED evidence before fix:
+- Command: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/py-kernel.test.ts
+- Result: failed.
+- Deterministic contract test failed because prelude.py did not contain /completion.
+- Live PythonKernel + startBridgeServer tool/completion tests returned ok:false with the old prelude contract before handler-level success.
+
+Fix:
+- Python ToolProxy now posts to /call with { callId: "py-<uuid>", toolName, args }.
+- Python completion() now posts to /completion with { prompt, opts }.
+- bridge_post accepts the route path and preserves Bearer token authorization.
+- py-kernel test now uses startBridgeServer instead of a raw fake HTTP server.
+
+GREEN evidence:
+- Command: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/py-kernel.test.ts
+- Result: passed, 1 file, 7 tests.
+- Verbose run showed:
+  - PythonKernel transport > prelude speaks the loopback bridge server HTTP contract
+  - PythonKernel live > calls host tools through the loopback bridge
+  - PythonKernel live > sends completions to the bridge completion route
+- Handler observation in test:
+  - onCall saw exactly one request matching { toolName: "echo_tool", args: { q: "hi" } } with callId /^py-/.
+  - onCompletion saw exactly [{ prompt: "Say hi", opts: { temperature: 0 } }].
+
+Full verification:
+- Command: npm run check
+- Result: passed. Final run reported Biome checked 1343 files with no fixes applied; tsgo/check scripts passed; check:neo build+vet+test passed.
+
+Scoped diff / LOC:
+- git diff --stat scoped files: 2 files changed, 62 insertions(+), 26 deletions(-).
+- git diff --numstat scoped files:
+  - packages/senpi-codemode/src/kernels/py/prelude.py: 5 insertions, 4 deletions
+  - packages/senpi-codemode/test/py-kernel.test.ts: 57 insertions, 22 deletions
+- Pure LOC after edit:
+  - prelude.py: 193
+  - py-kernel.test.ts: 229
+- Both are <= 250 LOC.

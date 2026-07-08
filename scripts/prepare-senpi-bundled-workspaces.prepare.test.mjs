@@ -33,11 +33,19 @@ function writeShrinkwrap(root, packages) {
 	});
 }
 
+function bundledWorkspaceFiles(workspace) {
+	if (workspace === "pty") {
+		return ["package.json", "dist/index.js", "native/index.js", nativePrebuildFile(nativePrebuildTarget())];
+	}
+	if (workspace === "senpi-codemode") {
+		return ["package.json", "src/index.ts", "src/kernels/py/prelude.py"];
+	}
+	return ["package.json", "dist/index.js"];
+}
+
 function writeBundledWorkspace(root, workspace) {
 	const sourceRoot = join(root, "packages", workspace);
-	const files = workspace === "pty"
-		? ["package.json", "dist/index.js", "native/index.js", nativePrebuildFile(nativePrebuildTarget())]
-		: ["package.json", "dist/index.js"];
+	const files = bundledWorkspaceFiles(workspace);
 
 	for (const file of files) {
 		if (file === "package.json") {
@@ -55,7 +63,7 @@ describe("prepareSenpiBundledWorkspaces", () => {
 		// Given
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-bundle-workspaces-"));
 		writeShrinkwrap(tempDir, { "": { dependencies: {} } });
-		for (const workspace of ["agent", "ai", "pty", "tui"]) {
+		for (const workspace of ["agent", "ai", "pty", "tui", "senpi-codemode"]) {
 			writeBundledWorkspace(tempDir, workspace);
 		}
 

@@ -1,0 +1,805 @@
+TASK 4 senpi-codemode prompt template evidence
+
+## RED proof
+Command: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/prompt.test.ts
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+ ❯ test/prompt.test.ts (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/prompt.test.ts [ test/prompt.test.ts ]
+Error: Cannot find module '../src/prompt/eval-prompt.ts' imported from /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode/test/prompt.test.ts
+ ❯ test/prompt.test.ts:2:1
+      1| import { describe, expect, it } from "vitest";
+      2| import { buildEvalPrompt } from "../src/prompt/eval-prompt.ts";
+       | ^
+      3|
+      4| const excludedSurfaces = ["agent(", "budget", "output(", "local://", "…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  no tests
+   Start at  15:12:35
+   Duration  126ms (transform 11ms, setup 0ms, import 0ms, tests 0ms, environment 0ms)
+
+
+RED_STATUS=1
+
+## GREEN focused prompt test
+Command: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/prompt.test.ts
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+  Snapshots  3 written
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  15:16:03
+   Duration  150ms (transform 20ms, setup 0ms, import 30ms, tests 6ms, environment 0ms)
+
+
+FOCUSED_TEST_STATUS=0
+
+## Required focused prompt test after strict excluded-surface assertion
+Command: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/prompt.test.ts
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  15:16:58
+   Duration  132ms (transform 24ms, setup 0ms, import 33ms, tests 4ms, environment 0ms)
+
+
+REQUIRED_PROMPT_TEST_STATUS=0
+
+## Manual/auxiliary scenario
+Command: cd packages/senpi-codemode && npx tsx -e <prompt assertions>
+
+{
+  "pyEnabled": true,
+  "jsEnabled": true,
+  "rbOmitted": true,
+  "jlOmitted": true,
+  "resetSemantics": true,
+  "helpersPresent": true,
+  "excludedAbsent": true
+}
+
+MANUAL_SCENARIO_STATUS=0
+
+## Root check
+Command: npm run check
+
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:18:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    17 │ const EVAL_PROMPT_TEMPLATE =
+  > 18 │ 	String.raw`Run one step of code in a persistent kernel.
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  > 19 │ 
+  > 20 │ <instruction>
+  > 21 │ **One eval call = one cell = one logical step.** State persists per language across separate eval calls and tool calls — define helpers, datasets, and clients in one call, then later calls reuse them directly.
+  > 22 │ 
+  > 23 │ Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after ` +
+       │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    24 │ 	"`reset`" +
+    25 │ 	String.raw`, a kernel crash, or a ` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:25:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    23 │ Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after ` +
+    24 │ 	"`reset`" +
+  > 25 │ 	String.raw`, a kernel crash, or a ` +
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    26 │ 	"`NameError`" +
+    27 │ 	String.raw`/` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:27:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    25 │ 	String.raw`, a kernel crash, or a ` +
+    26 │ 	"`NameError`" +
+  > 27 │ 	String.raw`/` +
+       │ 	^^^^^^^^^^^^^
+    28 │ 	"`ReferenceError`" +
+    29 │ 	String.raw` proving the state is gone. Parallelize work *within* a cell with the ` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:29:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    27 │ 	String.raw`/` +
+    28 │ 	"`ReferenceError`" +
+  > 29 │ 	String.raw` proving the state is gone. Parallelize work *within* a cell with the ` +
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    30 │ 	"`parallel(thunks)`" +
+    31 │ 	String.raw` helper, not by batching steps.
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:31:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    29 │ 	String.raw` proving the state is gone. Parallelize work *within* a cell with the ` +
+    30 │ 	"`parallel(thunks)`" +
+  > 31 │ 	String.raw` helper, not by batching steps.
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  > 32 │ 
+  > 33 │ Fields:
+  > 34 │ 
+  > 35 │ - ` +
+       │ ^^^
+    36 │ 	"`language`" +
+    37 │ 	String.raw` — {{#if py}}` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:37:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    35 │ - ` +
+    36 │ 	"`language`" +
+  > 37 │ 	String.raw` — {{#if py}}` +
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^
+    38 │ 	'`"py"` IPython kernel' +
+    39 │ 	String.raw`{{/if}}{{#ifAll py js}}, {{/ifAll}}{{#if js}}` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:39:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    37 │ 	String.raw` — {{#if py}}` +
+    38 │ 	'`"py"` IPython kernel' +
+  > 39 │ 	String.raw`{{/if}}{{#ifAll py js}}, {{/ifAll}}{{#if js}}` +
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    40 │ 	'`"js"` persistent JavaScript VM' +
+    41 │ 	String.raw`{{/if}}{{#if rb}}{{#ifAny py js}}, {{/ifAny}}` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:41:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    39 │ 	String.raw`{{/if}}{{#ifAll py js}}, {{/ifAll}}{{#if js}}` +
+    40 │ 	'`"js"` persistent JavaScript VM' +
+  > 41 │ 	String.raw`{{/if}}{{#if rb}}{{#ifAny py js}}, {{/ifAny}}` +
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    42 │ 	'`"rb"` persistent Ruby kernel' +
+    43 │ 	String.raw`{{/if}}{{#if jl}}{{#ifAny py js rb}}, {{/ifAny}}` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:43:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    41 │ 	String.raw`{{/if}}{{#if rb}}{{#ifAny py js}}, {{/ifAny}}` +
+    42 │ 	'`"rb"` persistent Ruby kernel' +
+  > 43 │ 	String.raw`{{/if}}{{#if jl}}{{#ifAny py js rb}}, {{/ifAny}}` +
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    44 │ 	'`"jl"` persistent Julia kernel' +
+    45 │ 	String.raw`{{/if}}.
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:45:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    43 │ 	String.raw`{{/if}}{{#if jl}}{{#ifAny py js rb}}, {{/ifAny}}` +
+    44 │ 	'`"jl"` persistent Julia kernel' +
+  > 45 │ 	String.raw`{{/if}}.
+       │ 	^^^^^^^^^^^^^^^^^^^
+  > 46 │ - ` +
+       │ ^^^
+    47 │ 	"`code`" +
+    48 │ 	String.raw` — cell body, verbatim. Newlines/quotes JSON-encoded; no fences, no headers.
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:48:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    46 │ - ` +
+    47 │ 	"`code`" +
+  > 48 │ 	String.raw` — cell body, verbatim. Newlines/quotes JSON-encoded; no fences, no headers.
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  > 49 │ - ` +
+       │ ^^^
+    50 │ 	"`title`" +
+    51 │ 	String.raw` (optional) — short transcript label (e.g. ` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:51:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    49 │ - ` +
+    50 │ 	"`title`" +
+  > 51 │ 	String.raw` (optional) — short transcript label (e.g. ` +
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    52 │ 	'`"imports"`' +
+    53 │ 	String.raw`).
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:53:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    51 │ 	String.raw` (optional) — short transcript label (e.g. ` +
+    52 │ 	'`"imports"`' +
+  > 53 │ 	String.raw`).
+       │ 	^^^^^^^^^^^^^
+  > 54 │ - ` +
+       │ ^^^
+    55 │ 	"`timeout`" +
+    56 │ 	String.raw` (optional) — seconds. Raise only for heavy compute or long delegated tool calls.
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:56:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    54 │ - ` +
+    55 │ 	"`timeout`" +
+  > 56 │ 	String.raw` (optional) — seconds. Raise only for heavy compute or long delegated tool calls.
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  > 57 │ - ` +
+       │ ^^^
+    58 │ 	"`reset`" +
+    59 │ 	String.raw` (optional) — wipe this language's kernel first.{{#ifAll py js}} Per-language: a ` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:59:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    57 │ - ` +
+    58 │ 	"`reset`" +
+  > 59 │ 	String.raw` (optional) — wipe this language's kernel first.{{#ifAll py js}} Per-language: a ` +
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    60 │ 	"`py`" +
+    61 │ 	String.raw` reset never touches the JS VM.{{/ifAll}}
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:61:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    59 │ 	String.raw` (optional) — wipe this language's kernel first.{{#ifAll py js}} Per-language: a ` +
+    60 │ 	"`py`" +
+  > 61 │ 	String.raw` reset never touches the JS VM.{{/ifAll}}
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  > 62 │ 
+  > 63 │ {{#if py}}Live event loop: use top-level ` +
+       │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    64 │ 	"`await`" +
+    65 │ 	String.raw` directly; ` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:65:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    63 │ {{#if py}}Live event loop: use top-level ` +
+    64 │ 	"`await`" +
+  > 65 │ 	String.raw` directly; ` +
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^
+    66 │ 	"`asyncio.run(...)`" +
+    67 │ 	String.raw` raises "cannot be called from a running event loop".{{/if}}
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:67:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    65 │ 	String.raw` directly; ` +
+    66 │ 	"`asyncio.run(...)`" +
+  > 67 │ 	String.raw` raises "cannot be called from a running event loop".{{/if}}
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  > 68 │ {{#if js}}JS runs under Node.js worker: top-level ` +
+       │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    69 │ 	"`await`" +
+    70 │ 	String.raw`/` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:70:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    68 │ {{#if js}}JS runs under Node.js worker: top-level ` +
+    69 │ 	"`await`" +
+  > 70 │ 	String.raw`/` +
+       │ 	^^^^^^^^^^^^^
+    71 │ 	"`return`" +
+    72 │ 	String.raw` work; ` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:72:2 lint/complexity/noUselessStringRaw ━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    70 │ 	String.raw`/` +
+    71 │ 	"`return`" +
+  > 72 │ 	String.raw` work; ` +
+       │ 	^^^^^^^^^^^^^^^^^^^
+    73 │ 	"`fetch`" +
+    74 │ 	String.raw`/` +
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+The number of diagnostics exceeds the limit allowed. Use --max-diagnostics to increase it.
+Diagnostics not shown: 10.
+Checked 1324 files in 730ms. No fixes applied.
+Found 30 infos.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 33ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+
+NPM_RUN_CHECK_STATUS=0
+
+## Focused prompt test after template cleanup
+Command: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/prompt.test.ts
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  15:19:50
+   Duration  112ms (transform 15ms, setup 0ms, import 20ms, tests 4ms, environment 0ms)
+
+
+CLEANUP_PROMPT_TEST_STATUS=0
+
+## Root check after cleanup
+Command: npm run check
+
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1324 files in 708ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 33ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+
+FINAL_NPM_RUN_CHECK_STATUS=0
+
+## Diff whitespace check
+Command: git diff --check -- packages/senpi-codemode/src/prompt/eval-prompt.ts packages/senpi-codemode/test/prompt.test.ts packages/senpi-codemode/test/__snapshots__/prompt.test.ts.snap .omo/evidence/task-4-senpi-codemode.txt
+
+
+GIT_DIFF_CHECK_STATUS=0
+
+## LOC check
+Command: awk nonblank/noncomment LOC for prompt source/test files
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts pure_loc=166
+packages/senpi-codemode/test/prompt.test.ts pure_loc=61
+
+LOC_CHECK_STATUS=0
+
+## Excluded-surface grep
+Command: rg -n "agent|budget|output|local://|Bun" packages/senpi-codemode/src/prompt packages/senpi-codemode/test/prompt.test.ts
+
+packages/senpi-codemode/test/prompt.test.ts:4:const excludedSurfaces = ["agent", "budget", "output", "local://", "Bun"] as const;
+packages/senpi-codemode/src/prompt/eval-prompt.ts:110:	let output = "";
+packages/senpi-codemode/src/prompt/eval-prompt.ts:115:			return [output + template.slice(index), template.length];
+packages/senpi-codemode/src/prompt/eval-prompt.ts:117:		output += template.slice(index, open);
+packages/senpi-codemode/src/prompt/eval-prompt.ts:125:			return [output, index, tag];
+packages/senpi-codemode/src/prompt/eval-prompt.ts:129:			output += block;
+packages/senpi-codemode/src/prompt/eval-prompt.ts:136:		output += valueFor(tag, context);
+packages/senpi-codemode/src/prompt/eval-prompt.ts:138:	return [output, index];
+
+EXCLUDED_SURFACE_GREP_STATUS=0 (1 means no matches)
+
+## Source-only excluded-surface grep
+Command: rg -n "agent|budget|output|local://|Bun" packages/senpi-codemode/src/prompt
+
+packages/senpi-codemode/src/prompt/eval-prompt.ts:110:	let output = "";
+packages/senpi-codemode/src/prompt/eval-prompt.ts:115:			return [output + template.slice(index), template.length];
+packages/senpi-codemode/src/prompt/eval-prompt.ts:117:		output += template.slice(index, open);
+packages/senpi-codemode/src/prompt/eval-prompt.ts:125:			return [output, index, tag];
+packages/senpi-codemode/src/prompt/eval-prompt.ts:129:			output += block;
+packages/senpi-codemode/src/prompt/eval-prompt.ts:136:		output += valueFor(tag, context);
+packages/senpi-codemode/src/prompt/eval-prompt.ts:138:	return [output, index];
+
+SOURCE_EXCLUDED_SURFACE_GREP_STATUS=0 (1 means no matches)
+
+## Final focused prompt test
+Command: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/prompt.test.ts
+
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  15:21:58
+   Duration  110ms (transform 14ms, setup 0ms, import 19ms, tests 4ms, environment 0ms)
+
+
+FINAL_PROMPT_TEST_STATUS=0
+
+## Final root check
+Command: npm run check
+
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1324 files in 754ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 33ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+
+FINAL2_NPM_RUN_CHECK_STATUS=0
+
+## Final diff whitespace check
+Command: git diff --check -- packages/senpi-codemode/src/prompt/eval-prompt.ts packages/senpi-codemode/test/prompt.test.ts packages/senpi-codemode/test/__snapshots__/prompt.test.ts.snap .omo/evidence/task-4-senpi-codemode.txt
+
+
+FINAL_GIT_DIFF_CHECK_STATUS=0
+
+## Final source-only excluded-surface grep
+Command: rg -n "agent|budget|output|local://|Bun" packages/senpi-codemode/src/prompt
+
+
+FINAL_SOURCE_EXCLUDED_SURFACE_GREP_STATUS=1 (1 means no matches)
+
+## Adversarial probes
+prompt_injection: not applicable to runtime untrusted names; builder accepts only boolean language flags and renders generic tool.<name>.
+stale_state: prompt explicitly documents persistence and reset-only reinitialization.
+dirty_worktree: checked before staging; unrelated existing files are left untouched.
+misleading_success_output: commands record explicit exit status lines.
+hung_long_commands: verification commands were bounded by harness waits and completed.
+flaky_tests: focused prompt test rerun multiple times after edits.
+
+
+=== Independent final verification 2026-07-06T06:24:35Z ===
+Command: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/prompt.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  15:24:36
+   Duration  121ms (transform 17ms, setup 0ms, import 24ms, tests 4ms, environment 0ms)
+
+zsh:5: read-only variable: status
+
+## Corrected focused prompt test wrapper
+Command: cd packages/senpi-codemode && npx tsx ../../node_modules/vitest/dist/cli.js --run test/prompt.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/senpi-codemode
+
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  15:24:49
+   Duration  466ms (transform 354ms, setup 0ms, import 363ms, tests 4ms, environment 0ms)
+
+Exit status: 0
+
+## Independent root check
+Command: npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1324 files in 3s. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 190ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	(cached)
+check:neo: packages/neo build+vet+test passed
+Exit status: 0
+
+## Independent scoped diff whitespace check
+Command: git diff --check -- packages/senpi-codemode/src/prompt/eval-prompt.ts packages/senpi-codemode/test/prompt.test.ts packages/senpi-codemode/test/__snapshots__/prompt.test.ts.snap .omo/evidence/task-4-senpi-codemode.txt
+Exit status: 0
+
+## Independent excluded-surface source grep
+Command: rg -n "agent\(|budget|output\(|local://|Bun" packages/senpi-codemode/src/prompt packages/senpi-codemode/test/__snapshots__/prompt.test.ts.snap
+Exit status: 1 (1 means no matches)
+
+Excluded-surface note: broad grep for plain output only hits renderer-internal local variable names in eval-prompt.ts and test/evidence assertion text; the model-facing prompt and snapshots contain no agent(), budget, output(), local://, or Bun API surface.

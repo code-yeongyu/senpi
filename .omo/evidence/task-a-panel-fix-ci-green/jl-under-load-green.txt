@@ -1,0 +1,5 @@
+# jl-kernel: 20 CPU burners on 18 cores, COLD depot
+load:       20 burners on 18 cores
+      Tests  3 passed (3)
+wall: 7s
+load killed

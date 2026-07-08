@@ -2,12 +2,13 @@ import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.
 import {
 	discoverOAuthServerInfo,
 	fetchToken,
+	type OAuthDiscoveryState,
 	type OAuthServerInfo,
 	auth as sdkAuth,
 } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { OAuthFlowError } from "./oauth-errors.ts";
-import { type McpOAuthProvider, tokenExpiresAt } from "./oauth-provider.ts";
+import { isInvalidGrant, OAuthFlowError } from "./oauth-errors.ts";
+import type { McpOAuthProvider } from "./oauth-provider.ts";
 import { assertS256Supported } from "./oauth-refresh.ts";
 
 export interface OAuthFlowOptions {
@@ -67,11 +68,25 @@ export async function finishAuthorization(
 	code: string,
 	options: OAuthFlowOptions = {},
 ): Promise<void> {
-	const result = await sdkAuth(provider, {
-		serverUrl: provider.serverUrl,
-		authorizationCode: code,
-		fetchFn: options.fetchFn,
-	});
+	let result: Awaited<ReturnType<typeof sdkAuth>>;
+	try {
+		result = await sdkAuth(provider, {
+			serverUrl: provider.serverUrl,
+			authorizationCode: code,
+			fetchFn: options.fetchFn,
+		});
+	} catch (error) {
+		if (isInvalidGrant(error) || isRejectedAuthorizationCode(error)) {
+			await provider.invalidateCredentials("tokens");
+			await provider.invalidateCredentials("verifier");
+			throw new OAuthFlowError(
+				"expired_code",
+				`MCP server ${provider.serverName} authorization code was rejected or expired; restart with /mcp auth-start ${provider.serverName}.`,
+				{ cause: error, serverName: provider.serverName },
+			);
+		}
+		throw error;
+	}
 	if (result !== "AUTHORIZED") {
 		throw new OAuthFlowError("needs_auth", `MCP server ${provider.serverName} did not complete authorization.`, {
 			serverName: provider.serverName,
@@ -125,16 +140,28 @@ export async function clientCredentialsGrant(
 		resource: new URL(provider.serverUrl),
 		fetchFn: options.fetchFn,
 	});
-	await provider.store.update((current) => ({ ...(current ?? {}), tokens, expiresAt: tokenExpiresAt(tokens) }));
+	await provider.saveTokens(tokens);
 }
 
 export async function logout(provider: McpOAuthProvider): Promise<void> {
 	await provider.store.clear();
 }
 
-function discover(provider: McpOAuthProvider, options: OAuthFlowOptions): Promise<OAuthServerInfo> {
+async function discover(provider: McpOAuthProvider, options: OAuthFlowOptions): Promise<OAuthServerInfo> {
 	if (options.discover !== undefined) return options.discover(provider.serverUrl);
-	return discoverOAuthServerInfo(provider.serverUrl, { fetchFn: options.fetchFn });
+	const cached = provider.discoveryState();
+	if (cached !== undefined) return cached;
+	const info = await discoverOAuthServerInfo(provider.serverUrl, { fetchFn: options.fetchFn });
+	await provider.saveDiscoveryState(toDiscoveryState(info));
+	return info;
+}
+
+function toDiscoveryState(info: OAuthServerInfo): OAuthDiscoveryState {
+	return {
+		authorizationServerUrl: info.authorizationServerUrl,
+		authorizationServerMetadata: info.authorizationServerMetadata,
+		resourceMetadata: info.resourceMetadata,
+	};
 }
 
 function parseRedirect(input: string, serverName: string): { code: string; state: string | undefined } {
@@ -161,4 +188,13 @@ function parseRedirect(input: string, serverName: string): { code: string; state
 		);
 	}
 	return { code, state: url.searchParams.get("state") ?? undefined };
+}
+
+function isRejectedAuthorizationCode(error: unknown): boolean {
+	const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+	return (
+		message.includes("authorization code invalid") ||
+		(message.includes("authorization code") && message.includes("used")) ||
+		message.includes("pkce verification failed")
+	);
 }

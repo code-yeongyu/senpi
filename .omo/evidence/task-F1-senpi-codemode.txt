@@ -1,0 +1,9 @@
+# F1 — Plan compliance audit (Must-have 1-8) — VERDICT: APPROVE
+1. packages/senpi-codemode workspace package (@code-yeongyu/senpi-codemode): PRESENT, source-only, pi.extensions manifest. npm run check sees it; 76 tests pass.
+2. Four persistent kernels js/py/rb/jl; defaults py/js on, rb/jl off (defaultCodemodeSettings). Missing interpreter -> language absent (S8-style detection; jl skipped, no interpreter). PROVEN js/py/rb via mock-loop S1/S6/S7.
+3. Loopback tool bridge: tool.<name> for the ACTIVE set incl. OTHER extensions' tools; every call routes through pi.executeTool so tool_call/permission/tool_result all fire. PROVEN by codemode-bridge.test.ts + mock-loop S3/S4 (extension demo_tool + hooks + block).
+4. pi.executeTool core API on ExtensionAPI, bindCore-wired; documented in docs/extensions.md + changes.md (grep-confirmed).
+5. Prelude helpers display/print/read/write/env/tool/completion/parallel/pipeline/log/phase; excluded set absent (F4 grep clean).
+6. omp parity infra: prompt template, idle-timeout watchdog, bridge pause/resume, per-language reset, streamed output, truncation, renderers. Tests green (timeouts.test.ts etc.).
+7. Bundled + default-on: coding-agent depends on package; loaded via loadExtensionFactories/getActiveBuiltinExtensionIds; --exclude-tools eval + disabledBuiltinExtensions remove it (mock-loop S8 + codemode-bridge disable test). Shrinkwrap/lockfile regenerated (npm run check:shrinkwrap/install-lock green).
+8. TDD vitest + mandatory senpi-qa evidence (4 channels) captured. Delivered as one PR (#142) with merge commits.

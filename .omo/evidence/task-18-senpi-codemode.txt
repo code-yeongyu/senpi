@@ -1,0 +1,36 @@
+# Todo 18 — senpi-qa evidence, all four channels (zero-token, isolated sandbox)
+
+Artifacts (gitignored): local-ignore/qa-evidence/20260707-senpi-codemode/
+Real ~/.senpi/agent/auth.json snapshotted and asserted unchanged in every channel.
+
+## Channel 3 — mock-loop eval driver (RUN-eval-qa.log): 9/9 PASS
+Drives the REAL CLI with a scripted mock model emitting `eval` tool calls.
+  S1 JS eval tool bundled + cell executes (42)                              PASS
+  S2 JS kernel state persists across cells (acc=21 -> 42)                    PASS
+  S3 HARD CONSTRAINT: extension-registered tool runs via tool.<name> bridge,
+     tool_call+tool_result hooks fire, result rewritten (demo:hi:rewritten)  PASS
+  S4 HARD CONSTRAINT: tool_call hook block -> execute NOT called, error to cell PASS
+  S5 timeout interrupts runaway while(true) cell + kernel survives next cell PASS
+  S6 Python kernel executes + state persists (acc=21 -> PY-42)              PASS
+  S7 Ruby kernel (config-enabled) executes + state persists (RB-42)         PASS
+  S8 --exclude-tools eval removes eval (model call resolves to not-found)   PASS
+  real ~/.senpi auth unchanged                                             PASS
+
+## Channel 4 — cli-smoke --self-test: 6/6 PASS  (--help/--version/--list-models offline/unknown-opt)
+## Channel 1 — rpc-drive --self-test: 4/4 PASS  (get_state RpcSessionState shape, offline)
+## Channel 2 — tui-smoke --self-test: 5/5 PASS  (tmux boot, keystroke to composer, teardown)
+
+## Julia (jl): SKIPPED — no julia interpreter on this machine OR mengmotaHost
+  (`which julia` MISSING both). Gated by hasJulia()/detect('jl'); jl-kernel.test.ts
+  is the sole skipped test (describe.skipIf). rb/jl are default-off per plan.
+
+## Bugs found by real-surface QA and fixed (commit 23e2eed78), all RED->GREEN:
+  1. eval-tool.ts TDZ crash: subprocess kernels emit `ready` synchronously during
+     getKernel await -> onMessage closure read `const kernel` in the temporal dead
+     zone -> crashed the whole agent process on the first py/rb/jl cell. Hoisted.
+  2. session-manager.ts getKernel reused a persistent kernel WITHOUT rebinding
+     onMessage -> 2nd+ cell streamed output routed to the previous cell. Now routed
+     through a per-language dispatcher rebound each call. Locked by
+     test/session-manager.test.ts (fails without the fix).
+  3. kernels/rb/runner.rb wrote user puts/print onto the JSONL protocol channel;
+     $stdout now redirected during eval and flushed as text frames.

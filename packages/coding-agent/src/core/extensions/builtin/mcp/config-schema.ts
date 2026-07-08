@@ -15,6 +15,7 @@ export const LogLevelSchema = Type.Union([
 const OAuthSchema = Type.Object(
 	{
 		clientId: Type.Optional(Type.String()),
+		callbackPort: Type.Optional(Type.Integer({ minimum: 0, maximum: 65_535 })),
 		scopes: Type.Optional(Type.Array(Type.String())),
 		clientMetadataUrl: Type.Optional(Type.String()),
 		flow: Type.Optional(Type.Union([Type.Literal("code"), Type.Literal("client_credentials")])),

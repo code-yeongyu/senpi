@@ -115,7 +115,7 @@ async function callMcpTool(
 	try {
 		return await runMcpConnectionLifecycleCall(entry.connection, () =>
 			withMcpSessionExpiryRetry(entry.connection, async () => {
-				await ensureMcpToolCallConnection(entry.connection);
+				await ensureMcpToolCallConnection(entry.connection, entry.ensureFresh);
 				await entry.ensureConnected?.();
 				return await withMcpRetriableFailedSendRetry(entry.connection, async () => {
 					return await entry.connection.client.callTool({ name: entry.tool, arguments: args }, undefined, {

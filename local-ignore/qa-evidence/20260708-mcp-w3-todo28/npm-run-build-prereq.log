@@ -1,0 +1,54 @@
+
+> build
+> node scripts/build-all.mjs
+
+
+[build-all] phase 1: packages/tui, packages/pty, packages/ai
+[build-all] building packages/tui
+[build-all] building packages/pty
+[build-all] building packages/ai
+
+> @earendil-works/pi-tui@2026.7.5-2 build
+> tsgo -p tsconfig.build.json
+
+
+> @earendil-works/pi-ai@2026.7.5-2 build
+> tsgo -p tsconfig.build.json
+
+
+> @earendil-works/pi-pty@2026.7.5-2 build
+> tsgo -p tsconfig.build.json
+
+
+[build-all] phase 2: packages/agent
+[build-all] building packages/agent
+
+> @earendil-works/pi-agent-core@2026.7.5-2 build
+> tsgo -p tsconfig.build.json
+
+
+[build-all] phase 3: packages/coding-agent, packages/web-ui
+[build-all] building packages/coding-agent
+[build-all] building packages/web-ui
+
+> @earendil-works/pi-web-ui@2026.7.5-2 build
+> tsc -p tsconfig.build.json && node scripts/tailwindcss.mjs -i ./src/app.css -o ./dist/app.css --minify
+
+
+> @code-yeongyu/senpi@2026.7.5-2 build
+> tsgo -p tsconfig.build.json && npm run copy-assets && shx chmod +x dist/cli.js dist/rpc-entry.js && shx cp dist/cli.js dist/senpi && shx chmod +x dist/senpi
+
+
+> @code-yeongyu/senpi@2026.7.5-2 copy-assets
+> shx mkdir -p dist/modes/interactive/theme && shx cp src/modes/interactive/theme/*.json dist/modes/interactive/theme/ && shx mkdir -p dist/modes/interactive/assets && shx cp src/modes/interactive/assets/*.png dist/modes/interactive/assets/ && shx mkdir -p dist/core/export-html/vendor && shx cp src/core/export-html/template.html src/core/export-html/template.css src/core/export-html/template.js dist/core/export-html/ && shx cp src/core/export-html/vendor/*.js dist/core/export-html/vendor/
+
+≈ tailwindcss v4.3.0
+
+Done in 91ms
+
+[build-all] phase 4: packages/orchestrator
+[build-all] building packages/orchestrator
+
+> @code-yeongyu/senpi-orchestrator@2026.7.5-2 build
+> tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js
+

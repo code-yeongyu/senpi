@@ -1,0 +1,490 @@
+TASK 2 evidence
+
+RED proof command: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/execute-tool.test.ts
+--- RED proof output ---
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/coding-agent
+
+xxxxxxxxx
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 9 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/execute-tool.test.ts > pi.executeTool > dispatches extension tools through tool_call and tool_result hooks
+TypeError: harness.api.executeTool is not a function
+ ❯ test/execute-tool.test.ts:54:37
+     54|
+     55|   try {
+     56|    const result = await harness.api.executeTool("echo_ext", { value: "…
+       |                            ^
+     57|
+     58|    expect(calls).toEqual([{ toolName: "echo_ext", input: { value: "sta…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/9]⎯
+
+ FAIL  test/execute-tool.test.ts > pi.executeTool > dispatches built-in tools from the active set
+TypeError: harness.api.executeTool is not a function
+ ❯ test/execute-tool.test.ts:67:37
+     65|
+     66|  it("dispatches built-in tools from the active set", async () => {
+     67|   const harness = await createExecuteToolHarness(() => {});
+       |                                     ^
+     68|   try {
+     69|    const result = await harness.api.executeTool("read", { filePath: `$…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/9]⎯
+
+ FAIL  test/execute-tool.test.ts > pi.executeTool > blocks before execution with the exact hook reason
+TypeError: harness.api.executeTool is not a function
+ ❯ test/execute-tool.test.ts:92:29
+     92|
+     93|   try {
+     94|    await expect(harness.api.executeTool("blocked_ext", {})).rejects.to…
+       |                    ^
+     95|     code: "blocked",
+     96|     message: "nope",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/9]⎯
+
+ FAIL  test/execute-tool.test.ts > pi.executeTool > applies tool_result rewrites after execution
+TypeError: harness.api.executeTool is not a function
+ ❯ test/execute-tool.test.ts:122:37
+    122|
+    123|   try {
+    124|    const result = await harness.api.executeTool("rewrite_ext", {});
+       |                            ^
+    125|
+    126|    expect(textOf(result)).toBe("replacement");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/9]⎯
+
+ FAIL  test/execute-tool.test.ts > pi.executeTool > rejects unknown and inactive tools with typed errors
+TypeError: harness.api.executeTool is not a function
+ ❯ test/execute-tool.test.ts:147:29
+    146|
+    147|   try {
+    148|    harness.session.setActiveToolsByName(["read"]);
+       |                     ^
+    149|    await expect(harness.api.executeTool("missing_ext", {})).rejects.to…
+    150|     code: "unknown_tool",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/9]⎯
+
+ FAIL  test/execute-tool.test.ts > pi.executeTool > forwards AbortSignal and onUpdate to tool execution
+TypeError: harness.api.executeTool is not a function
+ ❯ test/execute-tool.test.ts:182:22
+    180|
+    181|   try {
+    182|    const controller = new AbortController();
+       |                      ^
+    183|    const updates: unknown[] = [];
+    184|    await harness.api.executeTool(
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/9]⎯
+
+ FAIL  test/execute-tool.test.ts > pi.executeTool > rejects invalid params before hooks and execution
+TypeError: harness.api.executeTool is not a function
+ ❯ test/execute-tool.test.ts:213:29
+    213|     execute,
+    214|    });
+    215|    pi.on("tool_call", hook);
+       |         ^
+    216|   });
+    217|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/9]⎯
+
+ FAIL  test/execute-tool.test.ts > pi.executeTool > uses the same extension context shape as agent-loop dispatch
+TypeError: harness.api.executeTool is not a function
+ ❯ test/execute-tool.test.ts:255:43
+    254|    harness.session.setActiveToolsByName(["ctx_ext"]);
+    255|    harness.setResponses([
+    256|     fauxAssistantMessage(fauxToolCall("ctx_ext", { source: "agent" }),…
+       |                 ^
+    257|     fauxAssistantMessage("done"),
+    258|    ]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/9]⎯
+
+ FAIL  test/execute-tool.test.ts > pi.executeTool > normalizes non-Error tool_call hook failures after queued events settle
+TypeError: harness.api.executeTool is not a function
+ ❯ test/execute-tool.test.ts:301:39
+    302|
+    303|   try {
+    304|    harness.setResponses([fauxAssistantMessage("queued")]);
+       |                        ^
+    305|    const promptPromise = harness.session.prompt("queue an update");
+    306|    await messageUpdateEntered;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/9]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  9 failed (9)
+   Start at  14:51:50
+   Duration  4.28s (transform 2.21s, setup 12ms, import 4.13s, tests 28ms, environment 0ms)
+
+
+RED_EXIT=1
+
+
+--- Focused test output ---
+Command: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/execute-tool.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/coding-agent
+
+·········
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  14:58:25
+   Duration  2.25s (transform 1.33s, setup 15ms, import 2.10s, tests 25ms, environment 0ms)
+
+
+FOCUSED_TEST_EXIT=0
+
+--- Grep acceptance ---
+changes.md grep exit=0
+docs grep exit=0
+
+
+--- npm run check output ---
+Command: npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+packages/coding-agent/src/core/agent-session.ts:1073:7 lint/suspicious/noImplicitAnyLet ━━━━━━━━━━━━
+
+  × This variable implicitly has the any type.
+  
+    1071 │ 		};
+    1072 │ 
+  > 1073 │ 		let prepared;
+         │ 		    ^^^^^^^^
+    1074 │ 		try {
+    1075 │ 			prepared = prepareAgentToolCall(tool, toolCall);
+  
+  i Variable declarations without type annotation and initialization implicitly have the any type. Declare a type or initialize the variable with some value.
+  
+
+Checked 1316 files in 1669ms. No fixes applied.
+Found 1 error.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while applying fixes.
+  
+
+
+CHECK_EXIT=1
+
+
+--- npm run check rerun output ---
+Command: npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1316 files in 2s. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+packages/coding-agent/test/execute-tool.test.ts(92,5): error TS2322: Type 'Mock<() => Promise<{ content: { type: string; text: string; }[]; details: {}; }>>' is not assignable to type '(toolCallId: string, params: object, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<{}> | undefined, ctx: ExtensionContext) => Promise<...>'.
+  Type 'Promise<{ content: { type: string; text: string; }[]; details: {}; }>' is not assignable to type 'Promise<AgentToolResult<{}>>'.
+    Type '{ content: { type: string; text: string; }[]; details: {}; }' is not assignable to type 'AgentToolResult<{}>'.
+      Types of property 'content' are incompatible.
+        Type '{ type: string; text: string; }[]' is not assignable to type '(ImageContent | TextContent)[]'.
+          Type '{ type: string; text: string; }' is not assignable to type 'ImageContent | TextContent'.
+            Type '{ type: string; text: string; }' is not assignable to type 'TextContent'.
+              Types of property 'type' are incompatible.
+                Type 'string' is not assignable to type '"text"'.
+packages/coding-agent/test/execute-tool.test.ts(217,5): error TS2322: Type 'Mock<() => Promise<{ content: { type: string; text: string; }[]; details: {}; }>>' is not assignable to type '(toolCallId: string, params: { required: string; }, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<{}> | undefined, ctx: ExtensionContext) => Promise<...>'.
+  Type 'Promise<{ content: { type: string; text: string; }[]; details: {}; }>' is not assignable to type 'Promise<AgentToolResult<{}>>'.
+    Type '{ content: { type: string; text: string; }[]; details: {}; }' is not assignable to type 'AgentToolResult<{}>'.
+      Types of property 'content' are incompatible.
+        Type '{ type: string; text: string; }[]' is not assignable to type '(ImageContent | TextContent)[]'.
+          Type '{ type: string; text: string; }' is not assignable to type 'ImageContent | TextContent'.
+            Type '{ type: string; text: string; }' is not assignable to type 'TextContent'.
+              Types of property 'type' are incompatible.
+                Type 'string' is not assignable to type '"text"'.
+packages/coding-agent/test/extensions-runner.test.ts(71,8): error TS2741: Property 'executeTool' is missing in type '{ sendMessage: () => void; sendUserMessage: () => void; appendEntry: () => void; setSessionName: () => void; getSessionName: () => undefined; setLabel: () => void; getActiveTools: () => never[]; getAllTools: () => never[]; ... 5 more ...; setThinkingLevel: () => void; }' but required in type 'ExtensionActions'.
+
+CHECK_RERUN_EXIT=1
+
+
+--- Focused test rerun output ---
+Command: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/execute-tool.test.ts
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/coding-agent
+
+·········
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  15:00:03
+   Duration  2.10s (transform 1.22s, setup 13ms, import 1.96s, tests 22ms, environment 0ms)
+
+
+=== REPAIR RUN 2026-07-06 ===
+
+Scope read:
+- Plan todo 2 read from .omo/plans/senpi-codemode.md.
+- Current allowed-scope diff inspected before repair/verification.
+- Pre-existing dirty files outside todo-2 commit scope observed and left unstaged: package-lock.json, packages/coding-agent/src/core/changes.md, packages/coding-agent/test/extensions-runner.test.ts, packages/senpi-codemode/**, .omo/drafts/**, task-1 evidence.
+
+Repair summary:
+- Bound runtime.executeTool through createExtensionAPI, ExtensionRunner.bindCore, and AgentSession extension actions so the captured ExtensionAPI has executeTool.
+- Exported prepareAgentToolCall from agent core and reused it for executeTool argument preparation/schema validation.
+- Added AgentSession.executeTool active-tool lookup, invalid-param preflight, tool_call hook mutation/blocking, wrapped tool execution, onUpdate/signal forwarding, and tool_result rewrite application.
+- Fixed implicit prepared type in agent-session.ts and focused-test literal content typing.
+
+Command: cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/execute-tool.test.ts
+Output:
+
+ RUN  v4.1.9 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/senpi-codemode/packages/coding-agent
+
+·········
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  15:02:02
+   Duration  2.15s (transform 1.11s, setup 15ms, import 2.02s, tests 21ms, environment 0ms)
+
+Exit: 0
+
+Command: npm run check
+Output:
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1316 files in 863ms. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 48ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/bridge	8.186s
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store	(cached)
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/store/clipboard	(cached)
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/store/writeqa	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/theme	3.079s
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui	0.838s
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext	1.095s
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/builtinext/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor	0.547s
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/editor/textwidth	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings	0.728s
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/keybindings/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown	1.513s
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/markdown/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays	1.332s
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/overlays/qaharness	[no test files]
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell	1.175s
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/shell/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash	1.223s
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/slash/qaharness	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript	1.687s
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	[no test files]
+ok  	github.com/code-yeongyu/senpi/packages/neo/internal/ui/transcript/terminalimage	1.817s
+check:neo: packages/neo build+vet+test passed
+
+Exit: 0
+
+Command: git diff --check -- packages/agent/src/agent-loop.ts packages/agent/CHANGELOG.md packages/coding-agent/docs/extensions.md packages/coding-agent/src/core/agent-session.ts packages/coding-agent/src/core/extensions/index.ts packages/coding-agent/src/core/extensions/loader.ts packages/coding-agent/src/core/extensions/runner.ts packages/coding-agent/src/core/extensions/types.ts packages/coding-agent/src/core/extensions/changes.md packages/coding-agent/test/execute-tool.test.ts .omo/evidence/task-2-senpi-codemode.txt
+Output: <no output>
+Exit: 0
+
+Adversarial notes:
+- stale_state: applicable; inherited partial state had RED evidence and stale failure claims. Re-read plan/diff and reran focused test/check in current state.
+- dirty_worktree: applicable; unrelated/out-of-scope dirty files remain and are intentionally unstaged.
+- malformed_input: not applicable; executeTool invalid params are covered by focused test and reject before hooks/execution.
+- cancel/resume/abort: applicable; AbortSignal forwarding is covered by focused test.
+- misleading_success_output: applicable; root check was rerun after focused green to avoid focused-only success.
+- hung/long commands: applicable; root check completed normally with exit 0.
+- flaky_tests: no flake observed; focused test passed twice in current evidence history and once in repair run.
+
+
+FOCUSED_TEST_RERUN_EXIT=0
+
+--- npm run check final output ---
+Command: npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1316 files in 928ms. Fixed 1 file.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+packages/coding-agent/test/extensions-runner.test.ts(78,28): error TS2322: Type 'Promise<{ content: never[]; details: {}; }>' is not assignable to type 'Promise<ExecuteToolResult<TDetails>>'.
+  Type '{ content: never[]; details: {}; }' is not assignable to type 'ExecuteToolResult<TDetails>'.
+    Types of property 'details' are incompatible.
+      Type '{}' is not assignable to type 'TDetails'.
+        'TDetails' could be instantiated with an arbitrary type which could be unrelated to '{}'.
+
+CHECK_FINAL_EXIT=1
+
+
+--- npm run check final rerun output ---
+Command: npm run check
+
+> check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs && npm run check:neo
+
+Checked 1316 files in 2s. No fixes applied.
+
+> check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+> check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+> check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+> check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+> @earendil-works/pi-web-ui@2026.7.5-2 check
+> biome check --write --error-on-warnings . && tsc --noEmit && npm run check --prefix example
+
+Checked 67 files in 38ms. No fixes applied.
+
+> pi-web-ui-example@0.75.3 check
+> tsgo --noEmit
+
+
+> check:neo
+> node scripts/check-neo.mjs
+
+check:neo: go build ./...
+check:neo: go vet ./...
+check:neo: go test ./...
+ok  	github.com/code-yeongyu/senpi/packages/neo/cmd/senpi-neo	0.381s
+?   	github.com/code-yeongyu/senpi/packages/neo/internal/app	[no test files]
+
+
+## TODO 2 LEFTOVER FINALIZATION
+
+Date: 2026-07-06
+Worktree: /Users/yeongyu/local-workspaces/senpi-wt/senpi-codemode
+
+Inspected:
+- AGENTS.md and packages/coding-agent/AGENTS.md.
+- .omo/plans/senpi-codemode.md todo 2 block.
+- Current diffs for packages/coding-agent/src/core/changes.md and packages/coding-agent/test/extensions-runner.test.ts.
+
+Decision:
+- packages/coding-agent/src/core/changes.md is required because todo 2 explicitly requires a core/changes.md entry for the executeTool core bridge.
+- packages/coding-agent/test/extensions-runner.test.ts is required because ExtensionActions now requires executeTool; without the fake core stub, the extension runner test/check surface is incomplete.
+- Both files are todo-2 follow-up scope and should be committed atomically with this evidence.
+
+Command:
+cd packages/coding-agent && npx tsx ../../node_modules/vitest/dist/cli.js --run test/extensions-runner.test.ts test/execute-tool.test.ts
+
+Result:
+PASS, exit 0.
+Test Files: 2 passed (2).
+Tests: 51 passed (51).
+
+Command:
+npm run check
+
+Result:
+FAIL, exit 1.
+The command reached check:pinned-deps and failed on an out-of-scope dirty package:
+Direct external dependencies must use exact versions:
+  packages/senpi-codemode/package.json: devDependencies.@code-yeongyu/senpi must be pinned, found *
+
+Scope note:
+- The failing package-lock/package packages/senpi-codemode state is outside the allowed write/stage scope for this finalization task, so it was left untouched.
+
+
+## TODO 2 V1 GATE BLOCKER FIX
+
+Date: 2026-07-06
+Worktree: /Users/yeongyu/local-workspaces/senpi-wt/senpi-codemode
+
+Summary:
+- Fixed executeTool thrown-tool parity so thrown tool execution is converted to an error AgentToolResult, passed through tool_result hooks, and hook rewrites are honored.
+- Added regression coverage for a throwing tool observed and rewritten by a tool_result hook.
+- Split execute-tool tests so each execute-tool test file is under 250 pure LOC.
+- Removed explicit any from the agent-loop prepared-tool helper area.
+
+Evidence:
+- Full command output: .omo/evidence/task-6-fix-executeTool.txt
+- Real CLI QA artifact: local-ignore/qa-evidence/20260706-task-6-fix-executeTool/mock-loop-with-tool.txt
+- Focused tests: packages/coding-agent execute-tool glob passed, 2 files / 10 tests.
+- npm run check: passed.
+- LOC: execute-tool-hooks.test.ts 156, execute-tool.test.ts 195.
+- any scan: no hits in packages/agent/src/agent-loop.ts or execute-tool tests; remaining agent-session.ts hits are pre-existing Model<any> annotations and comments/prose.

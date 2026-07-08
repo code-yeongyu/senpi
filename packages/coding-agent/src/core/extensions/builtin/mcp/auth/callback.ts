@@ -167,8 +167,15 @@ export class LoopbackCallbackServer {
 		const code = url.searchParams.get("code");
 		const state = url.searchParams.get("state") ?? undefined;
 		const error = url.searchParams.get("error");
-		if (error !== null || code === null || !this.#options.validateState(state)) {
+		if (error !== null || code === null || state === undefined || !this.#options.validateState(state)) {
 			res.writeHead(400, { "content-type": "text/html" }).end(FAILURE_HTML);
+			void this.#fail(
+				new OAuthFlowError(
+					"state_mismatch",
+					`MCP server ${this.#options.serverName} authorization state did not match (possible CSRF or a stale/replayed link); restart the auth flow.`,
+					{ serverName: this.#options.serverName },
+				),
+			);
 			return;
 		}
 		res.writeHead(200, { "content-type": "text/html" }).end(SUCCESS_HTML);

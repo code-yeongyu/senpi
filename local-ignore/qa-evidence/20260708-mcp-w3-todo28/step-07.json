@@ -1,0 +1,13 @@
+{
+  "id": 7,
+  "invocation": "tamper sandbox refresh token -> McpRefreshManager.ensureFresh -> runAuthStart/Complete -> tool call",
+  "observations": {
+    "dropped": true,
+    "invalidError": "MCP server oauth refresh rejected (invalid_grant); credentials cleared, re-authentication required.",
+    "reauthRedirected": true,
+    "toolText": "fixture tool_1 value=reauth-hit mode=alpha"
+  },
+  "surface": "CLI/data surface: refresh manager + OAuth command runners + MCP tool bridge",
+  "title": "invalid_grant injection -> credentials dropped + clean re-auth path",
+  "verdict": "PASS"
+}

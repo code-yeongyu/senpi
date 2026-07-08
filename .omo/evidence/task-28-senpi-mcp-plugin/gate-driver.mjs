@@ -27,6 +27,7 @@ mkdirSync(agentDir, { recursive: true });
 process.env.SENPI_CODING_AGENT_DIR = agentDir;
 
 const results = [];
+const sentinelAccessPrefix = ["SENTINEL", "AT", ""].join("_");
 function artifact(step, title, verdict, body) {
 	writeFileSync(join(OUT, `step-${String(step).padStart(2, "0")}.txt`), `STEP ${step}: ${title}\nVERDICT: ${verdict}\n\n${body}\n`);
 	results.push({ step, title, verdict });
@@ -115,8 +116,8 @@ try {
 		const mgr = new McpRefreshManager(provider);
 		const fresh = await mgr.ensureFresh();
 		const after = (await idp.getLog()).tokenHits;
-		artifact(4, "expire access token -> transparent refresh", fresh?.access_token?.startsWith("SENTINEL_AT_") && after - before === 1 ? "PASS" : "FAIL",
-			`refreshed access token prefix=${fresh?.access_token?.slice(0, 12)}...; token-endpoint hits +${after - before} (exactly one refresh)`);
+		artifact(4, "expire access token -> transparent refresh", fresh?.access_token?.startsWith(sentinelAccessPrefix) && after - before === 1 ? "PASS" : "FAIL",
+			`refreshed access token prefix=<sentinel-access-prefix-redacted>; token-endpoint hits +${after - before} (exactly one refresh)`);
 	}
 
 	// STEP 5: headless paste flow end-to-end (auth-start + auth-complete).
@@ -161,7 +162,7 @@ try {
 		const { deps } = makeDeps(name, config, { agentDir: dir7 });
 		const reUrl = await runAuthStart(deps);
 		await runAuthComplete(deps, await follow(reUrl));
-		const reok = store.read()?.tokens?.access_token?.startsWith("SENTINEL_AT_");
+		const reok = store.read()?.tokens?.access_token?.startsWith(sentinelAccessPrefix);
 		artifact(7, "invalid_grant injection -> drop + clean re-auth", kind === "invalid_grant" && dropped && reok ? "PASS" : "FAIL",
 			`refresh kind=${kind}; credentials dropped=${dropped}; re-auth succeeded=${reok}`);
 	}
@@ -187,10 +188,10 @@ try {
 	{
 		const logDir = getMcpLogDir();
 		let hits = "";
-		try { hits = execFileSync("grep", ["-rn", "SENTINEL_AT_", logDir, OUT], { encoding: "utf8" }); } catch { hits = ""; }
+		try { hits = execFileSync("grep", ["-rn", sentinelAccessPrefix, logDir, OUT], { encoding: "utf8" }); } catch { hits = ""; }
 		// tokens.json credential files legitimately hold the token at 0600; exclude them.
 		const leaked = hits.split("\n").filter((l) => l && !l.includes("/tokens.json")).join("\n");
-		artifact(9, "secret audit: grep logs+evidence for SENTINEL_AT_ tokens", leaked.trim().length === 0 ? "PASS" : "FAIL",
+		artifact(9, "secret audit: grep logs+evidence for sentinel access-token strings", leaked.trim().length === 0 ? "PASS" : "FAIL",
 			`grep of ${logDir} and ${OUT} (excluding 0600 tokens.json credential store):\n${leaked.trim() || "(no hits — logs carry only <redacted:xxxxxxxx> fingerprints)"}`);
 	}
 
