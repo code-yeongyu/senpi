@@ -53,6 +53,58 @@ jobs:
       - name: Build binaries
         run: ./scripts/build-binaries.sh
 
+      - name: Setup Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: packages/neo/go.mod
+          cache-dependency-path: packages/neo/go.sum
+
+      - name: Build neo binaries
+        run: |
+          set -euo pipefail
+
+          # CalVer without the leading `v`, stamped into the Go binary (main.version).
+          VERSION="${RELEASE_TAG#v}"
+
+          mkdir -p "${GITHUB_WORKSPACE}/dist/neo-bin"
+          cd packages/neo
+
+          # Single runner, six targets: GOOS {darwin,linux,windows} × GOARCH {amd64,arm64}.
+          # CGO_ENABLED=0 + -trimpath + stripped ldflags are the neo release contract;
+          # scripts/generate-neo-npm-packages.mjs' own build fallback uses the same flags.
+          targets=(darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64)
+          for target in "${targets[@]}"; do
+            goos="${target%/*}"
+            goarch="${target#*/}"
+            echo "==> building senpi-neo ${goos}/${goarch}"
+            GOOS="${goos}" GOARCH="${goarch}" CGO_ENABLED=0 go build \
+              -trimpath \
+              -ldflags "-s -w -X main.version=${VERSION}" \
+              -o "${GITHUB_WORKSPACE}/dist/neo-bin/senpi-neo-${goos}-${goarch}" \
+              ./cmd/senpi-neo
+          done
+
+          file "${GITHUB_WORKSPACE}/dist/neo-bin/"*
+
+      - name: Stage neo npm packages
+        run: |
+          set -euo pipefail
+
+          # Meta + six per-platform packages, staged from the binaries built above.
+          # macOS ad-hoc codesign is a no-op on this Linux runner (parity with
+          # scripts/build-binaries.sh, whose codesign only fires when a codesign
+          # tool is present); local macOS builds sign the darwin binaries.
+          VERSION="${RELEASE_TAG#v}"
+          node scripts/generate-neo-npm-packages.mjs --version "${VERSION}" --binaries-dir dist/neo-bin
+
+      - name: Upload neo npm packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: neo-npm-${{ env.RELEASE_TAG }}
+          path: dist/neo-npm/**
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Prepare GitHub release payload
         run: |
           set -euo pipefail
