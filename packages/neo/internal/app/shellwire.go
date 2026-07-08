@@ -235,10 +235,40 @@ func (w *ShellWire) applyState(st bridge.RPCSessionState) {
 	}
 }
 
-// HandleCommandResult consumes a get_session_stats round-trip (the command
-// HandleEvent returned for agent_end) into the footer token/cost/context
-// numbers. Reports whether the message was the wire's to consume.
+// applyModelResult folds a set_model / cycle_model response payload (the model
+// object, or null when a cycle had nowhere to go) into the footer model
+// segment. A null/undecodable payload keeps the current model.
+func (w *ShellWire) applyModelResult(data json.RawMessage) {
+	var m struct {
+		ID            string `json:"id"`
+		Provider      string `json:"provider"`
+		Reasoning     bool   `json:"reasoning"`
+		ContextWindow int    `json:"contextWindow"`
+	}
+	if len(data) == 0 || json.Unmarshal(data, &m) != nil || m.ID == "" {
+		return
+	}
+	w.footer.ModelID = m.ID
+	w.footer.Provider = m.Provider
+	w.footer.ModelReasons = m.Reasoning
+	if m.ContextWindow > 0 {
+		w.footer.ContextWindow = m.ContextWindow
+	}
+	w.pushFooter()
+}
+
+// HandleCommandResult consumes the wire-owned command round-trips: session
+// stats (the command HandleEvent returned for agent_end) into the footer
+// token/cost/context numbers, and model switches (set_model / cycle_model —
+// no RPC event carries model changes, so the response is the only signal)
+// into the footer model segment. Reports whether the message was consumed.
 func (w *ShellWire) HandleCommandResult(msg CommandResultMsg) bool {
+	if msg.Command == "set_model" || msg.Command == "cycle_model" {
+		if msg.Err == nil && msg.Response.Success {
+			w.applyModelResult(msg.Response.Data)
+		}
+		return true
+	}
 	if msg.Command != "get_session_stats" {
 		return false
 	}

@@ -448,3 +448,53 @@ func TestShellWireExtensionWidgetSegments(t *testing.T) {
 		t.Fatalf("expected widget cleared, got %q", below)
 	}
 }
+
+// TestShellWireModelSwitchResultUpdatesFooter proves a successful set_model /
+// cycle_model round-trip re-points the footer at the new model (live QA
+// regression: after switching mock-a -> mock-b in the /model selector the
+// footer stayed on mock-a — no event carries model changes over RPC, so the
+// wire must consume the command response itself).
+func TestShellWireModelSwitchResultUpdatesFooter(t *testing.T) {
+	h := newWireHarness(t)
+	h.wire.HandleBootstrap(app.BootstrapMsg{
+		State: okResponse("get_state", `{"thinkingLevel":"off","steeringMode":"all","followUpMode":"all",`+
+			`"sessionId":"s1","messageCount":0,"pendingMessageCount":0,"isStreaming":false,"isCompacting":false,`+
+			`"autoCompactionEnabled":true,"model":{"id":"mock-a","provider":"mock","reasoning":false,"contextWindow":128000}}`),
+	})
+	if got := ui.StripANSI(h.sh.Footer().Render(120)[0]); !strings.Contains(got, "mock-a") {
+		t.Fatalf("bootstrap footer should show mock-a, got: %q", got)
+	}
+
+	consumed := h.wire.HandleCommandResult(app.CommandResultMsg{
+		Command:  "set_model",
+		Response: okResponse("set_model", `{"id":"mock-b","provider":"mock","reasoning":true,"contextWindow":200000}`),
+	})
+	if !consumed {
+		t.Fatalf("set_model result was not consumed by the wire")
+	}
+	got := ui.StripANSI(h.sh.Footer().Render(120)[0])
+	if !strings.Contains(got, "mock-b") || strings.Contains(got, "mock-a") {
+		t.Fatalf("footer should show mock-b after set_model, got: %q", got)
+	}
+
+	if !h.wire.HandleCommandResult(app.CommandResultMsg{
+		Command:  "cycle_model",
+		Response: okResponse("cycle_model", `{"id":"mock-a","provider":"mock","reasoning":false,"contextWindow":128000}`),
+	}) {
+		t.Fatalf("cycle_model result was not consumed by the wire")
+	}
+	if got := ui.StripANSI(h.sh.Footer().Render(120)[0]); !strings.Contains(got, "mock-a") {
+		t.Fatalf("footer should show mock-a after cycle_model, got: %q", got)
+	}
+
+	// A null cycle result (no other model) must keep the current footer.
+	if !h.wire.HandleCommandResult(app.CommandResultMsg{
+		Command:  "cycle_model",
+		Response: okResponse("cycle_model", `null`),
+	}) {
+		t.Fatalf("null cycle_model result should still be consumed")
+	}
+	if got := ui.StripANSI(h.sh.Footer().Render(120)[0]); !strings.Contains(got, "mock-a") {
+		t.Fatalf("footer should keep mock-a after null cycle_model, got: %q", got)
+	}
+}
