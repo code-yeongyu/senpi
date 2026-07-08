@@ -216,3 +216,41 @@ func derefStr(p *string) string {
 func derefBool(p *bool) bool {
 	return p != nil && *p
 }
+
+// TestParseNeoRuntimeArgv_ShortAliases proves the classic single-dash aliases
+// (args.ts: -e/-t/-n/-c/-r/-a) parse as their long flags instead of falling
+// through to positional initial-input messages (live QA regression: `-e
+// fixture.ts` was sent to the model as a prompt and the extension never
+// loaded).
+func TestParseNeoRuntimeArgv_ShortAliases(t *testing.T) {
+	opts, residual := ParseNeoRuntimeArgv([]string{
+		"-e", "/tmp/ext.ts",
+		"-t", "read,bash",
+		"-n", "sesh",
+		"-c", "-r", "-a",
+	})
+	if len(residual) != 0 {
+		t.Fatalf("residual args: %v", residual)
+	}
+	if len(opts.Messages) != 0 {
+		t.Fatalf("short-alias values leaked into Messages: %v", opts.Messages)
+	}
+	if len(opts.Extensions) != 1 || opts.Extensions[0] != "/tmp/ext.ts" {
+		t.Fatalf("-e not parsed as --extension: %v", opts.Extensions)
+	}
+	if len(opts.Tools) != 2 || opts.Tools[0] != "read" || opts.Tools[1] != "bash" {
+		t.Fatalf("-t not parsed as --tools: %v", opts.Tools)
+	}
+	if opts.Name == nil || *opts.Name != "sesh" {
+		t.Fatalf("-n not parsed as --name: %v", opts.Name)
+	}
+	if opts.Continue == nil || !*opts.Continue {
+		t.Fatalf("-c not parsed as --continue")
+	}
+	if opts.Resume == nil || !*opts.Resume {
+		t.Fatalf("-r not parsed as --resume")
+	}
+	if opts.ProjectTrustOverride == nil || !*opts.ProjectTrustOverride {
+		t.Fatalf("-a not parsed as --approve")
+	}
+}

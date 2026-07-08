@@ -127,6 +127,19 @@ var launcherLocalFlags = map[string]bool{
 	"--isolated": true,
 }
 
+// shortAliases maps the classic single-dash aliases (args.ts parseArgs) onto
+// their long flags so `senpi --neo -e ext.ts` behaves like classic instead of
+// leaking the tokens into the initial-input messages. -p/-h/-v are not runtime
+// inputs (print mode / launcher fast-paths) and stay unmapped.
+var shortAliases = map[string]string{
+	"-e": "--extension",
+	"-t": "--tools",
+	"-n": "--name",
+	"-c": "--continue",
+	"-r": "--resume",
+	"-a": "--approve",
+}
+
 // ParseNeoRuntimeArgv converts the argv the neo launcher forwards
 // (build-argv.ts output) into a NeoRuntimeOptions payload plus any residual args
 // it did not consume (there should be none for well-formed launcher argv; the
@@ -141,6 +154,9 @@ func ParseNeoRuntimeArgv(argv []string) (NeoRuntimeOptions, []string) {
 
 		if launcherLocalFlags[arg] {
 			continue
+		}
+		if long, ok := shortAliases[arg]; ok {
+			arg = long
 		}
 
 		if strings.HasPrefix(arg, "@") && len(arg) > 1 {
