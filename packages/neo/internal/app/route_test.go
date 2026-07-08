@@ -333,3 +333,42 @@ func contains(xs []string, want string) bool {
 	}
 	return false
 }
+
+// sentinelAbortMsg marks that the commander's AbortBash cmd actually executed.
+type sentinelAbortMsg struct{}
+
+// abortSentinelCommander is a recordingCommander whose AbortBash returns a live
+// cmd, so a routing layer that drops RouteResult.Cmd is caught.
+type abortSentinelCommander struct{ recordingCommander }
+
+func (abortSentinelCommander) AbortBash() tea.Cmd {
+	return func() tea.Msg { return sentinelAbortMsg{} }
+}
+
+// TestInterruptDuringBashIssuesAbortBash asserts the interrupt chord pressed
+// while a `!` command runs actually EXECUTES the abort_bash command (regression:
+// interpretRoute's default arm returned only the notice and dropped the Cmd, so
+// escape never aborted a running bash).
+func TestInterruptDuringBashIssuesAbortBash(t *testing.T) {
+	th := testTheme(t)
+	keys := keybindings.NewManager(nil)
+	sh := shell.New(th, "", "senpi")
+	router := NewRouter(slash.NewDispatcher(slash.NewBuiltins()), sh.Queue(), abortSentinelCommander{}, th)
+	m := &Model{
+		theme: th, keys: keys,
+		feed:   transcript.NewFeed(transcript.NewRenderTheme(th)),
+		router: router,
+	}
+
+	if res := router.Submit("!sleep 99"); res.Kind != RouteBash {
+		t.Fatalf("expected RouteBash, got %v", res.Kind)
+	}
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+
+	for _, msg := range runCmd(cmd) {
+		if _, ok := msg.(sentinelAbortMsg); ok {
+			return // abort_bash executed
+		}
+	}
+	t.Fatalf("escape during running bash did not execute the AbortBash command")
+}

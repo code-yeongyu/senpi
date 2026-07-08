@@ -169,7 +169,9 @@ func (m *Model) interpretRoute(res RouteResult) tea.Cmd {
 	case RouteNative:
 		return m.runNative(res.Native, res.Arg)
 	default: // RouteFollowUpQueued/RouteDequeued/RouteAbortBash/RouteBashBusy/RouteUnknown
-		return m.noticeCmd(res.Notice)
+		// RouteAbortBash carries the abort_bash command; the notice-only arms
+		// carry a nil Cmd, so joining is safe for all of them.
+		return joinCmds(res.Cmd, m.noticeCmd(res.Notice))
 	}
 }
 
