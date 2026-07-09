@@ -17,16 +17,17 @@ export default defineConfig({
 		reporters: process.env.GITHUB_ACTIONS ? ["dot", "github-actions"] : ["dot"],
 		silent: "passed-only",
 		// Cap fork concurrency ON CI ONLY. This suite's subprocess-lifecycle tests
-		// (MCP keep-alive/ping-on-call fixtures, and now the default-on terminal PTY
-		// builtin) each spawn several real child processes. With the default forks
-		// pool (maxWorkers = CPU count) the 4-vCPU GitHub runner is oversubscribed once
-		// every default-on builtin's suite runs in parallel, and those child processes
-		// get starved — surfacing as intermittent "condition timed out" / off-by-one
-		// ping-count / kernel-startup-timeout flakes that no per-test timeout bump can
-		// fix (it is CPU/IO starvation, not tight deadlines). Two workers keep useful
-		// parallelism while bounding peak concurrent subprocesses. Local runs (many
-		// cores, no oversubscription) keep the default pool for speed.
-		...(process.env.GITHUB_ACTIONS ? { pool: "forks" as const, maxWorkers: 2 } : {}),
+		// (MCP keep-alive/ping-on-call fixtures, the default-on terminal PTY builtin,
+		// and the app-server daemon/websocket listeners) each spawn several real child
+		// processes. On the 4-vCPU GitHub runner, running these in parallel oversubscribes
+		// CPU/IO and — worse in the release publish job — leaves child processes unreaped
+		// long enough that the forks pool cannot exit, hanging the whole `npm test` step
+		// (observed: coding-agent RUN never summarizes, orphan senpi/esbuild processes).
+		// A per-test timeout cannot fix a pool-shutdown hang. Serialize to a single fork
+		// on CI: it bounds peak concurrent subprocesses to one suite's worth, trading a
+		// slower run for a deterministic one. Local runs (many cores) keep the default
+		// pool for speed.
+		...(process.env.GITHUB_ACTIONS ? { pool: "forks" as const, maxWorkers: 1, teardownTimeout: 20000 } : {}),
 		server: {
 			deps: {
 				external: [/@silvia-odwyer\/photon-node/],
