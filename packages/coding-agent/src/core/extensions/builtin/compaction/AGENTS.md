@@ -16,7 +16,7 @@ compaction/
 ├── circuit-breaker.ts        # N consecutive failures → halt automatic compaction
 ├── per-turn-cap.ts           # Max compactions per turn rate-limiter
 ├── degradation-monitor.ts    # Detects post-compact assistant degradation (all-tool, no-text turns)
-├── tool-truncation.ts        # Truncates oversized bash/read results before they hit context
+├── tool-truncation.ts        # Emergency/compaction-budget truncation for oversized bash/read results
 ├── checkpoint-state.ts       # Snapshots agent state (model, thinking, todos) at compact boundaries
 ├── todo-bridge.ts            # Carries todos through compaction so the summary preserves them
 ├── restoration-tracker.ts    # Post-compact: re-injects skill + file context (fork-introduced)
@@ -31,15 +31,16 @@ compaction/
 | Adjust when proactive compaction fires | `policy.ts` (thresholds) |
 | Tune circuit breaker count | `circuit-breaker.ts` |
 | Add a new degradation signal | `degradation-monitor.ts` |
-| Change tool-result truncation policy | `tool-truncation.ts` |
+| Change tool-result truncation format | `tool-truncation.ts` |
+| Change when emergency tool-result truncation fires | `speculative.ts` |
 | Add a new piece of state that should survive compaction | `checkpoint-state.ts` + `restoration-tracker.ts` |
 | Modify the summarization prompt | `prompts.ts` |
 
 ## PIPELINE (one turn)
 
 1. **Pre-turn**: `policy.ts` checks thresholds; if proactive, fire `speculative.ts` in parallel.
-2. **Mid-turn**: `tool-truncation.ts` shrinks oversized results before they land in context.
-3. **Context assembly** (`context` event): near the limit, `context-reduction.ts` applies deterministic no-LLM reductions; after any pruning, `repair-tool-pairs.ts` patches orphaned tool-call/result pairs.
+2. **Context assembly** (`context` event): below the emergency threshold, tool results pass through untouched; once the assembled context exceeds the hard threshold, `speculative.ts` applies the `tool-truncation.ts` emergency valve before old-message pruning.
+3. **Context reduction** (`context` event): near the limit, `context-reduction.ts` applies deterministic no-LLM reductions; after any pruning, `repair-tool-pairs.ts` patches orphaned tool-call/result pairs.
 4. **Provider call**: on a provider context-overflow error, `core/agent-session.ts` detects it via `isContextOverflow` (`packages/ai/src/utils/overflow.ts`), cancels the turn, runs blocking compaction, and auto-retries once. On OpenAI Responses models, compaction routes through `openai-remote.ts` instead of local summarization.
 5. **Post-turn**: `circuit-breaker.ts` + `per-turn-cap.ts` gate any further auto-compaction; `degradation-monitor.ts` watches for post-compact quality drop.
 6. **Compact event**: `checkpoint-state.ts` snapshots, `todo-bridge.ts` injects todos, `restoration-tracker.ts` queues re-injections for the first post-compact turn.

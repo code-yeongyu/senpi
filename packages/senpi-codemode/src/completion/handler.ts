@@ -1,6 +1,6 @@
 import type { ExtensionContext } from "@code-yeongyu/senpi";
-import { completeSimple } from "../../../ai/src/stream.ts";
-import type { Api, AssistantMessage, Context, Model, SimpleStreamOptions } from "../../../ai/src/types.ts";
+import type { Api, AssistantMessage, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai/compat";
+import { completeSimple } from "@earendil-works/pi-ai/compat";
 
 export interface CompletionRequest {
 	readonly prompt: string;

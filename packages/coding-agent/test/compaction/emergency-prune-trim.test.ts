@@ -78,6 +78,17 @@ function toolResult(id: string, timestamp: number): ToolResultMessage {
 	};
 }
 
+function toolResultText(id: string, text: string, timestamp: number): ToolResultMessage {
+	return {
+		role: "toolResult",
+		toolCallId: id,
+		toolName: "bash",
+		content: [{ type: "text", text }],
+		isError: false,
+		timestamp,
+	};
+}
+
 function labelMessage(message: AgentMessage): string {
 	if (message.role === "user") {
 		const content = message.content;
@@ -104,6 +115,41 @@ function labelMessage(message: AgentMessage): string {
 describe("hard-limit emergency prune trimming", () => {
 	beforeEach(() => {
 		estimateTracker.calls = 0;
+	});
+
+	it("keeps an oversized tool result byte-identical when the context is under the emergency threshold", () => {
+		// Given
+		const originalText = `${"A".repeat(10_000)}MID-SENTINEL-7f3a1c${"B".repeat(10_000)}`;
+		const messages: AgentMessage[] = [userMessage("latest request", 1), toolResultText("call-1", originalText, 2)];
+
+		// When
+		const result = hardLimitEmergencyPrune(messages, 128_000);
+		const toolMessage = result.messages.find(
+			(message): message is ToolResultMessage => message.role === "toolResult",
+		);
+		const textBlock = toolMessage?.content.find((block) => block.type === "text");
+
+		// Then
+		expect(result.needsAggressiveCompaction).toBe(false);
+		expect(textBlock?.text).toBe(originalText);
+		expect(textBlock?.text).not.toContain("<truncated:");
+	});
+
+	it("still truncates oversized tool results when the context is over the emergency threshold", () => {
+		// Given
+		const originalText = `${"A".repeat(10_000)}MID-SENTINEL-7f3a1c${"B".repeat(10_000)}`;
+		const messages: AgentMessage[] = [userMessage("latest request", 1), toolResultText("call-1", originalText, 2)];
+
+		// When
+		const result = hardLimitEmergencyPrune(messages, 2);
+		const toolMessage = result.messages.find(
+			(message): message is ToolResultMessage => message.role === "toolResult",
+		);
+		const textBlock = toolMessage?.content.find((block) => block.type === "text");
+
+		// Then
+		expect(result.needsAggressiveCompaction).toBe(true);
+		expect(textBlock?.text).toMatch(/<truncated:\d+ bytes original[^>]*>/);
 	});
 
 	it("preserves the current old-message pruning output when representative overflow must trim", () => {

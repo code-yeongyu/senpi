@@ -15,7 +15,14 @@ use std::path::PathBuf;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-const PACKAGE_VERSION: &str = "2026.7.5-2";
+/// Native ABI version. This is INTENTIONALLY decoupled from the package/CalVer
+/// version: it identifies the shape of the native surface (exports + signatures)
+/// that `packages/pty/src/loader.ts` requires. Bump it ONLY on a
+/// backward-incompatible change to that surface, and update `NATIVE_PTY_ABI_VERSION`
+/// in the loader + the `__senpiPtyAbi<N>` sentinel export together. A CalVer
+/// release must NOT change it — otherwise every release invalidates the prebuilt
+/// binaries. See the sentinel export below.
+const NATIVE_PTY_ABI_VERSION: &str = "1";
 
 #[napi(object)]
 pub struct NativePtySessionOptions {
@@ -122,9 +129,14 @@ pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
-#[napi(js_name = "__senpiPtyV2026_7_5")]
-pub fn senpi_pty_version_sentinel() -> String {
-    PACKAGE_VERSION.to_string()
+// Stable ABI sentinel. The `js_name` MUST be a string literal (napi requirement),
+// so it is spelled `__senpiPtyAbi<N>` where N == NATIVE_PTY_ABI_VERSION. The loader
+// derives the same name from its own ABI constant and also checks the return value,
+// rejecting any prebuilt binary compiled against a different ABI. This is decoupled
+// from the CalVer package version on purpose so releases don't invalidate prebuilds.
+#[napi(js_name = "__senpiPtyAbi1")]
+pub fn senpi_pty_abi_sentinel() -> String {
+    NATIVE_PTY_ABI_VERSION.to_string()
 }
 
 #[cfg(test)]
@@ -137,17 +149,8 @@ mod tests {
     }
 
     #[test]
-    fn version_sentinel_matches_package_version() {
-        assert_eq!(senpi_pty_version_sentinel(), PACKAGE_VERSION);
-    }
-
-    #[test]
-    fn package_version_constant_matches_package_json() {
-        let package_json = include_str!("../../../packages/pty/package.json");
-        assert!(
-            package_json.contains("\"version\": \"2026.7.5-2\""),
-            "PACKAGE_VERSION and sentinel export must be updated with packages/pty/package.json"
-        );
+    fn abi_sentinel_matches_abi_version() {
+        assert_eq!(senpi_pty_abi_sentinel(), NATIVE_PTY_ABI_VERSION);
     }
 
     #[test]

@@ -8,6 +8,16 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.7.9] - 2026-07-09
+
+### Added
+
+### Changed
+
+### Fixed
+
 - Fixed OpenAI Responses and Azure OpenAI Responses requests to avoid sending `max_output_tokens` values below the provider minimum ([#6265](https://github.com/earendil-works/pi/issues/6265)).
 - Fixed Anthropic same-model replay of server-side web search results so `encrypted_content` is not sent back inside replayed search result blocks, avoiding 400 `Invalid encrypted_content in search_result block` errors on follow-up turns.
 

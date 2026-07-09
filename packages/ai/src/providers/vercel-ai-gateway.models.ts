@@ -2865,6 +2865,23 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		contextWindow: 1000000,
 		maxTokens: 1000000,
 	} satisfies Model<"anthropic-messages">,
+	"xai/grok-4.5": {
+		id: "xai/grok-4.5",
+		name: "Grok 4.5",
+		api: "anthropic-messages",
+		provider: "vercel-ai-gateway",
+		baseUrl: "https://ai-gateway.vercel.sh",
+		reasoning: true,
+		input: ["text", "image"],
+		cost: {
+			input: 2,
+			output: 6,
+			cacheRead: 0.5,
+			cacheWrite: 0,
+		},
+		contextWindow: 500000,
+		maxTokens: 500000,
+	} satisfies Model<"anthropic-messages">,
 	"xai/grok-build-0.1": {
 		id: "xai/grok-build-0.1",
 		name: "Grok Build 0.1",

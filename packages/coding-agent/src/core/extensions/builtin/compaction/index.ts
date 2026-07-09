@@ -38,7 +38,6 @@ import {
 } from "./speculative.ts";
 import { type CompactionExtensionState, createInitialState, resetTurnCounter } from "./state.ts";
 import * as todoBridge from "./todo-bridge.ts";
-import * as truncation from "./tool-truncation.ts";
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 const EMERGENCY_COMPACTION_INSTRUCTIONS =
@@ -439,11 +438,6 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 				notify: (message) => ctx.ui.notify(message, "warning"),
 			});
 		}
-	});
-
-	pi.on("tool_result", (event) => {
-		const [truncated] = truncation.truncateOversizedToolResults([{ content: event.content, details: event.details }]);
-		return truncated ? { content: truncated.content, details: event.details, isError: event.isError } : undefined;
 	});
 
 	pi.on("tool_call", (event) => {

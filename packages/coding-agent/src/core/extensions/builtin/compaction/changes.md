@@ -1,5 +1,18 @@
 # Builtin compaction extension changes
 
+## Threshold-first emergency tool-result pruning (2026-07-09)
+
+- `index.ts` no longer mutates live `tool_result` events with head/tail truncation before they enter session
+  history. Tool outputs stay byte-identical until the assembled provider context exceeds the emergency threshold.
+- `speculative.ts` now checks the original message estimate against the 0.95 context-window target before calling the
+  existing tool-result prune/truncate helpers. Once over target, the emergency valve still uses the existing
+  truncate-then-old-message-prune behavior.
+- This stays in the builtin extension because provider-context pressure is extension-owned policy; core only assembles
+  and retries provider requests.
+
+Expected upstream conflict zones: `builtin/compaction/index.ts` around event hook wiring and
+`builtin/compaction/speculative.ts` around `hardLimitEmergencyPrune`.
+
 ## Running token total for emergency prune trimming (2026-06-16)
 
 - `speculative.ts` prunes the compaction budget with a running token total instead of re-tokenizing the retained

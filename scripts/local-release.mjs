@@ -242,10 +242,27 @@ function main() {
 				throw new Error("Bun is required for the isolated Bun install. Use --skip-bun-install to skip it.");
 			}
 			mkdirSync(bunInstallDirectory, { recursive: true });
-			const bunDependencies = Object.fromEntries(
-				packages.map((pkg) => [pkg.name, fileSpecifier(bunInstallDirectory, tarballs.get(pkg.name))]),
+			// Bun's resolver enters an unbounded allocating loop (RAM explosion) when a
+			// `file:` tarball that BUNDLES other internal deps is ALSO listed in `overrides`
+			// as a `file:` tarball. Install only the root app as a dependency and pin every
+			// other internal package via `overrides` (never the root itself). npm tolerates
+			// the all-in-overrides shape; bun does not.
+			const bunRootName = "@code-yeongyu/senpi";
+			const bunRootTarball = tarballs.get(bunRootName);
+			if (!bunRootTarball) {
+				throw new Error(`Bun install root package ${bunRootName} was not packed`);
+			}
+			const bunOverrides = Object.fromEntries(
+				packages
+					.filter((pkg) => pkg.name !== bunRootName)
+					.map((pkg) => [pkg.name, fileSpecifier(bunInstallDirectory, tarballs.get(pkg.name))]),
 			);
-			writeFileSync(join(bunInstallDirectory, "package.json"), `${JSON.stringify({ private: true, dependencies: bunDependencies, overrides: bunDependencies }, undefined, "\t")}\n`);
+			const bunPackageJson = {
+				private: true,
+				dependencies: { [bunRootName]: fileSpecifier(bunInstallDirectory, bunRootTarball) },
+				overrides: bunOverrides,
+			};
+			writeFileSync(join(bunInstallDirectory, "package.json"), `${JSON.stringify(bunPackageJson, undefined, "\t")}\n`);
 			run("bun", ["install", "--production", "--ignore-scripts"], { cwd: bunInstallDirectory });
 			createPackageCliShim(bunInstallDirectory);
 		}

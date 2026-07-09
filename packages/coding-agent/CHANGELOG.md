@@ -4,6 +4,20 @@
 
 ### Added
 
+### Changed
+
+- Tool-result truncation markers now include retrieval guidance (re-run with a narrower range); legacy markers remain parseable.
+
+### Fixed
+
+- Tool results are no longer head/tail-truncated below the emergency context threshold; the model now sees full tool output until context genuinely runs out (session 019f45c0 regression).
+
+### Removed
+
+## [2026.7.9] - 2026-07-09
+
+### Added
+
 - Added MCP skills-carry support: a skill can ship MCP servers via an `mcp.json` sidecar or SKILL.md `mcp:` frontmatter; their tools stay hidden (zero payload cost) until the skill loads.
 - Added the opt-in MCP proxy exposure tier (`exposure:"proxy"`): one `mcp_<server>` gateway tool with search/describe/call ops.
 - Added MCP resources: `mcp_list_resources`/`mcp_read_resource` utility tools, `@mcp:<server>/<uri>` prompt mentions, and resource-update subscriptions.
@@ -34,10 +48,10 @@
 
 ### Changed
 
-- Tool-result truncation markers now include retrieval guidance (re-run with a narrower range); legacy markers remain parseable.
-
 ### Fixed
 
+- Fixed the compiled Bun single-file binary crashing on every command (`Cannot find module '../package.json'`): the bundled `@earendil-works/pi-pty` loader read its version eagerly via `require("../package.json")`, which does not exist in the embedded Bun filesystem. It now falls back to the `package.json` shipped beside the executable (lockstep-versioned), so the Bun binary starts.
+- Fixed the native `@earendil-works/pi-pty` prebuild sentinel being coupled to the CalVer package version, which made every release invalidate the vendored prebuilds (the publish gate failed with a `__senpiPtyV<version>` sentinel mismatch). The sentinel is now a stable native-ABI tag (`__senpiPtyAbi1`) that only changes on a backward-incompatible native change, so CalVer releases no longer require rebuilding or re-vendoring the prebuilt binaries.
 - Fixed context-overflow recovery for configured upstream model aliases, so a selected alias such as `gpt-5.5-fast` can auto-compact and retry when the provider reports the wire model `gpt-5.5`.
 - Fixed the built-in `todowrite` tool call row to show the actual todo items instead of only an item count.
 - Fixed sessions going stale forever when the network dropped and reconnected mid-stream: the agent loop's provider stream idle timeout is now enabled by default (follows `httpIdleTimeoutMs`, default 5 min, `0` disables; `retry.provider.timeoutMs` overrides), so a silently dead connection fails with a retryable idle-timeout error and auto-retry recovers the turn. Previously the guard was off unless `retry.provider.timeoutMs` was set, which left the Bun binary (no undici dispatcher protection) hanging indefinitely.

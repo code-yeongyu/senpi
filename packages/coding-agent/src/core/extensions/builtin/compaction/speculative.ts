@@ -249,6 +249,9 @@ export function hardLimitEmergencyPrune(
 	needsAggressiveCompaction: boolean;
 } {
 	const targetTokens = Math.floor(contextWindow * EMERGENCY_CONTEXT_TARGET_RATIO);
+	if (estimateTotalTokens(messages) <= targetTokens) {
+		return { messages, needsAggressiveCompaction: false };
+	}
 	const noLlmPruned = truncateContextMessages(pruneToolResults(messages, contextWindow));
 	if (estimateTotalTokens(noLlmPruned) <= targetTokens) {
 		return { messages: noLlmPruned, needsAggressiveCompaction: false };

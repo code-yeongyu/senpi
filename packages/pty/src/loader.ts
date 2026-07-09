@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -62,22 +63,40 @@ export interface NativePtyLoaderOptions extends NativePtyCandidatePathOptions {
 
 const cjsRequire = createRequire(import.meta.url);
 export const NATIVE_PTY_PACKAGE_VERSION = readPackageVersion();
-const SEMVER_CORE_PATTERN = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/;
+/**
+ * Native ABI version. INTENTIONALLY decoupled from the package/CalVer version: it
+ * identifies the native surface (exports + signatures) this loader requires. Must
+ * match `NATIVE_PTY_ABI_VERSION` and the `__senpiPtyAbi<N>` export in
+ * `crates/senpi-pty/src/lib.rs`. Bump ONLY on a backward-incompatible native change
+ * (and rebuild the vendored prebuilds); a CalVer release must NOT change it.
+ */
+export const NATIVE_PTY_ABI_VERSION = "1";
 
 function readPackageVersion(): string {
-	const packageMetadata = cjsRequire("../package.json");
-	if (!isRecord(packageMetadata) || typeof packageMetadata.version !== "string") {
-		throw new Error("@earendil-works/pi-pty package.json is missing a string version");
+	// node/tsx/tarball layouts: the sibling `../package.json` resolves normally.
+	try {
+		const packageMetadata = cjsRequire("../package.json");
+		if (isRecord(packageMetadata) && typeof packageMetadata.version === "string") {
+			return packageMetadata.version;
+		}
+	} catch {
+		// Compiled Bun binary: `../package.json` is not in the embedded FS. Fall through.
 	}
-	return packageMetadata.version;
+	// Compiled Bun binary: the release ships package.json beside the executable. All
+	// workspace packages are lockstep-versioned, so the sibling version matches pty's.
+	try {
+		const parsed: unknown = JSON.parse(readFileSync(join(dirname(process.execPath), "package.json"), "utf-8"));
+		if (isRecord(parsed) && typeof parsed.version === "string") {
+			return parsed.version;
+		}
+	} catch {
+		// No readable sibling package.json either.
+	}
+	throw new Error("@earendil-works/pi-pty package.json is missing a string version");
 }
 
-export function getNativePtySentinelExport(packageVersion: string = NATIVE_PTY_PACKAGE_VERSION): string {
-	const match = SEMVER_CORE_PATTERN.exec(packageVersion);
-	if (match === null) {
-		throw new Error(`@earendil-works/pi-pty package version is not semver-compatible: ${packageVersion}`);
-	}
-	return `__senpiPtyV${match[1]}_${match[2]}_${match[3]}`;
+export function getNativePtySentinelExport(abiVersion: string = NATIVE_PTY_ABI_VERSION): string {
+	return `__senpiPtyAbi${abiVersion}`;
 }
 
 export function detectNativePtyRuntime(
@@ -150,7 +169,7 @@ function assertNativePtyBinding(value: unknown, modulePath: string): NativePtyBi
 	}
 
 	const sentinelValue = sentinel();
-	if (sentinelValue !== NATIVE_PTY_PACKAGE_VERSION) {
+	if (sentinelValue !== NATIVE_PTY_ABI_VERSION) {
 		throw new NativePtySentinelMismatchError(modulePath, sentinelExport, actualExports);
 	}
 
