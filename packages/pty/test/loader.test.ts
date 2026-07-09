@@ -14,8 +14,8 @@ import {
 const moduleDir = path.join(path.sep, "pkg", "dist");
 const execDir = path.join(path.sep, "bundle");
 const packageRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const packageVersion = "2026.7.9";
-const sentinelExport = "__senpiPtyV2026_7_9";
+const abiVersion = "1";
+const sentinelExport = "__senpiPtyAbi1";
 
 function candidate(host: string): string {
 	return path.join(path.sep, "pkg", "native", "prebuilds", host, `senpi_pty.${host}.node`);
@@ -38,7 +38,7 @@ describe("loadNativePty", () => {
 		const host = "darwin-arm64";
 		const native: NativePtyBinding = {
 			PtySession: class PtySession {},
-			[sentinelExport]: () => packageVersion,
+			[sentinelExport]: () => abiVersion,
 		};
 		const attempted: string[] = [];
 
@@ -60,8 +60,8 @@ describe("loadNativePty", () => {
 		expect(attempted).toEqual([candidate(host)]);
 	});
 
-	it("derives the sentinel export from the package version", () => {
-		expect(getNativePtySentinelExport(packageVersion)).toBe(sentinelExport);
+	it("derives the sentinel export from the ABI version", () => {
+		expect(getNativePtySentinelExport(abiVersion)).toBe(sentinelExport);
 	});
 
 	it("returns a native-unavailable diagnostic when every candidate is missing", () => {

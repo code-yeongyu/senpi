@@ -63,7 +63,14 @@ export interface NativePtyLoaderOptions extends NativePtyCandidatePathOptions {
 
 const cjsRequire = createRequire(import.meta.url);
 export const NATIVE_PTY_PACKAGE_VERSION = readPackageVersion();
-const SEMVER_CORE_PATTERN = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/;
+/**
+ * Native ABI version. INTENTIONALLY decoupled from the package/CalVer version: it
+ * identifies the native surface (exports + signatures) this loader requires. Must
+ * match `NATIVE_PTY_ABI_VERSION` and the `__senpiPtyAbi<N>` export in
+ * `crates/senpi-pty/src/lib.rs`. Bump ONLY on a backward-incompatible native change
+ * (and rebuild the vendored prebuilds); a CalVer release must NOT change it.
+ */
+export const NATIVE_PTY_ABI_VERSION = "1";
 
 function readPackageVersion(): string {
 	// node/tsx/tarball layouts: the sibling `../package.json` resolves normally.
@@ -88,12 +95,8 @@ function readPackageVersion(): string {
 	throw new Error("@earendil-works/pi-pty package.json is missing a string version");
 }
 
-export function getNativePtySentinelExport(packageVersion: string = NATIVE_PTY_PACKAGE_VERSION): string {
-	const match = SEMVER_CORE_PATTERN.exec(packageVersion);
-	if (match === null) {
-		throw new Error(`@earendil-works/pi-pty package version is not semver-compatible: ${packageVersion}`);
-	}
-	return `__senpiPtyV${match[1]}_${match[2]}_${match[3]}`;
+export function getNativePtySentinelExport(abiVersion: string = NATIVE_PTY_ABI_VERSION): string {
+	return `__senpiPtyAbi${abiVersion}`;
 }
 
 export function detectNativePtyRuntime(
@@ -166,7 +169,7 @@ function assertNativePtyBinding(value: unknown, modulePath: string): NativePtyBi
 	}
 
 	const sentinelValue = sentinel();
-	if (sentinelValue !== NATIVE_PTY_PACKAGE_VERSION) {
+	if (sentinelValue !== NATIVE_PTY_ABI_VERSION) {
 		throw new NativePtySentinelMismatchError(modulePath, sentinelExport, actualExports);
 	}
 

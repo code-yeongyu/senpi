@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { getNativePtySentinelExport, NATIVE_PTY_PACKAGE_VERSION } from "../src/loader.ts";
+import { getNativePtySentinelExport, NATIVE_PTY_ABI_VERSION, NATIVE_PTY_PACKAGE_VERSION } from "../src/loader.ts";
 
 // The compiled Bun single-file binary made `import.meta.url` resolve to `/$bunfs/root/pi`,
 // so the eager `require("../package.json")` threw at module load and crashed every CLI
@@ -8,7 +8,7 @@ import { getNativePtySentinelExport, NATIVE_PTY_PACKAGE_VERSION } from "../src/l
 // even be collected unless `../src/loader.ts` loaded without throwing, and they assert the
 // sentinel export is derived from that resolved version so a regression surfaces here.
 
-const SENTINEL_SHAPE = /^__senpiPtyV\d+_\d+_\d+$/;
+const SENTINEL_SHAPE = /^__senpiPtyAbi\d+$/;
 const SEMVER_CORE = /^\d+\.\d+\.\d+(?:-[\w.-]+)?$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -26,15 +26,9 @@ function readOwnPackageVersion(): string {
 	return raw.version;
 }
 
-// Recompute the sentinel from major/minor/patch by hand so a bug in either the resolved
-// version or the derivation reddens the cross-check, not just a self-consistent echo.
-function expectedSentinel(version: string): string {
-	const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
-	if (match === null) {
-		throw new Error(`test fixture: version is not semver-core: ${version}`);
-	}
-	return `__senpiPtyV${match[1]}_${match[2]}_${match[3]}`;
-}
+// The sentinel is decoupled from the package version: it encodes only the native ABI
+// version, so a CalVer bump must NOT change it (that coupling is exactly what crashed
+// the prior release's publish).
 
 describe("NATIVE_PTY_PACKAGE_VERSION", () => {
 	it("resolves to the package.json version at module load (proving load did not throw)", () => {
@@ -46,21 +40,23 @@ describe("NATIVE_PTY_PACKAGE_VERSION", () => {
 });
 
 describe("getNativePtySentinelExport", () => {
-	it("derives the sentinel from the resolved package version", () => {
-		const sentinel = getNativePtySentinelExport(NATIVE_PTY_PACKAGE_VERSION);
+	it("derives the sentinel from the ABI version, not the package version", () => {
+		const sentinel = getNativePtySentinelExport();
 		expect(sentinel).toMatch(SENTINEL_SHAPE);
-		expect(sentinel).toBe(expectedSentinel(NATIVE_PTY_PACKAGE_VERSION));
+		expect(sentinel).toBe(`__senpiPtyAbi${NATIVE_PTY_ABI_VERSION}`);
+	});
+
+	it("stays stable across package versions (CalVer bump must not change it)", () => {
+		const fromPackageVersion = getNativePtySentinelExport(NATIVE_PTY_ABI_VERSION);
+		expect(fromPackageVersion).toBe(getNativePtySentinelExport());
+		// The sentinel must not embed the CalVer package version.
+		expect(getNativePtySentinelExport()).not.toContain(NATIVE_PTY_PACKAGE_VERSION.replace(/[.+-]/g, "_"));
 	});
 
 	it.each([
-		["2026.7.5-2", "__senpiPtyV2026_7_5"],
-		["1.0.0", "__senpiPtyV1_0_0"],
-		["10.20.30+build.7", "__senpiPtyV10_20_30"],
-	])("maps semver %s to sentinel %s (dropping any suffix)", (version, expected) => {
-		expect(getNativePtySentinelExport(version)).toBe(expected);
-	});
-
-	it.each([["not-semver"], ["2026.7"], ["v1.2.3"], [""]])("throws for the non-semver version %s", (version) => {
-		expect(() => getNativePtySentinelExport(version)).toThrow(/not semver-compatible/);
+		["1", "__senpiPtyAbi1"],
+		["2", "__senpiPtyAbi2"],
+	])("maps ABI version %s to sentinel %s", (abi, expected) => {
+		expect(getNativePtySentinelExport(abi)).toBe(expected);
 	});
 });
