@@ -368,7 +368,10 @@ func TestAttachOrSpawn_RaceExactlyOneDaemon(t *testing.T) {
 				AgentDir: agentDir,
 				Cwd:      cwd,
 				Spawn:    sp.spawn,
-				Timeout:  4 * time.Second,
+				// Generous headroom: 4 concurrent racers spawn + poll the registry under
+				// heavily loaded CI (the publish job runs the full suite). Production default
+				// is 10s; the tight 4s here flaked as a cancel/timeout during release publish.
+				Timeout:  30 * time.Second,
 			})
 			results[idx], errs[idx] = res, err
 		}(i)
