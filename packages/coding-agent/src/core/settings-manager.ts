@@ -85,11 +85,13 @@ export type TransportSetting = Transport;
  * Package source for npm/git packages.
  * - String form: load all resources from the package
  * - Object form: filter which resources to load
+ * - autoload=false: start empty and only apply explicit resource patterns
  */
 export type PackageSource =
 	| string
 	| {
 			source: string;
+			autoload?: boolean;
 			extensions?: string[];
 			skills?: string[];
 			prompts?: string[];
@@ -113,6 +115,7 @@ export interface Settings {
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettings;
 	hideThinkingBlock?: boolean;
+	showCacheMissNotices?: boolean; // default: false - show transcript notices for significant prompt-cache misses
 	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows)
 	quietStartup?: boolean;
@@ -934,6 +937,10 @@ export class SettingsManager {
 		return this.settings.hideThinkingBlock ?? false;
 	}
 
+	getShowCacheMissNotices(): boolean {
+		return this.settings.showCacheMissNotices ?? false;
+	}
+
 	getExternalEditorCommand(): string | undefined {
 		const configuredEditor = this.settings.externalEditor;
 		if (typeof configuredEditor === "string" && configuredEditor.trim() !== "") {
@@ -949,6 +956,12 @@ export class SettingsManager {
 	setHideThinkingBlock(hide: boolean): void {
 		this.globalSettings.hideThinkingBlock = hide;
 		this.markModified("hideThinkingBlock");
+		this.save();
+	}
+
+	setShowCacheMissNotices(show: boolean): void {
+		this.globalSettings.showCacheMissNotices = show;
+		this.markModified("showCacheMissNotices");
 		this.save();
 	}
 

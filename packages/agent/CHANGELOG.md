@@ -10,6 +10,23 @@
 
 ### Removed
 
+## [2026.7.9-2] - 2026-07-09
+
+### Added
+
+- Exported `InMemorySessionStorage` and `JsonlSessionStorage`.
+- Supported custom metadata in JSONL session headers.
+
+### Changed
+
+### Fixed
+
+- Added session context entry projection for harness sessions.
+- Failed tool calls from length-truncated assistant messages.
+- Normalized null message content at ingestion boundaries.
+
+### Removed
+
 ## [2026.7.9] - 2026-07-09
 
 ### Added

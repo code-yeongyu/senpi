@@ -416,6 +416,7 @@ export class ModelRegistry {
 	private modelRequestExtraBody: Map<string, Record<string, unknown>> = new Map();
 	private modelRequestUpstreamIds: Map<string, string> = new Map();
 	private modelRequestServiceTiers: Map<string, ModelServiceTier> = new Map();
+	private configModelOverrides: Map<string, Map<string, ModelOverride>> = new Map();
 	private registeredProviders: Map<string, ProviderConfigInput> = new Map();
 	private loadError: string | undefined = undefined;
 	readonly authStorage: AuthStorage;
@@ -475,6 +476,7 @@ export class ModelRegistry {
 			modelBlacklists,
 			error,
 		} = this.modelsJsonPath ? this.loadCustomModels(this.modelsJsonPath) : emptyCustomModelsResult();
+		this.configModelOverrides = modelOverrides;
 
 		if (error) {
 			this.loadError = error;
@@ -545,6 +547,15 @@ export class ModelRegistry {
 				return [model];
 			});
 		});
+	}
+
+	private getConfiguredModelOverride(providerName: string, modelId: string): ModelOverride | undefined {
+		return this.configModelOverrides.get(providerName)?.get(modelId);
+	}
+
+	private applyConfiguredModelOverride(providerName: string, model: Model<Api>): Model<Api> {
+		const modelOverride = this.getConfiguredModelOverride(providerName, model.id);
+		return modelOverride ? applyModelOverride(model, modelOverride) : model;
 	}
 
 	/** Merge custom models into built-in list by provider+id (custom wins on conflicts). */
@@ -1171,12 +1182,21 @@ export class ModelRegistry {
 			// Parse and add new models
 			for (const modelDef of config.models) {
 				const api = modelDef.api || config.api;
-				this.storeModelHeaders(providerName, modelDef.id, modelDef.headers);
-				this.storeModelExtraBody(providerName, modelDef.id, modelDef.extraBody);
+				const modelOverride = this.getConfiguredModelOverride(providerName, modelDef.id);
+				const headers =
+					modelDef.headers || modelOverride?.headers
+						? { ...modelDef.headers, ...modelOverride?.headers }
+						: undefined;
+				const extraBody =
+					modelDef.extraBody || modelOverride?.extraBody
+						? { ...modelDef.extraBody, ...modelOverride?.extraBody }
+						: undefined;
+				this.storeModelHeaders(providerName, modelDef.id, headers);
+				this.storeModelExtraBody(providerName, modelDef.id, extraBody);
 				this.storeModelUpstreamId(providerName, modelDef.id, modelDef.upstreamModelId);
 				this.storeModelServiceTier(providerName, modelDef.id, modelDef.serviceTier);
 
-				this.models.push({
+				const model = this.applyConfiguredModelOverride(providerName, {
 					id: modelDef.id,
 					name: modelDef.name,
 					api: api as Api,
@@ -1192,6 +1212,7 @@ export class ModelRegistry {
 					headers: undefined,
 					compat: modelDef.compat,
 				} as Model<Api>);
+				this.models.push(model);
 			}
 
 			// Apply OAuth modifyModels if credentials exist (e.g., to update baseUrl)

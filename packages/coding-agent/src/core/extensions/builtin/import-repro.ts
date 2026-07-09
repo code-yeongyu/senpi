@@ -125,11 +125,108 @@ function decodeExportedHtml(html: string): { header: SessionHeader; jsonl: strin
 	return { header, jsonl: `${lines.join("\n")}\n` };
 }
 
-/** Rewrite all occurrences of the recorded cwd (JSON-escaped) to the target cwd. */
+type SessionPlatform = "windows" | "unix" | "unknown";
+
+function escapeJsonString(value: string): string {
+	return JSON.stringify(value).slice(1, -1);
+}
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function trimTrailingPathSeparators(value: string): string {
+	return value.replace(/[\\/]+$/, "");
+}
+
+function getPathTailName(value: string): string {
+	const trimmed = trimTrailingPathSeparators(value);
+	return trimmed.split(/[\\/]/).filter(Boolean).at(-1) ?? "";
+}
+
+function getWindowsDrivePathParts(value: string): { drive: string; rest: string } | undefined {
+	const trimmed = trimTrailingPathSeparators(value);
+	const driveMatch = trimmed.match(/^([A-Za-z]):[\\/](.*)$/);
+	if (driveMatch) {
+		return { drive: driveMatch[1].toUpperCase(), rest: driveMatch[2].replace(/[\\/]+/g, "/") };
+	}
+
+	const msysMatch = trimmed.match(/^\/([A-Za-z])\/(.*)$/);
+	if (msysMatch) {
+		return { drive: msysMatch[1].toUpperCase(), rest: msysMatch[2].replace(/[\\/]+/g, "/") };
+	}
+
+	return undefined;
+}
+
+function getCwdRewriteVariants(sourceCwd: string): string[] {
+	const trimmed = trimTrailingPathSeparators(sourceCwd);
+	const variants = new Set<string>();
+	if (trimmed) variants.add(trimmed);
+
+	const driveParts = getWindowsDrivePathParts(trimmed);
+	if (driveParts) {
+		const rest = driveParts.rest.replace(/^\/+|\/+$/g, "");
+		const backslashRest = rest.replace(/\//g, "\\");
+		variants.add(`${driveParts.drive}:\\${backslashRest}`);
+		variants.add(`${driveParts.drive}:/${rest}`);
+		variants.add(`/${driveParts.drive.toLowerCase()}/${rest}`);
+		variants.add(`/${driveParts.drive}/${rest}`);
+	}
+
+	return Array.from(variants)
+		.filter(Boolean)
+		.sort((a, b) => b.length - a.length);
+}
+
+function getCiWorkdirName(sourceCwd: string): string | undefined {
+	const name = getPathTailName(sourceCwd);
+	return /^pi-ci-[0-9a-f]{32}$/i.test(name) ? name : undefined;
+}
+
+function detectSessionPlatform(cwd: string): SessionPlatform {
+	if (/^[A-Za-z]:[\\/]/.test(cwd) || /^\/[A-Za-z]\//.test(cwd)) return "windows";
+	if (cwd.startsWith("/")) return "unix";
+	return "unknown";
+}
+
+function getLocalPlatform(): Exclude<SessionPlatform, "unknown"> {
+	return process.platform === "win32" ? "windows" : "unix";
+}
+
+function getPlatformContinuationNotice(sourceCwd: string): string | undefined {
+	const sourcePlatform = detectSessionPlatform(sourceCwd);
+	const localPlatform = getLocalPlatform();
+	if (sourcePlatform === "unknown" || sourcePlatform === localPlatform) return undefined;
+	if (localPlatform === "unix") {
+		return "This session was continued on a non-Windows machine; paths are now Unix style.";
+	}
+	return "This session was continued on a Windows machine; paths are now Windows style.";
+}
+
+/** Rewrite occurrences of the recorded CI cwd (JSON-escaped) to the target cwd. */
 function rewriteSessionCwd(raw: string, sourceCwd: string, targetCwd: string): string {
-	if (sourceCwd === targetCwd) return raw;
-	const escapeJson = (value: string) => JSON.stringify(value).slice(1, -1);
-	return raw.split(escapeJson(sourceCwd)).join(escapeJson(targetCwd));
+	const target = escapeJsonString(targetCwd);
+	let rewritten = raw;
+
+	for (const sourceVariant of getCwdRewriteVariants(sourceCwd)) {
+		if (sourceVariant === targetCwd) continue;
+		rewritten = rewritten.split(escapeJsonString(sourceVariant)).join(target);
+	}
+
+	const ciWorkdirName = getCiWorkdirName(sourceCwd);
+	if (ciWorkdirName) {
+		const escapedName = escapeRegExp(ciWorkdirName);
+		const windowsPathPatterns = [
+			new RegExp(`[A-Za-z]:(?:[^"\\r\\n])*?${escapedName}`, "g"),
+			new RegExp(`/[A-Za-z]/(?:[^"\\r\\n])*?${escapedName}`, "g"),
+		];
+		for (const pattern of windowsPathPatterns) {
+			rewritten = rewritten.replace(pattern, target);
+		}
+	}
+
+	return rewritten;
 }
 
 async function fetchText(url: string): Promise<string> {
@@ -226,6 +323,7 @@ export default function (pi: ExtensionAPI) {
 					sourceName = basename(parsedRef.path).replace(/\.html$/, ".jsonl");
 				}
 
+				const platformNotice = getPlatformContinuationNotice(decoded.header.cwd);
 				const rewritten = rewriteSessionCwd(decoded.jsonl, decoded.header.cwd, targetCwd);
 				const destination = join(sessionDir, sourceName);
 				if (existsSync(destination)) {
@@ -241,7 +339,20 @@ export default function (pi: ExtensionAPI) {
 				writeFileSync(destination, rewritten);
 
 				ctx.ui.notify(`Imported session ${decoded.header.id} (cwd ${decoded.header.cwd} -> ${targetCwd})`, "info");
-				await ctx.switchSession(destination);
+				await ctx.switchSession(destination, {
+					withSession: async (nextCtx) => {
+						if (!platformNotice) return;
+						await nextCtx.sendMessage(
+							{
+								customType: "import-repro",
+								content: platformNotice,
+								display: true,
+								details: { sourceCwd: decoded.header.cwd, targetCwd },
+							},
+							{ triggerTurn: false },
+						);
+					},
+				});
 			} catch (error) {
 				ctx.ui.notify(`ir: ${error instanceof Error ? error.message : String(error)}`, "error");
 			}

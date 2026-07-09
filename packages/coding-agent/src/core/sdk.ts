@@ -105,6 +105,7 @@ export type {
 	ExtensionCommandContext,
 	ExtensionContext,
 	ExtensionFactory,
+	InlineExtension,
 	SlashCommandInfo,
 	SlashCommandSource,
 	ToolDefinition,
@@ -322,7 +323,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				throw new Error(auth.error);
 			}
 			const requestModel = auth.upstreamModelId ? { ...model, id: auth.upstreamModelId } : model;
-			const env = auth.env;
 			const providerRetrySettings = settingsManager.getProviderRetrySettings();
 			const httpIdleTimeoutMs = settingsManager.getHttpIdleTimeoutMs();
 			// SDKs treat timeout=0 as 0ms (immediate timeout), not "no timeout".
@@ -331,6 +331,20 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			const timeoutMs = options?.timeoutMs ?? providerRetrySettings.timeoutMs ?? effectiveTimeoutMs;
 			const websocketConnectTimeoutMs =
 				options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
+			const env = auth.env || options?.env ? { ...(auth.env ?? {}), ...(options?.env ?? {}) } : undefined;
+			let headers = mergeProviderAttributionHeaders(
+				model,
+				settingsManager,
+				options?.sessionId,
+				auth.headers,
+				options?.headers,
+			);
+			// Let extensions inject/adjust per-request headers (e.g. tracing, session correlation)
+			// after static assembly, before the provider HTTP call.
+			const headerRunner = extensionRunnerRef.current;
+			if (headerRunner?.hasHandlers("before_provider_headers")) {
+				headers = await headerRunner.emitBeforeProviderHeaders(headers ?? {});
+			}
 			const streamOptions = {
 				...options,
 				apiKey: auth.apiKey,
@@ -340,13 +354,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				websocketConnectTimeoutMs,
 				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
 				maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
-				headers: mergeProviderAttributionHeaders(
-					model,
-					settingsManager,
-					options?.sessionId,
-					auth.headers,
-					options?.headers,
-				),
+				headers,
 				extraBody: auth.extraBody || options?.extraBody ? { ...auth.extraBody, ...options?.extraBody } : undefined,
 			};
 			return streamSimple(requestModel, context, streamOptions);

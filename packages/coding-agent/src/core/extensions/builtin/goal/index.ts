@@ -87,6 +87,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		updateGoalUiBestEffort(ctx, goal);
 		if (
 			goal?.status === "active" &&
+			!ctx.signal?.aborted &&
 			shouldQueueGoalContinuationAfterAgentEnd(goal, ctx.hasPendingMessages(), event.messages)
 		) {
 			queueHiddenGoalPrompt(pi, buildContinuationPrompt(goal));

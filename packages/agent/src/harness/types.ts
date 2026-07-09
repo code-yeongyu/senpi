@@ -436,6 +436,7 @@ export interface JsonlSessionMetadata extends SessionMetadata {
 	cwd: string;
 	path: string;
 	parentSessionPath?: string;
+	metadata?: Record<string, unknown>;
 }
 
 export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetadata> {
@@ -481,6 +482,7 @@ export interface SessionRepo<
 export interface JsonlSessionCreateOptions extends SessionCreateOptions {
 	cwd: string;
 	parentSessionPath?: string;
+	metadata?: Record<string, unknown>;
 }
 
 export interface JsonlSessionListOptions {

@@ -49,6 +49,7 @@ import type {
 import {
 	buildSessionContext,
 	type CompactionEntry,
+	type CustomMessageEntry,
 	type ModelChangeEntry,
 	migrateSessionEntries,
 	parseSessionEntries,
@@ -165,6 +166,21 @@ function createThinkingLevelEntry(thinkingLevel: string): ThinkingLevelChangeEnt
 		parentId: lastId,
 		timestamp: new Date().toISOString(),
 		thinkingLevel,
+	};
+	lastId = id;
+	return entry;
+}
+
+function createCustomMessageEntry(content: string): CustomMessageEntry {
+	const id = `test-id-${entryCounter++}`;
+	const entry: CustomMessageEntry = {
+		type: "custom_message",
+		id,
+		parentId: lastId,
+		timestamp: new Date().toISOString(),
+		customType: "test",
+		content,
+		display: true,
 	};
 	lastId = id;
 	return entry;
@@ -580,6 +596,25 @@ describe("findCutPoint", () => {
 		const result = findCutPoint(entries, 0, entries.length, tinyBudget);
 
 		expect(result.firstKeptEntryIndex).toBe(lastValidCutPointIndex);
+	});
+
+	it("should budget context-visible custom message entries", () => {
+		const entries: SessionEntry[] = [
+			createMessageEntry(createUserMessage("hi")),
+			createMessageEntry(createAssistantMessage("hello")),
+			createCustomMessageEntry("x".repeat(4000)),
+			createMessageEntry(createAssistantMessage("ok")),
+		];
+
+		const tinyBudget = findCutPoint(entries, 0, entries.length, 1);
+		expect(tinyBudget.firstKeptEntryIndex).toBe(3);
+		expect(tinyBudget.isSplitTurn).toBe(true);
+		expect(tinyBudget.turnStartIndex).toBe(2);
+
+		const customFitsBudget = findCutPoint(entries, 0, entries.length, 2);
+		expect(customFitsBudget.firstKeptEntryIndex).toBe(2);
+		expect(customFitsBudget.isSplitTurn).toBe(false);
+		expect(customFitsBudget.turnStartIndex).toBe(-1);
 	});
 });
 

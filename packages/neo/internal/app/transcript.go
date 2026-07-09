@@ -45,6 +45,7 @@ const (
 // feed entry, with the surface that owns it instead. The exhaustiveness test
 // asserts handled ∪ ignored ∪ deferred covers the whole mirror.
 var transcriptIgnoredEvents = map[string]string{
+	"agent_settled":         "RPC completion marker; transcript state is finalized by agent_end/message_end",
 	"turn_start":             "turn boundaries render nothing; content arrives via message_* events",
 	"turn_end":               "turn boundaries render nothing; tool results arrive via tool_execution_end",
 	"compaction_start":       "status-indicator surface (shell status line, todo 7)",

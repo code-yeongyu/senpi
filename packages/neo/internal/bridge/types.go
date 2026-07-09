@@ -209,7 +209,7 @@ var eventTypes = []string{
 	"message_start", "message_update", "message_end",
 	"tool_execution_start", "tool_execution_update", "tool_execution_end",
 	// --- AgentSessionEvent extensions (agent-session.ts:145-172) ---
-	"queue_update",
+	"agent_settled", "queue_update",
 	"compaction_start", "compaction_progress", "compaction_end",
 	"entry_appended", "session_info_changed",
 	"tool_hook_status",     // ExtensionToolHookLifecycleEvent

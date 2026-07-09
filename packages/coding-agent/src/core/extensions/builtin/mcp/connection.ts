@@ -65,6 +65,21 @@ export class ServerConnection {
 		return this.#generation;
 	}
 
+	refreshCapturedDiagnostics(): void {
+		const current = this.#lastError;
+		if (current === undefined) return;
+		const capturedError = diagnoseCapturedMcpConnectFailure({
+			config: this.#config,
+			cause: current,
+			env: this.#env,
+			logger: this.#logger,
+			serverName: this.serverName,
+		});
+		if (capturedError !== null && capturedError.message !== current.message) {
+			this.#lastError = capturedError;
+		}
+	}
+
 	get client(): Client {
 		if (this.#connection === undefined) {
 			throw new ConnectError(`MCP server ${this.serverName} is not connected`, {

@@ -26,6 +26,7 @@ export { ExtensionRunner } from "./runner.ts";
 export type {
 	AfterProviderResponseEvent,
 	AgentEndEvent,
+	AgentSettledEvent,
 	AgentStartEvent,
 	// Re-exports
 	AgentToolResult,
@@ -39,6 +40,7 @@ export type {
 	BashToolResultEvent,
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
+	BeforeProviderHeadersEvent,
 	BeforeProviderRequestEvent,
 	BeforeProviderRequestEventResult,
 	BuildSystemPromptOptions,
@@ -93,6 +95,7 @@ export type {
 	GetThinkingLevelHandler,
 	GrepToolCallEvent,
 	GrepToolResultEvent,
+	InlineExtension,
 	// Events - Input
 	InputEvent,
 	InputEventResult,

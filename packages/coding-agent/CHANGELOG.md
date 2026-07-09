@@ -6,12 +6,47 @@
 
 ### Changed
 
+### Fixed
+
+- Fixed `npm install @code-yeongyu/senpi` shipping a broken dependency tree: the published tarball no longer includes `npm-shrinkwrap.json`, which (combined with `bundleDependencies`) made npm treat the bundled subtree as the complete locked tree and skip installing non-bundled direct deps like `@modelcontextprotocol/sdk` and `cross-spawn`, crashing the CLI at startup with `ERR_MODULE_NOT_FOUND`. The publish/bundle staging manifest is now generated as `publish-deps.lock.json` (never packed), and a pack guard prevents any future `npm-shrinkwrap.json` from being shipped.
+
+### Removed
+
+## [2026.7.9-2] - 2026-07-09
+
+### Added
+
+- Added prompt cache miss tracking and optional TUI notices.
+- Added the `agent_settled` lifecycle event for extensions and RPC clients.
+- Added provider arguments for `/login`.
+- Added a `before_provider_headers` extension hook.
+- Added named inline extension factories for SDK users.
+- Exposed GPT-5.6 model metadata through the CLI model registry.
+
+### Changed
+
+- Improved project-local `config` resource management.
+- Aligned reload command descriptions across docs, examples, and slash commands.
+- Updated model catalogs, including GitHub Copilot extended-context windows and Xiaomi token-plan catalogs.
+- Warned when `--session-id` creates a new session.
 - Tool-result truncation markers now include retrieval guidance (re-run with a narrower range); legacy markers remain parseable.
 
 ### Fixed
 
+- Counted context-visible custom messages in compaction budgeting.
+- Avoided Windows context-file discovery hangs.
+- Applied `modelOverrides` to extension-provided models.
+- Fixed upstream-merge regressions that could run queued follow-up or goal-continuation prompts after aborted turns, drop context-exclusion filtering during compaction, or show stale MCP diagnostics.
+- Restored exact comma-formatted token counts in the interactive footer.
+- Fixed native clipboard image handling in Bun releases.
+- Prevented double-selecting a fork menu entry.
+- Cleared label timestamp cache state when starting new sessions.
+- Normalized null message content at ingestion boundaries.
+- Retried Bun socket-drop provider failures and `ResourceExhausted` errors.
+- Used a `(no tool output)` placeholder for empty text-only tool results.
+- Failed tool calls from length-truncated assistant messages.
+- Kept TUI paste tracking correct when paste markers are deleted or the terminal is cleared.
 - Tool results are no longer head/tail-truncated below the emergency context threshold; the model now sees full tool output until context genuinely runs out (session 019f45c0 regression).
-- Fixed `npm install @code-yeongyu/senpi` shipping a broken dependency tree: the published tarball no longer includes `npm-shrinkwrap.json`, which (combined with `bundleDependencies`) made npm treat the bundled subtree as the complete locked tree and skip installing non-bundled direct deps like `@modelcontextprotocol/sdk` and `cross-spawn`, crashing the CLI at startup with `ERR_MODULE_NOT_FOUND`. The publish/bundle staging manifest is now generated as `publish-deps.lock.json` (never packed), and a pack guard prevents any future `npm-shrinkwrap.json` from being shipped.
 
 ### Removed
 
