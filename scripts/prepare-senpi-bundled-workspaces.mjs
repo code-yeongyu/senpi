@@ -120,6 +120,7 @@ export function copyPublishDependencies(repoRoot) {
 
 export function assertSenpiPackedWorkspaceFiles(packed, options = {}) {
 	const nativeTargets = options.nativePrebuildTargets ?? [nativePrebuildTarget()];
+	const prebuildFiles = new Set(nativeTargets.map(nativePrebuildFile));
 	const filePaths = new Set((packed.files ?? []).map((file) => file.path));
 	const missing = [];
 
@@ -129,9 +130,15 @@ export function assertSenpiPackedWorkspaceFiles(packed, options = {}) {
 		for (const requiredFile of requiredFiles) {
 			const path = `${packageRoot}/${requiredFile}`;
 			const dryRunPath = `${dryRunPackageRoot}/${requiredFile}`;
-			if (!filePaths.has(path) && !filePaths.has(dryRunPath)) {
-				missing.push(`${path} or ${dryRunPath}`);
+			if (filePaths.has(path) || filePaths.has(dryRunPath)) continue;
+			// The platform native prebuild (.node) is optional — the pty loader falls back
+			// to a child_process pipe when it is absent, so a host without a committed/built
+			// prebuild (e.g. linux-x64 in the npm-publish job) must not fail the pack check.
+			if (prebuildFiles.has(requiredFile)) {
+				console.warn(`Warning: packed ${packageName} has no native prebuild ${requiredFile} (pipe fallback at runtime).`);
+				continue;
 			}
+			missing.push(`${path} or ${dryRunPath}`);
 		}
 	}
 
@@ -151,14 +158,26 @@ export function prepareSenpiBundledWorkspaces(repoRoot = root) {
 			throw new Error(`Missing ${distPath}. Run npm run build before preparing bundled workspaces.`);
 		}
 
+		// Loader files (package.json, dist/index.js, native/index.js) are hard-required.
+		// The platform-specific native prebuild (.node) is NOT: when it is absent the pty
+		// loader uses its child_process pipe fallback (same tolerance as build-binaries.sh,
+		// and the published package historically shipped with no prebuilds at all). So a
+		// missing host prebuild must warn, not fail the publish on a runner whose platform
+		// has no committed or built prebuild (e.g. linux-x64 in the npm-publish job).
+		const prebuildFiles = new Set(workspace.nativePrebuild ? [nativePrebuildFile(nativePrebuildTarget())] : []);
 		const requiredFiles = requiredFilesForWorkspace(workspace, [nativePrebuildTarget()]);
 		for (const requiredFile of requiredFiles) {
 			const requiredPath = join(sourceRoot, requiredFile);
-			if (!existsSync(requiredPath)) {
-				throw new Error(
-					`Missing ${requiredPath}. ${workspace.packageName} cannot be bundled without loader-visible package files.`,
+			if (existsSync(requiredPath)) continue;
+			if (prebuildFiles.has(requiredFile)) {
+				console.warn(
+					`Warning: ${workspace.packageName} has no native prebuild at ${requiredFile}; bundling without it (pipe fallback at runtime).`,
 				);
+				continue;
 			}
+			throw new Error(
+				`Missing ${requiredPath}. ${workspace.packageName} cannot be bundled without loader-visible package files.`,
+			);
 		}
 
 		const targetRoot = join(codingAgentNodeModules, ...workspace.targetParts);

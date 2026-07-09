@@ -88,20 +88,56 @@ describe("prepareSenpiBundledWorkspaces", () => {
 		);
 	});
 
-	it("fails before bundling pty when the host prebuild is missing", () => {
-		// Given
+	it("bundles pty with a pipe-fallback warning when the host prebuild is missing", () => {
+		// Given: every loader-visible file present, but the host native prebuild absent.
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-bundle-missing-pty-prebuild-"));
 		writeShrinkwrap(tempDir, { "": { dependencies: {} } });
-		for (const workspace of ["agent", "ai", "tui"]) {
+		for (const workspace of ["agent", "ai", "tui", "senpi-codemode"]) {
 			writeBundledWorkspace(tempDir, workspace);
 		}
 		writeBundledWorkspace(tempDir, "pty");
 		rmSync(join(tempDir, "packages", "pty", nativePrebuildFile(nativePrebuildTarget())));
 
-		// When / Then
+		const warnings = [];
+		const originalWarn = console.warn;
+		console.warn = (message) => warnings.push(String(message));
+
+		// When / Then: the prebuild is optional (pipe fallback), so bundling must not throw.
+		try {
+			assert.doesNotThrow(() => prepareSenpiBundledWorkspaces(tempDir));
+		} finally {
+			console.warn = originalWarn;
+		}
+
+		// And: pty is still copied into coding-agent node_modules (loader files present).
+		assert.equal(
+			readFileSync(
+				join(tempDir, "packages", "coding-agent", "node_modules", "@earendil-works", "pi-pty", "native", "index.js"),
+				"utf8",
+			),
+			"",
+		);
+		// And: a warning names the missing prebuild.
+		assert.ok(
+			warnings.some((message) => /no native prebuild/.test(message)),
+			`expected a pipe-fallback warning, got: ${JSON.stringify(warnings)}`,
+		);
+	});
+
+	it("fails before bundling pty when a loader-visible file is missing", () => {
+		// Given: the hard-required loader file native/index.js is absent.
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-bundle-missing-pty-loader-"));
+		writeShrinkwrap(tempDir, { "": { dependencies: {} } });
+		for (const workspace of ["agent", "ai", "tui"]) {
+			writeBundledWorkspace(tempDir, workspace);
+		}
+		writeBundledWorkspace(tempDir, "pty");
+		rmSync(join(tempDir, "packages", "pty", "native", "index.js"));
+
+		// When / Then: a missing loader file is still fatal.
 		assert.throws(
 			() => prepareSenpiBundledWorkspaces(tempDir),
-			/Missing .*native\/prebuilds\/.*senpi_pty\..*\.node.*cannot be bundled/,
+			/Missing .*native\/index\.js.*cannot be bundled/,
 		);
 	});
 });

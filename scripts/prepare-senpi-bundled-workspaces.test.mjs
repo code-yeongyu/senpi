@@ -209,9 +209,8 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 		);
 	});
 
-	it("rejects senpi package metadata that omits the bundled host pty prebuild", () => {
-		// Given
-		const hostPrebuild = nativePrebuildFile(nativePrebuildTarget());
+	it("accepts senpi package metadata that omits the host pty prebuild (pipe fallback)", () => {
+		// Given: all loader files present, but no host native prebuild.
 		const packed = {
 			files: [
 				{ path: "package/dist/cli.js" },
@@ -224,18 +223,24 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 				{ path: "package/node_modules/@earendil-works/pi-pty/native/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-tui/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-tui/dist/index.js" },
+				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/package.json" },
+				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/src/index.ts" },
+				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/src/kernels/py/prelude.py" },
 			],
 		};
 
-		// When / Then
-		assert.throws(
-			() => assertSenpiPackedWorkspaceFiles(packed),
-			new RegExp(`@earendil-works/pi-pty/${hostPrebuild.replaceAll("/", "\\/").replaceAll(".", "\\.")}`),
-		);
+		// When / Then: the native prebuild is optional (pipe fallback), so this must not throw.
+		const originalWarn = console.warn;
+		console.warn = () => {};
+		try {
+			assert.doesNotThrow(() => assertSenpiPackedWorkspaceFiles(packed));
+		} finally {
+			console.warn = originalWarn;
+		}
 	});
 
-	it("defines the all-OS native artifact ingestion contract without requiring fake local binaries", () => {
-		// Given
+	it("accepts an all-OS check when a target's prebuild is absent (pipe fallback)", () => {
+		// Given: the darwin-arm64 prebuild is present but linux-x64 is not.
 		const missingTarget = "linux-x64";
 		const packed = {
 			files: [
@@ -250,15 +255,23 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 				{ path: `package/node_modules/@earendil-works/pi-pty/${nativePrebuildFile("darwin-arm64")}` },
 				{ path: "package/node_modules/@earendil-works/pi-tui/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-tui/dist/index.js" },
+				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/package.json" },
+				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/src/index.ts" },
+				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/src/kernels/py/prelude.py" },
 			],
 		};
 
-		// When / Then
+		// When / Then: a missing per-target prebuild is optional, so the check must not throw.
 		assert.ok(SUPPORTED_NATIVE_PREBUILD_TARGETS.includes(missingTarget));
-		assert.throws(
-			() => assertSenpiPackedWorkspaceFiles(packed, { nativePrebuildTargets: ["darwin-arm64", missingTarget] }),
-			/package tarball is missing bundled workspace files: .*native\/prebuilds\/linux-x64\/senpi_pty\.linux-x64\.node/,
-		);
+		const originalWarn = console.warn;
+		console.warn = () => {};
+		try {
+			assert.doesNotThrow(() =>
+				assertSenpiPackedWorkspaceFiles(packed, { nativePrebuildTargets: ["darwin-arm64", missingTarget] }),
+			);
+		} finally {
+			console.warn = originalWarn;
+		}
 	});
 
 	it("publishes the supported native target list through package checks", () => {
