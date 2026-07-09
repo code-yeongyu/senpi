@@ -5,15 +5,19 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { assertSenpiPackedWorkspaceFiles, prepareSenpiBundledWorkspaces } from "./prepare-senpi-bundled-workspaces.mjs";
 
+// Only STANDALONE-published npm packages belong here. Excluded on purpose:
+//  - @code-yeongyu/senpi-orchestrator is `private: true` (never published).
+//  - @code-yeongyu/senpi-codemode ships via senpi's `bundleDependencies` (packed
+//    INTO the @code-yeongyu/senpi tarball), so consumers get it without a registry
+//    entry; publishing it standalone via OIDC trusted publishing fails E404 because
+//    it is a brand-new scoped package name OIDC cannot create.
 const packages = [
 	{ directory: "packages/ai", name: "@earendil-works/pi-ai" },
 	{ directory: "packages/agent", name: "@earendil-works/pi-agent-core" },
 	{ directory: "packages/tui", name: "@earendil-works/pi-tui" },
-	{ directory: "packages/orchestrator", name: "@code-yeongyu/senpi-orchestrator" },
-	{ directory: "packages/senpi-codemode", name: "@code-yeongyu/senpi-codemode" },
 	{ directory: "packages/coding-agent", name: "@code-yeongyu/senpi" },
 ];
-const sourceOnlyPackages = new Set(["@code-yeongyu/senpi-codemode"]);
+const sourceOnlyPackages = new Set([]);
 
 const dryRun = process.argv.includes("--dry-run");
 const unknownArgs = process.argv.slice(2).filter((arg) => arg !== "--dry-run");
