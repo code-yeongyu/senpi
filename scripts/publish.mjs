@@ -64,9 +64,12 @@ function validatePack(directory) {
 	}
 	if (sourceOnlyPackages.has(packageJson.name)) {
 		const filePaths = new Set((packed.files ?? []).map((file) => file.path));
-		for (const requiredPath of ["package/src/index.ts", "package/README.md", "package/CHANGELOG.md", "package/LICENSE"]) {
-			if (!filePaths.has(requiredPath)) {
-				throw new Error(`${packageJson.name} package tarball is missing ${requiredPath}`);
+		// `npm pack --json` file paths vary by npm version: some emit a `package/` prefix,
+		// others emit bare repo-relative paths. Accept either so the source-only content
+		// check is npm-version-agnostic (mirrors assertSenpiPackedWorkspaceFiles).
+		for (const requiredFile of ["src/index.ts", "README.md", "CHANGELOG.md", "LICENSE"]) {
+			if (!filePaths.has(`package/${requiredFile}`) && !filePaths.has(requiredFile)) {
+				throw new Error(`${packageJson.name} package tarball is missing ${requiredFile}`);
 			}
 		}
 	}
