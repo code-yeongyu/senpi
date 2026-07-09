@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- Fixed the editor swallowing Enter when the terminal delivers it as a bare LF (`\n`): the submit binding now runs before the newline branch, so LF Enter submits the prompt instead of silently inserting a newline. Explicit Shift+Enter/Ctrl+J newline insertion and the trailing-backslash newline workaround are unchanged. ([#156](https://github.com/code-yeongyu/senpi/pull/156))
+
 ## [2026.7.5-2] - 2026-07-05
 
 ### Added
