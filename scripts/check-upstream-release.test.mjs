@@ -19,12 +19,22 @@ function tryGit(args) {
 }
 
 describe("upstream release detector outputs", () => {
+	let upstreamAvailable = false;
+
 	before(() => {
 		if (!tryGit(["remote", "get-url", "upstream"])) {
-			git(["remote", "add", "upstream", UPSTREAM_REMOTE_URL]);
+			if (!tryGit(["remote", "add", "upstream", UPSTREAM_REMOTE_URL])) return;
 			addedUpstreamRemote = true;
 		}
-		git(["fetch", "--quiet", "upstream", "+refs/heads/main:refs/remotes/upstream/main"]);
+		// A real fetch of the upstream GitHub repo. On credential-less/offline
+		// runners (e.g. the release publish job checks out with
+		// persist-credentials:false) this cannot authenticate — skip rather than
+		// hard-fail the whole `test:scripts` suite, since this test inherently
+		// requires the external upstream repo.
+		if (tryGit(["fetch", "--quiet", "upstream", "+refs/heads/main:refs/remotes/upstream/main"]) === "" && !tryGit(["rev-parse", "upstream/main"])) {
+			return;
+		}
+		upstreamAvailable = tryGit(["rev-parse", "upstream/main"]) !== "";
 	});
 
 	after(() => {
@@ -33,7 +43,11 @@ describe("upstream release detector outputs", () => {
 		}
 	});
 
-	it("preserves the release tag sha and emits upstream/main head separately on forced runs", () => {
+	it("preserves the release tag sha and emits upstream/main head separately on forced runs", (t) => {
+		if (!upstreamAvailable) {
+			t.skip("upstream remote unreachable (offline or no git credentials)");
+			return;
+		}
 		const stdout = execFileSync("node", ["scripts/check-upstream-release.mjs", "--force"], { encoding: "utf8" });
 		const output = Object.fromEntries(
 			stdout
