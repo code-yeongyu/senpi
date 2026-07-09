@@ -61,7 +61,21 @@ describe("ExtensionRunner", () => {
 				name: "Instant Model",
 				reasoning: false,
 				input: ["text"],
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				cost: {
+					input: 1,
+					output: 2,
+					cacheRead: 0.1,
+					cacheWrite: 1.25,
+					tiers: [
+						{
+							inputTokensAbove: 272000,
+							input: 2,
+							output: 3,
+							cacheRead: 0.2,
+							cacheWrite: 2.5,
+						},
+					],
+				},
 				contextWindow: 128000,
 				maxTokens: 4096,
 			},
@@ -1369,7 +1383,15 @@ describe("ExtensionRunner", () => {
 
 			runtime.registerProvider("instant-provider", providerModelConfig);
 			expect(runtime.pendingProviderRegistrations).toHaveLength(0);
-			expect(modelRegistry.find("instant-provider", "instant-model")).toBeDefined();
+			expect(modelRegistry.find("instant-provider", "instant-model")?.cost.tiers).toEqual([
+				{
+					inputTokensAbove: 272000,
+					input: 2,
+					output: 3,
+					cacheRead: 0.2,
+					cacheWrite: 2.5,
+				},
+			]);
 
 			runtime.unregisterProvider("instant-provider");
 			expect(modelRegistry.find("instant-provider", "instant-model")).toBeUndefined();

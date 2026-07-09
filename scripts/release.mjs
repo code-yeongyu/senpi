@@ -21,7 +21,7 @@
  *   6. For each `packages/*\/CHANGELOG.md`, replace `## [Unreleased]` with
  *      `## [<version>] - <YYYY-MM-DD>`, remembering its subsection structure
  *      (`### Added`, `### Fixed`, ...) for re-insertion in step 8.
- *   7. Run `npm run check`.
+ *   7. Run `npm run check` and `npm test`.
  *   8. Commit the release, tag it, re-insert a fresh `## [Unreleased]` block,
  *      commit the next-cycle changelog update, then push `main` and the new tag.
  *      GitHub Actions builds binaries and publishes from the pushed tag.
@@ -218,6 +218,15 @@ function runCheck(dryRun) {
 	runCommand("npm", ["run", "check"]);
 }
 
+function runTests(dryRun) {
+	if (dryRun) {
+		dryRunLog("npm test");
+		return;
+	}
+	log("npm test");
+	runCommand("npm", ["test"]);
+}
+
 function main() {
 	const args = parseArgs(process.argv.slice(2));
 	if (args.help) {
@@ -244,6 +253,7 @@ function main() {
 	runInstallLock(args.dryRun, runCommand, log, dryRunLog);
 	stampChangelogs(version, date, args.dryRun, capturedChangelogSubsections, log, dryRunLog);
 	runCheck(args.dryRun);
+	runTests(args.dryRun);
 
 	stageChangedFiles(args.dryRun);
 	gitCommit(`release: v${version}`, args.dryRun);

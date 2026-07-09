@@ -1181,11 +1181,8 @@ function supportsAdaptiveThinking(model: Model<"anthropic-messages">): boolean {
 
 /**
  * Map ThinkingLevel to Anthropic effort levels for adaptive thinking.
- *
- * Model-specific effort tiers:
- * - Opus 4.7+ and Fable 5: supports "low" | "medium" | "high" | "xhigh" | "max"
- * - Opus 4.6: supports "low" | "medium" | "high" | "max" ("xhigh" maps to "max")
- * - Sonnet 4.6 and other adaptive models: "low" | "medium" | "high" ("xhigh"/"max" clamp to "high")
+ * Note: effort "max" is available on all adaptive-thinking Claude models, while native
+ * "xhigh" is only available on Opus 4.7/4.8, Sonnet 5, and Fable 5.
  */
 function mapThinkingLevelToEffort(
 	model: Model<"anthropic-messages">,
@@ -1629,11 +1626,13 @@ function convertMessages(
 						});
 						continue;
 					}
-					if (block.thinking.trim().length === 0) continue;
+					const thinkingSignature = block.thinkingSignature;
+					const hasThinkingSignature = !!thinkingSignature && thinkingSignature.trim().length > 0;
+					if (block.thinking.trim().length === 0 && !hasThinkingSignature) continue;
 					// If thinking signature is missing/empty (e.g., from aborted stream),
 					// convert to plain text for Anthropic. Some compatible providers emit
 					// and accept empty signatures, so let marked models preserve the block.
-					if (!block.thinkingSignature || block.thinkingSignature.trim().length === 0) {
+					if (!hasThinkingSignature) {
 						blocks.push(
 							allowEmptySignature
 								? {

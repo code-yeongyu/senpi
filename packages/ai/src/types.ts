@@ -727,6 +727,23 @@ export interface VercelGatewayRouting {
 	order?: string[];
 }
 
+export interface ModelCostRates {
+	input: number; // $/million tokens
+	output: number; // $/million tokens
+	cacheRead: number; // $/million tokens
+	cacheWrite: number; // $/million tokens
+}
+
+export interface ModelCostTier extends ModelCostRates {
+	/** Use this tier for requests whose total input usage exceeds this token count. */
+	inputTokensAbove: number;
+}
+
+export interface ModelCost extends ModelCostRates {
+	/** Request-wide pricing tiers. The highest matching input threshold applies to the full request. */
+	tiers?: ModelCostTier[];
+}
+
 // Model interface for the unified model system
 export interface Model<TApi extends Api> {
 	id: string;
@@ -741,12 +758,7 @@ export interface Model<TApi extends Api> {
 	 */
 	thinkingLevelMap?: ThinkingLevelMap;
 	input: ("text" | "image")[];
-	cost: {
-		input: number; // $/million tokens
-		output: number; // $/million tokens
-		cacheRead: number; // $/million tokens
-		cacheWrite: number; // $/million tokens
-	};
+	cost: ModelCost;
 	contextWindow: number;
 	maxTokens: number;
 	headers?: Record<string, string>;
