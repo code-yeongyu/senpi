@@ -4,16 +4,17 @@
 
 import { ProcessTerminal, TUI } from "@earendil-works/pi-tui";
 import { appendHiddenTuiStdout } from "../core/hidden-stdout-log.ts";
-import type { ResolvedPaths } from "../core/package-manager.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
-import { ConfigSelectorComponent } from "../modes/interactive/components/config-selector.ts";
+import { ConfigSelectorComponent, type ScopedResolvedPaths } from "../modes/interactive/components/config-selector.ts";
 import { initTheme, stopThemeWatcher } from "../modes/interactive/theme/theme.ts";
 
 export interface ConfigSelectorOptions {
-	resolvedPaths: ResolvedPaths;
+	resolvedPaths: ScopedResolvedPaths;
 	settingsManager: SettingsManager;
 	cwd: string;
 	agentDir: string;
+	writeScope: "global" | "project";
+	projectModeAvailable: boolean;
 }
 
 /** Show TUI config selector and return when closed */
@@ -45,6 +46,8 @@ export async function selectConfig(options: ConfigSelectorOptions): Promise<void
 			},
 			() => ui.requestRender(),
 			ui.terminal.rows,
+			options.writeScope,
+			options.projectModeAvailable,
 		);
 
 		ui.addChild(selector);

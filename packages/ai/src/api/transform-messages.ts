@@ -85,7 +85,10 @@ export function transformMessages<TApi extends Api>(
 ): Message[] {
 	// Build a map of original tool call IDs to normalized IDs
 	const toolCallIdMap = new Map<string, string>();
-	const imageAwareMessages = downgradeUnsupportedImages(messages, model);
+	// Normalize null/undefined content from untyped callers (custom tools, hand-built
+	// histories, old session files) so downstream code can rely on the type contract.
+	const normalizedMessages = messages.map((msg) => (msg.content == null ? { ...msg, content: [] } : msg));
+	const imageAwareMessages = downgradeUnsupportedImages(normalizedMessages, model);
 	const preserveThinking = options.preserveThinking ?? true;
 	const preserveTextSignatures = options.preserveTextSignatures ?? false;
 	const preserveUnsignedThinking = options.preserveUnsignedThinking ?? false;

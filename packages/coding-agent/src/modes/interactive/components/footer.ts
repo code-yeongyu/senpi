@@ -16,8 +16,15 @@ function sanitizeStatusText(text: string): string {
 		.trim();
 }
 
-function formatTokens(count: number): string {
-	return count.toLocaleString("en-US");
+/**
+ * Format token counts for compact footer display.
+ */
+export function formatTokens(count: number): string {
+	if (count < 1000) return count.toString();
+	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
+	if (count < 1000000) return `${Math.round(count / 1000)}k`;
+	if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
+	return `${Math.round(count / 1000000)}M`;
 }
 
 export function formatCwdForFooter(cwd: string, home: string | undefined): string {
@@ -164,7 +171,6 @@ export class FooterComponent implements Component {
 			coloredSegments.push(theme.fg("dim", text));
 			plainSegments.push(text);
 		}
-
 		// Show cost with "(sub)" indicator if using OAuth subscription
 		const usingSubscription = state.model ? this.session.modelRegistry.isUsingOAuth(state.model) : false;
 		if (totalCost || usingSubscription) {
