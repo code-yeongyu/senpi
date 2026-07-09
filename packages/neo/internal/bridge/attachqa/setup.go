@@ -91,6 +91,7 @@ func setupHarness() (*harnessEnv, error) {
 	_ = os.Setenv("SENPI_NEO_WORKER_ARGS", string(workerArgs))
 	_ = os.Setenv("SENPI_CODING_AGENT_DIR", agentDir)
 	_ = os.Setenv("PI_OFFLINE", "1")
+	_ = os.Setenv("SENPI_ENABLE_NEO", "1")
 	_ = os.Setenv("PI_TELEMETRY", "0")
 	for _, k := range providerKeyNames() {
 		_ = os.Unsetenv(k)

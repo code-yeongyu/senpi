@@ -26,7 +26,18 @@ async function selfTest() {
 		`code=${help.code}`,
 	);
 
-	checks.ok("--help lists the --neo launcher flag", help.code === 0 && help.stdout.includes("--neo"), `code=${help.code}`);
+	checks.ok(
+		"--help omits the gated --neo flag by default",
+		help.code === 0 && !help.stdout.includes("--neo"),
+		`code=${help.code}`,
+	);
+
+	const helpNeo = await runCli(["--help"], { ...opts, env: { ...box.env, SENPI_ENABLE_NEO: "1" } });
+	checks.ok(
+		"--help lists --neo when SENPI_ENABLE_NEO is set",
+		helpNeo.code === 0 && helpNeo.stdout.includes("--neo"),
+		`code=${helpNeo.code}`,
+	);
 
 	const version = await runCli(["--version"], opts);
 	checks.ok("--version prints a version", version.code === 0 && /\d+\.\d+/.test(version.stdout), version.stdout.trim());

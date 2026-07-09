@@ -47,29 +47,60 @@ describe("classic parser semantics are byte-identical (no --neo present)", () =>
 	});
 });
 
-describe("--neo flag parsing", () => {
-	test("--neo is now a recognized flag, not an 'Unknown option' error", () => {
-		const parsed = parseArgs(["--neo"]);
+describe("--neo flag parsing (gate enabled)", () => {
+	test("--neo is a recognized flag when neo is enabled, not an 'Unknown option' error", () => {
+		const parsed = parseArgs(["--neo"], { neoEnabled: true });
 		expect(parsed.neo).toBe(true);
 		expect(parsed.diagnostics).toEqual([]);
 	});
 
 	test("--neo-isolated implies neo and sets neoIsolated", () => {
-		const parsed = parseArgs(["--neo-isolated"]);
+		const parsed = parseArgs(["--neo-isolated"], { neoEnabled: true });
 		expect(parsed.neo).toBe(true);
 		expect(parsed.neoIsolated).toBe(true);
 		expect(parsed.diagnostics).toEqual([]);
 	});
 
 	test("--neo-bin captures a dev override path", () => {
-		const parsed = parseArgs(["--neo", "--neo-bin", "/tmp/dev-neo"]);
+		const parsed = parseArgs(["--neo", "--neo-bin", "/tmp/dev-neo"], { neoEnabled: true });
 		expect(parsed.neo).toBe(true);
 		expect(parsed.neoBin).toBe("/tmp/dev-neo");
 	});
 
 	test("--neo coexists with runtime flags without swallowing them", () => {
-		const parsed = parseArgs(["--neo", "--model", "gpt-4o", "hello"]);
+		const parsed = parseArgs(["--neo", "--model", "gpt-4o", "hello"], { neoEnabled: true });
 		expect(parsed.neo).toBe(true);
+		expect(parsed.model).toBe("gpt-4o");
+		expect(parsed.messages).toEqual(["hello"]);
+	});
+});
+
+describe("--neo flags are absent when the gate is off (default)", () => {
+	test("--neo falls through to the unknown-flag channel and never dispatches", () => {
+		const parsed = parseArgs(["--neo"], { neoEnabled: false });
+		expect(parsed.neo).toBeUndefined();
+		expect(parsed.unknownFlags.get("neo")).toBe(true);
+		expect(parsed.diagnostics).toEqual([]);
+	});
+
+	test("--neo-isolated / --register are unknown flags and set no neo state", () => {
+		const parsed = parseArgs(["--neo-isolated", "--register"], { neoEnabled: false });
+		expect(parsed.neo).toBeUndefined();
+		expect(parsed.neoIsolated).toBeUndefined();
+		expect(parsed.neoRegister).toBeUndefined();
+		expect(parsed.unknownFlags.get("neo-isolated")).toBe(true);
+		expect(parsed.unknownFlags.get("register")).toBe(true);
+	});
+
+	test("--listen consumes its value as an unknown flag, not neoListen", () => {
+		const parsed = parseArgs(["--listen", "/tmp/s.sock"], { neoEnabled: false });
+		expect(parsed.neoListen).toBeUndefined();
+		expect(parsed.unknownFlags.get("listen")).toBe("/tmp/s.sock");
+	});
+
+	test("classic runtime flags still parse normally alongside a stray --neo", () => {
+		const parsed = parseArgs(["--neo", "--model", "gpt-4o", "hello"], { neoEnabled: false });
+		expect(parsed.neo).toBeUndefined();
 		expect(parsed.model).toBe("gpt-4o");
 		expect(parsed.messages).toEqual(["hello"]);
 	});

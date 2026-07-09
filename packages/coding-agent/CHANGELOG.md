@@ -26,7 +26,9 @@
   and `logout`, with OAuth completion delivered via `auth_login_url` / `auth_login_end` session events.
 - Added the neo TUI launch handoff (`--neo`, `--neo-isolated`, `--neo-bin`) and the shared neo daemon
   (`--listen <socket>`: supervisor with atomic registry, token+version handshake, per-connection worker processes,
-  and idle shutdown via `neoDaemon.idleShutdownMs`).
+  and idle shutdown via `neoDaemon.idleShutdownMs`). Gated OFF by default behind `SENPI_ENABLE_NEO=1`: until the
+  per-platform neo binary packages ship, the flags are absent from `--help` and parse as unknown flags so a released
+  build never exposes a non-functional `--neo`. The Go daemon supervisor forces the gate on for its own child.
 - Added a convention guard that rejects senpi-defined PascalCase tool names in core and builtin extension tool registrations.
 - Added the persistent-terminal tool suite (built-in `terminal` extension): the `bash` tool is now PTY-backed with `run_in_background`, `cols`, and `rows`, plus companion tools `bash_output` (with `wait_for`/`filter`/`view:"screen"`), `bash_input` (stdin + named keys), `bash_resize`, and `kill_bash`. Backed by `@earendil-works/pi-pty` (native ConPTY on Windows, `child_process` pipe fallback otherwise). Adds `SENPI_GIT_BASH_PATH` + shell-kind resolution (cmd `/c`, PowerShell `-NoProfile -Command`), `terminal.*` settings, idle-guarded async completion wake, and permission-gates `bash_input` in the `bash` class. See `docs/terminal-tools.md`.
 
