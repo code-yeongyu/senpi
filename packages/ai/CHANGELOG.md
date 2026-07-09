@@ -4,9 +4,18 @@
 
 ### Added
 
+- Added GPT-5.6 model metadata.
+
 ### Changed
 
+- Updated model catalogs, including GitHub Copilot extended-context windows and Xiaomi token-plan catalogs.
+
 ### Fixed
+
+- Retried Bun socket-drop failures.
+- Treated `ResourceExhausted` provider errors as retryable.
+- Normalized null message content at provider ingestion boundaries.
+- Used a `(no tool output)` placeholder for empty text-only tool results.
 
 ### Removed
 

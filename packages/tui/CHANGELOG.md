@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- Decremented the paste counter when paste markers are deleted or the terminal is cleared.
+
 ## [2026.7.9] - 2026-07-09
 
 ### Added
