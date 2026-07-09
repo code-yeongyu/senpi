@@ -401,12 +401,9 @@ export class McpService {
 	}
 
 	#serverSnapshot(name: string): McpServerSnapshot {
-		return buildMcpServerSnapshot(
-			name,
-			this.#config?.servers[name],
-			this.getConnection(name),
-			this.#entryForName(name),
-		);
+		const connection = this.getConnection(name);
+		connection?.refreshCapturedDiagnostics();
+		return buildMcpServerSnapshot(name, this.#config?.servers[name], connection, this.#entryForName(name));
 	}
 
 	#entryForName(name: string): McpConnectionEntry | undefined {

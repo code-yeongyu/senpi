@@ -45,7 +45,7 @@ function findLastAssistantMessageIndex(messages: readonly AgentMessage[]): numbe
 }
 
 function isContinuableStopReason(stopReason: AssistantAgentMessage["stopReason"]): boolean {
-	return stopReason === "stop" || stopReason === "toolUse" || stopReason === "length";
+	return stopReason === "stop" || stopReason === "length";
 }
 
 function isAbortedToolResult(message: ToolResultAgentMessage): boolean {

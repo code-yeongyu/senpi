@@ -546,12 +546,12 @@ export class AgentSession {
 	}
 
 	private async _emitBeforeToolCallHooks(toolCall: AgentToolCall, args: unknown) {
+		await this._agentEventQueue;
+
 		const runner = this._extensionRunner;
 		if (!runner.hasHandlers("tool_call")) {
 			return undefined;
 		}
-
-		await this._agentEventQueue;
 
 		try {
 			return await runner.emitToolCall({
@@ -768,6 +768,40 @@ export class AgentSession {
 		return undefined;
 	}
 
+	private _agentEndAllowsQueuedContinuation(messages: AgentMessage[]): boolean {
+		let lastAssistantIndex = -1;
+		for (let index = messages.length - 1; index >= 0; index--) {
+			if (messages[index]?.role === "assistant") {
+				lastAssistantIndex = index;
+				break;
+			}
+		}
+		if (lastAssistantIndex === -1) {
+			return false;
+		}
+
+		const lastAssistant = messages[lastAssistantIndex];
+		if (lastAssistant?.role !== "assistant") {
+			return false;
+		}
+		if (lastAssistant.stopReason === "aborted" || lastAssistant.stopReason === "error") {
+			return false;
+		}
+
+		for (let index = lastAssistantIndex + 1; index < messages.length; index++) {
+			const message = messages[index];
+			if (
+				message?.role === "toolResult" &&
+				message.isError &&
+				message.content.some((content) => content.type === "text" && /\babort(?:ed)?\b/i.test(content.text))
+			) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
 	private _willRetryAfterAgentEnd(messages: AgentMessage[]): boolean {
 		const settings = this.settingsManager.getRetrySettings();
 		if (!settings.enabled) {
@@ -870,6 +904,8 @@ export class AgentSession {
 
 		// Check auto-retry and auto-compaction after agent completes
 		let launchedContinuation = false;
+		const allowsQueuedContinuation =
+			event.type === "agent_end" ? this._agentEndAllowsQueuedContinuation(event.messages) : false;
 		if (event.type === "agent_end" && this._lastAssistantMessage) {
 			const msg = this._lastAssistantMessage;
 			this._lastAssistantMessage = undefined;
@@ -886,7 +922,7 @@ export class AgentSession {
 
 		if (event.type === "agent_end") {
 			this._flushPendingBashMessages();
-			if (!launchedContinuation && this.agent.hasQueuedMessages()) {
+			if (!launchedContinuation && allowsQueuedContinuation && this.agent.hasQueuedMessages()) {
 				launchedContinuation = await this._continueAgentAfterCurrentRun();
 			}
 			if (!launchedContinuation) {
@@ -1584,6 +1620,7 @@ export class AgentSession {
 		preflightResult?.(true);
 		await this._promptAgent(messages);
 		await this.waitForRetry();
+		await this.waitForIdle();
 		if (shouldWaitForSessionWork) {
 			await this._waitForSettledSessionWork();
 		} else {
@@ -1845,15 +1882,15 @@ export class AgentSession {
 		} satisfies CustomMessage<T>;
 		if (options?.deliverAs === "nextTurn") {
 			this._pendingNextTurnMessages.push(appMessage);
-			} else if (this.isStreaming) {
-				if (options?.deliverAs === "followUp") {
-					this.agent.followUp(appMessage);
-				} else {
-					this.agent.steer(appMessage);
-				}
-			} else if (options?.triggerTurn) {
-				await this._promptAgent(appMessage);
+		} else if (this.isStreaming) {
+			if (options?.deliverAs === "followUp") {
+				this.agent.followUp(appMessage);
 			} else {
+				this.agent.steer(appMessage);
+			}
+		} else if (options?.triggerTurn) {
+			await this._promptAgent(appMessage);
+		} else {
 			this.agent.state.messages.push(appMessage);
 			this.sessionManager.appendCustomMessageEntry(
 				message.customType,
@@ -3420,6 +3457,7 @@ export class AgentSession {
 			const attempt = this._retryAttempt;
 			this._retryAttempt = 0;
 			this._retryAbortController = undefined;
+			await this._emitAgentSettled();
 			this._emit({
 				type: "auto_retry_end",
 				success: false,

@@ -174,7 +174,9 @@ function getCwdRewriteVariants(sourceCwd: string): string[] {
 		variants.add(`/${driveParts.drive}/${rest}`);
 	}
 
-	return Array.from(variants).filter(Boolean).sort((a, b) => b.length - a.length);
+	return Array.from(variants)
+		.filter(Boolean)
+		.sort((a, b) => b.length - a.length);
 }
 
 function getCiWorkdirName(sourceCwd: string): string | undefined {

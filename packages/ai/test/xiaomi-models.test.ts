@@ -6,12 +6,13 @@ describe("Xiaomi MiMo models", () => {
 		expect(getModel("xiaomi", modelId)).toBeDefined();
 	});
 
-	it.each(["xiaomi-token-plan-cn", "xiaomi-token-plan-ams", "xiaomi-token-plan-sgp"] as const)(
-		"omits API-billing-only models from %s",
-		(provider) => {
-			const modelIds = getModels(provider).map((model) => model.id);
-			expect(modelIds).not.toContain("mimo-v2-flash");
-			expect(modelIds).not.toContain("mimo-v2-omni");
-		},
-	);
+	it.each([
+		"xiaomi-token-plan-cn",
+		"xiaomi-token-plan-ams",
+		"xiaomi-token-plan-sgp",
+	] as const)("omits API-billing-only models from %s", (provider) => {
+		const modelIds = getModels(provider).map((model) => model.id);
+		expect(modelIds).not.toContain("mimo-v2-flash");
+		expect(modelIds).not.toContain("mimo-v2-omni");
+	});
 });

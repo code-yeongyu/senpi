@@ -1179,24 +1179,24 @@ export class ModelRegistry {
 			this.models = this.models.filter((m) => m.provider !== providerName);
 			this.clearModelRequestConfigForProvider(providerName);
 
-				// Parse and add new models
-				for (const modelDef of config.models) {
-					const api = modelDef.api || config.api;
-					const modelOverride = this.getConfiguredModelOverride(providerName, modelDef.id);
-					const headers =
-						modelDef.headers || modelOverride?.headers
-							? { ...modelDef.headers, ...modelOverride?.headers }
-							: undefined;
-					const extraBody =
-						modelDef.extraBody || modelOverride?.extraBody
-							? { ...modelDef.extraBody, ...modelOverride?.extraBody }
-							: undefined;
-					this.storeModelHeaders(providerName, modelDef.id, headers);
-					this.storeModelExtraBody(providerName, modelDef.id, extraBody);
-					this.storeModelUpstreamId(providerName, modelDef.id, modelDef.upstreamModelId);
-					this.storeModelServiceTier(providerName, modelDef.id, modelDef.serviceTier);
+			// Parse and add new models
+			for (const modelDef of config.models) {
+				const api = modelDef.api || config.api;
+				const modelOverride = this.getConfiguredModelOverride(providerName, modelDef.id);
+				const headers =
+					modelDef.headers || modelOverride?.headers
+						? { ...modelDef.headers, ...modelOverride?.headers }
+						: undefined;
+				const extraBody =
+					modelDef.extraBody || modelOverride?.extraBody
+						? { ...modelDef.extraBody, ...modelOverride?.extraBody }
+						: undefined;
+				this.storeModelHeaders(providerName, modelDef.id, headers);
+				this.storeModelExtraBody(providerName, modelDef.id, extraBody);
+				this.storeModelUpstreamId(providerName, modelDef.id, modelDef.upstreamModelId);
+				this.storeModelServiceTier(providerName, modelDef.id, modelDef.serviceTier);
 
-					const model = this.applyConfiguredModelOverride(providerName, {
+				const model = this.applyConfiguredModelOverride(providerName, {
 					id: modelDef.id,
 					name: modelDef.name,
 					api: api as Api,

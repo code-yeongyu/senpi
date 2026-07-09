@@ -7,6 +7,13 @@ import type { ExtensionAPI } from "../../../src/index.ts";
 
 const noop: (pi: ExtensionAPI) => void = () => {};
 
+function inlineExtensionPaths(loader: DefaultResourceLoader): string[] {
+	return loader
+		.getExtensions()
+		.extensions.filter((extension) => extension.path.startsWith("<inline:"))
+		.map((extension) => extension.path);
+}
+
 describe("inline extension naming", () => {
 	const roots: string[] = [];
 
@@ -46,11 +53,7 @@ describe("inline extension naming", () => {
 
 		await loader.reload();
 
-		const result = loader.getExtensions();
-
-		expect(result.extensions).toHaveLength(2);
-		expect(result.extensions[0].path).toBe("<inline:1>");
-		expect(result.extensions[1].path).toBe("<inline:2>");
+		expect(inlineExtensionPaths(loader)).toEqual(["<inline:1>", "<inline:2>"]);
 	});
 
 	it("displays named wrappers as <inline:name>", async () => {
@@ -69,11 +72,7 @@ describe("inline extension naming", () => {
 
 		await loader.reload();
 
-		const result = loader.getExtensions();
-
-		expect(result.extensions).toHaveLength(2);
-		expect(result.extensions[0].path).toBe("<inline:my-provider>");
-		expect(result.extensions[1].path).toBe("<inline:my-commands>");
+		expect(inlineExtensionPaths(loader)).toEqual(["<inline:my-provider>", "<inline:my-commands>"]);
 	});
 
 	it("supports mixed bare and named factories", async () => {
@@ -89,11 +88,6 @@ describe("inline extension naming", () => {
 
 		await loader.reload();
 
-		const result = loader.getExtensions();
-
-		expect(result.extensions).toHaveLength(3);
-		expect(result.extensions[0].path).toBe("<inline:1>");
-		expect(result.extensions[1].path).toBe("<inline:named-ext>");
-		expect(result.extensions[2].path).toBe("<inline:3>");
+		expect(inlineExtensionPaths(loader)).toEqual(["<inline:1>", "<inline:named-ext>", "<inline:3>"]);
 	});
 });

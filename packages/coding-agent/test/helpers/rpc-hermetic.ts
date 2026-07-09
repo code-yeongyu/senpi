@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AgentEvent } from "@earendil-works/pi-agent-core";
+import type { AgentSessionEvent } from "../../src/core/agent-session.ts";
 import { RpcClient } from "../../src/modes/rpc/rpc-client.ts";
 import { MOCK_API_KEY, MOCK_MODEL, MOCK_PROVIDER, startFakeModelServer } from "./rpc-fake-model.ts";
 
@@ -154,7 +154,7 @@ export function readSessionEntries(sessionDir: string): readonly RpcSessionEntry
 	return readFileSync(join(cwdSessionDir, sessionFileName), "utf8").trim().split("\n").map(parseSessionEntry);
 }
 
-export function getAssistantText(events: readonly AgentEvent[]): string | undefined {
+export function getAssistantText(events: readonly AgentSessionEvent[]): string | undefined {
 	for (const event of events) {
 		if (event.type !== "message_end" || event.message.role !== "assistant") continue;
 		const textContent = event.message.content.find(isTextContentBlock);
