@@ -23,6 +23,7 @@ describe("--neo early dispatch (no runtime, zero extensions)", () => {
 	const tempDirs: string[] = [];
 	let originalAgentDir: string | undefined;
 	let originalNeoBin: string | undefined;
+	let originalEnableNeo: string | undefined;
 	let originalCwd = process.cwd();
 	let originalExitCode: typeof process.exitCode = process.exitCode;
 	const originalStdinIsTTY = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
@@ -51,6 +52,8 @@ describe("--neo early dispatch (no runtime, zero extensions)", () => {
 		else process.env[ENV_AGENT_DIR] = originalAgentDir;
 		if (originalNeoBin === undefined) delete process.env.SENPI_NEO_BIN;
 		else process.env.SENPI_NEO_BIN = originalNeoBin;
+		if (originalEnableNeo === undefined) delete process.env.SENPI_ENABLE_NEO;
+		else process.env.SENPI_ENABLE_NEO = originalEnableNeo;
 		for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 	});
 
@@ -95,10 +98,12 @@ describe("--neo early dispatch (no runtime, zero extensions)", () => {
 
 		originalAgentDir = process.env[ENV_AGENT_DIR];
 		originalNeoBin = process.env.SENPI_NEO_BIN;
+		originalEnableNeo = process.env.SENPI_ENABLE_NEO;
 		originalCwd = process.cwd();
 		originalExitCode = process.exitCode;
 		process.env[ENV_AGENT_DIR] = agentDir;
 		process.env.SENPI_NEO_BIN = join(tempDir, "stub-neo");
+		process.env.SENPI_ENABLE_NEO = "1";
 		process.exitCode = undefined;
 		process.chdir(projectDir);
 
@@ -137,9 +142,11 @@ describe("--neo early dispatch (no runtime, zero extensions)", () => {
 		mkdirSync(projectDir, { recursive: true });
 		originalAgentDir = process.env[ENV_AGENT_DIR];
 		originalNeoBin = process.env.SENPI_NEO_BIN;
+		originalEnableNeo = process.env.SENPI_ENABLE_NEO;
 		originalCwd = process.cwd();
 		originalExitCode = process.exitCode;
 		process.env[ENV_AGENT_DIR] = agentDir;
+		process.env.SENPI_ENABLE_NEO = "1";
 		process.exitCode = undefined;
 		process.chdir(projectDir);
 

@@ -48,40 +48,43 @@ describe("buildNeoArgv — flag passthrough", () => {
 			["explain", "@a.md", "@img.png"],
 		],
 	])("%s", (_label, classicArgv, expectedNeoArgv) => {
-		const parsed = parseArgs(["--neo", ...classicArgv]);
+		const parsed = parseArgs(["--neo", ...classicArgv], { neoEnabled: true });
 		expect(buildNeoArgv(parsed, { isolated: false })).toEqual(expectedNeoArgv);
 	});
 
 	test("isolated: true prepends --neo-isolated → --isolated for the Go binary", () => {
-		const parsed = parseArgs(["--neo", "--neo-isolated", "--model", "gpt-4o"]);
+		const parsed = parseArgs(["--neo", "--neo-isolated", "--model", "gpt-4o"], { neoEnabled: true });
 		expect(buildNeoArgv(parsed, { isolated: true })).toEqual(["--isolated", "--model", "gpt-4o"]);
 	});
 
 	test("isolated: false omits --isolated", () => {
-		const parsed = parseArgs(["--neo", "--model", "gpt-4o"]);
+		const parsed = parseArgs(["--neo", "--model", "gpt-4o"], { neoEnabled: true });
 		expect(buildNeoArgv(parsed, { isolated: false })).toEqual(["--model", "gpt-4o"]);
 	});
 
 	test("neo-only launch (no runtime flags) → empty argv", () => {
-		const parsed = parseArgs(["--neo"]);
+		const parsed = parseArgs(["--neo"], { neoEnabled: true });
 		expect(buildNeoArgv(parsed, { isolated: false })).toEqual([]);
 	});
 
 	test("full kitchen-sink invocation is forwarded in a stable order", () => {
-		const parsed = parseArgs([
-			"--neo",
-			"--provider",
-			"anthropic",
-			"--model",
-			"claude-sonnet",
-			"--thinking",
-			"high",
-			"--no-context-files",
-			"-e",
-			"./ext.ts",
-			"@prompt.md",
-			"Do the task",
-		]);
+		const parsed = parseArgs(
+			[
+				"--neo",
+				"--provider",
+				"anthropic",
+				"--model",
+				"claude-sonnet",
+				"--thinking",
+				"high",
+				"--no-context-files",
+				"-e",
+				"./ext.ts",
+				"@prompt.md",
+				"Do the task",
+			],
+			{ neoEnabled: true },
+		);
 		expect(buildNeoArgv(parsed, { isolated: false })).toEqual([
 			"--provider",
 			"anthropic",

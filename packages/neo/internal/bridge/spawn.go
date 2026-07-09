@@ -19,6 +19,13 @@ import (
 // Example (dev):         SENPI_NEO_CLI_PATH="node .../tsx/dist/cli.mjs --tsconfig .../tsconfig.json .../src/cli.ts"
 const EnvNeoCLIPath = "SENPI_NEO_CLI_PATH"
 
+// EnvEnableNeo gates the neo CLI flags. The daemon supervisor is launched with
+// `--listen`/`--register`, which the CLI only parses when this env is truthy.
+// The daemon is only ever spawned as part of an active neo session, so force the
+// gate on for the child regardless of ambient env — otherwise the supervisor
+// would reject its own flags on a build where neo is off by default.
+const EnvEnableNeo = "SENPI_ENABLE_NEO"
+
 // ErrNoCLIPath is returned by SpawnDaemonDetached when SENPI_NEO_CLI_PATH is
 // unset — the client cannot know how to launch the daemon supervisor. The caller
 // should fall back to isolated transport with a clear message.
@@ -50,6 +57,9 @@ func SpawnDaemonDetached(req SpawnRequest) error {
 	args := append(fields[1:], "--listen", req.Socket, "--register")
 	cmd := exec.Command(fields[0], args...)
 	cmd.Dir = req.Cwd
+	// Force the neo gate on for the supervisor: it must parse its own
+	// `--listen`/`--register` flags even when the ambient build defaults neo off.
+	cmd.Env = append(os.Environ(), EnvEnableNeo+"=1")
 
 	// Detach stdio so the daemon never touches the client's terminal.
 	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)

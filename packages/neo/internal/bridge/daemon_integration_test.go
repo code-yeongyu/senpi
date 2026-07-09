@@ -67,6 +67,7 @@ func newDaemonSandbox(t *testing.T) daemonSandbox {
 		"SENPI_CODING_AGENT_DIR="+agentDir,
 		"PI_OFFLINE=1", "PI_TELEMETRY=0",
 		"SENPI_NEO_WORKER_ARGS="+string(workerArgs),
+		"SENPI_ENABLE_NEO=1",
 	)
 	for _, k := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN", "OPENAI_API_KEY", "GEMINI_API_KEY"} {
 		env = filterEnv(env, k)
