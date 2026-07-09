@@ -749,6 +749,23 @@ export const AMAZON_BEDROCK_MODELS = {
 		contextWindow: 128000,
 		maxTokens: 4096,
 	} satisfies Model<"bedrock-converse-stream">,
+	"jp.anthropic.claude-haiku-4-5-20251001-v1:0": {
+		id: "jp.anthropic.claude-haiku-4-5-20251001-v1:0",
+		name: "Claude Haiku 4.5 (JP)",
+		api: "bedrock-converse-stream",
+		provider: "amazon-bedrock",
+		baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+		reasoning: true,
+		input: ["text", "image"],
+		cost: {
+			input: 1,
+			output: 5,
+			cacheRead: 0.1,
+			cacheWrite: 1.25,
+		},
+		contextWindow: 200000,
+		maxTokens: 64000,
+	} satisfies Model<"bedrock-converse-stream">,
 	"jp.anthropic.claude-opus-4-7": {
 		id: "jp.anthropic.claude-opus-4-7",
 		name: "Claude Opus 4.7 (JP)",
