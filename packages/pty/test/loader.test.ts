@@ -14,8 +14,8 @@ import {
 const moduleDir = path.join(path.sep, "pkg", "dist");
 const execDir = path.join(path.sep, "bundle");
 const packageRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const packageVersion = "2026.7.5-2";
-const sentinelExport = "__senpiPtyV2026_7_5";
+const packageVersion = "2026.7.9";
+const sentinelExport = "__senpiPtyV2026_7_9";
 
 function candidate(host: string): string {
 	return path.join(path.sep, "pkg", "native", "prebuilds", host, `senpi_pty.${host}.node`);

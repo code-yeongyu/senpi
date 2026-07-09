@@ -10,7 +10,7 @@ export declare class PtySession {
 }
 export type NativePtySession = PtySession
 
-export declare function __senpiPtyV2026_7_5(): string
+export declare function __senpiPtyV2026_7_9(): string
 
 export interface NativePtyExit {
   exitCode?: number

@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-const PACKAGE_VERSION: &str = "2026.7.5-2";
+const PACKAGE_VERSION: &str = "2026.7.9";
 
 #[napi(object)]
 pub struct NativePtySessionOptions {
@@ -122,7 +122,7 @@ pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
-#[napi(js_name = "__senpiPtyV2026_7_5")]
+#[napi(js_name = "__senpiPtyV2026_7_9")]
 pub fn senpi_pty_version_sentinel() -> String {
     PACKAGE_VERSION.to_string()
 }
@@ -145,7 +145,7 @@ mod tests {
     fn package_version_constant_matches_package_json() {
         let package_json = include_str!("../../../packages/pty/package.json");
         assert!(
-            package_json.contains("\"version\": \"2026.7.5-2\""),
+            package_json.contains("\"version\": \"2026.7.9\""),
             "PACKAGE_VERSION and sentinel export must be updated with packages/pty/package.json"
         );
     }
