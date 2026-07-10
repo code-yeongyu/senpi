@@ -123,6 +123,98 @@ describe("prompt preset resolver", () => {
 
 	it.each([
 		{
+			id: "gpt-5.6",
+			provider: "openai",
+			api: "openai-responses" as const,
+		},
+		{
+			id: "gpt-5.6-sol",
+			provider: "openai",
+			api: "openai-responses" as const,
+		},
+		{
+			id: "gpt-5.6-terra",
+			provider: "openai",
+			api: "openai-responses" as const,
+		},
+		{
+			id: "gpt-5.6-luna",
+			provider: "openai",
+			api: "openai-responses" as const,
+		},
+		{
+			id: "gpt-5.6-sol",
+			provider: "openai-codex",
+			api: "openai-codex-responses" as const,
+		},
+		{
+			id: "openai/gpt-5.6-terra",
+			provider: "openrouter",
+			api: "openai-responses" as const,
+		},
+	])("returns gpt-5.6 preset for $provider/$id", ({ id, provider, api }) => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel(id, provider, api);
+
+		// when
+		const preset = resolvePreset(model, settings);
+
+		// then
+		expect(preset?.name).toBe("gpt-5.6");
+		expect(preset?.prompt).toContain("You are senpi");
+		expect(preset?.prompt).toContain("## Intent Gate");
+		expect(preset?.prompt).toContain("I read this as");
+		expect(preset?.prompt).toContain("outcome-first");
+		expect(preset?.prompt).toContain("todowrite");
+		// GPT-5.6 tuning: prioritization instead of brevity, tool-loop stopping conditions.
+		expect(preset?.prompt).toContain("fewest useful tool loops");
+		expect(preset?.prompt).toContain("Lead with the conclusion");
+		// Full-core rewrite: shared-core scaffolding is replaced, dynamic pieces stay.
+		expect(preset?.prompt).toContain("## Verification");
+		expect(preset?.prompt).toContain("### Test Discipline");
+		expect(preset?.prompt).toContain("## Hard Limits");
+		expect(preset?.prompt).not.toContain("## Policies");
+		expect(preset?.prompt).not.toContain("### Execution Stance");
+		expect(preset?.prompt).not.toContain("### Request Classification");
+		expect(preset?.prompt.length).toBeGreaterThan(2_000);
+	});
+
+	it("keeps GPT-5.5 on the gpt-5.5 preset, distinct from GPT-5.6", () => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const gpt55 = resolvePreset(createModel("gpt-5.5", "openai", "openai-responses"), settings);
+		const gpt56 = resolvePreset(createModel("gpt-5.6-sol", "openai", "openai-responses"), settings);
+
+		// then
+		expect(gpt55?.name).toBe("gpt-5.5");
+		expect(gpt55?.prompt).not.toContain("fewest useful tool loops");
+		expect(gpt56?.name).toBe("gpt-5.6");
+		expect(gpt56?.prompt).not.toContain("Dig deeper");
+	});
+
+	it("returns gpt-5.6 preset for every GPT-5.6 built-in catalog model", () => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const catalogModels = getProviders().flatMap((provider) =>
+			(getModels(provider) as Model<Api>[]).filter((model) => model.id.toLowerCase().includes("gpt-5.6")),
+		);
+		const catalogModelIds = catalogModels.map((model) => `${model.provider}/${model.id}`);
+
+		// when
+		const misses = catalogModels
+			.filter((model) => resolvePresetName(model, settings) !== "gpt-5.6")
+			.map((model) => `${model.provider}/${model.id}`);
+
+		// then
+		expect(catalogModelIds).toEqual(
+			expect.arrayContaining(["openai/gpt-5.6-sol", "openai-codex/gpt-5.6-sol", "openrouter/openai/gpt-5.6-sol"]),
+		);
+		expect(misses).toEqual([]);
+	});
+
+	it.each([
+		{
 			id: "claude-opus-4-8",
 			provider: "anthropic",
 			api: "anthropic-messages" as const,
@@ -454,6 +546,19 @@ describe("prompt preset resolver", () => {
 		expect(preset?.prompt).toContain("Dig deeper");
 	});
 
+	it("allows settings.json to force gpt-5.6 regardless of model id", () => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "gpt-5.6" };
+		const model = createModel("claude-opus-4-7", "anthropic", "anthropic-messages");
+
+		// when
+		const preset = resolvePreset(model, settings);
+
+		// then
+		expect(preset?.name).toBe("gpt-5.6");
+		expect(preset?.prompt).toContain("fewest useful tool loops");
+	});
+
 	it("resolves gpt-5.2 preset", () => {
 		const settings: PromptPresetSettings = { promptPreset: "auto" };
 		const model = createModel("gpt-5.2", "openai", "openai-responses");
@@ -502,6 +607,7 @@ describe("prompt preset resolver", () => {
 		},
 		{ presetName: "gpt-5.4" as const, modelId: "gpt-5.4", provider: "openai", api: "openai-responses" as const },
 		{ presetName: "gpt-5.5" as const, modelId: "gpt-5.5", provider: "openai", api: "openai-responses" as const },
+		{ presetName: "gpt-5.6" as const, modelId: "gpt-5.6-sol", provider: "openai", api: "openai-responses" as const },
 	])("$presetName preset includes the codex-style File operations guard", ({ presetName, modelId, provider, api }) => {
 		const settings: PromptPresetSettings = { promptPreset: presetName };
 		const model = createModel(modelId, provider, api);

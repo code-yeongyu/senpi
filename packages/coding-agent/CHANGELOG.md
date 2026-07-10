@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added a `gpt-5.6` system prompt preset covering the whole GPT-5.6 series (`gpt-5.6`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`), tuned per the GPT-5.6 prompting guide: a shorter outcome-first full-core rewrite with prioritization-based style, a compact authorization policy, and tool-loop stopping conditions.
+
 ### Changed
 
 ### Fixed

@@ -10,6 +10,7 @@ import { buildGpt52Prompt } from "./gpt-5.2.ts";
 import { buildGpt53CodexPrompt } from "./gpt-5.3-codex.ts";
 import { buildGpt54Prompt } from "./gpt-5.4.ts";
 import { buildGpt55Prompt } from "./gpt-5.5.ts";
+import { buildGpt56Prompt } from "./gpt-5.6.ts";
 import { buildGpt5Prompt } from "./gpt-5.ts";
 import { buildKimiK26Prompt } from "./kimi-k2-6.ts";
 import { buildKimiK27Prompt } from "./kimi-k2-7.ts";
@@ -32,10 +33,13 @@ function normalizeModelId(modelId: string): string {
 	return modelId.toLowerCase().replace(/\s+/g, "-");
 }
 
-type Gpt5Version = "gpt-5.2" | "gpt-5.3-codex" | "gpt-5.4" | "gpt-5.5";
+type Gpt5Version = "gpt-5.2" | "gpt-5.3-codex" | "gpt-5.4" | "gpt-5.5" | "gpt-5.6";
 
 function extractGpt5Version(modelId: string): Gpt5Version | undefined {
 	const normalized = normalizeModelId(modelId);
+	if (normalized.includes("gpt-5.6")) {
+		return "gpt-5.6";
+	}
 	if (normalized.includes("gpt-5.5")) {
 		return "gpt-5.5";
 	}
@@ -136,6 +140,8 @@ export function resolvePresetName(
 
 function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPromptOptions): ResolvedPromptPreset {
 	switch (name) {
+		case "gpt-5.6":
+			return { name, prompt: buildGpt56Prompt(options) };
 		case "gpt-5.5":
 			return { name, prompt: buildGpt55Prompt(options) };
 		case "gpt-5.4":
