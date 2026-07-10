@@ -7,7 +7,7 @@ import { describeExit } from "./tools/spawn.ts";
 const NON_INTERACTIVE_MODES = new Set(["print", "json"]);
 
 export interface TerminalNotifierDeps {
-	/** Deliver a user-visible follow-up message that wakes an idle agent. */
+	/** Deliver a user-visible completion message with the requested scheduling mode. */
 	readonly sendUserMessage: (content: string, options?: { deliverAs?: "steer" | "followUp" }) => void;
 	readonly getContext: () => ExtensionContext | undefined;
 	readonly getMode: () => NotifyMode;
@@ -21,11 +21,11 @@ function buildNotice(id: string, runtime: TerminalRuntimeSession): string {
 }
 
 /**
- * Wakes an idle interactive agent once when a background session completes.
+ * Notifies an interactive agent once when a background session completes.
  *
  * Guards (todo 23): never wakes in one-shot `-p`/`--print`/`--mode json` runs; never wakes
  * without an active model (would spin an auth-less turn); `notify:"off"` suppresses entirely;
- * each session id fires at most once. A busy agent's follow-up naturally queues until idle.
+ * each session id fires at most once. `wake` steers immediately; `next-turn` queues a follow-up.
  */
 export class TerminalNotifier {
 	private readonly notified = new Set<string>();
@@ -36,7 +36,8 @@ export class TerminalNotifier {
 	}
 
 	notifyCompletion(id: string, runtime: TerminalRuntimeSession): void {
-		if (this.deps.getMode() === "off") return;
+		const mode = this.deps.getMode();
+		if (mode === "off") return;
 		if (this.notified.has(id)) return;
 
 		const ctx = this.deps.getContext();
@@ -45,6 +46,8 @@ export class TerminalNotifier {
 		if (!ctx.model) return;
 
 		this.notified.add(id);
-		this.deps.sendUserMessage(buildNotice(id, runtime), { deliverAs: "followUp" });
+		this.deps.sendUserMessage(buildNotice(id, runtime), {
+			deliverAs: mode === "wake" ? "steer" : "followUp",
+		});
 	}
 }
