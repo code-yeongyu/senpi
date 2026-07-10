@@ -8,6 +8,8 @@
 
 ### Changed
 
+- Exposed the active terminal image protocol to extension tool renderers so custom renderers can avoid duplicate image fallbacks.
+
 ### Fixed
 
 - Fixed `bash_output` waits ignoring turn cancellation and accepting unbounded model-supplied timeouts; waits now release without killing the background terminal and individual polls are capped at five minutes.

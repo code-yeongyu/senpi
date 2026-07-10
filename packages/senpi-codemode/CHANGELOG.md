@@ -10,6 +10,7 @@
 ### Changed
 
 - Documented that the current exported extension factory is still a no-op until the `eval` tool and bundled host loading land.
+- Improved `eval` TUI rendering with streaming status and timing, bounded expandable previews, width-safe ANSI/CJK/emoji reflow, nested tool-call state, and terminal-aware image fallbacks.
 
 ### Fixed
 
