@@ -14,6 +14,8 @@
 
 - Fixed emergency context pruning to reserve a model-aware output allowance without collapsing the usable prompt budget, preventing oversized tool results from exceeding new-model input limits.
 
+- Fixed invalid extension tool renderers displaying `[render error: Box]` instead of fallback rendering.
+
 ### Removed
 
 ## [2026.7.10-2] - 2026-07-10

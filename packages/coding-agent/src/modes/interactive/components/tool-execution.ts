@@ -7,6 +7,7 @@ import { stripAnsi } from "../../../utils/ansi.ts";
 import { convertToPng } from "../../../utils/image-convert.ts";
 import { theme } from "../theme/theme.ts";
 import { createBoundedRenderSignature } from "./render-signature.ts";
+import { isComponent, ToolRendererBoundary } from "./tool-renderer-boundary.ts";
 
 export interface ToolExecutionOptions {
 	showImages?: boolean;
@@ -332,9 +333,21 @@ export class ToolExecutionComponent extends Container {
 			} else {
 				try {
 					const component = callRenderer(this.args, theme, this.getRenderContext(this.callRendererComponent));
-					this.callRendererComponent = component;
-					renderContainer.addChild(component);
-					hasContent = true;
+					if (isComponent(component)) {
+						this.callRendererComponent = component;
+						renderContainer.addChild(
+							new ToolRendererBoundary(component, this.createCallFallback(), () => {
+								if (this.callRendererComponent === component) {
+									this.callRendererComponent = undefined;
+								}
+							}),
+						);
+						hasContent = true;
+					} else {
+						this.callRendererComponent = undefined;
+						renderContainer.addChild(this.createCallFallback());
+						hasContent = true;
+					}
 				} catch {
 					this.callRendererComponent = undefined;
 					renderContainer.addChild(this.createCallFallback());
@@ -362,9 +375,24 @@ export class ToolExecutionComponent extends Container {
 							theme,
 							this.getRenderContext(this.resultRendererComponent),
 						);
-						this.resultRendererComponent = component;
-						renderContainer.addChild(component);
-						hasContent = true;
+						if (isComponent(component)) {
+							this.resultRendererComponent = component;
+							renderContainer.addChild(
+								new ToolRendererBoundary(component, this.createResultFallback(), () => {
+									if (this.resultRendererComponent === component) {
+										this.resultRendererComponent = undefined;
+									}
+								}),
+							);
+							hasContent = true;
+						} else {
+							this.resultRendererComponent = undefined;
+							const fallback = this.createResultFallback();
+							if (fallback) {
+								renderContainer.addChild(fallback);
+								hasContent = true;
+							}
+						}
 					} catch {
 						this.resultRendererComponent = undefined;
 						const component = this.createResultFallback();
