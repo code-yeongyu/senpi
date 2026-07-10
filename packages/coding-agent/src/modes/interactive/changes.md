@@ -1,5 +1,33 @@
 # changes
 
+## eval/tool image renderer lifecycle (2026-07-10)
+
+### What changed
+
+- `components/tool-execution.ts`: keeps tool lifecycle state, spinner updates, and bounded render caching while
+  delegating renderer composition and image handling to focused collaborators.
+- `components/tool-execution-renderer.ts`: resolves built-in/custom renderer slots, preserves reusable renderer
+  components and shared state, and passes the active terminal image protocol through the renderer context (see
+  `../../core/extensions/changes.md` 2026-07-10).
+- `components/tool-execution-images.ts`: owns host image/fallback composition and Kitty conversion. Converted images
+  are keyed by source identity, and generation checks prevent late conversion callbacks from replacing newer results.
+
+### Why
+
+- Eval/tool results can reuse renderer components across partial and final updates. Without the host fallback and
+  conversion invalidation, non-PNG Kitty results could remain blank or cached instead of being replaced by the
+  converted PNG.
+
+### Why extension system couldn't handle this
+
+- Extensions can inspect `imageProtocol` and return a result component, but they do not own the host's image conversion,
+  post-renderer child composition, or display-cache invalidation across reused `ToolExecutionComponent` results.
+
+### Expected merge conflict zones
+
+- MEDIUM: `components/tool-execution.ts`, `tool-execution-renderer.ts`, and `tool-execution-images.ts` around lifecycle
+  snapshots, renderer context/reuse, render signatures, and Kitty image conversion.
+
 ## preserve steer intent when draining queued input (2026-07-10)
 
 ### What changed
