@@ -36,9 +36,9 @@ export async function writeGoal(ref: GoalStoreRef, goal: Goal | null): Promise<v
 }
 
 async function writeGoalFileAtomic(filePath: string, contents: string): Promise<void> {
-	const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+	const tempPath = join(dirname(filePath), `.goal-${randomUUID()}.tmp`);
 	try {
-		await writeFile(tempPath, contents, "utf8");
+		await writeFile(tempPath, contents, { encoding: "utf8", mode: 0o600 });
 		await rename(tempPath, filePath);
 	} catch (error) {
 		try {
@@ -177,7 +177,11 @@ function parseGoalFile(raw: string): GoalFile {
 		if (!(error instanceof SyntaxError)) throw error;
 		const recovered = recoverGoalFileWithStaleClosingBraces(raw);
 		if (recovered === undefined) throw error;
-		parsed = JSON.parse(recovered);
+		try {
+			parsed = JSON.parse(recovered);
+		} catch {
+			throw error;
+		}
 	}
 	if (!isRecord(parsed)) throw new InvalidGoalStoreError("goal store must be a JSON object");
 	if (parsed.version !== STORE_VERSION) throw new UnsupportedGoalStoreVersionError("unsupported goal store version");

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -77,6 +77,26 @@ describe("goal store JSON recovery", () => {
 		await expect(readGoal(ref)).rejects.toBeInstanceOf(SyntaxError);
 	});
 
+	it("preserves the original parse error for mismatched container corruption", async () => {
+		// Given
+		const ref = await tempStore("thread-mismatched-container");
+		const raw = '{"version":1,"goal":[}}}';
+		let originalMessage = "";
+		try {
+			JSON.parse(raw);
+		} catch (error) {
+			if (!(error instanceof SyntaxError)) throw error;
+			originalMessage = error.message;
+		}
+		await writeRawGoalFile(ref, raw);
+
+		// When
+		const read = readGoal(ref);
+
+		// Then
+		await expect(read).rejects.toThrow(originalMessage);
+	});
+
 	it("rejects adversarial stale-brace suffixes without blocking", async () => {
 		// Given
 		const ref = await tempStore("thread-adversarial-stale-braces");
@@ -111,20 +131,71 @@ describe("goal store JSON recovery", () => {
 });
 
 describe("goal store atomic writes", () => {
-	it("leaves complete JSON after overlapping long and short writes", async () => {
+	it("writes a goal whose valid basename leaves no room for an appended temp suffix", async () => {
+		// Given
+		const ref = await tempStore("x".repeat(250));
+		expect(Buffer.byteLength(basename(goalFilePath(ref)))).toBe(255);
+
+		// When
+		const goal = await createGoal(ref, "Persist at the component limit");
+
+		// Then
+		expect(await readGoal(ref)).toEqual(goal);
+	});
+
+	it.skipIf(process.platform === "win32")("preserves mode 0600 across atomic replacement", async () => {
+		// Given
+		const ref = await tempStore("thread-private-mode");
+		const goal = await createGoal(ref, "Keep this private");
+		await chmod(goalFilePath(ref), 0o600);
+		const previousUmask = process.umask(0o022);
+
+		// When
+		try {
+			await writeGoal(ref, { ...goal, objective: "Still private" });
+		} finally {
+			process.umask(previousUmask);
+		}
+
+		// Then
+		const fileStat = await stat(goalFilePath(ref));
+		expect(fileStat.mode & 0o777).toBe(0o600);
+	});
+
+	it("leaves a parsed file exactly equal to one overlapping submitted goal", async () => {
 		// Given
 		const ref = await tempStore("thread-overlapping-writes");
 		const goal = await createGoal(ref, "Initial goal");
 		const longGoal = { ...goal, objective: "x".repeat(4_000_000), updatedAt: goal.updatedAt + 1 };
 		const shortGoal = { ...goal, objective: "short", updatedAt: goal.updatedAt + 2 };
+		const submittedFiles = [
+			{ version: 1, goal: longGoal },
+			{ version: 1, goal: shortGoal },
+		];
 
-		// When / Then
+		// When
 		for (let iteration = 0; iteration < 50; iteration += 1) {
 			await Promise.all([writeGoal(ref, longGoal), writeGoal(ref, shortGoal)]);
 			const parsed: unknown = JSON.parse(await readFile(goalFilePath(ref), "utf8"));
-			expect(parsed).toMatchObject({ version: 1 });
+
+			// Then
+			expect(submittedFiles).toContainEqual(parsed);
 		}
 		expect(await readdir(ref.baseDir)).toEqual([basename(goalFilePath(ref))]);
+	});
+
+	it("cleans its temp sibling after a deterministic rename failure", async () => {
+		// Given
+		const ref = await tempStore("thread-rename-failure");
+		await mkdir(goalFilePath(ref), { recursive: true });
+
+		// When
+		const write = writeGoal(ref, null);
+
+		// Then
+		await expect(write).rejects.toBeInstanceOf(Error);
+		expect(await readdir(ref.baseDir)).toEqual([basename(goalFilePath(ref))]);
+		expect((await stat(goalFilePath(ref))).isDirectory()).toBe(true);
 	});
 });
 
