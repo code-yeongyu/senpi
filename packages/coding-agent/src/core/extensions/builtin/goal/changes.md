@@ -5,6 +5,26 @@ Persistent per-thread goal tracking as an in-tree builtin. Ports the standalone
 `pi-goal` extension into senpi with no dependency on it, file-based persistence,
 codex-aligned tool naming, and the budget concept removed.
 
+## Atomic goal store and narrow stale-brace recovery (2026-07-10)
+
+### What changed
+- Fork-specific divergence from standalone `pi-goal`: `store.ts` writes complete JSON to a unique sibling temporary
+  file with mode `0600`, then atomically renames it over the destination and cleans up the temporary file on failure.
+- Goal reads recover only the observed corruption shape: one complete root JSON object followed solely by whitespace
+  and one or more stale closing braces. Truncated JSON, arbitrary trailing bytes, unsupported versions, and invalid
+  goal shapes still fail normally.
+
+### Why this belongs in the builtin
+- The persistence path, file format, and recovery boundary are private to the vendored goal builtin. Keeping this
+  fork-specific behavior in `goal/store.ts` protects session resume without broadening shared session storage or the
+  public extension API.
+
+### Expected merge conflict zones on next upstream sync
+- HIGH in `store.ts` for standalone `pi-goal` changes to imports, temporary-file handling, `writeGoal`,
+  `parseGoalFile`, or malformed JSON recovery.
+- MEDIUM in goal store tests covering persistence and malformed JSON behavior.
+- NONE in shared core session storage and `extensions/types.ts`, which this divergence does not touch.
+
 ## Continuation halts on aborts and terminal turns (2026-06-21)
 
 ### What changed
