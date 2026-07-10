@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	accountGoalUsage,
@@ -9,6 +9,7 @@ import {
 	goalFilePath,
 	readGoal,
 	updateGoal,
+	writeGoal,
 } from "../../src/core/extensions/builtin/goal/store.ts";
 import type { GoalStoreRef } from "../../src/core/extensions/builtin/goal/types.ts";
 
@@ -20,11 +21,114 @@ async function tempStore(threadId = "thread-test"): Promise<GoalStoreRef> {
 	return { baseDir: join(dir, "extensions", "goal"), threadId };
 }
 
-describe("goal store (budget-free)", () => {
-	afterEach(async () => {
-		await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+async function writeRawGoalFile(ref: GoalStoreRef, contents: string): Promise<void> {
+	await mkdir(ref.baseDir, { recursive: true });
+	await writeFile(goalFilePath(ref), contents, "utf8");
+}
+
+afterEach(async () => {
+	await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+describe("goal store JSON recovery", () => {
+	it("reads an unchanged valid goal file", async () => {
+		// Given
+		const ref = await tempStore("thread-valid-json");
+		const goal = await createGoal(ref, "Keep reading valid goals");
+
+		// When
+		const persisted = await readGoal(ref);
+
+		// Then
+		expect(persisted).toEqual(goal);
 	});
 
+	it("recovers a complete goal file followed by stale closing braces", async () => {
+		// Given
+		const ref = await tempStore("thread-stale-braces");
+		const goal = await createGoal(ref, 'Resume } the "named" session \\ safely');
+		const validContents = await readFile(goalFilePath(ref), "utf8");
+		await writeRawGoalFile(ref, `${validContents}}\n}\n`);
+
+		// When
+		const recovered = await readGoal(ref);
+
+		// Then
+		expect(recovered).toEqual(goal);
+	});
+
+	it("rejects truncated JSON", async () => {
+		// Given
+		const ref = await tempStore("thread-truncated-json");
+		await writeRawGoalFile(ref, '{"version":1,"goal":');
+
+		// When / Then
+		await expect(readGoal(ref)).rejects.toBeInstanceOf(SyntaxError);
+	});
+
+	it("rejects arbitrary trailing text", async () => {
+		// Given
+		const ref = await tempStore("thread-trailing-text");
+		await createGoal(ref, "Reject arbitrary suffixes");
+		const validContents = await readFile(goalFilePath(ref), "utf8");
+		await writeRawGoalFile(ref, `${validContents}not-stale-write-bytes`);
+
+		// When / Then
+		await expect(readGoal(ref)).rejects.toBeInstanceOf(SyntaxError);
+	});
+
+	it("rejects adversarial stale-brace suffixes without blocking", async () => {
+		// Given
+		const ref = await tempStore("thread-adversarial-stale-braces");
+		await createGoal(ref, "Reject adversarial stale-brace suffixes");
+		const validContents = await readFile(goalFilePath(ref), "utf8");
+		await writeRawGoalFile(ref, `${validContents}${"} ".repeat(24)}X`);
+
+		// When / Then
+		const startedAt = performance.now();
+		await expect(readGoal(ref)).rejects.toBeInstanceOf(SyntaxError);
+		const elapsedMs = performance.now() - startedAt;
+		expect(elapsedMs).toBeLessThan(500);
+	});
+
+	it("rejects unsupported versions even with stale closing braces", async () => {
+		// Given
+		const ref = await tempStore("thread-unsupported-version");
+		await writeRawGoalFile(ref, '{"version":2,"goal":null}\n}\n');
+
+		// When / Then
+		await expect(readGoal(ref)).rejects.toThrow("unsupported goal store version");
+	});
+
+	it("rejects invalid goal shapes even with stale closing braces", async () => {
+		// Given
+		const ref = await tempStore("thread-invalid-goal");
+		await writeRawGoalFile(ref, '{"version":1,"goal":{"id":1}}\n}\n');
+
+		// When / Then
+		await expect(readGoal(ref)).rejects.toThrow("goal store contains an invalid goal");
+	});
+});
+
+describe("goal store atomic writes", () => {
+	it("leaves complete JSON after overlapping long and short writes", async () => {
+		// Given
+		const ref = await tempStore("thread-overlapping-writes");
+		const goal = await createGoal(ref, "Initial goal");
+		const longGoal = { ...goal, objective: "x".repeat(4_000_000), updatedAt: goal.updatedAt + 1 };
+		const shortGoal = { ...goal, objective: "short", updatedAt: goal.updatedAt + 2 };
+
+		// When / Then
+		for (let iteration = 0; iteration < 50; iteration += 1) {
+			await Promise.all([writeGoal(ref, longGoal), writeGoal(ref, shortGoal)]);
+			const parsed: unknown = JSON.parse(await readFile(goalFilePath(ref), "utf8"));
+			expect(parsed).toMatchObject({ version: 1 });
+		}
+		expect(await readdir(ref.baseDir)).toEqual([basename(goalFilePath(ref))]);
+	});
+});
+
+describe("goal store (budget-free)", () => {
 	it("creates a persisted active goal with no budget field", async () => {
 		const ref = await tempStore("thread-create");
 		const goal = await createGoal(ref, "  Ship the extension  ");
