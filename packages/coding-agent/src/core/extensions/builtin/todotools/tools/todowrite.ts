@@ -1,5 +1,6 @@
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { getTextOutput } from "../../../../tools/render-utils.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../../types.ts";
 import {
 	getTodoResultLines,
@@ -106,14 +107,10 @@ export function registerTodoWriteTool(pi: ExtensionAPI, accessors: TodoAccessors
 			const body = items.length > 0 ? `\n${items.join("\n")}` : "";
 			return new Text(`${theme.fg("toolTitle", theme.bold("todowrite "))}${theme.fg("muted", title)}${body}`, 0, 0);
 		},
-		renderResult(result, _options, theme) {
-			const details = result.details as TodoWriteDetails | undefined;
-			const todos = details?.todos ?? accessors.getCurrentTodos();
-			const lines = getTodoResultLines(todos);
-			const title = lines[0] ?? "0 todos";
-			const items = lines.slice(1);
-			const body = items.length > 0 ? `\n${items.join("\n")}` : "";
-			return new Text(`${theme.fg("muted", title)}${body}`, 0, 0);
+		renderResult(result, _options, theme, context) {
+			if (!context.isError) return new Text("", 0, 0);
+
+			return new Text(theme.fg("toolOutput", getTextOutput(result, context.showImages)), 0, 0);
 		},
 	});
 }
