@@ -1,6 +1,6 @@
 {
 	"name": "@code-yeongyu/senpi-codemode",
-	"version": "2026.7.10",
+	"version": "2026.7.10-2",
 	"description": "Source-only senpi extension package for codemode evaluation tools",
 	"type": "module",
 	"main": "./src/index.ts",
@@ -29,14 +29,14 @@
 		"access": "public"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "^2026.7.10",
+		"@earendil-works/pi-ai": "^2026.7.10-2",
 		"typebox": "1.1.38"
 	},
 	"peerDependencies": {
 		"@code-yeongyu/senpi": "*"
 	},
 	"devDependencies": {
-		"@code-yeongyu/senpi": "2026.7.10"
+		"@code-yeongyu/senpi": "2026.7.10-2"
 	},
 	"keywords": [
 		"senpi",

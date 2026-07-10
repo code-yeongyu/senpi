@@ -4687,13 +4687,13 @@ export const OPENROUTER_MODELS = {
 		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text"],
 		cost: {
-			input: 0.532,
-			output: 1.672,
-			cacheRead: 0.0988,
+			input: 0.49,
+			output: 1.54,
+			cacheRead: 0.091,
 			cacheWrite: 0,
 		},
 		contextWindow: 1048576,
-		maxTokens: 131072,
+		maxTokens: 128000,
 	} satisfies Model<"openai-completions">,
 	"z-ai/glm-5v-turbo": {
 		id: "z-ai/glm-5v-turbo",
