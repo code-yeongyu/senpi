@@ -36,6 +36,7 @@ import type {
 	Component,
 	EditorComponent,
 	EditorTheme,
+	ImageProtocol,
 	KeyId,
 	OverlayHandle,
 	OverlayOptions,
@@ -479,6 +480,8 @@ export interface ToolRenderContext<TState = any, TArgs = any> {
 	expanded: boolean;
 	/** Whether inline images are currently shown in the TUI. */
 	showImages: boolean;
+	/** Image protocol supported by the current terminal, or null when images cannot render. */
+	imageProtocol?: ImageProtocol;
 	/** Whether the current result is an error. */
 	isError: boolean;
 	spinnerFrame?: number;

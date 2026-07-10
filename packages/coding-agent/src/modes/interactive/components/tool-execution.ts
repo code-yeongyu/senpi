@@ -161,6 +161,7 @@ export class ToolExecutionComponent extends Container {
 			isPartial: this.isPartial,
 			expanded: this.expanded,
 			showImages: this.showImages,
+			imageProtocol: getCapabilities().images,
 			isError: this.result?.isError ?? false,
 			spinnerFrame: this.spinnerFrame,
 		};
