@@ -15,6 +15,9 @@
 - Fixed inherited post-compaction output-token budgeting to ignore stale assistant usage from before the compaction boundary.
 - Fixed inherited GPT-5.4, GPT-5.5, and GPT-5.6 long-context pricing metadata, while excluding the nonexistent bare `gpt-5.6` OpenAI/Azure alias.
 - Fixed inherited Anthropic message conversion to preserve thinking blocks with empty thinking text but a valid signature instead of dropping them ([#6457](https://github.com/earendil-works/pi/pull/6457) by [@davidbrai](https://github.com/davidbrai)).
+- Fixed inherited Anthropic replay to send the normalized thinking signature value after signature narrowing.
+- Fixed inherited OpenAI-compatible simple streams to preserve provider-specific `max` reasoning mappings instead of clamping them.
+- Fixed inherited same-model signed thinking replay to keep non-empty signed blocks only when provider state must be replayed, while preserving empty opaque signed blocks.
 
 ### Removed
 
