@@ -395,6 +395,11 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 	pi.on("context", (event, ctx) => {
 		const usage = ctx.getContextUsage();
 		const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+		const maxTokens = ctx.model?.maxTokens;
+		const promptContextWindow =
+			typeof maxTokens === "number" && Number.isFinite(maxTokens) && maxTokens > 0 && maxTokens < contextWindow
+				? contextWindow - maxTokens
+				: contextWindow;
 		const sourceMessages = shouldApplyContextReduction({
 			usageTokens: usage?.tokens ?? null,
 			contextWindow,
@@ -402,7 +407,7 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 		})
 			? reduceContextMessages(event.messages, BUILTIN_CONTEXT_REDUCTION_OPTIONS).messages
 			: event.messages;
-		const emergency = hardLimitEmergencyPrune(sourceMessages, contextWindow);
+		const emergency = hardLimitEmergencyPrune(sourceMessages, promptContextWindow);
 		return { messages: repairOrphanedToolResults(convertToLlm(emergency.messages)) };
 	});
 

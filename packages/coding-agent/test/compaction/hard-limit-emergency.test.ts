@@ -87,7 +87,7 @@ function createBeforeAgentStartHandler(): ExtensionHandler<BeforeAgentStartEvent
 	return beforeAgentStartHandler as ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>;
 }
 
-function createContext(contextWindow: number, compact = vi.fn()): ExtensionContext {
+function createContext(contextWindow: number, maxTokens = contextWindow, compact = vi.fn()): ExtensionContext {
 	const sessionManager = Object.create(null) as ExtensionContext["sessionManager"];
 	sessionManager.getBranch = vi.fn(() => []);
 	return {
@@ -98,7 +98,7 @@ function createContext(contextWindow: number, compact = vi.fn()): ExtensionConte
 		isProjectTrusted: () => true,
 		sessionManager,
 		modelRegistry: {} as ExtensionContext["modelRegistry"],
-		model: { contextWindow } as ExtensionContext["model"],
+		model: { contextWindow, maxTokens } as ExtensionContext["model"],
 		serviceTier: undefined,
 		isIdle: () => true,
 		signal: undefined,
@@ -192,7 +192,7 @@ describe("compaction hard-limit emergency behavior", () => {
 				];
 
 				// When
-				const result = await handler({ type: "context", messages }, createContext(2_000, compact));
+				const result = await handler({ type: "context", messages }, createContext(2_000, 2_000, compact));
 				const pruned = result?.messages ?? messages;
 
 				// Then
@@ -221,7 +221,7 @@ describe("compaction hard-limit emergency behavior", () => {
 					lastUser,
 				];
 
-				const context = createContext(20, compact);
+				const context = createContext(20, 20, compact);
 
 				// When
 				const result = await handler({ type: "context", messages }, context);
@@ -234,6 +234,56 @@ describe("compaction hard-limit emergency behavior", () => {
 				expect(pruned).not.toContainEqual(messages[2]);
 				const { toolCallIds, toolResultIds } = collectToolPairIds(pruned);
 				expect(toolCallIds).toEqual(toolResultIds);
+			});
+		});
+	});
+
+	describe("Given model output tokens consume part of the context window", () => {
+		describe("When context hook runs with an oversized paired tool result", () => {
+			it("Then it reserves valid model output budget and preserves the latest user and tool pair", async () => {
+				// Given
+				const handler = createContextHandler();
+				const lastUser = userMessage("Keep this latest request", 4);
+				const messages: AgentMessage[] = [
+					userMessage("Run a command", 1),
+					assistantWithToolCall("call-large", "produce large output", 2),
+					toolResult("call-large", "A".repeat(1_000_000), 3),
+					lastUser,
+				];
+				const maximumInputTokens = Math.floor((372_000 - 128_000) * 0.95);
+
+				// When
+				const result = await handler({ type: "context", messages }, createContext(372_000, 128_000));
+				const pruned = result?.messages ?? messages;
+
+				// Then
+				expect(estimateContextTokens(pruned).tokens).toBeLessThanOrEqual(maximumInputTokens);
+				expect(pruned).toContainEqual(lastUser);
+				const { toolCallIds, toolResultIds } = collectToolPairIds(pruned);
+				expect(toolCallIds).toEqual(toolResultIds);
+			});
+		});
+	});
+
+	describe("Given model output tokens equal the context window", () => {
+		describe("When context hook runs with a small paired tool result", () => {
+			it("Then it leaves the paired result byte-for-byte unchanged", async () => {
+				// Given
+				const handler = createContextHandler();
+				const messages: AgentMessage[] = [
+					userMessage("Run a small command", 1),
+					assistantWithToolCall("call-small", "printf small", 2),
+					toolResult("call-small", "small result\n", 3),
+					userMessage("Use the small result", 4),
+				];
+				const originalBytes = JSON.stringify(messages);
+
+				// When
+				const result = await handler({ type: "context", messages }, createContext(372_000, 372_000));
+				const pruned = result?.messages ?? messages;
+
+				// Then
+				expect(JSON.stringify(pruned)).toBe(originalBytes);
 			});
 		});
 	});
