@@ -53,6 +53,7 @@ export interface EvalKernelRunInput {
 
 export interface EvalKernel {
 	run(input: EvalKernelRunInput): Promise<EvalKernelResult>;
+	interrupt(reason?: string): Promise<void>;
 	deliverToolReply(message: Extract<HostToKernelMessage, { type: "tool-reply" }>): void;
 	reset(): Promise<void>;
 	close(): Promise<void>;
