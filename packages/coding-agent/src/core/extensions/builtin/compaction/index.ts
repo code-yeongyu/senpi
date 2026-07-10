@@ -45,6 +45,7 @@ const EMERGENCY_COMPACTION_INSTRUCTIONS =
 const PROACTIVE_COMPACTION_INSTRUCTIONS = "Proactively compact before the next agent turn.";
 const MAX_PENDING_METADATA = 8;
 const IMAGE_PROMPT_TOKEN_ESTIMATE = 1_200;
+const MAX_OUTPUT_RESERVE_RATIO = 0.5;
 
 interface PendingCompactionMetadata {
 	checkpoint: checkpointState.AgentCheckpoint;
@@ -61,6 +62,14 @@ function isOpenAiResponsesModel(model: ExtensionContext["model"]): boolean {
 
 function estimatePendingPromptTokens(event: { prompt?: string; images?: readonly unknown[] }): number {
 	return approxTokens(event.prompt ?? "") + (event.images?.length ?? 0) * IMAGE_PROMPT_TOKEN_ESTIMATE;
+}
+
+function getPromptContextWindow(contextWindow: number, maxTokens: number | undefined): number {
+	if (typeof maxTokens !== "number" || !Number.isFinite(maxTokens) || maxTokens <= 0 || contextWindow <= 0) {
+		return contextWindow;
+	}
+	const outputReserve = Math.min(maxTokens, Math.floor(contextWindow * MAX_OUTPUT_RESERVE_RATIO));
+	return contextWindow - outputReserve;
 }
 
 function withAdditionalTokens(usage: ContextUsage, additionalTokens: number): ContextUsage {
@@ -395,11 +404,7 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 	pi.on("context", (event, ctx) => {
 		const usage = ctx.getContextUsage();
 		const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
-		const maxTokens = ctx.model?.maxTokens;
-		const promptContextWindow =
-			typeof maxTokens === "number" && Number.isFinite(maxTokens) && maxTokens > 0 && maxTokens < contextWindow
-				? contextWindow - maxTokens
-				: contextWindow;
+		const promptContextWindow = getPromptContextWindow(contextWindow, ctx.model?.maxTokens);
 		const sourceMessages = shouldApplyContextReduction({
 			usageTokens: usage?.tokens ?? null,
 			contextWindow,

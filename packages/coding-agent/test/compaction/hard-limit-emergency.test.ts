@@ -288,6 +288,29 @@ describe("compaction hard-limit emergency behavior", () => {
 		});
 	});
 
+	describe("Given model output tokens nearly equal the context window", () => {
+		describe("When context hook runs with a moderate paired tool result", () => {
+			it("Then it keeps a usable prompt budget instead of pruning to the output-cap remainder", async () => {
+				// Given
+				const handler = createContextHandler();
+				const messages: AgentMessage[] = [
+					userMessage("Run a moderate command", 1),
+					assistantWithToolCall("call-moderate", "produce moderate output", 2),
+					toolResult("call-moderate", "A".repeat(20_000), 3),
+					userMessage("Use the moderate result", 4),
+				];
+				const originalBytes = JSON.stringify(messages);
+
+				// When
+				const result = await handler({ type: "context", messages }, createContext(131_072, 129_024));
+				const pruned = result?.messages ?? messages;
+
+				// Then
+				expect(JSON.stringify(pruned)).toBe(originalBytes);
+			});
+		});
+	});
+
 	describe("Given usage is at the hard limit before the next agent turn", () => {
 		describe("When before_agent_start runs", () => {
 			it("Then aggressive extension compaction is applied once before normal threshold compaction", async () => {

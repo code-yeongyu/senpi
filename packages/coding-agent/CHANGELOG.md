@@ -12,7 +12,7 @@
 
 - Fixed `bash_output` waits ignoring turn cancellation and accepting unbounded model-supplied timeouts; waits now release without killing the background terminal and individual polls are capped at five minutes.
 
-- Fixed emergency context pruning to reserve each model's valid separate output-token allowance, preventing oversized tool results from exceeding new-model input budgets.
+- Fixed emergency context pruning to reserve a model-aware output allowance without collapsing the usable prompt budget, preventing oversized tool results from exceeding new-model input limits.
 
 ### Removed
 
