@@ -12,6 +12,8 @@
 
 - Fixed `bash_output` waits ignoring turn cancellation and accepting unbounded model-supplied timeouts; waits now release without killing the background terminal and individual polls are capped at five minutes.
 
+- Fixed `bash_output` waiting on `wait_for` even when the pattern had already arrived in unread output before the waiter was registered.
+
 - Fixed emergency context pruning to reserve a model-aware output allowance without collapsing the usable prompt budget, preventing oversized tool results from exceeding new-model input limits.
 
 - Fixed invalid extension tool renderers displaying `[render error: Box]` instead of fallback rendering.
