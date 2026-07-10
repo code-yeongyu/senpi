@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createBuiltinParserRegistry } from "../../src/core/extensions/builtin/permission-system/parsers.ts";
 import registerTerminalExtension from "../../src/core/extensions/builtin/terminal/index.ts";
 import { TerminalManager } from "../../src/core/extensions/builtin/terminal/manager.ts";
+import { TerminalRuntimeSession } from "../../src/core/extensions/builtin/terminal/runtime-session.ts";
 import { createPtyBashTool } from "../../src/core/extensions/builtin/terminal/tools/bash.ts";
 import { createBashInputTool } from "../../src/core/extensions/builtin/terminal/tools/bash-input.ts";
 import {
@@ -220,6 +221,24 @@ describe("terminal builtin extension — bash_output robustness", () => {
 		const statusCheck = await output.execute("call-status-check", { bash_id: bashId });
 		expect(firstText(statusCheck)).toContain("status: running");
 		await manager.stop(bashId);
+	});
+
+	it("matches unread output that arrived before waiter registration", async () => {
+		const runtime = new TerminalRuntimeSession("buffered-output-fixture", {});
+		const ingestValue: unknown = Reflect.get(runtime, "ingest");
+		if (typeof ingestValue !== "function") throw new Error("Runtime ingest method missing");
+		Reflect.apply(ingestValue, runtime, [new TextEncoder().encode("CODEX_EXIT=0")]);
+		vi.useFakeTimers();
+
+		try {
+			const outcome = runtime.waitFor("CODEX_EXIT=", 1000);
+			await vi.advanceTimersByTimeAsync(1000);
+			await expect(outcome).resolves.toBe("matched");
+		} finally {
+			runtime.session.kill();
+			runtime.dispose();
+			vi.useRealTimers();
+		}
 	});
 
 	it("bounds an oversized timeout at the 300-second schema and runtime ceiling", async () => {

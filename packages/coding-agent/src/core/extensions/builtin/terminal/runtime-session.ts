@@ -111,7 +111,7 @@ export class TerminalRuntimeSession {
 	}
 
 	/**
-	 * Wait until `pattern` matches newly produced output, the session exits, the
+	 * Wait until `pattern` matches unread or newly produced output, the session exits, the
 	 * timeout elapses, or the wait is aborted.
 	 */
 	waitFor(pattern: string, timeoutMs: number, signal?: AbortSignal): Promise<OutputWaitOutcome> {
@@ -119,10 +119,13 @@ export class TerminalRuntimeSession {
 		if (regex === null) return Promise.resolve("invalid_pattern");
 		if (this.exited) return Promise.resolve("exited");
 		if (signal?.aborted) return Promise.resolve("aborted");
+		const unreadStart = Math.max(this.consumed, this.droppedChars);
+		const unreadOutput = this.buffer.slice(unreadStart - this.droppedChars);
+		if (regex.test(unreadOutput)) return Promise.resolve("matched");
 		return new Promise((resolve) => {
 			const waiter: OutputWaiter = {
 				regex,
-				buffer: "",
+				buffer: unreadOutput,
 				timer: null,
 				signal,
 				onAbort: () => this.resolveWaiter(waiter, "aborted"),
