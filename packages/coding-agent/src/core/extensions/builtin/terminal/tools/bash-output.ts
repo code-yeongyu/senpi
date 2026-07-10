@@ -4,6 +4,8 @@ import { DEFAULT_OUTPUT_WAIT_TIMEOUT_SECONDS, safeRegExp, TERMINAL_OUTPUT_TOOL }
 import { errorResult, type TerminalToolContext, type TerminalToolResult, textResult } from "./context.ts";
 import { describeExit } from "./spawn.ts";
 
+const MAX_OUTPUT_WAIT_TIMEOUT_SECONDS = 300;
+
 export const bashOutputSchema = Type.Object({
 	bash_id: Type.String({ description: "Session id returned by a run_in_background bash call." }),
 	filter: Type.Optional(Type.String({ description: "Only return output lines matching this regex." })),
@@ -11,7 +13,13 @@ export const bashOutputSchema = Type.Object({
 		Type.String({ description: "Block until output matches this regex, the session exits, or timeout." }),
 	),
 	block: Type.Optional(Type.Boolean({ description: "When wait_for is set, block (default true)." })),
-	timeout: Type.Optional(Type.Number({ description: "wait_for timeout in seconds (default 30)." })),
+	timeout: Type.Optional(
+		Type.Number({
+			minimum: 0,
+			maximum: MAX_OUTPUT_WAIT_TIMEOUT_SECONDS,
+			description: "wait_for timeout in seconds (default 30, maximum 300).",
+		}),
+	),
 	view: Type.Optional(
 		Type.Union([Type.Literal("log"), Type.Literal("screen")], {
 			description: "'log' returns new raw output (default); 'screen' returns the rendered xterm grid.",
@@ -51,13 +59,17 @@ export function createBashOutputTool(ctx: TerminalToolContext) {
 			"Read new output from a background bash session, or block until wait_for matches / the session exits / timeout. Use view:'screen' for a rendered full-screen snapshot.",
 		promptSnippet: "Read/subscribe to background bash session output (wait_for, filter, screen view)",
 		parameters: bashOutputSchema,
-		async execute(_toolCallId: string, input: BashOutputInput, _signal?: AbortSignal): Promise<TerminalToolResult> {
+		async execute(_toolCallId: string, input: BashOutputInput, signal?: AbortSignal): Promise<TerminalToolResult> {
 			const runtime = ctx.manager.get(input.bash_id);
 			if (!runtime) return errorResult(`No terminal session found with id: ${input.bash_id}`);
 
 			if (input.wait_for && input.block !== false) {
-				const timeoutMs = Math.trunc((input.timeout ?? DEFAULT_OUTPUT_WAIT_TIMEOUT_SECONDS) * 1000);
-				const outcome = await runtime.waitFor(input.wait_for, timeoutMs);
+				const timeoutSeconds = Math.min(
+					Math.max(input.timeout ?? DEFAULT_OUTPUT_WAIT_TIMEOUT_SECONDS, 0),
+					MAX_OUTPUT_WAIT_TIMEOUT_SECONDS,
+				);
+				const timeoutMs = Math.trunc(timeoutSeconds * 1000);
+				const outcome = await runtime.waitFor(input.wait_for, timeoutMs, signal);
 				if (outcome === "invalid_pattern") return errorResult(`Invalid wait_for regex: ${input.wait_for}`);
 			}
 

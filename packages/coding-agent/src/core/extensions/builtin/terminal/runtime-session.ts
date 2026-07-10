@@ -17,10 +17,15 @@ export interface DeltaRead {
 	readonly droppedChars: number;
 }
 
+type OutputWaitOutcome = "matched" | "exited" | "timeout" | "aborted" | "invalid_pattern";
+
 interface OutputWaiter {
 	readonly regex: RegExp;
 	buffer: string;
-	resolve: (matched: boolean) => void;
+	timer: ReturnType<typeof setTimeout> | null;
+	readonly signal: AbortSignal | undefined;
+	readonly onAbort: () => void;
+	readonly resolve: (outcome: OutputWaitOutcome) => void;
 }
 
 /**
@@ -47,7 +52,7 @@ export class TerminalRuntimeSession {
 		});
 		this.session = createTerminalSession(options);
 		this.unsubscribeData = this.session.onData((chunk) => this.ingest(chunk));
-		this.session.onExit(() => this.settleWaiters());
+		this.session.onExit(() => this.settleWaiters("exited"));
 	}
 
 	get backend(): string | null {
@@ -79,7 +84,7 @@ export class TerminalRuntimeSession {
 		}
 		for (const waiter of this.waiters) {
 			waiter.buffer += text;
-			if (waiter.regex.test(waiter.buffer)) this.resolveWaiter(waiter, true);
+			if (waiter.regex.test(waiter.buffer)) this.resolveWaiter(waiter, "matched");
 		}
 	}
 
@@ -106,40 +111,50 @@ export class TerminalRuntimeSession {
 	}
 
 	/**
-	 * Wait until `pattern` matches newly produced output, the session exits, or the
-	 * timeout elapses. Returns `"matched" | "exited" | "timeout" | "invalid_pattern"`.
+	 * Wait until `pattern` matches newly produced output, the session exits, the
+	 * timeout elapses, or the wait is aborted.
 	 */
-	waitFor(pattern: string, timeoutMs: number): Promise<"matched" | "exited" | "timeout" | "invalid_pattern"> {
+	waitFor(pattern: string, timeoutMs: number, signal?: AbortSignal): Promise<OutputWaitOutcome> {
 		const regex = safeRegExp(pattern);
 		if (regex === null) return Promise.resolve("invalid_pattern");
 		if (this.exited) return Promise.resolve("exited");
+		if (signal?.aborted) return Promise.resolve("aborted");
 		return new Promise((resolve) => {
 			const waiter: OutputWaiter = {
 				regex,
 				buffer: "",
-				resolve: (matched) => {
-					clearTimeout(timer);
-					resolve(matched ? "matched" : this.exited ? "exited" : "timeout");
-				},
+				timer: null,
+				signal,
+				onAbort: () => this.resolveWaiter(waiter, "aborted"),
+				resolve,
 			};
-			const timer = setTimeout(() => this.resolveWaiter(waiter, false), timeoutMs);
 			this.waiters.add(waiter);
+			waiter.timer = setTimeout(() => this.resolveWaiter(waiter, "timeout"), timeoutMs);
+			if (signal) {
+				signal.addEventListener("abort", waiter.onAbort, { once: true });
+				if (signal.aborted) this.resolveWaiter(waiter, "aborted");
+			}
 		});
 	}
 
 	dispose(): void {
 		this.unsubscribeData?.();
 		this.unsubscribeData = null;
-		this.settleWaiters();
+		this.settleWaiters(this.exited ? "exited" : "timeout");
 		this.screen.dispose();
 	}
 
-	private settleWaiters(): void {
-		for (const waiter of [...this.waiters]) this.resolveWaiter(waiter, false);
+	private settleWaiters(outcome: "exited" | "timeout"): void {
+		for (const waiter of [...this.waiters]) this.resolveWaiter(waiter, outcome);
 	}
 
-	private resolveWaiter(waiter: OutputWaiter, matched: boolean): void {
+	private resolveWaiter(waiter: OutputWaiter, outcome: Exclude<OutputWaitOutcome, "invalid_pattern">): void {
 		if (!this.waiters.delete(waiter)) return;
-		waiter.resolve(matched);
+		if (waiter.timer !== null) {
+			clearTimeout(waiter.timer);
+			waiter.timer = null;
+		}
+		waiter.signal?.removeEventListener("abort", waiter.onAbort);
+		waiter.resolve(outcome);
 	}
 }

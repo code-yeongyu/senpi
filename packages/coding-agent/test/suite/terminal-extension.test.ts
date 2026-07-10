@@ -1,10 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createBuiltinParserRegistry } from "../../src/core/extensions/builtin/permission-system/parsers.ts";
 import registerTerminalExtension from "../../src/core/extensions/builtin/terminal/index.ts";
 import { TerminalManager } from "../../src/core/extensions/builtin/terminal/manager.ts";
 import { createPtyBashTool } from "../../src/core/extensions/builtin/terminal/tools/bash.ts";
 import { createBashInputTool } from "../../src/core/extensions/builtin/terminal/tools/bash-input.ts";
-import { createBashOutputTool } from "../../src/core/extensions/builtin/terminal/tools/bash-output.ts";
+import {
+	bashOutputSchema,
+	createBashOutputTool,
+} from "../../src/core/extensions/builtin/terminal/tools/bash-output.ts";
 import { createBashResizeTool } from "../../src/core/extensions/builtin/terminal/tools/bash-resize.ts";
 import type { TerminalToolContext } from "../../src/core/extensions/builtin/terminal/tools/context.ts";
 import { createKillBashTool } from "../../src/core/extensions/builtin/terminal/tools/kill-bash.ts";
@@ -153,5 +156,91 @@ describe("terminal permission gating", () => {
 		const requests = registry.parse("bash_input", { input: "rm -rf /tmp/thing" }, "/tmp");
 		expect(requests[0]?.permission).toBe("bash");
 		expect(requests[0]?.patterns).toContain("rm");
+	});
+});
+
+describe("terminal builtin extension — bash_output robustness", () => {
+	let manager: TerminalManager;
+	let ctx: TerminalToolContext;
+	const savedForcePipe = process.env.SENPI_PTY_FORCE_PIPE;
+
+	beforeEach(() => {
+		process.env.SENPI_PTY_FORCE_PIPE = "1";
+		manager = new TerminalManager({});
+		ctx = {
+			manager,
+			cwd: process.cwd(),
+			defaultCols: 120,
+			defaultRows: 40,
+			getEnv: () => process.env,
+		};
+	});
+
+	afterEach(async () => {
+		vi.restoreAllMocks();
+		await manager.teardown();
+		if (savedForcePipe === undefined) delete process.env.SENPI_PTY_FORCE_PIPE;
+		else process.env.SENPI_PTY_FORCE_PIPE = savedForcePipe;
+	});
+
+	it("bash_output wait_for is released by an AbortSignal without killing the live background PTY", async () => {
+		const bash = createPtyBashTool(ctx);
+		const output = createBashOutputTool(ctx);
+		const started = await bash.execute("call-bg-abort", { command: "sleep 30", run_in_background: true }, undefined);
+		const bashId = /ID: (bash_\d+)/.exec(firstText(started))?.[1];
+		if (!bashId) throw new Error("Background bash did not return an id");
+
+		const controller = new AbortController();
+		const waitPromise = output.execute(
+			"call-wait-abort",
+			{ bash_id: bashId, wait_for: "NEVER_MATCHES_THIS_PATTERN_XYZ", timeout: 10 },
+			controller.signal,
+		);
+		const waitCompleted = new Promise<Awaited<typeof waitPromise>>((resolve, reject) => {
+			const timeout = setTimeout(
+				() => reject(new Error("AbortSignal did not release wait_for within 1 second")),
+				1000,
+			);
+			waitPromise.then(
+				(value) => {
+					clearTimeout(timeout);
+					resolve(value);
+				},
+				(error: unknown) => {
+					clearTimeout(timeout);
+					reject(error);
+				},
+			);
+		});
+
+		controller.abort();
+		const result = await waitCompleted;
+		expect(firstText(result)).toContain("status: running");
+
+		const statusCheck = await output.execute("call-status-check", { bash_id: bashId });
+		expect(firstText(statusCheck)).toContain("status: running");
+		await manager.stop(bashId);
+	});
+
+	it("bounds an oversized timeout at the 300-second schema and runtime ceiling", async () => {
+		const timeoutSchema = bashOutputSchema.properties.timeout;
+		expect("maximum" in timeoutSchema ? timeoutSchema.maximum : undefined).toBe(300);
+
+		const bash = createPtyBashTool(ctx);
+		const output = createBashOutputTool(ctx);
+		const started = await bash.execute(
+			"call-bg-clamp",
+			{ command: "echo READY", run_in_background: true },
+			undefined,
+		);
+		const bashId = /ID: (bash_\d+)/.exec(firstText(started))?.[1];
+		if (!bashId) throw new Error("Background bash did not return an id");
+		const runtime = ctx.manager.get(bashId);
+		if (!runtime) throw new Error(`No terminal session found with id: ${bashId}`);
+
+		const waitForSpy = vi.spyOn(runtime, "waitFor").mockResolvedValueOnce("timeout");
+		await output.execute("call-wait-oversized", { bash_id: bashId, wait_for: "READY", timeout: 1800 }, undefined);
+
+		expect(waitForSpy).toHaveBeenCalledWith("READY", 300000, undefined);
 	});
 });
