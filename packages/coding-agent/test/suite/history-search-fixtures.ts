@@ -51,6 +51,7 @@ const testFgColors = {
 	thinkingMedium: "",
 	thinkingHigh: "",
 	thinkingXhigh: "",
+	thinkingMax: "",
 	bashMode: "",
 };
 

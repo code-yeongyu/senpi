@@ -149,7 +149,7 @@ function isEncryptedReasoningDetail(detail: unknown): detail is OpenAIEncryptedR
 
 export interface OpenAICompletionsOptions extends StreamOptions {
 	toolChoice?: "auto" | "none" | "required" | { type: "function"; function: { name: string } };
-	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 }
 
 interface OpenAICompatCacheControl {
@@ -551,7 +551,11 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
 	const base = buildBaseOptions(model, context, options, options?.apiKey);
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
 	const reasoningEffort =
-		clampedReasoning === "off" ? undefined : clampMaxForOpenAI(clampedReasoning, supportsXhigh(model));
+		clampedReasoning === "off"
+			? undefined
+			: clampedReasoning === "max" && model.thinkingLevelMap?.max !== undefined
+				? "max"
+				: clampMaxForOpenAI(clampedReasoning, supportsXhigh(model));
 	const toolChoice = (options as OpenAICompletionsOptions | undefined)?.toolChoice;
 
 	return stream(model, context, {

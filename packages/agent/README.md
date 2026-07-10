@@ -164,7 +164,7 @@ const agent = new Agent({
   initialState: {
     systemPrompt: string,
     model: Model<any>,
-    thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max", // "max" is Anthropic-only adaptive thinking effort
+    thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max",
     tools: AgentTool<any>[],
     messages: AgentMessage[],
   },

@@ -69,7 +69,7 @@ export const GITHUB_COPILOT_MODELS = {
 		headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
 		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"max"},
+		thinkingLevelMap: {"max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -89,7 +89,7 @@ export const GITHUB_COPILOT_MODELS = {
 		headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
 		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh","minimal":"low"},
+		thinkingLevelMap: {"xhigh":"xhigh","max":"max","minimal":"low"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -109,7 +109,7 @@ export const GITHUB_COPILOT_MODELS = {
 		headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
 		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh","minimal":"low"},
+		thinkingLevelMap: {"xhigh":"xhigh","max":"max","minimal":"low"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -167,7 +167,7 @@ export const GITHUB_COPILOT_MODELS = {
 		headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
 		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
-		thinkingLevelMap: {"minimal":"low","xhigh":"max"},
+		thinkingLevelMap: {"max":"max","minimal":"low"},
 		input: ["text", "image"],
 		cost: {
 			input: 3,
@@ -187,6 +187,7 @@ export const GITHUB_COPILOT_MODELS = {
 		headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
 		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
+		thinkingLevelMap: {"xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 2,

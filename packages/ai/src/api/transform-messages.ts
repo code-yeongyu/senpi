@@ -128,9 +128,11 @@ export function transformMessages<TApi extends Api>(
 					}
 					const hasUsableSignature =
 						typeof block.thinkingSignature === "string" && block.thinkingSignature.trim().length > 0;
-					// For same model: keep thinking blocks with signatures (needed for replay)
-					// even if the thinking text is empty (OpenAI encrypted reasoning)
-					if (isSameModel && preserveProviderState && hasUsableSignature) return { ...block };
+					// For same model: keep signed thinking only while replaying provider state.
+					// Empty signed blocks are opaque compatibility state, not visible reasoning.
+					if (isSameModel && hasUsableSignature && (preserveProviderState || block.thinking.trim() === "")) {
+						return { ...block };
+					}
 					// Skip empty thinking blocks, convert others to plain text
 					if (!block.thinking || block.thinking.trim() === "") return [];
 					if (isSameModel) {

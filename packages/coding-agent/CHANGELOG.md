@@ -4,9 +4,17 @@
 
 ### Added
 
+- Added the opt-in `max` thinking level across CLI, SDK, RPC, model selection, settings, and themes.
+- Added request-wide input-token pricing tiers to custom model costs in `models.json`, `modelOverrides`, and extension-registered providers.
+- Added `~` expansion for the `shellPath` setting ([#6470](https://github.com/earendil-works/pi/pull/6470) by [@aaronkyriesenbach](https://github.com/aaronkyriesenbach)).
+
 ### Changed
 
 ### Fixed
+
+- Fixed inherited post-compaction output-token budgeting to ignore stale assistant usage from before the compaction boundary.
+- Fixed inherited GPT-5.4, GPT-5.5, and GPT-5.6 long-context pricing metadata, while excluding the nonexistent bare `gpt-5.6` OpenAI/Azure alias.
+- Fixed inherited Anthropic message conversion to preserve thinking blocks with empty thinking text but a valid signature instead of dropping them ([#6457](https://github.com/earendil-works/pi/pull/6457) by [@davidbrai](https://github.com/davidbrai)).
 
 ### Removed
 

@@ -66,7 +66,7 @@ export const FIREWORKS_MODELS = {
 		baseUrl: "https://api.fireworks.ai/inference/v1",
 		compat: {"supportsStore":false,"supportsDeveloperRole":false},
 		reasoning: true,
-		thinkingLevelMap: {"off":"none","minimal":null,"low":"high","medium":"high","xhigh":"max"},
+		thinkingLevelMap: {"off":"none","minimal":null,"low":"high","medium":"high","max":"max"},
 		input: ["text"],
 		cost: {
 			input: 1.4,
@@ -229,7 +229,7 @@ export const FIREWORKS_MODELS = {
 		baseUrl: "https://api.fireworks.ai/inference/v1",
 		compat: {"supportsStore":false,"supportsDeveloperRole":false},
 		reasoning: true,
-		thinkingLevelMap: {"off":"none","minimal":null,"low":"high","medium":"high","xhigh":"max"},
+		thinkingLevelMap: {"off":"none","minimal":null,"low":"high","medium":"high","max":"max"},
 		input: ["text"],
 		cost: {
 			input: 2.1,

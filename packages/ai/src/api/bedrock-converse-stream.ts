@@ -598,7 +598,9 @@ function supportsAdaptiveThinking(modelId: string, modelName?: string): boolean 
 
 function supportsNativeXhighEffort(model: Model<"bedrock-converse-stream">): boolean {
 	const candidates = getModelMatchCandidates(model.id, model.name);
-	return candidates.some((s) => s.includes("opus-4-7") || s.includes("opus-4-8") || s.includes("fable-5"));
+	return candidates.some(
+		(s) => s.includes("opus-4-7") || s.includes("opus-4-8") || s.includes("sonnet-5") || s.includes("fable-5"),
+	);
 }
 
 function mapThinkingLevelToEffort(
@@ -1057,14 +1059,11 @@ function buildAdditionalModelRequestFields(
 						low: 2048,
 						medium: 8192,
 						high: 16384,
-						xhigh: 16384,
+						xhigh: 16384, // Budget-based Claude clamps extended levels to high
 						max: 16384,
 					};
 
-					// Custom ThinkingBudgets only declares minimal/low/medium/high; xhigh and max
-					// fall back to defaultBudgets (the Bedrock budget-based path doesn't know the
-					// native Anthropic adaptive "max" tier, and this model is not on the adaptive
-					// path anyway).
+					// Custom budgets only cover token-based levels through high.
 					const level = options.reasoning === "xhigh" || options.reasoning === "max" ? "high" : options.reasoning;
 					const budget = options.thinkingBudgets?.[level] ?? defaultBudgets[options.reasoning];
 

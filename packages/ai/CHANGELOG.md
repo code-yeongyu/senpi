@@ -4,9 +4,16 @@
 
 ### Added
 
+- Added the opt-in `max` thinking level, plus provider metadata for native `xhigh` and `max` support on GPT-5.6 and adaptive Claude models.
+- Added request-wide input-token pricing tiers to model cost metadata and usage cost calculation.
+
 ### Changed
 
 ### Fixed
+
+- Fixed post-compaction output-token budgeting to ignore stale assistant usage from before the compaction boundary.
+- Fixed GPT-5.4, GPT-5.5, and GPT-5.6 long-context pricing metadata, while excluding the nonexistent bare `gpt-5.6` OpenAI/Azure alias.
+- Fixed Anthropic message conversion to preserve thinking blocks with empty thinking text but a valid signature instead of dropping them ([#6457](https://github.com/earendil-works/pi/pull/6457) by [@davidbrai](https://github.com/davidbrai)).
 
 ### Removed
 

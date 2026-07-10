@@ -170,6 +170,21 @@ const ProviderCompatSchema = Type.Union([
 	AnthropicMessagesCompatSchema,
 ]);
 
+const ModelCostRatesSchema = {
+	input: Type.Number(),
+	output: Type.Number(),
+	cacheRead: Type.Number(),
+	cacheWrite: Type.Number(),
+};
+const ModelCostTierSchema = Type.Object({
+	inputTokensAbove: Type.Number(),
+	...ModelCostRatesSchema,
+});
+const ModelCostSchema = Type.Object({
+	...ModelCostRatesSchema,
+	tiers: Type.Optional(Type.Array(ModelCostTierSchema)),
+});
+
 // Schema for custom model definition
 // Most fields are optional with sensible defaults for local models (Ollama, LM Studio, etc.)
 const ExtraBodySchema = Type.Record(Type.String(), Type.Unknown());
@@ -188,14 +203,7 @@ const ModelDefinitionSchema = Type.Object({
 	reasoning: Type.Optional(Type.Boolean()),
 	thinkingLevelMap: Type.Optional(ThinkingLevelMapSchema),
 	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image"), Type.Literal("video")]))),
-	cost: Type.Optional(
-		Type.Object({
-			input: Type.Number(),
-			output: Type.Number(),
-			cacheRead: Type.Number(),
-			cacheWrite: Type.Number(),
-		}),
-	),
+	cost: Type.Optional(ModelCostSchema),
 	contextWindow: Type.Optional(Type.Number()),
 	maxTokens: Type.Optional(Type.Number()),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
@@ -218,6 +226,7 @@ const ModelOverrideSchema = Type.Object({
 			output: Type.Optional(Type.Number()),
 			cacheRead: Type.Optional(Type.Number()),
 			cacheWrite: Type.Optional(Type.Number()),
+			tiers: Type.Optional(Type.Array(ModelCostTierSchema)),
 		}),
 	),
 	contextWindow: Type.Optional(Type.Number()),
@@ -397,6 +406,7 @@ function applyModelOverride(model: Model<Api>, override: ModelOverride): Model<A
 			output: override.cost.output ?? model.cost.output,
 			cacheRead: override.cost.cacheRead ?? model.cost.cacheRead,
 			cacheWrite: override.cost.cacheWrite ?? model.cost.cacheWrite,
+			tiers: override.cost.tiers ?? model.cost.tiers,
 		};
 	}
 
@@ -1261,7 +1271,7 @@ export interface ProviderConfigInput {
 		reasoning: boolean;
 		thinkingLevelMap?: ThinkingLevelMap;
 		input: Model<Api>["input"];
-		cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
+		cost: Model<Api>["cost"];
 		contextWindow: number;
 		maxTokens: number;
 		headers?: Record<string, string>;

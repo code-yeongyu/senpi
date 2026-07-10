@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added the `max` model thinking level after `xhigh`.
+
 ### Changed
 
 ### Fixed

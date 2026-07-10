@@ -522,7 +522,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		baseUrl: "https://ai-gateway.vercel.sh",
 		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 10,
@@ -609,7 +609,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		baseUrl: "https://ai-gateway.vercel.sh",
 		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"max"},
+		thinkingLevelMap: {"max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -628,7 +628,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		baseUrl: "https://ai-gateway.vercel.sh",
 		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
+		thinkingLevelMap: {"xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -647,7 +647,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		baseUrl: "https://ai-gateway.vercel.sh",
 		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
+		thinkingLevelMap: {"xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -700,6 +700,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		baseUrl: "https://ai-gateway.vercel.sh",
 		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
+		thinkingLevelMap: {"max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 3,
@@ -718,6 +719,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		baseUrl: "https://ai-gateway.vercel.sh",
 		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
+		thinkingLevelMap: {"xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 2,

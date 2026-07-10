@@ -3,11 +3,11 @@ import type { AssistantMessage, Context, ImageContent, Message, TextContent, Usa
 export interface ContextUsageEstimate {
 	/** Estimated total context tokens. */
 	tokens: number;
-	/** Tokens reported by the most recent assistant usage block. */
+	/** Tokens reported by the most recent applicable assistant usage block. */
 	usageTokens: number;
-	/** Estimated tokens after the most recent assistant usage block. */
+	/** Estimated tokens after the most recent applicable assistant usage block. */
 	trailingTokens: number;
-	/** Index of the message that provided usage, or null when none exists. */
+	/** Index of the applicable message that provided usage, or null when none exists. */
 	lastUsageIndex: number | null;
 }
 
@@ -63,14 +63,29 @@ export function estimateMessageTokens(message: Message): number {
 }
 
 function getLastAssistantUsageInfo(messages: readonly Message[]): { usage: Usage; index: number } | undefined {
-	for (let i = messages.length - 1; i >= 0; i--) {
+	let latestPrefixTimestamp = Number.NEGATIVE_INFINITY;
+	let usageInfo: { usage: Usage; index: number } | undefined;
+
+	for (let i = 0; i < messages.length; i++) {
 		const message = messages[i];
-		if (message.role !== "assistant") continue;
-		const assistant = message as AssistantMessage;
-		if (assistant.stopReason === "aborted" || assistant.stopReason === "error") continue;
-		if (calculateContextTokens(assistant.usage) > 0) return { usage: assistant.usage, index: i };
+		if (message.role === "assistant") {
+			const assistant = message as AssistantMessage;
+			// A newer prefix message was inserted after this response (for example, a
+			// compaction summary), so its usage cannot describe the current prefix.
+			const usageAppliesToPrefix = assistant.timestamp >= latestPrefixTimestamp;
+			if (
+				usageAppliesToPrefix &&
+				assistant.stopReason !== "aborted" &&
+				assistant.stopReason !== "error" &&
+				calculateContextTokens(assistant.usage) > 0
+			) {
+				usageInfo = { usage: assistant.usage, index: i };
+			}
+		}
+		latestPrefixTimestamp = Math.max(latestPrefixTimestamp, message.timestamp);
 	}
-	return undefined;
+
+	return usageInfo;
 }
 
 function estimateMessages(messages: readonly Message[]): ContextUsageEstimate {

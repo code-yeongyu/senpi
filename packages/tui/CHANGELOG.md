@@ -6,6 +6,8 @@
 
 ### Changed
 
+- Added optional `thinkingMax` theme color support through inherited coding-agent theme integration.
+
 ### Fixed
 
 ## [2026.7.10] - 2026-07-10
