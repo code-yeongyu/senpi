@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { TUI } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { createEventBus } from "../../src/core/event-bus.ts";
@@ -11,6 +12,7 @@ import { ExtensionRunner } from "../../src/core/extensions/runner.ts";
 import type { ToolRenderContext } from "../../src/core/extensions/types.ts";
 import { ModelRegistry } from "../../src/core/model-registry.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
+import { ToolExecutionComponent } from "../../src/modes/interactive/components/tool-execution.ts";
 import { initTheme, theme } from "../../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../src/utils/ansi.ts";
 
@@ -23,6 +25,12 @@ afterEach(() => {
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+function createFakeTui(): TUI {
+	return {
+		requestRender: () => {},
+	} as TUI;
+}
 
 async function renderTodoWriteCall(todos: TodoItem[]): Promise<string> {
 	const root = mkdtempSync(join(tmpdir(), "todowrite-render-"));
@@ -58,6 +66,44 @@ async function renderTodoWriteCall(todos: TodoItem[]): Promise<string> {
 	};
 	const component = tool.definition.renderCall(args, theme, context);
 	return stripAnsi(component.render(100).join("\n"));
+}
+
+async function renderCompletedTodoWrite(todos: TodoItem[], text: string, isError: boolean): Promise<string> {
+	const root = mkdtempSync(join(tmpdir(), "todowrite-completed-render-"));
+	tempRoots.push(root);
+	const runtime = createExtensionRuntime();
+	const extension = await loadExtensionFromFactory(
+		todowriteExtension,
+		root,
+		createEventBus(),
+		runtime,
+		"<builtin:todowrite>",
+	);
+	const sessionManager = SessionManager.inMemory(root);
+	const modelRegistry = ModelRegistry.create(AuthStorage.create(join(root, "auth.json")), root);
+	const runner = new ExtensionRunner([extension], runtime, root, sessionManager, modelRegistry);
+	const tool = runner.getAllRegisteredTools().find((registeredTool) => registeredTool.definition.name === "todowrite");
+	if (!tool) throw new Error("Expected todowrite to be registered");
+
+	const component = new ToolExecutionComponent(
+		"todowrite",
+		"tool-todo",
+		{ todos },
+		{},
+		tool.definition,
+		createFakeTui(),
+		root,
+	);
+	component.updateResult(
+		{
+			content: [{ type: "text", text }],
+			details: { todos },
+			isError,
+		},
+		false,
+	);
+
+	return stripAnsi(component.render(240).join("\n"));
 }
 
 describe("todowrite renderer", () => {
@@ -98,5 +144,29 @@ describe("todowrite renderer", () => {
 		);
 		expect(rendered).not.toContain("\u0000");
 		expect(rendered).not.toContain("\nNormalize");
+	});
+
+	it("renders each completed todo row once after the result arrives", async () => {
+		const target =
+			"packages/coding-agent/src/core/extensions/builtin/todotools/tools/todowrite.ts: Deduplicate completed todo row - expect one rendered row";
+		const todos: TodoItem[] = [{ content: target, status: "completed", priority: "high" }];
+
+		const rendered = await renderCompletedTodoWrite(todos, JSON.stringify(todos), false);
+
+		expect(rendered.split(target)).toHaveLength(2);
+	});
+
+	it("preserves failed todowrite result text", async () => {
+		const todos: TodoItem[] = [
+			{
+				content: "packages/coding-agent/test/suite/todowrite-render.test.ts: Preserve errors - expect visible text",
+				status: "in_progress",
+				priority: "high",
+			},
+		];
+
+		const rendered = await renderCompletedTodoWrite(todos, "todowrite failed: validation exploded", true);
+
+		expect(rendered).toContain("todowrite failed: validation exploded");
 	});
 });
