@@ -78,4 +78,28 @@ describe("context token estimation", () => {
 			lastUsageIndex: 3,
 		});
 	});
+
+	it.each([
+		Number.NaN,
+		Number.POSITIVE_INFINITY,
+		Number.NEGATIVE_INFINITY,
+		0,
+		-1,
+	])("replaces invalid model maxTokens %s with the safe available context", (maxTokens) => {
+		const context: Context = { messages: [] };
+
+		expect(buildBaseOptions({ ...model, maxTokens }, context).maxTokens).toBe(5_904);
+	});
+
+	it.each([
+		Number.NaN,
+		Number.POSITIVE_INFINITY,
+		Number.NEGATIVE_INFINITY,
+		0,
+		-1,
+	])("replaces invalid requested maxTokens %s with the safe available context", (maxTokens) => {
+		const context: Context = { messages: [] };
+
+		expect(buildBaseOptions(model, context, { maxTokens }).maxTokens).toBe(5_904);
+	});
 });

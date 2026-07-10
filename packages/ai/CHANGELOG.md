@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- Prevented invalid model or request `maxTokens` metadata from reaching provider payloads by falling back to the available context budget.
+
 ### Removed
 
 ## [2026.7.10-2] - 2026-07-10

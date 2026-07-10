@@ -124,9 +124,15 @@ const CONTEXT_SAFETY_TOKENS = 4096;
 const MIN_MAX_TOKENS = 1;
 
 export function clampMaxTokensToContext(model: Model<Api>, context: Context, maxTokens: number): number {
-	if (model.contextWindow <= 0) return Math.max(MIN_MAX_TOKENS, maxTokens);
+	if (model.contextWindow <= 0) {
+		return Number.isFinite(maxTokens) && maxTokens > 0
+			? Math.max(MIN_MAX_TOKENS, Math.floor(maxTokens))
+			: MIN_MAX_TOKENS;
+	}
 	const available = model.contextWindow - estimateContextTokens(context).tokens - CONTEXT_SAFETY_TOKENS;
-	return Math.min(maxTokens, Math.max(MIN_MAX_TOKENS, available));
+	const safeAvailable = Math.max(MIN_MAX_TOKENS, available);
+	const requested = Number.isFinite(maxTokens) && maxTokens > 0 ? Math.floor(maxTokens) : safeAvailable;
+	return Math.min(requested, safeAvailable);
 }
 
 export function buildBaseOptions(
