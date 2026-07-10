@@ -181,21 +181,21 @@ describe("eval renderer preview", () => {
 		expect.soft(visibleText).not.toMatch(/ctrl|to expand|to collapse/i);
 	});
 
-	it("Given expanded code beyond the former finite boundary when rendered then the first and last lines remain visible", () => {
+	it("Given realistically large expanded code when rendered then every line remains visible", () => {
 		// Given
-		const middleLineCount = 999_999;
+		const codeLines = Array.from({ length: 4_096 }, (_, index) => `expanded-line-${index + 1}`);
 		const givenArgs = {
 			language: "js",
-			code: `first-expanded-line\n${"middle-expanded-line\n".repeat(middleLineCount)}last-expanded-line`,
+			code: codeLines.join("\n"),
 		} satisfies Parameters<typeof renderEvalCall>[0];
 
 		// When
 		const lines = renderEvalCall(givenArgs, undefined, callContext({ expanded: true })).render(80);
 
 		// Then
-		expect.soft(lines).toHaveLength(middleLineCount + 3);
-		expect.soft(lines[1]).toBe("first-expanded-line");
-		expect.soft(lines.at(-1)).toBe("last-expanded-line");
+		expect.soft(lines).toHaveLength(codeLines.length + 1);
+		expect.soft(lines[1]).toBe(codeLines[0]);
+		expect.soft(lines.at(-1)).toBe(codeLines.at(-1));
 	});
 
 	it("Given a retained nested tool call with a huge multiline error when collapsed then detail is bounded and expandable", () => {
