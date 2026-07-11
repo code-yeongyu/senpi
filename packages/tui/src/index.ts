@@ -96,13 +96,13 @@ export {
 	type ImageDimensions,
 	type ImageProtocol,
 	type ImageRenderOptions,
-	imageFallback,
 	renderImage,
 	resetCapabilitiesCache,
 	setCapabilities,
 	setCellDimensions,
 	type TerminalCapabilities,
 } from "./terminal-image.ts";
+export { imageFallback, sanitizeTerminalLabel } from "./terminal-text.ts";
 export {
 	type Component,
 	Container,
