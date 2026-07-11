@@ -443,9 +443,26 @@ async function migrateCommand(command: ParsedCommand, agentDir: string): Promise
 	const sourcePath = join(agentDir, "auth.json");
 	const source = await readFile(sourcePath, "utf8");
 	const receiptPath = resolve(command.receiptPath);
-	const receipt = { sourcePath, sourceSha256: hash(source), version: 1 };
+	const backupPath = `${receiptPath}.backup`;
+	const provenancePath = `${receiptPath}.provenance`;
+	const sourceSha256 = hash(source);
 	if (command.dryRun) {
 		await ensureDirectory(dirname(receiptPath));
+		await writeFile(backupPath, source, { mode: 0o600 });
+		await chmod(backupPath, 0o600);
+		const backupSha256 = hash(await readFile(backupPath, "utf8"));
+		const provenance = { backupPath, backupSha256, nonce: randomUUID(), sourcePath, sourceSha256, version: 1 };
+		await writeFile(provenancePath, `${JSON.stringify(provenance)}\n`, { mode: 0o600 });
+		await chmod(provenancePath, 0o600);
+		const receipt = {
+			backupPath,
+			backupSha256,
+			provenancePath,
+			provenanceSha256: hash(JSON.stringify(provenance)),
+			sourcePath,
+			sourceSha256,
+			version: 2,
+		};
 		await writeFile(receiptPath, `${JSON.stringify(receipt)}\n`, { mode: 0o600 });
 		await chmod(receiptPath, 0o600);
 		return {
@@ -457,7 +474,30 @@ async function migrateCommand(command: ParsedCommand, agentDir: string): Promise
 		};
 	}
 	const saved = parseJsonRecord(await readFile(receiptPath, "utf8"));
-	if (saved.version !== 1 || saved.sourcePath !== sourcePath || saved.sourceSha256 !== receipt.sourceSha256)
+	if (
+		saved.version !== 2 ||
+		saved.sourcePath !== sourcePath ||
+		saved.sourceSha256 !== sourceSha256 ||
+		saved.backupPath !== backupPath ||
+		saved.provenancePath !== provenancePath ||
+		typeof saved.backupSha256 !== "string" ||
+		typeof saved.provenanceSha256 !== "string"
+	)
+		throw new AuthBrokerCommandError("Migration backup receipt is invalid or stale");
+	const backup = await readFile(backupPath, "utf8");
+	if (backup !== source || hash(backup) !== saved.backupSha256)
+		throw new AuthBrokerCommandError("Migration backup receipt is invalid or stale");
+	const provenance = parseJsonRecord(await readFile(provenancePath, "utf8"));
+	if (
+		hash(JSON.stringify(provenance)) !== saved.provenanceSha256 ||
+		provenance.version !== 1 ||
+		provenance.sourcePath !== sourcePath ||
+		provenance.sourceSha256 !== sourceSha256 ||
+		provenance.backupPath !== backupPath ||
+		provenance.backupSha256 !== saved.backupSha256 ||
+		typeof provenance.nonce !== "string" ||
+		provenance.nonce.length < 20
+	)
 		throw new AuthBrokerCommandError("Migration backup receipt is invalid or stale");
 	const records = localAuthRecords(parseJsonRecord(source));
 	const vault = SqliteCredentialVault.open(vaultPath(agentDir));

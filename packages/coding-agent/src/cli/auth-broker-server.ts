@@ -88,6 +88,10 @@ async function handleRequest(
 		writeJson(response, 401, { error: "unauthorized" });
 		return;
 	}
+	if (!options.broker.isAuthorized(authentication)) {
+		writeJson(response, 401, { error: "unauthorized" });
+		return;
+	}
 	try {
 		const body = await readJson(request);
 		const result = await options.broker.handle(body, authentication);

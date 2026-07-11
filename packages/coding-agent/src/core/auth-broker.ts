@@ -337,6 +337,10 @@ export class AuthBrokerService {
 		return this.refresh(request);
 	}
 
+	isAuthorized(authentication: string): boolean {
+		return this.clients.some((client) => safeEqual(digest(client.authentication), digest(authentication)));
+	}
+
 	private outcome(
 		request: Extract<AuthBrokerWireRequest, { readonly operation: "outcome_report" }>,
 		authentication: string,

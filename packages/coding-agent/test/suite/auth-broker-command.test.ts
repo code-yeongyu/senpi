@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -75,6 +76,17 @@ describe("auth broker command", () => {
 				expect(await health.json()).toEqual({ ok: true, version: "test" });
 				const denied = await fetch(`${server.url}/v1/broker`, { method: "POST" });
 				expect(denied.status).toBe(401);
+				const wrongBearer = await fetch(`${server.url}/v1/broker`, {
+					body: JSON.stringify({
+						capability: AUTH_BROKER_CAPABILITIES.metadataRead,
+						operation: "metadata_snapshot",
+						protocolVersion: AUTH_BROKER_PROTOCOL_VERSION,
+						requestId: "wrong-bearer",
+					}),
+					headers: { authorization: "Bearer wrong-broker-token-value", "content-type": "application/json" },
+					method: "POST",
+				});
+				expect(wrongBearer.status).toBe(401);
 				const snapshot = await fetch(`${server.url}/v1/broker`, {
 					body: JSON.stringify({
 						capability: AUTH_BROKER_CAPABILITIES.metadataRead,
@@ -147,5 +159,30 @@ describe("auth broker command", () => {
 		} finally {
 			vault.close();
 		}
+	});
+
+	it("rejects a manually forged migration receipt without a dry-run backup manifest", async () => {
+		const agentDir = createDirectory("broker-command-forged-receipt");
+		const authPath = join(agentDir, "auth.json");
+		const receiptPath = join(agentDir, "forged-receipt.json");
+		const auth = JSON.stringify({ openai: { key: secret, type: "api_key" } });
+		writeFileSync(authPath, auth, { mode: 0o600 });
+		writeFileSync(
+			receiptPath,
+			JSON.stringify({
+				sourcePath: authPath,
+				sourceSha256: createHash("sha256").update(auth).digest("hex"),
+				version: 1,
+			}),
+			{ mode: 0o600 },
+		);
+
+		const result = await executeAuthBrokerCommand(
+			["auth-broker", "migrate", "--from-local", "--backup-receipt", receiptPath],
+			{ agentDir },
+		);
+
+		expect(result?.exitCode).toBe(2);
+		expect(result?.stderr).not.toContain(secret);
 	});
 });
