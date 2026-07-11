@@ -470,11 +470,3 @@ export function renderImage(
 export function hyperlink(text: string, url: string): string {
 	return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
 }
-
-export function imageFallback(mimeType: string, dimensions?: ImageDimensions, filename?: string): string {
-	const parts: string[] = [];
-	if (filename) parts.push(filename);
-	parts.push(`[${mimeType}]`);
-	if (dimensions) parts.push(`${dimensions.widthPx}x${dimensions.heightPx}`);
-	return `[Image: ${parts.join(" ")}]`;
-}

@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- Sanitized terminal control characters from image fallback MIME types and filenames.
+
 ## [2026.7.10-2] - 2026-07-10
 
 ### Added

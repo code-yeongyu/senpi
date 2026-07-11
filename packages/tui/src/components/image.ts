@@ -4,9 +4,9 @@ import {
 	getCellDimensions,
 	getImageDimensions,
 	type ImageDimensions,
-	imageFallback,
 	renderImage,
 } from "../terminal-image.ts";
+import { imageFallback } from "../terminal-text.ts";
 import type { Component } from "../tui.ts";
 
 export interface ImageTheme {

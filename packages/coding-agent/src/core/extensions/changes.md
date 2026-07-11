@@ -1,5 +1,26 @@
 # Core Extensions Changes
 
+## 2026-07-10 - Tool renderer image protocol context
+
+### What changed
+
+- Added optional `ToolRenderContext.imageProtocol`, exposing `"kitty"`, `"iterm2"`, or `null` to tool call and result renderers.
+- The interactive host owns native image rendering and Kitty conversion fallbacks, allowing custom renderers to suppress duplicate image indicators when a terminal image protocol is active.
+- Documented the field in the exhaustive tool renderer context list in `docs/extensions.md`.
+
+### Why
+
+- Custom renderers need the active terminal image capability to coordinate their text output with host-owned image rendering without leaving image-only results blank or rendering duplicate fallbacks.
+
+### Why extension system couldn't handle this alone
+
+- `ToolRenderContext` is a public host-to-extension contract, and the active image protocol plus native/fallback image lifecycle are owned by the interactive renderer.
+
+### Expected merge conflict zones
+
+- MEDIUM: `types.ts` around `ToolRenderContext` as upstream adds renderer context fields.
+- LOW: `modes/interactive/components/tool-execution.ts` around host-owned image composition.
+
 ## 2026-07-07 - Persistent-terminal builtin extension
 
 ### What changed

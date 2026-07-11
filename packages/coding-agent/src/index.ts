@@ -1,7 +1,7 @@
 // Core session management
 
+export { sanitizeTerminalLabel } from "@earendil-works/pi-tui";
 export { type Args, parseArgs } from "./cli/args.ts";
-
 // Config paths
 export {
 	CONFIG_DIR_NAME,

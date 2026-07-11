@@ -8,8 +8,11 @@
 
 ### Changed
 
+- Exposed the active terminal image protocol to extension tool renderers so custom renderers can avoid duplicate image fallbacks.
+
 ### Fixed
 
+- Prevented untrusted image MIME labels from injecting terminal control sequences through custom renderer fallbacks.
 - Fixed goal persistence to use atomic file replacement and narrowly recover the observed stale closing-brace
   corruption, preventing session resume crashes without accepting other malformed JSON.
 
