@@ -1589,6 +1589,44 @@ describe("ModelRegistry", () => {
 			});
 		});
 
+		test("broken configured command does not defeat runtime or stored auth", async () => {
+			writeRawModelsJson({ "custom-provider": providerWithApiKey("!exit 1") });
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const model = registry.find("custom-provider", "test-model");
+			expect(model).toBeDefined();
+
+			authStorage.setRuntimeApiKey("custom-provider", "runtime-api-key");
+			expect(await registry.getApiKeyAndHeaders(model!)).toMatchObject({ ok: true, apiKey: "runtime-api-key" });
+			authStorage.removeRuntimeApiKey("custom-provider");
+			authStorage.set("custom-provider", { type: "api_key", key: "stored-api-key" });
+			expect(await registry.getApiKeyAndHeaders(model!)).toMatchObject({ ok: true, apiKey: "stored-api-key" });
+			authStorage.remove("custom-provider");
+			expect(await registry.getApiKeyAndHeaders(model!)).toMatchObject({ ok: false });
+		});
+
+		test("missing configured environment key does not defeat runtime or stored auth", async () => {
+			const envVarName = "TEST_API_KEY_MISSING_PRECEDENCE_98765";
+			const originalEnv = process.env[envVarName];
+			delete process.env[envVarName];
+			try {
+				writeRawModelsJson({ "custom-provider": providerWithApiKey(`$${envVarName}`) });
+				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+				const model = registry.find("custom-provider", "test-model");
+				expect(model).toBeDefined();
+
+				authStorage.setRuntimeApiKey("custom-provider", "runtime-api-key");
+				expect(await registry.getApiKeyAndHeaders(model!)).toMatchObject({ ok: true, apiKey: "runtime-api-key" });
+				authStorage.removeRuntimeApiKey("custom-provider");
+				authStorage.set("custom-provider", { type: "api_key", key: "stored-api-key" });
+				expect(await registry.getApiKeyAndHeaders(model!)).toMatchObject({ ok: true, apiKey: "stored-api-key" });
+				authStorage.remove("custom-provider");
+				expect(await registry.getApiKeyAndHeaders(model!)).toMatchObject({ ok: false });
+			} finally {
+				if (originalEnv === undefined) delete process.env[envVarName];
+				else process.env[envVarName] = originalEnv;
+			}
+		});
+
 		test("apiKey with ! prefix executes command and uses stdout", async () => {
 			writeRawModelsJson({
 				"custom-provider": providerWithApiKey("!echo test-api-key-from-command"),

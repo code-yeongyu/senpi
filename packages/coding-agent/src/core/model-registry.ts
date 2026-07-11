@@ -930,9 +930,14 @@ export class ModelRegistry {
 			const providerConfig = this.providerRequestConfigs.get(model.provider);
 			const providerEnv = this.authStorage.getProviderEnv(model.provider);
 			const apiKeyFromAuthStorage = await this.authStorage.getApiKey(model.provider, { includeFallback: false });
-			const configuredApiKey = providerConfig?.apiKey
-				? resolveConfigValueOrThrow(providerConfig.apiKey, `API key for provider "${model.provider}"`, providerEnv)
-				: undefined;
+			const configuredApiKey =
+				apiKeyFromAuthStorage === undefined && providerConfig?.apiKey
+					? resolveConfigValueOrThrow(
+							providerConfig.apiKey,
+							`API key for provider "${model.provider}"`,
+							providerEnv,
+						)
+					: undefined;
 			const pooledCredential =
 				apiKeyFromAuthStorage === undefined && configuredApiKey === undefined
 					? this.authStorage.selectPooledCredential(model.provider, pooledCredentialOptions)
