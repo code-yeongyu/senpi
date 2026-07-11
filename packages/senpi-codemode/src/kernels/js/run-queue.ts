@@ -7,6 +7,7 @@ export interface PendingJavaScriptRun {
 	readonly input: JavaScriptRunInput;
 	readonly resolve: (message: ResultMessage) => void;
 	readonly reject: (error: Error) => void;
+	startedAtMs: number | null;
 	settled: boolean;
 }
 
@@ -24,15 +25,21 @@ export class JavaScriptRunQueue {
 
 	enqueue(input: JavaScriptRunInput): Promise<ResultMessage> {
 		return new Promise((resolve, reject) => {
-			this.#queue.push({ input, resolve, reject, settled: false });
+			this.#queue.push({ input, resolve, reject, startedAtMs: null, settled: false });
 		});
 	}
 
-	startNext(): PendingJavaScriptRun | null {
+	startNext(startedAtMs: number): PendingJavaScriptRun | null {
 		if (this.#active) return null;
 		const next = this.#queue.shift() ?? null;
+		if (next) next.startedAtMs = startedAtMs;
 		this.#active = next;
 		return next;
+	}
+
+	durationMs(run: PendingJavaScriptRun, finishedAtMs: number): number {
+		if (run.startedAtMs === null) return 0;
+		return Math.max(0, Math.round(finishedAtMs - run.startedAtMs));
 	}
 
 	takeInterruptTarget(): PendingJavaScriptRun | null {

@@ -210,7 +210,7 @@ return "done";
 		});
 	});
 
-	it("runs from node_modules in worker mode and worker graph imports no TypeScript", async () => {
+	it("runs a copied node_modules worker graph without TypeScript imports", async () => {
 		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-node-modules-"));
 		try {
 			const packageDir = join(root, "node_modules", "@code-yeongyu", "senpi-codemode");
@@ -218,24 +218,12 @@ return "done";
 			await cp(join(process.cwd(), "src"), join(packageDir, "src"), { recursive: true });
 			await writeFile(join(packageDir, "package.json"), JSON.stringify({ type: "module" }));
 
-			const module = (await import(
-				pathToFileURL(join(packageDir, "src", "kernels", "js", "context-manager.ts")).href
-			)) as {
-				JavaScriptKernel: new (options: {
-					sessionId: string;
-					cwd: string;
-					parallelPoolWidth: number;
-					onMessage?: (message: KernelToHostMessage) => void;
-				}) => {
-					readonly mode: JavaScriptKernelMode;
-					run(input: { cellId: string; code: string; timeoutMs?: number }): Promise<KernelToHostMessage>;
-					close(): Promise<void>;
-				};
-			};
-			const kernel = new module.JavaScriptKernel({
+			const entry = join(packageDir, "src", "kernels", "js", "worker-entry.js");
+			const kernel = new JavaScriptKernel({
 				sessionId: "installed",
 				cwd: root,
 				parallelPoolWidth: 2,
+				workerEntryUrl: pathToFileURL(entry),
 			});
 			try {
 				const result = await kernel.run({ cellId: "installed-cell", code: "return 21 * 2", timeoutMs: 2_000 });
@@ -245,7 +233,6 @@ return "done";
 				await kernel.close();
 			}
 
-			const entry = join(packageDir, "src", "kernels", "js", "worker-entry.js");
 			const seen = new Set<string>();
 			const stack = [entry];
 			while (stack.length > 0) {

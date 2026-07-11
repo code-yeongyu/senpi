@@ -3,7 +3,6 @@ import { JsWorkerRuntime } from "./worker-runtime.js";
 export function createWorkerCore(transport, options) {
 	let runtime = null;
 	const pendingTools = new Map();
-	const started = Date.now();
 
 	function emit(message) {
 		transport.send(message);
@@ -14,14 +13,15 @@ export function createWorkerCore(transport, options) {
 			emit({ type: "result", cellId: message.cellId, ok: false, error: { message: "JS runtime not initialized" }, durationMs: 0 });
 			return;
 		}
+		const startedAtMs = performance.now();
 		try {
 			const value = await runtime.run(message.code, message.cellId, {
 				emit,
 				callTool: async (toolName, args) => await callTool(toolName, args),
 			});
-			emit({ type: "result", cellId: message.cellId, ok: true, valueRepr: valueRepr(value), durationMs: Date.now() - started });
+			emit({ type: "result", cellId: message.cellId, ok: true, valueRepr: valueRepr(value), durationMs: durationMs(startedAtMs) });
 		} catch (error) {
-			emit({ type: "result", cellId: message.cellId, ok: false, error: bridgeError(error), durationMs: Date.now() - started });
+			emit({ type: "result", cellId: message.cellId, ok: false, error: bridgeError(error), durationMs: durationMs(startedAtMs) });
 		}
 	}
 
@@ -63,6 +63,10 @@ export function createWorkerCore(transport, options) {
 			globalThis.__senpi_restore_console__?.();
 		},
 	};
+}
+
+function durationMs(startedAtMs) {
+	return Math.max(0, Math.round(performance.now() - startedAtMs));
 }
 
 function valueRepr(value) {

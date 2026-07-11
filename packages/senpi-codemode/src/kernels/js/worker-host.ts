@@ -1,6 +1,7 @@
 import { Worker } from "node:worker_threads";
 import type { KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { WorkerLike } from "./inline-worker.ts";
+import type { JavaScriptKernelMode } from "./kernel-contract.ts";
 
 export class WorkerStartupCancelledError extends Error {
 	readonly name = "WorkerStartupCancelledError";
@@ -10,11 +11,27 @@ export class WorkerStartupCancelledError extends Error {
 	}
 }
 
-export function spawnNodeWorker(url: URL, cwd: string, parallelPoolWidth: number): WorkerLike {
+export class JavaScriptWorkerExitedError extends Error {
+	readonly name = "JavaScriptWorkerExitedError";
+	readonly exitCode: number;
+
+	constructor(exitCode: number) {
+		super(`JavaScript worker exited with code ${exitCode}`);
+		this.exitCode = exitCode;
+	}
+}
+
+export function spawnNodeWorker(
+	url: URL,
+	cwd: string,
+	parallelPoolWidth: number,
+	mode: JavaScriptKernelMode = "worker",
+): WorkerLike {
 	return wrapNodeWorker(
 		new Worker(url, {
 			workerData: { cwd, parallelPoolWidth },
 		}),
+		mode,
 	);
 }
 
@@ -68,9 +85,9 @@ export function bridgeError(error: Error): {
 	return { message: error.message, name: error.name, stack: error.stack };
 }
 
-function wrapNodeWorker(worker: Worker): WorkerLike {
+function wrapNodeWorker(worker: Worker, mode: JavaScriptKernelMode): WorkerLike {
 	return {
-		mode: "worker",
+		mode,
 		postMessage: (message) => worker.postMessage(message),
 		onMessage(handler) {
 			const listener = (message: KernelToHostMessage): void => handler(message);
@@ -78,8 +95,20 @@ function wrapNodeWorker(worker: Worker): WorkerLike {
 			return () => worker.off("message", listener);
 		},
 		onError(handler) {
-			worker.on("error", handler);
-			return () => worker.off("error", handler);
+			let reported = false;
+			const report = (error: Error): void => {
+				if (reported) return;
+				reported = true;
+				handler(error);
+			};
+			const onError = (error: Error): void => report(error);
+			const onExit = (code: number): void => report(new JavaScriptWorkerExitedError(code));
+			worker.on("error", onError);
+			worker.on("exit", onExit);
+			return () => {
+				worker.off("error", onError);
+				worker.off("exit", onExit);
+			};
 		},
 		async terminate() {
 			await worker.terminate();

@@ -24,6 +24,7 @@ export class JavaScriptKernel {
 	#startupAbort: AbortController | null = null;
 	#generation = 0;
 	#activation: Promise<void> | null = null;
+	#recovery: Promise<void> | null = null;
 	#closePromise: Promise<void> | null = null;
 	readonly #runs = new JavaScriptRunQueue();
 	#timeout: NodeJS.Timeout | null = null;
@@ -78,7 +79,11 @@ export class JavaScriptKernel {
 		this.#worker?.postMessage({ type: "close" });
 		this.#lifecycle = "closing";
 		this.#runs.settleAll("JS kernel closed");
-		const closePromise = this.#terminate().finally(() => {
+		const recovery = this.#recovery;
+		const closePromise = (async () => {
+			if (recovery) await recovery;
+			await this.#terminate();
+		})().finally(() => {
 			this.#lifecycle = "closed";
 		});
 		this.#closePromise = closePromise;
@@ -136,15 +141,15 @@ export class JavaScriptKernel {
 			return;
 		} catch (error) {
 			if (!this.#isCurrent(worker, generation) || error instanceof WorkerStartupCancelledError) {
-				await worker.terminate().catch(() => undefined);
+				await worker.terminate();
 				throw new WorkerStartupCancelledError();
 			}
 			if (worker.mode === "inline") throw error;
 			this.#worker = null;
-			await worker.terminate().catch(() => undefined);
+			await worker.terminate();
 		}
 		if (this.#lifecycle !== "open" || generation !== this.#generation) throw new WorkerStartupCancelledError();
-		worker = createInlineWorker(this.#options.parallelPoolWidth);
+		worker = createInlineWorker(this.#options.cwd, this.#options.parallelPoolWidth);
 		this.#publishWorker(worker, generation);
 		await this.#initializeWorker(worker, signal);
 	}
@@ -155,7 +160,7 @@ export class JavaScriptKernel {
 			return spawnNodeWorker(url, this.#options.cwd, this.#options.parallelPoolWidth);
 		} catch (error) {
 			if (!(error instanceof Error)) throw error;
-			return createInlineWorker(this.#options.parallelPoolWidth);
+			return createInlineWorker(this.#options.cwd, this.#options.parallelPoolWidth);
 		}
 	}
 
@@ -183,7 +188,7 @@ export class JavaScriptKernel {
 
 	#startNext(): void {
 		if (this.#lifecycle !== "open" || this.#runs.active || !this.#worker) return;
-		const next = this.#runs.startNext();
+		const next = this.#runs.startNext(performance.now());
 		if (!next) return;
 		if (next.input.timeoutMs) {
 			this.#timeout = setTimeout(() => void this.#timeoutActive(next), next.input.timeoutMs);
@@ -210,16 +215,26 @@ export class JavaScriptKernel {
 	}
 
 	async #restartAfterStop(): Promise<void> {
-		await this.#terminate();
-		if (this.#lifecycle !== "open") return;
+		if (this.#recovery) return await this.#recovery;
+		const recovery = this.#performRestartAfterStop();
+		this.#recovery = recovery;
 		try {
+			await recovery;
+		} finally {
+			if (this.#recovery === recovery) this.#recovery = null;
+		}
+	}
+
+	async #performRestartAfterStop(): Promise<void> {
+		try {
+			await this.#terminate();
+			if (this.#lifecycle !== "open") return;
 			await this.#ensureReady();
+			if (this.#lifecycle === "open") this.#startNext();
 		} catch (error) {
 			if (error instanceof WorkerStartupCancelledError) return;
 			this.#runs.rejectWaiting(error instanceof Error ? error : new Error(String(error)));
-			return;
 		}
-		if (this.#lifecycle === "open") this.#startNext();
 	}
 
 	#handleMessage(message: KernelToHostMessage): void {
@@ -242,16 +257,19 @@ export class JavaScriptKernel {
 
 	#handleCrash(error: Error): void {
 		const active = this.#runs.active;
-		if (!active) return;
+		if (!active && this.#startupAbort) return;
 		this.#clearTimeout();
-		this.#runs.releaseActive(active);
-		this.#runs.settle(active, {
-			type: "result",
-			cellId: active.input.cellId,
-			ok: false,
-			error: bridgeError(error),
-			durationMs: 0,
-		});
+		if (active) {
+			this.#runs.releaseActive(active);
+			this.#runs.settle(active, {
+				type: "result",
+				cellId: active.input.cellId,
+				ok: false,
+				error: bridgeError(error),
+				durationMs: this.#runs.durationMs(active, performance.now()),
+			});
+		}
+		void this.#restartAfterStop();
 	}
 
 	#clearTimeout(): void {
@@ -267,6 +285,6 @@ export class JavaScriptKernel {
 		this.#ready = null;
 		const worker = this.#worker;
 		this.#worker = null;
-		await worker?.terminate().catch(() => undefined);
+		if (worker) await worker.terminate();
 	}
 }
