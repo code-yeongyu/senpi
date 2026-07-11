@@ -135,7 +135,7 @@ describe("auth broker", () => {
 			const request = {
 				capability: AUTH_BROKER_CAPABILITIES.refresh,
 				operation: "refresh" as const,
-				payload: { credentialId: "oauth-replacement" },
+				payload: { credentialId: "oauth-a" },
 				protocolVersion: AUTH_BROKER_PROTOCOL_VERSION,
 				requestId: "refresh",
 			};
@@ -174,5 +174,52 @@ describe("auth broker", () => {
 		await remote.metadataSnapshot();
 		expect(requests).toBe(1);
 		expect("save" in remote).toBe(false);
+	});
+
+	it("rejects a foreign gateway outcome and preserves an active lease during identity dedupe", async () => {
+		const fixture = createVaultPath();
+		try {
+			const vault = SqliteCredentialVault.open(fixture.path);
+			vault.upsertCredential(apiCredential("credential-a", "operator:a"));
+			const lease = vault.issueSelectionLease(
+				{ pool: { provider: "openai", type: "api_key" }, selector: { kind: "automatic" } },
+				"gateway-a",
+			);
+			vault.consumeSelectionLease({ authentication: "gateway-a", leaseId: lease.leaseId });
+			const broker = new AuthBrokerService(vault, [
+				{
+					authentication: "gateway-a",
+					capabilities: [AUTH_BROKER_CAPABILITIES.outcomeReport],
+					trustedGateway: true,
+				},
+				{
+					authentication: "gateway-b",
+					capabilities: [AUTH_BROKER_CAPABILITIES.outcomeReport],
+					trustedGateway: false,
+				},
+			]);
+			await expect(
+				broker.handle(
+					{
+						capability: AUTH_BROKER_CAPABILITIES.outcomeReport,
+						operation: "outcome_report",
+						payload: { leaseId: lease.leaseId, observedAt: createdAt, status: "unauthorized" },
+						protocolVersion: AUTH_BROKER_PROTOCOL_VERSION,
+						requestId: "foreign-outcome",
+					},
+					"gateway-b",
+				),
+			).rejects.toThrow("lease owner");
+			expect(() =>
+				vault.upsertCredential({
+					...apiCredential("replacement-id", "operator:a"),
+					material: { apiKey: "replacement-key", type: "api_key" },
+				}),
+			).not.toThrow();
+			expect(vault.credential("credential-a").material).toEqual({ apiKey: "replacement-key", type: "api_key" });
+			vault.close();
+		} finally {
+			fixture.cleanup();
+		}
 	});
 });

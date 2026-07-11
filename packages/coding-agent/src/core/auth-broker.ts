@@ -71,7 +71,7 @@ export class SqliteCredentialVault implements CredentialVault {
 		this.db
 			.prepare(`INSERT INTO credentials (credential_id, provider, type, identity_key, material, created_at, updated_at, disabled_at, disabled_cause)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(provider, type, identity_key) DO UPDATE SET credential_id=excluded.credential_id, material=excluded.material, updated_at=excluded.updated_at, disabled_at=excluded.disabled_at, disabled_cause=excluded.disabled_cause`)
+			ON CONFLICT(provider, type, identity_key) DO UPDATE SET material=excluded.material, updated_at=excluded.updated_at, disabled_at=excluded.disabled_at, disabled_cause=excluded.disabled_cause`)
 			.run(
 				record.credentialId,
 				record.pool.provider,
@@ -147,7 +147,7 @@ export class SqliteCredentialVault implements CredentialVault {
 				pool: record.pool,
 				selector: { kind: "credential", credentialId: record.credentialId },
 				reportOutcome: (report) =>
-					this.reportLeaseOutcome(request.leaseId, {
+					this.reportLeaseOutcome(request.leaseId, request.authentication, {
 						...report,
 						credentialId: record.credentialId,
 						pool: record.pool,
@@ -160,8 +160,11 @@ export class SqliteCredentialVault implements CredentialVault {
 		this.recordUsage(report);
 	}
 
-	reportLeaseOutcome(leaseId: string, report: UsageReport): boolean {
+	reportLeaseOutcome(leaseId: string, authentication: string, report: UsageReport): boolean {
 		return this.transaction(() => {
+			const owner = this.leaseOwner(leaseId);
+			if (owner === undefined || !safeEqual(owner, digest(authentication)))
+				throw new AuthBrokerError("Outcome reporter is not the lease owner");
 			const updated = this.db
 				.prepare("UPDATE leases SET outcome=? WHERE lease_id=? AND consumed_at IS NOT NULL AND outcome IS NULL")
 				.run(JSON.stringify(report), leaseId);
@@ -178,6 +181,11 @@ export class SqliteCredentialVault implements CredentialVault {
 	leaseCredential(leaseId: string): string | undefined {
 		const row = this.db.prepare("SELECT credential_id FROM leases WHERE lease_id=?").get(leaseId);
 		return row === undefined ? undefined : readString(row, "credential_id");
+	}
+
+	private leaseOwner(leaseId: string): string | undefined {
+		const row = this.db.prepare("SELECT authentication_hash FROM leases WHERE lease_id=?").get(leaseId);
+		return row === undefined ? undefined : readString(row, "authentication_hash");
 	}
 
 	private migrate(): void {
@@ -314,16 +322,17 @@ export class AuthBrokerService {
 				requestId: request.requestId,
 			};
 		}
-		if (request.operation === "outcome_report") return this.outcome(request);
+		if (request.operation === "outcome_report") return this.outcome(request, authentication);
 		return this.refresh(request);
 	}
 
 	private outcome(
 		request: Extract<AuthBrokerWireRequest, { readonly operation: "outcome_report" }>,
+		authentication: string,
 	): AuthBrokerWireResponse {
 		const credentialId = this.leaseCredential(request.payload.leaseId);
 		const credential = this.vault.credential(credentialId);
-		this.vault.reportLeaseOutcome(request.payload.leaseId, {
+		this.vault.reportLeaseOutcome(request.payload.leaseId, authentication, {
 			...request.payload,
 			credentialId,
 			pool: credential.pool,
