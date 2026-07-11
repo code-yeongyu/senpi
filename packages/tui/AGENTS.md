@@ -1,61 +1,55 @@
 # packages/tui
 
-`@earendil-works/pi-tui` — terminal UI library with three-strategy differential rendering and synchronized output (DECSET 2026). Standalone (no agent dependency); senpi's interactive mode is the largest consumer.
+`@earendil-works/pi-tui` is the standalone terminal renderer/editor library used by Senpi interactive mode. Rendering uses synchronized, differential frames and must preserve terminal ownership boundaries.
 
 ## STRUCTURE
 
+```text
+src/tui.ts                  Render scheduler, viewport strategies, cursor state
+src/terminal.ts             Terminal capabilities and lifecycle
+src/editor-component.ts     Multiline editor primitive
+src/components/             Text, markdown, loader, selectors, image components
+src/keybindings.ts          Configurable default bindings
+src/keys.ts                 Key parsing and matching
+src/stdin-buffer.ts         Paste/input framing
+src/terminal-image.ts       Kitty/iTerm image paths
+src/changes.md              Fork render behavior
+test/*.test.ts              Node test-runner coverage
 ```
-src/
-├── tui.ts                # TUI class. doRender() — the differential render core
-├── terminal.ts           # Terminal abstraction (writes, capabilities, mouse, paste)
-├── editor-component.ts   # Multi-line text editor primitive
-├── components/           # Built-in components (text, loader, box, markdown, select-list, input, image, ...)
-├── autocomplete.ts       # Generic autocomplete engine (used by editor)
-├── fuzzy.ts              # Fuzzy match used by autocomplete
-├── keybindings.ts / keys.ts  # Key parsing, binding registry
-├── kill-ring.ts          # Emacs-style cut buffer
-├── stdin-buffer.ts       # Decoupled stdin reader (handles bracketed paste)
-├── undo-stack.ts         # Editor undo/redo
-├── terminal-image.ts     # iTerm2 / Kitty image protocol adapters
-├── utils.ts              # ANSI/widths/east-asian width
-├── index.ts              # Public exports
-└── changes.md            # Fork-tracked: doRender() flicker-budget tightening
-```
+
+## RENDERING CONTRACT
+
+- Balanced synchronized-output and autowrap frame guards are mandatory on every render path.
+- Stable-width streaming updates must remain differential and must not introduce clear-screen operations.
+- Resize, recovery, scrollback replay, multiplexer, and image branches may legitimately repaint or clear when their contracts require it.
+- `start()` and `stop()` reset queued render state so stale scheduled frames cannot leak across lifecycles.
+- `ProcessTerminal` owns external stdout while running; components must not write around it.
+- Terminal title output strips control characters.
+- High-frequency consumer components are responsible for memoization; preserve the Senpi streaming caches.
 
 ## WHERE TO LOOK
 
 | Task | File |
-|------|------|
-| Reduce flicker / re-render | `src/tui.ts` `doRender()` — three branches: viewport-shift / line-diff / fullRender |
-| Loader / Working animation | `src/components/loader.ts` — indicator frames and independent `messageFormatter` animation |
-| Add a new key / chord | `src/keys.ts` (parsing) + `src/keybindings.ts` (binding) |
-| Image rendering issue | `src/terminal-image.ts` (per-protocol path) |
-| Paste handling | `src/stdin-buffer.ts` bracketed-paste sequence handler |
-| Width / wrap regressions | `src/utils.ts` East-Asian width handling |
-| Test rendering invariants | `test/tui-render.test.ts` flicker-budget assertions |
-
-## RENDERING CONTRACT (DO NOT BREAK)
-
-- `doRender()` MUST stay on the differential path whenever viewport rows are stable.
-- Every `DECSET 2026` (synchronized output begin) MUST have a matching end. The flicker-budget test counts them.
-- `fullRender(true)` (full clear) is allowed at most once — at init. Any post-init full clear is a regression.
-- Component memoization for high-frequency streaming updates is the consumer's responsibility (see senpi `assistant-message.ts` / `tool-execution.ts` caches).
-- `Loader` MUST preserve `messageFormatter` and `messageIntervalMs`. Senpi normal TUI uses them for animated `Working (Xs • esc to interrupt)` text; indicator-only animation is a regression.
-
-## CONVENTIONS
-
-- Test runner is `node --test --import tsx`, NOT vitest. Tests are flat in `test/*.test.ts`.
-- Headless terminal under test uses `@xterm/headless` to read back what the TUI wrote.
-- Windows console hijacking and macOS modifier detection use vendored native prebuilds (`native/win32/prebuilds/*.node` loaded in `src/terminal.ts`, `native/darwin/prebuilds/*.node` loaded in `src/native-modifiers.ts`), loaded lazily via `createRequire` — never add a required native dependency.
+|---|---|
+| Flicker, cursor, viewport | `src/tui.ts` |
+| Terminal lifecycle/title | `src/terminal.ts` |
+| Child process terminal | `src/terminal.ts` (`ProcessTerminal`) |
+| Key parsing/defaults | `src/keys.ts`, `src/keybindings.ts` |
+| Paste handling | `src/stdin-buffer.ts` |
+| Width/wrapping | `src/utils.ts` |
+| Images | `src/terminal-image.ts` |
 
 ## ANTI-PATTERNS
 
-- Replacing `doRender()` with a redraw-everything path "to fix a corner case" — breaks flicker budget.
-- Using `console.log` / `process.stdout.write` directly inside components — bypasses synchronized output.
-- Hand-tracking cursor position outside `tui.ts` private state.
-- Adding test files outside `test/` — `npm test` glob is `test/*.test.ts`.
+- Replacing differential rendering with unconditional full redraws.
+- Unbalanced frame guards or cursor bookkeeping outside `tui.ts`.
+- Direct `console.log` or `process.stdout.write` from components.
+- Required native dependencies; optional native capabilities load lazily.
+- Hardcoded application keybindings in library components.
 
-## NOTES
+## VALIDATION
 
-- This package is consumed by `packages/coding-agent` (TUI mode).
-- Authored by Mario Zechner (upstream). Fork changes include `doRender()` differential paths and `Loader` message animation; see `src/changes.md`.
+- Tests use `node --test --import tsx`, not Vitest. Run `npm test` from this package.
+- Rendering changes must include focused headless-terminal assertions and preserve flicker budgets.
+- Runtime changes require root `npm run check`, `senpi-qa` TUI smoke evidence, and visual terminal QA.
+- Read `src/changes.md` before altering renderer or loader behavior.

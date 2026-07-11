@@ -1,66 +1,57 @@
 # packages/ai
 
-`@earendil-works/pi-ai` — unified streaming + tool-calling API across 15+ LLM providers. Browser-safe (subset). Used by every other package in the monorepo.
+`@earendil-works/pi-ai` is the provider-neutral streaming, model, auth, tool-call, and image API used across the monorepo. Its root surface must remain browser-safe.
 
 ## STRUCTURE
 
+```text
+src/types.ts                    Core API/model/message contracts
+src/compat.ts                   Temporary legacy dispatch, registry, catalogs
+src/api/                        Wire/API implementations and lazy wrappers
+src/providers/                  Provider factories, catalogs, shared transforms
+src/auth/                       Credential stores, contexts, auth helpers/types
+src/models*.ts                  Runtime model catalogs; generated files committed
+src/env-api-keys.ts             Browser-safe credential detection boundary
+src/tool-call-middleware/       Text-encoded tool protocols
+scripts/generate-models.ts      Model catalog source of truth
+scripts/generate-image-models.ts Image catalog source of truth
+test/                           Faux-first and opt-in live tests
 ```
-src/
-├── types.ts                       # Api, Model, Message, StreamOptions, KnownProvider, ToolDef
-├── stream.ts                      # AssistantMessageEventStream + helpers
-├── api-registry.ts                # registerApiProvider() / lazy provider lookup
-├── images-api-registry.ts         # registerImagesApiProvider() (image-gen providers)
-├── images.ts / image-models.ts    # Image-generation surface
-├── env-api-keys.ts                # Credential autodetect — INLINE imports only
-├── oauth.ts                       # Generic OAuth helpers
-├── session-resources.ts           # Per-stream temp resources (cleanup hooks)
-├── bedrock-provider.ts            # Bedrock-specific subpath export
-├── cli.ts                         # `pi-ai` debug binary
-├── models.ts / models.generated.ts          # Model catalog (generated; do NOT hand-edit)
-├── image-models.ts / image-models.generated.ts  # Image-model catalog (generated)
-├── providers/                     # See packages/ai/src/providers/AGENTS.md
-├── tool-call-middleware/          # XML/Hermes/YAML+XML text-tool protocols
-└── utils/                         # diagnostics, hash, validation, oauth/, tool-pair-repair…
 
-scripts/
-├── generate-models.ts             # Pulls latest catalog → models.generated.ts
-└── generate-image-models.ts       # Same for image-models.generated.ts
+## ARCHITECTURE
 
-test/                              # ~80 vitest files; opt-in live API gating via env vars
-```
+- Provider factories and model catalogs live in `src/providers/`; wire protocol implementations live in `src/api/`.
+- `src/api/lazy.ts` exposes `lazyApi()`. API-specific `*.lazy.ts` wrappers are the documented dynamic-import boundary.
+- `src/providers/register-builtins.ts` registers compatibility behavior and currently imports only `src/compat.ts`; do not restore the old provider-loader architecture there.
+- Public provider and API wildcard subpaths are declared in `package.json`. Keep root exports browser-safe.
+- Message transforms return new structures; never mutate shared input messages.
 
 ## WHERE TO LOOK
 
-| Task | File(s) | Notes |
-|------|---------|-------|
-| Add LLM provider | `src/providers/AGENTS.md` | 7-step checklist there |
-| Add provider OAuth | `src/utils/oauth/<provider>.ts` + `src/oauth.ts` | Inline-import the dynamic bits |
-| Edit model catalog | `scripts/generate-models.ts` | Regenerate via `npm run generate-models` |
-| Cross-provider message conversion | `src/providers/transform-messages.ts` | One-shot mapper between role/content shapes |
-| SimpleStreamOptions ↔ provider opts | `src/providers/simple-options.ts` | Per-provider effort/reasoning translation |
-| Mock provider (tests) | `src/providers/faux.ts` | `registerFauxProvider()`, `fauxAssistantMessage()` |
-| Text-format tool calls (Hermes/XML) | `src/tool-call-middleware/` | Wraps providers that don't natively call tools |
-| Browser-safe credential probe | `src/env-api-keys.ts` | Inline `await import()` only |
+| Task | Path |
+|---|---|
+| Add or change a wire protocol | `src/api/` |
+| Add provider metadata/factory | `src/providers/` |
+| Translate reasoning/tool options | `src/api/simple-options.ts` |
+| Cross-provider message coercion | `src/api/transform-messages.ts` |
+| Add auth detection | `src/env-api-keys.ts` |
+| Change auth context/storage | `src/auth/` |
+| Change model inventory | `scripts/generate-models.ts` |
+| Add text-tool protocol | `src/tool-call-middleware/` |
+| Provider checklist | `README.md` provider section |
 
-## CONVENTIONS
+## INVARIANTS
 
-- **Lazy providers**: every entry in `providers/register-builtins.ts` is a `() => import("./<provider>.js")` arrow. Static imports there are forbidden — they bloat browser bundles and break Vite consumers.
-- **Subpath exports**: each public provider is exported under its own `./<provider>` subpath in `package.json` (`./anthropic`, `./google`, `./openai-responses`, …). New providers MUST be added there too.
-- **Stream entry shape**: every provider exports `stream<Provider>(opts: StreamOptions): AssistantMessageEventStream`. Keep the name pattern.
-- **Live test gating**: `describe.skipIf(!process.env.<API_KEY>)` for any test that calls a real endpoint. Add `{ retry: 3 }` for flaky public APIs. Add an explicit `PI_ENABLE_…=1` opt-in for unstable provider regressions (precedent: OpenRouter cache-write repro).
-- **Generated files committed**: `models.generated.ts` and `image-models.generated.ts` ARE checked in (consumers that only build still get a working catalog). Ordinary builds must not regenerate them; regenerate before publishing or for intentional catalog updates.
-- **Browser smoke**: `scripts/check-browser-smoke.mjs` (root) bundles `src/index.ts` for the browser and verifies no Node-only imports leak.
+- Dynamic imports are limited to lazy API and browser-safe credential/OAuth boundaries; ordinary source uses top-level imports.
+- Generated model files are never hand-edited. Regenerate and commit intentional catalog changes.
+- Unit tests use `src/providers/faux.ts`; live APIs require explicit key/feature gating and must not be part of default success.
+- Keep `extraBody`, tool definitions, reasoning options, usage, stop reasons, errors, and abort behavior consistent across APIs.
+- Inspect installed SDK types before changing external request/response shapes.
+- Preserve browser smoke coverage when changing exports or imports.
 
-## ANTI-PATTERNS
+## VALIDATION
 
-- **Static imports in `providers/register-builtins.ts`** — breaks lazy loading and balloons browser bundles.
-- **Top-level imports in `env-api-keys.ts` or `utils/oauth/*`** — breaks browser builds; the comment in `env-api-keys.ts` is load-bearing.
-- **Hand-editing `*.generated.ts`** — regenerate via the scripts.
-- **Real API keys in unit tests** — use `faux` provider; tests must pass with zero credentials in `npm test`.
-- **Guessing external SDK types** — read `node_modules/@anthropic-ai/sdk`, `openai`, `@google/genai`, `@aws-sdk/*` directly when wiring a provider.
-
-## NOTES
-
-- `models.generated.ts` and `image-models.generated.ts` should only show up as modified after explicit generation or publish prep. Commit only intentional regenerations.
-- The `bedrock-provider` subpath export exists separately so non-AWS consumers can avoid the AWS SDK transitive cost.
-- `tool-call-middleware/TESTING.md` documents how to add a new text-tool protocol without breaking stream-error recovery.
+- Run the affected focused Vitest file, then `npm test` for broad provider changes.
+- Run `npm run check:browser-smoke` from the root for import/export boundary changes.
+- Runtime changes require root `npm run check` and real CLI QA evidence.
+- Read `src/changes.md` and the nearest child `AGENTS.md` before editing provider or middleware internals.

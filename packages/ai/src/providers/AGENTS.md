@@ -1,58 +1,45 @@
 # packages/ai/src/providers
 
-Per-provider streaming + tool-call adapters. Lazy-loaded. Each file exports `stream<Provider>()` returning an `AssistantMessageEventStream`.
+This directory owns provider factories, catalogs, provider metadata, and the faux test provider. API wire implementations, option translation, and message transforms live in sibling `../api/`.
 
-## FILE LAYOUT
+## FILE MAP
 
-```
-providers/
-├── register-builtins.ts        # Lazy `() => import("./<provider>.js")` wrappers — STATIC IMPORTS FORBIDDEN
-├── transform-messages.ts       # Cross-provider Message ↔ provider-format mapper (single source)
-├── simple-options.ts           # SimpleStreamOptions ↔ provider-specific opts (effort, reasoning, tools)
-├── faux.ts                     # Mock provider for tests; `registerFauxProvider()` + `fauxAssistantMessage()`
-├── anthropic.ts                # Anthropic Claude — direct API
-├── amazon-bedrock.ts           # AWS Bedrock (uses bedrock-provider.ts shim for cross-region profiles)
-├── google.ts                   # Google Gemini direct API
-├── google-vertex.ts            # Vertex AI variant
-├── google-shared.ts            # Helpers shared by google.ts + google-vertex.ts
-├── mistral.ts                  # Mistral
-├── cloudflare.ts               # Cloudflare base-URL helpers (isCloudflareProvider/resolveCloudflareBaseUrl) — NOT a provider; used by openai-completions/openai-responses/anthropic
-├── openai-completions.ts       # OpenAI Completions API + clones (Groq, Together, OpenRouter, Fireworks, …)
-├── openai-responses.ts         # OpenAI Responses API
-├── openai-responses-shared.ts  # Helpers shared between openai-responses.ts + openai-codex-responses.ts
-├── openai-codex-responses.ts   # Codex (apply_patch / freeform tool grammar)
-├── azure-openai-responses.ts   # Azure OpenAI Responses API variant
-├── github-copilot-headers.ts   # Headers + auth for Copilot routing
-└── images/                     # Image-generation providers (currently OpenRouter only)
+```text
+register-builtins.ts     Compatibility registration through src/compat.ts
+all.ts                   Builtin provider/model aggregation
+faux.ts                  Deterministic public test provider
+*-models.ts              Provider model/catalog helpers where present
+images/                  Image-provider metadata and factories
 ```
 
-## ADD A PROVIDER (7-step canonical checklist)
+## ADD OR CHANGE A PROVIDER
 
-1. Create `providers/<name>.ts` exporting `stream<Name>(opts: StreamOptions): AssistantMessageEventStream`.
-2. Register in `providers/register-builtins.ts` as a **lazy** Promise wrapper. NEVER static-import.
-3. Add subpath export to `packages/ai/package.json` `exports["./<name>"]`.
-4. Add provider-specific options translation in `simple-options.ts` (effort, reasoning, tools).
-5. Add message-format adapters to `transform-messages.ts` if the wire shape differs.
-6. Add models to `scripts/generate-models.ts`; run `npm run generate-models`. Commit `models.generated.ts`.
-7. Write tests: `test/<name>.test.ts` (gated by `describe.skipIf(!process.env.<KEY>)` + `{ retry: 3 }` for live).
+1. Define or update the provider factory/catalog in this directory.
+2. Implement wire streaming in `../api/<api>.ts`; use `../api/<api>.lazy.ts` when async loading is required.
+3. Export public provider/API entry points through `packages/ai/package.json` subpaths.
+4. Map simple options in `../api/simple-options.ts` and wire-shape conversions in `../api/transform-messages.ts`.
+5. Update credential detection, model generation, and the provider matrix described in `packages/ai/README.md`.
+6. Regenerate model artifacts instead of editing generated files.
+7. Add faux-first tests and opt-in live coverage only where endpoint behavior must be verified.
 
-## CONVENTIONS
+## INVARIANTS
 
-- **Provider files are self-contained**. Shared helpers live in `*-shared.ts` (`google-shared.ts`, `openai-responses-shared.ts`); add a new shared module when 3+ providers duplicate logic.
-- **Tools**: `simple-options.ts` is the canonical place to map `StreamOptions.tools` into provider-native tool definitions.
-- **`extraBody`**: every provider must thread `StreamOptions.extraBody` into the wire payload (precedent: 2026-04-17 in `src/changes.md`).
-- **OAuth providers** (Anthropic, OpenAI Codex, GitHub Copilot, Google Vertex): credential refresh lives in `src/utils/oauth/<provider>.ts`. Token resolution must use INLINE imports (`await import(...)`) for browser compat.
-- **Faux provider** is part of the public surface for tests. Update `faux.ts` whenever adding new event types to `AssistantMessageEventStream`.
+- Do not put wire clients back into provider factories or restore lazy registration in `register-builtins.ts`.
+- `../api/transform-messages.ts` is the canonical cross-provider coercion boundary and must not mutate source messages.
+- Keep provider-specific quirks local; shared behavior belongs in clearly named shared modules.
+- Every API stream must preserve tool calls, thinking blocks, usage accounting, stop reasons, setup errors, and abort semantics.
+- Default tests run with zero credentials. Use the faux provider for deterministic event sequences.
+- Keep image providers structurally separate under `images/`.
 
 ## ANTI-PATTERNS
 
-- `import { stream<X> } from "./<x>.js"` at the top of `register-builtins.ts` — defeats lazy loading and bloats browser bundles.
-- Calling provider SDKs from tests without env-key gating — `npm test` MUST pass with zero credentials.
-- Adding hardcoded model lists to provider files — generate via `scripts/generate-models.ts`.
-- Mutating shared message objects in `transform-messages.ts` — return new structures.
+- Hardcoded model inventories in runtime provider files.
+- Static Node-only imports reachable from the package root.
+- Guessing SDK types or silently dropping provider-specific options.
+- Real-key tests without explicit environment gating.
 
-## NOTES
+## VALIDATION
 
-- Cross-provider `transform-messages.ts` is the canonical spot for image/tool-result/thinking-block coercion. Each new provider that uses a non-standard format adds adapter logic here, not in its own file.
-- `openai-completions.ts` is reused by clones (Groq, OpenRouter, Together, Fireworks). Provider-specific kinks live in `openai-completions-*.test.ts`.
-- The `images/` subdir is structurally separate from text providers — image-API entry points live in `src/images-api-registry.ts`.
+- Run focused tests for the changed API/provider plus the applicable cross-provider matrix tests.
+- Run model generation only for intentional catalog changes and inspect the generated diff.
+- Export/import changes require the root browser smoke check; runtime changes require the root QA evidence gate.
