@@ -1,4 +1,4 @@
-import type { KernelResult, KernelRunInput } from "./subprocess-kernel.ts";
+import type { KernelResult, KernelRunInput } from "./subprocess-contract.ts";
 
 export interface PendingRun {
 	readonly input: KernelRunInput;

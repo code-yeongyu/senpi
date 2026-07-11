@@ -199,7 +199,7 @@ describe("SubprocessKernel settlement races", () => {
 		expect(spawnCount).toBe(1);
 	});
 
-	it("retains an errored child when forced termination cannot confirm exit", async () => {
+	it("rejects close until the owned child exit is confirmed", async () => {
 		vi.useFakeTimers();
 		const child = new RaceSubprocess(false);
 		let spawnCount = 0;
@@ -207,34 +207,30 @@ describe("SubprocessKernel settlement races", () => {
 			spawnCount += 1;
 			return child;
 		});
-		const retiredProcess = Reflect.get(kernel, "process");
 		const run = kernel.run({ cellId: "active", code: "block" });
 
 		child.emitError("spawn channel failed");
-		const close = kernel.close();
-		let closeSettled = false;
-		void close.then(() => {
-			closeSettled = true;
-		});
+		const firstClose = kernel.close();
+		const firstCloseRejection = expect(firstClose).rejects.toThrow("Kernel process did not exit after SIGKILL");
 
 		await expect(run).resolves.toMatchObject({
 			ok: false,
 			error: { message: "Kernel process error: spawn channel failed" },
 		});
 		expect(child.killedSignals).toEqual(["SIGTERM"]);
-		expect(closeSettled).toBe(false);
 
 		await vi.advanceTimersByTimeAsync(1_500);
 		expect(child.killedSignals).toEqual(["SIGTERM", "SIGKILL"]);
-		expect(closeSettled).toBe(false);
 
 		await vi.advanceTimersByTimeAsync(500);
-		await close;
+		await firstCloseRejection;
+		await expect(kernel.close()).rejects.toThrow("Kernel process did not exit after SIGKILL");
 
-		expect(closeSettled).toBe(true);
 		expect(spawnCount).toBe(1);
-		expect(Reflect.get(kernel, "process")).toBe(retiredProcess);
 		expect(() => kernel.run({ cellId: "later", code: "3" })).toThrow("Kernel is closed");
+
+		child.exitNow();
+		await expect(kernel.close()).resolves.toBeUndefined();
 	});
 });
 

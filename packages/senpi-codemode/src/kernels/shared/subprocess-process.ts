@@ -95,6 +95,7 @@ export class SubprocessProcess {
 	}
 
 	terminate(initialSignal: NodeJS.Signals = "SIGTERM", escalationMs = gracefulExitWaitMs): Promise<boolean> {
+		if (this.exited) return Promise.resolve(true);
 		if (this.terminationPromise) return this.terminationPromise;
 		this.terminationPromise = this.performTermination(initialSignal, escalationMs);
 		return this.terminationPromise;

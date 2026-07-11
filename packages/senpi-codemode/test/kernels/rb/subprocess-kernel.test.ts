@@ -7,10 +7,22 @@ import type { SubprocessSpawn } from "../../../src/kernels/shared/subprocess-ker
 import { SubprocessKernel } from "../../../src/kernels/shared/subprocess-kernel.ts";
 
 class FakeProc extends EventEmitter {
-	readonly stdin = { writes: [] as string[], write: (chunk: string): number => this.stdin.writes.push(chunk) };
+	readonly stdin: { readonly writes: string[]; readonly write: (chunk: string) => number };
 	readonly stdout = new PassThrough();
 	readonly stderr = new PassThrough();
 	readonly killedSignals: NodeJS.Signals[] = [];
+
+	constructor(writeError?: Error) {
+		super();
+		const writes: string[] = [];
+		this.stdin = {
+			writes,
+			write: (chunk) => {
+				if (writeError) throw writeError;
+				return writes.push(chunk);
+			},
+		};
+	}
 
 	kill(signal: NodeJS.Signals = "SIGTERM"): boolean {
 		this.killedSignals.push(signal);
@@ -49,6 +61,30 @@ describe("SubprocessKernel", () => {
 		});
 
 		await kernel.close();
+	});
+
+	it("retires an acquired child when the initial init write fails", async () => {
+		const fake = new FakeProc(new Error("init write failed"));
+		let startupError: unknown;
+
+		try {
+			new SubprocessKernel({
+				command: "ruby",
+				args: ["runner.rb"],
+				spawn: () => fake,
+				sessionId: "session-1",
+				connection: { port: 39_001, token: "secret-token" },
+			});
+		} catch (error) {
+			if (!(error instanceof Error)) throw error;
+			startupError = error;
+		}
+
+		expect(fake.killedSignals).toEqual(["SIGTERM"]);
+		expect(startupError).toMatchObject({
+			name: "KernelStartupError",
+			message: "Kernel startup failed: init write failed",
+		});
 	});
 
 	it("runs cells and round-trips tool replies", async () => {

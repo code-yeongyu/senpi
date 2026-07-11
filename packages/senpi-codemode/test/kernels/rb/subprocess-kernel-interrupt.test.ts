@@ -73,8 +73,9 @@ describe("SubprocessKernel interrupt", () => {
 		const queued = kernel.run({ cellId: "queued-ruby-cell", code: "40 + 2", timeoutMs: 2_000 });
 
 		const interrupted = kernel.interrupt("manual stop");
+		const interruptedRejection = expect(interrupted).rejects.toThrow("Kernel process did not exit after SIGKILL");
 		await vi.advanceTimersByTimeAsync(5_500);
-		await interrupted;
+		await interruptedRejection;
 
 		expect(first.killedSignals).toEqual([process.platform === "win32" ? "SIGTERM" : "SIGINT", "SIGKILL"]);
 		await expect(active).resolves.toMatchObject({ ok: false, error: { message: "Eval interrupted: manual stop" } });
@@ -85,7 +86,7 @@ describe("SubprocessKernel interrupt", () => {
 		});
 		expect(spawnCount).toBe(1);
 		expect(() => kernel.run({ cellId: "later", code: "3" })).toThrow("Kernel is closed");
-		await kernel.close();
+		await expect(kernel.close()).rejects.toThrow("Kernel process did not exit after SIGKILL");
 	});
 });
 

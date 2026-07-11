@@ -104,6 +104,34 @@ describe("SubprocessKernel lifecycle", () => {
 		await kernel.close();
 	});
 
+	it("settles a cancelled run queued during retirement without executing it on the replacement", async () => {
+		vi.useFakeTimers();
+		const firstChild = new FakeSubprocess(false);
+		const replacement = new FakeSubprocess();
+		const children = [firstChild, replacement];
+		const kernel = createKernel(spawnFrom(children));
+		const timedOut = kernel.run({ cellId: "timeout", code: "block", timeoutMs: 10 });
+
+		await vi.advanceTimersByTimeAsync(10);
+		await expect(timedOut).resolves.toMatchObject({ ok: false, durationMs: 10 });
+		const cancelled = kernel.run({ cellId: "cancelled", code: "must-not-run", timeoutMs: 1_000 });
+		await kernel.interrupt("caller cancelled");
+		const later = kernel.run({ cellId: "later", code: "safe", timeoutMs: 1_000 });
+
+		firstChild.exitNow();
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(runCellIds(replacement)).toEqual(["later"]);
+		await expect(cancelled).resolves.toMatchObject({
+			ok: false,
+			error: { message: "Eval interrupted: caller cancelled" },
+			durationMs: 0,
+		});
+		replacement.emitMessage(success("later", "safe"));
+		await expect(later).resolves.toMatchObject({ ok: true, valueRepr: "safe" });
+		await kernel.close();
+	});
+
 	it("fails closed without spawning when SIGKILL has no confirmed exit", async () => {
 		vi.useFakeTimers();
 		const child = new FakeSubprocess(false);

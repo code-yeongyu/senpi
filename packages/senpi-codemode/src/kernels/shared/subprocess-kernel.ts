@@ -1,9 +1,10 @@
-import type { BridgeConnectionConfig, HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
+import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
 import { decodeBridgeFrame, encodeBridgeFrame, isKernelToHostMessage } from "../../bridge/protocol.ts";
+import type { KernelResult, KernelRunInput, SubprocessKernelOptions, ToolCallMessage } from "./subprocess-contract.ts";
 import { type SubprocessLike, SubprocessProcess, type SubprocessSpawn, spawnSubprocess } from "./subprocess-process.ts";
+import { SubprocessRunQueue } from "./subprocess-queue.ts";
 import {
 	CellInterruptedError,
-	createPendingRun,
 	failureResult,
 	KernelClosedError,
 	KernelClosingError,
@@ -13,41 +14,20 @@ import {
 	KernelRetirementError,
 	KernelStartupError,
 	type PendingRun,
-	settlePendingRun,
 	timeoutResult,
 } from "./subprocess-run.ts";
 
+export type { KernelResult, KernelRunInput, SubprocessKernelOptions, ToolCallMessage } from "./subprocess-contract.ts";
 export type { SubprocessLike, SubprocessSpawn };
-
-export interface KernelRunInput {
-	readonly cellId: string;
-	readonly code: string;
-	readonly timeoutMs?: number;
-}
-
-export type KernelResult = Extract<KernelToHostMessage, { type: "result" }>;
-export type ToolCallMessage = Extract<KernelToHostMessage, { type: "tool-call" }>;
-
-export interface SubprocessKernelOptions {
-	readonly command: string;
-	readonly args: readonly string[];
-	readonly cwd?: string;
-	readonly env?: NodeJS.ProcessEnv;
-	readonly sessionId: string;
-	readonly connection: BridgeConnectionConfig;
-	readonly spawn?: SubprocessSpawn;
-	readonly onMessage?: (message: KernelToHostMessage) => void;
-}
 
 export class SubprocessKernel {
 	private readonly options: SubprocessKernelOptions;
 	private readonly onMessage?: (message: KernelToHostMessage) => void;
-	private readonly runQueue: PendingRun[] = [];
-	private readonly pendingCalls: ToolCallMessage[] = [];
-	private readonly callWaiters: ((message: ToolCallMessage) => void)[] = [];
+	private readonly runs = new SubprocessRunQueue();
 	private process: SubprocessProcess | null = null;
-	private activeRun: PendingRun | null = null;
 	private retirementPromise: Promise<void> | null = null;
+	private retirementProcess: SubprocessProcess | null = null;
+	private retirementFailure: Error | null = null;
 	private failure: Error | null = null;
 	private closed = false;
 
@@ -59,28 +39,33 @@ export class SubprocessKernel {
 
 	run(input: KernelRunInput): Promise<KernelResult> {
 		if (this.closed) throw new KernelClosedError();
-		return new Promise((resolve) => {
-			this.runQueue.push(createPendingRun(input, resolve));
-			this.pumpRuns();
-		});
+		const run = this.runs.enqueue(input);
+		this.pumpRuns();
+		return run;
 	}
 
 	async interrupt(reason = "interrupted"): Promise<void> {
-		if (this.closed || !this.activeRun) return;
+		if (this.closed) return;
+		if (!this.runs.active) {
+			if (!this.retirementPromise) return;
+			const queued = this.runs.takeWaiting();
+			if (queued) this.runs.settle(queued, failureResult(queued, new CellInterruptedError(reason)));
+			return;
+		}
 		const process = this.process;
 		process?.retire();
-		this.pendingCalls.length = 0;
-		const run = this.activeRun;
-		this.activeRun = null;
-		this.settleRun(run, failureResult(run, new CellInterruptedError(reason)));
+		this.runs.clearToolCalls();
+		const run = this.runs.active;
+		if (!run) return;
+		this.runs.releaseActive(run);
+		this.runs.settle(run, failureResult(run, new CellInterruptedError(reason)));
 		const signal = globalThis.process.platform === "win32" ? "SIGTERM" : "SIGINT";
 		await this.restartProcess(process, signal, 5_000);
+		if (this.failure) throw this.failure;
 	}
 
 	nextToolCall(): Promise<ToolCallMessage> {
-		const queued = this.pendingCalls.shift();
-		if (queued !== undefined) return Promise.resolve(queued);
-		return new Promise((resolve) => this.callWaiters.push(resolve));
+		return this.runs.nextToolCall();
 	}
 
 	deliverToolReply(message: Extract<HostToKernelMessage, { type: "tool-reply" }>): void {
@@ -90,8 +75,7 @@ export class SubprocessKernel {
 	async reset(): Promise<void> {
 		if (this.closed) throw new KernelClosedError();
 		this.settleAll(new KernelResetError());
-		this.pendingCalls.length = 0;
-		this.callWaiters.length = 0;
+		this.runs.clearToolCalls();
 		await this.restartProcess(this.process);
 		if (this.failure) throw this.failure;
 	}
@@ -101,23 +85,30 @@ export class SubprocessKernel {
 		this.closed = true;
 		if (!wasClosed) {
 			this.settleAll(new KernelClosingError());
-			this.pendingCalls.length = 0;
-			this.callWaiters.length = 0;
+			this.runs.clearToolCalls();
 		}
-		if (this.retirementPromise) return this.retirementPromise;
+		if (this.retirementPromise) {
+			await this.retirementPromise;
+			if (this.retirementFailure) throw this.retirementFailure;
+			return;
+		}
 		const process = this.process;
 		if (!process) return;
 		const closeFrame = wasClosed ? undefined : encodeBridgeFrame({ type: "close" });
-		if (await process.shutdown(closeFrame)) this.process = null;
+		if (!(await process.shutdown(closeFrame))) {
+			const error = new KernelRetirementError();
+			this.retirementFailure = error;
+			throw error;
+		}
+		if (this.process === process) this.process = null;
+		this.retirementFailure = null;
 	}
 
 	private pumpRuns(): void {
 		const process = this.process;
-		if (this.closed || this.activeRun || !process || process.isRetiring) return;
-		const run = this.runQueue.shift();
+		if (this.closed || this.runs.active || !process || process.isRetiring) return;
+		const run = this.runs.startNext(performance.now());
 		if (!run) return;
-		this.activeRun = run;
-		run.startedAt = performance.now();
 		const timeoutMs = run.input.timeoutMs;
 		if (timeoutMs !== undefined) run.timer = setTimeout(() => this.handleTimeout(run, timeoutMs), timeoutMs);
 		try {
@@ -128,12 +119,12 @@ export class SubprocessKernel {
 	}
 
 	private handleTimeout(run: PendingRun, timeoutMs: number): void {
-		if (this.activeRun !== run || run.settled) return;
+		if (this.runs.active !== run || run.settled) return;
 		const process = this.process;
 		process?.retire();
-		this.pendingCalls.length = 0;
-		this.activeRun = null;
-		this.settleRun(run, timeoutResult(run, timeoutMs));
+		this.runs.clearToolCalls();
+		this.runs.releaseActive(run);
+		this.runs.settle(run, timeoutResult(run, timeoutMs));
 		void this.restartProcess(process);
 	}
 
@@ -148,9 +139,15 @@ export class SubprocessKernel {
 			},
 		});
 		this.process = process;
-		process.send(
-			encodeBridgeFrame({ type: "init", sessionId: this.options.sessionId, connection: this.options.connection }),
-		);
+		try {
+			process.send(
+				encodeBridgeFrame({ type: "init", sessionId: this.options.sessionId, connection: this.options.connection }),
+			);
+		} catch (error) {
+			const failure = new KernelStartupError(error instanceof Error ? error.message : String(error));
+			this.failClosed(failure);
+			throw failure;
+		}
 	}
 
 	private handleLine(process: SubprocessProcess, line: string): void {
@@ -165,40 +162,16 @@ export class SubprocessKernel {
 
 	private handleMessage(process: SubprocessProcess, message: KernelToHostMessage): void {
 		if (!this.accepts(process)) return;
-		switch (message.type) {
-			case "result": {
-				const run = this.activeRun;
-				if (!run || run.input.cellId !== message.cellId) return;
-				this.onMessage?.(message);
-				this.activeRun = null;
-				this.settleRun(run, message);
-				this.pumpRuns();
-				return;
-			}
-			case "tool-call": {
-				if (!this.activeRun) return;
-				this.onMessage?.(message);
-				const waiter = this.callWaiters.shift();
-				if (waiter) waiter(message);
-				else this.pendingCalls.push(message);
-				return;
-			}
-			case "text":
-			case "display":
-			case "log":
-			case "phase":
-				if (this.activeRun) this.onMessage?.(message);
-				return;
-			case "ready":
-			case "init-failed":
-			case "closed":
-				this.onMessage?.(message);
-				return;
-		}
+		if (this.runs.handleMessage(message, this.onMessage)) this.pumpRuns();
 	}
 
 	private handleExit(process: SubprocessProcess, code: number | null, signal: NodeJS.Signals | null): void {
-		if (process.isRetiring || this.process !== process) return;
+		if (this.process !== process) return;
+		if (process.isRetiring) {
+			this.process = null;
+			this.retirementFailure = null;
+			return;
+		}
 		this.process = null;
 		this.failClosed(new KernelExitedError(signal ?? code ?? "unknown"));
 	}
@@ -216,11 +189,7 @@ export class SubprocessKernel {
 		if (this.retirementPromise) return this.retirementPromise;
 		process.retire();
 		const retirement = this.replaceAfterRetirement(process, initialSignal, escalationMs);
-		this.retirementPromise = retirement;
-		void retirement.finally(() => {
-			if (this.retirementPromise === retirement) this.retirementPromise = null;
-		});
-		return retirement;
+		return this.trackRetirement(process, retirement);
 	}
 
 	private async replaceAfterRetirement(
@@ -230,33 +199,33 @@ export class SubprocessKernel {
 	): Promise<void> {
 		const termination = await process.terminateSafely(initialSignal, escalationMs);
 		if (!termination.ok) {
-			this.failClosed(new KernelProcessError(termination.error.message));
+			const error = new KernelProcessError(termination.error.message);
+			this.retirementFailure = error;
+			this.failClosed(error);
 			return;
 		}
 		if (!termination.exited) {
-			this.failClosed(new KernelRetirementError());
+			const error = new KernelRetirementError();
+			this.retirementFailure = error;
+			this.failClosed(error);
 			return;
 		}
 		if (this.process === process) this.process = null;
+		this.retirementFailure = null;
 		if (this.closed) return;
 		try {
 			this.spawnProcess();
 		} catch (error) {
-			this.failClosed(new KernelStartupError(error instanceof Error ? error.message : String(error)));
+			if (!(error instanceof KernelStartupError)) {
+				this.failClosed(new KernelStartupError(error instanceof Error ? error.message : String(error)));
+			}
 			return;
 		}
 		this.pumpRuns();
 	}
 
-	private settleRun(run: PendingRun, result: KernelResult): void {
-		if (settlePendingRun(run, result) && this.activeRun === run) this.activeRun = null;
-	}
-
 	private settleAll(error: Error): void {
-		const runs = this.activeRun ? [this.activeRun, ...this.runQueue] : [...this.runQueue];
-		this.activeRun = null;
-		this.runQueue.length = 0;
-		for (const run of runs) this.settleRun(run, failureResult(run, error));
+		this.runs.settleAll(error);
 	}
 
 	private failClosed(error: Error): void {
@@ -264,11 +233,34 @@ export class SubprocessKernel {
 		this.failure = error;
 		this.closed = true;
 		process?.retire();
-		this.pendingCalls.length = 0;
+		this.runs.clearToolCalls();
 		this.settleAll(error);
-		if (!process || this.retirementPromise) return;
-		this.retirementPromise = process.terminateSafely().then((termination) => {
-			if (termination.ok && termination.exited && this.process === process) this.process = null;
+		if (!process || this.retirementProcess === process) return;
+		this.trackRetirement(process, this.terminateOwnedProcess(process));
+	}
+
+	private async terminateOwnedProcess(process: SubprocessProcess): Promise<void> {
+		const termination = await process.terminateSafely();
+		if (!termination.ok) {
+			this.retirementFailure = new KernelProcessError(termination.error.message);
+			return;
+		}
+		if (!termination.exited) {
+			this.retirementFailure = new KernelRetirementError();
+			return;
+		}
+		if (this.process === process) this.process = null;
+		this.retirementFailure = null;
+	}
+
+	private trackRetirement(process: SubprocessProcess, retirement: Promise<void>): Promise<void> {
+		this.retirementProcess = process;
+		this.retirementPromise = retirement;
+		void retirement.then(() => {
+			if (this.retirementPromise !== retirement) return;
+			this.retirementPromise = null;
+			this.retirementProcess = null;
 		});
+		return retirement;
 	}
 }
