@@ -4,6 +4,24 @@
 
 ### Added
 
+- Added cache-friendly dynamic tool loading for extension tools activated by tool results. Supported Anthropic and OpenAI Responses models load definitions where they become available, preserving the cached prompt prefix. See [Dynamic Tool Loading](docs/extensions.md#dynamic-tool-loading) ([#6474](https://github.com/earendil-works/pi-mono/pull/6474)).
+- Added inherited native `xhigh` and `max` thinking levels for Claude Fable 5 across all generated provider catalogs ([#6490](https://github.com/earendil-works/pi-mono/pull/6490) by [@davidbrai](https://github.com/davidbrai)).
+- Added `Ctrl+X` to copy the last assistant message, or the selected message in `/tree`.
+
+### Changed
+
+### Fixed
+
+- Fixed inherited OpenRouter model context windows to use the top provider's actual context length ([#6481](https://github.com/earendil-works/pi-mono/pull/6481) by [@davidbrai](https://github.com/davidbrai)).
+- Fixed `Ctrl+V` to paste clipboard text when the pasteboard does not contain an image.
+- Fixed `/login amazon-bedrock` to prompt for and save a Bedrock API key instead of only displaying ambient AWS credential setup instructions.
+
+### Removed
+
+## [0.80.6] - 2026-07-09
+
+### Added
+
 - Added a `gpt-5.6` system prompt preset covering the whole GPT-5.6 series (`gpt-5.6`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`), tuned per the GPT-5.6 prompting guide: a shorter outcome-first full-core rewrite with prioritization-based style, a compact authorization policy, and tool-loop stopping conditions.
 
 ### Changed
@@ -17,11 +35,8 @@
   corruption, preventing session resume crashes without accepting other malformed JSON.
 
 - Fixed `bash_output` waits ignoring turn cancellation and accepting unbounded model-supplied timeouts; waits now release without killing the background terminal and individual polls are capped at five minutes.
-
 - Fixed `bash_output` waiting on `wait_for` even when the pattern had already arrived in unread output before the waiter was registered.
-
 - Fixed emergency context pruning to reserve a model-aware output allowance without collapsing the usable prompt budget, preventing oversized tool results from exceeding new-model input limits.
-
 - Fixed invalid extension tool renderers displaying `[render error: Box]` instead of fallback rendering.
 
 ### Removed

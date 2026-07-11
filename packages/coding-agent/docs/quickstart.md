@@ -111,7 +111,7 @@ senpi @README.md "Summarize this"
 senpi @src/app.ts @src/app.test.ts "Review these together"
 ```
 
-Images can be pasted with Ctrl+V (Alt+V on Windows) or dragged into supported terminals.
+Images or text can be pasted with Ctrl+V (Alt+V on Windows); images can also be dragged into supported terminals.
 
 ### Run shell commands
 

@@ -9,7 +9,14 @@ import {
 	CLOUDFLARE_AI_GATEWAY_OPENAI_BASE_URL,
 	CLOUDFLARE_WORKERS_AI_BASE_URL,
 } from "../src/api/cloudflare.ts";
-import type { AnthropicMessagesCompat, Api, KnownProvider, Model, OpenAICompletionsCompat } from "../src/types.ts";
+import type {
+	AnthropicMessagesCompat,
+	Api,
+	KnownProvider,
+	Model,
+	OpenAICompletionsCompat,
+	OpenAIResponsesCompat,
+} from "../src/types.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -194,6 +201,15 @@ const ANT_LING_RING_THINKING_LEVEL_MAP = {
 } as const;
 
 const MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS = new Set(["gpt-5.6"]);
+const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
+	"gpt-5.4",
+	"gpt-5.4-mini",
+	"gpt-5.4-pro",
+	"gpt-5.5",
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
+	"gpt-5.6-luna",
+]);
 const OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000;
 const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-5.4",
@@ -483,6 +499,16 @@ function applyOpenAICompletionsCompatMetadata(model: Model<Api>): void {
 	}
 }
 
+function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
+	const isOpenAIResponses = model.provider === "openai" && model.api === "openai-responses";
+	const isOpenAICodex = model.provider === "openai-codex" && model.api === "openai-codex-responses";
+	if (!(isOpenAIResponses || isOpenAICodex) || !OPENAI_TOOL_SEARCH_MODEL_IDS.has(model.id)) return;
+	model.compat = {
+		...(model.compat as OpenAIResponsesCompat | undefined),
+		supportsToolSearch: true,
+	};
+}
+
 function isGemini3ProModel(modelId: string): boolean {
 	return /gemini-3(?:\.\d+)?-pro/.test(modelId.toLowerCase());
 }
@@ -546,10 +572,7 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	) {
 		mergeThinkingLevelMap(model, { xhigh: "xhigh", max: "max" });
 	}
-	if (
-		(model.api === "anthropic-messages" || model.api === "bedrock-converse-stream") &&
-		model.id.includes("fable-5")
-	) {
+	if (model.id.includes("fable-5")) {
 		mergeThinkingLevelMap(model, { off: null, xhigh: "xhigh", max: "max" });
 	}
 	if (model.api === "anthropic-messages" && isAnthropicAdaptiveThinkingModel(model.id)) {
@@ -701,6 +724,8 @@ async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 			const cacheReadCost = roundCost(parseFloat(model.pricing?.input_cache_read || "0") * 1_000_000);
 			const cacheWriteCost = roundCost(parseFloat(model.pricing?.input_cache_write || "0") * 1_000_000);
 
+			const contextWindow = model.top_provider?.context_length || model.context_length || 4096;
+
 			const normalizedModel: Model<any> = {
 				id: modelKey,
 				name: model.name,
@@ -715,7 +740,7 @@ async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 					cacheRead: cacheReadCost,
 					cacheWrite: cacheWriteCost,
 				},
-				contextWindow: model.context_length || 4096,
+				contextWindow,
 				maxTokens: model.top_provider?.max_completion_tokens || 4096,
 			};
 			models.push(normalizedModel);
@@ -2359,6 +2384,7 @@ async function generateModels() {
 	for (const model of allModels) {
 		applyThinkingLevelMetadata(model);
 		applyOpenAICompletionsCompatMetadata(model);
+		applyOpenAIToolSearchMetadata(model);
 	}
 
 	// Group by provider and deduplicate by model ID

@@ -4,19 +4,26 @@
 
 ### Added
 
+- Added cache-friendly dynamic tool loading. `ToolResultMessage.addedToolNames` marks where tools from `Context.tools` became available; Anthropic and OpenAI Responses use native deferred loading so late tools stay out of the cached prefix, while other providers continue using `Context.tools` normally ([#6474](https://github.com/earendil-works/pi-mono/pull/6474)).
+- Added native `xhigh` and `max` thinking levels for Claude Fable 5 across all generated provider catalogs ([#6490](https://github.com/earendil-works/pi-mono/pull/6490) by [@davidbrai](https://github.com/davidbrai)).
+
 ### Changed
 
 ### Fixed
 
+- Fixed Anthropic deferred tool loading to ignore `addedToolNames` markers on tool results discarded by server-side fallback pruning; such markers deferred a tool while its `tool_reference` never replayed, leaving the tool unloadable.
+- Fixed OpenRouter model context windows to use the top provider's actual context length ([#6481](https://github.com/earendil-works/pi-mono/pull/6481) by [@davidbrai](https://github.com/davidbrai)).
+- Fixed Amazon Bedrock requests to use the generic `apiKey` stream option as a Bedrock bearer token.
 - Prevented invalid model or request `maxTokens` metadata from reaching provider payloads by falling back to the available context budget.
 
 ### Removed
 
 ## [2026.7.10-2] - 2026-07-10
 
+## [0.80.6] - 2026-07-09
+
 ### Added
 
-- Added the opt-in `max` thinking level, plus provider metadata for native `xhigh` and `max` support on GPT-5.6 and adaptive Claude models.
 - Added request-wide input-token pricing tiers to model cost metadata and usage cost calculation.
 
 ### Changed

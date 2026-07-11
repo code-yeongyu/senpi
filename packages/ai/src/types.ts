@@ -433,6 +433,12 @@ export interface ToolResultMessage<TDetails = any> {
 	toolName: string;
 	content: (TextContent | ImageContent)[]; // Supports text and images
 	details?: TDetails;
+	/**
+	 * Names from `Context.tools` that became available after this result.
+	 * Providers with native deferred tool loading use this as the load point;
+	 * other providers ignore it and use `Context.tools` normally.
+	 */
+	addedToolNames?: string[];
 	isError: boolean;
 	timestamp: number; // Unix timestamp in milliseconds
 }
@@ -576,6 +582,8 @@ export interface OpenAIResponsesCompat {
 	supportsWebSocket?: boolean;
 	/** Whether the provider supports the OpenAI Responses native `web_search_preview` tool. Default: true for api.openai.com only. */
 	supportsWebSearchPreview?: boolean;
+	/** Whether the model supports client-executed tool search for deferred tools. Default: false. */
+	supportsToolSearch?: boolean;
 }
 
 /** Compatibility settings for Anthropic Messages-compatible APIs. */
@@ -638,6 +646,12 @@ export interface AnthropicMessagesCompat {
 	forceAdaptiveThinking?: boolean;
 	/** Whether to replay empty thinking signatures as `signature: ""` instead of converting thinking to text. Default: false. */
 	allowEmptySignature?: boolean;
+	/**
+	 * Whether the provider supports deferred tools loaded by `tool_reference`
+	 * blocks in tool results. Default: true for first-party Anthropic models
+	 * except Haiku and models older than Claude 4.5; false for other providers.
+	 */
+	supportsToolReferences?: boolean;
 }
 
 /**
@@ -767,7 +781,7 @@ export interface Model<TApi extends Api> {
 	/** Compatibility overrides for OpenAI-compatible APIs. If not set, auto-detected from baseUrl. */
 	compat?: TApi extends "openai-completions"
 		? OpenAICompletionsCompat
-		: TApi extends "openai-responses"
+		: TApi extends "openai-responses" | "openai-codex-responses"
 			? OpenAIResponsesCompat
 			: TApi extends "anthropic-messages"
 				? AnthropicMessagesCompat

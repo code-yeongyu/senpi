@@ -15,6 +15,7 @@ import type {
 	StreamOptions,
 	Usage,
 } from "../types.ts";
+import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
@@ -98,6 +99,7 @@ function getCompat(model: Model<"openai-responses">, env?: ProviderEnv): Require
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
 		supportsWebSocket: model.compat?.supportsWebSocket ?? isNativeEndpoint,
 		supportsWebSearchPreview: model.compat?.supportsWebSearchPreview ?? isNativeEndpoint,
+		supportsToolSearch: model.compat?.supportsToolSearch ?? false,
 	};
 }
 
@@ -354,13 +356,15 @@ function createClient(
 }
 
 function buildParams(model: Model<"openai-responses">, context: Context, options?: OpenAIResponsesOptions) {
+	const compat = getCompat(model, options?.env);
 	const reasoningRequested = options?.reasoningEffort !== undefined || !!options?.reasoningSummary;
+	const toolPlacement = splitDeferredTools(context, compat.supportsToolSearch);
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
 		preserveThinking: reasoningRequested,
+		deferredTools: toolPlacement.deferred,
 	});
 
 	const cacheRetention = resolveCacheRetention(options?.cacheRetention ?? model.cacheRetention, options?.env);
-	const compat = getCompat(model, options?.env);
 	const params: ResponseCreateParamsStreaming = {
 		model: model.id,
 		input: messages,
@@ -382,8 +386,8 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 		params.service_tier = options.serviceTier;
 	}
 
-	if (context.tools && context.tools.length > 0) {
-		params.tools = convertResponsesTools(context.tools);
+	if (toolPlacement.immediate.length > 0) {
+		params.tools = convertResponsesTools(toolPlacement.immediate);
 	}
 
 	if (model.reasoning) {

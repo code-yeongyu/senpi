@@ -1,5 +1,6 @@
 import type OpenAI from "openai";
 import type {
+	ResponseInputItem as OpenAIResponseInputItem,
 	Tool as OpenAITool,
 	ResponseCreateParamsStreaming,
 	ResponseFunctionCallOutputItemList,
@@ -11,6 +12,7 @@ import type {
 	ResponseOutputMessage,
 	ResponseReasoningItem,
 	ResponseStreamEvent,
+	ResponseToolSearchOutputItemParam,
 } from "openai/resources/responses/responses.js";
 import { calculateCost } from "../models.ts";
 import type {
@@ -80,10 +82,12 @@ export interface ConvertResponsesMessagesOptions {
 	includeSystemPrompt?: boolean;
 	preserveThinking?: boolean;
 	preserveTextSignatures?: boolean;
+	deferredTools?: ReadonlyMap<string, Tool>;
 }
 
 export interface ConvertResponsesToolsOptions {
 	strict?: boolean | null;
+	deferLoading?: boolean;
 }
 
 type ResponseCustomToolCallItem = {
@@ -100,7 +104,7 @@ type ResponseCustomToolCallOutputItem = {
 	output: string | ResponseFunctionCallOutputItemList;
 };
 
-type ResponseInputItem = ResponseInput[number] | ResponseCustomToolCallItem | ResponseCustomToolCallOutputItem;
+type ResponseInputItem = OpenAIResponseInputItem | ResponseCustomToolCallItem | ResponseCustomToolCallOutputItem;
 
 type ResponseFunctionTool = Extract<OpenAITool, { type: "function" }>;
 
@@ -116,10 +120,9 @@ function isFreeformToolName(toolName: string, tools: Tool[] | undefined): boolea
 	return tools?.some((tool) => tool.name === toolName && isFreeformTool(tool)) ?? false;
 }
 
-function getFreeformToolInput(argumentsValue: Record<string, any>): string {
+function getFreeformToolInput(argumentsValue: Record<string, unknown>): string {
 	return typeof argumentsValue.input === "string" ? argumentsValue.input : JSON.stringify(argumentsValue);
 }
-
 // =============================================================================
 // Message conversion
 // =============================================================================
@@ -131,6 +134,7 @@ export function convertResponsesMessages<TApi extends Api>(
 	options?: ConvertResponsesMessagesOptions,
 ): ResponseInput {
 	const messages: ResponseInputItem[] = [];
+	const loadedToolNames = new Set<string>();
 
 	const normalizeIdPart = (part: string): string => {
 		const sanitized = part.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -303,7 +307,6 @@ export function convertResponsesMessages<TApi extends Api>(
 			} else {
 				output = sanitizeSurrogates(hasText ? textResult : hasImages ? "(see attached image)" : "(no tool output)");
 			}
-
 			if (isFreeformToolName(msg.toolName, context.tools)) {
 				messages.push({
 					type: "custom_tool_call_output",
@@ -318,6 +321,32 @@ export function convertResponsesMessages<TApi extends Api>(
 					output,
 				});
 			}
+
+			const deferredTools: Tool[] = [];
+			for (const name of msg.addedToolNames ?? []) {
+				const tool = options?.deferredTools?.get(name);
+				if (!tool || loadedToolNames.has(name)) continue;
+				loadedToolNames.add(name);
+				deferredTools.push(tool);
+			}
+			if (deferredTools.length > 0) {
+				const names = deferredTools.map((tool) => tool.name);
+				const searchCallId = `pi_tool_load_${shortHash(`${msg.toolCallId}:${names.join(",")}`)}`;
+				messages.push({
+					type: "tool_search_call",
+					call_id: searchCallId,
+					execution: "client",
+					status: "completed",
+					arguments: { query: names.join(" "), limit: names.length },
+				} satisfies ResponseInputItem);
+				messages.push({
+					type: "tool_search_output",
+					call_id: searchCallId,
+					execution: "client",
+					status: "completed",
+					tools: convertResponsesTools(deferredTools, { deferLoading: true }),
+				} satisfies ResponseToolSearchOutputItemParam);
+			}
 		}
 		msgIndex++;
 	}
@@ -329,7 +358,7 @@ export function convertResponsesMessages<TApi extends Api>(
 // Tool conversion
 // =============================================================================
 
-export function convertResponsesTools(tools: Tool[], options?: ConvertResponsesToolsOptions): OpenAITool[] {
+export function convertResponsesTools(tools: readonly Tool[], options?: ConvertResponsesToolsOptions): OpenAITool[] {
 	const strict = options?.strict === undefined ? false : options.strict;
 	return tools.map((tool) => {
 		if (tool.freeform) {
@@ -338,6 +367,7 @@ export function convertResponsesTools(tools: Tool[], options?: ConvertResponsesT
 				name: tool.name,
 				description: tool.description,
 				format: tool.freeform,
+				...(options?.deferLoading ? { defer_loading: true } : {}),
 			} as OpenAITool;
 		}
 
@@ -347,6 +377,7 @@ export function convertResponsesTools(tools: Tool[], options?: ConvertResponsesT
 			description: tool.description,
 			parameters: tool.parameters as ResponseFunctionTool["parameters"], // TypeBox already generates JSON Schema
 			strict,
+			...(options?.deferLoading ? { defer_loading: true } : {}),
 		} as OpenAITool;
 	});
 }
