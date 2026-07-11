@@ -133,6 +133,35 @@ describe("auth gateway server", () => {
 		}
 	});
 
+	it("rejects json-like media types before the gateway adapter", async () => {
+		// Given: a gateway adapter that records every accepted request.
+		let dispatches = 0;
+		const handle = await startGateway({
+			onRequest: async () => {
+				dispatches += 1;
+				return { statusCode: 200 };
+			},
+		});
+
+		// When: a JSONP media type is sent to a JSON endpoint.
+		const response = await fetch(`${handle.url}/v1/chat/completions`, {
+			body: "{}",
+			headers: { Authorization: `Bearer ${gatewayToken}`, "content-type": "application/jsonp" },
+			method: "POST",
+		});
+
+		// Then: the request is rejected before it reaches the adapter.
+		expect(response.status).toBe(415);
+		expect(dispatches).toBe(0);
+		const parameterizedJson = await fetch(`${handle.url}/v1/chat/completions`, {
+			body: "{}",
+			headers: { Authorization: `Bearer ${gatewayToken}`, "content-type": "application/json; charset=utf-8" },
+			method: "POST",
+		});
+		expect(parameterizedJson.status).toBe(200);
+		expect(dispatches).toBe(1);
+	});
+
 	it("bounds concurrent requests and aborts in-flight work during graceful shutdown", async () => {
 		// Given: a one-request gateway whose adapter waits for shutdown cancellation.
 		let entered: (() => void) | undefined;

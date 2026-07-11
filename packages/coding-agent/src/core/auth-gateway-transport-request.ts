@@ -143,7 +143,8 @@ function resolvePeerAddress(request: IncomingMessage, trustedProxy: string | und
 
 async function readJsonBody(request: IncomingMessage, maxBodyBytes: number, idleTimeoutMs: number): Promise<unknown> {
 	const contentType = request.headers["content-type"];
-	if (typeof contentType !== "string" || !contentType.toLowerCase().startsWith("application/json")) {
+	const mediaType = typeof contentType === "string" ? contentType.split(";", 1)[0]?.trim().toLowerCase() : undefined;
+	if (mediaType !== "application/json") {
 		throw new GatewayRequestError(415, "content type must be application/json");
 	}
 	const contentLength = request.headers["content-length"];
