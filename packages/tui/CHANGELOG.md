@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Fixed the legacy alt-key parser to also recognize alt+symbol combinations (e.g. `alt+/`, `alt+.`), not just alt+letter and alt+digit ([#6523](https://github.com/earendil-works/pi/pull/6523)).
 - Sanitized terminal control characters from image fallback MIME types and filenames.
 
 ## [2026.7.10-2] - 2026-07-10

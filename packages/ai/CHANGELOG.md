@@ -12,6 +12,7 @@
 ### Fixed
 
 - Fixed Cloudflare Workers AI / AI Gateway auth to fall back to the ambient `CLOUDFLARE_ACCOUNT_ID` (and `CLOUDFLARE_GATEWAY_ID`) when the stored credential carries only the API key, so `/login`-style key-only credentials no longer leave the `{CLOUDFLARE_ACCOUNT_ID}` placeholder unresolved and return 404 ([#6021](https://github.com/earendil-works/pi/issues/6021)).
+- Fixed Amazon Bedrock auth to keep SigV4 signing for AWS profiles, IAM credentials, and roles by not treating the internal `<authenticated>` ambient-auth marker as a Bedrock bearer token in compat dispatch, while still honoring real Bedrock API keys ([#6531](https://github.com/earendil-works/pi/issues/6531)).
 - Fixed Anthropic deferred tool loading to ignore `addedToolNames` markers on tool results discarded by server-side fallback pruning; such markers deferred a tool while its `tool_reference` never replayed, leaving the tool unloadable.
 - Fixed OpenRouter model context windows to use the top provider's actual context length ([#6481](https://github.com/earendil-works/pi-mono/pull/6481) by [@davidbrai](https://github.com/davidbrai)).
 - Fixed Amazon Bedrock requests to use the generic `apiKey` stream option as a Bedrock bearer token.
