@@ -1,7 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { getModels } from "@earendil-works/pi-ai";
 import { getAgentDir, VERSION } from "../config.ts";
 import { AuthBrokerRemoteStore } from "../core/auth-broker-remote-store.ts";
 import { parseAuthBrokerWireResponse } from "../core/auth-broker-wire-contract.ts";
@@ -14,7 +13,8 @@ const BROKER_TOKEN_FILE = "auth-broker.token";
 const AUTH_GATEWAY_USAGE = `Usage: senpi auth-gateway <command>
 
 Commands:
-  serve [--bind=127.0.0.1:4000]  Start a gateway backed by the configured broker.
+  serve [--bind=127.0.0.1:4000] [--model=provider/model]...
+                                  Start a gateway backed by the configured broker.
   token [--regenerate] [--json]  Create or rotate the gateway bearer token.
   status [--json]                Show redacted gateway and broker status.
   check [--json]                 List broker credential health without secrets.
@@ -22,10 +22,16 @@ Commands:
 
 type AuthGatewayAction = "serve" | "token" | "status" | "check";
 
+type GatewayAuthorizedModel = {
+	readonly modelId: string;
+	readonly provider: string;
+};
+
 type ParsedCommand = {
 	readonly action: AuthGatewayAction;
 	readonly bind?: string;
 	readonly json: boolean;
+	readonly models: readonly GatewayAuthorizedModel[];
 	readonly regenerate: boolean;
 };
 
@@ -85,11 +91,14 @@ function parseCommand(args: readonly string[]): ParsedCommand {
 	if (!isAction(action)) throw new AuthGatewayCommandError(AUTH_GATEWAY_USAGE.trim());
 	let bind: string | undefined;
 	let json = false;
+	const models: GatewayAuthorizedModel[] = [];
 	let regenerate = false;
 	for (let index = 1; index < args.length; index++) {
 		const argument = args[index];
 		if (argument === "--json") json = true;
 		else if (argument === "--regenerate" && action === "token") regenerate = true;
+		else if (argument.startsWith("--model=")) models.push(parseAuthorizedModel(argument.slice("--model=".length)));
+		else if (argument === "--model") models.push(parseAuthorizedModel(requiredValue(args, ++index, "--model")));
 		else if (argument.startsWith("--bind=")) bind = argument.slice("--bind=".length);
 		else if (argument === "--bind") bind = requiredValue(args, ++index, "--bind");
 		else throw new AuthGatewayCommandError(`Unknown auth-gateway option: ${argument}`);
@@ -100,7 +109,10 @@ function parseCommand(args: readonly string[]): ParsedCommand {
 	if (action !== "token" && regenerate) {
 		throw new AuthGatewayCommandError("--regenerate is only valid for auth-gateway token");
 	}
-	return { action, bind, json, regenerate };
+	if (action !== "serve" && models.length > 0) {
+		throw new AuthGatewayCommandError("--model is only valid for auth-gateway serve");
+	}
+	return { action, bind, json, models, regenerate };
 }
 
 function isAction(value: string | undefined): value is AuthGatewayAction {
@@ -111,6 +123,14 @@ function requiredValue(args: readonly string[], index: number, flag: string): st
 	const value = args[index];
 	if (value === undefined || value.startsWith("-")) throw new AuthGatewayCommandError(`${flag} requires a value`);
 	return value;
+}
+
+function parseAuthorizedModel(value: string): GatewayAuthorizedModel {
+	const separator = value.indexOf("/");
+	if (separator < 1 || separator === value.length - 1) {
+		throw new AuthGatewayCommandError("--model must use provider/model format");
+	}
+	return { modelId: value.slice(separator + 1), provider: value.slice(0, separator) };
 }
 
 async function execute(
@@ -194,7 +214,7 @@ async function serveCommand(
 			.filter((credential) => credential.disabled === undefined)
 			.map((credential) => credential.pool.provider),
 	);
-	const models = authorizedModelList(authorizedProviders);
+	const models = authorizedModelList(command.models, authorizedProviders);
 	const handle = await startAuthGatewayTransport({
 		auth: { kind: "token-file", path: gatewayTokenPath(agentDirectory(options)) },
 		brokerUrl: broker.url,
@@ -282,11 +302,17 @@ async function snapshotFor(broker: BrokerConfig) {
 }
 
 function authorizedModelList(
+	configuredModels: readonly GatewayAuthorizedModel[],
 	providers: ReadonlySet<string>,
 ): readonly { readonly id: string; readonly object: "model"; readonly owned_by: string }[] {
 	const models: { id: string; object: "model"; owned_by: string }[] = [];
-	for (const provider of providers) {
-		for (const model of getModels(provider)) models.push({ id: model.id, object: "model", owned_by: provider });
+	const seen = new Set<string>();
+	for (const model of configuredModels) {
+		const key = `${model.provider}/${model.modelId}`;
+		if (providers.has(model.provider) && !seen.has(key)) {
+			models.push({ id: model.modelId, object: "model", owned_by: model.provider });
+			seen.add(key);
+		}
 	}
 	return models;
 }

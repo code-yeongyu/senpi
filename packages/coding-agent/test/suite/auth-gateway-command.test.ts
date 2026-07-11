@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getModels } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { startAuthBrokerServer } from "../../src/cli/auth-broker-server.ts";
 import { executeAuthGatewayCommand } from "../../src/cli/auth-gateway-cli.ts";
@@ -23,8 +24,14 @@ afterEach(async () => {
 
 describe("auth gateway command", () => {
 	it("starts from redacted snapshot and lists only authorized models", async () => {
-		// Given: a broker that owns one OpenAI credential and one non-model provider credential.
+		// Given: a broker credential and an explicit allowlist containing one of several OpenAI catalog models.
 		const agentDir = await createDirectory();
+		const openaiCatalog = getModels("openai");
+		expect(openaiCatalog.length).toBeGreaterThan(1);
+		const allowedModel = openaiCatalog[0];
+		const disallowedModel = openaiCatalog[1];
+		if (allowedModel === undefined || disallowedModel === undefined)
+			throw new Error("OpenAI catalog fixture is incomplete");
 		const vault = SqliteCredentialVault.open(join(agentDir, "broker.sqlite"));
 		vault.upsertCredential({
 			createdAt: "2026-07-11T00:00:00.000Z",
@@ -49,23 +56,30 @@ describe("auth gateway command", () => {
 		try {
 			let models: unknown;
 
-			// When: the command starts from the broker metadata snapshot.
-			const result = await executeAuthGatewayCommand(["auth-gateway", "serve", "--bind", "127.0.0.1:0"], {
-				agentDir,
-				brokerToken,
-				brokerUrl: server.url,
-				onGatewayStarted: async (handle) => {
-					const response = await fetch(`${handle.url}/v1/models`, {
-						headers: { authorization: `Bearer ${await gatewayBearer(agentDir)}` },
-					});
-					expect(response.status).toBe(200);
-					models = await response.json();
+			// When: the command starts from the broker metadata snapshot with a configured model allowlist.
+			const result = await executeAuthGatewayCommand(
+				["auth-gateway", "serve", "--bind", "127.0.0.1:0", `--model=openai/${allowedModel.id}`],
+				{
+					agentDir,
+					brokerToken,
+					brokerUrl: server.url,
+					onGatewayStarted: async (handle) => {
+						const response = await fetch(`${handle.url}/v1/models`, {
+							headers: { authorization: `Bearer ${await gatewayBearer(agentDir)}` },
+						});
+						expect(response.status).toBe(200);
+						models = await response.json();
+					},
 				},
-			});
+			);
 
-			// Then: only OpenAI catalog entries are exposed and neither broker nor gateway secret leaks.
+			// Then: only the explicitly authorized model is exposed, never the provider-wide catalog, and no secret leaks.
 			expect(result?.exitCode).toBe(0);
-			expect(JSON.stringify(models)).toContain('"owned_by":"openai"');
+			expect(models).toEqual({
+				data: [{ id: allowedModel.id, object: "model", owned_by: "openai" }],
+				object: "list",
+			});
+			expect(JSON.stringify(models)).not.toContain(disallowedModel.id);
 			expect(JSON.stringify(models)).not.toContain("unknown-provider");
 			expect(`${result?.stdout}${result?.stderr}${JSON.stringify(models)}`).not.toContain(brokerToken);
 			expect(`${result?.stdout}${result?.stderr}${JSON.stringify(models)}`).not.toContain(gatewayToken);
