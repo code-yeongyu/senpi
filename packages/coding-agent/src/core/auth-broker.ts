@@ -92,6 +92,17 @@ export class SqliteCredentialVault implements CredentialVault {
 		if (result.changes !== 1) throw new AuthBrokerError("Credential was not found");
 	}
 
+	deleteCredentialsForProvider(provider: string): number {
+		return this.transaction(() => {
+			this.db
+				.prepare(
+					"DELETE FROM leases WHERE credential_id IN (SELECT credential_id FROM credentials WHERE provider=?)",
+				)
+				.run(provider);
+			return Number(this.db.prepare("DELETE FROM credentials WHERE provider=?").run(provider).changes);
+		});
+	}
+
 	metadataSnapshot(): MetadataSnapshot {
 		return { credentials: this.load().map(toMetadata), generatedAt: new Date().toISOString() };
 	}
