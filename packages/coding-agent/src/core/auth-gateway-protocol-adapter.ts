@@ -1,4 +1,5 @@
 import type { AssistantMessageEventStream, Context } from "@earendil-works/pi-ai/compat";
+import { type TSchema, Type } from "typebox";
 import type { AuthBrokerCredentialSelector } from "./auth-broker-wire-contract.ts";
 
 export type AuthGatewayAdapterInput = {
@@ -92,6 +93,12 @@ export function requiredArray(record: Record<string, unknown>, key: string): rea
 export function selectorFromHeaders(
 	headers: Readonly<Record<string, string | undefined>> | undefined,
 ): AuthBrokerCredentialSelector | undefined {
+	for (const [name, value] of Object.entries(headers ?? {})) {
+		if (value === undefined || name.toLowerCase() === "authorization") continue;
+		if (name !== "x-auth-broker-credential-id" && name !== "x-auth-broker-identity-key") {
+			throw new AuthGatewayAdapterError(`header: ${name}`);
+		}
+	}
 	const credentialId = headers?.["x-auth-broker-credential-id"];
 	const identityKey = headers?.["x-auth-broker-identity-key"];
 	if (credentialId !== undefined && identityKey !== undefined)
@@ -99,6 +106,40 @@ export function selectorFromHeaders(
 	if (credentialId !== undefined && credentialId.length > 0) return { credentialId, kind: "credential" };
 	if (identityKey !== undefined && identityKey.length > 0) return { identityKey, kind: "identity" };
 	return undefined;
+}
+
+export function parseToolSchema(value: unknown): TSchema {
+	const record = readRecord(value);
+	const type = requiredString(record, "type");
+	const description = record.description;
+	if (description !== undefined && typeof description !== "string")
+		throw new AuthGatewayAdapterError("tools.schema.description");
+	const options = description === undefined ? {} : { description };
+	if (type === "string") return Type.String(options);
+	if (type === "number") return Type.Number(options);
+	if (type === "integer") return Type.Integer(options);
+	if (type === "boolean") return Type.Boolean(options);
+	if (type === "array") return Type.Array(parseToolSchema(record.items), options);
+	if (type !== "object") throw new AuthGatewayAdapterError("tools.schema.type");
+	const properties = record.properties === undefined ? {} : readRecord(record.properties);
+	const required = record.required === undefined ? new Set<string>() : schemaRequired(record.required);
+	const fields: Record<string, TSchema> = {};
+	for (const [name, schema] of Object.entries(properties)) {
+		const parsed = parseToolSchema(schema);
+		fields[name] = required.has(name) ? parsed : Type.Optional(parsed);
+	}
+	const additionalProperties = record.additionalProperties;
+	if (additionalProperties !== undefined && typeof additionalProperties !== "boolean") {
+		throw new AuthGatewayAdapterError("tools.schema.additionalProperties");
+	}
+	return Type.Object(fields, { ...options, ...(additionalProperties === undefined ? {} : { additionalProperties }) });
+}
+
+function schemaRequired(value: unknown): Set<string> {
+	if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+		throw new AuthGatewayAdapterError("tools.schema.required");
+	}
+	return new Set(value);
 }
 
 export function unknownModel(): AuthGatewayAdapterResponse {

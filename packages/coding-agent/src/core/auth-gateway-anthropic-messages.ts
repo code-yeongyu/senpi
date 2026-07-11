@@ -1,5 +1,4 @@
 import type { AssistantMessage, AssistantMessageEvent, Context, Message, Tool } from "@earendil-works/pi-ai/compat";
-import { type TSchema, Type } from "typebox";
 import {
 	AuthGatewayAdapterError,
 	type AuthGatewayAdapterRequest,
@@ -9,6 +8,7 @@ import {
 	invalidRequest,
 	optionalBoolean,
 	optionalNumber,
+	parseToolSchema,
 	readRecord,
 	requiredArray,
 	requiredString,
@@ -66,7 +66,7 @@ function parseAnthropicRequest(value: unknown): {
 	const systemPrompt = record.system === undefined ? undefined : parseSystem(record.system);
 	return {
 		context: {
-			messages: requiredArray(record, "messages").map(parseMessage),
+			messages: requiredArray(record, "messages").flatMap(parseMessage),
 			systemPrompt,
 			tools: record.tools === undefined ? undefined : parseTools(record.tools),
 		},
@@ -88,32 +88,36 @@ function parseSystem(value: unknown): string {
 		.join("");
 }
 
-function parseMessage(value: unknown): Message {
+function parseMessage(value: unknown): readonly Message[] {
 	const record = readRecord(value);
 	exactKeys(record, ["content", "role"]);
 	const role = requiredString(record, "role");
 	if (role === "user") return parseUser(record.content);
-	if (role === "assistant") return parseAssistant(record.content);
+	if (role === "assistant") return [parseAssistant(record.content)];
 	throw new AuthGatewayAdapterError("messages.role");
 }
 
-function parseUser(content: unknown): Message {
-	if (typeof content === "string") return { content, role: "user", timestamp: 0 };
+function parseUser(content: unknown): readonly Message[] {
+	if (typeof content === "string") return [{ content, role: "user", timestamp: 0 }];
 	if (!Array.isArray(content)) throw new AuthGatewayAdapterError("messages.content");
-	const text: string[] = [];
-	const results: Message[] = [];
+	const messages: Message[] = [];
+	let text = "";
 	for (const block of content) {
 		const record = readRecord(block);
 		const type = requiredString(record, "type");
 		if (type === "text") {
 			exactKeys(record, ["text", "type"]);
-			text.push(requiredString(record, "text"));
+			text += requiredString(record, "text");
 			continue;
 		}
 		if (type === "tool_result") {
 			exactKeys(record, ["content", "is_error", "tool_use_id", "type"]);
 			const isError = record.is_error === undefined ? false : Boolean(record.is_error);
-			results.push({
+			if (text.length > 0) {
+				messages.push({ content: text, role: "user", timestamp: 0 });
+				text = "";
+			}
+			messages.push({
 				content: [{ text: textBlock(record.content), type: "text" }],
 				isError,
 				role: "toolResult",
@@ -125,9 +129,8 @@ function parseUser(content: unknown): Message {
 		}
 		throw new AuthGatewayAdapterError("messages.content");
 	}
-	return results.length > 0
-		? (results[0] ?? invalidContent())
-		: { content: text.join(""), role: "user", timestamp: 0 };
+	if (text.length > 0) messages.push({ content: text, role: "user", timestamp: 0 });
+	return messages.length > 0 ? messages : [invalidContent()];
 }
 
 function parseAssistant(content: unknown): Message {
@@ -183,15 +186,11 @@ function parseTools(value: unknown): Tool[] {
 		return {
 			description: requiredString(record, "description"),
 			name: requiredString(record, "name"),
-			parameters: schema(record.input_schema),
+			parameters: parseToolSchema(record.input_schema),
 		};
 	});
 }
 
-function schema(value: unknown): TSchema {
-	readRecord(value);
-	return Type.Object({}, { additionalProperties: true });
-}
 function textBlock(value: unknown): string {
 	return typeof value === "string" ? value : parseSystem(value);
 }
@@ -224,6 +223,7 @@ function anthropicBlocks(message: AssistantMessage): unknown[] {
 
 async function* anthropicFrames(stream: AsyncIterable<AssistantMessageEvent>) {
 	yield { data: { message: { content: [], role: "assistant" }, type: "message_start" }, event: "message_start" };
+	let pendingTool: { readonly contentIndex: number; deltas: string[] } | undefined;
 	for await (const event of stream) {
 		if (event.type === "text_start")
 			yield {
@@ -261,26 +261,35 @@ async function* anthropicFrames(stream: AsyncIterable<AssistantMessageEvent>) {
 			};
 		if (event.type === "thinking_end")
 			yield { data: { index: event.contentIndex, type: "content_block_stop" }, event: "content_block_stop" };
-		if (event.type === "toolcall_start")
+		if (event.type === "toolcall_start") pendingTool = { contentIndex: event.contentIndex, deltas: [] };
+		if (event.type === "toolcall_delta") {
+			if (pendingTool === undefined || pendingTool.contentIndex !== event.contentIndex) {
+				pendingTool = { contentIndex: event.contentIndex, deltas: [] };
+			}
+			pendingTool.deltas.push(event.delta);
+		}
+		if (event.type === "toolcall_end") {
+			const deltas = pendingTool?.contentIndex === event.contentIndex ? pendingTool.deltas.join("") : "";
 			yield {
 				data: {
-					content_block: { id: "", input: {}, name: "", type: "tool_use" },
+					content_block: { id: event.toolCall.id, input: {}, name: event.toolCall.name, type: "tool_use" },
 					index: event.contentIndex,
 					type: "content_block_start",
 				},
 				event: "content_block_start",
 			};
-		if (event.type === "toolcall_delta")
-			yield {
-				data: {
-					delta: { partial_json: event.delta, type: "input_json_delta" },
-					index: event.contentIndex,
-					type: "content_block_delta",
-				},
-				event: "content_block_delta",
-			};
-		if (event.type === "toolcall_end")
+			if (deltas.length > 0)
+				yield {
+					data: {
+						delta: { partial_json: deltas, type: "input_json_delta" },
+						index: event.contentIndex,
+						type: "content_block_delta",
+					},
+					event: "content_block_delta",
+				};
 			yield { data: { index: event.contentIndex, type: "content_block_stop" }, event: "content_block_stop" };
+			pendingTool = undefined;
+		}
 		if (event.type === "done")
 			yield {
 				data: {

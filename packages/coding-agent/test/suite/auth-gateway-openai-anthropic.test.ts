@@ -60,6 +60,134 @@ describe("auth gateway OpenAI Chat and Anthropic Messages adapters", () => {
 		expect(COMPATIBILITY_MATRIX.map((entry) => entry.path)).toEqual(["/v1/chat/completions", "/v1/messages"]);
 	});
 
+	it("preserves Anthropic text and multiple tool results in canonical context order", async () => {
+		// Given: a user turn interleaving text with two Anthropic tool results.
+		const runtime = createRuntime();
+		const anthropic = createAnthropicMessagesGatewayAdapter({ provider: "fixture", runtime });
+
+		// When: the adapter translates the mixed-content message.
+		await anthropic.handle({
+			body: {
+				max_tokens: 64,
+				messages: [
+					{
+						content: [
+							{ text: "before", type: "text" },
+							{ content: "one", tool_use_id: "tool-1", type: "tool_result" },
+							{ text: "between", type: "text" },
+							{ content: "two", tool_use_id: "tool-2", type: "tool_result" },
+							{ text: "after", type: "text" },
+						],
+						role: "user",
+					},
+				],
+				model: "fixture-model",
+			},
+		});
+
+		// Then: every text/result block reaches the runtime in the original order.
+		expect(runtime.calls[0]?.context.messages).toMatchObject([
+			{ content: "before", role: "user" },
+			{ content: [{ text: "one" }], role: "toolResult", toolCallId: "tool-1" },
+			{ content: "between", role: "user" },
+			{ content: [{ text: "two" }], role: "toolResult", toolCallId: "tool-2" },
+			{ content: "after", role: "user" },
+		]);
+	});
+
+	it("emits Anthropic tool SSE starts with the completed tool identity", async () => {
+		// Given: a canonical stream whose tool call starts before its final metadata arrives.
+		const anthropic = createAnthropicMessagesGatewayAdapter({ provider: "fixture", runtime: createRuntime() });
+
+		// When: an Anthropic streaming response is serialized.
+		const response = await anthropic.handle({
+			body: { max_tokens: 64, messages: [{ content: "hello", role: "user" }], model: "fixture-model", stream: true },
+		});
+
+		// Then: the tool block starts with the actual id and name rather than placeholders.
+		expect(response.kind).toBe("sse");
+		if (response.kind !== "sse") throw new Error("Expected SSE result");
+		expect(await collectSse(response)).toContainEqual({
+			data: {
+				content_block: { id: "tool-1", input: {}, name: "lookup", type: "tool_use" },
+				index: 2,
+				type: "content_block_start",
+			},
+			event: "content_block_start",
+		});
+	});
+
+	it("preserves supported OpenAI and Anthropic tool schemas", async () => {
+		// Given: nested JSON Schemas with descriptions, required properties, and nested objects.
+		const runtime = createRuntime();
+		const openAI = createOpenAIChatGatewayAdapter({ provider: "fixture", runtime });
+		const anthropic = createAnthropicMessagesGatewayAdapter({ provider: "fixture", runtime });
+		const schema = {
+			description: "lookup parameters",
+			properties: {
+				filter: {
+					description: "nested filter",
+					properties: { city: { type: "string" } },
+					required: ["city"],
+					type: "object",
+				},
+			},
+			required: ["filter"],
+			type: "object",
+		};
+
+		// When: each endpoint receives its native tool definition.
+		await openAI.handle({
+			body: {
+				messages: [{ content: "hello", role: "user" }],
+				model: "fixture-model",
+				tools: [{ function: { description: "lookup", name: "lookup", parameters: schema }, type: "function" }],
+			},
+		});
+		await anthropic.handle({
+			body: {
+				max_tokens: 64,
+				messages: [{ content: "hello", role: "user" }],
+				model: "fixture-model",
+				tools: [{ description: "lookup", input_schema: schema, name: "lookup" }],
+			},
+		});
+
+		// Then: canonical tools retain the complete schema instead of an empty permissive object.
+		const schemas = runtime.calls.map((call) => JSON.stringify(call.context.tools?.[0]?.parameters));
+		for (const serialized of schemas) {
+			expect(serialized).toContain("lookup parameters");
+			expect(serialized).toContain("nested filter");
+			expect(serialized).toContain('"required":["filter"]');
+			expect(serialized).toContain('"city"');
+		}
+	});
+
+	it("rejects unallowlisted headers while stripping inbound Authorization", async () => {
+		// Given: gateway authentication and an arbitrary caller header at the adapter boundary.
+		const runtime = createRuntime();
+		const openAI = createOpenAIChatGatewayAdapter({ provider: "fixture", runtime });
+
+		// When: Authorization and an unsupported header are supplied separately.
+		const authorized = await openAI.handle({
+			body: { messages: [{ content: "hello", role: "user" }], model: "fixture-model" },
+			headers: { authorization: "Bearer caller-secret" },
+		});
+		const rejected = await openAI.handle({
+			body: { messages: [{ content: "hello", role: "user" }], model: "fixture-model" },
+			headers: { "x-unsafe-upstream": "forward-me" },
+		});
+
+		// Then: Authorization is never forwarded, while arbitrary headers fail closed.
+		expect(authorized).toMatchObject({ kind: "json", statusCode: 200 });
+		expect(rejected).toEqual({
+			body: { error: { message: "Unsupported field: header: x-unsafe-upstream", type: "invalid_request_error" } },
+			kind: "json",
+			statusCode: 400,
+		});
+		expect(JSON.stringify(runtime.calls)).not.toContain("caller-secret");
+	});
+
 	it("matches golden non-stream and SSE text tool thinking fixtures", async () => {
 		// Given: canonical runtime events for a completion with text, thinking, and a tool call.
 		const runtime = createRuntime();
@@ -122,7 +250,7 @@ describe("auth gateway OpenAI Chat and Anthropic Messages adapters", () => {
 			{ data: { index: 1, type: "content_block_stop" }, event: "content_block_stop" },
 			{
 				data: {
-					content_block: { id: "", input: {}, name: "", type: "tool_use" },
+					content_block: { id: "tool-1", input: {}, name: "lookup", type: "tool_use" },
 					index: 2,
 					type: "content_block_start",
 				},

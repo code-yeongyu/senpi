@@ -6,7 +6,6 @@ import type {
 	Tool,
 	ToolCall,
 } from "@earendil-works/pi-ai/compat";
-import { type TSchema, Type } from "typebox";
 import {
 	AuthGatewayAdapterError,
 	type AuthGatewayAdapterRequest,
@@ -16,6 +15,7 @@ import {
 	invalidRequest,
 	optionalBoolean,
 	optionalNumber,
+	parseToolSchema,
 	readRecord,
 	requiredArray,
 	requiredString,
@@ -151,7 +151,7 @@ function parseTools(value: unknown): Tool[] {
 		return {
 			description: requiredString(fn, "description"),
 			name: requiredString(fn, "name"),
-			parameters: schema(fn.parameters),
+			parameters: parseToolSchema(fn.parameters),
 		};
 	});
 }
@@ -178,11 +178,6 @@ function parseToolCalls(value: unknown): ToolCall[] {
 			type: "toolCall",
 		};
 	});
-}
-
-function schema(value: unknown): TSchema {
-	readRecord(value);
-	return Type.Object({}, { additionalProperties: true });
 }
 
 function openAiCompletion(message: AssistantMessage, model: string): unknown {
