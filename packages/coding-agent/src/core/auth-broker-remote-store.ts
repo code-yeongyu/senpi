@@ -12,6 +12,7 @@ export interface AuthBrokerRemoteTransport {
 
 export class AuthBrokerRemoteStore {
 	private snapshot: { readonly value: AuthBrokerMetadataSnapshot; readonly validUntil: number } | undefined;
+	private snapshotFlight: Promise<AuthBrokerMetadataSnapshot> | undefined;
 	private requestNumber = 0;
 	private readonly transport: AuthBrokerRemoteTransport;
 	private readonly snapshotFreshnessMs: number;
@@ -21,14 +22,19 @@ export class AuthBrokerRemoteStore {
 		this.snapshotFreshnessMs = snapshotFreshnessMs;
 	}
 
-	async metadataSnapshot(): Promise<AuthBrokerMetadataSnapshot> {
-		if (this.snapshot !== undefined && this.snapshot.validUntil > Date.now()) return this.snapshot.value;
-		const response = await this.transport.request(
-			this.message("metadata_snapshot", AUTH_BROKER_CAPABILITIES.metadataRead),
-		);
-		if (response.operation !== "metadata_snapshot") throw new Error("Unexpected broker response");
-		this.snapshot = { validUntil: Date.now() + this.snapshotFreshnessMs, value: response.snapshot };
-		return response.snapshot;
+	async metadataSnapshot(options: { readonly forceRefresh?: boolean } = {}): Promise<AuthBrokerMetadataSnapshot> {
+		if (!options.forceRefresh && this.snapshot !== undefined && this.snapshot.validUntil > Date.now()) {
+			return this.snapshot.value;
+		}
+		const existing = this.snapshotFlight;
+		if (existing !== undefined) return existing;
+		const flight = this.fetchSnapshot();
+		this.snapshotFlight = flight;
+		try {
+			return await flight;
+		} finally {
+			if (this.snapshotFlight === flight) this.snapshotFlight = undefined;
+		}
 	}
 
 	async select(
@@ -89,5 +95,14 @@ export class AuthBrokerRemoteStore {
 			protocolVersion: AUTH_BROKER_PROTOCOL_VERSION,
 			requestId: `remote-${this.requestNumber}`,
 		};
+	}
+
+	private async fetchSnapshot(): Promise<AuthBrokerMetadataSnapshot> {
+		const response = await this.transport.request(
+			this.message("metadata_snapshot", AUTH_BROKER_CAPABILITIES.metadataRead),
+		);
+		if (response.operation !== "metadata_snapshot") throw new Error("Unexpected broker response");
+		this.snapshot = { validUntil: Date.now() + this.snapshotFreshnessMs, value: response.snapshot };
+		return response.snapshot;
 	}
 }

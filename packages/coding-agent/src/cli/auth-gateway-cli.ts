@@ -4,6 +4,10 @@ import { join } from "node:path";
 import { getAgentDir, VERSION } from "../config.ts";
 import { AuthBrokerRemoteStore } from "../core/auth-broker-remote-store.ts";
 import { parseAuthBrokerWireResponse } from "../core/auth-broker-wire-contract.ts";
+import {
+	type AuthGatewayAuthorizedModel,
+	createAuthGatewayObservabilityHandler,
+} from "../core/auth-gateway-observability.ts";
 import { type AuthGatewayTransportHandle, startAuthGatewayTransport } from "../core/auth-gateway-transport.ts";
 
 const DEFAULT_BIND = "127.0.0.1:4000";
@@ -22,16 +26,11 @@ Commands:
 
 type AuthGatewayAction = "serve" | "token" | "status" | "check";
 
-type GatewayAuthorizedModel = {
-	readonly modelId: string;
-	readonly provider: string;
-};
-
 type ParsedCommand = {
 	readonly action: AuthGatewayAction;
 	readonly bind?: string;
 	readonly json: boolean;
-	readonly models: readonly GatewayAuthorizedModel[];
+	readonly models: readonly AuthGatewayAuthorizedModel[];
 	readonly regenerate: boolean;
 };
 
@@ -91,7 +90,7 @@ function parseCommand(args: readonly string[]): ParsedCommand {
 	if (!isAction(action)) throw new AuthGatewayCommandError(AUTH_GATEWAY_USAGE.trim());
 	let bind: string | undefined;
 	let json = false;
-	const models: GatewayAuthorizedModel[] = [];
+	const models: AuthGatewayAuthorizedModel[] = [];
 	let regenerate = false;
 	for (let index = 1; index < args.length; index++) {
 		const argument = args[index];
@@ -125,7 +124,7 @@ function requiredValue(args: readonly string[], index: number, flag: string): st
 	return value;
 }
 
-function parseAuthorizedModel(value: string): GatewayAuthorizedModel {
+function parseAuthorizedModel(value: string): AuthGatewayAuthorizedModel {
 	const separator = value.indexOf("/");
 	if (separator < 1 || separator === value.length - 1) {
 		throw new AuthGatewayCommandError("--model must use provider/model format");
@@ -207,22 +206,15 @@ async function serveCommand(
 	options: AuthGatewayCommandOptions,
 ): Promise<AuthGatewayCommandExecution> {
 	const broker = await requiredBrokerConfig(options);
-	const snapshot = await snapshotFor(broker);
+	const store = brokerStore(broker);
+	await store.metadataSnapshot();
 	const bind = parseBind(command.bind ?? DEFAULT_BIND);
-	const authorizedProviders = new Set(
-		snapshot.credentials
-			.filter((credential) => credential.disabled === undefined)
-			.map((credential) => credential.pool.provider),
-	);
-	const models = authorizedModelList(command.models, authorizedProviders);
+	const observability = createAuthGatewayObservabilityHandler({ broker: store, models: command.models });
 	const handle = await startAuthGatewayTransport({
 		auth: { kind: "token-file", path: gatewayTokenPath(agentDirectory(options)) },
 		brokerUrl: broker.url,
 		host: bind.host,
-		onRequest: async (request) => {
-			if (request.pathname === "/v1/models") return { body: { data: models, object: "list" }, statusCode: 200 };
-			return { body: { error: "route adapter unavailable" }, statusCode: 501 };
-		},
+		onRequest: observability,
 		port: bind.port,
 		version: VERSION,
 	});
@@ -284,7 +276,11 @@ async function requiredBrokerConfig(options: AuthGatewayCommandOptions): Promise
 }
 
 async function snapshotFor(broker: BrokerConfig) {
-	const store = new AuthBrokerRemoteStore({
+	return brokerStore(broker).metadataSnapshot();
+}
+
+function brokerStore(broker: BrokerConfig): AuthBrokerRemoteStore {
+	return new AuthBrokerRemoteStore({
 		async request(request: unknown) {
 			const response = await fetch(new URL("/v1/broker", broker.url), {
 				body: JSON.stringify(request),
@@ -298,23 +294,6 @@ async function snapshotFor(broker: BrokerConfig) {
 			return parseAuthBrokerWireResponse(await response.json());
 		},
 	});
-	return await store.metadataSnapshot();
-}
-
-function authorizedModelList(
-	configuredModels: readonly GatewayAuthorizedModel[],
-	providers: ReadonlySet<string>,
-): readonly { readonly id: string; readonly object: "model"; readonly owned_by: string }[] {
-	const models: { id: string; object: "model"; owned_by: string }[] = [];
-	const seen = new Set<string>();
-	for (const model of configuredModels) {
-		const key = `${model.provider}/${model.modelId}`;
-		if (providers.has(model.provider) && !seen.has(key)) {
-			models.push({ id: model.modelId, object: "model", owned_by: model.provider });
-			seen.add(key);
-		}
-	}
-	return models;
 }
 
 function parseBind(value: string): { readonly host: string; readonly port: number } {
