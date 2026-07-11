@@ -143,7 +143,7 @@ describe("todo30 bm25: determinism + perf", () => {
 		expect(a).toEqual(["mcp_docs_a_tool", "mcp_docs_b_tool", "mcp_docs_c_tool"]);
 	});
 
-	it("5k-tool corpus search is under 10ms (loose bound)", () => {
+	it("5k-tool corpus search is under 100ms (loose bound)", () => {
 		const corpus: Bm25Doc[] = [];
 		for (let i = 0; i < 5000; i += 1) {
 			corpus.push({
@@ -160,6 +160,10 @@ describe("todo30 bm25: determinism + perf", () => {
 		const results = index.search("operation resource tool", 10);
 		const elapsed = performance.now() - start;
 		expect(results.length).toBeGreaterThan(0);
-		expect(elapsed).toBeLessThan(10);
+		// Guards against algorithmic regressions (a naive O(n²) rescan of the 5k
+		// corpus would take seconds), not micro-latency. The bound is generous so a
+		// busy dev machine or a loaded CI/release runner does not flake it; a warm
+		// search here is ~1ms on an idle host and tens of ms under heavy load.
+		expect(elapsed).toBeLessThan(100);
 	});
 });

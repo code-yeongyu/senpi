@@ -29,18 +29,32 @@ async function main(): Promise<void> {
 		clientId: "race-client",
 	});
 
+	// Two-phase file barrier so both worker processes fire their refresh within the
+	// same scheduling window even on a busy host — otherwise the concurrent-refresh
+	// race the control case proves (and the contention the lock-ON case relies on)
+	// does not reliably reproduce. Phase 1: wait for both processes to arrive.
+	// Phase 2: both signal ready and busy-wait on a 1ms poll so the two attempts are
+	// released together, replacing a fixed 20ms sleep that left them skewed under load.
 	appendFileSync(barrierFile ?? "", `${tag}\n`);
-	for (let i = 0; i < 200; i++) {
+	for (let i = 0; i < 400; i++) {
 		if (
 			readFileSync(barrierFile ?? "", "utf8")
-				.trim()
 				.split("\n")
-				.filter(Boolean).length >= 2
+				.filter((line) => line.length > 0 && !line.includes(":")).length >= 2
 		)
 			break;
-		await sleep(10);
+		await sleep(5);
 	}
-	await sleep(20);
+	appendFileSync(barrierFile ?? "", `${tag}:ready\n`);
+	for (let i = 0; i < 400; i++) {
+		if (
+			readFileSync(barrierFile ?? "", "utf8")
+				.split("\n")
+				.filter((line) => line.endsWith(":ready")).length >= 2
+		)
+			break;
+		await sleep(1);
+	}
 
 	const first = await runtimeAttempt(agentDir ?? "", mcpUrl ?? "", provider, store);
 	if (!lockDisabled) {

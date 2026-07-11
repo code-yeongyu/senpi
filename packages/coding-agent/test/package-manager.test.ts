@@ -1712,10 +1712,24 @@ Content`,
 				{ source: relative(join(tempDir, ".pi"), pkgDir), autoload: false, extensions: ["+extensions/foo.ts"] },
 			]);
 
-			const result = await packageManager.resolve();
+			// Isolate HOME to the empty tempDir so user/global `$HOME/.agents/skills`
+			// discovery finds nothing — this "without a global package" case asserts
+			// result.skills is empty, which otherwise picks up the developer's real
+			// global skills (CI passes only because its home has none).
+			const previousHome = process.env.HOME;
+			process.env.HOME = tempDir;
+			try {
+				const result = await packageManager.resolve();
 
-			expect(result.extensions.map((resource) => resource.path)).toEqual([join(pkgDir, "extensions", "foo.ts")]);
-			expect(result.skills).toEqual([]);
+				expect(result.extensions.map((resource) => resource.path)).toEqual([join(pkgDir, "extensions", "foo.ts")]);
+				expect(result.skills).toEqual([]);
+			} finally {
+				if (previousHome === undefined) {
+					delete process.env.HOME;
+				} else {
+					process.env.HOME = previousHome;
+				}
+			}
 		});
 	});
 

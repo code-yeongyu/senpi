@@ -254,10 +254,30 @@ func TestIntegrationConcurrentSpawnRaceExactlyOneDaemon(t *testing.T) {
 		t.Fatalf("chooseSocketPath: %v", err)
 	}
 	reap := func() {
-		for _, pid := range socketHolderPIDs(t, socket) {
+		pids := socketHolderPIDs(t, socket)
+		for _, pid := range pids {
 			if p, perr := os.FindProcess(pid); perr == nil {
 				_ = p.Kill()
 			}
+		}
+		// Wait for the killed daemons to actually exit before returning. This cleanup
+		// runs (LIFO) before t.TempDir's RemoveAll; a daemon still winding down holds
+		// open files under the sandbox agent dir, so RemoveAll would race it and fail
+		// with "unlinkat ... /agent: directory not empty". Poll until every socket
+		// holder is gone, bounded so a stuck process cannot hang the suite.
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			anyAlive := false
+			for _, pid := range pids {
+				if IsPidAlive(pid) {
+					anyAlive = true
+					break
+				}
+			}
+			if !anyAlive || time.Now().After(deadline) {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
 		}
 		_ = os.Remove(socket)
 	}
