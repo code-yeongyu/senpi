@@ -6,6 +6,8 @@
  * value that can carry selected API or access material to a trusted gateway.
  */
 
+export { InMemoryCredentialVault } from "./in-memory-credential-vault.ts";
+
 export type CredentialPool = {
 	readonly provider: string;
 	readonly type: CredentialMaterial["type"];
@@ -66,16 +68,20 @@ export type CredentialSelector =
 export type SelectionLeaseRequest = {
 	readonly pool: CredentialPool;
 	readonly selector: CredentialSelector;
+	readonly sessionId?: string;
 };
 
 export type PendingSelectionLease = {
 	readonly credentialId: string;
 	readonly leaseId: string;
 	readonly pool: CredentialPool;
+	readonly selector: CredentialSelector;
+	readonly sessionId?: string;
 };
 
 export type SelectionLease = PendingSelectionLease & {
 	readonly material: CredentialMaterial;
+	reportOutcome(report: Omit<UsageReport, "credentialId" | "pool">): void;
 };
 
 export type ConsumeSelectionLeaseRequest = {
@@ -106,133 +112,10 @@ export interface CredentialVault {
 	reportUsage(report: UsageReport): void;
 }
 
-type StoredLease = {
-	readonly authentication: string;
-	readonly credential: CredentialRecord;
-	readonly leaseId: string;
-};
-
 export type SerializedCredentialVault = {
 	readonly credentials: readonly CredentialRecord[];
 };
 
 export function credentialPoolKey(pool: CredentialPool): CredentialPoolKey {
 	return `${pool.provider}:${pool.type}`;
-}
-
-export class InMemoryCredentialVault implements CredentialVault {
-	private records: CredentialRecord[];
-	private readonly leases = new Map<string, StoredLease>();
-	private readonly reports: UsageReport[] = [];
-	private leaseSequence = 0;
-	private readonly diagnostic?: (entry: VaultDiagnostic) => void;
-
-	private constructor(records: readonly CredentialRecord[], diagnostic?: (entry: VaultDiagnostic) => void) {
-		this.records = Array.from(structuredClone(records));
-		this.diagnostic = diagnostic;
-	}
-
-	static fromRecords(
-		records: readonly CredentialRecord[],
-		diagnostic?: (entry: VaultDiagnostic) => void,
-	): InMemoryCredentialVault {
-		return new InMemoryCredentialVault(records, diagnostic);
-	}
-
-	static fromSerialized(serialized: SerializedCredentialVault): InMemoryCredentialVault {
-		return new InMemoryCredentialVault(serialized.credentials);
-	}
-
-	load(): readonly CredentialRecord[] {
-		return structuredClone(this.records);
-	}
-
-	save(records: readonly CredentialRecord[]): void {
-		this.records = Array.from(structuredClone(records));
-		this.leases.clear();
-	}
-
-	serialize(): SerializedCredentialVault {
-		return { credentials: this.load() };
-	}
-
-	metadataSnapshot(): MetadataSnapshot {
-		return {
-			credentials: this.records.map(toCredentialMetadata),
-			generatedAt: new Date().toISOString(),
-		};
-	}
-
-	issueSelectionLease(request: SelectionLeaseRequest, authentication: string): PendingSelectionLease {
-		const credential = this.selectCredential(request);
-		this.leaseSequence += 1;
-		const leaseId = `lease-${this.leaseSequence}`;
-		this.leases.set(leaseId, { authentication, credential, leaseId });
-		return { credentialId: credential.credentialId, leaseId, pool: { ...credential.pool } };
-	}
-
-	consumeSelectionLease(request: ConsumeSelectionLeaseRequest): SelectionLease {
-		const stored = this.leases.get(request.leaseId);
-		if (stored === undefined) {
-			this.diagnostic?.({ code: "lease_consumed", leaseId: request.leaseId });
-			throw new Error("Selection lease is no longer available");
-		}
-		if (stored.authentication !== request.authentication) {
-			this.diagnostic?.({ code: "lease_authentication_failed", leaseId: request.leaseId });
-			throw new Error("Selection lease authentication failed");
-		}
-		this.leases.delete(request.leaseId);
-		return {
-			credentialId: stored.credential.credentialId,
-			leaseId: stored.leaseId,
-			material: structuredClone(stored.credential.material),
-			pool: { ...stored.credential.pool },
-		};
-	}
-
-	reportUsage(report: UsageReport): void {
-		this.reports.push({ ...report, pool: { ...report.pool } });
-	}
-
-	private selectCredential(request: SelectionLeaseRequest): CredentialRecord {
-		const candidates = this.records.filter(
-			(record) =>
-				credentialPoolKey(record.pool) === credentialPoolKey(request.pool) && record.disabled === undefined,
-		);
-		const selected = candidates.find((record) => matchesSelector(record, request.selector));
-		if (selected === undefined) {
-			this.diagnostic?.({ code: "selector_rejected" });
-			throw new Error("No credential matches selector");
-		}
-		return selected;
-	}
-}
-
-function matchesSelector(record: CredentialRecord, selector: CredentialSelector): boolean {
-	switch (selector.kind) {
-		case "automatic":
-			return true;
-		case "credential":
-			return record.credentialId === selector.credentialId;
-		case "identity":
-			return record.identityKey === selector.identityKey;
-		default:
-			return assertNever(selector);
-	}
-}
-
-function toCredentialMetadata(record: CredentialRecord): CredentialMetadata {
-	return {
-		createdAt: record.createdAt,
-		credentialId: record.credentialId,
-		disabled: record.disabled === undefined ? undefined : { ...record.disabled },
-		identityKey: record.identityKey,
-		pool: { ...record.pool },
-		updatedAt: record.updatedAt,
-	};
-}
-
-function assertNever(value: never): never {
-	void value;
-	throw new Error("Unexpected credential contract variant");
 }

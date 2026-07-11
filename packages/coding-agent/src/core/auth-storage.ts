@@ -19,6 +19,7 @@ import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../config.ts";
 import { normalizePath } from "../utils/paths.ts";
+import type { CredentialSelector, CredentialVault, SelectionLease, UsageReport } from "./auth-multi-account.ts";
 import { resolveConfigValue } from "./resolve-config-value.ts";
 
 export type ApiKeyCredential = {
@@ -44,6 +45,17 @@ export type AuthStatus = {
 export interface GetApiKeyOptions {
 	includeFallback?: boolean;
 }
+
+export type PooledCredentialOptions = {
+	selector?: CredentialSelector;
+	sessionId?: string;
+};
+
+export type PooledCredentialSelection = {
+	apiKey: string;
+	credentialId: string;
+	reportOutcome: (status: UsageReport["status"]) => void;
+};
 
 type LockResult<T> = {
 	result: T;
@@ -206,6 +218,7 @@ export class AuthStorage {
 	private loadError: Error | null = null;
 	private errors: Error[] = [];
 	private storage: AuthStorageBackend;
+	private credentialVault: CredentialVault | undefined;
 
 	private constructor(storage: AuthStorageBackend) {
 		this.storage = storage;
@@ -224,6 +237,10 @@ export class AuthStorage {
 		const storage = new InMemoryAuthStorageBackend();
 		storage.withLock(() => ({ result: undefined, next: JSON.stringify(data, null, 2) }));
 		return AuthStorage.fromStorage(storage);
+	}
+
+	setCredentialVault(vault: CredentialVault | undefined): void {
+		this.credentialVault = vault;
 	}
 
 	/**
@@ -530,10 +547,48 @@ export class AuthStorage {
 		return undefined;
 	}
 
+	selectPooledCredential(
+		providerId: string,
+		options: PooledCredentialOptions = {},
+	): PooledCredentialSelection | undefined {
+		if (
+			this.runtimeOverrides.has(providerId) ||
+			this.data[providerId] !== undefined ||
+			this.credentialVault === undefined
+		) {
+			return undefined;
+		}
+
+		const pool = this.credentialVault
+			.metadataSnapshot()
+			.credentials.find((credential) => credential.pool.provider === providerId)?.pool;
+		if (pool === undefined) return undefined;
+		const pending = this.credentialVault.issueSelectionLease(
+			{ pool, selector: options.selector ?? { kind: "automatic" }, sessionId: options.sessionId },
+			"local-auth-storage",
+		);
+		const lease = this.credentialVault.consumeSelectionLease({
+			authentication: "local-auth-storage",
+			leaseId: pending.leaseId,
+		});
+		return selectionFromLease(lease);
+	}
+
 	/**
 	 * Get all registered OAuth providers
 	 */
 	getOAuthProviders() {
 		return getOAuthProviders();
 	}
+}
+
+function selectionFromLease(lease: SelectionLease): PooledCredentialSelection {
+	const apiKey = lease.material.type === "api_key" ? lease.material.apiKey : lease.material.accessToken;
+	return {
+		apiKey,
+		credentialId: lease.credentialId,
+		reportOutcome: (status) => {
+			lease.reportOutcome({ observedAt: new Date().toISOString(), status });
+		},
+	};
 }

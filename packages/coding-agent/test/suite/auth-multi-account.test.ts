@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
 	type CredentialRecord,
 	InMemoryCredentialVault,
 	type SelectionLeaseRequest,
+	type UsageReport,
 } from "../../src/core/auth-multi-account.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 
@@ -55,6 +56,114 @@ function selectionRequest(): SelectionLeaseRequest {
 }
 
 describe("multi-account credential contracts", () => {
+	it("rotates A B A and preserves a healthy session affinity", () => {
+		const secondApiKeyRecord: CredentialRecord = {
+			...apiKeyRecord,
+			credentialId: "credential-b",
+			identityKey: "operator:account-b",
+			material: { type: "api_key", apiKey: "test-api-key-b" },
+		};
+		const vault = InMemoryCredentialVault.fromRecords([apiKeyRecord, secondApiKeyRecord]);
+		const automaticRequest: SelectionLeaseRequest = {
+			pool: apiKeyRecord.pool,
+			selector: { kind: "automatic" },
+		};
+
+		const selected = [
+			vault.issueSelectionLease(automaticRequest, "gateway-a").credentialId,
+			vault.issueSelectionLease(automaticRequest, "gateway-a").credentialId,
+			vault.issueSelectionLease(automaticRequest, "gateway-a").credentialId,
+		];
+		expect(selected).toEqual(["credential-a", "credential-b", "credential-a"]);
+
+		const sessionRequest: SelectionLeaseRequest = { ...automaticRequest, sessionId: "session-1" };
+		expect(vault.issueSelectionLease(sessionRequest, "gateway-a").credentialId).toBe("credential-b");
+		expect(vault.issueSelectionLease(sessionRequest, "gateway-a").credentialId).toBe("credential-b");
+	});
+
+	it("does not fall back from an explicit pin and cools down after 401 or 429", () => {
+		let now = 1_784_131_200_000;
+		const secondApiKeyRecord: CredentialRecord = {
+			...apiKeyRecord,
+			credentialId: "credential-b",
+			identityKey: "operator:account-b",
+			material: { type: "api_key", apiKey: "test-api-key-b" },
+		};
+		const vault = InMemoryCredentialVault.fromRecords([apiKeyRecord, secondApiKeyRecord], undefined, () => now);
+		const pinned: SelectionLeaseRequest = {
+			pool: apiKeyRecord.pool,
+			selector: { kind: "credential", credentialId: "credential-a" },
+		};
+		const automatic: SelectionLeaseRequest = { pool: apiKeyRecord.pool, selector: { kind: "automatic" } };
+		const cooldownReport = (status: UsageReport["status"]): UsageReport => ({
+			credentialId: "credential-a",
+			observedAt: new Date(now).toISOString(),
+			pool: apiKeyRecord.pool,
+			status,
+		});
+
+		vault.reportUsage(cooldownReport("rate_limited"));
+		expect(vault.issueSelectionLease(automatic, "gateway-a").credentialId).toBe("credential-b");
+		expect(() => vault.issueSelectionLease(pinned, "gateway-a")).toThrow("No eligible credential matches selector");
+		now += 30_001;
+		expect(vault.issueSelectionLease(pinned, "gateway-a").credentialId).toBe("credential-a");
+
+		vault.reportUsage(cooldownReport("unauthorized"));
+		expect(vault.issueSelectionLease(automatic, "gateway-a").credentialId).toBe("credential-b");
+		expect(() => vault.issueSelectionLease(pinned, "gateway-a")).toThrow("No eligible credential matches selector");
+	});
+
+	it("uses deterministic equal-score ranking and coordinates one OAuth refresh", async () => {
+		const secondApiKeyRecord: CredentialRecord = {
+			...apiKeyRecord,
+			credentialId: "credential-b",
+			identityKey: "operator:account-b",
+			material: { type: "api_key", apiKey: "test-api-key-b" },
+		};
+		const vault = InMemoryCredentialVault.fromRecords([secondApiKeyRecord, apiKeyRecord]);
+		const automatic: SelectionLeaseRequest = { pool: apiKeyRecord.pool, selector: { kind: "automatic" } };
+		const first = vault.issueSelectionLease(automatic, "gateway-a");
+		const second = vault.issueSelectionLease(automatic, "gateway-a");
+		expect([first.credentialId, second.credentialId]).toEqual(["credential-a", "credential-b"]);
+		vault.reportUsage({
+			credentialId: "credential-a",
+			observedAt: "2026-07-11T00:00:00.000Z",
+			pool: apiKeyRecord.pool,
+			remainingFraction: 0.2,
+			status: "success",
+		});
+		expect(vault.issueSelectionLease(automatic, "gateway-a").credentialId).toBe("credential-b");
+
+		let release: (() => void) | undefined;
+		const refresh = vi.fn(
+			() =>
+				new Promise<string>((resolve) => {
+					release = () => resolve("fresh-access-token");
+				}),
+		);
+		const firstRefresh = vault.runRefresh("credential-b", refresh);
+		const secondRefresh = vault.runRefresh("credential-b", refresh);
+		expect(firstRefresh).toBe(secondRefresh);
+		expect(refresh).toHaveBeenCalledTimes(1);
+		expect(release).toBeDefined();
+		release?.();
+		await expect(firstRefresh).resolves.toBe("fresh-access-token");
+	});
+
+	it("preserves runtime and stored API-key precedence over a configured pool", () => {
+		const vault = InMemoryCredentialVault.fromRecords([apiKeyRecord]);
+		const storage = AuthStorage.inMemory({ openai: { type: "api_key", key: "stored-api-key" } });
+		storage.setCredentialVault(vault);
+		expect(storage.selectPooledCredential("openai")).toBeUndefined();
+		storage.remove("openai");
+		storage.setRuntimeApiKey("openai", "runtime-api-key");
+		expect(storage.selectPooledCredential("openai")).toBeUndefined();
+		storage.removeRuntimeApiKey("openai");
+		const selected = storage.selectPooledCredential("openai");
+		expect(selected?.apiKey).toBe("test-api-key-a");
+		selected?.reportOutcome("rate_limited");
+		expect(() => storage.selectPooledCredential("openai")).toThrow("No eligible credential is available");
+	});
 	it("persists two redacted credential records and consumes one authenticated lease", () => {
 		// Given: two credentials from separate provider/type pools.
 		const original = InMemoryCredentialVault.fromRecords([apiKeyRecord, oauthRecord]);

@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { type Api, type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
+import { type Api, type AssistantMessage, type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
@@ -318,7 +318,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		},
 		convertToLlm: convertToLlmWithBlockImages,
 		streamFn: async (model, context, options) => {
-			const auth = await modelRegistry.getApiKeyAndHeaders(model);
+			const auth = await modelRegistry.getApiKeyAndHeaders(model, { sessionId: options?.sessionId });
 			if (!auth.ok) {
 				throw new Error(auth.error);
 			}
@@ -357,7 +357,14 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				headers,
 				extraBody: auth.extraBody || options?.extraBody ? { ...auth.extraBody, ...options?.extraBody } : undefined,
 			};
-			return streamSimple(requestModel, context, streamOptions);
+			const responseStream = streamSimple(requestModel, context, streamOptions);
+			if (auth.reportOutcome !== undefined) {
+				void responseStream.result().then(
+					(message) => auth.reportOutcome?.(classifyCredentialOutcome(message)),
+					() => auth.reportOutcome?.("unavailable"),
+				);
+			}
+			return responseStream;
 		},
 		onPayload: async (payload, _model) => {
 			const runner = extensionRunnerRef.current;
@@ -429,6 +436,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		extensionsResult,
 		modelFallbackMessage,
 	};
+}
+
+function classifyCredentialOutcome(
+	message: AssistantMessage,
+): "success" | "rate_limited" | "unauthorized" | "unavailable" {
+	if (message.stopReason !== "error") return "success";
+	const detail = message.errorMessage ?? "";
+	if (/\b(?:401|unauthori[sz]ed)\b/i.test(detail)) return "unauthorized";
+	if (/\b(?:429|rate[ -]?limit)\b/i.test(detail)) return "rate_limited";
+	return "unavailable";
 }
 
 /**
