@@ -11,6 +11,7 @@ import type {
 import { getApiProvider, getSupportedThinkingLevels } from "@earendil-works/pi-ai/compat";
 import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { type CredentialRecord, InMemoryCredentialVault } from "../src/core/auth-multi-account.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRegistry, type ProviderConfigInput } from "../src/core/model-registry.ts";
 import { clearConfigValueCache } from "../src/core/resolve-config-value.ts";
@@ -1558,6 +1559,35 @@ describe("ModelRegistry", () => {
 				],
 			};
 		}
+
+		test("uses runtime, stored, provider config, then pooled credentials in that order", async () => {
+			const pooledRecord: CredentialRecord = {
+				createdAt: "2026-07-11T00:00:00.000Z",
+				credentialId: "pooled-account",
+				identityKey: "operator:pooled-account",
+				material: { type: "api_key", apiKey: "pooled-api-key" },
+				pool: { provider: "custom-provider", type: "api_key" },
+				updatedAt: "2026-07-11T00:00:00.000Z",
+			};
+			authStorage.setCredentialVault(InMemoryCredentialVault.fromRecords([pooledRecord]));
+			writeRawModelsJson({ "custom-provider": providerWithApiKey("provider-config-key") });
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const model = registry.find("custom-provider", "test-model");
+			expect(model).toBeDefined();
+
+			expect(await registry.getApiKeyAndHeaders(model!)).toMatchObject({ ok: true, apiKey: "provider-config-key" });
+			authStorage.set("custom-provider", { type: "api_key", key: "stored-api-key" });
+			expect(await registry.getApiKeyAndHeaders(model!)).toMatchObject({ ok: true, apiKey: "stored-api-key" });
+			authStorage.setRuntimeApiKey("custom-provider", "runtime-api-key");
+			expect(await registry.getApiKeyAndHeaders(model!)).toMatchObject({ ok: true, apiKey: "runtime-api-key" });
+			authStorage.removeRuntimeApiKey("custom-provider");
+			authStorage.remove("custom-provider");
+			const poolOnlyRegistry = ModelRegistry.inMemory(authStorage);
+			expect(await poolOnlyRegistry.getApiKeyAndHeaders(model!)).toMatchObject({
+				ok: true,
+				apiKey: "pooled-api-key",
+			});
+		});
 
 		test("apiKey with ! prefix executes command and uses stdout", async () => {
 			writeRawModelsJson({
