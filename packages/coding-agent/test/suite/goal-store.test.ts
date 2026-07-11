@@ -162,24 +162,24 @@ describe("goal store atomic writes", () => {
 		expect(fileStat.mode & 0o777).toBe(0o600);
 	});
 
-	it("leaves a parsed file exactly equal to one overlapping submitted goal", async () => {
+	it("leaves exact bytes from one overlapping submitted goal", async () => {
 		// Given
 		const ref = await tempStore("thread-overlapping-writes");
 		const goal = await createGoal(ref, "Initial goal");
 		const longGoal = { ...goal, objective: "x".repeat(4_000_000), updatedAt: goal.updatedAt + 1 };
 		const shortGoal = { ...goal, objective: "short", updatedAt: goal.updatedAt + 2 };
 		const submittedFiles = [
-			{ version: 1, goal: longGoal },
-			{ version: 1, goal: shortGoal },
+			Buffer.from(`${JSON.stringify({ version: 1, goal: longGoal }, null, 2)}\n`),
+			Buffer.from(`${JSON.stringify({ version: 1, goal: shortGoal }, null, 2)}\n`),
 		];
 
 		// When
 		for (let iteration = 0; iteration < 50; iteration += 1) {
 			await Promise.all([writeGoal(ref, longGoal), writeGoal(ref, shortGoal)]);
-			const parsed: unknown = JSON.parse(await readFile(goalFilePath(ref), "utf8"));
+			const persisted = await readFile(goalFilePath(ref));
 
 			// Then
-			expect(submittedFiles).toContainEqual(parsed);
+			expect(submittedFiles.some((submittedFile) => submittedFile.equals(persisted))).toBe(true);
 		}
 		expect(await readdir(ref.baseDir)).toEqual([basename(goalFilePath(ref))]);
 	});
