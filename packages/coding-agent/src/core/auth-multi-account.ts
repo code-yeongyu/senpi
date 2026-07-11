@@ -233,5 +233,6 @@ function toCredentialMetadata(record: CredentialRecord): CredentialMetadata {
 }
 
 function assertNever(value: never): never {
-	throw new Error(`Unexpected credential contract variant: ${JSON.stringify(value)}`);
+	void value;
+	throw new Error("Unexpected credential contract variant");
 }

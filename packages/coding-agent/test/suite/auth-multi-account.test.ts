@@ -104,4 +104,27 @@ describe("multi-account credential contracts", () => {
 		expect(logs.join("\n")).not.toContain("test-access-token-b");
 		expect(logs.join("\n")).not.toContain("test-refresh-token-b");
 	});
+
+	it("redacts malformed runtime selector errors", () => {
+		// Given: an untyped runtime selector containing caller-supplied secret-like data.
+		const sentinel = "selector-secret-sentinel";
+		const logs: string[] = [];
+		const vault = InMemoryCredentialVault.fromRecords([apiKeyRecord], (entry) => logs.push(JSON.stringify(entry)));
+		const malformedRequest = {
+			pool: apiKeyRecord.pool,
+			selector: { kind: "malformed", token: sentinel },
+		};
+
+		// When: runtime dispatch bypasses the compile-time selector union.
+		let errorMessage = "";
+		try {
+			Reflect.apply(vault.issueSelectionLease, vault, [malformedRequest, "gateway-a"]);
+		} catch (error) {
+			errorMessage = error instanceof Error ? error.message : String(error);
+		}
+
+		// Then: neither error text nor diagnostics include caller data.
+		expect(errorMessage).not.toContain(sentinel);
+		expect(logs.join("\n")).not.toContain(sentinel);
+	});
 });
