@@ -23,6 +23,29 @@ export {
 	parseSkillBlock,
 	type SessionStats,
 } from "./core/agent-session.ts";
+export {
+	type ApiKeyCredentialMaterial,
+	type ConsumeSelectionLeaseRequest,
+	type CredentialMaterial,
+	type CredentialMetadata,
+	type CredentialPool,
+	type CredentialPoolKey,
+	type CredentialRecord,
+	type CredentialSelector,
+	type CredentialVault,
+	credentialPoolKey,
+	type DisabledCredentialState,
+	InMemoryCredentialVault,
+	type MetadataSnapshot,
+	type OAuthCredentialMaterial,
+	type PendingSelectionLease,
+	type SelectionLease,
+	type SelectionLeaseRequest,
+	type SerializedCredentialVault,
+	type StableIdentityKey,
+	type UsageReport,
+	type VaultDiagnostic,
+} from "./core/auth-multi-account.ts";
 // Auth and model registry
 export {
 	type ApiKeyCredential,
