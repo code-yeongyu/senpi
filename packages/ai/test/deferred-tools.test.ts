@@ -237,6 +237,37 @@ describe("deferred tools", () => {
 		expect(payload.tools?.every((tool) => !tool.defer_loading)).toBe(true);
 	});
 
+	it("still defers a tool when its marker also rides a surviving result", async () => {
+		// Discarding a pre-fallback result must not suppress the same tool's
+		// marker on a surviving result: the tool stays deferred and its
+		// tool_reference is emitted from the surviving result.
+		const context = makeContext([makeTool("base_tool"), makeTool("late_tool")]);
+		const assistant = context.messages[1] as AssistantMessage;
+		assistant.content = [
+			{ type: "toolCall", id: "call_1", name: "base_tool", arguments: {} },
+			{
+				type: "providerNative",
+				subtype: "fallback",
+				raw: { type: "fallback", from: { model: "claude-opus-4-6" }, to: { model: "claude-opus-4-6" } },
+			},
+			{ type: "toolCall", id: "call_2", name: "base_tool", arguments: {} },
+		];
+		context.messages.splice(3, 0, { ...makeToolResult(["late_tool"]), toolCallId: "call_2" });
+
+		const payload = await capturePayload<AnthropicPayload>(getModel("anthropic", "claude-opus-4-6"), context);
+
+		expect(payload.tools).toMatchObject([{ name: "base_tool" }, { name: "late_tool", defer_loading: true }]);
+		const toolResults = findAnthropicToolResultContent(payload).filter((block) => block.type === "tool_result");
+		expect(toolResults).toEqual([
+			{
+				type: "tool_result",
+				tool_use_id: "call_2",
+				content: [{ type: "tool_reference", tool_name: "late_tool" }],
+				is_error: false,
+			},
+		]);
+	});
+
 	it("normalizes OAuth names before checking prior tool usage", async () => {
 		const context = makeContext([makeTool("base_tool"), makeTool("read")], ["read"]);
 		const assistant = context.messages[1] as AssistantMessage;
