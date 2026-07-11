@@ -131,6 +131,7 @@ describe("auth broker import", () => {
 		const secretReferencePath = join(agentDir, "secret-reference.json");
 		const staleBackupPath = join(agentDir, "stale-backup.json");
 		const dryRunPath = join(agentDir, "dry-run.json");
+		const unknownKindPath = join(agentDir, "unknown-kind.json");
 		writeJson(invalidPath, { credentials: [], unexpected: true, version: 6 });
 		writeJson(duplicatePath, {
 			credentials: [
@@ -199,6 +200,19 @@ describe("auth broker import", () => {
 			],
 			version: 6,
 		});
+		writeJson(unknownKindPath, {
+			credentials: [
+				{
+					access_token: "proxy-v6-unknown-kind-sentinel",
+					email: "unknown-kind@example.test",
+					expired: "2099-12-31T23:59:59.000Z",
+					provider: "surprise",
+					refresh_token: "proxy-v6-unknown-kind-sentinel",
+					type: "surprise-kind",
+				},
+			],
+			version: 6,
+		});
 		const initialVault = SqliteCredentialVault.open(join(agentDir, "auth-broker.sqlite"));
 		initialVault.close();
 		const before = sha256(readFileSync(join(agentDir, "auth-broker.sqlite")));
@@ -207,13 +221,15 @@ describe("auth broker import", () => {
 			executeAuthBrokerCommand(["auth-broker", "import", duplicatePath], { agentDir }),
 			executeAuthBrokerCommand(["auth-broker", "import", secretReferencePath], { agentDir }),
 			executeAuthBrokerCommand(["auth-broker", "restore", staleBackupPath], { agentDir }),
+			executeAuthBrokerCommand(["auth-broker", "import", unknownKindPath], { agentDir }),
 			executeAuthBrokerCommand(["auth-broker", "import", dryRunPath, "--dry-run"], { agentDir }),
 		]);
-		for (const result of results.slice(0, 4)) {
+		for (const result of results.slice(0, 5)) {
 			expect(result?.exitCode).toBe(2);
 			expect(result?.stderr).not.toContain(secret);
+			expect(result?.stderr).not.toContain("proxy-v6-unknown-kind-sentinel");
 		}
-		expect(results[4]?.exitCode).toBe(0);
+		expect(results[5]?.exitCode).toBe(0);
 		expect(sha256(readFileSync(join(agentDir, "auth-broker.sqlite")))).toBe(before);
 	});
 });

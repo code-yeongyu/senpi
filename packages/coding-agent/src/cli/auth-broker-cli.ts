@@ -609,7 +609,9 @@ function cliProxyV6Record(value: Record<string, unknown>, overrideProvider: stri
 		"type",
 		"updated_at",
 	]);
-	const provider = overrideProvider ?? providerForImport(value.type) ?? requiredString(value, "provider");
+	const mappedProvider = providerForImport(value.type);
+	if (mappedProvider === undefined) throw new AuthBrokerCommandError("Unsupported CLIProxyAPI credential kind");
+	const provider = overrideProvider ?? mappedProvider;
 	const identityKey =
 		optionalString(value, "email") ?? optionalString(value, "account_id") ?? optionalString(value, "project_id");
 	if (identityKey === undefined) throw new AuthBrokerCommandError("CLIProxyAPI credential has no supported identity");
