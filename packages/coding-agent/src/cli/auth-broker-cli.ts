@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { chmod, mkdir, open, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { chmod, mkdir, open, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai/compat";
 import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
@@ -21,7 +21,10 @@ Commands:
   status [--json]                     Show redacted local broker status.
   login <provider> [--identity=<id>]  Store an OAuth credential in the vault.
   logout <provider> [--dry-run]       Remove provider credentials from the vault.
-  import <file|dir> [--dry-run]       Import supported CLIProxyAPI OAuth records.
+  import <file> [--format=<format>] [--dry-run]
+                                     Import Senpi backup v1 or CLIProxyAPI v6 JSON.
+  backup <file>                      Write a permission-locked Senpi backup v1 export.
+  restore <file> [--dry-run]         Validate and restore a Senpi backup v1 export.
   migrate --from-local --dry-run --backup-receipt=<path>
                                      Create a receipt before a destructive migration.
 
@@ -29,13 +32,13 @@ GET /healthz is unauthenticated. POST /v1/broker requires this command's Bearer 
 External binds are rejected.
 `;
 
-type BrokerAction = "serve" | "token" | "status" | "login" | "logout" | "import" | "migrate";
+type BrokerAction = "serve" | "token" | "status" | "login" | "logout" | "import" | "backup" | "restore" | "migrate";
 
 type ParsedCommand = {
 	readonly action: BrokerAction;
 	readonly bind?: string;
 	readonly dryRun: boolean;
-	readonly includeDisabled: boolean;
+	readonly format?: string;
 	readonly json: boolean;
 	readonly provider?: string;
 	readonly receiptPath?: string;
@@ -92,7 +95,7 @@ function parseCommand(args: readonly string[]): ParsedCommand {
 	if (!isAction(action)) throw new AuthBrokerCommandError(AUTH_BROKER_USAGE.trim());
 	let bind: string | undefined;
 	let dryRun = false;
-	let includeDisabled = false;
+	let format: string | undefined;
 	let json = false;
 	let provider: string | undefined;
 	let receiptPath: string | undefined;
@@ -102,7 +105,8 @@ function parseCommand(args: readonly string[]): ParsedCommand {
 	for (let index = 1; index < args.length; index++) {
 		const argument = args[index];
 		if (argument === "--dry-run") dryRun = true;
-		else if (argument === "--include-disabled" && action === "import") includeDisabled = true;
+		else if (argument.startsWith("--format=")) format = argument.slice("--format=".length);
+		else if (argument === "--format") format = requiredValue(args, ++index, "--format");
 		else if (argument === "--json") json = true;
 		else if (argument === "--regenerate" && action === "token") regenerate = true;
 		else if (argument === "--from-local" && action === "migrate") continue;
@@ -118,13 +122,22 @@ function parseCommand(args: readonly string[]): ParsedCommand {
 		else if (source === undefined) source = argument;
 		else throw new AuthBrokerCommandError("Auth-broker command accepts one positional argument");
 	}
-	if ((action === "login" || action === "logout" || action === "import") && source === undefined)
+	if (
+		(action === "login" ||
+			action === "logout" ||
+			action === "import" ||
+			action === "backup" ||
+			action === "restore") &&
+		source === undefined
+	)
 		throw new AuthBrokerCommandError(`auth-broker ${action} requires a source argument`);
 	if (action === "migrate" && !args.includes("--from-local"))
 		throw new AuthBrokerCommandError("auth-broker migrate requires --from-local");
+	if (format !== undefined && action !== "import")
+		throw new AuthBrokerCommandError("--format is only valid for auth-broker import");
 	if (action !== "serve" && bind !== undefined)
 		throw new AuthBrokerCommandError("--bind is only valid for auth-broker serve");
-	return { action, bind, dryRun, includeDisabled, json, provider, receiptPath, regenerate, source, identity };
+	return { action, bind, dryRun, format, json, provider, receiptPath, regenerate, source, identity };
 }
 
 function isAction(value: string | undefined): value is BrokerAction {
@@ -135,6 +148,8 @@ function isAction(value: string | undefined): value is BrokerAction {
 		value === "login" ||
 		value === "logout" ||
 		value === "import" ||
+		value === "backup" ||
+		value === "restore" ||
 		value === "migrate"
 	);
 }
@@ -158,6 +173,10 @@ async function execute(command: ParsedCommand, agentDir: string): Promise<AuthBr
 			return statusCommand(command, agentDir);
 		case "import":
 			return importCommand(command, agentDir);
+		case "backup":
+			return backupCommand(command, agentDir);
+		case "restore":
+			return restoreCommand(command, agentDir);
 		case "migrate":
 			return migrateCommand(command, agentDir);
 		case "logout":
@@ -354,11 +373,14 @@ async function replaceToken(agentDir: string): Promise<string> {
 
 async function importCommand(command: ParsedCommand, agentDir: string): Promise<AuthBrokerCommandExecution> {
 	const source = command.source;
-	if (source === undefined) throw new AuthBrokerCommandError("auth-broker import requires a file or directory");
-	const records = await loadImportRecords(resolve(source), command.provider, command.includeDisabled);
-	if (!command.dryRun) {
+	if (source === undefined) throw new AuthBrokerCommandError("auth-broker import requires a file");
+	const records = await loadImportRecords(resolve(source), command.format, command.provider);
+	if (command.dryRun) {
+		assertNoIdentityConflicts(records, await existingCredentials(agentDir));
+	} else {
 		const vault = SqliteCredentialVault.open(vaultPath(agentDir));
 		try {
+			assertNoIdentityConflicts(records, vault.load());
 			for (const record of records) vault.upsertCredential(record);
 		} finally {
 			vault.close();
@@ -378,45 +400,37 @@ async function importCommand(command: ParsedCommand, agentDir: string): Promise<
 	};
 }
 
-async function loadImportRecords(
-	source: string,
-	overrideProvider: string | undefined,
-	includeDisabled: boolean,
-): Promise<readonly CredentialRecord[]> {
-	const files = await importFiles(source);
-	const records: CredentialRecord[] = [];
-	for (const file of files) {
-		const value = parseJsonRecord(await readFile(file, "utf8"));
-		if (value.disabled === true && !includeDisabled) continue;
-		const provider = overrideProvider ?? providerForImport(value.type);
-		if (provider === undefined) throw new AuthBrokerCommandError("Unsupported import credential type");
-		const access = requiredString(value, "access_token");
-		const refresh = requiredString(value, "refresh_token");
-		const expires = Date.parse(requiredString(value, "expired"));
-		if (!Number.isFinite(expires)) throw new AuthBrokerCommandError("Import credential has invalid expiry");
-		const identityKey =
-			optionalString(value, "email") ?? optionalString(value, "account_id") ?? `import:${basename(file)}`;
-		records.push({
-			createdAt: new Date().toISOString(),
-			credentialId: randomUUID(),
-			identityKey,
-			material: { accessToken: access, expiresAt: expires, refreshToken: refresh, type: "oauth" },
-			pool: { provider, type: "oauth" },
-			updatedAt: new Date().toISOString(),
-		});
+async function existingCredentials(agentDir: string): Promise<readonly CredentialRecord[]> {
+	try {
+		await stat(vaultPath(agentDir));
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
+		throw error;
 	}
-	return records;
+	const vault = SqliteCredentialVault.open(vaultPath(agentDir));
+	try {
+		return vault.load();
+	} finally {
+		vault.close();
+	}
 }
 
-async function importFiles(source: string): Promise<readonly string[]> {
+async function loadImportRecords(
+	source: string,
+	format: string | undefined,
+	overrideProvider: string | undefined,
+): Promise<readonly CredentialRecord[]> {
 	const sourceStat = await stat(source);
-	if (sourceStat.isFile()) return [source];
-	if (!sourceStat.isDirectory()) throw new AuthBrokerCommandError("Import source must be a JSON file or directory");
-	const entries = await readdir(source, { withFileTypes: true });
-	return entries
-		.filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-		.map((entry) => join(source, entry.name))
-		.sort();
+	if (!sourceStat.isFile()) throw new AuthBrokerCommandError("Import source must be a JSON file");
+	const value = parseJsonRecord(await readFile(source, "utf8"));
+	if (format === "gajae-snapshot-legacy") return gajaeSnapshotRecords(value, overrideProvider);
+	if (format !== undefined) throw new AuthBrokerCommandError("Unknown import format");
+	if (value.format === "senpi-auth-broker-backup") {
+		assertPermissionLocked(sourceStat.mode);
+		return senpiBackupRecords(value);
+	}
+	if (value.version === 6) return cliProxyV6Records(value, overrideProvider);
+	throw new AuthBrokerCommandError("Unknown import format or version");
 }
 
 function providerForImport(value: unknown): string | undefined {
@@ -435,6 +449,304 @@ function providerForImport(value: unknown): string | undefined {
 		default:
 			return undefined;
 	}
+}
+
+async function backupCommand(command: ParsedCommand, agentDir: string): Promise<AuthBrokerCommandExecution> {
+	const destination = command.source;
+	if (destination === undefined) throw new AuthBrokerCommandError("auth-broker backup requires a file");
+	const vault = SqliteCredentialVault.open(vaultPath(agentDir));
+	try {
+		const credentials = vault.load();
+		await writeLockedJson(resolve(destination), {
+			credentials,
+			format: "senpi-auth-broker-backup",
+			manifest: { algorithm: "sha256", credentialsSha256: hashJson(credentials) },
+			version: 1,
+		});
+	} finally {
+		vault.close();
+	}
+	return { exitCode: 0, stderr: "", stdout: `Backup written to ${resolve(destination)}\n` };
+}
+
+async function restoreCommand(command: ParsedCommand, agentDir: string): Promise<AuthBrokerCommandExecution> {
+	const source = command.source;
+	if (source === undefined) throw new AuthBrokerCommandError("auth-broker restore requires a file");
+	const resolvedSource = resolve(source);
+	assertPermissionLocked((await stat(resolvedSource)).mode);
+	const records = senpiBackupRecords(parseJsonRecord(await readFile(resolvedSource, "utf8")));
+	if (!command.dryRun) {
+		const vault = SqliteCredentialVault.open(vaultPath(agentDir));
+		try {
+			assertNoDuplicateIdentity(records);
+			vault.save(records);
+		} finally {
+			vault.close();
+		}
+	}
+	return {
+		exitCode: 0,
+		stderr: "",
+		stdout: `${command.dryRun ? "Would restore" : "Restored"} ${records.length} credential(s)\n`,
+	};
+}
+
+function senpiBackupRecords(value: Record<string, unknown>): readonly CredentialRecord[] {
+	assertExactKeys(value, ["credentials", "format", "manifest", "version"]);
+	if (value.format !== "senpi-auth-broker-backup" || value.version !== 1)
+		throw new AuthBrokerCommandError("Unknown Senpi backup version");
+	const credentials = requiredArray(value, "credentials");
+	const manifest = parseJsonRecord(value.manifest);
+	assertExactKeys(manifest, ["algorithm", "credentialsSha256"]);
+	if (manifest.algorithm !== "sha256" || manifest.credentialsSha256 !== hashJson(credentials))
+		throw new AuthBrokerCommandError("Backup manifest hash is invalid");
+	const records = credentials.map((entry) => senpiCredentialRecord(parseJsonRecord(entry)));
+	assertNoDuplicateIdentity(records);
+	return records;
+}
+
+function senpiCredentialRecord(value: Record<string, unknown>): CredentialRecord {
+	assertExactKeys(value, ["createdAt", "credentialId", "disabled", "identityKey", "material", "pool", "updatedAt"]);
+	const pool = parseJsonRecord(value.pool);
+	assertExactKeys(pool, ["provider", "type"]);
+	const provider = requiredString(pool, "provider");
+	const type = credentialType(pool.type);
+	const material = parseCredentialMaterial(parseJsonRecord(value.material), type);
+	const disabled = parseDisabled(value.disabled, requiredTimestamp(value, "updatedAt"));
+	return {
+		createdAt: requiredTimestamp(value, "createdAt"),
+		credentialId: requiredString(value, "credentialId"),
+		disabled,
+		identityKey: requiredString(value, "identityKey"),
+		material,
+		pool: { provider, type },
+		updatedAt: requiredTimestamp(value, "updatedAt"),
+	};
+}
+
+function gajaeSnapshotRecords(
+	value: Record<string, unknown>,
+	overrideProvider: string | undefined,
+): readonly CredentialRecord[] {
+	assertExactKeys(value, ["credentials", "generatedAt", "generation"]);
+	if (
+		!Number.isInteger(value.generation) ||
+		typeof value.generatedAt !== "number" ||
+		!Number.isFinite(value.generatedAt)
+	)
+		throw new AuthBrokerCommandError("Invalid Gajae snapshot");
+	const timestamp = new Date(value.generatedAt).toISOString();
+	const records = requiredArray(value, "credentials").map((entry) => {
+		const snapshot = parseJsonRecord(entry);
+		assertExactKeys(snapshot, ["credential", "id", "identityKey", "provider"]);
+		if (!Number.isInteger(snapshot.id)) throw new AuthBrokerCommandError("Invalid Gajae snapshot credential");
+		const credential = parseJsonRecord(snapshot.credential);
+		const provider = overrideProvider ?? requiredString(snapshot, "provider");
+		const identityKey = optionalNullableString(snapshot, "identityKey") ?? `gajae:${snapshot.id}`;
+		return recordFromGajaeCredential(credential, provider, identityKey, timestamp);
+	});
+	assertNoDuplicateIdentity(records);
+	return records;
+}
+
+function recordFromGajaeCredential(
+	credential: Record<string, unknown>,
+	provider: string,
+	identityKey: string,
+	timestamp: string,
+): CredentialRecord {
+	if (credential.type === "api_key") {
+		assertExactKeys(credential, ["key", "type"]);
+		return credentialRecord(
+			provider,
+			identityKey,
+			{ apiKey: requiredString(credential, "key"), type: "api_key" },
+			timestamp,
+		);
+	}
+	if (credential.type === "oauth") {
+		assertExactKeys(credential, ["access", "expires", "refresh", "type"]);
+		const expiresAt = requiredFiniteNumber(credential, "expires");
+		return credentialRecord(
+			provider,
+			identityKey,
+			{
+				accessToken: requiredString(credential, "access"),
+				expiresAt,
+				refreshToken: requiredString(credential, "refresh"),
+				type: "oauth",
+			},
+			timestamp,
+		);
+	}
+	throw new AuthBrokerCommandError("Unsupported Gajae credential kind");
+}
+
+function cliProxyV6Records(
+	value: Record<string, unknown>,
+	overrideProvider: string | undefined,
+): readonly CredentialRecord[] {
+	assertExactKeys(value, ["credentials", "version"]);
+	if (value.version !== 6) throw new AuthBrokerCommandError("Unknown CLIProxyAPI version");
+	const records = requiredArray(value, "credentials").map((entry) =>
+		cliProxyV6Record(parseJsonRecord(entry), overrideProvider),
+	);
+	assertNoDuplicateIdentity(records);
+	return records;
+}
+
+function cliProxyV6Record(value: Record<string, unknown>, overrideProvider: string | undefined): CredentialRecord {
+	assertExactKeys(value, [
+		"access_token",
+		"account_id",
+		"created_at",
+		"disabled",
+		"email",
+		"expired",
+		"project_id",
+		"provider",
+		"refresh_token",
+		"type",
+		"updated_at",
+	]);
+	const provider = overrideProvider ?? providerForImport(value.type) ?? requiredString(value, "provider");
+	const identityKey =
+		optionalString(value, "email") ?? optionalString(value, "account_id") ?? optionalString(value, "project_id");
+	if (identityKey === undefined) throw new AuthBrokerCommandError("CLIProxyAPI credential has no supported identity");
+	const expiresAt = Date.parse(requiredString(value, "expired"));
+	if (!Number.isFinite(expiresAt)) throw new AuthBrokerCommandError("CLIProxyAPI credential has invalid expiry");
+	const updatedAt =
+		optionalTimestamp(value, "updated_at") ?? optionalTimestamp(value, "created_at") ?? new Date().toISOString();
+	return {
+		...credentialRecord(
+			provider,
+			identityKey,
+			{
+				accessToken: requiredString(value, "access_token"),
+				expiresAt,
+				refreshToken: requiredString(value, "refresh_token"),
+				type: "oauth",
+			},
+			optionalTimestamp(value, "created_at") ?? updatedAt,
+		),
+		disabled: parseDisabled(value.disabled, updatedAt),
+		updatedAt,
+	};
+}
+
+function credentialRecord(
+	provider: string,
+	identityKey: string,
+	material: CredentialMaterial,
+	timestamp: string,
+): CredentialRecord {
+	return {
+		createdAt: timestamp,
+		credentialId: randomUUID(),
+		identityKey,
+		material,
+		pool: { provider, type: material.type },
+		updatedAt: timestamp,
+	};
+}
+
+function parseCredentialMaterial(value: Record<string, unknown>, type: CredentialMaterial["type"]): CredentialMaterial {
+	if (type === "api_key") {
+		assertExactKeys(value, ["apiKey", "type"]);
+		if (value.type !== "api_key") throw new AuthBrokerCommandError("Credential material kind does not match pool");
+		return { apiKey: requiredString(value, "apiKey"), type };
+	}
+	assertExactKeys(value, ["accessToken", "expiresAt", "refreshToken", "type"]);
+	if (value.type !== "oauth") throw new AuthBrokerCommandError("Credential material kind does not match pool");
+	return {
+		accessToken: requiredString(value, "accessToken"),
+		expiresAt: requiredFiniteNumber(value, "expiresAt"),
+		refreshToken: requiredString(value, "refreshToken"),
+		type,
+	};
+}
+
+function credentialType(value: unknown): CredentialMaterial["type"] {
+	if (value === "api_key" || value === "oauth") return value;
+	throw new AuthBrokerCommandError("Unsupported credential kind");
+}
+
+function parseDisabled(value: unknown, timestamp: string): CredentialRecord["disabled"] {
+	if (value === undefined) return undefined;
+	if (value === false) return undefined;
+	if (value === true) return { at: timestamp, cause: "disabled" };
+	const disabled = parseJsonRecord(value);
+	assertExactKeys(disabled, ["at", "cause"]);
+	return { at: optionalTimestamp(disabled, "at") ?? timestamp, cause: requiredString(disabled, "cause") };
+}
+
+function assertNoIdentityConflicts(records: readonly CredentialRecord[], existing: readonly CredentialRecord[]): void {
+	assertNoDuplicateIdentity(records);
+	const keys = new Set(existing.map(identityConflictKey));
+	if (records.some((record) => keys.has(identityConflictKey(record))))
+		throw new AuthBrokerCommandError("Import conflicts with an existing credential identity");
+}
+
+function assertNoDuplicateIdentity(records: readonly CredentialRecord[]): void {
+	const keys = new Set<string>();
+	for (const record of records) {
+		const key = identityConflictKey(record);
+		if (keys.has(key)) throw new AuthBrokerCommandError("Import contains duplicate credential identity");
+		keys.add(key);
+	}
+}
+
+function identityConflictKey(record: CredentialRecord): string {
+	return `${record.pool.provider}\u0000${record.pool.type}\u0000${record.identityKey}`;
+}
+
+function assertExactKeys(value: Record<string, unknown>, allowed: readonly string[]): void {
+	if (Object.keys(value).some((key) => !allowed.includes(key)))
+		throw new AuthBrokerCommandError("Import contains unknown fields");
+}
+
+function assertPermissionLocked(mode: number): void {
+	if ((mode & 0o077) !== 0) throw new AuthBrokerCommandError("Senpi backup must be permission-locked (0600)");
+}
+
+function requiredArray(value: Record<string, unknown>, key: string): readonly unknown[] {
+	const candidate = value[key];
+	if (!Array.isArray(candidate)) throw new AuthBrokerCommandError("Import data is incomplete");
+	return candidate;
+}
+
+function requiredFiniteNumber(value: Record<string, unknown>, key: string): number {
+	const candidate = value[key];
+	if (typeof candidate !== "number" || !Number.isFinite(candidate))
+		throw new AuthBrokerCommandError("Import data is incomplete");
+	return candidate;
+}
+
+function requiredTimestamp(value: Record<string, unknown>, key: string): string {
+	const timestamp = requiredString(value, key);
+	if (!Number.isFinite(Date.parse(timestamp))) throw new AuthBrokerCommandError("Import data has invalid timestamp");
+	return timestamp;
+}
+
+function optionalTimestamp(value: Record<string, unknown>, key: string): string | undefined {
+	const timestamp = optionalString(value, key);
+	if (timestamp !== undefined && !Number.isFinite(Date.parse(timestamp)))
+		throw new AuthBrokerCommandError("Import data has invalid timestamp");
+	return timestamp;
+}
+
+function optionalNullableString(value: Record<string, unknown>, key: string): string | undefined {
+	const candidate = value[key];
+	if (candidate === undefined || candidate === null) return undefined;
+	if (typeof candidate !== "string" || candidate.length === 0)
+		throw new AuthBrokerCommandError("Import data is incomplete");
+	return candidate;
+}
+
+async function writeLockedJson(destination: string, value: unknown): Promise<void> {
+	await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+	await writeFile(destination, `${JSON.stringify(value)}\n`, { flag: "wx", mode: 0o600 });
+	await chmod(destination, 0o600);
 }
 
 async function migrateCommand(command: ParsedCommand, agentDir: string): Promise<AuthBrokerCommandExecution> {
@@ -589,4 +901,8 @@ function optionalString(record: Record<string, unknown>, key: string): string | 
 
 function hash(value: string): string {
 	return createHash("sha256").update(value).digest("hex");
+}
+
+function hashJson(value: unknown): string {
+	return hash(JSON.stringify(value));
 }

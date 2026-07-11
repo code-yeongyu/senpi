@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -30,11 +30,17 @@ describe("auth broker command", () => {
 		writeFileSync(
 			source,
 			JSON.stringify({
-				access_token: secret,
-				email: "operator@example.test",
-				expired: "2099-12-31T23:59:59.000Z",
-				refresh_token: `${secret}-refresh`,
-				type: "claude",
+				credentials: [
+					{
+						access_token: secret,
+						email: "operator@example.test",
+						expired: "2099-12-31T23:59:59.000Z",
+						provider: "claude",
+						refresh_token: `${secret}-refresh`,
+						type: "claude",
+					},
+				],
+				version: 6,
 			}),
 		);
 
@@ -55,6 +61,7 @@ describe("auth broker command", () => {
 		expect(readFileSync(tokenPath, "utf8").trim()).toBe(first?.stdout.trim());
 		expect(imported?.exitCode).toBe(0);
 		expect(imported?.stdout).not.toContain(secret);
+		expect(existsSync(join(agentDir, "auth-broker.sqlite"))).toBe(false);
 		const vault = SqliteCredentialVault.open(join(agentDir, "auth-broker.sqlite"));
 		try {
 			expect(vault.load()).toEqual([]);

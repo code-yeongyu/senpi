@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added strict auth-broker migration imports, permission-locked manifest-validated backups, restore support, and operational broker/gateway documentation.
+
 ### Changed
 
 ### Fixed
@@ -27,10 +29,6 @@
 - Fixed `/login amazon-bedrock` to prompt for and save a Bedrock API key instead of only displaying ambient AWS credential setup instructions.
 
 ### Removed
-
-## [0.80.6] - 2026-07-09
-
-### Added
 
 - Added a `gpt-5.6` system prompt preset covering the whole GPT-5.6 series (`gpt-5.6`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`), tuned per the GPT-5.6 prompting guide: a shorter outcome-first full-core rewrite with prioritization-based style, a compact authorization policy, and tool-loop stopping conditions.
 
