@@ -111,9 +111,9 @@ function captureCommand(bin, args) {
 	}
 }
 
-function runCommand(bin, args) {
+function runCommand(bin, args, extraEnv) {
 	try {
-		execFileSync(bin, args, { stdio: "inherit" });
+		execFileSync(bin, args, extraEnv ? { stdio: "inherit", env: { ...process.env, ...extraEnv } } : { stdio: "inherit" });
 	} catch (err) {
 		const message = err && typeof err === "object" && "message" in err ? err.message : String(err);
 		process.stderr.write(`[release] error: ${bin} ${args.join(" ")} failed: ${message}\n`);
@@ -263,11 +263,16 @@ function runBuild(dryRun) {
 
 function runTests(dryRun) {
 	if (dryRun) {
-		dryRunLog("npm test");
+		dryRunLog("CI=1 npm test");
 		return;
 	}
-	log("npm test");
-	runCommand("npm", ["test"]);
+	// Run the gate with CI=1 so packages reproduce their CI test behavior — notably
+	// the coding-agent vitest suite serializes its subprocess-heavy tests to a single
+	// fork (see packages/coding-agent/vitest.config.ts). Without it the parallel forks
+	// contend with the release build for CPU and flake app-server/daemon spawn timeouts
+	// and perf-bound tests locally, while passing on CI. App code never branches on CI.
+	log("CI=1 npm test");
+	runCommand("npm", ["test"], { CI: "1" });
 }
 
 function main() {

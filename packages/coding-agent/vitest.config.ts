@@ -16,18 +16,23 @@ export default defineConfig({
 		setupFiles: ["./test/setup.ts"],
 		reporters: process.env.GITHUB_ACTIONS ? ["dot", "github-actions"] : ["dot"],
 		silent: "passed-only",
-		// Cap fork concurrency ON CI ONLY. This suite's subprocess-lifecycle tests
+		// Cap fork concurrency when CI is set. This suite's subprocess-lifecycle tests
 		// (MCP keep-alive/ping-on-call fixtures, the default-on terminal PTY builtin,
 		// and the app-server daemon/websocket listeners) each spawn several real child
 		// processes. On the 4-vCPU GitHub runner, running these in parallel oversubscribes
 		// CPU/IO and — worse in the release publish job — leaves child processes unreaped
 		// long enough that the forks pool cannot exit, hanging the whole `npm test` step
 		// (observed: coding-agent RUN never summarizes, orphan senpi/esbuild processes).
-		// A per-test timeout cannot fix a pool-shutdown hang. Serialize to a single fork
-		// on CI: it bounds peak concurrent subprocesses to one suite's worth, trading a
-		// slower run for a deterministic one. Local runs (many cores) keep the default
-		// pool for speed.
-		...(process.env.GITHUB_ACTIONS ? { pool: "forks" as const, maxWorkers: 1, teardownTimeout: 20000 } : {}),
+		// The same oversubscription flakes the local owner release, whose parallel forks
+		// contend with the release build for CPU (app-server spawn timeouts, perf-bound
+		// and race-control tests). A per-test timeout cannot fix a pool-shutdown hang.
+		// Serialize to a single fork whenever `CI` is set — GitHub Actions sets it, and
+		// `scripts/release.mjs` sets it for its test gate so the local release reproduces
+		// CI's deterministic run. Plain local `npm test` (no `CI`) keeps the default pool
+		// for speed.
+		...(process.env.CI || process.env.GITHUB_ACTIONS
+			? { pool: "forks" as const, maxWorkers: 1, teardownTimeout: 20000 }
+			: {}),
 		server: {
 			deps: {
 				external: [/@silvia-odwyer\/photon-node/],
