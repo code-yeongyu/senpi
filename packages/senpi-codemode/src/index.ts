@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "@code-yeongyu/senpi";
+import type { ExtensionContext } from "@code-yeongyu/senpi";
 import type { KernelToHostMessage } from "./bridge/protocol.ts";
 import { type CompletionRequest, type CompletionResult, createCompletionHandler } from "./completion/handler.ts";
 import { type CodemodeSettings, loadCodemodeSettings } from "./config/settings.ts";
@@ -13,8 +13,15 @@ import {
 	type InterpreterAvailability,
 } from "./interpreters/detect.ts";
 import { createEvalTool } from "./tool/eval-tool.ts";
-import type { EvalKernel, EvalLanguage } from "./tool/types.ts";
-import { evalLanguageOrder } from "./tool/types.ts";
+import type { EvalKernel, EvalLanguage, ExecuteTool } from "./tool/types.ts";
+
+type SessionLifecycleEvent = "session_start" | "session_shutdown" | "session_before_switch" | "session_before_fork";
+
+export interface CodemodeExtensionAPI {
+	registerTool(tool: ReturnType<typeof createEvalTool>): void;
+	on(event: SessionLifecycleEvent, handler: (event: unknown, ctx: ExtensionContext) => Promise<void> | void): void;
+	executeTool: ExecuteTool;
+}
 
 export interface SenpiCodemodeOptions {
 	readonly createSessionManager?: (
@@ -23,7 +30,7 @@ export interface SenpiCodemodeOptions {
 	readonly complete?: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>;
 }
 
-export default function senpiCodemode(pi: ExtensionAPI, options: SenpiCodemodeOptions = {}): void {
+export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCodemodeOptions = {}): void {
 	const manager = new SessionManagerProxy();
 	const complete = options.complete ?? ((request, ctx) => createCompletionHandler()(ctx)(request));
 	pi.registerTool(
@@ -37,7 +44,8 @@ export default function senpiCodemode(pi: ExtensionAPI, options: SenpiCodemodeOp
 	);
 
 	pi.on("session_start", async (event, ctx) => {
-		await manager.replace(await createManager(pi, ctx, event, complete, options));
+		const generation = manager.beginReplacement();
+		await manager.replace(generation, await createManager(pi, ctx, event, complete, options));
 	});
 	pi.on("session_shutdown", async () => manager.dispose());
 	pi.on("session_before_switch", async () => manager.dispose());
@@ -46,9 +54,25 @@ export default function senpiCodemode(pi: ExtensionAPI, options: SenpiCodemodeOp
 
 class SessionManagerProxy implements CodemodeSessionManager {
 	#current: CodemodeSessionManager | undefined;
+	#generation = 0;
 
-	async replace(next: CodemodeSessionManager): Promise<void> {
-		await this.dispose();
+	beginReplacement(): number {
+		this.#generation++;
+		return this.#generation;
+	}
+
+	async replace(generation: number, next: CodemodeSessionManager): Promise<void> {
+		if (generation !== this.#generation) {
+			await next.dispose();
+			return;
+		}
+		const current = this.#current;
+		this.#current = undefined;
+		await current?.dispose();
+		if (generation !== this.#generation) {
+			await next.dispose();
+			return;
+		}
 		this.#current = next;
 	}
 
@@ -67,6 +91,7 @@ class SessionManagerProxy implements CodemodeSessionManager {
 	}
 
 	async dispose(): Promise<void> {
+		this.#generation++;
 		const current = this.#current;
 		this.#current = undefined;
 		await current?.dispose();
@@ -74,7 +99,7 @@ class SessionManagerProxy implements CodemodeSessionManager {
 }
 
 async function createManager(
-	pi: ExtensionAPI,
+	pi: CodemodeExtensionAPI,
 	ctx: ExtensionContext,
 	event: unknown,
 	complete: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>,
@@ -104,9 +129,10 @@ export function enabledLanguagesFrom(
 	settings: CodemodeSettings,
 	availability: InterpreterAvailability,
 ): Record<EvalLanguage, boolean> {
-	const enabled = {} as Record<EvalLanguage, boolean>;
-	for (const language of evalLanguageOrder) {
-		enabled[language] = settings.languages[language] && availability[language].detected.ok;
-	}
-	return enabled;
+	return {
+		py: settings.languages.py && availability.py.detected.ok,
+		js: settings.languages.js && availability.js.detected.ok,
+		rb: settings.languages.rb && availability.rb.detected.ok,
+		jl: settings.languages.jl && availability.jl.detected.ok,
+	};
 }

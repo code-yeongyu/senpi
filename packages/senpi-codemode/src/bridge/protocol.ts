@@ -158,9 +158,10 @@ export function parseBridgeJsonLine(line: string, options: BridgeFrameOptions = 
 		};
 	}
 	try {
-		return { ok: true, value: JSON.parse(trimmedLine) as unknown };
+		return { ok: true, value: JSON.parse(trimmedLine) };
 	} catch (error) {
-		return { ok: false, error: { code: "malformed_json", message: errorMessage(error) } };
+		const message = error instanceof Error ? error.message : "Invalid JSON bridge frame";
+		return { ok: false, error: { code: "malformed_json", message } };
 	}
 }
 
@@ -175,11 +176,10 @@ export function decodeBridgeFrame(line: string, options: BridgeFrameOptions = {}
 	return { ok: false, error: { code: "invalid_message", message } };
 }
 
-function tokenHash(token: string): Buffer {
-	return createHash("sha256").update(token, "utf8").digest();
+export function isKernelToHostMessage(message: BridgeMessage): message is KernelToHostMessage {
+	return Value.Check(kernelToHostMessageSchema, message);
 }
 
-function errorMessage(error: unknown): string {
-	if (error instanceof Error) return error.message;
-	return "Invalid JSON bridge frame";
+function tokenHash(token: string): Buffer {
+	return createHash("sha256").update(token, "utf8").digest();
 }

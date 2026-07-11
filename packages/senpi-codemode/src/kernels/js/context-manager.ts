@@ -1,39 +1,32 @@
-import { Worker } from "node:worker_threads";
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
 import { createInlineWorker, type WorkerLike } from "./inline-worker.ts";
+import {
+	assertJavaScriptKernelOpen,
+	type JavaScriptKernelMode,
+	type JavaScriptKernelOptions,
+	type JavaScriptRunInput,
+	type LifecycleState,
+	type ResultMessage,
+	type ToolCallMessage,
+} from "./kernel-contract.ts";
+import { JavaScriptRunQueue, type PendingJavaScriptRun, stoppedResult } from "./run-queue.ts";
+import { bridgeError, spawnNodeWorker, WorkerStartupCancelledError, waitForReady } from "./worker-host.ts";
 
-export type JavaScriptKernelMode = "worker" | "inline";
-
-export interface JavaScriptKernelOptions {
-	readonly sessionId: string;
-	readonly cwd: string;
-	readonly parallelPoolWidth: number;
-	readonly onMessage?: (message: KernelToHostMessage) => void;
-	readonly workerEntryUrl?: URL;
-}
-
-export interface JavaScriptRunInput {
-	readonly cellId: string;
-	readonly code: string;
-	readonly timeoutMs?: number;
-	readonly onMessage?: (message: KernelToHostMessage) => void;
-}
-
-type ResultMessage = Extract<KernelToHostMessage, { type: "result" }>;
-type ToolCallMessage = Extract<KernelToHostMessage, { type: "tool-call" }>;
-
-interface QueuedRun {
-	readonly input: JavaScriptRunInput;
-	resolve(message: ResultMessage): void;
-}
+export type { JavaScriptKernelMode, JavaScriptKernelOptions, JavaScriptRunInput } from "./kernel-contract.ts";
+export { JavaScriptKernelClosedError } from "./kernel-contract.ts";
 
 export class JavaScriptKernel {
 	readonly #options: JavaScriptKernelOptions;
 	#worker: WorkerLike | null = null;
 	#mode: JavaScriptKernelMode = "worker";
+	#lifecycle: LifecycleState = "open";
 	#ready: Promise<void> | null = null;
-	#queue: QueuedRun[] = [];
-	#active: QueuedRun | null = null;
+	#startupAbort: AbortController | null = null;
+	#generation = 0;
+	#activation: Promise<void> | null = null;
+	#recovery: Promise<void> | null = null;
+	#closePromise: Promise<void> | null = null;
+	readonly #runs = new JavaScriptRunQueue();
 	#timeout: NodeJS.Timeout | null = null;
 	#toolWaiters: Array<(message: ToolCallMessage) => void> = [];
 	#pendingToolCalls: ToolCallMessage[] = [];
@@ -47,22 +40,32 @@ export class JavaScriptKernel {
 	}
 
 	async run(input: JavaScriptRunInput): Promise<ResultMessage> {
-		await this.#ensureReady();
-		const promise = new Promise<ResultMessage>((resolve) => {
-			this.#queue.push({ input, resolve });
-		});
-		this.#startNext();
+		assertJavaScriptKernelOpen(this.#lifecycle, "run");
+		const promise = this.#runs.enqueue(input);
+		this.#activate();
 		return await promise;
 	}
 
+	async interrupt(reason = "interrupted"): Promise<void> {
+		assertJavaScriptKernelOpen(this.#lifecycle, "interrupt");
+		const active = this.#runs.active;
+		const target = this.#runs.takeInterruptTarget();
+		if (!target) return;
+		if (target === active) this.#clearTimeout();
+		this.#runs.settle(target, stoppedResult(target.input.cellId, `JS cell interrupted: ${reason}`));
+		await this.#restartAfterStop();
+	}
+
 	async reset(): Promise<void> {
+		assertJavaScriptKernelOpen(this.#lifecycle, "reset");
 		await this.#terminate();
-		this.#ready = null;
+		assertJavaScriptKernelOpen(this.#lifecycle, "reset");
 		await this.#ensureReady();
+		this.#startNext();
 	}
 
 	deliverToolReply(message: Extract<HostToKernelMessage, { type: "tool-reply" }>): void {
-		this.#worker?.postMessage(message);
+		if (this.#lifecycle === "open") this.#worker?.postMessage(message);
 	}
 
 	async nextToolCall(): Promise<ToolCallMessage> {
@@ -72,62 +75,123 @@ export class JavaScriptKernel {
 	}
 
 	async close(): Promise<void> {
+		if (this.#closePromise) return await this.#closePromise;
 		this.#worker?.postMessage({ type: "close" });
-		await this.#terminate();
+		this.#lifecycle = "closing";
+		this.#runs.settleAll("JS kernel closed");
+		const recovery = this.#recovery;
+		const closePromise = (async () => {
+			if (recovery) await recovery;
+			await this.#terminate();
+		})().finally(() => {
+			this.#lifecycle = "closed";
+		});
+		this.#closePromise = closePromise;
+		return await closePromise;
+	}
+
+	#activate(): void {
+		if (this.#activation || this.#lifecycle !== "open" || this.#runs.active || !this.#runs.hasWaiting) return;
+		const activation = this.#activateWhenReady();
+		this.#activation = activation;
+		void activation.then(() => {
+			if (this.#activation === activation) this.#activation = null;
+			if (this.#lifecycle === "open" && !this.#runs.active && this.#runs.hasWaiting) this.#activate();
+		});
+	}
+
+	async #activateWhenReady(): Promise<void> {
+		try {
+			await this.#ensureReady();
+			if (this.#lifecycle === "open") this.#startNext();
+		} catch (error) {
+			if (error instanceof WorkerStartupCancelledError) return;
+			this.#runs.rejectWaiting(error instanceof Error ? error : new Error(String(error)));
+		}
 	}
 
 	async #ensureReady(): Promise<void> {
-		if (!this.#ready) this.#ready = this.#startWorker();
+		assertJavaScriptKernelOpen(this.#lifecycle, "run");
+		if (!this.#ready) {
+			const generation = ++this.#generation;
+			const controller = new AbortController();
+			this.#startupAbort = controller;
+			const ready = this.#startWorker(generation, controller.signal);
+			this.#ready = ready;
+			void ready.then(
+				() => {
+					if (this.#ready === ready) this.#startupAbort = null;
+				},
+				() => {
+					if (this.#ready === ready) {
+						this.#ready = null;
+						this.#startupAbort = null;
+					}
+				},
+			);
+		}
 		return await this.#ready;
 	}
 
-	async #startWorker(): Promise<void> {
-		const worker = this.#spawnWorker();
-		this.#worker = worker;
-		this.#mode = worker.mode;
-		const ready = waitForReady(worker);
-		worker.onMessage((message) => this.#handleMessage(message));
-		worker.onError((error) => this.#handleCrash(error));
-		worker.postMessage({ type: "init", sessionId: this.#options.sessionId, connection: { port: 1, token: "local" } });
+	async #startWorker(generation: number, signal: AbortSignal): Promise<void> {
+		let worker = this.#spawnWorker();
+		this.#publishWorker(worker, generation);
 		try {
-			await ready;
+			await this.#initializeWorker(worker, signal);
+			return;
 		} catch (error) {
+			if (!this.#isCurrent(worker, generation) || error instanceof WorkerStartupCancelledError) {
+				await worker.terminate();
+				throw new WorkerStartupCancelledError();
+			}
 			if (worker.mode === "inline") throw error;
-			await worker.terminate().catch(() => undefined);
-			const inline = createInlineWorker(this.#options.parallelPoolWidth);
-			this.#worker = inline;
-			this.#mode = "inline";
-			const inlineReady = waitForReady(inline);
-			inline.onMessage((message) => this.#handleMessage(message));
-			inline.onError((crash) => this.#handleCrash(crash));
-			inline.postMessage({
-				type: "init",
-				sessionId: this.#options.sessionId,
-				connection: { port: 1, token: "local" },
-			});
-			await inlineReady;
+			this.#worker = null;
+			await worker.terminate();
 		}
+		if (this.#lifecycle !== "open" || generation !== this.#generation) throw new WorkerStartupCancelledError();
+		worker = createInlineWorker(this.#options.cwd, this.#options.parallelPoolWidth);
+		this.#publishWorker(worker, generation);
+		await this.#initializeWorker(worker, signal);
 	}
 
 	#spawnWorker(): WorkerLike {
 		try {
 			const url = this.#options.workerEntryUrl ?? new URL("./worker-entry.js", import.meta.url);
-			const worker = new Worker(url, {
-				workerData: { cwd: this.#options.cwd, parallelPoolWidth: this.#options.parallelPoolWidth },
-			});
-			return wrapNodeWorker(worker);
-		} catch {
-			return createInlineWorker(this.#options.parallelPoolWidth);
+			return spawnNodeWorker(url, this.#options.cwd, this.#options.parallelPoolWidth);
+		} catch (error) {
+			if (!(error instanceof Error)) throw error;
+			return createInlineWorker(this.#options.cwd, this.#options.parallelPoolWidth);
 		}
 	}
 
+	#publishWorker(worker: WorkerLike, generation: number): void {
+		if (this.#lifecycle !== "open" || generation !== this.#generation) throw new WorkerStartupCancelledError();
+		this.#worker = worker;
+		this.#mode = worker.mode;
+		worker.onMessage((message) => {
+			if (this.#isCurrent(worker, generation)) this.#handleMessage(message);
+		});
+		worker.onError((error) => {
+			if (this.#isCurrent(worker, generation)) this.#handleCrash(error);
+		});
+	}
+
+	async #initializeWorker(worker: WorkerLike, signal: AbortSignal): Promise<void> {
+		const ready = waitForReady(worker, signal);
+		worker.postMessage({ type: "init", sessionId: this.#options.sessionId, connection: { port: 1, token: "local" } });
+		await ready;
+	}
+
+	#isCurrent(worker: WorkerLike, generation: number): boolean {
+		return this.#lifecycle === "open" && this.#worker === worker && this.#generation === generation;
+	}
+
 	#startNext(): void {
-		if (this.#active || !this.#worker) return;
-		const next = this.#queue.shift();
+		if (this.#lifecycle !== "open" || this.#runs.active || !this.#worker) return;
+		const next = this.#runs.startNext(performance.now());
 		if (!next) return;
-		this.#active = next;
 		if (next.input.timeoutMs) {
-			this.#timeout = setTimeout(() => void this.#timeoutActive(next.input.cellId), next.input.timeoutMs);
+			this.#timeout = setTimeout(() => void this.#timeoutActive(next), next.input.timeoutMs);
 		}
 		this.#worker.postMessage({
 			type: "run",
@@ -137,27 +201,45 @@ export class JavaScriptKernel {
 		});
 	}
 
-	async #timeoutActive(cellId: string): Promise<void> {
-		const active = this.#active;
-		if (!active || active.input.cellId !== cellId) return;
-		const durationMs = active.input.timeoutMs ?? 0;
-		active.resolve({
+	async #timeoutActive(run: PendingJavaScriptRun): Promise<void> {
+		if (!this.#runs.releaseActive(run)) return;
+		const durationMs = run.input.timeoutMs ?? 0;
+		this.#runs.settle(run, {
 			type: "result",
-			cellId,
+			cellId: run.input.cellId,
 			ok: false,
 			error: { message: `JS cell timed out after ${durationMs}ms` },
 			durationMs,
 		});
-		this.#active = null;
-		await this.#terminate();
-		this.#ready = null;
-		await this.#ensureReady();
-		this.#startNext();
+		await this.#restartAfterStop();
+	}
+
+	async #restartAfterStop(): Promise<void> {
+		if (this.#recovery) return await this.#recovery;
+		const recovery = this.#performRestartAfterStop();
+		this.#recovery = recovery;
+		try {
+			await recovery;
+		} finally {
+			if (this.#recovery === recovery) this.#recovery = null;
+		}
+	}
+
+	async #performRestartAfterStop(): Promise<void> {
+		try {
+			await this.#terminate();
+			if (this.#lifecycle !== "open") return;
+			await this.#ensureReady();
+			if (this.#lifecycle === "open") this.#startNext();
+		} catch (error) {
+			if (error instanceof WorkerStartupCancelledError) return;
+			this.#runs.rejectWaiting(error instanceof Error ? error : new Error(String(error)));
+		}
 	}
 
 	#handleMessage(message: KernelToHostMessage): void {
 		this.#options.onMessage?.(message);
-		this.#active?.input.onMessage?.(message);
+		this.#runs.active?.input.onMessage?.(message);
 		if (message.type === "tool-call") {
 			const waiter = this.#toolWaiters.shift();
 			if (waiter) waiter(message);
@@ -165,83 +247,44 @@ export class JavaScriptKernel {
 			return;
 		}
 		if (message.type !== "result") return;
-		if (this.#timeout) clearTimeout(this.#timeout);
-		this.#timeout = null;
-		const active = this.#active;
-		this.#active = null;
-		active?.resolve(message);
+		const active = this.#runs.active;
+		if (!active || active.input.cellId !== message.cellId) return;
+		this.#clearTimeout();
+		this.#runs.releaseActive(active);
+		this.#runs.settle(active, message);
 		this.#startNext();
 	}
 
 	#handleCrash(error: Error): void {
-		const active = this.#active;
-		if (!active) return;
-		this.#active = null;
-		active.resolve({
-			type: "result",
-			cellId: active.input.cellId,
-			ok: false,
-			error: bridgeError(error),
-			durationMs: 0,
-		});
+		const active = this.#runs.active;
+		if (!active && this.#startupAbort) return;
+		this.#clearTimeout();
+		if (active) {
+			this.#runs.releaseActive(active);
+			this.#runs.settle(active, {
+				type: "result",
+				cellId: active.input.cellId,
+				ok: false,
+				error: bridgeError(error),
+				durationMs: this.#runs.durationMs(active, performance.now()),
+			});
+		}
+		void this.#restartAfterStop();
+	}
+
+	#clearTimeout(): void {
+		if (this.#timeout) clearTimeout(this.#timeout);
+		this.#timeout = null;
 	}
 
 	async #terminate(): Promise<void> {
-		if (this.#timeout) clearTimeout(this.#timeout);
-		this.#timeout = null;
+		this.#clearTimeout();
+		this.#generation += 1;
+		this.#startupAbort?.abort();
+		this.#startupAbort = null;
+		this.#ready = null;
 		const worker = this.#worker;
 		this.#worker = null;
-		await worker?.terminate().catch(() => undefined);
+		if (worker) await worker.terminate();
 	}
-}
-
-function waitForReady(worker: WorkerLike): Promise<void> {
-	return new Promise((resolve, reject) => {
-		const offMessage = worker.onMessage((message) => {
-			if (message.type === "ready") {
-				offMessage();
-				offError();
-				resolve();
-			} else if (message.type === "init-failed") {
-				offMessage();
-				offError();
-				reject(errorFromBridge(message.error));
-			}
-		});
-		const offError = worker.onError((error) => {
-			offMessage();
-			offError();
-			reject(error);
-		});
-	});
-}
-
-function wrapNodeWorker(worker: Worker): WorkerLike {
-	return {
-		mode: "worker",
-		postMessage: (message) => worker.postMessage(message),
-		onMessage(handler) {
-			const listener = (message: KernelToHostMessage): void => handler(message);
-			worker.on("message", listener);
-			return () => worker.off("message", listener);
-		},
-		onError(handler) {
-			worker.on("error", handler);
-			return () => worker.off("error", handler);
-		},
-		async terminate() {
-			await worker.terminate();
-		},
-	};
-}
-
-function errorFromBridge(error: { message: string; name?: string; stack?: string }): Error {
-	const result = new Error(error.message);
-	if (error.name) result.name = error.name;
-	if (error.stack) result.stack = error.stack;
-	return result;
-}
-
-function bridgeError(error: Error): { message: string; name?: string; stack?: string } {
-	return { message: error.message, name: error.name, stack: error.stack };
 }
