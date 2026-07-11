@@ -13,6 +13,9 @@
 ### Fixed
 
 - Prevented untrusted image MIME labels from injecting terminal control sequences through custom renderer fallbacks.
+- Fixed goal persistence to use atomic file replacement and narrowly recover the observed stale closing-brace
+  corruption, preventing session resume crashes without accepting other malformed JSON.
+
 - Fixed `bash_output` waits ignoring turn cancellation and accepting unbounded model-supplied timeouts; waits now release without killing the background terminal and individual polls are capped at five minutes.
 
 - Fixed `bash_output` waiting on `wait_for` even when the pattern had already arrived in unread output before the waiter was registered.
