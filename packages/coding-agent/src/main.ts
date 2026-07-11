@@ -12,6 +12,7 @@ import chalk from "chalk";
 import { handleAppServerCommand } from "./cli/app-server-command.ts";
 import { type Args, type Mode, parseArgs, printHelp } from "./cli/args.ts";
 import { handleAuthBrokerCommand } from "./cli/auth-broker-cli.ts";
+import { handleAuthGatewayCommand } from "./cli/auth-gateway-cli.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
@@ -537,6 +538,9 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	if (await handleAuthBrokerCommand(args)) {
+		return;
+	}
+	if (await handleAuthGatewayCommand(args)) {
 		return;
 	}
 
