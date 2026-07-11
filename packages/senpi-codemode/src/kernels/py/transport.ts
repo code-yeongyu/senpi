@@ -39,8 +39,9 @@ export interface PythonTransportOptions {
 	readonly onMessage?: (message: KernelToHostMessage) => void;
 	readonly spawnProcess?: KernelSpawnProcess;
 	readonly isOwned: () => boolean;
-	readonly onOwnershipFailure: (transport: PythonKernelTransport, error: Error) => Error;
+	readonly onRetirementFailure: (transport: PythonKernelTransport, error: Error) => void;
 	readonly onResult: (transport: PythonKernelTransport, result: PythonTransportResult) => void;
+	readonly onError: (transport: PythonKernelTransport, error: Error) => void;
 	readonly onExit: (transport: PythonKernelTransport, error: Error) => void;
 }
 
@@ -52,6 +53,7 @@ export class PythonKernelTransport {
 	#stdoutBuffer = "";
 	#stderrTail = "";
 	#settleReady: ((error?: Error) => void) | null = null;
+	#detachChildListeners: (() => void) | null = null;
 	#active = true;
 	#exited = false;
 	#retirement: Promise<void> | null = null;
@@ -80,8 +82,10 @@ export class PythonKernelTransport {
 			try {
 				await transport.retire();
 			} catch (retirementError) {
-				if (retirementError instanceof Error) throw options.onOwnershipFailure(transport, retirementError);
-				throw retirementError;
+				options.onRetirementFailure(
+					transport,
+					retirementError instanceof Error ? retirementError : new Error(String(retirementError)),
+				);
 			}
 			throw error;
 		}
@@ -128,6 +132,7 @@ export class PythonKernelTransport {
 		if (this.#retirement) return this.#retirement;
 		this.#active = false;
 		const retirement = hardKill(this.#child, hardKillWaitMs).finally(() => {
+			this.#detachListeners();
 			if (this.#retirement === retirement) this.#retirement = null;
 		});
 		this.#retirement = retirement;
@@ -138,9 +143,20 @@ export class PythonKernelTransport {
 		const ready = new Promise<void>((resolve, reject) => {
 			this.#settleReady = (error) => (error ? reject(error) : resolve());
 		});
-		this.#child.stdout.on("data", (chunk) => this.#onStdout(String(chunk)));
-		this.#child.stderr.on("data", (chunk) => this.#onStderr(String(chunk)));
-		this.#child.once("exit", (code, signal) => this.#onExit(numberOrNull(code), signalOrNull(signal)));
+		const onStdout = (chunk: unknown) => this.#onStdout(String(chunk));
+		const onStderr = (chunk: unknown) => this.#onStderr(String(chunk));
+		const onError = (error: unknown) => this.#onError(error instanceof Error ? error : new Error(String(error)));
+		const onExit = (code: unknown, signal: unknown) => this.#onExit(numberOrNull(code), signalOrNull(signal));
+		this.#detachChildListeners = () => {
+			this.#child.stdout.off("data", onStdout);
+			this.#child.stderr.off("data", onStderr);
+			this.#child.off("error", onError);
+			this.#child.off("exit", onExit);
+		};
+		this.#child.stdout.on("data", onStdout);
+		this.#child.stderr.on("data", onStderr);
+		this.#child.on("error", onError);
+		this.#child.on("exit", onExit);
 		this.#write({ type: "init", sessionId: this.#options.sessionId, connection: this.#options.connection });
 		await withTimeout(ready, this.#options.startupTimeoutMs, "Python kernel did not become ready");
 	}
@@ -182,11 +198,29 @@ export class PythonKernelTransport {
 	}
 
 	#onExit(code: number | null, signal: string | null): void {
+		if (this.#exited) return;
 		this.#exited = true;
-		if (!this.#active) return;
+		const active = this.#active;
 		this.#active = false;
 		const error = new Error(this.#stderrTail.trim() || `Python kernel exited (${code ?? signal ?? "unknown"})`);
+		this.#detachListeners();
+		if (!active) return;
 		if (!this.#settleStartup(error)) this.#options.onExit(this, error);
+	}
+
+	#onError(error: Error): void {
+		if (this.#exited || !this.#active) return;
+		this.#active = false;
+		if (!this.#settleStartup(error)) this.#options.onError(this, error);
+	}
+
+	#detachListeners(): void {
+		const detach = this.#detachChildListeners;
+		if (!detach) return;
+		this.#detachChildListeners = null;
+		detach();
+		this.#stdoutBuffer = "";
+		this.#stderrTail = "";
 	}
 
 	#settleStartup(error?: Error): boolean {

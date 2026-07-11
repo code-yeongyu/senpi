@@ -172,11 +172,12 @@ export class PythonKernel {
 			...this.#options,
 			startupTimeoutMs: this.#options.startupTimeoutMs ?? startupTimeoutMs,
 			isOwned: () => !this.#closed && generation === this.#generation,
-			onOwnershipFailure: (transport, error) => {
+			onRetirementFailure: (transport, error) => {
 				if (!this.#transport) this.#transport = transport;
-				return this.#recordFailure(error);
+				this.#recordFailure(error);
 			},
 			onResult: (transport, result) => this.#onResult(transport, result),
+			onError: (transport, error) => this.#onError(transport, error),
 			onExit: (transport, error) => this.#onExit(transport, error),
 		});
 	}
@@ -193,6 +194,21 @@ export class PythonKernel {
 		const active = this.#active;
 		if (active) this.#settleRun(active, failedPythonResult(active.input.cellId, "Python kernel died", error.message));
 		this.#startNext();
+	}
+
+	#onError(transport: PythonKernelTransport, error: Error): void {
+		if (this.#transport !== transport) return;
+		const retirement = this.#beginRetirement(transport);
+		void retirement.then(
+			() => undefined,
+			(retirementError: unknown) => {
+				this.#recordFailure(
+					retirementError instanceof Error ? retirementError : new Error(String(retirementError)),
+				);
+			},
+		);
+		const active = this.#active;
+		if (active) this.#settleRun(active, failedPythonResult(active.input.cellId, "Python kernel died", error.message));
 	}
 
 	#settleRun(pending: PendingRun, result: ResultMessage): void {

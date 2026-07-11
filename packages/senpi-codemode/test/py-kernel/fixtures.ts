@@ -13,6 +13,7 @@ export interface FakeChildOptions {
 	readonly autoRun?: boolean;
 	readonly remainAliveOnInterrupt?: boolean;
 	readonly remainAliveOnSigkill?: boolean;
+	readonly rejectKill?: boolean;
 	readonly throwOnInterruptFrame?: boolean;
 	readonly onRun?: (message: Extract<HostToKernelMessage, { type: "run" }>) => void;
 }
@@ -67,6 +68,7 @@ export class FakeChild implements KernelChild {
 	kill(signal?: NodeJS.Signals): boolean {
 		const deliveredSignal = signal ?? "SIGTERM";
 		this.killSignals.push(deliveredSignal);
+		if (this.#options.rejectKill === true) return false;
 		this.killed = true;
 		const remainsAlive =
 			deliveredSignal === "SIGKILL"
@@ -78,6 +80,10 @@ export class FakeChild implements KernelChild {
 
 	emitMessage(message: KernelToHostMessage): void {
 		this.stdout.emit("data", encodeBridgeFrame(message));
+	}
+
+	fail(error: Error): void {
+		this.emit("error", error);
 	}
 
 	finish(code: number | null, signal: NodeJS.Signals | null): void {
@@ -117,7 +123,12 @@ export class FakeChild implements KernelChild {
 	}
 
 	emit(event: string, ...args: unknown[]): boolean {
-		for (const listener of this.listeners.get(event) ?? []) listener(...args);
+		const listeners = this.listeners.get(event) ?? [];
+		if (event === "error" && listeners.length === 0) {
+			const error = args[0];
+			throw error instanceof Error ? error : new Error(String(error));
+		}
+		for (const listener of listeners) listener(...args);
 		return true;
 	}
 }

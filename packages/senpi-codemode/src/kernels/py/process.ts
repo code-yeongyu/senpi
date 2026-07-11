@@ -81,16 +81,39 @@ export async function waitForExit(child: KernelChild, timeoutMs: number): Promis
 }
 
 export async function hardKill(child: KernelChild, timeoutMs: number): Promise<void> {
-	const exited = waitForExit(child, timeoutMs);
-	if (child.pid !== undefined && process.platform !== "win32") {
-		try {
-			process.kill(-child.pid, "SIGKILL");
-		} catch (error) {
-			if (!(error instanceof Error)) throw error;
-			child.kill("SIGKILL");
+	await new Promise<void>((resolve, reject) => {
+		let timer: NodeJS.Timeout | undefined;
+		let settled = false;
+		const settle = (error?: Error) => {
+			if (settled) return;
+			settled = true;
+			child.off("exit", onExit);
+			if (timer) clearTimeout(timer);
+			if (error) reject(error);
+			else resolve();
+		};
+		const onExit = () => settle();
+		child.on("exit", onExit);
+		let signalDelivered = true;
+		if (child.pid !== undefined && process.platform !== "win32") {
+			try {
+				process.kill(-child.pid, "SIGKILL");
+			} catch (error) {
+				if (!(error instanceof Error)) {
+					settle(new Error(String(error)));
+					return;
+				}
+				signalDelivered = child.kill("SIGKILL");
+			}
+		} else {
+			signalDelivered = child.kill("SIGKILL");
 		}
-	} else {
-		child.kill("SIGKILL");
-	}
-	if (!(await exited)) throw new PythonKernelRetirementError(child.pid);
+		if (!signalDelivered) {
+			settle();
+			return;
+		}
+		if (settled) return;
+		timer = setTimeout(() => settle(new PythonKernelRetirementError(child.pid)), timeoutMs);
+		timer.unref?.();
+	});
 }
