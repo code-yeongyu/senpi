@@ -1,116 +1,10 @@
 import { readFile } from "node:fs/promises";
-import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { type BridgeHttpCallRequest, startBridgeServer } from "../src/bridge/http-server.ts";
-import type { BridgeConnectionConfig, KernelToHostMessage } from "../src/bridge/protocol.ts";
-import { decodeBridgeFrame, encodeBridgeFrame } from "../src/bridge/protocol.ts";
+import type { BridgeConnectionConfig } from "../src/bridge/protocol.ts";
 import { createInterpreterDetector } from "../src/interpreters/detect.ts";
-import { type KernelChild, type KernelSpawnOptions, PythonKernel } from "../src/kernels/py/kernel.ts";
-
-class FakeChild implements KernelChild {
-	readonly stdin = new PassThrough();
-	readonly stdout = new PassThrough();
-	readonly stderr = new PassThrough();
-	readonly pid = 12345;
-	killed = false;
-	exitCode: number | null = null;
-	signalCode: NodeJS.Signals | null = null;
-
-	constructor(autoRespond = true) {
-		if (!autoRespond) return;
-		this.stdin.on("data", (chunk) => {
-			const lines = String(chunk).split("\n").filter(Boolean);
-			for (const line of lines) {
-				const decoded = decodeBridgeFrame(`${line}\n`);
-				if (!decoded.ok) continue;
-				if (decoded.message.type === "init") this.emitMessage({ type: "ready" });
-				if (decoded.message.type === "run") {
-					this.emitMessage({
-						type: "result",
-						cellId: decoded.message.cellId,
-						ok: true,
-						valueRepr: "fake",
-						durationMs: 1,
-					});
-				}
-				if (decoded.message.type === "close") {
-					this.emitMessage({ type: "closed" });
-					this.finish(0, null);
-				}
-			}
-		});
-	}
-
-	kill(signal?: NodeJS.Signals): boolean {
-		this.killed = true;
-		this.finish(null, signal ?? "SIGTERM");
-		return true;
-	}
-
-	emitMessage(message: KernelToHostMessage): void {
-		this.stdout.write(encodeBridgeFrame(message));
-	}
-
-	finish(code: number | null, signal: NodeJS.Signals | null): void {
-		this.exitCode = code;
-		this.signalCode = signal;
-		this.stdout.end();
-		this.stderr.end();
-		this.stdin.end();
-		this.stdout.emit("close");
-		this.stderr.emit("close");
-		this.emit("exit", code, signal);
-	}
-
-	readonly listeners = new Map<string, ((...args: unknown[]) => void)[]>();
-
-	on(event: string, listener: (...args: unknown[]) => void): this {
-		this.listeners.set(event, [...(this.listeners.get(event) ?? []), listener]);
-		return this;
-	}
-
-	once(event: string, listener: (...args: unknown[]) => void): this {
-		const wrapped = (...args: unknown[]) => {
-			this.off(event, wrapped);
-			listener(...args);
-		};
-		return this.on(event, wrapped);
-	}
-
-	off(event: string, listener: (...args: unknown[]) => void): this {
-		this.listeners.set(
-			event,
-			(this.listeners.get(event) ?? []).filter((candidate) => candidate !== listener),
-		);
-		return this;
-	}
-
-	emit(event: string, ...args: unknown[]): boolean {
-		for (const listener of this.listeners.get(event) ?? []) listener(...args);
-		return true;
-	}
-}
-
-async function hasPython3(): Promise<boolean> {
-	const detector = createInterpreterDetector();
-	return (await detector.detect("py")).ok;
-}
-
-async function liveKernel(): Promise<PythonKernel> {
-	const detector = createInterpreterDetector();
-	const detected = await detector.detect("py");
-	if (!detected.ok) throw new Error("python unavailable");
-	return await PythonKernel.start({
-		interpreterPath: detected.path,
-		sessionId: "live-session",
-		cwd: process.cwd(),
-		connection: { port: 1, token: "unused" },
-	});
-}
-
-async function runCell(kernel: PythonKernel, code: string): Promise<Extract<KernelToHostMessage, { type: "result" }>> {
-	return await kernel.run({ cellId: `cell-${crypto.randomUUID()}`, code, timeoutMs: 3_000 });
-}
+import { type KernelSpawnOptions, PythonKernel } from "../src/kernels/py/kernel.ts";
+import { FakeChild, hasPython3, liveKernel, runCell } from "./py-kernel/fixtures.ts";
 
 describe("PythonKernel transport", () => {
 	it("prelude speaks the loopback bridge server HTTP contract", async () => {
@@ -146,7 +40,7 @@ describe("PythonKernel transport", () => {
 	});
 
 	it("surfaces startup crashes as init failures", async () => {
-		const child = new FakeChild(false);
+		const child = new FakeChild({ autoReady: false, autoRun: false });
 		const started = PythonKernel.start({
 			interpreterPath: "python3",
 			sessionId: "crash-session",

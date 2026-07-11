@@ -1,15 +1,15 @@
 import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext, ToolDefinition } from "@code-yeongyu/senpi";
-import type { KernelToHostMessage } from "../bridge/protocol.ts";
+import type { HostToKernelMessage, KernelToHostMessage } from "../bridge/protocol.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
-import { handleCompletionToolCall } from "../completion/tool-bridge.ts";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncateTail } from "../host-sdk.ts";
 import { buildEvalPrompt } from "../prompt/eval-prompt.ts";
+import { CellHandler, type CellState } from "./cell-handler.ts";
 import { renderEvalCall, renderEvalResult } from "./render.ts";
 import {
 	createEvalInputSchema,
 	type EnabledEvalLanguages,
 	type EvalKernel,
 	type EvalKernelManager,
+	type EvalKernelRunInput,
 	type EvalToolDetails,
 	type EvalToolInput,
 	type ExecuteTool,
@@ -17,11 +17,6 @@ import {
 } from "./types.ts";
 
 export type { EnabledEvalLanguages, EvalKernel, EvalKernelManager } from "./types.ts";
-
-type ImageContent = { type: "image"; mimeType: string; data: string };
-type ToolContent = AgentToolResult<unknown>["content"][number];
-type TextPart = Extract<ToolContent, { type: "text" }>;
-type RuntimeImagePart = { type: "image"; mimeType: string; data: string };
 
 export interface CreateEvalToolOptions {
 	readonly enabledLanguages: EnabledEvalLanguages;
@@ -31,18 +26,142 @@ export interface CreateEvalToolOptions {
 	readonly complete?: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>;
 }
 
-interface CellState {
+interface EvalCellInvocation {
 	readonly cellId: string;
-	readonly language: EvalToolInput["language"];
-	readonly title: string | undefined;
+	readonly input: EvalToolInput;
 	readonly signal: AbortSignal | undefined;
 	readonly onUpdate: AgentToolUpdateCallback<EvalToolDetails> | undefined;
-	readonly toolCalls: EvalToolDetails["toolCalls"] extends readonly (infer T)[] ? T[] : never;
-	readonly images: ImageContent[];
-	readonly pendingBridgeCalls: Promise<void>[];
-	output: string;
-	phase: string | undefined;
-	durationMs: number;
+	readonly ctx: ExtensionContext;
+}
+
+type ToolReply = Extract<HostToKernelMessage, { type: "tool-reply" }>;
+
+const INTERRUPT_DELIVERY_GRACE_MS = 100;
+
+class CellKernel implements EvalKernel {
+	readonly #kernel: EvalKernel;
+	readonly #state: CellState;
+
+	constructor(kernel: EvalKernel, state: CellState) {
+		this.#kernel = kernel;
+		this.#state = state;
+	}
+
+	run(input: EvalKernelRunInput): Promise<Extract<KernelToHostMessage, { type: "result" }>> {
+		return this.#kernel.run(input);
+	}
+
+	deliverToolReply(message: ToolReply): void {
+		if (this.#state.active) this.#kernel.deliverToolReply(message);
+	}
+
+	interrupt(reason?: string): Promise<void> {
+		return this.#kernel.interrupt(reason);
+	}
+
+	reset(): Promise<void> {
+		return this.#kernel.reset();
+	}
+
+	close(): Promise<void> {
+		return this.#kernel.close();
+	}
+}
+
+class CellExecution {
+	readonly #callerSignal: AbortSignal | undefined;
+	readonly #timeoutMs: number;
+	readonly #onAbort: (error: Error) => void;
+	readonly #abortPromise: Promise<never>;
+	#rejectAbort: (reason?: unknown) => void = () => {};
+	#kernel: CellKernel | undefined;
+	#deadline: ReturnType<typeof setTimeout> | undefined;
+	#abortSettled = false;
+	#active = true;
+
+	constructor(callerSignal: AbortSignal | undefined, timeoutMs: number, onAbort: (error: Error) => void) {
+		this.#callerSignal = callerSignal;
+		this.#timeoutMs = timeoutMs;
+		this.#onAbort = onAbort;
+		this.#abortPromise = new Promise<never>((_resolve, reject) => {
+			this.#rejectAbort = reject;
+		});
+		callerSignal?.addEventListener("abort", this.#handleCallerAbort, { once: true });
+		this.startDeadline();
+	}
+
+	startDeadline(): void {
+		this.clearDeadline();
+		if (!this.#active) return;
+		this.#deadline = setTimeout(() => {
+			const error = new Error(`Cell timed out after ${this.#timeoutMs}ms`);
+			error.name = "TimeoutError";
+			this.#abort(error);
+		}, this.#timeoutMs);
+	}
+
+	clearDeadline(): void {
+		if (this.#deadline === undefined) return;
+		clearTimeout(this.#deadline);
+		this.#deadline = undefined;
+	}
+
+	setKernel(kernel: CellKernel): void {
+		this.#kernel = kernel;
+	}
+
+	cancel(reason: unknown): void {
+		this.#abort(reason);
+	}
+
+	async wait<T>(operation: Promise<T>): Promise<T> {
+		const guardedOperation = operation.then(
+			(value): T | Promise<never> => (this.#active ? value : this.#abortPromise),
+			(reason: unknown): Promise<never> => (this.#active ? Promise.reject(reason) : this.#abortPromise),
+		);
+		return await Promise.race([guardedOperation, this.#abortPromise]);
+	}
+
+	finish(): void {
+		this.#active = false;
+		this.#cleanup();
+	}
+
+	readonly #handleCallerAbort = (): void => {
+		this.#abort(this.#callerSignal?.reason);
+	};
+
+	#abort(reason: unknown): void {
+		if (!this.#active) return;
+		this.#active = false;
+		this.#cleanup();
+		const error = abortError(reason);
+		this.#onAbort(error);
+		const kernel = this.#kernel;
+		if (!kernel) {
+			this.#settleAbort(error);
+			return;
+		}
+		this.#deadline = setTimeout(() => this.#settleAbort(error), INTERRUPT_DELIVERY_GRACE_MS);
+		void Promise.resolve()
+			.then(() => kernel.interrupt(error.message))
+			.then(
+				() => this.#settleAbort(error),
+				(interruptError: unknown) => this.#settleAbort(interruptError),
+			);
+	}
+
+	#settleAbort(reason: unknown): void {
+		if (this.#abortSettled) return;
+		this.#abortSettled = true;
+		this.clearDeadline();
+		this.#rejectAbort(reason);
+	}
+
+	#cleanup(): void {
+		this.#callerSignal?.removeEventListener("abort", this.#handleCallerAbort);
+		this.clearDeadline();
+	}
 }
 
 export function createEvalTool(
@@ -58,6 +177,7 @@ export function createEvalTool(
 		promptSnippet: prompt.promptSnippet,
 		promptGuidelines: [...prompt.promptGuidelines],
 		parameters,
+		executionMode: "sequential",
 		renderCall: renderEvalCall,
 		renderResult: renderEvalResult,
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
@@ -66,199 +186,84 @@ export function createEvalTool(
 					`Unsupported eval language "${params.language}". Enabled languages: ${languages.join(", ")}`,
 				);
 			}
-			const state: CellState = {
-				cellId: toolCallId,
-				language: params.language,
-				title: params.title,
-				signal,
-				onUpdate,
-				toolCalls: [],
-				images: [],
-				pendingBridgeCalls: [],
-				output: "",
-				phase: undefined,
-				durationMs: 0,
-			};
-			// `kernel` is referenced by the onMessage closure below. Subprocess kernels
-			// (py/rb/jl) emit their `ready` frame synchronously from within getKernel's
-			// await, before the binding is assigned — a `const` here would be in the
-			// temporal dead zone and throw. A pre-declared `let` yields `undefined` for
-			// that pre-ready frame instead (which is a control message, never a tool-call,
-			// so the kernel argument is unused for it).
-			let kernel!: EvalKernel;
-			kernel = await options.kernelManager.getKernel(
-				params.language,
-				(message) => void handleMessage(message, kernel, state, options.executeTool, options.complete, ctx),
-			);
-			if ("setContext" in options.kernelManager && typeof options.kernelManager.setContext === "function") {
-				options.kernelManager.setContext(ctx);
-			}
-			if (params.reset) await kernel.reset();
-			const timeoutMs = Math.floor((params.timeout ?? options.cellTimeoutSeconds) * 1000);
-			const result = await kernel.run({ cellId: toolCallId, code: params.code, timeoutMs });
-			await Promise.all(state.pendingBridgeCalls);
-			return finalizeResult(result, state);
+			return await runEvalCell(options, { cellId: toolCallId, input: params, signal, onUpdate, ctx });
 		},
 	};
 }
 
-async function handleMessage(
-	message: KernelToHostMessage,
-	kernel: EvalKernel,
-	state: CellState,
-	executeTool: ExecuteTool,
-	complete: CreateEvalToolOptions["complete"],
-	ctx: ExtensionContext,
-): Promise<void> {
-	if (message.type === "text") {
-		state.output += message.data;
-		emitUpdate(state, false);
-		return;
-	}
-	if (message.type === "phase") {
-		state.phase = message.title;
-		emitUpdate(state, false);
-		return;
-	}
-	if (message.type === "log") {
-		state.output += `${message.message}\n`;
-		emitUpdate(state, false);
-		return;
-	}
-	if (message.type === "display") {
-		state.images.push({ type: "image", mimeType: message.mimeType, data: message.dataBase64 });
-		state.output += `[display: ${message.mimeType}]\n`;
-		emitUpdate(state, false);
-		return;
-	}
-	if (message.type === "tool-call") {
-		const pending = handleToolCall(message, kernel, state, executeTool, complete, ctx);
-		state.pendingBridgeCalls.push(pending);
-		await pending;
-	}
-}
-
-async function handleToolCall(
-	message: Extract<KernelToHostMessage, { type: "tool-call" }>,
-	kernel: EvalKernel,
-	state: CellState,
-	executeTool: ExecuteTool,
-	complete: CreateEvalToolOptions["complete"],
-	ctx: ExtensionContext,
-): Promise<void> {
-	if (message.toolName === "eval") {
-		const error = "recursive eval is not allowed";
-		state.toolCalls.push({ name: message.toolName, ok: false, error });
-		kernel.deliverToolReply({ type: "tool-reply", callId: message.callId, ok: false, error: { message: error } });
-		return;
-	}
-	if (message.toolName === "completion" && complete) {
-		const result = await handleCompletionToolCall({ message, kernel, complete, ctx });
-		state.toolCalls.push(
-			result.ok ? { name: message.toolName, ok: true } : { name: message.toolName, ok: false, error: result.error },
-		);
-		emitUpdate(state, false);
-		return;
-	}
-	try {
-		const result = await executeTool(message.toolName, message.args, { signal: state.signal });
-		state.toolCalls.push({ name: message.toolName, ok: !toolResultIsError(result) });
-		kernel.deliverToolReply({
-			type: "tool-reply",
-			callId: message.callId,
-			ok: true,
-			value: marshalToolResult(result),
-		});
-	} catch (error) {
-		const messageText = errorMessage(error);
-		state.toolCalls.push({ name: message.toolName, ok: false, error: messageText });
-		kernel.deliverToolReply({
-			type: "tool-reply",
-			callId: message.callId,
-			ok: false,
-			error: { message: messageText },
-		});
-	}
-	emitUpdate(state, false);
-}
-
-function marshalToolResult(result: AgentToolResult<unknown>): unknown {
-	const texts: string[] = [];
-	const images: Array<{ mimeType: string; dataBase64: string }> = [];
-	for (const part of result.content) {
-		if (isTextPart(part)) texts.push(part.text);
-		if (isRuntimeImagePart(part)) images.push({ mimeType: part.mimeType, dataBase64: part.data });
-	}
-	const text = texts.join("\n");
-	const details = isEmptyObject(result.details) ? undefined : result.details;
-	const hasError = toolResultIsError(result);
-	if (images.length === 0 && details === undefined && !hasError) return { text };
-	return { text, details, images, hasError };
-}
-
-function finalizeResult(
-	result: Extract<KernelToHostMessage, { type: "result" }>,
-	state: CellState,
-): AgentToolResult<EvalToolDetails> {
-	state.durationMs = result.durationMs;
-	if (result.ok && result.valueRepr) state.output += `${result.valueRepr}\n`;
-	if (!result.ok) state.output += `${result.error.message}\n`;
-	const truncation = truncateTail(state.output, { maxBytes: DEFAULT_MAX_BYTES, maxLines: DEFAULT_MAX_LINES });
-	const suffix = truncation.truncated
-		? `\n\n[Output truncated: ${truncation.outputLines} of ${truncation.totalLines} lines (${truncation.outputBytes} of ${truncation.totalBytes} bytes).]`
-		: "";
-	const details = detailsFor(state, truncation.truncated, !result.ok);
-	return {
-		content: [{ type: "text", text: `${truncation.content}${suffix}` }, ...state.images],
-		details,
+async function runEvalCell(
+	options: CreateEvalToolOptions,
+	invocation: EvalCellInvocation,
+): Promise<AgentToolResult<EvalToolDetails>> {
+	if (invocation.signal?.aborted) throw abortError(invocation.signal.reason);
+	const timeoutMs = Math.floor((invocation.input.timeout ?? options.cellTimeoutSeconds) * 1000);
+	const bridgeAbortController = new AbortController();
+	const cellSignal = invocation.signal
+		? AbortSignal.any([invocation.signal, bridgeAbortController.signal])
+		: bridgeAbortController.signal;
+	const bridgeContext: ExtensionContext = { ...invocation.ctx, signal: cellSignal };
+	const state: CellState = {
+		cellId: invocation.cellId,
+		language: invocation.input.language,
+		title: invocation.input.title,
+		signal: cellSignal,
+		onUpdate: invocation.onUpdate,
+		toolCalls: [],
+		images: [],
+		pendingBridgeCalls: [],
+		active: true,
+		output: "",
+		phase: undefined,
+		durationMs: 0,
 	};
-}
-
-function detailsFor(state: CellState, truncated: boolean, isError: boolean): EvalToolDetails {
-	return {
-		language: state.language,
-		title: state.title,
-		durationMs: state.durationMs,
-		toolCalls: state.toolCalls,
-		truncated,
-		isError,
-		phase: state.phase,
-	};
-}
-
-function emitUpdate(state: CellState, isError: boolean): void {
-	state.onUpdate?.({
-		content: [{ type: "text", text: state.output }],
-		details: detailsFor(state, false, isError),
+	const execution = new CellExecution(invocation.signal, timeoutMs, (error) => {
+		state.active = false;
+		bridgeAbortController.abort(error);
 	});
+	let handler: CellHandler | undefined;
+	try {
+		const acquired = await execution.wait(
+			options.kernelManager.getKernel(invocation.input.language, (message) => {
+				if (!state.active || !handler) return;
+				const pending = handler.handle(message);
+				void pending.catch((error: unknown) => execution.cancel(error));
+			}),
+		);
+		const kernel = new CellKernel(acquired, state);
+		execution.setKernel(kernel);
+		execution.clearDeadline();
+		handler = new CellHandler(kernel, state, {
+			executeTool: options.executeTool,
+			complete: options.complete,
+			ctx: bridgeContext,
+		});
+		if ("setContext" in options.kernelManager && typeof options.kernelManager.setContext === "function") {
+			options.kernelManager.setContext(bridgeContext);
+		}
+		if (invocation.input.reset) {
+			execution.startDeadline();
+			await execution.wait(kernel.reset());
+			execution.clearDeadline();
+		}
+		const result = await execution.wait(
+			kernel.run({ cellId: invocation.cellId, code: invocation.input.code, timeoutMs }),
+		);
+		if (result.ok && state.pendingBridgeCalls.length > 0) {
+			execution.startDeadline();
+			await execution.wait(Promise.all(state.pendingBridgeCalls));
+			execution.clearDeadline();
+		}
+		return handler.finalize(result);
+	} finally {
+		state.active = false;
+		bridgeAbortController.abort();
+		execution.finish();
+	}
 }
 
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}
-
-function isEmptyObject(value: unknown): boolean {
-	return typeof value === "object" && value !== null && !Array.isArray(value) && Object.keys(value).length === 0;
-}
-
-function toolResultIsError(result: AgentToolResult<unknown>): boolean {
-	const details = result.details;
-	return typeof details === "object" && details !== null && "isError" in details && details.isError === true;
-}
-
-function isTextPart(part: ToolContent): part is TextPart {
-	return part.type === "text";
-}
-
-function isRuntimeImagePart(part: unknown): part is RuntimeImagePart {
-	return (
-		typeof part === "object" &&
-		part !== null &&
-		"type" in part &&
-		part.type === "image" &&
-		"mimeType" in part &&
-		typeof part.mimeType === "string" &&
-		"data" in part &&
-		typeof part.data === "string"
-	);
+function abortError(reason: unknown): Error {
+	if (reason instanceof Error && reason.name !== "AbortError") return reason;
+	const error = new Error(typeof reason === "string" ? reason : "Eval interrupted");
+	error.name = "AbortError";
+	return error;
 }

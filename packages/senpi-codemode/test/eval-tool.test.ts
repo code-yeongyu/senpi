@@ -1,7 +1,7 @@
-import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext } from "@code-yeongyu/senpi";
+import type { AgentToolResult, AgentToolUpdateCallback } from "@code-yeongyu/senpi";
 import { describe, expect, it, vi } from "vitest";
 import { createEvalTool } from "../src/tool/eval-tool.ts";
-import { errorResult, FakeKernel, FakeManager, result } from "./eval/fakes.ts";
+import { errorResult, FakeKernel, FakeManager, fakeExtensionContext, result } from "./eval/fakes.ts";
 
 type ToolResult = AgentToolResult<unknown>;
 type ToolContent = ToolResult["content"][number];
@@ -37,10 +37,6 @@ function isImagePart(part: ToolContent): part is ImagePart {
 	return part.type === "image";
 }
 
-function context(): ExtensionContext {
-	return {} as unknown as ExtensionContext;
-}
-
 function updateDetails(update: unknown): unknown {
 	if (typeof update === "object" && update !== null && "details" in update) return update.details;
 	return undefined;
@@ -65,12 +61,13 @@ describe("createEvalTool", () => {
 			updates.push(updateDetails(update));
 		};
 
+		expect(tool.executionMode).toBe("sequential");
 		const toolResult = await tool.execute(
 			"cell-1",
 			{ language: "js", code: "return 42", title: "math" },
 			undefined,
 			onUpdate,
-			context(),
+			fakeExtensionContext(),
 		);
 
 		expect(tool.parameters.properties.language.anyOf).toEqual([{ const: "js", type: "string" }]);
@@ -85,7 +82,11 @@ describe("createEvalTool", () => {
 			{ type: "tool-call", callId: "call-1", toolName: "demo", args: { x: 1 } },
 			result("cell-2", "done"),
 		]);
-		const executeTool = vi.fn(async () => ({ content: [{ type: "text" as const, text: "demo ok" }], details: {} }));
+		const bridgeSignals: AbortSignal[] = [];
+		const executeTool: ExecuteTool = vi.fn(async (_toolName, _params, options) => {
+			if (options?.signal) bridgeSignals.push(options.signal);
+			return { content: [{ type: "text" as const, text: "demo ok" }], details: {} };
+		});
 		const tool = createEvalTool({
 			enabledLanguages: { js: true, py: true, rb: false, jl: false },
 			kernelManager: new FakeManager([["js", kernel]]),
@@ -98,10 +99,12 @@ describe("createEvalTool", () => {
 			{ language: "js", code: "await tool.demo({x:1})" },
 			undefined,
 			undefined,
-			context(),
+			fakeExtensionContext(),
 		);
 
-		expect(executeTool).toHaveBeenCalledWith("demo", { x: 1 }, expect.objectContaining({ signal: undefined }));
+		expect(executeTool).toHaveBeenCalledWith("demo", { x: 1 }, expect.objectContaining({ signal: bridgeSignals[0] }));
+		expect(bridgeSignals).toHaveLength(1);
+		expect(bridgeSignals[0]?.aborted).toBe(true);
 		expect(kernel.replies).toContainEqual({
 			type: "tool-reply",
 			callId: "call-1",
@@ -129,7 +132,7 @@ describe("createEvalTool", () => {
 			{ language: "js", code: "await tool.eval({})" },
 			undefined,
 			undefined,
-			context(),
+			fakeExtensionContext(),
 		);
 
 		expect(executeTool).not.toHaveBeenCalled();
@@ -151,7 +154,7 @@ describe("createEvalTool", () => {
 		});
 
 		await expect(
-			tool.execute("cell-4", { language: "js", code: "1" }, undefined, undefined, context()),
+			tool.execute("cell-4", { language: "js", code: "1" }, undefined, undefined, fakeExtensionContext()),
 		).rejects.toThrow('Unsupported eval language "js". Enabled languages: py');
 	});
 
@@ -174,7 +177,7 @@ describe("createEvalTool", () => {
 			{ language: "js", code: "heavy()", timeout: 2, reset: true },
 			undefined,
 			undefined,
-			context(),
+			fakeExtensionContext(),
 		);
 
 		expect(kernel.resetCount).toBe(1);
@@ -204,11 +207,17 @@ describe("createEvalTool", () => {
 			{ language: "js", code: "await tool.blocked({})" },
 			undefined,
 			undefined,
-			context(),
+			fakeExtensionContext(),
 		);
 		kernel.onMessage = undefined;
 		kernel.replaceMessages([result("cell-7", "next-ok")]);
-		const second = await tool.execute("cell-7", { language: "js", code: "1 + 1" }, undefined, undefined, context());
+		const second = await tool.execute(
+			"cell-7",
+			{ language: "js", code: "1 + 1" },
+			undefined,
+			undefined,
+			fakeExtensionContext(),
+		);
 
 		expect(kernel.replies).toContainEqual({
 			type: "tool-reply",

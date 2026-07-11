@@ -8,6 +8,7 @@ export interface CompletionToolCallOptions {
 	readonly kernel: EvalKernel;
 	readonly complete: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>;
 	readonly ctx: ExtensionContext;
+	readonly isActive: () => boolean;
 }
 
 export type CompletionToolCallSummary = { readonly ok: true } | { readonly ok: false; readonly error: string };
@@ -15,10 +16,12 @@ export type CompletionToolCallSummary = { readonly ok: true } | { readonly ok: f
 export async function handleCompletionToolCall(options: CompletionToolCallOptions): Promise<CompletionToolCallSummary> {
 	try {
 		const value = await options.complete(toCompletionRequest(options.message.args), options.ctx);
+		if (!options.isActive()) return { ok: false, error: "completion() result ignored after eval finalization" };
 		options.kernel.deliverToolReply({ type: "tool-reply", callId: options.message.callId, ok: true, value });
 		return { ok: true };
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
+		if (!options.isActive()) return { ok: false, error: message };
 		options.kernel.deliverToolReply({
 			type: "tool-reply",
 			callId: options.message.callId,
