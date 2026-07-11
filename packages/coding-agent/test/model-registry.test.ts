@@ -1604,6 +1604,25 @@ describe("ModelRegistry", () => {
 			expect(await registry.getApiKeyAndHeaders(model!)).toMatchObject({ ok: false });
 		});
 
+		test("redacts a selected failing configured command", async () => {
+			const sentinel = "configured-command-secret-sentinel";
+			writeRawModelsJson({
+				"custom-provider": providerWithApiKey(`!sh -c 'echo ${sentinel} >&2; exit 1'`),
+			});
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const model = registry.find("custom-provider", "test-model");
+			expect(model).toBeDefined();
+
+			const auth = await registry.getApiKeyAndHeaders(model!);
+			expect(auth).toMatchObject({ ok: false });
+			if (!auth.ok) {
+				expect(auth.error).toContain(
+					'Failed to resolve API key for provider "custom-provider" from configured shell command',
+				);
+				expect(auth.error).not.toContain(sentinel);
+			}
+		});
+
 		test("missing configured environment key does not defeat runtime or stored auth", async () => {
 			const envVarName = "TEST_API_KEY_MISSING_PRECEDENCE_98765";
 			const originalEnv = process.env[envVarName];
@@ -1620,7 +1639,9 @@ describe("ModelRegistry", () => {
 				authStorage.set("custom-provider", { type: "api_key", key: "stored-api-key" });
 				expect(await registry.getApiKeyAndHeaders(model!)).toMatchObject({ ok: true, apiKey: "stored-api-key" });
 				authStorage.remove("custom-provider");
-				expect(await registry.getApiKeyAndHeaders(model!)).toMatchObject({ ok: false });
+				const auth = await registry.getApiKeyAndHeaders(model!);
+				expect(auth).toMatchObject({ ok: false });
+				if (!auth.ok) expect(auth.error).toContain(`from environment variable: ${envVarName}`);
 			} finally {
 				if (originalEnv === undefined) delete process.env[envVarName];
 				else process.env[envVarName] = originalEnv;

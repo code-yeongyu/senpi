@@ -234,7 +234,7 @@ export function resolveConfigValueOrThrow(config: string, description: string, e
 
 	const reference = parseConfigValueReference(config);
 	if (reference.type === "command") {
-		throw new Error(`Failed to resolve ${description} from shell command: ${reference.config.slice(1)}`);
+		throw new Error(`Failed to resolve ${description} from configured shell command`);
 	}
 
 	if (reference.type === "template") {
