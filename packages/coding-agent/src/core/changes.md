@@ -1,5 +1,27 @@
 # changes
 
+## Post-compaction continuation deadlock fix (2026-07-12)
+
+### What changed
+
+- `agent-session.ts`: deferred post-compaction and queued-message continuations until the current serialized
+  `agent_end` event promise resolves, while registering the detached continuation in `SessionWorkBarrier`.
+- Overflow retry, threshold/pending-message delivery, and normal queued `agent_end` continuation use the same scheduler.
+
+### Why
+
+- Awaiting `agent.continue()` inside the active `agent_end` queue item deadlocked tool-bearing continuations because
+  pre-tool hooks wait for the current agent-event queue to finish persisting.
+
+### Why extension system couldn't handle this
+
+- `AgentSession` owns the event queue, tool-hook barrier, settlement state, and continuation launch boundary.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` around `agent_end` queued continuation handling and `_runAutoCompaction()` recovery.
+- LOW: `_continueAgentAfterCurrentRun()` and the session-work barrier integration.
+
 ## Upstream model context overflow recovery (2026-07-08)
 
 ### What changed
