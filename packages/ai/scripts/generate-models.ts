@@ -75,6 +75,20 @@ const KIMI_STATIC_HEADERS = {
 	"User-Agent": "KimiCLI/1.5",
 } as const;
 
+const KIMI_CODE_STATIC_HEADERS = {
+	"User-Agent": "KimiCLI/1.5",
+	"X-Msh-Platform": "kimi_cli",
+} as const;
+
+const KIMI_CODE_COMPAT: OpenAICompletionsCompat = {
+	supportsStore: false,
+	supportsDeveloperRole: false,
+	supportsReasoningEffort: false,
+	maxTokensField: "max_tokens",
+	supportsStrictMode: false,
+	thinkingFormat: "zai",
+};
+
 const TOGETHER_BASE_URL = "https://api.together.ai/v1";
 const TOGETHER_BASE_COMPAT: OpenAICompletionsCompat = {
 	supportsStore: false,
@@ -332,7 +346,9 @@ function supportsOpenAiMax(model: Model<Api>): boolean {
 }
 
 function isGoogleThinkingApi(model: Model<any>): boolean {
-	return model.api === "google-generative-ai" || model.api === "google-vertex";
+	return (
+		model.api === "google-generative-ai" || model.api === "google-gemini-cli" || model.api === "google-vertex"
+	);
 }
 
 function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
@@ -597,6 +613,9 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	}
 	if (isGoogleThinkingApi(model) && isGemma4Model(model.id)) {
 		mergeThinkingLevelMap(model, { off: null, minimal: "MINIMAL", low: null, medium: null, high: "HIGH" });
+	}
+	if (model.api === "google-gemini-cli" && model.id.startsWith("claude-")) {
+		mergeThinkingLevelMap(model, { max: null });
 	}
 	if (model.provider === "groq" && model.id === "qwen/qwen3-32b") {
 		mergeThinkingLevelMap(model, { minimal: null, low: null, medium: null, high: "default" });
@@ -2112,6 +2131,274 @@ async function generateModels() {
 	];
 	allModels.push(...antLingModels);
 
+	// Gajae API-key login parity providers. Kagi, Parallel, and Tavily are
+	// credential-only web-search services; their placeholder rows keep them in
+	// the model-provider catalog so the coding-agent /login selector can expose
+	// their API-key storage flow until dedicated search-provider auth exists.
+	const zeroCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+	const localOpenAICompat: OpenAICompletionsCompat = {
+		supportsStore: false,
+		supportsDeveloperRole: false,
+		supportsReasoningEffort: false,
+		supportsUsageInStreaming: false,
+		maxTokensField: "max_tokens",
+		supportsStrictMode: false,
+		supportsLongCacheRetention: false,
+	};
+	const gajaeApiKeyProviderModels: Model<Api>[] = [
+		{
+			id: "qwen3.5-plus",
+			name: "Qwen3.5 Plus",
+			api: "openai-completions",
+			provider: "alibaba-coding-plan",
+			baseUrl: "https://coding-intl.dashscope.aliyuncs.com/v1",
+			compat: { supportsDeveloperRole: false },
+			reasoning: true,
+			input: ["text", "image"],
+			cost: zeroCost,
+			contextWindow: 1000000,
+			maxTokens: 65536,
+		},
+		{
+			id: "deepseek-ai/DeepSeek-V3.2",
+			name: "DeepSeek-V3.2",
+			api: "openai-completions",
+			provider: "deepinfra",
+			baseUrl: "https://api.deepinfra.com/v1/openai",
+			reasoning: true,
+			thinkingLevelMap: { xhigh: "xhigh" },
+			input: ["text"],
+			cost: { input: 0.26, output: 0.38, cacheRead: 0.13, cacheWrite: 0 },
+			contextWindow: 163840,
+			maxTokens: 64000,
+		},
+		{
+			id: "accounts/fireworks/routers/kimi-k2p6-turbo",
+			name: "Kimi K2.6 Turbo (Fire Pass)",
+			api: "openai-completions",
+			provider: "firepass",
+			baseUrl: "https://api.fireworks.ai/inference/v1",
+			compat: {
+				supportsStore: false,
+				supportsDeveloperRole: false,
+				maxTokensField: "max_tokens",
+				supportsStrictMode: false,
+				supportsLongCacheRetention: false,
+			},
+			reasoning: true,
+			thinkingLevelMap: { xhigh: "xhigh" },
+			input: ["text", "image"],
+			cost: zeroCost,
+			contextWindow: 262144,
+			maxTokens: 65536,
+		},
+		{
+			id: "fugu",
+			name: "Sakana Fugu",
+			api: "openai-completions",
+			provider: "fugu",
+			baseUrl: "https://api.sakana.ai/v1",
+			compat: {
+				supportsStore: false,
+				supportsDeveloperRole: false,
+				supportsReasoningEffort: false,
+				maxTokensField: "max_tokens",
+			},
+			reasoning: true,
+			input: ["text"],
+			cost: zeroCost,
+			contextWindow: 200000,
+			maxTokens: 65536,
+		},
+		{
+			id: "search",
+			name: "Kagi Search (credential placeholder)",
+			api: "openai-completions",
+			provider: "kagi",
+			baseUrl: "https://kagi.com/api/v0",
+			compat: localOpenAICompat,
+			reasoning: false,
+			input: ["text"],
+			cost: zeroCost,
+			contextWindow: 8192,
+			maxTokens: 1024,
+		},
+		{
+			id: "claude-opus-4-6",
+			name: "Anthropic Opus 4.6",
+			api: "openai-completions",
+			provider: "litellm",
+			baseUrl: "http://localhost:4000/v1",
+			reasoning: true,
+			thinkingLevelMap: { xhigh: "xhigh" },
+			input: ["text", "image"],
+			cost: zeroCost,
+			contextWindow: 1000000,
+			maxTokens: 128000,
+		},
+		{
+			id: "llama-3-8b",
+			name: "Llama 3 8B",
+			api: "openai-completions",
+			provider: "lm-studio",
+			baseUrl: "http://127.0.0.1:1234/v1",
+			compat: localOpenAICompat,
+			reasoning: false,
+			input: ["text"],
+			cost: zeroCost,
+			contextWindow: 8192,
+			maxTokens: 4096,
+		},
+		{
+			id: "openai/gpt-5.4",
+			name: "GPT-5.4",
+			api: "openai-completions",
+			provider: "nanogpt",
+			baseUrl: "https://nano-gpt.com/api/v1",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: zeroCost,
+			contextWindow: 1050000,
+			maxTokens: 128000,
+		},
+		{
+			id: "gpt-oss:20b",
+			name: "GPT OSS (20B)",
+			api: "openai-completions",
+			provider: "ollama",
+			baseUrl: "http://127.0.0.1:11434/v1",
+			compat: localOpenAICompat,
+			reasoning: true,
+			input: ["text"],
+			cost: zeroCost,
+			contextWindow: 131072,
+			maxTokens: 16384,
+		},
+		{
+			id: "gpt-oss:120b",
+			name: "GPT OSS (120B)",
+			api: "openai-completions",
+			provider: "ollama-cloud",
+			baseUrl: "https://ollama.com/v1",
+			compat: localOpenAICompat,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: zeroCost,
+			contextWindow: 131072,
+			maxTokens: 16384,
+		},
+		{
+			id: "search",
+			name: "Parallel Search (credential placeholder)",
+			api: "openai-completions",
+			provider: "parallel",
+			baseUrl: "https://api.parallel.ai/v1beta",
+			compat: localOpenAICompat,
+			reasoning: false,
+			input: ["text"],
+			cost: zeroCost,
+			contextWindow: 8192,
+			maxTokens: 1024,
+		},
+		{
+			id: "deepseek-v3.2",
+			name: "DeepSeek V3.2",
+			api: "openai-completions",
+			provider: "qianfan",
+			baseUrl: "https://qianfan.baidubce.com/v2",
+			compat: {
+				supportsStore: false,
+				supportsDeveloperRole: false,
+				maxTokensField: "max_tokens",
+				supportsStrictMode: false,
+			},
+			reasoning: false,
+			input: ["text"],
+			cost: zeroCost,
+			contextWindow: 98304,
+			maxTokens: 32768,
+		},
+		{
+			id: "coder-model",
+			name: "Qwen Coder",
+			api: "openai-completions",
+			provider: "qwen-portal",
+			baseUrl: "https://portal.qwen.ai/v1",
+			compat: { supportsStore: false, supportsDeveloperRole: false, maxTokensField: "max_tokens" },
+			reasoning: false,
+			input: ["text"],
+			cost: zeroCost,
+			contextWindow: 128000,
+			maxTokens: 8192,
+		},
+		{
+			id: "hf:moonshotai/Kimi-K2.5",
+			name: "moonshotai/Kimi-K2.5",
+			api: "openai-completions",
+			provider: "synthetic",
+			baseUrl: "https://api.synthetic.new/openai/v1",
+			compat: { supportsStore: false, supportsDeveloperRole: false },
+			reasoning: false,
+			input: ["text"],
+			cost: zeroCost,
+			contextWindow: 262144,
+			maxTokens: 8192,
+		},
+		{
+			id: "search",
+			name: "Tavily Search (credential placeholder)",
+			api: "openai-completions",
+			provider: "tavily",
+			baseUrl: "https://api.tavily.com",
+			compat: localOpenAICompat,
+			reasoning: false,
+			input: ["text"],
+			cost: zeroCost,
+			contextWindow: 8192,
+			maxTokens: 1024,
+		},
+		{
+			id: "llama-3.3-70b",
+			name: "Llama 3.3 70B",
+			api: "openai-completions",
+			provider: "venice",
+			baseUrl: "https://api.venice.ai/api/v1",
+			compat: { supportsUsageInStreaming: false },
+			reasoning: false,
+			input: ["text"],
+			cost: zeroCost,
+			contextWindow: 128000,
+			maxTokens: 8192,
+		},
+		{
+			id: "gpt-oss-20b",
+			name: "GPT OSS 20B",
+			api: "openai-completions",
+			provider: "vllm",
+			baseUrl: "http://127.0.0.1:8000/v1",
+			compat: localOpenAICompat,
+			reasoning: true,
+			input: ["text"],
+			cost: zeroCost,
+			contextWindow: 131072,
+			maxTokens: 16384,
+		},
+		{
+			id: "anthropic/claude-opus-4.6",
+			name: "Anthropic Opus 4.6",
+			api: "anthropic-messages",
+			provider: "zenmux",
+			baseUrl: "https://zenmux.ai/api/anthropic",
+			reasoning: true,
+			thinkingLevelMap: { max: "max" },
+			input: ["text", "image"],
+			cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+			contextWindow: 1000000,
+			maxTokens: 128000,
+		},
+	];
+	allModels.push(...gajaeApiKeyProviderModels);
+
 	for (const candidate of allModels) {
 		if (candidate.api === "openai-completions" && candidate.id.includes("deepseek-v4")) {
 			const preservesNativeReasoningEffort = candidate.provider === "openrouter" || candidate.provider === "opencode";
@@ -2381,11 +2668,446 @@ async function generateModels() {
 		}));
 	allModels.push(...azureOpenAiModels);
 
+	// OAuth-backed catalogs whose account tokens target provider-specific gateways.
+	const oauthParityModels: Model<Api>[] = [
+		{
+			id: "default",
+			name: "Auto",
+			api: "openai-completions",
+			provider: "cursor",
+			baseUrl: "https://api2.cursor.sh",
+			reasoning: false,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 200000,
+			maxTokens: 64000,
+		},
+		{
+			id: "claude-sonnet-4-6",
+			name: "Claude Sonnet 4.6",
+			api: "anthropic-messages",
+			provider: "gitlab-duo",
+			baseUrl: "https://cloud.gitlab.com/ai/v1/proxy/anthropic/",
+			reasoning: true,
+			thinkingLevelMap: { xhigh: "max" },
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 1000000,
+			maxTokens: 64000,
+		},
+		{
+			id: "gpt-5.1-2025-11-13",
+			name: "GPT-5.1",
+			api: "openai-responses",
+			provider: "gitlab-duo",
+			baseUrl: "https://cloud.gitlab.com/ai/v1/proxy/openai/v1",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 128000,
+			maxTokens: 16384,
+		},
+		{
+			id: "sonar-pro",
+			name: "Sonar Pro",
+			api: "openai-completions",
+			provider: "perplexity",
+			baseUrl: "https://api.perplexity.ai",
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 3, output: 15, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 200000,
+			maxTokens: 8192,
+		},
+		{
+			id: "anthropic/claude-sonnet-4.5",
+			name: "Claude Sonnet 4.5",
+			api: "openai-completions",
+			provider: "kilo",
+			baseUrl: "https://api.kilo.ai/api/gateway",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+			contextWindow: 200000,
+			maxTokens: 64000,
+		},
+		{
+			id: "glm-5.2",
+			name: "GLM-5.2 (ZCode)",
+			api: "anthropic-messages",
+			provider: "glm-zcode",
+			baseUrl: "https://api.z.ai/api/anthropic",
+			headers: {
+				"User-Agent": "ZCode/3.1.2",
+				"X-Title": "Z Code@electron",
+				"HTTP-Referer": "https://zcode.z.ai",
+				"X-ZCode-Agent": "glm",
+				"X-ZCode-App-Version": "3.1.2",
+				"X-Release-Channel": "production",
+			},
+			reasoning: true,
+			thinkingLevelMap: { minimal: null, low: "high", medium: "high", high: "high", max: "max" },
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 1000000,
+			maxTokens: 131072,
+		},
+	];
+	allModels.push(...oauthParityModels);
+
+	// Cloud Code Assist catalogs are endpoint-specific contracts, not aliases for
+	// public Generative Language models. These rows mirror the verified bundled
+	// Gemini CLI and Antigravity metadata in Gajae.
+	interface GoogleCcaModelMetadata {
+		id: string;
+		name: string;
+		reasoning: boolean;
+		input: ("text" | "image")[];
+		cost?: Model<"google-gemini-cli">["cost"];
+		contextWindow: number;
+		maxTokens: number;
+	}
+	const createGoogleCcaCatalog = (
+		provider: "google-gemini-cli" | "google-antigravity",
+		rows: GoogleCcaModelMetadata[],
+	): Model<"google-gemini-cli">[] =>
+		rows.map((row) => ({
+			id: row.id,
+			name: row.name,
+			api: "google-gemini-cli",
+			provider,
+			baseUrl:
+				provider === "google-antigravity"
+					? "https://daily-cloudcode-pa.sandbox.googleapis.com"
+					: "https://cloudcode-pa.googleapis.com",
+			reasoning: row.reasoning,
+			input: row.input,
+			cost: row.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: row.contextWindow,
+			maxTokens: row.maxTokens,
+		}));
+
+	const googleGeminiCliModels = createGoogleCcaCatalog("google-gemini-cli", [
+		{
+			id: "gemini-2.0-flash",
+			name: "Gemini 2.0 Flash",
+			reasoning: false,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 8192,
+		},
+		{
+			id: "gemini-2.5-flash",
+			name: "Gemini 2.5 Flash",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+		{
+			id: "gemini-2.5-pro",
+			name: "Gemini 2.5 Pro",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+		{
+			id: "gemini-3-flash-preview",
+			name: "Gemini 3 Flash Preview",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+		{
+			id: "gemini-3-pro-preview",
+			name: "Gemini 3 Pro Preview",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1000000,
+			maxTokens: 64000,
+		},
+		{
+			id: "gemini-3.1-flash-lite-preview",
+			name: "Gemini 3.1 Flash Lite Preview",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+		{
+			id: "gemini-3.1-pro-preview",
+			name: "Gemini 3.1 Pro Preview",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+		{
+			id: "gemini-3.5-flash",
+			name: "Gemini 3.5 Flash",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 1.5, output: 9, cacheRead: 0.15, cacheWrite: 0 },
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+	]);
+
+	const googleAntigravityModels = createGoogleCcaCatalog("google-antigravity", [
+		{
+			id: "claude-opus-4-5-thinking",
+			name: "Anthropic Opus 4.5 Thinking (Antigravity)",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 200000,
+			maxTokens: 64000,
+		},
+		{
+			id: "claude-opus-4-6-thinking",
+			name: "Anthropic Opus 4.6 (Thinking) (Antigravity)",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1000000,
+			maxTokens: 64000,
+		},
+		{
+			id: "claude-sonnet-4-5",
+			name: "Anthropic Sonnet 4.5",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1000000,
+			maxTokens: 64000,
+		},
+		{
+			id: "claude-sonnet-4-5-thinking",
+			name: "Anthropic Sonnet 4.5 Thinking (Antigravity)",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 200000,
+			maxTokens: 64000,
+		},
+		{
+			id: "claude-sonnet-4-6",
+			name: "Anthropic Sonnet 4.6",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1000000,
+			maxTokens: 64000,
+		},
+		{
+			id: "claude-sonnet-4-6-thinking",
+			name: "Anthropic Sonnet 4.6 Thinking (Antigravity)",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1000000,
+			maxTokens: 128000,
+		},
+		{
+			id: "gemini-2.5-flash",
+			name: "Gemini 2.5 Flash",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+		{
+			id: "gemini-2.5-flash-thinking",
+			name: "Gemini 2.5 Flash (Thinking) (Antigravity)",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65535,
+		},
+		{
+			id: "gemini-2.5-pro",
+			name: "Gemini 2.5 Pro",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+		{
+			id: "gemini-3-flash",
+			name: "Gemini 3 Flash",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+		{
+			id: "gemini-3-pro-high",
+			name: "Gemini 3 Pro (High) (Antigravity)",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65535,
+		},
+		{
+			id: "gemini-3-pro-low",
+			name: "Gemini 3 Pro (Low) (Antigravity)",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65535,
+		},
+		{
+			id: "gemini-3.1-pro-low",
+			name: "Gemini 3.1 Pro (Low) (Antigravity)",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65535,
+		},
+		{
+			id: "gpt-oss-120b-medium",
+			name: "GPT-OSS 120B (Medium) (Antigravity)",
+			reasoning: true,
+			input: ["text"],
+			contextWindow: 114000,
+			maxTokens: 32768,
+		},
+	]);
+	allModels.push(...googleGeminiCliModels, ...googleAntigravityModels);
+
+	// Kimi Code OAuth uses Kimi's coding endpoint rather than the API-key-only
+	// kimi-coding provider. Keep the bundled set explicit because the endpoint's
+	// unauthenticated model catalog is not available during generation.
+	const kimiCodeModels: Model<"openai-completions">[] = [
+		{
+			id: "kimi-for-coding",
+			name: "Kimi For Coding",
+			api: "openai-completions",
+			provider: "kimi-code",
+			baseUrl: "https://api.kimi.com/coding/v1",
+			headers: KIMI_CODE_STATIC_HEADERS,
+			compat: KIMI_CODE_COMPAT,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 262144,
+			maxTokens: 32000,
+		},
+		{
+			id: "kimi-k2",
+			name: "Kimi K2",
+			api: "openai-completions",
+			provider: "kimi-code",
+			baseUrl: "https://api.kimi.com/coding/v1",
+			headers: KIMI_CODE_STATIC_HEADERS,
+			compat: KIMI_CODE_COMPAT,
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 262144,
+			maxTokens: 262144,
+		},
+		{
+			id: "kimi-k2-turbo-preview",
+			name: "Kimi K2 Turbo Preview",
+			api: "openai-completions",
+			provider: "kimi-code",
+			baseUrl: "https://api.kimi.com/coding/v1",
+			headers: KIMI_CODE_STATIC_HEADERS,
+			compat: KIMI_CODE_COMPAT,
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 262144,
+			maxTokens: 32000,
+		},
+		{
+			id: "kimi-k2.5",
+			name: "Kimi K2.5",
+			api: "openai-completions",
+			provider: "kimi-code",
+			baseUrl: "https://api.kimi.com/coding/v1",
+			headers: KIMI_CODE_STATIC_HEADERS,
+			compat: KIMI_CODE_COMPAT,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 262144,
+			maxTokens: 65536,
+		},
+		{
+			id: "kimi-k2.7-code",
+			name: "Kimi K2.7 Code",
+			api: "openai-completions",
+			provider: "kimi-code",
+			baseUrl: "https://api.kimi.com/coding/v1",
+			headers: KIMI_CODE_STATIC_HEADERS,
+			compat: KIMI_CODE_COMPAT,
+			reasoning: true,
+			thinkingLevelMap: { off: null },
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 262144,
+			maxTokens: 65536,
+		},
+	];
+	allModels.push(...kimiCodeModels);
+
 	for (const model of allModels) {
 		applyThinkingLevelMetadata(model);
 		applyOpenAICompletionsCompatMetadata(model);
 		applyOpenAIToolSearchMetadata(model);
 	}
+
+	const cloneProviderModels = (
+		sourceProvider: string,
+		targetProvider: KnownProvider,
+		overrides?: (model: Model<any>) => Partial<Model<any>>,
+	): Model<any>[] =>
+		allModels
+			.filter((model) => model.provider === sourceProvider)
+			.map((model) => {
+				const override = overrides?.(model);
+				const cost = override?.cost ?? model.cost;
+				return {
+					...model,
+					...override,
+					provider: targetProvider,
+					headers: override?.headers ?? (model.headers ? { ...model.headers } : undefined),
+					thinkingLevelMap:
+						override?.thinkingLevelMap ?? (model.thinkingLevelMap ? { ...model.thinkingLevelMap } : undefined),
+					input: [...(override?.input ?? model.input)],
+					cost: {
+						...cost,
+						tiers: cost.tiers?.map((tier) => ({ ...tier })),
+					},
+				};
+			});
+
+	const minimaxCodeCompat: OpenAICompletionsCompat = {
+		supportsStore: false,
+		supportsDeveloperRole: false,
+		supportsReasoningEffort: false,
+		maxTokensField: "max_tokens",
+		requiresReasoningContentOnAssistantMessages: true,
+	};
+	const aliasedModels = [
+		...cloneProviderModels("openai-codex", "openai-codex-device"),
+		...cloneProviderModels("minimax", "minimax-code", () => ({
+			api: "openai-completions",
+			baseUrl: "https://api.minimax.io/v1",
+			compat: minimaxCodeCompat,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		})),
+		...cloneProviderModels("minimax-cn", "minimax-code-cn", () => ({
+			api: "openai-completions",
+			baseUrl: "https://api.minimaxi.com/v1",
+			compat: minimaxCodeCompat,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		})),
+		...cloneProviderModels("moonshotai", "moonshot"),
+		...cloneProviderModels("opencode", "opencode-zen"),
+	];
+	for (const model of aliasedModels) {
+		applyOpenAICompletionsCompatMetadata(model);
+	}
+	allModels.push(...aliasedModels);
 
 	// Group by provider and deduplicate by model ID
 	const providers: Record<string, Record<string, Model<any>>> = {};

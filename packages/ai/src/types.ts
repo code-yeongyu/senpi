@@ -1,6 +1,7 @@
 import type { AnthropicOptions } from "./api/anthropic-messages.ts";
 import type { AzureOpenAIResponsesOptions } from "./api/azure-openai-responses.ts";
 import type { BedrockOptions } from "./api/bedrock-converse-stream.ts";
+import type { GoogleGeminiCliOptions } from "./api/google-gemini-cli.ts";
 import type { GoogleOptions } from "./api/google-generative-ai.ts";
 import type { GoogleVertexOptions } from "./api/google-vertex.ts";
 import type { MistralOptions } from "./api/mistral-conversations.ts";
@@ -21,6 +22,7 @@ export type KnownApi =
 	| "anthropic-messages"
 	| "bedrock-converse-stream"
 	| "google-generative-ai"
+	| "google-gemini-cli"
 	| "google-vertex";
 
 export type Api = KnownApi | (string & {});
@@ -30,41 +32,72 @@ export type KnownImagesApi = "openrouter-images";
 export type ImagesApi = KnownImagesApi | (string & {});
 
 export type KnownProvider =
+	| "alibaba-coding-plan"
 	| "amazon-bedrock"
 	| "ant-ling"
 	| "anthropic"
-	| "google"
-	| "google-vertex"
-	| "openai"
 	| "azure-openai-responses"
-	| "openai-codex"
-	| "nvidia"
-	| "deepseek"
-	| "github-copilot"
-	| "xai"
-	| "groq"
 	| "cerebras"
-	| "openrouter"
-	| "vercel-ai-gateway"
-	| "zai"
-	| "zai-coding-cn"
-	| "mistral"
+	| "cloudflare-ai-gateway"
+	| "cloudflare-workers-ai"
+	| "cursor"
+	| "deepinfra"
+	| "deepseek"
+	| "firepass"
+	| "fireworks"
+	| "fugu"
+	| "github-copilot"
+	| "gitlab-duo"
+	| "glm-zcode"
+	| "google"
+	| "google-antigravity"
+	| "google-gemini-cli"
+	| "google-vertex"
+	| "groq"
+	| "huggingface"
+	| "kagi"
+	| "kilo"
+	| "kimi-code"
+	| "kimi-coding"
+	| "litellm"
+	| "lm-studio"
 	| "minimax"
 	| "minimax-cn"
+	| "minimax-code"
+	| "minimax-code-cn"
+	| "mistral"
+	| "moonshot"
 	| "moonshotai"
 	| "moonshotai-cn"
-	| "huggingface"
-	| "fireworks"
-	| "together"
+	| "nanogpt"
+	| "nvidia"
+	| "ollama"
+	| "ollama-cloud"
+	| "openai"
+	| "openai-codex"
+	| "openai-codex-device"
 	| "opencode"
 	| "opencode-go"
-	| "kimi-coding"
-	| "cloudflare-workers-ai"
-	| "cloudflare-ai-gateway"
+	| "opencode-zen"
+	| "openrouter"
+	| "parallel"
+	| "perplexity"
+	| "qianfan"
+	| "qwen-portal"
+	| "synthetic"
+	| "tavily"
+	| "together"
+	| "venice"
+	| "vercel-ai-gateway"
+	| "vllm"
+	| "xai"
 	| "xiaomi"
-	| "xiaomi-token-plan-cn"
 	| "xiaomi-token-plan-ams"
-	| "xiaomi-token-plan-sgp";
+	| "xiaomi-token-plan-cn"
+	| "xiaomi-token-plan-sgp"
+	| "zai"
+	| "zai-coding-cn"
+	| "zenmux";
 export type ProviderId = KnownProvider | string;
 
 export type KnownImagesProvider = "openrouter";
@@ -206,6 +239,7 @@ export interface ApiOptionsMap {
 	"openai-codex-responses": OpenAICodexResponsesOptions;
 	"azure-openai-responses": AzureOpenAIResponsesOptions;
 	"google-generative-ai": GoogleOptions;
+	"google-gemini-cli": GoogleGeminiCliOptions;
 	"google-vertex": GoogleVertexOptions;
 	"mistral-conversations": MistralOptions;
 	"bedrock-converse-stream": BedrockOptions;

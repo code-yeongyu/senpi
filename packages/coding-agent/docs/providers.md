@@ -19,7 +19,7 @@ Use `/login` in interactive mode, then select a provider:
 - Claude Pro/Max
 - GitHub Copilot
 
-Use `/logout` to clear credentials. Tokens are stored in `~/.senpi/agent/auth.json` and auto-refresh when expired.
+Use `/logout` to clear credentials. Tokens are stored in `~/.senpi/agent/auth.json` and auto-refresh when expired. For multiple local provider accounts, use the [auth broker and gateway](auth-broker-gateway.md); it owns durable tokens and uses explicit `provider/model` gateway IDs.
 
 ### OpenAI Codex
 
