@@ -1,9 +1,13 @@
 import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext } from "@code-yeongyu/senpi";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
+import { RESERVED_AGENT_TOOL } from "../bridge/reserved.ts";
+import { type AgentExecuteTool, runEvalAgent } from "../bridges/agent-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
 import { handleCompletionToolCall } from "../completion/tool-bridge.ts";
+import { type CodemodeSettings, defaultCodemodeSettings } from "../config/settings.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncateTail } from "../host-sdk.ts";
-import type { EvalKernel, EvalToolDetails, EvalToolInput, ExecuteTool } from "./types.ts";
+import { upsertStatusEvent } from "./status-events.ts";
+import type { EvalKernel, EvalStatusEvent, EvalToolDetails, EvalToolInput } from "./types.ts";
 
 type ImageContent = { type: "image"; mimeType: string; data: string };
 type ToolContent = AgentToolResult<unknown>["content"][number];
@@ -18,6 +22,7 @@ export interface CellState {
 	readonly toolCalls: EvalToolDetails["toolCalls"] extends readonly (infer T)[] ? T[] : never;
 	readonly images: ImageContent[];
 	readonly pendingBridgeCalls: Promise<void>[];
+	statusEvents?: EvalStatusEvent[];
 	active: boolean;
 	output: string;
 	phase: string | undefined;
@@ -25,7 +30,8 @@ export interface CellState {
 }
 
 export interface CellBridgeRuntime {
-	readonly executeTool: ExecuteTool;
+	readonly executeTool: AgentExecuteTool;
+	readonly settings?: Pick<CodemodeSettings, "taskTools">;
 	readonly complete?: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>;
 	readonly ctx: ExtensionContext;
 }
@@ -100,6 +106,10 @@ export class CellHandler {
 			});
 			return;
 		}
+		if (message.toolName === RESERVED_AGENT_TOOL) {
+			await this.#handleAgentToolCall(message);
+			return;
+		}
 		if (message.toolName === "completion" && this.#runtime.complete) {
 			const result = await handleCompletionToolCall({
 				message,
@@ -143,6 +153,44 @@ export class CellHandler {
 		this.#emitUpdate(false);
 	}
 
+	async #handleAgentToolCall(message: Extract<KernelToHostMessage, { type: "tool-call" }>): Promise<void> {
+		try {
+			const value = await runEvalAgent(message.args, {
+				callId: message.callId,
+				taskToolName: this.#runtime.settings?.taskTools?.task ?? defaultCodemodeSettings.taskTools.task,
+				executeTool: this.#runtime.executeTool,
+				signal: this.#state.signal,
+				emitStatus: (event) => this.#recordStatus(event),
+			});
+			if (!this.#state.active) return;
+			this.#state.toolCalls.push({ name: message.toolName, ok: true });
+			this.#kernel.deliverToolReply({
+				type: "tool-reply",
+				callId: message.callId,
+				ok: true,
+				value,
+			});
+		} catch (error) {
+			if (!this.#state.active) return;
+			const messageText = error instanceof Error ? error.message : String(error);
+			this.#state.toolCalls.push({ name: message.toolName, ok: false, error: messageText });
+			this.#kernel.deliverToolReply({
+				type: "tool-reply",
+				callId: message.callId,
+				ok: false,
+				error: { message: messageText },
+			});
+		}
+		this.#emitUpdate(false);
+	}
+
+	#recordStatus(event: EvalStatusEvent): void {
+		const events = this.#state.statusEvents ?? [];
+		if (this.#state.statusEvents === undefined) this.#state.statusEvents = events;
+		upsertStatusEvent(events, event);
+		this.#emitUpdate(false);
+	}
+
 	#details(truncated: boolean, isError: boolean): EvalToolDetails {
 		return {
 			language: this.#state.language,
@@ -152,6 +200,7 @@ export class CellHandler {
 			truncated,
 			isError,
 			phase: this.#state.phase,
+			...(this.#state.statusEvents === undefined ? {} : { statusEvents: this.#state.statusEvents }),
 		};
 	}
 
