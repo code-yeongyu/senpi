@@ -144,7 +144,7 @@ function candidateInvocation(candidate: string): { readonly command: string; rea
 }
 
 function parseVersion(output: string): string | null {
-	const match = /(?:Python|ruby|julia)\s+v?(\d+(?:\.\d+){1,3})/i.exec(output.trim());
+	const match = /(?:Python|ruby|julia)\s+(?:version\s+)?v?(\d+(?:\.\d+){1,3})/i.exec(output.trim());
 	return match?.[1] ?? null;
 }
 
