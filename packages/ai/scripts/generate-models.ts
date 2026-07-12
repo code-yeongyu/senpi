@@ -332,7 +332,9 @@ function supportsOpenAiMax(model: Model<Api>): boolean {
 }
 
 function isGoogleThinkingApi(model: Model<any>): boolean {
-	return model.api === "google-generative-ai" || model.api === "google-vertex";
+	return (
+		model.api === "google-generative-ai" || model.api === "google-gemini-cli" || model.api === "google-vertex"
+	);
 }
 
 function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
@@ -597,6 +599,9 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	}
 	if (isGoogleThinkingApi(model) && isGemma4Model(model.id)) {
 		mergeThinkingLevelMap(model, { off: null, minimal: "MINIMAL", low: null, medium: null, high: "HIGH" });
+	}
+	if (model.api === "google-gemini-cli" && model.id.startsWith("claude-")) {
+		mergeThinkingLevelMap(model, { max: null });
 	}
 	if (model.provider === "groq" && model.id === "qwen/qwen3-32b") {
 		mergeThinkingLevelMap(model, { minimal: null, low: null, medium: null, high: "default" });
@@ -2380,6 +2385,309 @@ async function generateModels() {
 			contextWindow: AZURE_CONTEXT_WINDOW_OVERRIDES[model.id] ?? model.contextWindow,
 		}));
 	allModels.push(...azureOpenAiModels);
+
+	// OAuth-backed catalogs whose account tokens target provider-specific gateways.
+	const oauthParityModels: Model<Api>[] = [
+		{
+			id: "default",
+			name: "Auto",
+			api: "openai-completions",
+			provider: "cursor",
+			baseUrl: "https://api2.cursor.sh",
+			reasoning: false,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 200000,
+			maxTokens: 64000,
+		},
+		{
+			id: "claude-sonnet-4-6",
+			name: "Claude Sonnet 4.6",
+			api: "anthropic-messages",
+			provider: "gitlab-duo",
+			baseUrl: "https://cloud.gitlab.com/ai/v1/proxy/anthropic/",
+			reasoning: true,
+			thinkingLevelMap: { xhigh: "max" },
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 1000000,
+			maxTokens: 64000,
+		},
+		{
+			id: "gpt-5.1-2025-11-13",
+			name: "GPT-5.1",
+			api: "openai-responses",
+			provider: "gitlab-duo",
+			baseUrl: "https://cloud.gitlab.com/ai/v1/proxy/openai/v1",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 128000,
+			maxTokens: 16384,
+		},
+		{
+			id: "sonar-pro",
+			name: "Sonar Pro",
+			api: "openai-completions",
+			provider: "perplexity",
+			baseUrl: "https://api.perplexity.ai",
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 3, output: 15, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 200000,
+			maxTokens: 8192,
+		},
+		{
+			id: "anthropic/claude-sonnet-4.5",
+			name: "Claude Sonnet 4.5",
+			api: "openai-completions",
+			provider: "kilo",
+			baseUrl: "https://api.kilo.ai/api/gateway",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+			contextWindow: 200000,
+			maxTokens: 64000,
+		},
+		{
+			id: "glm-5.2",
+			name: "GLM-5.2 (ZCode)",
+			api: "anthropic-messages",
+			provider: "glm-zcode",
+			baseUrl: "https://api.z.ai/api/anthropic",
+			headers: {
+				"User-Agent": "ZCode/3.1.2",
+				"X-Title": "Z Code@electron",
+				"HTTP-Referer": "https://zcode.z.ai",
+				"X-ZCode-Agent": "glm",
+				"X-ZCode-App-Version": "3.1.2",
+				"X-Release-Channel": "production",
+			},
+			reasoning: true,
+			thinkingLevelMap: { minimal: null, low: "high", medium: "high", high: "high", max: "max" },
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 1000000,
+			maxTokens: 131072,
+		},
+	];
+	allModels.push(...oauthParityModels);
+
+	// Cloud Code Assist catalogs are endpoint-specific contracts, not aliases for
+	// public Generative Language models. These rows mirror the verified bundled
+	// Gemini CLI and Antigravity metadata in Gajae.
+	interface GoogleCcaModelMetadata {
+		id: string;
+		name: string;
+		reasoning: boolean;
+		input: ("text" | "image")[];
+		cost?: Model<"google-gemini-cli">["cost"];
+		contextWindow: number;
+		maxTokens: number;
+	}
+	const createGoogleCcaCatalog = (
+		provider: "google-gemini-cli" | "google-antigravity",
+		rows: GoogleCcaModelMetadata[],
+	): Model<"google-gemini-cli">[] =>
+		rows.map((row) => ({
+			id: row.id,
+			name: row.name,
+			api: "google-gemini-cli",
+			provider,
+			baseUrl:
+				provider === "google-antigravity"
+					? "https://daily-cloudcode-pa.sandbox.googleapis.com"
+					: "https://cloudcode-pa.googleapis.com",
+			reasoning: row.reasoning,
+			input: row.input,
+			cost: row.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: row.contextWindow,
+			maxTokens: row.maxTokens,
+		}));
+
+	const googleGeminiCliModels = createGoogleCcaCatalog("google-gemini-cli", [
+		{
+			id: "gemini-2.0-flash",
+			name: "Gemini 2.0 Flash",
+			reasoning: false,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 8192,
+		},
+		{
+			id: "gemini-2.5-flash",
+			name: "Gemini 2.5 Flash",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+		{
+			id: "gemini-2.5-pro",
+			name: "Gemini 2.5 Pro",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+		{
+			id: "gemini-3-flash-preview",
+			name: "Gemini 3 Flash Preview",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+		{
+			id: "gemini-3-pro-preview",
+			name: "Gemini 3 Pro Preview",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1000000,
+			maxTokens: 64000,
+		},
+		{
+			id: "gemini-3.1-flash-lite-preview",
+			name: "Gemini 3.1 Flash Lite Preview",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+		{
+			id: "gemini-3.1-pro-preview",
+			name: "Gemini 3.1 Pro Preview",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+		{
+			id: "gemini-3.5-flash",
+			name: "Gemini 3.5 Flash",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 1.5, output: 9, cacheRead: 0.15, cacheWrite: 0 },
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+	]);
+
+	const googleAntigravityModels = createGoogleCcaCatalog("google-antigravity", [
+		{
+			id: "claude-opus-4-5-thinking",
+			name: "Anthropic Opus 4.5 Thinking (Antigravity)",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 200000,
+			maxTokens: 64000,
+		},
+		{
+			id: "claude-opus-4-6-thinking",
+			name: "Anthropic Opus 4.6 (Thinking) (Antigravity)",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1000000,
+			maxTokens: 64000,
+		},
+		{
+			id: "claude-sonnet-4-5",
+			name: "Anthropic Sonnet 4.5",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1000000,
+			maxTokens: 64000,
+		},
+		{
+			id: "claude-sonnet-4-5-thinking",
+			name: "Anthropic Sonnet 4.5 Thinking (Antigravity)",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 200000,
+			maxTokens: 64000,
+		},
+		{
+			id: "claude-sonnet-4-6",
+			name: "Anthropic Sonnet 4.6",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1000000,
+			maxTokens: 64000,
+		},
+		{
+			id: "claude-sonnet-4-6-thinking",
+			name: "Anthropic Sonnet 4.6 Thinking (Antigravity)",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1000000,
+			maxTokens: 128000,
+		},
+		{
+			id: "gemini-2.5-flash",
+			name: "Gemini 2.5 Flash",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+		{
+			id: "gemini-2.5-flash-thinking",
+			name: "Gemini 2.5 Flash (Thinking) (Antigravity)",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65535,
+		},
+		{
+			id: "gemini-2.5-pro",
+			name: "Gemini 2.5 Pro",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+		{
+			id: "gemini-3-flash",
+			name: "Gemini 3 Flash",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+		{
+			id: "gemini-3-pro-high",
+			name: "Gemini 3 Pro (High) (Antigravity)",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65535,
+		},
+		{
+			id: "gemini-3-pro-low",
+			name: "Gemini 3 Pro (Low) (Antigravity)",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65535,
+		},
+		{
+			id: "gemini-3.1-pro-low",
+			name: "Gemini 3.1 Pro (Low) (Antigravity)",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1048576,
+			maxTokens: 65535,
+		},
+		{
+			id: "gpt-oss-120b-medium",
+			name: "GPT-OSS 120B (Medium) (Antigravity)",
+			reasoning: true,
+			input: ["text"],
+			contextWindow: 114000,
+			maxTokens: 32768,
+		},
+	]);
+	allModels.push(...googleGeminiCliModels, ...googleAntigravityModels);
 
 	for (const model of allModels) {
 		applyThinkingLevelMetadata(model);

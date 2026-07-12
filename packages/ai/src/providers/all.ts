@@ -9,13 +9,18 @@ import { azureOpenAIResponsesProvider } from "./azure-openai-responses.ts";
 import { cerebrasProvider } from "./cerebras.ts";
 import { cloudflareAIGatewayProvider } from "./cloudflare-ai-gateway.ts";
 import { cloudflareWorkersAIProvider } from "./cloudflare-workers-ai.ts";
+import { cursorProvider } from "./cursor.ts";
 import { deepseekProvider } from "./deepseek.ts";
 import { fireworksProvider } from "./fireworks.ts";
 import { githubCopilotProvider } from "./github-copilot.ts";
+import { gitlabDuoProvider } from "./gitlab-duo.ts";
+import { glmZcodeProvider } from "./glm-zcode.ts";
 import { googleProvider } from "./google.ts";
+import { googleAntigravityProvider, googleGeminiCliProvider } from "./google-gemini-cli.ts";
 import { googleVertexProvider } from "./google-vertex.ts";
 import { groqProvider } from "./groq.ts";
 import { huggingfaceProvider } from "./huggingface.ts";
+import { kiloProvider } from "./kilo.ts";
 import { kimiCodingProvider } from "./kimi-coding.ts";
 import { minimaxProvider } from "./minimax.ts";
 import { minimaxCnProvider } from "./minimax-cn.ts";
@@ -29,6 +34,7 @@ import { opencodeProvider } from "./opencode.ts";
 import { opencodeGoProvider } from "./opencode-go.ts";
 import { openrouterProvider } from "./openrouter.ts";
 import { openrouterImagesProvider } from "./openrouter-images.ts";
+import { perplexityProvider } from "./perplexity.ts";
 import { togetherProvider } from "./together.ts";
 import { vercelAIGatewayProvider } from "./vercel-ai-gateway.ts";
 import { xaiProvider } from "./xai.ts";
@@ -115,13 +121,19 @@ export function builtinProviders(): Provider[] {
 		cerebrasProvider(),
 		cloudflareAIGatewayProvider(),
 		cloudflareWorkersAIProvider(),
+		cursorProvider(),
 		deepseekProvider(),
 		fireworksProvider(),
 		githubCopilotProvider(),
+		gitlabDuoProvider(),
+		glmZcodeProvider(),
 		googleProvider(),
+		googleGeminiCliProvider(),
+		googleAntigravityProvider(),
 		googleVertexProvider(),
 		groqProvider(),
 		huggingfaceProvider(),
+		kiloProvider(),
 		kimiCodingProvider(),
 		minimaxProvider(),
 		minimaxCnProvider(),
@@ -134,6 +146,7 @@ export function builtinProviders(): Provider[] {
 		opencodeProvider(),
 		opencodeGoProvider(),
 		openrouterProvider(),
+		perplexityProvider(),
 		togetherProvider(),
 		vercelAIGatewayProvider(),
 		xaiProvider(),

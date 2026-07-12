@@ -8,13 +8,19 @@ import { AZURE_OPENAI_RESPONSES_MODELS } from "./providers/azure-openai-response
 import { CEREBRAS_MODELS } from "./providers/cerebras.models.ts";
 import { CLOUDFLARE_AI_GATEWAY_MODELS } from "./providers/cloudflare-ai-gateway.models.ts";
 import { CLOUDFLARE_WORKERS_AI_MODELS } from "./providers/cloudflare-workers-ai.models.ts";
+import { CURSOR_MODELS } from "./providers/cursor.models.ts";
 import { DEEPSEEK_MODELS } from "./providers/deepseek.models.ts";
 import { FIREWORKS_MODELS } from "./providers/fireworks.models.ts";
 import { GITHUB_COPILOT_MODELS } from "./providers/github-copilot.models.ts";
+import { GITLAB_DUO_MODELS } from "./providers/gitlab-duo.models.ts";
+import { GLM_ZCODE_MODELS } from "./providers/glm-zcode.models.ts";
 import { GOOGLE_MODELS } from "./providers/google.models.ts";
+import { GOOGLE_ANTIGRAVITY_MODELS } from "./providers/google-antigravity.models.ts";
+import { GOOGLE_GEMINI_CLI_MODELS } from "./providers/google-gemini-cli.models.ts";
 import { GOOGLE_VERTEX_MODELS } from "./providers/google-vertex.models.ts";
 import { GROQ_MODELS } from "./providers/groq.models.ts";
 import { HUGGINGFACE_MODELS } from "./providers/huggingface.models.ts";
+import { KILO_MODELS } from "./providers/kilo.models.ts";
 import { KIMI_CODING_MODELS } from "./providers/kimi-coding.models.ts";
 import { MINIMAX_MODELS } from "./providers/minimax.models.ts";
 import { MINIMAX_CN_MODELS } from "./providers/minimax-cn.models.ts";
@@ -27,6 +33,7 @@ import { OPENAI_CODEX_MODELS } from "./providers/openai-codex.models.ts";
 import { OPENCODE_MODELS } from "./providers/opencode.models.ts";
 import { OPENCODE_GO_MODELS } from "./providers/opencode-go.models.ts";
 import { OPENROUTER_MODELS } from "./providers/openrouter.models.ts";
+import { PERPLEXITY_MODELS } from "./providers/perplexity.models.ts";
 import { TOGETHER_MODELS } from "./providers/together.models.ts";
 import { VERCEL_AI_GATEWAY_MODELS } from "./providers/vercel-ai-gateway.models.ts";
 import { XAI_MODELS } from "./providers/xai.models.ts";
@@ -45,13 +52,19 @@ export const MODELS = {
 	"cerebras": CEREBRAS_MODELS,
 	"cloudflare-ai-gateway": CLOUDFLARE_AI_GATEWAY_MODELS,
 	"cloudflare-workers-ai": CLOUDFLARE_WORKERS_AI_MODELS,
+	"cursor": CURSOR_MODELS,
 	"deepseek": DEEPSEEK_MODELS,
 	"fireworks": FIREWORKS_MODELS,
 	"github-copilot": GITHUB_COPILOT_MODELS,
+	"gitlab-duo": GITLAB_DUO_MODELS,
+	"glm-zcode": GLM_ZCODE_MODELS,
 	"google": GOOGLE_MODELS,
+	"google-antigravity": GOOGLE_ANTIGRAVITY_MODELS,
+	"google-gemini-cli": GOOGLE_GEMINI_CLI_MODELS,
 	"google-vertex": GOOGLE_VERTEX_MODELS,
 	"groq": GROQ_MODELS,
 	"huggingface": HUGGINGFACE_MODELS,
+	"kilo": KILO_MODELS,
 	"kimi-coding": KIMI_CODING_MODELS,
 	"minimax": MINIMAX_MODELS,
 	"minimax-cn": MINIMAX_CN_MODELS,
@@ -64,6 +77,7 @@ export const MODELS = {
 	"opencode": OPENCODE_MODELS,
 	"opencode-go": OPENCODE_GO_MODELS,
 	"openrouter": OPENROUTER_MODELS,
+	"perplexity": PERPLEXITY_MODELS,
 	"together": TOGETHER_MODELS,
 	"vercel-ai-gateway": VERCEL_AI_GATEWAY_MODELS,
 	"xai": XAI_MODELS,

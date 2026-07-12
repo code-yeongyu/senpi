@@ -9,6 +9,7 @@
 
 // Anthropic
 export { anthropicOAuthProvider, loginAnthropic, refreshAnthropicToken } from "./anthropic.ts";
+export * from "./cursor.ts";
 export * from "./device-code.ts";
 // GitHub Copilot
 export {
@@ -18,6 +19,11 @@ export {
 	normalizeDomain,
 	refreshGitHubCopilotToken,
 } from "./github-copilot.ts";
+export * from "./gitlab-duo.ts";
+export * from "./glm-zcode.ts";
+export { googleAntigravityOAuthProvider, loginAntigravity, refreshAntigravityToken } from "./google-antigravity.ts";
+export { googleGeminiCliOAuthProvider, loginGeminiCli, refreshGoogleCloudToken } from "./google-gemini-cli.ts";
+export * from "./kilo.ts";
 // OpenAI Codex (ChatGPT OAuth)
 export {
 	loginOpenAICodex,
@@ -27,22 +33,45 @@ export {
 	openaiCodexOAuthProvider,
 	refreshOpenAICodexToken,
 } from "./openai-codex.ts";
-
+export * from "./perplexity.ts";
 export * from "./types.ts";
+export {
+	discoverXaiOAuthEndpoints,
+	exchangeXaiAuthorizationCode,
+	loginXai,
+	refreshXaiToken,
+	xaiOAuthProvider,
+} from "./xai.ts";
 
 // ============================================================================
 // Provider Registry
 // ============================================================================
 
 import { anthropicOAuthProvider } from "./anthropic.ts";
+import { cursorOAuthProvider } from "./cursor.ts";
 import { githubCopilotOAuthProvider } from "./github-copilot.ts";
+import { gitlabDuoOAuthProvider } from "./gitlab-duo.ts";
+import { glmZcodeOAuthProvider } from "./glm-zcode.ts";
+import { googleAntigravityOAuthProvider } from "./google-antigravity.ts";
+import { googleGeminiCliOAuthProvider } from "./google-gemini-cli.ts";
+import { kiloOAuthProvider } from "./kilo.ts";
 import { openaiCodexOAuthProvider } from "./openai-codex.ts";
+import { perplexityOAuthProvider } from "./perplexity.ts";
 import type { OAuthCredentials, OAuthProviderId, OAuthProviderInfo, OAuthProviderInterface } from "./types.ts";
+import { xaiOAuthProvider } from "./xai.ts";
 
 const BUILT_IN_OAUTH_PROVIDERS: OAuthProviderInterface[] = [
 	anthropicOAuthProvider,
 	githubCopilotOAuthProvider,
 	openaiCodexOAuthProvider,
+	cursorOAuthProvider,
+	gitlabDuoOAuthProvider,
+	perplexityOAuthProvider,
+	kiloOAuthProvider,
+	glmZcodeOAuthProvider,
+	xaiOAuthProvider,
+	googleGeminiCliOAuthProvider,
+	googleAntigravityOAuthProvider,
 ];
 
 const oauthProviderRegistry = new Map<string, OAuthProviderInterface>(
