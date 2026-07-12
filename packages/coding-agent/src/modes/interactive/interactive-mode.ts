@@ -112,7 +112,7 @@ import { abortedErrorLabel } from "./aborted-error-label.ts";
 import {
 	type CompactionQueuedMessage,
 	transferCompactionQueue,
-	waitForPromptAcceptance,
+	waitForPromptDisposition,
 } from "./compaction-queue-transfer.ts";
 import { ArminComponent } from "./components/armin.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
@@ -498,6 +498,10 @@ export class InteractiveMode {
 
 	// Messages queued while compaction is running
 	private compactionQueuedMessages: CompactionQueuedMessage[] = [];
+	private compactionInFlightMessages: CompactionQueuedMessage[] = [];
+	private compactionTransferAbortControllers = new Map<CompactionQueuedMessage, AbortController>();
+	private compactionQueueFlushTail: Promise<void> | undefined;
+	private compactionQueueGeneration = 0;
 
 	// Shutdown state
 	private shutdownRequested = false;
@@ -1863,7 +1867,11 @@ export class InteractiveMode {
 		this.loadedResourcesContainer.clear();
 		this.chatContainer.clear();
 		this.pendingMessagesContainer.clear();
+		for (const controller of this.compactionTransferAbortControllers.values()) controller.abort();
+		this.compactionQueueGeneration += 1;
 		this.compactionQueuedMessages = [];
+		this.compactionInFlightMessages = [];
+		this.compactionTransferAbortControllers.clear();
 		this.streamingComponent = undefined;
 		this.streamingMessage = undefined;
 		this.clearPendingTools();
@@ -3413,6 +3421,10 @@ export class InteractiveMode {
 				await this.checkShutdownRequested();
 				break;
 
+			case "continuation_error":
+				this.showError(event.errorMessage);
+				break;
+
 			case "compaction_start": {
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(true);
@@ -4313,10 +4325,12 @@ export class InteractiveMode {
 		return {
 			steering: [
 				...this.session.getSteeringMessages(),
+				...this.compactionInFlightMessages.filter((msg) => msg.mode === "steer").map((msg) => msg.text),
 				...this.compactionQueuedMessages.filter((msg) => msg.mode === "steer").map((msg) => msg.text),
 			],
 			followUp: [
 				...this.session.getFollowUpMessages(),
+				...this.compactionInFlightMessages.filter((msg) => msg.mode === "followUp").map((msg) => msg.text),
 				...this.compactionQueuedMessages.filter((msg) => msg.mode === "followUp").map((msg) => msg.text),
 			],
 		};
@@ -4328,12 +4342,12 @@ export class InteractiveMode {
 	 */
 	private clearAllQueues(): { steering: string[]; followUp: string[] } {
 		const { steering, followUp } = this.session.clearQueue();
-		const compactionSteering = this.compactionQueuedMessages
-			.filter((msg) => msg.mode === "steer")
-			.map((msg) => msg.text);
-		const compactionFollowUp = this.compactionQueuedMessages
-			.filter((msg) => msg.mode === "followUp")
-			.map((msg) => msg.text);
+		const compactionMessages = [...this.compactionInFlightMessages, ...this.compactionQueuedMessages];
+		const compactionSteering = compactionMessages.filter((msg) => msg.mode === "steer").map((msg) => msg.text);
+		const compactionFollowUp = compactionMessages.filter((msg) => msg.mode === "followUp").map((msg) => msg.text);
+		for (const controller of this.compactionTransferAbortControllers.values()) controller.abort();
+		this.compactionInFlightMessages = [];
+		this.compactionTransferAbortControllers.clear();
 		this.compactionQueuedMessages = [];
 		return {
 			steering: [...steering, ...compactionSteering],
@@ -4426,46 +4440,81 @@ export class InteractiveMode {
 	}
 
 	private async flushCompactionQueue(options?: { willRetry?: boolean }): Promise<void> {
-		await transferCompactionQueue(
-			{
-				takeBatch: () => {
-					const batch = this.compactionQueuedMessages;
-					this.compactionQueuedMessages = [];
-					this.updatePendingMessagesDisplay();
-					return batch;
+		const session = this.session;
+		const generation = this.compactionQueueGeneration ?? 0;
+		const previousFlush = this.compactionQueueFlushTail;
+		const runTransfer = async (): Promise<void> => {
+			if ((this.compactionQueueGeneration ?? 0) !== generation || this.session !== session) return;
+			await transferCompactionQueue(
+				{
+					takeBatch: () => {
+						const batch = this.compactionQueuedMessages;
+						this.compactionQueuedMessages = [];
+						this.compactionInFlightMessages.push(...batch);
+						for (const message of batch) {
+							this.compactionTransferAbortControllers.set(message, new AbortController());
+						}
+						this.updatePendingMessagesDisplay();
+						return batch;
+					},
+					commitAccepted: (message) => {
+						const index = this.compactionInFlightMessages.indexOf(message);
+						if (index === -1) return false;
+						this.compactionInFlightMessages.splice(index, 1);
+						this.compactionTransferAbortControllers.delete(message);
+						this.updatePendingMessagesDisplay();
+						return true;
+					},
+					restoreUndelivered: (messages) => {
+						const restorable = messages.filter((message) => this.compactionInFlightMessages.includes(message));
+						const restorableSet = new Set(restorable);
+						this.compactionInFlightMessages = this.compactionInFlightMessages.filter(
+							(message) => !restorableSet.has(message),
+						);
+						for (const message of restorable) this.compactionTransferAbortControllers.delete(message);
+						this.compactionQueuedMessages = [...restorable, ...this.compactionQueuedMessages];
+						this.updatePendingMessagesDisplay();
+						return restorable.length;
+					},
+					isCommand: (message) => this.isExtensionCommand(message.text),
+					deliverCommand: (message) => session.prompt(message.text),
+					deliverFirstPrompt: (message) =>
+						waitForPromptDisposition(
+							(preflightResult, promptDisposition) =>
+								session.prompt(message.text, {
+									streamingBehavior: message.mode,
+									preflightResult,
+									promptDisposition,
+									signal: this.compactionTransferAbortControllers.get(message)?.signal,
+								}),
+							(error) => {
+								this.showError(
+									`Queued prompt failed after acceptance: ${error instanceof Error ? error.message : String(error)}`,
+								);
+							},
+						),
+					deliverQueued: (message) =>
+						message.mode === "followUp" ? session.followUp(message.text) : session.steer(message.text),
+					reportFailure: (error, undeliveredCount) => {
+						this.showError(
+							`Failed to send queued message${undeliveredCount === 1 ? "" : "s"}: ${
+								error instanceof Error ? error.message : String(error)
+							}`,
+						);
+					},
 				},
-				restoreUndelivered: (messages) => {
-					this.compactionQueuedMessages = [...messages, ...this.compactionQueuedMessages];
-					this.updatePendingMessagesDisplay();
-				},
-				isCommand: (message) => this.isExtensionCommand(message.text),
-				deliverCommand: (message) => this.session.prompt(message.text),
-				deliverFirstPrompt: (message) =>
-					waitForPromptAcceptance(
-						(preflightResult) =>
-							this.session.prompt(message.text, {
-								streamingBehavior: message.mode,
-								preflightResult,
-							}),
-						(error) => {
-							this.showError(
-								`Queued prompt failed after acceptance: ${error instanceof Error ? error.message : String(error)}`,
-							);
-						},
-					),
-				deliverQueued: (message) =>
-					message.mode === "followUp" ? this.session.followUp(message.text) : this.session.steer(message.text),
-				reportFailure: (error, undeliveredCount) => {
-					this.showError(
-						`Failed to send queued message${undeliveredCount === 1 ? "" : "s"}: ${
-							error instanceof Error ? error.message : String(error)
-						}`,
-					);
-				},
-			},
-			options,
-		);
-		this.updatePendingMessagesDisplay();
+				options,
+			);
+			this.updatePendingMessagesDisplay();
+		};
+		const currentFlush = previousFlush ? previousFlush.then(runTransfer, runTransfer) : runTransfer();
+		const settledFlush = currentFlush.catch(() => undefined);
+		this.compactionQueueFlushTail = settledFlush;
+		try {
+			await currentFlush;
+		} finally {
+			if (this.compactionQueueFlushTail === settledFlush) this.compactionQueueFlushTail = undefined;
+		}
 	}
 
 	/** Move pending bash components from pending area to chat */

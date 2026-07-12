@@ -148,6 +148,27 @@ describe("InteractiveMode compaction events", () => {
 		expect(fakeThis.flushCompactionQueue).toHaveBeenCalledWith({ willRetry: false });
 	});
 
+	test("shows a detached continuation launch failure", async () => {
+		const fakeThis = {
+			isInitialized: true,
+			footer: { invalidate: vi.fn() },
+			showError: vi.fn(),
+		};
+		const handleEvent = Reflect.get(InteractiveMode.prototype, "handleEvent") as (
+			this: typeof fakeThis,
+			event: { type: "continuation_error"; errorMessage: string },
+		) => Promise<void>;
+
+		await handleEvent.call(fakeThis, {
+			type: "continuation_error",
+			errorMessage: "Failed to continue queued messages: synthetic continuation launch failure",
+		});
+
+		expect(fakeThis.showError).toHaveBeenCalledWith(
+			"Failed to continue queued messages: synthetic continuation launch failure",
+		);
+	});
+
 	test("renders OpenAI remote compaction details in the summary card", () => {
 		const component = new CompactionSummaryMessageComponent({
 			role: "compactionSummary",

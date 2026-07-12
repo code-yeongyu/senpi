@@ -10,6 +10,7 @@ type QueueMessage = {
 type PromptOptions = {
 	readonly streamingBehavior?: "steer" | "followUp";
 	readonly preflightResult?: (success: boolean) => void;
+	readonly promptDisposition?: (disposition: "handled" | "queued" | "started") => void;
 };
 
 function getFlushCompactionQueue() {
@@ -30,6 +31,8 @@ describe("InteractiveMode transactional compaction queue transfer", () => {
 		const showError = vi.fn();
 		const context = {
 			compactionQueuedMessages: [first, failed, suffix],
+			compactionInFlightMessages: [] as QueueMessage[],
+			compactionTransferAbortControllers: new Map<QueueMessage, AbortController>(),
 			isExtensionCommand: () => false,
 			showError,
 			updatePendingMessagesDisplay: vi.fn(),
@@ -67,6 +70,8 @@ describe("InteractiveMode transactional compaction queue transfer", () => {
 		const showError = vi.fn();
 		const context = {
 			compactionQueuedMessages: [first, rest],
+			compactionInFlightMessages: [] as QueueMessage[],
+			compactionTransferAbortControllers: new Map<QueueMessage, AbortController>(),
 			isExtensionCommand: () => false,
 			showError,
 			updatePendingMessagesDisplay: vi.fn(),
@@ -77,6 +82,7 @@ describe("InteractiveMode transactional compaction queue transfer", () => {
 				prompt: vi.fn((text: string, options?: PromptOptions) => {
 					expect(text).toBe(first.text);
 					observedOptions = options;
+					options?.promptDisposition?.("started");
 					options?.preflightResult?.(true);
 					return Promise.reject(new Error("post-accept turn failure"));
 				}),
@@ -102,6 +108,8 @@ describe("InteractiveMode transactional compaction queue transfer", () => {
 		const showError = vi.fn();
 		const context = {
 			compactionQueuedMessages: [first, suffix],
+			compactionInFlightMessages: [] as QueueMessage[],
+			compactionTransferAbortControllers: new Map<QueueMessage, AbortController>(),
 			isExtensionCommand: () => false,
 			showError,
 			updatePendingMessagesDisplay: vi.fn(),

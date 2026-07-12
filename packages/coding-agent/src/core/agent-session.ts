@@ -162,6 +162,7 @@ export type AgentSessionEvent =
 	| Exclude<AgentEvent, { type: "agent_end" }>
 	| AgentSessionAgentEndEvent
 	| { type: "agent_settled" }
+	| { type: "continuation_error"; errorMessage: string }
 	| {
 			type: "queue_update";
 			steering: readonly string[];
@@ -281,6 +282,8 @@ export interface ExtensionBindings {
 }
 
 /** Options for AgentSession.prompt() */
+export type PromptDisposition = "handled" | "queued" | "started";
+
 export interface PromptOptions {
 	/** Whether to expand file-based prompt templates (default: true) */
 	expandPromptTemplates?: boolean;
@@ -292,6 +295,10 @@ export interface PromptOptions {
 	source?: InputSource;
 	/** Internal hook used by RPC mode to observe prompt preflight acceptance or rejection. */
 	preflightResult?: (success: boolean) => void;
+	/** Internal hook used by the TUI to distinguish handled input from owned prompt work. */
+	promptDisposition?: (disposition: PromptDisposition) => void;
+	/** Internal cancellation signal for a prompt that has not acquired session-work ownership yet. */
+	signal?: AbortSignal;
 	sessionTitlePrompt?: string | false;
 }
 
@@ -1459,9 +1466,17 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
+		const throwIfCancelled = (): void => {
+			if (!options?.signal?.aborted) return;
+			const error = new Error("Prompt cancelled before acceptance");
+			error.name = "AbortError";
+			throw error;
+		};
+		throwIfCancelled();
 		const userAbortPromise = this._userAbortPromise;
 		if (userAbortPromise) {
 			await userAbortPromise;
+			throwIfCancelled();
 		}
 		const shouldWaitForSessionWork = options?.source !== "extension";
 		if (
@@ -1469,10 +1484,12 @@ export class AgentSession {
 			(!this.isStreaming || this.isCompacting || this._sessionWorkBarrier.hasActiveWork)
 		) {
 			await this._waitForSettledSessionWork();
+			throwIfCancelled();
 		}
 
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 		const preflightResult = options?.preflightResult;
+		const promptDisposition = options?.promptDisposition;
 		let messages: AgentMessage[] | undefined;
 		let titlePrompt: string | undefined;
 
@@ -1481,8 +1498,10 @@ export class AgentSession {
 			// Extension commands manage their own LLM interaction via pi.sendMessage()
 			if (expandPromptTemplates && text.startsWith("/")) {
 				const handled = await this._tryExecuteExtensionCommand(text);
+				throwIfCancelled();
 				if (handled) {
 					// Extension command executed, no prompt to send
+					promptDisposition?.("handled");
 					preflightResult?.(true);
 					return;
 				}
@@ -1498,7 +1517,9 @@ export class AgentSession {
 					options?.source ?? "interactive",
 					this.isStreaming ? options?.streamingBehavior : undefined,
 				);
+				throwIfCancelled();
 				if (inputResult.action === "handled") {
+					promptDisposition?.("handled");
 					preflightResult?.(true);
 					return;
 				}
@@ -1528,6 +1549,7 @@ export class AgentSession {
 				} else {
 					await this._queueSteer(expandedText, currentImages);
 				}
+				promptDisposition?.("queued");
 				preflightResult?.(true);
 				return;
 			}
@@ -1618,6 +1640,8 @@ export class AgentSession {
 			return;
 		}
 
+		throwIfCancelled();
+		promptDisposition?.("started");
 		preflightResult?.(true);
 		await this._promptAgent(messages);
 		await this.waitForRetry();
@@ -2748,14 +2772,9 @@ export class AgentSession {
 		}
 	}
 
-	private async _continueAgentAfterCurrentRun(): Promise<boolean> {
+	private async _continueAgentAfterCurrentRun(): Promise<void> {
 		await this.agent.waitForIdle();
-		try {
-			await this.agent.continue();
-			return true;
-		} catch {
-			return false;
-		}
+		await this.agent.continue();
 	}
 
 	private _scheduleContinuationAfterCurrentEvent(): void {
@@ -2763,8 +2782,14 @@ export class AgentSession {
 		const currentEventQueue = this._agentEventQueue;
 		const finishContinuationWork = this._sessionWorkBarrier.begin();
 		const continueAfterEvent = async (): Promise<void> => {
-			const launched = await this._continueAgentAfterCurrentRun();
-			if (!launched) {
+			try {
+				await this._continueAgentAfterCurrentRun();
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				this._emit({
+					type: "continuation_error",
+					errorMessage: `Failed to continue queued messages: ${message}`,
+				});
 				await this._emitAgentSettled();
 			}
 		};

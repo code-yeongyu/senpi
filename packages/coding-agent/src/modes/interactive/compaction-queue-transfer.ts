@@ -3,16 +3,19 @@ export type CompactionQueuedMessage = {
 	readonly mode: "steer" | "followUp";
 };
 
+export type PromptDisposition = "handled" | "queued" | "started";
+
 type TransferOptions = {
 	readonly willRetry?: boolean;
 };
 
 type TransferDependencies = {
 	readonly takeBatch: () => CompactionQueuedMessage[];
-	readonly restoreUndelivered: (messages: readonly CompactionQueuedMessage[]) => void;
+	readonly commitAccepted: (message: CompactionQueuedMessage) => boolean;
+	readonly restoreUndelivered: (messages: readonly CompactionQueuedMessage[]) => number;
 	readonly isCommand: (message: CompactionQueuedMessage) => boolean;
 	readonly deliverCommand: (message: CompactionQueuedMessage) => Promise<void>;
-	readonly deliverFirstPrompt: (message: CompactionQueuedMessage) => Promise<void>;
+	readonly deliverFirstPrompt: (message: CompactionQueuedMessage) => Promise<PromptDisposition>;
 	readonly deliverQueued: (message: CompactionQueuedMessage) => Promise<void>;
 	readonly reportFailure: (error: unknown, undeliveredCount: number) => void;
 };
@@ -33,59 +36,63 @@ export async function transferCompactionQueue(
 				} else {
 					await dependencies.deliverQueued(message);
 				}
+				if (!dependencies.commitAccepted(message)) return;
 				acceptedCount += 1;
 			}
 			return;
 		}
 
-		const firstPromptIndex = batch.findIndex((message) => !dependencies.isCommand(message));
-		if (firstPromptIndex === -1) {
-			for (const message of batch) {
-				await dependencies.deliverCommand(message);
-				acceptedCount += 1;
-			}
-			return;
-		}
-
-		for (const message of batch.slice(0, firstPromptIndex)) {
-			await dependencies.deliverCommand(message);
-			acceptedCount += 1;
-		}
-
-		await dependencies.deliverFirstPrompt(batch[firstPromptIndex]);
-		acceptedCount += 1;
-
-		for (const message of batch.slice(firstPromptIndex + 1)) {
+		let promptWorkOwned = false;
+		for (const message of batch) {
 			if (dependencies.isCommand(message)) {
 				await dependencies.deliverCommand(message);
+			} else if (!promptWorkOwned) {
+				const disposition = await dependencies.deliverFirstPrompt(message);
+				promptWorkOwned = disposition !== "handled";
 			} else {
 				await dependencies.deliverQueued(message);
 			}
+			if (!dependencies.commitAccepted(message)) return;
 			acceptedCount += 1;
 		}
 	} catch (error) {
 		const failure = error instanceof Error ? error : new Error(String(error));
 		const undelivered = batch.slice(acceptedCount);
-		dependencies.restoreUndelivered(undelivered);
-		dependencies.reportFailure(failure, undelivered.length);
+		const restoredCount = dependencies.restoreUndelivered(undelivered);
+		if (restoredCount > 0) {
+			dependencies.reportFailure(failure, restoredCount);
+		}
 	}
 }
 
-export function waitForPromptAcceptance(
-	startPrompt: (preflightResult: (success: boolean) => void) => Promise<void>,
+export function waitForPromptDisposition(
+	startPrompt: (
+		preflightResult: (success: boolean) => void,
+		promptDisposition: (disposition: PromptDisposition) => void,
+	) => Promise<void>,
 	reportPostAcceptanceFailure: (error: unknown) => void,
-): Promise<void> {
-	return new Promise<void>((resolve, reject) => {
+): Promise<PromptDisposition> {
+	return new Promise<PromptDisposition>((resolve, reject) => {
 		let accepted = false;
 		let rejectedAtPreflight = false;
-		const prompt = startPrompt((success) => {
-			if (success) {
-				accepted = true;
-				resolve();
-			} else {
-				rejectedAtPreflight = true;
-			}
-		});
+		let disposition: PromptDisposition | undefined;
+		const resolveAcceptedDisposition = (): void => {
+			if (accepted && disposition) resolve(disposition);
+		};
+		const prompt = startPrompt(
+			(success) => {
+				if (success) {
+					accepted = true;
+					resolveAcceptedDisposition();
+				} else {
+					rejectedAtPreflight = true;
+				}
+			},
+			(nextDisposition) => {
+				disposition = nextDisposition;
+				resolveAcceptedDisposition();
+			},
+		);
 
 		void prompt.then(
 			() => {

@@ -52,6 +52,8 @@ function getFlushCompactionQueue() {
 function createTuiQueueContext(harness: Harness) {
 	return {
 		compactionQueuedMessages: [] as QueuedMessage[],
+		compactionInFlightMessages: [] as QueuedMessage[],
+		compactionTransferAbortControllers: new Map<QueuedMessage, AbortController>(),
 		isExtensionCommand: () => false,
 		showError: (message: string) => {
 			throw new Error(message);
