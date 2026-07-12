@@ -26,6 +26,63 @@
 		},
 		"GEMINI_API_KEY": {
 			"description": "(Optional) Google Gemini API key (senpi's default provider is google)."
+		},
+		"ALIBABA_CODING_PLAN_API_KEY": {
+			"description": "(Optional) Alibaba Coding Plan API key."
+		},
+		"DEEPINFRA_API_KEY": {
+			"description": "(Optional) DeepInfra API key."
+		},
+		"FIREPASS_API_KEY": {
+			"description": "(Optional) Fire Pass API key."
+		},
+		"FUGU_API_KEY": {
+			"description": "(Optional) Sakana Fugu API key."
+		},
+		"KAGI_API_KEY": {
+			"description": "(Optional) Kagi API key."
+		},
+		"LITELLM_API_KEY": {
+			"description": "(Optional) LiteLLM proxy API key."
+		},
+		"LM_STUDIO_API_KEY": {
+			"description": "(Optional) LM Studio API key."
+		},
+		"NANO_GPT_API_KEY": {
+			"description": "(Optional) NanoGPT API key."
+		},
+		"OLLAMA_API_KEY": {
+			"description": "(Optional) Ollama API key."
+		},
+		"OLLAMA_CLOUD_API_KEY": {
+			"description": "(Optional) Ollama Cloud API key."
+		},
+		"PARALLEL_API_KEY": {
+			"description": "(Optional) Parallel API key."
+		},
+		"QIANFAN_API_KEY": {
+			"description": "(Optional) Qianfan API key."
+		},
+		"QWEN_OAUTH_TOKEN": {
+			"description": "(Optional) Qwen Portal OAuth token."
+		},
+		"QWEN_PORTAL_API_KEY": {
+			"description": "(Optional) Qwen Portal API key."
+		},
+		"SYNTHETIC_API_KEY": {
+			"description": "(Optional) Synthetic API key."
+		},
+		"TAVILY_API_KEY": {
+			"description": "(Optional) Tavily API key."
+		},
+		"VENICE_API_KEY": {
+			"description": "(Optional) Venice API key."
+		},
+		"VLLM_API_KEY": {
+			"description": "(Optional) vLLM API key."
+		},
+		"ZENMUX_API_KEY": {
+			"description": "(Optional) ZenMux API key."
 		}
 	},
 	"customizations": {
