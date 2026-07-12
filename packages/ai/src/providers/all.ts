@@ -26,12 +26,16 @@ import { groqProvider } from "./groq.ts";
 import { huggingfaceProvider } from "./huggingface.ts";
 import { kagiProvider } from "./kagi.ts";
 import { kiloProvider } from "./kilo.ts";
+import { kimiCodeProvider } from "./kimi-code.ts";
 import { kimiCodingProvider } from "./kimi-coding.ts";
 import { litellmProvider } from "./litellm.ts";
 import { lmStudioProvider } from "./lm-studio.ts";
 import { minimaxProvider } from "./minimax.ts";
 import { minimaxCnProvider } from "./minimax-cn.ts";
+import { minimaxCodeProvider } from "./minimax-code.ts";
+import { minimaxCodeCnProvider } from "./minimax-code-cn.ts";
 import { mistralProvider } from "./mistral.ts";
+import { moonshotProvider } from "./moonshot.ts";
 import { moonshotaiProvider } from "./moonshotai.ts";
 import { moonshotaiCnProvider } from "./moonshotai-cn.ts";
 import { nanogptProvider } from "./nanogpt.ts";
@@ -40,8 +44,10 @@ import { ollamaProvider } from "./ollama.ts";
 import { ollamaCloudProvider } from "./ollama-cloud.ts";
 import { openaiProvider } from "./openai.ts";
 import { openaiCodexProvider } from "./openai-codex.ts";
+import { openaiCodexDeviceProvider } from "./openai-codex-device.ts";
 import { opencodeProvider } from "./opencode.ts";
 import { opencodeGoProvider } from "./opencode-go.ts";
+import { opencodeZenProvider } from "./opencode-zen.ts";
 import { openrouterProvider } from "./openrouter.ts";
 import { openrouterImagesProvider } from "./openrouter-images.ts";
 import { parallelProvider } from "./parallel.ts";
@@ -157,12 +163,16 @@ export function builtinProviders(): Provider[] {
 		huggingfaceProvider(),
 		kagiProvider(),
 		kiloProvider(),
+		kimiCodeProvider(),
 		kimiCodingProvider(),
 		litellmProvider(),
 		lmStudioProvider(),
 		minimaxProvider(),
 		minimaxCnProvider(),
+		minimaxCodeProvider(),
+		minimaxCodeCnProvider(),
 		mistralProvider(),
+		moonshotProvider(),
 		moonshotaiProvider(),
 		moonshotaiCnProvider(),
 		nanogptProvider(),
@@ -171,8 +181,10 @@ export function builtinProviders(): Provider[] {
 		ollamaCloudProvider(),
 		openaiProvider(),
 		openaiCodexProvider(),
+		openaiCodexDeviceProvider(),
 		opencodeProvider(),
 		opencodeGoProvider(),
+		opencodeZenProvider(),
 		openrouterProvider(),
 		parallelProvider(),
 		perplexityProvider(),

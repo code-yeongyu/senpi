@@ -17,6 +17,10 @@ export const loadAnthropicOAuth = async (): Promise<OAuthAuth> =>
 export const loadOpenAICodexOAuth = async (): Promise<OAuthAuth> =>
 	((await importOAuthModule("./openai-codex.ts")) as { openaiCodexOAuth: OAuthAuth }).openaiCodexOAuth;
 
+export const loadOpenAICodexDeviceOAuth = async (): Promise<OAuthAuth> =>
+	((await importOAuthModule("./openai-codex-device.ts")) as { openaiCodexDeviceOAuth: OAuthAuth })
+		.openaiCodexDeviceOAuth;
+
 export const loadGitHubCopilotOAuth = async (): Promise<OAuthAuth> =>
 	((await importOAuthModule("./github-copilot.ts")) as { githubCopilotOAuth: OAuthAuth }).githubCopilotOAuth;
 
@@ -31,6 +35,9 @@ export const loadPerplexityOAuth = async (): Promise<OAuthAuth> =>
 
 export const loadKiloOAuth = async (): Promise<OAuthAuth> =>
 	((await importOAuthModule("./kilo.ts")) as { kiloOAuth: OAuthAuth }).kiloOAuth;
+
+export const loadKimiCodeOAuth = async (): Promise<OAuthAuth> =>
+	((await importOAuthModule("./kimi-code.ts")) as { kimiCodeOAuth: OAuthAuth }).kimiCodeOAuth;
 
 export const loadGlmZcodeOAuth = async (): Promise<OAuthAuth> =>
 	((await importOAuthModule("./glm-zcode.ts")) as { glmZcodeOAuth: OAuthAuth }).glmZcodeOAuth;

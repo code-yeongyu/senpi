@@ -13,7 +13,12 @@ import {
 	type OAuthLoginCallbacks,
 	type OAuthProviderId,
 } from "@earendil-works/pi-ai/compat";
-import { getOAuthApiKey, getOAuthProvider, getOAuthProviders } from "@earendil-works/pi-ai/oauth";
+import {
+	getOAuthApiKey,
+	getOAuthProvider,
+	getOAuthProviders,
+	resolveOAuthStorageProvider,
+} from "@earendil-works/pi-ai/oauth";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
@@ -248,14 +253,14 @@ export class AuthStorage {
 	 * Used for CLI --api-key flag.
 	 */
 	setRuntimeApiKey(provider: string, apiKey: string): void {
-		this.runtimeOverrides.set(provider, apiKey);
+		this.runtimeOverrides.set(resolveOAuthStorageProvider(provider), apiKey);
 	}
 
 	/**
 	 * Remove a runtime API key override.
 	 */
 	removeRuntimeApiKey(provider: string): void {
-		this.runtimeOverrides.delete(provider);
+		this.runtimeOverrides.delete(resolveOAuthStorageProvider(provider));
 	}
 
 	private recordError(error: unknown): void {
@@ -326,14 +331,14 @@ export class AuthStorage {
 	 * Get credential for a provider.
 	 */
 	get(provider: string): AuthCredential | undefined {
-		return this.data[provider] ?? undefined;
+		return this.data[resolveOAuthStorageProvider(provider)] ?? undefined;
 	}
 
 	/**
 	 * Get provider-scoped environment values for an API key credential.
 	 */
 	getProviderEnv(provider: string): Record<string, string> | undefined {
-		const cred = this.data[provider];
+		const cred = this.data[resolveOAuthStorageProvider(provider)];
 		return cred?.type === "api_key" && cred.env ? { ...cred.env } : undefined;
 	}
 
@@ -341,14 +346,14 @@ export class AuthStorage {
 	 * Set credential for a provider.
 	 */
 	set(provider: string, credential: AuthCredential): void {
-		this.data = this.persistProviderChange(provider, credential);
+		this.data = this.persistProviderChange(resolveOAuthStorageProvider(provider), credential);
 	}
 
 	/**
 	 * Remove credential for a provider.
 	 */
 	remove(provider: string): void {
-		this.data = this.persistProviderChange(provider, undefined);
+		this.data = this.persistProviderChange(resolveOAuthStorageProvider(provider), undefined);
 	}
 
 	/**
@@ -362,7 +367,7 @@ export class AuthStorage {
 	 * Check if credentials exist for a provider in auth.json.
 	 */
 	has(provider: string): boolean {
-		return provider in this.data;
+		return resolveOAuthStorageProvider(provider) in this.data;
 	}
 
 	/**
@@ -370,8 +375,9 @@ export class AuthStorage {
 	 * Unlike getApiKey(), this doesn't refresh OAuth tokens.
 	 */
 	hasAuth(provider: string): boolean {
-		if (this.runtimeOverrides.has(provider)) return true;
-		if (this.data[provider]) return true;
+		const storageProvider = resolveOAuthStorageProvider(provider);
+		if (this.runtimeOverrides.has(storageProvider)) return true;
+		if (this.data[storageProvider]) return true;
 		if (getEnvApiKey(provider)) return true;
 		return false;
 	}
@@ -380,11 +386,12 @@ export class AuthStorage {
 	 * Return auth status without exposing credential values or refreshing tokens.
 	 */
 	getAuthStatus(provider: string): AuthStatus {
-		if (this.data[provider]) {
+		const storageProvider = resolveOAuthStorageProvider(provider);
+		if (this.data[storageProvider]) {
 			return { configured: true, source: "stored" };
 		}
 
-		if (this.runtimeOverrides.has(provider)) {
+		if (this.runtimeOverrides.has(storageProvider)) {
 			return { configured: false, source: "runtime", label: "--api-key" };
 		}
 
@@ -436,6 +443,7 @@ export class AuthStorage {
 	private async refreshOAuthTokenWithLock(
 		providerId: OAuthProviderId,
 	): Promise<{ apiKey: string; newCredentials: OAuthCredentials } | null> {
+		const storageProvider = resolveOAuthStorageProvider(providerId);
 		const provider = getOAuthProvider(providerId);
 		if (!provider) {
 			return null;
@@ -446,7 +454,7 @@ export class AuthStorage {
 			this.data = currentData;
 			this.loadError = null;
 
-			const cred = currentData[providerId];
+			const cred = currentData[storageProvider];
 			if (cred?.type !== "oauth") {
 				return { result: null };
 			}
@@ -461,6 +469,7 @@ export class AuthStorage {
 					oauthCreds[key] = value;
 				}
 			}
+			oauthCreds[providerId] = cred;
 
 			const refreshed = await getOAuthApiKey(providerId, oauthCreds);
 			if (!refreshed) {
@@ -469,7 +478,7 @@ export class AuthStorage {
 
 			const merged: AuthStorageData = {
 				...currentData,
-				[providerId]: { type: "oauth", ...refreshed.newCredentials },
+				[storageProvider]: { type: "oauth", ...refreshed.newCredentials },
 			};
 			this.data = merged;
 			this.loadError = null;
@@ -488,13 +497,14 @@ export class AuthStorage {
 	 * 4. Environment variable
 	 */
 	async getApiKey(providerId: string, options: GetApiKeyOptions = {}): Promise<string | undefined> {
+		const storageProvider = resolveOAuthStorageProvider(providerId);
 		// Runtime override takes highest priority
-		const runtimeKey = this.runtimeOverrides.get(providerId);
+		const runtimeKey = this.runtimeOverrides.get(storageProvider);
 		if (runtimeKey) {
 			return runtimeKey;
 		}
 
-		const cred = this.data[providerId];
+		const cred = this.data[storageProvider];
 
 		if (cred?.type === "api_key") {
 			return resolveConfigValue(cred.key, cred.env);
@@ -521,7 +531,7 @@ export class AuthStorage {
 					this.recordError(error);
 					// Refresh failed - re-read file to check if another instance succeeded
 					this.reload();
-					const updatedCred = this.data[providerId];
+					const updatedCred = this.data[storageProvider];
 
 					if (updatedCred?.type === "oauth" && Date.now() < updatedCred.expires) {
 						// Another instance refreshed successfully, use those credentials
@@ -551,9 +561,10 @@ export class AuthStorage {
 		providerId: string,
 		options: PooledCredentialOptions = {},
 	): PooledCredentialSelection | undefined {
+		const storageProvider = resolveOAuthStorageProvider(providerId);
 		if (
-			this.runtimeOverrides.has(providerId) ||
-			this.data[providerId] !== undefined ||
+			this.runtimeOverrides.has(storageProvider) ||
+			this.data[storageProvider] !== undefined ||
 			this.credentialVault === undefined
 		) {
 			return undefined;
@@ -561,7 +572,7 @@ export class AuthStorage {
 
 		const pool = this.credentialVault
 			.metadataSnapshot()
-			.credentials.find((credential) => credential.pool.provider === providerId)?.pool;
+			.credentials.find((credential) => credential.pool.provider === storageProvider)?.pool;
 		if (pool === undefined) return undefined;
 		const pending = this.credentialVault.issueSelectionLease(
 			{ pool, selector: options.selector ?? { kind: "automatic" }, sessionId: options.sessionId },

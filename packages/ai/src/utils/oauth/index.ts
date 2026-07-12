@@ -24,6 +24,7 @@ export * from "./glm-zcode.ts";
 export { googleAntigravityOAuthProvider, loginAntigravity, refreshAntigravityToken } from "./google-antigravity.ts";
 export { googleGeminiCliOAuthProvider, loginGeminiCli, refreshGoogleCloudToken } from "./google-gemini-cli.ts";
 export * from "./kilo.ts";
+export * from "./kimi-code.ts";
 // OpenAI Codex (ChatGPT OAuth)
 export {
 	loginOpenAICodex,
@@ -33,6 +34,7 @@ export {
 	openaiCodexOAuthProvider,
 	refreshOpenAICodexToken,
 } from "./openai-codex.ts";
+export * from "./openai-codex-device.ts";
 export * from "./perplexity.ts";
 export * from "./types.ts";
 export {
@@ -55,7 +57,9 @@ import { glmZcodeOAuthProvider } from "./glm-zcode.ts";
 import { googleAntigravityOAuthProvider } from "./google-antigravity.ts";
 import { googleGeminiCliOAuthProvider } from "./google-gemini-cli.ts";
 import { kiloOAuthProvider } from "./kilo.ts";
+import { kimiCodeOAuthProvider } from "./kimi-code.ts";
 import { openaiCodexOAuthProvider } from "./openai-codex.ts";
+import { openaiCodexDeviceOAuthProvider } from "./openai-codex-device.ts";
 import { perplexityOAuthProvider } from "./perplexity.ts";
 import type { OAuthCredentials, OAuthProviderId, OAuthProviderInfo, OAuthProviderInterface } from "./types.ts";
 import { xaiOAuthProvider } from "./xai.ts";
@@ -64,6 +68,8 @@ const BUILT_IN_OAUTH_PROVIDERS: OAuthProviderInterface[] = [
 	anthropicOAuthProvider,
 	githubCopilotOAuthProvider,
 	openaiCodexOAuthProvider,
+	openaiCodexDeviceOAuthProvider,
+	kimiCodeOAuthProvider,
 	cursorOAuthProvider,
 	gitlabDuoOAuthProvider,
 	perplexityOAuthProvider,
@@ -77,6 +83,13 @@ const BUILT_IN_OAUTH_PROVIDERS: OAuthProviderInterface[] = [
 const oauthProviderRegistry = new Map<string, OAuthProviderInterface>(
 	BUILT_IN_OAUTH_PROVIDERS.map((provider) => [provider.id, provider]),
 );
+
+/**
+ * Resolve login-only provider aliases to the credential owner used by models.
+ */
+export function resolveOAuthStorageProvider(id: OAuthProviderId): OAuthProviderId {
+	return id === "openai-codex-device" ? "openai-codex" : id;
+}
 
 /**
  * Get an OAuth provider by ID

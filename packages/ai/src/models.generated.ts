@@ -26,12 +26,16 @@ import { GROQ_MODELS } from "./providers/groq.models.ts";
 import { HUGGINGFACE_MODELS } from "./providers/huggingface.models.ts";
 import { KAGI_MODELS } from "./providers/kagi.models.ts";
 import { KILO_MODELS } from "./providers/kilo.models.ts";
+import { KIMI_CODE_MODELS } from "./providers/kimi-code.models.ts";
 import { KIMI_CODING_MODELS } from "./providers/kimi-coding.models.ts";
 import { LITELLM_MODELS } from "./providers/litellm.models.ts";
 import { LM_STUDIO_MODELS } from "./providers/lm-studio.models.ts";
 import { MINIMAX_MODELS } from "./providers/minimax.models.ts";
 import { MINIMAX_CN_MODELS } from "./providers/minimax-cn.models.ts";
+import { MINIMAX_CODE_MODELS } from "./providers/minimax-code.models.ts";
+import { MINIMAX_CODE_CN_MODELS } from "./providers/minimax-code-cn.models.ts";
 import { MISTRAL_MODELS } from "./providers/mistral.models.ts";
+import { MOONSHOT_MODELS } from "./providers/moonshot.models.ts";
 import { MOONSHOTAI_MODELS } from "./providers/moonshotai.models.ts";
 import { MOONSHOTAI_CN_MODELS } from "./providers/moonshotai-cn.models.ts";
 import { NANOGPT_MODELS } from "./providers/nanogpt.models.ts";
@@ -40,8 +44,10 @@ import { OLLAMA_MODELS } from "./providers/ollama.models.ts";
 import { OLLAMA_CLOUD_MODELS } from "./providers/ollama-cloud.models.ts";
 import { OPENAI_MODELS } from "./providers/openai.models.ts";
 import { OPENAI_CODEX_MODELS } from "./providers/openai-codex.models.ts";
+import { OPENAI_CODEX_DEVICE_MODELS } from "./providers/openai-codex-device.models.ts";
 import { OPENCODE_MODELS } from "./providers/opencode.models.ts";
 import { OPENCODE_GO_MODELS } from "./providers/opencode-go.models.ts";
+import { OPENCODE_ZEN_MODELS } from "./providers/opencode-zen.models.ts";
 import { OPENROUTER_MODELS } from "./providers/openrouter.models.ts";
 import { PARALLEL_MODELS } from "./providers/parallel.models.ts";
 import { PERPLEXITY_MODELS } from "./providers/perplexity.models.ts";
@@ -88,12 +94,16 @@ export const MODELS = {
 	"huggingface": HUGGINGFACE_MODELS,
 	"kagi": KAGI_MODELS,
 	"kilo": KILO_MODELS,
+	"kimi-code": KIMI_CODE_MODELS,
 	"kimi-coding": KIMI_CODING_MODELS,
 	"litellm": LITELLM_MODELS,
 	"lm-studio": LM_STUDIO_MODELS,
 	"minimax": MINIMAX_MODELS,
 	"minimax-cn": MINIMAX_CN_MODELS,
+	"minimax-code": MINIMAX_CODE_MODELS,
+	"minimax-code-cn": MINIMAX_CODE_CN_MODELS,
 	"mistral": MISTRAL_MODELS,
+	"moonshot": MOONSHOT_MODELS,
 	"moonshotai": MOONSHOTAI_MODELS,
 	"moonshotai-cn": MOONSHOTAI_CN_MODELS,
 	"nanogpt": NANOGPT_MODELS,
@@ -102,8 +112,10 @@ export const MODELS = {
 	"ollama-cloud": OLLAMA_CLOUD_MODELS,
 	"openai": OPENAI_MODELS,
 	"openai-codex": OPENAI_CODEX_MODELS,
+	"openai-codex-device": OPENAI_CODEX_DEVICE_MODELS,
 	"opencode": OPENCODE_MODELS,
 	"opencode-go": OPENCODE_GO_MODELS,
+	"opencode-zen": OPENCODE_ZEN_MODELS,
 	"openrouter": OPENROUTER_MODELS,
 	"parallel": PARALLEL_MODELS,
 	"perplexity": PERPLEXITY_MODELS,
