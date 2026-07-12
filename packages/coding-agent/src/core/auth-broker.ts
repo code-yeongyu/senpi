@@ -363,20 +363,68 @@ export class AuthBrokerService {
 	private async refresh(
 		request: Extract<AuthBrokerWireRequest, { readonly operation: "refresh" }>,
 	): Promise<AuthBrokerWireResponse> {
-		if (this.refreshCredential === undefined) throw new AuthBrokerError("Credential refresh is not configured");
-		const credential = this.vault.credential(request.payload.credentialId);
-		const existing = this.refreshes.get(credential.credentialId);
-		const refresh =
-			existing ?? this.refreshCredential(credential).finally(() => this.refreshes.delete(credential.credentialId));
-		this.refreshes.set(credential.credentialId, refresh);
-		const material = await refresh;
-		this.vault.upsertCredential({ ...credential, material, updatedAt: new Date().toISOString() });
+		await this.refreshCredentialById(request.payload.credentialId);
 		return {
 			operation: request.operation,
 			protocolVersion: AUTH_BROKER_PROTOCOL_VERSION,
 			refreshedAt: new Date().toISOString(),
 			requestId: request.requestId,
 		};
+	}
+
+	/**
+	 * Shared single-flight refresh core used by both the `refresh` wire operation
+	 * and the background refresher. Throws when refresh is not configured or the
+	 * credential is missing so callers can classify the failure.
+	 */
+	async refreshCredentialById(credentialId: string): Promise<CredentialMaterial> {
+		if (this.refreshCredential === undefined) throw new AuthBrokerError("Credential refresh is not configured");
+		const credential = this.vault.credential(credentialId);
+		const existing = this.refreshes.get(credential.credentialId);
+		const refresh =
+			existing ?? this.refreshCredential(credential).finally(() => this.refreshes.delete(credential.credentialId));
+		this.refreshes.set(credential.credentialId, refresh);
+		const material = await refresh;
+		this.vault.upsertCredential({ ...credential, material, updatedAt: new Date().toISOString() });
+		return material;
+	}
+
+	/**
+	 * Background sweep: refresh OAuth credentials expiring within `refreshSkewMs`
+	 * of `now`, disabling any that fail definitively (invalid_grant / bare 401).
+	 * Transient failures are left for the next sweep. No-op when refresh is not
+	 * configured, so a freshly-booted broker without a refresh callback is inert.
+	 */
+	async sweepExpiringCredentials(options: {
+		readonly now: number;
+		readonly refreshSkewMs: number;
+	}): Promise<{ readonly checked: number; readonly disabled: number; readonly refreshed: number }> {
+		if (this.refreshCredential === undefined) return { checked: 0, disabled: 0, refreshed: 0 };
+		const deadline = options.now + options.refreshSkewMs;
+		let checked = 0;
+		let refreshed = 0;
+		let disabled = 0;
+		for (const record of this.vault.load()) {
+			if (record.disabled !== undefined || record.material.type !== "oauth") continue;
+			const expiresAt = record.material.expiresAt;
+			if (!Number.isFinite(expiresAt) || expiresAt > deadline) continue;
+			checked += 1;
+			try {
+				await this.refreshCredentialById(record.credentialId);
+				refreshed += 1;
+			} catch (error) {
+				if (isDefinitiveOAuthFailure(error instanceof Error ? error.message : String(error))) {
+					try {
+						this.vault.disableCredential(record.credentialId, "oauth refresh failed definitively");
+						disabled += 1;
+					} catch {
+						// A peer/login rotated the row since the snapshot; the live
+						// credential is intentionally kept. Leave it for the next sweep.
+					}
+				}
+			}
+		}
+		return { checked, disabled, refreshed };
 	}
 
 	private client(authentication: string): BrokerClient {
@@ -433,6 +481,10 @@ function safeEqual(left: string, right: string): boolean {
 }
 function cooldownFor(status: UsageReport["status"]): number | undefined {
 	return status === "success" ? undefined : COOL_DOWN_MS[status];
+}
+function isDefinitiveOAuthFailure(message: string): boolean {
+	const lower = message.toLowerCase();
+	return lower.includes("invalid_grant") || lower.includes("invalid grant") || /\b401\b/.test(lower);
 }
 function readString(record: Record<string, unknown>, key: string): string {
 	const value = record[key];

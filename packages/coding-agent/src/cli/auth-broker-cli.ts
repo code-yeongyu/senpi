@@ -6,6 +6,7 @@ import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-a
 import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import { getAgentDir, VERSION } from "../config.ts";
 import { AuthBrokerService, SqliteCredentialVault } from "../core/auth-broker.ts";
+import { AuthBrokerRefresher } from "../core/auth-broker-refresher.ts";
 import { AUTH_BROKER_CAPABILITIES } from "../core/auth-broker-wire-contract.ts";
 import type { CredentialMaterial, CredentialRecord } from "../core/auth-multi-account.ts";
 import { AuthBrokerServerError, parseAuthBrokerBind, startAuthBrokerServer } from "./auth-broker-server.ts";
@@ -256,10 +257,14 @@ async function serveCommand(command: ParsedCommand, agentDir: string): Promise<A
 	const bind = parseAuthBrokerBind(command.bind ?? "127.0.0.1:8765");
 	const token = await ensureToken(agentDir);
 	const vault = SqliteCredentialVault.open(vaultPath(agentDir));
-	const broker = new AuthBrokerService(vault, [
-		{ authentication: token, capabilities: ALL_CAPABILITIES, trustedGateway: true },
-	]);
+	const broker = new AuthBrokerService(
+		vault,
+		[{ authentication: token, capabilities: ALL_CAPABILITIES, trustedGateway: true }],
+		refreshOAuthCredential,
+	);
+	const refresher = new AuthBrokerRefresher({ service: broker });
 	const handle = await startAuthBrokerServer({ bind, broker, version: VERSION });
+	refresher.start();
 	let resolveStop: (() => void) | undefined;
 	const stopped = new Promise<void>((resolveStopPromise) => {
 		resolveStop = resolveStopPromise;
@@ -272,6 +277,7 @@ async function serveCommand(command: ParsedCommand, agentDir: string): Promise<A
 	} finally {
 		process.off("SIGINT", shutdown);
 		process.off("SIGTERM", shutdown);
+		refresher.stop();
 		await handle.close();
 		vault.close();
 	}
@@ -296,6 +302,23 @@ async function prompt(message: string): Promise<string> {
 		reader.close();
 	}
 }
+
+const refreshOAuthCredential = async (record: CredentialRecord): Promise<CredentialMaterial> => {
+	if (record.material.type !== "oauth") throw new AuthBrokerCommandError("Only OAuth credentials can be refreshed");
+	const provider = getOAuthProvider(record.pool.provider);
+	if (provider === undefined) throw new AuthBrokerCommandError(`Unknown OAuth provider: ${record.pool.provider}`);
+	const refreshed = await provider.refreshToken({
+		access: record.material.accessToken,
+		expires: record.material.expiresAt,
+		refresh: record.material.refreshToken,
+	});
+	return {
+		accessToken: refreshed.access,
+		expiresAt: refreshed.expires,
+		refreshToken: refreshed.refresh,
+		type: "oauth",
+	};
+};
 
 function oauthRecord(provider: string, identityKey: string, credentials: OAuthCredentials): CredentialRecord {
 	return {
