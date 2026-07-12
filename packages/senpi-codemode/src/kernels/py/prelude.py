@@ -58,6 +58,10 @@ _ASSIGN_LINE_RE = re.compile(
 _SHELL_READ_CHUNK_BYTES = 8192
 _SHELL_CAPTURE_MAX_BYTES = 1024 * 1024
 _SHELL_CAPTURE_MAX_LINES = 3000
+_SHELL_TRUNCATION_NOTICE = (
+    f"[output truncated: shell helper exceeded {_SHELL_CAPTURE_MAX_BYTES} bytes "
+    f"or {_SHELL_CAPTURE_MAX_LINES} lines; remaining output discarded]\n"
+)
 os.environ.setdefault("MPLBACKEND", "Agg")
 
 
@@ -480,7 +484,7 @@ def _pool_map(items: Iterable[Any], function: Callable[[Any], Any]) -> list[Any]
             index = futures[future]
             try:
                 results[index] = future.result()
-            except BaseException as exc:
+            except BaseException as exc:  # noqa: BROAD_EXCEPT_OK — preserve user thunk failures for deterministic re-raise.
                 errors[index] = exc
     if errors:
         raise errors[min(errors)]
@@ -682,10 +686,101 @@ def _magic_cell(name: str, args: str, body: str) -> Any:
     raise PreludeRuntimeError(f"Unsupported cell magic: %%{name}")
 
 
+def _take_prefix_by_lines(value: str, max_lines: int) -> str:
+    if max_lines <= 0:
+        return ""
+    cursor = 0
+    for _ in range(max_lines):
+        newline = value.find("\n", cursor)
+        if newline < 0:
+            return value
+        cursor = newline + 1
+    return value[:cursor]
+
+
+def _take_prefix_by_encoded_bytes(value: str, max_bytes: int, encoding: str) -> str:
+    if max_bytes <= 0:
+        return ""
+    if len(value.encode(encoding, errors="replace")) <= max_bytes:
+        return value
+    low = 0
+    high = len(value)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if len(value[:middle].encode(encoding, errors="replace")) <= max_bytes:
+            low = middle
+        else:
+            high = middle - 1
+    return value[:low]
+
+
+class _ShellOutputLimiter:
+    def __init__(self, *, max_bytes: int, max_lines: int, encoding: str) -> None:
+        self._remaining_bytes = max_bytes
+        self._remaining_lines = max_lines
+        self._encoding = encoding
+        self._truncated = False
+        self._at_line_start = True
+
+    def write(self, value: str) -> None:
+        if not value or self._truncated:
+            return
+        line_limited = _take_prefix_by_lines(value, self._remaining_lines)
+        truncated = line_limited != value
+        byte_limited = _take_prefix_by_encoded_bytes(
+            line_limited,
+            self._remaining_bytes,
+            self._encoding,
+        )
+        truncated = truncated or byte_limited != line_limited
+        if byte_limited:
+            text("stdout", byte_limited)
+            self._remaining_bytes -= len(
+                byte_limited.encode(self._encoding, errors="replace")
+            )
+            self._remaining_lines -= byte_limited.count("\n")
+            self._at_line_start = byte_limited.endswith("\n")
+        if truncated:
+            self._emit_truncation_notice()
+
+    def _emit_truncation_notice(self) -> None:
+        if self._truncated:
+            return
+        prefix = "" if self._at_line_start else "\n"
+        text("stdout", prefix + _SHELL_TRUNCATION_NOTICE)
+        self._truncated = True
+
+
+class _BoundedTextCapture:
+    def __init__(self, max_bytes: int, max_lines: int, encoding: str) -> None:
+        self._remaining_bytes = max_bytes
+        self._remaining_lines = max_lines
+        self._encoding = encoding
+        self._parts: list[str] = []
+
+    def add(self, value: str) -> None:
+        if self._remaining_bytes <= 0 or self._remaining_lines <= 0:
+            return
+        line_limited = _take_prefix_by_lines(value, self._remaining_lines)
+        part = _take_prefix_by_encoded_bytes(
+            line_limited,
+            self._remaining_bytes,
+            self._encoding,
+        )
+        if not part:
+            return
+        self._parts.append(part)
+        self._remaining_bytes -= len(part.encode(self._encoding, errors="replace"))
+        self._remaining_lines -= part.count("\n")
+
+    def value(self) -> str:
+        return "".join(self._parts)
+
+
 class ShellResult(list[str]):
-    def __init__(self, lines: list[str], exit_code: int) -> None:
+    def __init__(self, lines: list[str], returncode: int) -> None:
         super().__init__(lines)
-        self.exit_code = exit_code
+        self.returncode = returncode
 
     @property
     def n(self) -> str:
@@ -704,31 +799,26 @@ def _shell(command: str) -> ShellResult:
         stderr=subprocess.STDOUT,
     )
     if process.stdout is None:
-        process.wait()
-        return ShellResult([], process.returncode)
+        return ShellResult([], process.wait())
 
     encoding = locale.getpreferredencoding(False) or "utf-8"
     decoder = codecs.getincrementaldecoder(encoding)(errors="replace")
-    captured_parts: list[str] = []
-    captured_bytes = 0
-    captured_lines = 0
+    limiter = _ShellOutputLimiter(
+        max_bytes=_SHELL_CAPTURE_MAX_BYTES,
+        max_lines=_SHELL_CAPTURE_MAX_LINES,
+        encoding=encoding,
+    )
+    capture = _BoundedTextCapture(
+        _SHELL_CAPTURE_MAX_BYTES,
+        _SHELL_CAPTURE_MAX_LINES,
+        encoding,
+    )
 
     def consume(chunk_text: str) -> None:
-        nonlocal captured_bytes, captured_lines
         if not chunk_text:
             return
-        text("stdout", chunk_text)
-        if captured_bytes >= _SHELL_CAPTURE_MAX_BYTES or captured_lines >= _SHELL_CAPTURE_MAX_LINES:
-            return
-        remaining_lines = _SHELL_CAPTURE_MAX_LINES - captured_lines
-        line_limited = "".join(chunk_text.splitlines(keepends=True)[:remaining_lines])
-        remaining_bytes = _SHELL_CAPTURE_MAX_BYTES - captured_bytes
-        encoded = line_limited.encode(encoding, errors="replace")[:remaining_bytes]
-        captured = encoded.decode(encoding, errors="ignore")
-        if captured:
-            captured_parts.append(captured)
-            captured_bytes += len(captured.encode(encoding, errors="replace"))
-            captured_lines += captured.count("\n")
+        limiter.write(chunk_text)
+        capture.add(chunk_text)
 
     while True:
         raw_chunk = os.read(process.stdout.fileno(), _SHELL_READ_CHUNK_BYTES)
@@ -736,8 +826,7 @@ def _shell(command: str) -> ShellResult:
             break
         consume(decoder.decode(raw_chunk))
     consume(decoder.decode(b"", final=True))
-    process.wait()
-    return ShellResult("".join(captured_parts).splitlines(), process.returncode)
+    return ShellResult(capture.value().splitlines(), process.wait())
 
 
 USER_NS.update(

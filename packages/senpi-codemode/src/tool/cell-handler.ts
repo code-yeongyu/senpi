@@ -15,6 +15,8 @@ type ToolContent = AgentToolResult<unknown>["content"][number];
 type TextPart = Extract<ToolContent, { type: "text" }>;
 type RuntimeImagePart = { type: "image"; mimeType: string; data: string };
 type ResolvedToolReply = { readonly value: unknown; readonly toolCallOk: boolean };
+
+const MAX_DISPLAY_TEXT_CHARS = 8_000;
 export interface CellState {
 	readonly cellId: string;
 	readonly language: EvalToolInput["language"];
@@ -42,6 +44,7 @@ export class CellHandler {
 	readonly #kernel: EvalKernel;
 	readonly #state: CellState;
 	readonly #runtime: CellBridgeRuntime;
+	readonly #jsonOutputs: unknown[] = [];
 
 	constructor(kernel: EvalKernel, state: CellState, runtime: CellBridgeRuntime) {
 		this.#kernel = kernel;
@@ -71,8 +74,19 @@ export class CellHandler {
 			return;
 		}
 		if (message.type === "display") {
-			this.#state.images.push({ type: "image", mimeType: message.mimeType, data: message.dataBase64 });
-			this.#state.output += `[display: ${message.mimeType}]\n`;
+			if (message.mimeType.startsWith("image/")) {
+				this.#state.images.push({ type: "image", mimeType: message.mimeType, data: message.dataBase64 });
+				this.#state.output += `display image ${this.#state.images.length}: [${message.mimeType}]\n`;
+			} else {
+				const displayText = Buffer.from(message.dataBase64, "base64").toString("utf8");
+				if (message.mimeType === "application/json") {
+					const value: unknown = JSON.parse(displayText);
+					this.#jsonOutputs.push(value);
+					this.#state.output += `display[${this.#jsonOutputs.length}]:\n${formatDisplayJson(value)}\n`;
+				} else {
+					this.#state.output += displayText.endsWith("\n") ? displayText : `${displayText}\n`;
+				}
+			}
 			this.#emitUpdate(false);
 			return;
 		}
@@ -94,8 +108,14 @@ export class CellHandler {
 		const suffix = truncation.truncated
 			? `\n\n[Output truncated: ${truncation.outputLines} of ${truncation.totalLines} lines (${truncation.outputBytes} of ${truncation.totalBytes} bytes).]`
 			: "";
+		const output = `${truncation.content}${suffix}`;
+		const text =
+			output ||
+			(this.#state.images.length > 0
+				? `(displayed ${this.#state.images.length} image${this.#state.images.length === 1 ? "" : "s"}; no text output)`
+				: "(no output)");
 		return {
-			content: [{ type: "text", text: `${truncation.content}${suffix}` }, ...this.#state.images],
+			content: [{ type: "text", text }, ...this.#state.images],
 			details: this.#details(truncation.truncated, !result.ok),
 		};
 	}
@@ -215,6 +235,7 @@ export class CellHandler {
 			isError,
 			phase: this.#state.phase,
 			...(this.#state.statusEvents === undefined ? {} : { statusEvents: this.#state.statusEvents }),
+			...(this.#jsonOutputs.length === 0 ? {} : { jsonOutputs: [...this.#jsonOutputs] }),
 		};
 	}
 
@@ -225,6 +246,18 @@ export class CellHandler {
 			details: this.#details(false, isError),
 		});
 	}
+}
+
+function formatDisplayJson(value: unknown): string {
+	let text: string;
+	try {
+		text = JSON.stringify(value, null, 2) ?? String(value);
+	} catch (error) {
+		if (!(error instanceof TypeError)) throw error;
+		text = String(value);
+	}
+	if (text.length <= MAX_DISPLAY_TEXT_CHARS) return text;
+	return `${text.slice(0, MAX_DISPLAY_TEXT_CHARS)}\n[…${text.length - MAX_DISPLAY_TEXT_CHARS}ch elided…]`;
 }
 
 function marshalToolResult(result: AgentToolResult<unknown>) {

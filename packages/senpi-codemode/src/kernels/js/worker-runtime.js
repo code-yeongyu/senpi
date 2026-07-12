@@ -6,6 +6,8 @@ import { awaitMaybePromise, indirectEval, wrapUserCode } from "./worker-indirect
 
 const PREPARED_CELL_PREFIX = "/*senpi:prepared-cell*/";
 const INTERNAL_URL = /^([a-z][a-z0-9+.-]*):\/\/(.*)$/iu;
+const BASE64_STRICT_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
+const DECIMAL_CSV_RE = /^\d{1,3}(?:,\d{1,3})*$/u;
 
 export class JsWorkerRuntime {
 	#cwd;
@@ -63,11 +65,28 @@ export class JsWorkerRuntime {
 		);
 		const originalLog = console.log.bind(console);
 		const originalError = console.error.bind(console);
+		const originalStdoutWrite = process.stdout.write;
+		const originalStderrWrite = process.stderr.write;
+		const routeWrite = (stream, originalWrite, streamName) => {
+			const write = originalWrite.bind(stream);
+			return (chunk, encoding, callback) => {
+				if (!this.#hooks) return write(chunk, encoding, callback);
+				const callbackValue = typeof encoding === "function" ? encoding : callback;
+				const encodingValue = typeof encoding === "string" ? encoding : undefined;
+				this.#emitText(streamName, chunkToString(chunk, encodingValue));
+				if (typeof callbackValue === "function") callbackValue();
+				return true;
+			};
+		};
+		process.stdout.write = routeWrite(process.stdout, originalStdoutWrite, "stdout");
+		process.stderr.write = routeWrite(process.stderr, originalStderrWrite, "stderr");
 		console.log = (...values) => this.#emitText("stdout", `${values.map(formatValue).join(" ")}\n`);
 		console.error = (...values) => this.#emitText("stderr", `${values.map(formatValue).join(" ")}\n`);
 		globalThis.__senpi_restore_console__ = () => {
 			console.log = originalLog;
 			console.error = originalError;
+			process.stdout.write = originalStdoutWrite;
+			process.stderr.write = originalStderrWrite;
 		};
 	}
 
@@ -87,7 +106,14 @@ export class JsWorkerRuntime {
 			}
 			if (value.type === "image" && typeof value.mimeType === "string") {
 				const dataBase64 = imageBase64(value.data);
-				if (dataBase64 !== undefined) this.#hooks?.emit({ type: "display", mimeType: value.mimeType, dataBase64 });
+				if (dataBase64 !== undefined) {
+					this.#hooks?.emit({ type: "display", mimeType: value.mimeType, dataBase64 });
+					return;
+				}
+				this.#emitText(
+					"stdout",
+					`[display: image dropped — \`data\` must be a base64 string, Uint8Array/Buffer, or ArrayBuffer; got ${describeImageData(value.data)}]\n`,
+				);
 				return;
 			}
 			if (typeof value.mimeType === "string" && typeof value.dataBase64 === "string") {
@@ -198,12 +224,29 @@ export class JsWorkerRuntime {
 			...callArgs,
 			handle: Boolean(handle),
 		});
-		const text = isPlainObject(response) && "text" in response ? response.text : response;
-		const output = Object.hasOwn(callArgs, "schema") ? JSON.parse(String(text)) : text;
+		const responseRecord = isPlainObject(response) ? response : {};
+		const text = Object.hasOwn(responseRecord, "text") ? responseRecord.text : response;
+		const output = Object.hasOwn(callArgs, "schema")
+			? Object.hasOwn(responseRecord, "data")
+				? responseRecord.data
+				: JSON.parse(String(text))
+			: text;
 		if (!handle) return output;
-		const details = isPlainObject(response) && isPlainObject(response.details) ? response.details : undefined;
-		if (!details || details.id === undefined) return { text, output: text, handle: null, id: null, agent: null };
-		return { text, output: text, handle: `agent://${details.id}`, id: details.id, agent: details.agent ?? null };
+		const details = isPlainObject(responseRecord.details) ? responseRecord.details : responseRecord;
+		const id = details.id;
+		if (id === undefined || id === null) return { text, output: text, handle: null, id: null, agent: null };
+		const node = {
+			text,
+			output: text,
+			handle: details.handle ?? `agent://${id}`,
+			id,
+			agent: details.agent ?? callArgs.agent ?? null,
+		};
+		if (Object.hasOwn(callArgs, "schema")) node.data = output;
+		for (const key of ["isolated", "patchPath", "branchName", "nestedPatches", "changesApplied", "isolationSummary"]) {
+			if (details[key] !== undefined) node[key] = details[key];
+		}
+		return node;
 	}
 
 	async #callTool(toolName, args) {
@@ -302,10 +345,50 @@ async function writeData(value) {
 }
 
 function imageBase64(data) {
-	if (typeof data === "string") return data;
+	if (typeof data === "string") {
+		if (isStrictBase64(data)) return data;
+		if (!DECIMAL_CSV_RE.test(data)) return undefined;
+		const parts = data.split(",");
+		const bytes = new Uint8Array(parts.length);
+		for (let index = 0; index < parts.length; index += 1) {
+			const byte = Number(parts[index]);
+			if (!Number.isInteger(byte) || byte < 0 || byte > 255) return undefined;
+			bytes[index] = byte;
+		}
+		return Buffer.from(bytes).toString("base64");
+	}
+	if (data instanceof Uint8Array) return Buffer.from(data).toString("base64");
 	if (data instanceof ArrayBuffer) return Buffer.from(data).toString("base64");
 	if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("base64");
+	if (isPlainObject(data) && data.type === "Buffer" && Array.isArray(data.data)) {
+		const bytes = new Uint8Array(data.data.length);
+		for (let index = 0; index < data.data.length; index += 1) {
+			const byte = data.data[index];
+			if (typeof byte !== "number" || !Number.isInteger(byte) || byte < 0 || byte > 255) return undefined;
+			bytes[index] = byte;
+		}
+		return Buffer.from(bytes).toString("base64");
+	}
 	return undefined;
+}
+
+function isStrictBase64(value) {
+	return value.length > 0 && value.length % 4 === 0 && BASE64_STRICT_RE.test(value);
+}
+
+function describeImageData(data) {
+	if (data === null) return "null";
+	if (data instanceof Uint8Array) return "Uint8Array";
+	if (data instanceof ArrayBuffer) return "ArrayBuffer";
+	if (ArrayBuffer.isView(data)) return data.constructor.name;
+	if (typeof data === "string") return `string(${data.length})`;
+	return typeof data;
+}
+
+function chunkToString(chunk, encoding) {
+	if (typeof chunk === "string") return chunk;
+	if (chunk instanceof Uint8Array) return Buffer.from(chunk).toString(encoding ?? "utf8");
+	return String(chunk);
 }
 
 function encodeBase64(value) {
