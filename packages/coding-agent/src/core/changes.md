@@ -1,5 +1,20 @@
 # changes
 
+## Release accepted auto-compaction ownership before recovery (2026-07-13)
+
+### What changed
+
+- `agent-session.ts`: accepted auto-compaction now releases only its own abort-controller identity before awaiting the recovery continuation, while the session-work barrier remains active until recovery settles.
+- Final cleanup is identity-guarded so an older compaction cannot clear a newer controller installed during recovery.
+
+### Why extension system couldn't handle this
+
+- Interactive input classification reads core-owned `AgentSession.isCompacting`, and fresh-prompt serialization depends on the private session-work barrier. Extensions cannot split those two lifecycle boundaries safely.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` around `_runAutoCompaction()` accepted-result handling and final controller cleanup.
+
 ## Post-compaction continuation deadlock fix (2026-07-12)
 
 ### What changed

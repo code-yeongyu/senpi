@@ -2781,7 +2781,8 @@ export class AgentSession {
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
 		const finishCompactionWork = this._sessionWorkBarrier.begin();
 		this._emit({ type: "compaction_start", reason });
-		this._autoCompactionAbortController = new AbortController();
+		const autoCompactionController = new AbortController();
+		this._autoCompactionAbortController = autoCompactionController;
 
 		try {
 			if (!this.model) {
@@ -2830,6 +2831,9 @@ export class AgentSession {
 				if (reason === "overflow") this._overflowRecoveryAttempted = false;
 				return false;
 			}
+			if (this._autoCompactionAbortController === autoCompactionController) {
+				this._autoCompactionAbortController = undefined;
+			}
 
 			if (willRetry) {
 				const messages = this.agent.state.messages;
@@ -2869,7 +2873,9 @@ export class AgentSession {
 			});
 			return false;
 		} finally {
-			this._autoCompactionAbortController = undefined;
+			if (this._autoCompactionAbortController === autoCompactionController) {
+				this._autoCompactionAbortController = undefined;
+			}
 			finishCompactionWork();
 		}
 	}
