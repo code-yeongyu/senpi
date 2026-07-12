@@ -1,3 +1,4 @@
+// allow: SIZE_OK — private runtime state and installed globals must stay in one worker module.
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { inspect } from "node:util";
@@ -206,8 +207,20 @@ export class JsWorkerRuntime {
 	}
 
 	async #callTool(toolName, args) {
-		if (!this.#hooks) throw new Error("tool call outside active JS cell");
-		return await this.#hooks.callTool(toolName, args);
+		const hooks = this.#hooks;
+		if (!hooks) throw new Error("tool call outside active JS cell");
+		if (
+			typeof globalThis.__senpi_timeout_pause_op__ !== "string" ||
+			typeof globalThis.__senpi_timeout_resume_op__ !== "string"
+		) {
+			throw new Error("timeout bridge is unavailable");
+		}
+		this.#emitStatus({ op: globalThis.__senpi_timeout_pause_op__ });
+		try {
+			return await hooks.callTool(toolName, args);
+		} finally {
+			this.#emitStatus({ op: globalThis.__senpi_timeout_resume_op__ });
+		}
 	}
 
 	async #parallel(thunks) {

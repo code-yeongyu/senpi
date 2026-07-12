@@ -1,7 +1,12 @@
 import { join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { BridgeConnectionConfig } from "../../bridge/protocol.ts";
-import { RESERVED_AGENT_TOOL, RESERVED_OUTPUT_TOOL } from "../../bridge/reserved.ts";
+import {
+	RESERVED_AGENT_TOOL,
+	RESERVED_OUTPUT_TOOL,
+	TIMEOUT_PAUSE_OP,
+	TIMEOUT_RESUME_OP,
+} from "../../bridge/reserved.ts";
 import type { JavaScriptKernelOptions as BaseJavaScriptKernelOptions } from "./kernel-contract.ts";
 import { rewriteImports } from "./rewrite-imports.ts";
 
@@ -29,6 +34,8 @@ type RuntimeModuleContext = {
 	readonly localRootUrls: Readonly<Record<string, string>>;
 	readonly reservedAgentTool: string;
 	readonly reservedOutputTool: string;
+	readonly timeoutPauseOp: string;
+	readonly timeoutResumeOp: string;
 };
 
 function directoryUrl(directory: string): string {
@@ -48,6 +55,8 @@ function runtimeContext(options: LocalModuleLoaderOptions): RuntimeModuleContext
 		localRootUrls: roots,
 		reservedAgentTool: RESERVED_AGENT_TOOL,
 		reservedOutputTool: RESERVED_OUTPUT_TOOL,
+		timeoutPauseOp: TIMEOUT_PAUSE_OP,
+		timeoutResumeOp: TIMEOUT_RESUME_OP,
 	};
 }
 
@@ -57,6 +66,8 @@ function loaderPrelude(context: RuntimeModuleContext): string {
 		`globalThis.__senpi_module_context__ = ${serialized};`,
 		"globalThis.__senpi_reserved_agent_tool__ = globalThis.__senpi_module_context__.reservedAgentTool;",
 		"globalThis.__senpi_reserved_output_tool__ = globalThis.__senpi_module_context__.reservedOutputTool;",
+		"globalThis.__senpi_timeout_pause_op__ = globalThis.__senpi_module_context__.timeoutPauseOp;",
+		"globalThis.__senpi_timeout_resume_op__ = globalThis.__senpi_module_context__.timeoutResumeOp;",
 		"globalThis.__senpi_import__ = async (source, options) => {",
 		"  const context = globalThis.__senpi_module_context__;",
 		"  const specifier = String(source);",

@@ -1,3 +1,4 @@
+# allow: SIZE_OK — this dependency-free kernel prelude is loaded as one runtime asset.
 const SENPI_B64_ALPHABET = collect("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
 
 function senpi_base64(text::AbstractString)
@@ -21,14 +22,23 @@ function senpi_status_events_enabled()
     get(senpi_connection, "statusEvents", true) !== false
 end
 
-function senpi_emit_status(op::AbstractString, fields::AbstractDict=Dict{String, Any}())
-    senpi_status_events_enabled() || return nothing
+function senpi_emit_status(op::AbstractString, fields::AbstractDict=Dict{String, Any}(); force::Bool=false)
+    (force || senpi_status_events_enabled()) || return nothing
     event = Dict{String, Any}("op" => string(op))
     for (key, value) in fields
         event[string(key)] = value
     end
     senpi_emit(Dict("type" => "status", "event" => event))
     nothing
+end
+
+function senpi_with_bridge_timeout_pause(operation::Function)
+    senpi_emit_status("timeout-pause"; force=true)
+    try
+        return operation()
+    finally
+        senpi_emit_status("timeout-resume"; force=true)
+    end
 end
 
 function senpi_url_decode(value::AbstractString)
@@ -165,7 +175,7 @@ function (callable::SenpiToolCallable)(args=nothing; kwargs...)
     for (key, value) in kwargs
         values[string(key)] = value
     end
-    senpi_call_tool(callable.name, values)
+    senpi_with_bridge_timeout_pause(() -> senpi_call_tool(callable.name, values))
 end
 
 Base.getproperty(::SenpiToolProxy, name::Symbol) = SenpiToolCallable(string(name))
@@ -178,7 +188,7 @@ function completion(prompt::AbstractString; model="default", system=nothing, sch
     for (key, value) in kwargs
         options[string(key)] = value
     end
-    response = senpi_completion(string(prompt), options)
+    response = senpi_with_bridge_timeout_pause(() -> senpi_completion(string(prompt), options))
     schema === nothing && return response
     text_value = response isa AbstractDict ? get(response, "text", response) : response
     senpi_json_parse(string(text_value))
@@ -190,7 +200,7 @@ function output(ids...; format="raw", offset=nothing, limit=nothing)
     arguments = Dict{String, Any}("ids" => string.(ids), "format" => format)
     offset !== nothing && (arguments["offset"] = offset)
     limit !== nothing && (arguments["limit"] = limit)
-    senpi_call_tool("__output__", arguments)
+    senpi_with_bridge_timeout_pause(() -> senpi_call_tool("__output__", arguments))
 end
 
 function agent(prompt::AbstractString; agent="task", model=nothing, label=nothing, schema=nothing, isolated=nothing, apply=nothing, merge=nothing, handle=false, kwargs...)
@@ -202,7 +212,7 @@ function agent(prompt::AbstractString; agent="task", model=nothing, label=nothin
         arguments[string(key)] = value
     end
     handle && (arguments["handle"] = true)
-    response = senpi_call_tool("__agent__", arguments)
+    response = senpi_with_bridge_timeout_pause(() -> senpi_call_tool("__agent__", arguments))
     record = response isa AbstractDict ? response : Dict{String, Any}()
     text_value = get(record, "text", response)
     parsed = schema === nothing ? text_value : haskey(record, "data") ? record["data"] : senpi_json_parse(string(text_value))

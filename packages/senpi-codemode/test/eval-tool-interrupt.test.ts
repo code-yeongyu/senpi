@@ -9,7 +9,6 @@ import {
 	FakeKernel,
 	FakeManager,
 	fakeExtensionContext,
-	KernelOwnedTimeoutKernel,
 	PendingInterruptKernel,
 	result,
 	SingleKernelManager,
@@ -92,33 +91,6 @@ describe("createEvalTool interrupt handling", () => {
 		expect(kernel.interrupts).toEqual(["Cell timed out after 1000ms"]);
 		expect(kernel.runs).toEqual([]);
 		kernel.resetReleased.resolve(undefined);
-	});
-
-	it("preserves the kernel timeout result when its deadline equals the cell timeout", async () => {
-		vi.useFakeTimers();
-		const kernel = new KernelOwnedTimeoutKernel();
-		const tool = createTool(new SingleKernelManager(kernel));
-		const execution = tool.execute(
-			"cell-kernel-timeout",
-			{ language: "js", code: "while (true) {}", timeout: 1 },
-			undefined,
-			undefined,
-			fakeExtensionContext(),
-		);
-		const outcome = execution.then(
-			(value) => ({ status: "fulfilled" as const, value }),
-			(reason: unknown) => ({ status: "rejected" as const, reason }),
-		);
-		await kernel.runStarted.promise;
-
-		await vi.advanceTimersByTimeAsync(1_000);
-
-		const settled = await outcome;
-		expect(settled).toMatchObject({ status: "fulfilled", value: { details: { durationMs: 1_000, isError: true } } });
-		if (settled.status === "rejected") throw settled.reason;
-		const toolResult = settled.value;
-		expect(textOf(toolResult)).toContain("Kernel timed out after 1000ms");
-		expect(kernel.interrupts).toEqual([]);
 	});
 
 	it("combines the caller and cell lifecycle signals for nested tools", async () => {
@@ -266,5 +238,35 @@ describe("createEvalTool interrupt handling", () => {
 		).rejects.toThrow("Eval interrupted");
 		expect(getKernel).not.toHaveBeenCalled();
 		expect(kernel.runs).toHaveLength(0);
+	});
+
+	it("pauses the host watchdog around bridge status frames", async () => {
+		vi.useFakeTimers();
+		const kernel = new FakeKernel([
+			{ type: "status", event: { op: "timeout-pause" } },
+			{ type: "status", event: { op: "read", path: "/tmp/example.ts" } },
+			{ type: "tool-call", callId: "slow-bridge", toolName: "slow", args: {} },
+			result("cell-timeout-status", "done"),
+		]);
+		const executeTool: ExecuteTool = vi.fn(async () => {
+			vi.advanceTimersByTime(3_000);
+			kernel.onMessage?.({ type: "status", event: { op: "timeout-resume" } });
+			return { content: [{ type: "text" as const, text: "slow result" }], details: {} };
+		});
+		const tool = createTool(new FakeManager([["js", kernel]]), 1, executeTool);
+
+		const toolResult = await tool.execute(
+			"cell-timeout-status",
+			{ language: "js", code: "await tool.slow({})" },
+			undefined,
+			undefined,
+			fakeExtensionContext(),
+		);
+
+		expect(kernel.runs).toEqual([
+			{ cellId: "cell-timeout-status", code: "await tool.slow({})", timeoutMs: undefined },
+		]);
+		expect(kernel.interrupts).toEqual([]);
+		expect(toolResult.details.statusEvents).toEqual([{ op: "read", path: "/tmp/example.ts" }]);
 	});
 });

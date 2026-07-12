@@ -1,17 +1,12 @@
-/// <reference types="node" />
-import type { AgentToolResult } from "@code-yeongyu/senpi";
 import { resolve } from "node:path";
+import { DEFAULT_COMPACTION_SETTINGS, type ExtensionContext } from "@code-yeongyu/senpi";
 import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
 import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
-import { RESERVED_OUTPUT_TOOL } from "../src/bridge/reserved.ts";
-import {
-	type MarshalledToolResult,
-	type OutputExecuteTool,
-	runEvalOutput,
-} from "../src/bridges/output-bridge.ts";
+import type { OutputExecuteTool } from "../src/bridges/output-bridge.ts";
 import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
-import type { ExecuteTool } from "../src/tool/types.ts";
+import { createEvalTool } from "../src/tool/eval-tool.ts";
+import type { EvalKernelManager } from "../src/tool/types.ts";
 
 const taskOutputParamsSchema = Type.Object(
 	{
@@ -28,6 +23,8 @@ const taskOutputParamsSchema = Type.Object(
 type QaOptions = {
 	readonly cwd: string;
 	readonly codes: readonly string[];
+	readonly timeoutSeconds: number;
+	readonly slowToolMs: number | undefined;
 	readonly withFakeTask: boolean;
 };
 
@@ -41,25 +38,52 @@ class QaTaskOutputError extends Error {
 	readonly name = "QaTaskOutputError";
 }
 
+function parseDuration(flag: string, value: string | undefined, minimum: number): number {
+	if (value === undefined) throw new QaArgumentError(`${flag} requires a value`);
+	const parsed = Number(value);
+	if (!Number.isFinite(parsed) || parsed < minimum) {
+		throw new QaArgumentError(`${flag} must be a finite number >= ${minimum}`);
+	}
+	return parsed;
+}
+
 function parseArgs(args: readonly string[]): QaOptions {
 	let cwd = process.cwd();
-	const codes: string[] = [];
+	let timeoutSeconds = 15;
+	let slowToolMs: number | undefined;
 	let withFakeTask = false;
+	const codes: string[] = [];
 	for (let index = 0; index < args.length; index += 1) {
 		const flag = args[index];
 		if (flag === "--with-fake-task") {
 			withFakeTask = true;
 			continue;
 		}
-		if (flag !== "--cwd" && flag !== "--code") throw new QaArgumentError(`Unknown argument: ${flag}`);
-		const value = args[index + 1];
-		if (value === undefined) throw new QaArgumentError(`${flag} requires a value`);
-		if (flag === "--cwd") cwd = resolve(value);
-		else codes.push(value);
-		index += 1;
+		if (flag === "--cwd") {
+			cwd = resolveArg(flag, args[++index]);
+			continue;
+		}
+		if (flag === "--code") {
+			codes.push(resolveArg(flag, args[++index]));
+			continue;
+		}
+		if (flag === "--timeout-s") {
+			timeoutSeconds = parseDuration(flag, args[++index], Number.MIN_VALUE);
+			continue;
+		}
+		if (flag === "--slow-tool-ms") {
+			slowToolMs = parseDuration(flag, args[++index], 0);
+			continue;
+		}
+		throw new QaArgumentError(`Unknown argument: ${flag}`);
 	}
 	if (codes.length === 0) throw new QaArgumentError("At least one --code value is required");
-	return { cwd, codes, withFakeTask };
+	return { cwd, codes, timeoutSeconds, slowToolMs, withFakeTask };
+}
+
+function resolveArg(flag: string, value: string | undefined): string {
+	if (value === undefined) throw new QaArgumentError(`${flag} requires a value`);
+	return flag === "--cwd" ? resolve(value) : value;
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -81,76 +105,123 @@ function parseTaskOutputParams(value: unknown): TaskOutputParams {
 	return value;
 }
 
-function createFakeTaskOutputTool(enabled: boolean): OutputExecuteTool {
-	const executeTool: ExecuteTool = async (toolName, params) => {
-		if (toolName !== "task_output") throw new QaTaskOutputError(`unexpected fake task output tool: ${toolName}`);
-		const parsed = parseTaskOutputParams(params);
-		const target = parsed.task_id ?? parsed.name;
-		if (target === undefined) throw new QaTaskOutputError("task_output target missing");
-		if (target.includes("missing")) throw new QaTaskOutputError(`unknown task ${target}`);
-		return {
-			content: [{ type: "text", text: `TRANSCRIPT:${target}:${parsed.mode}` }],
-			details: {},
-		};
-	};
-	return Object.assign(executeTool, { isToolAvailable: (name: string) => enabled && name === "task_output" });
-}
-
-function marshalToolResult(result: AgentToolResult<unknown>): MarshalledToolResult {
-	const text = result.content
-		.filter((part): part is Extract<(typeof result.content)[number], { type: "text" }> => part.type === "text")
-		.map((part) => part.text)
-		.join("\n");
-	return { text };
-}
-
-function printFrame(message: KernelToHostMessage): void {
-	process.stdout.write(`${JSON.stringify(message)}\n`);
-}
-
-async function replyToToolCall(
-	message: Extract<KernelToHostMessage, { type: "tool-call" }>,
-	kernel: JavaScriptKernel,
-	options: QaOptions,
-	executeTool: OutputExecuteTool,
-): Promise<void> {
-	try {
-		if (message.toolName !== RESERVED_OUTPUT_TOOL) throw new QaArgumentError(`tool unavailable in qa driver: ${message.toolName}`);
-		if (!options.withFakeTask) throw new QaArgumentError("output() unavailable: no host handler is registered");
-		const value = await runEvalOutput(message.args, {
-			taskOutputToolName: "task_output",
-			executeTool,
-			marshalToolResult,
+function createQaExecuteTool(options: QaOptions): OutputExecuteTool {
+	const executeTool: OutputExecuteTool = async (toolName, params, executeOptions) => {
+		if (toolName === "task_output") {
+			if (!options.withFakeTask) throw new QaTaskOutputError("output() unavailable: no host handler is registered");
+			const parsed = parseTaskOutputParams(params);
+			const target = parsed.task_id ?? parsed.name;
+			if (target === undefined) throw new QaTaskOutputError("task_output target missing");
+			if (target.includes("missing")) throw new QaTaskOutputError(`unknown task ${target}`);
+			return {
+				content: [{ type: "text", text: `TRANSCRIPT:${target}:${parsed.mode}` }],
+				details: {},
+			};
+		}
+		if (toolName !== "slow_fake") throw new QaArgumentError(`Tool unavailable in QA driver: ${toolName}`);
+		if (options.slowToolMs === undefined) throw new QaArgumentError("slow_fake requires --slow-tool-ms");
+		await new Promise<void>((resolve, reject) => {
+			const signal = executeOptions?.signal;
+			const timer = setTimeout(() => {
+				signal?.removeEventListener("abort", onAbort);
+				resolve();
+			}, options.slowToolMs);
+			const onAbort = (): void => {
+				clearTimeout(timer);
+				signal?.removeEventListener("abort", onAbort);
+				reject(signal?.reason);
+			};
+			if (signal?.aborted) {
+				onAbort();
+				return;
+			}
+			signal?.addEventListener("abort", onAbort, { once: true });
 		});
-		kernel.deliverToolReply({ type: "tool-reply", callId: message.callId, ok: true, value });
-	} catch (error) {
-		const text = error instanceof Error ? error.message : String(error);
-		kernel.deliverToolReply({ type: "tool-reply", callId: message.callId, ok: false, error: { message: text } });
-	}
+		return { content: [{ type: "text", text: "slow fake" }], details: {} };
+	};
+	return Object.assign(executeTool, {
+		isToolAvailable: (toolName: string): boolean =>
+			(toolName === "task_output" && options.withFakeTask) ||
+			(toolName === "slow_fake" && options.slowToolMs !== undefined),
+	});
 }
 
-async function main(): Promise<void> {
-	const options = parseArgs(process.argv.slice(2));
-	const executeTool = createFakeTaskOutputTool(options.withFakeTask);
-	let kernel: JavaScriptKernel | undefined;
-	kernel = new JavaScriptKernel({
+async function runQa(options: QaOptions): Promise<void> {
+	let dispatch: ((message: KernelToHostMessage) => void) | undefined;
+	const kernel = new JavaScriptKernel({
 		sessionId: `qa-js-${crypto.randomUUID()}`,
 		cwd: options.cwd,
 		parallelPoolWidth: 4,
 		onMessage: (message) => {
-			printFrame(message);
-			if (message.type !== "tool-call" || kernel === undefined) return;
-			void replyToToolCall(message, kernel, options, executeTool);
+			process.stdout.write(`${JSON.stringify(message)}\n`);
+			dispatch?.(message);
 		},
+	});
+	const kernelManager: EvalKernelManager = {
+		getKernel: async (language, onMessage) => {
+			if (language !== "js") throw new QaArgumentError(`Unsupported QA language: ${language}`);
+			dispatch = onMessage;
+			return kernel;
+		},
+	};
+	const executeTool = createQaExecuteTool(options);
+	const qaContext: ExtensionContext = {
+		ui: Object.create(null),
+		mode: "print",
+		hasUI: false,
+		cwd: options.cwd,
+		sessionManager: Object.create(null),
+		modelRegistry: Object.create(null),
+		model: undefined,
+		serviceTier: undefined,
+		isIdle: () => true,
+		isProjectTrusted: () => true,
+		signal: undefined,
+		abort: () => {},
+		hasPendingMessages: () => false,
+		shutdown: () => {},
+		getContextUsage: () => undefined,
+		getCompactionSettings: () => DEFAULT_COMPACTION_SETTINGS,
+		compact: () => {},
+		getMessageRevision: () => 0,
+		applyCompaction: async () => ({ applied: false, reason: "rejected" }),
+		getSystemPrompt: () => "",
+	};
+	const tool = createEvalTool({
+		enabledLanguages: { js: true, py: false, rb: false, jl: false },
+		kernelManager,
+		cellTimeoutSeconds: options.timeoutSeconds,
+		executeTool,
 	});
 	try {
 		for (const [index, code] of options.codes.entries()) {
-			const result = await kernel.run({ cellId: `qa-cell-${index + 1}`, code, timeoutMs: 15_000 });
-			if (!result.ok) process.exitCode = 1;
+			const startedAt = performance.now();
+			try {
+				const result = await tool.execute(
+					`qa-cell-${index + 1}`,
+					{ language: "js", code, timeout: options.timeoutSeconds },
+					undefined,
+					undefined,
+					qaContext,
+				);
+				process.stdout.write(`${JSON.stringify(result)}\n`);
+				if (result.details.isError) process.exitCode = 1;
+			} catch (error) {
+				process.stderr.write(`QA_ERROR ${error instanceof Error ? error.message : String(error)}\n`);
+				process.exitCode = 1;
+			} finally {
+				process.stdout.write(`ELAPSED_MS ${Math.round(performance.now() - startedAt)}\n`);
+			}
+			if (process.exitCode) return;
 		}
 	} finally {
 		await kernel.close();
 	}
 }
 
-await main();
+try {
+	await runQa(parseArgs(process.argv.slice(2)));
+} catch (error) {
+	process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+	process.exitCode = 1;
+}

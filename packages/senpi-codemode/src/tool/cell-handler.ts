@@ -61,6 +61,10 @@ export class CellHandler {
 			this.#emitUpdate(false);
 			return;
 		}
+		if (message.type === "status") {
+			this.#recordStatus(message.event);
+			return;
+		}
 		if (message.type === "log") {
 			this.#state.output += `${message.message}\n`;
 			this.#emitUpdate(false);

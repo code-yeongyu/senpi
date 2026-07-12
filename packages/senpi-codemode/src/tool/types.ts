@@ -35,7 +35,7 @@ export function createEvalInputSchema(enabled: EnabledEvalLanguages): typeof ful
 	}) as typeof fullEvalInputSchema;
 }
 
-export type EvalInputSchema = ReturnType<typeof createEvalInputSchema>;
+export type EvalInputSchema = typeof fullEvalInputSchema;
 export interface EvalToolInput {
 	readonly language: EvalLanguage;
 	readonly code: string;

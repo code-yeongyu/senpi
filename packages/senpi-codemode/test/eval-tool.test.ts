@@ -181,7 +181,7 @@ describe("createEvalTool", () => {
 		);
 
 		expect(kernel.resetCount).toBe(1);
-		expect(kernel.runs[0]?.timeoutMs).toBe(2_000);
+		expect(kernel.runs[0]?.timeoutMs).toBeUndefined();
 		expect(toolResult.details).toMatchObject({ truncated: true });
 		expect(textOf(toolResult)).toContain("[Output truncated:");
 		expect(imageCount(toolResult)).toBe(1);

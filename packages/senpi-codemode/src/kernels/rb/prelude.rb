@@ -13,8 +13,8 @@ def __senpi_status_enabled?
   connection["statusEvents"] != false
 end
 
-def __senpi_emit_status(op, fields = {})
-  return unless __senpi_status_enabled?
+def __senpi_emit_status(op, fields = {}, force: false)
+  return unless force || __senpi_status_enabled?
   __senpi_emit({ "type" => "status", "event" => { "op" => op }.merge(fields.transform_keys(&:to_s)) })
 end
 
@@ -129,7 +129,12 @@ def __senpi_bridge_request(path, payload)
   request["authorization"] = "Bearer #{token}"
   request["content-type"] = "application/json"
   request.body = JSON.generate(payload)
-  response = Net::HTTP.start(uri.hostname, uri.port, open_timeout: 10, read_timeout: 60) { |http| http.request(request) }
+  __senpi_emit_status("timeout-pause", force: true)
+  begin
+    response = Net::HTTP.start(uri.hostname, uri.port, open_timeout: 10, read_timeout: 60) { |http| http.request(request) }
+  ensure
+    __senpi_emit_status("timeout-resume", force: true)
+  end
   body = JSON.parse(response.body.to_s)
   return body["value"] if body.is_a?(Hash) && body["ok"] == true
 
