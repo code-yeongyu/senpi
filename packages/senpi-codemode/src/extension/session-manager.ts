@@ -17,6 +17,11 @@ export interface CodemodeSessionManager extends EvalKernelManager {
 	setContext?(ctx: ExtensionContext): void;
 }
 
+export interface EvalExecutionTracker {
+	assertEvalExecutionAllowed(): void;
+	trackEvalExecution<Result>(execution: Promise<Result>, controller: AbortController): Promise<Result>;
+}
+
 export interface CreateCodemodeSessionManagerOptions {
 	readonly sessionId: string;
 	readonly cwd: string;
@@ -38,7 +43,7 @@ export async function createCodemodeSessionManager(
 	return manager;
 }
 
-class CodemodeSessionDisposedError extends Error {
+export class CodemodeSessionDisposedError extends Error {
 	readonly name = "CodemodeSessionDisposedError";
 
 	constructor() {

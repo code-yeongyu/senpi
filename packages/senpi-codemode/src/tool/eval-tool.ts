@@ -1,18 +1,20 @@
+import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext, ToolDefinition } from "@code-yeongyu/senpi";
-import type { HostToKernelMessage, KernelToHostMessage } from "../bridge/protocol.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
+import { defaultCodemodeSettings, type ResolvedCodemodeSettings } from "../config/settings.ts";
+import type { EvalExecutionTracker } from "../extension/session-manager.ts";
 import { buildEvalPrompt } from "../prompt/eval-prompt.ts";
 import { TIMEOUT_PAUSE_OP, TIMEOUT_RESUME_OP } from "../timeouts/bridge-timeout.ts";
 import { IdleTimeout } from "../timeouts/idle-timeout.ts";
 import { CellHandler, type CellState } from "./cell-handler.ts";
-import { renderEvalCall, renderEvalResult } from "./render.ts";
+import type { EvalImageResizer } from "./image.ts";
 import {
 	createEvalInputSchema,
 	type EnabledEvalLanguages,
 	type EvalInputSchema,
 	type EvalKernel,
 	type EvalKernelManager,
-	type EvalKernelRunInput,
 	type EvalToolDetails,
 	type EvalToolInput,
 	type ExecuteTool,
@@ -27,66 +29,39 @@ export interface CreateEvalToolOptions {
 	readonly cellTimeoutSeconds: number;
 	readonly executeTool: ExecuteTool;
 	readonly complete?: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>;
+	readonly settings?: ResolvedCodemodeSettings;
+	readonly artifactsDir?: string;
+	readonly imageResizer?: EvalImageResizer;
+	readonly executionTracker?: EvalExecutionTracker;
+	readonly proxyExecutor?: (params: EvalToolInput, signal?: AbortSignal) => Promise<AgentToolResult<EvalToolDetails>>;
+	readonly renderers?: Pick<ToolDefinition<EvalInputSchema, EvalToolDetails>, "renderCall" | "renderResult">;
 }
 
 interface EvalCellInvocation {
 	readonly cellId: string;
 	readonly input: EvalToolInput;
-	readonly signal: AbortSignal | undefined;
+	readonly signal: AbortSignal;
 	readonly onUpdate: AgentToolUpdateCallback<EvalToolDetails> | undefined;
 	readonly ctx: ExtensionContext;
 }
 
 interface CellExecutionOptions {
-	readonly callerSignal: AbortSignal | undefined;
+	readonly callerSignal: AbortSignal;
 	readonly cellId: string;
 	readonly onAbort: (error: Error) => void;
 	readonly timeoutMs: number;
 }
 
-type ToolReply = Extract<HostToKernelMessage, { type: "tool-reply" }>;
-
 const INTERRUPT_DELIVERY_GRACE_MS = 100;
 
-class CellKernel implements EvalKernel {
-	readonly #kernel: EvalKernel;
-	readonly #state: CellState;
-
-	constructor(kernel: EvalKernel, state: CellState) {
-		this.#kernel = kernel;
-		this.#state = state;
-	}
-
-	run(input: EvalKernelRunInput): Promise<Extract<KernelToHostMessage, { type: "result" }>> {
-		return this.#kernel.run(input);
-	}
-
-	deliverToolReply(message: ToolReply): void {
-		if (this.#state.active) this.#kernel.deliverToolReply(message);
-	}
-
-	interrupt(reason?: string): Promise<void> {
-		return this.#kernel.interrupt(reason);
-	}
-
-	reset(): Promise<void> {
-		return this.#kernel.reset();
-	}
-
-	close(): Promise<void> {
-		return this.#kernel.close();
-	}
-}
-
 class CellExecution {
-	readonly #callerSignal: AbortSignal | undefined;
+	readonly #callerSignal: AbortSignal;
 	readonly #onAbort: (error: Error) => void;
 	readonly #abortPromise: Promise<never>;
 	readonly #watchdog: IdleTimeout;
-	#rejectAbort: (reason?: unknown) => void = () => {};
-	#kernel: CellKernel | undefined;
+	#rejectAbort: ((reason?: unknown) => void) | undefined;
+	#kernel: EvalKernel | undefined;
 	#interruptDeadline: ReturnType<typeof setTimeout> | undefined;
-	#abortSettled = false;
 	#active = true;
 
 	constructor(options: CellExecutionOptions) {
@@ -100,40 +75,36 @@ class CellExecution {
 			timeoutMs: options.timeoutMs,
 			onTimeout: ({ error }) => this.#abort(error),
 		});
-		this.#callerSignal?.addEventListener("abort", this.#handleCallerAbort, { once: true });
+		this.#callerSignal.addEventListener("abort", this.#handleCallerAbort, { once: true });
 	}
 
 	pause(): void {
 		this.#watchdog.pause();
 	}
-
 	resume(): void {
 		this.#watchdog.resume();
 	}
-
-	setKernel(kernel: CellKernel): void {
+	setKernel(kernel: EvalKernel): void {
 		this.#kernel = kernel;
 	}
-
 	cancel(reason: unknown): void {
 		this.#abort(reason);
 	}
-
-	async wait<T>(operation: Promise<T>): Promise<T> {
-		const guardedOperation = operation.then(
-			(value): T | Promise<never> => (this.#active ? value : this.#abortPromise),
-			(reason: unknown): Promise<never> => (this.#active ? Promise.reject(reason) : this.#abortPromise),
-		);
-		return await Promise.race([guardedOperation, this.#abortPromise]);
-	}
-
 	finish(): void {
 		this.#active = false;
 		this.#cleanup();
 	}
 
+	async wait<Result>(operation: Promise<Result>): Promise<Result> {
+		const guarded = operation.then(
+			(value): Result | Promise<never> => (this.#active ? value : this.#abortPromise),
+			(reason: unknown): Promise<never> => (this.#active ? Promise.reject(reason) : this.#abortPromise),
+		);
+		return await Promise.race([guarded, this.#abortPromise]);
+	}
+
 	readonly #handleCallerAbort = (): void => {
-		this.#abort(this.#callerSignal?.reason);
+		this.#abort(this.#callerSignal.reason);
 	};
 
 	#abort(reason: unknown): void {
@@ -143,7 +114,7 @@ class CellExecution {
 		const error = abortError(reason);
 		this.#onAbort(error);
 		const kernel = this.#kernel;
-		if (!kernel) {
+		if (kernel === undefined) {
 			this.#settleAbort(error);
 			return;
 		}
@@ -157,21 +128,17 @@ class CellExecution {
 	}
 
 	#settleAbort(reason: unknown): void {
-		if (this.#abortSettled) return;
-		this.#abortSettled = true;
-		this.#clearInterruptDeadline();
-		this.#rejectAbort(reason);
+		const reject = this.#rejectAbort;
+		if (reject === undefined) return;
+		this.#rejectAbort = undefined;
+		if (this.#interruptDeadline !== undefined) clearTimeout(this.#interruptDeadline);
+		reject(reason);
 	}
 
 	#cleanup(): void {
-		this.#callerSignal?.removeEventListener("abort", this.#handleCallerAbort);
+		this.#callerSignal.removeEventListener("abort", this.#handleCallerAbort);
 		this.#watchdog.dispose();
-		this.#clearInterruptDeadline();
-	}
-
-	#clearInterruptDeadline(): void {
-		if (this.#interruptDeadline === undefined) return;
-		clearTimeout(this.#interruptDeadline);
+		if (this.#interruptDeadline !== undefined) clearTimeout(this.#interruptDeadline);
 		this.#interruptDeadline = undefined;
 	}
 }
@@ -188,15 +155,29 @@ export function createEvalTool(options: CreateEvalToolOptions): ToolDefinition<E
 		promptGuidelines: [...prompt.promptGuidelines],
 		parameters,
 		executionMode: "sequential",
-		renderCall: renderEvalCall,
-		renderResult: renderEvalResult,
+		...(options.renderers?.renderCall === undefined ? {} : { renderCall: options.renderers.renderCall }),
+		...(options.renderers?.renderResult === undefined ? {} : { renderResult: options.renderers.renderResult }),
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			if (!languages.includes(params.language)) {
-				throw new Error(
+			if (options.proxyExecutor) return await options.proxyExecutor(params, signal);
+			if (!languages.includes(params.language))
+				throw new RangeError(
 					`Unsupported eval language "${params.language}". Enabled languages: ${languages.join(", ")}`,
 				);
-			}
-			return await runEvalCell(options, { cellId: toolCallId, input: params, signal, onUpdate, ctx });
+			options.executionTracker?.assertEvalExecutionAllowed();
+			const lifecycleController = new AbortController();
+			const combinedSignal = signal
+				? AbortSignal.any([signal, lifecycleController.signal])
+				: lifecycleController.signal;
+			const execution = runEvalCell(options, {
+				cellId: toolCallId,
+				input: params,
+				signal: combinedSignal,
+				onUpdate,
+				ctx,
+			});
+			return options.executionTracker
+				? await options.executionTracker.trackEvalExecution(execution, lifecycleController)
+				: await execution;
 		},
 	};
 }
@@ -205,26 +186,23 @@ async function runEvalCell(
 	options: CreateEvalToolOptions,
 	invocation: EvalCellInvocation,
 ): Promise<AgentToolResult<EvalToolDetails>> {
-	if (invocation.signal?.aborted) throw abortError(invocation.signal.reason);
-	const timeoutMs = Math.floor((invocation.input.timeout ?? options.cellTimeoutSeconds) * 1000);
+	if (invocation.signal.aborted) throw abortError(invocation.signal.reason);
+	const timeoutMs = Math.floor((invocation.input.timeout ?? options.cellTimeoutSeconds) * 1_000);
 	const bridgeAbortController = new AbortController();
-	const cellSignal = invocation.signal
-		? AbortSignal.any([invocation.signal, bridgeAbortController.signal])
-		: bridgeAbortController.signal;
+	const cellSignal = AbortSignal.any([invocation.signal, bridgeAbortController.signal]);
 	const bridgeContext: ExtensionContext = { ...invocation.ctx, signal: cellSignal };
 	const state: CellState = {
-		cellId: invocation.cellId,
-		language: invocation.input.language,
-		title: invocation.input.title,
+		input: invocation.input,
 		signal: cellSignal,
 		onUpdate: invocation.onUpdate,
 		toolCalls: [],
-		images: [],
 		pendingBridgeCalls: [],
+		statusEvents: [],
 		active: true,
 		output: "",
 		phase: undefined,
 		durationMs: 0,
+		status: "pending",
 	};
 	const execution = new CellExecution({
 		callerSignal: invocation.signal,
@@ -254,12 +232,17 @@ async function runEvalCell(
 				void pending.catch((error: unknown) => execution.cancel(error));
 			}),
 		);
-		const kernel = new CellKernel(acquired, state);
+		const kernel = acquired;
 		execution.setKernel(kernel);
 		handler = new CellHandler(kernel, state, {
 			executeTool: options.executeTool,
-			complete: options.complete,
+			settings: options.settings ?? defaultCodemodeSettings,
+			...(options.complete === undefined ? {} : { complete: options.complete }),
 			ctx: bridgeContext,
+			...(options.artifactsDir === undefined
+				? {}
+				: { artifactPath: join(options.artifactsDir, `eval-${randomUUID()}.log`) }),
+			...(options.imageResizer === undefined ? {} : { imageResizer: options.imageResizer }),
 		});
 		if ("setContext" in options.kernelManager && typeof options.kernelManager.setContext === "function") {
 			options.kernelManager.setContext(bridgeContext);
@@ -267,17 +250,23 @@ async function runEvalCell(
 		if (invocation.input.reset) await execution.wait(kernel.reset());
 		const result = await execution.wait(kernel.run({ cellId: invocation.cellId, code: invocation.input.code }));
 		if (result.ok && state.pendingBridgeCalls.length > 0) await execution.wait(Promise.all(state.pendingBridgeCalls));
-		return handler.finalize(result);
+		return await handler.finalize(result);
+	} catch (error) {
+		if (handler && error instanceof Error && error.name === "CodemodeSessionDisposedError") {
+			return await handler.finalizeCancellation(error);
+		}
+		throw error;
 	} finally {
 		state.active = false;
 		bridgeAbortController.abort();
 		execution.finish();
+		if (handler) await handler.flushOutput();
 	}
 }
 
 function abortError(reason: unknown): Error {
 	if (reason instanceof Error && reason.name !== "AbortError") return reason;
-	const error = new Error(typeof reason === "string" ? reason : "Eval interrupted");
+	const error = new Error(typeof reason === "string" ? reason : "Eval interrupted", { cause: reason });
 	error.name = "AbortError";
 	return error;
 }

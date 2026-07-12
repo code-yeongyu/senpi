@@ -159,7 +159,7 @@ describe("createEvalTool", () => {
 	});
 
 	it("honors timeout, reset, truncation, and display images", async () => {
-		const big = `${Array.from({ length: 2_010 }, (_, index) => `line-${index}`).join("\n")}\n`;
+		const big = `${Array.from({ length: 8_010 }, (_, index) => `line-${index}`).join("\n")}\n`;
 		const kernel = new FakeKernel([
 			{ type: "text", stream: "stdout", data: big },
 			{ type: "display", mimeType: "image/png", dataBase64: "abc123" },
@@ -182,8 +182,8 @@ describe("createEvalTool", () => {
 
 		expect(kernel.resetCount).toBe(1);
 		expect(kernel.runs[0]?.timeoutMs).toBeUndefined();
-		expect(toolResult.details).toMatchObject({ truncated: true });
-		expect(textOf(toolResult)).toContain("[Output truncated:");
+		expect(toolResult.details).toMatchObject({ truncated: true, meta: { direction: "middle" } });
+		expect(textOf(toolResult)).toContain("line-8009");
 		expect(imageCount(toolResult)).toBe(1);
 	});
 
@@ -227,5 +227,44 @@ describe("createEvalTool", () => {
 		});
 		expect(first.details).toMatchObject({ isError: true });
 		expect(textOf(second)).toContain("next-ok");
+	});
+
+	it("bypasses kernel execution when a proxy executor is configured", async () => {
+		// Given
+		const getKernel = vi.fn(async () => {
+			throw new Error("proxy execution must not acquire a kernel");
+		});
+		const proxyExecutor = vi.fn(async () => ({
+			content: [{ type: "text" as const, text: "proxied" }],
+			details: {
+				language: "js" as const,
+				durationMs: 0,
+				toolCalls: [],
+				truncated: false,
+				cells: [],
+			},
+		}));
+		const tool = createEvalTool({
+			enabledLanguages: { js: true, py: false, rb: false, jl: false },
+			kernelManager: { getKernel },
+			cellTimeoutSeconds: 30,
+			executeTool: vi.fn(),
+			proxyExecutor,
+		});
+		const controller = new AbortController();
+
+		// When
+		const toolResult = await tool.execute(
+			"proxy-cell",
+			{ language: "js", code: "return 42" },
+			controller.signal,
+			undefined,
+			fakeExtensionContext(),
+		);
+
+		// Then
+		expect(proxyExecutor).toHaveBeenCalledWith({ language: "js", code: "return 42" }, controller.signal);
+		expect(getKernel).not.toHaveBeenCalled();
+		expect(textOf(toolResult)).toBe("proxied");
 	});
 });

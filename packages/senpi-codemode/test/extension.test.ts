@@ -1,5 +1,8 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ExtensionContext } from "@code-yeongyu/senpi";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import type { CodemodeSessionManager } from "../src/extension/session-manager.ts";
 import senpiCodemode, { type CodemodeExtensionAPI } from "../src/index.ts";
 import type { EvalKernelResult, EvalKernelRunInput } from "../src/tool/types.ts";
@@ -13,13 +16,18 @@ interface RegisteredHandler {
 class FakePi {
 	readonly tools: string[] = [];
 	readonly handlers: RegisteredHandler[] = [];
-	registeredTool: Pick<Parameters<CodemodeExtensionAPI["registerTool"]>[0], "execute"> | undefined;
+	readonly activeTools = new Set<string>(["eval"]);
+	registeredTool: Parameters<CodemodeExtensionAPI["registerTool"]>[0] | undefined;
 	registerTool(tool: Parameters<CodemodeExtensionAPI["registerTool"]>[0]): void {
 		this.tools.push(tool.name);
+		this.activeTools.add(tool.name);
 		if (tool.name === "eval") this.registeredTool = tool;
 	}
 	on(event: string, handler: RegisteredHandler["handler"]): void {
 		this.handlers.push({ event, handler });
+	}
+	getActiveTools(): string[] {
+		return [...this.activeTools];
 	}
 	async executeTool(): Promise<never> {
 		throw new Error("nested tool execution was not expected");
@@ -29,12 +37,19 @@ class FakePi {
 class DisposableManager implements CodemodeSessionManager {
 	readonly runControllers: AbortController[] = [];
 	readonly runStarted = Promise.withResolvers<void>();
+	readonly events: string[] = [];
+	readonly #abortOnDispose: boolean;
 	#disposed = false;
 	disposeCount = 0;
 	getKernelCount = 0;
+
+	constructor(abortOnDispose = true) {
+		this.#abortOnDispose = abortOnDispose;
+	}
+
 	async getKernel(): Promise<{
 		run(input: EvalKernelRunInput): Promise<EvalKernelResult>;
-		interrupt(): Promise<void>;
+		interrupt(reason?: string): Promise<void>;
 		deliverToolReply(): void;
 		reset(): Promise<void>;
 		close(): Promise<void>;
@@ -61,23 +76,49 @@ class DisposableManager implements CodemodeSessionManager {
 					);
 				});
 			},
-			interrupt: async () => undefined,
+			interrupt: async (reason) => {
+				this.events.push("interrupt");
+				controller.abort(reason);
+			},
 			deliverToolReply: () => undefined,
 			reset: async () => undefined,
 			close: async () => undefined,
 		};
 	}
+
 	async dispose(): Promise<void> {
 		this.#disposed = true;
 		this.disposeCount++;
-		for (const controller of this.runControllers) controller.abort();
+		this.events.push("dispose");
+		if (this.#abortOnDispose) {
+			for (const controller of this.runControllers) controller.abort();
+		}
 	}
+
 	async complete(): Promise<{
 		readonly text: string;
 		readonly details: { readonly model: string; readonly structured: false };
 	}> {
 		return { text: "ok", details: { model: "fake/fake-model", structured: false } };
 	}
+}
+
+const extensionArtifactsRoot = join(tmpdir(), `senpi-codemode-extension-tests-${process.pid}`);
+
+afterAll(async () => {
+	await rm(extensionArtifactsRoot, { recursive: true, force: true });
+});
+
+function extensionContext(cwd = process.cwd()): ExtensionContext {
+	const base = fakeExtensionContext();
+	return {
+		...base,
+		cwd,
+		sessionManager: {
+			...base.sessionManager,
+			getSessionFile: () => join(extensionArtifactsRoot, `${crypto.randomUUID()}.jsonl`),
+		},
+	};
 }
 
 async function emit(pi: FakePi, event: string, payload: unknown, ctx: ExtensionContext): Promise<void> {
@@ -105,6 +146,41 @@ describe("senpi-codemode extension factory", () => {
 		expect(managers).toEqual([]);
 	});
 
+	it("re-registers eval after session start with only enabled and available languages", async () => {
+		// Given
+		const cwd = await mkdtemp(join(tmpdir(), "senpi-codemode-extension-"));
+		await mkdir(join(cwd, ".senpi"), { recursive: true });
+		await writeFile(
+			join(cwd, ".senpi", "codemode.json"),
+			JSON.stringify({ languages: { py: false, js: true, rb: false, jl: false } }),
+		);
+		const pi = new FakePi();
+		const manager = new DisposableManager();
+		senpiCodemode(pi, { createSessionManager: () => manager });
+		const ctx = extensionContext(cwd);
+
+		try {
+			// When
+			await emit(pi, "session_start", { reason: "startup" }, ctx);
+
+			// Then
+			expect(pi.tools).toEqual(["eval", "eval"]);
+			const tool = pi.registeredTool;
+			if (!tool) throw new Error("eval tool was not registered");
+			expect(tool.parameters.properties.language.anyOf).toEqual([{ const: "js", type: "string" }]);
+			expect(tool.description).toContain('`"js"`');
+			expect(tool.description).not.toContain('`"py"`');
+			expect(tool.description).not.toContain('`"rb"`');
+			expect(tool.description).not.toContain('`"jl"`');
+			await expect(
+				tool.execute("disabled-ruby", { language: "rb", code: "1" }, undefined, undefined, ctx),
+			).rejects.toThrow('Unsupported eval language "rb". Enabled languages: js');
+		} finally {
+			await emit(pi, "session_shutdown", {}, ctx);
+			await rm(cwd, { recursive: true, force: true });
+		}
+	});
+
 	it("creates a fresh manager on start/reload and disposes on shutdown, switch, and fork", async () => {
 		const pi = new FakePi();
 		const managers: DisposableManager[] = [];
@@ -115,7 +191,7 @@ describe("senpi-codemode extension factory", () => {
 				return manager;
 			},
 		});
-		const ctx = fakeExtensionContext();
+		const ctx = extensionContext();
 
 		await emit(pi, "session_start", { reason: "startup" }, ctx);
 		await emit(pi, "session_start", { reason: "reload" }, ctx);
@@ -141,7 +217,7 @@ describe("senpi-codemode extension factory", () => {
 				return creation.promise;
 			},
 		});
-		const ctx = fakeExtensionContext();
+		const ctx = extensionContext();
 		const startup = emit(pi, "session_start", { reason: "startup" }, ctx);
 		await creationStarted.promise;
 
@@ -166,7 +242,7 @@ describe("senpi-codemode extension lifecycle", () => {
 		const pi = new FakePi();
 		const manager = new DisposableManager();
 		senpiCodemode(pi, { createSessionManager: () => manager });
-		const ctx = fakeExtensionContext();
+		const ctx = extensionContext();
 		await emit(pi, "session_start", { reason: "startup" }, ctx);
 		const tool = pi.registeredTool;
 		expect(tool).toBeDefined();
@@ -177,9 +253,37 @@ describe("senpi-codemode extension lifecycle", () => {
 		await expect(run).resolves.toMatchObject({ details: expect.objectContaining({ isError: true }) });
 		await expect(
 			tool?.execute("after-shutdown", { language: "js", code: "1" }, undefined, undefined, ctx),
-		).rejects.toThrow("session has not started");
-		expect(manager.disposeCount).toBe(1);
-		expect(manager.getKernelCount).toBe(1);
+		).rejects.toMatchObject({ name: "CodemodeSessionDisposedError" });
+		expect([manager.disposeCount, manager.getKernelCount]).toEqual([1, 1]);
 		expect(manager.runControllers[0]?.signal.aborted).toBe(true);
+	});
+
+	it("aborts and settles tracked eval work before disposing the session manager", async () => {
+		// Given
+		const pi = new FakePi();
+		const manager = new DisposableManager(false);
+		senpiCodemode(pi, { createSessionManager: () => manager });
+		const ctx = extensionContext();
+		await emit(pi, "session_start", { reason: "startup" }, ctx);
+		const tool = pi.registeredTool;
+		if (!tool) throw new Error("eval tool was not registered");
+		const run = tool.execute("tracked-cell", { language: "js", code: "await pending()" }, undefined, undefined, ctx);
+		await manager.runStarted.promise;
+
+		// When
+		await emit(pi, "session_shutdown", {}, ctx);
+		const settled = await Promise.race([
+			run,
+			new Promise<never>((_resolve, reject) => {
+				setTimeout(() => reject(new Error("tracked eval did not settle during shutdown")), 250);
+			}),
+		]);
+
+		// Then
+		expect(settled.details).toMatchObject({ isError: true, cells: [{ status: "error" }] });
+		expect(manager.events).toEqual(["interrupt", "dispose"]);
+		await expect(
+			tool.execute("after-shutdown", { language: "js", code: "1" }, undefined, undefined, ctx),
+		).rejects.toMatchObject({ name: "CodemodeSessionDisposedError" });
 	});
 });
