@@ -40,6 +40,7 @@ import {
 	matchesKey,
 	ProcessTerminal,
 	Spacer,
+	sanitizeTerminalLabel,
 	setKeybindings,
 	Text,
 	TruncatedText,
@@ -1869,6 +1870,7 @@ export class InteractiveMode {
 		this.pendingMessagesContainer.clear();
 		for (const controller of this.compactionTransferAbortControllers.values()) controller.abort();
 		this.compactionQueueGeneration += 1;
+		this.compactionQueueFlushTail = undefined;
 		this.compactionQueuedMessages = [];
 		this.compactionInFlightMessages = [];
 		this.compactionTransferAbortControllers.clear();
@@ -3422,7 +3424,7 @@ export class InteractiveMode {
 				break;
 
 			case "continuation_error":
-				this.showError(event.errorMessage);
+				this.showError(sanitizeTerminalLabel(event.errorMessage));
 				break;
 
 			case "compaction_start": {
