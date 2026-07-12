@@ -2,6 +2,7 @@ import { createImagesModels, type ImagesProvider, type MutableImagesModels } fro
 import { MODELS } from "../models.generated.ts";
 import { type CreateModelsOptions, createModels, type MutableModels, type Provider } from "../models.ts";
 import type { Api, KnownProvider, Model } from "../types.ts";
+import { alibabaCodingPlanProvider } from "./alibaba-coding-plan.ts";
 import { amazonBedrockProvider } from "./amazon-bedrock.ts";
 import { antLingProvider } from "./ant-ling.ts";
 import { anthropicProvider } from "./anthropic.ts";
@@ -10,8 +11,11 @@ import { cerebrasProvider } from "./cerebras.ts";
 import { cloudflareAIGatewayProvider } from "./cloudflare-ai-gateway.ts";
 import { cloudflareWorkersAIProvider } from "./cloudflare-workers-ai.ts";
 import { cursorProvider } from "./cursor.ts";
+import { deepinfraProvider } from "./deepinfra.ts";
 import { deepseekProvider } from "./deepseek.ts";
+import { firepassProvider } from "./firepass.ts";
 import { fireworksProvider } from "./fireworks.ts";
+import { fuguProvider } from "./fugu.ts";
 import { githubCopilotProvider } from "./github-copilot.ts";
 import { gitlabDuoProvider } from "./gitlab-duo.ts";
 import { glmZcodeProvider } from "./glm-zcode.ts";
@@ -20,23 +24,36 @@ import { googleAntigravityProvider, googleGeminiCliProvider } from "./google-gem
 import { googleVertexProvider } from "./google-vertex.ts";
 import { groqProvider } from "./groq.ts";
 import { huggingfaceProvider } from "./huggingface.ts";
+import { kagiProvider } from "./kagi.ts";
 import { kiloProvider } from "./kilo.ts";
 import { kimiCodingProvider } from "./kimi-coding.ts";
+import { litellmProvider } from "./litellm.ts";
+import { lmStudioProvider } from "./lm-studio.ts";
 import { minimaxProvider } from "./minimax.ts";
 import { minimaxCnProvider } from "./minimax-cn.ts";
 import { mistralProvider } from "./mistral.ts";
 import { moonshotaiProvider } from "./moonshotai.ts";
 import { moonshotaiCnProvider } from "./moonshotai-cn.ts";
+import { nanogptProvider } from "./nanogpt.ts";
 import { nvidiaProvider } from "./nvidia.ts";
+import { ollamaProvider } from "./ollama.ts";
+import { ollamaCloudProvider } from "./ollama-cloud.ts";
 import { openaiProvider } from "./openai.ts";
 import { openaiCodexProvider } from "./openai-codex.ts";
 import { opencodeProvider } from "./opencode.ts";
 import { opencodeGoProvider } from "./opencode-go.ts";
 import { openrouterProvider } from "./openrouter.ts";
 import { openrouterImagesProvider } from "./openrouter-images.ts";
+import { parallelProvider } from "./parallel.ts";
 import { perplexityProvider } from "./perplexity.ts";
+import { qianfanProvider } from "./qianfan.ts";
+import { qwenPortalProvider } from "./qwen-portal.ts";
+import { syntheticProvider } from "./synthetic.ts";
+import { tavilyProvider } from "./tavily.ts";
 import { togetherProvider } from "./together.ts";
+import { veniceProvider } from "./venice.ts";
 import { vercelAIGatewayProvider } from "./vercel-ai-gateway.ts";
+import { vllmProvider } from "./vllm.ts";
 import { xaiProvider } from "./xai.ts";
 import { xiaomiProvider } from "./xiaomi.ts";
 import { xiaomiTokenPlanAmsProvider } from "./xiaomi-token-plan-ams.ts";
@@ -44,6 +61,7 @@ import { xiaomiTokenPlanCnProvider } from "./xiaomi-token-plan-cn.ts";
 import { xiaomiTokenPlanSgpProvider } from "./xiaomi-token-plan-sgp.ts";
 import { zaiProvider } from "./zai.ts";
 import { zaiCodingCnProvider } from "./zai-coding-cn.ts";
+import { zenmuxProvider } from "./zenmux.ts";
 
 type BuiltinModelApi<
 	TProvider extends KnownProvider,
@@ -114,6 +132,7 @@ export function getBuiltinModels<TProvider extends KnownProvider>(
 /** All built-in providers, freshly constructed. */
 export function builtinProviders(): Provider[] {
 	return [
+		alibabaCodingPlanProvider(),
 		amazonBedrockProvider(),
 		antLingProvider(),
 		anthropicProvider(),
@@ -122,8 +141,11 @@ export function builtinProviders(): Provider[] {
 		cloudflareAIGatewayProvider(),
 		cloudflareWorkersAIProvider(),
 		cursorProvider(),
+		deepinfraProvider(),
 		deepseekProvider(),
+		firepassProvider(),
 		fireworksProvider(),
+		fuguProvider(),
 		githubCopilotProvider(),
 		gitlabDuoProvider(),
 		glmZcodeProvider(),
@@ -133,22 +155,35 @@ export function builtinProviders(): Provider[] {
 		googleVertexProvider(),
 		groqProvider(),
 		huggingfaceProvider(),
+		kagiProvider(),
 		kiloProvider(),
 		kimiCodingProvider(),
+		litellmProvider(),
+		lmStudioProvider(),
 		minimaxProvider(),
 		minimaxCnProvider(),
 		mistralProvider(),
 		moonshotaiProvider(),
 		moonshotaiCnProvider(),
+		nanogptProvider(),
 		nvidiaProvider(),
+		ollamaProvider(),
+		ollamaCloudProvider(),
 		openaiProvider(),
 		openaiCodexProvider(),
 		opencodeProvider(),
 		opencodeGoProvider(),
 		openrouterProvider(),
+		parallelProvider(),
 		perplexityProvider(),
+		qianfanProvider(),
+		qwenPortalProvider(),
+		syntheticProvider(),
+		tavilyProvider(),
 		togetherProvider(),
+		veniceProvider(),
 		vercelAIGatewayProvider(),
+		vllmProvider(),
 		xaiProvider(),
 		xiaomiProvider(),
 		xiaomiTokenPlanAmsProvider(),
@@ -156,6 +191,7 @@ export function builtinProviders(): Provider[] {
 		xiaomiTokenPlanSgpProvider(),
 		zaiProvider(),
 		zaiCodingCnProvider(),
+		zenmuxProvider(),
 	];
 }
 

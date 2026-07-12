@@ -28,6 +28,12 @@ import { getProviderEnvValue } from "./utils/provider-env.ts";
 
 let cachedVertexAdcCredentialsExists: boolean | null = null;
 
+const LOCAL_PROVIDER_API_KEYS: Partial<Record<KnownProvider, string>> = {
+	"lm-studio": "lm-studio-local",
+	ollama: "ollama-local",
+	vllm: "vllm-local",
+};
+
 function hasVertexAdcCredentials(env?: ProviderEnv): boolean {
 	const explicitCredentialsPath = env?.GOOGLE_APPLICATION_CREDENTIALS;
 	if (explicitCredentialsPath) {
@@ -71,43 +77,64 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		return ["ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"];
 	}
 
+	if (provider === "qwen-portal") {
+		return ["QWEN_OAUTH_TOKEN", "QWEN_PORTAL_API_KEY"];
+	}
+
 	const envMap: Record<string, string> = {
+		"alibaba-coding-plan": "ALIBABA_CODING_PLAN_API_KEY",
 		"ant-ling": "ANT_LING_API_KEY",
-		openai: "OPENAI_API_KEY",
 		"azure-openai-responses": "AZURE_OPENAI_API_KEY",
-		nvidia: "NVIDIA_API_KEY",
+		cerebras: "CEREBRAS_API_KEY",
+		"cloudflare-ai-gateway": "CLOUDFLARE_API_KEY",
+		"cloudflare-workers-ai": "CLOUDFLARE_API_KEY",
+		cursor: "CURSOR_API_KEY",
+		deepinfra: "DEEPINFRA_API_KEY",
 		deepseek: "DEEPSEEK_API_KEY",
+		firepass: "FIREPASS_API_KEY",
+		fireworks: "FIREWORKS_API_KEY",
+		fugu: "FUGU_API_KEY",
+		"gitlab-duo": "GITLAB_TOKEN",
+		"glm-zcode": "GLM_ZCODE_API_KEY",
 		google: "GEMINI_API_KEY",
 		"google-vertex": "GOOGLE_CLOUD_API_KEY",
 		groq: "GROQ_API_KEY",
-		cerebras: "CEREBRAS_API_KEY",
-		cursor: "CURSOR_API_KEY",
-		"gitlab-duo": "GITLAB_TOKEN",
-		"glm-zcode": "GLM_ZCODE_API_KEY",
+		huggingface: "HF_TOKEN",
+		kagi: "KAGI_API_KEY",
 		kilo: "KILO_API_KEY",
-		perplexity: "PERPLEXITY_API_KEY",
-		xai: "XAI_API_KEY",
-		openrouter: "OPENROUTER_API_KEY",
-		"vercel-ai-gateway": "AI_GATEWAY_API_KEY",
-		zai: "ZAI_API_KEY",
-		"zai-coding-cn": "ZAI_CODING_CN_API_KEY",
-		mistral: "MISTRAL_API_KEY",
+		"kimi-coding": "KIMI_API_KEY",
+		litellm: "LITELLM_API_KEY",
+		"lm-studio": "LM_STUDIO_API_KEY",
 		minimax: "MINIMAX_API_KEY",
 		"minimax-cn": "MINIMAX_CN_API_KEY",
+		mistral: "MISTRAL_API_KEY",
 		moonshotai: "MOONSHOT_API_KEY",
 		"moonshotai-cn": "MOONSHOT_API_KEY",
-		huggingface: "HF_TOKEN",
-		fireworks: "FIREWORKS_API_KEY",
-		together: "TOGETHER_API_KEY",
+		nanogpt: "NANO_GPT_API_KEY",
+		nvidia: "NVIDIA_API_KEY",
+		ollama: "OLLAMA_API_KEY",
+		"ollama-cloud": "OLLAMA_CLOUD_API_KEY",
+		openai: "OPENAI_API_KEY",
 		opencode: "OPENCODE_API_KEY",
 		"opencode-go": "OPENCODE_API_KEY",
-		"kimi-coding": "KIMI_API_KEY",
-		"cloudflare-workers-ai": "CLOUDFLARE_API_KEY",
-		"cloudflare-ai-gateway": "CLOUDFLARE_API_KEY",
+		openrouter: "OPENROUTER_API_KEY",
+		parallel: "PARALLEL_API_KEY",
+		perplexity: "PERPLEXITY_API_KEY",
+		qianfan: "QIANFAN_API_KEY",
+		synthetic: "SYNTHETIC_API_KEY",
+		tavily: "TAVILY_API_KEY",
+		together: "TOGETHER_API_KEY",
+		venice: "VENICE_API_KEY",
+		"vercel-ai-gateway": "AI_GATEWAY_API_KEY",
+		vllm: "VLLM_API_KEY",
+		xai: "XAI_API_KEY",
 		xiaomi: "XIAOMI_API_KEY",
-		"xiaomi-token-plan-cn": "XIAOMI_TOKEN_PLAN_CN_API_KEY",
 		"xiaomi-token-plan-ams": "XIAOMI_TOKEN_PLAN_AMS_API_KEY",
+		"xiaomi-token-plan-cn": "XIAOMI_TOKEN_PLAN_CN_API_KEY",
 		"xiaomi-token-plan-sgp": "XIAOMI_TOKEN_PLAN_SGP_API_KEY",
+		zai: "ZAI_API_KEY",
+		"zai-coding-cn": "ZAI_CODING_CN_API_KEY",
+		zenmux: "ZENMUX_API_KEY",
 	};
 
 	const envVar = envMap[provider];
@@ -143,6 +170,9 @@ export function getEnvApiKey(provider: string, env?: ProviderEnv): string | unde
 	if (envKeys?.[0]) {
 		return getProviderEnvValue(envKeys[0], env);
 	}
+
+	const localApiKey = LOCAL_PROVIDER_API_KEYS[provider as KnownProvider];
+	if (localApiKey) return localApiKey;
 
 	// Vertex AI supports either an explicit API key or Application Default Credentials.
 	// Auth is configured via `gcloud auth application-default login`.
