@@ -1,3 +1,4 @@
+// allow: SIZE_OK — todo 7 parity cases must remain in the plan-listed js-kernel test file.
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -95,6 +96,204 @@ describe("JavaScriptKernel", () => {
 			kernel.deliverToolReply({ type: "tool-reply", callId: call.callId, ok: true, value: "from-host" });
 			const result = await run;
 			expect(result).toMatchObject({ ok: true, valueRepr: '"from-host"' });
+		});
+	});
+
+	it("round-trips env values inside the persistent runtime", async () => {
+		await withKernel(async (kernel) => {
+			// Given a live JavaScript kernel
+			// When a cell sets and reads an environment override
+			const run = await runCell(kernel, 'env("CODEMODE_JS_ENV", "value"); return env("CODEMODE_JS_ENV")');
+
+			// Then the override is returned to user code
+			expect(run.result).toMatchObject({ ok: true, valueRepr: '"value"' });
+		});
+	});
+
+	it("imports Node builtins from a cell", async () => {
+		await withKernel(async (kernel) => {
+			// Given a live JavaScript kernel
+			// When a cell uses a static ESM import
+			const run = await runCell(kernel, 'import fs from "node:fs"; return typeof fs.readFileSync');
+
+			// Then the imported namespace is available to the cell
+			expect(run.result).toMatchObject({ ok: true, valueRepr: '"function"' });
+		});
+	});
+
+	it("imports a relative module from the session cwd", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-js-import-"));
+		await writeFile(join(root, "module.mjs"), "export const value = 41;\n");
+		const kernel = new JavaScriptKernel({ sessionId: "relative-import", cwd: root, parallelPoolWidth: 2 });
+		try {
+			// Given an ESM module beside the session cell
+			// When the cell imports it by a relative specifier
+			const run = await runCell(kernel, 'import { value } from "./module.mjs"; return value + 1');
+
+			// Then resolution starts from the session cwd
+			expect(run.result).toMatchObject({ ok: true, valueRepr: "42" });
+		} finally {
+			await kernel.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("imports local protocol modules from the configured root", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-js-local-"));
+		const localRoot = join(root, "local");
+		await mkdir(localRoot, { recursive: true });
+		await writeFile(join(localRoot, "module.mjs"), "export const value = 42;\n");
+		const kernel = new JavaScriptKernel({
+			sessionId: "local-import",
+			cwd: root,
+			parallelPoolWidth: 2,
+			localRoots: { local: localRoot },
+			artifactsDir: root,
+		});
+		try {
+			// Given a local:// root supplied by the session
+			// When the cell imports a module through that protocol
+			const run = await runCell(kernel, 'import { value } from "local://module.mjs"; return value');
+
+			// Then the module stays confined to the configured root
+			expect(run.result).toMatchObject({ ok: true, valueRepr: "42" });
+		} finally {
+			await kernel.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("emits a status frame when write completes", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-js-status-"));
+		const kernel = new JavaScriptKernel({
+			sessionId: "write-status",
+			cwd: root,
+			parallelPoolWidth: 2,
+		});
+		try {
+			// Given a writable session directory
+			// When a cell writes a UTF-8 file
+			const run = await runCell(kernel, 'await write("status.txt", "hello")');
+
+			// Then the kernel reports the observable write operation
+			expect(run.messages).toContainEqual({
+				type: "status",
+				event: { op: "write", path: join(root, "status.txt"), bytes: 5 },
+			});
+		} finally {
+			await kernel.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("marshals agent options through the reserved bridge tool", async () => {
+		await withKernel(async (kernel) => {
+			// Given an active cell with a host tool bridge
+			// When user code calls agent() with the supported options object
+			const run = kernel.run({
+				cellId: "agent-cell",
+				code: `return await agent("inspect", {
+				  agent: "reviewer",
+				  model: "model-x",
+				  label: "review",
+				  isolated: true,
+				  apply: false,
+				  merge: true
+				})`,
+				timeoutMs: 2_000,
+			});
+			const observed = await Promise.race([
+				kernel.nextToolCall().then((call) => ({ kind: "call", call }) as const),
+				run.then((result) => ({ kind: "result", result }) as const),
+			]);
+
+			// Then the reserved tool receives every option without executing in the worker
+			expect(observed.kind).toBe("call");
+			if (observed.kind !== "call") return;
+			expect(observed.call).toMatchObject({
+				type: "tool-call",
+				toolName: "__agent__",
+				args: {
+					prompt: "inspect",
+					agent: "reviewer",
+					model: "model-x",
+					label: "review",
+					isolated: true,
+					apply: false,
+					merge: true,
+					handle: false,
+				},
+			});
+			kernel.deliverToolReply({ type: "tool-reply", callId: observed.call.callId, ok: true, value: "done" });
+			await expect(run).resolves.toMatchObject({ ok: true, valueRepr: '"done"' });
+		});
+	});
+
+	it("emits status frames for env and read operations", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-js-helper-status-"));
+		await writeFile(join(root, "input.txt"), "hello");
+		const kernel = new JavaScriptKernel({ sessionId: "helper-status", cwd: root, parallelPoolWidth: 2 });
+		try {
+			// Given a readable file and an active environment overlay
+			// When a cell sets env state and reads the file
+			const run = await runCell(kernel, 'env("STATUS_KEY", "VALUE"); await read("input.txt")');
+
+			// Then both helper operations emit structured status frames
+			expect(run.messages).toEqual(
+				expect.arrayContaining([
+					{ type: "status", event: { op: "env", key: "STATUS_KEY", value: "VALUE", action: "set" } },
+					{ type: "status", event: { op: "read", path: join(root, "input.txt"), bytes: 5, chars: 5 } },
+				]),
+			);
+		} finally {
+			await kernel.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("marshals output ids through the reserved bridge tool", async () => {
+		await withKernel(async (kernel) => {
+			// Given an active cell with a host tool bridge
+			// When user code requests multiple task outputs
+			const run = kernel.run({
+				cellId: "output-cell",
+				code: 'return await output("task-a", "task-b", { format: "tail", offset: 2, limit: 5 })',
+				timeoutMs: 2_000,
+			});
+			const observed = await Promise.race([
+				kernel.nextToolCall().then((call) => ({ kind: "call", call }) as const),
+				run.then((result) => ({ kind: "result", result }) as const),
+			]);
+
+			// Then the reserved output tool receives the ids and options
+			expect(observed.kind).toBe("call");
+			if (observed.kind !== "call") return;
+			expect(observed.call).toMatchObject({
+				toolName: "__output__",
+				args: { ids: ["task-a", "task-b"], format: "tail", offset: 2, limit: 5 },
+			});
+			kernel.deliverToolReply({
+				type: "tool-reply",
+				callId: observed.call.callId,
+				ok: true,
+				value: ["first", "second"],
+			});
+			await expect(run).resolves.toMatchObject({ ok: true, valueRepr: '["first","second"]' });
+		});
+	});
+
+	it("emits markdown display frames", async () => {
+		await withKernel(async (kernel) => {
+			// Given a markdown display value
+			// When the cell displays it
+			const run = await runCell(kernel, 'display({ type: "markdown", text: "# Heading" })');
+
+			// Then the bridge receives the markdown MIME payload
+			expect(run.messages).toContainEqual({
+				type: "display",
+				mimeType: "text/markdown",
+				dataBase64: Buffer.from("# Heading", "utf8").toString("base64"),
+			});
 		});
 	});
 

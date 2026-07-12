@@ -3,20 +3,21 @@ import { createInlineWorker, type WorkerLike } from "./inline-worker.ts";
 import {
 	assertJavaScriptKernelOpen,
 	type JavaScriptKernelMode,
-	type JavaScriptKernelOptions,
 	type JavaScriptRunInput,
 	type LifecycleState,
 	type ResultMessage,
 	type ToolCallMessage,
 } from "./kernel-contract.ts";
+import { type JavaScriptKernelOptions, LocalModuleLoader, localBridgeConnection } from "./local-module-loader.ts";
 import { JavaScriptRunQueue, type PendingJavaScriptRun, stoppedResult } from "./run-queue.ts";
 import { bridgeError, spawnNodeWorker, WorkerStartupCancelledError, waitForReady } from "./worker-host.ts";
 
-export type { JavaScriptKernelMode, JavaScriptKernelOptions, JavaScriptRunInput } from "./kernel-contract.ts";
-export { JavaScriptKernelClosedError } from "./kernel-contract.ts";
+export { JavaScriptKernelClosedError, type JavaScriptKernelMode, type JavaScriptRunInput } from "./kernel-contract.ts";
+export type { JavaScriptKernelOptions } from "./local-module-loader.ts";
 
 export class JavaScriptKernel {
 	readonly #options: JavaScriptKernelOptions;
+	readonly #moduleLoader: LocalModuleLoader;
 	#worker: WorkerLike | null = null;
 	#mode: JavaScriptKernelMode = "worker";
 	#lifecycle: LifecycleState = "open";
@@ -33,6 +34,7 @@ export class JavaScriptKernel {
 
 	constructor(options: JavaScriptKernelOptions) {
 		this.#options = options;
+		this.#moduleLoader = new LocalModuleLoader(options);
 	}
 
 	get mode(): JavaScriptKernelMode {
@@ -178,7 +180,11 @@ export class JavaScriptKernel {
 
 	async #initializeWorker(worker: WorkerLike, signal: AbortSignal): Promise<void> {
 		const ready = waitForReady(worker, signal);
-		worker.postMessage({ type: "init", sessionId: this.#options.sessionId, connection: { port: 1, token: "local" } });
+		worker.postMessage({
+			type: "init",
+			sessionId: this.#options.sessionId,
+			connection: localBridgeConnection(this.#options),
+		});
 		await ready;
 	}
 
@@ -196,7 +202,7 @@ export class JavaScriptKernel {
 		this.#worker.postMessage({
 			type: "run",
 			cellId: next.input.cellId,
-			code: next.input.code,
+			code: this.#moduleLoader.prepareCell(next.input.code),
 			timeoutMs: next.input.timeoutMs,
 		});
 	}
