@@ -923,7 +923,8 @@ export class AgentSession {
 		if (event.type === "agent_end") {
 			this._flushPendingBashMessages();
 			if (!launchedContinuation && allowsQueuedContinuation && this.agent.hasQueuedMessages()) {
-				launchedContinuation = await this._continueAgentAfterCurrentRun();
+				this._scheduleContinuationAfterCurrentEvent();
+				launchedContinuation = true;
 			}
 			if (!launchedContinuation) {
 				await this._emitAgentSettled();
@@ -2752,12 +2753,26 @@ export class AgentSession {
 		try {
 			await this.agent.continue();
 			return true;
-		} catch (error) {
-			if (error instanceof Error) {
-				return false;
-			}
-			throw error;
+		} catch {
+			return false;
 		}
+	}
+
+	private _scheduleContinuationAfterCurrentEvent(): void {
+		// Tool hooks wait for queued message persistence, so continue() cannot run inside this event promise.
+		const currentEventQueue = this._agentEventQueue;
+		const finishContinuationWork = this._sessionWorkBarrier.begin();
+		const continueAfterEvent = async (): Promise<void> => {
+			const launched = await this._continueAgentAfterCurrentRun();
+			if (!launched) {
+				await this._emitAgentSettled();
+			}
+		};
+
+		void currentEventQueue
+			.then(continueAfterEvent, continueAfterEvent)
+			.finally(finishContinuationWork)
+			.catch(() => undefined);
 	}
 
 	/**
@@ -2824,11 +2839,14 @@ export class AgentSession {
 					this._incrementMessageRevision();
 				}
 
-				return await this._continueAgentAfterCurrentRun();
+				this._scheduleContinuationAfterCurrentEvent();
+				return true;
 			} else if (this.pendingMessageCount > 0) {
-				return await this._continueAgentAfterCurrentRun();
+				this._scheduleContinuationAfterCurrentEvent();
+				return true;
 			} else if (this.agent.hasQueuedMessages()) {
-				return await this._continueAgentAfterCurrentRun();
+				this._scheduleContinuationAfterCurrentEvent();
+				return true;
 			}
 
 			return false;
