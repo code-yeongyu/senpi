@@ -1,7 +1,8 @@
 import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext } from "@code-yeongyu/senpi";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
-import { RESERVED_AGENT_TOOL } from "../bridge/reserved.ts";
+import { RESERVED_AGENT_TOOL, RESERVED_OUTPUT_TOOL } from "../bridge/reserved.ts";
 import { type AgentExecuteTool, runEvalAgent } from "../bridges/agent-bridge.ts";
+import { runEvalOutput } from "../bridges/output-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
 import { handleCompletionToolCall } from "../completion/tool-bridge.ts";
 import { type CodemodeSettings, defaultCodemodeSettings } from "../config/settings.ts";
@@ -13,6 +14,7 @@ type ImageContent = { type: "image"; mimeType: string; data: string };
 type ToolContent = AgentToolResult<unknown>["content"][number];
 type TextPart = Extract<ToolContent, { type: "text" }>;
 type RuntimeImagePart = { type: "image"; mimeType: string; data: string };
+type ResolvedToolReply = { readonly value: unknown; readonly toolCallOk: boolean };
 export interface CellState {
 	readonly cellId: string;
 	readonly language: EvalToolInput["language"];
@@ -110,6 +112,10 @@ export class CellHandler {
 			await this.#handleAgentToolCall(message);
 			return;
 		}
+		if (message.toolName === RESERVED_OUTPUT_TOOL) {
+			await this.#handleOutputToolCall(message);
+			return;
+		}
 		if (message.toolName === "completion" && this.#runtime.complete) {
 			const result = await handleCompletionToolCall({
 				message,
@@ -127,48 +133,52 @@ export class CellHandler {
 			this.#emitUpdate(false);
 			return;
 		}
-		try {
+		await this.#deliverToolReply(message, async () => {
 			const result = await this.#runtime.executeTool(message.toolName, message.args, {
 				signal: this.#state.signal,
 			});
-			if (!this.#state.active) return;
-			this.#state.toolCalls.push({ name: message.toolName, ok: !toolResultIsError(result) });
-			this.#kernel.deliverToolReply({
-				type: "tool-reply",
-				callId: message.callId,
-				ok: true,
-				value: marshalToolResult(result),
-			});
-		} catch (error) {
-			if (!this.#state.active) return;
-			const messageText = error instanceof Error ? error.message : String(error);
-			this.#state.toolCalls.push({ name: message.toolName, ok: false, error: messageText });
-			this.#kernel.deliverToolReply({
-				type: "tool-reply",
-				callId: message.callId,
-				ok: false,
-				error: { message: messageText },
-			});
-		}
-		this.#emitUpdate(false);
+			return { value: marshalToolResult(result), toolCallOk: !toolResultIsError(result) };
+		});
 	}
 
 	async #handleAgentToolCall(message: Extract<KernelToHostMessage, { type: "tool-call" }>): Promise<void> {
-		try {
-			const value = await runEvalAgent(message.args, {
+		await this.#deliverToolReply(message, async () => ({
+			value: await runEvalAgent(message.args, {
 				callId: message.callId,
 				taskToolName: this.#runtime.settings?.taskTools?.task ?? defaultCodemodeSettings.taskTools.task,
 				executeTool: this.#runtime.executeTool,
 				signal: this.#state.signal,
 				emitStatus: (event) => this.#recordStatus(event),
-			});
+			}),
+			toolCallOk: true,
+		}));
+	}
+
+	async #handleOutputToolCall(message: Extract<KernelToHostMessage, { type: "tool-call" }>): Promise<void> {
+		await this.#deliverToolReply(message, async () => ({
+			value: await runEvalOutput(message.args, {
+				taskOutputToolName: this.#runtime.settings?.taskTools?.output ?? defaultCodemodeSettings.taskTools.output,
+				executeTool: this.#runtime.executeTool,
+				signal: this.#state.signal,
+				marshalToolResult,
+			}),
+			toolCallOk: true,
+		}));
+	}
+
+	async #deliverToolReply(
+		message: Extract<KernelToHostMessage, { type: "tool-call" }>,
+		resolve: () => Promise<ResolvedToolReply>,
+	): Promise<void> {
+		try {
+			const reply = await resolve();
 			if (!this.#state.active) return;
-			this.#state.toolCalls.push({ name: message.toolName, ok: true });
+			this.#state.toolCalls.push({ name: message.toolName, ok: reply.toolCallOk });
 			this.#kernel.deliverToolReply({
 				type: "tool-reply",
 				callId: message.callId,
 				ok: true,
-				value,
+				value: reply.value,
 			});
 		} catch (error) {
 			if (!this.#state.active) return;
@@ -213,7 +223,7 @@ export class CellHandler {
 	}
 }
 
-function marshalToolResult(result: AgentToolResult<unknown>): unknown {
+function marshalToolResult(result: AgentToolResult<unknown>) {
 	const texts: string[] = [];
 	const images: Array<{ mimeType: string; dataBase64: string }> = [];
 	for (const part of result.content) {
