@@ -1,3 +1,4 @@
+import { setImmediate as waitForImmediate } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 
@@ -122,4 +123,71 @@ it("starts a replacement-session flush while an old transfer remains pending", a
 	expect(context.compactionQueueFlushTail).toBeUndefined();
 	expect(context.compactionQueuedMessages).toEqual([]);
 	expect(context.compactionInFlightMessages).toEqual([]);
+});
+
+it("does not render an accepted old-session prompt failure after session rebind", async () => {
+	const oldMessage: QueueMessage = { text: "accepted old-session prompt", mode: "steer" };
+	let rejectOldPrompt: ((error: Error) => void) | undefined;
+	const oldPromptHeld = new Promise<void>((_resolve, reject) => {
+		rejectOldPrompt = reject;
+	});
+	const showError = vi.fn();
+	const replacementSession: SessionLike = {
+		prompt: vi.fn(async () => {}),
+		followUp: vi.fn(async () => {}),
+		steer: vi.fn(async () => {}),
+	};
+	const context: {
+		compactionQueuedMessages: QueueMessage[];
+		compactionInFlightMessages: QueueMessage[];
+		compactionTransferAbortControllers: Map<QueueMessage, AbortController>;
+		compactionQueueFlushTail: Promise<void> | undefined;
+		compactionQueueGeneration: number;
+		session: SessionLike;
+		readonly isExtensionCommand: (text: string) => boolean;
+		readonly showError: ReturnType<typeof vi.fn>;
+		readonly updatePendingMessagesDisplay: ReturnType<typeof vi.fn>;
+		readonly loadedResourcesContainer: { clear(): void };
+		readonly chatContainer: { clear(): void };
+		readonly pendingMessagesContainer: { clear(): void };
+		streamingComponent: undefined;
+		streamingMessage: undefined;
+		readonly clearPendingTools: () => void;
+		readonly clearToolHookStatuses: () => void;
+		readonly renderInitialMessages: () => void;
+	} = {
+		compactionQueuedMessages: [oldMessage],
+		compactionInFlightMessages: [],
+		compactionTransferAbortControllers: new Map(),
+		compactionQueueFlushTail: undefined,
+		compactionQueueGeneration: 0,
+		session: {
+			prompt: vi.fn((_text: string, options?: PromptOptions) => {
+				options?.promptDisposition?.("started");
+				options?.preflightResult?.(true);
+				return oldPromptHeld;
+			}),
+			followUp: vi.fn(async () => {}),
+			steer: vi.fn(async () => {}),
+		},
+		isExtensionCommand: () => false,
+		showError,
+		updatePendingMessagesDisplay: vi.fn(),
+		loadedResourcesContainer: { clear: vi.fn() },
+		chatContainer: { clear: vi.fn() },
+		pendingMessagesContainer: { clear: vi.fn() },
+		streamingComponent: undefined,
+		streamingMessage: undefined,
+		clearPendingTools: vi.fn(),
+		clearToolHookStatuses: vi.fn(),
+		renderInitialMessages: vi.fn(),
+	};
+
+	await getFlushCompactionQueue()(context);
+	getRenderCurrentSessionState()(context);
+	context.session = replacementSession;
+	rejectOldPrompt?.(new Error("stale old-session failure"));
+	await waitForImmediate();
+
+	expect(showError).not.toHaveBeenCalled();
 });

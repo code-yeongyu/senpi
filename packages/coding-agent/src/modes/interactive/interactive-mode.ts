@@ -4490,6 +4490,7 @@ export class InteractiveMode {
 									signal: this.compactionTransferAbortControllers.get(message)?.signal,
 								}),
 							(error) => {
+								if ((this.compactionQueueGeneration ?? 0) !== generation || this.session !== session) return;
 								this.showError(
 									`Queued prompt failed after acceptance: ${error instanceof Error ? error.message : String(error)}`,
 								);
