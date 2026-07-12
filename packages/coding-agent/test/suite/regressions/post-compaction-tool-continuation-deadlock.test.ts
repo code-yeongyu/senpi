@@ -178,26 +178,50 @@ describe("post-compaction tool continuation regression", () => {
 		expect(getPersistedAssistantTexts(harness)).toContain("automatic continuation complete");
 	});
 
-	it("settles once when a deferred continuation cannot start", async () => {
-		const toolRuns: string[] = [];
-		const harness = await createOverflowHarness(toolRuns);
+	it("settles and releases session work when a deferred queued continuation cannot start", async () => {
+		let queuedContinuation = false;
+		let activeHarness: Harness | undefined;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("agent_end", async () => {
+						if (queuedContinuation) return;
+						queuedContinuation = true;
+						const currentHarness = activeHarness;
+						if (!currentHarness) throw new Error("Harness was not initialized");
+						await currentHarness.session.agent.waitForIdle();
+						currentHarness.session.agent.followUp({
+							role: "user",
+							content: [{ type: "text", text: "rejected continuation" }],
+							timestamp: Date.now(),
+						});
+					});
+				},
+			],
+		});
+		activeHarness = harness;
 		harnesses.push(harness);
-		harness.setResponses([fauxAssistantMessage("seed response"), createOverflowResponse(harness)]);
-		await harness.session.prompt("seed prompt");
+		harness.setResponses([fauxAssistantMessage("initial answer"), fauxAssistantMessage("next prompt answer")]);
 		const continueSpy = vi
 			.spyOn(harness.session.agent, "continue")
 			.mockRejectedValueOnce("deferred continuation failed");
 
-		const settledBeforeOverflow = harness.eventsOfType("agent_settled").length;
-		const prompt = harness.session.prompt("overflow prompt");
+		const settledBeforePrompt = harness.eventsOfType("agent_settled").length;
+		const firstPrompt = harness.session.prompt("initial prompt");
 
-		expect(await settleWithin(prompt, 500)).toBe("settled");
+		expect(await settleWithin(firstPrompt, 500)).toBe("settled");
 		expect(continueSpy).toHaveBeenCalledTimes(1);
+		expect(harness.eventsOfType("agent_settled")).toHaveLength(settledBeforePrompt + 1);
+		expect(harness.session.agent.hasQueuedMessages()).toBe(true);
+		harness.session.clearQueue();
+
+		const nextPrompt = harness.session.prompt("next prompt");
+
+		expect(await settleWithin(nextPrompt, 500)).toBe("settled");
 		expect(harness.faux.state.callCount).toBe(2);
-		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(1);
-		expect(harness.eventsOfType("agent_settled")).toHaveLength(settledBeforeOverflow + 1);
-		expect(toolRuns).toEqual([]);
-		expect(getPersistedAssistantTexts(harness)).not.toContain("recovered after tool");
+		expect(getUserTexts(harness)).toEqual(["initial prompt", "next prompt"]);
+		expect(getPersistedAssistantTexts(harness)).toContain("next prompt answer");
+		expect(harness.eventsOfType("agent_settled")).toHaveLength(settledBeforePrompt + 2);
 	});
 
 	it("caps a repeated overflow after one compact-and-retry attempt", async () => {
