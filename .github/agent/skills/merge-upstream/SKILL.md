@@ -26,7 +26,6 @@ Options:
 
 - Do not run `git rebase`.
 - Do not run `git push --force` or `git push --force-with-lease`.
-- Do not run `git stash push -a`.
 - Do not bypass hooks or signing with `--no-verify` or `--no-gpg-sign`.
 - Ask before pushing.
 
@@ -43,15 +42,14 @@ Options:
 
    Abort on detached HEAD or missing `upstream`. If `origin` is missing, continue locally and skip push.
 
-2. If the worktree is dirty, auto-stash tracked and untracked files:
+2. Require a clean worktree:
 
    ```bash
-   git stash push -u -m "merge-upstream auto-stash $(date +%Y%m%d-%H%M%S)"
-   git stash list -n 1 --format='%gd'
-   git status --porcelain
+   worktree_status=$(git status --porcelain) || exit 1
+   test -z "$worktree_status"
    ```
 
-   Track the stash ref. If the worktree is still dirty after stashing, stop and ask the user to clean it manually.
+   If dirty, stop and ask the user to clean or commit the changes, or use a clean task worktree.
 
 3. Detect the upstream target branch:
 
@@ -64,7 +62,18 @@ Options:
    ```bash
    git rev-parse --is-shallow-repository
    git fetch --tags upstream "+refs/heads/${upstream_branch}:refs/remotes/upstream/${upstream_branch}"
-   git fetch origin "+refs/heads/${current_branch}:refs/remotes/origin/${current_branch}"
+   origin_branch_exists=false
+   if git remote get-url origin >/dev/null 2>&1; then
+     if ! origin_branch=$(git ls-remote --heads origin "refs/heads/${current_branch}"); then
+       echo "failed to inspect origin/${current_branch}" >&2
+       exit 1
+     elif [ -n "$origin_branch" ]; then
+       git fetch origin "+refs/heads/${current_branch}:refs/remotes/origin/${current_branch}" || exit 1
+       origin_branch_exists=true
+     else
+       echo "origin/${current_branch} does not exist; current branch is unpublished"
+     fi
+   fi
    git merge-base HEAD "upstream/${upstream_branch}"
    ```
 
@@ -91,10 +100,11 @@ Options:
 
      ```bash
      git merge-base --is-ancestor "$upstream_tip" "$current_head"
-     test -z "$(git rev-list "$current_head..$upstream_tip")"
+     upstream_range=$(git rev-list "$current_head..$upstream_tip") || exit 1
+     test -z "$upstream_range"
      ```
 
-     This is a successful terminal no-op. Restore any auto-stash, report the exact refs, SHAs, ancestry result, and empty commit range, then stop. Even when the request expects publication, do not create an empty commit, branch, pull request, push, release, or run QA/review gates that depend on a change.
+     This completes upstream integration as a successful no-op. Report the exact refs, SHAs, ancestry result, and empty range; skip the merge, release, and other change-dependent gates. Do not create an empty commit or pull request, or publish a branch solely to represent the sync. If an independent request explicitly approves pushing existing local commits, use step 9's non-destructive push semantics.
    - If behind is greater than `0` and `--ff-allow` is set with ahead `0`, run:
 
      ```bash
@@ -128,7 +138,9 @@ Options:
    git rev-parse --git-path rebase-apply
    git show -s --format=%P HEAD
    git rev-list --left-right --count "upstream/${upstream_branch}...HEAD"
-   git merge-base --is-ancestor "origin/${current_branch}" HEAD
+   if [ "$origin_branch_exists" = true ]; then
+     git merge-base --is-ancestor "origin/${current_branch}" HEAD
+   fi
    ```
 
    In default mode, verify HEAD has two parents: `previous_head` as first parent and `upstream_tip` as second parent. In `--ff-allow` fast-forward mode, verify HEAD equals `upstream_tip`.
@@ -142,14 +154,6 @@ Options:
 
    If the remote branch does not exist, use `git push -u origin "${current_branch}"`. If push is rejected as non-fast-forward, re-fetch and offer only non-destructive options: merge `origin/<branch>` into HEAD and retry, or stop.
 
-10. Restore the stash when one was created:
-
-   ```bash
-   git stash pop "$stash_ref"
-   ```
-
-   If pop conflicts, leave the stash entry in place and report the exact ref.
-
 ## Final Report
 
 Include:
@@ -160,5 +164,4 @@ Include:
 - fork commits preserved
 - upstream commits integrated
 - push status
-- stash status
 - any conflicts and how they were resolved
