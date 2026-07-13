@@ -123,6 +123,7 @@ export interface AgentOptions {
 
 class PendingMessageQueue {
 	private messages: AgentMessage[] = [];
+	private clearGeneration = 0;
 	public mode: QueueMode;
 
 	constructor(mode: QueueMode) {
@@ -135,6 +136,10 @@ class PendingMessageQueue {
 
 	hasItems(): boolean {
 		return this.messages.length > 0;
+	}
+
+	getClearGeneration(): number {
+		return this.clearGeneration;
 	}
 
 	drain(): AgentMessage[] {
@@ -158,6 +163,7 @@ class PendingMessageQueue {
 
 	clear(): void {
 		this.messages = [];
+		this.clearGeneration++;
 	}
 }
 
@@ -438,6 +444,8 @@ export class Agent {
 
 	private createLoopConfig(options: { skipInitialSteeringPoll?: boolean } = {}): AgentLoopConfig {
 		let skipInitialSteeringPoll = options.skipInitialSteeringPoll === true;
+		let steeringQueueGeneration = this.steeringQueue.getClearGeneration();
+		let followUpQueueGeneration = this.followUpQueue.getClearGeneration();
 		return {
 			model: this._state.model,
 			reasoning: this._state.thinkingLevel === "off" ? undefined : this._state.thinkingLevel,
@@ -468,14 +476,20 @@ export class Agent {
 					skipInitialSteeringPoll = false;
 					return [];
 				}
+				steeringQueueGeneration = this.steeringQueue.getClearGeneration();
 				return this.steeringQueue.drain();
 			},
-			getFollowUpMessages: async () => this.followUpQueue.drain(),
+			getFollowUpMessages: async () => {
+				followUpQueueGeneration = this.followUpQueue.getClearGeneration();
+				return this.followUpQueue.drain();
+			},
 			restorePendingMessages: (queue, messages) => {
 				if (queue === "steering") {
+					if (this.steeringQueue.getClearGeneration() !== steeringQueueGeneration) return;
 					this.steeringQueue.prepend(messages);
 					return;
 				}
+				if (this.followUpQueue.getClearGeneration() !== followUpQueueGeneration) return;
 				this.followUpQueue.prepend(messages);
 			},
 		};

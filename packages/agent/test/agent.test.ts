@@ -810,6 +810,143 @@ describe("Agent", () => {
 		expect(agent.state.errorMessage).toContain("required preparation failed");
 	});
 
+	it.each([
+		"steering",
+		"followUp",
+	] as const)("retains queued %s input when next-turn preparation aborts after a terminating tool", async (queue) => {
+		// given
+		const toolStarted = createDeferred();
+		const releaseTool = createDeferred();
+		const schema = Type.Object({});
+		const tool: AgentTool<typeof schema> = {
+			name: "terminating",
+			label: "Terminating",
+			description: "Terminates after release",
+			parameters: schema,
+			execute: async () => {
+				toolStarted.resolve();
+				await releaseTool.promise;
+				return { content: [{ type: "text", text: "done" }], details: {}, terminate: true };
+			},
+		};
+		let providerCalls = 0;
+		let agent: Agent;
+		agent = new Agent({
+			initialState: { tools: [tool] },
+			prepareNextTurnWithContext: async () => {
+				agent.abort();
+				return undefined;
+			},
+			streamFn: () => {
+				providerCalls++;
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					stream.push({
+						type: "done",
+						reason: "toolUse",
+						message: createAssistantToolUseMessage([
+							{ type: "toolCall", id: "tool-1", name: "terminating", arguments: {} },
+						]),
+					});
+				});
+				return stream;
+			},
+		});
+		const queuedMessage: AgentMessage = {
+			role: "user",
+			content: [{ type: "text", text: "queued safety instruction" }],
+			timestamp: Date.now(),
+		};
+
+		// when
+		const prompt = agent.prompt("run the terminating tool");
+		await toolStarted.promise;
+		if (queue === "steering") {
+			agent.steer(queuedMessage);
+		} else {
+			agent.followUp(queuedMessage);
+		}
+		releaseTool.resolve();
+		await prompt;
+
+		// then
+		expect(providerCalls).toBe(1);
+		expect(agent.hasQueuedMessages()).toBe(true);
+		expect(agent.state.messages).not.toContain(queuedMessage);
+		expect(agent.state.errorMessage).toBeUndefined();
+	});
+
+	it.each([
+		"steering",
+		"followUp",
+	] as const)("clears queued %s input when next-turn preparation clears it before aborting", async (queue) => {
+		// given
+		const toolStarted = createDeferred();
+		const releaseTool = createDeferred();
+		const schema = Type.Object({});
+		const tool: AgentTool<typeof schema> = {
+			name: "terminating",
+			label: "Terminating",
+			description: "Terminates after release",
+			parameters: schema,
+			execute: async () => {
+				toolStarted.resolve();
+				await releaseTool.promise;
+				return { content: [{ type: "text", text: "done" }], details: {}, terminate: true };
+			},
+		};
+		let providerCalls = 0;
+		let agent: Agent;
+		agent = new Agent({
+			initialState: { tools: [tool] },
+			prepareNextTurnWithContext: async () => {
+				if (queue === "steering") {
+					agent.clearSteeringQueue();
+				} else {
+					agent.clearFollowUpQueue();
+				}
+				agent.abort();
+				return undefined;
+			},
+			streamFn: () => {
+				providerCalls++;
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					stream.push({
+						type: "done",
+						reason: "toolUse",
+						message: createAssistantToolUseMessage([
+							{ type: "toolCall", id: "tool-1", name: "terminating", arguments: {} },
+						]),
+					});
+				});
+				return stream;
+			},
+		});
+		const queuedMessage: AgentMessage = {
+			role: "user",
+			content: [{ type: "text", text: "queued safety instruction" }],
+			timestamp: Date.now(),
+		};
+
+		// when
+		const prompt = agent.prompt("run the terminating tool");
+		await toolStarted.promise;
+		if (queue === "steering") {
+			agent.steer(queuedMessage);
+		} else {
+			agent.followUp(queuedMessage);
+		}
+		releaseTool.resolve();
+		await prompt;
+
+		// then
+		expect(providerCalls).toBe(1);
+		expect(agent.hasQueuedMessages()).toBe(false);
+		expect(agent.state.messages).not.toContain(queuedMessage);
+		expect(agent.state.errorMessage).toBeUndefined();
+	});
+
 	it("forwards sessionId to streamFn options", async () => {
 		let receivedSessionId: string | undefined;
 		const agent = new Agent({

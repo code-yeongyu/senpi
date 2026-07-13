@@ -298,6 +298,9 @@ async function runLoop(
 				};
 			}
 			if (signal?.aborted) {
+				if (drainedTerminatingQueue) {
+					await config.restorePendingMessages?.(drainedTerminatingQueue, pendingMessages);
+				}
 				await emit({ type: "agent_end", messages: newMessages });
 				return;
 			}
