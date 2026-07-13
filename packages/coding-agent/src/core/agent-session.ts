@@ -416,6 +416,7 @@ export class AgentSession {
 	private _retryPromise: Promise<void> | undefined = undefined;
 	private _retryResolve: (() => void) | undefined = undefined;
 	private _userAbortPromise: Promise<void> | undefined = undefined;
+	private _suppressQueuedContinuationAfterUserAbort = false;
 
 	// Bash execution state
 	private _bashAbortController: AbortController | undefined = undefined;
@@ -938,8 +939,15 @@ export class AgentSession {
 
 		// Check auto-retry and auto-compaction after agent completes
 		let launchedContinuation = false;
+		const userAbortSuppressedQueuedContinuation =
+			event.type === "agent_end" && this._suppressQueuedContinuationAfterUserAbort;
+		if (userAbortSuppressedQueuedContinuation) {
+			this._suppressQueuedContinuationAfterUserAbort = false;
+		}
 		const allowsQueuedContinuation =
-			event.type === "agent_end" ? this._agentEndAllowsQueuedContinuation(event.messages) : false;
+			event.type === "agent_end" && !userAbortSuppressedQueuedContinuation
+				? this._agentEndAllowsQueuedContinuation(event.messages)
+				: false;
 		if (event.type === "agent_end" && this._lastAssistantMessage) {
 			const msg = this._lastAssistantMessage;
 			this._lastAssistantMessage = undefined;
@@ -2042,6 +2050,9 @@ export class AgentSession {
 			this.agent.abort();
 			await this._userAbortPromise;
 			return;
+		}
+		if (this.isStreaming) {
+			this._suppressQueuedContinuationAfterUserAbort = true;
 		}
 
 		const abortPromise = (async () => {
