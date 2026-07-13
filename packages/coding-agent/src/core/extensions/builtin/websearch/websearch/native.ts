@@ -23,6 +23,11 @@ interface NativeProviderMapping {
 	resource: string;
 }
 
+interface NativeEntryOptions {
+	id?: string;
+	signal?: AbortSignal;
+}
+
 function nativeMapping(model: NativeModelInfo): NativeProviderMapping | null {
 	if (
 		model.provider === "openai" &&
@@ -102,16 +107,35 @@ function discoveredNativeEntryId(provider: SearchProvider, routeKey: string): st
 async function buildNativeEntryForModel(
 	model: NativeModelInfo | undefined,
 	modelRegistry: NativeModelRegistry | undefined,
-	id = "native",
+	options: NativeEntryOptions = {},
 ): Promise<SearchProviderEntry | null> {
 	if (!model || !modelRegistry) return null;
+	const { id = "native", signal } = options;
 
 	const mapping = nativeMapping(model);
 	if (!mapping) return null;
 	const baseUrl = buildEndpointUrl(model.baseUrl, mapping.resource);
 	if (!isAllowedProviderBaseUrl(baseUrl)) return null;
 
-	const auth = await modelRegistry.getApiKeyAndHeaders(model);
+	signal?.throwIfAborted();
+	const authPromise = modelRegistry.getApiKeyAndHeaders(model);
+	let auth: NativeAuthResult;
+	if (!signal) {
+		auth = await authPromise;
+	} else {
+		signal.throwIfAborted();
+		let removeAbortListener = (): void => {};
+		const abortPromise = new Promise<never>((_resolve, reject) => {
+			const onAbort = (): void => reject(signal.reason);
+			signal.addEventListener("abort", onAbort, { once: true });
+			removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+		});
+		try {
+			auth = await Promise.race([authPromise, abortPromise]);
+		} finally {
+			removeAbortListener();
+		}
+	}
 	if (!auth.ok || !auth.apiKey) return null;
 
 	return {
@@ -126,7 +150,9 @@ async function buildNativeEntryForModel(
 export async function buildNativeEntries(
 	model: NativeModelInfo | undefined,
 	modelRegistry: NativeModelRegistry | undefined,
+	signal?: AbortSignal,
 ): Promise<SearchProviderEntry[]> {
+	signal?.throwIfAborted();
 	if (!modelRegistry) return [];
 
 	const entries: SearchProviderEntry[] = [];
@@ -135,7 +161,7 @@ export async function buildNativeEntries(
 	const activeRouteKey = model ? nativeRouteKey(model) : null;
 	if (activeRouteKey) {
 		seenRoutes.add(activeRouteKey);
-		const activeEntry = await buildNativeEntryForModel(model, modelRegistry);
+		const activeEntry = await buildNativeEntryForModel(model, modelRegistry, { signal });
 		if (activeEntry) entries.push(activeEntry);
 	}
 
@@ -145,7 +171,10 @@ export async function buildNativeEntries(
 		const routeKey = nativeRouteKey(availableModel);
 		if (!routeKey || seenRoutes.has(routeKey)) continue;
 		seenRoutes.add(routeKey);
-		const entry = await buildNativeEntryForModel(availableModel, modelRegistry, "native-discovered");
+		const entry = await buildNativeEntryForModel(availableModel, modelRegistry, {
+			id: "native-discovered",
+			signal,
+		});
 		if (!entry) continue;
 		entries.push({ ...entry, id: discoveredNativeEntryId(entry.provider, routeKey) });
 	}
@@ -158,5 +187,5 @@ export async function buildNativeEntry(
 	modelRegistry: NativeModelRegistry | undefined,
 	id = "native",
 ): Promise<SearchProviderEntry | null> {
-	return buildNativeEntryForModel(model, modelRegistry, id);
+	return buildNativeEntryForModel(model, modelRegistry, { id });
 }
