@@ -1,26 +1,59 @@
 import type { ExtensionContext } from "@code-yeongyu/senpi";
 import type { KernelToHostMessage } from "./bridge/protocol.ts";
+import type { AgentExecuteTool } from "./bridges/agent-bridge.ts";
 import { type CompletionRequest, type CompletionResult, createCompletionHandler } from "./completion/handler.ts";
-import { type CodemodeSettings, loadCodemodeSettings } from "./config/settings.ts";
 import {
+	type CodemodeSettings,
+	defaultCodemodeSettings,
+	loadCodemodeSettings,
+	type ResolvedCodemodeSettings,
+	resolveEnabledLanguages,
+} from "./config/settings.ts";
+import {
+	CodemodeSessionDisposedError,
 	type CodemodeSessionManager,
 	type CreateCodemodeSessionManagerOptions,
 	createCodemodeSessionManager,
+	type EvalExecutionTracker,
 } from "./extension/session-manager.ts";
 import {
 	createInterpreterDetector,
 	getInterpreterAvailability,
 	type InterpreterAvailability,
 } from "./interpreters/detect.ts";
+import { resolveSessionArtifactsDir } from "./output/streaming-output.ts";
 import { createEvalTool } from "./tool/eval-tool.ts";
-import type { EvalKernel, EvalLanguage, ExecuteTool } from "./tool/types.ts";
+import { renderEvalCall, renderEvalResult } from "./tool/render.ts";
+import type { EnabledEvalLanguages, EvalKernel, EvalLanguage } from "./tool/types.ts";
 
-type SessionLifecycleEvent = "session_start" | "session_shutdown" | "session_before_switch" | "session_before_fork";
+const SESSION_LIFECYCLE_EVENTS = [
+	"session_start",
+	"session_shutdown",
+	"session_before_switch",
+	"session_before_fork",
+] as const;
+
+type SessionLifecycleEvent = (typeof SESSION_LIFECYCLE_EVENTS)[number];
+
+type TrackedExecution = {
+	readonly promise: Promise<unknown>;
+	readonly controller: AbortController;
+};
+
+type SessionRuntime = {
+	readonly manager: CodemodeSessionManager;
+	readonly enabledLanguages: EnabledEvalLanguages;
+	readonly settings: ResolvedCodemodeSettings;
+	readonly artifactsDir: string;
+	readonly executeTool: AgentExecuteTool;
+	readonly spawns: boolean;
+};
 
 export interface CodemodeExtensionAPI {
 	registerTool(tool: ReturnType<typeof createEvalTool>): void;
 	on(event: SessionLifecycleEvent, handler: (event: unknown, ctx: ExtensionContext) => Promise<void> | void): void;
-	executeTool: ExecuteTool;
+	executeTool: AgentExecuteTool;
+	getActiveTools(): string[];
 }
 
 export interface SenpiCodemodeOptions {
@@ -30,60 +63,122 @@ export interface SenpiCodemodeOptions {
 	readonly complete?: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>;
 }
 
+class CodemodeSessionNotStartedError extends Error {
+	readonly name = "CodemodeSessionNotStartedError";
+
+	constructor() {
+		super("codemode session has not started");
+	}
+}
+
 export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCodemodeOptions = {}): void {
 	const manager = new SessionManagerProxy();
 	const complete = options.complete ?? ((request, ctx) => createCompletionHandler()(ctx)(request));
+	const renderers = { renderCall: renderEvalCall, renderResult: renderEvalResult };
 	pi.registerTool(
 		createEvalTool({
 			enabledLanguages: { py: true, js: true, rb: true, jl: true },
 			kernelManager: manager,
-			cellTimeoutSeconds: 30,
-			executeTool: (toolName, params, executeOptions) => pi.executeTool(toolName, params, executeOptions),
+			cellTimeoutSeconds: defaultCodemodeSettings.cellTimeoutSeconds,
+			executeTool: createExecuteTool(pi),
 			complete,
+			settings: defaultCodemodeSettings,
+			executionTracker: manager,
+			renderers,
 		}),
 	);
 
 	pi.on("session_start", async (event, ctx) => {
 		const generation = manager.beginReplacement();
-		await manager.replace(generation, await createManager(pi, ctx, event, complete, options));
+		const runtime = await createRuntime(pi, ctx, event, complete, options);
+		if (!(await manager.replace(generation, runtime.manager))) return;
+		pi.registerTool(
+			createEvalTool({
+				enabledLanguages: runtime.enabledLanguages,
+				kernelManager: manager,
+				cellTimeoutSeconds: runtime.settings.cellTimeoutSeconds,
+				executeTool: runtime.executeTool,
+				complete,
+				settings: runtime.settings,
+				artifactsDir: runtime.artifactsDir,
+				executionTracker: manager,
+				renderers,
+				spawns: runtime.spawns,
+				spawnDefaultAgent: runtime.settings.taskTools.task,
+			}),
+		);
 	});
 	pi.on("session_shutdown", async () => manager.dispose());
 	pi.on("session_before_switch", async () => manager.dispose());
 	pi.on("session_before_fork", async () => manager.dispose());
 }
 
-class SessionManagerProxy implements CodemodeSessionManager {
+class SessionManagerProxy implements CodemodeSessionManager, EvalExecutionTracker {
 	#current: CodemodeSessionManager | undefined;
 	#generation = 0;
+	#started = false;
+	#acceptingExecutions = false;
+	readonly #executions = new Set<TrackedExecution>();
 
 	beginReplacement(): number {
 		this.#generation++;
+		this.#acceptingExecutions = false;
+		this.#abortExecutions();
 		return this.#generation;
 	}
 
-	async replace(generation: number, next: CodemodeSessionManager): Promise<void> {
+	async replace(generation: number, next: CodemodeSessionManager): Promise<boolean> {
 		if (generation !== this.#generation) {
 			await next.dispose();
-			return;
+			return false;
+		}
+		await this.#settleExecutions();
+		if (generation !== this.#generation) {
+			await next.dispose();
+			return false;
 		}
 		const current = this.#current;
 		this.#current = undefined;
 		await current?.dispose();
 		if (generation !== this.#generation) {
 			await next.dispose();
-			return;
+			return false;
 		}
 		this.#current = next;
+		this.#started = true;
+		this.#acceptingExecutions = true;
+		return true;
+	}
+
+	assertEvalExecutionAllowed(): void {
+		if (this.#acceptingExecutions && this.#current !== undefined) return;
+		if (this.#started) throw new CodemodeSessionDisposedError();
+		throw new CodemodeSessionNotStartedError();
+	}
+
+	async trackEvalExecution<Result>(execution: Promise<Result>, controller: AbortController): Promise<Result> {
+		this.assertEvalExecutionAllowed();
+		const tracked: TrackedExecution = { promise: execution, controller };
+		this.#executions.add(tracked);
+		try {
+			return await execution;
+		} finally {
+			this.#executions.delete(tracked);
+		}
 	}
 
 	async getKernel(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): Promise<EvalKernel> {
-		if (!this.#current) throw new Error("codemode session has not started");
-		return await this.#current.getKernel(language, onMessage);
+		this.assertEvalExecutionAllowed();
+		const current = this.#current;
+		if (current === undefined) throw new CodemodeSessionNotStartedError();
+		return await current.getKernel(language, onMessage);
 	}
 
 	async complete(request: CompletionRequest, ctx: ExtensionContext): Promise<CompletionResult> {
-		if (!this.#current) throw new Error("codemode session has not started");
-		return await this.#current.complete(request, ctx);
+		this.assertEvalExecutionAllowed();
+		const current = this.#current;
+		if (current === undefined) throw new CodemodeSessionNotStartedError();
+		return await current.complete(request, ctx);
 	}
 
 	setContext(ctx: ExtensionContext): void {
@@ -92,29 +187,68 @@ class SessionManagerProxy implements CodemodeSessionManager {
 
 	async dispose(): Promise<void> {
 		this.#generation++;
+		this.#acceptingExecutions = false;
+		this.#abortExecutions();
+		await this.#settleExecutions();
 		const current = this.#current;
 		this.#current = undefined;
 		await current?.dispose();
 	}
+
+	#abortExecutions(): void {
+		if (this.#executions.size === 0) return;
+		const error = new CodemodeSessionDisposedError();
+		for (const execution of this.#executions) execution.controller.abort(error);
+	}
+
+	async #settleExecutions(): Promise<void> {
+		if (this.#executions.size === 0) return;
+		await Promise.allSettled([...this.#executions].map((execution) => execution.promise));
+	}
 }
 
-async function createManager(
+async function createRuntime(
 	pi: CodemodeExtensionAPI,
 	ctx: ExtensionContext,
 	event: unknown,
 	complete: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>,
 	options: SenpiCodemodeOptions,
-): Promise<CodemodeSessionManager> {
+): Promise<SessionRuntime> {
 	const loaded = await loadCodemodeSettings({ cwd: ctx.cwd });
-	const availability = await getInterpreterAvailability(loaded.settings, createInterpreterDetector());
+	const settings: ResolvedCodemodeSettings = {
+		...loaded.settings,
+		languages: resolveEnabledLanguages(loaded.settings),
+	};
+	const availability = await getInterpreterAvailability(settings, createInterpreterDetector());
+	const enabledLanguages = enabledLanguagesFrom(settings, availability);
+	const artifacts = resolveSessionArtifactsDir(ctx.sessionManager.getSessionFile());
+	const activeTools = new Set(pi.getActiveTools());
+	const executeTool = createExecuteTool(pi, activeTools);
 	const create = options.createSessionManager ?? createCodemodeSessionManager;
-	return await create({
+	const manager = await create({
 		sessionId: sessionIdFrom(event),
 		cwd: ctx.cwd,
-		settings: loaded.settings,
+		settings,
 		availability,
-		executeTool: (toolName, params, executeOptions) => pi.executeTool(toolName, params, executeOptions),
+		artifactsDir: artifacts.dir,
+		executeTool,
 		complete,
+	});
+	return {
+		manager,
+		enabledLanguages,
+		settings,
+		artifactsDir: artifacts.dir,
+		executeTool,
+		spawns: activeTools.has(settings.taskTools.task),
+	};
+}
+
+function createExecuteTool(pi: CodemodeExtensionAPI, activeTools?: ReadonlySet<string>): AgentExecuteTool {
+	const executeTool: AgentExecuteTool = (toolName, params, executeOptions) =>
+		pi.executeTool(toolName, params, executeOptions);
+	return Object.assign(executeTool, {
+		isToolAvailable: (name: string): boolean => activeTools?.has(name) ?? pi.getActiveTools().includes(name),
 	});
 }
 

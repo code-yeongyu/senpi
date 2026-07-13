@@ -10,6 +10,12 @@ import {
 	parseBridgeJsonLine,
 	verifyBridgeToken,
 } from "../src/bridge/protocol.ts";
+import {
+	RESERVED_AGENT_TOOL,
+	RESERVED_OUTPUT_TOOL,
+	TIMEOUT_PAUSE_OP,
+	TIMEOUT_RESUME_OP,
+} from "../src/bridge/reserved.ts";
 
 const hostMessages: HostToKernelMessage[] = [
 	{ type: "init", sessionId: "session-1", connection: { port: 4317, token: "secret-token" } },
@@ -31,6 +37,7 @@ const kernelMessages: KernelToHostMessage[] = [
 	{ type: "phase", title: "Running" },
 	{ type: "result", cellId: "cell-2", ok: true, valueRepr: "2", durationMs: 12 },
 	{ type: "result", cellId: "cell-3", ok: false, error: { message: "boom", stack: "stack" }, durationMs: 15 },
+	{ type: "status", event: { op: "future-op", nested: { kept: true }, count: 3 } },
 	{ type: "closed" },
 ];
 
@@ -41,6 +48,45 @@ describe("bridge protocol JSONL framing", () => {
 			expect(encoded.endsWith("\n")).toBe(true);
 			expect(decodeBridgeFrame(encoded)).toEqual({ ok: true, message });
 		}
+	});
+
+	it("round-trips status frames with unknown operations and payloads", () => {
+		const message: KernelToHostMessage = {
+			type: "status",
+			event: { op: "future-op", nested: { kept: true }, count: 3 },
+		};
+		expect(decodeBridgeFrame(encodeBridgeFrame(message))).toEqual({ ok: true, message });
+	});
+
+	it("accepts init connection roots while preserving the legacy shape", () => {
+		const withRoots: HostToKernelMessage = {
+			type: "init",
+			sessionId: "session-roots",
+			connection: {
+				port: 4317,
+				token: "secret-token",
+				localRoots: { local: "/tmp/session-artifacts/local" },
+				artifactsDir: "/tmp/session-artifacts",
+			},
+		};
+		expect(decodeBridgeFrame(encodeBridgeFrame(withRoots))).toEqual({ ok: true, message: withRoots });
+		const withoutRoots: HostToKernelMessage = {
+			type: "init",
+			sessionId: "session-legacy",
+			connection: { port: 4317, token: "secret-token" },
+		};
+		expect(decodeBridgeFrame(encodeBridgeFrame(withoutRoots))).toEqual({ ok: true, message: withoutRoots });
+	});
+
+	it("rejects an oversized status frame at the existing frame cap", () => {
+		const frame = encodeBridgeFrame({
+			type: "status",
+			event: { op: "large", data: "x".repeat(BRIDGE_FRAME_MAX_BYTES) },
+		});
+		expect(decodeBridgeFrame(frame)).toEqual({
+			ok: false,
+			error: { code: "frame_too_large", message: expect.any(String) },
+		});
 	});
 
 	it("returns typed decode errors for malformed and oversized frames", () => {
@@ -79,6 +125,15 @@ describe("bridge protocol JSONL framing", () => {
 		expect(verifyBridgeToken(token, `${token}x`)).toEqual({
 			ok: false,
 			error: { code: "token_mismatch", message: expect.any(String) },
+		});
+	});
+
+	it("exports the shared reserved bridge constants", () => {
+		expect({ RESERVED_AGENT_TOOL, RESERVED_OUTPUT_TOOL, TIMEOUT_PAUSE_OP, TIMEOUT_RESUME_OP }).toEqual({
+			RESERVED_AGENT_TOOL: "__agent__",
+			RESERVED_OUTPUT_TOOL: "__output__",
+			TIMEOUT_PAUSE_OP: "timeout-pause",
+			TIMEOUT_RESUME_OP: "timeout-resume",
 		});
 	});
 

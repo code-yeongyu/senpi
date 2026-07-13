@@ -210,4 +210,110 @@ describe("eval renderer", () => {
 		expect(renderLines(call)).toEqual(["eval js", "1 + 1"]);
 		expect(renderLines(result)).toEqual(["eval js done", "took 1ms", "", "2"]);
 	});
+
+	it("Given completed cell details when rendered then framed status agent and JSON output are visible", () => {
+		// Given
+		const givenResult = evalResult(
+			{
+				language: "py",
+				title: "load config",
+				durationMs: 1_250,
+				toolCalls: [],
+				truncated: false,
+				cells: [
+					{
+						index: 0,
+						title: "load config",
+						code: "config = {'a': 1}",
+						language: "py",
+						output: "loaded",
+						status: "complete",
+						durationMs: 1_250,
+						statusEvents: [
+							{ op: "read", path: "/tmp/config.json", chars: 42 },
+							{ op: "write", path: "/tmp/result.json", chars: 18 },
+						],
+					},
+				],
+				jsonOutputs: [{ a: 1 }],
+			},
+			"",
+		);
+
+		// When
+		const lines = renderLines(
+			renderEvalResult(givenResult, { expanded: false, isPartial: false }, undefined, resultContext()),
+		);
+		const text = lines.join("\n");
+
+		// Then
+		expect.soft(lines[0]).toContain("╭─");
+		expect.soft(text).toContain("eval py load config done");
+		expect.soft(text).toContain("✓");
+		expect.soft(text).toContain("1s");
+		expect.soft(text).toContain("read 42 chars · from /tmp/config.json");
+		expect.soft(text).toContain("write 18 chars · to /tmp/result.json");
+		expect.soft(text).toContain("display[1]");
+		expect.soft(text).toMatch(/a: 1/u);
+	});
+
+	it("Given the supported status event matrix when expanded then each operation has a useful summary", () => {
+		// Given
+		const givenResult = evalResult(
+			{
+				language: "js",
+				durationMs: 2,
+				toolCalls: [],
+				truncated: false,
+				cells: [
+					{
+						index: 0,
+						code: "run()",
+						language: "js",
+						output: "ok",
+						status: "complete",
+						statusEvents: [
+							{ op: "cat", files: 2, chars: 9 },
+							{ op: "ls", count: 3 },
+							{ op: "env", action: "set", key: "TOKEN", value: "secret" },
+							{ op: "git_status", staged: 1, modified: 2, untracked: 3, branch: "main" },
+							{ op: "git_diff", lines: 12, staged: true },
+							{ op: "git_log", commits: 4 },
+							{ op: "run", command: "node script.js", exitCode: 0 },
+							{ op: "completion", model: "slow-model", tier: "slow", chars: 25 },
+							{ op: "log", message: "checkpoint" },
+							{ op: "phase", title: "finalize" },
+						],
+					},
+				],
+			},
+			"",
+		);
+
+		// When
+		const text = renderEvalResult(
+			givenResult,
+			{ expanded: true, isPartial: false },
+			undefined,
+			resultContext({ expanded: true }),
+		)
+			.render(120)
+			.join("\n");
+
+		// Then
+		for (const summary of [
+			"cat 2 files · 9 chars",
+			"ls 3 entries",
+			"env set TOKEN=secret",
+			"git_status 1 staged, 2 modified, 3 untracked · on main",
+			"git_diff 12 lines · staged",
+			"git_log 4 commits",
+			"run node script.js · exit 0",
+			"completion slow-model · slow · 25 chars",
+			"log checkpoint",
+			"phase finalize",
+		]) {
+			expect.soft(text).toContain(summary);
+		}
+	});
 });

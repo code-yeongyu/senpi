@@ -1,6 +1,7 @@
 import type { ExtensionContext } from "@code-yeongyu/senpi";
 import type { Api, AssistantMessage, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai/compat";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
+import { injectSchemaInstruction } from "../bridges/schema-injection.ts";
 
 export interface CompletionRequest {
 	readonly prompt: string;
@@ -20,19 +21,27 @@ export type CompleteSimple = (
 	options?: SimpleStreamOptions,
 ) => Promise<AssistantMessage>;
 
-interface CompletionDetails {
+type CompletionDetails = {
 	readonly model: string;
 	readonly structured: boolean;
+};
+
+type CompletionTier = "smol" | "default" | "slow";
+
+class CompletionUnknownTierError extends Error {
+	readonly name = "CompletionUnknownTierError";
+
+	constructor(tier: string) {
+		super(`completion() could not resolve the "${tier}" model tier; expected "smol", "default", or "slow".`);
+	}
 }
 
-interface ResolvedAuth {
-	readonly ok: boolean;
-	readonly apiKey?: string;
-	readonly headers?: Record<string, string>;
-	readonly env?: Record<string, string>;
-	readonly extraBody?: Record<string, unknown>;
-	readonly upstreamModelId?: string;
-	readonly error?: string;
+class CompletionTierUnavailableError extends Error {
+	readonly name = "CompletionTierUnavailableError";
+
+	constructor(tier: Exclude<CompletionTier, "default">) {
+		super(`completion() could not resolve the "${tier}" model tier: no configured models are available.`);
+	}
 }
 
 export function createCompletionHandler(
@@ -46,16 +55,20 @@ async function runCompletion(
 	request: CompletionRequest,
 	complete: CompleteSimple,
 ): Promise<CompletionResult> {
-	const model = resolveRequestedModel(ctx.model, request.model);
-	if (!model) throw noModelCredentialsError();
-	const auth = (await ctx.modelRegistry.getApiKeyAndHeaders(model)) as ResolvedAuth;
-	if (!auth.ok || !auth.apiKey) throw noModelCredentialsError(auth.error);
+	const tier = resolveCompletionTier(request.model);
+	const model = resolveRequestedModel(ctx, tier);
+	if (!model) throw unavailableModelError(tier);
+	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+	if (!auth.ok) throw noModelCredentialsError(auth.error);
+	if (!auth.apiKey) throw noModelCredentialsError();
 	const requestModel = auth.upstreamModelId ? { ...model, id: auth.upstreamModelId } : model;
+	const structured = request.schema !== undefined;
+	const prompt = structured ? injectSchemaInstruction(request.prompt, request.schema) : request.prompt;
 	const message = await complete(
 		requestModel,
 		{
 			systemPrompt: request.system ?? "You are a helpful assistant.",
-			messages: [{ role: "user", content: [{ type: "text", text: request.prompt }], timestamp: Date.now() }],
+			messages: [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }],
 		},
 		{
 			apiKey: auth.apiKey,
@@ -65,7 +78,7 @@ async function runCompletion(
 			signal: ctx.signal,
 		},
 	);
-	return formatCompletion(message, model, request.schema !== undefined);
+	return formatCompletion(message, model, structured);
 }
 
 function normalizeRequest(request: CompletionRequest): CompletionRequest {
@@ -78,25 +91,77 @@ function normalizeRequest(request: CompletionRequest): CompletionRequest {
 	};
 }
 
-function resolveRequestedModel(current: Model<Api> | undefined, requested: string | undefined): Model<Api> | undefined {
-	if (requested === undefined || requested === "default") return current;
-	if (requested === "smol" || requested === "slow") {
-		throw new Error('completion() model roles are not supported; use model: "default" or omit model.');
+function resolveCompletionTier(requested: string | undefined): CompletionTier {
+	switch (requested) {
+		case undefined:
+		case "default":
+			return "default";
+		case "smol":
+			return "smol";
+		case "slow":
+			return "slow";
+		default:
+			throw new CompletionUnknownTierError(requested);
 	}
-	if (!current) return undefined;
-	if (requested === current.id || requested === `${current.provider}/${current.id}`) return current;
-	throw new Error(`completion() could not resolve requested model "${requested}" from the current session model.`);
+}
+
+function resolveRequestedModel(ctx: ExtensionContext, tier: CompletionTier): Model<Api> | undefined {
+	switch (tier) {
+		case "default":
+			return ctx.model;
+		case "smol":
+			return lowestCostModel(ctx.modelRegistry.getAvailable());
+		case "slow":
+			return highestCostModel(ctx.modelRegistry.getAvailable());
+		default:
+			return assertNever(tier);
+	}
+}
+
+function unavailableModelError(tier: CompletionTier): Error {
+	switch (tier) {
+		case "default":
+			return noModelCredentialsError();
+		case "smol":
+		case "slow":
+			return new CompletionTierUnavailableError(tier);
+		default:
+			return assertNever(tier);
+	}
+}
+
+function lowestCostModel(models: readonly Model<Api>[]): Model<Api> | undefined {
+	let selected: Model<Api> | undefined;
+	for (const model of models) {
+		if (selected === undefined || promptAndResponseCost(model) < promptAndResponseCost(selected)) selected = model;
+	}
+	return selected;
+}
+
+function highestCostModel(models: readonly Model<Api>[]): Model<Api> | undefined {
+	let selected: Model<Api> | undefined;
+	for (const model of models) {
+		if (selected === undefined || promptAndResponseCost(model) > promptAndResponseCost(selected)) selected = model;
+	}
+	return selected;
+}
+
+function promptAndResponseCost(model: Model<Api>): number {
+	return model.cost.input + model.cost.output;
 }
 
 function formatCompletion(message: AssistantMessage, model: Model<Api>, structured: boolean): CompletionResult {
 	if (message.stopReason === "error") throw new Error(message.errorMessage ?? "completion() request failed.");
 	if (message.stopReason === "aborted") throw new Error("completion() request aborted.");
 	const text = extractText(message);
-	if (!structured) return { text, details: { model: formatModel(model), structured: false } };
+	const details = { model: formatModel(model), structured };
+	if (!structured) return { text, details };
 	try {
-		return { value: JSON.parse(text) as unknown, details: { model: formatModel(model), structured: true } };
-	} catch {
-		throw new Error("completion() did not return a structured JSON response.");
+		const value: unknown = JSON.parse(text);
+		return { value, details };
+	} catch (error) {
+		if (error instanceof SyntaxError) return { value: { parseError: error.message }, details };
+		throw error;
 	}
 }
 
@@ -120,4 +185,8 @@ function formatModel(model: Model<Api>): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
+}
+
+function assertNever(value: never): never {
+	throw new CompletionUnknownTierError(String(value));
 }

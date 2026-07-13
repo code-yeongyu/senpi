@@ -275,4 +275,64 @@ describe("eval renderer preview", () => {
 		expect(toolText).not.toContain("�");
 		expect(toolText).not.toMatch(/[\uD800-\uDFFF]/u);
 	});
+
+	it("Given a detailed cell with five status events when collapsed and expanded then previews use the newest rows only", () => {
+		// Given
+		const codeLines = Array.from({ length: 6 }, (_, index) => `cell-code-${index + 1}`);
+		const outputLines = Array.from({ length: 10 }, (_, index) => `cell-output-${index + 1}`);
+		const statusEvents = Array.from({ length: 5 }, (_, index) => ({
+			op: "log",
+			message: `status-${index + 1}`,
+		}));
+		const givenResult = evalResult(
+			{
+				language: "js",
+				durationMs: 1,
+				toolCalls: [],
+				truncated: false,
+				cells: [
+					{
+						index: 0,
+						code: codeLines.join("\n"),
+						language: "js",
+						output: outputLines.join("\n"),
+						status: "complete",
+						statusEvents,
+					},
+				],
+			},
+			"",
+		);
+
+		// When
+		const collapsedText = renderEvalResult(
+			givenResult,
+			{ expanded: false, isPartial: false },
+			undefined,
+			resultContext(),
+		)
+			.render(80)
+			.join("\n");
+		const expandedText = renderEvalResult(
+			givenResult,
+			{ expanded: true, isPartial: false },
+			undefined,
+			resultContext({ expanded: true }),
+		)
+			.render(80)
+			.join("\n");
+
+		// Then
+		expect.soft(collapsedText).toContain("2 earlier status events");
+		expect.soft(collapsedText).not.toContain("status-1");
+		expect.soft(collapsedText).not.toContain("status-2");
+		for (const visibleStatus of ["status-3", "status-4", "status-5"])
+			expect.soft(collapsedText).toContain(visibleStatus);
+		expect.soft(collapsedText).not.toContain(codeLines[0]);
+		expect.soft(collapsedText).not.toMatch(/cell-output-1(?:\r?\n|$)/u);
+		for (const status of statusEvents) expect.soft(expandedText).toContain(status.message);
+		for (const codeLine of codeLines) expect.soft(expandedText).toContain(codeLine);
+		for (const outputLine of outputLines) expect.soft(expandedText).toContain(outputLine);
+		expect.soft(expandedText).not.toContain("earlier status events");
+	});
 });

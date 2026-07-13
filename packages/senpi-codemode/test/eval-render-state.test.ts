@@ -1,8 +1,14 @@
 import type { AgentToolResult } from "@code-yeongyu/senpi";
 import { describe, expect, it } from "vitest";
-import { renderEvalResult } from "../src/tool/render.ts";
+import { renderEvalCall, renderEvalResult } from "../src/tool/render.ts";
 import type { EvalToolDetails } from "../src/tool/types.ts";
-import { evalResult, evalResultWithOmittedDetails, renderLines, resultContext } from "./eval-render-fixtures.ts";
+import {
+	callContext,
+	evalResult,
+	evalResultWithOmittedDetails,
+	renderLines,
+	resultContext,
+} from "./eval-render-fixtures.ts";
 
 const TERMINAL_CONTROL_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
 
@@ -231,5 +237,73 @@ describe("eval renderer state", () => {
 		const metadataText = lines.join("\n");
 		expect.soft(header).toContain("error");
 		expect.soft(metadataText).toContain("took 5ms");
+	});
+
+	it("Given call badges and cells in every lifecycle state when rendered then headers expose icons and formatted durations", () => {
+		// Given
+		const call = renderEvalCall(
+			{ language: "py", code: "work()", title: "resettable", reset: true, timeout: 3 },
+			undefined,
+			callContext({ spinnerFrame: 0 }),
+		);
+		const result = evalResult(
+			{
+				language: "py",
+				durationMs: 3_720_000,
+				toolCalls: [],
+				truncated: false,
+				cells: [
+					{ index: 0, title: "queued", code: "queued()", language: "py", output: "", status: "pending" },
+					{
+						index: 1,
+						title: "active",
+						code: "active()",
+						language: "py",
+						output: "",
+						status: "running",
+						durationMs: 500,
+					},
+					{
+						index: 2,
+						title: "finished",
+						code: "finished()",
+						language: "py",
+						output: "ok",
+						status: "complete",
+						durationMs: 61_000,
+					},
+					{
+						index: 3,
+						title: "broken",
+						code: "broken()",
+						language: "py",
+						output: "boom",
+						status: "error",
+						durationMs: 3_720_000,
+					},
+				],
+			},
+			"",
+		);
+
+		// When
+		const callText = renderLines(call).join("\n");
+		const resultText = renderEvalResult(
+			result,
+			{ expanded: false, isPartial: true },
+			undefined,
+			resultContext({ spinnerFrame: 2 }),
+		)
+			.render(100)
+			.join("\n");
+
+		// Then
+		expect.soft(callText).toContain("eval py resettable running");
+		expect.soft(callText).toContain("reset");
+		expect.soft(callText).toContain("timeout 3s");
+		expect.soft(resultText).toContain("eval py queued pending ○");
+		expect.soft(resultText).toMatch(/eval py active running [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/u);
+		expect.soft(resultText).toContain("eval py finished done ✓ · 1m 1s");
+		expect.soft(resultText).toContain("eval py broken error ✗ · 1h 2m");
 	});
 });

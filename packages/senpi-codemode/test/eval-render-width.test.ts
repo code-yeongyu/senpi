@@ -192,3 +192,64 @@ describe("eval renderer rerender width behavior", () => {
 		expect(text).not.toContain("earlier code lines");
 	});
 });
+
+describe("eval renderer cell detail width", () => {
+	it("Given narrow CJK cell status agent JSON and truncation details when rendered then every line reflows within width", () => {
+		// Given
+		const width = 40;
+		const givenResult = evalResult(
+			{
+				language: "py",
+				durationMs: 900,
+				toolCalls: [],
+				truncated: true,
+				isError: true,
+				cells: [
+					{
+						index: 0,
+						title: "실패 셀",
+						code: "print('한글출력테스트')",
+						language: "py",
+						output: "한글출력테스트와 아주 긴 오류 설명이 폭에 맞게 줄바꿈되어야 합니다",
+						status: "error",
+						durationMs: 900,
+						statusEvents: [
+							{ op: "read", path: "/tmp/설정.json", chars: 12 },
+							{ op: "write", path: "/tmp/결과.json", chars: 8 },
+							{ op: "agent", id: "worker-한글", status: "completed", durationMs: 700 },
+						],
+					},
+				],
+				jsonOutputs: [{ a: 1 }],
+				meta: {
+					direction: "tail",
+					truncatedBy: "lines",
+					totalLines: 12,
+					totalBytes: 240,
+					outputLines: 3,
+					outputBytes: 60,
+					shownRange: { start: 10, end: 12 },
+					artifactId: "/tmp/full-output.log",
+				},
+			},
+			"",
+		);
+
+		// When
+		const lines = renderEvalResult(
+			givenResult,
+			{ expanded: false, isPartial: false },
+			undefined,
+			resultContext(),
+		).render(width);
+		const text = lines.join("\n");
+
+		// Then
+		expectLinesWithinWidth(lines, width, "narrow detail render");
+		expect.soft(text).toContain("eval py 실패 셀 error");
+		expect.soft(text).toContain("read 12 chars");
+		expect.soft(text).toContain("worker-한글 done");
+		expect.soft(text).toContain("display[1]");
+		expect.soft(text).toContain("Showing lines 10-12 of 12");
+	});
+});

@@ -242,4 +242,92 @@ describe("eval renderer streaming reuse", () => {
 		expect.soft(renderLines(call)).toEqual(["eval js", "const value = 1"]);
 		expect.soft(renderLines(final).slice(0, 4)).toEqual(["eval js done", "phase complete | took 3ms", "", "final"]);
 	});
+
+	it("Given running completed and failed agent events when rendered then progress rows expose state detail and duration", () => {
+		// Given
+		const givenResult = evalResult(
+			{
+				language: "py",
+				durationMs: 0,
+				toolCalls: [],
+				truncated: false,
+				cells: [
+					{
+						index: 0,
+						code: "await agent('work')",
+						language: "py",
+						output: "",
+						status: "running",
+						statusEvents: [
+							{ op: "agent", id: "a-running", status: "running", currentTool: "read", lastIntent: "config" },
+							{ op: "agent", id: "a-done", status: "completed", durationMs: 2_500 },
+							{ op: "agent", id: "a-failed", status: "failed", durationMs: 800 },
+						],
+					},
+				],
+			},
+			"",
+		);
+
+		// When
+		const text = renderEvalResult(
+			givenResult,
+			{ expanded: false, isPartial: true },
+			undefined,
+			resultContext({ spinnerFrame: 0 }),
+		)
+			.render(100)
+			.join("\n");
+
+		// Then
+		expect.soft(text).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] a-running running/u);
+		expect.soft(text).toContain("read: config");
+		expect.soft(text).toContain("✓ a-done done · 2s");
+		expect.soft(text).toContain("✗ a-failed failed · <1s");
+	});
+
+	it("Given a reused running agent row when spinnerFrame advances then only the spinner glyph changes", () => {
+		// Given
+		const givenResult = evalResult(
+			{
+				language: "js",
+				durationMs: 0,
+				toolCalls: [],
+				truncated: false,
+				cells: [
+					{
+						index: 0,
+						code: "await agent('work')",
+						language: "js",
+						output: "",
+						status: "running",
+						statusEvents: [{ op: "agent", id: "spinner-agent", status: "running" }],
+					},
+				],
+			},
+			"",
+		);
+		const first = renderEvalResult(
+			givenResult,
+			{ expanded: false, isPartial: true },
+			undefined,
+			resultContext({ spinnerFrame: 0 }),
+		);
+		const firstRow = first.render(80).find((line) => line.includes("spinner-agent"));
+
+		// When
+		const second = renderEvalResult(
+			givenResult,
+			{ expanded: false, isPartial: true },
+			undefined,
+			resultContext({ lastComponent: first, spinnerFrame: 1 }),
+		);
+		const secondRow = second.render(80).find((line) => line.includes("spinner-agent"));
+
+		// Then
+		expect.soft(second).toBe(first);
+		expect.soft(firstRow).toBeDefined();
+		expect.soft(secondRow).toBeDefined();
+		expect.soft(secondRow).not.toBe(firstRow);
+	});
 });

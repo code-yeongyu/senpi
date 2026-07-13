@@ -1,47 +1,83 @@
 # packages/senpi-codemode
 
-`@code-yeongyu/senpi-codemode` is a source-only Senpi extension that registers the `eval` tool and runs persistent JavaScript, Python, Ruby, and Julia kernels.
+`@code-yeongyu/senpi-codemode` is a source-only Senpi extension that registers
+the persistent-kernel `eval` tool for JavaScript, Python, Ruby, and Julia.
 
 ## STRUCTURE
 
 ```text
-src/index.ts                    Extension factory and eval registration
-src/extension/session-manager.ts Session generation and kernel ownership
-src/tool/                       Eval schema, cell execution, rendering
-src/kernels/js/                 Worker-backed persistent JavaScript kernel
-src/kernels/py/                 Python process and transport
-src/kernels/rb/, kernels/jl/    Optional subprocess kernels
-src/kernels/shared/             Shared subprocess lifecycle/queues
-src/bridge/                     Loopback bearer-auth host bridge
-src/completion/                 Host completion/tool bridge
-src/timeouts/                   Bridge and idle timeout ownership
+src/index.ts                     Extension factory and session-start re-registration
+src/config/                      Settings schema, defaults, env overrides
+src/extension/                   Session generations and kernel ownership
+src/tool/                        Eval schema, cell execution, status events, rendering
+src/kernels/js/                  Worker-backed persistent JavaScript kernel
+src/kernels/py/                  Python process and transport
+src/kernels/rb/, kernels/jl/     Optional subprocess kernels
+src/kernels/shared/              Shared subprocess lifecycle and queues
+src/bridge/                      Loopback bearer-auth protocol and server
+src/bridges/                     Host adapters for agent(), output(), structured schemas
+src/output/                      OutputSink, truncation metadata, artifact-path handling
+src/completion/                  Host completion bridge
+src/timeouts/                    Bridge and idle-timeout ownership
+scripts/qa-*.ts                  Direct kernel, extension, and renderer QA drivers
+test/                            Vitest contracts and the omp parity ledger
 ```
 
 ## INVARIANTS
 
-- The extension currently registers `eval`; do not rely on the stale README no-op claim.
-- Session generations fence old kernels and callbacks. A retired generation must not emit into a newer session.
-- Kernels persist state per language, while per-cell callbacks are rebound for each execution.
-- Every cell settles exactly once across success, error, timeout, abort, bridge failure, and kernel crash.
-- Timeout/abort cleanup retires child work and confirms process exit before ownership is released.
-- The host bridge binds loopback only, requires a per-session bearer token, limits request bodies, and aborts work on disconnect.
-- Optional interpreters are capability gaps, not install failures; JavaScript remains available on supported Node versions.
+- `eval` is registered at extension load and re-registered at `session_start`
+  after settings, interpreter availability, and active task-tool names resolve.
+- Session generations fence old kernels and callbacks. A retired generation
+  must not emit into a newer session.
+- Kernels persist state per language, while per-cell callbacks are rebound for
+  each execution.
+- Every cell settles exactly once across success, error, timeout, abort, bridge
+  failure, and kernel crash.
+- Timeout and abort cleanup retires child work before ownership is released.
+- The host bridge binds loopback only, requires a per-session bearer token,
+  limits request bodies, and aborts work on disconnect.
+- `agent()` and `output()` use configured active tool names through
+  `pi.executeTool`. Do not import an orchestration workspace package here.
+- `local://` resolves under the extension-owned session artifact root. Spill
+  notices contain plain absolute paths, not a custom URI scheme.
+- Status events stay structured from kernel protocol through `EvalToolDetails`
+  and render output. Preserve agent-progress coalescing semantics.
+- Optional interpreters are capability gaps, not installation failures;
+  JavaScript remains available on supported Node versions.
+- This package targets Node 24 or newer. Do not introduce Bun-only APIs,
+  `@oh-my-opencode` imports, or a `budget` helper.
 
 ## WHERE TO LOOK
 
 | Task | Path |
-|---|---|
-| Register/change eval | `src/index.ts`, `src/tool/eval-tool.ts` |
-| Cell settlement | `src/tool/cell-handler.ts` |
-| Session/kernel ownership | `src/extension/session-manager.ts` |
-| Bridge auth/protocol | `src/bridge/` |
-| JS lifecycle | `src/kernels/js/` |
-| Subprocess lifecycle | `src/kernels/shared/` and language directory |
-| Rendering | `src/tool/render.ts` |
+| --- | --- |
+| Register or narrow eval | `src/index.ts`, `src/tool/eval-tool.ts` |
+| Cell settlement and output | `src/tool/cell-handler.ts`, `src/output/` |
+| Session and kernel ownership | `src/extension/session-manager.ts`, `src/index.ts` |
+| Bridge auth and protocol | `src/bridge/` |
+| Agent/output task composition | `src/bridges/` |
+| JavaScript lifecycle and imports | `src/kernels/js/` |
+| Subprocess lifecycle | `src/kernels/shared/` and each language directory |
+| Status and TUI/HTML rendering | `src/tool/status-events.ts`, `src/tool/render.ts` |
+| Real-surface QA | `scripts/qa-*.ts` |
+| Port coverage mapping | `test/PARITY.md` |
 
-## VALIDATION
+## QUALITY GATES
 
-- Run `npm test` from this package; tests use the package Vitest command.
-- Run focused lifecycle tests for the changed kernel, timeout, bridge, or settlement path.
-- Source changes require root `npm run check` and real CLI QA evidence because this extension reaches the agent runtime.
-- The current `README.md` no-op/deferred-integration language is stale; do not copy it into implementation guidance. Repair it in a dedicated package-documentation change.
+- Add or update a focused Vitest contract before changing runtime behavior; run
+  it red, then green.
+- Run `npm test` from this package and `npm run check` from the repository root
+  before committing code or packaging changes.
+- Run the relevant `scripts/qa-*.ts` driver when changing a kernel, bridge,
+  extension lifecycle, output sink, or renderer. Capture evidence without
+  tokens, headers, cookies, or raw environment dumps.
+- Keep TypeScript erasable and strict: no `any`, assertions, non-null
+  assertions, ignored diagnostics, or dynamic imports outside documented
+  boundaries.
+- Keep renderer imports out of `src/output/`; output collection is a runtime
+  layer and must not create a renderer dependency cycle.
+- Direct dependencies are exact-pinned. Refresh locks with
+  `npm install --ignore-scripts`; use `PI_ALLOW_LOCKFILE_CHANGE=1` only when the
+  lockfile policy permits the intentional change.
+- Documentation must describe the current tool contract. Update README settings
+  and helper tables with every user-visible surface change.

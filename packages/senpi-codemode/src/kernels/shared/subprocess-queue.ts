@@ -84,6 +84,7 @@ export class SubprocessRunQueue {
 			case "display":
 			case "log":
 			case "phase":
+			case "status":
 				if (this.#active) onMessage?.(message);
 				return false;
 			case "ready":

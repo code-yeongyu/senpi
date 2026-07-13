@@ -34,7 +34,12 @@ export function createWorkerCore(transport, options) {
 
 	function onMessage(message) {
 		if (message.type === "init") {
-			runtime = new JsWorkerRuntime({ cwd: options.cwd, parallelPoolWidth: options.parallelPoolWidth });
+			runtime = new JsWorkerRuntime({
+				cwd: options.cwd,
+				parallelPoolWidth: options.parallelPoolWidth,
+				localRoots: message.connection.localRoots,
+				artifactsDir: message.connection.artifactsDir,
+			});
 			emit({ type: "ready" });
 			return;
 		}

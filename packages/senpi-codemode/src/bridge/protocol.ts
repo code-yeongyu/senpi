@@ -11,9 +11,14 @@ const bridgeErrorSchema = Type.Object({
 	code: Type.Optional(Type.String()),
 });
 
+const statusEventSchema = Type.Object({ op: Type.String() }, { additionalProperties: true });
+
 const connectionConfigSchema = Type.Object({
 	port: Type.Integer({ minimum: 1, maximum: 65_535 }),
 	token: Type.String({ minLength: 1 }),
+	localRoots: Type.Optional(Type.Record(Type.String(), Type.String())),
+	artifactsDir: Type.Optional(Type.String()),
+	parallelPoolWidth: Type.Optional(Type.Integer({ minimum: 1 })),
 });
 
 const hostToKernelMessageSchema = Type.Union([
@@ -70,6 +75,7 @@ const kernelToHostMessageSchema = Type.Union([
 	}),
 	Type.Object({ type: Type.Literal("log"), message: Type.String() }),
 	Type.Object({ type: Type.Literal("phase"), title: Type.String() }),
+	Type.Object({ type: Type.Literal("status"), event: statusEventSchema }),
 	Type.Object({
 		type: Type.Literal("result"),
 		cellId: Type.String({ minLength: 1 }),
@@ -89,11 +95,18 @@ const kernelToHostMessageSchema = Type.Union([
 
 const bridgeMessageSchema = Type.Union([hostToKernelMessageSchema, kernelToHostMessageSchema]);
 
+export type EvalStatusEvent = { op: string } & Record<string, unknown>;
 export type BridgeError = Static<typeof bridgeErrorSchema>;
 export type BridgeConnectionConfig = Static<typeof connectionConfigSchema>;
 export type HostToKernelMessage = Static<typeof hostToKernelMessageSchema>;
-export type KernelToHostMessage = Static<typeof kernelToHostMessageSchema>;
-export type BridgeMessage = Static<typeof bridgeMessageSchema>;
+type KernelToHostMessageSchema = Static<typeof kernelToHostMessageSchema>;
+type BridgeMessageSchema = Static<typeof bridgeMessageSchema>;
+export type KernelToHostMessage =
+	| Exclude<KernelToHostMessageSchema, { type: "status" }>
+	| { type: "status"; event: EvalStatusEvent };
+export type BridgeMessage =
+	| Exclude<BridgeMessageSchema, { type: "status" }>
+	| { type: "status"; event: EvalStatusEvent };
 
 export type BridgeDecodeErrorCode =
 	| "empty_frame"

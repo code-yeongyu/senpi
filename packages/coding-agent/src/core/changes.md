@@ -37,6 +37,21 @@
 - MEDIUM: `agent-session.ts` around `agent_end` queued continuation handling and `_runAutoCompaction()` recovery.
 - LOW: `_continueAgentAfterCurrentRun()` and the session-work barrier integration.
 
+## Preserve builtin extensions after project trust resolution (2026-07-12)
+
+### What changed
+
+- `resource-loader.ts`: project-trust reloads now carry forward only preloaded factory-origin extensions - builtins, bundled codemode package entries, and inline factories - ahead of file-based extensions.
+- Shadowed or disabled file extensions from the pre-trust pass remain excluded from the trusted final set instead of being restored by the factory carry-over.
+- Added regression coverage that verifies trusted reloads preserve plain-reload membership and builtin-first order, including `todowrite`, codemode's `eval` tool, and a shadowed `pi-todotools` package.
+
+### Why extension system couldn't handle this
+
+- Project trust uses a core-owned two-phase resource load. Only the resource loader can retain the factory instances and side effects from the untrusted bootstrap pass while rebuilding the final trusted extension order.
+
+### Expected merge conflict zones
+
+- LOW: `resource-loader.ts` around trusted final extension-set composition.
 ## Upstream model context overflow recovery (2026-07-08)
 
 ### What changed

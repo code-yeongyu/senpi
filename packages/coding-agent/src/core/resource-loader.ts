@@ -721,13 +721,17 @@ export class DefaultResourceLoader implements ResourceLoader {
 			loadedByPath.set(extension.resolvedPath, extension);
 		}
 
-		const inlineExtensions = preTrustExtensions.extensions.filter((extension) =>
-			extension.path.startsWith("<inline:"),
+		const bundledExtensionPaths = this.getBundledExtensionEntryPaths();
+		const factoryExtensions = preTrustExtensions.extensions.filter(
+			(extension) =>
+				extension.path.startsWith("<builtin:") ||
+				extension.path.startsWith("<inline:") ||
+				bundledExtensionPaths.has(extension.resolvedPath),
 		);
 		const orderedExtensions = extensionPaths
 			.map((path) => loadedByPath.get(this.resolveExtensionLoadPath(path)))
 			.filter((extension): extension is Extension => extension !== undefined);
-		orderedExtensions.unshift(...inlineExtensions);
+		orderedExtensions.unshift(...factoryExtensions);
 
 		const extensionsResult: LoadExtensionsResult = {
 			extensions: orderedExtensions,
@@ -1271,6 +1275,21 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 
 		return { extensions, errors };
+	}
+
+	private getBundledExtensionEntryPaths(): Set<string> {
+		const paths = new Set<string>();
+		for (const bundledExtension of bundledBuiltinExtensions) {
+			try {
+				const packageJsonPath = bundledExtension.resolvePackage();
+				for (const extensionPath of this.resolvePackageExtensionEntries(packageJsonPath)) {
+					paths.add(this.resolveExtensionLoadPath(extensionPath));
+				}
+			} catch {
+				// Bundled resolution errors are already reported by loadExtensionFactories().
+			}
+		}
+		return paths;
 	}
 
 	private resolvePackageExtensionEntries(packageJsonPath: string): string[] {

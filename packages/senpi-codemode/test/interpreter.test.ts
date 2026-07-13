@@ -48,6 +48,20 @@ describe("interpreter detection", () => {
 		await expect(detector.detect("jl")).resolves.toEqual({ ok: false });
 	});
 
+	it("detects julia despite the 'version' word in its --version output", async () => {
+		// Regression: `julia --version` prints "julia version 1.12.6" (the word
+		// "version" sits between the name and the number), unlike Python/Ruby.
+		// The old parseVersion regex required the number right after the name and
+		// so never detected julia — the jl backend was permanently unavailable and
+		// the skip-if-absent jl tests hid it.
+		const detector = createInterpreterDetector({
+			platform: "linux",
+			execFile: stubProbe(new Map([["julia --version", "julia version 1.12.6"]])),
+		});
+
+		await expect(detector.detect("jl")).resolves.toEqual({ ok: true, path: "julia", version: "1.12.6" });
+	});
+
 	it("caches detection results per detector instance", async () => {
 		let probes = 0;
 		const detector = createInterpreterDetector({

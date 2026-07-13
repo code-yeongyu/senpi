@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -47,6 +48,44 @@ describe("DefaultResourceLoader", () => {
 
 	function nonBuiltinExtensions(extensions: ReturnType<DefaultResourceLoader["getExtensions"]>["extensions"]) {
 		return extensions.filter((extension) => !extension.path.startsWith("<builtin:"));
+	}
+
+	// Bundled codemode is loaded through Jiti. Running this probe from source preserves
+	// the production ESM path instead of Vitest's in-process module aliases.
+	function reloadExtensionsFromSource(): {
+		plain: { extensions: Array<{ path: string; tools: string[] }>; errors: Array<{ path: string; error: string }> };
+		trusted: { extensions: Array<{ path: string; tools: string[] }>; errors: Array<{ path: string; error: string }> };
+	} {
+		const probePath = join(tempDir, "resource-loader-probe.mts");
+		const resourceLoaderUrl = pathToFileURL(join(process.cwd(), "src", "core", "resource-loader.ts")).href;
+		writeFileSync(
+			probePath,
+			`import { DefaultResourceLoader } from ${JSON.stringify(resourceLoaderUrl)};
+
+const [agentDir, cwd] = process.argv.slice(2);
+const snapshot = (loader: DefaultResourceLoader) => ({
+	extensions: loader.getExtensions().extensions.map((extension) => ({
+		path: extension.path,
+		tools: [...extension.tools.keys()],
+	})),
+	errors: loader.getExtensions().errors,
+});
+
+void (async () => {
+	const plainLoader = new DefaultResourceLoader({ cwd, agentDir, noSkills: true });
+	await plainLoader.reload();
+	const trustedLoader = new DefaultResourceLoader({ cwd, agentDir, noSkills: true });
+	await trustedLoader.reload({ resolveProjectTrust: async () => true });
+	process.stdout.write(JSON.stringify({ plain: snapshot(plainLoader), trusted: snapshot(trustedLoader) }));
+})();
+`,
+		);
+		const output = execFileSync(process.execPath, ["--import", "tsx", probePath, agentDir, cwd], {
+			cwd: process.cwd(),
+			encoding: "utf8",
+			env: { ...process.env, HOME: tempDir },
+		});
+		return JSON.parse(output) as ReturnType<typeof reloadExtensionsFromSource>;
 	}
 
 	describe("reload", () => {
@@ -254,6 +293,76 @@ export default function(pi) {
 				join(userExtDir, "user.ts"),
 			]);
 			expect(globalState[loadCountKey]).toBe(1);
+		});
+
+		it("should preserve builtin and bundled extensions when project trust resolves", async () => {
+			writeFileSync(join(agentDir, "settings.json"), "{}\n");
+			const userExtDir = join(agentDir, "extensions");
+			const fileExtensionPath = join(userExtDir, "file.ts");
+			mkdirSync(userExtDir, { recursive: true });
+			writeFileSync(
+				fileExtensionPath,
+				`export default function(pi) {
+	pi.registerCommand("file-extension", {
+		description: "file extension",
+		handler: async () => {},
+	});
+}`,
+			);
+
+			const { plain, trusted } = reloadExtensionsFromSource();
+			expect(plain.errors).toEqual([]);
+			expect(trusted.errors).toEqual([]);
+			expect(trusted.extensions.map((extension) => extension.path)).toEqual(
+				plain.extensions.map((extension) => extension.path),
+			);
+			expect(trusted.extensions.some((extension) => extension.path === "<builtin:todowrite>")).toBe(true);
+			expect(trusted.extensions.some((extension) => extension.tools.includes("eval"))).toBe(true);
+
+			const fileExtensionIndex = trusted.extensions.findIndex((extension) => extension.path === fileExtensionPath);
+			const factoryExtensionPaths = plain.extensions
+				.filter((extension) => extension.path !== fileExtensionPath)
+				.map((extension) => extension.path);
+			expect(fileExtensionIndex).toBeGreaterThanOrEqual(0);
+			expect(trusted.extensions.slice(0, fileExtensionIndex).map((extension) => extension.path)).toEqual(
+				factoryExtensionPaths,
+			);
+		});
+
+		it("should not restore shadowed vendored package extensions after project trust resolves", async () => {
+			const packageDir = join(tempDir, "shadowed-todotools");
+			const packageExtensionPath = join(packageDir, "extension.ts");
+			mkdirSync(packageDir, { recursive: true });
+			writeFileSync(
+				join(packageDir, "package.json"),
+				JSON.stringify({
+					name: "pi-todotools",
+					pi: { extensions: ["./extension.ts"] },
+				}),
+			);
+			writeFileSync(
+				packageExtensionPath,
+				`import { Type } from "typebox";
+
+export default function(pi) {
+	pi.registerTool({
+		name: "todowrite",
+		description: "shadowed todowrite",
+		parameters: Type.Object({}),
+		execute: async () => ({ content: [], details: {} }),
+	});
+}`,
+			);
+			writeFileSync(join(agentDir, "settings.json"), `${JSON.stringify({ packages: [packageDir] })}\n`);
+
+			const { plain, trusted } = reloadExtensionsFromSource();
+			expect(plain.extensions.some((extension) => extension.path === "<builtin:todowrite>")).toBe(true);
+			expect(plain.extensions.some((extension) => extension.path === packageExtensionPath)).toBe(false);
+			expect(trusted.extensions.some((extension) => extension.path === "<builtin:todowrite>")).toBe(true);
+			expect(trusted.extensions.some((extension) => extension.path === packageExtensionPath)).toBe(false);
+			expect(trusted.extensions.map((extension) => extension.path)).toEqual(
+				plain.extensions.map((extension) => extension.path),
+			);
 		});
 
 		it("should keep both extensions loaded when command names collide", async () => {

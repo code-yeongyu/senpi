@@ -15,9 +15,14 @@ export type CompletionToolCallSummary = { readonly ok: true } | { readonly ok: f
 
 export async function handleCompletionToolCall(options: CompletionToolCallOptions): Promise<CompletionToolCallSummary> {
 	try {
-		const value = await options.complete(toCompletionRequest(options.message.args), options.ctx);
+		const result = await options.complete(toCompletionRequest(options.message.args), options.ctx);
 		if (!options.isActive()) return { ok: false, error: "completion() result ignored after eval finalization" };
-		options.kernel.deliverToolReply({ type: "tool-reply", callId: options.message.callId, ok: true, value });
+		options.kernel.deliverToolReply({
+			type: "tool-reply",
+			callId: options.message.callId,
+			ok: true,
+			value: completionReplyValue(result),
+		});
 		return { ok: true };
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -43,4 +48,8 @@ function toCompletionRequest(value: unknown): CompletionRequest {
 		};
 	}
 	throw new Error("completion() received invalid arguments");
+}
+
+function completionReplyValue(result: CompletionResult): unknown {
+	return "value" in result ? result.value : result.text;
 }
