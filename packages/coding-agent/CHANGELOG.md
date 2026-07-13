@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- Compacted context after tool results cross the threshold before issuing the next provider request, avoiding context-overflow failures inside multi-step tool loops.
+
 ### Removed
 
 ## [2026.7.11] - 2026-07-11
