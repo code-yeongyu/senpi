@@ -8,7 +8,7 @@
 
 ### Fixed
 
-- Compacted context after tool results cross the threshold before issuing the next provider request, avoiding context-overflow failures inside multi-step tool loops.
+- Compacted context after tool results cross the threshold before issuing the next provider request, preserved provider-bound context transforms during summary generation, and stopped safely when required compaction could not complete.
 
 ### Removed
 

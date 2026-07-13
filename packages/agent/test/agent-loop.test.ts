@@ -1568,6 +1568,7 @@ describe("agentLoop with AgentMessage", () => {
 		const config: AgentLoopConfig = {
 			model: createModel(),
 			convertToLlm: identityConverter,
+			prepareNextTurn: vi.fn(async () => undefined),
 		};
 
 		let llmCalls = 0;
@@ -1591,6 +1592,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		const messages = await stream.result();
 		expect(llmCalls).toBe(1);
+		expect(config.prepareNextTurn).not.toHaveBeenCalled();
 		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult"]);
 		expect(events.filter((event) => event.type === "turn_end")).toHaveLength(1);
 	});

@@ -590,6 +590,7 @@ export async function generateSummary(
 	thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
 	env?: Record<string, string>,
+	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>,
 ): Promise<string> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
@@ -604,7 +605,8 @@ export async function generateSummary(
 
 	// Serialize conversation to text so model doesn't try to continue it
 	// Convert to LLM messages first (handles custom types like bashExecution, custom, etc.)
-	const llmMessages = convertToLlm(currentMessages);
+	const providerMessages = transformContext ? await transformContext(currentMessages, signal) : currentMessages;
+	const llmMessages = convertToLlm(providerMessages);
 	const conversationText = serializeConversation(llmMessages);
 
 	// Build the prompt with conversation wrapped in tags
@@ -793,6 +795,7 @@ export async function compact(
 	thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
 	env?: Record<string, string>,
+	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>,
 ): Promise<CompactionResult> {
 	const {
 		firstKeptEntryId,
@@ -824,6 +827,7 @@ export async function compact(
 						thinkingLevel,
 						streamFn,
 						env,
+						transformContext,
 					)
 				: "No prior history.";
 		const turnPrefixResult = await generateTurnPrefixSummary(
@@ -837,6 +841,7 @@ export async function compact(
 			extraBody,
 			thinkingLevel,
 			streamFn,
+			transformContext,
 		);
 		// Merge into single summary
 		summary = `${historyResult}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult}`;
@@ -855,6 +860,7 @@ export async function compact(
 			thinkingLevel,
 			streamFn,
 			env,
+			transformContext,
 		);
 	}
 
@@ -888,12 +894,14 @@ async function generateTurnPrefixSummary(
 	extraBody?: Record<string, unknown>,
 	thinkingLevel?: ThinkingLevel,
 	streamFn?: SummarizationStreamFn,
+	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>,
 ): Promise<string> {
 	const maxTokens = Math.min(
 		Math.floor(0.5 * reserveTokens),
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
 	); // Smaller budget for turn prefix
-	const llmMessages = convertToLlm(messages);
+	const providerMessages = transformContext ? await transformContext(messages, signal) : messages;
+	const llmMessages = convertToLlm(providerMessages);
 	const conversationText = serializeConversation(llmMessages);
 	const promptText = `<conversation>\n${conversationText}\n</conversation>\n\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
 	const summarizationMessages = [

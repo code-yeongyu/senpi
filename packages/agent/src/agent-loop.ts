@@ -221,6 +221,7 @@ async function runLoop(
 
 			const toolResults: ToolResultMessage[] = [];
 			hasMoreToolCalls = false;
+			let toolBatchTerminated = false;
 			if (toolCalls.length > 0) {
 				// A "length" stop means the output was cut off by the token limit, so
 				// every tool call in the message may carry truncated arguments. Fail
@@ -230,6 +231,7 @@ async function runLoop(
 						? await failToolCallsFromTruncatedMessage(toolCalls, emit)
 						: await executeToolCalls(currentContext, message, config, signal, emit);
 				toolResults.push(...executedToolBatch.messages);
+				toolBatchTerminated = executedToolBatch.terminate;
 				hasMoreToolCalls = !executedToolBatch.terminate;
 
 				for (const result of toolResults) {
@@ -250,6 +252,21 @@ async function runLoop(
 				context: currentContext,
 				newMessages,
 			};
+			if (toolBatchTerminated) {
+				if (await config.shouldStopAfterTurn?.(nextTurnContext)) {
+					await emit({ type: "agent_end", messages: newMessages });
+					return;
+				}
+
+				pendingMessages = (await config.getSteeringMessages?.()) || [];
+				if (pendingMessages.length === 0) {
+					pendingMessages = (await config.getFollowUpMessages?.()) || [];
+				}
+				if (pendingMessages.length === 0) {
+					await emit({ type: "agent_end", messages: newMessages });
+					return;
+				}
+			}
 			const nextTurnSnapshot = await config.prepareNextTurn?.(nextTurnContext);
 			if (nextTurnSnapshot) {
 				currentContext = nextTurnSnapshot.context ?? currentContext;
@@ -266,18 +283,21 @@ async function runLoop(
 			}
 
 			if (
-				await config.shouldStopAfterTurn?.({
+				!toolBatchTerminated &&
+				(await config.shouldStopAfterTurn?.({
 					message,
 					toolResults,
 					context: currentContext,
 					newMessages,
-				})
+				}))
 			) {
 				await emit({ type: "agent_end", messages: newMessages });
 				return;
 			}
 
-			pendingMessages = (await config.getSteeringMessages?.()) || [];
+			if (!toolBatchTerminated) {
+				pendingMessages = (await config.getSteeringMessages?.()) || [];
+			}
 		}
 
 		// Agent would stop here. Check for follow-up messages.

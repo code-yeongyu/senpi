@@ -272,6 +272,13 @@ class CompactionRejectedError extends Error {
 	}
 }
 
+class RequiredCompactionError extends Error {
+	constructor() {
+		super("Context remains above the compaction threshold because compaction did not complete");
+		this.name = "RequiredCompactionError";
+	}
+}
+
 export interface ExtensionBindings {
 	uiContext?: ExtensionUIContext;
 	mode?: ExtensionMode;
@@ -620,6 +627,14 @@ export class AgentSession {
 				const compacted = await this._checkCompaction(turn.message, true, "threshold");
 				if (compacted) {
 					messages = this.agent.state.messages.slice();
+				} else {
+					const settings = this.settingsManager.getCompactionSettings();
+					const contextTokens = estimateContextTokens(
+						filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
+					).tokens;
+					if (settings.enabled && this.model && shouldCompact(contextTokens, this.model.contextWindow, settings)) {
+						throw new RequiredCompactionError();
+					}
 				}
 			}
 			const postCompactionTurn = {
@@ -2502,6 +2517,7 @@ export class AgentSession {
 						this.thinkingLevel,
 						this.agent.streamFn,
 						env,
+						this.agent.transformContext,
 					);
 				}
 			}

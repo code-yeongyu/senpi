@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- Skipped next-turn preparation when every tool result terminates the current batch and no queued message requires another provider turn.
+
 ### Removed
 
 ## [2026.7.11] - 2026-07-11
