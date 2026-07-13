@@ -40,6 +40,7 @@ import {
 	matchesKey,
 	ProcessTerminal,
 	Spacer,
+	sanitizeTerminalLabel,
 	setKeybindings,
 	Text,
 	TruncatedText,
@@ -109,6 +110,11 @@ import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { checkForNewPiVersion, getReleaseChangelogUrl } from "../../utils/version-check.ts";
 import { abortedErrorLabel } from "./aborted-error-label.ts";
+import {
+	type CompactionQueuedMessage,
+	transferCompactionQueue,
+	waitForPromptDisposition,
+} from "./compaction-queue-transfer.ts";
 import { ArminComponent } from "./components/armin.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
@@ -206,11 +212,6 @@ class ExpandableText extends Text implements Expandable {
 		this.setText(expanded ? this.getExpandedText() : this.getCollapsedText());
 	}
 }
-
-type CompactionQueuedMessage = {
-	text: string;
-	mode: "steer" | "followUp";
-};
 
 type ToolExecutionStartEvent = Extract<AgentSessionEvent, { type: "tool_execution_start" }>;
 type ToolExecutionEndEvent = Extract<AgentSessionEvent, { type: "tool_execution_end" }>;
@@ -498,6 +499,10 @@ export class InteractiveMode {
 
 	// Messages queued while compaction is running
 	private compactionQueuedMessages: CompactionQueuedMessage[] = [];
+	private compactionInFlightMessages: CompactionQueuedMessage[] = [];
+	private compactionTransferAbortControllers = new Map<CompactionQueuedMessage, AbortController>();
+	private compactionQueueFlushTail: Promise<void> | undefined;
+	private compactionQueueGeneration = 0;
 
 	// Shutdown state
 	private shutdownRequested = false;
@@ -1863,7 +1868,12 @@ export class InteractiveMode {
 		this.loadedResourcesContainer.clear();
 		this.chatContainer.clear();
 		this.pendingMessagesContainer.clear();
+		for (const controller of this.compactionTransferAbortControllers.values()) controller.abort();
+		this.compactionQueueGeneration += 1;
+		this.compactionQueueFlushTail = undefined;
 		this.compactionQueuedMessages = [];
+		this.compactionInFlightMessages = [];
+		this.compactionTransferAbortControllers.clear();
 		this.streamingComponent = undefined;
 		this.streamingMessage = undefined;
 		this.clearPendingTools();
@@ -3413,6 +3423,10 @@ export class InteractiveMode {
 				await this.checkShutdownRequested();
 				break;
 
+			case "continuation_error":
+				this.showError(sanitizeTerminalLabel(event.errorMessage));
+				break;
+
 			case "compaction_start": {
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(true);
@@ -4313,10 +4327,12 @@ export class InteractiveMode {
 		return {
 			steering: [
 				...this.session.getSteeringMessages(),
+				...this.compactionInFlightMessages.filter((msg) => msg.mode === "steer").map((msg) => msg.text),
 				...this.compactionQueuedMessages.filter((msg) => msg.mode === "steer").map((msg) => msg.text),
 			],
 			followUp: [
 				...this.session.getFollowUpMessages(),
+				...this.compactionInFlightMessages.filter((msg) => msg.mode === "followUp").map((msg) => msg.text),
 				...this.compactionQueuedMessages.filter((msg) => msg.mode === "followUp").map((msg) => msg.text),
 			],
 		};
@@ -4328,12 +4344,12 @@ export class InteractiveMode {
 	 */
 	private clearAllQueues(): { steering: string[]; followUp: string[] } {
 		const { steering, followUp } = this.session.clearQueue();
-		const compactionSteering = this.compactionQueuedMessages
-			.filter((msg) => msg.mode === "steer")
-			.map((msg) => msg.text);
-		const compactionFollowUp = this.compactionQueuedMessages
-			.filter((msg) => msg.mode === "followUp")
-			.map((msg) => msg.text);
+		const compactionMessages = [...this.compactionInFlightMessages, ...this.compactionQueuedMessages];
+		const compactionSteering = compactionMessages.filter((msg) => msg.mode === "steer").map((msg) => msg.text);
+		const compactionFollowUp = compactionMessages.filter((msg) => msg.mode === "followUp").map((msg) => msg.text);
+		for (const controller of this.compactionTransferAbortControllers.values()) controller.abort();
+		this.compactionInFlightMessages = [];
+		this.compactionTransferAbortControllers.clear();
 		this.compactionQueuedMessages = [];
 		return {
 			steering: [...steering, ...compactionSteering],
@@ -4426,79 +4442,81 @@ export class InteractiveMode {
 	}
 
 	private async flushCompactionQueue(options?: { willRetry?: boolean }): Promise<void> {
-		if (this.compactionQueuedMessages.length === 0) {
-			return;
-		}
-
-		const queuedMessages = [...this.compactionQueuedMessages];
-		this.compactionQueuedMessages = [];
-		this.updatePendingMessagesDisplay();
-
-		const restoreQueue = (error: unknown) => {
-			this.session.clearQueue();
-			this.compactionQueuedMessages = queuedMessages;
-			this.updatePendingMessagesDisplay();
-			this.showError(
-				`Failed to send queued message${queuedMessages.length > 1 ? "s" : ""}: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
+		const session = this.session;
+		const generation = this.compactionQueueGeneration ?? 0;
+		const previousFlush = this.compactionQueueFlushTail;
+		const runTransfer = async (): Promise<void> => {
+			if ((this.compactionQueueGeneration ?? 0) !== generation || this.session !== session) return;
+			await transferCompactionQueue(
+				{
+					takeBatch: () => {
+						const batch = this.compactionQueuedMessages;
+						this.compactionQueuedMessages = [];
+						this.compactionInFlightMessages.push(...batch);
+						for (const message of batch) {
+							this.compactionTransferAbortControllers.set(message, new AbortController());
+						}
+						this.updatePendingMessagesDisplay();
+						return batch;
+					},
+					commitAccepted: (message) => {
+						const index = this.compactionInFlightMessages.indexOf(message);
+						if (index === -1) return false;
+						this.compactionInFlightMessages.splice(index, 1);
+						this.compactionTransferAbortControllers.delete(message);
+						this.updatePendingMessagesDisplay();
+						return true;
+					},
+					restoreUndelivered: (messages) => {
+						const restorable = messages.filter((message) => this.compactionInFlightMessages.includes(message));
+						const restorableSet = new Set(restorable);
+						this.compactionInFlightMessages = this.compactionInFlightMessages.filter(
+							(message) => !restorableSet.has(message),
+						);
+						for (const message of restorable) this.compactionTransferAbortControllers.delete(message);
+						this.compactionQueuedMessages = [...restorable, ...this.compactionQueuedMessages];
+						this.updatePendingMessagesDisplay();
+						return restorable.length;
+					},
+					isCommand: (message) => this.isExtensionCommand(message.text),
+					deliverCommand: (message) => session.prompt(message.text),
+					deliverFirstPrompt: (message) =>
+						waitForPromptDisposition(
+							(preflightResult, promptDisposition) =>
+								session.prompt(message.text, {
+									streamingBehavior: message.mode,
+									preflightResult,
+									promptDisposition,
+									signal: this.compactionTransferAbortControllers.get(message)?.signal,
+								}),
+							(error) => {
+								if ((this.compactionQueueGeneration ?? 0) !== generation || this.session !== session) return;
+								this.showError(
+									`Queued prompt failed after acceptance: ${error instanceof Error ? error.message : String(error)}`,
+								);
+							},
+						),
+					deliverQueued: (message) =>
+						message.mode === "followUp" ? session.followUp(message.text) : session.steer(message.text),
+					reportFailure: (error, undeliveredCount) => {
+						this.showError(
+							`Failed to send queued message${undeliveredCount === 1 ? "" : "s"}: ${
+								error instanceof Error ? error.message : String(error)
+							}`,
+						);
+					},
+				},
+				options,
 			);
-		};
-
-		try {
-			if (options?.willRetry) {
-				// When retry is pending, queue messages for the retry turn
-				for (const message of queuedMessages) {
-					if (this.isExtensionCommand(message.text)) {
-						await this.session.prompt(message.text);
-					} else if (message.mode === "followUp") {
-						await this.session.followUp(message.text);
-					} else {
-						await this.session.steer(message.text);
-					}
-				}
-				this.updatePendingMessagesDisplay();
-				return;
-			}
-
-			// Find first non-extension-command message to use as prompt
-			const firstPromptIndex = queuedMessages.findIndex((message) => !this.isExtensionCommand(message.text));
-			if (firstPromptIndex === -1) {
-				// All extension commands - execute them all
-				for (const message of queuedMessages) {
-					await this.session.prompt(message.text);
-				}
-				return;
-			}
-
-			// Execute any extension commands before the first prompt
-			const preCommands = queuedMessages.slice(0, firstPromptIndex);
-			const firstPrompt = queuedMessages[firstPromptIndex];
-			const rest = queuedMessages.slice(firstPromptIndex + 1);
-
-			for (const message of preCommands) {
-				await this.session.prompt(message.text);
-			}
-
-			// Send first prompt (starts streaming)
-			const promptPromise = this.session.prompt(firstPrompt.text).catch((error) => {
-				restoreQueue(error);
-			});
-
-			// Queue remaining messages
-			for (const message of rest) {
-				if (this.isExtensionCommand(message.text)) {
-					await this.session.prompt(message.text);
-				} else if (message.mode === "followUp") {
-					await this.session.followUp(message.text);
-				} else {
-					await this.session.steer(message.text);
-				}
-			}
 			this.updatePendingMessagesDisplay();
-			void promptPromise;
-		} catch (error) {
-			restoreQueue(error);
+		};
+		const currentFlush = previousFlush ? previousFlush.then(runTransfer, runTransfer) : runTransfer();
+		const settledFlush = currentFlush.catch(() => undefined);
+		this.compactionQueueFlushTail = settledFlush;
+		try {
+			await currentFlush;
+		} finally {
+			if (this.compactionQueueFlushTail === settledFlush) this.compactionQueueFlushTail = undefined;
 		}
 	}
 

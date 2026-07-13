@@ -148,6 +148,34 @@ describe("InteractiveMode compaction events", () => {
 		expect(fakeThis.flushCompactionQueue).toHaveBeenCalledWith({ willRetry: false });
 	});
 
+	test("sanitizes a detached continuation launch failure before rendering", async () => {
+		const fakeThis = {
+			isInitialized: true,
+			footer: { invalidate: vi.fn() },
+			showError: vi.fn(),
+		};
+		const hostileMessage =
+			"Failed\u001b]52;c;c2VjcmV0\u0007 to\u001b]0;stolen title\u0007 continue" +
+			"\u001b]8;;https://attacker.invalid\u0007 queued\u001b]8;;\u0007\u0000 messages:\u007f" +
+			"\u0085 \u009b31mprovider\u009b0m unavailable";
+		const handleEvent = Reflect.get(InteractiveMode.prototype, "handleEvent") as (
+			this: typeof fakeThis,
+			event: { type: "continuation_error"; errorMessage: string },
+		) => Promise<void>;
+
+		await handleEvent.call(fakeThis, {
+			type: "continuation_error",
+			errorMessage: hostileMessage,
+		});
+
+		expect(fakeThis.showError).toHaveBeenCalledWith("Failed to continue queued messages: provider unavailable");
+		const rendered = fakeThis.showError.mock.calls[0]?.[0];
+		expect(rendered).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+		expect(rendered).not.toContain("]52;");
+		expect(rendered).not.toContain("attacker.invalid");
+		expect(rendered).not.toContain("stolen title");
+	});
+
 	test("renders OpenAI remote compaction details in the summary card", () => {
 		const component = new CompactionSummaryMessageComponent({
 			role: "compactionSummary",

@@ -45,7 +45,7 @@ const (
 // feed entry, with the surface that owns it instead. The exhaustiveness test
 // asserts handled ∪ ignored ∪ deferred covers the whole mirror.
 var transcriptIgnoredEvents = map[string]string{
-	"agent_settled":         "RPC completion marker; transcript state is finalized by agent_end/message_end",
+	"agent_settled":          "RPC completion marker; transcript state is finalized by agent_end/message_end",
 	"turn_start":             "turn boundaries render nothing; content arrives via message_* events",
 	"turn_end":               "turn boundaries render nothing; tool results arrive via tool_execution_end",
 	"compaction_start":       "status-indicator surface (shell status line, todo 7)",
@@ -155,6 +155,9 @@ func (t *Transcript) HandleEvent(msg EventMsg) EventDisposition {
 	case "compaction_end":
 		return t.applyCompactionEnd(ev.Payload)
 
+	case "continuation_error":
+		return t.applyContinuationError(ev.Payload)
+
 	case "queue_update":
 		// Hand-off to todo 4: the queue/pending-messages area (shell.Queue) owns
 		// steering/follow-up display; the transcript renders nothing for it.
@@ -166,6 +169,22 @@ func (t *Transcript) HandleEvent(msg EventMsg) EventDisposition {
 	}
 	t.logUnknown(ev.Type)
 	return EventUnknown
+}
+
+func (t *Transcript) applyContinuationError(payload []byte) EventDisposition {
+	var body struct {
+		ErrorMessage string `json:"errorMessage"`
+	}
+	if err := json.Unmarshal(payload, &body); err != nil || body.ErrorMessage == "" {
+		t.logMalformed("continuation_error", err)
+		return EventApplied
+	}
+	t.feed.Apply(transcript.FeedEvent{Type: "message_end", Message: &transcript.FeedMessage{
+		Role:         "assistant",
+		StopReason:   "error",
+		ErrorMessage: body.ErrorMessage,
+	}})
+	return EventApplied
 }
 
 // applyMessageEvent decodes the wire message envelope and forwards it to the

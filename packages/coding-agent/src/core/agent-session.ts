@@ -162,6 +162,7 @@ export type AgentSessionEvent =
 	| Exclude<AgentEvent, { type: "agent_end" }>
 	| AgentSessionAgentEndEvent
 	| { type: "agent_settled" }
+	| { type: "continuation_error"; errorMessage: string }
 	| {
 			type: "queue_update";
 			steering: readonly string[];
@@ -281,6 +282,8 @@ export interface ExtensionBindings {
 }
 
 /** Options for AgentSession.prompt() */
+export type PromptDisposition = "handled" | "queued" | "started";
+
 export interface PromptOptions {
 	/** Whether to expand file-based prompt templates (default: true) */
 	expandPromptTemplates?: boolean;
@@ -292,6 +295,10 @@ export interface PromptOptions {
 	source?: InputSource;
 	/** Internal hook used by RPC mode to observe prompt preflight acceptance or rejection. */
 	preflightResult?: (success: boolean) => void;
+	/** Internal hook used by the TUI to distinguish handled input from owned prompt work. */
+	promptDisposition?: (disposition: PromptDisposition) => void;
+	/** Internal cancellation signal for a prompt that has not acquired session-work ownership yet. */
+	signal?: AbortSignal;
 	sessionTitlePrompt?: string | false;
 }
 
@@ -923,7 +930,8 @@ export class AgentSession {
 		if (event.type === "agent_end") {
 			this._flushPendingBashMessages();
 			if (!launchedContinuation && allowsQueuedContinuation && this.agent.hasQueuedMessages()) {
-				launchedContinuation = await this._continueAgentAfterCurrentRun();
+				this._scheduleContinuationAfterCurrentEvent();
+				launchedContinuation = true;
 			}
 			if (!launchedContinuation) {
 				await this._emitAgentSettled();
@@ -1458,9 +1466,17 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
+		const throwIfCancelled = (): void => {
+			if (!options?.signal?.aborted) return;
+			const error = new Error("Prompt cancelled before acceptance");
+			error.name = "AbortError";
+			throw error;
+		};
+		throwIfCancelled();
 		const userAbortPromise = this._userAbortPromise;
 		if (userAbortPromise) {
 			await userAbortPromise;
+			throwIfCancelled();
 		}
 		const shouldWaitForSessionWork = options?.source !== "extension";
 		if (
@@ -1468,10 +1484,12 @@ export class AgentSession {
 			(!this.isStreaming || this.isCompacting || this._sessionWorkBarrier.hasActiveWork)
 		) {
 			await this._waitForSettledSessionWork();
+			throwIfCancelled();
 		}
 
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 		const preflightResult = options?.preflightResult;
+		const promptDisposition = options?.promptDisposition;
 		let messages: AgentMessage[] | undefined;
 		let titlePrompt: string | undefined;
 
@@ -1480,8 +1498,10 @@ export class AgentSession {
 			// Extension commands manage their own LLM interaction via pi.sendMessage()
 			if (expandPromptTemplates && text.startsWith("/")) {
 				const handled = await this._tryExecuteExtensionCommand(text);
+				throwIfCancelled();
 				if (handled) {
 					// Extension command executed, no prompt to send
+					promptDisposition?.("handled");
 					preflightResult?.(true);
 					return;
 				}
@@ -1497,7 +1517,9 @@ export class AgentSession {
 					options?.source ?? "interactive",
 					this.isStreaming ? options?.streamingBehavior : undefined,
 				);
+				throwIfCancelled();
 				if (inputResult.action === "handled") {
+					promptDisposition?.("handled");
 					preflightResult?.(true);
 					return;
 				}
@@ -1527,6 +1549,7 @@ export class AgentSession {
 				} else {
 					await this._queueSteer(expandedText, currentImages);
 				}
+				promptDisposition?.("queued");
 				preflightResult?.(true);
 				return;
 			}
@@ -1617,6 +1640,8 @@ export class AgentSession {
 			return;
 		}
 
+		throwIfCancelled();
+		promptDisposition?.("started");
 		preflightResult?.(true);
 		await this._promptAgent(messages);
 		await this.waitForRetry();
@@ -2747,17 +2772,32 @@ export class AgentSession {
 		}
 	}
 
-	private async _continueAgentAfterCurrentRun(): Promise<boolean> {
+	private async _continueAgentAfterCurrentRun(): Promise<void> {
 		await this.agent.waitForIdle();
-		try {
-			await this.agent.continue();
-			return true;
-		} catch (error) {
-			if (error instanceof Error) {
-				return false;
+		await this.agent.continue();
+	}
+
+	private _scheduleContinuationAfterCurrentEvent(): void {
+		// Tool hooks wait for queued message persistence, so continue() cannot run inside this event promise.
+		const currentEventQueue = this._agentEventQueue;
+		const finishContinuationWork = this._sessionWorkBarrier.begin();
+		const continueAfterEvent = async (): Promise<void> => {
+			try {
+				await this._continueAgentAfterCurrentRun();
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				this._emit({
+					type: "continuation_error",
+					errorMessage: `Failed to continue queued messages: ${message}`,
+				});
+				await this._emitAgentSettled();
 			}
-			throw error;
-		}
+		};
+
+		void currentEventQueue
+			.then(continueAfterEvent, continueAfterEvent)
+			.finally(finishContinuationWork)
+			.catch(() => undefined);
 	}
 
 	/**
@@ -2766,7 +2806,8 @@ export class AgentSession {
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
 		const finishCompactionWork = this._sessionWorkBarrier.begin();
 		this._emit({ type: "compaction_start", reason });
-		this._autoCompactionAbortController = new AbortController();
+		const autoCompactionController = new AbortController();
+		this._autoCompactionAbortController = autoCompactionController;
 
 		try {
 			if (!this.model) {
@@ -2815,6 +2856,9 @@ export class AgentSession {
 				if (reason === "overflow") this._overflowRecoveryAttempted = false;
 				return false;
 			}
+			if (this._autoCompactionAbortController === autoCompactionController) {
+				this._autoCompactionAbortController = undefined;
+			}
 
 			if (willRetry) {
 				const messages = this.agent.state.messages;
@@ -2824,11 +2868,14 @@ export class AgentSession {
 					this._incrementMessageRevision();
 				}
 
-				return await this._continueAgentAfterCurrentRun();
+				this._scheduleContinuationAfterCurrentEvent();
+				return true;
 			} else if (this.pendingMessageCount > 0) {
-				return await this._continueAgentAfterCurrentRun();
+				this._scheduleContinuationAfterCurrentEvent();
+				return true;
 			} else if (this.agent.hasQueuedMessages()) {
-				return await this._continueAgentAfterCurrentRun();
+				this._scheduleContinuationAfterCurrentEvent();
+				return true;
 			}
 
 			return false;
@@ -2851,7 +2898,9 @@ export class AgentSession {
 			});
 			return false;
 		} finally {
-			this._autoCompactionAbortController = undefined;
+			if (this._autoCompactionAbortController === autoCompactionController) {
+				this._autoCompactionAbortController = undefined;
+			}
 			finishCompactionWork();
 		}
 	}
