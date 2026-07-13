@@ -8,7 +8,7 @@
 
 ### Fixed
 
-- Skipped next-turn preparation when every tool result terminates the current batch and no queued message requires another provider turn.
+- Skipped next-turn preparation when every tool result terminates the current batch and no queued message requires another provider turn, and stopped before provider continuation when next-turn preparation aborts.
 
 ### Removed
 

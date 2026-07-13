@@ -281,6 +281,10 @@ async function runLoop(
 								: nextTurnSnapshot.thinkingLevel,
 				};
 			}
+			if (signal?.aborted) {
+				await emit({ type: "agent_end", messages: newMessages });
+				return;
+			}
 
 			if (
 				!toolBatchTerminated &&
