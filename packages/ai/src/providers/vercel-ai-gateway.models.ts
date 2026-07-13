@@ -565,7 +565,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 			cacheWrite: 18.75,
 		},
 		contextWindow: 200000,
-		maxTokens: 32000,
+		maxTokens: 8192,
 	} satisfies Model<"anthropic-messages">,
 	"anthropic/claude-opus-4.1": {
 		id: "anthropic/claude-opus-4.1",
@@ -673,7 +673,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 			cacheWrite: 3.75,
 		},
 		contextWindow: 1000000,
-		maxTokens: 64000,
+		maxTokens: 8192,
 	} satisfies Model<"anthropic-messages">,
 	"anthropic/claude-sonnet-4.5": {
 		id: "anthropic/claude-sonnet-4.5",
@@ -875,12 +875,12 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		reasoning: true,
 		input: ["text"],
 		cost: {
-			input: 0.6,
-			output: 1.7,
-			cacheRead: 0,
+			input: 0.21,
+			output: 0.79,
+			cacheRead: 0.13,
 			cacheWrite: 0,
 		},
-		contextWindow: 128000,
+		contextWindow: 163840,
 		maxTokens: 128000,
 	} satisfies Model<"anthropic-messages">,
 	"deepseek/deepseek-v3.1-terminus": {

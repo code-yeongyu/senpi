@@ -10,6 +10,18 @@
 
 ### Removed
 
+## [2026.7.13] - 2026-07-13
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Preserved the executable bit on the `pi-ai` CLI after ordinary workspace builds, preventing release builds from recording a non-executable bin stub.
+
+### Removed
+
 ## [2026.7.11] - 2026-07-11
 
 ### Added

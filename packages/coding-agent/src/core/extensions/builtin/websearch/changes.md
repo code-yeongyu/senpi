@@ -1,6 +1,6 @@
 # changes.md — websearch (vendored)
 
-Vendored from [`code-yeongyu/pi-websearch`](https://github.com/code-yeongyu/pi-websearch) at `0b9b44e83eef46121758f22965aadf59544faccf`.
+Vendored from [`code-yeongyu/pi-websearch`](https://github.com/code-yeongyu/pi-websearch) at `06e3ec457e86d299c20808954e18f20b23cc7a64`.
 
 ## Senpi adaptations vs upstream
 
@@ -8,7 +8,7 @@ Vendored from [`code-yeongyu/pi-websearch`](https://github.com/code-yeongyu/pi-w
   - `@mariozechner/pi-tui` -> `@earendil-works/pi-tui`
   - `@mariozechner/pi-coding-agent` type/tool imports -> senpi local `../../types.ts` / `../../../types.ts`
   - relative `.js` import suffixes -> `.ts`
-- No behavior changes versus upstream. The `web_search` tool is registered unconditionally; native provider search bypass remains upstream's provider-based check (`openai` / `anthropic`) so Anthropic-protocol third-party providers such as `kimi-coding` can still use the provider-backed tool.
+- Senpi forwards the tool `AbortSignal` into native route discovery so cancellation stops waiting for pending authentication before any provider request begins, and canonicalizes one permitted terminal DNS dot in route identity so dotted and undotted aliases share one candidate. Otherwise behavior matches upstream: the `web_search` tool is registered unconditionally, and native provider search bypass remains upstream's provider-based check (`openai` / `anthropic`) so Anthropic-protocol third-party providers such as `kimi-coding` can still use the provider-backed tool.
 
 ## Conflict zones
 

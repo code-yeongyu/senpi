@@ -4,6 +4,14 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [2026.7.13] - 2026-07-13
+
+### Added
+
 - Added the source-only `@code-yeongyu/senpi-codemode` workspace package scaffold.
 - Added codemode settings loading, interpreter detection, prompt generation, loopback bridge helpers, and persistent JS/Python/Ruby/Julia kernel building blocks.
 - Added structured kernel status events from the bridge through TUI rendering.
@@ -14,7 +22,7 @@
 
 ### Changed
 
-- Documented that the current exported extension factory is still a no-op until the `eval` tool and bundled host loading land.
+- Activated the exported extension factory so the bundled package registers and reconfigures the persistent-kernel `eval` tool in Senpi sessions.
 - Improved `eval` TUI rendering with streaming status and timing, bounded expandable previews, width-safe ANSI/CJK/emoji reflow, nested tool-call state, and terminal-aware image fallbacks.
 - Re-register the eval prompt and schema at session start after settings, interpreter availability, and active task-tool names resolve.
 - Recorded the completed oh-my-pi eval-port provenance for this extension; task delegation and artifact handling follow Senpi extension boundaries.

@@ -1,5 +1,29 @@
 # changes.md — ai
 
+## Preserve the generated CLI executable bit during builds (2026-07-13)
+
+### What changed
+
+- `package.json`: ordinary AI builds now restore the executable bit on `dist/cli.js`, matching the existing publish-only safeguard.
+- `../../scripts/build-all.test.mjs`: added a regression assertion for the executable-bit build step.
+
+### Why
+
+- TypeScript can rewrite `dist/cli.js` with mode `0644` when AI sources change. The release workflow runs an ordinary build before staging its release commit, so that rewrite could silently reverse the tracked executable mode.
+
+### Why extension system couldn't handle this
+
+- This is package build and release behavior that runs before the coding-agent extension system is loaded.
+
+### Modified upstream files
+
+- `package.json`
+- `../../scripts/build-all.test.mjs`
+
+### Expected merge conflict zones
+
+- LOW: AI package build scripts if upstream changes the compiler command or bin generation flow.
+
 ## Upstream model generation and test sync (2026-07-02)
 
 ### What changed

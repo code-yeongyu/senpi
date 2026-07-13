@@ -170,6 +170,21 @@ describe("prompt preset resolver", () => {
 		// GPT-5.6 tuning: prioritization instead of brevity, tool-loop stopping conditions.
 		expect(preset?.prompt).toContain("fewest useful tool loops");
 		expect(preset?.prompt).toContain("Lead with the conclusion");
+		// Hephaestus parity: autonomous deep-worker contracts.
+		expect(preset?.prompt).toContain("Implement, don't propose");
+		expect(preset?.prompt).toContain("## Manual QA Gate");
+		expect(preset?.prompt).toContain("## Failure Recovery");
+		expect(preset?.prompt).toContain("## Pragmatism & Scope");
+		expect(preset?.prompt).toContain("## Stop Rules");
+		expect(preset?.prompt).toContain("Never revert or modify changes you did not make");
+		// omo-only tool contracts must NOT leak into senpi's tool surface.
+		expect(preset?.prompt).not.toContain("librarian");
+		expect(preset?.prompt).not.toContain("oracle");
+		expect(preset?.prompt).not.toContain("background_output");
+		expect(preset?.prompt).not.toContain("background_cancel");
+		expect(preset?.prompt).not.toContain("update_plan");
+		expect(preset?.prompt).not.toContain("interactive_bash");
+		expect(preset?.prompt).not.toContain("subagent_type");
 		// Full-core rewrite: shared-core scaffolding is replaced, dynamic pieces stay.
 		expect(preset?.prompt).toContain("## Verification");
 		expect(preset?.prompt).toContain("### Test Discipline");

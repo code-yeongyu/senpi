@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import {
+	CHANGELOGS,
 	DEFAULT_UNRELEASED_SUBSECTIONS,
 	buildUnreleasedBlock,
 	insertUnreleasedBlock,
@@ -63,6 +64,17 @@ function writeJson(path, value) {
 }
 
 describe("release changelog bookkeeping", () => {
+	it("stamps the bundled codemode changelog during lockstep releases", () => {
+		// Given
+		const codemodeChangelog = "packages/senpi-codemode/CHANGELOG.md";
+
+		// When
+		const isIncluded = CHANGELOGS.includes(codemodeChangelog);
+
+		// Then
+		assert.equal(isIncluded, true);
+	});
+
 	it("recreates the standard next-cycle section when no previous Unreleased block was captured", () => {
 		// Given
 		const capturedSubsections = undefined;

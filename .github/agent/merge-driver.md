@@ -119,9 +119,6 @@ node .agents/skills/senpi-qa/scripts/tui-smoke.mjs --self-test --driver tmux --e
 
 ### 6. Finish
 
-Before declaring the branch PR-ready, re-fetch `upstream/main`. If its full SHA changed,
-return to step 1 with the refreshed tip and repeat affected audit and QA.
-
 Leave the bot branch with committed merge, pin, changelog, and focused fix commits in place.
 Write `.github/agent/last-merge-report.md` with the upstream tag, preserved fork commits,
 conflicts resolved and how, changelog entries added, and QA results.
