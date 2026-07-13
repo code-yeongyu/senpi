@@ -14,7 +14,7 @@
 
 ### Changed
 
-- Documented that the current exported extension factory is still a no-op until the `eval` tool and bundled host loading land.
+- Activated the exported extension factory so the bundled package registers and reconfigures the persistent-kernel `eval` tool in Senpi sessions.
 - Improved `eval` TUI rendering with streaming status and timing, bounded expandable previews, width-safe ANSI/CJK/emoji reflow, nested tool-call state, and terminal-aware image fallbacks.
 - Re-register the eval prompt and schema at session start after settings, interpreter availability, and active task-tool names resolve.
 - Recorded the completed oh-my-pi eval-port provenance for this extension; task delegation and artifact handling follow Senpi extension boundaries.

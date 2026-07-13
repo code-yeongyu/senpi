@@ -4,9 +4,16 @@
 
 ### Added
 
+- Added a bundled persistent-kernel `eval` extension for JavaScript, Python, Ruby, and Julia, with persistent state, `agent()` and `output()` bridges, structured status streaming, bounded spillable output, rich terminal rendering, completion schemas, and cancellation-safe cleanup.
+
 ### Changed
 
+- Reworked the GPT-5.6 prompt preset into a Hephaestus-parity autonomous deep worker with explicit manual QA, failure recovery, shared-worktree safeguards, and outcome-based stop rules.
+
 ### Fixed
+
+- Fixed post-compaction queued input and tool continuations so they no longer deadlock, lose ownership, or surface stale continuation failures while the TUI and neo resume work.
+- Fixed project-trust reloads dropping builtin and bundled extensions, including the bundled `eval` extension.
 
 ### Removed
 
