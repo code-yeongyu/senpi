@@ -84,7 +84,7 @@ def read(path, offset = 1, limit = nil)
     start = [offset.to_i - 1, 0].max
     data = lines[start, limit || lines.length].to_a.join
   end
-  __senpi_emit_status("read", "path" => resolved, "chars" => data.length, "preview" => data[0, 500].to_s)
+  __senpi_emit_status("read", { "path" => resolved, "chars" => data.length, "preview" => data[0, 500].to_s })
   data
 end
 
@@ -93,27 +93,27 @@ def write(path, content)
   FileUtils.mkdir_p(File.dirname(resolved))
   data = content.to_s
   File.write(resolved, data)
-  __senpi_emit_status("write", "path" => resolved, "chars" => data.length)
+  __senpi_emit_status("write", { "path" => resolved, "chars" => data.length })
   resolved
 end
 
 def env(key = nil, value = nil)
   if key.nil?
     entries = ENV.to_h.sort.to_h
-    __senpi_emit_status("env", "count" => entries.length, "keys" => entries.keys.first(20))
+    __senpi_emit_status("env", { "count" => entries.length, "keys" => entries.keys.first(20) })
     return entries
   end
 
   name = key.to_s
   if value.nil?
     resolved = ENV[name]
-    __senpi_emit_status("env", "key" => name, "value" => resolved, "action" => "get")
+    __senpi_emit_status("env", { "key" => name, "value" => resolved, "action" => "get" })
     return resolved
   end
 
   resolved = value.to_s
   ENV[name] = resolved
-  __senpi_emit_status("env", "key" => name, "value" => resolved, "action" => "set")
+  __senpi_emit_status("env", { "key" => name, "value" => resolved, "action" => "set" })
   resolved
 end
 
