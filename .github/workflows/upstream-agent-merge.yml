@@ -544,6 +544,8 @@ jobs:
           follow_up="none"
           if [ "$PROCEED" != "true" ]; then
             follow_up="none: no new upstream release"
+          elif [ "$AGENT_RESULT" = "NO_RELEASE_NEEDED" ]; then
+            follow_up="none: upstream was already integrated; no release needed"
           elif [ "$AGENT_RESULT" != "CLEAN_PR_READY" ]; then
             follow_up="attention issue or failure path: agent result ${AGENT_RESULT}"
           elif [ "$DRY_RUN" = "true" ]; then
