@@ -106,6 +106,30 @@ describe("vendored websearch native route discovery", () => {
 		expect(authModels).toEqual(["claude-opus-4"]);
 	});
 
+	it("#given dotted private route spellings #when discovering native entries #then rejects them before auth", async () => {
+		// given
+		const authModels: string[] = [];
+		const modelRegistry: DiscoveryRegistry = {
+			async getApiKeyAndHeaders(model) {
+				authModels.push(model.id);
+				return { ok: true, apiKey: "native-test" };
+			},
+			getAvailable() {
+				return [
+					{ provider: "openai", id: "gpt-5.5", baseUrl: "https://localhost./v1" },
+					{ provider: "openai", id: "gpt-4.1", baseUrl: "https://127.1../v1" },
+				];
+			},
+		};
+
+		// when
+		const entries = await buildNativeEntries(undefined, modelRegistry);
+
+		// then
+		expect(entries).toEqual([]);
+		expect(authModels).toEqual([]);
+	});
+
 	it("#given one provider on distinct endpoints #when discovering native entries #then preserves both route candidates", async () => {
 		// given
 		const authModels: string[] = [];

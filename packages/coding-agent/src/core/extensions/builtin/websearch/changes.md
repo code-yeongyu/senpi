@@ -1,6 +1,6 @@
 # changes.md — websearch (vendored)
 
-Vendored from [`code-yeongyu/pi-websearch`](https://github.com/code-yeongyu/pi-websearch) at `ff6db5ccbd73522d683aada9f0a365205fd1c2c6`.
+Vendored from [`code-yeongyu/pi-websearch`](https://github.com/code-yeongyu/pi-websearch) at `06e3ec457e86d299c20808954e18f20b23cc7a64`.
 
 ## Senpi adaptations vs upstream
 

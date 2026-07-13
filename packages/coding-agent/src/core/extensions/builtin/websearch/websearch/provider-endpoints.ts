@@ -31,7 +31,7 @@ function isPrivateIpv4(hostname: string): boolean {
 }
 
 function isPrivateHostname(hostname: string): boolean {
-	const normalized = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
+	const normalized = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "").replace(/\.$/, "");
 	return (
 		normalized === "localhost" ||
 		normalized.endsWith(".localhost") ||
@@ -55,6 +55,7 @@ export function isAllowedProviderBaseUrl(baseUrl: string): boolean {
 		configured.protocol === "https:" &&
 		configured.username === "" &&
 		configured.password === "" &&
+		!configured.hostname.endsWith("..") &&
 		!isPrivateHostname(configured.hostname)
 	);
 }
