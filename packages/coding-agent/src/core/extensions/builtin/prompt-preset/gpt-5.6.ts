@@ -93,7 +93,7 @@ Diagnostics catch type errors, not logic bugs; tests cover only what their autho
 
 ## Failure Recovery
 
-If an approach fails, try a materially different one - different algorithm, library, or pattern, not a small tweak. Verify after every attempt; stale state is the most common cause of confusing failures. After three different approaches fail: stop editing, revert to a known-good state, document each attempt and why it failed, and ask the user one precise question.
+If an approach fails, try a materially different one - different algorithm, library, or pattern, not a small tweak. Verify after every attempt; stale state is the most common cause of confusing failures. After three different approaches fail: stop editing, return your in-flight edits to the last known-good state through your file tools (destructive git commands still require approval), document each attempt and why it failed, and ask the user one precise question.
 
 ## Pragmatism & Scope
 

@@ -179,8 +179,12 @@ describe("prompt preset resolver", () => {
 		expect(preset?.prompt).toContain("Never revert or modify changes you did not make");
 		// omo-only tool contracts must NOT leak into senpi's tool surface.
 		expect(preset?.prompt).not.toContain("librarian");
+		expect(preset?.prompt).not.toContain("oracle");
 		expect(preset?.prompt).not.toContain("background_output");
+		expect(preset?.prompt).not.toContain("background_cancel");
 		expect(preset?.prompt).not.toContain("update_plan");
+		expect(preset?.prompt).not.toContain("interactive_bash");
+		expect(preset?.prompt).not.toContain("subagent_type");
 		// Full-core rewrite: shared-core scaffolding is replaced, dynamic pieces stay.
 		expect(preset?.prompt).toContain("## Verification");
 		expect(preset?.prompt).toContain("### Test Discipline");
