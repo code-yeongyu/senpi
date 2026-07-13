@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- Fixed built-in web search discovery so model aliases sharing a provider endpoint no longer multiply serial fallback attempts ([upstream #5](https://github.com/code-yeongyu/pi-websearch/pull/5)).
+
 ### Removed
 
 ## [2026.7.11] - 2026-07-11
