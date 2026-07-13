@@ -492,10 +492,6 @@ export class Agent {
 				if (this.followUpQueue.getClearGeneration() !== followUpQueueGeneration) return;
 				this.followUpQueue.prepend(messages);
 			},
-			isPendingMessageDrainCurrent: (queue) =>
-				queue === "steering"
-					? this.steeringQueue.getClearGeneration() === steeringQueueGeneration
-					: this.followUpQueue.getClearGeneration() === followUpQueueGeneration,
 		};
 	}
 

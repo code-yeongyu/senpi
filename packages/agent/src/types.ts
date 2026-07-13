@@ -255,9 +255,6 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 */
 	restorePendingMessages?: (queue: "steering" | "followUp", messages: AgentMessage[]) => Promise<void> | void;
 
-	/** Returns whether a terminating-tool queue drain is still owned after next-turn preparation. */
-	isPendingMessageDrainCurrent?: (queue: "steering" | "followUp") => boolean;
-
 	/**
 	 * Tool execution mode.
 	 * - "sequential": execute tool calls one by one

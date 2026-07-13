@@ -183,6 +183,17 @@ async function runLoop(
 	let firstTurn = true;
 	// Check for steering messages at start (user may have typed while waiting)
 	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
+	let drainedTerminatingQueue: "steering" | "followUp" | undefined;
+	const refreshTerminatingQueueDrain = async (): Promise<void> => {
+		if (!drainedTerminatingQueue || !config.restorePendingMessages) return;
+		await config.restorePendingMessages(drainedTerminatingQueue, pendingMessages);
+		pendingMessages = (await config.getSteeringMessages?.()) || [];
+		drainedTerminatingQueue = pendingMessages.length > 0 ? "steering" : undefined;
+		if (pendingMessages.length === 0) {
+			pendingMessages = (await config.getFollowUpMessages?.()) || [];
+			drainedTerminatingQueue = pendingMessages.length > 0 ? "followUp" : undefined;
+		}
+	};
 
 	// Outer loop: continues when queued follow-up messages arrive after agent would stop
 	while (true) {
@@ -190,11 +201,18 @@ async function runLoop(
 
 		// Inner loop: process tool calls and steering messages
 		while (hasMoreToolCalls || pendingMessages.length > 0) {
-			let drainedTerminatingQueue: "steering" | "followUp" | undefined;
 			if (!firstTurn) {
 				await emit({ type: "turn_start" });
 			} else {
 				firstTurn = false;
+			}
+			if (drainedTerminatingQueue) {
+				await refreshTerminatingQueueDrain();
+				if (pendingMessages.length === 0) {
+					await emit({ type: "agent_end", messages: newMessages });
+					return;
+				}
+				drainedTerminatingQueue = undefined;
 			}
 
 			// Process pending messages (inject before next assistant response)
@@ -304,13 +322,8 @@ async function runLoop(
 				await emit({ type: "agent_end", messages: newMessages });
 				return;
 			}
-			if (drainedTerminatingQueue && config.isPendingMessageDrainCurrent?.(drainedTerminatingQueue) === false) {
-				pendingMessages = (await config.getSteeringMessages?.()) || [];
-				drainedTerminatingQueue = pendingMessages.length > 0 ? "steering" : undefined;
-				if (pendingMessages.length === 0) {
-					pendingMessages = (await config.getFollowUpMessages?.()) || [];
-					drainedTerminatingQueue = pendingMessages.length > 0 ? "followUp" : undefined;
-				}
+			if (drainedTerminatingQueue) {
+				await refreshTerminatingQueueDrain();
 				if (pendingMessages.length === 0) {
 					await emit({ type: "agent_end", messages: newMessages });
 					return;
