@@ -573,6 +573,26 @@ async function completeSummarization(
 	return stream.result();
 }
 
+async function transformPreviousSummary(
+	previousSummary: string | undefined,
+	transformContext: ((messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>) | undefined,
+	signal: AbortSignal | undefined,
+): Promise<string | undefined> {
+	if (!previousSummary || !transformContext) return previousSummary;
+	const transformed = await transformContext(
+		[
+			{
+				role: "user",
+				content: [{ type: "text", text: previousSummary }],
+				timestamp: 0,
+			},
+		],
+		signal,
+	);
+	if (transformed.length === 0) return undefined;
+	return serializeConversation(convertToLlm(transformed));
+}
+
 /**
  * Generate a summary of the conversation using the LLM.
  * If previousSummary is provided, uses the update prompt to merge.
@@ -597,8 +617,10 @@ export async function generateSummary(
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
 	);
 
+	const providerPreviousSummary = await transformPreviousSummary(previousSummary, transformContext, signal);
+
 	// Use update prompt if we have a previous summary, otherwise initial prompt
-	let basePrompt = previousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
+	let basePrompt = providerPreviousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
 	if (customInstructions) {
 		basePrompt = `${basePrompt}\n\nAdditional focus: ${customInstructions}`;
 	}
@@ -611,8 +633,8 @@ export async function generateSummary(
 
 	// Build the prompt with conversation wrapped in tags
 	let promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
-	if (previousSummary) {
-		promptText += `<previous-summary>\n${previousSummary}\n</previous-summary>\n\n`;
+	if (providerPreviousSummary) {
+		promptText += `<previous-summary>\n${providerPreviousSummary}\n</previous-summary>\n\n`;
 	}
 	promptText += basePrompt;
 

@@ -1,3 +1,4 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
@@ -6,7 +7,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { estimateContextTokens, estimateTokens } from "../../src/core/compaction/index.ts";
+import { estimateContextTokens, estimateTokens, generateSummary } from "../../src/core/compaction/index.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/index.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
@@ -600,6 +601,55 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.eventsOfType("compaction_end")).toContainEqual(
 			expect.objectContaining({ reason: "threshold", accepted: true }),
 		);
+	});
+
+	it("applies the provider context transform to a persisted previous summary", async () => {
+		// given
+		const sensitiveSummary = "SENSITIVE_PREVIOUS_SUMMARY";
+		const harness = await createHarness();
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("updated summary")]);
+		const transformContext = vi.fn(async (messages: AgentMessage[]) =>
+			messages.map((message) => {
+				if (message.role !== "user" || typeof message.content === "string") return message;
+				return {
+					...message,
+					content: message.content.map((content) =>
+						content.type === "text"
+							? { ...content, text: content.text.replaceAll(sensitiveSummary, "") }
+							: content,
+					),
+				};
+			}),
+		);
+
+		// when
+		await generateSummary(
+			[
+				{
+					role: "user",
+					content: [{ type: "text", text: "new conversation content" }],
+					timestamp: Date.now(),
+				},
+			],
+			harness.getModel(),
+			1_000,
+			"faux-key",
+			undefined,
+			undefined,
+			undefined,
+			sensitiveSummary,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			transformContext,
+		);
+
+		// then
+		const providerContext = JSON.stringify(harness.faux.getCallLog()[0]?.context.messages ?? []);
+		expect(transformContext).toHaveBeenCalled();
+		expect(providerContext).not.toContain(sensitiveSummary);
 	});
 
 	it("stops before provider call 2 when required inline threshold compaction is cancelled", async () => {
