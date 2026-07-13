@@ -4,6 +4,7 @@ export const CHANGELOGS = [
 	"packages/ai/CHANGELOG.md",
 	"packages/agent/CHANGELOG.md",
 	"packages/coding-agent/CHANGELOG.md",
+	"packages/senpi-codemode/CHANGELOG.md",
 	"packages/orchestrator/CHANGELOG.md",
 	"packages/tui/CHANGELOG.md",
 	"packages/web-ui/CHANGELOG.md",
