@@ -16,6 +16,7 @@ import type {
 	AgentContext,
 	AgentEvent,
 	AgentLoopConfig,
+	AgentLoopTurnUpdate,
 	AgentMessage,
 	AgentTool,
 	AgentToolCall,
@@ -189,6 +190,7 @@ async function runLoop(
 
 		// Inner loop: process tool calls and steering messages
 		while (hasMoreToolCalls || pendingMessages.length > 0) {
+			let drainedTerminatingQueue: "steering" | "followUp" | undefined;
 			if (!firstTurn) {
 				await emit({ type: "turn_start" });
 			} else {
@@ -259,15 +261,29 @@ async function runLoop(
 				}
 
 				pendingMessages = (await config.getSteeringMessages?.()) || [];
+				if (pendingMessages.length > 0) {
+					drainedTerminatingQueue = "steering";
+				}
 				if (pendingMessages.length === 0) {
 					pendingMessages = (await config.getFollowUpMessages?.()) || [];
+					if (pendingMessages.length > 0) {
+						drainedTerminatingQueue = "followUp";
+					}
 				}
 				if (pendingMessages.length === 0) {
 					await emit({ type: "agent_end", messages: newMessages });
 					return;
 				}
 			}
-			const nextTurnSnapshot = await config.prepareNextTurn?.(nextTurnContext);
+			let nextTurnSnapshot: AgentLoopTurnUpdate | undefined;
+			try {
+				nextTurnSnapshot = await config.prepareNextTurn?.(nextTurnContext);
+			} catch (error) {
+				if (drainedTerminatingQueue) {
+					await config.restorePendingMessages?.(drainedTerminatingQueue, pendingMessages);
+				}
+				throw error;
+			}
 			if (nextTurnSnapshot) {
 				currentContext = nextTurnSnapshot.context ?? currentContext;
 				config = {

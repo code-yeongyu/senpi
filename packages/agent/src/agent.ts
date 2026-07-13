@@ -152,6 +152,10 @@ class PendingMessageQueue {
 		return [first];
 	}
 
+	prepend(messages: AgentMessage[]): void {
+		this.messages = [...messages, ...this.messages];
+	}
+
 	clear(): void {
 		this.messages = [];
 	}
@@ -467,6 +471,13 @@ export class Agent {
 				return this.steeringQueue.drain();
 			},
 			getFollowUpMessages: async () => this.followUpQueue.drain(),
+			restorePendingMessages: (queue, messages) => {
+				if (queue === "steering") {
+					this.steeringQueue.prepend(messages);
+					return;
+				}
+				this.followUpQueue.prepend(messages);
+			},
 		};
 	}
 

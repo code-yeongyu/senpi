@@ -461,6 +461,17 @@ export class AgentHarness<
 			},
 			getSteeringMessages: async () => this.drainQueuedMessages(this.steerQueue, this.steeringQueueMode),
 			getFollowUpMessages: async () => this.drainQueuedMessages(this.followUpQueue, this.followUpQueueMode),
+			restorePendingMessages: async (queue, messages) => {
+				const target = queue === "steering" ? this.steerQueue : this.followUpQueue;
+				for (let index = messages.length - 1; index >= 0; index--) {
+					const message = messages[index];
+					if (message?.role !== "user") {
+						throw new AgentHarnessError("invalid_state", "Only user messages can be restored to input queues");
+					}
+					target.unshift(message);
+				}
+				await this.emitQueueUpdate();
+			},
 		};
 	}
 
