@@ -70,18 +70,31 @@ Options:
 
    If the repository is shallow, unshallow `origin` first when available, then `upstream` only if still shallow.
 
-5. Report divergence:
+   Always use the fetched remote-tracking ref as the target; do not decide from a previously cached `upstream/<branch>` tip.
+
+5. Record the exact refs and report divergence:
 
    ```bash
+   current_head=$(git rev-parse HEAD)
+   upstream_tip=$(git rev-parse "upstream/${upstream_branch}")
    git rev-list --count "upstream/${upstream_branch}..HEAD"
    git rev-list --count "HEAD..upstream/${upstream_branch}"
    GIT_PAGER=cat git log --oneline "HEAD..upstream/${upstream_branch}"
    GIT_PAGER=cat git log --first-parent --oneline "upstream/${upstream_branch}..HEAD"
    ```
 
+   Report `HEAD` and `upstream/${upstream_branch}` with their full SHAs.
+
 6. Merge:
 
-   - If behind is `0`, skip merge.
+   - Behind `0` means the fetched `upstream_tip` is already an ancestor of `current_head`. Confirm that state with both checks:
+
+     ```bash
+     git merge-base --is-ancestor "$upstream_tip" "$current_head"
+     test -z "$(git rev-list "$current_head..$upstream_tip")"
+     ```
+
+     This is a successful terminal no-op. Restore any auto-stash, report the exact refs, SHAs, ancestry result, and empty commit range, then stop. Even when the request expects publication, do not create an empty commit, branch, pull request, push, release, or run QA/review gates that depend on a change.
    - If behind is greater than `0` and `--ff-allow` is set with ahead `0`, run:
 
      ```bash
@@ -141,11 +154,11 @@ Options:
 
 Include:
 
-- branch and upstream target
+- branch and upstream target, including their full SHAs
 - whether merge, fast-forward, or no-op happened
+- for a no-op, confirmed ancestry and the empty `HEAD..upstream/<branch>` range
 - fork commits preserved
 - upstream commits integrated
 - push status
 - stash status
 - any conflicts and how they were resolved
-
