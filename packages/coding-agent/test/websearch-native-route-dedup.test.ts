@@ -130,6 +130,31 @@ describe("vendored websearch native route discovery", () => {
 		expect(authModels).toEqual([]);
 	});
 
+	it("#given dotted and undotted public aliases #when discovering native entries #then emits one route", async () => {
+		// given
+		const authModels: string[] = [];
+		const modelRegistry: DiscoveryRegistry = {
+			async getApiKeyAndHeaders(model) {
+				authModels.push(model.id);
+				return { ok: true, apiKey: "native-test" };
+			},
+			getAvailable() {
+				return [
+					{ provider: "openai", id: "gpt-5.5", baseUrl: "https://gateway.example.com./v1" },
+					{ provider: "openai", id: "gpt-4.1", baseUrl: "https://gateway.example.com/v1" },
+				];
+			},
+		};
+
+		// when
+		const entries = await buildNativeEntries(undefined, modelRegistry);
+
+		// then
+		expect(entries).toHaveLength(1);
+		expect(entries[0]?.baseUrl).toBe("https://gateway.example.com./v1/responses");
+		expect(authModels).toEqual(["gpt-5.5"]);
+	});
+
 	it("#given one provider on distinct endpoints #when discovering native entries #then preserves both route candidates", async () => {
 		// given
 		const authModels: string[] = [];

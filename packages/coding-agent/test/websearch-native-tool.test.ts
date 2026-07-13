@@ -87,7 +87,7 @@ describe("vendored websearch native tool", () => {
 			return { ok: true, apiKey: `${model.provider}-native-key` };
 		});
 		vi.spyOn(modelRegistry, "getAvailable").mockReturnValue([
-			nativeModel("openai", "gpt-4o-2025-06-01", "openai-responses", "https://gateway.example.com/v1"),
+			nativeModel("openai", "gpt-4o-2025-06-01", "openai-responses", "https://gateway.example.com./v1"),
 			nativeModel("openai", "gpt-4.1", "openai-responses", "https://gateway.example.com/v1"),
 			nativeModel("anthropic", "claude-sonnet-4-20250514", "anthropic-messages", "https://anthropic.example.com"),
 		]);

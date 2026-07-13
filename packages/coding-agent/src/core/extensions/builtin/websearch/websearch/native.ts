@@ -96,7 +96,9 @@ function nativeRouteKey(model: NativeModelInfo): string | null {
 	if (!mapping) return null;
 	const baseUrl = buildEndpointUrl(model.baseUrl, mapping.resource);
 	if (!isAllowedProviderBaseUrl(baseUrl)) return null;
-	return `${mapping.provider}|${new URL(baseUrl).href}`;
+	const routeUrl = new URL(baseUrl);
+	routeUrl.hostname = routeUrl.hostname.replace(/\.$/, "");
+	return `${mapping.provider}|${routeUrl.href}`;
 }
 
 function discoveredNativeEntryId(provider: SearchProvider, routeKey: string): string {
