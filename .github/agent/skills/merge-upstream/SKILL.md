@@ -64,24 +64,49 @@ Options:
    ```bash
    git rev-parse --is-shallow-repository
    git fetch --tags upstream "+refs/heads/${upstream_branch}:refs/remotes/upstream/${upstream_branch}"
-   git fetch origin "+refs/heads/${current_branch}:refs/remotes/origin/${current_branch}"
+   origin_branch_exists=false
+   if git remote get-url origin >/dev/null 2>&1; then
+     if ! origin_branch=$(git ls-remote --heads origin "refs/heads/${current_branch}"); then
+       echo "failed to inspect origin/${current_branch}" >&2
+       exit 1
+     elif [ -n "$origin_branch" ]; then
+       git fetch origin "+refs/heads/${current_branch}:refs/remotes/origin/${current_branch}" || exit 1
+       origin_branch_exists=true
+     else
+       echo "origin/${current_branch} does not exist; current branch is unpublished"
+     fi
+   fi
    git merge-base HEAD "upstream/${upstream_branch}"
    ```
 
    If the repository is shallow, unshallow `origin` first when available, then `upstream` only if still shallow.
 
-5. Report divergence:
+   Always use the fetched remote-tracking ref as the target; do not decide from a previously cached `upstream/<branch>` tip.
+
+5. Record the exact refs and report divergence:
 
    ```bash
+   current_head=$(git rev-parse HEAD)
+   upstream_tip=$(git rev-parse "upstream/${upstream_branch}")
    git rev-list --count "upstream/${upstream_branch}..HEAD"
    git rev-list --count "HEAD..upstream/${upstream_branch}"
    GIT_PAGER=cat git log --oneline "HEAD..upstream/${upstream_branch}"
    GIT_PAGER=cat git log --first-parent --oneline "upstream/${upstream_branch}..HEAD"
    ```
 
+   Report `HEAD` and `upstream/${upstream_branch}` with their full SHAs.
+
 6. Merge:
 
-   - If behind is `0`, skip merge.
+   - Behind `0` means the fetched `upstream_tip` is already an ancestor of `current_head`. Confirm that state with both checks:
+
+     ```bash
+     git merge-base --is-ancestor "$upstream_tip" "$current_head"
+     upstream_range=$(git rev-list "$current_head..$upstream_tip") || exit 1
+     test -z "$upstream_range"
+     ```
+
+     This completes upstream integration as a successful no-op. Report the exact refs, SHAs, ancestry result, and empty range; skip the merge, release, and gates that depend on a new upstream delta. Do not create an empty commit or pull request, or publish a branch solely to represent the sync. If an independent request explicitly approves pushing existing local commits, continue through steps 9-10; otherwise jump to step 10 to restore any auto-stash, then stop.
    - If behind is greater than `0` and `--ff-allow` is set with ahead `0`, run:
 
      ```bash
@@ -115,7 +140,9 @@ Options:
    git rev-parse --git-path rebase-apply
    git show -s --format=%P HEAD
    git rev-list --left-right --count "upstream/${upstream_branch}...HEAD"
-   git merge-base --is-ancestor "origin/${current_branch}" HEAD
+   if [ "$origin_branch_exists" = true ]; then
+     git merge-base --is-ancestor "origin/${current_branch}" HEAD
+   fi
    ```
 
    In default mode, verify HEAD has two parents: `previous_head` as first parent and `upstream_tip` as second parent. In `--ff-allow` fast-forward mode, verify HEAD equals `upstream_tip`.
@@ -141,11 +168,11 @@ Options:
 
 Include:
 
-- branch and upstream target
+- branch and upstream target, including their full SHAs
 - whether merge, fast-forward, or no-op happened
+- for a no-op, confirmed ancestry and the empty `HEAD..upstream/<branch>` range
 - fork commits preserved
 - upstream commits integrated
 - push status
 - stash status
 - any conflicts and how they were resolved
-
