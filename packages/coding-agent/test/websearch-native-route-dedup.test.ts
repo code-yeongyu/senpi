@@ -152,6 +152,56 @@ describe("vendored websearch native route discovery", () => {
 		expect(authModels).toEqual(["gpt-5.5"]);
 	});
 
+	it("#given unavailable aliases on one route #when discovering native entries #then resolves auth for only the first alias", async () => {
+		// given
+		const authModels: string[] = [];
+		const modelRegistry: DiscoveryRegistry = {
+			async getApiKeyAndHeaders(model) {
+				authModels.push(model.id);
+				return { ok: false, error: "unavailable" };
+			},
+			getAvailable() {
+				return anthropicAliases("https://gateway.example.com/v1");
+			},
+		};
+
+		// when
+		const entries = await buildNativeEntries(undefined, modelRegistry);
+
+		// then
+		expect(entries).toEqual([]);
+		expect(authModels).toEqual(["claude-opus-4"]);
+	});
+
+	it("#given one provider on distinct endpoints #when discovering native entries #then preserves both route candidates", async () => {
+		// given
+		const authModels: string[] = [];
+		const modelRegistry: DiscoveryRegistry = {
+			async getApiKeyAndHeaders(model) {
+				authModels.push(model.id);
+				return { ok: true, apiKey: "native-test" };
+			},
+			getAvailable() {
+				return [
+					{ provider: "openai", id: "gpt-4.1", baseUrl: "https://openai-a.example.com/v1" },
+					{ provider: "openai", id: "gpt-5.5", baseUrl: "https://openai-b.example.com/v1" },
+				];
+			},
+		};
+
+		// when
+		const entries = await buildNativeEntries(undefined, modelRegistry);
+
+		// then
+		expect(entries).toHaveLength(2);
+		expect(entries.map((entry) => entry.baseUrl)).toEqual([
+			"https://openai-a.example.com/v1/responses",
+			"https://openai-b.example.com/v1/responses",
+		]);
+		expect(new Set(entries.map((entry) => entry.id)).size).toBe(2);
+		expect(authModels).toEqual(["gpt-4.1", "gpt-5.5"]);
+	});
+
 	it("#given query auth and fragment aliases #when building the endpoint #then preserves query and dedupes fragments", async () => {
 		// given
 		const authModels: string[] = [];
