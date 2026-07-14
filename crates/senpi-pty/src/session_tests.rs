@@ -1,9 +1,7 @@
 use super::{PtySession, PtySessionOptions};
 #[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(unix)]
-use std::sync::{mpsc, Condvar};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::time::Duration;
 
 #[cfg(unix)]
@@ -29,7 +27,6 @@ fn pty_session_streams_raw_bytes_and_exit_code() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn background_wait_does_not_complete_before_reader_drain() {
     let output = Arc::new(Mutex::new(Vec::new()));
@@ -37,20 +34,15 @@ fn background_wait_does_not_complete_before_reader_drain() {
     let reader_gate = Arc::new((Mutex::new(false), Condvar::new()));
     let callback_gate = Arc::clone(&reader_gate);
     let (reader_started_tx, reader_started_rx) = mpsc::channel();
-    let mut session = PtySession::start(
-        PtySessionOptions::new("sh")
-            .arg("-lc")
-            .arg("printf fast-exit-final-output"),
-        move |chunk| {
-            reader_started_tx.send(()).unwrap();
-            let (lock, ready) = &*callback_gate;
-            let mut released = lock.lock().unwrap();
-            while !*released {
-                released = ready.wait(released).unwrap();
-            }
-            seen.lock().unwrap().extend_from_slice(chunk);
-        },
-    )
+    let mut session = PtySession::start(fast_exit_command(), move |chunk| {
+        reader_started_tx.send(()).unwrap();
+        let (lock, ready) = &*callback_gate;
+        let mut released = lock.lock().unwrap();
+        while !*released {
+            released = ready.wait(released).unwrap();
+        }
+        seen.lock().unwrap().extend_from_slice(chunk);
+    })
     .unwrap();
 
     reader_started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
@@ -78,10 +70,24 @@ fn background_wait_does_not_complete_before_reader_drain() {
         "background wait completed before the reader callback drained final output"
     );
     assert_eq!(exit.exit_code, Some(0));
-    assert_eq!(
-        String::from_utf8_lossy(&output.lock().unwrap()).as_ref(),
-        "fast-exit-final-output"
-    );
+    assert!(String::from_utf8_lossy(&output.lock().unwrap()).contains("fast-exit-final-output"));
+}
+
+#[cfg(unix)]
+fn fast_exit_command() -> PtySessionOptions {
+    PtySessionOptions::new("sh")
+        .arg("-lc")
+        .arg("printf fast-exit-final-output")
+}
+
+#[cfg(windows)]
+fn fast_exit_command() -> PtySessionOptions {
+    PtySessionOptions::new("cmd.exe")
+        .arg("/d")
+        .arg("/q")
+        .arg("/c")
+        .arg("<nul set /p =fast-exit-final-output")
+        .timeout(Duration::from_secs(120))
 }
 
 #[test]
