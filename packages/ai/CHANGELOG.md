@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added the `anthropic-xml` text tool-call protocol for OpenAI-compatible models that emit legacy Anthropic `<invoke>` and `<parameter>` XML, including streaming, schema-driven argument coercion, XML escaping, case-insensitive tool resolution, and bounded malformed-fragment recovery.
+
 ### Changed
 
 ### Fixed

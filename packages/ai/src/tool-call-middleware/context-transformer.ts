@@ -8,6 +8,13 @@ import type {
 	UserMessage,
 } from "../types.ts";
 import {
+	anthropicXmlFormatToolCall,
+	anthropicXmlFormatToolResponse,
+	anthropicXmlFormatToolsSystemPrompt,
+	createAnthropicXmlStreamParser,
+	parseAnthropicXmlGeneratedText,
+} from "./protocols/anthropic-xml/index.ts";
+import {
 	gemma4CreateStreamParser,
 	gemma4FormatToolCall,
 	gemma4FormatToolResponse,
@@ -78,10 +85,19 @@ const gemma4Protocol: ToolCallProtocol = {
 	createStreamParser: gemma4CreateStreamParser,
 };
 
+const anthropicXmlProtocol: ToolCallProtocol = {
+	formatToolsSystemPrompt: anthropicXmlFormatToolsSystemPrompt,
+	formatToolResponse: anthropicXmlFormatToolResponse,
+	formatToolCall: anthropicXmlFormatToolCall,
+	parseGeneratedText: parseAnthropicXmlGeneratedText,
+	createStreamParser: createAnthropicXmlStreamParser,
+};
+
 /**
  * Protocol registry mapping format strings to protocol implementations.
  */
 const protocolRegistry: Record<ToolCallFormat, ToolCallProtocol> = {
+	"anthropic-xml": anthropicXmlProtocol,
 	hermes: hermesProtocol,
 	xml: morphXmlProtocol,
 	"yaml-xml": yamlXmlProtocol,
