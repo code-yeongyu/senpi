@@ -1,6 +1,8 @@
 use super::{PtySession, PtySessionOptions};
 #[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(unix)]
+use std::sync::{mpsc, Condvar};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -24,6 +26,61 @@ fn pty_session_streams_raw_bytes_and_exit_code() {
     assert_eq!(
         String::from_utf8_lossy(&output.lock().unwrap()).as_ref(),
         "hello-stream\r\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn background_wait_does_not_complete_before_reader_drain() {
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&output);
+    let reader_gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let callback_gate = Arc::clone(&reader_gate);
+    let (reader_started_tx, reader_started_rx) = mpsc::channel();
+    let mut session = PtySession::start(
+        PtySessionOptions::new("sh")
+            .arg("-lc")
+            .arg("printf fast-exit-final-output"),
+        move |chunk| {
+            reader_started_tx.send(()).unwrap();
+            let (lock, ready) = &*callback_gate;
+            let mut released = lock.lock().unwrap();
+            while !*released {
+                released = ready.wait(released).unwrap();
+            }
+            seen.lock().unwrap().extend_from_slice(chunk);
+        },
+    )
+    .unwrap();
+
+    reader_started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let waiter = session.wait_in_background().unwrap();
+    let (wait_done_tx, wait_done_rx) = mpsc::channel();
+    std::thread::spawn(move || wait_done_tx.send(waiter.join().unwrap()).unwrap());
+
+    let early_result = wait_done_rx.recv_timeout(Duration::from_millis(100));
+    let completed_before_drain = early_result.is_ok();
+    let (lock, ready) = &*reader_gate;
+    *lock.lock().unwrap() = true;
+    ready.notify_one();
+
+    let exit = match early_result {
+        Ok(result) => result.unwrap(),
+        Err(mpsc::RecvTimeoutError::Timeout) => wait_done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap(),
+        Err(mpsc::RecvTimeoutError::Disconnected) => panic!("background wait channel disconnected"),
+    };
+
+    assert!(
+        !completed_before_drain,
+        "background wait completed before the reader callback drained final output"
+    );
+    assert_eq!(exit.exit_code, Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&output.lock().unwrap()).as_ref(),
+        "fast-exit-final-output"
     );
 }
 
