@@ -4,11 +4,23 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.7.14-2] - 2026-07-14
+
+### Added
+
 - Added the `anthropic-xml` text tool-call protocol for OpenAI-compatible models that emit legacy Anthropic `<invoke>` and `<parameter>` XML, including streaming, schema-driven argument coercion, XML escaping, case-insensitive tool resolution, and bounded malformed-fragment recovery.
 
 ### Changed
 
 ### Fixed
+
+- Preserved Anthropic server-side web search `encrypted_content` during same-model replay so follow-up turns no longer fail after native web searches ([#208](https://github.com/code-yeongyu/senpi/pull/208)).
 
 ### Removed
 

@@ -16,6 +16,8 @@ src/modes/app-server/              App-server transport and RPC registry
 src/modes/rpc/                     JSONL RPC mode/client/types
 src/modes/print-mode.ts            One-shot mode
 test/suite/harness.ts              Preferred faux-provider harness
+test/                              Test domains, fixtures, QA, integration gates
+examples/                          Extension and SDK examples
 src/changes.md                     Root fork-change record
 ```
 
@@ -30,6 +32,7 @@ src/changes.md                     Root fork-change record
 | Change interactive UI | `src/modes/interactive/` |
 | Change RPC/app-server | matching directory under `src/modes/` |
 | Add regression | `test/suite/regressions/` |
+| Add or update an example | `examples/` and the matching public docs |
 
 ## CONVENTIONS
 
@@ -56,4 +59,5 @@ src/changes.md                     Root fork-change record
 - Run changed test files from this package; issue regressions use `<issue>-<slug>.test.ts`.
 - Code changes require root `npm run check` plus the applicable `senpi-qa` CLI channel and saved evidence.
 - Interactive changes also follow `src/modes/interactive/AGENTS.md`; extension/tool changes follow their nearest child guide.
+- App-server, test, and example changes follow their local `AGENTS.md` files.
 - Keep `src/changes.md`, nested `changes.md`, public docs, and examples aligned with fork behavior.

@@ -4,6 +4,16 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.7.14-2] - 2026-07-14
+
+### Added
+
 - Added `anthropic-xml` as a valid `compat.toolCallFormat` in custom `models.json` provider and model definitions.
 
 ### Changed
@@ -11,6 +21,9 @@
 - Hardened the GPT-5.6 prompt preset's stop contract to Hephaestus parity: the intent line now declares a binding per-turn stop condition, and the Stop Rules section became a Stop Goal that makes stopping mandatory and immediate once every done-condition holds.
 
 ### Fixed
+
+- Preserved Anthropic server-side web search `encrypted_content` during same-model replay so follow-up turns no longer fail after native web searches ([#208](https://github.com/code-yeongyu/senpi/pull/208)).
+- Preserved final output from fast-exiting persistent-terminal commands by draining native PTY readers before exit and subscribing before session startup ([#207](https://github.com/code-yeongyu/senpi/pull/207)).
 
 ### Removed
 
