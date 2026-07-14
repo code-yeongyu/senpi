@@ -8,6 +8,8 @@
 
 ### Changed
 
+- Hardened the GPT-5.6 prompt preset's stop contract to Hephaestus parity: the intent line now declares a binding per-turn stop condition, and the Stop Rules section became a Stop Goal that makes stopping mandatory and immediate once every done-condition holds.
+
 ### Fixed
 
 ### Removed

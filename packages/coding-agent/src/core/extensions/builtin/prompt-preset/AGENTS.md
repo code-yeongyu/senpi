@@ -15,7 +15,7 @@ prompt-preset/
 ├── gpt-5.3-codex.ts     # GPT-5.3 Codex preset
 ├── gpt-5.4.ts           # GPT-5.4 preset
 ├── gpt-5.5.ts           # GPT-5.5 preset — full-core rewrite via `corePrompt` (outcome-first, per the GPT-5.5 prompting guide)
-├── gpt-5.6.ts           # GPT-5.6 series preset (sol/terra/luna) — full-core rewrite via `corePrompt`; Hephaestus-parity autonomous deep worker (implement-don't-propose, Manual QA Gate, stop rules) under GPT-5.6 doctrine
+├── gpt-5.6.ts           # GPT-5.6 series preset (sol/terra/luna) — full-core rewrite via `corePrompt`; Hephaestus-parity autonomous deep worker (implement-don't-propose, Manual QA Gate, binding stop contract: declared per-turn stop condition + Stop Goal) under GPT-5.6 doctrine
 ├── claude-fable-5.ts    # Claude Fable 5 preset
 ├── claude-opus-4-5.ts   # Claude Opus 4.5 preset
 ├── claude-opus-4-6.ts   # Claude Opus 4.6 preset

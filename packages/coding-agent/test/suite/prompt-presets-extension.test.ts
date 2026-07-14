@@ -175,7 +175,12 @@ describe("prompt preset resolver", () => {
 		expect(preset?.prompt).toContain("## Manual QA Gate");
 		expect(preset?.prompt).toContain("## Failure Recovery");
 		expect(preset?.prompt).toContain("## Pragmatism & Scope");
-		expect(preset?.prompt).toContain("## Stop Rules");
+		expect(preset?.prompt).toContain("## Stop Goal");
+		// Binding stop contract: declared per-turn stop condition + mandatory immediate stop.
+		expect(preset?.prompt).toContain("I'll stop right away when");
+		expect(preset?.prompt).toContain("BINDING");
+		expect(preset?.prompt).toContain("STOPPING IS MANDATORY AND IMMEDIATE");
+		expect(preset?.prompt).not.toContain("## Stop Rules");
 		expect(preset?.prompt).toContain("Never revert or modify changes you did not make");
 		// omo-only tool contracts must NOT leak into senpi's tool surface.
 		expect(preset?.prompt).not.toContain("librarian");
