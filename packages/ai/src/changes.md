@@ -1,14 +1,17 @@
 # AI Source Changes
 
-## 2026-07-08 - Anthropic web search replay encrypted content
+## 2026-07-14 - Anthropic web search replay encrypted content correction
 
 ### What changed and why
 
-- `api/anthropic-messages.ts`: same-model provider-native replay now strips `encrypted_content` from nested
-  `web_search_result` items before sending prior server-side web search results back in the next Anthropic request.
-- The raw session `019f3d9f-ddf6-7d87-add8-95a5f703e99b` showed follow-up turns failing with 400
-  `messages.1.content.0: Invalid encrypted_content in search_result block`; the visible result metadata
-  (`type`, `title`, `url`, `page_age`) is preserved.
+- `api/anthropic-messages.ts`: same-model provider-native replay now preserves each nested `web_search_result` item's
+  `encrypted_content` byte-for-byte before sending prior server-side web search results back in the next Anthropic
+  request. The existing same-provider/api/model boundary, fallback pruning, and cross-model dropping behavior remain
+  unchanged.
+- Anthropic's current web-search contract requires `encrypted_content` to be passed back unmodified for multi-turn use.
+  The July 8 stripping workaround was wrong under that contract: it discarded opaque provider-owned replay state after
+  one observed 400, even though the raw session stored all seven encrypted fields and Senpi removed them during
+  conversion.
 
 ### Files modified
 

@@ -134,7 +134,14 @@ describe("Anthropic provider-native replay", () => {
 			{
 				type: "web_search_tool_result",
 				tool_use_id: "srvu_1",
-				content: [{ type: "web_search_result", title: "Example", url: "https://example.com" }],
+				content: [
+					{
+						type: "web_search_result",
+						title: "Example",
+						url: "https://example.com",
+						encrypted_content: "enc",
+					},
+				],
 			},
 			{ type: "thinking", thinking: "protected thinking", signature: "sig_1" },
 			{ type: "text", text: "kept" },
@@ -307,7 +314,14 @@ describe("Anthropic provider-native replay", () => {
 			{
 				type: "web_search_tool_result",
 				tool_use_id: "srvu_paired",
-				content: [{ type: "web_search_result", title: "A", url: "https://a.example" }],
+				content: [
+					{
+						type: "web_search_result",
+						title: "A",
+						url: "https://a.example",
+						encrypted_content: "enc",
+					},
+				],
 			},
 			fallbackBlock,
 			{ type: "thinking", thinking: "served", signature: "sig_post" },

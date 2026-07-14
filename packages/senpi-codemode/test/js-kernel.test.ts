@@ -1,3 +1,4 @@
+// allow: SIZE_OK — todo 7 parity cases must remain in the plan-listed js-kernel test file.
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -95,6 +96,204 @@ describe("JavaScriptKernel", () => {
 			kernel.deliverToolReply({ type: "tool-reply", callId: call.callId, ok: true, value: "from-host" });
 			const result = await run;
 			expect(result).toMatchObject({ ok: true, valueRepr: '"from-host"' });
+		});
+	});
+
+	it("round-trips env values inside the persistent runtime", async () => {
+		await withKernel(async (kernel) => {
+			// Given a live JavaScript kernel
+			// When a cell sets and reads an environment override
+			const run = await runCell(kernel, 'env("CODEMODE_JS_ENV", "value"); return env("CODEMODE_JS_ENV")');
+
+			// Then the override is returned to user code
+			expect(run.result).toMatchObject({ ok: true, valueRepr: '"value"' });
+		});
+	});
+
+	it("imports Node builtins from a cell", async () => {
+		await withKernel(async (kernel) => {
+			// Given a live JavaScript kernel
+			// When a cell uses a static ESM import
+			const run = await runCell(kernel, 'import fs from "node:fs"; return typeof fs.readFileSync');
+
+			// Then the imported namespace is available to the cell
+			expect(run.result).toMatchObject({ ok: true, valueRepr: '"function"' });
+		});
+	});
+
+	it("imports a relative module from the session cwd", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-js-import-"));
+		await writeFile(join(root, "module.mjs"), "export const value = 41;\n");
+		const kernel = new JavaScriptKernel({ sessionId: "relative-import", cwd: root, parallelPoolWidth: 2 });
+		try {
+			// Given an ESM module beside the session cell
+			// When the cell imports it by a relative specifier
+			const run = await runCell(kernel, 'import { value } from "./module.mjs"; return value + 1');
+
+			// Then resolution starts from the session cwd
+			expect(run.result).toMatchObject({ ok: true, valueRepr: "42" });
+		} finally {
+			await kernel.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("imports local protocol modules from the configured root", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-js-local-"));
+		const localRoot = join(root, "local");
+		await mkdir(localRoot, { recursive: true });
+		await writeFile(join(localRoot, "module.mjs"), "export const value = 42;\n");
+		const kernel = new JavaScriptKernel({
+			sessionId: "local-import",
+			cwd: root,
+			parallelPoolWidth: 2,
+			localRoots: { local: localRoot },
+			artifactsDir: root,
+		});
+		try {
+			// Given a local:// root supplied by the session
+			// When the cell imports a module through that protocol
+			const run = await runCell(kernel, 'import { value } from "local://module.mjs"; return value');
+
+			// Then the module stays confined to the configured root
+			expect(run.result).toMatchObject({ ok: true, valueRepr: "42" });
+		} finally {
+			await kernel.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("emits a status frame when write completes", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-js-status-"));
+		const kernel = new JavaScriptKernel({
+			sessionId: "write-status",
+			cwd: root,
+			parallelPoolWidth: 2,
+		});
+		try {
+			// Given a writable session directory
+			// When a cell writes a UTF-8 file
+			const run = await runCell(kernel, 'await write("status.txt", "hello")');
+
+			// Then the kernel reports the observable write operation
+			expect(run.messages).toContainEqual({
+				type: "status",
+				event: { op: "write", path: join(root, "status.txt"), bytes: 5 },
+			});
+		} finally {
+			await kernel.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("marshals agent options through the reserved bridge tool", async () => {
+		await withKernel(async (kernel) => {
+			// Given an active cell with a host tool bridge
+			// When user code calls agent() with the supported options object
+			const run = kernel.run({
+				cellId: "agent-cell",
+				code: `return await agent("inspect", {
+				  agent: "reviewer",
+				  model: "model-x",
+				  label: "review",
+				  isolated: true,
+				  apply: false,
+				  merge: true
+				})`,
+				timeoutMs: 2_000,
+			});
+			const observed = await Promise.race([
+				kernel.nextToolCall().then((call) => ({ kind: "call", call }) as const),
+				run.then((result) => ({ kind: "result", result }) as const),
+			]);
+
+			// Then the reserved tool receives every option without executing in the worker
+			expect(observed.kind).toBe("call");
+			if (observed.kind !== "call") return;
+			expect(observed.call).toMatchObject({
+				type: "tool-call",
+				toolName: "__agent__",
+				args: {
+					prompt: "inspect",
+					agent: "reviewer",
+					model: "model-x",
+					label: "review",
+					isolated: true,
+					apply: false,
+					merge: true,
+					handle: false,
+				},
+			});
+			kernel.deliverToolReply({ type: "tool-reply", callId: observed.call.callId, ok: true, value: "done" });
+			await expect(run).resolves.toMatchObject({ ok: true, valueRepr: '"done"' });
+		});
+	});
+
+	it("emits status frames for env and read operations", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-js-helper-status-"));
+		await writeFile(join(root, "input.txt"), "hello");
+		const kernel = new JavaScriptKernel({ sessionId: "helper-status", cwd: root, parallelPoolWidth: 2 });
+		try {
+			// Given a readable file and an active environment overlay
+			// When a cell sets env state and reads the file
+			const run = await runCell(kernel, 'env("STATUS_KEY", "VALUE"); await read("input.txt")');
+
+			// Then both helper operations emit structured status frames
+			expect(run.messages).toEqual(
+				expect.arrayContaining([
+					{ type: "status", event: { op: "env", key: "STATUS_KEY", value: "VALUE", action: "set" } },
+					{ type: "status", event: { op: "read", path: join(root, "input.txt"), bytes: 5, chars: 5 } },
+				]),
+			);
+		} finally {
+			await kernel.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("marshals output ids through the reserved bridge tool", async () => {
+		await withKernel(async (kernel) => {
+			// Given an active cell with a host tool bridge
+			// When user code requests multiple task outputs
+			const run = kernel.run({
+				cellId: "output-cell",
+				code: 'return await output("task-a", "task-b", { format: "tail", offset: 2, limit: 5 })',
+				timeoutMs: 2_000,
+			});
+			const observed = await Promise.race([
+				kernel.nextToolCall().then((call) => ({ kind: "call", call }) as const),
+				run.then((result) => ({ kind: "result", result }) as const),
+			]);
+
+			// Then the reserved output tool receives the ids and options
+			expect(observed.kind).toBe("call");
+			if (observed.kind !== "call") return;
+			expect(observed.call).toMatchObject({
+				toolName: "__output__",
+				args: { ids: ["task-a", "task-b"], format: "tail", offset: 2, limit: 5 },
+			});
+			kernel.deliverToolReply({
+				type: "tool-reply",
+				callId: observed.call.callId,
+				ok: true,
+				value: ["first", "second"],
+			});
+			await expect(run).resolves.toMatchObject({ ok: true, valueRepr: '["first","second"]' });
+		});
+	});
+
+	it("emits markdown display frames", async () => {
+		await withKernel(async (kernel) => {
+			// Given a markdown display value
+			// When the cell displays it
+			const run = await runCell(kernel, 'display({ type: "markdown", text: "# Heading" })');
+
+			// Then the bridge receives the markdown MIME payload
+			expect(run.messages).toContainEqual({
+				type: "display",
+				mimeType: "text/markdown",
+				dataBase64: Buffer.from("# Heading", "utf8").toString("base64"),
+			});
 		});
 	});
 
@@ -249,5 +448,124 @@ return "done";
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
+	});
+	it("preserves input order through a bounded pool under controlled jitter", async () => {
+		const heldCalls: Extract<KernelToHostMessage, { type: "tool-call" }>[] = [];
+		let kernel: JavaScriptKernel | undefined;
+		let markerSeen = false;
+		let releasedFirstWave = false;
+		const reply = (call: Extract<KernelToHostMessage, { type: "tool-call" }>): void => {
+			const activeKernel = kernel;
+			if (!activeKernel) throw new Error("kernel is unavailable");
+			activeKernel.deliverToolReply({ type: "tool-reply", callId: call.callId, ok: true, value: call.args });
+		};
+		const releaseFirstWave = (): void => {
+			if (!markerSeen || releasedFirstWave || heldCalls.length < 2) return;
+			const first = heldCalls[0];
+			const second = heldCalls[1];
+			if (!first || !second) throw new Error("missing first-wave tool calls");
+			releasedFirstWave = true;
+			reply(second);
+			reply(first);
+		};
+		kernel = new JavaScriptKernel({
+			sessionId: "parallel-width",
+			cwd: process.cwd(),
+			parallelPoolWidth: 2,
+			onMessage: (message) => {
+				if (message.type !== "tool-call") return;
+				if (message.toolName === "marker") {
+					markerSeen = true;
+					reply(message);
+					releaseFirstWave();
+					return;
+				}
+				if (message.toolName !== "hold") throw new Error("unexpected tool call");
+				if (releasedFirstWave) {
+					reply(message);
+					return;
+				}
+				heldCalls.push(message);
+				releaseFirstWave();
+			},
+		});
+		try {
+			// Given: four thunks whose first two calls are held by the bridge.
+			const result = await kernel.run({
+				cellId: "parallel-width",
+				code: `let active = 0;
+const work = async (index) => {
+  active += 1;
+  if (active > 2) throw new Error("pool width exceeded");
+  if (active === 2) await tool.marker({});
+  const value = await tool.hold({ index });
+  active -= 1;
+  return value;
+};
+return await parallel([0, 1, 2, 3].map((index) => async () => await work(index)));`,
+				timeoutMs: 2_000,
+			});
+
+			// When: the bridge resolves the held wave out of input order.
+			// Then: pool width remains bounded and results retain input order.
+			expect(heldCalls).toHaveLength(2);
+			expect(result).toMatchObject({
+				ok: true,
+				valueRepr: '[{"index":0},{"index":1},{"index":2},{"index":3}]',
+			});
+		} finally {
+			await kernel.close();
+		}
+	});
+
+	it("propagates the lowest-index parallel error after every worker settles", async () => {
+		await withKernel(async (kernel) => {
+			// Given: a lower-index thunk blocked on a bridge reply and a higher-index failure.
+			const run = kernel.run({
+				cellId: "parallel-error",
+				code: `return await parallel([
+  async () => { await tool.gate({}); throw new Error("idx0"); },
+  async () => { throw new Error("idx1"); }
+]);`,
+				timeoutMs: 2_000,
+			});
+			const gate = await kernel.nextToolCall();
+			expect(gate).toMatchObject({ toolName: "gate" });
+
+			// When: the lower-index thunk is allowed to finish after the higher-index failure.
+			kernel.deliverToolReply({ type: "tool-reply", callId: gate.callId, ok: true, value: "released" });
+			const result = await run;
+
+			// Then: the result reports the lowest-index failure.
+			expect(result.ok).toBe(false);
+			if (!result.ok) expect(result.error.message).toContain("idx0");
+		});
+	});
+
+	it("keeps every pipeline stage behind the preceding stage barrier", async () => {
+		await withKernel(async (kernel) => {
+			// Given: stages recording deterministic logical timestamps after asynchronous yields.
+			const run = await runCell(
+				kernel,
+				`let logicalTime = 0;
+const stageOneEnds = [];
+const stageTwoStarts = [];
+const stageOne = async (value) => {
+  await Promise.resolve();
+  stageOneEnds.push(++logicalTime);
+  return value;
+};
+const stageTwo = async (value) => {
+  stageTwoStarts.push(++logicalTime);
+  return value;
+};
+const values = await pipeline([0, 1, 2], stageOne, stageTwo);
+return { values, barrier: Math.min(...stageTwoStarts) >= Math.max(...stageOneEnds) };`,
+			);
+
+			// When: both pipeline stages run.
+			// Then: stage two starts only after every stage-one completion.
+			expect(run.result).toMatchObject({ ok: true, valueRepr: '{"values":[0,1,2],"barrier":true}' });
+		});
 	});
 });

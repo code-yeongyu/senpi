@@ -1,6 +1,7 @@
 import type { AgentToolResult, AgentToolUpdateCallback } from "@code-yeongyu/senpi";
 import { Type } from "typebox";
 import type { HostToKernelMessage, KernelToHostMessage } from "../bridge/protocol.ts";
+import type { TruncationMeta } from "../output/output-meta.ts";
 
 export const evalLanguageOrder = ["py", "js", "rb", "jl"] as const;
 export type EvalLanguage = (typeof evalLanguageOrder)[number];
@@ -34,7 +35,7 @@ export function createEvalInputSchema(enabled: EnabledEvalLanguages): typeof ful
 	}) as typeof fullEvalInputSchema;
 }
 
-export type EvalInputSchema = ReturnType<typeof createEvalInputSchema>;
+export type EvalInputSchema = typeof fullEvalInputSchema;
 export interface EvalToolInput {
 	readonly language: EvalLanguage;
 	readonly code: string;
@@ -75,12 +76,39 @@ export interface EvalToolCallSummary {
 	readonly error?: string;
 }
 
+export type EvalStatusEvent = { readonly op: string } & Readonly<Record<string, unknown>>;
+
+export type EvalDisplayOutput =
+	| { readonly type: "json"; readonly data: unknown }
+	| { readonly type: "image"; readonly data: string; readonly mimeType: string }
+	| { readonly type: "markdown"; readonly text: string }
+	| { readonly type: "status"; readonly event: EvalStatusEvent };
+
+export type EvalCellResult = {
+	readonly index: number;
+	readonly title?: string;
+	readonly code: string;
+	readonly language: EvalLanguage;
+	readonly output: string;
+	readonly status: "pending" | "running" | "complete" | "error";
+	readonly exitCode?: number;
+	readonly durationMs?: number;
+	readonly statusEvents?: readonly EvalStatusEvent[];
+	readonly hasMarkdown?: boolean;
+};
+
 export interface EvalToolDetails {
 	readonly language: EvalLanguage;
+	readonly languages?: readonly EvalLanguage[];
 	readonly title?: string;
 	readonly durationMs: number;
 	readonly toolCalls: readonly EvalToolCallSummary[];
 	readonly truncated: boolean;
 	readonly isError?: boolean;
 	readonly phase?: string;
+	readonly cells?: readonly EvalCellResult[];
+	readonly statusEvents?: readonly EvalStatusEvent[];
+	readonly jsonOutputs?: readonly unknown[];
+	readonly notice?: string;
+	readonly meta?: TruncationMeta;
 }

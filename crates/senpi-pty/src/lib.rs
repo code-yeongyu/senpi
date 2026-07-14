@@ -12,6 +12,7 @@ use napi::Error as NapiError;
 use napi_derive::napi;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::mpsc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -115,7 +116,24 @@ pub fn start_pty_session(
         .build_threadsafe_function::<Vec<u8>>()
         .build_callback(|context| Ok(Buffer::from(context.value)))?;
     let session = PtySession::start(options.into_session_options(), move |chunk| {
-        let _ = on_data.call(chunk.to_vec(), ThreadsafeFunctionCallMode::NonBlocking);
+        let (delivered_tx, delivered_rx) = mpsc::channel();
+        let status = on_data.call_with_return_value(
+            chunk.to_vec(),
+            ThreadsafeFunctionCallMode::NonBlocking,
+            move |result, _env| {
+                let _ = delivered_tx.send(());
+                result.map(|_| ())
+            },
+        );
+        if status == Status::Ok {
+            loop {
+                match delivered_rx.recv_timeout(Duration::from_millis(100)) {
+                    Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(mpsc::RecvTimeoutError::Timeout) if on_data.aborted() => break,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                }
+            }
+        }
     })
     .map_err(to_napi_error)?;
 

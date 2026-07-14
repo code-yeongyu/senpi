@@ -1,10 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { withBridgeTimeoutPause } from "../src/timeouts/bridge-timeout.ts";
+import { TIMEOUT_PAUSE_OP, TIMEOUT_RESUME_OP, withBridgeTimeoutPause } from "../src/timeouts/bridge-timeout.ts";
 import { IdleTimeout } from "../src/timeouts/idle-timeout.ts";
 
 describe("codemode timeout infrastructure", () => {
 	afterEach(() => {
 		vi.useRealTimers();
+	});
+
+	it("re-exports canonical bridge timeout operations", () => {
+		expect({ TIMEOUT_PAUSE_OP, TIMEOUT_RESUME_OP }).toEqual({
+			TIMEOUT_PAUSE_OP: "timeout-pause",
+			TIMEOUT_RESUME_OP: "timeout-resume",
+		});
 	});
 
 	it("interrupts a cell once when active work exceeds the budget", () => {
@@ -45,7 +52,7 @@ describe("codemode timeout infrastructure", () => {
 		expect(interrupted).toEqual([]);
 	});
 
-	it("resumes with the remaining budget after a bridge call releases", async () => {
+	it("restarts a fresh window after a bridge call releases", async () => {
 		vi.useFakeTimers();
 		const interrupted: string[] = [];
 		const watchdog = new IdleTimeout({
@@ -59,13 +66,13 @@ describe("codemode timeout infrastructure", () => {
 			vi.advanceTimersByTime(10_000);
 		});
 
-		vi.advanceTimersByTime(599);
+		vi.advanceTimersByTime(999);
 		expect(interrupted).toEqual([]);
 		vi.advanceTimersByTime(1);
 		expect(interrupted).toEqual(["resume-cell"]);
 	});
 
-	it("handles multiple sequential pauses without losing active budget", async () => {
+	it("restarts a fresh window after sequential bridge pauses", async () => {
 		vi.useFakeTimers();
 		const interrupted: string[] = [];
 		const watchdog = new IdleTimeout({
@@ -83,7 +90,7 @@ describe("codemode timeout infrastructure", () => {
 			vi.advanceTimersByTime(5_000);
 		});
 
-		vi.advanceTimersByTime(499);
+		vi.advanceTimersByTime(999);
 		expect(interrupted).toEqual([]);
 		vi.advanceTimersByTime(1);
 		expect(interrupted).toEqual(["sequential-cell"]);
@@ -111,5 +118,74 @@ describe("codemode timeout infrastructure", () => {
 		expect(interrupted).toEqual(["failed-bridge-cell"]);
 		vi.advanceTimersByTime(1_000);
 		expect(interrupted).toEqual(["failed-bridge-cell"]);
+	});
+
+	it("runs a bridge operation once when no watchdog is wired", async () => {
+		let calls = 0;
+
+		const result = await withBridgeTimeoutPause(undefined, async () => {
+			calls++;
+			return 42;
+		});
+
+		expect(result).toBe(42);
+		expect(calls).toBe(1);
+	});
+
+	it("reference-counts overlapping pauses before starting a fresh timeout window", () => {
+		vi.useFakeTimers();
+		const interrupted: string[] = [];
+		const watchdog = new IdleTimeout({
+			cellId: "overlapping-pauses",
+			timeoutMs: 1_000,
+			onTimeout: (event) => interrupted.push(event.cellId),
+		});
+
+		watchdog.pause();
+		watchdog.pause();
+		vi.advanceTimersByTime(5_000);
+		watchdog.resume();
+		vi.advanceTimersByTime(5_000);
+		expect(interrupted).toEqual([]);
+
+		watchdog.resume();
+		vi.advanceTimersByTime(999);
+		expect(interrupted).toEqual([]);
+		vi.advanceTimersByTime(1);
+		expect(interrupted).toEqual(["overlapping-pauses"]);
+	});
+
+	it("never fires after disposal", () => {
+		vi.useFakeTimers();
+		const interrupted: string[] = [];
+		const watchdog = new IdleTimeout({
+			cellId: "disposed-cell",
+			timeoutMs: 1_000,
+			onTimeout: (event) => interrupted.push(event.cellId),
+		});
+
+		watchdog.dispose();
+		vi.advanceTimersByTime(5_000);
+
+		expect(interrupted).toEqual([]);
+		expect(watchdog.signal.aborted).toBe(false);
+	});
+
+	it("ignores pause and resume after the watchdog has already fired", () => {
+		vi.useFakeTimers();
+		const interrupted: string[] = [];
+		const watchdog = new IdleTimeout({
+			cellId: "settled-cell",
+			timeoutMs: 1_000,
+			onTimeout: (event) => interrupted.push(event.cellId),
+		});
+
+		vi.advanceTimersByTime(1_000);
+		watchdog.pause();
+		watchdog.resume();
+		vi.advanceTimersByTime(5_000);
+
+		expect(interrupted).toEqual(["settled-cell"]);
+		expect(watchdog.signal.aborted).toBe(true);
 	});
 });

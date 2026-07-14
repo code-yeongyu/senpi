@@ -97,11 +97,11 @@ pub struct PtyExit {
 }
 
 pub struct PtySession {
-    master: Option<Box<dyn MasterPty + Send>>,
+    master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
     writer: Arc<Mutex<Option<Box<dyn Write + Send>>>>,
     child: Option<Box<dyn Child + Send + Sync>>,
     killer: Box<dyn ChildKiller + Send + Sync>,
-    reader_thread: Option<JoinHandle<()>>,
+    reader_thread: Arc<Mutex<Option<JoinHandle<()>>>>,
     finished: Arc<AtomicBool>,
     cancelled: Arc<AtomicBool>,
     timed_out: Arc<AtomicBool>,
@@ -192,11 +192,11 @@ impl PtySession {
         }
 
         Ok(Self {
-            master: Some(pair.master),
+            master: Arc::new(Mutex::new(Some(pair.master))),
             writer,
             child: Some(child),
             killer,
-            reader_thread: Some(reader_thread),
+            reader_thread: Arc::new(Mutex::new(Some(reader_thread))),
             finished,
             cancelled,
             timed_out,
@@ -226,6 +226,8 @@ impl PtySession {
 
     pub fn resize(&self, cols: u16, rows: u16) -> PtyResult<()> {
         self.master
+            .lock()
+            .map_err(|_| PtyError::new("pty master lock poisoned"))?
             .as_ref()
             .ok_or_else(|| PtyError::new("pty session is closed"))?
             .resize(PtySize {
@@ -260,18 +262,7 @@ impl PtySession {
             .ok_or_else(|| PtyError::new("pty session is closed"))?;
         let status = child.wait()?;
         self.finished.store(true, Ordering::SeqCst);
-        if let Ok(mut guard) = self.writer.lock() {
-            guard.take();
-        }
-        // Drop the PTY master before joining the reader thread. On Windows the ConPTY output pipe
-        // never reaches EOF just because the child exited; only closing the pseudo console (by
-        // dropping the master) unblocks the reader's pending read, so joining first would hang
-        // forever. On POSIX the reader already sees EOF once the child closes the slave, so closing
-        // the master here is a harmless early cleanup.
-        self.master.take();
-        if let Some(reader_thread) = self.reader_thread.take() {
-            let _ = reader_thread.join();
-        }
+        drain_output(&self.writer, &self.master, &self.reader_thread);
         let exit = PtyExit {
             exit_code: Some(status.exit_code() as i32),
             cancelled: self.cancelled.load(Ordering::SeqCst) || self.timed_out.load(Ordering::SeqCst),
@@ -293,10 +284,14 @@ impl PtySession {
         let finished = Arc::clone(&self.finished);
         let cancelled = Arc::clone(&self.cancelled);
         let timed_out = Arc::clone(&self.timed_out);
+        let writer = Arc::clone(&self.writer);
+        let master = Arc::clone(&self.master);
+        let reader_thread = Arc::clone(&self.reader_thread);
 
         Ok(std::thread::spawn(move || {
             let status = child.wait()?;
             finished.store(true, Ordering::SeqCst);
+            drain_output(&writer, &master, &reader_thread);
             Ok(PtyExit {
                 exit_code: Some(status.exit_code() as i32),
                 cancelled: cancelled.load(Ordering::SeqCst) || timed_out.load(Ordering::SeqCst),
@@ -310,6 +305,26 @@ impl PtySession {
             return Err(PtyError::new("pty session is closed"));
         }
         send_signal(self.process_group, signal, &mut *self.killer)
+    }
+}
+
+fn drain_output(
+    writer: &Arc<Mutex<Option<Box<dyn Write + Send>>>>,
+    master: &Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
+    reader_thread: &Arc<Mutex<Option<JoinHandle<()>>>>,
+) {
+    if let Ok(mut guard) = writer.lock() {
+        guard.take();
+    }
+    // Drop the PTY master before joining the reader thread. On Windows the ConPTY output pipe
+    // never reaches EOF just because the child exited; only closing the pseudo console unblocks the
+    // pending read. On POSIX closing the master here is harmless early cleanup.
+    if let Ok(mut guard) = master.lock() {
+        guard.take();
+    }
+    let reader_thread = reader_thread.lock().ok().and_then(|mut guard| guard.take());
+    if let Some(reader_thread) = reader_thread {
+        let _ = reader_thread.join();
     }
 }
 

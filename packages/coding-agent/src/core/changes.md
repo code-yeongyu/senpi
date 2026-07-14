@@ -23,6 +23,58 @@
 - HIGH: auth-storage.ts, model-registry.ts, and sdk.ts credential-resolution paths.
 - MEDIUM: broker wire contracts and vault schema when auth persistence changes upstream.
 
+## Release accepted auto-compaction ownership before recovery (2026-07-13)
+
+### What changed
+
+- `agent-session.ts`: accepted auto-compaction now releases only its own abort-controller identity before awaiting the recovery continuation, while the session-work barrier remains active until recovery settles.
+- Final cleanup is identity-guarded so an older compaction cannot clear a newer controller installed during recovery.
+
+### Why extension system couldn't handle this
+
+- Interactive input classification reads core-owned `AgentSession.isCompacting`, and fresh-prompt serialization depends on the private session-work barrier. Extensions cannot split those two lifecycle boundaries safely.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` around `_runAutoCompaction()` accepted-result handling and final controller cleanup.
+
+## Post-compaction continuation deadlock fix (2026-07-12)
+
+### What changed
+
+- `agent-session.ts`: deferred post-compaction and queued-message continuations until the current serialized
+  `agent_end` event promise resolves, while registering the detached continuation in `SessionWorkBarrier`.
+- Overflow retry, threshold/pending-message delivery, and normal queued `agent_end` continuation use the same scheduler.
+
+### Why
+
+- Awaiting `agent.continue()` inside the active `agent_end` queue item deadlocked tool-bearing continuations because
+  pre-tool hooks wait for the current agent-event queue to finish persisting.
+
+### Why extension system couldn't handle this
+
+- `AgentSession` owns the event queue, tool-hook barrier, settlement state, and continuation launch boundary.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` around `agent_end` queued continuation handling and `_runAutoCompaction()` recovery.
+- LOW: `_continueAgentAfterCurrentRun()` and the session-work barrier integration.
+
+## Preserve builtin extensions after project trust resolution (2026-07-12)
+
+### What changed
+
+- `resource-loader.ts`: project-trust reloads now carry forward only preloaded factory-origin extensions - builtins, bundled codemode package entries, and inline factories - ahead of file-based extensions.
+- Shadowed or disabled file extensions from the pre-trust pass remain excluded from the trusted final set instead of being restored by the factory carry-over.
+- Added regression coverage that verifies trusted reloads preserve plain-reload membership and builtin-first order, including `todowrite`, codemode's `eval` tool, and a shadowed `pi-todotools` package.
+
+### Why extension system couldn't handle this
+
+- Project trust uses a core-owned two-phase resource load. Only the resource loader can retain the factory instances and side effects from the untrusted bootstrap pass while rebuilding the final trusted extension order.
+
+### Expected merge conflict zones
+
+- LOW: `resource-loader.ts` around trusted final extension-set composition.
 ## Upstream model context overflow recovery (2026-07-08)
 
 ### What changed

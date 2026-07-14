@@ -47,7 +47,7 @@ async function captureMessages(
 }
 
 describe("Anthropic web search replay encryption", () => {
-	it("omits encrypted_content from replayed web search results", async () => {
+	it("preserves encrypted_content byte-for-byte in replayed web search results", async () => {
 		const model = getModel("anthropic", "claude-fable-5");
 		const assistant: AssistantMessage = {
 			role: "assistant",
@@ -96,6 +96,7 @@ describe("Anthropic web search replay encryption", () => {
 						title: "Example",
 						url: "https://example.com",
 						page_age: "2026-07-07",
+						encrypted_content: "opaque-ciphertext",
 					},
 				],
 			},

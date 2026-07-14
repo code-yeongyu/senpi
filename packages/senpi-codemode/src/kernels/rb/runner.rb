@@ -1,92 +1,193 @@
 require "json"
 require "net/http"
-require "stringio"
 require "uri"
-require_relative "prelude"
 
 $__senpi_binding = TOPLEVEL_BINDING
-$__senpi_mutex = Mutex.new
+$__senpi_frame_mutex = Mutex.new
 $__senpi_current_cell = nil
+$__senpi_capture_cell = nil
 $__senpi_connection = nil
+$__senpi_frame_io = STDOUT.dup
+$__senpi_frame_io.sync = true
+
+begin
+  stdout_read, stdout_write = IO.pipe
+  STDOUT.reopen(stdout_write)
+  STDOUT.sync = true
+  stdout_write.close
+  $__senpi_stdout_capture = stdout_read
+rescue StandardError
+  $__senpi_stdout_capture = nil
+end
+
+begin
+  stderr_read, stderr_write = IO.pipe
+  STDERR.reopen(stderr_write)
+  STDERR.sync = true
+  stderr_write.close
+  $__senpi_stderr_capture = stderr_read
+rescue StandardError
+  $__senpi_stderr_capture = nil
+end
+
+begin
+  $__senpi_protocol_stdin = STDIN.dup
+  STDIN.reopen(File.open(File::NULL, "r"))
+rescue StandardError
+  $__senpi_protocol_stdin = STDIN
+end
 
 def __senpi_emit(frame)
-  STDOUT.write(JSON.generate(frame))
-  STDOUT.write("\n")
-  STDOUT.flush
+  line = JSON.generate(frame)
+  $__senpi_frame_mutex.synchronize do
+    $__senpi_frame_io.write(line)
+    $__senpi_frame_io.write("\n")
+    $__senpi_frame_io.flush
+  end
+rescue StandardError
+  nil
 end
 
 def __senpi_error(error)
-  { "name" => error.class.name, "message" => error.message, "stack" => error.backtrace&.join("\n") }
+  { "name" => error.class.name, "message" => error.message.to_s, "stack" => error.backtrace&.join("\n") }
 end
 
-def __senpi_call_tool(name, args)
-  connection = $__senpi_connection
-  raise "Ruby tool bridge is not initialized" unless connection.is_a?(Hash)
-  port = connection["port"]
-  token = connection["token"]
-  raise "Ruby tool bridge is not initialized" unless port.is_a?(Integer) && token.is_a?(String)
+def __senpi_emit_stream(stream, data)
+  return if data.nil? || data.empty? || $__senpi_capture_cell.nil?
+  __senpi_emit({ "type" => "text", "stream" => stream, "data" => data })
+end
 
-  call_id = "#{Time.now.to_i}-#{rand(1_000_000)}"
-  uri = URI("http://127.0.0.1:#{port}/call")
-  request = Net::HTTP::Post.new(uri)
-  request["authorization"] = "Bearer #{token}"
-  request["content-type"] = "application/json"
-  request.body = JSON.generate({ "callId" => call_id, "toolName" => name, "args" => args })
-  response = Net::HTTP.start(uri.hostname, uri.port, read_timeout: 60) { |http| http.request(request) }
-  body = JSON.parse(response.body.to_s)
-  return body["value"] if body.is_a?(Hash) && body["ok"] == true
-
-  error = body.is_a?(Hash) ? body["error"] : body
-  if error.is_a?(Hash)
-    raise error["message"].to_s
+class SenpiStreamProxy
+  def initialize(stream)
+    @stream = stream
   end
-  raise error.to_s
+
+  def write(*values)
+    data = values.join
+    __senpi_emit_stream(@stream, data)
+    data.bytesize
+  end
+
+  def print(*values)
+    write(*values)
+    nil
+  end
+
+  def puts(*values)
+    values = [""] if values.empty?
+    values.each { |value| write(value.to_s.end_with?("\n") ? value.to_s : "#{value}\n") }
+    nil
+  end
+
+  def printf(format, *values)
+    write(Kernel.format(format, *values))
+    nil
+  end
+
+  def flush
+    self
+  end
+
+  def sync
+    true
+  end
+
+  def sync=(_value)
+    true
+  end
+
+  def tty?
+    false
+  end
 end
 
-# Capture the cell's $stdout writes (puts/print) and emit them as `text` frames.
-# $stdout is redirected to a buffer during eval so user output never contaminates
-# the JSONL protocol channel, which __senpi_emit writes to via the STDOUT constant
-# (the STDOUT constant is unaffected by reassigning the $stdout global).
+def __senpi_start_capture(io, stream)
+  return if io.nil?
+  Thread.new do
+    loop do
+      data = io.readpartial(65_536)
+      __senpi_emit_stream(stream, data)
+    rescue EOFError, IOError, Errno::EBADF
+      break
+    end
+  end
+end
+
+def __senpi_value_repr(value)
+  JSON.generate(value)
+rescue JSON::GeneratorError
+  value.inspect
+end
+
+SENPI_NON_DISPLAY_NODES = %i[
+  LASGN IASGN GASGN CVASGN DASGN OP_ASGN OP_CDECL CDECL MASGN CASGN
+  DEFN DEFS CLASS MODULE SCLASS ALIAS UNDEF
+].freeze
+
+def __senpi_ast_last(node)
+  return nil unless node.is_a?(RubyVM::AbstractSyntaxTree::Node)
+  case node.type
+  when :SCOPE
+    __senpi_ast_last(node.children[2])
+  when :BLOCK
+    children = node.children.compact
+    children.empty? ? nil : __senpi_ast_last(children.last)
+  else
+    node
+  end
+end
+
+def __senpi_should_display_result?(source)
+  return true unless defined?(RubyVM::AbstractSyntaxTree)
+  node = RubyVM::AbstractSyntaxTree.parse(source)
+  last = __senpi_ast_last(node)
+  return true if last.nil?
+  !SENPI_NON_DISPLAY_NODES.include?(last.type)
+rescue StandardError, SyntaxError
+  true
+end
+
+require_relative "prelude"
+
+$stdout = SenpiStreamProxy.new("stdout")
+$stderr = SenpiStreamProxy.new("stderr")
+__senpi_start_capture($__senpi_stdout_capture, "stdout")
+__senpi_start_capture($__senpi_stderr_capture, "stderr")
+
 def __senpi_run_cell(message)
   started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-  $__senpi_current_cell = message["cellId"]
-  captured = StringIO.new
-  previous_stdout = $stdout
-  $stdout = captured
+  cell_id = message["cellId"].to_s
+  $__senpi_current_cell = cell_id
+  $__senpi_capture_cell = cell_id
   begin
-    value = eval(message["code"].to_s, $__senpi_binding, "(senpi-rb)")
-    $stdout = previous_stdout
-    __senpi_flush_stdout(captured)
+    source = message["code"].to_s
+    value = eval(source, $__senpi_binding, "(senpi-rb)")
+    STDOUT.flush
+    STDERR.flush
+    Thread.pass
     frame = {
       "type" => "result",
-      "cellId" => message["cellId"],
+      "cellId" => cell_id,
       "ok" => true,
       "durationMs" => ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round,
     }
-    frame["valueRepr"] = JSON.generate(value) unless value.nil?
+    frame["valueRepr"] = __senpi_value_repr(value) if !value.nil? && __senpi_should_display_result?(source)
     __senpi_emit(frame)
   rescue Exception => error
-    $stdout = previous_stdout
-    __senpi_flush_stdout(captured)
     __senpi_emit({
       "type" => "result",
-      "cellId" => message["cellId"],
+      "cellId" => cell_id,
       "ok" => false,
       "error" => __senpi_error(error),
       "durationMs" => ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round,
     })
   ensure
-    $stdout = previous_stdout
+    $__senpi_capture_cell = nil
     $__senpi_current_cell = nil
   end
 end
 
-def __senpi_flush_stdout(captured)
-  data = captured.string
-  __senpi_emit({ "type" => "text", "stream" => "stdout", "data" => data }) unless data.empty?
-end
-
-STDIN.each_line do |line|
+$__senpi_protocol_stdin.each_line do |line|
   message = JSON.parse(line)
   case message["type"]
   when "init"
@@ -98,4 +199,6 @@ STDIN.each_line do |line|
     __senpi_emit({ "type" => "closed" })
     exit 0
   end
+rescue JSON::ParserError => error
+  __senpi_emit({ "type" => "init-failed", "error" => __senpi_error(error) })
 end

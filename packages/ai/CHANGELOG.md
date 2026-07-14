@@ -4,9 +4,33 @@
 
 ### Added
 
+- Added the `anthropic-xml` text tool-call protocol for OpenAI-compatible models that emit legacy Anthropic `<invoke>` and `<parameter>` XML, including streaming, schema-driven argument coercion, XML escaping, case-insensitive tool resolution, and bounded malformed-fragment recovery.
+
 ### Changed
 
 ### Fixed
+
+### Removed
+
+## [2026.7.14] - 2026-07-14
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.7.13] - 2026-07-13
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Preserved the executable bit on the `pi-ai` CLI after ordinary workspace builds, preventing release builds from recording a non-executable bin stub.
 
 ### Removed
 

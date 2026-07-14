@@ -34,9 +34,13 @@ interface WebSearchToolContext {
 	modelRegistry: NativeModelRegistry;
 }
 
-async function configWithNativeRoute(config: WebsearchConfig, ctx?: WebSearchToolContext): Promise<WebsearchConfig> {
+async function configWithNativeRoute(
+	config: WebsearchConfig,
+	ctx: WebSearchToolContext | undefined,
+	signal: AbortSignal | undefined,
+): Promise<WebsearchConfig> {
 	if (!config.auto) return config;
-	const nativeEntries = await buildNativeEntries(ctx?.model, ctx?.modelRegistry);
+	const nativeEntries = await buildNativeEntries(ctx?.model, ctx?.modelRegistry, signal);
 	return nativeEntries.length > 0 ? { ...config, providers: [...nativeEntries, ...config.providers] } : config;
 }
 
@@ -78,7 +82,7 @@ export function createWebSearchTool(getConfig: ConfigProvider): WebSearchTool {
 			}
 
 			const maxResults = loaded.config.providers[0]?.maxResults ?? 10;
-			const config = await configWithNativeRoute(loaded.config, ctx);
+			const config = await configWithNativeRoute(loaded.config, ctx, signal);
 			const progressDetails: SearchProgressDetails = {
 				phase: "searching",
 				query: params.query,

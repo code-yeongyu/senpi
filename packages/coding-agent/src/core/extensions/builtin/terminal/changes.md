@@ -45,3 +45,19 @@ correctness the plan targets — is fully prevented by deactivation.
 `session.waitExit()` via the session object rather than a detached reference, so class-based
 sessions (pi-pty `TerminalSession`) keep their `this` binding under `SessionRegistry.stop/
 teardown`. Regression test: `packages/pty/test/registry.test.ts`.
+
+## Fast-exit PTY output drain (2026-07-14)
+
+- `crates/senpi-pty/src/session.rs`: synchronous and background waits close the PTY writer/master
+  and join the reader before reporting exit, preserving final output from fast-exiting commands.
+- `crates/senpi-pty/src/lib.rs`: native data callbacks wait until the JavaScript callback has run,
+  preserve callback exceptions, and unblock only when the thread-safe function reports N-API
+  environment teardown, so the reader join guarantees delivery without leaking a blocked thread.
+- `core/extensions/builtin/terminal/runtime-session.ts`: constructs `TerminalSession` explicitly,
+  registers output/exit listeners, then calls `start()` so startup output cannot beat subscription.
+
+This ordering belongs below the extension layer: an extension cannot change native PTY teardown or
+subscribe before a session created by the convenience factory has already started. During upstream
+merges, preserve the close-writer → close-master → join-reader sequence, the N-API delivery
+acknowledgement, and listener-before-start construction. Expected conflict zones are native session
+lifecycle code, the N-API `startPtySession` callback, and terminal runtime construction.

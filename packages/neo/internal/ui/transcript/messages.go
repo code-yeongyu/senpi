@@ -131,7 +131,7 @@ func (a *AssistantMessageComponent) Render(width int) []string {
 		out = append(out, "")
 		out = append(out, a.theme.Error(abortMsg))
 	case !hasToolCalls && a.msg.StopReason == "error":
-		errMsg := a.msg.ErrorMessage
+		errMsg := sanitizeInline(a.msg.ErrorMessage)
 		if errMsg == "" {
 			errMsg = "Unknown error"
 		}

@@ -1,7 +1,7 @@
 import { Theme, type ThemeColor } from "@code-yeongyu/senpi";
 import { describe, expect, it } from "vitest";
 import { renderEvalCall, renderEvalResult } from "../src/tool/render.ts";
-import { callContext, evalResult, resultContext } from "./eval-render-fixtures.ts";
+import { callContext, evalResult, resultContext, stripAnsi } from "./eval-render-fixtures.ts";
 
 const FG_COLORS = {
 	accent: "#010101",
@@ -64,7 +64,7 @@ const BG_COLORS = {
 const TEST_THEME = new Theme(FG_COLORS, BG_COLORS, "truecolor", { name: "eval-render-theme-test" });
 
 function requiredLine(lines: readonly string[], text: string): string {
-	const line = lines.find((item) => item.includes(text));
+	const line = lines.find((item) => stripAnsi(item).includes(text));
 	if (line === undefined) throw new Error(`Missing rendered line containing ${JSON.stringify(text)}`);
 	return line;
 }
@@ -186,5 +186,60 @@ describe("eval renderer theme hierarchy", () => {
 
 		// Then
 		expectStartsWithColor(requiredLine(lines, "[tool error omitted]"), "muted");
+	});
+
+	it("Given a themed JavaScript call when rendered then the framed code uses syntax highlighting", () => {
+		// Given
+		const component = renderEvalCall(
+			{ language: "js", code: "const answer = 42;", title: "compute" },
+			TEST_THEME,
+			callContext(),
+		);
+
+		// When
+		const lines = component.render(80);
+		const codeLine = requiredLine(lines, "answer");
+
+		// Then
+		expect.soft(stripAnsi(lines[0] ?? "")).toContain("eval js compute pending");
+		expect.soft(stripAnsi(codeLine)).toContain("const answer = 42;");
+		expect.soft(codeLine.startsWith(TEST_THEME.getFgAnsi("mdCodeBlock"))).toBe(false);
+	});
+
+	it("Given themed status events when rendered then operation and error summaries use semantic colors", () => {
+		// Given
+		const result = evalResult(
+			{
+				language: "py",
+				durationMs: 1,
+				toolCalls: [],
+				truncated: false,
+				cells: [
+					{
+						index: 0,
+						code: "read()",
+						language: "py",
+						output: "ok",
+						status: "complete",
+						statusEvents: [
+							{ op: "read", path: "/tmp/x", chars: 7 },
+							{ op: "write", error: "denied" },
+						],
+					},
+				],
+			},
+			"",
+		);
+
+		// When
+		const lines = renderEvalResult(result, { expanded: false, isPartial: false }, TEST_THEME, resultContext()).render(
+			80,
+		);
+		const readLine = requiredLine(lines, "read 7 chars");
+		const errorLine = requiredLine(lines, "write: denied");
+
+		// Then
+		expect.soft(readLine).toContain(TEST_THEME.getFgAnsi("muted"));
+		expect.soft(errorLine).toContain(TEST_THEME.getFgAnsi("warning"));
 	});
 });

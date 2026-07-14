@@ -135,8 +135,9 @@ export class PythonKernel {
 		if (!pending || !this.#pending.has(pending.input.cellId)) return;
 		this.#active = pending;
 		pending.startedAt = performance.now();
-		const timeoutMs = pending.input.timeoutMs ?? 30_000;
-		pending.timeoutTimer = setTimeout(() => this.#timeoutRun(pending, timeoutMs), timeoutMs);
+		const timeoutMs = pending.input.timeoutMs;
+		if (timeoutMs !== undefined)
+			pending.timeoutTimer = setTimeout(() => this.#timeoutRun(pending, timeoutMs), timeoutMs);
 		try {
 			this.#transport?.run(pending.input);
 		} catch (error) {

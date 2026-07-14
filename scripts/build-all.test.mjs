@@ -89,7 +89,7 @@ describe("build-all", () => {
 		assert.equal(cleaned.npm_config_registry, "https://registry.npmjs.org/");
 	});
 
-	it("keeps generated model catalog updates out of ordinary ai builds", () => {
+	it("keeps generated model updates out of ordinary ai builds and preserves the CLI mode", () => {
 		// Given
 		const packageJson = JSON.parse(readFileSync(join(root, "packages/ai/package.json"), "utf8"));
 		const scripts = packageJson.scripts;
@@ -100,7 +100,7 @@ describe("build-all", () => {
 
 		// Then
 		assert.equal(scripts.prebuild, undefined);
-		assert.equal(buildScript, "tsgo -p tsconfig.build.json");
+		assert.equal(buildScript, "tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js");
 		assert.equal(buildScript.includes("generate-models"), false);
 		assert.match(prepublishScript, /generate-models\.ts/);
 		assert.match(prepublishScript, /generate-image-models\.ts/);

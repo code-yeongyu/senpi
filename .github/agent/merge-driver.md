@@ -6,8 +6,8 @@ You are Codex running headless inside GitHub Actions on the `senpi` fork
 the current repository checkout. Do not contact external services other than git remotes and
 GitHub through `gh`.
 
-The remotes `origin` (this fork) and `upstream` (`badlogic/pi-mono`) are already configured,
-and `upstream` has been fetched. The current branch is a bot branch created from `main`.
+The remotes `origin` (this fork) and `upstream` (`badlogic/pi-mono`) are already configured.
+The current branch is a bot branch created from `main`.
 
 ## Procedure
 
@@ -17,6 +17,12 @@ Use the **merge-upstream** skill semantics to sync the current bot branch with
 `upstream/main` via a history-preserving merge (`git merge --no-ff`). Honor every skill
 invariant: no rebase, no force-push, no `--no-verify`, and no history rewrite. Do not push,
 open pull requests, merge pull requests, create tags, or run the release.
+
+Fetch live `upstream/main` and apply the skill's verified-no-op terminal condition before
+change-dependent work. For a no-op, report exact refs and full SHAs plus the confirmed
+ancestry and empty `HEAD..upstream/main` range, then finish with
+`MERGE_RESULT: NO_RELEASE_NEEDED`. Do not update the pin, audit changelogs, run QA, create or
+publish a pull request, push, or release.
 
 If the upstream release does not require any source, package, changelog, or pin change after
 inspection, write a short report and finish with `MERGE_RESULT: NO_RELEASE_NEEDED`.

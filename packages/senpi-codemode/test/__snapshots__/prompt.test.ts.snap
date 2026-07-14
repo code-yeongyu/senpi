@@ -1,60 +1,105 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`buildEvalPrompt > renders the all enabled-language prompt 1`] = `
+exports[`buildEvalPrompt > renders the all with spawns prompt 1`] = `
 {
   "description": "Run one step of code in a persistent kernel.
 
 <instruction>
-**One eval call = one cell = one logical step.** State persists per language across separate eval calls and tool calls — define helpers, datasets, and clients in one call, then later calls reuse them directly.
+**One eval call = one cell = one logical step.** State persists per language across separate eval calls and tool calls, and \`task\` subagents — define helpers, datasets, and clients in one call, then later calls reuse them directly.
 
-Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after \`reset\`, a kernel crash, or a \`NameError\`/\`ReferenceError\` proving the state is gone. Parallelize work *within* a cell with the \`parallel(thunks)\` helper, not by batching steps.
+Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after \`reset\`, a kernel crash, or a \`NameError\`/\`ReferenceError\` proving the state is gone.
+
+**Batch through eval.** One cell replaces many one-shot tool calls: loop or comprehend over file sets with \`read()\`/stdlib instead of reading files one call at a time, post-process \`tool.<name>()\` results programmatically, and fan independent calls through \`parallel(thunks)\` within the cell — never one call per turn.
 
 Fields:
 
 - \`language\` — \`"py"\` IPython kernel, \`"js"\` persistent JavaScript VM, \`"rb"\` persistent Ruby kernel, \`"jl"\` persistent Julia kernel.
 - \`code\` — cell body, verbatim. Newlines/quotes JSON-encoded; no fences, no headers.
 - \`title\` (optional) — short transcript label (e.g. \`"imports"\`).
-- \`timeout\` (optional) — seconds. Raise only for heavy compute or long delegated tool calls.
+- \`timeout\` (optional) — seconds. Raise only for heavy compute or long non-agent tool calls.
 - \`reset\` (optional) — wipe this language's kernel first. Per-language: a \`py\` reset never touches the JS VM.
 
-Live event loop: use top-level \`await\` directly; \`asyncio.run(...)\` raises "cannot be called from a running event loop".
+Live event loop: use top-level \`await\` directly; \`asyncio.run(…)\` raises "cannot be called from a running event loop".
 JS runs under Node.js worker: top-level \`await\`/\`return\` work; \`fetch\`/\`Buffer\` available.
-Ruby: synchronous; helper options are keyword args; the last expression auto-displays unless it is \`nil\`, an assignment, or a definition.
-Julia: synchronous; helper options are standard keyword args; the last expression auto-displays unless it is an assignment or a definition.
+Ruby: synchronous; helper options are keyword args (e.g. \`output("id", limit: 2)\`); the last expression auto-displays unless it is \`nil\`, an assignment, or a definition (like IRB).
+Julia: synchronous; helper options are standard keyword args (e.g. \`output("id", limit=2)\`); the last expression auto-displays unless it is an assignment or a definition (like the Julia REPL).
 On error, fix and re-run only the failing step — prior calls' state survives.
 </instruction>
 
 <prelude>
-Same helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/\`await\`able, options = ONE trailing object literal, never positional. Ruby: sync, options = trailing keyword args. Julia: sync, options = trailing keyword args.
+Same helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/\`await\`able, options = ONE trailing object literal, never positional (extras throw). Ruby: sync, options = trailing keyword args. Julia: sync, options = trailing keyword args.
 \`\`\`
-display(value) -> None
-    Cell result; figures/images/dataframes shown natively.
-print(value, ...) -> None
-    Text stream.
-read(path, offset?=1, limit?=None) -> str
-    File as text; offset/limit are 1-indexed lines.
-write(path, content) -> str
-    Write file, creating parents, and return the resolved path.
-env(key?=None, value?=None) -> str | None | dict
-    No args -> full env dict; one -> value of key; two -> set key=value and return value.
-tool.<name>(args) -> unknown
-    Invoke any active session tool; args = its parameter object.
-completion(prompt, model?="default", system?=None, schema?=None) -> str | dict
-    Oneshot, stateless completion. model "default" uses the session model; schema is JSON Schema for structured results.
-parallel(thunks) -> list
-    Thunks through a bounded pool, input order kept; returns when all finish, a throwing thunk propagates.
-pipeline(items, ...stages) -> list
+display(value) → None
+    Cell output; figures/images/dataframes shown natively.
+print(value, ...) → None
+    Text output.
+read(path, offset?=1, limit?=None) → str
+    File as text; offset/limit are 1-indexed lines. Accepts \`local://…\`.
+write(path, content) → str
+    Write file (creates parents) → resolved path. \`local://…\` persists across turns/subagents.
+env(key?=None, value?=None) → str | None | dict
+    No args → full env dict; one → value of \`key\`; two → set \`key=value\`, return value.
+output(*ids, format?="raw", offset?=None, limit?=None) → str | dict | list[dict]
+    Task/agent output by id. \`format\` selects full (\`"raw"\`) or trailing (\`"tail"\`) output.
+tool.<name>(args) → unknown
+    Invoke any session tool; \`args\` = its parameter object.
+completion(prompt, model?="default", system?=None, schema?=None) → str | dict
+    Oneshot, stateless (no history/tools). \`model\`: \`"smol"\` fast | \`"default"\` session | \`"slow"\` most capable. \`schema\` (JSON-Schema) → structured output, parsed object.
+agent(prompt, agent?="task", model?=None, label?=None, schema?=None, handle?=False) → str | dict
+    Run a subagent → final output. \`agent\` picks another discovered agent; omit it to use \`task\`. \`schema\` as in completion(). Background via \`local://\` files named in the prompt. \`handle\` → DAG node dict { text, output, handle: \`agent://<id>\`, id, agent } (parsed under \`data\` when \`schema\` set).
+    JS: options are ONE trailing object — agent(prompt, { agent, schema, handle }).
+parallel(thunks) → list
+    Thunks through a bounded pool (wide as a \`task\` batch — don't pre-shrink), input order kept; returns when all finish, a throwing thunk propagates.
+pipeline(items, ...stages) → list
     Map items through one-arg stages left-to-right, barrier between stages; stage 1 gets the item, later stages the previous result.
-log(message) -> None
+log(message) → None
     Progress line above the status tree.
-phase(title) -> None
+phase(title) → None
     Phase grouping subsequent status lines.
 \`\`\`
 </prelude>
 
+<dag>
+Pipe handles through stage helpers to build a dependency graph — acyclic waves:
+- **Name nodes.** Capture each \`agent(…, handle=True{ handle: true }handle=true)\` result; carries \`handle\` (\`agent://<id>\`) + \`output\`.
+- **Wire edges by reference.** Put an upstream node's \`handle\`/\`output\` in the dependent stage's prompt — large transcript never re-inlined. Bulk: \`write("local://<name>.md", …)\`, pass the URI.
+- **\`pipeline(items, *stages)\` = staged waves**, barrier between stages (every item clears stage N before any enters N+1). **\`parallel(thunks)\` = one wave** of independent nodes.
+- **Isolate failure.** A raising node re-raises the lowest-index error, aborts its wave; wrap risky nodes in try/except so a failure degrades only its dependent subtree, independent branches finish.
+- **Acyclic only.** A node never waits on its own descendant.
+</dag>
+
 <critical>
-Prior top-level names survive into the next eval call — reuse them; NEVER re-import, re-require, or re-declare a helper. Re-read a file only if it may have changed since the last read. Re-run setup only after \`reset\`, a crash, or a \`NameError\`/\`ReferenceError\`.
-</critical>",
+Prior top-level names (\`data\`, \`sessions\`, helpers, imports) survive into the next eval call — reuse them; NEVER re-import, re-require, or re-declare a helper. Re-read a file only if it may have changed since the last read.
+</critical>
+
+<examples>
+### First call — set up once
+\`\`\`json
+{
+  "language": "py",
+  "title": "collect targets",
+  "code": "from pathlib import Path\\nfrom collections import Counter\\nfiles = [p for p in Path('src').rglob('*.ts') if 'test' not in p.parts]\\nprint(len(files))"
+}
+\`\`\`
+
+### Second call — reuse \`files\`, batch-read in one cell
+\`\`\`json
+{
+  "language": "py",
+  "title": "scan usages",
+  "code": "hits = Counter()\\nfor p in files:\\n    hits[p.name] = read(p).count('legacyClient')\\ndisplay({k: v for k, v in hits.items() if v})"
+}
+\`\`\`
+
+### Third call — reuse results, fan out session tools in parallel
+\`\`\`json
+{
+  "language": "py",
+  "title": "confirm callsites",
+  "code": "dirs = ['src/core', 'src/tools']\\ndisplay(parallel([lambda d=d: tool.grep({'pattern': 'legacyClient', 'path': d}) for d in dirs]))"
+}
+\`\`\`
+</examples>",
   "promptGuidelines": [
     "Use eval for incremental code execution when a persistent JS, Python, Ruby, or Julia kernel is available.",
     "Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language.",
@@ -63,21 +108,23 @@ Prior top-level names survive into the next eval call — reuse them; NEVER re-i
 }
 `;
 
-exports[`buildEvalPrompt > renders the js enabled-language prompt 1`] = `
+exports[`buildEvalPrompt > renders the js without spawns prompt 1`] = `
 {
   "description": "Run one step of code in a persistent kernel.
 
 <instruction>
 **One eval call = one cell = one logical step.** State persists per language across separate eval calls and tool calls — define helpers, datasets, and clients in one call, then later calls reuse them directly.
 
-Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after \`reset\`, a kernel crash, or a \`NameError\`/\`ReferenceError\` proving the state is gone. Parallelize work *within* a cell with the \`parallel(thunks)\` helper, not by batching steps.
+Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after \`reset\`, a kernel crash, or a \`NameError\`/\`ReferenceError\` proving the state is gone.
+
+**Batch through eval.** One cell replaces many one-shot tool calls: loop or comprehend over file sets with \`read()\`/stdlib instead of reading files one call at a time, post-process \`tool.<name>()\` results programmatically, and fan independent calls through \`parallel(thunks)\` within the cell — never one call per turn.
 
 Fields:
 
 - \`language\` — \`"js"\` persistent JavaScript VM.
 - \`code\` — cell body, verbatim. Newlines/quotes JSON-encoded; no fences, no headers.
 - \`title\` (optional) — short transcript label (e.g. \`"imports"\`).
-- \`timeout\` (optional) — seconds. Raise only for heavy compute or long delegated tool calls.
+- \`timeout\` (optional) — seconds. Raise only for heavy compute or long tool calls.
 - \`reset\` (optional) — wipe this language's kernel first.
 
 JS runs under Node.js worker: top-level \`await\`/\`return\` work; \`fetch\`/\`Buffer\` available.
@@ -86,35 +133,35 @@ On error, fix and re-run only the failing step — prior calls' state survives.
 </instruction>
 
 <prelude>
-Async/\`await\`able; options = ONE trailing object literal, never positional.
+Async/\`await\`able; options = ONE trailing object literal, never positional (extras throw).
 \`\`\`
-display(value) -> None
-    Cell result; figures/images/dataframes shown natively.
-print(value, ...) -> None
-    Text stream.
-read(path, offset?=1, limit?=None) -> str
-    File as text; offset/limit are 1-indexed lines.
-write(path, content) -> str
-    Write file, creating parents, and return the resolved path.
-env(key?=None, value?=None) -> str | None | dict
-    No args -> full env dict; one -> value of key; two -> set key=value and return value.
-tool.<name>(args) -> unknown
-    Invoke any active session tool; args = its parameter object.
-completion(prompt, model?="default", system?=None, schema?=None) -> str | dict
-    Oneshot, stateless completion. model "default" uses the session model; schema is JSON Schema for structured results.
-parallel(thunks) -> list
-    Thunks through a bounded pool, input order kept; returns when all finish, a throwing thunk propagates.
-pipeline(items, ...stages) -> list
+display(value) → None
+    Cell output; figures/images/dataframes shown natively.
+print(value, ...) → None
+    Text output.
+read(path, offset?=1, limit?=None) → str
+    File as text; offset/limit are 1-indexed lines. Accepts \`local://…\`.
+write(path, content) → str
+    Write file (creates parents) → resolved path. \`local://…\` persists across turns/subagents.
+env(key?=None, value?=None) → str | None | dict
+    No args → full env dict; one → value of \`key\`; two → set \`key=value\`, return value.
+tool.<name>(args) → unknown
+    Invoke any session tool; \`args\` = its parameter object.
+completion(prompt, model?="default", system?=None, schema?=None) → str | dict
+    Oneshot, stateless (no history/tools). \`model\`: \`"smol"\` fast | \`"default"\` session | \`"slow"\` most capable. \`schema\` (JSON-Schema) → structured output, parsed object.
+parallel(thunks) → list
+    Thunks through a bounded pool (wide as a \`task\` batch — don't pre-shrink), input order kept; returns when all finish, a throwing thunk propagates.
+pipeline(items, ...stages) → list
     Map items through one-arg stages left-to-right, barrier between stages; stage 1 gets the item, later stages the previous result.
-log(message) -> None
+log(message) → None
     Progress line above the status tree.
-phase(title) -> None
+phase(title) → None
     Phase grouping subsequent status lines.
 \`\`\`
 </prelude>
 
 <critical>
-Prior top-level names survive into the next eval call — reuse them; NEVER re-import, re-require, or re-declare a helper. Re-read a file only if it may have changed since the last read. Re-run setup only after \`reset\`, a crash, or a \`NameError\`/\`ReferenceError\`.
+Prior top-level names (\`data\`, \`sessions\`, helpers, imports) survive into the next eval call — reuse them; NEVER re-import, re-require, or re-declare a helper. Re-read a file only if it may have changed since the last read.
 </critical>",
   "promptGuidelines": [
     "Use eval for incremental code execution when a persistent JS, Python, Ruby, or Julia kernel is available.",
@@ -124,60 +171,91 @@ Prior top-level names survive into the next eval call — reuse them; NEVER re-i
 }
 `;
 
-exports[`buildEvalPrompt > renders the js-py enabled-language prompt 1`] = `
+exports[`buildEvalPrompt > renders the js-py without spawns prompt 1`] = `
 {
   "description": "Run one step of code in a persistent kernel.
 
 <instruction>
 **One eval call = one cell = one logical step.** State persists per language across separate eval calls and tool calls — define helpers, datasets, and clients in one call, then later calls reuse them directly.
 
-Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after \`reset\`, a kernel crash, or a \`NameError\`/\`ReferenceError\` proving the state is gone. Parallelize work *within* a cell with the \`parallel(thunks)\` helper, not by batching steps.
+Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after \`reset\`, a kernel crash, or a \`NameError\`/\`ReferenceError\` proving the state is gone.
+
+**Batch through eval.** One cell replaces many one-shot tool calls: loop or comprehend over file sets with \`read()\`/stdlib instead of reading files one call at a time, post-process \`tool.<name>()\` results programmatically, and fan independent calls through \`parallel(thunks)\` within the cell — never one call per turn.
 
 Fields:
 
 - \`language\` — \`"py"\` IPython kernel, \`"js"\` persistent JavaScript VM.
 - \`code\` — cell body, verbatim. Newlines/quotes JSON-encoded; no fences, no headers.
 - \`title\` (optional) — short transcript label (e.g. \`"imports"\`).
-- \`timeout\` (optional) — seconds. Raise only for heavy compute or long delegated tool calls.
+- \`timeout\` (optional) — seconds. Raise only for heavy compute or long tool calls.
 - \`reset\` (optional) — wipe this language's kernel first. Per-language: a \`py\` reset never touches the JS VM.
 
-Live event loop: use top-level \`await\` directly; \`asyncio.run(...)\` raises "cannot be called from a running event loop".
+Live event loop: use top-level \`await\` directly; \`asyncio.run(…)\` raises "cannot be called from a running event loop".
 JS runs under Node.js worker: top-level \`await\`/\`return\` work; \`fetch\`/\`Buffer\` available.
 
 On error, fix and re-run only the failing step — prior calls' state survives.
 </instruction>
 
 <prelude>
-Same helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/\`await\`able, options = ONE trailing object literal, never positional.
+Same helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/\`await\`able, options = ONE trailing object literal, never positional (extras throw).
 \`\`\`
-display(value) -> None
-    Cell result; figures/images/dataframes shown natively.
-print(value, ...) -> None
-    Text stream.
-read(path, offset?=1, limit?=None) -> str
-    File as text; offset/limit are 1-indexed lines.
-write(path, content) -> str
-    Write file, creating parents, and return the resolved path.
-env(key?=None, value?=None) -> str | None | dict
-    No args -> full env dict; one -> value of key; two -> set key=value and return value.
-tool.<name>(args) -> unknown
-    Invoke any active session tool; args = its parameter object.
-completion(prompt, model?="default", system?=None, schema?=None) -> str | dict
-    Oneshot, stateless completion. model "default" uses the session model; schema is JSON Schema for structured results.
-parallel(thunks) -> list
-    Thunks through a bounded pool, input order kept; returns when all finish, a throwing thunk propagates.
-pipeline(items, ...stages) -> list
+display(value) → None
+    Cell output; figures/images/dataframes shown natively.
+print(value, ...) → None
+    Text output.
+read(path, offset?=1, limit?=None) → str
+    File as text; offset/limit are 1-indexed lines. Accepts \`local://…\`.
+write(path, content) → str
+    Write file (creates parents) → resolved path. \`local://…\` persists across turns/subagents.
+env(key?=None, value?=None) → str | None | dict
+    No args → full env dict; one → value of \`key\`; two → set \`key=value\`, return value.
+tool.<name>(args) → unknown
+    Invoke any session tool; \`args\` = its parameter object.
+completion(prompt, model?="default", system?=None, schema?=None) → str | dict
+    Oneshot, stateless (no history/tools). \`model\`: \`"smol"\` fast | \`"default"\` session | \`"slow"\` most capable. \`schema\` (JSON-Schema) → structured output, parsed object.
+parallel(thunks) → list
+    Thunks through a bounded pool (wide as a \`task\` batch — don't pre-shrink), input order kept; returns when all finish, a throwing thunk propagates.
+pipeline(items, ...stages) → list
     Map items through one-arg stages left-to-right, barrier between stages; stage 1 gets the item, later stages the previous result.
-log(message) -> None
+log(message) → None
     Progress line above the status tree.
-phase(title) -> None
+phase(title) → None
     Phase grouping subsequent status lines.
 \`\`\`
 </prelude>
 
 <critical>
-Prior top-level names survive into the next eval call — reuse them; NEVER re-import, re-require, or re-declare a helper. Re-read a file only if it may have changed since the last read. Re-run setup only after \`reset\`, a crash, or a \`NameError\`/\`ReferenceError\`.
-</critical>",
+Prior top-level names (\`data\`, \`sessions\`, helpers, imports) survive into the next eval call — reuse them; NEVER re-import, re-require, or re-declare a helper. Re-read a file only if it may have changed since the last read.
+</critical>
+
+<examples>
+### First call — set up once
+\`\`\`json
+{
+  "language": "py",
+  "title": "collect targets",
+  "code": "from pathlib import Path\\nfrom collections import Counter\\nfiles = [p for p in Path('src').rglob('*.ts') if 'test' not in p.parts]\\nprint(len(files))"
+}
+\`\`\`
+
+### Second call — reuse \`files\`, batch-read in one cell
+\`\`\`json
+{
+  "language": "py",
+  "title": "scan usages",
+  "code": "hits = Counter()\\nfor p in files:\\n    hits[p.name] = read(p).count('legacyClient')\\ndisplay({k: v for k, v in hits.items() if v})"
+}
+\`\`\`
+
+### Third call — reuse results, fan out session tools in parallel
+\`\`\`json
+{
+  "language": "py",
+  "title": "confirm callsites",
+  "code": "dirs = ['src/core', 'src/tools']\\ndisplay(parallel([lambda d=d: tool.grep({'pattern': 'legacyClient', 'path': d}) for d in dirs]))"
+}
+\`\`\`
+</examples>",
   "promptGuidelines": [
     "Use eval for incremental code execution when a persistent JS, Python, Ruby, or Julia kernel is available.",
     "Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language.",

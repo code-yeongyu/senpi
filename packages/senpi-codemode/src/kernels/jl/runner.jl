@@ -1,30 +1,36 @@
-include("prelude.jl")
-
+# allow: SIZE_OK — parser, stream capture, bridge calls, and the persistent execution loop share Main globals.
 using Sockets
 
+const SENPI_ORIGINAL_STDOUT = stdout
+const SENPI_ORIGINAL_STDIN = stdin
+out_read, out_write = redirect_stdout()
+err_read, err_write = redirect_stderr()
+redirect_stdin(devnull)
+
+include("prelude.jl")
+
 const senpi_connection = Dict{String, Any}()
+const senpi_write_lock = ReentrantLock()
+global senpi_current_cell = nothing
 
 function senpi_escape(text::AbstractString)
-    # NOTE: prelude.jl defines Main-level `write`/`read` helpers for user cells,
-    # which shadow Base within Main. Runner infrastructure must qualify Base calls
-    # explicitly (Base.write/Base.read) or it crashes with a MethodError.
     out = IOBuffer()
-    for c in text
-        if c == '"'
+    for character in text
+        if character == '"'
             Base.write(out, "\\\"")
-        elseif c == '\\'
+        elseif character == '\\'
             Base.write(out, "\\\\")
-        elseif c == '\n'
+        elseif character == '\n'
             Base.write(out, "\\n")
-        elseif c == '\r'
+        elseif character == '\r'
             Base.write(out, "\\r")
-        elseif c == '\t'
+        elseif character == '\t'
             Base.write(out, "\\t")
         else
-            Base.write(out, c)
+            Base.write(out, character)
         end
     end
-    return String(take!(out))
+    String(take!(out))
 end
 
 function senpi_json(value)
@@ -37,62 +43,192 @@ function senpi_json(value)
     elseif value isa AbstractString
         return "\"" * senpi_escape(value) * "\""
     elseif value isa AbstractDict
-        pairs = ["\"" * senpi_escape(string(k)) * "\":" * senpi_json(v) for (k, v) in value]
-        return "{" * join(pairs, ",") * "}"
+        return "{" * join(["\"" * senpi_escape(string(key)) * "\":" * senpi_json(item) for (key, item) in value], ",") * "}"
     elseif value isa AbstractVector || value isa Tuple
-        return "[" * join([senpi_json(v) for v in value], ",") * "]"
-    else
-        return "\"" * senpi_escape(string(value)) * "\""
+        return "[" * join([senpi_json(item) for item in value], ",") * "]"
     end
+    "\"" * senpi_escape(string(value)) * "\""
 end
 
-function senpi_parse_string(line::AbstractString, field::AbstractString)
-    m = match(Regex("\"" * field * "\"\\s*:\\s*\"((?:\\\\.|[^\"])*)\""), line)
-    m === nothing && return nothing
-    return replace(m.captures[1], "\\n" => "\n", "\\\"" => "\"", "\\\\" => "\\")
-end
-
-function senpi_parse_bool(line::AbstractString, field::AbstractString)
-    m = match(Regex("\"" * field * "\"\\s*:\\s*(true|false)"), line)
-    m === nothing && return nothing
-    return m.captures[1] == "true"
-end
-
-function senpi_parse_json_value(line::AbstractString)
-    value = senpi_parse_string(line, "value")
-    value !== nothing && return value
-    m = match(r""""value"\s*:\s*(true|false)""", line)
-    m !== nothing && return m.captures[1] == "true"
-    m = match(r""""value"\s*:\s*(-?\d+(?:\.\d+)?)""", line)
-    if m !== nothing
-        text = m.captures[1]
-        return occursin(".", text) ? parse(Float64, text) : parse(Int, text)
+function senpi_json_parse(input::AbstractString)
+    characters = collect(input)
+    cursor = Ref(1)
+    length_value = length(characters)
+    function skip_space()
+        while cursor[] <= length_value && isspace(characters[cursor[]])
+            cursor[] += 1
+        end
     end
-    return nothing
-end
-
-function senpi_parse_error_message(line::AbstractString)
-    message = senpi_parse_string(line, "message")
-    return message === nothing ? line : message
+    function parse_string()
+        characters[cursor[]] == '"' || error("Expected JSON string")
+        cursor[] += 1
+        out = IOBuffer()
+        while cursor[] <= length_value
+            character = characters[cursor[]]
+            cursor[] += 1
+            character == '"' && return String(take!(out))
+            if character != '\\'
+                Base.write(out, character)
+                continue
+            end
+            cursor[] <= length_value || error("Unexpected JSON string escape")
+            escaped = characters[cursor[]]
+            cursor[] += 1
+            if escaped == 'u'
+                cursor[] + 3 <= length_value || error("Incomplete JSON unicode escape")
+                code = parse(Int, String(characters[cursor[]:cursor[] + 3]); base=16)
+                Base.write(out, Char(code))
+                cursor[] += 4
+            else
+                mapped = escaped == 'n' ? '\n' : escaped == 'r' ? '\r' : escaped == 't' ? '\t' : escaped == 'b' ? '\b' : escaped == 'f' ? '\f' : escaped
+                Base.write(out, mapped)
+            end
+        end
+        error("Unterminated JSON string")
+    end
+    function parse_value()
+        skip_space()
+        cursor[] <= length_value || error("Unexpected JSON end")
+        character = characters[cursor[]]
+        if character == '"'
+            return parse_string()
+        elseif character == '{'
+            cursor[] += 1
+            object_result = Dict{String, Any}()
+            skip_space()
+            if cursor[] <= length_value && characters[cursor[]] == '}'
+                cursor[] += 1
+                return object_result
+            end
+            while true
+                skip_space()
+                key = parse_string()
+                skip_space()
+                cursor[] <= length_value && characters[cursor[]] == ':' || error("Expected JSON object colon")
+                cursor[] += 1
+                object_result[key] = parse_value()
+                skip_space()
+                cursor[] <= length_value || error("Unexpected JSON object end")
+                characters[cursor[]] == '}' && (cursor[] += 1; return object_result)
+                characters[cursor[]] == ',' || error("Expected JSON object separator")
+                cursor[] += 1
+            end
+        elseif character == '['
+            cursor[] += 1
+            array_result = Any[]
+            skip_space()
+            if cursor[] <= length_value && characters[cursor[]] == ']'
+                cursor[] += 1
+                return array_result
+            end
+            while true
+                push!(array_result, parse_value())
+                skip_space()
+                cursor[] <= length_value || error("Unexpected JSON array end")
+                characters[cursor[]] == ']' && (cursor[] += 1; return array_result)
+                characters[cursor[]] == ',' || error("Expected JSON array separator")
+                cursor[] += 1
+            end
+        elseif startswith(String(characters[cursor[]:end]), "true")
+            cursor[] += 4
+            return true
+        elseif startswith(String(characters[cursor[]:end]), "false")
+            cursor[] += 5
+            return false
+        elseif startswith(String(characters[cursor[]:end]), "null")
+            cursor[] += 4
+            return nothing
+        end
+        start = cursor[]
+        while cursor[] <= length_value && characters[cursor[]] in ['-', '+', '.', 'e', 'E', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+            cursor[] += 1
+        end
+        number = String(characters[start:cursor[] - 1])
+        integer = tryparse(Int, number)
+        integer === nothing || return integer
+        decimal = tryparse(Float64, number)
+        decimal === nothing && error("Invalid JSON value")
+        decimal
+    end
+    parsed_result = parse_value()
+    skip_space()
+    cursor[] > length_value || error("Trailing JSON data")
+    parsed_result
 end
 
 function senpi_emit(frame)
-    println(senpi_json(frame))
-    flush(stdout)
+    lock(senpi_write_lock) do
+        println(SENPI_ORIGINAL_STDOUT, senpi_json(frame))
+        flush(SENPI_ORIGINAL_STDOUT)
+    end
+    nothing
 end
 
-function senpi_call_tool(name::String, args)
-    if !haskey(senpi_connection, "port") || !haskey(senpi_connection, "token")
-        error("Julia tool bridge is not initialized")
+function senpi_emit_stream(stream::String, bytes::Vector{UInt8})
+    senpi_current_cell === nothing && return nothing
+    isempty(bytes) && return nothing
+    data = try
+        String(copy(bytes))
+    catch
+        repr(bytes)
     end
-    port = senpi_connection["port"]
-    token = senpi_connection["token"]
-    call_id = string(time_ns())
-    body = senpi_json(Dict("callId" => call_id, "toolName" => name, "args" => args))
+    senpi_emit(Dict("type" => "text", "stream" => stream, "data" => data))
+    nothing
+end
+
+function senpi_drain_stream(io, stream::String)
+    while true
+        bytes = readavailable(io)
+        if !isempty(bytes)
+            senpi_emit_stream(stream, bytes)
+        elseif eof(io)
+            return nothing
+        else
+            yield()
+            sleep(0.001)
+        end
+    end
+end
+
+@async senpi_drain_stream(out_read, "stdout")
+@async senpi_drain_stream(err_read, "stderr")
+
+function senpi_http_body(response::AbstractString)
+    parts = split(response, "\r\n\r\n"; limit=2)
+    length(parts) == 2 || return response
+    headers, body = parts
+    occursin("transfer-encoding: chunked", lowercase(headers)) || return body
+    bytes = collect(codeunits(body))
+    output = UInt8[]
+    cursor = 1
+    while cursor <= length(bytes)
+        header_end = nothing
+        for index in cursor:length(bytes) - 1
+            if bytes[index] == 0x0d && bytes[index + 1] == 0x0a
+                header_end = index
+                break
+            end
+        end
+        header_end === nothing && error("Invalid chunked bridge response")
+        chunk_size = parse(Int, split(String(bytes[cursor:header_end - 1]), ";"; limit=2)[1]; base=16)
+        cursor = header_end + 2
+        chunk_size == 0 && break
+        cursor + chunk_size - 1 <= length(bytes) || error("Truncated chunked bridge response")
+        append!(output, bytes[cursor:cursor + chunk_size - 1])
+        cursor += chunk_size + 2
+    end
+    String(output)
+end
+
+function senpi_bridge_request(path::String, payload)
+    port = get(senpi_connection, "port", nothing)
+    token = get(senpi_connection, "token", nothing)
+    port isa Integer && token isa AbstractString || error("Julia tool bridge is not initialized")
+    body = senpi_json(payload)
     socket = connect(ip"127.0.0.1", port)
     try
         request = join([
-            "POST /call HTTP/1.1",
+            "POST " * path * " HTTP/1.1",
             "Host: 127.0.0.1",
             "Authorization: Bearer " * string(token),
             "Content-Type: application/json",
@@ -104,44 +240,88 @@ function senpi_call_tool(name::String, args)
         Base.write(socket, request)
         flush(socket)
         response = Base.read(socket, String)
-        parts = split(response, "\r\n\r\n"; limit=2)
-        response_body = length(parts) == 2 ? parts[2] : response
-        if senpi_parse_bool(response_body, "ok") == true
-            return senpi_parse_json_value(response_body)
-        end
-        error(senpi_parse_error_message(response_body))
+        parsed = senpi_json_parse(senpi_http_body(response))
+        parsed isa AbstractDict || error("Bridge returned invalid JSON")
+        get(parsed, "ok", false) === true && return get(parsed, "value", nothing)
+        failure = get(parsed, "error", parsed)
+        error(failure isa AbstractDict ? string(get(failure, "message", failure)) : string(failure))
     finally
         close(socket)
     end
 end
 
-while !eof(stdin)
-    line = readline(stdin)
-    type = senpi_parse_string(line, "type")
-    if type == "init"
-        port_match = match(r""""port"\s*:\s*(\d+)""", line)
-        token = senpi_parse_string(line, "token")
-        if port_match !== nothing && token !== nothing
-            senpi_connection["port"] = parse(Int, port_match.captures[1])
-            senpi_connection["token"] = token
+function senpi_call_tool(name::String, arguments)
+    senpi_bridge_request("/call", Dict("callId" => "jl-" * string(time_ns()), "toolName" => name, "args" => arguments))
+end
+
+function senpi_completion(prompt::String, options)
+    senpi_bridge_request("/completion", Dict("prompt" => prompt, "opts" => options))
+end
+
+function senpi_error(error)
+    message = sprint(showerror, error)
+    Dict("name" => string(typeof(error)), "message" => message)
+end
+
+function senpi_should_display_result(parsed)
+    if parsed isa Expr && parsed.head === :block && !isempty(parsed.args)
+        last = parsed.args[end]
+        if last isa Expr && last.head in [Symbol("="), :function, :struct, :using, :import, :const, :global, :local, :macro]
+            return false
         end
-        senpi_emit(Dict("type" => "ready"))
-    elseif type == "run"
-        cell_id = senpi_parse_string(line, "cellId")
-        code = senpi_parse_string(line, "code")
-        started = time()
-        try
-            value = Core.eval(Main, Meta.parse(code))
-            frame = Dict("type" => "result", "cellId" => cell_id, "ok" => true, "durationMs" => round(Int, (time() - started) * 1000))
-            if value !== nothing
-                frame["valueRepr"] = senpi_json(value)
-            end
-            senpi_emit(frame)
-        catch err
-            senpi_emit(Dict("type" => "result", "cellId" => cell_id, "ok" => false, "error" => Dict("message" => string(err)), "durationMs" => round(Int, (time() - started) * 1000)))
+    end
+    true
+end
+
+function senpi_set_connection(value)
+    value isa AbstractDict || error("missing bridge connection")
+    empty!(senpi_connection)
+    for (key, item) in value
+        senpi_connection[string(key)] = item
+    end
+end
+
+function senpi_run_cell(message)
+    cell_id = string(get(message, "cellId", ""))
+    code = string(get(message, "code", ""))
+    started = time()
+    global senpi_current_cell = cell_id
+    try
+        parsed = Meta.parse("begin\n" * code * "\nend")
+        if parsed isa Expr && parsed.head === :error
+            error(string(parsed.args[1]))
         end
-    elseif type == "close"
-        senpi_emit(Dict("type" => "closed"))
-        exit(0)
+        value = Core.eval(Main, parsed)
+        flush(stdout)
+        flush(stderr)
+        yield()
+        frame = Dict{String, Any}("type" => "result", "cellId" => cell_id, "ok" => true, "durationMs" => round(Int, (time() - started) * 1000))
+        value !== nothing && senpi_should_display_result(parsed) && (frame["valueRepr"] = senpi_json(value))
+        senpi_emit(frame)
+    catch error
+        senpi_emit(Dict("type" => "result", "cellId" => cell_id, "ok" => false, "error" => senpi_error(error), "durationMs" => round(Int, (time() - started) * 1000)))
+    finally
+        global senpi_current_cell = nothing
+    end
+end
+
+while !eof(SENPI_ORIGINAL_STDIN)
+    line = readline(SENPI_ORIGINAL_STDIN)
+    isempty(line) && continue
+    try
+        message = senpi_json_parse(line)
+        message isa AbstractDict || error("Bridge frame must be an object")
+        kind = get(message, "type", nothing)
+        if kind == "init"
+            senpi_set_connection(get(message, "connection", nothing))
+            senpi_emit(Dict("type" => "ready"))
+        elseif kind == "run"
+            senpi_run_cell(message)
+        elseif kind == "close"
+            senpi_emit(Dict("type" => "closed"))
+            break
+        end
+    catch error
+        senpi_emit(Dict("type" => "init-failed", "error" => senpi_error(error)))
     end
 end

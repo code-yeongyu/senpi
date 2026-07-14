@@ -1,11 +1,11 @@
 import type { AgentToolResult } from "@code-yeongyu/senpi";
 import type { ImageProtocol } from "@earendil-works/pi-tui";
-import type { renderEvalCall, renderEvalResult } from "../src/tool/render.ts";
-import type { EvalToolDetails } from "../src/tool/types.ts";
+import type { EvalRenderComponent, renderEvalCall, renderEvalResult } from "../src/tool/render.ts";
+import type { EvalToolDetails, EvalToolInput } from "../src/tool/types.ts";
 
 type CallContext = Parameters<typeof renderEvalCall>[2];
 type ResultContext = Parameters<typeof renderEvalResult>[3];
-export type EvalComponent = ReturnType<typeof renderEvalCall>;
+export type EvalComponent = EvalRenderComponent;
 
 export interface RenderContextOptions {
 	readonly lastComponent?: EvalComponent;
@@ -13,6 +13,8 @@ export interface RenderContextOptions {
 	readonly showImages?: boolean;
 	readonly imageProtocol?: ImageProtocol;
 	readonly isError?: boolean;
+	readonly spinnerFrame?: number;
+	readonly args?: EvalToolInput;
 }
 
 function isEvalComponent(input: EvalComponent | RenderContextOptions): input is EvalComponent {
@@ -33,7 +35,7 @@ export function callContext(options?: RenderContextOptions): CallContext;
 export function callContext(input?: EvalComponent | RenderContextOptions): CallContext {
 	const options = resolveContextOptions(input, false);
 	return {
-		args: { language: "js", code: "" },
+		args: options.args ?? { language: "js", code: "" },
 		toolCallId: "eval-render-call",
 		invalidate: () => {},
 		lastComponent: options.lastComponent,
@@ -46,6 +48,7 @@ export function callContext(input?: EvalComponent | RenderContextOptions): CallC
 		showImages: options.showImages ?? false,
 		imageProtocol: options.imageProtocol ?? null,
 		isError: options.isError ?? false,
+		...(options.spinnerFrame === undefined ? {} : { spinnerFrame: options.spinnerFrame }),
 	};
 }
 
@@ -54,7 +57,7 @@ export function resultContext(options?: RenderContextOptions): ResultContext;
 export function resultContext(input?: EvalComponent | RenderContextOptions, showImages = false): ResultContext {
 	const options = resolveContextOptions(input, showImages);
 	return {
-		args: { language: "js", code: "" },
+		args: options.args ?? { language: "js", code: "" },
 		toolCallId: "eval-render-result",
 		invalidate: () => {},
 		lastComponent: options.lastComponent,
@@ -67,11 +70,16 @@ export function resultContext(input?: EvalComponent | RenderContextOptions, show
 		showImages: options.showImages ?? false,
 		imageProtocol: options.imageProtocol ?? null,
 		isError: options.isError ?? false,
+		...(options.spinnerFrame === undefined ? {} : { spinnerFrame: options.spinnerFrame }),
 	};
 }
 
 export function renderLines(component: EvalComponent): string[] {
 	return component.render(80);
+}
+
+export function stripAnsi(text: string): string {
+	return text.replace(/\u001b\[[0-9;]*m/gu, "");
 }
 
 export function evalResult(details: EvalToolDetails, text: string): AgentToolResult<EvalToolDetails> {

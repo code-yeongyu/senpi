@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type { ExtensionContext } from "@code-yeongyu/senpi";
 import { type BridgeServerHandle, startBridgeServer } from "../bridge/http-server.ts";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
@@ -16,11 +17,20 @@ export interface CodemodeSessionManager extends EvalKernelManager {
 	setContext?(ctx: ExtensionContext): void;
 }
 
+export interface EvalExecutionTracker {
+	assertEvalExecutionAllowed(): void;
+	trackEvalExecution<Result>(execution: Promise<Result>, controller: AbortController): Promise<Result>;
+}
+
 export interface CreateCodemodeSessionManagerOptions {
 	readonly sessionId: string;
 	readonly cwd: string;
 	readonly settings: CodemodeSettings;
 	readonly availability: InterpreterAvailability;
+	/** Session-scoped roots exposed to kernel helpers such as local://. */
+	readonly localRoots?: Readonly<Record<string, string>>;
+	/** Session-adjacent directory used for persisted eval artifacts. */
+	readonly artifactsDir?: string;
 	readonly executeTool: ExecuteTool;
 	readonly complete: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>;
 }
@@ -33,7 +43,7 @@ export async function createCodemodeSessionManager(
 	return manager;
 }
 
-class CodemodeSessionDisposedError extends Error {
+export class CodemodeSessionDisposedError extends Error {
 	readonly name = "CodemodeSessionDisposedError";
 
 	constructor() {
@@ -148,17 +158,28 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 	async #createKernel(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): Promise<EvalKernel> {
 		const bridge = this.#bridge;
 		if (!bridge) throw new Error("codemode bridge server is not running");
+		const configuredPoolWidth = this.#options.settings.parallelPoolWidth;
+		const parallelPoolWidth = Number.isFinite(configuredPoolWidth) ? Math.max(1, Math.trunc(configuredPoolWidth)) : 1;
 		if (language === "js") {
 			return new JavaScriptKernel({
 				sessionId: this.#options.sessionId,
 				cwd: this.#options.cwd,
-				parallelPoolWidth: this.#options.settings.parallelPoolWidth,
+				parallelPoolWidth,
 				onMessage,
 			});
 		}
 		const detected = this.#options.availability[language].detected;
 		if (!detected.ok) throw new Error(`No ${language} interpreter is available`);
-		const connection = { port: bridge.port, token: bridge.token };
+		const localRoots =
+			this.#options.localRoots ??
+			(this.#options.artifactsDir ? { local: join(this.#options.artifactsDir, "local") } : undefined);
+		const connection = {
+			port: bridge.port,
+			token: bridge.token,
+			parallelPoolWidth,
+			...(localRoots ? { localRoots: { ...localRoots } } : {}),
+			...(this.#options.artifactsDir ? { artifactsDir: this.#options.artifactsDir } : {}),
+		};
 		if (language === "py") {
 			return await PythonKernel.start({
 				interpreterPath: detected.path,
