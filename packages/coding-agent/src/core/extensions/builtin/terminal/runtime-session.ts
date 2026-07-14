@@ -1,8 +1,7 @@
 import {
-	createTerminalSession,
 	TerminalScreen,
 	type TerminalScreenSnapshot,
-	type TerminalSession,
+	TerminalSession,
 	type TerminalSessionExit,
 	type TerminalSessionOptions,
 } from "@earendil-works/pi-pty";
@@ -50,9 +49,10 @@ export class TerminalRuntimeSession {
 			rows: options.rows,
 			scrollback: options.scrollback ?? DEFAULT_SCROLLBACK,
 		});
-		this.session = createTerminalSession(options);
+		this.session = new TerminalSession(options);
 		this.unsubscribeData = this.session.onData((chunk) => this.ingest(chunk));
 		this.session.onExit(() => this.settleWaiters("exited"));
+		this.session.start();
 	}
 
 	get backend(): string | null {

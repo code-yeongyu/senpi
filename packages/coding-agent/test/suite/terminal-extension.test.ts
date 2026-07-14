@@ -1,3 +1,4 @@
+import { TerminalSession } from "@earendil-works/pi-pty";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createBuiltinParserRegistry } from "../../src/core/extensions/builtin/permission-system/parsers.ts";
 import registerTerminalExtension from "../../src/core/extensions/builtin/terminal/index.ts";
@@ -148,6 +149,31 @@ describe("terminal builtin extension — real session execution (pipe fallback)"
 		const resized = await resize.execute("call-resize", { bash_id: bashId, cols: 100, rows: 30 });
 		// Pipe fallback cannot resize a real PTY, so it returns an informative note, not a hard error.
 		expect(firstText(resized).toLowerCase()).toContain("resize");
+	});
+});
+
+describe("terminal runtime session startup ordering", () => {
+	it("subscribes to output before starting a fast session", () => {
+		const calls: string[] = [];
+		const start = vi.spyOn(TerminalSession.prototype, "start").mockImplementation(function (this: TerminalSession) {
+			calls.push("start");
+			return this;
+		});
+		const onData = vi.spyOn(TerminalSession.prototype, "onData").mockImplementation(() => {
+			calls.push("onData");
+			return () => {};
+		});
+		const onExit = vi.spyOn(TerminalSession.prototype, "onExit").mockReturnValue(() => {});
+
+		const runtime = new TerminalRuntimeSession("fast-exit", { command: "true" });
+		try {
+			expect(calls).toEqual(["onData", "start"]);
+		} finally {
+			runtime.dispose();
+			start.mockRestore();
+			onData.mockRestore();
+			onExit.mockRestore();
+		}
 	});
 });
 
