@@ -39,7 +39,7 @@ turn-adapter.ts       Agent/session events to app-server turn events
 ## GENERATED PROTOCOL
 
 - The pinned raw protocol comes from Codex and is regenerated with `packages/coding-agent/scripts/generate-app-server-protocol.sh`.
-- Keep `protocol/generated/**/*.ts` byte-identical to generator output. The local `generated/package.json` is only a compilation shim.
+- Keep `protocol/generated/**/*.ts` byte-identical to generator output. The local `protocol/generated/package.json` is only a compilation shim.
 - Wire compatibility is defined by runtime message shape and the app-facing facade. Existing type-only imports from the generated tree are compatibility gaps, not permission to add runtime dependencies on it.
 
 ## VALIDATION
