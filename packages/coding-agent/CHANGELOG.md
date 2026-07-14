@@ -6,6 +6,8 @@
 
 ### Changed
 
+- Improved the bundled `eval` tool instructions and examples to teach persistent-state reuse, batch file processing, and parallel session-tool fan-out within a single cell.
+
 ### Fixed
 
 - Fixed built-in web search discovery so model aliases sharing a provider endpoint no longer multiply serial fallback attempts, aborting a search stops pending native authentication discovery, and dotted private host spellings are rejected before auth or fetch ([upstream #5](https://github.com/code-yeongyu/pi-websearch/pull/5), [upstream #6](https://github.com/code-yeongyu/pi-websearch/pull/6)).

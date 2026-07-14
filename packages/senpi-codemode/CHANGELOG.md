@@ -6,6 +6,8 @@
 
 ### Changed
 
+- Improved the `eval` prompt instructions and reuse-chain examples to teach persistent-state reuse, batch file processing, and parallel session-tool fan-out within a single cell.
+
 ### Fixed
 
 ## [2026.7.13] - 2026-07-13
