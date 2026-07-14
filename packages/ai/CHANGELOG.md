@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Preserved Anthropic server-side web search `encrypted_content` during same-model replay so follow-up turns no longer fail after native web searches ([#208](https://github.com/code-yeongyu/senpi/pull/208)).
+
 ### Removed
 
 ## [2026.7.14] - 2026-07-14
