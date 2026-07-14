@@ -86,7 +86,7 @@ fn fast_exit_command() -> PtySessionOptions {
         .arg("/d")
         .arg("/q")
         .arg("/c")
-        .arg("<nul set /p =fast-exit-final-output")
+        .arg("echo fast-exit-final-output")
         .timeout(Duration::from_secs(120))
 }
 
