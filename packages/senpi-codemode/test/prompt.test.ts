@@ -83,19 +83,18 @@ describe("buildEvalPrompt", () => {
 	});
 
 	it("filters reuse-chain examples by enabled language", () => {
-		// Given: prompts that each expose one language from the upstream example set.
+		// Given: prompts exposing the Python example set and kernels without one.
 		const python = buildEvalPrompt({ py: true, js: false, rb: false, jl: false }, { spawns: false }).description;
 		const ruby = buildEvalPrompt({ py: false, js: false, rb: true, jl: false }, { spawns: false }).description;
 		const node = buildEvalPrompt({ py: false, js: true, rb: false, jl: false }, { spawns: false }).description;
 
 		// When: their embedded reuse-chain examples are rendered.
-		// Then: each prompt contains only examples its kernels can execute.
-		expect(python).toContain("import json");
-		expect(python).not.toContain("require ");
-		expect(ruby).toContain("require ");
-		expect(ruby).not.toContain("import json");
-		expect(node).not.toContain("require ");
-		expect(node).not.toContain("import json");
+		// Then: only Python kernels carry examples, and those teach batch + tool bridging.
+		expect(python).toContain("collect targets");
+		expect(python).toContain("tool.grep");
+		expect(python).toContain("parallel([");
+		expect(ruby).not.toContain("<examples>");
+		expect(node).not.toContain("<examples>");
 	});
 
 	it("documents core helpers with Node wording and no excluded surface", () => {

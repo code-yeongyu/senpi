@@ -25,37 +25,28 @@ type EvalPromptExample = {
 	readonly code: string;
 };
 
-// senpi ToolDefinition has no examples field, so description embeds parity examples.
+// senpi ToolDefinition has no examples field, so description embeds the examples.
+// ADAPTATION: payloads diverge from omp's json-config chain to teach batch read,
+// comprehension filtering, and parallel tool.<name> fan-out while keeping the
+// three-cell reuse narrative.
 const REUSE_CHAIN_EXAMPLES = [
 	{
 		caption: "First call — set up once",
 		language: "py",
-		title: "imports",
-		code: "import json\nfrom pathlib import Path",
+		title: "collect targets",
+		code: "from pathlib import Path\nfrom collections import Counter\nfiles = [p for p in Path('src').rglob('*.ts') if 'test' not in p.parts]\nprint(len(files))",
 	},
 	{
-		caption: "Second call — reuse, do NOT re-import",
+		caption: "Second call — reuse `files`, batch-read in one cell",
 		language: "py",
-		title: "load config",
-		code: "data = json.loads(read('package.json'))\ndisplay(data)",
+		title: "scan usages",
+		code: "hits = Counter()\nfor p in files:\n    hits[p.name] = read(p).count('legacyClient')\ndisplay({k: v for k, v in hits.items() if v})",
 	},
 	{
-		caption: "Third call — reuse the loaded config",
+		caption: "Third call — reuse results, fan out session tools in parallel",
 		language: "py",
-		title: "scan deps",
-		code: "display(sorted(data['dependencies']))",
-	},
-	{
-		caption: "Ruby first call — set up once",
-		language: "rb",
-		title: "setup",
-		code: "require 'json'\npkg_path = 'package.json'",
-	},
-	{
-		caption: "Ruby second call — reuse, do NOT re-require",
-		language: "rb",
-		title: "load config",
-		code: "pkg = JSON.parse(read(pkg_path))\ndisplay(pkg.keys.sort)",
+		title: "confirm callsites",
+		code: "dirs = ['src/core', 'src/tools']\ndisplay(parallel([lambda d=d: tool.grep({'pattern': 'legacyClient', 'path': d}) for d in dirs]))",
 	},
 ] as const satisfies readonly EvalPromptExample[];
 
@@ -64,7 +55,9 @@ const EVAL_PROMPT_TEMPLATE = `Run one step of code in a persistent kernel.
 <instruction>
 **One eval call = one cell = one logical step.** State persists per language across separate eval calls and tool calls{{#if spawns}}, and \`task\` subagents{{/if}} — define helpers, datasets, and clients in one call, then later calls reuse them directly.
 
-Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after \`reset\`, a kernel crash, or a \`NameError\`/\`ReferenceError\` proving the state is gone. Parallelize work *within* a cell with the \`parallel(thunks)\` helper, not by batching steps.
+Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after \`reset\`, a kernel crash, or a \`NameError\`/\`ReferenceError\` proving the state is gone.
+
+**Batch through eval.** One cell replaces many one-shot tool calls: loop or comprehend over file sets with \`read()\`/stdlib instead of reading files one call at a time, post-process \`tool.<name>()\` results programmatically, and fan independent calls through \`parallel(thunks)\` within the cell — never one call per turn.
 
 Fields:
 
@@ -125,7 +118,7 @@ Pipe handles through stage helpers to build a dependency graph — acyclic waves
 {{/if}}
 
 <critical>
-Prior top-level names (\`data\`, \`sessions\`, helpers, imports) survive into the next eval call — reuse them; NEVER re-import, re-require, or re-declare a helper. Re-read a file only if it may have changed since the last read. Re-run setup only after \`reset\`, a crash, or a \`NameError\`/\`ReferenceError\`.
+Prior top-level names (\`data\`, \`sessions\`, helpers, imports) survive into the next eval call — reuse them; NEVER re-import, re-require, or re-declare a helper. Re-read a file only if it may have changed since the last read.
 </critical>`;
 
 export function buildEvalPrompt(
