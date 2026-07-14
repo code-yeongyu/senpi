@@ -143,6 +143,29 @@ senpi --provider openrouter-gemma --model "google/gemma-4-31b-it" -p "Use bash t
 
 ---
 
+### 4. Anthropic XML Protocol
+
+The Anthropic XML format uses an attribute-bearing `<invoke>` element with nested `<parameter>` elements.
+
+Add an OpenAI-compatible custom model with `"toolCallFormat": "anthropic-xml"`, then run:
+
+```bash
+senpi --provider <provider> --model <model> -p \
+  "Use the Bash tool to run 'printf anthropic-xml-ok' and report the output."
+```
+
+**Expected Behavior:**
+- The model emits `<invoke name="Bash"><parameter name="command">printf anthropic-xml-ok</parameter></invoke>`.
+- The middleware resolves the declared tool name, parses schema-typed parameters, and executes the tool.
+- The tool result or final response contains `anthropic-xml-ok`.
+
+**Protocol Format Details:**
+- Multiple `<parameter>` elements are allowed.
+- An optional `<function_calls>` wrapper is accepted only when it contains a recognized complete invocation.
+- Incomplete retained fragments are bounded and released according to the middleware error policy.
+
+---
+
 ## Troubleshooting
 
 ### Common Issues
@@ -232,6 +255,7 @@ Look for the `toolCallFormat` field in the output. Valid values are:
 - `hermes` - For Qwen and other Hermes-format models
 - `xml` or `morphXml` - For Gemini and XML-based models
 - `gemma4-delimiter` - For Gemma 4 models
+- `anthropic-xml` - For legacy Anthropic invoke/parameter XML
 - `native` - For models with native tool calling (OpenAI, Anthropic)
 
 ## Summary Table
@@ -241,3 +265,4 @@ Look for the `toolCallFormat` field in the output. Valid values are:
 | Hermes | openrouter-qwen | qwen/qwen3.5-27b | `senpi --provider openrouter-qwen --model "qwen/qwen3.5-27b" -p "Read package.json"` |
 | MorphXml | openrouter-gemini | google/gemini-3-flash-preview | `senpi --provider openrouter-gemini --model "google/gemini-3-flash-preview" -p "List TypeScript files"` |
 | Gemma4 | openrouter-gemma | google/gemma-4-31b-it | `senpi --provider openrouter-gemma --model "google/gemma-4-31b-it" -p "Run date command"` |
+| Anthropic XML | custom OpenAI-compatible provider | compatible text-tool model | `senpi --provider <provider> --model <model> -p "Use Bash to run printf anthropic-xml-ok"` |

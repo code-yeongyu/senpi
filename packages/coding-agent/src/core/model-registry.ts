@@ -135,6 +135,7 @@ const OpenAICompletionsCompatSchema = Type.Object({
 	supportsStrictMode: Type.Optional(Type.Boolean()),
 	toolCallFormat: Type.Optional(
 		Type.Union([
+			Type.Literal("anthropic-xml"),
 			Type.Literal("hermes"),
 			Type.Literal("gemma4"),
 			Type.Literal("gemma4-delimiter"),

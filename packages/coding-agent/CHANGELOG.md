@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added `anthropic-xml` as a valid `compat.toolCallFormat` in custom `models.json` provider and model definitions.
+
 ### Changed
 
 ### Fixed

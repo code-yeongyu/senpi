@@ -39,3 +39,16 @@
 - `packages/ai/src/tool-call-middleware/protocols/*`
 - `packages/ai/src/tool-call-middleware/types.ts`
 - `packages/ai/test/tool-call-middleware/*`
+
+## 2026-07-14 - Anthropic legacy XML tool-call protocol
+
+### What changed and why
+
+- Added the `anthropic-xml` text-tool protocol for OpenAI-compatible models that emit legacy Anthropic-style
+  `<invoke name="..."><parameter name="...">...</parameter></invoke>` calls.
+- Registered the format in the middleware protocol registry, compatibility whitelist, and coding-agent custom-model schema.
+- Added batch, streaming, resource-bound, formatter, coercion, registration, and faux-provider end-to-end coverage.
+
+### Why the extension system could not handle this
+
+- Text-tool parsing and custom-model format validation happen in shared AI and coding-agent core before extension tool execution.
