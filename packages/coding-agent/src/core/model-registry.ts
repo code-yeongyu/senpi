@@ -6,11 +6,11 @@ import {
 	type AnthropicMessagesCompat,
 	type Api,
 	type AssistantMessageEventStream,
+	type BuiltinProvider,
 	type CacheRetention,
 	type Context,
 	getModels,
 	getProviders,
-	type KnownProvider,
 	type Model,
 	type OAuthProviderInterface,
 	type OpenAICompletionsCompat,
@@ -30,6 +30,7 @@ import { stripJsonComments } from "../utils/json.ts";
 import { normalizePath } from "../utils/paths.ts";
 import type { AuthStatus, AuthStorage } from "./auth-storage.ts";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "./provider-display-names.ts";
+import { registerCustomRadiusOAuthProvider } from "./radius.ts";
 import {
 	getConfigValueEnvVarNames,
 	isCommandConfigValue,
@@ -143,12 +144,18 @@ const OpenAICompletionsCompatSchema = Type.Object({
 			Type.Literal("yaml-xml"),
 		]),
 	),
+	sendSessionAffinityHeaders: Type.Optional(Type.Boolean()),
+	sessionAffinityFormat: Type.Optional(
+		Type.Union([Type.Literal("openai"), Type.Literal("openai-nosession"), Type.Literal("openrouter")]),
+	),
 	supportsLongCacheRetention: Type.Optional(Type.Boolean()),
 });
 
 const OpenAIResponsesCompatSchema = Type.Object({
 	supportsDeveloperRole: Type.Optional(Type.Boolean()),
-	sendSessionIdHeader: Type.Optional(Type.Boolean()),
+	sessionAffinityFormat: Type.Optional(
+		Type.Union([Type.Literal("openai"), Type.Literal("openai-nosession"), Type.Literal("openrouter")]),
+	),
 	supportsLongCacheRetention: Type.Optional(Type.Boolean()),
 	supportsWebSocket: Type.Optional(Type.Boolean()),
 	supportsWebSearchPreview: Type.Optional(Type.Boolean()),
@@ -254,6 +261,9 @@ const ProviderConfigSchema = Type.Object({
 	baseUrl: Type.Optional(Type.String({ minLength: 1 })),
 	apiKey: Type.Optional(Type.String({ minLength: 1 })),
 	api: Type.Optional(Type.String({ minLength: 1 })),
+	/** OAuth flavor spoken by this provider's endpoint. Registers a sign-in
+	 * provider with a dynamic model catalog (e.g. a custom Radius gateway). */
+	oauth: Type.Optional(Type.Literal("radius")),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
 	extraBody: Type.Optional(ExtraBodySchema),
 	cacheRetention: Type.Optional(CacheRetentionSchema),
@@ -529,7 +539,7 @@ export class ModelRegistry {
 				return [];
 			}
 
-			const models = getModels(provider as KnownProvider) as Model<Api>[];
+			const models = getModels(provider as BuiltinProvider) as Model<Api>[];
 			const providerOverride = overrides.get(provider);
 			const perModelOverrides = modelOverrides.get(provider);
 			const whitelist = modelWhitelists.get(provider);
@@ -634,6 +644,12 @@ export class ModelRegistry {
 					});
 				}
 
+				if (providerConfig.oauth === "radius") {
+					// Must run before the modifyModels loop in loadModels() so the
+					// credential-cached catalog is injected on this load.
+					registerCustomRadiusOAuthProvider(providerName, providerConfig.name, providerConfig.baseUrl!);
+				}
+
 				this.storeProviderRequestConfig(providerName, providerConfig);
 
 				if (providerConfig.modelOverrides) {
@@ -676,7 +692,11 @@ export class ModelRegistry {
 			const hasModelOverrides =
 				providerConfig.modelOverrides && Object.keys(providerConfig.modelOverrides).length > 0;
 
-			if (models.length === 0) {
+			if (providerConfig.oauth && !providerConfig.baseUrl) {
+				throw new Error(`Provider ${providerName}: "baseUrl" is required when "oauth" is set.`);
+			}
+
+			if (models.length === 0 && !providerConfig.oauth) {
 				// Override-only config: needs baseUrl, headers, compat, modelOverrides, extraBody, or some combination.
 				if (
 					!providerConfig.baseUrl &&
@@ -689,7 +709,7 @@ export class ModelRegistry {
 					!providerConfig.blacklist
 				) {
 					throw new Error(
-						`Provider ${providerName}: must specify "baseUrl", "headers", "compat", "cacheRetention", "modelOverrides", "extraBody", or "models".`,
+						`Provider ${providerName}: must specify "baseUrl", "headers", "compat", "cacheRetention", "modelOverrides", "extraBody", "whitelist", "blacklist", or "models".`,
 					);
 				}
 			} else if (!isBuiltIn) {
@@ -736,7 +756,7 @@ export class ModelRegistry {
 		const getBuiltInDefaults = (providerName: string): { api: string; baseUrl: string } | undefined => {
 			if (!builtInProviders.has(providerName)) return undefined;
 			if (builtInDefaultsCache.has(providerName)) return builtInDefaultsCache.get(providerName);
-			const builtIn = getModels(providerName as KnownProvider) as Model<Api>[];
+			const builtIn = getModels(providerName as BuiltinProvider) as Model<Api>[];
 			if (builtIn.length === 0) return undefined;
 			const defaults = { api: builtIn[0].api, baseUrl: builtIn[0].baseUrl };
 			builtInDefaultsCache.set(providerName, defaults);

@@ -91,6 +91,7 @@ export interface OpenAICodexResponsesOptions extends StreamOptions {
 	reasoningSummary?: "auto" | "concise" | "detailed" | "off" | "on" | null;
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
 	textVerbosity?: "low" | "medium" | "high";
+	toolChoice?: "auto" | "none" | "required";
 }
 
 type CodexResponseStatus = "completed" | "incomplete" | "failed" | "cancelled" | "queued" | "in_progress";
@@ -103,7 +104,7 @@ interface RequestBody {
 	previous_response_id?: string;
 	input?: ResponseInput;
 	tools?: OpenAITool[];
-	tool_choice?: "auto";
+	tool_choice?: OpenAICodexResponsesOptions["toolChoice"];
 	parallel_tool_calls?: boolean;
 	temperature?: number;
 	reasoning?: { effort?: string; summary?: string };
@@ -517,7 +518,7 @@ function buildRequestBody(
 		text: { verbosity: options?.textVerbosity || "low" },
 		include: ["reasoning.encrypted_content"],
 		prompt_cache_key: clampOpenAIPromptCacheKey(options?.sessionId),
-		tool_choice: "auto",
+		tool_choice: options?.toolChoice ?? "auto",
 		parallel_tool_calls: true,
 	};
 
