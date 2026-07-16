@@ -6,6 +6,8 @@
 
 ### Fixed
 
+- Fixed inherited OpenCode Go catalog metadata to include Grok 4.5 and Kimi K3, and refreshed OpenRouter pricing metadata from upstream v0.80.10.
+
 ### Removed
 
 ## [2026.7.16-2] - 2026-07-16
