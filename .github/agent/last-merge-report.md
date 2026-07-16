@@ -3,61 +3,56 @@
 ## Upstream
 
 - Upstream repo: `badlogic/pi-mono`
-- Latest upstream release tag: `v0.80.7`
-- Release tag SHA: `818d67457cdd6b60bce6b121d16b23141c252dd8`
-- Merged `upstream/main` SHA: `c6d8371521fc8357958bb21fd43552c15f46c7f4`
-- Fork base SHA: `81c77f94d21449c28f87a7483ed36ba0b7650838`
-- Merge commit: `1b32d5b76066af5eb5dd789ba7d31f0429b50c62`
-- Pin commit: `dd8123f92`
-- Changelog audit commits: `7b76f7fa7`, `cf0c28473`
+- Latest upstream release tag: `v0.80.10`
+- Release tag SHA: `8dc78834cde4e329284cf505f9e3f99763df5529`
+- Merged `upstream/main` SHA: `216e672e7c9fc65682553394b74e483c0c9e47f7`
+- Previous fork HEAD: `3abc5cffc8de715c66649f121adbc0d363106bf6`
+- Merge commit: `8230be00de8035504a86f9831e5e18709211c5e5`
+- Pin commit: `8ba58577f606e49f794123dd0e585f045f0ea7f6`
+- Changelog audit commit: `771630a89623c5b7272c905507422146b37d3aa1`
 
 ## Preserved Fork Work
 
-- Preserved the fork's CalVer release history, package identity, bundled workspace layout, and existing post-`v2026.7.14-3` GPT-5.6 prompt refinements.
-- Retained `AuthStorage`, `ModelRegistry`, and their SDK options as compatibility facades while adopting upstream `ModelRuntime` as the canonical model/auth implementation.
-- Retained extension OAuth callback types, provider display names, faux-provider registration, synchronous model configuration for legacy consumers, and configurable provider/model metadata used by the fork.
-- Preserved fork compaction/session behavior and fixed automatic compaction to retain user, OMO steer, and goal follow-up messages appended while context is rebuilt.
+- Preserved the fork branch history with a `git merge --no-ff` merge; no rebase, force-push, tag creation, PR creation, or release script was run.
+- Preserved fork package identities, CalVer package versions, Senpi branding, config directories, Node 24+ engine policy, bundled workspace layout, and generated install/publish lock conventions.
+- Preserved fork changelog history and existing released sections; upstream release-only version headers were not copied into fork released sections.
+- Preserved 1,641 fork-side commits already ahead of `upstream/main` before the merge, with previous fork HEAD `3abc5cffc8de715c66649f121adbc0d363106bf6` as the merge commit's first parent.
 
 ## Conflicts Resolved
 
-- Merged upstream provider-owned auth, OAuth, dynamic model catalogs, Cloudflare streams, Radius support, and lazy provider changes while retaining fork compatibility exports and adapters.
-- Reconciled the new `ModelRuntime` architecture with fork SDK, extension, model-selector, auth-storage, and test-harness consumers.
-- Preserved fork `models.json` capabilities for disabled providers, whitelists/blacklists, prompt presets, cache retention, service tiers, upstream model IDs, configured headers, and command-backed values.
-- Kept fork documentation and released changelog history while restoring all applicable upstream `[Unreleased]` entries.
-- Regenerated the tracked `packages/ai/dist/cli.js` output from the merged CLI source.
-
-## Focused Fixes
-
-- Added legacy model/auth compatibility facades and credential propagation across SDK-created sessions.
-- Propagated configured SDK stream idle timeouts into agent construction.
-- Preserved messages appended during automatic compaction when the original message prefix remains unchanged.
-- Applied Biome's static-property-access cleanups required for a zero-diagnostic repository check.
+- `package-lock.json`: took the upstream conflict side, then regenerated with `npm install --package-lock-only --ignore-scripts`; final diff contains the upstream example-extension version refresh and remains consistent with fork metadata.
+- `packages/coding-agent/install-lock/package-lock.json` and `packages/coding-agent/publish-deps.lock.json`: regenerated through `node scripts/generate-coding-agent-install-lock.mjs` and `node scripts/generate-coding-agent-shrinkwrap.mjs` after preserving fork package names and versions.
+- Package manifests under `packages/{ai,agent,coding-agent,orchestrator,tui}`: preserved fork names, versions, dependency graph, build scripts, and engine policy instead of upstream release-version metadata.
+- Changelogs under `packages/{ai,agent,coding-agent,orchestrator,tui}`: preserved fork changelog sections during merge and audited missing `[Unreleased]` notes afterward.
+- `packages/ai/src/providers/openrouter.models.ts`: accepted upstream v0.80.10 pricing metadata for OpenRouter.
+- `packages/ai/src/providers/opencode-go.models.ts`: accepted upstream v0.80.10 OpenCode Go catalog additions for Grok 4.5 and Kimi K3.
 
 ## Changelog Audit
 
-- Added `packages/ai` notes for provider-scoped auth, `Models`, `CredentialStore`, `ModelsStore`, Radius, Cloudflare endpoint resolution, lazy stream completion, compatibility exports, and OpenAI Codex session-ID limits.
-- Added `packages/coding-agent` notes for `ModelRuntime`, retained compatibility APIs, async refresh/list migration, dynamic catalogs, `/model` refresh, compaction message preservation, SDK timeouts, inherited AI fixes, and Windows terminal-title restoration.
-- Audited every non-merge commit since fork release tag `v2026.7.14-3`; no other package required a new `[Unreleased]` entry.
+- Added `packages/ai/CHANGELOG.md` `[Unreleased]` fixed entry for inherited OpenCode Go catalog additions and OpenRouter pricing refresh from upstream v0.80.10.
+- Duplicated the same user-facing catalog/pricing entry in `packages/coding-agent/CHANGELOG.md`.
+- Skipped release housekeeping, upstream-sync merge commits, pin updates, and already-released upstream changelog section moves per `.github/agent/commands/cl.md`.
 
 ## QA
 
 - `npm run build` passed.
-- `npm run check` passed with zero errors, warnings, or infos.
-- Hermetic `npm test` passed across the workspace: coding-agent 416 files / 3,611 tests; AI 111 files / 865 tests; all other package suites passed.
-- Focused model-runtime, auth, SDK, middleware, and compaction regression tests passed.
-- Final `test/auth-storage.test.ts` run passed 12/12.
+- `npm run check` passed, including Biome, pinned deps, TS imports, shrinkwrap/install-lock checks, TypeScript, browser smoke, web UI check, and `check:neo` Go build/vet/test.
+- `npm test` passed across the workspace. Notable summaries: scripts 48/48, agent 190/190, AI 890 passed with live-gated skips, coding-agent 3,615 passed, orchestrator 3/3, pty 39 passed, codemode 356/356, and TUI completed successfully.
+- Built CLI smoke passed:
+  - `node packages/coding-agent/dist/cli.js --version` -> `2026.7.16-2`
+  - `node packages/coding-agent/dist/cli.js --help` rendered usage successfully.
 - Senpi QA passed:
-  - common isolation self-check: 9/9
-  - RPC self-test: 4/4
-  - deterministic mock loop: 5/5
-  - CLI smoke: 7/7
-  - tmux TUI smoke: 5/5
-- Every QA channel verified the real `~/.senpi/agent/auth.json` remained unchanged.
-- GitHub PR #212 passed the main check/test job, terminal-tool jobs on Ubuntu, macOS, and Windows, and GitGuardian before the documentation audit update; final CI was retriggered by the audit commits.
-- Evidence: `local-ignore/qa-evidence/20260716-upstream-sync-release/`.
+  - `common.mjs --self-check`: 9/9
+  - `mock-loop.mjs --self-test --evidence upstream-agent-mock-loop`: 5/5
+  - `cli-smoke.mjs --self-test`: 7/7
+  - `tui-smoke.mjs --self-test --driver tmux --evidence upstream-agent-tui`: 5/5
+- Every Senpi QA channel verified the real `~/.senpi/agent/auth.json` remained unchanged.
+- Evidence logs:
+  - `local-ignore/qa-evidence/20260716-upstream-v08010/`
+  - `local-ignore/qa-evidence/20260716-upstream-agent-tui/`
 
 ## Result
 
-The branch is PR-ready after final CI and review gates complete.
+The branch is PR-ready locally with committed merge, upstream pin, changelog audit, and this report.
 
 MERGE_RESULT: CLEAN_PR_READY
