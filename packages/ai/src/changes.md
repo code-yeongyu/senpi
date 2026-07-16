@@ -1,5 +1,36 @@
 # AI Source Changes
 
+## 2026-07-14 - Provider and OAuth parity
+
+### What changed and why
+
+- Added supported provider factories, generated catalogs, and OAuth flows used by the coding-agent login surface.
+- Added provider-specific request and refresh behavior, including GitLab Duo direct-access exchange, Google account
+  transport, and Perplexity OTP state handling.
+- Legacy OAuth providers can expose request-scoped tokens and headers so compatibility consumers preserve GitLab Duo's
+  direct-access contract.
+- Search-only integrations are not exposed as chat providers.
+
+### Files modified
+
+- api/google-gemini-cli.ts
+- auth/helpers.ts
+- providers/all.ts
+- types.ts
+- utils/oauth/index.ts
+- utils/oauth/load.ts
+- provider-specific files under providers/ and utils/oauth/
+
+### Why the higher-level extension system couldn't handle this alone
+
+- Authentication is resolved while constructing provider requests and generated model catalogs; extension hooks cannot
+  safely replace those credential and wire boundaries.
+
+### Expected merge conflict zones
+
+- HIGH: provider unions, OAuth registration, and generated catalogs.
+- MEDIUM: Google shared transport and provider-specific OAuth refresh paths.
+
 ## 2026-07-14 - Anthropic web search replay encrypted content correction
 
 ### What changed and why

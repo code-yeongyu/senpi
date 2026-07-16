@@ -120,6 +120,7 @@ describe("buildDynamicSystemPrompt", () => {
 
 		expect(prompt).toContain("# My Project Rules");
 		expect(prompt).toContain("/project/AGENTS.md");
+		expect(prompt).toContain("deeper files win on conflict");
 	});
 
 	test("appends skills in XML format", () => {

@@ -39,7 +39,12 @@ function buildContextFilesSection(contextFiles: Array<{ path: string; content: s
 		return "";
 	}
 
-	const lines = ["## Project Context", ""];
+	const lines = [
+		"## Project Context",
+		"",
+		"Project instruction files (below, and in [Directory Context: ...] blocks injected during reads) bind files under their directory; deeper files win on conflict; explicit user instructions override.",
+		"",
+	];
 	for (const contextFile of contextFiles) {
 		lines.push(`### ${contextFile.path}`, "", contextFile.content.trimEnd(), "");
 	}

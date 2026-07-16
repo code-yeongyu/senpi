@@ -24,7 +24,6 @@ import { GOOGLE_GEMINI_CLI_MODELS } from "./providers/google-gemini-cli.models.t
 import { GOOGLE_VERTEX_MODELS } from "./providers/google-vertex.models.ts";
 import { GROQ_MODELS } from "./providers/groq.models.ts";
 import { HUGGINGFACE_MODELS } from "./providers/huggingface.models.ts";
-import { KAGI_MODELS } from "./providers/kagi.models.ts";
 import { KILO_MODELS } from "./providers/kilo.models.ts";
 import { KIMI_CODE_MODELS } from "./providers/kimi-code.models.ts";
 import { KIMI_CODING_MODELS } from "./providers/kimi-coding.models.ts";
@@ -49,12 +48,10 @@ import { OPENCODE_MODELS } from "./providers/opencode.models.ts";
 import { OPENCODE_GO_MODELS } from "./providers/opencode-go.models.ts";
 import { OPENCODE_ZEN_MODELS } from "./providers/opencode-zen.models.ts";
 import { OPENROUTER_MODELS } from "./providers/openrouter.models.ts";
-import { PARALLEL_MODELS } from "./providers/parallel.models.ts";
 import { PERPLEXITY_MODELS } from "./providers/perplexity.models.ts";
 import { QIANFAN_MODELS } from "./providers/qianfan.models.ts";
 import { QWEN_PORTAL_MODELS } from "./providers/qwen-portal.models.ts";
 import { SYNTHETIC_MODELS } from "./providers/synthetic.models.ts";
-import { TAVILY_MODELS } from "./providers/tavily.models.ts";
 import { TOGETHER_MODELS } from "./providers/together.models.ts";
 import { VENICE_MODELS } from "./providers/venice.models.ts";
 import { VERCEL_AI_GATEWAY_MODELS } from "./providers/vercel-ai-gateway.models.ts";
@@ -92,7 +89,6 @@ export const MODELS = {
 	"google-vertex": GOOGLE_VERTEX_MODELS,
 	"groq": GROQ_MODELS,
 	"huggingface": HUGGINGFACE_MODELS,
-	"kagi": KAGI_MODELS,
 	"kilo": KILO_MODELS,
 	"kimi-code": KIMI_CODE_MODELS,
 	"kimi-coding": KIMI_CODING_MODELS,
@@ -117,12 +113,10 @@ export const MODELS = {
 	"opencode-go": OPENCODE_GO_MODELS,
 	"opencode-zen": OPENCODE_ZEN_MODELS,
 	"openrouter": OPENROUTER_MODELS,
-	"parallel": PARALLEL_MODELS,
 	"perplexity": PERPLEXITY_MODELS,
 	"qianfan": QIANFAN_MODELS,
 	"qwen-portal": QWEN_PORTAL_MODELS,
 	"synthetic": SYNTHETIC_MODELS,
-	"tavily": TAVILY_MODELS,
 	"together": TOGETHER_MODELS,
 	"venice": VENICE_MODELS,
 	"vercel-ai-gateway": VERCEL_AI_GATEWAY_MODELS,

@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { chmod, mkdir, open, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai/compat";
@@ -263,8 +263,15 @@ async function serveCommand(command: ParsedCommand, agentDir: string): Promise<A
 		refreshOAuthCredential,
 	);
 	const refresher = new AuthBrokerRefresher({ service: broker });
-	const handle = await startAuthBrokerServer({ bind, broker, version: VERSION });
-	refresher.start();
+	let handle: Awaited<ReturnType<typeof startAuthBrokerServer>>;
+	try {
+		await refresher.start();
+		handle = await startAuthBrokerServer({ bind, broker, version: VERSION });
+	} catch (error) {
+		await refresher.stop();
+		vault.close();
+		throw error;
+	}
 	let resolveStop: (() => void) | undefined;
 	const stopped = new Promise<void>((resolveStopPromise) => {
 		resolveStop = resolveStopPromise;
@@ -277,7 +284,7 @@ async function serveCommand(command: ParsedCommand, agentDir: string): Promise<A
 	} finally {
 		process.off("SIGINT", shutdown);
 		process.off("SIGTERM", shutdown);
-		refresher.stop();
+		await refresher.stop();
 		await handle.close();
 		vault.close();
 	}
@@ -768,6 +775,22 @@ function optionalNullableString(value: Record<string, unknown>, key: string): st
 	return candidate;
 }
 
+async function rejectIfExists(path: string): Promise<void> {
+	try {
+		await lstat(path);
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+		throw error;
+	}
+	throw new AuthBrokerCommandError(`Migration receipt path already exists: ${path}`);
+}
+
+async function writeMigrationFileExclusive(destination: string, data: string): Promise<void> {
+	await rejectIfExists(destination);
+	await writeFile(destination, data, { flag: "wx", mode: 0o600 });
+	await chmod(destination, 0o600);
+}
+
 async function writeLockedJson(destination: string, value: unknown): Promise<void> {
 	await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
 	await writeFile(destination, `${JSON.stringify(value)}\n`, { flag: "wx", mode: 0o600 });
@@ -785,12 +808,10 @@ async function migrateCommand(command: ParsedCommand, agentDir: string): Promise
 	const sourceSha256 = hash(source);
 	if (command.dryRun) {
 		await ensureDirectory(dirname(receiptPath));
-		await writeFile(backupPath, source, { mode: 0o600 });
-		await chmod(backupPath, 0o600);
+		await writeMigrationFileExclusive(backupPath, source);
 		const backupSha256 = hash(await readFile(backupPath, "utf8"));
 		const provenance = { backupPath, backupSha256, nonce: randomUUID(), sourcePath, sourceSha256, version: 1 };
-		await writeFile(provenancePath, `${JSON.stringify(provenance)}\n`, { mode: 0o600 });
-		await chmod(provenancePath, 0o600);
+		await writeMigrationFileExclusive(provenancePath, `${JSON.stringify(provenance)}\n`);
 		const receipt = {
 			backupPath,
 			backupSha256,
@@ -800,8 +821,7 @@ async function migrateCommand(command: ParsedCommand, agentDir: string): Promise
 			sourceSha256,
 			version: 2,
 		};
-		await writeFile(receiptPath, `${JSON.stringify(receipt)}\n`, { mode: 0o600 });
-		await chmod(receiptPath, 0o600);
+		await writeMigrationFileExclusive(receiptPath, `${JSON.stringify(receipt)}\n`);
 		return {
 			exitCode: 0,
 			stderr: "",

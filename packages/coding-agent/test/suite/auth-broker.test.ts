@@ -222,4 +222,39 @@ describe("auth broker", () => {
 			fixture.cleanup();
 		}
 	});
+
+	it("does not yield material when a leased credential is disabled before consume", () => {
+		const fixture = createVaultPath();
+		try {
+			const vault = SqliteCredentialVault.open(fixture.path);
+			vault.upsertCredential(apiCredential("credential-a", "operator:a"));
+			const pending = vault.issueSelectionLease(
+				{ pool: { provider: "openai", type: "api_key" }, selector: { kind: "automatic" } },
+				"gateway-token",
+			);
+			vault.disableCredential("credential-a", "revoked");
+			expect(() =>
+				vault.consumeSelectionLease({ authentication: "gateway-token", leaseId: pending.leaseId }),
+			).toThrow();
+			vault.close();
+		} finally {
+			fixture.cleanup();
+		}
+	});
+
+	it("redacts secret-shaped content from a disable cause in metadata", () => {
+		const fixture = createVaultPath();
+		try {
+			const vault = SqliteCredentialVault.open(fixture.path);
+			vault.upsertCredential(apiCredential("credential-a", "operator:a"));
+			vault.disableCredential("credential-a", "Authorization: Bearer sk-secret-leak-1234567890abcdef");
+			const json = JSON.stringify(vault.metadataSnapshot());
+			expect(json).not.toContain("Bearer");
+			expect(json).not.toContain("sk-secret-leak");
+			expect(json).not.toContain("1234567890abcdef");
+			vault.close();
+		} finally {
+			fixture.cleanup();
+		}
+	});
 });

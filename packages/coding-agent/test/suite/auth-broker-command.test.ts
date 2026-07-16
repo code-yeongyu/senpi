@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { executeAuthBrokerCommand } from "../../src/cli/auth-broker-cli.ts";
 import { startAuthBrokerServer } from "../../src/cli/auth-broker-server.ts";
 import { AuthBrokerService, SqliteCredentialVault } from "../../src/core/auth-broker.ts";
@@ -191,5 +192,29 @@ describe("auth broker command", () => {
 
 		expect(result?.exitCode).toBe(2);
 		expect(result?.stderr).not.toContain(secret);
+	});
+
+	it("stops the refresher when broker server startup fails", async () => {
+		// Given: another server already owns the requested loopback port.
+		const agentDir = createDirectory("broker-command-startup-failure");
+		const occupied = createServer();
+		await new Promise<void>((resolve) => occupied.listen(0, "127.0.0.1", resolve));
+		const address = occupied.address();
+		if (address === null || typeof address === "string") throw new Error("Test server did not expose a TCP port");
+		const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
+
+		try {
+			// When: auth-broker starts its refresher but cannot bind its HTTP server.
+			const result = await executeAuthBrokerCommand(["auth-broker", "serve", `--bind=127.0.0.1:${address.port}`], {
+				agentDir,
+			});
+
+			// Then: startup fails and the already-started refresh cadence is torn down.
+			expect(result?.exitCode).toBe(1);
+			expect(clearIntervalSpy).toHaveBeenCalledOnce();
+		} finally {
+			clearIntervalSpy.mockRestore();
+			await new Promise<void>((resolve, reject) => occupied.close((error) => (error ? reject(error) : resolve())));
+		}
 	});
 });

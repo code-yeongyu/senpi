@@ -34,28 +34,41 @@ describe.sequential("Perplexity OAuth", () => {
 	});
 
 	it("logs in through mocked OTP endpoints and keeps JWTs without exp non-expiring", async () => {
+		// Given: a CSRF response that requires its NextAuth cookie on both OTP requests.
 		process.env.PI_AUTH_NO_BORROW = "1";
 		const tokenWithoutExpiry = jwt({ sub: "perplexity-account" });
 		const urls: string[] = [];
+		const requestCookies: (string | null)[] = [];
 		vi.stubGlobal(
 			"fetch",
-			vi.fn(async (input: string | URL | Request) => {
+			vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
 				const url = String(input);
 				urls.push(url);
-				if (url.endsWith("/api/auth/csrf")) return jsonResponse({ csrfToken: "csrf-value" });
+				if (url.endsWith("/api/auth/csrf")) {
+					return new Response(JSON.stringify({ csrfToken: "csrf-value" }), {
+						headers: {
+							"Content-Type": "application/json",
+							"Set-Cookie": "next-auth.csrf-token=cookie-value; Path=/; HttpOnly; Secure",
+						},
+					});
+				}
+				requestCookies.push(new Headers(init?.headers).get("cookie"));
 				if (url.endsWith("/api/auth/signin-email")) return jsonResponse({ ok: true });
 				if (url.endsWith("/api/auth/signin-otp")) return jsonResponse({ token: tokenWithoutExpiry });
 				throw new Error(`Unexpected request: ${url}`);
 			}),
 		);
 		const answers = ["member@example.com", "123456"];
+		// When: the email OTP flow sends and verifies the code.
 		const credentials = await provider().login({
 			onAuth: () => {},
 			onDeviceCode: () => {},
 			onPrompt: async () => answers.shift() ?? "",
 			onSelect: async () => undefined,
 		});
+		// Then: both state-changing requests preserve the CSRF cookie and the JWT remains usable.
 		expect(urls).toHaveLength(3);
+		expect(requestCookies).toEqual(["next-auth.csrf-token=cookie-value", "next-auth.csrf-token=cookie-value"]);
 		expect(credentials).toMatchObject({ access: tokenWithoutExpiry, refresh: tokenWithoutExpiry });
 		expect(credentials.expires).toBe(8.64e15);
 
@@ -75,7 +88,14 @@ describe.sequential("Perplexity OAuth", () => {
 			"fetch",
 			vi.fn(async (input: string | URL | Request) => {
 				const url = String(input);
-				if (url.endsWith("/api/auth/csrf")) return jsonResponse({ csrfToken: "csrf-private" });
+				if (url.endsWith("/api/auth/csrf")) {
+					return new Response(JSON.stringify({ csrfToken: "csrf-private" }), {
+						headers: {
+							"Content-Type": "application/json",
+							"Set-Cookie": "next-auth.csrf-token=private-cookie; Path=/; HttpOnly",
+						},
+					});
+				}
 				if (url.endsWith("/api/auth/signin-email")) return jsonResponse({ ok: true });
 				return jsonResponse({ text: "perplexity-response-private" }, 401);
 			}),

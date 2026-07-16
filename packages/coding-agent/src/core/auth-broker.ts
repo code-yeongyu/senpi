@@ -62,7 +62,7 @@ export class SqliteCredentialVault implements CredentialVault {
 
 	save(records: readonly CredentialRecord[]): void {
 		this.transaction(() => {
-			this.db.exec("DELETE FROM credentials; DELETE FROM leases; DELETE FROM state;");
+			this.db.exec("DELETE FROM leases; DELETE FROM credentials; DELETE FROM state;");
 			for (const record of records) this.upsertCredential(record);
 		});
 	}
@@ -88,8 +88,24 @@ export class SqliteCredentialVault implements CredentialVault {
 	disableCredential(credentialId: string, cause: string, at = new Date().toISOString()): void {
 		const result = this.db
 			.prepare("UPDATE credentials SET disabled_at=?, disabled_cause=?, updated_at=? WHERE credential_id=?")
-			.run(at, cause, at, credentialId);
+			.run(at, redactDisableCause(cause), at, credentialId);
 		if (result.changes !== 1) throw new AuthBrokerError("Credential was not found");
+	}
+
+	applyRefresh(
+		credentialId: string,
+		expectedUpdatedAt: string,
+		material: CredentialMaterial,
+		at = new Date().toISOString(),
+	): boolean {
+		return this.transaction(() => {
+			const result = this.db
+				.prepare(
+					"UPDATE credentials SET material=?, updated_at=? WHERE credential_id=? AND disabled_at IS NULL AND updated_at=?",
+				)
+				.run(JSON.stringify(material), at, credentialId, expectedUpdatedAt);
+			return result.changes === 1;
+		});
 	}
 
 	deleteCredentialsForProvider(provider: string): number {
@@ -151,6 +167,7 @@ export class SqliteCredentialVault implements CredentialVault {
 			)
 				throw new AuthBrokerError("Selection lease is no longer available");
 			const record = this.getCredential(lease.credential_id);
+			if (record.disabled !== undefined) throw new AuthBrokerError("Selection lease is no longer available");
 			return {
 				credentialId: record.credentialId,
 				leaseId: request.leaseId,
@@ -385,7 +402,7 @@ export class AuthBrokerService {
 			existing ?? this.refreshCredential(credential).finally(() => this.refreshes.delete(credential.credentialId));
 		this.refreshes.set(credential.credentialId, refresh);
 		const material = await refresh;
-		this.vault.upsertCredential({ ...credential, material, updatedAt: new Date().toISOString() });
+		this.vault.applyRefresh(credential.credentialId, credential.updatedAt, material);
 		return material;
 	}
 
@@ -476,6 +493,14 @@ function matchesSelector(record: CredentialRecord, selector: CredentialSelector)
 function digest(value: string): string {
 	return createHash("sha256").update(value).digest("hex");
 }
+function redactDisableCause(cause: string): string {
+	const truncated = cause.length > 120 ? cause.slice(0, 120) : cause;
+	return truncated.replace(
+		/(bearer|authorization|api[_-]?key|refresh[_-]?token|secret|password|token|sk-)[\s:=]*[A-Za-z0-9_.-]+/gi,
+		"[redacted]",
+	);
+}
+
 function safeEqual(left: string, right: string): boolean {
 	return timingSafeEqual(new TextEncoder().encode(left), new TextEncoder().encode(right));
 }

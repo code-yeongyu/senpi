@@ -4,11 +4,45 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.7.14-3] - 2026-07-14
+
+### Added
+
+- Added Radius gateway support, including the `pi-messages` API, Radius OAuth helpers, and dynamic model catalogs.
+- Added forced tool-call support for OpenAI Responses and OpenAI Codex providers ([#6588](https://github.com/earendil-works/pi-mono/pull/6588)).
+
+### Changed
+
+- Stopped sending OpenAI Responses session-id fields to OpenCode models that opt out of session IDs ([#6645](https://github.com/earendil-works/pi-mono/pull/6645) by [@davidbrai](https://github.com/davidbrai)).
+
+### Fixed
+
+- Fixed Anthropic Messages streaming to omit empty usage fields that some endpoints reject ([#6611](https://github.com/earendil-works/pi-mono/pull/6611) by [@davidbrai](https://github.com/davidbrai)).
+- Fixed OpenAI/Azure Responses reasoning replay to backfill `encrypted_content` from completed responses when reasoning blocks omit it ([#6608](https://github.com/earendil-works/pi-mono/pull/6608) by [@davidbrai](https://github.com/davidbrai)).
+- Fixed Bedrock Converse streams to surface unhandled stop reasons as error messages ([#6598](https://github.com/earendil-works/pi-mono/pull/6598) by [@davidbrai](https://github.com/davidbrai)).
+- Fixed OpenRouter session-affinity headers for OpenAI-compatible completion and Responses providers ([#6496](https://github.com/earendil-works/pi-mono/pull/6496) by [@houskape](https://github.com/houskape)).
+- Fixed OpenAI Responses WebSocket session-affinity headers to use each provider's configured affinity format.
+- Fixed GitHub Copilot MAI-Code models to route through the Responses endpoint ([#6544](https://github.com/earendil-works/pi-mono/pull/6544) by [@houskape](https://github.com/houskape)).
+
+### Removed
+
+## [2026.7.14-2] - 2026-07-14
+
+### Added
+
 - Added the `anthropic-xml` text tool-call protocol for OpenAI-compatible models that emit legacy Anthropic `<invoke>` and `<parameter>` XML, including streaming, schema-driven argument coercion, XML escaping, case-insensitive tool resolution, and bounded malformed-fragment recovery.
 
 ### Changed
 
 ### Fixed
+
+- Preserved Anthropic server-side web search `encrypted_content` during same-model replay so follow-up turns no longer fail after native web searches ([#208](https://github.com/code-yeongyu/senpi/pull/208)).
 
 ### Removed
 

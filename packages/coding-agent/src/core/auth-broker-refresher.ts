@@ -39,6 +39,8 @@ export class AuthBrokerRefresher {
 	#timer: ReturnType<typeof setInterval> | undefined;
 	#running = false;
 	#nextSweepAt: number;
+	#activeTick: Promise<void> | undefined;
+	#startPromise: Promise<void> | undefined;
 
 	constructor(opts: AuthBrokerRefresherOptions) {
 		this.#service = opts.service;
@@ -48,22 +50,36 @@ export class AuthBrokerRefresher {
 		this.#nextSweepAt = this.#now();
 	}
 
-	start(): void {
+	async start(): Promise<void> {
 		if (this.#timer !== undefined) return;
-		// Kick once immediately so a freshly-booted broker does not hand out
-		// near-expired tokens for the first interval.
-		this.#nextSweepAt = this.#now();
-		void this.tick();
-		this.#timer = setInterval(() => {
-			void this.tick();
-		}, this.#refreshIntervalMs);
+		const existing = this.#startPromise;
+		if (existing !== undefined) return existing;
+		const starting = this.startOnce();
+		this.#startPromise = starting;
+		try {
+			await starting;
+		} finally {
+			if (this.#startPromise === starting) this.#startPromise = undefined;
+		}
 	}
 
-	stop(): void {
+	async stop(): Promise<void> {
+		const starting = this.#startPromise;
+		if (starting !== undefined) await starting.catch(() => undefined);
 		if (this.#timer !== undefined) {
 			clearInterval(this.#timer);
 			this.#timer = undefined;
 		}
+		const active = this.#activeTick;
+		if (active !== undefined) await active.catch(() => undefined);
+	}
+
+	private async startOnce(): Promise<void> {
+		this.#nextSweepAt = this.#now();
+		await this.tick();
+		this.#timer = setInterval(() => {
+			void this.tick();
+		}, this.#refreshIntervalMs);
 	}
 
 	getSchedule(): AuthBrokerRefresherSchedule {
@@ -79,14 +95,19 @@ export class AuthBrokerRefresher {
 	async tick(): Promise<void> {
 		if (this.#running) return;
 		this.#running = true;
+		const sweep = this.#service
+			.sweepExpiringCredentials({ now: this.#now(), refreshSkewMs: this.#refreshSkewMs })
+			.then(
+				() => undefined,
+				() => undefined,
+			);
+		this.#activeTick = sweep;
 		try {
-			await this.#service.sweepExpiringCredentials({
-				now: this.#now(),
-				refreshSkewMs: this.#refreshSkewMs,
-			});
+			await sweep;
 		} finally {
 			this.#running = false;
 			this.#nextSweepAt = this.#now() + this.#refreshIntervalMs;
+			this.#activeTick = undefined;
 		}
 	}
 }

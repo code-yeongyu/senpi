@@ -111,13 +111,14 @@ async function emailOtpLogin(callbacks: OAuthLoginCallbacks): Promise<OAuthCrede
 	if (typeof csrfData.csrfToken !== "string" || !csrfData.csrfToken) {
 		throw new Error("Perplexity CSRF response missing token");
 	}
+	const csrfCookie = readCsrfCookie(csrfResponse);
 
 	callbacks.onProgress?.("Sending a Perplexity login code...");
 	const sendResponse = await endpointFetch(
 		"https://www.perplexity.ai/api/auth/signin-email",
 		{
 			method: "POST",
-			headers: { "Content-Type": "application/json", ...headers },
+			headers: { "Content-Type": "application/json", Cookie: csrfCookie, ...headers },
 			body: JSON.stringify({ email, csrfToken: csrfData.csrfToken }),
 		},
 		callbacks.signal,
@@ -137,7 +138,7 @@ async function emailOtpLogin(callbacks: OAuthLoginCallbacks): Promise<OAuthCrede
 		"https://www.perplexity.ai/api/auth/signin-otp",
 		{
 			method: "POST",
-			headers: { "Content-Type": "application/json", ...headers },
+			headers: { "Content-Type": "application/json", Cookie: csrfCookie, ...headers },
 			body: JSON.stringify({ email, otp, csrfToken: csrfData.csrfToken }),
 		},
 		callbacks.signal,
@@ -148,6 +149,14 @@ async function emailOtpLogin(callbacks: OAuthLoginCallbacks): Promise<OAuthCrede
 		throw new Error("Perplexity OTP verification response missing token");
 	}
 	return credentialsFromJwt(verifyData.token, email);
+}
+
+function readCsrfCookie(response: Response): string {
+	const setCookie = response.headers.get("set-cookie");
+	const match = /(?:^|,\s*)((?:__Host-)?next-auth\.csrf-token=[^;,]+)/i.exec(setCookie ?? "");
+	const cookie = match?.[1];
+	if (cookie === undefined) throw new Error("Perplexity CSRF response missing cookie");
+	return cookie;
 }
 
 export async function loginPerplexity(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {

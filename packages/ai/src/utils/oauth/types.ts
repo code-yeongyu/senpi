@@ -9,6 +9,11 @@ export type OAuthCredentials = {
 
 export type OAuthProviderId = string;
 
+export type OAuthRequestAuth = {
+	readonly apiKey: string;
+	readonly headers?: Readonly<Record<string, string>>;
+};
+
 /** @deprecated Use OAuthProviderId instead */
 export type OAuthProvider = OAuthProviderId;
 
@@ -66,6 +71,9 @@ export interface OAuthProviderInterface {
 
 	/** Convert credentials to API key string for the provider */
 	getApiKey(credentials: OAuthCredentials): string;
+
+	/** Resolve request-scoped auth when a provider needs exchanged tokens or headers. */
+	getRequestAuth?(credentials: OAuthCredentials): Promise<OAuthRequestAuth>;
 
 	/** Optional: modify models for this provider (e.g., update baseUrl) */
 	modifyModels?(models: Model<Api>[], credentials: OAuthCredentials): Model<Api>[];

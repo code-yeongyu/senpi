@@ -292,4 +292,11 @@ export const gitlabDuoOAuthProvider: OAuthProviderInterface = {
 	login: loginGitLabDuo,
 	refreshToken: refreshGitLabDuoToken,
 	getApiKey: (credentials) => credentials.access,
+	getRequestAuth: async (credentials) => {
+		const directAccess = await getGitLabDuoDirectAccess(credentials.access);
+		return {
+			apiKey: directAccess.token,
+			headers: { ...directAccess.headers, Authorization: `Bearer ${directAccess.token}` },
+		};
+	},
 };

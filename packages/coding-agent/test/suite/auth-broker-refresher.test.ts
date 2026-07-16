@@ -162,13 +162,46 @@ describe("auth broker refresher", () => {
 			skewMs: DEFAULT_AUTH_BROKER_REFRESH_SKEW_MS,
 		});
 
-		refresher.start();
+		await refresher.start();
 		expect(refresher.getSchedule().enabled).toBe(true);
-		refresher.stop();
+		await refresher.stop();
 		expect(refresher.getSchedule().enabled).toBe(false);
 		// A second tick is idempotent: the token was already renewed far into the future.
 		await refresher.tick();
 		expect(calls).toBe(1);
+		vault.close();
+	});
+
+	it("stop() awaits an in-flight tick before resolving", async () => {
+		const vault = openVault();
+		vault.upsertCredential(oauthCredential("expiring", NOW + 30_000));
+		let resolveGate: () => void = () => {};
+		const gate = new Promise<void>((resolve) => {
+			resolveGate = resolve;
+		});
+		let started = false;
+		const broker = new AuthBrokerService(vault, [], async (record) => {
+			started = true;
+			await gate;
+			return refreshedMaterial(record.credentialId);
+		});
+		const refresher = new AuthBrokerRefresher({
+			service: broker,
+			refreshSkewMs: DEFAULT_AUTH_BROKER_REFRESH_SKEW_MS,
+			refreshIntervalMs: 1000,
+			now: () => NOW,
+		});
+		const starting = refresher.start();
+		while (!started) await Promise.resolve();
+		const stopP = Promise.resolve(refresher.stop());
+		let settled = false;
+		void stopP.then(() => {
+			settled = true;
+		});
+		for (let i = 0; i < 5; i++) await Promise.resolve();
+		expect(settled).toBe(false);
+		resolveGate();
+		await Promise.all([starting, stopP]);
 		vault.close();
 	});
 });

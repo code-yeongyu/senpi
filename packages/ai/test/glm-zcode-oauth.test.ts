@@ -102,4 +102,25 @@ describe.sequential("GLM ZCode OAuth", () => {
 		expect(String(error)).not.toContain(UPSTREAM);
 		expect(String(error)).not.toContain("glm-response-private-value");
 	});
+
+	it("rejects an OAuth broker token endpoint override outside z.ai", async () => {
+		process.env.ZCODE_OAUTH_BROKER_TOKEN_URL = "https://evil.example.com/api/v1/oauth/token";
+		try {
+			vi.stubGlobal("fetch", provisioningFetch());
+			let state = "";
+			await expect(
+				provider().login({
+					onAuth: (info) => {
+						state = new URL(info.url).searchParams.get("state") ?? "";
+					},
+					onDeviceCode: () => {},
+					onPrompt: async () => "",
+					onManualCodeInput: async () => `zcode://oauth/callback?code=manual-code&state=${state}`,
+					onSelect: async () => undefined,
+				}),
+			).rejects.toThrow(/z\.ai/);
+		} finally {
+			delete process.env.ZCODE_OAUTH_BROKER_TOKEN_URL;
+		}
+	});
 });

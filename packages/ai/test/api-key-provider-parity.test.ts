@@ -7,17 +7,14 @@ const API_KEY_PROVIDER_IDS = [
 	"deepinfra",
 	"firepass",
 	"fugu",
-	"kagi",
 	"litellm",
 	"lm-studio",
 	"nanogpt",
 	"ollama",
 	"ollama-cloud",
-	"parallel",
 	"qianfan",
 	"qwen-portal",
 	"synthetic",
-	"tavily",
 	"venice",
 	"vllm",
 	"zenmux",
@@ -28,17 +25,14 @@ const API_KEY_ENV_VARS = {
 	deepinfra: ["DEEPINFRA_API_KEY"],
 	firepass: ["FIREPASS_API_KEY"],
 	fugu: ["FUGU_API_KEY"],
-	kagi: ["KAGI_API_KEY"],
 	litellm: ["LITELLM_API_KEY"],
 	"lm-studio": ["LM_STUDIO_API_KEY"],
 	nanogpt: ["NANO_GPT_API_KEY"],
 	ollama: ["OLLAMA_API_KEY"],
 	"ollama-cloud": ["OLLAMA_CLOUD_API_KEY"],
-	parallel: ["PARALLEL_API_KEY"],
 	qianfan: ["QIANFAN_API_KEY"],
 	"qwen-portal": ["QWEN_OAUTH_TOKEN", "QWEN_PORTAL_API_KEY"],
 	synthetic: ["SYNTHETIC_API_KEY"],
-	tavily: ["TAVILY_API_KEY"],
 	venice: ["VENICE_API_KEY"],
 	vllm: ["VLLM_API_KEY"],
 	zenmux: ["ZENMUX_API_KEY"],
@@ -50,7 +44,22 @@ const LOCAL_DUMMY_KEYS = {
 	vllm: "vllm-local",
 } as const;
 
+const SEARCH_ONLY_PROVIDER_IDS = ["kagi", "parallel", "tavily"] as const;
+
 describe("Gajae API-key provider parity", () => {
+	it("does not advertise search-only services as chat model providers", () => {
+		// Given: the complete built-in model-provider catalog.
+		const providerIds = builtinProviders().map((provider) => provider.id);
+
+		// When: search-only integration identifiers are compared with model providers.
+		const advertisedSearchProviders = SEARCH_ONLY_PROVIDER_IDS.filter((providerId) =>
+			providerIds.includes(providerId),
+		);
+
+		// Then: none can route a coding-agent chat request to a search API.
+		expect(advertisedSearchProviders).toEqual([]);
+	});
+
 	it("registers every provider with API-key auth and at least one model", async () => {
 		const providers = new Map(builtinProviders().map((provider) => [provider.id, provider]));
 

@@ -21,6 +21,7 @@ describe("auth broker wire contract", () => {
 			payload: {
 				pool: { provider: "openai", type: "api_key" },
 				selector: { kind: "identity", identityKey: "operator:account-a" },
+				sessionId: "session-affinity-a",
 			},
 			protocolVersion: AUTH_BROKER_PROTOCOL_VERSION,
 			requestId: "request-selection",
@@ -48,6 +49,7 @@ describe("auth broker wire contract", () => {
 
 		// Then: the fixture remains versioned, redacted, and capability-scoped.
 		expect(selectionRequest.capability).toBe("gateway.selection.lease");
+		expect(selectionRequest).toMatchObject({ payload: { sessionId: "session-affinity-a" } });
 		expect(AUTH_BROKER_WIRE_FIXTURE_JSON).toBe(
 			'{"protocolVersion":1,"selectionLeaseRequest":{"capability":"gateway.selection.lease","operation":"selection_lease","payload":{"pool":{"provider":"openai","type":"api_key"},"selector":{"identityKey":"operator:account-a","kind":"identity"}},"protocolVersion":1,"requestId":"fixture-selection-lease"},"snapshot":{"credentials":[{"createdAt":"2026-07-11T00:00:00.000Z","credentialId":"credential-a","identityKey":"operator:account-a","pool":{"provider":"openai","type":"api_key"},"updatedAt":"2026-07-11T00:00:00.000Z"}],"generatedAt":"2026-07-11T00:00:00.000Z"}}',
 		);

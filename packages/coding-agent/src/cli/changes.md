@@ -18,6 +18,25 @@
 - LOW: fork-only auth-gateway CLI modules.
 
 
+## Auth broker command (2026-07-14)
+
+### What changed
+
+- Added the auth-broker serve, token, login, logout, import, backup, restore, and migrate command surface.
+- Startup completes the initial expiring-token sweep before accepting selection requests.
+- Backup, restore, and migration operations validate manifests and preserve restricted permissions.
+
+### Why extension system couldn't handle this
+
+- The standalone broker must run before an interactive coding-agent session and owns process signals, loopback HTTP,
+  token files, and SQLite lifecycle.
+
+### Expected merge conflict zones
+
+- MEDIUM: main command dispatch and CLI bootstrap.
+- LOW: fork-only auth-broker command and server modules.
+
+
 ## Neo launcher flags and daemon plumbing (2026-07-06)
 
 ### What changed

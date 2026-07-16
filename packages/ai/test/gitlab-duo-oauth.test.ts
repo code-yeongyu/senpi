@@ -81,4 +81,30 @@ describe.sequential("GitLab Duo OAuth", () => {
 		expect(String(error)).not.toContain("gitlab-refresh-private");
 		expect(String(error)).not.toContain("gitlab-response-private");
 	});
+
+	it("exchanges legacy OAuth credentials for direct-access request auth", async () => {
+		// Given: GitLab returns a short-lived direct-access token with required instance headers.
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () =>
+				jsonResponse({ headers: { "x-gitlab-instance-id": "instance-a" }, token: "gitlab-direct-token" }),
+			),
+		);
+
+		// When: the compatibility provider resolves request-scoped authentication.
+		const requestAuth = await provider().getRequestAuth?.({
+			access: "gitlab-oauth-access-for-direct-exchange",
+			expires: Date.now() + 60_000,
+			refresh: "gitlab-oauth-refresh",
+		});
+
+		// Then: callers receive the exchanged token and every required header, never the raw OAuth token.
+		expect(requestAuth).toEqual({
+			apiKey: "gitlab-direct-token",
+			headers: {
+				Authorization: "Bearer gitlab-direct-token",
+				"x-gitlab-instance-id": "instance-a",
+			},
+		});
+	});
 });
