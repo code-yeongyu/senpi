@@ -41,9 +41,10 @@ const compat = {
 	sendSessionAffinityHeaders: false,
 	sessionAffinityFormat: "openai",
 	supportsLongCacheRetention: true,
-} satisfies Required<Omit<OpenAICompletionsCompat, "cacheControlFormat" | "toolCallFormat">> & {
+} satisfies Omit<Required<OpenAICompletionsCompat>, "cacheControlFormat" | "toolCallFormat" | "deferredToolsMode"> & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	toolCallFormat?: OpenAICompletionsCompat["toolCallFormat"];
+	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
 };
 
 function buildToolResult(toolCallId: string, timestamp: number): ToolResultMessage {

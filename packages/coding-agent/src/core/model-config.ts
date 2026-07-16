@@ -103,6 +103,7 @@ const OpenAICompletionsCompatSchema = Type.Object({
 	supportsStrictMode: Type.Optional(Type.Boolean()),
 	toolCallFormat: Type.Optional(Type.String()),
 	sendSessionAffinityHeaders: Type.Optional(Type.Boolean()),
+	deferredToolsMode: Type.Optional(Type.Literal("kimi")),
 	sessionAffinityFormat: Type.Optional(
 		Type.Union([Type.Literal("openai"), Type.Literal("openai-nosession"), Type.Literal("openrouter")]),
 	),

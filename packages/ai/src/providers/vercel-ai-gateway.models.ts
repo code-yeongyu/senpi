@@ -1890,6 +1890,23 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		contextWindow: 262144,
 		maxTokens: 32768,
 	} satisfies Model<"anthropic-messages">,
+	"moonshotai/kimi-k3": {
+		id: "moonshotai/kimi-k3",
+		name: "Kimi K3",
+		api: "anthropic-messages",
+		provider: "vercel-ai-gateway",
+		baseUrl: "https://ai-gateway.vercel.sh",
+		reasoning: true,
+		input: ["text", "image"],
+		cost: {
+			input: 3,
+			output: 15,
+			cacheRead: 0.3,
+			cacheWrite: 0,
+		},
+		contextWindow: 1000000,
+		maxTokens: 256000,
+	} satisfies Model<"anthropic-messages">,
 	"nvidia/nemotron-3-nano-30b-a3b": {
 		id: "nvidia/nemotron-3-nano-30b-a3b",
 		name: "Nemotron 3 Nano 30B A3B",

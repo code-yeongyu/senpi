@@ -426,8 +426,9 @@ const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
 	supportsStrictMode: true,
 	sendSessionAffinityHeaders: false,
 	supportsLongCacheRetention: true,
-} satisfies Required<Omit<OpenAICompletionsCompat, "cacheControlFormat">> & {
+} satisfies Required<Omit<OpenAICompletionsCompat, "cacheControlFormat" | "deferredToolsMode">> & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
+	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
 };
 
 type OpenAICompletionsResolvedCompat = typeof OPENAI_COMPLETIONS_DEFAULT_COMPAT & {
@@ -1675,6 +1676,11 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				if (m.tool_call !== true) continue;
 
 				const isKimiK3 = modelId === "kimi-k3";
+				const compat = isKimiK3 ? { ...moonshotCompat } : moonshotCompat;
+				if (isKimiK3) {
+					compat.requiresReasoningContentOnAssistantMessages = true;
+					compat.deferredToolsMode = "kimi";
+				}
 				models.push({
 					id: modelId,
 					name: m.name || modelId,
@@ -1692,9 +1698,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					},
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
-					compat: isKimiK3
-						? { ...moonshotCompat, requiresReasoningContentOnAssistantMessages: true }
-						: moonshotCompat,
+					compat,
 				});
 			}
 		}
