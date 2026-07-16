@@ -64,6 +64,9 @@ function validateHttpsEndpoint(rawUrl: string, label: string): string {
 		throw new Error(`GLM ZCode ${label} endpoint is invalid`);
 	}
 	if (url.protocol !== "https:") throw new Error(`GLM ZCode ${label} endpoint must use HTTPS`);
+	const host = url.hostname.toLowerCase();
+	if (host !== "z.ai" && !host.endsWith(".z.ai"))
+		throw new Error(`GLM ZCode ${label} endpoint must be on a z.ai host`);
 	return url.toString().replace(/\/+$/, "");
 }
 

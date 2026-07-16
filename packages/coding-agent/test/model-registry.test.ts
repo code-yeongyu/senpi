@@ -1159,6 +1159,61 @@ describe("ModelRegistry", () => {
 			});
 		});
 
+		test("applies provider-specific OAuth request auth from legacy storage", async () => {
+			// Given: an OAuth provider whose request credential requires an exchanged token and headers.
+			const providerId = `oauth-request-auth-${Date.now()}`;
+			const oauthProvider = {
+				id: providerId,
+				name: "OAuth request auth fixture",
+				async login() {
+					throw new Error("Not used in this test");
+				},
+				async refreshToken(credentials: { access: string; expires: number; refresh: string }) {
+					return credentials;
+				},
+				getApiKey: (credentials: { access: string }) => credentials.access,
+				getRequestAuth: async () => ({
+					apiKey: "direct-access-token",
+					headers: { "x-provider-instance": "instance-a" },
+				}),
+			};
+			authStorage.set(providerId, {
+				access: "oauth-access-token",
+				expires: Date.now() + 60_000,
+				refresh: "oauth-refresh-token",
+				type: "oauth",
+			});
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			registry.registerProvider(providerId, {
+				api: "openai-completions",
+				baseUrl: "https://provider.test/v1",
+				oauth: oauthProvider,
+				models: [
+					{
+						contextWindow: 1_000,
+						cost: { cacheRead: 0, cacheWrite: 0, input: 0, output: 0 },
+						id: "fixture-model",
+						input: ["text"],
+						maxTokens: 100,
+						name: "Fixture model",
+						reasoning: false,
+					},
+				],
+			});
+			const model = registry.find(providerId, "fixture-model");
+			if (model === undefined) throw new Error("Fixture model was not registered");
+
+			// When: request authentication is resolved for the model.
+			const auth = await registry.getApiKeyAndHeaders(model);
+
+			// Then: the exchanged token and required provider headers replace the raw OAuth access token.
+			expect(auth).toMatchObject({
+				apiKey: "direct-access-token",
+				headers: { "x-provider-instance": "instance-a" },
+				ok: true,
+			});
+		});
+
 		test("registerProvider treats uppercase apiKey and headers as literals", async () => {
 			const envKeys = ["CUSTOM_NAME", "BEARER", "MODEL_TOKEN"];
 			const savedEnv: Record<string, string | undefined> = {};

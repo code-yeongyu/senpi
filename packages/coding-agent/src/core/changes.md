@@ -23,6 +23,39 @@
 - HIGH: auth-storage.ts, model-registry.ts, and sdk.ts credential-resolution paths.
 - MEDIUM: broker wire contracts and vault schema when auth persistence changes upstream.
 
+
+## Provider login and model-resolution parity (2026-07-14)
+
+### What changed
+
+- auth-providers.ts, model-resolver.ts, and provider-display-names.ts now consume the expanded pi-ai provider catalog
+  for consistent /login, display, and default-model behavior.
+- AuthStorage and ModelRegistry apply provider-specific OAuth request tokens and headers instead of reducing every
+  legacy credential to one raw string.
+
+### Why extension system couldn't handle this
+
+- Login selection and startup model resolution run in core before user extensions can provide a replacement catalog.
+
+### Expected merge conflict zones
+
+- MEDIUM: provider display/default maps when upstream changes model resolution or login discovery.
+
+
+## Skill-loading trigger reframed with cost asymmetry (2026-07-16)
+
+### What changed
+
+- `skills.ts` (`formatSkillsForPrompt`): the load trigger changed from "when the task matches its description" to "whenever its description even loosely matches the task - loading an irrelevant skill costs little; missing a relevant one degrades the work" (ported from omo Hephaestus). `skills.test.ts` pins "even loosely matches".
+
+### Why extension system couldn't handle this
+
+- `formatSkillsForPrompt` is core-owned and rendered into every system prompt. Strict-match framing under-loads skills on compression-biased models (GPT-5.6); stating the cost asymmetry is the decision-rule form the 5.6 guide prescribes for judgment calls.
+
+### Expected merge conflict zones
+
+- LOW: `skills.ts` intro lines if upstream rewords the skills preamble.
+
 ## Release accepted auto-compaction ownership before recovery (2026-07-13)
 
 ### What changed

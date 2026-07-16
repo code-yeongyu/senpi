@@ -189,4 +189,35 @@ describe("Google Cloud Code Assist runtime", () => {
 				.generationConfig?.thinkingConfig,
 		).toMatchObject({ includeThoughts: true, ...expectedThinking });
 	});
+
+	it("parses CRLF-delimited SSE events", async () => {
+		const first = JSON.stringify({
+			response: { candidates: [{ content: { role: "model", parts: [{ text: "alpha-token" }] } }] },
+		});
+		const second = JSON.stringify({
+			response: {
+				candidates: [{ content: { role: "model", parts: [{ text: "beta-token" }] }, finishReason: "STOP" }],
+			},
+		});
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(
+				async () =>
+					new Response(`data: ${first}\r\n\r\ndata: ${second}\r\n\r\n`, {
+						status: 200,
+						headers: { "Content-Type": "text/event-stream" },
+					}),
+			),
+		);
+		const provider = googleGeminiCliProvider();
+		const text: string[] = [];
+		for await (const event of provider.stream(provider.getModels()[0]!, context, {
+			apiKey: JSON.stringify({ token: "access-secret", projectId: "project-123" }),
+		})) {
+			if (event.type === "text_end") text.push(event.content);
+		}
+		const joined = text.join("");
+		expect(joined).toContain("alpha-token");
+		expect(joined).toContain("beta-token");
+	});
 });

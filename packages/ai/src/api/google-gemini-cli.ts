@@ -178,17 +178,17 @@ async function* parseSse(body: ReadableStream<Uint8Array>, signal?: AbortSignal)
 			const { value, done } = await reader.read();
 			if (done) break;
 			buffer += decoder.decode(value, { stream: true });
-			let boundary = buffer.indexOf("\n\n");
-			while (boundary >= 0) {
-				const event = buffer.slice(0, boundary);
-				buffer = buffer.slice(boundary + 2);
+			let boundary = /\r?\n\r?\n/.exec(buffer);
+			while (boundary !== null) {
+				const event = buffer.slice(0, boundary.index);
+				buffer = buffer.slice(boundary.index + boundary[0].length);
 				const data = event
 					.split(/\r?\n/)
 					.filter((line) => line.startsWith("data:"))
 					.map((line) => line.slice(5).trim())
 					.join("\n");
 				if (data && data !== "[DONE]") yield JSON.parse(data) as CcaChunk;
-				boundary = buffer.indexOf("\n\n");
+				boundary = /\r?\n\r?\n/.exec(buffer);
 			}
 		}
 	} finally {

@@ -1,5 +1,38 @@
 # changes.md — ai
 
+## Provider and OAuth catalog parity (2026-07-14)
+
+### What changed
+
+- Added model catalogs and API-key discovery for supported coding providers, plus OAuth implementations for providers
+  whose credentials can be translated into the provider wire contract.
+- Added deterministic parity tests for provider registration, environment keys, OAuth exchanges, and generated catalogs.
+- Kept Kagi, Parallel, and Tavily out of the chat model catalog because their APIs are search-only.
+
+### Why
+
+- /login and model resolution need one truthful provider catalog; credential placeholders that cannot serve chat
+  completions create selectable models that always fail at runtime.
+
+### Why extension system couldn't handle this
+
+- Provider catalogs, generated models, credential discovery, and OAuth wire exchanges live in pi-ai before coding-agent
+  extensions are loaded.
+
+### Modified upstream files
+
+- scripts/generate-models.ts
+- src/env-api-keys.ts
+- src/types.ts
+- src/providers/all.ts
+- src/utils/oauth/index.ts
+- src/utils/oauth/load.ts
+
+### Expected merge conflict zones
+
+- HIGH: generated model catalogs and provider unions when upstream refreshes provider metadata.
+- MEDIUM: OAuth registration and credential discovery when upstream changes auth APIs.
+
 ## Preserve the generated CLI executable bit during builds (2026-07-13)
 
 ### What changed

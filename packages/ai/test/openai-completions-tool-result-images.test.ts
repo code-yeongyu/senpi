@@ -39,6 +39,7 @@ const compat = {
 	toolCallFormat: undefined,
 	cacheControlFormat: "anthropic",
 	sendSessionAffinityHeaders: false,
+	sessionAffinityFormat: "openai",
 	supportsLongCacheRetention: true,
 } satisfies Required<Omit<OpenAICompletionsCompat, "cacheControlFormat" | "toolCallFormat">> & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];

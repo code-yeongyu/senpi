@@ -6,11 +6,11 @@ import {
 	type AnthropicMessagesCompat,
 	type Api,
 	type AssistantMessageEventStream,
+	type BuiltinProvider,
 	type CacheRetention,
 	type Context,
 	getModels,
 	getProviders,
-	type KnownProvider,
 	type Model,
 	type OAuthProviderInterface,
 	type OpenAICompletionsCompat,
@@ -530,7 +530,7 @@ export class ModelRegistry {
 				return [];
 			}
 
-			const models = getModels(provider as KnownProvider) as Model<Api>[];
+			const models = getModels(provider as BuiltinProvider) as Model<Api>[];
 			const providerOverride = overrides.get(provider);
 			const perModelOverrides = modelOverrides.get(provider);
 			const whitelist = modelWhitelists.get(provider);
@@ -737,7 +737,7 @@ export class ModelRegistry {
 		const getBuiltInDefaults = (providerName: string): { api: string; baseUrl: string } | undefined => {
 			if (!builtInProviders.has(providerName)) return undefined;
 			if (builtInDefaultsCache.has(providerName)) return builtInDefaultsCache.get(providerName);
-			const builtIn = getModels(providerName as KnownProvider) as Model<Api>[];
+			const builtIn = getModels(providerName as BuiltinProvider) as Model<Api>[];
 			if (builtIn.length === 0) return undefined;
 			const defaults = { api: builtIn[0].api, baseUrl: builtIn[0].baseUrl };
 			builtInDefaultsCache.set(providerName, defaults);
@@ -930,7 +930,8 @@ export class ModelRegistry {
 		try {
 			const providerConfig = this.providerRequestConfigs.get(model.provider);
 			const providerEnv = this.authStorage.getProviderEnv(model.provider);
-			const apiKeyFromAuthStorage = await this.authStorage.getApiKey(model.provider, { includeFallback: false });
+			const storedAuth = await this.authStorage.getRequestAuth(model.provider, { includeFallback: false });
+			const apiKeyFromAuthStorage = storedAuth?.apiKey;
 			const configuredApiKey =
 				apiKeyFromAuthStorage === undefined && providerConfig?.apiKey
 					? resolveConfigValueOrThrow(
@@ -958,8 +959,8 @@ export class ModelRegistry {
 			);
 
 			let headers =
-				model.headers || providerHeaders || modelHeaders
-					? { ...model.headers, ...providerHeaders, ...modelHeaders }
+				storedAuth?.headers || model.headers || providerHeaders || modelHeaders
+					? { ...storedAuth?.headers, ...model.headers, ...providerHeaders, ...modelHeaders }
 					: undefined;
 
 			if (providerConfig?.authHeader) {

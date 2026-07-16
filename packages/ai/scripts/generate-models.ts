@@ -1390,11 +1390,12 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				const npm = m.provider?.npm;
 				let api: Api;
 				let baseUrl: string;
-				let compat: OpenAICompletionsCompat | undefined;
+				let compat: OpenAICompletionsCompat | OpenAIResponsesCompat | undefined;
 
 				if (npm === "@ai-sdk/openai") {
 					api = "openai-responses";
 					baseUrl = `${variant.basePath}/v1`;
+					compat = { sessionAffinityFormat: "openai-nosession" };
 				} else if (npm === "@ai-sdk/anthropic") {
 					api = "anthropic-messages";
 					// Anthropic SDK appends /v1/messages to baseURL
@@ -1483,8 +1484,10 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 
 				// Claude 4.x and 5.x models route to Anthropic Messages API
 				const isCopilotClaude = /^claude-(haiku|sonnet|opus)-[45]([.\-]|$)/.test(modelId);
-				// gpt-5 models require responses API, others use completions
-				const needsResponsesApi = modelId.startsWith("gpt-5") || modelId.startsWith("oswe");
+				// gpt-5, oswe, and MAI-Code models are only served through the
+				// Copilot /responses endpoint.
+				const needsResponsesApi =
+					modelId.startsWith("gpt-5") || modelId.startsWith("oswe") || modelId.startsWith("mai-");
 
 				const api: Api = isCopilotClaude
 					? "anthropic-messages"
@@ -2211,19 +2214,6 @@ async function generateModels() {
 			maxTokens: 65536,
 		},
 		{
-			id: "search",
-			name: "Kagi Search (credential placeholder)",
-			api: "openai-completions",
-			provider: "kagi",
-			baseUrl: "https://kagi.com/api/v0",
-			compat: localOpenAICompat,
-			reasoning: false,
-			input: ["text"],
-			cost: zeroCost,
-			contextWindow: 8192,
-			maxTokens: 1024,
-		},
-		{
 			id: "claude-opus-4-6",
 			name: "Anthropic Opus 4.6",
 			api: "openai-completions",
@@ -2288,19 +2278,6 @@ async function generateModels() {
 			maxTokens: 16384,
 		},
 		{
-			id: "search",
-			name: "Parallel Search (credential placeholder)",
-			api: "openai-completions",
-			provider: "parallel",
-			baseUrl: "https://api.parallel.ai/v1beta",
-			compat: localOpenAICompat,
-			reasoning: false,
-			input: ["text"],
-			cost: zeroCost,
-			contextWindow: 8192,
-			maxTokens: 1024,
-		},
-		{
 			id: "deepseek-v3.2",
 			name: "DeepSeek V3.2",
 			api: "openai-completions",
@@ -2343,19 +2320,6 @@ async function generateModels() {
 			cost: zeroCost,
 			contextWindow: 262144,
 			maxTokens: 8192,
-		},
-		{
-			id: "search",
-			name: "Tavily Search (credential placeholder)",
-			api: "openai-completions",
-			provider: "tavily",
-			baseUrl: "https://api.tavily.com",
-			compat: localOpenAICompat,
-			reasoning: false,
-			input: ["text"],
-			cost: zeroCost,
-			contextWindow: 8192,
-			maxTokens: 1024,
 		},
 		{
 			id: "llama-3.3-70b",

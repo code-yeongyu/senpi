@@ -6,7 +6,32 @@
 
 ### Changed
 
+- Tuned the `gpt-5.6` system prompt preset against the oh-my-opencode Hephaestus GPT-5.6 prompts: verification wording now names validators senpi can actually run (type check/lint instead of a nonexistent diagnostics tool), parallel tool calls are the stated default with serial as the exception and no `;`/`&&` chaining of unrelated shell steps, todo items are named by deliverable and reconciled at turn end, and bracketed `【F:...】`-style citations are banned from output.
+- Reframed the skill-loading trigger in every system prompt to load skills on loose description match, stating the cost asymmetry (an irrelevant load costs little; a missed relevant skill degrades the work).
+- Added an instruction-file precedence rule to the dynamic system prompt's Project Context section: instruction files bind files under their directory, deeper files win on conflict, and explicit user instructions override.
+
 ### Fixed
+
+### Removed
+
+## [2026.7.14-3] - 2026-07-14
+
+### Added
+
+- Added Radius gateway support for custom `models.json` providers, including Radius OAuth login and dynamic model discovery.
+- Added inherited forced tool-call support for OpenAI Responses and OpenAI Codex models ([#6588](https://github.com/earendil-works/pi-mono/pull/6588)).
+
+### Changed
+
+- Stopped including the current date in the system prompt so prompts no longer bake in stale date context ([#6621](https://github.com/earendil-works/pi/issues/6621)).
+- Stopped sending OpenAI Responses session-id fields to OpenCode models that opt out of session IDs ([#6645](https://github.com/earendil-works/pi-mono/pull/6645) by [@davidbrai](https://github.com/davidbrai)).
+
+### Fixed
+
+- Clarified the interactive `/login` option labels.
+- Fixed `senpi uninstall` under npm to pass `--legacy-peer-deps`, avoiding uninstall failures from unrelated peer dependency conflicts ([#6604](https://github.com/earendil-works/pi-mono/pull/6604) by [@davidbrai](https://github.com/davidbrai)).
+- Fixed branch summaries when the selected model uses ambient auth instead of a literal API key ([#6595](https://github.com/earendil-works/pi-mono/pull/6595) by [@davidbrai](https://github.com/davidbrai)).
+- Fixed inherited Anthropic empty-usage handling, OpenAI/Azure Responses encrypted reasoning replay, Bedrock stop-reason errors, OpenRouter and Responses WebSocket session affinity, and GitHub Copilot MAI-Code routing from the upstream AI package.
 
 ### Removed
 
