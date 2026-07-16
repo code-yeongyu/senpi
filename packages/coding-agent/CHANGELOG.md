@@ -2,15 +2,33 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Changed extension-facing `ModelRegistry.refresh()` from synchronous `void` to `Promise<void>` because `models.json` loading and dynamic provider refresh are asynchronous. Extensions must await it before making synchronous registry reads.
+- Changed `AuthStorage.list()` from a synchronous provider-ID list to asynchronous non-secret credential metadata matching the pi-ai `CredentialStore` contract.
+
 ### Added
+
+- Added `ModelRuntime` as the canonical async SDK and internal model/auth facade while retaining the fork's `AuthStorage`, `ModelRegistry`, and corresponding `CreateAgentSessionOptions` compatibility APIs.
+- Added provider-owned `/login` discovery directly from registered pi-ai providers, including ambient auth status and informational links.
+- Added file-backed dynamic catalogs in `models-store.json`, per-provider remote catalog overlays, and Radius gateway support including offline migration from legacy credential-cached catalogs.
+- Added extension provider `refreshModels(context)` support for dynamic model discovery with optional provider-controlled persistence.
 
 ### Changed
 
+- Changed `ModelRuntime` to compose built-in providers, immutable `models.json` configuration, and extension overlays through pi-ai provider methods.
+- Changed `ModelRuntime` to own final request assembly: `getAuth(model)` includes configured model headers, stream methods resolve auth once, and `before_provider_headers` runs as the Models-only header transform before provider dispatch.
+- Changed `/model` to render the current model snapshot immediately, refresh configured providers in the background, and update the open selector with partial results or timeout errors.
 - Tuned the `gpt-5.6` system prompt preset against the oh-my-opencode Hephaestus GPT-5.6 prompts: verification wording now names validators senpi can actually run (type check/lint instead of a nonexistent diagnostics tool), parallel tool calls are the stated default with serial as the exception and no `;`/`&&` chaining of unrelated shell steps, todo items are named by deliverable and reconciled at turn end, and bracketed `【F:...】`-style citations are banned from output.
 - Reframed the skill-loading trigger in every system prompt to load skills on loose description match, stating the cost asymmetry (an irrelevant load costs little; a missed relevant skill degrades the work).
 - Added an instruction-file precedence rule to the dynamic system prompt's Project Context section: instruction files bind files under their directory, deeper files win on conflict, and explicit user instructions override.
 
 ### Fixed
+
+- Fixed configured-provider catalog refresh to parse model-ID keyed responses, throttle checks, send the versioned pi user agent, and show concise refresh status in `/model`.
+- Fixed adjacent assistant thinking blocks to render as one thinking section.
+- Fixed automatic compaction to preserve user, OMO steer, and goal follow-up messages appended while compacted context is rebuilt.
+- Fixed SDK-created sessions to inherit the configured agent stream idle timeout.
 
 ### Removed
 
