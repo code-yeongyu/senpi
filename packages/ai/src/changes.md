@@ -1,5 +1,47 @@
 # AI Source Changes
 
+## 2026-07-16 - Anthropic native web_search endpoint guard and server_tool_use input streaming
+
+### What changed and why
+
+- `types.ts`: added `AnthropicMessagesCompat.supportsWebSearch`. Default (resolved in
+  `getAnthropicCompat`): true only for the first-party `anthropic` provider; Anthropic-compatible providers can
+  opt in per model via `compat`.
+- `api/anthropic-messages.ts`: `sanitizeUnsupportedNativeTools` now also strips hook-injected native `web_search_*`
+  tools when the resolved compat does not support them, mirroring the existing native computer tool guard and the
+  OpenAI Responses `web_search_preview` compat guard (2026-05-15). Anthropic-compatible endpoints such as kimi-coding
+  execute the server-side search but reject the replayed `server_tool_use` / `web_search_tool_result` blocks on the
+  next request (kimi-coding 400s with `tool_call_id is not found`), wedging the session.
+- `api/anthropic-messages.ts`: same-model provider-native replay also drops web-search server-tool blocks
+  (`server_tool_use` named `web_search` and `web_search_tool_result`) when the endpoint lacks `supportsWebSearch`.
+  Sessions that already recorded such blocks against an incompatible endpoint were permanently wedged — every
+  request replayed the rejected blocks; dropping the pair loses the searched context but unwedges the session.
+- `api/anthropic-messages.ts`: streaming now accumulates `input_json_delta` for tool_use-shaped provider-native
+  blocks (`*_tool_use`, e.g. `server_tool_use`) and merges the parsed input into the stored raw block at
+  `content_block_stop` (or in the abort/error finalizer for interrupted streams). Previously the block kept the
+  `content_block_start` snapshot (`input: {}`), so every same-model replay sent the server tool call with an empty
+  input. Result-shaped blocks are never touched — their `encrypted_content` must replay byte-for-byte.
+
+### Files modified
+
+- `types.ts`
+- `api/anthropic-messages.ts`
+- `../test/anthropic-native-web-search-compat.test.ts`
+- (see also `../../coding-agent/src/core/changes.md` for the models.json compat schema entry)
+
+### Why the higher-level extension system couldn't handle this alone
+
+- Extensions can inject native `web_search_*` tools via `before_provider_request`; the final payload is only known
+  after all hooks run, so the provider is the last reliable guard before SDK submission (same rationale as the
+  OpenAI Responses guard). Provider-native block capture during streaming happens inside `pi-ai` before any
+  extension sees the message.
+
+### Expected merge conflict zones
+
+- MEDIUM: `api/anthropic-messages.ts` around `getAnthropicCompat`, `sanitizeUnsupportedNativeTools`, and the
+  `content_block_delta` / `content_block_stop` streaming handlers.
+- LOW: `types.ts` `AnthropicMessagesCompat` if upstream adds more compat flags.
+
 ## 2026-07-14 - Anthropic web search replay encrypted content correction
 
 ### What changed and why

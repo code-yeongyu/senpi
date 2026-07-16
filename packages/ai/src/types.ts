@@ -661,6 +661,15 @@ export interface AnthropicMessagesCompat {
 	 * except Haiku and models older than Claude 4.5; false for other providers.
 	 */
 	supportsToolReferences?: boolean;
+	/**
+	 * Whether the provider executes Anthropic server-side `web_search_*` native
+	 * tools and accepts their `server_tool_use` / `web_search_tool_result`
+	 * blocks on replay. Anthropic-compatible endpoints (e.g., kimi-coding) may
+	 * run the search but reject the replayed server-tool blocks on the next
+	 * request. When false, hook-injected `web_search_*` tools are stripped from
+	 * the payload. Default: true only for the first-party Anthropic endpoint.
+	 */
+	supportsWebSearch?: boolean;
 }
 
 /**

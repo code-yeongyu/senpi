@@ -1,7 +1,9 @@
-import type { Api } from "@earendil-works/pi-ai";
+import type { AnthropicMessagesCompat, Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 
 type ToolDefinition = Record<string, unknown>;
+type AnthropicWebSearchModel = Pick<Model<Api>, "api" | "provider" | "compat">;
+type AnthropicWebSearchTarget = Api | AnthropicWebSearchModel | undefined;
 
 const WEB_SEARCH_MAX_USES = 8;
 const ENABLE_ENV = "PI_ANTHROPIC_WEB_SEARCH";
@@ -35,6 +37,33 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isWebSearchType(value: unknown): value is string {
 	return typeof value === "string" && value.startsWith("web_search_");
+}
+
+function resolveTarget(target: AnthropicWebSearchTarget): AnthropicWebSearchModel | undefined {
+	if (target === undefined) {
+		return undefined;
+	}
+	if (typeof target === "string") {
+		return {
+			api: target,
+			provider: target === "anthropic-messages" ? "anthropic" : "",
+		};
+	}
+	return target;
+}
+
+// Mirrors pi-ai's `AnthropicMessagesCompat.supportsWebSearch` default:
+// first-party Anthropic only. Anthropic-compatible endpoints (e.g.,
+// kimi-coding) may execute the server-side search but reject the replayed
+// server_tool_use / web_search_tool_result blocks on the next request.
+export function supportsNativeAnthropicWebSearch(target: AnthropicWebSearchTarget): boolean {
+	const model = resolveTarget(target);
+	if (model?.api !== "anthropic-messages") {
+		return false;
+	}
+
+	const compat = model.compat as AnthropicMessagesCompat | undefined;
+	return compat?.supportsWebSearch ?? model.provider === "anthropic";
 }
 
 function parseDomainListEnv(envVar: string): string[] | undefined {
@@ -85,16 +114,43 @@ function sanitizeTools(tools: unknown[]): ToolDefinition[] {
 	return sanitized;
 }
 
-export function addAnthropicWebSearchToPayload(api: Api | undefined, payload: unknown): unknown {
-	if (api !== "anthropic-messages") {
+function stripNativeAnthropicWebSearch(payload: Record<string, unknown>): Record<string, unknown> {
+	const tools = payload.tools;
+	if (!Array.isArray(tools)) {
 		return payload;
 	}
 
-	if (!isAnthropicWebSearchEnabled()) {
+	const sanitizedTools = tools.filter((tool) => !(isRecord(tool) && isWebSearchType(tool.type)));
+	if (sanitizedTools.length === tools.length) {
+		return payload;
+	}
+
+	return {
+		...payload,
+		tools: sanitizedTools,
+	};
+}
+
+export function addAnthropicWebSearchToPayload(target: AnthropicWebSearchTarget, payload: unknown): unknown {
+	const model = resolveTarget(target);
+	if (model?.api !== "anthropic-messages") {
 		return payload;
 	}
 
 	if (!isRecord(payload)) {
+		return payload;
+	}
+
+	if (!supportsNativeAnthropicWebSearch(model)) {
+		// Anthropic-compatible endpoints (e.g., kimi-coding) may execute the
+		// server-side search but reject the replayed server_tool_use /
+		// web_search_tool_result blocks on the next request. Strip any native
+		// web_search_* variant so the session never wedges; a function-tool
+		// web_search (pi-websearch) is left untouched as the working fallback.
+		return stripNativeAnthropicWebSearch(payload);
+	}
+
+	if (!isAnthropicWebSearchEnabled()) {
 		return payload;
 	}
 
@@ -135,7 +191,7 @@ Prefer web_search over guessing when freshness matters.
 
 export default function anthropicWebSearchExtension(pi: ExtensionAPI): void {
 	pi.on("before_provider_request", (event, ctx) => {
-		return addAnthropicWebSearchToPayload(ctx.model?.api, event.payload);
+		return addAnthropicWebSearchToPayload(ctx.model, event.payload);
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
@@ -151,7 +207,7 @@ export default function anthropicWebSearchExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		if (ctx.model?.api !== "anthropic-messages") {
+		if (!supportsNativeAnthropicWebSearch(ctx.model)) {
 			return undefined;
 		}
 

@@ -1,5 +1,35 @@
 # Core Extensions Changes
 
+## 2026-07-16 - anthropic-web-search gated to endpoints that support server-side web search
+
+### What changed
+
+- `builtin/anthropic-web-search/index.ts`: the extension now gates on the model instead of the API type,
+  mirroring `builtin/openai-web-search`. `supportsNativeAnthropicWebSearch(target)` is true for the first-party
+  `anthropic` provider or an explicit `compat.supportsWebSearch` opt-in. For unsupported
+  `anthropic-messages` endpoints the extension no longer
+  injects `web_search_20250305`, no longer strips a function-tool `web_search` (pi-websearch keeps working as the
+  fallback), strips any hook-injected native `web_search_*` variant, and skips the web-search system prompt
+  section.
+- `test/suite/anthropic-web-search-extension.test.ts`: added kimi-coding-shaped regression coverage for
+  non-injection, native-variant stripping, compat opt-in, and prompt-section gating.
+
+### Why
+
+- Anthropic-compatible endpoints such as kimi-coding accept the injected native tool and execute the server-side
+  search, but reject the replayed `server_tool_use` / `web_search_tool_result` blocks on the next request
+  (kimi-coding 400s with `tool_call_id is not found`), wedging the session mid-turn.
+
+### Why extension system couldn't handle this alone
+
+- It can (this is the extension-side half); `pi-ai` additionally strips unsupported `web_search_*` tools after all
+  hooks run (see `packages/ai/src/changes.md` 2026-07-16) so payloads from other extensions are covered too.
+
+### Expected merge conflict zones
+
+- MEDIUM: `builtin/anthropic-web-search/index.ts` if upstream reshapes native web tool payload handling.
+- LOW: `test/suite/anthropic-web-search-extension.test.ts` fixtures.
+
 ## 2026-07-10 - Tool renderer image protocol context
 
 ### What changed
