@@ -8,6 +8,7 @@
 
 ### Added
 
+- Added inherited Kimi K3 model availability and deferred tool loading for compatible providers.
 - Added `ModelRuntime` as the canonical async SDK and internal model/auth facade while retaining the fork's `AuthStorage`, `ModelRegistry`, and corresponding `CreateAgentSessionOptions` compatibility APIs.
 
 ### Changed

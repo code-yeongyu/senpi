@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added Kimi K3 model catalogs and deferred tool loading for compatible Kimi and OpenAI Completions routes.
 - Preserved fork compatibility for extension OAuth callback types and faux-provider registration through the `compat` surface.
 
 ## [0.80.8] - 2026-07-16
