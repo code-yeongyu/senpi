@@ -39,9 +39,6 @@
 		"FUGU_API_KEY": {
 			"description": "(Optional) Sakana Fugu API key."
 		},
-		"KAGI_API_KEY": {
-			"description": "(Optional) Kagi API key."
-		},
 		"LITELLM_API_KEY": {
 			"description": "(Optional) LiteLLM proxy API key."
 		},
@@ -57,9 +54,6 @@
 		"OLLAMA_CLOUD_API_KEY": {
 			"description": "(Optional) Ollama Cloud API key."
 		},
-		"PARALLEL_API_KEY": {
-			"description": "(Optional) Parallel API key."
-		},
 		"QIANFAN_API_KEY": {
 			"description": "(Optional) Qianfan API key."
 		},
@@ -71,9 +65,6 @@
 		},
 		"SYNTHETIC_API_KEY": {
 			"description": "(Optional) Synthetic API key."
-		},
-		"TAVILY_API_KEY": {
-			"description": "(Optional) Tavily API key."
 		},
 		"VENICE_API_KEY": {
 			"description": "(Optional) Venice API key."

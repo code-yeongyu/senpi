@@ -1,5 +1,24 @@
 # changes.md — dynamic-prompt
 
+## AGENTS.md precedence contract in Project Context (2026-07-16)
+
+### What changed
+
+- `build.ts`: the `## Project Context` section now opens with one precedence line: project instruction files (inline and `[Directory Context: ...]` blocks injected by nested-agents-md) bind files under their directory, deeper files win on conflict, explicit user instructions override. Ported from omo Hephaestus's `# AGENTS.md` section.
+- `build.test.ts` pins "deeper files win on conflict".
+
+### Why
+
+- senpi injects nested AGENTS.md content at read time but stated no precedence rule anywhere, leaving root-vs-nested conflicts as unresolved contradictions - the exact instability the GPT-5.6 guide warns about ("conflicting rules can create more instability than missing detail"). One ~25-token line closes the contradiction channel for every preset.
+
+### Why extension system couldn't handle this
+
+- `buildContextFilesSection` is core-owned and shared by every preset and the fallback prompt.
+
+### Expected merge conflict zones
+
+- LOW: `build.ts` context-section header block.
+
 ## Token diet for shared sections (2026-07-02)
 
 ### What changed

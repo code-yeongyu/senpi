@@ -124,6 +124,7 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		openrouter: "OPENROUTER_API_KEY",
 		perplexity: "PERPLEXITY_API_KEY",
 		qianfan: "QIANFAN_API_KEY",
+		radius: "PI_GATEWAY_API_KEY",
 		synthetic: "SYNTHETIC_API_KEY",
 		together: "TOGETHER_API_KEY",
 		venice: "VENICE_API_KEY",

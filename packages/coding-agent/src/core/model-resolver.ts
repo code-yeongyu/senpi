@@ -63,6 +63,7 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	perplexity: "sonar-pro",
 	qianfan: "deepseek-v3.2",
 	"qwen-portal": "coder-model",
+	radius: "auto",
 	synthetic: "hf:moonshotai/Kimi-K2.5",
 	together: "moonshotai/Kimi-K2.6",
 	venice: "llama-3.3-70b",

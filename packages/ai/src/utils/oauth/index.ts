@@ -36,6 +36,16 @@ export {
 } from "./openai-codex.ts";
 export * from "./openai-codex-device.ts";
 export * from "./perplexity.ts";
+
+// Radius (pi-messages gateway)
+export {
+	createRadiusOAuthProvider,
+	DEFAULT_RADIUS_GATEWAY,
+	type RadiusGatewayConfig,
+	type RadiusGatewayModel,
+	type RadiusOAuthCredentials,
+	type RadiusOAuthProviderOptions,
+} from "./radius.ts";
 export * from "./types.ts";
 export {
 	discoverXaiOAuthEndpoints,
@@ -49,6 +59,7 @@ export {
 // Provider Registry
 // ============================================================================
 
+import { getProviderEnvValue } from "../provider-env.ts";
 import { anthropicOAuthProvider } from "./anthropic.ts";
 import { cursorOAuthProvider } from "./cursor.ts";
 import { githubCopilotOAuthProvider } from "./github-copilot.ts";
@@ -61,6 +72,7 @@ import { kimiCodeOAuthProvider } from "./kimi-code.ts";
 import { openaiCodexOAuthProvider } from "./openai-codex.ts";
 import { openaiCodexDeviceOAuthProvider } from "./openai-codex-device.ts";
 import { perplexityOAuthProvider } from "./perplexity.ts";
+import { createRadiusOAuthProvider, DEFAULT_RADIUS_GATEWAY } from "./radius.ts";
 import type { OAuthCredentials, OAuthProviderId, OAuthProviderInfo, OAuthProviderInterface } from "./types.ts";
 import { xaiOAuthProvider } from "./xai.ts";
 
@@ -68,6 +80,11 @@ const BUILT_IN_OAUTH_PROVIDERS: OAuthProviderInterface[] = [
 	anthropicOAuthProvider,
 	githubCopilotOAuthProvider,
 	openaiCodexOAuthProvider,
+	createRadiusOAuthProvider({
+		id: "radius",
+		name: "Radius",
+		gateway: getProviderEnvValue("PI_GATEWAY") || DEFAULT_RADIUS_GATEWAY,
+	}),
 	openaiCodexDeviceOAuthProvider,
 	kimiCodeOAuthProvider,
 	cursorOAuthProvider,

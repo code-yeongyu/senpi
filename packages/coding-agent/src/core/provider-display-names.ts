@@ -47,6 +47,7 @@ export const BUILT_IN_PROVIDER_DISPLAY_NAMES: Record<string, string> = {
 	perplexity: "Perplexity",
 	qianfan: "Qianfan",
 	"qwen-portal": "Qwen Portal",
+	radius: "Radius",
 	synthetic: "Synthetic",
 	together: "Together AI",
 	venice: "Venice",

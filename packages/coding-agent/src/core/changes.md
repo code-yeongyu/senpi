@@ -17,6 +17,21 @@
 
 - MEDIUM: provider display/default maps when upstream changes model resolution or login discovery.
 
+
+## Skill-loading trigger reframed with cost asymmetry (2026-07-16)
+
+### What changed
+
+- `skills.ts` (`formatSkillsForPrompt`): the load trigger changed from "when the task matches its description" to "whenever its description even loosely matches the task - loading an irrelevant skill costs little; missing a relevant one degrades the work" (ported from omo Hephaestus). `skills.test.ts` pins "even loosely matches".
+
+### Why extension system couldn't handle this
+
+- `formatSkillsForPrompt` is core-owned and rendered into every system prompt. Strict-match framing under-loads skills on compression-biased models (GPT-5.6); stating the cost asymmetry is the decision-rule form the 5.6 guide prescribes for judgment calls.
+
+### Expected merge conflict zones
+
+- LOW: `skills.ts` intro lines if upstream rewords the skills preamble.
+
 ## Release accepted auto-compaction ownership before recovery (2026-07-13)
 
 ### What changed

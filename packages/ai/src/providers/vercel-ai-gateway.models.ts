@@ -841,8 +841,8 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		reasoning: true,
 		input: ["text"],
 		cost: {
-			input: 0.21,
-			output: 0.79,
+			input: 0.25,
+			output: 0.95,
 			cacheRead: 0.13,
 			cacheWrite: 0,
 		},

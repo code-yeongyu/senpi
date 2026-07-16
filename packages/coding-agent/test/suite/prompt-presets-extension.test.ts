@@ -167,8 +167,10 @@ describe("prompt preset resolver", () => {
 		expect(preset?.prompt).toContain("I read this as");
 		expect(preset?.prompt).toContain("outcome-first");
 		expect(preset?.prompt).toContain("todowrite");
+		expect(preset?.prompt).toContain("reconcile every item");
 		// GPT-5.6 tuning: prioritization instead of brevity, tool-loop stopping conditions.
 		expect(preset?.prompt).toContain("fewest useful tool loops");
+		expect(preset?.prompt).toContain("serial is the exception");
 		expect(preset?.prompt).toContain("Lead with the conclusion");
 		// Hephaestus parity: autonomous deep-worker contracts.
 		expect(preset?.prompt).toContain("Implement, don't propose");
@@ -182,6 +184,9 @@ describe("prompt preset resolver", () => {
 		expect(preset?.prompt).toContain("STOPPING IS MANDATORY AND IMMEDIATE");
 		expect(preset?.prompt).not.toContain("## Stop Rules");
 		expect(preset?.prompt).toContain("Never revert or modify changes you did not make");
+		// Verification binds to validators senpi can actually run; no phantom diagnostics tool.
+		expect(preset?.prompt).toContain("type check");
+		expect(preset?.prompt).not.toContain("lsp_diagnostics");
 		// omo-only tool contracts must NOT leak into senpi's tool surface.
 		expect(preset?.prompt).not.toContain("librarian");
 		expect(preset?.prompt).not.toContain("oracle");
