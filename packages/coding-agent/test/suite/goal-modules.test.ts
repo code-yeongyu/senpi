@@ -167,6 +167,13 @@ describe("goal status UI", () => {
 		expect(goalStatusText(makeGoal({ status: "complete" }))).toBe("Goal achieved");
 	});
 
+	it("renders live elapsed seconds for an active goal, ignoring it otherwise", () => {
+		expect(goalStatusText(makeGoal({ status: "active", timeUsedSeconds: 0 }), 0)).toBe("Pursuing goal (0s)");
+		expect(goalStatusText(makeGoal({ status: "active", timeUsedSeconds: 5 }), 42)).toBe("Pursuing goal (42s)");
+		expect(goalStatusText(makeGoal({ status: "paused" }), 99)).toBe("Goal paused (/goal resume)");
+		expect(goalStatusText(makeGoal({ status: "complete" }), 99)).toBe("Goal achieved");
+	});
+
 	it("sets and clears the status segment, respecting hasUI", () => {
 		const calls: Array<{ key: string; text: string | undefined }> = [];
 		const ctx = {
