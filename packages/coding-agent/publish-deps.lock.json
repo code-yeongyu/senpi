@@ -1,21 +1,21 @@
 {
 	"name": "@code-yeongyu/senpi",
-	"version": "2026.7.17-2",
+	"version": "2026.7.17-3",
 	"lockfileVersion": 3,
 	"requires": true,
 	"packages": {
 		"": {
 			"name": "@code-yeongyu/senpi",
-			"version": "2026.7.17-2",
+			"version": "2026.7.17-3",
 			"license": "MIT",
 			"dependencies": {
 				"@anthropic-ai/sdk": "0.91.1",
 				"@aws-sdk/client-bedrock-runtime": "3.1048.0",
-				"@code-yeongyu/senpi-codemode": "^2026.7.17-2",
-				"@earendil-works/pi-agent-core": "^2026.7.17-2",
-				"@earendil-works/pi-ai": "^2026.7.17-2",
-				"@earendil-works/pi-pty": "^2026.7.17-2",
-				"@earendil-works/pi-tui": "^2026.7.17-2",
+				"@code-yeongyu/senpi-codemode": "^2026.7.17-3",
+				"@earendil-works/pi-agent-core": "^2026.7.17-3",
+				"@earendil-works/pi-ai": "^2026.7.17-3",
+				"@earendil-works/pi-pty": "^2026.7.17-3",
+				"@earendil-works/pi-tui": "^2026.7.17-3",
 				"@mistralai/mistralai": "2.2.6",
 				"@modelcontextprotocol/sdk": "1.29.0",
 				"@mozilla/readability": "0.6.0",
@@ -600,12 +600,12 @@
 			}
 		},
 		"node_modules/@code-yeongyu/senpi-codemode": {
-			"version": "2026.7.17-2",
+			"version": "2026.7.17-3",
 			"inBundle": true,
 			"license": "MIT",
 			"dependencies": {
 				"@babel/parser": "7.29.7",
-				"@earendil-works/pi-ai": "^2026.7.17-2",
+				"@earendil-works/pi-ai": "^2026.7.17-3",
 				"typebox": "1.1.38"
 			},
 			"peerDependencies": {
@@ -750,11 +750,11 @@
 			]
 		},
 		"node_modules/@earendil-works/pi-agent-core": {
-			"version": "2026.7.17-2",
+			"version": "2026.7.17-3",
 			"inBundle": true,
 			"license": "MIT",
 			"dependencies": {
-				"@earendil-works/pi-ai": "^2026.7.17-2",
+				"@earendil-works/pi-ai": "^2026.7.17-3",
 				"ignore": "7.0.5",
 				"typebox": "1.1.38",
 				"yaml": "2.9.0"
@@ -764,7 +764,7 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-ai": {
-			"version": "2026.7.17-2",
+			"version": "2026.7.17-3",
 			"inBundle": true,
 			"license": "MIT",
 			"dependencies": {
@@ -792,7 +792,7 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-pty": {
-			"version": "2026.7.17-2",
+			"version": "2026.7.17-3",
 			"inBundle": true,
 			"license": "MIT",
 			"dependencies": {
@@ -803,7 +803,7 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-tui": {
-			"version": "2026.7.17-2",
+			"version": "2026.7.17-3",
 			"inBundle": true,
 			"license": "MIT",
 			"dependencies": {
