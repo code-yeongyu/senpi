@@ -6,9 +6,17 @@
 
 ```text
 src/cli.ts, cli-main.ts, main.ts   Bootstrap, args, mode dispatch
+src/package-manager-cli.ts         install/update/config subcommands (incl. `senpi update --models`)
 src/core/agent-session.ts          Session lifecycle and runtime
+src/core/dynamic-prompt/           Dynamic system-prompt assembly + workstation facts
+src/core/model-runtime.ts          Model runtime bootstrap
+src/core/model-config.ts           Per-model config resolution
+src/core/models-store.ts           Persisted model store
+src/core/provider-composer.ts      Provider payload composition
+src/core/remote-catalog-provider.ts Remote model-catalog fetch
+src/core/runtime-credentials.ts    Credential resolution and refresh
 src/core/extensions/               Public extension API and loader
-src/core/extensions/builtin/       Fork features implemented as extensions
+src/core/extensions/builtin/       In-tree fork extensions; bundled extensions (e.g. codemode) resolved via resource-loader.ts
 src/core/tools/                    Upstream-parity built-in tools
 src/core/compaction/               Core compaction mechanics
 src/modes/interactive/             TUI mode and components
@@ -28,6 +36,7 @@ src/changes.md                     Root fork-change record
 | Add tool, command, flag, or hook | `src/core/extensions/builtin/` |
 | Change extension contract | `src/core/extensions/types.ts` and `src/core/extensions/changes.md` |
 | Change session lifecycle | `src/core/agent-session.ts` |
+| Change model/provider/catalog/auth runtime | `src/core/model-runtime.ts` + related `model-*/provider-*` modules |
 | Change keybinding | `src/core/keybindings.ts` |
 | Change interactive UI | `src/modes/interactive/` |
 | Change RPC/app-server | matching directory under `src/modes/` |
@@ -43,7 +52,7 @@ src/changes.md                     Root fork-change record
 - Keep branding consistent: package `@code-yeongyu/senpi`, binary `senpi`, config directory `.senpi`.
 - Preserve the inlined UUIDv7 implementation; do not add a `uuid` dependency.
 - Do not run real providers in tests. Use `test/suite/harness.ts` and the faux provider.
-- RPC/app-server streams are LF-framed and request-correlated; preserve pending-work rejection on disconnect or child exit. Current readers/buffers are not size-bounded, so do not claim bounded/backpressured behavior without implementation and tests.
+- RPC/app-server streams are LF-framed and request-correlated; preserve pending-work rejection on disconnect or child exit. Inbound NDJSON readers are not size-bounded; outbound stdio waits for stdout backpressure (`transports/stdio.ts`) and WebSocket closes slow clients at queue cap (`transports/websocket-connection-handler.ts`); preserve those contracts.
 - MCP token/log storage preserves restricted directory/file permissions; do not widen inherited child environments. RPC child stderr is currently emitted and embedded raw, so treat diagnostics as potentially secret-bearing and do not claim redaction without implementing it.
 
 ## ANTI-PATTERNS

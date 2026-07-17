@@ -10,6 +10,8 @@ all.ts                   Builtin provider/model aggregation
 faux.ts                  Deterministic public test provider
 *-models.ts              Provider model/catalog helpers where present
 images/                  Image-provider metadata and factories
+radius.ts                Dynamic Radius provider with persisted model refresh
+radius-config.ts         Radius gateway/model catalog loading
 ```
 
 ## ADD OR CHANGE A PROVIDER
@@ -25,6 +27,7 @@ images/                  Image-provider metadata and factories
 ## INVARIANTS
 
 - Do not put wire clients back into provider factories or restore lazy registration in `register-builtins.ts`.
+- Dynamic providers expose last-known models synchronously and refresh through the ModelsStore/auth-aware refresh path; implement `refreshModels`, cache restore/write, abort handling, and failure retention.
 - `../api/transform-messages.ts` is the canonical cross-provider coercion boundary and must not mutate source messages.
 - Keep provider-specific quirks local; shared behavior belongs in clearly named shared modules.
 - Every API stream must preserve tool calls, thinking blocks, usage accounting, stop reasons, setup errors, and abort semantics.

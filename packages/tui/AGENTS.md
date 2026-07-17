@@ -25,6 +25,7 @@ test/*.test.ts              Node test-runner coverage
 - `start()` and `stop()` reset queued render state so stale scheduled frames cannot leak across lifecycles.
 - `ProcessTerminal` owns external stdout while running; components must not write around it.
 - Terminal title output strips control characters.
+- Visible tabs are normalized to a fixed three-column width at the terminal-output boundary; ANSI/OSC/APC escape sequences are untouched (`test/tab-width.test.ts`).
 - High-frequency consumer components are responsible for memoization; preserve the Senpi streaming caches.
 
 ## WHERE TO LOOK
@@ -37,6 +38,7 @@ test/*.test.ts              Node test-runner coverage
 | Key parsing/defaults | `src/keys.ts`, `src/keybindings.ts` |
 | Paste handling | `src/stdin-buffer.ts` |
 | Width/wrapping | `src/utils.ts` |
+| Terminal-output normalization/tab width | `src/utils.ts` (`normalizeTerminalOutput`, `visibleWidth`) and `src/tui.ts` |
 | Images | `src/terminal-image.ts` |
 
 ## ANTI-PATTERNS

@@ -1,6 +1,6 @@
 # packages/coding-agent/src/core/extensions
 
-The extension system. **The fork's most important architectural surface** — every fork feature that *can* be an extension *is* one. `types.ts` is ~1700 lines of public API contract. Treat changes here as breaking until proven otherwise.
+The extension system. **The fork's most important architectural surface** — every fork feature that *can* be an extension *is* one. `types.ts` is ~1844 lines of public API contract. Treat changes here as breaking until proven otherwise.
 
 ## FILES
 
@@ -8,14 +8,14 @@ The extension system. **The fork's most important architectural surface** — ev
 extensions/
 ├── types.ts             # Public API: ExtensionAPI, Extension, ExtensionContext, ExtensionUIContext,
 │                        # ExtensionEvent union (30+ events), all *EventResult types, ToolDefinition.
-│                        # ~1700 LOC — VERY HIGH merge-conflict risk on every upstream sync.
+│                        # ~1844 LOC — VERY HIGH merge-conflict risk on every upstream sync.
 ├── loader.ts            # Discovery + jiti-based TS import. Shared importer per `loadExtensions()` batch
 │                        # (perf fix 2026-05-08). Aliases `@mariozechner/pi-*` → workspace packages.
 ├── runner.ts            # ExtensionRunner — owns the runtime, dispatches events, holds shutdown handlers,
 │                        # exposes `bindCore()` to wire `pi.*` stubs to real implementations.
 ├── wrapper.ts           # 30-line wrapper utility used to track extension origin per UI message
 ├── index.ts             # Re-exports from runner/loader/types
-├── builtin/             # 22 builtin extensions + 4 global defaults — see builtin/AGENTS.md
+├── builtin/             # 23 builtin extensions + bundled codemode (`core/resource-loader.ts`) — see builtin/AGENTS.md
 └── changes.md           # Fork tracker — DENSE. Every public-API change must add a section.
 ```
 
@@ -31,6 +31,8 @@ extensions/
 | Providers | `registerProvider`, `unregisterProvider` | New LLM provider (extension-local) |
 | Messages | `sendMessage`, `sendUserMessage`, `appendEntry`, `registerMessageRenderer` | Inject messages/entries into the session |
 | Model | `setModel`, `getThinkingLevel`, `setThinkingLevel` | Model + thinking-level control |
+| Session metadata | `setSessionName`, `getSessionName`, `setLabel` | Session display name + entry labels |
+| Tool execution | `executeTool` | Run a tool through the normal validation/hook/permission pipeline |
 | Events | `on(<event>, handler)` | 30+ events (session_start, tool_call, message_update, before_provider_request, before_agent_start, model_select, system_prompt_change, session_before_compact, session_compact, resources_discover, etc.) |
 | Context | `ctx: ExtensionContext` — second parameter of every event handler | Read cwd, model, session manager, compaction settings, system prompt; `ctx.ui` for TUI dialogs/widgets |
 
@@ -38,9 +40,10 @@ extensions/
 
 ## LOADING ORDER
 
-1. Builtin factories from `builtin/index.ts`, in `builtinExtensions` array order — affects permission/agent stacking precedence.
-2. Generated default global extensions (`globalDefaultExtensionFactories`: `diff`, `files`, `prompt-url-widget`, `tps`) — fast-path resolved by `core/resource-loader.ts` (avoids jiti for unchanged stub files).
-3. User extensions from `~/.senpi/agent/extensions/`, `.senpi/extensions/` (directory name comes from `CONFIG_DIR_NAME` in `config.ts`), settings.json paths, `-e` CLI flag.
+1. In-tree factories from `builtin/index.ts`, in `builtinExtensions` array order — affects permission/agent stacking precedence.
+2. Bundled extensions (currently codemode; `core/resource-loader.ts`) — resolved via package JSON entries, loaded through the same jiti path as user extensions.
+3. Inline SDK/runtime factories passed to the runtime constructor (`core/resource-loader.ts`).
+4. Resolved global/project/user/settings/CLI paths (includes global default extensions: `diff`, `files`, `prompt-url-widget`, `tps`; user paths from `~/.senpi/agent/extensions/`, `.senpi/extensions/`, settings.json, `-e` flag).
 
 ## CONVENTIONS
 
@@ -59,5 +62,6 @@ extensions/
 
 ## NOTES
 
-- The ~1700-line `types.ts` is "the API"; treat its diffs like a public package release.
+- The ~1844-line `types.ts` is "the API"; treat its diffs like a public package release.
+- `ToolRenderContext` now includes `imageProtocol` (terminal image protocol, or null when images can't render) and `hasResult` (lets a call renderer yield to the result renderer).
 - `changes.md` already documents major fork-introduced APIs: `ModelSelectEventResult`, `SystemPromptChangeEvent`, `getCompactionSettings`, lazy/shared jiti, default-extension factory resolver. Read it before extending.
