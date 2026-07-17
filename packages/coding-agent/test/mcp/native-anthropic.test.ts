@@ -20,8 +20,8 @@ import {
 } from "./fixtures/native-search-mocks.ts";
 
 const CONFIG = {
-	searchToolName: "mcp_search",
-	isDeferrable: (name: string) => name.startsWith("mcp_") && name !== "mcp_search",
+	searchToolName: "tool_search",
+	isDeferrable: (name: string) => name.startsWith("mcp_") && name !== "tool_search",
 };
 
 function toolsOf(payload: unknown): Record<string, unknown>[] {
@@ -37,7 +37,7 @@ function searchTool(tools: Record<string, unknown>[]): Record<string, unknown>[]
 }
 
 function mcpToolsPayload(count: number): { tools: Record<string, unknown>[] } {
-	const tools: Record<string, unknown>[] = [{ name: "mcp_search", description: "search", input_schema: {} }];
+	const tools: Record<string, unknown>[] = [{ name: "tool_search", description: "search", input_schema: {} }];
 	for (let i = 1; i <= count; i += 1) {
 		tools.push({ name: `mcp_docs_tool-${i}`, description: `tool ${i}`, input_schema: {} });
 	}
@@ -49,8 +49,8 @@ describe("todo33 anthropic native: injection + HARD RULES (validator 400s on vio
 		const out = addAnthropicNativeToolSearch("anthropic-messages", mcpToolsPayload(3), CONFIG);
 		const tools = toolsOf(out);
 		expect(searchTool(tools)).toHaveLength(1);
-		// mcp_search itself is never deferred; the three catalog tools are.
-		expect(named(tools, "mcp_search")?.defer_loading).toBeUndefined();
+		// tool_search itself is never deferred; the three catalog tools are.
+		expect(named(tools, "tool_search")?.defer_loading).toBeUndefined();
 		expect(named(tools, "mcp_docs_tool-1")?.defer_loading).toBe(true);
 		expect(validateAnthropicToolSearchPayload(out)).toEqual({ status: 200 });
 	});
@@ -122,7 +122,7 @@ describe("todo33 anthropic native: 400 -> local fallback", () => {
 
 		adapter.noteResponseStatus(400);
 		expect(adapter.disabled).toBe(true);
-		expect(fallback).toContain("fell back to local mcp_search");
+		expect(fallback).toContain("fell back to local tool_search");
 
 		// Subsequent requests are byte-identical (no injection): session continues.
 		const next = mcpToolsPayload(3);
@@ -152,7 +152,7 @@ describe("todo33 anthropic native: M5 co-residence with web-search + cache tail 
 		const base: Record<string, unknown> = {
 			service_tier: "auto",
 			tools: [
-				{ name: "mcp_search", description: "search", input_schema: {} },
+				{ name: "tool_search", description: "search", input_schema: {} },
 				{ name: "mcp_docs_a", description: "a", input_schema: {} },
 				{ name: "mcp_docs_b", description: "b", input_schema: {}, cache_control: { type: "ephemeral" } },
 			],

@@ -1,4 +1,4 @@
-// Todo 31 — mcp_search tool + promotion engine.
+// Todo 31 — tool_search tool + promotion engine.
 //
 // Proves: turn-1 search lists full names + "next turn" and activates matches;
 // turn-2 the promoted tool is callable; inactive tools contribute ZERO tokens
@@ -12,10 +12,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	buildMcpSearchResultText,
 	createMcpSearchTool,
-	MCP_SEARCH_ACTIVATION_MARKER,
-	MCP_SEARCH_TOOL_NAME,
 	rehydrateActiveToolsFromHistory,
 	type SearchableMcpTool,
+	TOOL_SEARCH_ACTIVATION_MARKER,
+	TOOL_SEARCH_TOOL_NAME,
 	unionStable,
 } from "../../src/core/extensions/builtin/mcp/expose/tool-search.ts";
 import type { ExtensionAPI, ExtensionFactory, ToolDefinition } from "../../src/core/extensions/types.ts";
@@ -49,7 +49,7 @@ function fakeMcpTool(name: string): ToolDefinition {
 }
 
 // Extension that registers the catalog tools (inactive) + an always-active
-// mcp_search wired to promote via pi.setActiveTools.
+// tool_search wired to promote via pi.setActiveTools.
 function toolSearchExtension(): ExtensionFactory {
 	return (pi: ExtensionAPI) => {
 		for (const entry of CATALOG) pi.registerTool(fakeMcpTool(entry.name));
@@ -64,8 +64,8 @@ function toolSearchExtension(): ExtensionFactory {
 		pi.on("before_agent_start", async () => {
 			if (armed) return undefined;
 			armed = true;
-			// Only mcp_search is active initially; catalog tools stay inactive.
-			pi.setActiveTools([MCP_SEARCH_TOOL_NAME]);
+			// Only tool_search is active initially; catalog tools stay inactive.
+			pi.setActiveTools([TOOL_SEARCH_TOOL_NAME]);
 			return undefined;
 		});
 	};
@@ -82,14 +82,14 @@ async function makeHarness(): Promise<Harness> {
 	return harness;
 }
 
-describe("todo31 mcp_search: two-turn promotion + zero-token inactive tools", () => {
+describe("todo31 tool_search: two-turn promotion + zero-token inactive tools", () => {
 	it("turn1 search activates matches; turn2 they are callable; unmatched stay inactive", async () => {
 		const harness = await makeHarness();
 		const providerToolNames: string[][] = [];
 		harness.setResponses([
 			(context) => {
 				providerToolNames.push((context.tools ?? []).map((tool) => tool.name).sort());
-				return fauxAssistantMessage(fauxToolCall("mcp_search", { query: "library documentation" }), {
+				return fauxAssistantMessage(fauxToolCall("tool_search", { query: "library documentation" }), {
 					stopReason: "toolUse",
 				});
 			},
@@ -105,11 +105,11 @@ describe("todo31 mcp_search: two-turn promotion + zero-token inactive tools", ()
 
 		await harness.session.prompt("find a docs tool");
 
-		// Turn 1: only mcp_search was exposed — inactive catalog tools cost 0 tokens.
-		expect(providerToolNames[0]).toEqual(["mcp_search"]);
-		// Turn 2: the two matched docs tools are now active alongside mcp_search;
+		// Turn 1: only tool_search was exposed — inactive catalog tools cost 0 tokens.
+		expect(providerToolNames[0]).toEqual(["tool_search"]);
+		// Turn 2: the two matched docs tools are now active alongside tool_search;
 		// the unmatched mcp_fs_read-file is still absent (zero contribution).
-		expect(providerToolNames[1]).toEqual(["mcp_docs_get-library-docs", "mcp_docs_resolve-library-id", "mcp_search"]);
+		expect(providerToolNames[1]).toEqual(["mcp_docs_get-library-docs", "mcp_docs_resolve-library-id", "tool_search"]);
 		expect(providerToolNames[1]).not.toContain("mcp_fs_read-file");
 		// The promoted tool actually ran.
 		expect(harness.session.getActiveToolNames()).toContain("mcp_docs_get-library-docs");
@@ -121,7 +121,7 @@ describe("todo31 mcp_search: two-turn promotion + zero-token inactive tools", ()
 		harness.setResponses([
 			(context) => {
 				providerToolNames.push((context.tools ?? []).map((tool) => tool.name).sort());
-				return fauxAssistantMessage(fauxToolCall("mcp_search", { query: "teleportation quantum xyzzy" }), {
+				return fauxAssistantMessage(fauxToolCall("tool_search", { query: "teleportation quantum xyzzy" }), {
 					stopReason: "toolUse",
 				});
 			},
@@ -133,13 +133,13 @@ describe("todo31 mcp_search: two-turn promotion + zero-token inactive tools", ()
 
 		await harness.session.prompt("search for a capability that does not exist");
 
-		expect(providerToolNames[0]).toEqual(["mcp_search"]);
+		expect(providerToolNames[0]).toEqual(["tool_search"]);
 		// No activation -> next turn identical.
-		expect(providerToolNames[1]).toEqual(["mcp_search"]);
+		expect(providerToolNames[1]).toEqual(["tool_search"]);
 	});
 });
 
-describe("todo31 mcp_search: result text + rehydration", () => {
+describe("todo31 tool_search: result text + rehydration", () => {
 	it("result text lists full names, a next-turn notice, and the activation marker", () => {
 		const matches = [
 			{ name: "mcp_docs_get-library-docs", doc: CATALOG[0] as SearchableMcpTool },
@@ -149,12 +149,12 @@ describe("todo31 mcp_search: result text + rehydration", () => {
 		expect(text).toContain("NEXT turn");
 		expect(text).toContain("mcp_docs_get-library-docs");
 		expect(text).toContain("Fetch up-to-date documentation");
-		expect(text).toContain(`${MCP_SEARCH_ACTIVATION_MARKER} mcp_docs_get-library-docs mcp_docs_resolve-library-id`);
+		expect(text).toContain(`${TOOL_SEARCH_ACTIVATION_MARKER} mcp_docs_get-library-docs mcp_docs_resolve-library-id`);
 	});
 
 	it("empty result carries no activation marker", () => {
 		const text = buildMcpSearchResultText("nope", [], undefined);
-		expect(text).not.toContain(MCP_SEARCH_ACTIVATION_MARKER);
+		expect(text).not.toContain(TOOL_SEARCH_ACTIVATION_MARKER);
 		expect(text).toContain("unchanged");
 	});
 
@@ -164,7 +164,7 @@ describe("todo31 mcp_search: result text + rehydration", () => {
 			{ role: "user", content: "find docs tools" },
 			{
 				role: "toolResult",
-				toolName: MCP_SEARCH_TOOL_NAME,
+				toolName: TOOL_SEARCH_TOOL_NAME,
 				content: [
 					{
 						type: "text",
@@ -190,7 +190,7 @@ describe("todo31 mcp_search: result text + rehydration", () => {
 		// Real session: run a search, then reconstruct activations from history.
 		const harness = await makeHarness();
 		harness.setResponses([
-			fauxAssistantMessage(fauxToolCall("mcp_search", { query: "library documentation" }), {
+			fauxAssistantMessage(fauxToolCall("tool_search", { query: "library documentation" }), {
 				stopReason: "toolUse",
 			}),
 			fauxAssistantMessage("done"),
@@ -211,6 +211,6 @@ describe("todo31 mcp_search: result text + rehydration", () => {
 	});
 
 	it("unionStable dedupes and sorts", () => {
-		expect(unionStable(["mcp_search", "b"], ["a", "b"])).toEqual(["a", "b", "mcp_search"]);
+		expect(unionStable(["tool_search", "b"], ["a", "b"])).toEqual(["a", "b", "tool_search"]);
 	});
 });

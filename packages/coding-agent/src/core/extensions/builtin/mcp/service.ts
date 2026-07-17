@@ -146,7 +146,7 @@ export class McpService {
 	}
 
 	/** Reveal skill-owned tools (todo 37): activation is effective the next
-	 * turn, exactly like an mcp_search promotion. Unknown names are ignored. */
+	 * turn, exactly like an tool_search promotion. Unknown names are ignored. */
 	activateSkillMcpTools(names: readonly string[]): void {
 		this.#tierBRegistration?.activate(names);
 	}
@@ -380,7 +380,7 @@ export class McpService {
 	}
 
 	/**
-	 * Replay mcp_search activation markers from session history through the
+	 * Replay tool_search activation markers from session history through the
 	 * live tier-B activation path (see tool-search.ts). Returns newly activated
 	 * names; safe to call repeatedly (already-active names are skipped).
 	 */
