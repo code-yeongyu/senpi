@@ -80,5 +80,5 @@ ${buildFileOperationsTuning()}`;
 }
 
 export function buildGpt55Prompt(options: BuildDynamicSystemPromptOptions): string {
-	return buildDynamicSystemPrompt({ ...options, corePrompt: buildGpt55Core });
+	return buildDynamicSystemPrompt({ ...options, corePrompt: buildGpt55Core, workstationDialect: "codex" });
 }

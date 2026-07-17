@@ -13,5 +13,5 @@ Do not stop, summarize, or suggest a new session on account of context limits; t
 }
 
 export function buildKimiK3Prompt(options: BuildDynamicSystemPromptOptions): string {
-	return buildDynamicSystemPrompt({ ...options, tuningSection: buildKimiK3Tuning() });
+	return buildDynamicSystemPrompt({ ...options, tuningSection: buildKimiK3Tuning(), workstationDialect: "kimi" });
 }

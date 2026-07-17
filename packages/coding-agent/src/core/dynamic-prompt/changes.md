@@ -1,5 +1,21 @@
 # changes.md — dynamic-prompt
 
+## Workstation block + execution-context instruction (2026-07-17)
+
+### What changed
+
+- `workstation.ts` (new): synchronous host-facts collector (`os.platform`/`type`/`release`/`arch`, CPU model with `/proc/cpuinfo` fallback on Linux, core count via `os.availableParallelism()`, Apple-Silicon GPU derivation, TERM_PROGRAM terminal) cached per process, plus `buildWorkstationSection()` rendering a `<workstation>` facts block followed by an execution-context instruction in one of four dialects (`default` max-emphasis, `claude` tagged imperatives, `codex` terse, `kimi` positive constraints). The instruction names the active local executors (`bash`/`eval`) from `selectedTools`.
+- `build.ts`: `BuildDynamicSystemPromptOptions.workstationDialect?: WorkstationDialect`; the section is assembled right before the date/cwd footer (applies to `corePrompt` presets too).
+- All 15 `prompt-preset` builders pass their family dialect.
+
+### Why extension system couldn't handle this alone
+
+- The workstation facts belong to every prompt (fallback included), and the instruction must sit directly under the facts block for context proximity; a preset-level `tuningSection` lands before context files, far from the footer.
+
+### Expected merge conflict zones
+
+- LOW: `build.ts` footer assembly if upstream reshapes it. Resolution: keep the workstation push before the date/cwd push.
+
 ## AGENTS.md precedence contract in Project Context (2026-07-16)
 
 ### What changed

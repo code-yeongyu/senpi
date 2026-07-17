@@ -7,5 +7,5 @@ The intent gate routing line is required every turn. When the user has already c
 }
 
 export function buildKimiK27Prompt(options: BuildDynamicSystemPromptOptions): string {
-	return buildDynamicSystemPrompt({ ...options, tuningSection: buildKimiK27Tuning() });
+	return buildDynamicSystemPrompt({ ...options, tuningSection: buildKimiK27Tuning(), workstationDialect: "kimi" });
 }

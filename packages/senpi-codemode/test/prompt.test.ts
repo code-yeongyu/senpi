@@ -187,6 +187,21 @@ describe("buildEvalPrompt", () => {
 		);
 	});
 
+	it("renders the host-sizing note only when a host line is provided", () => {
+		// Given: the same kernel set with and without a preformatted host line.
+		const enabled = { py: true, js: true, rb: false, jl: false };
+		const withHost = buildEvalPrompt(enabled, {
+			spawns: false,
+			hostLine: "darwin arm64 \u00b7 Apple M5 Max \u00b7 18 cores",
+		}).description;
+		const withoutHost = buildEvalPrompt(enabled, { spawns: false }).description;
+
+		// Then: the note names the host and the sizing rule, and disappears without one.
+		expect(withHost).toContain("Host: darwin arm64 \u00b7 Apple M5 Max \u00b7 18 cores — cells execute here.");
+		expect(withHost).toContain("Size `parallel(thunks)` pools to its cores");
+		expect(withoutHost).not.toContain("Host:");
+	});
+
 	it("throws when no kernels are enabled", () => {
 		expect(() => buildEvalPrompt({ py: false, js: false, rb: false, jl: false })).toThrow(/no kernels enabled/i);
 	});

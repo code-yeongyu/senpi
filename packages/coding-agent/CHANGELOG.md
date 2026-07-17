@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added a `<workstation>` block (OS/kernel, arch, CPU, GPU, terminal) to the dynamic system prompt, followed by a dialect-tuned execution-context instruction telling the model that `bash`/`eval` run on this workstation while written code may target other machines. Presets pass their model-family dialect (Claude/GLM, GPT, Kimi); the fallback prompt uses a maximum-emphasis default.
+
 ### Changed
 
 ### Fixed
