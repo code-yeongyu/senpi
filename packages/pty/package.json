@@ -1,7 +1,7 @@
 {
 	"name": "@earendil-works/pi-pty",
 	"private": true,
-	"version": "2026.7.16-3",
+	"version": "2026.7.17",
 	"description": "Typed PTY session loader for Senpi persistent terminals",
 	"type": "module",
 	"main": "./dist/index.js",

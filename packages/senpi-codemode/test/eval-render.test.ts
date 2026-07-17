@@ -211,6 +211,36 @@ describe("eval renderer", () => {
 		expect(renderLines(result)).toEqual(["eval js done", "took 1ms", "", "2"]);
 	});
 
+	it("Given a streaming result exists when the framed call lane renders then it yields an empty component", () => {
+		// Given a framed call render (spinnerFrame set) that would otherwise draw its own pending/running box
+		const withoutResult = renderEvalCall(
+			{ language: "py", code: "print('x')" },
+			undefined,
+			callContext({ spinnerFrame: 0 }),
+		);
+
+		// When the same call lane renders after a result has arrived
+		const withResult = renderEvalCall(
+			{ language: "py", code: "print('x')" },
+			undefined,
+			callContext({ spinnerFrame: 0, hasResult: true }),
+		);
+
+		// Then only the pre-result render draws a frame; the post-result call lane is empty
+		expect.soft(renderLines(withoutResult).some((line) => line.includes("╭─"))).toBe(true);
+		expect.soft(renderLines(withResult)).toEqual([]);
+	});
+
+	it("Given a result exists when the compact call lane renders then it also yields an empty component", () => {
+		// Given the compact call preview (no theme, no spinner) and the same lane once a result exists
+		const compact = renderEvalCall({ language: "js", code: "1 + 1" }, undefined, callContext());
+		const yielded = renderEvalCall({ language: "js", code: "1 + 1" }, undefined, callContext({ hasResult: true }));
+
+		// Then the pre-result preview renders code while the post-result lane is empty
+		expect.soft(renderLines(compact)).toEqual(["eval js", "1 + 1"]);
+		expect.soft(renderLines(yielded)).toEqual([]);
+	});
+
 	it("Given completed cell details when rendered then framed status agent and JSON output are visible", () => {
 		// Given
 		const givenResult = evalResult(

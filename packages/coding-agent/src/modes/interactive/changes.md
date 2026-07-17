@@ -1,5 +1,28 @@
 # changes
 
+## eval tool call single-box render (2026-07-17)
+
+### What changed
+
+- `components/tool-execution-renderer.ts`: `getRenderContext()` now sets `hasResult: this.state.result !== undefined`
+  so a self-framing call renderer can yield once a result exists (see `../../core/extensions/changes.md` 2026-07-17).
+
+### Why
+
+- The codemode `eval` tool draws a full `╭─ … ╰─` frame in BOTH `renderCall` and `renderResult`. Because
+  `update()` renders call-then-result into one container, a finished eval showed two stacked boxes (a stale
+  pending/running frame above the live done frame). With `hasResult`, the call renderer yields and the result
+  renderer owns a single frame that updates in place pending -> running -> done.
+
+### Why extension system couldn't handle this
+
+- Result presence for a tool row is private host renderer state; only the interactive renderer can populate the
+  public `ToolRenderContext.hasResult` field the extension renderer reads.
+
+### Expected merge conflict zones
+
+- LOW: `components/tool-execution-renderer.ts` around `getRenderContext()`.
+
 ## Transactional post-compaction queue transfer (2026-07-13)
 
 ### What changed

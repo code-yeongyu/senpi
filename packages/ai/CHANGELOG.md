@@ -8,6 +8,16 @@
 
 ### Removed
 
+## [2026.7.17] - 2026-07-17
+
+### Added
+
+### Fixed
+
+- Fixed Anthropic native web search on compatible endpoints by defaulting support to `api.anthropic.com`, sanitizing unsupported native tools and replay blocks, and preserving streamed server-tool inputs; compatible models can opt in with `compat.supportsWebSearch` ([#213](https://github.com/code-yeongyu/senpi/pull/213) by [@tmdgusya](https://github.com/tmdgusya)).
+
+### Removed
+
 ## [2026.7.16-3] - 2026-07-16
 
 ### Added

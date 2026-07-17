@@ -35,6 +35,8 @@ const SESSION_LIFECYCLE_EVENTS = [
 
 type SessionLifecycleEvent = (typeof SESSION_LIFECYCLE_EVENTS)[number];
 
+type CodemodeEvent = SessionLifecycleEvent | "model_select";
+
 type TrackedExecution = {
 	readonly promise: Promise<unknown>;
 	readonly controller: AbortController;
@@ -51,7 +53,7 @@ type SessionRuntime = {
 
 export interface CodemodeExtensionAPI {
 	registerTool(tool: ReturnType<typeof createEvalTool>): void;
-	on(event: SessionLifecycleEvent, handler: (event: unknown, ctx: ExtensionContext) => Promise<void> | void): void;
+	on(event: CodemodeEvent, handler: (event: unknown, ctx: ExtensionContext) => Promise<void> | void): void;
 	executeTool: AgentExecuteTool;
 	getActiveTools(): string[];
 }
@@ -75,6 +77,31 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 	const manager = new SessionManagerProxy();
 	const complete = options.complete ?? ((request, ctx) => createCompletionHandler()(ctx)(request));
 	const renderers = { renderCall: renderEvalCall, renderResult: renderEvalResult };
+	let activeRuntime: SessionRuntime | undefined;
+	let activeModelId: string | undefined;
+	const registerEvalForRuntime = (runtime: SessionRuntime, modelId: string | undefined): void => {
+		pi.registerTool(
+			createEvalTool({
+				enabledLanguages: runtime.enabledLanguages,
+				kernelManager: manager,
+				cellTimeoutSeconds: runtime.settings.cellTimeoutSeconds,
+				executeTool: runtime.executeTool,
+				complete,
+				settings: runtime.settings,
+				artifactsDir: runtime.artifactsDir,
+				executionTracker: manager,
+				renderers,
+				spawns: runtime.spawns,
+				spawnDefaultAgent: runtime.settings.taskTools.task,
+				...(modelId === undefined ? {} : { modelId }),
+			}),
+		);
+	};
+	const dropRuntime = async (): Promise<void> => {
+		activeRuntime = undefined;
+		activeModelId = undefined;
+		await manager.dispose();
+	};
 	pi.registerTool(
 		createEvalTool({
 			enabledLanguages: { py: true, js: true, rb: true, jl: true },
@@ -92,25 +119,28 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		const generation = manager.beginReplacement();
 		const runtime = await createRuntime(pi, ctx, event, complete, options);
 		if (!(await manager.replace(generation, runtime.manager))) return;
-		pi.registerTool(
-			createEvalTool({
-				enabledLanguages: runtime.enabledLanguages,
-				kernelManager: manager,
-				cellTimeoutSeconds: runtime.settings.cellTimeoutSeconds,
-				executeTool: runtime.executeTool,
-				complete,
-				settings: runtime.settings,
-				artifactsDir: runtime.artifactsDir,
-				executionTracker: manager,
-				renderers,
-				spawns: runtime.spawns,
-				spawnDefaultAgent: runtime.settings.taskTools.task,
-			}),
-		);
+		activeRuntime = runtime;
+		activeModelId = ctx.model?.id;
+		registerEvalForRuntime(runtime, activeModelId);
 	});
-	pi.on("session_shutdown", async () => manager.dispose());
-	pi.on("session_before_switch", async () => manager.dispose());
-	pi.on("session_before_fork", async () => manager.dispose());
+	pi.on("session_shutdown", async () => dropRuntime());
+	pi.on("session_before_switch", async () => dropRuntime());
+	pi.on("session_before_fork", async () => dropRuntime());
+	pi.on("model_select", async (event) => {
+		const runtime = activeRuntime;
+		if (runtime === undefined) return;
+		const modelId = modelIdFrom(event);
+		if (modelId === undefined || modelId === activeModelId) return;
+		activeModelId = modelId;
+		registerEvalForRuntime(runtime, modelId);
+	});
+}
+
+function modelIdFrom(event: unknown): string | undefined {
+	if (typeof event !== "object" || event === null || !("model" in event)) return undefined;
+	const model = event.model;
+	if (typeof model !== "object" || model === null || !("id" in model)) return undefined;
+	return typeof model.id === "string" ? model.id : undefined;
 }
 
 class SessionManagerProxy implements CodemodeSessionManager, EvalExecutionTracker {

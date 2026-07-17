@@ -4,7 +4,6 @@ import { formatGoalToolResponse } from "./format.ts";
 import { createGoal, readGoal, updateGoal } from "./store.ts";
 import type { Goal, GoalAccountingMode, GoalStoreRef, TokenUsageSnapshot } from "./types.ts";
 import { COMPLETABLE_GOAL_STATUS_VALUES } from "./types.ts";
-import { updateGoalUi } from "./ui.ts";
 
 const EMPTY_USAGE: TokenUsageSnapshot = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 };
 
@@ -19,6 +18,7 @@ export type GoalToolRegistrationDeps = {
 	) => Promise<Goal | null>;
 	readonly beginAgentGoalAccounting: (goal: Goal) => void;
 	readonly markGoalCompletedThisTurn: (goal: Goal) => void;
+	readonly refreshGoalUi: (ctx: ExtensionContext, goal: Goal | null) => void;
 };
 
 export function registerGoalTools(pi: ExtensionAPI, deps: GoalToolRegistrationDeps): void {
@@ -45,7 +45,7 @@ export function registerGoalTools(pi: ExtensionAPI, deps: GoalToolRegistrationDe
 			}
 			const goal = await createGoal(ref, params.objective);
 			deps.beginAgentGoalAccounting(goal);
-			updateGoalUi(ctx, goal);
+			deps.refreshGoalUi(ctx, goal);
 			return toolText(formatGoalToolResponse(goal));
 		},
 	});
@@ -76,7 +76,7 @@ export function registerGoalTools(pi: ExtensionAPI, deps: GoalToolRegistrationDe
 			await deps.accountCurrentAgentTurn(ctx, EMPTY_USAGE, "active");
 			const goal = await updateGoal(deps.goalStoreRef(ctx), { status: "complete" });
 			deps.markGoalCompletedThisTurn(goal);
-			updateGoalUi(ctx, goal);
+			deps.refreshGoalUi(ctx, goal);
 			return toolText(formatGoalToolResponse(goal));
 		},
 	});
@@ -88,7 +88,7 @@ export function registerGoalTools(pi: ExtensionAPI, deps: GoalToolRegistrationDe
 		parameters: Type.Object({}, { additionalProperties: false }),
 		async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
 			const goal = await readGoal(deps.goalStoreRef(ctx));
-			updateGoalUi(ctx, goal);
+			deps.refreshGoalUi(ctx, goal);
 			return toolText(formatGoalToolResponse(goal));
 		},
 	});

@@ -15,6 +15,7 @@ import { buildGpt5Prompt } from "./gpt-5.ts";
 import { buildGrok45Prompt } from "./grok-4.5.ts";
 import { buildKimiK26Prompt } from "./kimi-k2-6.ts";
 import { buildKimiK27Prompt } from "./kimi-k2-7.ts";
+import { buildKimiK3Prompt } from "./kimi-k3.ts";
 import { type PromptPresetName, type PromptPresetSettings, parsePromptPreset } from "./settings.ts";
 
 export type { PromptPresetSettings } from "./settings.ts";
@@ -70,6 +71,15 @@ function hasKimiK27Signal(value: string): boolean {
 
 function isKimiK27Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasKimiK27Signal(model.id) || (model.name !== undefined && hasKimiK27Signal(model.name));
+}
+
+function hasKimiK3Signal(value: string): boolean {
+	const normalized = normalizeModelId(value);
+	return normalized === "k3" || /(?:^|[/@._-])kimi-k3(?:$|[/@._:-])/.test(normalized);
+}
+
+function isKimiK3Model(model: ModelWithPromptPresetMetadata): boolean {
+	return hasKimiK3Signal(model.id) || (model.name !== undefined && hasKimiK3Signal(model.name));
 }
 
 function hasGlm52Signal(value: string): boolean {
@@ -130,6 +140,9 @@ export function resolvePresetName(
 	if (gpt5Version) {
 		return gpt5Version;
 	}
+	if (isKimiK3Model(model)) {
+		return "kimi-k3";
+	}
 	if (isKimiK27Model(model)) {
 		return "kimi-k2-7";
 	}
@@ -170,6 +183,8 @@ function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPrompt
 			return { name, prompt: buildGlm52Prompt(options) };
 		case "grok-4.5":
 			return { name, prompt: buildGrok45Prompt(options) };
+		case "kimi-k3":
+			return { name, prompt: buildKimiK3Prompt(options) };
 		case "kimi-k2-7":
 			return { name, prompt: buildKimiK27Prompt(options) };
 		case "kimi-k2-6":

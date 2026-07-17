@@ -35,6 +35,24 @@ Per-model prompt preset extension. Selects a tuned system prompt based on the ac
 - `claude-opus-4-{5,6,7}.ts` / `kimi-k2-{6,7}.ts` - Other family presets.
 - `file-operations.ts` - Shared codex-style "File operations" tuning block consumed by every GPT-5.x preset.
 
+## Kimi K3 preset (2026-07-17)
+
+### What changed
+- `kimi-k3.ts`: new preset for the Kimi K3 family. K3 is distilled from Claude Opus 4.8 and Claude Fable 5 on top of the K2-line, so the tuning blends the three: K2 Thinking-class loop discipline (commit to one path, act directly on mechanical work, deep reasoning only where correctness is at risk — per the K2.6/K2.7 presets), Opus 4.8 traits (scope literalism with explicit scope statement; prefer tool calls over reasoning past a lookup-able fact), and Fable 5 traits (act when you have enough information; recommendation-not-survey; audit progress claims against tool results; no text-only promise endings — do the work; outcome-first final summaries in complete sentences; no context-limit wrap-up).
+- `presets.ts`: `hasKimiK3Signal` matches `kimi-k3` boundaries plus the bare `k3` id (the `kimi-coding` provider's catalog id); checked via id or display name, ordered before the K2.7/K2.6 checks. Dispatch case added.
+- `settings.ts`: `"kimi-k3"` joins `PromptPresetName` and `VALID_PRESETS`.
+- `docs/settings.md`, `AGENTS.md`: preset lists updated.
+- `test/suite/prompt-presets-kimi-k3.test.ts`: resolution across kimi-coding/moonshotai/moonshotai-cn/openrouter/vercel-ai-gateway/opencode-go ids (incl. `:thinking` tag and display-name matching), non-routing of K2.x/`kimi-for-coding`/`kimi-latest`/`grok-3`, K2.x/K3 tuning isolation, settings + model-metadata override, catalog sweep.
+
+### Why
+- Kimi K3 shipped in the model catalogs (packages/ai) without a preset, so it fell back to the untuned dynamic prompt. Its lineage (K2 base, Opus 4.8 + Fable 5 distillation) means the documented behavioral quirks of all three families apply, and each tuning line addresses a quirk documented in the respective prompting guide.
+
+### Why extension system couldn't handle this differently
+- Content-only addition inside this builtin; follows the thin-wrapper preset architecture (tuningSection only).
+
+### Expected merge conflict zones on next upstream sync
+- LOW: `kimi-k3.ts` is fork-only; `presets.ts`/`settings.ts` touch shared lists — trivial adjacent-line conflicts if upstream adds presets.
+
 ## GPT-5.6 omo-parity refinements (2026-07-16)
 
 ### What changed

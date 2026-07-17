@@ -4,9 +4,21 @@
 
 ### Added
 
+- Added model-aware eval-first batching emphasis: the `eval` tool description and its system-prompt guideline now render in a dialect selected by the active model id (Claude/GLM, OpenAI, Kimi, and a maximum-emphasis default fallback), re-registering on `model_select` so mid-session model switches pick up the matching dialect.
+
 ### Changed
 
 ### Fixed
+
+## [2026.7.17] - 2026-07-17
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed `eval` tool calls rendering duplicate stacked boxes after a result arrived; the pending, running, and completed states now update in one in-place frame ([#223](https://github.com/code-yeongyu/senpi/pull/223)).
 
 ## [2026.7.16-3] - 2026-07-16
 

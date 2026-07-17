@@ -485,6 +485,11 @@ export interface ToolRenderContext<TState = any, TArgs = any> {
 	imageProtocol?: ImageProtocol;
 	/** Whether the current result is an error. */
 	isError: boolean;
+	/**
+	 * Whether a result (partial or final) already exists for this tool call. Lets a call renderer that draws
+	 * self-contained framing yield to the result renderer instead of stacking a duplicate block.
+	 */
+	hasResult?: boolean;
 	spinnerFrame?: number;
 }
 

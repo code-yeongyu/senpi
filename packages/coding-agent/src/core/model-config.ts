@@ -133,6 +133,7 @@ const AnthropicMessagesCompatSchema = Type.Object({
 	forceAdaptiveThinking: Type.Optional(Type.Boolean()),
 	allowEmptySignature: Type.Optional(Type.Boolean()),
 	supportsToolReferences: Type.Optional(Type.Boolean()),
+	supportsWebSearch: Type.Optional(Type.Boolean()),
 });
 
 const ProviderCompatSchema = Type.Union([

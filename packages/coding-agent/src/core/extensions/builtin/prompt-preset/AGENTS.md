@@ -1,6 +1,6 @@
 # builtin/prompt-preset
 
-Builtin extension #3. On `before_agent_start` and `model_select`, picks a system prompt preset by **model family** (gpt-5.x through gpt-5.6, claude-fable-5, claude-opus-4-{5,6,7,8}, glm-5.2, grok-4.5, kimi-k2-{6,7}) and falls back to the senpi dynamic prompt when nothing matches. Renders the active preset name in the startup header. After 2026-04-30, presets are thin wrappers around `buildDynamicSystemPrompt()` carrying only model-specific tuning.
+Builtin extension #3. On `before_agent_start` and `model_select`, picks a system prompt preset by **model family** (gpt-5.x through gpt-5.6, claude-fable-5, claude-opus-4-{5,6,7,8}, glm-5.2, kimi-k2-{6,7}, kimi-k3) and falls back to the senpi dynamic prompt when nothing matches. Renders the active preset name in the startup header. After 2026-04-30, presets are thin wrappers around `buildDynamicSystemPrompt()` carrying only model-specific tuning.
 
 ## FILES
 
@@ -22,9 +22,9 @@ prompt-preset/
 ├── claude-opus-4-7.ts   # Claude Opus 4.7 preset
 ├── claude-opus-4-8.ts   # Claude Opus 4.8 preset
 ├── glm-5-2.ts           # GLM 5.2 preset
-├── grok-4.5.ts          # Grok 4.5 preset — wide-context synthesis, session-trust, progressive momentum (no thinking-level knobs)
 ├── kimi-k2-6.ts         # Kimi K2.6 preset
 ├── kimi-k2-7.ts         # Kimi K2.7 preset
+├── kimi-k3.ts           # Kimi K3 preset — K2-family loop discipline + Opus 4.8/Fable 5 distillation traits
 └── changes.md           # Fork tracker (model-family rename 2026-04-30, file-operations 2026-05-07)
 ```
 

@@ -228,6 +228,12 @@ function getAnthropicCompat(
 			model.compat?.supportsForcedToolChoice ?? !CLAUDE_FABLE_OR_MYTHOS_MODEL_ID.test(model.id),
 		allowEmptySignature: model.compat?.allowEmptySignature ?? false,
 		supportsToolReferences: model.compat?.supportsToolReferences ?? defaultSupportsToolReferences(model),
+		// Default: first-party Anthropic only. Anthropic-compatible providers
+		// (kimi-coding, fireworks, copilot, gateways) may execute the server-side
+		// search but reject the replayed server_tool_use / web_search_tool_result
+		// blocks on the next request (kimi-coding 400s with `tool_call_id is not
+		// found`).
+		supportsWebSearch: model.compat?.supportsWebSearch ?? isAnthropicApiBaseUrl(model.baseUrl),
 	};
 }
 
@@ -392,6 +398,23 @@ function isAnthropicServerToolUseBlock(raw: unknown): raw is { readonly type: "s
 	return isRecord(raw) && raw.type === "server_tool_use" && typeof raw.id === "string";
 }
 
+// Only tool_use-shaped provider-native blocks (server_tool_use, mcp_tool_use)
+// stream their input via input_json_delta. Result-shaped blocks must replay
+// byte-for-byte (encrypted_content), so never merge an `input` into them.
+function isProviderNativeToolUseBlock(raw: unknown): boolean {
+	return isRecord(raw) && (raw.type === "server_tool_use" || raw.type === "mcp_tool_use");
+}
+
+// Endpoints without `supportsWebSearch` reject replayed web-search server-tool
+// blocks (kimi-coding 400s with `tool_call_id is not found`), wedging every
+// subsequent request of the session. Dropping the pair loses the searched
+// context but keeps the conversation usable.
+function isAnthropicWebSearchReplayBlock(raw: unknown): boolean {
+	if (!isRecord(raw)) return false;
+	if (raw.type === "web_search_tool_result") return true;
+	return raw.type === "server_tool_use" && raw.name === "web_search";
+}
+
 // tool_use ids referenced by server-tool result blocks in content[0, boundary).
 // A pre-boundary `server_tool_use` whose id is absent here is unpaired — the
 // fallback interrupted the declined attempt before its result arrived — so
@@ -541,6 +564,10 @@ function rejectsComputerUseBeta(model: Model<"anthropic-messages">): boolean {
 	);
 }
 
+function isAnthropicWebSearchToolType(toolType: string): boolean {
+	return toolType.startsWith("web_search_");
+}
+
 function sanitizeUnsupportedNativeTools(
 	model: Model<"anthropic-messages">,
 	params: MessageCreateParamsStreaming,
@@ -550,10 +577,10 @@ function sanitizeUnsupportedNativeTools(
 	const headerSanitization = rejectsComputerUseBeta(model)
 		? removeComputerUseBetaHeader(headers)
 		: ({ changed: false } as const);
+	const rejectsNativeWebSearch = !getAnthropicCompat(model).supportsWebSearch;
 	const tools = payload.tools;
 	const sanitized: AnthropicPayloadWithRequestMetadata = { ...payload };
 	let changed = false;
-	const removedToolNames = new Set<string>();
 
 	if (Array.isArray(tools)) {
 		const supportedTools: typeof tools = [];
@@ -563,12 +590,10 @@ function sanitizeUnsupportedNativeTools(
 			if (
 				isRecord(hookTool) &&
 				typeof hookTool.type === "string" &&
-				rejectsNativeComputerTool(model, hookTool.type)
+				(rejectsNativeComputerTool(model, hookTool.type) ||
+					(rejectsNativeWebSearch && isAnthropicWebSearchToolType(hookTool.type)))
 			) {
 				changed = true;
-				if (typeof hookTool.name === "string") {
-					removedToolNames.add(hookTool.name);
-				}
 				continue;
 			}
 
@@ -595,8 +620,12 @@ function sanitizeUnsupportedNativeTools(
 
 	if (changed && isRecord(sanitized.tool_choice)) {
 		const toolChoiceName = sanitized.tool_choice.name;
+		const hasSelectedTool =
+			typeof toolChoiceName === "string" &&
+			Array.isArray(sanitized.tools) &&
+			sanitized.tools.some((tool) => isRecord(tool) && tool.name === toolChoiceName);
 		const shouldRemoveToolChoice =
-			(typeof toolChoiceName === "string" && removedToolNames.has(toolChoiceName)) || sanitized.tools === undefined;
+			sanitized.tools === undefined || (typeof toolChoiceName === "string" && !hasSelectedTool);
 		if (shouldRemoveToolChoice) {
 			delete sanitized.tool_choice;
 		}
@@ -934,7 +963,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				| (ThinkingContent & { index?: number })
 				| (TextContent & { index?: number })
 				| ((ToolCall & { partialJson: string }) & { index?: number })
-				| (ProviderNativeContent & { index?: number });
+				| (ProviderNativeContent & { partialJson?: string; index?: number });
 			const blocks = output.content as Block[];
 
 			for await (const event of iterateAnthropicEvents(response, options?.signal)) {
@@ -1039,6 +1068,11 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 								delta: event.delta.partial_json,
 								partial: output,
 							});
+						} else if (block && block.type === "providerNative" && isProviderNativeToolUseBlock(block.raw)) {
+							// Server-side tool blocks (server_tool_use) stream their input
+							// the same way tool_use does; the block captured at
+							// content_block_start still has `input: {}`.
+							block.partialJson = (block.partialJson ?? "") + event.delta.partial_json;
 						}
 					} else if (event.delta.type === "signature_delta") {
 						const index = blocks.findIndex((b) => b.index === event.index);
@@ -1078,6 +1112,12 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 								toolCall: block,
 								partial: output,
 							});
+						} else if (block.type === "providerNative") {
+							const partialJson = block.partialJson;
+							delete block.partialJson;
+							if (partialJson !== undefined && isRecord(block.raw)) {
+								block.raw = { ...block.raw, input: parseStreamingJson(partialJson) };
+							}
 						}
 					}
 				} else if (event.type === "message_delta") {
@@ -1132,6 +1172,13 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 		} catch (error) {
 			for (const block of output.content) {
 				delete (block as { index?: number }).index;
+				// An aborted stream never reaches content_block_stop; keep whatever
+				// provider-native input accumulated, mirroring toolCall's partial
+				// arguments.
+				const scratch = (block as { partialJson?: string }).partialJson;
+				if (block.type === "providerNative" && scratch !== undefined && isRecord(block.raw)) {
+					block.raw = { ...block.raw, input: parseStreamingJson(scratch) };
+				}
 				// partialJson is only a streaming scratch buffer; never persist it.
 				delete (block as { partialJson?: string }).partialJson;
 			}
@@ -1599,6 +1646,7 @@ function convertMessages(
 	// Tool calls from a declined pre-fallback attempt are dropped from their
 	// assistant turn below; drop their tool_results in lockstep so none dangle.
 	const discardedFallbackToolCallIds = collectDiscardedFallbackToolCallIds(transformedMessages, model);
+	const rejectsNativeWebSearchReplay = !getAnthropicCompat(model).supportsWebSearch;
 
 	for (let i = 0; i < transformedMessages.length; i++) {
 		const msg = transformedMessages[i];
@@ -1718,7 +1766,13 @@ function convertMessages(
 						input: block.arguments ?? {},
 					});
 				} else if (block.type === "providerNative") {
-					if (isSameModel && isReplayableAnthropicProviderNativeBlock(block.raw)) blocks.push(block.raw);
+					if (
+						isSameModel &&
+						isReplayableAnthropicProviderNativeBlock(block.raw) &&
+						!(rejectsNativeWebSearchReplay && isAnthropicWebSearchReplayBlock(block.raw))
+					) {
+						blocks.push(block.raw);
+					}
 				}
 			}
 			if (blocks.length === 0) continue;

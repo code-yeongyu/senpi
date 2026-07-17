@@ -4,6 +4,7 @@ import { getAgentDir } from "../../../../config.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { registerGoalCommand } from "./command-registration.ts";
 import { shouldQueueGoalContinuationAfterAgentEnd, shouldQueueGoalContinuationWhenIdle } from "./continuation.ts";
+import { GoalElapsedTicker } from "./elapsed-ticker.ts";
 import { formatGoalForTool, goalStatusLabel } from "./format.ts";
 import { buildContinuationPrompt } from "./prompt.ts";
 import { accountGoalUsage, readGoal, updateGoal } from "./store.ts";
@@ -32,11 +33,23 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	let agentGoalAccounting: AgentGoalAccounting | null = null;
 	let completedThisTurnGoalId: string | null = null;
 
+	const goalTicker = new GoalElapsedTicker({
+		render: (renderCtx, renderGoal, live) => {
+			try {
+				updateGoalUi(renderCtx, renderGoal, live);
+			} catch (error) {
+				if (error instanceof Error && error.message.startsWith(STALE_EXTENSION_CONTEXT_ERROR_PREFIX)) return;
+				throw error;
+			}
+		},
+	});
+
 	registerGoalTools(pi, {
 		goalStoreRef,
 		accountCurrentAgentTurn,
 		beginAgentGoalAccounting,
 		markGoalCompletedThisTurn,
+		refreshGoalUi,
 	});
 	registerGoalCommand(pi, {
 		goalStoreRef,
@@ -45,6 +58,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		stopAgentGoalAccounting,
 		clearAgentGoalAccounting,
 		queueGoalContinuation,
+		refreshGoalUi,
 	});
 
 	pi.on("session_start", async (event, ctx) => {
@@ -54,7 +68,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		} else {
 			clearAgentGoalAccounting();
 		}
-		updateGoalUi(ctx, goal);
+		refreshGoalUi(ctx, goal);
 		if (await maybePromptResumePausedGoal(pi, ctx, event.reason, goal)) {
 			return;
 		}
@@ -84,7 +98,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		} else {
 			clearAgentGoalAccounting();
 		}
-		updateGoalUiBestEffort(ctx, goal);
+		refreshGoalUiBestEffort(ctx, goal);
 		if (
 			goal?.status === "active" &&
 			!ctx.signal?.aborted &&
@@ -99,6 +113,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			await accountCurrentAgentTurn(ctx, EMPTY_USAGE, "active");
 		}
 		clearAgentGoalAccounting();
+		goalTicker.stop();
 	});
 
 	async function maybePromptResumePausedGoal(
@@ -119,7 +134,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 
 		const resumed = await updateGoal(goalStoreRef(ctx), { status: "active" });
 		beginAgentGoalAccounting(resumed);
-		updateGoalUi(ctx, resumed);
+		refreshGoalUi(ctx, resumed);
 		ctx.ui.notify(`Goal ${goalStatusLabel(resumed.status)}\n${formatGoalForTool(resumed)}`, "info");
 		queueGoalContinuation(pi, ctx, resumed);
 		return true;
@@ -151,6 +166,27 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		completedThisTurnGoalId = null;
 	}
 
+	function refreshGoalUi(ctx: ExtensionContext, goal: Goal | null): void {
+		const accounting = agentGoalAccounting;
+		if (ctx.hasUI && goal?.status === "active" && accounting?.goalId === goal.id) {
+			goalTicker.sync(ctx, goal, accounting.measuredFromMilliseconds);
+			return;
+		}
+		goalTicker.stop();
+		updateGoalUi(ctx, goal);
+	}
+
+	function refreshGoalUiBestEffort(ctx: ExtensionContext, goal: Goal | null): void {
+		try {
+			refreshGoalUi(ctx, goal);
+		} catch (error) {
+			if (error instanceof Error && error.message.startsWith(STALE_EXTENSION_CONTEXT_ERROR_PREFIX)) {
+				return;
+			}
+			throw error;
+		}
+	}
+
 	async function accountCurrentAgentTurn(
 		ctx: ExtensionContext,
 		usage: TokenUsageSnapshot,
@@ -169,17 +205,6 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			clearAgentGoalAccounting();
 		}
 		return goal;
-	}
-}
-
-function updateGoalUiBestEffort(ctx: ExtensionContext, goal: Goal | null): void {
-	try {
-		updateGoalUi(ctx, goal);
-	} catch (error) {
-		if (error instanceof Error && error.message.startsWith(STALE_EXTENSION_CONTEXT_ERROR_PREFIX)) {
-			return;
-		}
-		throw error;
 	}
 }
 
