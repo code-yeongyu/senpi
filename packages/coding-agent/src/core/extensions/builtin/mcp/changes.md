@@ -1,5 +1,55 @@
 # mcp Extension Changes
 
+## Trust-aware merge for extension-declared MCP servers (2026-07-17)
+
+### What changed
+- `config-schema.ts`: added `"extension"` to the `McpServerSource` union;
+  exported `McpServerDeclaration` and `validateMcpServerDeclaration`.
+- `config.ts`: added `resolveExtensionMcpServer` (preserves declared
+  `exposure`/`directTools`/filters/lifecycle/`enabled`, defaults stdio `cwd` to
+  the extension's registration cwd) and `mergeExtensionMcpServers` with
+  trust-aware rules: trusted file sources win (including `enabled:false`),
+  extension declarations replace `untrusted` placeholders with a diagnostic.
+
+### Why
+- The new `pi.registerMcpServer()` extension API needs a merge seam that
+  respects the existing trust model: user config must still win, and untrusted
+  project placeholders must not block extension-provided defaults.
+
+### Why extension system couldn't handle this alone
+- The merge runs inside the MCP builtin but consumes runner-aggregated
+  declarations; the builtin cannot know trust rules or normalize server configs.
+
+### Expected merge conflict zones
+- MEDIUM: `config.ts` around `resolveSkillMcpServer` and the trusted/untrusted
+  merge helpers.
+
+## Attach extension-declared MCP servers on every session attach (2026-07-17)
+
+### What changed
+- `service-types.ts`: `McpSessionContext` gained optional
+  `getRegisteredMcpServers`; `McpServerSnapshot` gained a `source` field.
+- `service-snapshot.ts`: populates `source` from the resolved server.
+- `status.ts`: status rows now render `origin=<source>`.
+- `service.ts`: `attachSession` calls `mergeExtensionMcpServers` from
+  `ctx.getRegisteredMcpServers()` on every invocation, so session start,
+  reattach, and `/mcp` command paths all pick up current declarations.
+- `docs/mcp.md`: documented the `extension` source and cross-linked to
+  `extensions.md`.
+
+### Why
+- Declarations are aggregated by the runner, but the MCP builtin must read them
+  from the context on every attach to survive reattach and reload without
+  caching stale declarations.
+
+### Why extension system couldn't handle this alone
+- The runner owns the aggregation and context accessor; the builtin only sees
+  the narrow `McpSessionContext` passed into `attachSession`.
+
+### Expected merge conflict zones
+- LOW: `service.ts` `attachSession` ordering.
+- LOW: `status.ts` row format.
+
 ## Overview
 Built-in MCP (Model Context Protocol) client support as an in-tree builtin
 extension. Fork-native: upstream pi-mono deliberately ships no MCP support, so
