@@ -734,7 +734,7 @@ export function createMorphXmlStreamParser(tools: Tool[], options?: ParserOption
 						arguments: parsedArguments,
 					});
 				} else if (currentToolState.lastArgumentsSnapshot) {
-					const recoveredArguments = JSON.parse(currentToolState.lastArgumentsSnapshot) as Record<string, unknown>;
+					const snapshotArguments = JSON.parse(currentToolState.lastArgumentsSnapshot) as Record<string, unknown>;
 					if (!currentToolState.started) {
 						events.push({
 							type: "toolcall_start",
@@ -749,16 +749,34 @@ export function createMorphXmlStreamParser(tools: Tool[], options?: ParserOption
 						index: currentToolState.index,
 						name: currentToolState.name,
 						id: currentToolState.id,
-						arguments: recoveredArguments,
+						arguments: snapshotArguments,
+						incomplete: true,
+						errorMessage: "Tool call was truncated mid-arguments",
 					});
 				} else {
-					const rawToolCall = `<${currentToolState.name}>${buffer}`;
+					const partialArguments = parseMorphXmlPartialArgumentsSafely(buffer, currentToolState.schema) ?? {};
 					options?.onError?.("Could not complete streaming XML tool call at finish.", {
-						toolCall: rawToolCall,
+						protocol: "morph-xml",
+						retainedLength: buffer.length,
 					});
-					if (shouldEmitRawToolCallTextOnError(options)) {
-						events.push({ type: "text", text: rawToolCall });
+					if (!currentToolState.started) {
+						events.push({
+							type: "toolcall_start",
+							index: currentToolState.index,
+							name: currentToolState.name,
+							id: currentToolState.id,
+						});
+						currentToolState.started = true;
 					}
+					events.push({
+						type: "toolcall_end",
+						index: currentToolState.index,
+						name: currentToolState.name,
+						id: currentToolState.id,
+						arguments: partialArguments,
+						incomplete: true,
+						errorMessage: "Tool call was truncated mid-arguments",
+					});
 				}
 
 				buffer = "";
