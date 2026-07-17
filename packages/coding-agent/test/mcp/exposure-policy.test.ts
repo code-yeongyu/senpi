@@ -79,12 +79,12 @@ describe("MCP Tier-A exposure policy", () => {
 		setConfig(elevenRoot, { fx: stdioServer(["--tools", "11"]) });
 		const elevenPi = capturingPi();
 		await attach(elevenRoot, elevenPi);
-		// All 11 tools are registered (catalog present) plus mcp_search...
+		// All 11 tools are registered (catalog present) plus tool_search...
 		expect([...withoutMcpUtilityTools(elevenPi.registeredTools)].sort()).toEqual(
-			[...toolNames(11), "mcp_search"].sort(),
+			[...toolNames(11), "tool_search"].sort(),
 		);
-		// ...but only mcp_search is active: the 11 tools cost zero tokens until promoted.
-		expect(withoutMcpUtilityTools(elevenPi.activeTools)).toEqual(["mcp_search"]);
+		// ...but only tool_search is active: the 11 tools cost zero tokens until promoted.
+		expect(withoutMcpUtilityTools(elevenPi.activeTools)).toEqual(["tool_search"]);
 		// The W1 pending-W4 warning fallback is gone.
 		expect(logContains("fx", "pending-W4")).toBe(false);
 	});
@@ -102,32 +102,32 @@ describe("MCP Tier-A exposure policy", () => {
 
 		await attach(root, pi);
 
-		// Search mode keeps directTools active alongside the always-active mcp_search.
+		// Search mode keeps directTools active alongside the always-active tool_search.
 		expect(withoutMcpUtilityTools(pi.activeTools)).toEqual([
 			"bash",
+			"tool_search",
 			"mcp_fx_tool_1",
 			"mcp_fx_tool_12",
 			"mcp_fx_tool_2",
-			"mcp_search",
 		]);
 		expect(withoutMcpUtilityTools(pi.setActiveCalls[pi.setActiveCalls.length - 1])).toEqual([
 			"bash",
+			"tool_search",
 			"mcp_fx_tool_1",
 			"mcp_fx_tool_12",
 			"mcp_fx_tool_2",
-			"mcp_search",
 		]);
 	});
 
-	it("registers a 30-tool fixture in search mode: full catalog registered, only mcp_search active", async () => {
+	it("registers a 30-tool fixture in search mode: full catalog registered, only tool_search active", async () => {
 		const root = mcpRoot("large-search");
 		setConfig(root, { fx: stdioServer(["--tools", "30"]) });
 		const pi = capturingPi();
 
 		await attach(root, pi);
 
-		expect([...withoutMcpUtilityTools(pi.registeredTools)].sort()).toEqual([...toolNames(30), "mcp_search"].sort());
-		expect(withoutMcpUtilityTools(pi.activeTools)).toEqual(["mcp_search"]);
+		expect([...withoutMcpUtilityTools(pi.registeredTools)].sort()).toEqual([...toolNames(30), "tool_search"].sort());
+		expect(withoutMcpUtilityTools(pi.activeTools)).toEqual(["tool_search"]);
 		expect(logContains("fx", "pending-W4")).toBe(false);
 	});
 

@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "../../ty
 import { registerMcpCommands } from "./commands.ts";
 import { setMcpElicitationUiProvider } from "./elicitation.ts";
 import { AnthropicNativeToolSearchAdapter } from "./expose/native-search.ts";
-import { MCP_SEARCH_TOOL_NAME } from "./expose/tool-search.ts";
+import { TOOL_SEARCH_TOOL_NAME } from "./expose/tool-search.ts";
 import { injectMcpInstructions, refreshMcpInstructionsForSession } from "./instructions.ts";
 import { createMcpLogger } from "./log.ts";
 import { registerMcpPromptCommands } from "./prompts.ts";
@@ -31,19 +31,19 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 	// Native provider tool-search adapter (todo 33 — Anthropic, spike = GO).
 	// Runs on every request but is a no-op unless settings.nativeToolSearch is
 	// auto|true and the model is anthropic-messages; a 400 disables it for the
-	// session and falls back to the always-registered local mcp_search.
+	// session and falls back to the always-registered local tool_search.
 	const nativeAdapter = new AnthropicNativeToolSearchAdapter({
 		enabled: () => {
 			const setting = getMcpService().getNativeToolSearchSetting();
 			return setting === true || setting === "auto";
 		},
-		isDeferrable: (name) => name.startsWith("mcp_") && name !== MCP_SEARCH_TOOL_NAME,
+		isDeferrable: (name) => name.startsWith("mcp_") && name !== TOOL_SEARCH_TOOL_NAME,
 		onFallback: (reason) => createMcpLogger("service").warn(reason),
-		searchToolName: MCP_SEARCH_TOOL_NAME,
+		searchToolName: TOOL_SEARCH_TOOL_NAME,
 	});
 	pi.on("before_provider_request", (event, ctx) => nativeAdapter.applyBeforeRequest(ctx.model?.api, event.payload));
 	pi.on("after_provider_response", (event) => nativeAdapter.noteResponseStatus(event.status));
-	// Resumed/compacted sessions carry mcp_search activation markers in their
+	// Resumed/compacted sessions carry tool_search activation markers in their
 	// history but re-enter search mode with only directTools active. The context
 	// event (fired before each LLM call, with the full message history) replays
 	// the markers as a safety net; the primary replay happens at attach time so

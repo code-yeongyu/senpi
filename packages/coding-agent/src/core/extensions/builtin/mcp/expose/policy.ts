@@ -53,7 +53,7 @@ export function computeMcpExposurePolicy(
 		};
 	}
 	// Tier-B search mode: register the full catalog but keep only directTools
-	// active; mcp_search promotes the rest on demand.
+	// active; tool_search promotes the rest on demand.
 	if (config.exposure === "search") {
 		return searchResult(filteredEntries, directEntries, "explicit");
 	}
