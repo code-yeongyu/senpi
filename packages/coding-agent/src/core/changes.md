@@ -1,5 +1,25 @@
 # changes
 
+## "video" input modality plumbed through provider composition (2026-07-17)
+
+### What changed
+
+- `provider-composer.ts`: model `input` arrays (config input, models.json override, custom model definition)
+  widened to `("text" | "image" | "video")[]`, tracking the pi-ai `Model.input` union. Enables the
+  kimi-coding `k3` video input capability and models.json overrides declaring video.
+- `remote-catalog-provider.ts`: `mergeModels` now unions `input` modalities (canonical text/image/video
+  order) when a pi.dev overlay entry replaces a builtin model. The overlay refreshes costs/limits but a
+  stale remote entry must not silently drop a fork-declared capability — the cached kimi-coding `k3`
+  entry in `models-store.json` otherwise strips `"video"` and deactivates the `read_video` tool.
+
+### Why extension system couldn't handle this alone
+
+- The modality union is a core type shared with pi-ai; extensions consume it but cannot widen it.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `provider-composer.ts` model field lists.
+
 ## AnthropicMessagesCompat.supportsWebSearch in models.json schema (2026-07-16)
 
 ### What changed

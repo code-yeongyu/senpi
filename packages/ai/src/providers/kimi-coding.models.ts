@@ -33,7 +33,7 @@ export const KIMI_CODING_MODELS = {
 		compat: {"allowEmptySignature":true,"forceAdaptiveThinking":true},
 		reasoning: true,
 		thinkingLevelMap: {"off":null,"minimal":null,"low":null,"medium":null,"high":null,"xhigh":null,"max":"max"},
-		input: ["text", "image"],
+		input: ["text", "image", "video"],
 		cost: {
 			input: 0,
 			output: 0,

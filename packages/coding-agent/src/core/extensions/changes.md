@@ -1,5 +1,21 @@
 # Core Extensions Changes
 
+## 2026-07-17 - video-in builtin extension and "video" input modality
+
+### What changed
+
+- `types.ts`: `ProviderModelConfig.input` widened to `("text" | "image" | "video")[]`, tracking the pi-ai
+  `Model.input` union (kimi-coding `k3` declares video input).
+- New builtin `builtin/video-in/`: registers a `read_video` tool that attaches a local video file
+  (mp4/mpeg/mov/webm/mkv/avi/flv/3gp, ≤100MB) as a base64 `video/*` ImageContent block. The tool is
+  activated/deactivated on `session_start` and `model_select` based on `model.input.includes("video")`,
+  so it is only exposed to video-capable models. Registered in `builtin/index.ts` after `webfetch`.
+
+### Expected merge conflict zones
+
+- LOW: `types.ts` `ProviderModelConfig.input`.
+- LOW: `builtin/index.ts` import block and `builtinExtensions` array tail.
+
 ## 2026-07-17 - Tool renderer hasResult context
 
 ### What changed
