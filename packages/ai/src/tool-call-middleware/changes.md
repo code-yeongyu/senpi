@@ -1,5 +1,31 @@
 # Tool Call Middleware Changes
 
+## 2026-07-18 - ANTML protocol with Claude-Code-style failure tolerance
+
+### What changed and why
+
+- Added the `antml` text-tool protocol: the ANTML `<function_calls>`/`<invoke>`/`<parameter>` format
+  Anthropic models are post-trained on (see "Better Models: Worse Tools",
+  https://lucumr.pocoo.org/2026/7/4/better-models-worse-tools/). Newer Claude models (Opus 4.8,
+  Sonnet 5) emit byte-correct tool calls but append invented keys (`requireUnique`, `oldText2`,
+  `type`, ...), substitute parameter aliases (`path` for `file_path`, `old_str` for `old_string`),
+  and occasionally produce broken `\uXXXX` escapes — slop that Claude Code's own harness absorbs
+  silently while strict parsers reject the whole call.
+- The protocol shares the invoke scanner/stream machinery with `anthropic-xml` via a new
+  `InvokeProtocolConfig` (protocol id, label, tool-call id prefix, coercion strategy);
+  `parse.ts`/`stream.ts` in `protocols/anthropic-xml/` were parameterized with zero behavior change
+  for the existing format (messages, ids, and event sequences are byte-identical).
+- `antml` coercion (`protocols/antml/coerce-parameters.ts`) applies validation-gated repairs:
+  case/separator-insensitive property matching, a documented alias table, recursive unknown-key
+  filtering honoring `additionalProperties`, `\u` escape repair plus lone-surrogate replacement,
+  lenient scalar spellings (`" TRUE "`, `'"2"'`), and duplicate-parameter last-wins. Every repaired
+  record must still pass `Value.Check` against the tool schema — repairs only narrow input, never
+  invent it, keeping the middleware's strict-parsing contract.
+- Formatted output wraps the canonical invoke serialization in `<function_calls>`; input accepts
+  both wrapped and bare invokes. Truncation-at-finish recovery inherits the R1-R4 boundary from the
+  shared stream core.
+
+
 ## 2026-07-17 - Truncation-recovery boundary for text tool-call protocols
 
 ### What changed and why

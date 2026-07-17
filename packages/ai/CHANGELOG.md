@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added the `antml` tool-call protocol: ANTML `<function_calls>`/`<invoke>` format with Claude-Code-style failure tolerance (parameter aliases, unknown-key filtering, unicode escape repair), validation-gated so repaired calls must still pass the tool schema.
+
 ### Changed
 
 ### Fixed

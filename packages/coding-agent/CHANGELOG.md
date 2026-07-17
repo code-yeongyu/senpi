@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added `antml` as a valid `compat.toolCallFormat` in custom `models.json` provider and model definitions: ANTML `<function_calls>`/`<invoke>` text-tool protocol with Claude-Code-style failure tolerance.
+
 ### Changed
 
 ### Fixed
