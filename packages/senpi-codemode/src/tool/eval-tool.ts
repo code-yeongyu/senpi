@@ -39,6 +39,8 @@ export interface CreateEvalToolOptions {
 	readonly spawns?: boolean;
 	/** Default agent name surfaced in the agent() helper docs when spawns are enabled. */
 	readonly spawnDefaultAgent?: string;
+	/** Active model id; selects the emphasis dialect of the eval prompt. */
+	readonly modelId?: string;
 }
 
 interface EvalCellInvocation {
@@ -152,6 +154,7 @@ export function createEvalTool(options: CreateEvalToolOptions): ToolDefinition<E
 	const prompt = buildEvalPrompt(options.enabledLanguages, {
 		spawns: options.spawns ?? false,
 		...(options.spawnDefaultAgent === undefined ? {} : { spawnDefaultAgent: options.spawnDefaultAgent }),
+		...(options.modelId === undefined ? {} : { modelId: options.modelId }),
 	});
 	const languages = enabledLanguageList(options.enabledLanguages);
 	return {

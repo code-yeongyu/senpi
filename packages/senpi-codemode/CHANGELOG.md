@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added model-aware eval-first batching emphasis: the `eval` tool description and its system-prompt guideline now render in a dialect selected by the active model id (Claude/GLM, OpenAI, Kimi, and a maximum-emphasis default fallback), re-registering on `model_select` so mid-session model switches pick up the matching dialect.
+
 ### Changed
 
 ### Fixed
