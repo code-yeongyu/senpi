@@ -2,7 +2,7 @@ import type { AnthropicMessagesCompat, Api, Model } from "@earendil-works/pi-ai"
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 
 type ToolDefinition = Record<string, unknown>;
-type AnthropicWebSearchModel = Pick<Model<Api>, "api" | "provider" | "compat">;
+type AnthropicWebSearchModel = Pick<Model<Api>, "api" | "provider" | "baseUrl" | "compat">;
 type AnthropicWebSearchTarget = Api | AnthropicWebSearchModel | undefined;
 
 const WEB_SEARCH_MAX_USES = 8;
@@ -46,14 +46,23 @@ function resolveTarget(target: AnthropicWebSearchTarget): AnthropicWebSearchMode
 	if (typeof target === "string") {
 		return {
 			api: target,
+			baseUrl: target === "anthropic-messages" ? "https://api.anthropic.com" : "",
 			provider: target === "anthropic-messages" ? "anthropic" : "",
 		};
 	}
 	return target;
 }
 
+function isNativeAnthropicEndpoint(model: AnthropicWebSearchModel): boolean {
+	try {
+		return new URL(model.baseUrl).hostname === "api.anthropic.com";
+	} catch {
+		return false;
+	}
+}
+
 // Mirrors pi-ai's `AnthropicMessagesCompat.supportsWebSearch` default:
-// first-party Anthropic only. Anthropic-compatible endpoints (e.g.,
+// first-party api.anthropic.com only. Anthropic-compatible endpoints (e.g.,
 // kimi-coding) may execute the server-side search but reject the replayed
 // server_tool_use / web_search_tool_result blocks on the next request.
 export function supportsNativeAnthropicWebSearch(target: AnthropicWebSearchTarget): boolean {
@@ -63,7 +72,7 @@ export function supportsNativeAnthropicWebSearch(target: AnthropicWebSearchTarge
 	}
 
 	const compat = model.compat as AnthropicMessagesCompat | undefined;
-	return compat?.supportsWebSearch ?? model.provider === "anthropic";
+	return compat?.supportsWebSearch ?? isNativeAnthropicEndpoint(model);
 }
 
 function parseDomainListEnv(envVar: string): string[] | undefined {
@@ -125,10 +134,24 @@ function stripNativeAnthropicWebSearch(payload: Record<string, unknown>): Record
 		return payload;
 	}
 
-	return {
-		...payload,
-		tools: sanitizedTools,
-	};
+	const sanitizedPayload = { ...payload };
+	if (sanitizedTools.length > 0) {
+		sanitizedPayload.tools = sanitizedTools;
+	} else {
+		delete sanitizedPayload.tools;
+	}
+
+	if (isRecord(sanitizedPayload.tool_choice)) {
+		const selectedName = sanitizedPayload.tool_choice.name;
+		const hasSelectedTool =
+			typeof selectedName === "string" &&
+			sanitizedTools.some((tool) => isRecord(tool) && tool.name === selectedName);
+		if (sanitizedTools.length === 0 || (typeof selectedName === "string" && !hasSelectedTool)) {
+			delete sanitizedPayload.tool_choice;
+		}
+	}
+
+	return sanitizedPayload;
 }
 
 export function addAnthropicWebSearchToPayload(target: AnthropicWebSearchTarget, payload: unknown): unknown {

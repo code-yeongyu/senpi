@@ -13,6 +13,7 @@ const BLOCKED_DOMAINS_ENV = "PI_ANTHROPIC_WEB_SEARCH_BLOCKED_DOMAINS";
 
 const kimiCodingModel = {
 	api: "anthropic-messages",
+	baseUrl: "https://api.kimi.com/coding",
 	provider: "kimi-coding",
 } as const;
 
@@ -126,6 +127,7 @@ describe("anthropic-web-search builtin extension", () => {
 
 	it("strips a hook-injected native web_search tool for Anthropic-compatible endpoints", () => {
 		const payload = {
+			tool_choice: { type: "tool", name: "web_search" },
 			tools: [
 				{ type: "web_search_20250305", name: "web_search", max_uses: 8 },
 				{ name: "web_search", description: "pi-websearch function" },
@@ -134,6 +136,7 @@ describe("anthropic-web-search builtin extension", () => {
 		};
 
 		const result = addAnthropicWebSearchToPayload(kimiCodingModel, payload) as {
+			tool_choice?: unknown;
 			tools: Array<Record<string, unknown>>;
 		};
 
@@ -141,6 +144,17 @@ describe("anthropic-web-search builtin extension", () => {
 			{ name: "web_search", description: "pi-websearch function" },
 			{ name: "other_tool" },
 		]);
+		expect(result.tool_choice).toEqual({ type: "tool", name: "web_search" });
+	});
+
+	it("removes orphaned tool_choice when stripping the only native web_search tool", () => {
+		const result = addAnthropicWebSearchToPayload(kimiCodingModel, {
+			tool_choice: { type: "tool", name: "web_search" },
+			tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 8 }],
+		}) as Record<string, unknown>;
+
+		expect(result.tools).toBeUndefined();
+		expect(result.tool_choice).toBeUndefined();
 	});
 
 	it("injects the native tool for a compatible endpoint that opts in via compat", () => {
@@ -190,7 +204,13 @@ describe("anthropic-web-search builtin extension", () => {
 
 describe("supportsNativeAnthropicWebSearch", () => {
 	it("supports the first-party Anthropic provider", () => {
-		expect(supportsNativeAnthropicWebSearch({ api: "anthropic-messages", provider: "anthropic" })).toBe(true);
+		expect(
+			supportsNativeAnthropicWebSearch({
+				api: "anthropic-messages",
+				baseUrl: "https://api.anthropic.com",
+				provider: "anthropic",
+			}),
+		).toBe(true);
 	});
 
 	it("keeps supporting the bare api string for backwards compatibility", () => {
@@ -201,11 +221,22 @@ describe("supportsNativeAnthropicWebSearch", () => {
 		expect(supportsNativeAnthropicWebSearch(kimiCodingModel)).toBe(false);
 	});
 
+	it("does not treat a custom endpoint as native only because its provider id is anthropic", () => {
+		expect(
+			supportsNativeAnthropicWebSearch({
+				api: "anthropic-messages",
+				baseUrl: "https://anthropic-proxy.example/v1",
+				provider: "anthropic",
+			}),
+		).toBe(false);
+	});
+
 	it("honors an explicit compat opt-in and opt-out", () => {
 		expect(supportsNativeAnthropicWebSearch({ ...kimiCodingModel, compat: { supportsWebSearch: true } })).toBe(true);
 		expect(
 			supportsNativeAnthropicWebSearch({
 				api: "anthropic-messages",
+				baseUrl: "https://api.anthropic.com",
 				provider: "anthropic",
 				compat: { supportsWebSearch: false },
 			}),
@@ -293,7 +324,7 @@ describe("anthropic-web-search before_agent_start", () => {
 
 		const result = await beforeAgentStartHandler?.(
 			{ systemPrompt: "system" },
-			{ model: { api: "anthropic-messages", provider: "anthropic" } },
+			{ model: { api: "anthropic-messages", provider: "anthropic", baseUrl: "https://api.anthropic.com" } },
 		);
 
 		expect(result).toBeUndefined();
@@ -319,7 +350,7 @@ describe("anthropic-web-search before_agent_start", () => {
 
 		const anthropicResult = await beforeAgentStartHandler?.(
 			{ systemPrompt: "system" },
-			{ model: { api: "anthropic-messages", provider: "anthropic" } },
+			{ model: { api: "anthropic-messages", provider: "anthropic", baseUrl: "https://api.anthropic.com" } },
 		);
 		expect(anthropicResult?.systemPrompt).toContain(ANTHROPIC_WEB_SEARCH_SECTION);
 

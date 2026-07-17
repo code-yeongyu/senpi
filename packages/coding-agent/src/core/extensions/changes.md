@@ -6,11 +6,11 @@
 
 - `builtin/anthropic-web-search/index.ts`: the extension now gates on the model instead of the API type,
   mirroring `builtin/openai-web-search`. `supportsNativeAnthropicWebSearch(target)` is true for the first-party
-  `anthropic` provider or an explicit `compat.supportsWebSearch` opt-in. For unsupported
+  `api.anthropic.com` endpoint or an explicit `compat.supportsWebSearch` opt-in. For unsupported
   `anthropic-messages` endpoints the extension no longer
   injects `web_search_20250305`, no longer strips a function-tool `web_search` (pi-websearch keeps working as the
-  fallback), strips any hook-injected native `web_search_*` variant, and skips the web-search system prompt
-  section.
+  fallback), strips any hook-injected native `web_search_*` variant plus an orphaned `tool_choice`, and skips the
+  web-search system prompt section.
 - `test/suite/anthropic-web-search-extension.test.ts`: added kimi-coding-shaped regression coverage for
   non-injection, native-variant stripping, compat opt-in, and prompt-section gating.
 
