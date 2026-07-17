@@ -725,6 +725,12 @@ export function renderEvalCall(
 	context: RenderContext,
 ): EvalRenderComponent {
 	const component = componentFor(context);
+	if (context.hasResult === true) {
+		// The result renderer owns the full pending -> running -> done frame once a result exists.
+		// Rendering the call frame too would stack a duplicate box, so yield to it here.
+		component.setBlocks([]);
+		return component;
+	}
 	if (theme === undefined && context.spinnerFrame === undefined) {
 		const title = args.title === undefined ? "" : ` ${args.title}`;
 		const reset = args.reset === true ? " reset" : "";

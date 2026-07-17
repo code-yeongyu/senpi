@@ -1,5 +1,28 @@
 # Core Extensions Changes
 
+## 2026-07-17 - Tool renderer hasResult context
+
+### What changed
+
+- Added optional `ToolRenderContext.hasResult`, true once a partial or final result exists for a tool call.
+- Lets a call renderer that draws self-contained framing (e.g. codemode `eval`) yield to the result renderer instead
+  of stacking a duplicate block, since `ToolExecutionRenderer.update()` renders call-then-result into one container.
+
+### Why
+
+- `renderCall` previously had no way to detect that a result had arrived: `isPartial` is true both for "no result yet"
+  and "partial result", so a self-framing call renderer kept drawing its own box on top of the result box.
+
+### Why extension system couldn't handle this alone
+
+- `ToolRenderContext` is a public host-to-extension contract, and result presence for a tool row is owned by the
+  interactive renderer (`modes/interactive/components/tool-execution-renderer.ts`).
+
+### Expected merge conflict zones
+
+- MEDIUM: `types.ts` around `ToolRenderContext` as upstream adds renderer context fields.
+- LOW: `modes/interactive/components/tool-execution-renderer.ts` around `getRenderContext()`.
+
 ## 2026-07-10 - Tool renderer image protocol context
 
 ### What changed
