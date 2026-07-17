@@ -1,5 +1,42 @@
 # AI Source Changes
 
+## 2026-07-17 - Truncation-recovery contract for ToolCall and toolcall_end
+
+### What changed and why
+
+- Truncated text-protocol tool calls were silently dropped, leaked as raw markup, or executed from a
+  stale argument snapshot, with no public signal distinguishing a finalized (executable) call from
+  one the parser could only partially recover. Consumers had no contract for "this tool call is
+  incomplete; do not execute it; ask the model to retry."
+- `ToolCall` gains optional `incomplete?: true` and `errorMessage?: string`, set by the text tool-call
+  middleware when a truncated call could not be recovered. Carriers of `incomplete` MUST NOT be
+  executed; they are surfaced as a failed tool result so the model re-issues the call next turn.
+- The `toolcall_end` member of `AssistantMessageEvent` is redefined from an implicit "complete" to
+  "finalized": a `toolcall_end` is executable iff `incomplete !== true`. Flagged ends still terminate
+  the call (so the wrapper never holds a dangling partial) but are not executable. This is the
+  release-note surface for the redefinition.
+- `ToolCallFormat` gains `"morph-xml"` as the canonical id; `"xml"` is retained as a deprecated alias
+  resolving to the same protocol, so existing `models.json` configs and compiled consumers of
+  `getProtocol("xml")` keep working without a runtime normalization that rewrites stored config
+  values.
+
+### Files modified
+
+- `types.ts` (`ToolCall`, `AssistantMessageEvent.toolcall_end`, `OpenAICompletionsCompat.toolCallFormat` doc)
+- `tool-call-middleware/types.ts`, `tool-call-middleware/index.ts`, `tool-call-middleware/context-transformer.ts`
+- `../test/tool-call-middleware/context-transformer.test.ts`, `../test/tool-call-middleware/stream-integration.test.ts`
+
+### Why the higher-level extension system couldn't handle this alone
+
+- The canonical `ToolCall` shape, the `toolcall_end` event contract, and the `ToolCallFormat` union
+  are all exported from `pi-ai` and consumed by standalone `pi-ai` clients before any coding-agent
+  extension runs.
+
+### Expected merge conflict zones
+
+- LOW: `types.ts` around the `ToolCall` and `AssistantMessageEvent` declarations.
+- LOW: `tool-call-middleware/types.ts` `ToolCallFormat` union and `toolcall_end` variant.
+
 ## 2026-07-16 - Anthropic native web_search endpoint guard and server_tool_use input streaming
 
 ### What changed and why
