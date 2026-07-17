@@ -261,6 +261,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			if (nextParams !== undefined) {
 				params = nextParams as OpenAICompletionsRequestParams;
 			}
+			params = normalizeRequestToolSchemas(params, compat);
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
@@ -1251,6 +1252,29 @@ function convertTools(
 			},
 		};
 	});
+}
+
+function normalizeRequestToolSchemas(
+	params: OpenAICompletionsRequestParams,
+	compat: ResolvedOpenAICompletionsCompat,
+): OpenAICompletionsRequestParams {
+	if (!params.tools) return params;
+
+	return {
+		...params,
+		tools: params.tools.map((tool) => {
+			if (tool.type !== "function" || !tool.function.parameters) return tool;
+
+			const parameters =
+				compat.toolSchemaFlavor === "moonshot-mfjs"
+					? normalizeToolParametersForMoonshot(tool.function.parameters)
+					: normalizeToolParametersForOpenAICompat(tool.function.parameters);
+			return {
+				...tool,
+				function: { ...tool.function, parameters },
+			};
+		}),
+	};
 }
 
 function parseChunkUsage(

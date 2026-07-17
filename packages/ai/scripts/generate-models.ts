@@ -241,6 +241,24 @@ const KIMI_K3_COST = {
 	cacheRead: 0.3,
 	cacheWrite: 0,
 } as const;
+const KIMI_CODING_STABLE_MODELS = {
+	"kimi-for-coding": {
+		id: "kimi-for-coding",
+		name: "Kimi For Coding",
+		tool_call: true,
+		reasoning: true,
+		limit: { context: 262144, output: 32768 },
+		modalities: { input: ["text", "image"] },
+	},
+	"kimi-k2-thinking": {
+		id: "kimi-k2-thinking",
+		name: "Kimi K2 Thinking",
+		tool_call: true,
+		reasoning: true,
+		limit: { context: 262144, output: 32768 },
+		modalities: { input: ["text"] },
+	},
+} satisfies Record<string, ModelsDevModel>;
 const OPENROUTER_KIMI_K3_MODEL_IDS = new Set(["moonshotai/kimi-k3", "~moonshotai/kimi-latest"]);
 
 const ANT_LING_RING_THINKING_LEVEL_MAP = {
@@ -1627,13 +1645,16 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 
 		// Process Kimi For Coding models
 		if (data["kimi-for-coding"]?.models) {
-			const kimiModels = data["kimi-for-coding"].models as Record<string, ModelsDevModel>;
+			const liveKimiModels = data["kimi-for-coding"].models as Record<string, ModelsDevModel>;
+			const kimiModels: Record<string, ModelsDevModel> = {
+				...KIMI_CODING_STABLE_MODELS,
+				...liveKimiModels,
+			};
 			const hasCanonicalModel = Object.prototype.hasOwnProperty.call(kimiModels, "kimi-for-coding");
 
 			const kimiAliases = new Set(["k2p5", "k2p6"]);
 
-			for (const [modelId, model] of Object.entries(kimiModels)) {
-				const m = model as ModelsDevModel;
+			for (const [modelId, m] of Object.entries(kimiModels)) {
 				if (m.tool_call !== true) continue;
 				// models.dev may expose versioned aliases (e.g. k2p5/k2p6).
 				// Normalize aliases to the canonical model id and drop duplicates when canonical exists.

@@ -90,6 +90,52 @@ function collapseConstUnion(node: Record<string, unknown>): void {
 	node.enum = values;
 }
 
+function mergeRootObjectUnion(schema: Record<string, unknown>): Record<string, unknown> | undefined {
+	const branches = Array.isArray(schema.anyOf) ? schema.anyOf : Array.isArray(schema.oneOf) ? schema.oneOf : undefined;
+	if (branches === undefined || branches.length === 0) return undefined;
+
+	const objectBranches: Record<string, unknown>[] = [];
+	for (const branch of branches) {
+		if (!isJsonObject(branch) || branch.type !== "object") return undefined;
+		if (branch.properties !== undefined && !isJsonObject(branch.properties)) return undefined;
+		if (branch.required !== undefined && !Array.isArray(branch.required)) return undefined;
+		objectBranches.push(branch);
+	}
+
+	const properties: Record<string, unknown> = {};
+	for (const branch of objectBranches) {
+		if (!isJsonObject(branch.properties)) continue;
+		for (const [name, propertySchema] of Object.entries(branch.properties)) {
+			const existing = properties[name];
+			properties[name] =
+				existing === undefined || JSON.stringify(existing) === JSON.stringify(propertySchema)
+					? propertySchema
+					: { anyOf: [existing, propertySchema] };
+		}
+	}
+
+	const firstRequired = objectBranches[0]?.required;
+	let commonRequired = Array.isArray(firstRequired)
+		? firstRequired.filter((name): name is string => typeof name === "string")
+		: [];
+	for (const branch of objectBranches.slice(1)) {
+		const branchRequired = new Set(
+			Array.isArray(branch.required)
+				? branch.required.filter((name): name is string => typeof name === "string")
+				: [],
+		);
+		commonRequired = commonRequired.filter((name) => branchRequired.has(name));
+	}
+
+	const { anyOf: _anyOf, oneOf: _oneOf, ...rest } = schema;
+	return {
+		...rest,
+		type: "object",
+		properties,
+		...(commonRequired.length > 0 ? { required: commonRequired } : {}),
+	};
+}
+
 function normalizeNode(node: unknown): unknown {
 	if (Array.isArray(node)) {
 		return node.map((child) => normalizeNode(child));
@@ -146,7 +192,7 @@ export function normalizeToolParametersForOpenAICompat(schema: Record<string, un
  */
 export function normalizeToolParametersForMoonshot(schema: Record<string, unknown>): Record<string, unknown> {
 	const normalized = normalizeToolParametersForOpenAICompat(schema);
-	return stripMoonshotAnnotations(normalized);
+	return stripMoonshotAnnotations(mergeRootObjectUnion(normalized) ?? normalized);
 }
 
 function stripMoonshotAnnotations(node: unknown): Record<string, unknown> {

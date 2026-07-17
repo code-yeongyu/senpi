@@ -17,12 +17,13 @@ tools/
 ├── find.ts                      # Path search tool (gitignore-aware)
 ├── ls.ts                        # Directory listing
 ├── file-mutation-queue.ts       # Serializes write/edit/apply_patch on the same file
-├── output-accumulator.ts        # Streams long stdout; truncate-tail with line cap
+├── tail-window.ts               # Bounded decoded tail window used by OutputAccumulator
+├── output-accumulator.ts        # Bounded streaming output snapshots; temp-file fallback preserves full output
 ├── path-utils.ts                # Path normalization, repo-root resolution
 ├── render-utils.ts              # ANSI / chalk / panel helpers shared across renders
 ├── tool-definition-wrapper.ts   # Helper to wire ToolDefinition + render + execute
 ├── truncate.ts                  # Output truncation policy
-└── changes.md                   # Fork tracker (currently: bash promptSnippet `grep` → `rg`)
+└── changes.md                   # Fork tracker: bash timeout validation, shared diff rendering (edit/write/apply_patch), bash prompt tuning (rg over grep, elapsed display, syntax highlighting)
 ```
 
 ## TOOL DEFINITION SHAPE

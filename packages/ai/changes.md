@@ -1,5 +1,29 @@
 # changes.md — ai
 
+## Preserve stable Kimi Coding model IDs during catalog generation (2026-07-17)
+
+### What changed
+
+- `scripts/generate-models.ts`: added fallback metadata for `kimi-for-coding` and `kimi-k2-thinking` that live
+  `models.dev` metadata can override but cannot silently remove.
+
+### Why
+
+- Senpi's public model catalog and provider regressions still support these IDs. A transient upstream catalog omission
+  caused release-time model regeneration to remove them and fail static validation.
+
+### Why extension system couldn't handle this
+
+- Model inventory is generated before the coding-agent extension runtime is loaded.
+
+### Modified upstream files
+
+- `scripts/generate-models.ts`
+
+### Expected merge conflict zones
+
+- MEDIUM: the Kimi Coding generation block if upstream changes alias or fallback handling.
+
 ## Preserve the generated CLI executable bit during builds (2026-07-13)
 
 ### What changed

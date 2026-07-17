@@ -10,6 +10,23 @@
 
 ### Fixed
 
+- Fixed Kimi/Moonshot function parameters with root object unions by flattening them into a compatible object schema.
+
+### Removed
+
+## [2026.7.17-3] - 2026-07-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed payload hooks reintroducing Moonshot-incompatible function schemas by normalizing the final tool list after `onPayload` and immediately before request submission.
+- Fixed model regeneration dropping the supported `kimi-for-coding` and `kimi-k2-thinking` catalog IDs when the live metadata source omits them.
+
 ### Removed
 
 ## [2026.7.17-2] - 2026-07-17
