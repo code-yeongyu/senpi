@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- Fixed `eval` tool calls rendering duplicate stacked boxes after a result arrived; the pending, running, and completed states now update in one in-place frame ([#223](https://github.com/code-yeongyu/senpi/pull/223)).
+
 ## [2026.7.16-3] - 2026-07-16
 
 ### Added
