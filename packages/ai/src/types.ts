@@ -562,6 +562,11 @@ export interface OpenAICompletionsCompat {
 	/** Whether the provider supports the `strict` field in tool definitions. Default: true. */
 	supportsStrictMode?: boolean;
 	/**
+	 * Provider-specific JSON Schema flavor for tool parameters. `"moonshot-mfjs"`
+	 * normalizes schemas for Moonshot / Kimi backends that enforce a stricter subset.
+	 */
+	toolSchemaFlavor?: "moonshot-mfjs";
+	/**
 	 * Tool call format for models that don't natively support tool calling.
 	 * When set, the middleware will intercept tool calls and format them as text.
 	 * Supported values: "hermes", "xml", "yaml-xml", "gemma4-delimiter"
