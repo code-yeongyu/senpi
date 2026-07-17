@@ -20,6 +20,7 @@ goal/
 ├── format.ts         # Tool/UI formatting + goalToolResponse snapshot
 ├── command.ts        # parseGoalCommand (show|pause|resume|clear|setObjective)
 ├── ui.ts             # ctx.ui.setStatus footer segment for the active goal
+├── elapsed-ticker.ts # GoalElapsedTicker + goalLiveElapsedSeconds (live footer refresh)
 ├── errors.ts         # Goal{AlreadyExists,NotFound}/store error classes
 └── changes.md        # Fork tracker (port + budget removal)
 ```
@@ -54,6 +55,7 @@ Do not return an `isError` property; it is ignored.
 | Adjust status transitions / persistence | `store.ts` |
 | Tune the continuation prompt | `prompt.ts` |
 | Change the footer status text | `ui.ts` |
+| Change the live footer elapsed ticker | `elapsed-ticker.ts` (+ `refreshGoalUi` in `index.ts`) |
 | `/goal` argument parsing | `command.ts` |
 
 ## CONVENTIONS
@@ -65,10 +67,15 @@ Do not return an `isError` property; it is ignored.
   is `active`, idle, and there are no pending messages.
 - **Usage accounting is display-only**: `accountGoalUsage` increments
   `tokensUsed`/`timeUsedSeconds`; it never changes status.
+- **Live footer is ticker-driven**: `refreshGoalUi` (index.ts) drives
+  `GoalElapsedTicker` to refresh `Pursuing goal (…)` once per second while a goal
+  is `active` and its accounting window is open, so the footer advances live
+  instead of freezing between `agent_end` accounting checkpoints. The ticker only
+  runs when `ctx.hasUI` and is stopped on pause/complete/clear and session shutdown.
 
 ## NOTES
 
 - Tests: `test/suite/goal-store.test.ts`, `goal-modules.test.ts`,
-  `goal-extension.test.ts` (faux/mocked `pi`, temp-file store, no real APIs).
+  `goal-extension.test.ts`, `goal-elapsed-ticker.test.ts` (faux/mocked `pi`, temp-file store, no real APIs).
 - Registered last in `builtin/index.ts` `builtinExtensions`; inert until a goal
   is created.
