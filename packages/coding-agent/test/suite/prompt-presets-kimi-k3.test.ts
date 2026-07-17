@@ -51,7 +51,8 @@ describe("Kimi K3 prompt preset", () => {
 		expect(preset?.prompt).toContain("You are senpi");
 		expect(preset?.prompt).toContain("## Intent Gate");
 		expect(preset?.prompt).toContain("running on Kimi K3");
-		expect(preset?.prompt).toContain("audit each claim against a tool result");
+		expect(preset?.prompt).toContain("evidence-first");
+		expect(preset?.prompt).toContain("skip filler verification language");
 		expect(preset?.prompt).toContain("a recommendation, not a survey");
 		expect(preset?.prompt.length).toBeGreaterThan(2_000);
 	});
@@ -87,7 +88,7 @@ describe("Kimi K3 prompt preset", () => {
 		// then
 		expect(k3?.name).toBe("kimi-k3");
 		expect(k3?.prompt).not.toContain("running on Kimi K2.7");
-		expect(k3?.prompt).not.toContain("filler verification language");
+		expect(k3?.prompt).not.toContain("Avoid restating the user's request");
 		expect(k26?.name).toBe("kimi-k2-6");
 		expect(k26?.prompt).not.toContain("running on Kimi K3");
 		expect(k27?.name).toBe("kimi-k2-7");

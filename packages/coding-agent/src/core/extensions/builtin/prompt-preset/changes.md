@@ -29,6 +29,21 @@ Per-model prompt preset extension. Selects a tuned system prompt based on the ac
 ### Expected merge conflict zones on next upstream sync
 - LOW: `kimi-k3.ts` is fork-only; `presets.ts`/`settings.ts` touch shared lists — trivial adjacent-line conflicts if upstream adds presets.
 
+## Kimi K3 tuning tightening against overthinking (2026-07-17)
+
+### What changed
+- `kimi-k3.ts`: rewrote the `tuningSection` to focus on the K2.6-style loop-discipline signal. Dropped the Opus 4.8 scope-literalism paragraph and the Fable 5 claim-audit / no-promise-ending paragraphs because the shared core already covers verification tiers and the "act, then report" execution stance; restating them in the tuning diluted the anti-overthinking message and added self-reflection loops. The new tuning is shorter, mirrors the proven K2.7 shape, and explicitly adds the K2.6 filler-verification ban.
+- `test/suite/prompt-presets-kimi-k3.test.ts`: replaced the `audit each claim` pin with `evidence-first` and `skip filler verification language`; updated the K2.6/K3 isolation assertion from the shared phrase to K2.6's exact opener so the test still guards against accidental preset drift.
+
+### Why
+- K3 was overthinking on clear, mechanical, or already-specified work — restating requests, re-deriving established facts, and using filler verification language. The previous tuning tried to prevent this while also carrying scope-literalism and claim-audit instructions; the extra instructions competed for attention and gave the model more opportunities to loop. The K2.6/K2.7 presets solve the same problem with a single, high-signal paragraph.
+
+### Why extension system couldn't handle this differently
+- Content-only change inside the existing builtin `tuningSection`; no core prompt code changed.
+
+### Expected merge conflict zones on next upstream sync
+- LOW: `kimi-k3.ts` is fork-only; the extension test only touches K3-specific assertions.
+
 ## GPT-5.6 omo-parity refinements (2026-07-16)
 
 ### What changed
