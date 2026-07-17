@@ -27,6 +27,12 @@ export * from "./images-api-registry.ts";
 export * from "./index.ts";
 export * from "./legacy-api-aliases.ts";
 export * from "./providers/images/register-builtins.ts";
+export {
+	getProtocol,
+	getToolCallFormat,
+	transformContext,
+	wrapStreamWithToolCallMiddleware,
+} from "./tool-call-middleware/index.ts";
 
 import { anthropicMessagesApi } from "./api/anthropic-messages.lazy.ts";
 import { azureOpenAIResponsesApi } from "./api/azure-openai-responses.lazy.ts";

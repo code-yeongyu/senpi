@@ -19,7 +19,13 @@ import {
 	type SimpleStreamOptions,
 	type StreamOptions,
 } from "@earendil-works/pi-ai";
-import { getApiProvider } from "@earendil-works/pi-ai/compat";
+import {
+	getApiProvider,
+	getProtocol,
+	getToolCallFormat,
+	transformContext,
+	wrapStreamWithToolCallMiddleware,
+} from "@earendil-works/pi-ai/compat";
 import type { ModelConfig, ModelsJsonModel, ModelsJsonModelOverride, ModelsJsonProvider } from "./model-config.ts";
 import {
 	clearConfigValueCache,
@@ -489,6 +495,13 @@ export function composeModelProvider(
 		simple: boolean,
 	): AssistantMessageEventStream =>
 		lazyStream(model, async () => {
+			const format = getToolCallFormat(model);
+			if (format && context.tools && context.tools.length > 0) {
+				const protocol = getProtocol(format);
+				const transformedContext = transformContext(context, protocol);
+				const innerStream = streamWith(model, transformedContext, options, simple);
+				return wrapStreamWithToolCallMiddleware(innerStream, protocol, context.tools);
+			}
 			if (extension?.streamSimple && model.api === extension.api) {
 				return extension.streamSimple(model, context, options as SimpleStreamOptions);
 			}

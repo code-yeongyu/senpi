@@ -1,5 +1,19 @@
 # changes
 
+## Composed providers engage text tool-call compatibility middleware (2026-07-17)
+
+### What changed
+
+- `provider-composer.ts`: composed provider `stream()` and `streamSimple()` now apply the text tool-call middleware when a model has `compat.toolCallFormat` and active tools. Custom `models.json` providers previously dispatched directly to their base or API provider, silently bypassing this compatibility behavior.
+
+### Why extension system couldn't handle this alone
+
+- Provider composition owns the final base-provider/API-provider stream dispatch before extensions receive model output, so extensions cannot insert the required context transformation and streaming parser on both paths.
+
+### Expected merge conflict zones
+
+- LOW: `provider-composer.ts` shared `streamWith()` dispatch and its `@earendil-works/pi-ai/compat` imports.
+
 ## AnthropicMessagesCompat.supportsWebSearch in models.json schema (2026-07-16)
 
 ### What changed

@@ -19,6 +19,8 @@
   resolving to the same protocol, so existing `models.json` configs and compiled consumers of
   `getProtocol("xml")` keep working without a runtime normalization that rewrites stored config
   values.
+- Flagged dangling-call diagnostics always append `Re-issue the tool call with complete arguments.` to parser-provided error messages without duplicating a final period.
+- `compat.ts` now publicly re-exports `getToolCallFormat`, `getProtocol`, `transformContext`, and `wrapStreamWithToolCallMiddleware` for composed providers that need the text tool-call middleware.
 
 ### Files modified
 
