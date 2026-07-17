@@ -2,6 +2,7 @@ import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
 import { hermesCreateStreamParser, hermesParseGeneratedText } from "../../src/tool-call-middleware/protocols/hermes.ts";
 import type { Tool } from "../../src/types.ts";
+import { FIXTURE_TOOLS, TRUNCATION_FIXTURES } from "./truncation-fixtures.ts";
 
 const weatherTool: Tool = {
 	name: "get_weather",
@@ -293,7 +294,7 @@ describe("hermesCreateStreamParser", () => {
 		expect(finishEvents).toEqual([]);
 	});
 
-	it("suppresses unfinished hermes tool markup at finish by default", () => {
+	it("flags unfinished hermes tool markup at finish by default", () => {
 		// given
 		const onError = vi.fn();
 		const parser = hermesCreateStreamParser([weatherTool], { onError });
@@ -304,11 +305,25 @@ describe("hermesCreateStreamParser", () => {
 
 		// then
 		expect(feedEvents).toEqual([{ type: "text", text: "prefix " }]);
-		expect(finishEvents).toEqual([]);
-		expect(onError).toHaveBeenCalled();
+		expect(finishEvents).toEqual([
+			{ type: "toolcall_start", index: 0, name: "get_weather", id: "hermes-tool-0" },
+			{
+				type: "toolcall_end",
+				index: 0,
+				name: "get_weather",
+				id: "hermes-tool-0",
+				arguments: {},
+				incomplete: true,
+				errorMessage: "Tool call was truncated mid-arguments",
+			},
+		]);
+		expect(onError).toHaveBeenCalledWith("Could not complete streaming JSON tool call at finish.", {
+			protocol: "hermes",
+			retainedLength: '{"name":"get_weather"'.length,
+		});
 	});
 
-	it("emits unfinished hermes tool markup at finish when raw fallback is enabled", () => {
+	it("never emits unfinished hermes markup at finish when raw fallback is enabled", () => {
 		// given
 		const parser = hermesCreateStreamParser([weatherTool], { emitRawToolCallTextOnError: true });
 
@@ -318,7 +333,111 @@ describe("hermesCreateStreamParser", () => {
 
 		// then
 		expect(feedEvents).toEqual([{ type: "text", text: "prefix " }]);
-		expect(finishEvents).toEqual([{ type: "text", text: '<tool_call>{"name":"get_weather"' }]);
+		expect(finishEvents).toEqual([
+			{ type: "toolcall_start", index: 0, name: "get_weather", id: "hermes-tool-0" },
+			{
+				type: "toolcall_end",
+				index: 0,
+				name: "get_weather",
+				id: "hermes-tool-0",
+				arguments: {},
+				incomplete: true,
+				errorMessage: "Tool call was truncated mid-arguments",
+			},
+		]);
+	});
+
+	it.each(TRUNCATION_FIXTURES.hermes)("recovers or flags $title", (fixture) => {
+		// given
+		const onError = vi.fn();
+		const parser = hermesCreateStreamParser(FIXTURE_TOOLS, {
+			onError,
+			emitRawToolCallTextOnError: true,
+		});
+
+		// when
+		const events = [...parser.feed(fixture.input), ...parser.finish()];
+		const toolCallEvents = events.filter((event) => event.type.startsWith("toolcall_"));
+		const text = events
+			.filter((event) => event.type === "text")
+			.map((event) => event.text)
+			.join("");
+
+		// then
+		if (fixture.expected.kind === "recovered") {
+			const ends = events.filter((event) => event.type === "toolcall_end");
+			expect(ends).toHaveLength(1);
+			expect(ends[0]).toMatchObject({
+				type: "toolcall_end",
+				name: fixture.tool,
+				arguments: fixture.expected.arguments,
+			});
+			expect(ends[0]).not.toHaveProperty("incomplete");
+			return;
+		}
+
+		if (fixture.expected.kind === "incomplete") {
+			const ends = events.filter((event) => event.type === "toolcall_end");
+			expect(ends).toHaveLength(1);
+			expect(ends[0]).toMatchObject({ type: "toolcall_end", name: fixture.tool, incomplete: true });
+			expect(text).not.toContain("<tool_call>");
+			expect(onError).toHaveBeenCalled();
+			expect(JSON.stringify(onError.mock.calls)).not.toContain(fixture.input);
+			return;
+		}
+
+		expect(toolCallEvents).toEqual([]);
+		expect(text).not.toContain(fixture.input);
+		expect(onError).toHaveBeenCalled();
+		expect(JSON.stringify(onError.mock.calls)).not.toContain(fixture.input);
+	});
+
+	it.each([false, true])("keeps unknown truncated names as raw text only when raw fallback is %s", (enabled) => {
+		// given
+		const onError = vi.fn();
+		const input = '<tool_call>{"name":"unknown_tool","arguments":{"city":"Seoul"}}';
+		const parser = hermesCreateStreamParser(FIXTURE_TOOLS, { onError, emitRawToolCallTextOnError: enabled });
+
+		// when
+		const events = [...parser.feed(input), ...parser.finish()];
+
+		// then
+		expect(events.filter((event) => event.type.startsWith("toolcall_"))).toEqual([]);
+		expect(
+			events
+				.filter((event) => event.type === "text")
+				.map((event) => event.text)
+				.join(""),
+		).toBe(enabled ? input : "");
+		expect(onError).toHaveBeenCalledWith("Could not complete streaming JSON tool call at finish.", {
+			protocol: "hermes",
+			retainedLength: input.slice("<tool_call>".length).length,
+		});
+	});
+
+	it("terminates an already-started malformed complete call as incomplete", () => {
+		// given
+		const parser = hermesCreateStreamParser([weatherTool]);
+
+		// when
+		const events = parser.feed(
+			'<tool_call>{"name":"get_weather","arguments":{"city":"Seoul"} malformed}</tool_call>',
+		);
+
+		// then
+		expect(events).toEqual([
+			{ type: "toolcall_start", index: 0, name: "get_weather", id: "hermes-tool-0" },
+			{ type: "toolcall_delta", index: 0, argumentsDelta: '{"city":"Seoul"}' },
+			{
+				type: "toolcall_end",
+				index: 0,
+				name: "get_weather",
+				id: "hermes-tool-0",
+				arguments: { city: "Seoul" },
+				incomplete: true,
+				errorMessage: "Tool call arguments could not be parsed",
+			},
+		]);
 	});
 
 	it("streams recovered qwen-style malformed tool call json as a tool call instead of raw text", () => {
