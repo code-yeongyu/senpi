@@ -650,9 +650,11 @@ class Gemma4StreamParser implements StreamParser {
 						});
 						this.emitFinalToolCall(events, name, validatedArguments);
 					} catch {
+						this.reportIncompleteToolCall(content.length);
 						this.emitIncompleteToolCall(events, name, parseGemma4Args(rawArgs, true));
 					}
 				} else {
+					this.reportIncompleteToolCall(content.length);
 					this.emitIncompleteToolCall(events, name, parseGemma4Args(rawArgs, true));
 				}
 			}
@@ -785,6 +787,13 @@ class Gemma4StreamParser implements StreamParser {
 
 	private resolveTool(name: string): Tool | undefined {
 		return this.tools.find((tool) => tool.name === name);
+	}
+
+	private reportIncompleteToolCall(retainedLength: number): void {
+		this.options?.onError?.("Could not complete Gemma4 tool call at finish.", {
+			protocol: "gemma4-delimiter",
+			retainedLength,
+		});
 	}
 
 	private reportDroppedToolCall(retainedLength: number): void {

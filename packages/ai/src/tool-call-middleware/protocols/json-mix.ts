@@ -783,7 +783,10 @@ export function createJsonMixStreamParser(
 						state.isInsideToolCall = false;
 						state.buffer = "";
 						return events;
-					} catch {}
+					} catch (validationError) {
+						// Fall through to the sanitized incomplete-call recovery below; validation errors can contain raw arguments.
+						void validationError;
+					}
 				}
 
 				const name = extractTopLevelStringProperty(remainder, "name");

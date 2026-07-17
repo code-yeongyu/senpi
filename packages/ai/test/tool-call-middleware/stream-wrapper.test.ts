@@ -407,6 +407,44 @@ describe("wrapStreamWithToolCallMiddleware", () => {
 		]);
 	});
 
+	it("flushes and finalizes a dangling parser call when the iterator throws", async () => {
+		const partial = createAssistantMessage([]);
+		let finishCalls = 0;
+		const protocol = createScriptedProtocol(
+			() => [
+				{ type: "toolcall_start", index: 0, id: "iterator-tool", name: "get_weather" },
+				{ type: "toolcall_delta", index: 0, argumentsDelta: '{"city":"Seo' },
+			],
+			() => {
+				finishCalls += 1;
+				return [];
+			},
+		);
+		const innerStream = new AssistantMessageEventStream();
+		innerStream.push({ type: "start", partial });
+		innerStream.push({ type: "text_start", contentIndex: 0, partial });
+		innerStream.push({ type: "text_delta", contentIndex: 0, delta: "partial call", partial });
+		innerStream.fail(new Error("iterator failed"));
+
+		const outerStream = wrapStreamWithToolCallMiddleware(innerStream, protocol, [weatherTool]);
+		const events = await collectEvents(outerStream);
+		const result = await outerStream.result();
+
+		expect(finishCalls).toBe(1);
+		expect(events.filter((event) => event.type === "toolcall_end")).toHaveLength(1);
+		expect(result.content).toEqual([
+			{
+				type: "toolCall",
+				id: "iterator-tool",
+				name: "get_weather",
+				arguments: { city: "Seo" },
+				incomplete: true,
+				errorMessage: "Tool call stream ended before completion",
+			},
+		]);
+		expect(result.content[0]).not.toHaveProperty("partialJson");
+	});
+
 	it("changes length to toolUse only when a finalized tool call was emitted", async () => {
 		const partial = createAssistantMessage([]);
 		const recoveredProtocol = createScriptedProtocol(

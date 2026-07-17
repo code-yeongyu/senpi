@@ -442,10 +442,12 @@ describe("createMorphXmlStreamParser", () => {
 
 	it("flags a stale snapshot instead of executing it", () => {
 		// given
-		const parser = createMorphXmlStreamParser([weatherTool]);
+		const rawFragment = "<city>Seoul</city><days>4";
+		const onError = vi.fn();
+		const parser = createMorphXmlStreamParser([weatherTool], { onError });
 
 		// when
-		const allEvents = [...parser.feed("<get_weather><city>Seoul</city><days>4"), ...parser.finish()];
+		const allEvents = [...parser.feed(`<get_weather>${rawFragment}`), ...parser.finish()];
 
 		// then
 		expect(allEvents).toContainEqual(
@@ -458,6 +460,12 @@ describe("createMorphXmlStreamParser", () => {
 			}),
 		);
 		expect(allEvents.filter((event) => event.type === "text")).toEqual([]);
+		expect(onError).toHaveBeenCalledOnce();
+		expect(onError).toHaveBeenCalledWith("Could not complete streaming XML tool call at finish.", {
+			protocol: "morph-xml",
+			retainedLength: rawFragment.length,
+		});
+		expect(JSON.stringify(onError.mock.calls)).not.toContain(rawFragment);
 	});
 
 	it("force-completes unfinished calls at finish when the partial xml is parseable", () => {

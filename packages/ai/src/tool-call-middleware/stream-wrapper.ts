@@ -503,6 +503,8 @@ export function wrapStreamWithToolCallMiddleware(
 			finalizeDanglingToolCallsAtTermination();
 			outerStream.end(finalizeMessage(outerMessage, finalInnerMessage, sawToolCall));
 		} catch (error) {
+			flushParserAtTermination();
+			finalizeDanglingToolCallsAtTermination();
 			const fallbackMessage = outerMessage ?? createOuterMessage(await innerStream.result());
 			fallbackMessage.stopReason = "error";
 			fallbackMessage.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);

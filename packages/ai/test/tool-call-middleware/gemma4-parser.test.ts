@@ -266,4 +266,21 @@ describe("Gemma 4 truncation recovery", () => {
 			expect.objectContaining({ type: "toolcall_end", id: "gemma4-tool-0", incomplete: true }),
 		]);
 	});
+
+	it.each([
+		["unbalanced arguments", 'call:get_weather{city:<|"|>Seo'],
+		["arguments that fail validation", "call:get_weather{}"],
+	])("reports sanitized metadata for incomplete known calls with %s", (_reason, rawFragment) => {
+		const onError = vi.fn();
+		const parser = gemma4CreateStreamParser(FIXTURE_TOOLS, { onError });
+		const events = [...parser.feed(`<|tool_call>${rawFragment}`), ...parser.finish()];
+
+		expect(events).toContainEqual(expect.objectContaining({ type: "toolcall_end", incomplete: true }));
+		expect(onError).toHaveBeenCalledOnce();
+		expect(onError).toHaveBeenCalledWith("Could not complete Gemma4 tool call at finish.", {
+			protocol: "gemma4-delimiter",
+			retainedLength: rawFragment.length,
+		});
+		expect(JSON.stringify(onError.mock.calls)).not.toContain(rawFragment);
+	});
 });

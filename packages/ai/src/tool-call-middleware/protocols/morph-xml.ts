@@ -734,6 +734,10 @@ export function createMorphXmlStreamParser(tools: Tool[], options?: ParserOption
 						arguments: parsedArguments,
 					});
 				} else if (currentToolState.lastArgumentsSnapshot) {
+					options?.onError?.("Could not complete streaming XML tool call at finish.", {
+						protocol: "morph-xml",
+						retainedLength: buffer.length,
+					});
 					const snapshotArguments = JSON.parse(currentToolState.lastArgumentsSnapshot) as Record<string, unknown>;
 					if (!currentToolState.started) {
 						events.push({
