@@ -33,8 +33,9 @@ const OPENAI_MODEL_RE = /(^|[/.:])(gpt|chatgpt|codex)[-.]|(^|[/.:])o[134](?:[-.]
  * - `claude`: Claude/GLM — direct imperatives; both are steered most reliably
  *   by explicit tagged directives (GLM prompting guidance routes to Claude's).
  * - `codex`: OpenAI reasoning families — terse bounded rules, no emphasis spam.
- * - `kimi`: Kimi K-series — positive operational constraints; all-caps NEVER
- *   directives make K2.x overthink instead of comply.
+ * - `kimi`: Kimi K-series — maximum-emphasis POSITIVE imperatives (uppercase/
+ *   bold DO-framing); all-caps NEVER prohibitions stay out because they make
+ *   K-series overthink instead of comply.
  * - `default`: everything else (and no model) — maximum-emphasis fallback.
  */
 export function evalEmphasisStyle(modelId: string | undefined): EvalEmphasisStyle {
@@ -94,10 +95,10 @@ Work incrementally: imports in one call, define in the next, test, then use — 
 </eval_first_batching>{{/if}}{{#if styleCodex}}Route multi-call steps through eval: one cell per step, independent lookups dispatched together via \`parallel(thunks)\`; keep work sequential only when one result determines the next action.
 - Loop or comprehend over file sets with \`read()\`/stdlib instead of reading files one call at a time; post-process \`tool.<name>()\` results programmatically.
 - Wrap failable calls in try/except inside the cell; a failed item degrades only itself. After two distinct failed strategies for the same fact, fall back to direct tool calls.
-- Reduce large results in-kernel to the facts the task needs before returning.{{/if}}{{#if styleKimi}}Treat eval as the standard way to execute any step involving several tool calls: write one cell that performs the whole step.
-- When lookups are independent, run them together with \`parallel(thunks)\` in that cell; when one result feeds the next, keep them sequential inside the same cell.
-- Loop or comprehend over file sets with \`read()\`/stdlib, post-process \`tool.<name>()\` results programmatically, and put try/except around each risky call so the rest of the batch completes.
-- Filter and aggregate results in the kernel, then return the distilled facts.{{/if}}{{#if styleDefault}}**EVAL IS YOUR PRIMARY EXECUTION SURFACE.** Any step that needs MORE THAN ONE tool call MUST be written as ONE cell — NEVER as a chain of single tool calls.
+- Reduce large results in-kernel to the facts the task needs before returning.{{/if}}{{#if styleKimi}}**EVAL IS YOUR SUPERPOWER — MAKE IT YOUR DEFAULT WAY TO ACT.** Before any step, think: "how do I execute this WHOLE step in ONE parallelized cell?" — then write that ONE cell.
+- **BATCH EVERYTHING AT ONCE:** enumerate EVERY independent lookup the step needs and dispatch them ALL simultaneously with \`parallel(thunks)\` in that cell; keep calls sequential only when one result feeds the next.
+- **WRITE REAL CODE, NOT CALL CHAINS:** loop or comprehend over file sets with \`read()\`/stdlib, post-process \`tool.<name>()\` results programmatically, and put try/except around each risky call so the rest of the batch completes.
+- **DISTILL IN-KERNEL:** filter and aggregate results in code, then return ONLY the distilled facts.{{/if}}{{#if styleDefault}}**EVAL IS YOUR PRIMARY EXECUTION SURFACE.** Any step that needs MORE THAN ONE tool call MUST be written as ONE cell — NEVER as a chain of single tool calls.
 - **PLAN THE WHOLE STEP, THEN BATCH IT.** Enumerate every read/search/lookup the step needs and dispatch ALL independent ones through \`parallel(thunks)\` in one cell.
 - **WRITE REAL CODE, NOT CALL LISTS.** Loop or comprehend over file sets with \`read()\`/stdlib, branch \`if\`/\`else\` per case, post-process \`tool.<name>()\` results programmatically, and wrap EVERY risky call in try/except so ONE failure NEVER kills the batch.
 - **DISTILL IN-KERNEL.** Filter, diff, and aggregate in code before returning; return facts, NOT dumps.{{/if}}
@@ -224,7 +225,7 @@ const BATCHING_GUIDELINES: Record<EvalEmphasisStyle, string> = {
 	claude:
 		"Prefer eval for any step needing more than one tool call: one cell that runs independent calls in parallel, handles per-call failures in code, and returns distilled facts.",
 	codex: "Route multi-call steps through eval: one cell per step, independent calls dispatched in parallel; fall back to direct tool calls when one call is sufficient or each result changes the next decision.",
-	kimi: "Treat eval as the standard way to execute multi-call steps: one cell that runs independent calls in parallel, handles failures per item, and returns distilled facts.",
+	kimi: "**EVAL IS YOUR SUPERPOWER — DEFAULT TO IT.** Execute EVERY multi-call step as ONE eval cell: run ALL independent calls simultaneously via parallel(thunks), handle failures per item in code, and return ONLY distilled facts.",
 };
 
 function renderTemplate(template: string, context: Context): string {

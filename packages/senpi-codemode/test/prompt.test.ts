@@ -162,7 +162,7 @@ describe("buildEvalPrompt", () => {
 		expect(codex).not.toContain("<eval_first_batching>");
 		expect(codex).not.toContain("EVAL IS YOUR PRIMARY EXECUTION SURFACE");
 		const kimiInstruction = kimi.slice(0, kimi.indexOf("<prelude>"));
-		expect(kimiInstruction).toContain("Treat eval as the standard way to execute");
+		expect(kimiInstruction).toContain("EVAL IS YOUR SUPERPOWER");
 		expect(kimiInstruction).not.toContain("NEVER kills the batch");
 		expect(kimiInstruction).not.toContain("<eval_first_batching>");
 		expect(fallback).toContain("EVAL IS YOUR PRIMARY EXECUTION SURFACE");
@@ -183,7 +183,7 @@ describe("buildEvalPrompt", () => {
 			"Route multi-call steps through eval: one cell per step, independent calls dispatched in parallel; fall back to direct tool calls when one call is sufficient or each result changes the next decision.",
 		);
 		expect(guideline("kimi-k2.6")).toBe(
-			"Treat eval as the standard way to execute multi-call steps: one cell that runs independent calls in parallel, handles failures per item, and returns distilled facts.",
+			"**EVAL IS YOUR SUPERPOWER — DEFAULT TO IT.** Execute EVERY multi-call step as ONE eval cell: run ALL independent calls simultaneously via parallel(thunks), handle failures per item in code, and return ONLY distilled facts.",
 		);
 	});
 
