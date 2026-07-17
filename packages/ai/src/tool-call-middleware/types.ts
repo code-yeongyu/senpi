@@ -8,8 +8,16 @@ import type { ImageContent, TextContent, Tool } from "../types.ts";
  * - "yaml-xml": YAML arguments inside XML tool tags
  * - "gemma4-delimiter": Gemma 4 specific delimiter format
  * - "anthropic-xml": Legacy Anthropic invoke/parameter XML format
+ * - "antml": ANTML function_calls/invoke format with Claude-Code-style failure tolerance
  */
-export type ToolCallFormat = "hermes" | "xml" | "morph-xml" | "yaml-xml" | "gemma4-delimiter" | "anthropic-xml";
+export type ToolCallFormat =
+	| "hermes"
+	| "xml"
+	| "morph-xml"
+	| "yaml-xml"
+	| "gemma4-delimiter"
+	| "anthropic-xml"
+	| "antml";
 
 /**
  * Content type for tool results (text or image)

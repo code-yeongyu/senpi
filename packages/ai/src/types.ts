@@ -574,7 +574,7 @@ export interface OpenAICompletionsCompat {
 	/**
 	 * Tool call format for models that don't natively support tool calling.
 	 * When set, the middleware will intercept tool calls and format them as text.
-	 * Supported values: "hermes", "morph-xml", "xml" (deprecated alias for "morph-xml"), "yaml-xml", "gemma4-delimiter", "anthropic-xml"
+	 * Supported values: "hermes", "morph-xml", "xml" (deprecated alias for "morph-xml"), "yaml-xml", "gemma4-delimiter", "anthropic-xml", "antml"
 	 */
 	toolCallFormat?: string;
 	/** Cache control convention for prompt caching. "anthropic" applies Anthropic-style `cache_control` markers to the system prompt, last tool definition, and last user/assistant text content. */
