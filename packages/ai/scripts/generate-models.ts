@@ -235,6 +235,12 @@ const KIMI_K3_THINKING_LEVEL_MAP = {
 	max: "max",
 } as const;
 const KIMI_K3_MAX_TOKENS = 131072;
+const KIMI_K3_COST = {
+	input: 3,
+	output: 15,
+	cacheRead: 0.3,
+	cacheWrite: 0,
+} as const;
 const OPENROUTER_KIMI_K3_MODEL_IDS = new Set(["moonshotai/kimi-k3", "~moonshotai/kimi-latest"]);
 
 const ANT_LING_RING_THINKING_LEVEL_MAP = {
@@ -302,6 +308,13 @@ const OPENAI_RESPONSES_NONE_REASONING_MODELS = new Set([
 	"gpt-5.6-luna",
 ]);
 const XAI_RESPONSES_MODEL_ID = "grok-4.5";
+const XAI_BUILTIN_EXCLUDED_MODEL_IDS = new Set([
+	"grok-3",
+	"grok-3-fast",
+	"grok-4.20-0309-non-reasoning",
+	"grok-4.20-0309-reasoning",
+	"grok-code-fast-1",
+]);
 const XAI_RESPONSES_EFFORT_LEVEL_MAP = {
 	off: null,
 	minimal: null,
@@ -1628,6 +1641,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 
 				const normalizedId = kimiAliases.has(modelId) ? "kimi-for-coding" : modelId;
 				const normalizedName = kimiAliases.has(modelId) ? "Kimi For Coding" : m.name || normalizedId;
+				const isKimiK3 = normalizedId === "k3";
+				const allowEmptySignature = isKimiK3 || normalizedId === "kimi-for-coding";
 
 				models.push({
 					id: normalizedId,
@@ -1637,7 +1652,12 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					// Kimi For Coding's Anthropic-compatible API - SDK appends /v1/messages
 					baseUrl: "https://api.kimi.com/coding",
 					headers: { ...KIMI_STATIC_HEADERS },
-					reasoning: m.reasoning === true,
+					compat: {
+						...(allowEmptySignature ? { allowEmptySignature: true } : {}),
+						forceAdaptiveThinking: true,
+					},
+					reasoning: isKimiK3 || m.reasoning === true,
+					...(isKimiK3 ? { thinkingLevelMap: KIMI_K3_THINKING_LEVEL_MAP } : {}),
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
 						input: m.cost?.input || 0,
@@ -1693,10 +1713,10 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					...(isKimiK3 ? { thinkingLevelMap: KIMI_K3_THINKING_LEVEL_MAP } : {}),
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
-						input: m.cost?.input || 0,
-						output: m.cost?.output || 0,
-						cacheRead: m.cost?.cache_read || 0,
-						cacheWrite: m.cost?.cache_write || 0,
+						input: m.cost?.input || (isKimiK3 ? KIMI_K3_COST.input : 0),
+						output: m.cost?.output || (isKimiK3 ? KIMI_K3_COST.output : 0),
+						cacheRead: m.cost?.cache_read || (isKimiK3 ? KIMI_K3_COST.cacheRead : 0),
+						cacheWrite: m.cost?.cache_write || (isKimiK3 ? KIMI_K3_COST.cacheWrite : 0),
 					},
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
@@ -1783,6 +1803,7 @@ async function generateModels() {
 	// Combine models (models.dev has priority)
 	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels].filter(
 		(model) =>
+			!(model.provider === "xai" && XAI_BUILTIN_EXCLUDED_MODEL_IDS.has(model.id)) &&
 			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark"),
 	);
 
@@ -2319,56 +2340,6 @@ async function generateModels() {
 		},
 	];
 	allModels.push(...codexModels);
-
-	// Add missing Grok models
-	const missingGrokModels: Model<"openai-completions">[] = [
-		{
-			id: "grok-3",
-			name: "Grok 3",
-			api: "openai-completions",
-			baseUrl: "https://api.x.ai/v1",
-			provider: "xai",
-			reasoning: false,
-			input: ["text"],
-			cost: { input: 3, output: 15, cacheRead: 0.75, cacheWrite: 0 },
-			contextWindow: 131072,
-			maxTokens: 8192,
-		},
-		{
-			id: "grok-3-fast",
-			name: "Grok 3 Fast",
-			api: "openai-completions",
-			baseUrl: "https://api.x.ai/v1",
-			provider: "xai",
-			reasoning: false,
-			input: ["text"],
-			cost: { input: 5, output: 25, cacheRead: 1.25, cacheWrite: 0 },
-			contextWindow: 131072,
-			maxTokens: 8192,
-		},
-		{
-			id: "grok-code-fast-1",
-			name: "Grok Code Fast 1",
-			api: "openai-completions",
-			baseUrl: "https://api.x.ai/v1",
-			provider: "xai",
-			reasoning: false,
-			input: ["text"],
-			cost: {
-				input: 0.2,
-				output: 1.5,
-				cacheRead: 0.02,
-				cacheWrite: 0,
-			},
-			contextWindow: 32768,
-			maxTokens: 8192,
-		},
-	];
-	for (const model of missingGrokModels) {
-		if (!allModels.some(m => m.provider === model.provider && m.id === model.id)) {
-			allModels.push(model);
-		}
-	}
 
 	// Add missing Mistral Medium 3.5 model until models.dev includes it
 	if (!allModels.some(m => m.provider === "mistral" && m.id === "mistral-medium-3.5")) {

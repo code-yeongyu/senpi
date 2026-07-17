@@ -79,7 +79,7 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 		label: "bedrock-claude-sonnet-4-5",
 	},
 	// xAI
-	{ provider: "xai", model: "grok-code-fast-1", label: "xai-grok-code-fast-1" },
+	{ provider: "xai", model: "grok-4.3", label: "xai-grok-4.3" },
 	// Cerebras
 	{ provider: "cerebras", model: "zai-glm-4.7", label: "cerebras-zai-glm-4.7" },
 	// Cloudflare Workers AI

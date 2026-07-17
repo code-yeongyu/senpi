@@ -4,6 +4,37 @@
 
 ### Added
 
+### Fixed
+
+### Removed
+
+## [2026.7.16-3] - 2026-07-16
+
+### Added
+
+### Fixed
+
+- Fixed inherited OpenCode Go catalog metadata to include Grok 4.5 and Kimi K3, and refreshed OpenRouter pricing metadata from upstream v0.80.10.
+
+### Removed
+
+## [2026.7.16-2] - 2026-07-16
+
+### Added
+
+### Fixed
+
+- Fixed Kimi Coding requests to use Anthropic adaptive thinking effort without token budgets, and enabled empty thinking signatures for K3 and `kimi-for-coding`.
+- Fixed Kimi K3 pricing metadata for Moonshot AI and Moonshot AI China.
+- Fixed Kimi Coding K3 thinking-level metadata to expose only the supported `max` level ([#6737](https://github.com/earendil-works/pi/issues/6737)).
+- Fixed catalog generation restoring xAI models removed in 0.80.9 ([#6736](https://github.com/earendil-works/pi/issues/6736)).
+
+### Removed
+
+## [2026.7.16] - 2026-07-16
+
+### Added
+
 - Added Kimi K3 model catalogs and deferred tool loading for compatible Kimi and OpenAI Completions routes.
 - Added prefilled xAI OAuth device links, SuperGrok login labeling, and a trimmed xAI model catalog.
 - Preserved fork compatibility for extension OAuth callback types and faux-provider registration through the `compat` surface.

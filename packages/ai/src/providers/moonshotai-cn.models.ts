@@ -179,9 +179,9 @@ export const MOONSHOTAI_CN_MODELS = {
 		thinkingLevelMap: {"off":null,"minimal":null,"low":null,"medium":null,"high":null,"xhigh":null,"max":"max"},
 		input: ["text", "image"],
 		cost: {
-			input: 0,
-			output: 0,
-			cacheRead: 0,
+			input: 3,
+			output: 15,
+			cacheRead: 0.3,
 			cacheWrite: 0,
 		},
 		contextWindow: 1048576,

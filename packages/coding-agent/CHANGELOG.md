@@ -4,6 +4,47 @@
 
 ### Breaking Changes
 
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.7.16-3] - 2026-07-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed inherited OpenCode Go catalog metadata to include Grok 4.5 and Kimi K3, and refreshed OpenRouter pricing metadata from upstream v0.80.10.
+
+### Removed
+
+## [2026.7.16-2] - 2026-07-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed inherited Kimi K3 pricing metadata for Moonshot AI and Moonshot AI China.
+- Fixed inherited catalog generation restoring xAI models removed in 0.80.9 ([#6736](https://github.com/earendil-works/pi/issues/6736)).
+
+### Removed
+
+## [2026.7.16] - 2026-07-16
+
+### Breaking Changes
+
 - Changed `AuthStorage.list()` from a synchronous provider-ID list to asynchronous non-secret credential metadata matching the pi-ai `CredentialStore` contract.
 
 ### Added

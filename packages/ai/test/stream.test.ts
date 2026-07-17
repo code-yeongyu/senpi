@@ -544,7 +544,7 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.XAI_API_KEY)("xAI Provider (grok-code-fast-1 via OpenAI Completions)", () => {
+	describe.skipIf(!process.env.XAI_API_KEY)("xAI Provider (grok-4.3 via OpenAI Completions)", () => {
 		const llm = getModel("xai", "grok-4.3");
 
 		it("should complete basic text generation", { retry: 3 }, async () => {

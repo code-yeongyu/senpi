@@ -11,6 +11,7 @@ export const KIMI_CODING_MODELS = {
 		provider: "kimi-coding",
 		baseUrl: "https://api.kimi.com/coding",
 		headers: {"User-Agent":"KimiCLI/1.5"},
+		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
@@ -29,7 +30,9 @@ export const KIMI_CODING_MODELS = {
 		provider: "kimi-coding",
 		baseUrl: "https://api.kimi.com/coding",
 		headers: {"User-Agent":"KimiCLI/1.5"},
+		compat: {"allowEmptySignature":true,"forceAdaptiveThinking":true},
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":null,"low":null,"medium":null,"high":null,"xhigh":null,"max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 0,
@@ -47,6 +50,7 @@ export const KIMI_CODING_MODELS = {
 		provider: "kimi-coding",
 		baseUrl: "https://api.kimi.com/coding",
 		headers: {"User-Agent":"KimiCLI/1.5"},
+		compat: {"allowEmptySignature":true,"forceAdaptiveThinking":true},
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
@@ -65,6 +69,7 @@ export const KIMI_CODING_MODELS = {
 		provider: "kimi-coding",
 		baseUrl: "https://api.kimi.com/coding",
 		headers: {"User-Agent":"KimiCLI/1.5"},
+		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
@@ -83,6 +88,7 @@ export const KIMI_CODING_MODELS = {
 		provider: "kimi-coding",
 		baseUrl: "https://api.kimi.com/coding",
 		headers: {"User-Agent":"KimiCLI/1.5"},
+		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
 		input: ["text"],
 		cost: {
