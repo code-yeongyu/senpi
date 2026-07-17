@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { type AnthropicMessagesCompat, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import { ModelRegistry } from "../../../src/core/model-registry.ts";
@@ -96,6 +96,29 @@ describe("model configuration controls", () => {
 		expect(allModels.filter((model) => model.provider === "anthropic").map((model) => model.id)).toEqual([
 			"claude-sonnet-4-5",
 		]);
+	});
+
+	it("preserves Anthropic native web search compatibility from models.json", () => {
+		writeFileSync(
+			join(agentDir, "models.json"),
+			JSON.stringify({
+				providers: {
+					custom: {
+						api: "anthropic-messages",
+						baseUrl: "https://anthropic-proxy.example/v1",
+						compat: { supportsWebSearch: true },
+						models: [{ id: "custom-claude" }],
+					},
+				},
+			}),
+			"utf-8",
+		);
+
+		const registry = ModelRegistry.create(AuthStorage.inMemory(), join(agentDir, "models.json"));
+		const compat = registry.find("custom", "custom-claude")?.compat as AnthropicMessagesCompat | undefined;
+
+		expect(registry.getError()).toBeUndefined();
+		expect(compat?.supportsWebSearch).toBe(true);
 	});
 
 	it("replaces configured thinking variants instead of merging them", () => {

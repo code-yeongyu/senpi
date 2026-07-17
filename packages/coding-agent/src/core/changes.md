@@ -1,5 +1,22 @@
 # changes
 
+## AnthropicMessagesCompat.supportsWebSearch in models.json schema (2026-07-16)
+
+### What changed
+
+- `model-config.ts` (`AnthropicMessagesCompatSchema`): added optional boolean `supportsWebSearch`, mirroring
+  `supportsWebSearchPreview` in `OpenAIResponsesCompatSchema`. This is the models.json opt-in for
+  Anthropic-compatible endpoints that genuinely support server-side web search (see `packages/ai/src/changes.md`
+  2026-07-16); without the schema entry the flag would fail models.json validation.
+
+### Why extension system couldn't handle this alone
+
+- models.json validation happens in core `model-config.ts` before any extension sees the model entry.
+
+### Expected merge conflict zones
+
+- LOW: `model-config.ts` compat schemas if upstream adds more compat flags.
+
 ## Skill-loading trigger reframed with cost asymmetry (2026-07-16)
 
 ### What changed
