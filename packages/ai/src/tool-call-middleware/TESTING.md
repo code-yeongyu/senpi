@@ -48,7 +48,7 @@ Your `~/.senpi/agent/models.json` must include the following provider configurat
                "id": "google/gemini-3-flash-preview",
                "name": "Gemini 3 Flash Preview (OpenRouter)",
                "compat": {
-                  "toolCallFormat": "xml"
+                  "toolCallFormat": "morph-xml"
                }
             }
          ]
@@ -253,7 +253,7 @@ senpi --provider <provider> --model <model> --info
 
 Look for the `toolCallFormat` field in the output. Valid values are:
 - `hermes` - For Qwen and other Hermes-format models
-- `xml` or `morphXml` - For Gemini and XML-based models
+- `morph-xml` - For Gemini and XML-based models (`xml` remains a deprecated alias)
 - `gemma4-delimiter` - For Gemma 4 models
 - `anthropic-xml` - For legacy Anthropic invoke/parameter XML
 - `native` - For models with native tool calling (OpenAI, Anthropic)

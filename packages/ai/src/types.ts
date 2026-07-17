@@ -359,6 +359,10 @@ export interface ToolCall {
 	id: string;
 	name: string;
 	arguments: Record<string, any>;
+	/** Set by text tool-call middleware when a truncated call could not be recovered. Carriers of `incomplete` MUST NOT be executed. */
+	incomplete?: true;
+	/** Error explaining why an incomplete tool call could not be recovered. */
+	errorMessage?: string;
 	thoughtSignature?: string; // Google-specific: opaque signature for reusing thought context
 }
 
@@ -510,6 +514,7 @@ export type AssistantMessageEvent =
 	| { type: "thinking_end"; contentIndex: number; content: string; partial: AssistantMessage }
 	| { type: "toolcall_start"; contentIndex: number; partial: AssistantMessage }
 	| { type: "toolcall_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
+	/** Finalized - executable iff `incomplete !== true` on `toolCall`. */
 	| { type: "toolcall_end"; contentIndex: number; toolCall: ToolCall; partial: AssistantMessage }
 	| { type: "done"; reason: Extract<StopReason, "stop" | "length" | "toolUse">; message: AssistantMessage }
 	| { type: "error"; reason: Extract<StopReason, "aborted" | "error">; error: AssistantMessage };
@@ -569,7 +574,7 @@ export interface OpenAICompletionsCompat {
 	/**
 	 * Tool call format for models that don't natively support tool calling.
 	 * When set, the middleware will intercept tool calls and format them as text.
-	 * Supported values: "hermes", "xml", "yaml-xml", "gemma4-delimiter"
+	 * Supported values: "hermes", "morph-xml", "xml" (deprecated alias for "morph-xml"), "yaml-xml", "gemma4-delimiter", "anthropic-xml"
 	 */
 	toolCallFormat?: string;
 	/** Cache control convention for prompt caching. "anthropic" applies Anthropic-style `cache_control` markers to the system prompt, last tool definition, and last user/assistant text content. */

@@ -100,6 +100,7 @@ const protocolRegistry: Record<ToolCallFormat, ToolCallProtocol> = {
 	"anthropic-xml": anthropicXmlProtocol,
 	hermes: hermesProtocol,
 	xml: morphXmlProtocol,
+	"morph-xml": morphXmlProtocol,
 	"yaml-xml": yamlXmlProtocol,
 	"gemma4-delimiter": gemma4Protocol,
 };

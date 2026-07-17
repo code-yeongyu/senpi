@@ -39,10 +39,11 @@ describe("getProtocol", () => {
 		expect(typeof protocol.formatToolCall).toBe("function");
 	});
 
-	it("should return morphXml protocol for 'xml' format", () => {
-		const protocol = getProtocol("xml");
-		expect(protocol).toBeDefined();
-		expect(typeof protocol.formatToolsSystemPrompt).toBe("function");
+	it("should return the same morphXml protocol for 'morph-xml' and 'xml' formats", () => {
+		const canonicalProtocol = getProtocol("morph-xml");
+		const aliasProtocol = getProtocol("xml");
+		expect(canonicalProtocol).toBe(aliasProtocol);
+		expect(typeof canonicalProtocol.formatToolsSystemPrompt).toBe("function");
 	});
 
 	it("should return gemma4 protocol for 'gemma4-delimiter' format", () => {

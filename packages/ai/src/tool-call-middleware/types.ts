@@ -3,12 +3,13 @@ import type { ImageContent, TextContent, Tool } from "../types.ts";
 /**
  * Supported tool call formats for models that don't natively support tool calling.
  * - "hermes": Hermes 2/3 format with special delimiters
- * - "xml": XML-based tool call format
+ * - "morph-xml": XML-based tool call format
+ * - "xml": Deprecated alias for "morph-xml"
  * - "yaml-xml": YAML arguments inside XML tool tags
  * - "gemma4-delimiter": Gemma 4 specific delimiter format
  * - "anthropic-xml": Legacy Anthropic invoke/parameter XML format
  */
-export type ToolCallFormat = "hermes" | "xml" | "yaml-xml" | "gemma4-delimiter" | "anthropic-xml";
+export type ToolCallFormat = "hermes" | "xml" | "morph-xml" | "yaml-xml" | "gemma4-delimiter" | "anthropic-xml";
 
 /**
  * Content type for tool results (text or image)
@@ -42,6 +43,8 @@ export type StreamParserEvent =
 			name: string;
 			id: string;
 			arguments: Record<string, unknown>;
+			incomplete?: true;
+			errorMessage?: string;
 	  };
 
 /**
