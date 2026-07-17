@@ -68,10 +68,6 @@ local-ignore/
 .pi/hf-sessions-backup/
 collect.sh
 
-# Ephemeral agent working state (cc-ulw-loop goal/ledger, run continuation).
-# Evidence archives under .omo/evidence are tracked intentionally; runtime
-# state is not, and must never be swept into a release commit.
-.omo/loop/
-.omo/run-continuation/
-.omo/ulw-loop/
-.omo/senpi-task/
+# Ephemeral agent working state. Existing tracked archives remain tracked,
+# but new untracked files must never block a release commit.
+.omo/
