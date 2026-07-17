@@ -1,7 +1,12 @@
 import { Type } from "typebox";
-import { describe, expect, it } from "vitest";
-import { gemma4CreateStreamParser, gemma4ParseGeneratedText } from "../../src/tool-call-middleware/protocols/gemma4.ts";
+import { describe, expect, it, vi } from "vitest";
+import {
+	gemma4CreateStreamParser,
+	gemma4ParseGeneratedText,
+	scanGemma4ArgsComplete,
+} from "../../src/tool-call-middleware/protocols/gemma4.ts";
 import type { Tool } from "../../src/types.ts";
+import { FIXTURE_TOOLS, TRUNCATION_FIXTURES } from "./truncation-fixtures.ts";
 
 const weatherTool: Tool = {
 	name: "get_weather",
@@ -156,5 +161,109 @@ describe("gemma4CreateStreamParser", () => {
 			{ type: "text", text: " after" },
 		]);
 		expect(finishEvents).toEqual([]);
+	});
+});
+
+describe("Gemma 4 truncation recovery", () => {
+	it.each(TRUNCATION_FIXTURES["gemma4-delimiter"])("$title", (fixture) => {
+		const onError = vi.fn();
+		const parser = gemma4CreateStreamParser(FIXTURE_TOOLS, { onError });
+		const events = [...parser.feed(fixture.input), ...parser.finish()];
+		const toolCallEvents = events.filter((event) => event.type.startsWith("toolcall_"));
+		const text = events
+			.filter((event) => event.type === "text")
+			.map((event) => event.text)
+			.join("");
+
+		switch (fixture.expected.kind) {
+			case "recovered": {
+				const ends = events.filter((event) => event.type === "toolcall_end");
+				expect(ends).toHaveLength(1);
+				expect(ends[0]).toMatchObject({
+					name: fixture.tool,
+					arguments: fixture.expected.arguments,
+				});
+				expect(ends[0]).not.toHaveProperty("incomplete");
+				expect(text).not.toContain("<|tool_call>");
+				break;
+			}
+			case "incomplete": {
+				const ends = events.filter((event) => event.type === "toolcall_end");
+				expect(ends).toHaveLength(1);
+				expect(ends[0]).toMatchObject({ incomplete: true });
+				expect(text).not.toContain("<|tool_call>");
+				expect(JSON.stringify(onError.mock.calls)).not.toContain(fixture.input);
+				break;
+			}
+			case "dropped":
+				expect(toolCallEvents).toEqual([]);
+				expect(text).not.toContain("<|tool_call>");
+				expect(onError).toHaveBeenCalledOnce();
+				expect(JSON.stringify(onError.mock.calls)).not.toContain(fixture.input);
+				break;
+			default:
+				throw new Error(`Unexpected fixture kind: ${fixture.expected.kind}`);
+		}
+	});
+
+	it("requires an explicit outer closing brace before recovering", () => {
+		expect(scanGemma4ArgsComplete('get_weather{city:<|"|>Seoul<|"|>')).toBeNull();
+		expect(scanGemma4ArgsComplete('get_weather{city:<|"|>Seoul<|"|>}')).toEqual({
+			rawArgs: 'city:<|"|>Seoul<|"|>',
+		});
+	});
+
+	it("flags a split string delimiter at EOF without leaking markup", () => {
+		const parser = gemma4CreateStreamParser(FIXTURE_TOOLS);
+		const events = [...parser.feed('<|tool_call>call:get_weather{city:<|"'), ...parser.finish()];
+
+		expect(events).toContainEqual(
+			expect.objectContaining({ type: "toolcall_end", incomplete: true, name: "get_weather" }),
+		);
+		expect(events).not.toContainEqual(
+			expect.objectContaining({ type: "text", text: expect.stringContaining("<|tool_call>") }),
+		);
+	});
+
+	it("recovers a partial terminator after balanced arguments", () => {
+		const parser = gemma4CreateStreamParser(FIXTURE_TOOLS);
+		const events = [...parser.feed('<|tool_call>call:get_weather{city:<|"|>Seoul<|"|>}<tool_c'), ...parser.finish()];
+
+		expect(events).toContainEqual(
+			expect.objectContaining({
+				type: "toolcall_end",
+				name: "get_weather",
+				arguments: { city: "Seoul" },
+			}),
+		);
+		expect(events).not.toContainEqual(expect.objectContaining({ type: "toolcall_end", incomplete: true }));
+	});
+
+	it("drops a terminated call with an unknown name", () => {
+		const onError = vi.fn();
+		const parser = gemma4CreateStreamParser(FIXTURE_TOOLS, { onError });
+		const events = [
+			...parser.feed('<|tool_call>call:unknown_tool{city:<|"|>Seoul<|"|>}<tool_call|>'),
+			...parser.finish(),
+		];
+
+		expect(events).toEqual([]);
+		expect(onError).toHaveBeenCalledOnce();
+		expect(JSON.stringify(onError.mock.calls)).not.toContain("unknown_tool{city");
+	});
+
+	it("finishes a started truncated call exactly once with consistent ids", () => {
+		const parser = gemma4CreateStreamParser(FIXTURE_TOOLS);
+		const feedEvents = parser.feed('<|tool_call>call:get_weather{city:<|"|>Seo');
+		const finishEvents = parser.finish();
+		const allEvents = [...feedEvents, ...finishEvents];
+		const start = allEvents.find((event) => event.type === "toolcall_start");
+		const endEvents = allEvents.filter((event) => event.type === "toolcall_end");
+
+		expect(start).toMatchObject({ type: "toolcall_start", id: "gemma4-tool-0" });
+		expect(allEvents.some((event) => event.type === "toolcall_delta")).toBe(true);
+		expect(endEvents).toEqual([
+			expect.objectContaining({ type: "toolcall_end", id: "gemma4-tool-0", incomplete: true }),
+		]);
 	});
 });

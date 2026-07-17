@@ -1,4 +1,5 @@
 import type { ImageContent, TextContent, Tool } from "../../types.ts";
+import { validateToolArguments } from "../../utils/validation.ts";
 import type { ParsedToolCall, ParserOptions, StreamParser, StreamParserEvent } from "../types.ts";
 
 const STRING_DELIM = '<|"|>';
@@ -391,6 +392,61 @@ function extractToolCalls(text: string): RegExpExecArray[] {
 	return Array.from(text.matchAll(TOOL_CALL_REGEX));
 }
 
+/**
+ * Returns the complete Gemma 4 argument body when the outer argument object is
+ * closed and is followed only by whitespace or a partial terminator.
+ */
+export function scanGemma4ArgsComplete(content: string): { rawArgs: string } | null {
+	const outerOpenIndex = content.indexOf("{");
+	if (outerOpenIndex === -1) {
+		return null;
+	}
+
+	const delimiters: string[] = [];
+	let insideString = false;
+
+	for (let index = outerOpenIndex; index < content.length; index += 1) {
+		if (content.startsWith(STRING_DELIM, index)) {
+			insideString = !insideString;
+			index += STRING_DELIM.length - 1;
+			continue;
+		}
+
+		if (STRING_DELIM.startsWith(content.slice(index))) {
+			return null;
+		}
+
+		if (insideString) {
+			continue;
+		}
+
+		const character = content[index];
+		if (character === "{" || character === "[") {
+			delimiters.push(character);
+			continue;
+		}
+
+		if (character !== "}" && character !== "]") {
+			continue;
+		}
+
+		const opening = delimiters.pop();
+		if ((character === "}" && opening !== "{") || (character === "]" && opening !== "[")) {
+			return null;
+		}
+
+		if (delimiters.length === 0) {
+			const residue = content.slice(index + 1).trim();
+			if (residue && residue !== getPartialTokenSuffix(residue, [TOOL_CALL_END, TURN_END])) {
+				return null;
+			}
+			return { rawArgs: content.slice(outerOpenIndex + 1, index) };
+		}
+	}
+
+	return null;
+}
+
 function extractPartialToolCall(content: string): {
 	name: string | null;
 	rawArgs: string;
@@ -479,6 +535,13 @@ export function gemma4ParseGeneratedText(text: string, _tools: Tool[], _options?
 
 class Gemma4StreamParser implements StreamParser {
 	private readonly toolCallIds: string[] = [];
+	private readonly tools: Tool[];
+	private readonly options?: ParserOptions;
+
+	constructor(tools: Tool[], options?: ParserOptions) {
+		this.tools = tools;
+		this.options = options;
+	}
 
 	private plainTextCarry = "";
 	private toolCallCarry = "";
@@ -568,9 +631,30 @@ class Gemma4StreamParser implements StreamParser {
 		}
 
 		if (this.insideToolCall) {
-			const unfinishedToolCall = TOOL_CALL_START + this.toolCallContent + this.toolCallCarry;
-			if (unfinishedToolCall) {
-				events.push({ type: "text", text: unfinishedToolCall });
+			const content = this.toolCallContent + this.toolCallCarry;
+			const { name, rawArgs } = extractPartialToolCall(content);
+			const tool = name ? this.resolveTool(name) : undefined;
+
+			if (!tool || !name) {
+				this.reportDroppedToolCall(content.length);
+			} else {
+				const complete = scanGemma4ArgsComplete(content);
+				if (complete) {
+					const argumentsObject = parseGemma4Args(complete.rawArgs);
+					try {
+						const validatedArguments = validateToolArguments(tool, {
+							type: "toolCall",
+							id: this.getCurrentToolCallId(),
+							name,
+							arguments: argumentsObject,
+						});
+						this.emitFinalToolCall(events, name, validatedArguments);
+					} catch {
+						this.emitIncompleteToolCall(events, name, parseGemma4Args(rawArgs, true));
+					}
+				} else {
+					this.emitIncompleteToolCall(events, name, parseGemma4Args(rawArgs, true));
+				}
 			}
 		}
 
@@ -586,19 +670,11 @@ class Gemma4StreamParser implements StreamParser {
 
 	private emitPartialToolCall(events: StreamParserEvent[]): void {
 		const { name, rawArgs } = extractPartialToolCall(this.toolCallContent);
-		if (!name) {
+		if (!name || !this.resolveTool(name)) {
 			return;
 		}
 
-		if (!this.currentToolName) {
-			this.currentToolName = name;
-			events.push({
-				type: "toolcall_start",
-				index: this.currentToolIndex,
-				name,
-				id: this.toolCallIds[this.currentToolIndex] ?? `gemma4-tool-${this.currentToolIndex}`,
-			});
-		}
+		this.emitToolCallStart(events, name);
 
 		if (!rawArgs) {
 			return;
@@ -638,21 +714,35 @@ class Gemma4StreamParser implements StreamParser {
 
 	private emitCompletedToolCall(events: StreamParserEvent[]): void {
 		const { name, rawArgs } = extractPartialToolCall(this.toolCallContent);
-		if (!name) {
+		if (!name || !this.resolveTool(name)) {
+			this.reportDroppedToolCall(this.toolCallContent.length);
 			return;
 		}
 
-		if (!this.currentToolName) {
-			this.currentToolName = name;
-			events.push({
-				type: "toolcall_start",
-				index: this.currentToolIndex,
-				name,
-				id: this.toolCallIds[this.currentToolIndex] ?? `gemma4-tool-${this.currentToolIndex}`,
-			});
+		this.emitFinalToolCall(events, name, parseGemma4Args(rawArgs));
+	}
+
+	private emitToolCallStart(events: StreamParserEvent[], name: string): void {
+		if (this.currentToolName) {
+			return;
 		}
 
-		const argumentsObject = parseGemma4Args(rawArgs);
+		this.currentToolName = name;
+		events.push({
+			type: "toolcall_start",
+			index: this.currentToolIndex,
+			name,
+			id: this.getCurrentToolCallId(),
+		});
+	}
+
+	private emitFinalToolCall(
+		events: StreamParserEvent[],
+		name: string,
+		argumentsObject: Record<string, unknown>,
+	): void {
+		this.emitToolCallStart(events, name);
+
 		const argumentsJson = JSON.stringify(argumentsObject);
 		const finalDelta = argumentsJson.slice(this.currentArgumentsJson.length);
 		if (finalDelta) {
@@ -667,12 +757,44 @@ class Gemma4StreamParser implements StreamParser {
 			type: "toolcall_end",
 			index: this.currentToolIndex,
 			name,
-			id: this.toolCallIds[this.currentToolIndex] ?? `gemma4-tool-${this.currentToolIndex}`,
+			id: this.getCurrentToolCallId(),
 			arguments: argumentsObject,
+		});
+	}
+
+	private emitIncompleteToolCall(
+		events: StreamParserEvent[],
+		name: string,
+		argumentsObject: Record<string, unknown>,
+	): void {
+		this.emitToolCallStart(events, name);
+		events.push({
+			type: "toolcall_end",
+			index: this.currentToolIndex,
+			name,
+			id: this.getCurrentToolCallId(),
+			arguments: argumentsObject,
+			incomplete: true,
+			errorMessage: "Tool call was truncated mid-arguments",
+		});
+	}
+
+	private getCurrentToolCallId(): string {
+		return this.toolCallIds[this.currentToolIndex] ?? `gemma4-tool-${this.currentToolIndex}`;
+	}
+
+	private resolveTool(name: string): Tool | undefined {
+		return this.tools.find((tool) => tool.name === name);
+	}
+
+	private reportDroppedToolCall(retainedLength: number): void {
+		this.options?.onError?.("Gemma4 tool call dropped", {
+			protocol: "gemma4-delimiter",
+			retainedLength,
 		});
 	}
 }
 
-export function gemma4CreateStreamParser(_tools: Tool[], _options?: ParserOptions): StreamParser {
-	return new Gemma4StreamParser();
+export function gemma4CreateStreamParser(tools: Tool[], options?: ParserOptions): StreamParser {
+	return new Gemma4StreamParser(tools, options);
 }
