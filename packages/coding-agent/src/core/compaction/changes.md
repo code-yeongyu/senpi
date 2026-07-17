@@ -1,5 +1,31 @@
 # changes.md — compaction
 
+## Base64-aware token estimation (2026-07-18)
+
+### What changed
+
+- `compaction.ts`: `estimateTokens()` now weights long unbroken base64-ish runs (512+ chars of `[A-Za-z0-9+/=_-]`) at
+  ~1 token per character instead of the chars/4 prose heuristic. Applied to string/text-block content, tool-call
+  arguments, and bash output via a shared `weightedChars()` helper.
+
+### Why
+
+- Providers tokenize base64 near 1 token/char. A tool result carrying a ~1 MB inline screenshot data URL estimated at
+  ~256K tokens while Anthropic counted ~1M, so pre-flight compaction never triggered and the provider rejected the
+  request (`prompt is too long: 1029893 tokens > 1000000 maximum`). Real reproducer: session
+  `019f711b-587a-75ba-9eda-48fd5b2c2c01` (compaction recorded `tokensBefore: 319506` for a context the provider
+  counted at 1.03M).
+
+### Why extension system couldn't handle this
+
+- `estimateTokens()` is core and feeds `estimateContextTokens()`, which `agent-session.ts` uses for the pre-prompt
+  compaction gate before any extension sees the turn.
+
+### Expected merge conflict zones
+
+- LOW: `compaction.ts` around `estimateTextAndImageContentChars()` and the `estimateTokens()` switch arms. Keep the
+  weighting applied to every text surface the estimator counts.
+
 ## Split-turn compaction serialization sync (2026-07-02)
 
 ### What changed
