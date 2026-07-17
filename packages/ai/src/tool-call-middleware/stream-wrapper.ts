@@ -154,8 +154,11 @@ function pushParserEvent(
 				id: parserEvent.id,
 				name: parserEvent.name,
 				arguments: parserEvent.arguments,
+				...(parserEvent.incomplete === true ? { incomplete: true } : {}),
+				...(parserEvent.errorMessage === undefined ? {} : { errorMessage: parserEvent.errorMessage }),
 			};
 			outerMessage.content[contentIndex] = finalToolCall;
+			toolCallIndexByParserIndex.delete(parserEvent.index);
 			outerStream.push({
 				type: "toolcall_end",
 				contentIndex,
@@ -206,15 +209,54 @@ function finalizeMessage(
 		content: outerMessage.content,
 	};
 
-	if (sawToolCall && finalMessage.stopReason === "stop") {
+	if (
+		(sawToolCall || hasFinalizedToolCallContent(finalMessage)) &&
+		(finalMessage.stopReason === "stop" || finalMessage.stopReason === "length")
+	) {
 		finalMessage.stopReason = "toolUse";
 	}
 
 	return finalMessage;
 }
 
-function hasCompletedToolCallContent(message: AssistantMessage): boolean {
-	return message.content.some((block) => block.type === "toolCall");
+function hasFinalizedToolCallContent(message: AssistantMessage): boolean {
+	return message.content.some((block) => {
+		const hasFinalized = block.type === "toolCall" && typeof (block as PartialToolCall).partialJson !== "string";
+		return hasFinalized;
+	});
+}
+
+function finalizeDanglingPartialToolCalls(
+	outerStream: AssistantMessageEventStream,
+	outerMessage: AssistantMessage,
+	toolCallIndexByParserIndex: Map<number, number>,
+): void {
+	for (const [contentIndex, block] of outerMessage.content.entries()) {
+		if (!isPartialToolCall(block)) {
+			continue;
+		}
+
+		const finalToolCall: ToolCall = {
+			type: "toolCall",
+			id: block.id,
+			name: block.name,
+			arguments: block.arguments,
+			incomplete: true,
+			errorMessage: "Tool call stream ended before completion",
+		};
+		outerMessage.content[contentIndex] = finalToolCall;
+		for (const [parserIndex, mappedContentIndex] of toolCallIndexByParserIndex) {
+			if (mappedContentIndex === contentIndex) {
+				toolCallIndexByParserIndex.delete(parserIndex);
+			}
+		}
+		outerStream.push({
+			type: "toolcall_end",
+			contentIndex,
+			toolCall: finalToolCall,
+			partial: outerMessage,
+		});
+	}
 }
 
 function finalizePendingTextBlock(
@@ -268,9 +310,33 @@ export function wrapStreamWithToolCallMiddleware(
 		let outerMessage: AssistantMessage | null = null;
 		let currentInnerTextIndex: number | null = null;
 		let sawToolCall = false;
+		let parserHasPendingInput = false;
 		const textBlockIndexByInnerIndex = new Map<number, number | null>();
 		const thinkingBlockIndexByInnerIndex = new Map<number, number>();
 		const toolCallIndexByParserIndex = new Map<number, number>();
+
+		const flushParserAtTermination = (): void => {
+			if (!outerMessage || !parserHasPendingInput) {
+				return;
+			}
+
+			({ currentInnerTextIndex, sawToolCall } = finalizePendingTextBlock(
+				outerStream,
+				outerMessage,
+				parser,
+				textBlockIndexByInnerIndex,
+				toolCallIndexByParserIndex,
+				currentInnerTextIndex,
+				sawToolCall,
+			));
+			parserHasPendingInput = false;
+		};
+
+		const finalizeDanglingToolCallsAtTermination = (): void => {
+			if (outerMessage) {
+				finalizeDanglingPartialToolCalls(outerStream, outerMessage, toolCallIndexByParserIndex);
+			}
+		};
 
 		try {
 			for await (const event of innerStream) {
@@ -296,6 +362,9 @@ export function wrapStreamWithToolCallMiddleware(
 							break;
 						}
 						syncOuterMetadata(outerMessage, event.partial);
+						if (event.delta.length > 0) {
+							parserHasPendingInput = true;
+						}
 						sawToolCall =
 							processParserEvents(
 								parser.feed(event.delta),
@@ -312,15 +381,18 @@ export function wrapStreamWithToolCallMiddleware(
 							break;
 						}
 						syncOuterMetadata(outerMessage, event.partial);
-						({ currentInnerTextIndex, sawToolCall } = finalizePendingTextBlock(
-							outerStream,
-							outerMessage,
-							parser,
-							textBlockIndexByInnerIndex,
-							toolCallIndexByParserIndex,
-							currentInnerTextIndex,
-							sawToolCall,
-						));
+						if (parserHasPendingInput) {
+							({ currentInnerTextIndex, sawToolCall } = finalizePendingTextBlock(
+								outerStream,
+								outerMessage,
+								parser,
+								textBlockIndexByInnerIndex,
+								toolCallIndexByParserIndex,
+								currentInnerTextIndex,
+								sawToolCall,
+							));
+							parserHasPendingInput = false;
+						}
 						break;
 					}
 					case "thinking_start": {
@@ -383,8 +455,14 @@ export function wrapStreamWithToolCallMiddleware(
 						if (!outerMessage) {
 							outerMessage = createOuterMessage(event.message);
 						}
+						flushParserAtTermination();
+						finalizeDanglingToolCallsAtTermination();
 						const finalMessage = finalizeMessage(outerMessage, event.message, sawToolCall);
-						const finalReason = sawToolCall && event.reason === "stop" ? "toolUse" : event.reason;
+						const finalizedToolCall = sawToolCall || hasFinalizedToolCallContent(finalMessage);
+						const finalReason =
+							finalizedToolCall && (event.reason === "stop" || event.reason === "length")
+								? "toolUse"
+								: event.reason;
 						outerStream.push({ type: "done", reason: finalReason, message: finalMessage });
 						outerStream.end();
 						return;
@@ -397,20 +475,11 @@ export function wrapStreamWithToolCallMiddleware(
 						}
 
 						syncOuterMetadata(outerMessage, event.error);
-						if (currentInnerTextIndex != null) {
-							({ currentInnerTextIndex, sawToolCall } = finalizePendingTextBlock(
-								outerStream,
-								outerMessage,
-								parser,
-								textBlockIndexByInnerIndex,
-								toolCallIndexByParserIndex,
-								currentInnerTextIndex,
-								sawToolCall,
-							));
-						}
+						flushParserAtTermination();
+						finalizeDanglingToolCallsAtTermination();
 
 						const finalErrorMessage = finalizeMessage(outerMessage, event.error, sawToolCall);
-						if (sawToolCall && hasCompletedToolCallContent(finalErrorMessage)) {
+						if (hasFinalizedToolCallContent(finalErrorMessage)) {
 							const recoveredMessage: AssistantMessage = {
 								...finalErrorMessage,
 								stopReason: "toolUse",
@@ -430,6 +499,8 @@ export function wrapStreamWithToolCallMiddleware(
 			if (!outerMessage) {
 				outerMessage = createOuterMessage(finalInnerMessage);
 			}
+			flushParserAtTermination();
+			finalizeDanglingToolCallsAtTermination();
 			outerStream.end(finalizeMessage(outerMessage, finalInnerMessage, sawToolCall));
 		} catch (error) {
 			const fallbackMessage = outerMessage ?? createOuterMessage(await innerStream.result());
