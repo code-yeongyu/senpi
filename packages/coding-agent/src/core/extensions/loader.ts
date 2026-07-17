@@ -31,6 +31,7 @@ import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
 import { createSyntheticSourceInfo } from "../source-info.ts";
 import { time } from "../timings.ts";
+import { validateMcpServerDeclaration } from "./builtin/mcp/config-schema.ts";
 import type {
 	EntryRenderer,
 	Extension,
@@ -41,6 +42,7 @@ import type {
 	MessageRenderer,
 	ProviderConfig,
 	RegisteredCommand,
+	RegisteredMcpServerDeclaration,
 	ToolDefinition,
 } from "./types.ts";
 
@@ -350,6 +352,20 @@ function createExtensionAPI(
 			extension.entryRenderers.set(customType, renderer as EntryRenderer);
 		},
 
+		registerMcpServer(name: string, config: RegisteredMcpServerDeclaration["config"]): void {
+			runtime.assertActive();
+			const error = validateMcpServerDeclaration(name, config);
+			if (error) {
+				throw new Error(error);
+			}
+			extension.mcpServers.set(name, {
+				name,
+				config,
+				extensionPath: extension.path,
+				registrationCwd: extension.registrationCwd,
+			});
+		},
+
 		// Flag access - checks extension registered it, reads from runtime
 		getFlag(name: string): boolean | string | undefined {
 			runtime.assertActive();
@@ -491,7 +507,7 @@ async function loadExtensionModule(
 /**
  * Create an Extension object with empty collections.
  */
-function createExtension(extensionPath: string, resolvedPath: string): Extension {
+function createExtension(extensionPath: string, resolvedPath: string, registrationCwd: string): Extension {
 	const source =
 		extensionPath.startsWith("<") && extensionPath.endsWith(">")
 			? extensionPath.slice(1, -1).split(":")[0] || "temporary"
@@ -505,10 +521,12 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 		handlers: new Map(),
 		tools: new Map(),
 		messageRenderers: new Map(),
-		entryRenderers: new Map(),
+		entryRenderers: undefined,
 		commands: new Map(),
 		flags: new Map(),
 		shortcuts: new Map(),
+		mcpServers: new Map(),
+		registrationCwd,
 	};
 }
 
@@ -532,7 +550,7 @@ async function loadExtension(
 			return { extension: null, error: `Extension does not export a valid factory function: ${extensionPath}` };
 		}
 
-		const extension = createExtension(extensionPath, resolvedPath);
+		const extension = createExtension(extensionPath, resolvedPath, cwd);
 		const api = createExtensionAPI(extension, runtime, cwd, eventBus);
 		await factory(api);
 		time(`${extensionPath} factory`, "extensions");
@@ -554,8 +572,8 @@ export async function loadExtensionFromFactory(
 	runtime: ExtensionRuntime,
 	extensionPath = "<inline>",
 ): Promise<Extension> {
-	const extension = createExtension(extensionPath, extensionPath);
 	const resolvedCwd = resolvePath(cwd);
+	const extension = createExtension(extensionPath, extensionPath, resolvedCwd);
 	const api = createExtensionAPI(extension, runtime, resolvedCwd, eventBus);
 	await factory(api);
 	time(`${extensionPath} factory`, "extensions");

@@ -1,5 +1,44 @@
 # Core Extensions Changes
 
+## 2026-07-17 - Factory-time `pi.registerMcpServer()` API
+
+### What changed
+- `src/core/extensions/builtin/mcp/config-schema.ts`: added `"extension"` to
+  `McpServerSource`; exported a public raw `McpServerDeclaration` type and a
+  single-server `validateMcpServerDeclaration(name, raw)` validator.
+- `src/core/extensions/types.ts`: added `ExtensionAPI.registerMcpServer(name,
+  config)`, `RegisteredMcpServerDeclaration`, and `Extension.mcpServers` +
+  `registrationCwd` storage; added optional
+  `ExtensionContext.getRegisteredMcpServers()`.
+- `src/core/extensions/loader.ts`: `createExtension` stores `registrationCwd`;
+  `createExtensionAPI` implements `registerMcpServer` with synchronous
+  ServerSchema + endpoint validation that throws only for the declaring
+  extension.
+- `src/core/extensions/runner.ts`: added
+  `ExtensionRunner.getRegisteredMcpServers()` with first-wins aggregation and a
+  conflict warning naming both extension paths; exposed it on
+  `ExtensionContext`.
+- `src/core/extensions/index.ts` + `src/index.ts`: re-export `McpServerDeclaration`.
+- `docs/extensions.md`: documented the factory-time-only contract, validation,
+  precedence, cwd defaulting, reload, and child-session behavior.
+
+### Why
+- Extensions need a first-class way to declare MCP servers that are available on
+  turn 1. Factory-time registration is the only seam that runs before
+  `session_start`, so servers can be connected and their tools registered before
+  the first model request.
+
+### Why extension system couldn't handle this alone
+- This is a public extension API addition: the declaration type, validator,
+  per-extension storage, runner aggregation, and context accessor all live in
+  the extension system.
+
+### Expected merge conflict zones
+- HIGH: `types.ts` around `ExtensionAPI` and `Extension` definitions.
+- MEDIUM: `loader.ts` `createExtension` / `createExtensionAPI`.
+- MEDIUM: `runner.ts` around `createContext()` and the aggregation helpers.
+- LOW: `src/index.ts` extension type re-exports.
+
 ## 2026-07-17 - Tool renderer hasResult context
 
 ### What changed

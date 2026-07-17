@@ -87,6 +87,8 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction extensions (real AP
 			commands: new Map(),
 			flags: new Map(),
 			shortcuts: new Map(),
+			mcpServers: new Map(),
+			registrationCwd: process.cwd(),
 		};
 	}
 
@@ -260,6 +262,8 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction extensions (real AP
 			commands: new Map(),
 			flags: new Map(),
 			shortcuts: new Map(),
+			mcpServers: new Map(),
+			registrationCwd: process.cwd(),
 		};
 
 		await createSession([throwingExtension]);
@@ -309,6 +313,8 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction extensions (real AP
 			commands: new Map(),
 			flags: new Map(),
 			shortcuts: new Map(),
+			mcpServers: new Map(),
+			registrationCwd: process.cwd(),
 		};
 
 		const extension2: Extension = {
@@ -340,6 +346,8 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction extensions (real AP
 			commands: new Map(),
 			flags: new Map(),
 			shortcuts: new Map(),
+			mcpServers: new Map(),
+			registrationCwd: process.cwd(),
 		};
 
 		await createSession([extension1, extension2]);

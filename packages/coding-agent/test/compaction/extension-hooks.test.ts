@@ -100,6 +100,8 @@ describe("Compaction extension hooks", () => {
 			commands: new Map(),
 			flags: new Map(),
 			shortcuts: new Map(),
+			mcpServers: new Map(),
+			registrationCwd: process.cwd(),
 		};
 	}
 

@@ -80,6 +80,7 @@ import type {
 	ReadToolInput,
 	WriteToolInput,
 } from "../tools/index.ts";
+import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
 export type { AppKeybinding, KeybindingsManager } from "../keybindings.ts";
@@ -379,6 +380,8 @@ export interface ExtensionContext {
 	getSystemPrompt(): string;
 	/** Get hook source paths currently visible to the builtin hooks extension. */
 	getLoadedHookSources?(): LoadedHookSources;
+	/** Get extension-declared MCP servers aggregated across all extensions (first-wins). */
+	getRegisteredMcpServers?(): readonly RegisteredMcpServerDeclaration[];
 	/**
 	 * Report what the currently running tool_call/tool_result handler is doing.
 	 * Updates the live "Running PreToolUse/PostToolUse hook" status row in the TUI.
@@ -1321,6 +1324,9 @@ export interface ExtensionAPI {
 		tool: ToolDefinition<TParams, TDetails, TState>,
 	): void;
 
+	/** Register an MCP server that the agent can use. Factory-time only. */
+	registerMcpServer(name: string, config: McpServerDeclaration): void;
+
 	// =========================================================================
 	// Command, Shortcut, Flag Registration
 	// =========================================================================
@@ -1811,6 +1817,13 @@ export interface ExtensionCommandContextActions {
 export interface ExtensionRuntime extends ExtensionRuntimeState, ExtensionActions {}
 
 /** Loaded extension with all registered items. */
+export interface RegisteredMcpServerDeclaration {
+	name: string;
+	config: McpServerDeclaration;
+	extensionPath: string;
+	registrationCwd: string;
+}
+
 export interface Extension {
 	path: string;
 	resolvedPath: string;
@@ -1822,6 +1835,8 @@ export interface Extension {
 	commands: Map<string, RegisteredCommand>;
 	flags: Map<string, ExtensionFlag>;
 	shortcuts: Map<KeyId, ExtensionShortcut>;
+	mcpServers: Map<string, RegisteredMcpServerDeclaration>;
+	registrationCwd: string;
 }
 
 /** Result of loading extensions. */

@@ -99,6 +99,7 @@ export type {
 	KeybindingsManager,
 	LoadExtensionsResult,
 	LsToolCallEvent,
+	McpServerDeclaration,
 	MessageRenderer,
 	MessageRenderOptions,
 	ProjectTrustContext,
