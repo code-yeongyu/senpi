@@ -7,5 +7,9 @@ Do not wrap up early because the context window is running low; the harness auto
 }
 
 export function buildClaudeOpus45Prompt(options: BuildDynamicSystemPromptOptions): string {
-	return buildDynamicSystemPrompt({ ...options, tuningSection: buildClaudeOpus45Tuning() });
+	return buildDynamicSystemPrompt({
+		...options,
+		tuningSection: buildClaudeOpus45Tuning(),
+		workstationDialect: "claude",
+	});
 }

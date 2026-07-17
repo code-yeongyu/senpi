@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added a host-sizing note to the `eval` prompt: the extension now passes a preformatted host line (platform, arch, CPU model, core count) at registration so the prompt tells the model to size `parallel(thunks)` pools to the local cores and keep shell commands platform-appropriate.
 - Added model-aware eval-first batching emphasis: the `eval` tool description and its system-prompt guideline now render in a dialect selected by the active model id (Claude/GLM, OpenAI, Kimi, and a maximum-emphasis default fallback), re-registering on `model_select` so mid-session model switches pick up the matching dialect.
 
 ### Changed

@@ -11,5 +11,5 @@ The intent gate routing line is non-optional every turn. For non-trivial tasks, 
 }
 
 export function buildGlm52Prompt(options: BuildDynamicSystemPromptOptions): string {
-	return buildDynamicSystemPrompt({ ...options, tuningSection: buildGlm52Tuning() });
+	return buildDynamicSystemPrompt({ ...options, tuningSection: buildGlm52Tuning(), workstationDialect: "claude" });
 }

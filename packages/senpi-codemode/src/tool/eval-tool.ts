@@ -41,6 +41,8 @@ export interface CreateEvalToolOptions {
 	readonly spawnDefaultAgent?: string;
 	/** Active model id; selects the emphasis dialect of the eval prompt. */
 	readonly modelId?: string;
+	/** Preformatted host line rendered into the prompt's host-sizing note. */
+	readonly hostLine?: string;
 }
 
 interface EvalCellInvocation {
@@ -155,6 +157,7 @@ export function createEvalTool(options: CreateEvalToolOptions): ToolDefinition<E
 		spawns: options.spawns ?? false,
 		...(options.spawnDefaultAgent === undefined ? {} : { spawnDefaultAgent: options.spawnDefaultAgent }),
 		...(options.modelId === undefined ? {} : { modelId: options.modelId }),
+		...(options.hostLine === undefined ? {} : { hostLine: options.hostLine }),
 	});
 	const languages = enabledLanguageList(options.enabledLanguages);
 	return {

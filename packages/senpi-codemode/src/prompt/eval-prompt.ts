@@ -16,6 +16,8 @@ export interface EvalPromptOptions {
 	readonly spawnDefaultAgent?: string;
 	/** Active model id; selects the emphasis dialect of the batching guidance. */
 	readonly modelId?: string;
+	/** Preformatted host line (e.g. "darwin arm64 · Apple M5 Max · 18 cores"); enables the host-sizing note. */
+	readonly hostLine?: string;
 }
 
 /** Prompt dialect for the eval-first batching emphasis. */
@@ -99,6 +101,9 @@ Work incrementally: imports in one call, define in the next, test, then use — 
 - **PLAN THE WHOLE STEP, THEN BATCH IT.** Enumerate every read/search/lookup the step needs and dispatch ALL independent ones through \`parallel(thunks)\` in one cell.
 - **WRITE REAL CODE, NOT CALL LISTS.** Loop or comprehend over file sets with \`read()\`/stdlib, branch \`if\`/\`else\` per case, post-process \`tool.<name>()\` results programmatically, and wrap EVERY risky call in try/except so ONE failure NEVER kills the batch.
 - **DISTILL IN-KERNEL.** Filter, diff, and aggregate in code before returning; return facts, NOT dumps.{{/if}}
+{{#if hostLine}}
+Host: {{hostLine}} — cells execute here. Size \`parallel(thunks)\` pools to its cores; \`tool.<name>()\` shell commands must fit this platform, even when the code you are writing targets another machine.
+{{/if}}
 
 Fields:
 
@@ -182,6 +187,7 @@ export function buildEvalPrompt(
 		styleCodex: style === "codex",
 		styleKimi: style === "kimi",
 		styleDefault: style === "default",
+		hostLine: options.hostLine ?? "",
 	};
 	const examples = REUSE_CHAIN_EXAMPLES.filter((example) => enabled[example.language])
 		.map((example) => {

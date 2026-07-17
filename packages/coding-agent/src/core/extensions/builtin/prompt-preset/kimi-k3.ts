@@ -11,5 +11,5 @@ Do not stop for context limits; the harness auto-compacts. Keep working until th
 }
 
 export function buildKimiK3Prompt(options: BuildDynamicSystemPromptOptions): string {
-	return buildDynamicSystemPrompt({ ...options, tuningSection: buildKimiK3Tuning() });
+	return buildDynamicSystemPrompt({ ...options, tuningSection: buildKimiK3Tuning(), workstationDialect: "kimi" });
 }

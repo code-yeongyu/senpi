@@ -1,3 +1,4 @@
+import * as os from "node:os";
 import type { ExtensionContext } from "@code-yeongyu/senpi";
 import type { KernelToHostMessage } from "./bridge/protocol.ts";
 import type { AgentExecuteTool } from "./bridges/agent-bridge.ts";
@@ -93,6 +94,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 				renderers,
 				spawns: runtime.spawns,
 				spawnDefaultAgent: runtime.settings.taskTools.task,
+				hostLine: hostLine(),
 				...(modelId === undefined ? {} : { modelId }),
 			}),
 		);
@@ -112,6 +114,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 			settings: defaultCodemodeSettings,
 			executionTracker: manager,
 			renderers,
+			hostLine: hostLine(),
 		}),
 	);
 
@@ -134,6 +137,13 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		activeModelId = modelId;
 		registerEvalForRuntime(runtime, modelId);
 	});
+}
+
+function hostLine(): string {
+	const cpu = os.cpus()[0]?.model?.trim();
+	return [`${os.platform()} ${os.arch()}`, cpu, `${os.availableParallelism()} cores`]
+		.filter((part): part is string => !!part)
+		.join(" \u00b7 ");
 }
 
 function modelIdFrom(event: unknown): string | undefined {
