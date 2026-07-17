@@ -6,6 +6,8 @@
 
 ### Fixed
 
+- Fixed Moonshot-flavored OpenAI backends by normalizing tool parameters through a dedicated compatibility layer so function schemas and result images are accepted by Moonshot's API ([#225](https://github.com/code-yeongyu/senpi/pull/225)).
+
 ### Removed
 
 ## [2026.7.17] - 2026-07-17
