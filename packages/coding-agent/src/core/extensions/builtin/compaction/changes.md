@@ -1,5 +1,21 @@
 # Builtin compaction extension changes
 
+## Truncation-recovery error placeholders for incomplete tool calls (2026-07-17)
+
+- A truncated text-protocol tool call that the middleware could only partially recover now reaches
+  history as an `incomplete`-flagged `ToolCall`. `repair-tool-pairs.ts` previously synthesized a
+  successful (`isError: false`) placeholder for any dangling `tool_use`, which would bless a
+  never-executed truncated call as if it had run. The local compaction copy now emits an
+  `isError: true` retry-diagnostic placeholder for flagged dangling calls (reusing the call's
+  `errorMessage` when present) so the model is asked to re-issue the call rather than seeing a
+  phantom success.
+- The matching `packages/ai/src/utils/tool-pair-repair.ts` helper is updated identically; both
+  copies are idempotent and legacy (non-flagged) placeholders are not upgraded, so histories written
+  before this change are not silently rewritten.
+
+Expected upstream conflict zones: `builtin/compaction/repair-tool-pairs.ts` around the
+dangling-call placeholder synthesis and the shared `packages/ai/src/utils/tool-pair-repair.ts` copy.
+
 ## Threshold-first emergency tool-result pruning (2026-07-09)
 
 - `index.ts` no longer mutates live `tool_result` events with head/tail truncation before they enter session

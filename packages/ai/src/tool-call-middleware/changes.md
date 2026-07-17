@@ -1,5 +1,44 @@
 # Tool Call Middleware Changes
 
+## 2026-07-17 - Truncation-recovery boundary for text tool-call protocols
+
+### What changed and why
+
+- The five text-based tool-call protocols (`anthropic-xml`, `hermes`/json-mix, `yaml-xml`,
+  `morph-xml`, `gemma4-delimiter`) handled a tool call truncated at stream end inconsistently: some
+  parsers silently dropped the partial call, some leaked the raw markup as text, and `morph-xml`
+  executed a stale argument snapshot that no longer reflected what the model was writing. There was no
+  shared definition of "recoverable" at `finish()`, so the same truncation could be dropped, leaked,
+  or executed stale depending on the format.
+- Every protocol `finish()` now applies one normative recoverability boundary (R1-R4): the opening
+  marker is complete (R1), the tool name resolves against the supplied `tools` (R2), the body is
+  structurally complete except for a missing closing marker or a proper prefix of it plus trailing
+  whitespace (R3), and the recovered arguments pass `validateToolArguments` against the tool schema
+  (R4). A call is recoverable iff all four hold; recoverable calls are ALWAYS force-completed and
+  executed exactly like a complete call, with `validateToolArguments` gating every forced completion.
+- Unrecoverable calls with a readable, resolving name now emit a terminal `toolcall_end` carrying
+  `incomplete: true` and `errorMessage` (plus best-effort parsed arguments) instead of being dropped
+  or leaked. Nameless protocol fragments (no readable tool name, so not representable as a `ToolCall`)
+  are dropped with a metadata-only `onError` diagnostic (`{ protocol, retainedLength }`). The raw
+  truncated fragment is never emitted as text, placed in `onError` metadata, logs, tool results, or
+  replayed context — even when `emitRawToolCallTextOnError` is set, for the truncated-at-finish case.
+  Mid-stream malformed-COMPLETE-call text-emission policy is unchanged.
+- `morph-xml`'s `lastArgumentsSnapshot` fallback is demoted from "execute stale args" to "flagged
+  incomplete": a snapshot that no longer matches the live buffer is not what the model was writing
+  and must not be executed.
+- The `incomplete`/`errorMessage` flags propagate from the parser event through the stream wrapper
+  into the agent loop, where a flagged call becomes an immediate error tool result that keeps the
+  inner loop alive so the model re-issues the tool call on the next assistant turn (the retry
+  contract).
+- `"morph-xml"` is the canonical format id; `"xml"` remains as a deprecated alias resolving to the
+  same protocol, so persisted `models.json` configs and compiled consumers keep working.
+
+### Why the extension system could not handle this
+
+- The recoverability boundary, per-format `finish()` behavior, the no-raw-fragment guarantee, and the
+  `incomplete`-flag propagation all live inside the provider-agnostic tool-call middleware before any
+  coding-agent extension participates.
+
 ## 2026-04-11
 
 ### What changed and why

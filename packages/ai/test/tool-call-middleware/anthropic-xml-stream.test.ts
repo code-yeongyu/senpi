@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createAnthropicXmlStreamParser } from "../../src/tool-call-middleware/protocols/anthropic-xml/stream.ts";
 import type { ParserOptions, StreamParserEvent } from "../../src/tool-call-middleware/types.ts";
 import type { Tool } from "../../src/types.ts";
+import { FIXTURE_TOOLS, TRUNCATION_FIXTURES } from "./truncation-fixtures.ts";
 
 const bashTool = {
 	name: "Bash",
@@ -257,26 +258,7 @@ describe("createAnthropicXmlStreamParser", () => {
 		);
 	});
 
-	it("reports and suppresses an incomplete known invoke at finish by default", () => {
-		// given
-		const onError = vi.fn();
-		const parser = createAnthropicXmlStreamParser([bashTool], { onError });
-		const incompleteCall = '<invoke name="Bash"><parameter name="command">ls';
-
-		// when
-		const feedEvents = parser.feed(`Before ${incompleteCall}`);
-		const finishEvents = parser.finish();
-
-		// then
-		expect(feedEvents).toEqual([{ type: "text", text: "Before " }]);
-		expect(finishEvents).toEqual([]);
-		expect(toolCallEnds([...feedEvents, ...finishEvents])).toHaveLength(0);
-		expect(onError).toHaveBeenCalledWith("Could not complete streaming Anthropic XML tool call at finish.", {
-			toolCall: incompleteCall,
-		});
-	});
-
-	it("emits an incomplete known invoke as raw text at finish when enabled", () => {
+	it("flags an incomplete known invoke at finish without raw text", () => {
 		// given
 		const onError = vi.fn();
 		const parser = createAnthropicXmlStreamParser([bashTool], {
@@ -286,38 +268,112 @@ describe("createAnthropicXmlStreamParser", () => {
 		const incompleteCall = '<invoke name="Bash"><parameter name="command">ls';
 
 		// when
-		const feedEvents = parser.feed(`Before ${incompleteCall}`);
-		const finishEvents = parser.finish();
+		const events = [...parser.feed(`Before ${incompleteCall}`), ...parser.finish()];
 
 		// then
-		expect(feedEvents).toEqual([{ type: "text", text: "Before " }]);
-		expect(finishEvents).toEqual([{ type: "text", text: incompleteCall }]);
-		expect(toolCallEnds([...feedEvents, ...finishEvents])).toHaveLength(0);
-		expect(onError).toHaveBeenCalledOnce();
+		expect(textOutput(events)).toBe("Before ");
+		expect(toolCallEnds(events)).toEqual([
+			expect.objectContaining({
+				incomplete: true,
+				arguments: {},
+				errorMessage: "Tool call was truncated mid-arguments",
+			}),
+		]);
+		expect(JSON.stringify(onError.mock.calls)).not.toContain(incompleteCall);
 	});
 
-	it.each([
-		{ emitRaw: false, expected: [] },
-		{ emitRaw: true, expected: [{ type: "text", text: '<invoke name="Bash"' }] },
-	])("applies the error policy to an incomplete known opening tag (raw: $emitRaw)", ({ emitRaw, expected }) => {
+	it("flags a recognized opening tag truncated before its closing quote without raw text", () => {
 		// given
 		const onError = vi.fn();
 		const parser = createAnthropicXmlStreamParser([bashTool], {
-			emitRawToolCallTextOnError: emitRaw,
+			emitRawToolCallTextOnError: true,
 			onError,
 		});
 		const incompleteCall = '<invoke name="Bash"';
 
 		// when
-		const feedEvents = parser.feed(`Before ${incompleteCall}`);
-		const finishEvents = parser.finish();
+		const events = [...parser.feed(`Before ${incompleteCall}`), ...parser.finish()];
 
 		// then
-		expect(feedEvents).toEqual([{ type: "text", text: "Before " }]);
-		expect(finishEvents).toEqual(expected);
-		expect(onError).toHaveBeenCalledOnce();
-		expect(onError).toHaveBeenCalledWith("Could not complete streaming Anthropic XML tool call at finish.", {
-			toolCall: incompleteCall,
+		expect(textOutput(events)).toBe("Before ");
+		expect(toolCallEnds(events)).toEqual([
+			expect.objectContaining({
+				incomplete: true,
+				arguments: {},
+				errorMessage: "Tool call was truncated mid-arguments",
+			}),
+		]);
+		expect(JSON.stringify(onError.mock.calls)).not.toContain(incompleteCall);
+	});
+
+	it.each(TRUNCATION_FIXTURES["anthropic-xml"])("handles truncation fixture: $title", (fixture) => {
+		// given
+		const onError = vi.fn();
+		const parser = createAnthropicXmlStreamParser(FIXTURE_TOOLS, {
+			emitRawToolCallTextOnError: true,
+			onError,
 		});
+
+		// when
+		const events = [...parser.feed(fixture.input), ...parser.finish()];
+		const ends = toolCallEnds(events);
+
+		// then
+		switch (fixture.expected.kind) {
+			case "recovered":
+				expect(ends).toEqual([
+					expect.objectContaining({ name: fixture.tool, arguments: fixture.expected.arguments }),
+				]);
+				expect(ends[0]?.incomplete).toBeUndefined();
+				break;
+			case "incomplete":
+				expect(ends).toEqual([expect.objectContaining({ name: fixture.tool, incomplete: true })]);
+				expect(textOutput(events)).not.toContain("<invoke");
+				expect(JSON.stringify(onError.mock.calls)).not.toContain(fixture.input);
+				break;
+			case "dropped":
+				expect(ends).toEqual([]);
+				expect(events.filter((event) => event.type.startsWith("toolcall_"))).toEqual([]);
+				expect(textOutput(events)).not.toContain(fixture.input);
+				expect(onError).toHaveBeenCalledOnce();
+				expect(JSON.stringify(onError.mock.calls)).not.toContain(fixture.input);
+				break;
+			case "text":
+				expect(ends).toEqual([]);
+				expect(textOutput(events)).toContain(fixture.input);
+				break;
+		}
+	});
+
+	it("recovers a complete invoke in a truncated function_calls wrapper without emitting wrapper markup", () => {
+		const parser = createAnthropicXmlStreamParser(FIXTURE_TOOLS);
+		const events = [
+			...parser.feed('<function_calls><invoke name="get_weather"><parameter name="city">Seoul</parameter></invoke>'),
+			...parser.finish(),
+		];
+
+		expect(toolCallEnds(events)).toEqual([
+			expect.objectContaining({ name: "get_weather", arguments: { city: "Seoul" } }),
+		]);
+		expect(toolCallEnds(events)[0]?.incomplete).toBeUndefined();
+		expect(textOutput(events)).not.toContain("<function_calls>");
+		expect(textOutput(events)).not.toContain("<invoke");
+	});
+
+	it("recovers and flags invokes in a truncated function_calls wrapper in source order", () => {
+		const parser = createAnthropicXmlStreamParser(FIXTURE_TOOLS);
+		const events = [
+			...parser.feed(
+				'<function_calls><invoke name="get_weather"><parameter name="city">Seoul</parameter></invoke><invoke name="get_weather"><parameter name="city">Seo',
+			),
+			...parser.finish(),
+		];
+
+		expect(toolCallEnds(events)).toEqual([
+			expect.objectContaining({ name: "get_weather", arguments: { city: "Seoul" } }),
+			expect.objectContaining({ name: "get_weather", incomplete: true }),
+		]);
+		expect(textOutput(events)).not.toContain("<function_calls>");
+		expect(textOutput(events)).not.toContain("<invoke");
 	});
 });

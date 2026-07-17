@@ -5,6 +5,7 @@ import {
 	parseMorphXmlGeneratedText,
 } from "../../src/tool-call-middleware/protocols/morph-xml.ts";
 import type { Tool } from "../../src/types.ts";
+import { FIXTURE_TOOLS, TRUNCATION_FIXTURES } from "./truncation-fixtures.ts";
 
 function seededRandom(seed: number): () => number {
 	let current = seed;
@@ -361,7 +362,7 @@ describe("createMorphXmlStreamParser", () => {
 		]);
 	});
 
-	it("suppresses unfinished invalid xml tool calls at finish by default", () => {
+	it("flags unfinished invalid xml tool calls at finish without raw markup", () => {
 		// given
 		const onError = vi.fn();
 		const parser = createMorphXmlStreamParser([todoWriteTool], { onError });
@@ -370,11 +371,20 @@ describe("createMorphXmlStreamParser", () => {
 		const allEvents = [...parser.feed("<todowrite><todos><item/></todos>"), ...parser.finish()];
 
 		// then
-		expect(allEvents).toEqual([]);
+		expect(allEvents).toContainEqual(
+			expect.objectContaining({
+				type: "toolcall_end",
+				name: "todowrite",
+				incomplete: true,
+				errorMessage: "Tool call was truncated mid-arguments",
+			}),
+		);
+		expect(allEvents.filter((event) => event.type === "text")).toEqual([]);
 		expect(onError).toHaveBeenCalled();
+		expect(JSON.stringify(onError.mock.calls)).not.toContain("<todowrite>");
 	});
 
-	it("emits unfinished invalid xml tool calls at finish when raw fallback is enabled", () => {
+	it("flags unfinished invalid xml tool calls even when raw fallback is enabled", () => {
 		// given
 		const parser = createMorphXmlStreamParser([todoWriteTool], { emitRawToolCallTextOnError: true });
 
@@ -382,7 +392,80 @@ describe("createMorphXmlStreamParser", () => {
 		const allEvents = [...parser.feed("<todowrite><todos><item/></todos>"), ...parser.finish()];
 
 		// then
-		expect(allEvents).toEqual([{ type: "text", text: "<todowrite><todos><item/></todos>" }]);
+		expect(allEvents).toContainEqual(
+			expect.objectContaining({ type: "toolcall_end", name: "todowrite", incomplete: true }),
+		);
+		expect(allEvents.filter((event) => event.type === "text")).toEqual([]);
+	});
+
+	it.each(TRUNCATION_FIXTURES["morph-xml"])("handles EOF truncation fixture: $title", (fixture) => {
+		// given
+		const onError = vi.fn();
+		const parser = createMorphXmlStreamParser(FIXTURE_TOOLS, { onError });
+
+		// when
+		const allEvents = [...parser.feed(fixture.input), ...parser.finish()];
+		const toolcallEnds = allEvents.filter((event) => event.type === "toolcall_end");
+		const textOutput = allEvents
+			.filter((event) => event.type === "text")
+			.map((event) => event.text)
+			.join("");
+
+		// then
+		if (fixture.expected.kind === "recovered") {
+			expect(toolcallEnds).toHaveLength(1);
+			expect(toolcallEnds[0]).toMatchObject({
+				type: "toolcall_end",
+				name: fixture.tool,
+				arguments: fixture.expected.arguments,
+			});
+			expect(toolcallEnds[0]).not.toHaveProperty("incomplete");
+			return;
+		}
+
+		if (fixture.expected.kind === "incomplete") {
+			expect(toolcallEnds).toHaveLength(1);
+			expect(toolcallEnds[0]).toMatchObject({
+				type: "toolcall_end",
+				name: fixture.tool,
+				incomplete: true,
+				errorMessage: "Tool call was truncated mid-arguments",
+			});
+			expect(textOutput).not.toContain(fixture.input);
+			expect(JSON.stringify(onError.mock.calls)).not.toContain(fixture.input);
+			return;
+		}
+
+		expect(allEvents.filter((event) => event.type.startsWith("toolcall_"))).toEqual([]);
+		expect(textOutput).toContain(fixture.input);
+	});
+
+	it("flags a stale snapshot instead of executing it", () => {
+		// given
+		const rawFragment = "<city>Seoul</city><days>4";
+		const onError = vi.fn();
+		const parser = createMorphXmlStreamParser([weatherTool], { onError });
+
+		// when
+		const allEvents = [...parser.feed(`<get_weather>${rawFragment}`), ...parser.finish()];
+
+		// then
+		expect(allEvents).toContainEqual(
+			expect.objectContaining({
+				type: "toolcall_end",
+				name: "get_weather",
+				arguments: expect.objectContaining({ city: "Seoul" }),
+				incomplete: true,
+				errorMessage: "Tool call was truncated mid-arguments",
+			}),
+		);
+		expect(allEvents.filter((event) => event.type === "text")).toEqual([]);
+		expect(onError).toHaveBeenCalledOnce();
+		expect(onError).toHaveBeenCalledWith("Could not complete streaming XML tool call at finish.", {
+			protocol: "morph-xml",
+			retainedLength: rawFragment.length,
+		});
+		expect(JSON.stringify(onError.mock.calls)).not.toContain(rawFragment);
 	});
 
 	it("force-completes unfinished calls at finish when the partial xml is parseable", () => {

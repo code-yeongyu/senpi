@@ -1,4 +1,5 @@
 import type { Tool } from "../../../types.ts";
+import { validateToolArguments } from "../../../utils/validation.ts";
 import type { ParserOptions, StreamParser, StreamParserEvent } from "../../types.ts";
 import { coerceParameters } from "./coerce-parameters.ts";
 import { findNextInvokeMatch } from "./invoke-match.ts";
@@ -6,7 +7,9 @@ import {
 	findIncompleteInvokeOpenTag,
 	findInvokeOpenTag,
 	getSafeInvokeTextLength,
+	isPotentialProtocolStart,
 	scanInvokeBlock,
+	scanTruncatedInvokeBlock,
 } from "./invoke-tag-scanner.ts";
 import { parseAnthropicXmlGeneratedText } from "./parse.ts";
 import {
@@ -15,6 +18,7 @@ import {
 	type PendingFragment,
 } from "./stream-boundary.ts";
 import { createToolResolver } from "./tool-resolver.ts";
+import { decodeXmlEntities } from "./xml-entities.ts";
 
 export { ANTHROPIC_XML_MAX_RETAINED_FRAGMENT_LENGTH } from "./stream-boundary.ts";
 
@@ -61,6 +65,14 @@ function isPotentialFunctionCallsTag(candidate: string): boolean {
 	);
 }
 
+function isWhitespaceOrFunctionCallsClosePrefix(text: string): boolean {
+	const compactText = text.replace(/\s/g, "");
+	return (
+		compactText.length === 0 ||
+		(FUNCTION_CALLS_CLOSE_PREFIX.startsWith(compactText) && compactText !== FUNCTION_CALLS_CLOSE_PREFIX)
+	);
+}
+
 function getSafeStreamTextLength(text: string): number {
 	const scannerSafeLength = getSafeInvokeTextLength(text);
 	const lastTagIndex = text.lastIndexOf("<");
@@ -75,6 +87,31 @@ function getSafeStreamTextLength(text: string): number {
 
 function reportError(options: ParserOptions | undefined, message: string, toolCall: string): void {
 	options?.onError?.(message, { toolCall });
+}
+
+function coerceStreamParameters(
+	parameters: Parameters<typeof coerceParameters>[0],
+	tool: Tool,
+	allowJsonSchemaFallback = false,
+): Record<string, unknown> | null {
+	const coercedParameters = coerceParameters(parameters, tool);
+	if (coercedParameters !== null || !allowJsonSchemaFallback) {
+		return coercedParameters;
+	}
+
+	const argumentsRecord: Record<string, unknown> = {};
+	for (const parameter of parameters) {
+		if (Object.hasOwn(argumentsRecord, parameter.name)) {
+			return null;
+		}
+		const rawValue = decodeXmlEntities(parameter.rawValue);
+		try {
+			argumentsRecord[parameter.name] = JSON.parse(rawValue);
+		} catch {
+			argumentsRecord[parameter.name] = rawValue;
+		}
+	}
+	return argumentsRecord;
 }
 
 export function createAnthropicXmlStreamParser(tools: Tool[], options?: ParserOptions): StreamParser {
@@ -100,7 +137,7 @@ export function createAnthropicXmlStreamParser(tools: Tool[], options?: ParserOp
 		return events;
 	}
 
-	function processBuffer(): StreamParserEvent[] {
+	function processBuffer(consumeFunctionCallsResidue = false, allowJsonSchemaFallback = false): StreamParserEvent[] {
 		const events: StreamParserEvent[] = [];
 		pendingFragment = null;
 
@@ -176,7 +213,9 @@ export function createAnthropicXmlStreamParser(tools: Tool[], options?: ParserOp
 				const index = nextToolCallIndex;
 				nextToolCallIndex += 1;
 				const id = `anthropic-xml-tool-${index}`;
-				const argumentsRecord = block.parameters ? coerceParameters(block.parameters, tool) : null;
+				const argumentsRecord = block.parameters
+					? coerceStreamParameters(block.parameters, tool, allowJsonSchemaFallback)
+					: null;
 				if (argumentsRecord === null) {
 					reportError(
 						options,
@@ -197,6 +236,11 @@ export function createAnthropicXmlStreamParser(tools: Tool[], options?: ParserOp
 				});
 				events.push({ type: "toolcall_end", index, name: tool.name, id, arguments: argumentsRecord });
 				continue;
+			}
+
+			if (consumeFunctionCallsResidue && isWhitespaceOrFunctionCallsClosePrefix(buffer)) {
+				buffer = "";
+				break;
 			}
 
 			const safeLength = getSafeStreamTextLength(buffer);
@@ -249,16 +293,68 @@ export function createAnthropicXmlStreamParser(tools: Tool[], options?: ParserOp
 		},
 		finish(): StreamParserEvent[] {
 			const events = processBuffer();
+			const functionCallsOpenTag = findFunctionCallsTag(FUNCTION_CALLS_OPEN_TAG, buffer, 0);
+			if (
+				functionCallsOpenTag?.index === 0 &&
+				findFunctionCallsTag(FUNCTION_CALLS_CLOSE_TAG, buffer, functionCallsOpenTag.length) === null
+			) {
+				buffer = buffer.slice(functionCallsOpenTag.length);
+				events.push(...processBuffer(true, true));
+			}
+
 			if (buffer.length === 0) {
 				return events;
 			}
 
 			const invokeOpenTag = findInvokeOpenTag(buffer, 0) ?? findIncompleteInvokeOpenTag(buffer, 0);
-			if (invokeOpenTag && invokeOpenTag.index === 0 && resolveTool(invokeOpenTag.toolName)) {
-				reportError(options, "Could not complete streaming Anthropic XML tool call at finish.", buffer);
-				if (shouldEmitRawToolCallTextOnError(options)) {
-					emitText(events, buffer);
+			const tool = invokeOpenTag?.index === 0 ? resolveTool(invokeOpenTag.toolName) : undefined;
+			if (invokeOpenTag && tool) {
+				const scannedBlock = scanTruncatedInvokeBlock(buffer, invokeOpenTag);
+				const coercedArguments = coerceStreamParameters(scannedBlock.parameters, tool, true);
+				let recoveredArguments: Record<string, unknown> | null = null;
+				if (scannedBlock.isStructurallyComplete && coercedArguments !== null) {
+					try {
+						recoveredArguments = validateToolArguments(tool, {
+							type: "toolCall",
+							id: "anthropic-xml-finish-recovery",
+							name: tool.name,
+							arguments: coercedArguments,
+						});
+					} catch {
+						recoveredArguments = null;
+					}
 				}
+
+				const index = nextToolCallIndex;
+				nextToolCallIndex += 1;
+				const id = `anthropic-xml-tool-${index}`;
+				const argumentsRecord = recoveredArguments ?? coercedArguments ?? {};
+				events.push({ type: "toolcall_start", index, name: tool.name, id });
+				events.push({ type: "toolcall_delta", index, argumentsDelta: JSON.stringify(argumentsRecord) });
+				if (recoveredArguments) {
+					events.push({ type: "toolcall_end", index, name: tool.name, id, arguments: argumentsRecord });
+				} else {
+					events.push({
+						type: "toolcall_end",
+						index,
+						name: tool.name,
+						id,
+						arguments: argumentsRecord,
+						incomplete: true,
+						errorMessage: "Tool call was truncated mid-arguments",
+					});
+					options?.onError?.("Anthropic XML tool call truncated at finish", {
+						protocol: "anthropic-xml",
+						retainedLength: buffer.length,
+					});
+				}
+			} else if (invokeOpenTag?.index === 0) {
+				emitText(events, buffer);
+			} else if (isPotentialProtocolStart(buffer)) {
+				options?.onError?.("Anthropic XML tool call truncated at finish", {
+					protocol: "anthropic-xml",
+					retainedLength: buffer.length,
+				});
 			} else {
 				emitText(events, buffer);
 			}

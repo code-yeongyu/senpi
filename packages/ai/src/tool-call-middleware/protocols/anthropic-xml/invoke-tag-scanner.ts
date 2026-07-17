@@ -40,6 +40,11 @@ export type InvokeBlockMatch = {
 	readonly parameters: InvokeParameter[] | null;
 };
 
+export type TruncatedInvokeBlockMatch = {
+	readonly parameters: InvokeParameter[];
+	readonly isStructurallyComplete: boolean;
+};
+
 function findTag(pattern: RegExp, text: string, fromIndex: number): TagMatch | null {
 	pattern.lastIndex = Math.max(0, fromIndex);
 	const match = pattern.exec(text);
@@ -249,7 +254,56 @@ function isAttributePrefix(remainder: string): boolean {
 	return closingQuoteIndex === -1 || valuePrefix.slice(closingQuoteIndex + 1).trim().length === 0;
 }
 
-function isPotentialProtocolStart(candidate: string): boolean {
+function isWhitespaceOrInvokeClosePrefix(remainder: string): boolean {
+	const compactRemainder = remainder.replace(/\s/g, "");
+	return (
+		compactRemainder.length === 0 || ("</invoke>".startsWith(compactRemainder) && compactRemainder !== "</invoke>")
+	);
+}
+
+/**
+ * Scans an invoke whose closing tag may be missing at stream end. A result is
+ * structurally complete only when every parameter closed and the residue is
+ * whitespace or a proper prefix of the invoke closing tag.
+ */
+export function scanTruncatedInvokeBlock(text: string, openingTag: InvokeOpenTagMatch): TruncatedInvokeBlockMatch {
+	const parameters: InvokeParameter[] = [];
+	let cursor = Math.max(0, openingTag.index + openingTag.length);
+
+	while (cursor <= text.length) {
+		const remainder = text.slice(cursor);
+		if (isWhitespaceOrInvokeClosePrefix(remainder)) {
+			return { parameters, isStructurallyComplete: true };
+		}
+
+		const leadingWhitespace = /^\s*/.exec(remainder)?.[0].length ?? 0;
+		const parameterMarkup = findTag(PARAMETER_MARKUP, text, cursor + leadingWhitespace);
+		if (!parameterMarkup || parameterMarkup.index !== cursor + leadingWhitespace) {
+			return { parameters, isStructurallyComplete: false };
+		}
+
+		const parameterOpen = findParameterOpenTagAt(text, parameterMarkup.index);
+		if (!parameterOpen) {
+			return { parameters, isStructurallyComplete: false };
+		}
+
+		const valueStart = parameterOpen.index + parameterOpen.length;
+		const boundary = findParameterBoundary(text, valueStart);
+		if (boundary?.kind !== "parameter-close") {
+			return { parameters, isStructurallyComplete: false };
+		}
+
+		parameters.push({
+			name: parameterOpen.name,
+			rawValue: text.slice(valueStart, boundary.match.index),
+		});
+		cursor = boundary.match.index + boundary.match.length;
+	}
+
+	return { parameters, isStructurallyComplete: false };
+}
+
+export function isPotentialProtocolStart(candidate: string): boolean {
 	if (!candidate.startsWith("<")) {
 		return false;
 	}
