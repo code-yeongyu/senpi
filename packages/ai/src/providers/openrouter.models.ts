@@ -4633,13 +4633,13 @@ export const OPENROUTER_MODELS = {
 		reasoning: true,
 		input: ["text"],
 		cost: {
-			input: 0.06,
+			input: 0.0605,
 			output: 0.4,
-			cacheRead: 0.01,
+			cacheRead: 0,
 			cacheWrite: 0,
 		},
-		contextWindow: 202752,
-		maxTokens: 16384,
+		contextWindow: 131072,
+		maxTokens: 131072,
 	} satisfies Model<"openai-completions">,
 	"z-ai/glm-5": {
 		id: "z-ai/glm-5",
