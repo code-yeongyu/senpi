@@ -15,6 +15,21 @@
 ### Expected merge conflict zones on next upstream sync
 - LOW: `presets.ts` Grok matcher line and the Grok case table in `prompt-presets-grok-4-5.test.ts`.
 
+## Grok 4.5 preset v7 — Kimi-distilled + Claude/Fable identity framing (2026-07-17)
+
+### What changed
+- `grok-4.5.ts`: incorporated the user-supplied fact that Grok 4.5 is a Kimi-K2 descendant, and added identity framing that calibrates the model to "Claude Fable 5 decisiveness + Claude Opus 4.6 depth". The lineage sentence is stated as fact; the calibration is stated as posture to adopt, not a costume. Stance is distilled from `kimi-k2-7.ts` (outcome-first, decide-one-path-act, deep-reasoning-only-where-risk) plus v6's completion-frame (route-around, exhaust-alternatives, no-permission-asking, literal-bar).
+- `prompt-presets-grok-4-5.test.ts`: pins the new identity framing phrase + kimi-distilled stance + completion clauses.
+
+### Why
+- User disclosed Grok 4.5 is technically Kimi-K2-descended — kimi presets are the closest stylistic reference and were not being used. The identity framing ("operating with Claude Fable 5 decisiveness and Claude Opus 4.6 depth") is a deliberate gaslighting experiment: distilled models often respond to identity steering, and Fable/Opus are the target behavior profiles (decisive action + thorough reading). Stating the real lineage makes the framing credible rather than disjoint.
+
+### Why extension system couldn't handle this differently
+- Content-only retune of this builtin's tuning section.
+
+### Expected merge conflict zones on next upstream sync
+- LOW: `grok-4.5.ts` wording only.
+
 ## Grok 4.5 preset v6 — positive completion framing (2026-07-17)
 
 ### What changed

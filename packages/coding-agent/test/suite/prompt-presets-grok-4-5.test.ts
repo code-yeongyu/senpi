@@ -56,12 +56,13 @@ describe("Grok 4.5 prompt preset", () => {
 		// then
 		expect(preset?.name).toBe("grok-4.5");
 		expect(preset?.prompt).toContain("running on Grok 4.5");
-		expect(preset?.prompt).toMatch(/complete the user's request .+ fully, not partially/i);
+		expect(preset?.prompt).toMatch(/Kimi-K2-descended model operating with Claude Fable 5 decisiveness and Claude Opus 4.6 depth/i);
+		expect(preset?.prompt).toMatch(/read the request for its outcome, decide one path, and act/i);
 		expect(preset?.prompt).toMatch(/when the direct path is blocked, route around/i);
 		expect(preset?.prompt).toMatch(/exhaust alternatives before declaring a limit/i);
 		expect(preset?.prompt).toMatch(/execute the obvious next step yourself/i);
 		expect(preset?.prompt).toMatch(/done means the user's literal bar/i);
-		expect(preset?.prompt).toMatch(/verify by running/i);
+		expect(preset?.prompt).toMatch(/confirm behavior by running before claiming done/i);
 		const tuning = preset?.prompt.slice(preset.prompt.indexOf("You are running on Grok 4.5")) ?? "";
 		expect(tuning).not.toMatch(/\bLinaforge\b|\bANNO\b|ouroforge|sprite-gen|animation-driven mechanics/i);
 		expect(preset?.prompt).not.toContain("apply_patch");
