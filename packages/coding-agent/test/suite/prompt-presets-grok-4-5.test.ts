@@ -61,11 +61,11 @@ describe("Grok 4.5 prompt preset", () => {
 		expect(preset?.prompt).toMatch(/single human-facing surface/i);
 		expect(preset?.prompt).toMatch(/delegate implementation via `bash`/i);
 		expect(preset?.prompt).toMatch(/senpi --print/i);
-		// CEO passes the Hephaestus prompt guide (the gpt-5.6/gpt-5.5 presets) to
-		// workers by spawning them with --model gpt-5.6*, not by restating the
-		// doctrine in the CEO prompt itself.
+		// CEO passes the gpt-5.6 prompting guide to workers by spawning them
+		// with --model gpt-5.6*, not by restating the doctrine in the CEO
+		// prompt itself.
 		expect(preset?.prompt).toMatch(/--model gpt-5\.6/i);
-		expect(preset?.prompt).toMatch(/Hephaestus prompt guide/i);
+		expect(preset?.prompt).toMatch(/gpt-5\.6 prompting guide/i);
 		expect(preset?.prompt).toMatch(/consult oracle before deploying non-trivial work/i);
 		expect(preset?.prompt).toMatch(/review invocation/i);
 		expect(preset?.prompt).toMatch(/you are the human surface/i);
