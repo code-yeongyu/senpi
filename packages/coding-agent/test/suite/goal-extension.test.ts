@@ -57,6 +57,18 @@ async function makeCtx(threadId = "thread-test"): Promise<ExtensionContext> {
 	} as unknown as ExtensionContext;
 }
 
+async function makeUiCtx(
+	onStatus: (key: string, text: string | undefined) => void,
+	threadId = "thread-ui",
+): Promise<ExtensionContext> {
+	const base = await makeCtx(threadId);
+	return {
+		...base,
+		hasUI: true,
+		ui: { notify: () => {}, select: async () => undefined, setStatus: onStatus },
+	} as unknown as ExtensionContext;
+}
+
 function storeRefFor(ctx: ExtensionContext) {
 	return {
 		baseDir: join(ctx.sessionManager.getSessionDir(), "extensions", "goal"),
@@ -185,6 +197,23 @@ describe("goal extension contract (budget-free)", () => {
 		);
 
 		expect(sent).toHaveLength(0);
+	});
+
+	it("renders a live elapsed footer segment while a goal is actively pursued", async () => {
+		const statuses: Array<string | undefined> = [];
+		const { tools, commands } = createGoalHarness();
+		const ctx = await makeUiCtx((key, text) => {
+			if (key === "goal") statuses.push(text);
+		});
+
+		await tools.get("create_goal")?.execute("c1", { objective: "Ship it live" }, undefined, undefined, ctx);
+		// The ticker syncs immediately on the active goal, so the footer already
+		// carries the parenthesized live elapsed time rather than a frozen label.
+		expect(statuses.at(-1)).toBe("Pursuing goal (0s)");
+
+		// Clearing stops the ticker interval and wipes the footer segment.
+		await commands.get("goal")?.handler("clear", ctx);
+		expect(statuses.at(-1)).toBeUndefined();
 	});
 });
 

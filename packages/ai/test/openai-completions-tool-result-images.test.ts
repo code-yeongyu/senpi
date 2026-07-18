@@ -36,14 +36,20 @@ const compat = {
 	chatTemplateKwargs: {},
 	zaiToolStream: false,
 	supportsStrictMode: true,
+	toolSchemaFlavor: undefined,
 	toolCallFormat: undefined,
 	cacheControlFormat: "anthropic",
 	sendSessionAffinityHeaders: false,
 	sessionAffinityFormat: "openai",
 	supportsLongCacheRetention: true,
-} satisfies Required<Omit<OpenAICompletionsCompat, "cacheControlFormat" | "toolCallFormat">> & {
+} satisfies Omit<
+	Required<OpenAICompletionsCompat>,
+	"cacheControlFormat" | "toolCallFormat" | "deferredToolsMode" | "toolSchemaFlavor"
+> & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	toolCallFormat?: OpenAICompletionsCompat["toolCallFormat"];
+	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
+	toolSchemaFlavor?: OpenAICompletionsCompat["toolSchemaFlavor"];
 };
 
 function buildToolResult(toolCallId: string, timestamp: number): ToolResultMessage {

@@ -34,7 +34,7 @@ type RunContext = {
 	version: string;
 	options: Record<string, never>;
 	session: {
-		modelRegistry: { getError: () => string | undefined };
+		modelRuntime: { getError: () => string | undefined };
 		prompt: (text: string, options?: unknown) => Promise<void>;
 	};
 	checkForPackageUpdates: () => Promise<string[]>;
@@ -109,7 +109,7 @@ describe("InteractiveMode startup input", () => {
 			version: "test",
 			options: {},
 			session: {
-				modelRegistry: { getError: vi.fn(() => undefined) },
+				modelRuntime: { getError: vi.fn(() => undefined) },
 				prompt,
 			},
 			checkForPackageUpdates: vi.fn(async (): Promise<string[]> => []),

@@ -7,5 +7,5 @@ The intent gate routing line is required every turn. On confirmation turns where
 }
 
 export function buildKimiK26Prompt(options: BuildDynamicSystemPromptOptions): string {
-	return buildDynamicSystemPrompt({ ...options, tuningSection: buildKimiK26Tuning() });
+	return buildDynamicSystemPrompt({ ...options, tuningSection: buildKimiK26Tuning(), workstationDialect: "kimi" });
 }

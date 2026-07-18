@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getModels } from "../src/compat.ts";
 import {
 	githubCopilotOAuthProvider,
 	loginGitHubCopilot,
 	refreshGitHubCopilotToken,
-} from "../src/utils/oauth/github-copilot.ts";
+} from "../src/auth/oauth/github-copilot.ts";
+import { getModels } from "../src/compat.ts";
 
 function jsonResponse(body: unknown, status: number = 200): Response {
 	return new Response(JSON.stringify(body), {

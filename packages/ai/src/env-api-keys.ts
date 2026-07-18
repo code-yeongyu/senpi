@@ -95,7 +95,6 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		fireworks: "FIREWORKS_API_KEY",
 		fugu: "FUGU_API_KEY",
 		"gitlab-duo": "GITLAB_TOKEN",
-		"glm-zcode": "GLM_ZCODE_API_KEY",
 		google: "GEMINI_API_KEY",
 		"google-vertex": "GOOGLE_CLOUD_API_KEY",
 		groq: "GROQ_API_KEY",

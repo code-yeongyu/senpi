@@ -13,5 +13,9 @@ Do not stop, summarize, or suggest a new session on account of context limits. C
 }
 
 export function buildClaudeFable5Prompt(options: BuildDynamicSystemPromptOptions): string {
-	return buildDynamicSystemPrompt({ ...options, tuningSection: buildClaudeFable5Tuning() });
+	return buildDynamicSystemPrompt({
+		...options,
+		tuningSection: buildClaudeFable5Tuning(),
+		workstationDialect: "claude",
+	});
 }

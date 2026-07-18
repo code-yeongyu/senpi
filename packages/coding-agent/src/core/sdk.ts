@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { type Api, type AssistantMessage, type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
+import type { Message, Model } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
@@ -12,10 +12,11 @@ import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefi
 import { convertToLlm } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { findInitialModel, getModelNarrowingPatterns, resolveModelScope } from "./model-resolver.ts";
+import { ModelRuntime } from "./model-runtime.ts";
 import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
-import { getDefaultSessionDir, type SessionContext, SessionManager } from "./session-manager.ts";
+import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
 import { SettingsManager } from "./settings-manager.ts";
 import { getSupportedThinkingLevels } from "./thinking-levels.ts";
 import { time } from "./timings.ts";
@@ -36,21 +37,23 @@ import {
 export interface CreateAgentSessionOptions {
 	/** Working directory for project-local discovery. Default: process.cwd() */
 	cwd?: string;
-	/** Global config directory. Default: ~/.senpi/agent */
+	/** Global config directory. Default: ~/.pi/agent */
 	agentDir?: string;
 
-	/** Auth storage for credentials. Default: AuthStorage.create(agentDir/auth.json) */
+	/** Canonical model/auth runtime. Defaults to a runtime using agentDir/auth.json and models.json. */
+	modelRuntime?: ModelRuntime;
+	/** Legacy credential facade retained for SDK compatibility. */
 	authStorage?: AuthStorage;
-	/** Model registry. Default: ModelRegistry.create(authStorage, agentDir/models.json) */
+	/** Legacy model facade retained for SDK compatibility. */
 	modelRegistry?: ModelRegistry;
 
 	/** Model to use. Default: from settings, else first available */
 	model?: Model<any>;
 	/** Thinking level. Default: from settings, else 'medium' (clamped to model capabilities) */
 	thinkingLevel?: ThinkingLevel;
-	/** Global model narrowing for selectors and startup model choice */
+	/** Models available for cycling (Ctrl+P in interactive mode) */
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>;
-	/** Favorite models for Ctrl+P cycling */
+	/** Favorite models for Ctrl+P cycling. */
 	favoriteModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>;
 
 	/**
@@ -84,6 +87,7 @@ export interface CreateAgentSessionOptions {
 	settingsManager?: SettingsManager;
 	/** Session start event metadata for extension runtime startup. */
 	sessionStartEvent?: SessionStartEvent;
+	/** Generate a session title after the first successful turn. */
 	autoTitleSessions?: boolean;
 }
 
@@ -115,8 +119,8 @@ export type { Skill } from "./skills.ts";
 export type { Tool } from "./tools/index.ts";
 
 export {
-	// Tool factories (for custom cwd)
 	createBashTool,
+	// Tool factories (for custom cwd)
 	createCodingTools,
 	createEditTool,
 	createFindTool,
@@ -127,6 +131,27 @@ export {
 	createWriteTool,
 	withFileMutationQueue,
 };
+
+export function clampThinkingLevelToModel(
+	level: ThinkingLevel | undefined,
+	model: Model<any> | undefined,
+): ThinkingLevel {
+	if (!model?.reasoning) return "off";
+	const requested = level ?? "off";
+	const available = getSupportedThinkingLevels(model);
+	if (available.includes(requested)) return requested;
+	const ordered: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+	const requestedIndex = ordered.indexOf(requested);
+	for (let index = requestedIndex - 1; index >= 0; index--) {
+		const candidate = ordered[index];
+		if (candidate !== undefined && available.includes(candidate)) return candidate;
+	}
+	for (let index = requestedIndex + 1; index < ordered.length; index++) {
+		const candidate = ordered[index];
+		if (candidate !== undefined && available.includes(candidate)) return candidate;
+	}
+	return available[0] ?? "off";
+}
 
 // Helper Functions
 
@@ -174,24 +199,25 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getDefaultAgentDir();
 	let resourceLoader = options.resourceLoader;
 
-	// Use provided or create AuthStorage and ModelRegistry
 	const authPath = options.agentDir ? join(agentDir, "auth.json") : undefined;
 	const modelsPath = options.agentDir ? join(agentDir, "models.json") : undefined;
-	const authStorage = options.authStorage ?? AuthStorage.create(authPath);
-	const modelRegistry = options.modelRegistry ?? ModelRegistry.create(authStorage, modelsPath);
+	const authStorage = options.authStorage ?? options.modelRegistry?.authStorage ?? AuthStorage.create(authPath);
+	const modelRuntime =
+		options.modelRuntime ??
+		options.modelRegistry?.modelRuntime ??
+		(await ModelRuntime.create({ credentials: authStorage, modelsPath }));
+	const modelRegistry = options.modelRegistry ?? new ModelRegistry(modelRuntime, authStorage);
 
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
 	const sessionManager = options.sessionManager ?? SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));
 	const scopedModels =
 		options.scopedModels ??
 		(await resolveModelScope(
-			getModelNarrowingPatterns({
-				legacyEnabledPatterns: settingsManager.getEnabledModels(),
-			}),
-			modelRegistry,
+			getModelNarrowingPatterns({ legacyEnabledPatterns: settingsManager.getEnabledModels() }),
+			modelRuntime,
 		));
 	const favoriteModels =
-		options.favoriteModels ?? (await resolveModelScope(settingsManager.getFavoriteModels() ?? [], modelRegistry));
+		options.favoriteModels ?? (await resolveModelScope(settingsManager.getFavoriteModels() ?? [], modelRuntime));
 
 	if (!resourceLoader) {
 		resourceLoader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
@@ -199,28 +225,22 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		time("resourceLoader.reload");
 	}
 
-	const hasExistingSession = sessionManager.hasContextMessages();
-	const hasThinkingEntry = sessionManager.hasThinkingLevelChanges();
-	let existingSession: SessionContext | undefined;
-	const getExistingSession = (): SessionContext => {
-		existingSession ??= sessionManager.buildSessionContext();
-		return existingSession;
-	};
+	// Check if session has existing data to restore
+	const existingSession = sessionManager.buildSessionContext();
+	const hasExistingSession = existingSession.messages.length > 0;
+	const hasThinkingEntry = sessionManager.getBranch().some((entry) => entry.type === "thinking_level_change");
 
 	let model = options.model;
 	let modelFallbackMessage: string | undefined;
 
 	// If session has data, try to restore model from it
-	if (!model && hasExistingSession) {
-		const sessionContext = getExistingSession();
-		if (sessionContext.model) {
-			const restoredModel = modelRegistry.find(sessionContext.model.provider, sessionContext.model.modelId);
-			if (restoredModel && modelRegistry.hasConfiguredAuth(restoredModel)) {
-				model = restoredModel;
-			}
-			if (!model) {
-				modelFallbackMessage = `Could not restore model ${sessionContext.model.provider}/${sessionContext.model.modelId}`;
-			}
+	if (!model && hasExistingSession && existingSession.model) {
+		const restoredModel = modelRuntime.getModel(existingSession.model.provider, existingSession.model.modelId);
+		if (restoredModel && modelRuntime.hasConfiguredAuth(restoredModel.provider)) {
+			model = restoredModel;
+		}
+		if (!model) {
+			modelFallbackMessage = `Could not restore model ${existingSession.model.provider}/${existingSession.model.modelId}`;
 		}
 	}
 
@@ -232,7 +252,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			defaultProvider: settingsManager.getDefaultProvider(),
 			defaultModelId: settingsManager.getDefaultModel(),
 			defaultThinkingLevel: settingsManager.getDefaultThinkingLevel(),
-			modelRegistry,
+			modelRuntime,
 		});
 		model = result.model;
 		if (!model) {
@@ -247,7 +267,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	// If session has data, restore thinking level from it
 	if (thinkingLevel === undefined && hasExistingSession) {
 		thinkingLevel = hasThinkingEntry
-			? (getExistingSession().thinkingLevel as ThinkingLevel)
+			? (existingSession.thinkingLevel as ThinkingLevel)
 			: (settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL);
 	}
 
@@ -257,7 +277,11 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	}
 
 	// Clamp to model capabilities
-	thinkingLevel = clampThinkingLevelToModel(thinkingLevel, model);
+	if (!model) {
+		thinkingLevel = "off";
+	} else {
+		thinkingLevel = clampThinkingLevelToModel(thinkingLevel, model);
+	}
 
 	const defaultActiveToolNames: ToolName[] = ["read", "bash", "edit", "write"];
 	const allowedToolNames = options.tools ?? (options.noTools === "all" ? [] : undefined);
@@ -307,7 +331,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	};
 
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
-	const providerRetrySettings = settingsManager.getProviderRetrySettings();
 
 	agent = new Agent({
 		initialState: {
@@ -318,11 +341,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		},
 		convertToLlm: convertToLlmWithBlockImages,
 		streamFn: async (model, context, options) => {
-			const auth = await modelRegistry.getApiKeyAndHeaders(model, { sessionId: options?.sessionId });
-			if (!auth.ok) {
-				throw new Error(auth.error);
-			}
-			const requestModel = auth.upstreamModelId ? { ...model, id: auth.upstreamModelId } : model;
 			const providerRetrySettings = settingsManager.getProviderRetrySettings();
 			const httpIdleTimeoutMs = settingsManager.getHttpIdleTimeoutMs();
 			// SDKs treat timeout=0 as 0ms (immediate timeout), not "no timeout".
@@ -331,40 +349,25 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			const timeoutMs = options?.timeoutMs ?? providerRetrySettings.timeoutMs ?? effectiveTimeoutMs;
 			const websocketConnectTimeoutMs =
 				options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
-			const env = auth.env || options?.env ? { ...(auth.env ?? {}), ...(options?.env ?? {}) } : undefined;
-			let headers = mergeProviderAttributionHeaders(
-				model,
-				settingsManager,
-				options?.sessionId,
-				auth.headers,
-				options?.headers,
-			);
-			// Let extensions inject/adjust per-request headers (e.g. tracing, session correlation)
-			// after static assembly, before the provider HTTP call.
 			const headerRunner = extensionRunnerRef.current;
-			if (headerRunner?.hasHandlers("before_provider_headers")) {
-				headers = await headerRunner.emitBeforeProviderHeaders(headers ?? {});
-			}
-			const streamOptions = {
+			return modelRuntime.streamSimple(model, context, {
 				...options,
-				apiKey: auth.apiKey,
-				serviceTier: auth.serviceTier,
-				env,
 				timeoutMs,
 				websocketConnectTimeoutMs,
 				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
 				maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
-				headers,
-				extraBody: auth.extraBody || options?.extraBody ? { ...auth.extraBody, ...options?.extraBody } : undefined,
-			};
-			const responseStream = streamSimple(requestModel, context, streamOptions);
-			if (auth.reportOutcome !== undefined) {
-				void responseStream.result().then(
-					(message) => auth.reportOutcome?.(classifyCredentialOutcome(message)),
-					() => auth.reportOutcome?.("unavailable"),
-				);
-			}
-			return responseStream;
+				transformHeaders: async (requestHeaders) => {
+					const headers = mergeProviderAttributionHeaders(
+						model,
+						settingsManager,
+						options?.sessionId,
+						requestHeaders,
+					);
+					return headerRunner?.hasHandlers("before_provider_headers")
+						? headerRunner.emitBeforeProviderHeaders(headers ?? {})
+						: (headers ?? {});
+				},
+			});
 		},
 		onPayload: async (payload, _model) => {
 			const runner = extensionRunnerRef.current;
@@ -395,12 +398,12 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		transport: settingsManager.getTransport(),
 		thinkingBudgets: settingsManager.getThinkingBudgets(),
 		timeoutMs: settingsManager.getAgentStreamIdleTimeoutMs(),
-		maxRetryDelayMs: providerRetrySettings.maxRetryDelayMs,
+		maxRetryDelayMs: settingsManager.getProviderRetrySettings().maxRetryDelayMs,
 	});
 
 	// Restore messages if session has existing data
 	if (hasExistingSession) {
-		agent.state.messages = getExistingSession().messages;
+		agent.state.messages = existingSession.messages;
 		if (!hasThinkingEntry) {
 			sessionManager.appendThinkingLevelChange(thinkingLevel);
 		}
@@ -421,6 +424,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		favoriteModels,
 		resourceLoader,
 		customTools: options.customTools,
+		modelRuntime,
 		modelRegistry,
 		initialActiveToolNames,
 		allowedToolNames,
@@ -436,52 +440,4 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		extensionsResult,
 		modelFallbackMessage,
 	};
-}
-
-function classifyCredentialOutcome(
-	message: AssistantMessage,
-): "success" | "rate_limited" | "unauthorized" | "unavailable" {
-	if (message.stopReason !== "error") return "success";
-	const detail = message.errorMessage ?? "";
-	if (/\b(?:401|unauthori[sz]ed)\b/i.test(detail)) return "unauthorized";
-	if (/\b(?:429|rate[ -]?limit)\b/i.test(detail)) return "rate_limited";
-	return "unavailable";
-}
-
-/**
- * Clamp a requested thinking level to what the resolved model actually exposes.
- *
- * Capability tiers:
- * - Non-reasoning model: everything collapses to "off".
- * - Model metadata can disable individual levels via thinkingLevelMap.
- * - No xhigh support:   xhigh and max both collapse to "high".
- * - xhigh but no max:   max collapses to "xhigh" (currently GPT-5.2/5.3/5.4).
- * - Native max support: xhigh and max are both preserved (Opus 4.6 / 4.7).
- *
- * This keeps session state aligned with `getAvailableThinkingLevels()` so the
- * UI never claims a tier the provider will silently downgrade at request time.
- */
-export function clampThinkingLevelToModel(
-	level: ThinkingLevel | undefined,
-	model: Model<Api> | undefined,
-): ThinkingLevel {
-	if (!model?.reasoning) return "off";
-
-	const requestedLevel = level ?? "off";
-	const availableLevels = getSupportedThinkingLevels(model);
-	if (availableLevels.includes(requestedLevel)) return requestedLevel;
-
-	const clampedLevels: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
-	const requestedIndex = clampedLevels.indexOf(requestedLevel === "max" ? "xhigh" : requestedLevel);
-	if (requestedIndex === -1) return availableLevels[0] ?? "off";
-
-	for (let index = requestedIndex; index < clampedLevels.length; index++) {
-		const candidate = clampedLevels[index];
-		if (candidate !== undefined && availableLevels.includes(candidate)) return candidate;
-	}
-	for (let index = requestedIndex - 1; index >= 0; index--) {
-		const candidate = clampedLevels[index];
-		if (candidate !== undefined && availableLevels.includes(candidate)) return candidate;
-	}
-	return availableLevels[0] ?? "off";
 }

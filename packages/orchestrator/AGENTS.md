@@ -23,6 +23,7 @@ src/cli.ts            CLI source; package currently declares no bin entry
 - Correlate requests and responses explicitly and close pending operations on disconnect.
 - The supervisor owns spawned children and must clean them up on stop, error, and partial startup.
 - Radius disconnect/reconnect paths settle listeners and pending work without leaking sockets.
+- Radius presence owns machine/Pi heartbeat retry backoff and re-registration after repeated 404s; credential lookup uses coding-agent stored credentials (`readStoredCredential("radius")`) with `SENPI_RADIUS_API_KEY` as fallback.
 - Never log credentials, tokens, raw auth headers, or secret-bearing environments.
 - Treat the package as unstable and private. Do not promise a CLI install surface until `package.json` declares one.
 
@@ -33,7 +34,7 @@ src/cli.ts            CLI source; package currently declares no bin entry
 | IPC schema/framing | `src/ipc/` |
 | Child RPC lifecycle | `src/rpc-process.ts` and `src/supervisor.ts` |
 | Daemon request handling | `src/handler.ts` and `src/serve.ts` |
-| Radius integration | `src/radius.ts` |
+| Radius credentials + heartbeat/re-registration | `src/radius.ts` |
 | Config/storage | `src/config.ts`, `src/storage.ts` |
 
 ## VALIDATION

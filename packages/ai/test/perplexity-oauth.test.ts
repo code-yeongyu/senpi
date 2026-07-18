@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { getOAuthProvider } from "../src/auth/oauth/index.ts";
+import { loginPerplexity, refreshPerplexityToken } from "../src/auth/oauth/perplexity.ts";
 import { builtinProviders } from "../src/providers/all.ts";
-import { getOAuthProvider } from "../src/utils/oauth/index.ts";
-import type { OAuthProviderInterface } from "../src/utils/oauth/types.ts";
 
 const originalNoBorrow = process.env.PI_AUTH_NO_BORROW;
 
@@ -14,13 +14,6 @@ function jwt(payload: Record<string, unknown>): string {
 	return `${encode({ alg: "none" })}.${encode(payload)}.`;
 }
 
-function provider(): OAuthProviderInterface {
-	const value = getOAuthProvider("perplexity");
-	expect(value).toBeDefined();
-	if (!value) throw new Error("perplexity OAuth provider is not registered");
-	return value;
-}
-
 describe.sequential("Perplexity OAuth", () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
@@ -28,8 +21,12 @@ describe.sequential("Perplexity OAuth", () => {
 		else process.env.PI_AUTH_NO_BORROW = originalNoBorrow;
 	});
 
-	it("is registered and advertised by a model provider", () => {
-		expect(getOAuthProvider("perplexity")?.id).toBe("perplexity");
+	it("keeps flow helpers but does not advertise OAuth on the model provider", async () => {
+		// Session JWT OAuth is not a direct api.perplexity.ai credential path.
+		expect(getOAuthProvider("perplexity")).toBeUndefined();
+		const { perplexityProvider } = await import("../src/providers/perplexity.ts");
+		expect(perplexityProvider().auth.oauth).toBeUndefined();
+		expect(perplexityProvider().auth.apiKey).toBeDefined();
 		expect(builtinProviders().map((entry) => entry.id)).toContain("perplexity");
 	});
 
@@ -60,7 +57,7 @@ describe.sequential("Perplexity OAuth", () => {
 		);
 		const answers = ["member@example.com", "123456"];
 		// When: the email OTP flow sends and verifies the code.
-		const credentials = await provider().login({
+		const credentials = await loginPerplexity({
 			onAuth: () => {},
 			onDeviceCode: () => {},
 			onPrompt: async () => answers.shift() ?? "",
@@ -72,7 +69,7 @@ describe.sequential("Perplexity OAuth", () => {
 		expect(credentials).toMatchObject({ access: tokenWithoutExpiry, refresh: tokenWithoutExpiry });
 		expect(credentials.expires).toBe(8.64e15);
 
-		const refreshed = await provider().refreshToken({ ...credentials, expires: 1 });
+		const refreshed = await refreshPerplexityToken({ ...credentials, expires: 1 });
 		expect(refreshed.access).toBe(tokenWithoutExpiry);
 		expect(refreshed.expires).toBe(8.64e15);
 	});
@@ -80,7 +77,7 @@ describe.sequential("Perplexity OAuth", () => {
 	it("uses an exp claim on refresh and keeps failed endpoint details secret", async () => {
 		const exp = Math.floor(Date.now() / 1000) + 3600;
 		const expiring = jwt({ exp });
-		const refreshed = await provider().refreshToken({ access: expiring, refresh: expiring, expires: 1 });
+		const refreshed = await refreshPerplexityToken({ access: expiring, refresh: expiring, expires: 1 });
 		expect(refreshed.expires).toBe(exp * 1000 - 5 * 60_000);
 
 		process.env.PI_AUTH_NO_BORROW = "1";
@@ -101,14 +98,12 @@ describe.sequential("Perplexity OAuth", () => {
 			}),
 		);
 		const answers = ["private@example.com", "otp-private-value"];
-		const error = await provider()
-			.login({
-				onAuth: () => {},
-				onDeviceCode: () => {},
-				onPrompt: async () => answers.shift() ?? "",
-				onSelect: async () => undefined,
-			})
-			.catch((value: unknown) => value);
+		const error = await loginPerplexity({
+			onAuth: () => {},
+			onDeviceCode: () => {},
+			onPrompt: async () => answers.shift() ?? "",
+			onSelect: async () => undefined,
+		}).catch((value: unknown) => value);
 		expect(String(error)).toContain("401");
 		expect(String(error)).not.toContain("otp-private-value");
 		expect(String(error)).not.toContain("perplexity-response-private");

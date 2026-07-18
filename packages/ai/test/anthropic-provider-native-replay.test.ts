@@ -70,6 +70,9 @@ async function capturePayload(
 	const payloadCaptureModel: Model<"anthropic-messages"> = {
 		...model,
 		baseUrl: "http://127.0.0.1:9",
+		// The localhost override only captures the payload; these tests exercise
+		// first-party replay semantics rather than endpoint capability detection.
+		compat: { ...model.compat, supportsWebSearch: true },
 	};
 	const stream = streamSimple(
 		payloadCaptureModel,

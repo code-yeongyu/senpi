@@ -21,7 +21,7 @@ export function getMcpCatalogExposureStatus(
 	// Report the total exposed tools; in search mode note how many are active now.
 	const hint =
 		policy.mode === "search"
-			? `search mode: ${policy.activeEntries.length} active now, ${policy.registeredEntries.length} searchable via mcp_search`
+			? `search mode: ${policy.activeEntries.length} active now, ${policy.registeredEntries.length} searchable via tool_search`
 			: undefined;
 	return { hint, toolCount: policy.registeredEntries.length, mode: policy.mode };
 }

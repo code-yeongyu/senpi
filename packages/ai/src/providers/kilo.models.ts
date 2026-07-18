@@ -12,7 +12,12 @@ export const KILO_MODELS = {
 		baseUrl: "https://api.kilo.ai/api/gateway",
 		reasoning: true,
 		input: ["text", "image"],
-		cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+		cost: {
+			input: 3,
+			output: 15,
+			cacheRead: 0.3,
+			cacheWrite: 3.75,
+		},
 		contextWindow: 200000,
 		maxTokens: 64000,
 	} satisfies Model<"openai-completions">,

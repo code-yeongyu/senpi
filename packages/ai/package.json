@@ -1,7 +1,7 @@
 {
 	"name": "@earendil-works/pi-ai",
 	"private": true,
-	"version": "2026.7.14-3",
+	"version": "2026.7.17-5",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -35,6 +35,10 @@
 		"./bedrock-provider": {
 			"types": "./dist/bedrock-provider.d.ts",
 			"import": "./dist/bedrock-provider.js"
+		},
+		"./bun-oauth": {
+			"types": "./dist/bun-oauth.d.ts",
+			"import": "./dist/bun-oauth.js"
 		}
 	},
 	"bin": {
@@ -47,6 +51,7 @@
 	"scripts": {
 		"clean": "shx rm -rf dist",
 		"generate-models": "tsx scripts/generate-models.ts",
+		"generate-model-catalog": "tsx scripts/generate-models.ts --strict --json-only --json-output ../../.artifacts/model-catalog",
 		"generate-image-models": "tsx scripts/generate-image-models.ts",
 		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js",
 		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",

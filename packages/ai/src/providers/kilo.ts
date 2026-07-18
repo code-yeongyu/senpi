@@ -1,7 +1,7 @@
 import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
 import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
+import { loadKiloOAuth } from "../auth/oauth/load.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { loadKiloOAuth } from "../utils/oauth/load.ts";
 import { KILO_MODELS } from "./kilo.models.ts";
 
 export function kiloProvider(): Provider<"openai-completions"> {

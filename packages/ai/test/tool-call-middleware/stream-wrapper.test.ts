@@ -2,6 +2,7 @@ import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { getProtocol } from "../../src/tool-call-middleware/context-transformer.ts";
 import { wrapStreamWithToolCallMiddleware } from "../../src/tool-call-middleware/stream-wrapper.ts";
+import type { StreamParserEvent, ToolCallProtocol } from "../../src/tool-call-middleware/types.ts";
 import type { AssistantMessage, AssistantMessageEvent, Tool } from "../../src/types.ts";
 import { AssistantMessageEventStream } from "../../src/utils/event-stream.ts";
 
@@ -122,6 +123,31 @@ async function collectEvents(stream: AssistantMessageEventStream): Promise<Assis
 		events.push(event);
 	}
 	return events;
+}
+
+function createScriptedProtocol(
+	feed: (text: string) => StreamParserEvent[],
+	finish: () => StreamParserEvent[],
+): ToolCallProtocol {
+	return {
+		formatToolsSystemPrompt: () => "",
+		formatToolResponse: () => "",
+		formatToolCall: () => "",
+		parseGeneratedText: () => [],
+		createStreamParser: () => ({ feed, finish }),
+	};
+}
+
+function createScriptedInnerStream(
+	events: Array<Exclude<AssistantMessageEvent, { type: "done" | "error" }>>,
+	terminal: Extract<AssistantMessageEvent, { type: "done" | "error" }>,
+): AssistantMessageEventStream {
+	const innerStream = new AssistantMessageEventStream();
+	for (const event of events) {
+		innerStream.push(event);
+	}
+	innerStream.push(terminal);
+	return innerStream;
 }
 
 describe("wrapStreamWithToolCallMiddleware", () => {
@@ -246,6 +272,227 @@ describe("wrapStreamWithToolCallMiddleware", () => {
 			{ type: "thinking", thinking: "Need to think carefully" },
 			{ type: "text", text: "Done" },
 		]);
+	});
+
+	it("finalizes parser flags from a terminal flush", async () => {
+		const partial = createAssistantMessage([]);
+		let finishCalls = 0;
+		const protocol = createScriptedProtocol(
+			() => [],
+			() => {
+				finishCalls += 1;
+				return [
+					{ type: "toolcall_start", index: 0, id: "flagged-tool", name: "get_weather" },
+					{
+						type: "toolcall_end",
+						index: 0,
+						id: "flagged-tool",
+						name: "get_weather",
+						arguments: {},
+						incomplete: true,
+						errorMessage: "Tool call was truncated mid-arguments",
+					},
+				];
+			},
+		);
+		const innerStream = createScriptedInnerStream(
+			[
+				{ type: "start", partial },
+				{ type: "text_start", contentIndex: 0, partial },
+				{ type: "text_delta", contentIndex: 0, delta: "partial call", partial },
+			],
+			{ type: "done", reason: "stop", message: createAssistantMessage([], "stop") },
+		);
+
+		const outerStream = wrapStreamWithToolCallMiddleware(innerStream, protocol, [weatherTool]);
+		const events = await collectEvents(outerStream);
+		const result = await outerStream.result();
+
+		expect(finishCalls).toBe(1);
+		expect(events).toContainEqual(expect.objectContaining({ type: "toolcall_end" }));
+		expect(result.stopReason).toBe("toolUse");
+		expect(result.content).toEqual([
+			{
+				type: "toolCall",
+				id: "flagged-tool",
+				name: "get_weather",
+				arguments: {},
+				incomplete: true,
+				errorMessage: "Tool call was truncated mid-arguments",
+			},
+		]);
+	});
+
+	it("flushes each pending text block exactly once when done omits text_end", async () => {
+		const partial = createAssistantMessage([]);
+		let finishCalls = 0;
+		const protocol = createScriptedProtocol(
+			() => [],
+			() => {
+				const index = finishCalls;
+				finishCalls += 1;
+				return [
+					{ type: "toolcall_start", index, id: `tool-${index}`, name: "get_weather" },
+					{
+						type: "toolcall_end",
+						index,
+						id: `tool-${index}`,
+						name: "get_weather",
+						arguments: { city: index === 0 ? "Seoul" : "Tokyo" },
+					},
+				];
+			},
+		);
+		const innerStream = createScriptedInnerStream(
+			[
+				{ type: "start", partial },
+				{ type: "text_start", contentIndex: 0, partial },
+				{ type: "text_delta", contentIndex: 0, delta: "first", partial },
+				{ type: "text_end", contentIndex: 0, content: "first", partial },
+				{ type: "text_start", contentIndex: 1, partial },
+				{ type: "text_delta", contentIndex: 1, delta: "second", partial },
+			],
+			{ type: "done", reason: "stop", message: createAssistantMessage([], "stop") },
+		);
+
+		const outerStream = wrapStreamWithToolCallMiddleware(innerStream, protocol, [weatherTool]);
+		const events = await collectEvents(outerStream);
+		const result = await outerStream.result();
+
+		expect(finishCalls).toBe(2);
+		expect(events.filter((event) => event.type === "toolcall_end")).toHaveLength(2);
+		expect(result.content).toEqual([
+			expect.objectContaining({ type: "toolCall", id: "tool-0", arguments: { city: "Seoul" } }),
+			expect.objectContaining({ type: "toolCall", id: "tool-1", arguments: { city: "Tokyo" } }),
+		]);
+	});
+
+	it("turns a dangling partial into a flagged tool call before recovering a transport error", async () => {
+		const partial = createAssistantMessage([]);
+		let finishCalls = 0;
+		const protocol = createScriptedProtocol(
+			() => [{ type: "toolcall_start", index: 0, id: "dangling-tool", name: "get_weather" }],
+			() => {
+				finishCalls += 1;
+				return [];
+			},
+		);
+		const transportError = createAssistantMessage([], "error");
+		transportError.errorMessage = "transport failed";
+		const innerStream = createScriptedInnerStream(
+			[
+				{ type: "start", partial },
+				{ type: "text_start", contentIndex: 0, partial },
+				{ type: "text_delta", contentIndex: 0, delta: "partial call", partial },
+			],
+			{ type: "error", reason: "error", error: transportError },
+		);
+
+		const outerStream = wrapStreamWithToolCallMiddleware(innerStream, protocol, [weatherTool]);
+		const events = await collectEvents(outerStream);
+		const result = await outerStream.result();
+
+		expect(finishCalls).toBe(1);
+		expect(events.map((event) => event.type)).toContain("toolcall_end");
+		expect(result.stopReason).toBe("toolUse");
+		expect(result.content).toEqual([
+			{
+				type: "toolCall",
+				id: "dangling-tool",
+				name: "get_weather",
+				arguments: {},
+				incomplete: true,
+				errorMessage: "Tool call stream ended before completion",
+			},
+		]);
+	});
+
+	it("flushes and finalizes a dangling parser call when the iterator throws", async () => {
+		const partial = createAssistantMessage([]);
+		let finishCalls = 0;
+		const protocol = createScriptedProtocol(
+			() => [
+				{ type: "toolcall_start", index: 0, id: "iterator-tool", name: "get_weather" },
+				{ type: "toolcall_delta", index: 0, argumentsDelta: '{"city":"Seo' },
+			],
+			() => {
+				finishCalls += 1;
+				return [];
+			},
+		);
+		const innerStream = new AssistantMessageEventStream();
+		innerStream.push({ type: "start", partial });
+		innerStream.push({ type: "text_start", contentIndex: 0, partial });
+		innerStream.push({ type: "text_delta", contentIndex: 0, delta: "partial call", partial });
+		innerStream.fail(new Error("iterator failed"));
+
+		const outerStream = wrapStreamWithToolCallMiddleware(innerStream, protocol, [weatherTool]);
+		const events = await collectEvents(outerStream);
+		const result = await outerStream.result();
+
+		expect(finishCalls).toBe(1);
+		expect(events.filter((event) => event.type === "toolcall_end")).toHaveLength(1);
+		expect(result.content).toEqual([
+			{
+				type: "toolCall",
+				id: "iterator-tool",
+				name: "get_weather",
+				arguments: { city: "Seo" },
+				incomplete: true,
+				errorMessage: "Tool call stream ended before completion",
+			},
+		]);
+		expect(result.content[0]).not.toHaveProperty("partialJson");
+	});
+
+	it("changes length to toolUse only when a finalized tool call was emitted", async () => {
+		const partial = createAssistantMessage([]);
+		const recoveredProtocol = createScriptedProtocol(
+			() => [
+				{ type: "toolcall_start", index: 0, id: "recovered-tool", name: "get_weather" },
+				{
+					type: "toolcall_end",
+					index: 0,
+					id: "recovered-tool",
+					name: "get_weather",
+					arguments: { city: "Seoul" },
+				},
+			],
+			() => [],
+		);
+		const recoveredInnerStream = createScriptedInnerStream(
+			[
+				{ type: "start", partial },
+				{ type: "text_start", contentIndex: 0, partial },
+				{ type: "text_delta", contentIndex: 0, delta: "complete call", partial },
+			],
+			{ type: "done", reason: "length", message: createAssistantMessage([], "length") },
+		);
+
+		const recoveredOuterStream = wrapStreamWithToolCallMiddleware(recoveredInnerStream, recoveredProtocol, [
+			weatherTool,
+		]);
+		await collectEvents(recoveredOuterStream);
+		expect((await recoveredOuterStream.result()).stopReason).toBe("toolUse");
+
+		const noToolPartial = createAssistantMessage([]);
+		const noToolOuterStream = wrapStreamWithToolCallMiddleware(
+			createScriptedInnerStream(
+				[
+					{ type: "start", partial: noToolPartial },
+					{ type: "text_start", contentIndex: 0, partial: noToolPartial },
+					{ type: "text_delta", contentIndex: 0, delta: "ordinary text", partial: noToolPartial },
+				],
+				{ type: "done", reason: "length", message: createAssistantMessage([], "length") },
+			),
+			createScriptedProtocol(
+				() => [],
+				() => [],
+			),
+			[weatherTool],
+		);
+		await collectEvents(noToolOuterStream);
+		expect((await noToolOuterStream.result()).stopReason).toBe("length");
 	});
 
 	it("recovers completed tool calls when the inner stream ends with a transport error", async () => {

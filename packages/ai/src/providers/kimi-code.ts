@@ -1,7 +1,7 @@
 import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
 import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
+import { loadKimiCodeOAuth } from "../auth/oauth/load.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { loadKimiCodeOAuth } from "../utils/oauth/load.ts";
 import { KIMI_CODE_MODELS } from "./kimi-code.models.ts";
 
 export function kimiCodeProvider(): Provider<"openai-completions"> {

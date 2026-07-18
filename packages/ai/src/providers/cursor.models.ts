@@ -4,16 +4,21 @@
 import type { Model } from "../types.ts";
 
 export const CURSOR_MODELS = {
-	default: {
+	"default": {
 		id: "default",
 		name: "Auto",
-		api: "openai-completions",
+		api: "cursor-connect",
 		provider: "cursor",
 		baseUrl: "https://api2.cursor.sh",
 		reasoning: false,
 		input: ["text", "image"],
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		cost: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+		},
 		contextWindow: 200000,
 		maxTokens: 64000,
-	} satisfies Model<"openai-completions">,
+	} satisfies Model<"cursor-connect">,
 } as const;

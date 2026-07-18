@@ -142,5 +142,5 @@ ${buildFileOperationsTuning()}`;
 }
 
 export function buildGpt56Prompt(options: BuildDynamicSystemPromptOptions): string {
-	return buildDynamicSystemPrompt({ ...options, corePrompt: buildGpt56Core });
+	return buildDynamicSystemPrompt({ ...options, corePrompt: buildGpt56Core, workstationDialect: "codex" });
 }

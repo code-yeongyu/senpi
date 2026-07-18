@@ -3,7 +3,6 @@ import { parseGoalCommand } from "./command.ts";
 import { formatGoalForTool, goalStatusLabel } from "./format.ts";
 import { clearGoal, createGoal, readGoal, updateGoal } from "./store.ts";
 import type { Goal, GoalAccountingMode, GoalStoreRef, TokenUsageSnapshot } from "./types.ts";
-import { updateGoalUi } from "./ui.ts";
 
 const GOAL_USAGE = "Usage: /goal <objective>";
 const GOAL_EMPTY_HINT = "No goal is currently set.";
@@ -22,6 +21,7 @@ export type GoalCommandRegistrationDeps = {
 	readonly stopAgentGoalAccounting: (goalId: string) => void;
 	readonly clearAgentGoalAccounting: () => void;
 	readonly queueGoalContinuation: (pi: ExtensionAPI, ctx: ExtensionContext, goal: Goal) => void;
+	readonly refreshGoalUi: (ctx: ExtensionContext, goal: Goal | null) => void;
 };
 
 export function registerGoalCommand(pi: ExtensionAPI, deps: GoalCommandRegistrationDeps): void {
@@ -33,7 +33,7 @@ export function registerGoalCommand(pi: ExtensionAPI, deps: GoalCommandRegistrat
 				switch (command.kind) {
 					case "show": {
 						const goal = await readGoal(deps.goalStoreRef(ctx));
-						updateGoalUi(ctx, goal);
+						deps.refreshGoalUi(ctx, goal);
 						ctx.ui.notify(
 							goal === null ? `${GOAL_USAGE}\n${GOAL_EMPTY_HINT}` : formatGoalForTool(goal),
 							goal ? "info" : "warning",
@@ -54,7 +54,7 @@ export function registerGoalCommand(pi: ExtensionAPI, deps: GoalCommandRegistrat
 						} else {
 							deps.stopAgentGoalAccounting(goal.id);
 						}
-						updateGoalUi(ctx, goal);
+						deps.refreshGoalUi(ctx, goal);
 						ctx.ui.notify(`Goal ${goalStatusLabel(goal.status)}\n${formatGoalForTool(goal)}`, "info");
 						deps.queueGoalContinuation(pi, ctx, goal);
 						return;
@@ -63,7 +63,7 @@ export function registerGoalCommand(pi: ExtensionAPI, deps: GoalCommandRegistrat
 						await deps.accountCurrentAgentTurn(ctx, EMPTY_USAGE, "active");
 						const cleared = await clearGoal(deps.goalStoreRef(ctx));
 						deps.clearAgentGoalAccounting();
-						updateGoalUi(ctx, null);
+						deps.refreshGoalUi(ctx, null);
 						ctx.ui.notify(
 							cleared ? "Goal cleared" : "No goal to clear\nThis thread does not currently have a goal.",
 							cleared ? "info" : "warning",
@@ -96,7 +96,7 @@ async function setGoalObjective(
 	}
 	const goal = current === null ? await createGoal(ref, objective) : await updateGoal(ref, { objective });
 	if (goal.status === "active") deps.beginAgentGoalAccounting(goal);
-	updateGoalUi(ctx, goal);
+	deps.refreshGoalUi(ctx, goal);
 	ctx.ui.notify(`Goal ${goalStatusLabel(goal.status)}\n${formatGoalForTool(goal)}`, "info");
 	deps.queueGoalContinuation(pi, ctx, goal);
 }

@@ -12,11 +12,13 @@ tool-call-middleware/
 ├── stream-wrapper.ts           # Wraps AssistantMessageEventStream → re-parses chunks
 ├── protocols/
 │   ├── hermes.ts               # Hermes <tool_call>{json}</tool_call> (Qwen, Mistral fine-tunes)
-│   ├── morph-xml.ts            # <fn><arg>val</arg></fn> XML (Gemini-style)
+│   ├── morph-xml.ts            # <fn><arg>val</arg></fn> XML (canonical "morph-xml"; "xml" deprecated alias)
 │   ├── yaml-xml.ts             # YAML body inside XML tags
 │   ├── gemma4.ts               # Gemma 4 delimiter format `<|tool_call>call:name{…}<tool_call|>`
 │   ├── json-mix.ts             # Shared JSON-mix helper (Hermes + delimited variants)
-│   └── xml-tool-tag-scanner.ts # Streaming XML tag boundary scanner
+│   ├── xml-tool-tag-scanner.ts # Streaming XML tag boundary scanner
+│   ├── anthropic-xml/          # Legacy <invoke>/<parameter> parser, coercion, scanner, formatter, stream parser
+│   └── antml/                  # ANTML <function_calls>/<invoke> protocol with Claude-Code-style failure tolerance
 ├── TESTING.md                  # Manual test commands per protocol (OpenRouter live API)
 └── changes.md                  # Fork tracker: morph-xml strict mode, yaml+xml, stream error preservation
 ```
@@ -33,10 +35,10 @@ tool-call-middleware/
 
 ## ADD A PROTOCOL (5 steps)
 
-1. Implement `Protocol` interface in `protocols/<name>.ts` (parse, format, stream).
+1. Implement `Protocol` interface in `protocols/<name>.ts` or `protocols/<name>/index.ts` plus focused helpers (parse, format, stream).
 2. Add system-prompt rendering for tools to `context-transformer.ts`.
 3. Export from `index.ts` and register in the protocol registry.
-4. Add `"<name>"` to the `ToolCallFormat` union in `types.ts` (this dir), the literal whitelist in `getToolCallFormat()` in `index.ts`, and the `toolCallFormat` TypeBox union in `packages/coding-agent/src/core/model-registry.ts` (validates `~/.senpi/agent/models.json`).
+4. Add "<name>" to the ToolCallFormat union in types.ts (this dir) and to the literal whitelist in getToolCallFormat() in index.ts. models.json accepts toolCallFormat as a free string (packages/coding-agent/src/core/model-config.ts:104, Type.String() by design), so the getToolCallFormat() whitelist is the ONLY enforcement point — a format missing there silently deactivates the middleware.
 5. Add manual test command to `TESTING.md` and an automated test under `packages/ai/test/tool-call-middleware/<name>*.test.ts`.
 
 ## CONVENTIONS
@@ -55,6 +57,6 @@ tool-call-middleware/
 
 ## NOTES
 
-- `TESTING.md` documents the canonical live-API test commands per protocol (Qwen for Hermes, Gemini for MorphXML, Gemma 4 for delimiter). Update it when adding new protocols.
+- `TESTING.md` documents the canonical live-API test commands per protocol (Qwen for Hermes, Gemini for MorphXML, Gemma 4 for delimiter, and Anthropic XML). Update it when adding new protocols.
 - This package's middleware is fork-modified — see `changes.md` for the architectural rewrite toward `minpeter/ai-sdk-tool-call-middleware` style.
 - `compat.toolCallFormat` on a custom model in `~/.senpi/agent/models.json` is what activates middleware for that model.

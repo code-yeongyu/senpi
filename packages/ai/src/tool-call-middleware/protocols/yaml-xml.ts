@@ -1,5 +1,6 @@
 import YAML from "yaml";
 import type { TextContent, Tool } from "../../types.ts";
+import { validateToolArguments } from "../../utils/validation.ts";
 import type { ParsedToolCall, ParserOptions, StreamParser, StreamParserEvent } from "../types.ts";
 import { findEarliestXmlToolTag, getSafeXmlTextLength } from "./xml-tool-tag-scanner.ts";
 
@@ -224,6 +225,17 @@ export function createYamlXmlStreamParser(tools: Tool[], options?: ParserOptions
 					options?.onError?.("Could not process YAML XML tool call, keeping original text.", {
 						toolCall: originalCallText,
 					});
+					if (currentToolState.lastArgumentsSnapshot !== null) {
+						events.push({
+							type: "toolcall_end",
+							index: currentToolState.index,
+							name: currentToolState.name,
+							id: currentToolState.id,
+							arguments: {},
+							incomplete: true,
+							errorMessage: "Tool call arguments could not be parsed",
+						});
+					}
 					if (shouldEmitRawToolCallTextOnError(options)) {
 						events.push({ type: "text", text: originalCallText });
 					}
@@ -302,33 +314,55 @@ export function createYamlXmlStreamParser(tools: Tool[], options?: ParserOptions
 				events.push({ type: "text", text: buffer });
 				buffer = "";
 			}
-			if (currentToolState && buffer.length > 0) {
+			if (currentToolState) {
+				const state = currentToolState;
 				const parsedArguments = parseYamlMapping(buffer);
-				if (parsedArguments !== null) {
-					emitSnapshot(events, buffer);
-					if (currentToolState.lastArgumentsSnapshot === null) {
-						events.push({
-							type: "toolcall_start",
-							index: currentToolState.index,
-							name: currentToolState.name,
-							id: currentToolState.id,
+				const tool = tools.find((candidate) => candidate.name === state.name);
+				let validatedArguments: Record<string, unknown> | null = null;
+
+				if (parsedArguments !== null && tool) {
+					try {
+						validatedArguments = validateToolArguments(tool, {
+							type: "toolCall",
+							id: state.id,
+							name: state.name,
+							arguments: parsedArguments,
 						});
+					} catch {
+						// Validation failure makes the truncated call incomplete rather than executable.
+						validatedArguments = null;
+					}
+				}
+
+				if (validatedArguments !== null) {
+					emitSnapshot(events, buffer);
+					if (state.lastArgumentsSnapshot === null) {
+						events.push({ type: "toolcall_start", index: state.index, name: state.name, id: state.id });
 					}
 					events.push({
 						type: "toolcall_end",
-						index: currentToolState.index,
-						name: currentToolState.name,
-						id: currentToolState.id,
-						arguments: parsedArguments,
+						index: state.index,
+						name: state.name,
+						id: state.id,
+						arguments: validatedArguments,
 					});
 				} else {
-					const rawToolCall = `<${currentToolState.name}>${buffer}`;
-					options?.onError?.("Could not complete streaming YAML XML tool call at finish.", {
-						toolCall: rawToolCall,
-					});
-					if (shouldEmitRawToolCallTextOnError(options)) {
-						events.push({ type: "text", text: rawToolCall });
+					if (state.lastArgumentsSnapshot === null) {
+						events.push({ type: "toolcall_start", index: state.index, name: state.name, id: state.id });
 					}
+					events.push({
+						type: "toolcall_end",
+						index: state.index,
+						name: state.name,
+						id: state.id,
+						arguments: parsedArguments ?? {},
+						incomplete: true,
+						errorMessage: "Tool call was truncated mid-arguments",
+					});
+					options?.onError?.("Could not complete streaming YAML XML tool call at finish.", {
+						protocol: "yaml-xml",
+						retainedLength: buffer.length,
+					});
 				}
 				buffer = "";
 				currentToolState = null;

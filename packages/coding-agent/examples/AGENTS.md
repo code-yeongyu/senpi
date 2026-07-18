@@ -9,6 +9,7 @@ extensions/        Tools, commands, UI, providers, hooks, resources
 extensions/*/      Multi-file examples and nested private workspaces
 sdk/               Programmatic SDK usage
 rpc-extension-ui.ts RPC-compatible extension UI example
+extensions/kimi-deferred-tools.ts  Deferred tool discovery/activation example
 ```
 
 ## CONVENTIONS
@@ -18,6 +19,8 @@ rpc-extension-ui.ts RPC-compatible extension UI example
 - Extension factories have no top-level runtime side effects. Register work through the public `pi.*` API and lifecycle events.
 - New interactive examples should use configurable keybindings and themed TUI helpers. Existing demos may keep fixed controls when the control scheme is part of the example. Direct terminal writes belong only in examples explicitly teaching a terminal protocol; ordinary SDK examples may use normal stdout.
 - Tool string enums use the shared `StringEnum` helper for provider compatibility.
+- SDK examples should use `ModelRuntime` for auth/custom-model/session composition; deprecated static catalog helpers import from `@earendil-works/pi-ai/compat`.
+- Deferred-tool examples preserve the Kimi flow: expose search first, activate via `pi.setActiveTools()`, and register lifecycle work in `session_start`.
 - Stateful examples persist reconstructable state in session entries or tool-result details so fork/resume behavior remains valid.
 - Nested example packages are private workspaces with exact-pinned dependencies. Treat their manifests and lock impact as production dependency changes.
 

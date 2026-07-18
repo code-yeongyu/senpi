@@ -59,7 +59,8 @@ export function renderWebfetchResult(
 	const format = theme.fg("accent", details.format);
 	const size = theme.fg("muted", formatBytes(details.bytes));
 	const converted = details.converted ? theme.fg("dim", " converted") : "";
-	const header = `${status} ${theme.fg("muted", "•")} ${format} ${theme.fg("muted", "•")} ${size}${converted}`;
+	const truncatedNote = details.outputTruncated ? theme.fg("warning", " truncated") : "";
+	const header = `${status} ${theme.fg("muted", "•")} ${format} ${theme.fg("muted", "•")} ${size}${converted}${truncatedNote}`;
 
 	if (!options.expanded) {
 		const preview = previewText(text, theme);

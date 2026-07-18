@@ -15,7 +15,7 @@ const INVALID: CoercionResult = { ok: false };
 const LEADING_RAW_NEWLINE = /^(?:\r\n|\r|\n)/;
 const TRAILING_RAW_NEWLINE = /(?:\r\n|\r|\n)$/;
 
-function trimRawBoundaryNewlines(value: string): string {
+export function trimRawBoundaryNewlines(value: string): string {
 	return value.replace(LEADING_RAW_NEWLINE, "").replace(TRAILING_RAW_NEWLINE, "");
 }
 

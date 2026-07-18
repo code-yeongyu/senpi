@@ -2,7 +2,7 @@
 //
 // Completes exposure:"auto": a server whose filtered tool count exceeds
 // searchThreshold enters SEARCH mode — the full catalog is registered but only
-// directTools stay active, and an always-active mcp_search promotes the rest on
+// directTools stay active, and an always-active tool_search promotes the rest on
 // demand. Prompt-cache mitigations (SPEC §5): stable name sort everywhere;
 // activation turns accept a cache miss (documented); opt-in settings.stubSwap
 // registers 30-70-token stubs so the tools array stays length-stable and only
@@ -24,9 +24,9 @@ import {
 } from "./register.ts";
 import {
 	createMcpSearchTool,
-	MCP_SEARCH_TOOL_NAME,
 	rehydrateActiveToolsFromHistory,
 	type SearchableMcpTool,
+	TOOL_SEARCH_TOOL_NAME,
 	unionStable,
 } from "./tool-search.ts";
 
@@ -52,13 +52,13 @@ export interface McpTierBRegistration {
 	readonly searchable: SearchableMcpTool[];
 	/**
 	 * Replay activation markers found in session history through the SAME
-	 * activation path mcp_search uses (stub swap + stable ordering), so a
+	 * activation path tool_search uses (stub swap + stable ordering), so a
 	 * resumed/compacted session restores its promoted tools without
 	 * re-searching. Returns the newly activated names (empty when nothing new).
 	 */
 	rehydrateFromHistory(messages: readonly unknown[]): string[];
 	/** Activate registered tools by name through the same stable path
-	 * mcp_search uses (skill lazy-reveal, todo 37). Unknown names ignored. */
+	 * tool_search uses (skill lazy-reveal, todo 37). Unknown names ignored. */
 	activate(names: readonly string[]): void;
 }
 
@@ -130,15 +130,15 @@ export function registerMcpTierBTools(
 		return fresh;
 	};
 
-	// mcp_search carries a distinct param schema, so register it on its own
+	// tool_search carries a distinct param schema, so register it on its own
 	// rather than mixing it into the broadly-typed catalog def array.
 	pi.registerTool(searchTool);
 
 	if (!stubSwap) {
-		// Default search mode: full defs registered, only directTools + mcp_search
+		// Default search mode: full defs registered, only directTools + tool_search
 		// active. Newly promoted tools enter the array on their activation turn
 		// (an accepted cache miss).
-		const active = orderActiveSet([...currentBase, MCP_SEARCH_TOOL_NAME, ...activeMcpNames], reference);
+		const active = orderActiveSet([...currentBase, TOOL_SEARCH_TOOL_NAME, ...activeMcpNames], reference);
 		registerToolsPreservingActiveSet(pi, fullDefs, active);
 		return { activate, searchable, rehydrateFromHistory };
 	}
@@ -151,7 +151,10 @@ export function registerMcpTierBTools(
 		stubbed.add(def.name);
 		return buildMcpStubDefinition(def.name);
 	});
-	const active = orderActiveSet([...currentBase, MCP_SEARCH_TOOL_NAME, ...fullDefs.map((def) => def.name)], reference);
+	const active = orderActiveSet(
+		[...currentBase, TOOL_SEARCH_TOOL_NAME, ...fullDefs.map((def) => def.name)],
+		reference,
+	);
 	registerToolsPreservingActiveSet(pi, toRegister, active);
 	return { activate, searchable, rehydrateFromHistory };
 }
@@ -173,7 +176,7 @@ function swapStubsToFull(
 
 /** Order the active set deterministically WITHOUT disturbing non-MCP (base)
  * tools: base tools keep their existing relative order (by `reference` index,
- * new ones appended), MCP tools (incl. mcp_search) are sorted for cache
+ * new ones appended), MCP tools (incl. tool_search) are sorted for cache
  * stability. Sorting base tools would churn the system-prompt tool listing. */
 function orderActiveSet(names: readonly string[], reference: readonly string[]): string[] {
 	const unique = [...new Set(names)];
@@ -186,17 +189,17 @@ function orderActiveSet(names: readonly string[], reference: readonly string[]):
 }
 
 /** A 30-70 token placeholder for an inactive search-mode tool. Keeps the tools
- * array length-stable under stubSwap; guides the model to mcp_search. */
+ * array length-stable under stubSwap; guides the model to tool_search. */
 export function buildMcpStubDefinition(name: string): McpToolDefinition {
 	return {
 		name,
 		label: name,
-		description: `Inactive MCP tool. Run mcp_search to activate ${name}, then call it on your next turn.`,
+		description: `Inactive MCP tool. Run tool_search to activate ${name}, then call it on your next turn.`,
 		parameters: Type.Object({}),
 		executionMode: "parallel",
 		async execute(): Promise<AgentToolResult<McpToolDetails | undefined>> {
 			return {
-				content: [{ type: "text", text: `${name} is not active. Use mcp_search to activate it, then call it.` }],
+				content: [{ type: "text", text: `${name} is not active. Use tool_search to activate it, then call it.` }],
 				details: undefined,
 			};
 		},

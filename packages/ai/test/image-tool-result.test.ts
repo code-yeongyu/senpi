@@ -384,7 +384,7 @@ describe("Tool Results with Images", () => {
 	);
 
 	describe.skipIf(!process.env.KIMI_API_KEY)("Kimi For Coding Provider (kimi-for-coding)", () => {
-		const llm = getModel("kimi-coding", "kimi-for-coding");
+		const llm = getModel("kimi-coding", "kimi-for-coding-highspeed");
 
 		it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
 			await handleToolWithImageResult(llm);

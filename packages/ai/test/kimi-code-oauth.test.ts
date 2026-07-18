@@ -2,8 +2,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { getOAuthProvider } from "../src/utils/oauth/index.ts";
-import { loginKimi, refreshKimiToken } from "../src/utils/oauth/kimi-code.ts";
+import { getOAuthProvider } from "../src/auth/oauth/index.ts";
+import { loginKimi, refreshKimiToken } from "../src/auth/oauth/kimi-code.ts";
 
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });

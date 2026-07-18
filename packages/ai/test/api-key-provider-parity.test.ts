@@ -76,7 +76,6 @@ describe("Gajae API-key provider parity", () => {
 			if (!model) throw new Error(`Missing provider model: ${providerId}`);
 			const envVars: readonly string[] = API_KEY_ENV_VARS[providerId];
 			const resolved = await apiKeyAuth.resolve({
-				model,
 				ctx: {
 					env: async (name) => (envVars.includes(name) ? "test-key" : undefined),
 					fileExists: async () => false,
@@ -106,7 +105,6 @@ describe("Gajae API-key provider parity", () => {
 			const model = provider?.getModels()[0];
 			if (!apiKeyAuth || !model) throw new Error(`Missing local provider: ${providerId}`);
 			const resolved = await apiKeyAuth.resolve({
-				model,
 				ctx: { env: async () => undefined, fileExists: async () => false },
 			});
 			expect(resolved?.auth.apiKey).toBe(dummyKey);

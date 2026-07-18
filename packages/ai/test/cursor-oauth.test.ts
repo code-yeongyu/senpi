@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { getOAuthProvider } from "../src/auth/oauth/index.ts";
+import type { OAuthProviderInterface } from "../src/auth/oauth/types.ts";
 import { builtinProviders } from "../src/providers/all.ts";
-import { getOAuthProvider } from "../src/utils/oauth/index.ts";
-import type { OAuthProviderInterface } from "../src/utils/oauth/types.ts";
 
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });

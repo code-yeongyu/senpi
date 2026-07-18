@@ -26,7 +26,7 @@ catalog costs almost nothing until the model actually needs it.
    summary, `/mcp add <name> <command...>` to add servers interactively.
 3. Servers needing OAuth: `/mcp login <name>` (see [Auth](#auth)).
 4. Use it: small catalogs register directly; big ones surface through
-   `mcp_search` (see [Exposure tiers](#exposure-tiers)).
+   `tool_search` (see [Exposure tiers](#exposure-tiers)).
 
 ## Configuration reference
 
@@ -95,7 +95,7 @@ Glob denylist applied after `includeTools`.
 
 ### `directTools`
 `true` = every filtered tool active immediately; or an array of names/globs
-that stay active while the rest goes behind `mcp_search`. Default: none.
+that stay active while the rest goes behind `tool_search`. Default: none.
 
 ### `exposure`
 `"auto"` (default), `"direct"`, `"search"`, or `"proxy"`. See
@@ -134,20 +134,36 @@ the stub for the full schema in place. Default `false`.
 ### `nativeToolSearch`
 `"auto"` (default) | `true` | `false`. On Anthropic models, defers inactive
 MCP tools to the provider's native tool-search; any 400 falls back to the
-local `mcp_search` for the session.
+local `tool_search` for the session.
 
 ## Exposure tiers
 
 | Tier | When | Cost profile |
 |---|---|---|
 | direct | `exposure:"direct"`, `directTools:true`, or `auto` at/below `searchThreshold` | Every tool schema on every request |
-| search (Tier-B) | `exposure:"search"` or `auto` above the threshold | Full catalog registered, ~135 tokens resident (`mcp_search` only); matches promote next turn; promotions survive resume/compaction |
+| search (Tier-B) | `exposure:"search"` or `auto` above the threshold | Full catalog registered, ~135 tokens resident (`tool_search` only); matches promote next turn; promotions survive resume/compaction |
 | proxy (Tier-C) | `exposure:"proxy"` only — never `auto` | One `mcp_<server>` gateway tool (`search`/`describe`/`call` with JSON-string args); cheapest, but no provider-side argument validation |
 
 Skills can carry MCP servers too (an `mcp.json` sidecar next to SKILL.md, or a
 `mcp:` frontmatter block): those servers register with zero active tools and
 reveal their `includeTools` matches when the skill loads. A name collision
 with a configured server resolves in favor of your config.
+
+### Server sources
+
+Servers are merged from these sources, in precedence order:
+
+- `global` — `<agentDir>/mcp.json`
+- `claude` — imported `.mcp.json` (requires project trust)
+- `project` — `.senpi/mcp.json` (requires project trust)
+- `extension` — declared by an extension via `pi.registerMcpServer()` during
+  factory load (see [extensions.md](extensions.md#piregistermcpservername-config))
+- `skill` — declared in a skill's `mcp.json` sidecar or SKILL.md frontmatter
+
+A name collision resolves as follows: trusted user config (including an
+`enabled: false` entry) wins over extension declarations; an extension
+declaration replaces an untrusted placeholder and records a diagnostic.
+Extension-declared servers use bare names (no prefix).
 
 ## Resources and prompts
 
@@ -181,7 +197,7 @@ with a configured server resolves in favor of your config.
 | `needs_auth` | 401 and no usable token | `/mcp login <name>` |
 | `suspended` | reconnect circuit breaker opened (5 failures/30s) | fix the server, then `/mcp reconnect <name>` |
 | `degraded` | transient failure; auto-reconnect with backoff is running | wait, or `/mcp reconnect <name>` |
-| tools missing | server filtered/disabled, or hidden behind search | check `includeTools`/`excludeTools`, ask the model to `mcp_search` |
+| tools missing | server filtered/disabled, or hidden behind search | check `includeTools`/`excludeTools`, ask the model to `tool_search` |
 | child exits at spawn (EOF) | bad `command`/`args`/`env` | `/mcp logs <name>` shows the captured stderr |
 | slow first call | lazy server cold boot | use `lifecycle:"eager"` or `"keep-alive"` |
 

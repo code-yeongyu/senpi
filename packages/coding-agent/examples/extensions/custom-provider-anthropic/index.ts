@@ -46,7 +46,7 @@ import {
 } from "@earendil-works/pi-ai";
 
 // =============================================================================
-// OAuth Implementation (copied from packages/ai/src/utils/oauth/anthropic.ts)
+// OAuth Implementation (copied from packages/ai/src/auth/oauth/anthropic.ts)
 // =============================================================================
 
 const decode = (s: string) => atob(s);

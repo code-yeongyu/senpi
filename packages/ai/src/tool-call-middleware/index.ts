@@ -16,7 +16,7 @@ export type {
  * Extracts the tool call format from a model's compatibility settings.
  * Only applies to models using the "openai-completions" API with compat settings.
  * @param model - The model to check
- * @returns The configured supported tool call format, or undefined if not set
+ * @returns The configured supported tool call format, or undefined if not set. "morph-xml" is canonical; "xml" remains a deprecated alias.
  */
 export function getToolCallFormat<TApi extends Api>(model: Model<TApi>): ToolCallFormat | undefined {
 	if (model.api !== "openai-completions") {
@@ -30,9 +30,11 @@ export function getToolCallFormat<TApi extends Api>(model: Model<TApi>): ToolCal
 	if (
 		format === "hermes" ||
 		format === "xml" ||
+		format === "morph-xml" ||
 		format === "yaml-xml" ||
 		format === "gemma4-delimiter" ||
-		format === "anthropic-xml"
+		format === "anthropic-xml" ||
+		format === "antml"
 	) {
 		return format;
 	}

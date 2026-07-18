@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
+import { anthropicOAuth } from "../src/auth/oauth/anthropic.ts";
+import { githubCopilotOAuth } from "../src/auth/oauth/github-copilot.ts";
+import { openaiCodexOAuth } from "../src/auth/oauth/openai-codex.ts";
 import { createModels } from "../src/models.ts";
 import { anthropicProvider } from "../src/providers/anthropic.ts";
 import { githubCopilotProvider } from "../src/providers/github-copilot.ts";
-import { anthropicOAuth } from "../src/utils/oauth/anthropic.ts";
-import { githubCopilotOAuth } from "../src/utils/oauth/github-copilot.ts";
-import { openaiCodexOAuth } from "../src/utils/oauth/openai-codex.ts";
 
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });

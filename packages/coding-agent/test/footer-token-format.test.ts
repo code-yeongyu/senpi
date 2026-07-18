@@ -39,7 +39,7 @@ function createSession(): unknown {
 			getCwd: () => "/tmp/project",
 		},
 		getContextUsage: () => ({ tokens: 44_000, contextWindow: 800_000, percent: 5.5 }),
-		modelRegistry: {
+		modelRuntime: {
 			isUsingOAuth: () => false,
 		},
 	};

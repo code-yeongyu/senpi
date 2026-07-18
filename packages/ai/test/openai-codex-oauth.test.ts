@@ -3,7 +3,7 @@ import {
 	loginOpenAICodexDeviceCode,
 	openaiCodexOAuthProvider,
 	refreshOpenAICodexToken,
-} from "../src/utils/oauth/openai-codex.ts";
+} from "../src/auth/oauth/openai-codex.ts";
 
 function jsonResponse(body: unknown, status: number = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -207,7 +207,7 @@ describe("OpenAI Codex OAuth", () => {
 				onPrompt: async () => {
 					throw new Error("Prompt should not be used");
 				},
-				onSelect: async (prompt) => {
+				onSelect: async (prompt: any) => {
 					selectPrompts.push(prompt);
 					return "device_code";
 				},

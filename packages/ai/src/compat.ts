@@ -27,6 +27,12 @@ export * from "./images-api-registry.ts";
 export * from "./index.ts";
 export * from "./legacy-api-aliases.ts";
 export * from "./providers/images/register-builtins.ts";
+export {
+	getProtocol,
+	getToolCallFormat,
+	transformContext,
+	wrapStreamWithToolCallMiddleware,
+} from "./tool-call-middleware/index.ts";
 
 import { anthropicMessagesApi } from "./api/anthropic-messages.lazy.ts";
 import { azureOpenAIResponsesApi } from "./api/azure-openai-responses.lazy.ts";
@@ -39,15 +45,16 @@ import { openAICompletionsApi } from "./api/openai-completions.lazy.ts";
 import { openAIResponsesApi } from "./api/openai-responses.lazy.ts";
 import { piMessagesApi } from "./api/pi-messages.lazy.ts";
 import { getEnvApiKey } from "./env-api-keys.ts";
+import type { ModelsApiStreamOptions } from "./models.ts";
 import { builtinModels, getBuiltinModel, getBuiltinModels, getBuiltinProviders } from "./providers/all.ts";
 
 export type { BuiltinProvider } from "./providers/all.ts";
 
 import {
+	createFauxCore,
 	type FauxProviderRegistration,
 	getRegisteredFauxProvider,
 	type RegisterFauxProviderOptions,
-	registerFauxProvider as registerFauxProviderCore,
 } from "./providers/faux.ts";
 import {
 	getProtocol,
@@ -148,6 +155,14 @@ export function registerApiProvider<TApi extends Api, TOptions extends StreamOpt
 }
 
 export function getApiProvider(api: Api): ApiProviderInternal | undefined {
+	const faux = getRegisteredFauxProvider(api);
+	if (faux) {
+		return {
+			api: faux.api,
+			stream: wrapStream(faux.api, faux.stream),
+			streamSimple: wrapStreamSimple(faux.api, faux.streamSimple),
+		};
+	}
 	return apiProviderRegistry.get(api)?.provider;
 }
 
@@ -168,7 +183,22 @@ function clearApiProviders(): void {
 }
 
 export function registerFauxProvider(options: RegisterFauxProviderOptions = {}): FauxProviderRegistration {
-	return registerFauxProviderCore(options);
+	const core = createFauxCore(options);
+	const sourceId = `faux-provider-${Math.random().toString(36).slice(2, 10)}`;
+	registerApiProvider({ api: core.api, stream: core.stream, streamSimple: core.streamSimple }, sourceId);
+	return {
+		api: core.api,
+		models: core.models,
+		getModel: core.getModel,
+		state: core.state,
+		setResponses: core.setResponses,
+		appendResponses: core.appendResponses,
+		getPendingResponseCount: core.getPendingResponseCount,
+		getCallLog: core.getCallLog,
+		unregister() {
+			unregisterApiProviders(sourceId);
+		},
+	};
 }
 
 const BUILTIN_APIS: [Api, ProviderStreams][] = [
@@ -225,16 +255,17 @@ function withEnvApiKey<TOptions extends StreamOptions>(
 	return { ...options, apiKey } as TOptions;
 }
 
-function shouldUseBuiltinModels(model: Model<Api>): boolean {
-	const builtin = compatModels.getModel(model.provider, model.id);
-	return builtin?.api === model.api && getApiProvider(model.api) === builtinApiProviderInstances.get(model.api);
+function hasResolvedCloudflareAuth(options: StreamOptions | undefined): boolean {
+	return hasExplicitApiKey(options?.apiKey) || typeof options?.headers?.["cf-aig-authorization"] === "string";
+}
+
+function getBuiltinProviderForModel(model: Model<Api>) {
+	if (getApiProvider(model.api) !== builtinApiProviderInstances.get(model.api)) return undefined;
+	const provider = compatModels.getProvider(model.provider);
+	return provider?.getModels().some((candidate) => candidate.api === model.api) ? provider : undefined;
 }
 
 function resolveApiProvider(api: Api) {
-	const faux = getRegisteredFauxProvider(api);
-	if (faux) {
-		return { api: faux.api, stream: faux.stream, streamSimple: faux.streamSimple };
-	}
 	const provider = getApiProvider(api);
 	if (!provider) {
 		throw new Error(`No API provider registered for api: ${api}`);
@@ -251,17 +282,16 @@ export function stream<TApi extends Api>(
 	if (format && context.tools && context.tools.length > 0) {
 		const protocol = getProtocol(format);
 		const transformedContext = transformContext(context, protocol);
-		const innerStream = stream(model, transformedContext, { ...options, tools: undefined } as ProviderStreamOptions);
+		const innerStream = stream(model, transformedContext, options);
 		return wrapStreamWithToolCallMiddleware(innerStream, protocol, context.tools);
 	}
 
-	const faux = getRegisteredFauxProvider(model.api);
-	if (faux) {
-		return faux.stream(model, context, withEnvApiKey(model, options) as StreamOptions);
-	}
-
-	if (shouldUseBuiltinModels(model)) {
-		return compatModels.stream(model, context, options as ApiStreamOptions<TApi> | undefined);
+	const builtinProvider = getBuiltinProviderForModel(model);
+	if (builtinProvider) {
+		if (model.provider.startsWith("cloudflare-") && !hasResolvedCloudflareAuth(options)) {
+			return compatModels.stream(model, context, options as ModelsApiStreamOptions<TApi> | undefined);
+		}
+		return builtinProvider.stream(model, context, withEnvApiKey(model, options) as ApiStreamOptions<TApi>);
 	}
 	const provider = resolveApiProvider(model.api);
 	return provider.stream(model, context, withEnvApiKey(model, options) as StreamOptions);
@@ -289,13 +319,12 @@ export function streamSimple<TApi extends Api>(
 		return wrapStreamWithToolCallMiddleware(innerStream, protocol, context.tools);
 	}
 
-	const faux = getRegisteredFauxProvider(model.api);
-	if (faux) {
-		return faux.streamSimple(model, context, withEnvApiKey(model, options));
-	}
-
-	if (shouldUseBuiltinModels(model)) {
-		return compatModels.streamSimple(model, context, options);
+	const builtinProvider = getBuiltinProviderForModel(model);
+	if (builtinProvider) {
+		if (model.provider.startsWith("cloudflare-") && !hasResolvedCloudflareAuth(options)) {
+			return compatModels.streamSimple(model, context, options);
+		}
+		return builtinProvider.streamSimple(model, context, withEnvApiKey(model, options));
 	}
 	const provider = resolveApiProvider(model.api);
 	return provider.streamSimple(model, context, withEnvApiKey(model, options));

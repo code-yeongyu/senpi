@@ -24,7 +24,8 @@ export type KnownApi =
 	| "google-vertex"
 	| "pi-messages"
 	| "azure-openai-responses"
-	| "mistral-conversations";
+	| "mistral-conversations"
+	| "cursor-connect";
 
 export type Api = KnownApi | (string & {});
 
@@ -49,7 +50,6 @@ export type KnownProvider =
 	| "fugu"
 	| "github-copilot"
 	| "gitlab-duo"
-	| "glm-zcode"
 	| "google"
 	| "google-antigravity"
 	| "google-gemini-cli"
@@ -388,6 +388,10 @@ export interface ToolCall {
 	id: string;
 	name: string;
 	arguments: Record<string, any>;
+	/** Set by text tool-call middleware when a truncated call could not be recovered. Carriers of `incomplete` MUST NOT be executed. */
+	incomplete?: true;
+	/** Error explaining why an incomplete tool call could not be recovered. */
+	errorMessage?: string;
 	thoughtSignature?: string; // Google-specific: opaque signature for reusing thought context
 }
 
@@ -539,6 +543,7 @@ export type AssistantMessageEvent =
 	| { type: "thinking_end"; contentIndex: number; content: string; partial: AssistantMessage }
 	| { type: "toolcall_start"; contentIndex: number; partial: AssistantMessage }
 	| { type: "toolcall_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
+	/** Finalized - executable iff `incomplete !== true` on `toolCall`. */
 	| { type: "toolcall_end"; contentIndex: number; toolCall: ToolCall; partial: AssistantMessage }
 	| { type: "done"; reason: Extract<StopReason, "stop" | "length" | "toolUse">; message: AssistantMessage }
 	| { type: "error"; reason: Extract<StopReason, "aborted" | "error">; error: AssistantMessage };
@@ -591,15 +596,22 @@ export interface OpenAICompletionsCompat {
 	/** Whether the provider supports the `strict` field in tool definitions. Default: true. */
 	supportsStrictMode?: boolean;
 	/**
+	 * Provider-specific JSON Schema flavor for tool parameters. `"moonshot-mfjs"`
+	 * normalizes schemas for Moonshot / Kimi backends that enforce a stricter subset.
+	 */
+	toolSchemaFlavor?: "moonshot-mfjs";
+	/**
 	 * Tool call format for models that don't natively support tool calling.
 	 * When set, the middleware will intercept tool calls and format them as text.
-	 * Supported values: "hermes", "xml", "yaml-xml", "gemma4-delimiter"
+	 * Supported values: "hermes", "morph-xml", "xml" (deprecated alias for "morph-xml"), "yaml-xml", "gemma4-delimiter", "anthropic-xml", "antml"
 	 */
 	toolCallFormat?: string;
 	/** Cache control convention for prompt caching. "anthropic" applies Anthropic-style `cache_control` markers to the system prompt, last tool definition, and last user/assistant text content. */
 	cacheControlFormat?: "anthropic";
 	/** Whether to send session-affinity data from `options.sessionId`. Default: false. */
 	sendSessionAffinityHeaders?: boolean;
+	/** Provider-specific deferred tool serialization mode. */
+	deferredToolsMode?: "kimi";
 	/** Session-affinity header format: `openai` sends `session_id`, `x-client-request-id`, and `x-session-affinity`; `openai-nosession` sends `x-client-request-id` and `x-session-affinity`; `openrouter` sends `x-session-id`. Does not affect the `prompt_cache_key` body param, which is governed by cache retention. Default: auto-detected. */
 	sessionAffinityFormat?: SessionAffinityFormat;
 	/** Whether the provider supports long prompt cache retention (`prompt_cache_retention: "24h"` or Anthropic-style `cache_control.ttl: "1h"`, depending on format). Default: true. */
@@ -688,6 +700,15 @@ export interface AnthropicMessagesCompat {
 	 * except Haiku and models older than Claude 4.5; false for other providers.
 	 */
 	supportsToolReferences?: boolean;
+	/**
+	 * Whether the provider executes Anthropic server-side `web_search_*` native
+	 * tools and accepts their `server_tool_use` / `web_search_tool_result`
+	 * blocks on replay. Anthropic-compatible endpoints (e.g., kimi-coding) may
+	 * run the search but reject the replayed server-tool blocks on the next
+	 * request. When false, hook-injected `web_search_*` tools are stripped from
+	 * the payload. Default: true only for the first-party Anthropic endpoint.
+	 */
+	supportsWebSearch?: boolean;
 }
 
 /**

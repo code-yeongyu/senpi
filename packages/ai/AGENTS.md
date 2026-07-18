@@ -10,9 +10,11 @@ src/compat.ts                   Temporary legacy dispatch, registry, catalogs
 src/api/                        Wire/API implementations and lazy wrappers
 src/providers/                  Provider factories, catalogs, shared transforms
 src/auth/                       Credential stores, contexts, auth helpers/types
-src/models*.ts                  Runtime model catalogs; generated files committed
+src/models.ts                   Models/provider/auth/refresh runtime (owns provider registration, auth resolution, dynamic catalog refresh, stream delegation)
+src/models.generated.ts         Generated static catalog
 src/env-api-keys.ts             Browser-safe credential detection boundary
 src/tool-call-middleware/       Text-encoded tool protocols
+src/utils/tool-schema-compat.ts OpenAI/Moonshot tool JSON-Schema normalization
 scripts/generate-models.ts      Model catalog source of truth
 scripts/generate-image-models.ts Image catalog source of truth
 test/                           Faux-first and opt-in live tests
@@ -36,6 +38,7 @@ test/                           Faux-first and opt-in live tests
 | Cross-provider message coercion | `src/api/transform-messages.ts` |
 | Add auth detection | `src/env-api-keys.ts` |
 | Change auth context/storage | `src/auth/` |
+| Model runtime/provider auth/refresh | `src/models.ts`, `src/auth/`, `src/providers/all.ts` |
 | Change model inventory | `scripts/generate-models.ts` |
 | Add text-tool protocol | `src/tool-call-middleware/` |
 | Provider checklist | `README.md` provider section |

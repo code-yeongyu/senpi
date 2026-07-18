@@ -14,5 +14,5 @@ ${buildFileOperationsTuning()}`;
 }
 
 export function buildGpt52Prompt(options: BuildDynamicSystemPromptOptions): string {
-	return buildDynamicSystemPrompt({ ...options, tuningSection: buildGpt52Tuning() });
+	return buildDynamicSystemPrompt({ ...options, tuningSection: buildGpt52Tuning(), workstationDialect: "codex" });
 }

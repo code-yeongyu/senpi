@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import * as _bundledPiAgentCore from "@earendil-works/pi-agent-core";
 import * as _bundledPiAiCompat from "@earendil-works/pi-ai/compat";
 import * as _bundledPiAiOauth from "@earendil-works/pi-ai/oauth";
+import * as _bundledPiAiProviders from "@earendil-works/pi-ai/providers/all";
 import type { KeyId } from "@earendil-works/pi-tui";
 import * as _bundledPiTui from "@earendil-works/pi-tui";
 import { createJiti } from "jiti/static";
@@ -30,6 +31,7 @@ import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
 import { createSyntheticSourceInfo } from "../source-info.ts";
 import { time } from "../timings.ts";
+import { validateMcpServerDeclaration } from "./builtin/mcp/config-schema.ts";
 import type {
 	EntryRenderer,
 	Extension,
@@ -40,6 +42,7 @@ import type {
 	MessageRenderer,
 	ProviderConfig,
 	RegisteredCommand,
+	RegisteredMcpServerDeclaration,
 	ToolDefinition,
 } from "./types.ts";
 
@@ -59,12 +62,14 @@ const VIRTUAL_MODULES: Record<string, unknown> = {
 	"@earendil-works/pi-ai": _bundledPiAiCompat,
 	"@earendil-works/pi-ai/compat": _bundledPiAiCompat,
 	"@earendil-works/pi-ai/oauth": _bundledPiAiOauth,
+	"@earendil-works/pi-ai/providers/all": _bundledPiAiProviders,
 	"@earendil-works/pi-coding-agent": _bundledPiCodingAgent,
 	"@mariozechner/pi-agent-core": _bundledPiAgentCore,
 	"@mariozechner/pi-tui": _bundledPiTui,
 	"@mariozechner/pi-ai": _bundledPiAiCompat,
 	"@mariozechner/pi-ai/compat": _bundledPiAiCompat,
 	"@mariozechner/pi-ai/oauth": _bundledPiAiOauth,
+	"@mariozechner/pi-ai/providers/all": _bundledPiAiProviders,
 	"@mariozechner/pi-coding-agent": _bundledPiCodingAgent,
 	"@code-yeongyu/senpi": _bundledPiCodingAgent,
 };
@@ -142,21 +147,30 @@ function getAliases(): Record<string, string> {
 		"ai/src/oauth.ts",
 		"@earendil-works/pi-ai/oauth",
 	);
+	const piAiProvidersEntry = resolveWorkspaceOrBundled(
+		"@earendil-works/pi-ai",
+		"dist/providers/all.js",
+		"ai/dist/providers/all.js",
+		"ai/src/providers/all.ts",
+		"@earendil-works/pi-ai/providers/all",
+	);
 
 	_aliases = {
 		"@earendil-works/pi-coding-agent": piCodingAgentEntry,
 		"@earendil-works/pi-agent-core": piAgentCoreEntry,
 		"@earendil-works/pi-tui": piTuiEntry,
-		"@earendil-works/pi-ai": piAiCompatEntry,
+		"@earendil-works/pi-ai/providers/all": piAiProvidersEntry,
 		"@earendil-works/pi-ai/compat": piAiCompatEntry,
 		"@earendil-works/pi-ai/oauth": piAiOauthEntry,
+		"@earendil-works/pi-ai": piAiCompatEntry,
 		"@code-yeongyu/senpi": piCodingAgentEntry,
 		"@mariozechner/pi-coding-agent": piCodingAgentEntry,
 		"@mariozechner/pi-agent-core": piAgentCoreEntry,
 		"@mariozechner/pi-tui": piTuiEntry,
-		"@mariozechner/pi-ai": piAiCompatEntry,
+		"@mariozechner/pi-ai/providers/all": piAiProvidersEntry,
 		"@mariozechner/pi-ai/compat": piAiCompatEntry,
 		"@mariozechner/pi-ai/oauth": piAiOauthEntry,
+		"@mariozechner/pi-ai": piAiCompatEntry,
 		typebox: typeboxEntry,
 		"typebox/compile": typeboxCompileEntry,
 		"typebox/value": typeboxValueEntry,
@@ -338,6 +352,20 @@ function createExtensionAPI(
 			extension.entryRenderers.set(customType, renderer as EntryRenderer);
 		},
 
+		registerMcpServer(name: string, config: RegisteredMcpServerDeclaration["config"]): void {
+			runtime.assertActive();
+			const error = validateMcpServerDeclaration(name, config);
+			if (error) {
+				throw new Error(error);
+			}
+			extension.mcpServers.set(name, {
+				name,
+				config,
+				extensionPath: extension.path,
+				registrationCwd: extension.registrationCwd,
+			});
+		},
+
 		// Flag access - checks extension registered it, reads from runtime
 		getFlag(name: string): boolean | string | undefined {
 			runtime.assertActive();
@@ -479,7 +507,7 @@ async function loadExtensionModule(
 /**
  * Create an Extension object with empty collections.
  */
-function createExtension(extensionPath: string, resolvedPath: string): Extension {
+function createExtension(extensionPath: string, resolvedPath: string, registrationCwd: string): Extension {
 	const source =
 		extensionPath.startsWith("<") && extensionPath.endsWith(">")
 			? extensionPath.slice(1, -1).split(":")[0] || "temporary"
@@ -493,10 +521,12 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 		handlers: new Map(),
 		tools: new Map(),
 		messageRenderers: new Map(),
-		entryRenderers: new Map(),
+		entryRenderers: undefined,
 		commands: new Map(),
 		flags: new Map(),
 		shortcuts: new Map(),
+		mcpServers: new Map(),
+		registrationCwd,
 	};
 }
 
@@ -520,7 +550,7 @@ async function loadExtension(
 			return { extension: null, error: `Extension does not export a valid factory function: ${extensionPath}` };
 		}
 
-		const extension = createExtension(extensionPath, resolvedPath);
+		const extension = createExtension(extensionPath, resolvedPath, cwd);
 		const api = createExtensionAPI(extension, runtime, cwd, eventBus);
 		await factory(api);
 		time(`${extensionPath} factory`, "extensions");
@@ -542,8 +572,8 @@ export async function loadExtensionFromFactory(
 	runtime: ExtensionRuntime,
 	extensionPath = "<inline>",
 ): Promise<Extension> {
-	const extension = createExtension(extensionPath, extensionPath);
 	const resolvedCwd = resolvePath(cwd);
+	const extension = createExtension(extensionPath, extensionPath, resolvedCwd);
 	const api = createExtensionAPI(extension, runtime, resolvedCwd, eventBus);
 	await factory(api);
 	time(`${extensionPath} factory`, "extensions");

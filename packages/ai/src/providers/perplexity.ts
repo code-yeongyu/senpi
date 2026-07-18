@@ -1,7 +1,6 @@
 import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
-import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
+import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { loadPerplexityOAuth } from "../utils/oauth/load.ts";
 import { PERPLEXITY_MODELS } from "./perplexity.models.ts";
 
 export function perplexityProvider(): Provider<"openai-completions"> {
@@ -9,9 +8,13 @@ export function perplexityProvider(): Provider<"openai-completions"> {
 		id: "perplexity",
 		name: "Perplexity",
 		baseUrl: "https://api.perplexity.ai",
+		// API-key only. The OAuth flow (auth/oauth/perplexity.ts) returns a
+		// www.perplexity.ai web-session JWT, which is NOT accepted by
+		// api.perplexity.ai as a Bearer token — session tokens are not direct
+		// API keys. The flow code is preserved for a future transport that
+		// routes session requests through the web API instead.
 		auth: {
 			apiKey: envApiKeyAuth("Perplexity API key", ["PERPLEXITY_API_KEY"]),
-			oauth: lazyOAuth({ name: "Perplexity (Pro/Max)", load: loadPerplexityOAuth }),
 		},
 		models: Object.values(PERPLEXITY_MODELS),
 		api: openAICompletionsApi(),

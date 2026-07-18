@@ -8,6 +8,8 @@ export type PromptPresetName =
 	| "claude-opus-4-6"
 	| "claude-opus-4-5"
 	| "glm-5.2"
+	| "grok-4.5"
+	| "kimi-k3"
 	| "kimi-k2-7"
 	| "kimi-k2-6"
 	| "gpt-5"
@@ -31,6 +33,8 @@ const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
 	"claude-opus-4-6",
 	"claude-opus-4-5",
 	"glm-5.2",
+	"grok-4.5",
+	"kimi-k3",
 	"kimi-k2-7",
 	"kimi-k2-6",
 	"gpt-5",

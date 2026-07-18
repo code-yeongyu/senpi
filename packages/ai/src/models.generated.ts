@@ -17,7 +17,6 @@ import { FIREWORKS_MODELS } from "./providers/fireworks.models.ts";
 import { FUGU_MODELS } from "./providers/fugu.models.ts";
 import { GITHUB_COPILOT_MODELS } from "./providers/github-copilot.models.ts";
 import { GITLAB_DUO_MODELS } from "./providers/gitlab-duo.models.ts";
-import { GLM_ZCODE_MODELS } from "./providers/glm-zcode.models.ts";
 import { GOOGLE_MODELS } from "./providers/google.models.ts";
 import { GOOGLE_ANTIGRAVITY_MODELS } from "./providers/google-antigravity.models.ts";
 import { GOOGLE_GEMINI_CLI_MODELS } from "./providers/google-gemini-cli.models.ts";
@@ -82,7 +81,6 @@ export const MODELS = {
 	"fugu": FUGU_MODELS,
 	"github-copilot": GITHUB_COPILOT_MODELS,
 	"gitlab-duo": GITLAB_DUO_MODELS,
-	"glm-zcode": GLM_ZCODE_MODELS,
 	"google": GOOGLE_MODELS,
 	"google-antigravity": GOOGLE_ANTIGRAVITY_MODELS,
 	"google-gemini-cli": GOOGLE_GEMINI_CLI_MODELS,

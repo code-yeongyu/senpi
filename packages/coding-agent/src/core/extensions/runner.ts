@@ -50,6 +50,7 @@ import type {
 	ProjectTrustEventResult,
 	ProviderConfig,
 	RegisteredCommand,
+	RegisteredMcpServerDeclaration,
 	RegisteredTool,
 	ReplacedSessionContext,
 	ResolvedCommand,
@@ -529,6 +530,24 @@ export class ExtensionRunner {
 		return Array.from(toolsByName.values());
 	}
 
+	/** Get extension-declared MCP servers (first declaration per name wins). */
+	getRegisteredMcpServers(): readonly RegisteredMcpServerDeclaration[] {
+		const serversByName = new Map<string, RegisteredMcpServerDeclaration>();
+		for (const ext of this.extensions) {
+			for (const decl of ext.mcpServers.values()) {
+				const existing = serversByName.get(decl.name);
+				if (existing === undefined) {
+					serversByName.set(decl.name, decl);
+				} else {
+					console.warn(
+						`MCP server '${decl.name}' declared by both ${existing.extensionPath} and ${ext.path}; keeping first declaration from ${existing.extensionPath}.`,
+					);
+				}
+			}
+		}
+		return Array.from(serversByName.values());
+	}
+
 	/** Get a tool definition by name. Returns undefined if not found. */
 	getToolDefinition(toolName: string): RegisteredTool["definition"] | undefined {
 		for (const ext of this.extensions) {
@@ -778,6 +797,10 @@ export class ExtensionRunner {
 		});
 	}
 
+	getModelRegistry(): ModelRegistry {
+		return this.modelRegistry;
+	}
+
 	getRegisteredCommands(): ResolvedCommand[] {
 		this.commandDiagnostics = [];
 		return this.resolveRegisteredCommands();
@@ -908,6 +931,10 @@ export class ExtensionRunner {
 			getLoadedHookSources: () => {
 				runner.assertActive();
 				return runner.getLoadedHookSourcesFn();
+			},
+			getRegisteredMcpServers: () => {
+				runner.assertActive();
+				return runner.getRegisteredMcpServers();
 			},
 		};
 	}

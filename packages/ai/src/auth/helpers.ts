@@ -13,8 +13,8 @@ export function envApiKeyAuth(
 ): ApiKeyAuth {
 	return {
 		name,
-		login: async (callbacks) => {
-			const key = await callbacks.prompt({ type: "secret", message: `Enter ${name}` });
+		login: async (interaction) => {
+			const key = await interaction.prompt({ type: "secret", message: `Enter ${name}` });
 			return { type: "api_key", key };
 		},
 		resolve: async ({ ctx, credential }) => {
@@ -38,7 +38,7 @@ export function envApiKeyAuth(
  * of bundles by loading through a bundler-opaque dynamic import (variable
  * specifier, see the bedrock lazy wrapper).
  */
-export function lazyOAuth(input: { name: string; load: () => Promise<OAuthAuth> }): OAuthAuth {
+export function lazyOAuth(input: { name: string; loginLabel?: string; load: () => Promise<OAuthAuth> }): OAuthAuth {
 	let promise: Promise<OAuthAuth> | undefined;
 	const loaded = () => {
 		promise ??= input.load();
@@ -46,7 +46,8 @@ export function lazyOAuth(input: { name: string; load: () => Promise<OAuthAuth> 
 	};
 	return {
 		name: input.name,
-		login: async (callbacks) => (await loaded()).login(callbacks),
+		loginLabel: input.loginLabel,
+		login: async (interaction) => (await loaded()).login(interaction),
 		refresh: async (credential) => (await loaded()).refresh(credential),
 		toAuth: async (credential) => (await loaded()).toAuth(credential),
 	};

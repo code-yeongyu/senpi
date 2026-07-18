@@ -21,7 +21,6 @@ describe("Gajae provider ID gaps", () => {
 			const model = alias?.getModels()[0];
 			if (!auth || !model) throw new Error(`Missing provider alias: ${aliasId}`);
 			const resolved = await auth.resolve({
-				model,
 				ctx: { env: async (name) => (name === envVar ? "test-key" : undefined), fileExists: async () => false },
 			});
 			expect(resolved).toMatchObject({ auth: { apiKey: "test-key" }, source: envVar });

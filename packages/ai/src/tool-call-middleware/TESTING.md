@@ -48,7 +48,7 @@ Your `~/.senpi/agent/models.json` must include the following provider configurat
                "id": "google/gemini-3-flash-preview",
                "name": "Gemini 3 Flash Preview (OpenRouter)",
                "compat": {
-                  "toolCallFormat": "xml"
+                  "toolCallFormat": "morph-xml"
                }
             }
          ]
@@ -243,7 +243,28 @@ This will show:
 - Parsed tool call structures
 - Tool response formatting
 
-### Verifying Protocol Selection
+### ANTML (antml)
+
+Add an OpenAI-compatible custom model with `"toolCallFormat": "antml"`, then run:
+
+```bash
+senpi --provider <provider> --model <model> -p \
+  "Use the Bash tool to run 'printf antml-ok' and report the output."
+```
+
+**Expected Behavior:**
+- The model emits `<function_calls><invoke name="Bash"><parameter name="command">printf antml-ok</parameter></invoke></function_calls>`.
+- The middleware resolves the tool name, repairs slop (parameter aliases, invented keys, broken unicode escapes), and executes the tool.
+- The tool result or final response contains `antml-ok`.
+
+**Protocol Format Details:**
+- Same `<invoke>`/`<parameter>` body as anthropic-xml; the `<function_calls>` wrapper is canonical in formatted output and optional on input.
+- Failure tolerance mirrors Claude Code: unknown keys are filtered (recursively, e.g. invented `edits[]` fields), documented aliases (`path`→`file_path`, `old_str`→`old_string`, …) are resolved, `\uXXXX` escapes and lone surrogates are repaired.
+- Every repaired call must still pass the tool's JSON-schema validation, or it is rejected like any malformed call.
+
+---
+
+## Verifying Protocol Selection
 
 To confirm which protocol is being used for a model, check the model configuration:
 
@@ -253,9 +274,10 @@ senpi --provider <provider> --model <model> --info
 
 Look for the `toolCallFormat` field in the output. Valid values are:
 - `hermes` - For Qwen and other Hermes-format models
-- `xml` or `morphXml` - For Gemini and XML-based models
+- `morph-xml` - For Gemini and XML-based models (`xml` remains a deprecated alias)
 - `gemma4-delimiter` - For Gemma 4 models
 - `anthropic-xml` - For legacy Anthropic invoke/parameter XML
+- `antml` - For ANTML function_calls/invoke with failure tolerance
 - `native` - For models with native tool calling (OpenAI, Anthropic)
 
 ## Summary Table
@@ -266,3 +288,4 @@ Look for the `toolCallFormat` field in the output. Valid values are:
 | MorphXml | openrouter-gemini | google/gemini-3-flash-preview | `senpi --provider openrouter-gemini --model "google/gemini-3-flash-preview" -p "List TypeScript files"` |
 | Gemma4 | openrouter-gemma | google/gemma-4-31b-it | `senpi --provider openrouter-gemma --model "google/gemma-4-31b-it" -p "Run date command"` |
 | Anthropic XML | custom OpenAI-compatible provider | compatible text-tool model | `senpi --provider <provider> --model <model> -p "Use Bash to run printf anthropic-xml-ok"` |
+| ANTML | custom OpenAI-compatible provider | compatible text-tool model | `senpi --provider <provider> --model <model> -p "Use Bash to run printf antml-ok"` |

@@ -88,6 +88,34 @@ describe("--list-models fast path", () => {
 		expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain("gpt-5.4");
 	});
 
+	it("lists built-in catalog models without configured credentials", async () => {
+		vi.resetModules();
+		const { main } = await import("../src/main.ts");
+
+		const tempDir = createTempDir();
+		const agentDir = join(tempDir, "agent");
+		const projectDir = join(tempDir, "project");
+		mkdirSync(agentDir, { recursive: true });
+		mkdirSync(projectDir, { recursive: true });
+		originalAgentDir = process.env[ENV_AGENT_DIR];
+		originalOpenaiApiKey = process.env.OPENAI_API_KEY;
+		originalCwd = process.cwd();
+		originalExitCode = process.exitCode;
+		process.env[ENV_AGENT_DIR] = agentDir;
+		delete process.env.OPENAI_API_KEY;
+		process.exitCode = undefined;
+		process.chdir(projectDir);
+
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		vi.spyOn(process, "exit").mockImplementation((code?: string | number | null | undefined): never => {
+			throw new ProcessExitError(code);
+		});
+
+		await expect(main(["--list-models", "gpt-5.4"])).rejects.toMatchObject({ code: 0 });
+		expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain("gpt-5.4");
+	});
+
 	it("loads only model-listing resources for --list-models", async () => {
 		vi.resetModules();
 		let capturedOptions: CreateAgentSessionServicesOptions | undefined;

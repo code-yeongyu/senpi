@@ -14,7 +14,6 @@ import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "./provider-display-names.ts";
 
 /** Built-in model providers (used to decide API-key vs oauth login eligibility). */
 const BUILT_IN_MODEL_PROVIDERS = new Set<string>(getProviders());
-const OAUTH_ONLY_MODEL_PROVIDERS = new Set(["openai-codex-device"]);
 
 /** One provider entry for a login/logout selector. */
 export interface AuthProviderInfo {
@@ -36,9 +35,6 @@ export function isApiKeyLoginProvider(
 	oauthProviderIds: ReadonlySet<string>,
 	builtInProviderIds: ReadonlySet<string> = BUILT_IN_MODEL_PROVIDERS,
 ): boolean {
-	if (OAUTH_ONLY_MODEL_PROVIDERS.has(providerId)) {
-		return false;
-	}
 	if (BUILT_IN_PROVIDER_DISPLAY_NAMES[providerId]) {
 		return true;
 	}
@@ -91,7 +87,7 @@ export function buildLoginProviderInfos(
 export function buildLogoutProviderInfos(modelRegistry: ModelRegistry): AuthProviderInfo[] {
 	const authStorage = modelRegistry.authStorage;
 	const options: AuthProviderInfo[] = [];
-	for (const providerId of authStorage.list()) {
+	for (const providerId of Object.keys(authStorage.getAll())) {
 		const credential = authStorage.get(providerId);
 		if (!credential) {
 			continue;

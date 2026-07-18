@@ -1,10 +1,10 @@
-> senpi can create extensions. Ask it to build one for your use case.
+> pi can create extensions. Ask it to build one for your use case.
 
 # Extensions
 
-Extensions are TypeScript modules that extend senpi's behavior. They can subscribe to lifecycle events, register custom tools callable by the LLM, add commands, and more.
+Extensions are TypeScript modules that extend pi's behavior. They can subscribe to lifecycle events, register custom tools callable by the LLM, add commands, and more.
 
-> **Placement for /reload:** Put extensions in `~/.senpi/agent/extensions/` (global) or `.senpi/extensions/` (project-local) for auto-discovery. Use `senpi -e ./path.ts` only for quick tests. Extensions in auto-discovered locations can be hot-reloaded with `/reload`.
+> **Placement for /reload:** Put extensions in `~/.pi/agent/extensions/` (global) or `.pi/extensions/` (project-local) for auto-discovery. Use `pi -e ./path.ts` only for quick tests. Extensions in auto-discovered locations can be hot-reloaded with `/reload`.
 
 **Key capabilities:**
 - **Custom tools** - Register tools the LLM can call via `pi.registerTool()`
@@ -38,11 +38,6 @@ See [examples/extensions/](../examples/extensions/) for working implementations.
 - [Events](#events)
   - [Lifecycle Overview](#lifecycle-overview)
   - [Resource Events](#resource-events)
-  - [Builtin Hooks](#builtin-hooks)
-    - [Hook setup workflow](#hook-setup-workflow)
-    - [Hook input and output](#hook-input-and-output)
-    - [Common hook recipes](#common-hook-recipes)
-    - [Hook troubleshooting](#hook-troubleshooting)
   - [Session Events](#session-events)
   - [Agent Events](#agent-events)
   - [Model Events](#model-events)
@@ -60,10 +55,10 @@ See [examples/extensions/](../examples/extensions/) for working implementations.
 
 ## Quick Start
 
-Create `~/.senpi/agent/extensions/my-extension.ts`:
+Create `~/.pi/agent/extensions/my-extension.ts`:
 
 ```typescript
-import type { ExtensionAPI } from "@code-yeongyu/senpi";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 export default function (pi: ExtensionAPI) {
@@ -108,21 +103,21 @@ export default function (pi: ExtensionAPI) {
 Test with `--extension` (or `-e`) flag:
 
 ```bash
-senpi -e ./my-extension.ts
+pi -e ./my-extension.ts
 ```
 
 ## Extension Locations
 
 > **Security:** Extensions run with your full system permissions and can execute arbitrary code. Only install from sources you trust.
 
-Extensions are auto-discovered from trusted locations. Project-local `.senpi/extensions` entries load only after the project is trusted.
+Extensions are auto-discovered from trusted locations. Project-local `.pi/extensions` entries load only after the project is trusted.
 
 | Location | Scope |
 |----------|-------|
-| `~/.senpi/agent/extensions/*.ts` | Global (all projects) |
-| `~/.senpi/agent/extensions/*/index.ts` | Global (subdirectory) |
-| `.senpi/extensions/*.ts` | Project-local |
-| `.senpi/extensions/*/index.ts` | Project-local (subdirectory) |
+| `~/.pi/agent/extensions/*.ts` | Global (all projects) |
+| `~/.pi/agent/extensions/*/index.ts` | Global (subdirectory) |
+| `.pi/extensions/*.ts` | Project-local |
+| `.pi/extensions/*/index.ts` | Project-local (subdirectory) |
 
 Additional paths via `settings.json`:
 
@@ -139,20 +134,20 @@ Additional paths via `settings.json`:
 }
 ```
 
-To share extensions via npm or git as senpi packages, see [packages.md](packages.md).
+To share extensions via npm or git as pi packages, see [packages.md](packages.md).
 
 ## Available Imports
 
 | Package | Purpose |
 |---------|---------|
-| `@code-yeongyu/senpi` | Extension types (`ExtensionAPI`, `ExtensionContext`, events) |
+| `@earendil-works/pi-coding-agent` | Extension types (`ExtensionAPI`, `ExtensionContext`, events) |
 | `typebox` | Schema definitions for tool parameters |
 | `@earendil-works/pi-ai` | AI utilities (`StringEnum` for Google-compatible enums) |
 | `@earendil-works/pi-tui` | TUI components for custom rendering |
 
 npm dependencies work too. Add a `package.json` next to your extension (or in a parent directory), run `npm install`, and imports from `node_modules/` are resolved automatically.
 
-For distributed senpi packages installed with `senpi install` (npm or git), runtime deps must be in `dependencies`. Package installation uses production installs (`npm install --omit=dev`) by default, so `devDependencies` are not available at runtime; when `npmCommand` is configured, git packages use plain `install` for compatibility with wrappers.
+For distributed pi packages installed with `pi install` (npm or git), runtime deps must be in `dependencies`. Package installation uses production installs (`npm install --omit=dev`) by default, so `devDependencies` are not available at runtime; when `npmCommand` is configured, git packages use plain `install` for compatibility with wrappers.
 
 Node.js built-ins (`node:fs`, `node:path`, etc.) are also available.
 
@@ -161,7 +156,7 @@ Node.js built-ins (`node:fs`, `node:path`, etc.) are also available.
 An extension exports a default factory function that receives `ExtensionAPI`. The factory can be synchronous or asynchronous:
 
 ```typescript
-import type { ExtensionAPI } from "@code-yeongyu/senpi";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
   // Subscribe to events
@@ -183,14 +178,14 @@ export default function (pi: ExtensionAPI) {
 
 Extensions are loaded via [jiti](https://github.com/unjs/jiti), so TypeScript works without compilation.
 
-If the factory returns a `Promise`, senpi awaits it before continuing startup. That means async initialization completes before `session_start`, before `resources_discover`, and before provider registrations queued via `pi.registerProvider()` are flushed.
+If the factory returns a `Promise`, pi awaits it before continuing startup. That means async initialization completes before `session_start`, before `resources_discover`, and before provider registrations queued via `pi.registerProvider()` are flushed.
 
 ### Async factory functions
 
 Use an async factory for one-time startup work such as fetching remote configuration or dynamically discovering available models.
 
 ```typescript
-import type { ExtensionAPI } from "@code-yeongyu/senpi";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export default async function (pi: ExtensionAPI) {
   const response = await fetch("http://localhost:1234/v1/models");
@@ -220,7 +215,7 @@ export default async function (pi: ExtensionAPI) {
 }
 ```
 
-This pattern makes the fetched models available during normal startup and to `senpi --list-models`.
+This pattern makes the fetched models available during normal startup and to `pi --list-models`.
 
 ### Long-lived resources and shutdown
 
@@ -233,14 +228,14 @@ Defer background resource startup until `session_start` or the command/tool/even
 **Single file** - simplest, for small extensions:
 
 ```
-~/.senpi/agent/extensions/
+~/.pi/agent/extensions/
 └── my-extension.ts
 ```
 
 **Directory with index.ts** - for multi-file extensions:
 
 ```
-~/.senpi/agent/extensions/
+~/.pi/agent/extensions/
 └── my-extension/
     ├── index.ts        # Entry point (exports default function)
     ├── tools.ts        # Helper module
@@ -250,7 +245,7 @@ Defer background resource startup until `session_start` or the command/tool/even
 **Package with dependencies** - for extensions that need npm packages:
 
 ```
-~/.senpi/agent/extensions/
+~/.pi/agent/extensions/
 └── my-extension/
     ├── package.json    # Declares dependencies and entry points
     ├── package-lock.json
@@ -280,7 +275,7 @@ Run `npm install` in the extension directory, then imports from `node_modules/` 
 ### Lifecycle Overview
 
 ```
-senpi starts
+pi starts
   │
   ├─► project_trust (user/global and CLI extensions only, before project resources load)
   ├─► session_start { reason: "startup" }
@@ -356,7 +351,7 @@ exit (Ctrl+C, Ctrl+D, SIGHUP, SIGTERM)
 
 #### project_trust
 
-Fired before senpi decides whether to trust a project with dynamic configs (`.senpi` or `.agents/skills`). It runs during startup and when session replacement (for example `/resume`) enters a cwd whose trust has not been resolved in the current process. Only user/global extensions and CLI `-e` extensions participate; project-local extensions are not loaded until after trust is resolved.
+Fired before pi decides whether to trust a project with dynamic configs (`.pi` or `.agents/skills`). It runs during startup and when session replacement (for example `/resume`) enters a cwd whose trust has not been resolved in the current process. Only user/global extensions and CLI `-e` extensions participate; project-local extensions are not loaded until after trust is resolved.
 
 ```typescript
 pi.on("project_trust", async (event, ctx) => {
@@ -369,7 +364,7 @@ pi.on("project_trust", async (event, ctx) => {
 });
 ```
 
-A `project_trust` handler must return `{ trusted: "yes" | "no" | "undecided" }`. A user/global or CLI extension that returns `"yes"` or `"no"` owns the decision; the first yes/no decision wins and suppresses the built-in trust prompt. Use `remember: true` to persist a yes/no decision; otherwise it applies only to the current process. Return `"undecided"` to let later handlers or the built-in trust flow decide. Check `ctx.hasUI` before prompting. If no handler returns yes/no, normal trust resolution continues: saved `trust.json` decisions apply first, then `defaultProjectTrust` controls whether senpi asks, trusts, or declines by default.
+A `project_trust` handler must return `{ trusted: "yes" | "no" | "undecided" }`. A user/global or CLI extension that returns `"yes"` or `"no"` owns the decision; the first yes/no decision wins and suppresses the built-in trust prompt. Use `remember: true` to persist a yes/no decision; otherwise it applies only to the current process. Return `"undecided"` to let later handlers or the built-in trust flow decide. Check `ctx.hasUI` before prompting. If no handler returns yes/no, normal trust resolution continues: saved `trust.json` decisions apply first, then `defaultProjectTrust` controls whether pi asks, trusts, or declines by default.
 
 ### Resource Events
 
@@ -389,451 +384,6 @@ pi.on("resources_discover", async (event, _ctx) => {
   };
 });
 ```
-
-### Builtin Hooks
-
-The builtin `hooks` extension runs trusted command hooks from JSON config files. It is intended for local guardrails and migration from Claude-style command hooks, while keeping the extension API as the primary senpi customization surface.
-
-Default senpi hook files are discovered from:
-
-| Source | Timing | Notes |
-|--------|--------|-------|
-| `~/.senpi/agent/hooks.json` | pre-session | Global hook config. |
-| Global package `pi.hooks` or `hooks/*.json` | pre-session | Package hook config loaded after the global hook file. |
-| `.senpi/hooks.json` | pre-session | Project hook config, loaded after project trust. |
-| Project package `pi.hooks` or `hooks/*.json` | pre-session | Package hook config loaded after the project hook file. |
-| Temporary package sources and SDK/host-provided `new DefaultResourceLoader({ additionalHookPaths })` | pre-session | Package/plugin hook JSON files resolved before `session_start`. |
-| `resources_discover` `hookPaths` | runtime | Late sources. They can affect later hook events in the current runtime and `SessionStart` on `/reload` or the next session. |
-
-#### Hook setup workflow
-
-Use builtin hooks when you already have Claude/Codex-style JSON hook configs or when you want a small shell-script guardrail. Use a TypeScript extension instead when the behavior needs rich senpi APIs, UI prompts, custom tools, long-lived state, or non-command handlers.
-
-For a project-local hook:
-
-1. Create `.senpi/hooks.json`.
-2. Put command scripts under `.senpi/hooks/` or another project path.
-3. Start `senpi` in that project.
-4. Run `/hooks list` and copy the real hook id.
-5. Run `/hooks trust <id>` once for each command hook you want to execute.
-6. Trigger the event, then use `/hooks diagnostics` if it did not run.
-
-For a global hook, use `~/.senpi/agent/hooks.json` and a stable global script path. For team-shared hooks, prefer a senpi package or plugin manifest so the scripts and hook JSON move together.
-
-Trust is tied to the command hook's canonical hash. Changing the command text, `commandWindows`, timeout, matcher, or status message makes the hook untrusted again until you review and trust the new hash. Disabling a hook with `/hooks disable <id>` keeps the trust entry but skips execution; `/hooks enable <id>` re-enables it.
-
-Recommended first check after adding a hook:
-
-```text
-/hooks list
-/hooks diagnostics
-```
-
-`/hooks list` should show the source, matcher, trust state, disabled state, and redacted command preview. `/hooks diagnostics` should be empty or contain only diagnostics you intentionally accept.
-
-#### Minimal project hook
-
-Create `.senpi/hooks.json`:
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node .senpi/hooks/log-pretool.mjs",
-            "timeout": 10,
-            "statusMessage": "Checking bash command"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Create `.senpi/hooks/log-pretool.mjs`:
-
-```javascript
-let stdin = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
-  stdin += chunk;
-});
-process.stdin.on("end", () => {
-  const input = JSON.parse(stdin);
-  const toolInput = input.toolInput ?? input.tool_input ?? {};
-  const command = String(toolInput.command ?? "");
-  if (command.includes("rm -rf")) {
-    process.stdout.write(JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: "deny",
-        permissionDecisionReason: "Refusing destructive shell command"
-      }
-    }));
-    return;
-  }
-  process.stdout.write(JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "allow"
-    }
-  }));
-});
-```
-
-Start senpi in the project and inspect hooks:
-
-```bash
-senpi
-/hooks list
-/hooks trust hk_example_PreToolUse_0_0
-```
-
-The real hook id is shown by `/hooks list`. A command hook must be trusted before it runs. Project hook trust is writable only when the project is trusted.
-
-Exact command grammar:
-
-```text
-Usage: /hooks [list|diagnostics|trust <id>|disable <id>|enable <id>|reload]
-```
-
-`/hooks list` shows executable hooks, ids, trust state, disabled state, matcher, status message, and a redacted command preview. `/hooks diagnostics` shows malformed, unsupported, untrusted, and skipped hook details. `/hooks reload` runs the normal extension/resource reload flow.
-
-#### Command handler JSON
-
-Only command handlers are executable in builtin hooks v1:
-
-```json
-{
-  "type": "command",
-  "command": "node ./hooks/check.mjs",
-  "commandWindows": "node .\\hooks\\check.mjs",
-  "timeout": 30,
-  "statusMessage": "Running hook"
-}
-```
-
-`command` is required and runs through the host shell with the hook input JSON on stdin. `commandWindows` or `command_windows` can override the command on Windows. `timeout` is seconds and defaults to 600. `statusMessage` is display text: while the hook command runs during `PreToolUse`/`PostToolUse`, the TUI shows it in the live `Running PreToolUse/PostToolUse hook: ...` status row (hooks without one show their sanitized command text instead).
-
-Hook commands inherit a minimal environment (`PATH`, home/user/shell/temp variables, and Windows shell basics). Hooks loaded through the plugin manifest helper also receive `PLUGIN_ROOT`, `PLUGIN_DATA`, `CLAUDE_PLUGIN_ROOT`, and `CLAUDE_PLUGIN_DATA`. Every command receives `SENPI_HOOK_SOURCE` and `SENPI_HOOK_EVENT`. Do not put API keys or tokens in hook config, command text, status messages, stdout, stderr, or diagnostics. Read secrets inside the command from your own secret store and avoid echoing them.
-
-#### Event map
-
-| Event | senpi source | Supported behavior |
-|-------|--------------|--------------------|
-| `SessionStart` | `session_start` | Runs on startup/reload/new/resume/fork. `additionalContext` is recorded as hidden hook context. Decisions are diagnostics only. |
-| `UserPromptSubmit` | `input` plus `before_agent_start` | Can block the prompt. `additionalContext` is injected as hidden context for the turn. `systemMessage` appends to the turn system prompt. |
-| `PreToolUse` | `tool_call` | Can deny/block, ask (represented as block), allow/approve, mutate `updatedInput` only with `permissionDecision: "allow"`, and add context for the matching tool result. |
-| `PostToolUse` | `tool_result` | Can block by replacing the tool result with an error, replace tool output with `updatedToolOutput`, and append `additionalContext`. |
-| `PreCompact` | `session_before_compact` | Can block/cancel compaction with `decision: "block"` or exit code 2. `additionalContext` and `customInstructions` are diagnostic-only. |
-| `PostCompact` | `session_compact` | Runs after accepted compactions. Output fields are currently diagnostic-only. |
-| `Stop` | `agent_end` | Can block by sending a follow-up prompt from `additionalContext` or `reason`. Reentry is capped at eight blocks per turn. |
-
-Matchers are strings. For tool events, matchers match tool names. For lifecycle events, `*`, event names, reasons such as `startup`, `reload`, `manual`, or `overflow`, comma/pipe-separated literals, and JavaScript regular expressions are supported.
-
-Command stdout may be empty or JSON. Universal JSON fields include `decision`, `reason`, `additionalContext`, `continue`, `stopReason`, `suppressOutput`, `systemMessage`, and `hookSpecificOutput`. `hookSpecificOutput.hookEventName` must match the current event when present. Exit code `2` is treated as a block decision with stderr as the reason.
-
-#### Hook input and output
-
-Every command receives one JSON object on stdin. The object always includes `event` and `cwd`, and includes session/transcript fields when senpi has them:
-
-| Field | Meaning |
-|-------|---------|
-| `event` | Hook event name, such as `PreToolUse` or `UserPromptSubmit`. |
-| `cwd` | Current project working directory. |
-| `session_id` | Session id when available. |
-| `transcript_path` | Session transcript path when available. |
-
-Tool events include both senpi-style camelCase and Claude-compatible snake_case fields:
-
-```json
-{
-  "event": "PreToolUse",
-  "toolName": "bash",
-  "toolInput": { "command": "npm test" },
-  "tool_name": "bash",
-  "tool_input": { "command": "npm test" },
-  "cwd": "/repo"
-}
-```
-
-Prompt hooks receive the raw prompt:
-
-```json
-{
-  "event": "UserPromptSubmit",
-  "prompt": "summarize this repo",
-  "cwd": "/repo"
-}
-```
-
-Output must be valid JSON if you want senpi to apply a decision. Empty stdout means no decision. Prefer event-specific output inside `hookSpecificOutput`:
-
-```json
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PreToolUse",
-    "permissionDecision": "deny",
-    "permissionDecisionReason": "Do not run destructive commands"
-  }
-}
-```
-
-`PreToolUse` supports `permissionDecision: "allow" | "deny" | "ask"`. `updatedInput` is applied only when `permissionDecision` is `"allow"`. `additionalContext` is saved as hidden context for the active tool result.
-
-```json
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PreToolUse",
-    "permissionDecision": "allow",
-    "updatedInput": { "command": "npm test -- --runInBand" },
-    "additionalContext": "The hook serialized this test command."
-  }
-}
-```
-
-`UserPromptSubmit` can block or add context, but it cannot replace the prompt through Claude/Codex-compatible fields:
-
-```json
-{
-  "decision": "block",
-  "reason": "Please include an issue number before starting release work."
-}
-```
-
-`PostToolUse` can replace visible tool output with `updatedToolOutput` and can add `additionalContext`:
-
-```json
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PostToolUse",
-    "updatedToolOutput": "Output redacted by local hook.",
-    "additionalContext": "The raw tool output was replaced because it matched the secret scanner."
-  }
-}
-```
-
-`Stop` can ask senpi to continue with a follow-up prompt by returning `decision: "block"` plus `additionalContext` or `reason`. senpi caps repeated Stop follow-ups at eight per turn to prevent loops.
-
-#### Common hook recipes
-
-Block dangerous shell commands:
-
-```javascript
-let stdin = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
-  stdin += chunk;
-});
-process.stdin.on("end", () => {
-  const input = JSON.parse(stdin);
-  const toolInput = input.toolInput ?? input.tool_input ?? {};
-  const command = String(toolInput.command ?? "");
-
-  if (/\brm\s+-rf\b/.test(command)) {
-    process.stdout.write(JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: "deny",
-        permissionDecisionReason: "Blocked rm -rf"
-      }
-    }));
-  }
-});
-```
-
-Add per-prompt project context:
-
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node .senpi/hooks/prompt-context.mjs",
-            "statusMessage": "Loading prompt context"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-```javascript
-process.stdin.resume();
-process.stdin.on("end", () => {
-  process.stdout.write(JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: "UserPromptSubmit",
-      additionalContext: "Prefer the repository's AGENTS.md rules over generic defaults."
-    }
-  }));
-});
-```
-
-Stop when a final answer needs a required follow-up:
-
-```javascript
-process.stdin.resume();
-process.stdin.on("end", () => {
-  process.stdout.write(JSON.stringify({
-    decision: "block",
-    hookSpecificOutput: {
-      hookEventName: "Stop",
-      additionalContext: "Before finishing, run the focused regression test and summarize the result."
-    }
-  }));
-});
-```
-
-Distribute hooks from a package:
-
-```json
-{
-  "name": "team-senpi-hooks",
-  "pi": {
-    "hooks": ["./hooks/pretool.json"]
-  }
-}
-```
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "bash|edit|write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ./hooks/check.mjs",
-            "statusMessage": "Running team hook"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Package hook paths are resolved relative to the package root. If you need plugin-root environment variables, use a `.codex-plugin/plugin.json` manifest and `${PLUGIN_ROOT}` in the command.
-
-#### Plugin hooks
-
-Plugin hook manifests are package integration inputs. Installed senpi packages can expose hook JSON files through `package.json` under `pi.hooks` or by placing JSON files under `hooks/`; those sources are discovered before `session_start` in global, project, or temporary package scope.
-
-Plugin hook manifests live at `.codex-plugin/plugin.json` under the plugin root. A manifest can point to hook JSON files:
-
-```json
-{
-  "name": "example-hooks-plugin",
-  "hooks": "./hooks/pretool.json"
-}
-```
-
-It can also inline hook config directly:
-
-```json
-{
-  "name": "inline-hooks-plugin",
-  "hooks": {
-    "hooks": {
-      "SessionStart": [
-        {
-          "matcher": "startup|reload",
-          "hooks": [
-            {
-              "type": "command",
-              "command": "node ${PLUGIN_ROOT}/hooks/session-start.mjs"
-            }
-          ]
-        }
-      ]
-    }
-  }
-}
-```
-
-`hooks` may also be an array mixing paths, nested arrays, and inline hook objects. Hook paths must stay inside the plugin root. The manifest helper also understands a plugin default hook file at `hooks/hooks.json` unless the host disables default plugin hooks. Plugin commands that reference `${PLUGIN_ROOT}`, `$PLUGIN_ROOT`, or `%PLUGIN_ROOT%` must resolve to existing files inside the plugin root.
-
-SDK hosts can still provide explicit pre-session hook sources:
-
-```typescript
-const loader = new DefaultResourceLoader({
-  cwd,
-  agentDir,
-  additionalHookPaths: ["/absolute/path/to/package-hooks.json"],
-});
-```
-
-Pre-session sources are visible to `SessionStart` on initial startup.
-
-#### Runtime hook sources
-
-Extensions can return late hook paths from `resources_discover`:
-
-```typescript
-import { join } from "node:path";
-import type { ExtensionAPI } from "@code-yeongyu/senpi";
-
-export default function (pi: ExtensionAPI) {
-  pi.on("resources_discover", (event, ctx) => {
-    if (event.reason !== "reload") return {};
-    return {
-      hookPaths: [join(ctx.cwd, ".senpi", "generated-hooks.json")],
-    };
-  });
-}
-```
-
-These paths are runtime sources. They can affect later hook events in the current runtime, but their `SessionStart` hooks do not run for the already-started initial session. On `/hooks reload` or `/reload`, runtime `SessionStart` hooks are visible to the reloaded session. If a runtime source contains `SessionStart`, senpi records a diagnostic: `Runtime SessionStart hooks are loaded for reload or the next session only.`
-
-#### Not yet supported
-
-The builtin hooks implementation intentionally does not claim full Claude hook coverage. Unsupported shapes produce warnings or diagnostics and are not executed.
-
-| Area | Not yet supported |
-|------|-------------------|
-| Events | `PermissionRequest`, `PermissionDenied`, `SubagentStart`, `SubagentStop`, `Notification`, `Setup`, `UserPromptExpansion`, `PostToolUseFailure`, `PostToolBatch`, `TaskCreated`, `TaskCompleted`, `StopFailure`, `TeammateIdle`, `InstructionsLoaded`, `ConfigChange`, `CwdChanged`, `FileChanged`, `WorktreeCreate`, `WorktreeRemove`, `MessageDisplay`, `SessionEnd`, `Elicitation`, `ElicitationResult`. |
-| Handler types | `prompt`, `agent`, `http`, and `mcp_tool`. |
-| Command forms | Exec-form commands, object-valued `command`, separate `args`, `shell`, and command handlers with `async: true`. |
-| Command fields | `if`, `asyncRewake`, `terminalSequence`, and `continueOnBlock`. |
-| Prompt mutation | UserPromptSubmit prompt replacement fields such as `prompt`, `updatedPrompt`, and `replacementPrompt`. |
-| Async behavior | Claude-style async hooks and `asyncRewake`. |
-| PreCompact mutation | `customInstructions` does not change compaction in builtin hooks v1. |
-
-#### omo-codex migration notes
-
-For omo-codex or Claude-style hook configs, migrate the lowest-risk checks first:
-
-- Keep existing `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `PreCompact`, `PostCompact`, and `Stop` command hooks if they use shell command strings.
-- Move `http`, `mcp_tool`, `prompt`, and `agent` hooks to senpi extensions or tools.
-- Replace `if` conditions with logic inside the command script or with matcher strings for tool/lifecycle selection.
-- Treat `Notification`, subagent/task/teammate/worktree events, and prompt replacement as deferred; document them in plugin README files instead of assuming execution.
-- When the host uses the plugin manifest helper, use `PLUGIN_ROOT` and `PLUGIN_DATA` for plugin-relative scripts and state. Keep secrets out of manifests and hook JSON.
-
-#### Hook troubleshooting
-
-If a hook does not run:
-
-1. Run `/hooks list` and confirm the hook is present, enabled, and trusted.
-2. Run `/hooks diagnostics` and check for malformed JSON, unsupported fields, untrusted hashes, skipped runtime `SessionStart`, or plugin containment errors.
-3. Confirm the matcher matches the event. Tool events match tool names such as `bash`, `edit`, `write`, `Bash`, `Edit`, and `Write`; lifecycle events match reasons such as `startup`, `reload`, `manual`, and `overflow`.
-4. Confirm the command path works from the project cwd. For plugin commands using `${PLUGIN_ROOT}`, the resolved file must exist inside the plugin root.
-5. Keep stdout as valid JSON or empty. Human-readable logs should go to stderr, and secret-bearing logs should be avoided entirely.
-6. After editing hook JSON or scripts, run `/hooks reload`, then `/hooks list` again. If the trusted hash changed, trust the hook again.
-
-If a hook runs but has no effect, check the event support table. Some fields are diagnostic-only by design, such as `PreCompact` `additionalContext` and `customInstructions`, `PostCompact` output fields, and unsupported prompt replacement fields for `UserPromptSubmit`.
-
-If a hook times out, increase `timeout` in seconds or make the script observe stdin and exit quickly. The default timeout is 600 seconds. Invalid timeout values such as `0`, negative numbers, `NaN`, or infinity are rejected and the command is not started.
 
 ### Session Events
 
@@ -878,7 +428,7 @@ pi.on("session_before_switch", async (event, ctx) => {
 });
 ```
 
-After a successful switch or new-session action, senpi emits `session_shutdown` for the old extension instance, reloads and rebinds extensions for the new session, then emits `session_start` with `reason: "new" | "resume"` and `previousSessionFile`.
+After a successful switch or new-session action, pi emits `session_shutdown` for the old extension instance, reloads and rebinds extensions for the new session, then emits `session_start` with `reason: "new" | "resume"` and `previousSessionFile`.
 Do cleanup work in `session_shutdown`, then reestablish any in-memory state in `session_start`.
 
 #### session_before_fork
@@ -895,7 +445,7 @@ pi.on("session_before_fork", async (event, ctx) => {
 });
 ```
 
-After a successful fork or clone, senpi emits `session_shutdown` for the old extension instance, reloads and rebinds extensions for the new session, then emits `session_start` with `reason: "fork"` and `previousSessionFile`.
+After a successful fork or clone, pi emits `session_shutdown` for the old extension instance, reloads and rebinds extensions for the new session, then emits `session_start` with `reason: "fork"` and `previousSessionFile`.
 Do cleanup work in `session_shutdown`, then reestablish any in-memory state in `session_start`.
 
 #### session_before_compact / session_compact
@@ -972,7 +522,7 @@ pi.on("before_agent_start", async (event, ctx) => {
   // event.systemPrompt - current chained system prompt for this handler
   //   (includes changes from earlier before_agent_start handlers)
   // event.systemPromptOptions - structured options used to build the system prompt
-  //   .customPrompt - any custom system prompt (from --system-prompt or custom templates)
+  //   .customPrompt - any custom system prompt (from --system-prompt, SYSTEM.md, or custom templates)
   //   .selectedTools - tools currently active in the prompt
   //   .toolSnippets - one-line descriptions for each tool
   //   .promptGuidelines - custom guideline bullets
@@ -994,7 +544,7 @@ pi.on("before_agent_start", async (event, ctx) => {
 });
 ```
 
-The `systemPromptOptions` field gives extensions access to the same structured data senpi uses to build the system prompt. This lets you inspect what senpi has loaded — custom prompts, guidelines, tool snippets, context files, skills — without re-discovering resources or re-parsing flags. Use it when your extension needs to make deep, informed changes to the system prompt while respecting user-provided configuration.
+The `systemPromptOptions` field gives extensions access to the same structured data Pi uses to build the system prompt. This lets you inspect what Pi has loaded — custom prompts, guidelines, tool snippets, context files, skills — without re-discovering resources or re-parsing flags. Use it when your extension needs to make deep, informed changes to the system prompt while respecting user-provided configuration.
 
 Inside `before_agent_start`, `event.systemPrompt` and `ctx.getSystemPrompt()` both reflect the chained system prompt as of the current handler. Later `before_agent_start` handlers can still modify it again.
 
@@ -1122,7 +672,7 @@ Runs once per provider request; retries reuse the same headers rather than re-fi
 
 Fired after the provider-specific payload is built, right before the request is sent. Handlers run in extension load order. Returning `undefined` keeps the payload unchanged. Returning any other value replaces the payload for later handlers and for the actual request.
 
-This hook can rewrite provider-level system instructions or remove them entirely. Those payload-level changes are not reflected by `ctx.getSystemPrompt()`, which reports senpi's system prompt string rather than the final serialized provider payload.
+This hook can rewrite provider-level system instructions or remove them entirely. Those payload-level changes are not reflected by `ctx.getSystemPrompt()`, which reports Pi's system prompt string rather than the final serialized provider payload.
 
 ```typescript
 pi.on("before_provider_request", (event, ctx) => {
@@ -1195,7 +745,7 @@ Use this to update extension UI when `pi.setThinkingLevel()`, model changes, or 
 
 Fired after `tool_execution_start`, before the tool executes. **Can block.** Use `isToolCallEventType` to narrow and get typed inputs.
 
-Before `tool_call` runs, senpi waits for previously emitted Agent events to finish draining through `AgentSession`. This means `ctx.sessionManager` is up to date through the current assistant tool-calling message.
+Before `tool_call` runs, pi waits for previously emitted Agent events to finish draining through `AgentSession`. This means `ctx.sessionManager` is up to date through the current assistant tool-calling message.
 
 In the default parallel tool execution mode, sibling tool calls from the same assistant message are preflighted sequentially, then executed concurrently. `tool_call` is not guaranteed to see sibling tool results from that same assistant message in `ctx.sessionManager`.
 
@@ -1208,7 +758,7 @@ Behavior guarantees:
 - Return values from `tool_call` only control blocking via `{ block: true, reason?: string }`
 
 ```typescript
-import { isToolCallEventType } from "@code-yeongyu/senpi";
+import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
 
 pi.on("tool_call", async (event, ctx) => {
   // event.toolName - "bash", "read", "write", "edit", etc.
@@ -1244,7 +794,7 @@ export type MyToolInput = Static<typeof myToolSchema>;
 Use `isToolCallEventType` with explicit type parameters:
 
 ```typescript
-import { isToolCallEventType } from "@code-yeongyu/senpi";
+import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import type { MyToolInput } from "my-extension";
 
 pi.on("tool_call", (event) => {
@@ -1268,7 +818,7 @@ In parallel tool mode, `tool_result` and `tool_execution_end` may interleave in 
 Use `ctx.signal` for nested async work inside the handler. This lets Esc cancel model calls, `fetch()`, and other abort-aware operations started by the extension.
 
 ```typescript
-import { isBashToolResult } from "@code-yeongyu/senpi";
+import { isBashToolResult } from "@earendil-works/pi-coding-agent";
 
 pi.on("tool_result", async (event, ctx) => {
   // event.toolName, event.toolCallId, event.input
@@ -1296,7 +846,7 @@ pi.on("tool_result", async (event, ctx) => {
 Fired when user executes `!` or `!!` commands. **Can intercept.**
 
 ```typescript
-import { createLocalBashOperations } from "@code-yeongyu/senpi";
+import { createLocalBashOperations } from "@earendil-works/pi-coding-agent";
 
 pi.on("user_bash", (event, ctx) => {
   // event.command - the bash command
@@ -1306,7 +856,7 @@ pi.on("user_bash", (event, ctx) => {
   // Option 1: Provide custom operations (e.g., SSH)
   return { operations: remoteBashOps };
 
-  // Option 2: Wrap senpi's built-in local bash backend
+  // Option 2: Wrap pi's built-in local bash backend
   const local = createLocalBashOperations();
   return {
     operations: {
@@ -1439,7 +989,7 @@ Use this for abort-aware nested work started by extension handlers, for example:
 - file or process helpers that accept `AbortSignal`
 
 `ctx.signal` is typically defined during active turn events such as `tool_call`, `tool_result`, `message_update`, and `turn_end`.
-It is usually `undefined` in idle or non-turn contexts such as session events, extension commands, and shortcuts fired while senpi is idle.
+It is usually `undefined` in idle or non-turn contexts such as session events, extension commands, and shortcuts fired while pi is idle.
 
 ```typescript
 pi.on("tool_result", async (event, ctx) => {
@@ -1460,7 +1010,7 @@ Control flow helpers. `ctx.isIdle()` is false while Pi is processing an agent ru
 
 ### ctx.shutdown()
 
-Request a graceful shutdown of senpi.
+Request a graceful shutdown of pi.
 
 - **Interactive mode:** Deferred until the agent becomes idle (after processing all queued steering and follow-up messages).
 - **RPC mode:** Deferred until the next idle state (after completing the current command response, when waiting for the next command).
@@ -1473,19 +1023,6 @@ pi.on("tool_call", (event, ctx) => {
   if (isFatal(event.input)) {
     ctx.shutdown();
   }
-});
-```
-
-### ctx.updateToolHookStatus()
-
-Only available on the context passed to `tool_call` and `tool_result` handlers. Replaces the label of that handler's live `Running PreToolUse/PostToolUse hook: ...` status row in the TUI, so long-running hooks can report what they are doing. Messages are truncated to 79 characters; calls after the handler finished are ignored.
-
-```typescript
-pi.on("tool_result", async (event, ctx) => {
-  ctx.updateToolHookStatus?.("Checking comments");
-  await runCommentChecker(event);
-  ctx.updateToolHookStatus?.("Collecting diagnostics");
-  await collectDiagnostics(event);
 });
 ```
 
@@ -1518,7 +1055,7 @@ ctx.compact({
 
 ### ctx.getSystemPrompt()
 
-Returns senpi's current system prompt string.
+Returns Pi's current system prompt string.
 
 - During `before_agent_start`, this reflects chained system-prompt changes made so far for the current turn.
 - It does not include later `context` message mutations.
@@ -1538,7 +1075,7 @@ Command handlers receive `ExtensionCommandContext`, which extends `ExtensionCont
 
 ### ctx.getSystemPromptOptions()
 
-Returns the base inputs senpi currently uses to build the system prompt.
+Returns the base inputs Pi currently uses to build the system prompt.
 
 ```typescript
 const options = ctx.getSystemPromptOptions();
@@ -1661,7 +1198,7 @@ Options:
 To discover available sessions, use the static `SessionManager.list()` or `SessionManager.listAll()` methods:
 
 ```typescript
-import { SessionManager } from "@code-yeongyu/senpi";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 pi.registerCommand("switch", {
   description: "Switch to another session",
@@ -1755,7 +1292,7 @@ Tools run with `ExtensionContext`, so they cannot call `ctx.reload()` directly. 
 Example tool the LLM can call to trigger reload:
 
 ```typescript
-import type { ExtensionAPI } from "@code-yeongyu/senpi";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 export default function (pi: ExtensionAPI) {
@@ -1839,6 +1376,52 @@ pi.registerTool({
 });
 ```
 
+### pi.registerMcpServer(name, config)
+
+Register an MCP server that the agent can use. This is a **factory-time only**
+API: it must be called inside the extension factory before the factory returns.
+Calling it after startup throws because registration is tied to extension load.
+
+`config` accepts the same fields as `mcpServers.<name>` in `mcp.json` (see the
+[MCP server fields reference](mcp.md#server-fields-mcpserversname)): `type`,
+`command`, `args`, `env`, `cwd`, `url`, `headers`, `auth`, `enabled`,
+`lifecycle`, timeouts, `includeTools`, `excludeTools`, `directTools`,
+`exposure`, and `logLevel`.
+
+```typescript
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+export default function (pi: ExtensionAPI) {
+  pi.registerMcpServer("docs", {
+    type: "stdio",
+    command: "npx",
+    args: ["-y", "@example/docs-mcp"],
+    env: { DOCS_TOKEN: "${DOCS_TOKEN}" },
+  });
+}
+```
+
+Validation runs synchronously when you call `registerMcpServer`. An invalid
+declaration (unknown fields, a stdio server without `command`, an http server
+without `url`, etc.) throws an error and fails **only** the declaring extension;
+other extensions still load.
+
+Same-name precedence:
+
+- User config from `mcp.json` (`global`, imported `claude`, or trusted
+  `project`) wins over an extension-declared server, including `enabled: false`.
+- An extension-declared server replaces an untrusted placeholder from an
+  untrusted project config and records a diagnostic.
+- Across extensions, the first loaded extension wins; later collisions log a
+  warning naming both extension paths.
+
+A stdio declaration that omits `cwd` defaults to the extension's registration
+cwd (the cwd passed to the factory), not the ambient `process.cwd()`.
+
+Extension factories re-run on `/reload`, so declarations are refreshed then.
+In-process senpi-task children load no extensions, so they see no
+extension-declared MCP servers.
+
 ### pi.sendMessage(message, options?)
 
 Inject a custom message into the session. Custom messages participate in LLM context. For durable TUI-only content that should not be sent to the LLM, use [`pi.appendEntry()`](#piappendentrycustomtype-data) with [`pi.registerEntryRenderer()`](#piregisterentryrenderercustomtype-renderer).
@@ -1873,7 +1456,7 @@ pi.sendUserMessage("What is 2+2?");
 // With content array (text + images)
 pi.sendUserMessage([
   { type: "text", text: "Describe this image:" },
-  { type: "image", data: "base64-encoded-data", mimeType: "image/png" },
+  { type: "image", source: { type: "base64", mediaType: "image/png", data: "..." } },
 ]);
 
 // During streaming - must specify delivery mode
@@ -1948,7 +1531,7 @@ Labels persist in the session and survive restarts. Use them to mark important p
 
 Register a command.
 
-If multiple extensions register the same command name, senpi keeps them all and assigns numeric invocation suffixes in load order, for example `/review:1` and `/review:2`.
+If multiple extensions register the same command name, pi keeps them all and assigns numeric invocation suffixes in load order, for example `/review:1` and `/review:2`.
 
 ```typescript
 pi.registerCommand("stats", {
@@ -2102,41 +1685,6 @@ Typical `sourceInfo.source` values:
 - `sdk` for tools passed via `createAgentSession({ customTools })`
 - extension source metadata for tools registered by extensions
 
-### pi.executeTool(name, params, options?)
-
-Execute an active tool from extension code using the same wrapped pipeline as a model-dispatched tool call.
-
-```typescript
-const result = await pi.executeTool("read", { path: "README.md" }, {
-  onUpdate: (partial) => {
-    // Forward partial AgentToolResult updates into your parent tool UI.
-  },
-});
-```
-
-`params` are prepared and validated against the target tool schema before `tool_call` handlers run. If validation fails, `executeTool` rejects with `ExecuteToolError` code `invalid_params`, the tool is not executed, and no `tool_call` hook fires.
-
-Only active tools can run. Registered but inactive tools reject with code `inactive_tool`; unknown names reject with code `unknown_tool`. Both errors include `toolName` and `activeTools`.
-
-When pre-tool hooks block, `executeTool` rejects with code `blocked` and the hook reason. When hooks mutate `event.input`, the executed tool sees the mutated arguments. `tool_result` hooks can replace the returned content, details, or error state before the promise resolves.
-
-The optional `signal` and `onUpdate` are forwarded directly to the tool execution callback. Bridge-invoked calls emit `tool_call` and `tool_result` extension events, but do not emit `tool_execution_start`, `tool_execution_update`, or `tool_execution_end` UI events; they are subcalls of the parent extension/tool UI.
-
-The SDK exports `ExecuteToolOptions<TDetails>`, `ExecuteToolResult<TDetails>`, `ExecuteToolUpdateCallback<TDetails>`, `ExecuteToolError`, and `ExecuteToolErrorCode`. `ExecuteToolResult<TDetails>` is the normal `AgentToolResult<TDetails>` returned by the wrapped tool after `tool_result` hooks have run.
-
-```typescript
-try {
-  const result = await pi.executeTool("bash", { command: "pwd" });
-  ctx.ui.notify(result.content);
-} catch (error) {
-  if (error instanceof ExecuteToolError && error.code === "blocked") {
-    ctx.ui.notify(error.message, "warning");
-  } else {
-    throw error;
-  }
-}
-```
-
 ### pi.setModel(model)
 
 Set the current model. Returns `false` if no API key is available for the model. See [models.md](models.md) for configuring custom models.
@@ -2175,7 +1723,7 @@ Register or override a model provider dynamically. Useful for proxies, custom en
 
 Calls made during the extension factory function are queued and applied once the runner initialises. Calls made after that — for example from a command handler following a user setup flow — take effect immediately without requiring a `/reload`.
 
-If you need to discover models from a remote endpoint, prefer an async extension factory over deferring the fetch to `session_start`. senpi waits for the factory before startup continues, so the registered models are available immediately, including to `senpi --list-models`.
+Dynamic providers can implement `refreshModels`. Pi calls it during model refresh, publishes the returned list synchronously through the provider, and passes the canonical credential/store/network/signal context. The extension decides whether to persist the catalog through `context.store`; live servers such as llama.cpp can ignore it.
 
 ```typescript
 // Register a new provider with custom models
@@ -2195,6 +1743,26 @@ pi.registerProvider("my-proxy", {
       maxTokens: 16384
     }
   ]
+});
+
+// Register a live llama.cpp catalog without persisting discovered models
+pi.registerProvider("llama.cpp", {
+  baseUrl: "http://localhost:8080/v1",
+  apiKey: "local",
+  api: "openai-completions",
+  async refreshModels({ signal }) {
+    const response = await fetch("http://localhost:8080/v1/models", { signal });
+    const { data } = await response.json();
+    return data.map(({ id }) => ({
+      id,
+      name: id,
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128000,
+      maxTokens: 16384
+    }));
+  }
 });
 
 // Override baseUrl for an existing provider (keeps all models)
@@ -2234,6 +1802,7 @@ pi.registerProvider("corporate-ai", {
 - `headers` - Custom headers to include in requests.
 - `authHeader` - If true, adds `Authorization: Bearer` header automatically.
 - `models` - Array of model definitions. If provided, replaces all existing models for this provider. Model definitions can set `baseUrl` to override the provider endpoint for that model.
+- `refreshModels` - Async dynamic discovery callback. Its returned models replace extension-provided models. Use the scoped `context.store` only when results should persist.
 - `oauth` - OAuth provider config for `/login` support. When provided, the provider appears in the login menu.
 - `streamSimple` - Custom streaming implementation for non-standard APIs.
 
@@ -2309,7 +1878,7 @@ Pass the real target file path to `withFileMutationQueue()`, not the raw user ar
 Queue the entire mutation window on that target path. That includes read-modify-write logic, not just the final write.
 
 ```typescript
-import { withFileMutationQueue } from "@code-yeongyu/senpi";
+import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
@@ -2405,7 +1974,7 @@ async execute(toolCallId, params) {
 
 **Important:** Use `StringEnum` from `@earendil-works/pi-ai` for string enums. `Type.Union`/`Type.Literal` doesn't work with Google's API.
 
-**Argument preparation:** `prepareArguments(args)` is optional. If defined, it runs before schema validation and before `execute()`. Use it to mimic an older accepted input shape when senpi resumes an older session whose stored tool call arguments no longer match the current schema. Return the object you want validated against `parameters`. Keep the public schema strict. Do not add deprecated compatibility fields to `parameters` just to keep old resumed sessions working.
+**Argument preparation:** `prepareArguments(args)` is optional. If defined, it runs before schema validation and before `execute()`. Use it to mimic an older accepted input shape when pi resumes an older session whose stored tool call arguments no longer match the current schema. Return the object you want validated against `parameters`. Keep the public schema strict. Do not add deprecated compatibility fields to `parameters` just to keep old resumed sessions working.
 
 Example: an older session may contain an `edit` tool call with top-level `oldText` and `newText`, while the current schema only accepts `edits: [{ oldText, newText }]`.
 
@@ -2458,13 +2027,13 @@ Extensions can override built-in tools (`read`, `bash`, `edit`, `write`, `grep`,
 
 ```bash
 # Extension's read tool replaces built-in read
-senpi -e ./tool-override.ts
+pi -e ./tool-override.ts
 ```
 
 Alternatively, use `--no-builtin-tools` to start without any built-in tools while keeping extension tools enabled:
 ```bash
 # No built-in tools, only extension tools
-senpi --no-builtin-tools -e ./my-extension.ts
+pi --no-builtin-tools -e ./my-extension.ts
 ```
 
 See [examples/extensions/tool-override.ts](../examples/extensions/tool-override.ts) for a complete example that overrides `read` with logging and access control.
@@ -2489,7 +2058,7 @@ Built-in tool implementations:
 Built-in tools support pluggable operations for delegating to remote systems (SSH, containers, etc.):
 
 ```typescript
-import { createReadTool, createBashTool, type ReadOperations } from "@code-yeongyu/senpi";
+import { createReadTool, createBashTool, type ReadOperations } from "@earendil-works/pi-coding-agent";
 
 // Create tool with custom operations
 const remoteRead = createReadTool(cwd, {
@@ -2515,12 +2084,12 @@ pi.registerTool({
 
 **Operations interfaces:** `ReadOperations`, `WriteOperations`, `EditOperations`, `BashOperations`, `LsOperations`, `GrepOperations`, `FindOperations`
 
-For `user_bash`, extensions can reuse senpi's local shell backend via `createLocalBashOperations()` instead of reimplementing local process spawning, shell resolution, and process-tree termination.
+For `user_bash`, extensions can reuse pi's local shell backend via `createLocalBashOperations()` instead of reimplementing local process spawning, shell resolution, and process-tree termination.
 
 The bash tool also supports a spawn hook to adjust the command, cwd, or env before execution:
 
 ```typescript
-import { createBashTool } from "@code-yeongyu/senpi";
+import { createBashTool } from "@earendil-works/pi-coding-agent";
 
 const bashTool = createBashTool(cwd, {
   spawnHook: ({ command, cwd, env }) => ({
@@ -2550,7 +2119,7 @@ import {
   formatSize,        // Human-readable size (e.g., "50KB", "1.5MB")
   DEFAULT_MAX_BYTES, // 50KB
   DEFAULT_MAX_LINES, // 2000
-} from "@code-yeongyu/senpi";
+} from "@earendil-works/pi-coding-agent";
 
 async execute(toolCallId, params, signal, onUpdate, ctx) {
   const output = await runCommand();
@@ -2633,7 +2202,6 @@ pi.registerTool({
 - `lastComponent` - the previously returned component for that slot, if any
 - `invalidate()` - request a rerender of this tool row
 - `toolCallId`, `cwd`, `executionStarted`, `argsComplete`, `isPartial`, `expanded`, `showImages`, `isError`
-- `imageProtocol` - optional for compatibility with older hosts; when present it is `"kitty"`, `"iterm2"`, or `null` when the terminal cannot render inline images. With an active protocol, the host owns native image rendering and protocol fallbacks for image result blocks, so custom renderers can suppress duplicate image indicators.
 
 Use `context.state` for cross-slot shared state. Keep slot-local caches on the returned component instance when you want to reuse and mutate the same component across renders.
 
@@ -2687,7 +2255,7 @@ If a slot intentionally has no visible content, return an empty `Component` such
 Use `keyHint()` to display keybinding hints that respect the active keybinding configuration:
 
 ```typescript
-import { keyHint } from "@code-yeongyu/senpi";
+import { keyHint } from "@earendil-works/pi-coding-agent";
 
 renderResult(result, { expanded }, theme, context) {
   let text = theme.fg("success", "✓ Done");
@@ -2992,7 +2560,7 @@ ctx.ui.setFooter((tui, theme) => ({
 ctx.ui.setFooter(undefined);  // Restore built-in footer
 
 // Terminal title
-ctx.ui.setTitle("senpi - my-project");
+ctx.ui.setTitle("pi - my-project");
 
 // Editor text
 ctx.ui.setEditorText("Prefill text");
@@ -3165,7 +2733,7 @@ See [tui.md](tui.md) for the full `OverlayOptions` and `OverlayHandle` API and [
 Replace the main input editor with a custom implementation (vim mode, emacs mode, etc.):
 
 ```typescript
-import { CustomEditor, type ExtensionAPI } from "@code-yeongyu/senpi";
+import { CustomEditor, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { matchesKey } from "@earendil-works/pi-tui";
 
 class VimEditor extends CustomEditor {
@@ -3275,7 +2843,7 @@ theme.strikethrough(text)
 For syntax highlighting in custom tool renderers:
 
 ```typescript
-import { highlightCode, getLanguageFromPath } from "@code-yeongyu/senpi";
+import { highlightCode, getLanguageFromPath } from "@earendil-works/pi-coding-agent";
 
 // Highlight code with explicit language
 const highlighted = highlightCode("const x = 1;", "typescript", theme);
@@ -3368,6 +2936,7 @@ All examples in [examples/extensions/](../examples/extensions/).
 | `interactive-shell.ts` | Persistent shell session | `on("user_bash")` |
 | `sandbox/` | Sandboxed tool execution | Tool operations |
 | `gondolin/` | Route built-in tools and `!` commands into a Gondolin micro-VM | Tool operations, built-in tool overrides, `on("user_bash")` |
+| `subagent/` | Spawn sub-agents | `registerTool`, `exec` |
 | **Games** |||
 | `snake.ts` | Snake game | `registerCommand`, `ui.custom`, keyboard handling |
 | `space-invaders.ts` | Space Invaders game | `registerCommand`, `ui.custom` |

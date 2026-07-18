@@ -263,7 +263,7 @@ ${chalk.bold("Commands:")}
   ${APP_NAME} install <source> [-l]     Install extension source and add to settings
   ${APP_NAME} remove <source> [-l]      Remove extension source from settings
   ${APP_NAME} uninstall <source> [-l]   Alias for remove
-  ${APP_NAME} update [source|self|${APP_NAME}]   Update ${APP_NAME} (use --all for ${APP_NAME} and extensions)
+  ${APP_NAME} update [source|self|${APP_NAME}]   Update ${APP_NAME}, extensions, or model catalogs
   ${APP_NAME} list [--approve|--no-approve]
                                  List installed extensions from settings
   ${APP_NAME} config [--no-approve]

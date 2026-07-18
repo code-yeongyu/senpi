@@ -32,6 +32,7 @@ function formatRow(row: McpStatusRow): string {
 		snapshot.name,
 		snapshot.configState,
 		`state=${snapshot.lifecycleState}`,
+		`origin=${snapshot.source ?? "n/a"}`,
 		`source=${snapshot.sourcePath ?? "n/a"}`,
 		`tools=${row.exposure.toolCount ?? "?"}`,
 		`uptime=${formatUptime(snapshot.uptimeMs)}`,

@@ -1,8 +1,8 @@
 import { createServer } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { getOAuthProvider } from "../src/auth/oauth/index.ts";
+import type { OAuthProviderInterface } from "../src/auth/oauth/types.ts";
 import { builtinProviders } from "../src/providers/all.ts";
-import { getOAuthProvider } from "../src/utils/oauth/index.ts";
-import type { OAuthProviderInterface } from "../src/utils/oauth/types.ts";
 
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -106,5 +106,28 @@ describe.sequential("GitLab Duo OAuth", () => {
 				"x-gitlab-instance-id": "instance-a",
 			},
 		});
+	});
+
+	it("exchanges ambient API-key credentials for direct-access request auth", async () => {
+		const { gitlabDuoProvider } = await import("../src/providers/gitlab-duo.ts");
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: string | URL | Request) => {
+				const url = String(input);
+				expect(url).toContain("/api/v4/ai/third_party_agents/direct_access");
+				return jsonResponse({ headers: { "x-gitlab-instance-id": "instance-b" }, token: "pat-direct-token" });
+			}),
+		);
+		const result = await gitlabDuoProvider().auth.apiKey?.resolve({
+			ctx: { env: async () => "gitlab-raw-pat", fileExists: async () => false },
+		});
+		expect(result?.auth).toEqual({
+			apiKey: "pat-direct-token",
+			headers: {
+				Authorization: "Bearer pat-direct-token",
+				"x-gitlab-instance-id": "instance-b",
+			},
+		});
+		expect(result?.source).toBe("GITLAB_TOKEN");
 	});
 });

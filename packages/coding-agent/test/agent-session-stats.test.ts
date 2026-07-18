@@ -5,9 +5,9 @@ import { describe, expect, it } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { estimateTokens } from "../src/core/compaction/index.ts";
-import { ModelRegistry } from "../src/core/model-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { createInMemoryModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 import { createTestResourceLoader } from "./utilities.ts";
 
 const model = getModel("anthropic", "claude-sonnet-4-5")!;
@@ -50,11 +50,11 @@ function createUserMessage(text: string, timestamp: number) {
 	};
 }
 
-function createSession() {
+async function createSession() {
 	const settingsManager = SettingsManager.inMemory();
 	const sessionManager = SessionManager.inMemory();
 	const authStorage = AuthStorage.inMemory();
-	authStorage.setRuntimeApiKey("anthropic", "test-key");
+	await authStorage.modify("anthropic", async () => ({ type: "api_key", key: "test-key" }));
 	const session = new AgentSession({
 		agent: new Agent({
 			getApiKey: () => "test-key",
@@ -68,7 +68,7 @@ function createSession() {
 		sessionManager,
 		settingsManager,
 		cwd: process.cwd(),
-		modelRegistry: ModelRegistry.inMemory(authStorage),
+		modelRuntime: getModelRuntime(await createInMemoryModelRegistry(authStorage)),
 		resourceLoader: createTestResourceLoader(),
 	});
 
@@ -80,8 +80,8 @@ function syncAgentMessages(session: AgentSession, sessionManager: SessionManager
 }
 
 describe("AgentSession.getSessionStats", () => {
-	it("exposes the current context usage alongside token totals", () => {
-		const { session, sessionManager } = createSession();
+	it("exposes the current context usage alongside token totals", async () => {
+		const { session, sessionManager } = await createSession();
 
 		try {
 			sessionManager.appendMessage(createUserMessage("hello", 1));
@@ -98,8 +98,8 @@ describe("AgentSession.getSessionStats", () => {
 		}
 	});
 
-	it("estimates current context usage immediately after compaction", () => {
-		const { session, sessionManager } = createSession();
+	it("estimates current context usage immediately after compaction", async () => {
+		const { session, sessionManager } = await createSession();
 
 		try {
 			sessionManager.appendMessage(createUserMessage("first", 1));
@@ -126,8 +126,8 @@ describe("AgentSession.getSessionStats", () => {
 		}
 	});
 
-	it("uses post-compaction usage for current context instead of stale kept usage", () => {
-		const { session, sessionManager } = createSession();
+	it("uses post-compaction usage for current context instead of stale kept usage", async () => {
+		const { session, sessionManager } = await createSession();
 
 		try {
 			sessionManager.appendMessage(createUserMessage("first", 1));
@@ -150,8 +150,8 @@ describe("AgentSession.getSessionStats", () => {
 		}
 	});
 
-	it("ignores zero-usage messages when checking for post-compaction context usage", () => {
-		const { session, sessionManager } = createSession();
+	it("ignores zero-usage messages when checking for post-compaction context usage", async () => {
+		const { session, sessionManager } = await createSession();
 
 		try {
 			sessionManager.appendMessage(createUserMessage("first", 1));

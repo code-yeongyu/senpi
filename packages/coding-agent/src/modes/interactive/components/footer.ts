@@ -168,7 +168,7 @@ export class FooterComponent implements Component {
 			plainSegments.push(text);
 		}
 		// Show cost with "(sub)" indicator if using OAuth subscription
-		const usingSubscription = state.model ? this.session.modelRegistry.isUsingOAuth(state.model) : false;
+		const usingSubscription = state.model ? this.session.modelRuntime.isUsingOAuth(state.model.provider) : false;
 		if (totalCost || usingSubscription) {
 			const costStr = `$${totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
 			coloredSegments.push(theme.fg("success", costStr));

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getOAuthProvider, resolveOAuthStorageProvider } from "../src/utils/oauth/index.ts";
-import { openaiCodexDeviceOAuthProvider } from "../src/utils/oauth/openai-codex-device.ts";
+import { getOAuthProvider, resolveOAuthStorageProvider } from "../src/auth/oauth/index.ts";
+import { openaiCodexDeviceOAuthProvider } from "../src/auth/oauth/openai-codex-device.ts";
 
 function jsonResponse(body: unknown): Response {
 	return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });

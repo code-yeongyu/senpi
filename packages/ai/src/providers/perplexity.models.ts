@@ -12,7 +12,12 @@ export const PERPLEXITY_MODELS = {
 		baseUrl: "https://api.perplexity.ai",
 		reasoning: false,
 		input: ["text"],
-		cost: { input: 3, output: 15, cacheRead: 0, cacheWrite: 0 },
+		cost: {
+			input: 3,
+			output: 15,
+			cacheRead: 0,
+			cacheWrite: 0,
+		},
 		contextWindow: 200000,
 		maxTokens: 8192,
 	} satisfies Model<"openai-completions">,

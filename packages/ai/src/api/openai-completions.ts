@@ -40,6 +40,10 @@ import { parseStreamingJson } from "../utils/json-parse.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { isForcedToolChoiceUnsupportedError, omitToolChoiceParam } from "../utils/tool-choice-fallback.ts";
+import {
+	normalizeToolParametersForMoonshot,
+	normalizeToolParametersForOpenAICompat,
+} from "../utils/tool-schema-compat.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import {
@@ -101,6 +105,26 @@ function hasToolHistory(messages: Message[]): boolean {
 	return false;
 }
 
+function getDeferredToolNames(messages: Message[]): Set<string> {
+	const names = new Set<string>();
+	for (const message of messages) {
+		if (message.role === "toolResult") {
+			for (const name of message.addedToolNames ?? []) {
+				names.add(name);
+			}
+		}
+	}
+	return names;
+}
+
+function getToolsByName(tools: Tool[] | undefined, names: Iterable<string>): Tool[] {
+	if (!tools) return [];
+	const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
+	return Array.from(names)
+		.map((name) => toolsByName.get(name))
+		.filter((tool): tool is Tool => tool !== undefined);
+}
+
 function isTextContentBlock(block: { type: string }): block is TextContent {
 	return block.type === "text";
 }
@@ -159,15 +183,22 @@ interface OpenAICompatCacheControl {
 
 type ResolvedOpenAICompletionsCompat = Omit<
 	Required<OpenAICompletionsCompat>,
-	"cacheControlFormat" | "toolCallFormat"
+	"cacheControlFormat" | "toolCallFormat" | "deferredToolsMode" | "toolSchemaFlavor"
 > & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	toolCallFormat?: OpenAICompletionsCompat["toolCallFormat"];
+	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
+	toolSchemaFlavor?: OpenAICompletionsCompat["toolSchemaFlavor"];
 };
 
 type ResolvedChatTemplateKwargValue = string | number | boolean | null;
 
 type ChatCompletionInstructionMessageParam = ChatCompletionDeveloperMessageParam | ChatCompletionSystemMessageParam;
+
+type KimiToolSystemMessageParam = {
+	role: "system";
+	tools: OpenAI.Chat.Completions.ChatCompletionTool[];
+};
 
 type OpenAIEncryptedReasoningDetail = {
 	type: "reasoning.encrypted";
@@ -230,6 +261,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			if (nextParams !== undefined) {
 				params = nextParams as OpenAICompletionsRequestParams;
 			}
+			params = normalizeRequestToolSchemas(params, compat);
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
@@ -655,8 +687,11 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
-	if (context.tools && context.tools.length > 0) {
-		params.tools = convertTools(context.tools, compat);
+	const deferredToolNames =
+		compat.deferredToolsMode === "kimi" ? getDeferredToolNames(context.messages) : new Set<string>();
+	const activeTools = context.tools?.filter((tool) => !deferredToolNames.has(tool.name));
+	if (activeTools && activeTools.length > 0) {
+		params.tools = convertTools(activeTools, compat);
 		if (compat.zaiToolStream) {
 			params.tool_stream = true;
 		}
@@ -1100,6 +1135,7 @@ export function convertMessages(
 			params.push(assistantMsg);
 		} else if (msg.role === "toolResult") {
 			const imageBlocks: Array<{ type: "image_url"; image_url: { url: string } }> = [];
+			const deferredToolNames = new Set<string>();
 			let j = i;
 
 			for (; j < transformedMessages.length && transformedMessages[j].role === "toolResult"; j++) {
@@ -1125,6 +1161,12 @@ export function convertMessages(
 					Object.assign(toolResultMsg, { name: toolMsg.toolName });
 				}
 				params.push(toolResultMsg);
+
+				if (compat.deferredToolsMode === "kimi") {
+					for (const name of toolMsg.addedToolNames ?? []) {
+						deferredToolNames.add(name);
+					}
+				}
 
 				if (hasImages && model.input.includes("image")) {
 					for (const block of toolMsg.content) {
@@ -1164,6 +1206,18 @@ export function convertMessages(
 			} else {
 				lastRole = "toolResult";
 			}
+
+			if (deferredToolNames.size > 0) {
+				const deferredTools = getToolsByName(context.tools, deferredToolNames);
+				if (deferredTools.length > 0) {
+					const kimiToolMessage: KimiToolSystemMessageParam = {
+						role: "system",
+						tools: convertTools(deferredTools, compat),
+					};
+					// Kimi accepts a system message with tools but omits the standard content field.
+					params.push(kimiToolMessage as unknown as ChatCompletionMessageParam);
+				}
+			}
 			continue;
 		}
 
@@ -1182,17 +1236,45 @@ function convertTools(
 			throw new Error("Freeform tools cannot be sent to OpenAI Chat Completions; use Responses API");
 		}
 
+		const normalizedParameters =
+			compat.toolSchemaFlavor === "moonshot-mfjs"
+				? normalizeToolParametersForMoonshot(tool.parameters as Record<string, unknown>)
+				: normalizeToolParametersForOpenAICompat(tool.parameters as Record<string, unknown>);
+
 		return {
 			type: "function",
 			function: {
 				name: tool.name,
 				description: tool.description,
-				parameters: tool.parameters as FunctionParameters,
+				parameters: normalizedParameters as FunctionParameters,
 				// Only include strict if provider supports it. Some reject unknown fields.
 				...(compat.supportsStrictMode !== false && { strict: false }),
 			},
 		};
 	});
+}
+
+function normalizeRequestToolSchemas(
+	params: OpenAICompletionsRequestParams,
+	compat: ResolvedOpenAICompletionsCompat,
+): OpenAICompletionsRequestParams {
+	if (!params.tools) return params;
+
+	return {
+		...params,
+		tools: params.tools.map((tool) => {
+			if (tool.type !== "function" || !tool.function.parameters) return tool;
+
+			const parameters =
+				compat.toolSchemaFlavor === "moonshot-mfjs"
+					? normalizeToolParametersForMoonshot(tool.function.parameters)
+					: normalizeToolParametersForOpenAICompat(tool.function.parameters);
+			return {
+				...tool,
+				function: { ...tool.function, parameters },
+			};
+		}),
+	};
 }
 
 function parseChunkUsage(
@@ -1335,10 +1417,12 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		chatTemplateKwargs: {},
 		zaiToolStream: false,
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
+		toolSchemaFlavor: isMoonshot ? "moonshot-mfjs" : undefined,
 		supportsDisabledThinking: true,
 		toolCallFormat: undefined,
 		cacheControlFormat,
 		sendSessionAffinityHeaders: false,
+		deferredToolsMode: undefined,
 		sessionAffinityFormat: isOpenRouter ? "openrouter" : "openai",
 		supportsLongCacheRetention: !(
 			isTogether ||
@@ -1381,6 +1465,7 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		toolCallFormat: model.compat.toolCallFormat ?? detected.toolCallFormat,
 		cacheControlFormat: model.compat.cacheControlFormat ?? detected.cacheControlFormat,
 		sendSessionAffinityHeaders: model.compat.sendSessionAffinityHeaders ?? detected.sendSessionAffinityHeaders,
+		deferredToolsMode: model.compat.deferredToolsMode ?? detected.deferredToolsMode,
 		sessionAffinityFormat: model.compat.sessionAffinityFormat ?? detected.sessionAffinityFormat,
 		supportsLongCacheRetention: model.compat.supportsLongCacheRetention ?? detected.supportsLongCacheRetention,
 	};

@@ -1,212 +1,331 @@
-import { readFile } from "node:fs/promises";
-import { createServer } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { xaiProvider } from "../src/providers/xai.ts";
-import {
-	discoverXaiOAuthEndpoints,
-	exchangeXaiAuthorizationCode,
-	getOAuthProvider,
-	refreshXaiToken,
-} from "../src/utils/oauth/index.ts";
-import { loginXai, parseXaiAuthorizationInput, xaiOAuth } from "../src/utils/oauth/xai.ts";
+import { xaiOAuth } from "../src/auth/oauth/xai.ts";
+import type { OAuthCredential } from "../src/auth/types.ts";
 
 function jsonResponse(body: unknown, status = 200): Response {
-	return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+	return new Response(JSON.stringify(body), {
+		status,
+		headers: { "Content-Type": "application/json" },
+	});
 }
 
-describe.sequential("xAI OAuth", () => {
-	afterEach(() => vi.unstubAllGlobals());
+function requestUrl(input: unknown): string {
+	if (typeof input === "string") return input;
+	if (input instanceof URL) return input.toString();
+	if (input instanceof Request) return input.url;
+	throw new Error(`Unsupported request input: ${String(input)}`);
+}
 
-	it("does not statically import node:http from the registry-loaded xAI module", async () => {
-		const source = await readFile(new URL("../src/utils/oauth/xai.ts", import.meta.url), "utf8");
-		expect(source).not.toMatch(/^import .*node:http/m);
+function requestForm(init: RequestInit | undefined): URLSearchParams {
+	return new URLSearchParams(String(init?.body));
+}
+
+function deviceCodeResponse(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+	return {
+		device_code: "device-code",
+		user_code: "ABCD-1234",
+		verification_uri: "https://accounts.x.ai/oauth2/device",
+		expires_in: 900,
+		interval: 5,
+		...overrides,
+	};
+}
+
+function tokenResponse(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+	return {
+		access_token: "access-token",
+		refresh_token: "refresh-token",
+		expires_in: 21_600,
+		token_type: "Bearer",
+		...overrides,
+	};
+}
+
+type DeviceCodeInfo = {
+	userCode: string;
+	verificationUri: string;
+	intervalSeconds?: number;
+	expiresInSeconds?: number;
+};
+
+function loginXaiForTest(options: {
+	onDeviceCode: (info: DeviceCodeInfo) => void;
+	signal?: AbortSignal;
+}): Promise<OAuthCredential> {
+	return xaiOAuth.login({
+		signal: options.signal,
+		prompt: () => {
+			throw new Error("Unexpected prompt");
+		},
+		notify: (event) => {
+			if (event.type === "device_code") {
+				const { type: _, ...info } = event;
+				options.onDeviceCode(info);
+			}
+		},
+	});
+}
+
+function refreshXaiForTest(refreshToken: string): Promise<OAuthCredential> {
+	return xaiOAuth.refresh({ type: "oauth", access: "old-access", refresh: refreshToken, expires: 0 });
+}
+
+describe("xAI OAuth device flow", () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
 	});
 
-	it("aborts the manual prompt after login settles", async () => {
+	it("uses the device grant, delays polling, and handles pending and slow_down", async () => {
+		vi.useFakeTimers();
+		const startTime = new Date("2026-07-09T20:00:00Z");
+		vi.setSystemTime(startTime);
+		const pollTimes: number[] = [];
+		const tokenReplies = [
+			jsonResponse({ error: "authorization_pending" }, 400),
+			jsonResponse({ error: "slow_down", interval: 10 }, 400),
+			jsonResponse(tokenResponse()),
+		];
+
+		const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+			const url = requestUrl(input);
+
+			if (url === "https://auth.x.ai/oauth2/device/code") {
+				const form = requestForm(init);
+				expect(form.get("client_id")).toBe("b1a00492-073a-47ea-816f-4c329264a828");
+				expect(form.get("scope")).toBe("openid profile email offline_access grok-cli:access api:access");
+				expect(form.get("referrer")).toBe("pi");
+				return jsonResponse(deviceCodeResponse());
+			}
+
+			if (url === "https://auth.x.ai/oauth2/token") {
+				pollTimes.push(Date.now());
+				const form = requestForm(init);
+				expect(form.get("grant_type")).toBe("urn:ietf:params:oauth:grant-type:device_code");
+				expect(form.get("client_id")).toBe("b1a00492-073a-47ea-816f-4c329264a828");
+				expect(form.get("device_code")).toBe("device-code");
+				const reply = tokenReplies.shift();
+				if (!reply) throw new Error("Unexpected token poll");
+				return reply;
+			}
+
+			throw new Error(`Unexpected request: ${url}`);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const deviceCodes: DeviceCodeInfo[] = [];
+		const loginPromise = loginXaiForTest({ onDeviceCode: (info) => deviceCodes.push(info) });
+
+		await vi.advanceTimersByTimeAsync(0);
+		expect(deviceCodes).toEqual([
+			{
+				userCode: "ABCD-1234",
+				verificationUri: "https://accounts.x.ai/oauth2/device",
+				intervalSeconds: 5,
+				expiresInSeconds: 900,
+			},
+		]);
+		expect(pollTimes).toEqual([]);
+
+		await vi.advanceTimersByTimeAsync(5000);
+		expect(pollTimes).toEqual([startTime.getTime() + 5000]);
+
+		// slow_down raised the interval to 10 seconds
+		await vi.advanceTimersByTimeAsync(5000);
+		expect(pollTimes).toEqual([startTime.getTime() + 5000, startTime.getTime() + 10_000]);
+
+		await vi.advanceTimersByTimeAsync(10_000);
+		const credentials = await loginPromise;
+		expect(pollTimes).toEqual([
+			startTime.getTime() + 5000,
+			startTime.getTime() + 10_000,
+			startTime.getTime() + 20_000,
+		]);
+		expect(credentials).toEqual({
+			type: "oauth",
+			access: "access-token",
+			refresh: "refresh-token",
+			expires: startTime.getTime() + 20_000 + 21_600_000 - 300_000,
+		});
+	});
+
+	it("falls back to the default poll interval when the response reports interval 0", async () => {
+		vi.useFakeTimers();
+		const startTime = new Date("2026-07-09T20:00:00Z");
+		vi.setSystemTime(startTime);
+		const pollTimes: number[] = [];
 		vi.stubGlobal(
 			"fetch",
-			vi.fn(async (input: string | URL | Request) =>
-				String(input).includes("openid-configuration")
-					? jsonResponse({
-							authorization_endpoint: "https://auth.x.ai/authorize",
-							token_endpoint: "https://auth.x.ai/token",
-						})
-					: jsonResponse({ access_token: "access", refresh_token: "refresh", expires_in: 3600 }),
-			),
+			vi.fn(async (input: unknown) => {
+				if (requestUrl(input) === "https://auth.x.ai/oauth2/device/code") {
+					return jsonResponse(deviceCodeResponse({ interval: 0 }));
+				}
+				pollTimes.push(Date.now());
+				return jsonResponse(tokenResponse());
+			}),
 		);
-		let manualSignal: AbortSignal | undefined;
-		await xaiOAuth.login({
-			notify: () => {},
-			prompt: async (prompt) => {
-				if (prompt.type !== "manual_code") throw new Error(`Unexpected prompt: ${prompt.type}`);
-				manualSignal = prompt.signal;
-				return "manual-code";
-			},
-		});
-		expect(manualSignal).toBeDefined();
-		expect(manualSignal?.aborted).toBe(true);
+
+		const loginPromise = loginXaiForTest({ onDeviceCode: () => {} });
+		// RFC 8628 default interval is 5 seconds when the server does not require a wait.
+		await vi.advanceTimersByTimeAsync(5000);
+		await loginPromise;
+		expect(pollTimes).toEqual([startTime.getTime() + 5000]);
 	});
 
-	it("cancels callback waiting from the caller signal", async () => {
+	it("prefers verification_uri_complete when the server provides it", async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: unknown) => {
+				if (requestUrl(input) === "https://auth.x.ai/oauth2/device/code") {
+					return jsonResponse(
+						deviceCodeResponse({
+							verification_uri_complete: "https://accounts.x.ai/oauth2/device?user_code=ABCD-1234",
+						}),
+					);
+				}
+				return jsonResponse(tokenResponse());
+			}),
+		);
+
+		const deviceCodes: DeviceCodeInfo[] = [];
+		const loginPromise = loginXaiForTest({ onDeviceCode: (info) => deviceCodes.push(info) });
+		await vi.advanceTimersByTimeAsync(5000);
+		await loginPromise;
+		expect(deviceCodes).toEqual([
+			{
+				userCode: "ABCD-1234",
+				verificationUri: "https://accounts.x.ai/oauth2/device?user_code=ABCD-1234",
+				intervalSeconds: 5,
+				expiresInSeconds: 900,
+			},
+		]);
+	});
+
+	it("rejects a non-https verification_uri_complete", async () => {
 		vi.stubGlobal(
 			"fetch",
 			vi.fn(async () =>
-				jsonResponse({
-					authorization_endpoint: "https://auth.x.ai/authorize",
-					token_endpoint: "https://auth.x.ai/token",
-				}),
+				jsonResponse(
+					deviceCodeResponse({
+						verification_uri_complete: "http://accounts.x.ai/oauth2/device?user_code=ABCD-1234",
+					}),
+				),
 			),
 		);
+
+		await expect(loginXaiForTest({ onDeviceCode: () => {} })).rejects.toThrow("Untrusted verification URI");
+	});
+
+	it.each([
+		"http://accounts.x.ai/oauth2/device",
+		"file:///etc/passwd",
+		"not a url",
+	])("rejects a non-https verification URI: %s", async (verificationUri) => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => jsonResponse(deviceCodeResponse({ verification_uri: verificationUri }))),
+		);
+
+		await expect(loginXaiForTest({ onDeviceCode: () => {} })).rejects.toThrow("Untrusted verification URI");
+	});
+
+	it.each([
+		"access_denied",
+		"authorization_denied",
+	])("fails when device authorization is denied: %s", async (error) => {
+		vi.useFakeTimers();
+		let requestCount = 0;
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => {
+				requestCount += 1;
+				return requestCount === 1
+					? jsonResponse(deviceCodeResponse({ interval: 1 }))
+					: jsonResponse({ error }, 400);
+			}),
+		);
+
+		const loginPromise = loginXaiForTest({ onDeviceCode: () => {} });
+		const assertion = expect(loginPromise).rejects.toThrow("xAI device authorization was denied");
+		await vi.advanceTimersByTimeAsync(1000);
+		await assertion;
+	});
+
+	it("cancels while waiting for the first token poll", async () => {
+		vi.useFakeTimers();
 		const controller = new AbortController();
-		const login = loginXai({
-			onAuth: () => controller.abort(new DOMException("cancelled", "AbortError")),
-			onDeviceCode: () => {},
-			onPrompt: async () => "",
-			onSelect: async () => undefined,
+		const fetchMock = vi.fn(async () => jsonResponse(deviceCodeResponse()));
+		vi.stubGlobal("fetch", fetchMock);
+
+		const loginPromise = loginXaiForTest({
+			onDeviceCode: () => controller.abort(),
 			signal: controller.signal,
 		});
-		await expect(login).rejects.toMatchObject({ name: "AbortError" });
+
+		await expect(loginPromise).rejects.toThrow("Login cancelled");
+		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 
-	it("falls back to manual paste when callback port is occupied", async () => {
-		const blocker = createServer();
-		await new Promise<void>((resolve, reject) => {
-			blocker.once("error", reject);
-			blocker.listen(56121, "127.0.0.1", resolve);
+	it("refreshes tokens and preserves an unrotated refresh token", async () => {
+		let requestCount = 0;
+		const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+			expect(requestUrl(input)).toBe("https://auth.x.ai/oauth2/token");
+			const form = requestForm(init);
+			expect(form.get("grant_type")).toBe("refresh_token");
+			expect(form.get("client_id")).toBe("b1a00492-073a-47ea-816f-4c329264a828");
+			requestCount += 1;
+			if (requestCount === 1) {
+				expect(form.get("refresh_token")).toBe("old-refresh");
+				return jsonResponse(tokenResponse({ access_token: "new-access", refresh_token: "new-refresh" }));
+			}
+			expect(form.get("refresh_token")).toBe("keep-refresh");
+			return jsonResponse(tokenResponse({ access_token: "newer-access", refresh_token: undefined }));
 		});
-		try {
-			vi.stubGlobal(
-				"fetch",
-				vi.fn(async (input: string | URL | Request) =>
-					String(input).includes("openid-configuration")
-						? jsonResponse({
-								authorization_endpoint: "https://auth.x.ai/authorize",
-								token_endpoint: "https://auth.x.ai/token",
-							})
-						: jsonResponse({ access_token: "access", refresh_token: "refresh", expires_in: 3600 }),
-				),
-			);
-			let state = "";
-			const credentials = await loginXai({
-				onAuth: (info) => {
-					state = new URL(info.url).searchParams.get("state") ?? "";
-				},
-				onDeviceCode: () => {},
-				onPrompt: async () => "",
-				onSelect: async () => undefined,
-				onManualCodeInput: async () => `code=manual-code&state=${state}`,
-			});
-			expect(credentials.access).toBe("access");
-		} finally {
-			await new Promise<void>((resolve) => blocker.close(() => resolve()));
-		}
+		vi.stubGlobal("fetch", fetchMock);
+
+		const rotated = await refreshXaiForTest("old-refresh");
+		const preserved = await refreshXaiForTest("keep-refresh");
+		expect(rotated.type).toBe("oauth");
+		expect(rotated.refresh).toBe("new-refresh");
+		expect(rotated.access).toBe("new-access");
+		expect(preserved.refresh).toBe("keep-refresh");
+		expect(preserved.access).toBe("newer-access");
+		expect(xaiOAuth.name).toBe("xAI (Grok/X subscription)");
+		await expect(xaiOAuth.toAuth(preserved)).resolves.toEqual({ apiKey: "newer-access" });
 	});
 
-	it("parses supported manual callback formats and validates state during login", async () => {
-		expect(parseXaiAuthorizationInput("https://127.0.0.1/callback?code=a&state=s")).toEqual({
-			code: "a",
-			state: "s",
-		});
-		expect(parseXaiAuthorizationInput("?code=b&state=s")).toEqual({ code: "b", state: "s" });
-		expect(parseXaiAuthorizationInput("c#s")).toEqual({ code: "c", state: "s" });
-
+	it("assumes a one-hour lifetime when expires_in is missing", async () => {
+		vi.useFakeTimers();
+		const startTime = new Date("2026-07-09T20:00:00Z");
+		vi.setSystemTime(startTime);
 		vi.stubGlobal(
 			"fetch",
-			vi.fn(async () =>
-				jsonResponse({
-					authorization_endpoint: "https://auth.x.ai/authorize",
-					token_endpoint: "https://auth.x.ai/token",
-				}),
-			),
+			vi.fn(async () => jsonResponse(tokenResponse({ expires_in: undefined }))),
 		);
-		await expect(
-			loginXai({
-				onAuth: () => {},
-				onDeviceCode: () => {},
-				onPrompt: async () => "",
-				onSelect: async () => undefined,
-				onManualCodeInput: async () => "code#wrong-state",
-			}),
-		).rejects.toThrow("state mismatch");
+
+		const credentials = await refreshXaiForTest("old-refresh");
+		expect(credentials.expires).toBe(startTime.getTime() + 3_600_000 - 300_000);
 	});
 
-	it("combines caller cancellation with a request timeout", async () => {
-		const controller = new AbortController();
-		let requestSignal: AbortSignal | undefined;
+	it("rejects token responses with missing fields", async () => {
 		vi.stubGlobal(
 			"fetch",
-			vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-				requestSignal = init?.signal ?? undefined;
-				return await new Promise<Response>((_resolve, reject) =>
-					requestSignal?.addEventListener("abort", () => reject(requestSignal?.reason), { once: true }),
-				);
-			}),
+			vi.fn(async () => jsonResponse(tokenResponse({ access_token: undefined }))),
 		);
-		const discovery = discoverXaiOAuthEndpoints(controller.signal);
-		expect(requestSignal).not.toBe(controller.signal);
-		controller.abort(new DOMException("cancelled", "AbortError"));
-		await expect(discovery).rejects.toMatchObject({ name: "AbortError" });
+
+		await expect(refreshXaiForTest("old-refresh")).rejects.toThrow("Invalid xAI OAuth response field: access_token");
 	});
 
-	it("is registered and advertised by the xAI model provider", () => {
-		expect(getOAuthProvider("xai")?.id).toBe("xai");
-		expect(xaiProvider().auth.oauth?.name).toBe("xAI (Grok account)");
-	});
-
-	it("rejects discovery endpoints outside HTTPS x.ai", async () => {
+	it("surfaces the upstream error code and description on refresh failure", async () => {
 		vi.stubGlobal(
 			"fetch",
-			vi.fn(async () =>
-				jsonResponse({
-					authorization_endpoint: "https://evil.example/authorize",
-					token_endpoint: "https://auth.x.ai/token",
-				}),
-			),
+			vi.fn(async () => jsonResponse({ error: "invalid_grant", error_description: "refresh token revoked" }, 400)),
 		);
-		await expect(discoverXaiOAuthEndpoints()).rejects.toThrow("unexpected endpoint");
-	});
 
-	it("exchanges and refreshes tokens with PKCE form requests", async () => {
-		const bodies: URLSearchParams[] = [];
-		vi.stubGlobal(
-			"fetch",
-			vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-				const url = String(input);
-				if (url.includes("openid-configuration"))
-					return jsonResponse({
-						authorization_endpoint: "https://auth.x.ai/authorize",
-						token_endpoint: "https://auth.x.ai/token",
-					});
-				bodies.push(new URLSearchParams(String(init?.body)));
-				return jsonResponse(
-					bodies.length === 1
-						? { access_token: "access-secret", refresh_token: "refresh-secret", expires_in: 3600 }
-						: { access_token: "new-access", expires_in: 3600 },
-				);
-			}),
+		await expect(refreshXaiForTest("old-refresh")).rejects.toThrow(
+			"xAI OAuth token refresh failed (HTTP 400): invalid_grant: refresh token revoked",
 		);
-		const exchanged = await exchangeXaiAuthorizationCode("code-secret", "pkce-verifier");
-		const refreshed = await refreshXaiToken(exchanged.refresh);
-		expect(bodies[0]?.get("code_verifier")).toBe("pkce-verifier");
-		expect(bodies[0]?.get("grant_type")).toBe("authorization_code");
-		expect(bodies[1]?.get("refresh_token")).toBe("refresh-secret");
-		expect(refreshed).toMatchObject({ access: "new-access", refresh: "refresh-secret" });
-	});
-
-	it("does not expose tokens from failed endpoint responses", async () => {
-		vi.stubGlobal(
-			"fetch",
-			vi.fn(async (input: string | URL | Request) =>
-				String(input).includes("openid-configuration")
-					? jsonResponse({
-							authorization_endpoint: "https://auth.x.ai/authorize",
-							token_endpoint: "https://auth.x.ai/token",
-						})
-					: jsonResponse({ error: "invalid_grant", access_token: "leaked-token" }, 400),
-			),
-		);
-		const error = await refreshXaiToken("refresh-secret").catch((value: unknown) => value);
-		expect(String(error)).not.toContain("refresh-secret");
-		expect(String(error)).not.toContain("leaked-token");
 	});
 });

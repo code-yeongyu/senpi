@@ -8,8 +8,8 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
-import { getOAuthApiKey } from "../src/utils/oauth/index.ts";
-import type { OAuthCredentials, OAuthProvider } from "../src/utils/oauth/types.ts";
+import { getOAuthApiKey } from "../src/auth/oauth/index.ts";
+import type { OAuthCredentials, OAuthProvider } from "../src/auth/oauth/types.ts";
 import { isOAuthLiveApiTestEnabled } from "./live-api-gates.ts";
 
 const AUTH_PATH = join(homedir(), ".pi", "agent", "auth.json");

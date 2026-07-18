@@ -18,7 +18,6 @@ import { fireworksProvider } from "./fireworks.ts";
 import { fuguProvider } from "./fugu.ts";
 import { githubCopilotProvider } from "./github-copilot.ts";
 import { gitlabDuoProvider } from "./gitlab-duo.ts";
-import { glmZcodeProvider } from "./glm-zcode.ts";
 import { googleProvider } from "./google.ts";
 import { googleAntigravityProvider, googleGeminiCliProvider } from "./google-gemini-cli.ts";
 import { googleVertexProvider } from "./google-vertex.ts";
@@ -52,6 +51,7 @@ import { openrouterImagesProvider } from "./openrouter-images.ts";
 import { perplexityProvider } from "./perplexity.ts";
 import { qianfanProvider } from "./qianfan.ts";
 import { qwenPortalProvider } from "./qwen-portal.ts";
+import { radiusProvider } from "./radius.ts";
 import { syntheticProvider } from "./synthetic.ts";
 import { togetherProvider } from "./together.ts";
 import { veniceProvider } from "./venice.ts";
@@ -138,6 +138,8 @@ export function getBuiltinModels<TProvider extends BuiltinProvider>(
 }
 
 /** All built-in providers, freshly constructed. */
+export { radiusProvider };
+
 export function builtinProviders(): Provider[] {
 	return [
 		alibabaCodingPlanProvider(),
@@ -156,7 +158,7 @@ export function builtinProviders(): Provider[] {
 		fuguProvider(),
 		githubCopilotProvider(),
 		gitlabDuoProvider(),
-		glmZcodeProvider(),
+		googleProvider(),
 		googleProvider(),
 		googleGeminiCliProvider(),
 		googleAntigravityProvider(),
@@ -188,6 +190,7 @@ export function builtinProviders(): Provider[] {
 		opencodeZenProvider(),
 		openrouterProvider(),
 		perplexityProvider(),
+		radiusProvider(),
 		qianfanProvider(),
 		qwenPortalProvider(),
 		syntheticProvider(),

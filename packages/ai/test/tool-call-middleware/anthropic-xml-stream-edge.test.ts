@@ -119,10 +119,9 @@ describe("createAnthropicXmlStreamParser edge cases", () => {
 		const events = [...parser.feed(input), ...parser.finish()];
 
 		// then
-		expect(toolCallEnds(events)).toEqual([]);
-		expect(onError).toHaveBeenCalledWith("Could not complete streaming Anthropic XML tool call at finish.", {
-			toolCall: input,
-		});
+		expect(toolCallEnds(events)).toEqual([expect.objectContaining({ incomplete: true })]);
+		expect(textOutput(events)).not.toContain("<invoke");
+		expect(JSON.stringify(onError.mock.calls)).not.toContain(input);
 	});
 
 	it("does not stream a known no-parameter invoke closed by a later nested call", () => {
@@ -135,10 +134,9 @@ describe("createAnthropicXmlStreamParser edge cases", () => {
 		const events = [...parser.feed(input), ...parser.finish()];
 
 		// then
-		expect(toolCallEnds(events)).toEqual([]);
-		expect(onError).toHaveBeenCalledWith("Could not complete streaming Anthropic XML tool call at finish.", {
-			toolCall: input,
-		});
+		expect(toolCallEnds(events)).toEqual([expect.objectContaining({ name: "noop", incomplete: true })]);
+		expect(textOutput(events)).not.toContain("<invoke");
+		expect(JSON.stringify(onError.mock.calls)).not.toContain(input);
 	});
 
 	it("preserves literal function_calls prose when it does not wrap a recognized invoke", () => {
@@ -169,31 +167,35 @@ describe("createAnthropicXmlStreamParser edge cases", () => {
 		expect(onError).not.toHaveBeenCalled();
 	});
 
-	it.each([
-		{ emitRaw: false, expected: [] },
-		{ emitRaw: true, expected: [{ type: "text", text: '<invoke name="Bash' }] },
-	])("applies the error policy to a recognized opening tag truncated before the closing quote (raw: $emitRaw)", ({
-		emitRaw,
-		expected,
-	}) => {
+	it("flags a recognized opening tag truncated before the closing quote without raw text", () => {
 		// given
 		const onError = vi.fn();
 		const parser = createAnthropicXmlStreamParser([bashTool], {
-			emitRawToolCallTextOnError: emitRaw,
+			emitRawToolCallTextOnError: true,
 			onError,
 		});
 		const incompleteCall = '<invoke name="Bash';
 
 		// when
-		const feedEvents = parser.feed(`Before ${incompleteCall}`);
-		const finishEvents = parser.finish();
+		const events = [...parser.feed(`Before ${incompleteCall}`), ...parser.finish()];
 
 		// then
-		expect(feedEvents).toEqual([{ type: "text", text: "Before " }]);
-		expect(finishEvents).toEqual(expected);
-		expect(onError).toHaveBeenCalledOnce();
-		expect(onError).toHaveBeenCalledWith("Could not complete streaming Anthropic XML tool call at finish.", {
-			toolCall: incompleteCall,
-		});
+		expect(textOutput(events)).toBe("Before ");
+		expect(toolCallEnds(events)).toEqual([expect.objectContaining({ incomplete: true, arguments: {} })]);
+		expect(JSON.stringify(onError.mock.calls)).not.toContain(incompleteCall);
+	});
+
+	it("consumes a truncated function_calls close-tag prefix after a complete invoke", () => {
+		const parser = createAnthropicXmlStreamParser([bashTool]);
+		const events = [
+			...parser.feed(
+				'<function_calls><invoke name="Bash"><parameter name="command">ls</parameter></invoke></function_',
+			),
+			...parser.finish(),
+		];
+
+		expect(toolCallEnds(events)).toEqual([expect.objectContaining({ arguments: { command: "ls" } })]);
+		expect(toolCallEnds(events)[0]?.incomplete).toBeUndefined();
+		expect(textOutput(events)).toBe("");
 	});
 });

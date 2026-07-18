@@ -26,6 +26,7 @@ import type {
 	OAuthCredentials,
 	OAuthLoginCallbacks,
 	ProviderHeaders,
+	RefreshModelsContext,
 	SimpleStreamOptions,
 	TextContent,
 	ToolResultMessage,
@@ -79,6 +80,7 @@ import type {
 	ReadToolInput,
 	WriteToolInput,
 } from "../tools/index.ts";
+import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
 export type { AppKeybinding, KeybindingsManager } from "../keybindings.ts";
@@ -378,6 +380,8 @@ export interface ExtensionContext {
 	getSystemPrompt(): string;
 	/** Get hook source paths currently visible to the builtin hooks extension. */
 	getLoadedHookSources?(): LoadedHookSources;
+	/** Get extension-declared MCP servers aggregated across all extensions (first-wins). */
+	getRegisteredMcpServers?(): readonly RegisteredMcpServerDeclaration[];
 	/**
 	 * Report what the currently running tool_call/tool_result handler is doing.
 	 * Updates the live "Running PreToolUse/PostToolUse hook" status row in the TUI.
@@ -484,6 +488,11 @@ export interface ToolRenderContext<TState = any, TArgs = any> {
 	imageProtocol?: ImageProtocol;
 	/** Whether the current result is an error. */
 	isError: boolean;
+	/**
+	 * Whether a result (partial or final) already exists for this tool call. Lets a call renderer that draws
+	 * self-contained framing yield to the result renderer instead of stacking a duplicate block.
+	 */
+	hasResult?: boolean;
 	spinnerFrame?: number;
 }
 
@@ -1315,6 +1324,9 @@ export interface ExtensionAPI {
 		tool: ToolDefinition<TParams, TDetails, TState>,
 	): void;
 
+	/** Register an MCP server that the agent can use. Factory-time only. */
+	registerMcpServer(name: string, config: McpServerDeclaration): void;
+
 	// =========================================================================
 	// Command, Shortcut, Flag Registration
 	// =========================================================================
@@ -1522,21 +1534,30 @@ export interface ProviderConfig {
 	streamSimple?: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
 	/** Custom headers to include in requests. */
 	headers?: Record<string, string>;
+	/** Custom fields merged into provider request bodies. */
+	extraBody?: Record<string, unknown>;
 	/** If true, adds Authorization: Bearer header with the resolved API key. */
 	authHeader?: boolean;
 	/** Models to register. If provided, replaces all existing models for this provider. */
 	models?: ProviderModelConfig[];
+	/**
+	 * Refresh this provider's model list. The returned list replaces extension-provided models.
+	 * Use context.store explicitly when the catalog should persist across sessions.
+	 */
+	refreshModels?(context: RefreshModelsContext): Promise<ProviderModelConfig[]>;
 	/** OAuth provider for /login support. The `id` is set automatically from the provider name. */
 	oauth?: {
 		/** Display name for the provider in login UI. */
 		name: string;
+		/** @deprecated Retained for source compatibility; canonical auth flows ignore it. */
+		usesCallbackServer?: boolean;
 		/** Run the login flow, return credentials to persist. */
 		login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials>;
 		/** Refresh expired credentials, return updated credentials to persist. */
 		refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials>;
 		/** Convert credentials to API key string for the provider. */
 		getApiKey(credentials: OAuthCredentials): string;
-		/** Optional: modify models for this provider (e.g., update baseUrl based on credentials). */
+		/** Legacy synchronous credential-dependent model projection. */
 		modifyModels?(models: Model<Api>[], credentials: OAuthCredentials): Model<Api>[];
 	};
 }
@@ -1547,6 +1568,8 @@ export interface ProviderModelConfig {
 	id: string;
 	/** Display name (e.g., "Claude 4 Sonnet"). */
 	name: string;
+	/** Canonical provider model ID reported in responses when this model is an alias. */
+	upstreamModelId?: string;
 	/** API type override for this model. */
 	api?: Api;
 	/** API endpoint URL override for this model. */
@@ -1565,6 +1588,8 @@ export interface ProviderModelConfig {
 	maxTokens: number;
 	/** Custom headers for this model. */
 	headers?: Record<string, string>;
+	/** Custom fields merged into request bodies after provider-level fields. */
+	extraBody?: Record<string, unknown>;
 	/** OpenAI compatibility settings. */
 	compat?: Model<Api>["compat"];
 }
@@ -1792,6 +1817,13 @@ export interface ExtensionCommandContextActions {
 export interface ExtensionRuntime extends ExtensionRuntimeState, ExtensionActions {}
 
 /** Loaded extension with all registered items. */
+export interface RegisteredMcpServerDeclaration {
+	name: string;
+	config: McpServerDeclaration;
+	extensionPath: string;
+	registrationCwd: string;
+}
+
 export interface Extension {
 	path: string;
 	resolvedPath: string;
@@ -1803,6 +1835,8 @@ export interface Extension {
 	commands: Map<string, RegisteredCommand>;
 	flags: Map<string, ExtensionFlag>;
 	shortcuts: Map<KeyId, ExtensionShortcut>;
+	mcpServers: Map<string, RegisteredMcpServerDeclaration>;
+	registrationCwd: string;
 }
 
 /** Result of loading extensions. */

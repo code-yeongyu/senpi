@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionContext } from "@code-yeongyu/senpi";
+import type { Api, Model } from "@earendil-works/pi-ai/compat";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import type { CodemodeSessionManager } from "../src/extension/session-manager.ts";
 import senpiCodemode, { type CodemodeExtensionAPI } from "../src/index.ts";
@@ -121,6 +122,21 @@ function extensionContext(cwd = process.cwd()): ExtensionContext {
 	};
 }
 
+function fakeModel(id: string): Model<Api> {
+	return {
+		id,
+		name: id,
+		api: "fake-api",
+		provider: "fake",
+		baseUrl: "https://fake.invalid",
+		reasoning: false,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 1000,
+		maxTokens: 100,
+	};
+}
+
 async function emit(pi: FakePi, event: string, payload: unknown, ctx: ExtensionContext): Promise<void> {
 	for (const entry of pi.handlers.filter((handler) => handler.event === event)) {
 		await entry.handler(payload, ctx);
@@ -237,6 +253,61 @@ describe("senpi-codemode extension factory", () => {
 			await emit(pi, "session_shutdown", {}, ctx);
 			await rm(cwd, { recursive: true, force: true });
 		}
+	});
+
+	it("registers the model-tuned dialect at session start and re-registers on model_select", async () => {
+		// Given a session whose active model is a Claude family id
+		const cwd = await mkdtemp(join(tmpdir(), "senpi-codemode-modelselect-"));
+		await mkdir(join(cwd, ".senpi"), { recursive: true });
+		await writeFile(
+			join(cwd, ".senpi", "codemode.json"),
+			JSON.stringify({ languages: { py: true, js: true, rb: false, jl: false } }),
+		);
+		const pi = new FakePi();
+		const manager = new DisposableManager();
+		senpiCodemode(pi, { createSessionManager: () => manager });
+		const ctx = { ...extensionContext(cwd), model: fakeModel("claude-opus-4-8") };
+
+		try {
+			// When the session starts with the Claude model active
+			await emit(pi, "session_start", { reason: "startup" }, ctx);
+
+			// Then the registered description carries the Claude dialect
+			const started = pi.registeredTool;
+			if (!started) throw new Error("eval tool was not registered");
+			expect(started.description).toContain("<eval_first_batching>");
+			expect(started.description).not.toContain("EVAL IS YOUR PRIMARY EXECUTION SURFACE");
+
+			// When the model switches to an OpenAI family id
+			await emit(pi, "model_select", { model: fakeModel("gpt-5.6") }, ctx);
+
+			// Then eval is re-registered with the codex dialect
+			const switched = pi.registeredTool;
+			if (!switched) throw new Error("eval tool was not re-registered");
+			expect(switched.description).toContain("Route multi-call steps through eval");
+			expect(switched.description).not.toContain("<eval_first_batching>");
+
+			// And a same-model reselection does not re-register
+			const registrations = pi.tools.length;
+			await emit(pi, "model_select", { model: fakeModel("gpt-5.6") }, ctx);
+			expect(pi.tools.length).toBe(registrations);
+		} finally {
+			await emit(pi, "session_shutdown", {}, ctx);
+			await rm(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("ignores model_select before any session has started", async () => {
+		// Given an extension with no started session
+		const pi = new FakePi();
+		senpiCodemode(pi, { createSessionManager: () => new DisposableManager() });
+		const ctx = extensionContext();
+
+		// When a model_select arrives early
+		await emit(pi, "model_select", { model: fakeModel("gpt-5.6") }, ctx);
+
+		// Then only the load-time registration exists
+		expect(pi.tools).toEqual(["eval"]);
 	});
 
 	it("creates a fresh manager on start/reload and disposes on shutdown, switch, and fork", async () => {

@@ -125,6 +125,45 @@ function buildToolCallWithoutResultSession(): Message[] {
 	return [userMsg, assistantMsg];
 }
 
+function buildFlaggedDanglingCallSession(errorMessage?: string): Message[] {
+	const userMsg: Message = {
+		role: "user",
+		content: [{ type: "text", text: "Run the build" }],
+		timestamp: 1,
+	};
+	const assistantMsg: AssistantMessage = {
+		role: "assistant",
+		content: [
+			{
+				type: "toolCall",
+				id: "flagged-call-1",
+				name: "bash",
+				arguments: {},
+				incomplete: true,
+				...(errorMessage ? { errorMessage } : {}),
+			},
+		],
+		api: "anthropic-messages",
+		provider: "anthropic",
+		model: "claude-sonnet-4-5",
+		usage: {
+			input: 6,
+			output: 6,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 12,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "toolUse",
+		timestamp: 2,
+	};
+	return [userMsg, assistantMsg];
+}
+
+function expectedRetryText(name: string): string {
+	return `Tool call "${name}" was not executed: the response ended before the tool call was complete. Re-issue the tool call with complete arguments.`;
+}
+
 describe("compaction tool-pair repair behavior", () => {
 	describe("Given session with valid tool_call/tool_result pairs", () => {
 		describe("When tool-pair-repair runs", () => {
@@ -210,6 +249,97 @@ describe("compaction tool-pair repair behavior", () => {
 				const callLog = registration.getCallLog();
 				expect(callLog).toHaveLength(1);
 				expect(callLog[0].context.messages.length).toBe(reconstructed.length);
+			});
+		});
+	});
+
+	// todo-12: error placeholders with retry diagnostics for flagged dangling calls
+	describe("Given session with a flagged (`incomplete: true`) dangling tool call", () => {
+		describe("When tool-pair-repair runs", () => {
+			it("Then exactly one isError:true tool_result with retry diagnostic text is synthesized (case a)", () => {
+				const messages = buildFlaggedDanglingCallSession();
+
+				const reconstructed = repairOrphanedToolResults(messages);
+
+				expect(reconstructed).toHaveLength(messages.length + 1);
+				const synth = reconstructed.at(-1) as ToolResultMessage;
+				expect(synth.role).toBe("toolResult");
+				expect(synth.toolCallId).toBe("flagged-call-1");
+				expect(synth.toolName).toBe("bash");
+				expect(synth.isError).toBe(true);
+				expect(findText(synth.content)).toBe(expectedRetryText("bash"));
+				const errorResults = reconstructed.filter(
+					(m): m is ToolResultMessage => m.role === "toolResult" && m.isError === true,
+				);
+				expect(errorResults).toHaveLength(1);
+			});
+		});
+	});
+
+	describe("Given a session already repaired once", () => {
+		describe("When tool-pair-repair runs a second time", () => {
+			it("Then output deep-equals the first pass (idempotency, case b)", () => {
+				const messages = buildFlaggedDanglingCallSession();
+
+				const once = repairOrphanedToolResults(messages);
+				const twice = repairOrphanedToolResults(once);
+
+				expect(JSON.stringify(twice)).toBe(JSON.stringify(once));
+			});
+		});
+	});
+
+	describe("Given session with a legacy (non-flagged) dangling tool call", () => {
+		describe("When tool-pair-repair runs", () => {
+			it("Then synthetic tool_result keeps isError:false and the placeholder content (case c)", () => {
+				const messages = buildToolCallWithoutResultSession();
+
+				const reconstructed = repairOrphanedToolResults(messages);
+
+				const synth = reconstructed.at(-1) as ToolResultMessage;
+				expect(synth.role).toBe("toolResult");
+				expect(synth.isError).toBe(false);
+				expect(findText(synth.content)).toBe(TOOL_RESULT_PLACEHOLDER);
+			});
+		});
+	});
+
+	describe("Given a flagged tool call that already has a real tool_result", () => {
+		describe("When tool-pair-repair runs", () => {
+			it("Then the existing tool_result is left untouched (case d)", () => {
+				const messages = buildFlaggedDanglingCallSession();
+				const realResult: ToolResultMessage = {
+					role: "toolResult",
+					toolCallId: "flagged-call-1",
+					toolName: "bash",
+					content: [{ type: "text", text: "real tool output" }],
+					isError: false,
+					timestamp: 3,
+				};
+				messages.push(realResult);
+
+				const reconstructed = repairOrphanedToolResults(messages);
+
+				expect(reconstructed).toEqual(messages);
+				const preserved = reconstructed.at(-1) as ToolResultMessage;
+				expect(preserved.isError).toBe(false);
+				expect(findText(preserved.content)).toBe("real tool output");
+			});
+		});
+	});
+
+	describe("Given a flagged tool call carrying an errorMessage", () => {
+		describe("When tool-pair-repair runs", () => {
+			it("Then the synthesized result appends the retry instruction to the errorMessage", () => {
+				const messages = buildFlaggedDanglingCallSession("custom truncation reason");
+
+				const reconstructed = repairOrphanedToolResults(messages);
+
+				const synth = reconstructed.at(-1) as ToolResultMessage;
+				expect(synth.isError).toBe(true);
+				expect(findText(synth.content)).toBe(
+					"custom truncation reason. Re-issue the tool call with complete arguments.",
+				);
 			});
 		});
 	});

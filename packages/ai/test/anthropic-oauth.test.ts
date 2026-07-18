@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { anthropicOAuth, loginAnthropic, refreshAnthropicToken } from "../src/auth/oauth/anthropic.ts";
 import type { AuthEvent, AuthPrompt } from "../src/auth/types.ts";
-import { anthropicOAuth, loginAnthropic, refreshAnthropicToken } from "../src/utils/oauth/anthropic.ts";
 
 function jsonResponse(body: unknown, status: number = 200): Response {
 	return new Response(JSON.stringify(body), {

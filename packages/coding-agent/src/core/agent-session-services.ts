@@ -7,6 +7,7 @@ import { AuthStorage } from "./auth-storage.ts";
 import type { ServiceTier } from "./extensions/builtin/service-tier.ts";
 import type { SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { ModelRegistry } from "./model-registry.ts";
+import { ModelRuntime } from "./model-runtime.ts";
 import {
 	DefaultResourceLoader,
 	type DefaultResourceLoaderOptions,
@@ -39,9 +40,8 @@ export interface AgentSessionRuntimeDiagnostic {
 export interface CreateAgentSessionServicesOptions {
 	cwd: string;
 	agentDir?: string;
-	authStorage?: AuthStorage;
 	settingsManager?: SettingsManager;
-	modelRegistry?: ModelRegistry;
+	modelRuntime?: ModelRuntime;
 	extensionFlagValues?: Map<string, boolean | string>;
 	resourceLoaderOptions?: Omit<DefaultResourceLoaderOptions, "cwd" | "agentDir" | "settingsManager">;
 	resourceLoaderReloadOptions?: ResourceLoaderReloadOptions;
@@ -78,8 +78,9 @@ export interface AgentSessionServices {
 	cwd: string;
 	agentDir: string;
 	authStorage: AuthStorage;
-	settingsManager: SettingsManager;
 	modelRegistry: ModelRegistry;
+	modelRuntime: ModelRuntime;
+	settingsManager: SettingsManager;
 	resourceLoader: ResourceLoader;
 	diagnostics: AgentSessionRuntimeDiagnostic[];
 }
@@ -144,9 +145,15 @@ export async function createAgentSessionServices(
 ): Promise<AgentSessionServices> {
 	const cwd = resolvePath(options.cwd);
 	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getAgentDir();
-	const authStorage = options.authStorage ?? AuthStorage.create(join(agentDir, "auth.json"));
+	const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
+	const modelRuntime =
+		options.modelRuntime ??
+		(await ModelRuntime.create({
+			credentials: authStorage,
+			modelsPath: join(agentDir, "models.json"),
+		}));
+	const modelRegistry = new ModelRegistry(modelRuntime, authStorage);
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
-	const modelRegistry = options.modelRegistry ?? ModelRegistry.create(authStorage, join(agentDir, "models.json"));
 	const resourceLoader = new DefaultResourceLoader({
 		...(options.resourceLoaderOptions ?? {}),
 		cwd,
@@ -159,7 +166,7 @@ export async function createAgentSessionServices(
 	const extensionsResult = resourceLoader.getExtensions();
 	for (const { name, config, extensionPath } of extensionsResult.runtime.pendingProviderRegistrations) {
 		try {
-			modelRegistry.registerProvider(name, config);
+			modelRuntime.registerProvider(name, config);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			diagnostics.push({
@@ -169,14 +176,16 @@ export async function createAgentSessionServices(
 		}
 	}
 	extensionsResult.runtime.pendingProviderRegistrations = [];
+	await modelRuntime.refresh({ allowNetwork: false });
 	diagnostics.push(...applyExtensionFlagValues(resourceLoader, options.extensionFlagValues));
 
 	return {
 		cwd,
 		agentDir,
 		authStorage,
-		settingsManager,
 		modelRegistry,
+		modelRuntime,
+		settingsManager,
 		resourceLoader,
 		diagnostics,
 	};
@@ -195,9 +204,10 @@ export async function createAgentSessionFromServices(
 	return createAgentSession({
 		cwd: options.services.cwd,
 		agentDir: options.services.agentDir,
+		modelRuntime: options.services.modelRuntime,
+		modelRegistry: options.services.modelRegistry,
 		authStorage: options.services.authStorage,
 		settingsManager: options.services.settingsManager,
-		modelRegistry: options.services.modelRegistry,
 		resourceLoader: options.services.resourceLoader,
 		sessionManager: options.sessionManager,
 		model: options.model,

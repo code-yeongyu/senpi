@@ -80,6 +80,7 @@ function createRuntime(harness: Harness): AgentSessionRuntime {
 			authStorage: harness.authStorage,
 			settingsManager: harness.settingsManager,
 			modelRegistry: harness.session.modelRegistry,
+			modelRuntime: harness.session.modelRuntime,
 			resourceLoader: harness.session.resourceLoader,
 			diagnostics: [],
 		},

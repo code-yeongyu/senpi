@@ -23,40 +23,7 @@ export {
 	parseSkillBlock,
 	type SessionStats,
 } from "./core/agent-session.ts";
-export {
-	type ApiKeyCredentialMaterial,
-	type ConsumeSelectionLeaseRequest,
-	type CredentialMaterial,
-	type CredentialMetadata,
-	type CredentialPool,
-	type CredentialPoolKey,
-	type CredentialRecord,
-	type CredentialSelector,
-	type CredentialVault,
-	credentialPoolKey,
-	type DisabledCredentialState,
-	InMemoryCredentialVault,
-	type MetadataSnapshot,
-	type OAuthCredentialMaterial,
-	type PendingSelectionLease,
-	type SelectionLease,
-	type SelectionLeaseRequest,
-	type SerializedCredentialVault,
-	type StableIdentityKey,
-	type UsageReport,
-	type VaultDiagnostic,
-} from "./core/auth-multi-account.ts";
-// Auth and model registry
-export {
-	type ApiKeyCredential,
-	type AuthCredential,
-	type AuthStatus,
-	AuthStorage,
-	type AuthStorageBackend,
-	FileAuthStorageBackend,
-	InMemoryAuthStorageBackend,
-	type OAuthCredential,
-} from "./core/auth-storage.ts";
+export { type OAuthCredential, readStoredCredential } from "./core/auth-storage.ts";
 // Compaction
 export {
 	type BranchPreparation,
@@ -132,6 +99,7 @@ export type {
 	KeybindingsManager,
 	LoadExtensionsResult,
 	LsToolCallEvent,
+	McpServerDeclaration,
 	MessageRenderer,
 	MessageRenderOptions,
 	ProjectTrustContext,
@@ -201,6 +169,11 @@ export {
 	resolveModelScopeWithDiagnostics,
 	type ScopedModel,
 } from "./core/model-resolver.ts";
+export {
+	type CreateModelRuntimeOptions,
+	ModelRuntime,
+	type ModelRuntimeAuthOverrides,
+} from "./core/model-runtime.ts";
 export type {
 	PackageManager,
 	PathMetadata,

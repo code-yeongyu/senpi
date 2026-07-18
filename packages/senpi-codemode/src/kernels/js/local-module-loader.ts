@@ -47,8 +47,8 @@ function runtimeContext(options: LocalModuleLoaderOptions): RuntimeModuleContext
 	for (const [scheme, root] of Object.entries(options.localRoots ?? {})) {
 		roots[scheme.toLowerCase()] = directoryUrl(root);
 	}
-	if (options.artifactsDir && roots["local"] === undefined) {
-		roots["local"] = directoryUrl(join(options.artifactsDir, "local"));
+	if (options.artifactsDir && roots.local === undefined) {
+		roots.local = directoryUrl(join(options.artifactsDir, "local"));
 	}
 	return {
 		cwdUrl: directoryUrl(options.cwd),

@@ -5,6 +5,32 @@ Persistent per-thread goal tracking as an in-tree builtin. Ports the standalone
 `pi-goal` extension into senpi with no dependency on it, file-based persistence,
 codex-aligned tool naming, and the budget concept removed.
 
+## Live elapsed footer ticker (2026-07-17)
+
+### What changed
+- New `elapsed-ticker.ts`: `GoalElapsedTicker` drives a once-per-second footer refresh, plus the pure
+  `goalLiveElapsedSeconds(goal, measuredFromMs, nowMs)` helper (committed `timeUsedSeconds` + whole seconds since
+  the current measurement window opened, mirroring `accountCurrentAgentTurn`'s rounding).
+- `ui.ts`: `goalStatusText`/`updateGoalUi` accept an optional `liveElapsedSeconds`; when present, an active goal
+  renders `Pursuing goal (…)` from the live value (including `0s`) instead of the frozen `timeUsedSeconds`.
+- `index.ts`: added `refreshGoalUi` — while `ctx.hasUI` and the goal is `active` with a matching open accounting
+  window, it syncs the ticker (live refresh); otherwise it stops the ticker and falls back to a static
+  `updateGoalUi`. The ticker is stopped on pause/complete/clear and `session_shutdown`. `refreshGoalUi` is injected
+  into `command-registration.ts` and `tool-registration.ts`, replacing their direct `updateGoalUi` calls.
+
+### Why
+- The footer showed a stale `Pursuing goal (…)` (or no time at all on a fresh goal) because `timeUsedSeconds` only
+  advances at `agent_end`/`session_shutdown`/`/goal` checkpoints and the footer was only re-set at those same
+  points. Users pursuing a goal saw the elapsed time freeze instead of ticking live.
+
+### Why extension system couldn't handle this differently
+- `setStatus` is fire-and-forget with no scheduler; the per-second refresh must be owned by the builtin. It is
+  implemented entirely via the public `pi.*` API + `ctx.ui.setStatus`; no core change.
+
+### Expected merge conflict zones on next upstream sync
+- LOW in `ui.ts`/`index.ts` if standalone `pi-goal` restyles the footer or refactors UI wiring.
+- The standalone `pi-goal` package needs the same ticker on its next sync (it shares this `ui.ts`/`format.ts` shape).
+
 ## Atomic goal store and narrow stale-brace recovery (2026-07-10)
 
 ### What changed

@@ -1,7 +1,7 @@
 # Senpi Repository Guide
 
-Generated: 2026-07-14
-Commit: `2c3a87858`
+Generated: 2026-07-17
+Commit: `92fc96389`
 Branch: `main`
 
 Metadata above records the source state used for this generation pass.
@@ -38,13 +38,15 @@ Senpi is an extension-first coding-agent monorepo. Keep changes scoped, preserve
 | Add or change extension examples | `packages/coding-agent/examples/` |
 | Change PTY behavior | `packages/pty/` and, for native behavior, `crates/senpi-pty/` |
 | Add provider setup docs | `packages/ai/README.md` and `packages/coding-agent/docs/providers.md` |
+| Change model/provider runtime | `packages/ai/src/models.ts`, `packages/ai/src/auth/`, `packages/ai/src/providers/` |
+| Change eval prompt/rendering | `packages/senpi-codemode/src/prompt/` and `src/tool/` |
 | Audit changelogs | `.github/agent/commands/cl.md` |
 | Prepare a release | `scripts/release.mjs` and `scripts/release-packages.mjs` |
 
 ## CODE MAP
 
 ```text
-Model/auth catalog -> packages/ai/src/providers -> packages/ai/src/api
+Models/auth runtime -> packages/ai/src/models.ts + src/auth/ -> providers -> api
                                          |
 Agent state -> packages/agent/src/agent-loop.ts
                                          |

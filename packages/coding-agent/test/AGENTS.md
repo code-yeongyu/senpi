@@ -11,13 +11,21 @@ mcp/               MCP transports, fixtures, security, lifecycle
 permission/        Permission-system behavior
 compaction/        Compaction mechanics and policy
 session-manager/   Persistence, branching, context construction
+dynamic-prompt/    Dynamic system-prompt + workstation fact coverage
+tool-pair-guard/   Provider payload tool-pair sanitization tests
+helpers/           Shared subprocess/QA/fixture helpers
+manual-qa/         Explicit manual QA scripts (not part of default suite)
 qa/app-server/     Real app-server surface drivers
 integration/       Explicitly gated real-provider tests
 fixtures/, goldens/ Shared deterministic inputs and snapshots
+model-runtime*.test.ts / models-store.test.ts / remote-catalog-provider.test.ts / runtime-credentials.test.ts
+                   Model/catalog/auth runtime coverage
 ```
 
 ## TEST RULES
 
+- `test/setup.ts` quarantines `SENPI_CODING_AGENT_DIR` into a unique temp directory by default; preserve that isolation in all new tests.
+- Model catalog refresh tests must stay mocked/offline; only `integration/` and `qa/` surfaces may use real credentials or incur network cost.
 - Prefer `suite/harness.ts` and the faux provider for new lifecycle and extension coverage.
 - Do not use real provider APIs, API keys, network calls, or paid tokens in default tests.
 - Some legacy tests outside `integration/` still activate from ambient Anthropic credentials. Run the suite hermetically and do not copy that activation pattern into new tests.

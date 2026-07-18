@@ -1,8 +1,11 @@
 import type { PathLike } from "node:fs";
 import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createEventBus } from "../src/core/event-bus.ts";
 import type { ExtensionAPI, ExtensionFactory } from "../src/core/extensions/types.ts";
 
+// loader.ts is dynamically imported in tests because the same file mocks
+// jiti/static and node:fs via vi.doMock.
 describe("extension loader", () => {
 	afterEach(() => {
 		vi.doUnmock("node:fs");
@@ -77,5 +80,97 @@ describe("extension loader", () => {
 		// transitive deps are installed beside the coding-agent package
 		expect(result.errors).toHaveLength(0);
 		expect(capturedOptions?.alias?.["@earendil-works/pi-tui"]).toContain(bundledTuiEntry);
+	});
+
+	describe("registerMcpServer", () => {
+		const bus = createEventBus();
+
+		it("stores a valid stdio declaration with extension path and registration cwd", async () => {
+			const { createExtensionRuntime, loadExtensionFromFactory } = await import("../src/core/extensions/loader.ts");
+			const ext = await loadExtensionFromFactory(
+				(pi) => {
+					pi.registerMcpServer("stdio-fixture", {
+						type: "stdio",
+						command: "node",
+						args: ["server.js"],
+					});
+				},
+				"/tmp/ext-cwd",
+				bus,
+				createExtensionRuntime(),
+				"<stdio-ext>",
+			);
+			const decl = ext.mcpServers.get("stdio-fixture");
+			expect(decl).toBeDefined();
+			expect(decl?.config).toMatchObject({ type: "stdio", command: "node", args: ["server.js"] });
+			expect(decl?.extensionPath).toBe("<stdio-ext>");
+			expect(decl?.registrationCwd).toBe("/tmp/ext-cwd");
+		});
+
+		it("stores a valid http declaration", async () => {
+			const { createExtensionRuntime, loadExtensionFromFactory } = await import("../src/core/extensions/loader.ts");
+			const ext = await loadExtensionFromFactory(
+				(pi) => {
+					pi.registerMcpServer("http-fixture", { type: "http", url: "http://localhost:3000" });
+				},
+				"/tmp",
+				bus,
+				createExtensionRuntime(),
+			);
+			expect(ext.mcpServers.get("http-fixture")?.config).toMatchObject({
+				type: "http",
+				url: "http://localhost:3000",
+			});
+		});
+
+		it("rejects an invalid declaration and fails only the declaring extension", async () => {
+			const { createExtensionRuntime, loadExtensions } = await import("../src/core/extensions/loader.ts");
+			const broken: ExtensionFactory = (pi) => {
+				pi.registerMcpServer("broken", {});
+			};
+			const healthy: ExtensionFactory = (pi) => {
+				pi.registerMcpServer("healthy", { type: "stdio", command: "node" });
+			};
+			const result = await loadExtensions(
+				["/tmp/broken.ts", "/tmp/healthy.ts"],
+				"/tmp",
+				bus,
+				createExtensionRuntime(),
+				{
+					factoryResolver: (p) => (p.includes("broken") ? broken : healthy),
+				},
+			);
+			expect(result.errors).toHaveLength(1);
+			expect(result.errors[0]?.error).toContain('Invalid MCP server declaration "broken"');
+			expect(result.extensions.flatMap((e) => [...e.mcpServers.keys()])).toEqual(["healthy"]);
+		});
+
+		it("last registration wins within one factory", async () => {
+			const { createExtensionRuntime, loadExtensionFromFactory } = await import("../src/core/extensions/loader.ts");
+			const ext = await loadExtensionFromFactory(
+				(pi) => {
+					pi.registerMcpServer("dup", { type: "stdio", command: "first" });
+					pi.registerMcpServer("dup", { type: "stdio", command: "second" });
+				},
+				"/tmp",
+				bus,
+				createExtensionRuntime(),
+			);
+			expect(ext.mcpServers.get("dup")?.config.command).toBe("second");
+		});
+
+		it("rejects unknown fields", async () => {
+			const { createExtensionRuntime, loadExtensionFromFactory } = await import("../src/core/extensions/loader.ts");
+			await expect(
+				loadExtensionFromFactory(
+					(pi) => {
+						pi.registerMcpServer("bad", { command: "node", bogus: true } as Record<string, unknown>);
+					},
+					"/tmp",
+					bus,
+					createExtensionRuntime(),
+				),
+			).rejects.toThrow('Invalid MCP server declaration "bad"');
+		});
 	});
 });

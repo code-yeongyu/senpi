@@ -1,19 +1,19 @@
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { builtinModels } from "../src/providers/all.ts";
 import {
 	discoverAntigravityProject,
 	googleAntigravityOAuth,
 	refreshAntigravityToken,
-} from "../src/utils/oauth/google-antigravity.ts";
+} from "../src/auth/oauth/google-antigravity.ts";
 import {
 	discoverGeminiCliProject,
 	googleGeminiCliOAuth,
 	refreshGoogleCloudToken,
-} from "../src/utils/oauth/google-gemini-cli.ts";
-import { googleOAuthExports } from "../src/utils/oauth/google-oauth-shared.ts";
-import { getOAuthProvider } from "../src/utils/oauth/index.ts";
+} from "../src/auth/oauth/google-gemini-cli.ts";
+import { googleOAuthExports } from "../src/auth/oauth/google-oauth-shared.ts";
+import { getOAuthProvider } from "../src/auth/oauth/index.ts";
+import { builtinModels } from "../src/providers/all.ts";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 
@@ -83,7 +83,7 @@ describe.sequential("Google account OAuth providers", () => {
 	});
 
 	it("keeps node:http behind the Google OAuth Node-only module", async () => {
-		const source = await readFile(new URL("../src/utils/oauth/google-oauth-shared.ts", import.meta.url), "utf8");
+		const source = await readFile(new URL("../src/auth/oauth/google-oauth-shared.ts", import.meta.url), "utf8");
 		expect(source).not.toMatch(/\bimport\s*\(\s*["']node:http["']\s*\)/);
 	});
 

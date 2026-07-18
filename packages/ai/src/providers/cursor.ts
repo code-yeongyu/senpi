@@ -1,10 +1,10 @@
-import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
+import { cursorConnectApi } from "../api/cursor-connect.lazy.ts";
 import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
+import { loadCursorOAuth } from "../auth/oauth/load.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { loadCursorOAuth } from "../utils/oauth/load.ts";
 import { CURSOR_MODELS } from "./cursor.models.ts";
 
-export function cursorProvider(): Provider<"openai-completions"> {
+export function cursorProvider(): Provider<"cursor-connect"> {
 	return createProvider({
 		id: "cursor",
 		name: "Cursor",
@@ -14,6 +14,6 @@ export function cursorProvider(): Provider<"openai-completions"> {
 			oauth: lazyOAuth({ name: "Cursor (Claude, GPT, etc.)", load: loadCursorOAuth }),
 		},
 		models: Object.values(CURSOR_MODELS),
-		api: openAICompletionsApi(),
+		api: cursorConnectApi(),
 	});
 }

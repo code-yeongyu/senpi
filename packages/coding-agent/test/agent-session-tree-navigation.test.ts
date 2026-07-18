@@ -62,8 +62,8 @@ const treeNavigationStreamFn: StreamFn = (model, context, options) => {
 describe.skipIf(!API_KEY)("AgentSession tree navigation e2e", () => {
 	let ctx: TestSessionContext;
 
-	beforeEach(() => {
-		ctx = createTestSession({
+	beforeEach(async () => {
+		ctx = await createTestSession({
 			systemPrompt: "You are a helpful assistant. Reply with just a few words.",
 			settingsOverrides: { compaction: { keepRecentTokens: 1 } },
 			streamFn: treeNavigationStreamFn,
@@ -327,8 +327,8 @@ describe.skipIf(!API_KEY)("AgentSession tree navigation e2e", () => {
 describe.skipIf(!API_KEY)("AgentSession tree navigation - branch scenarios", () => {
 	let ctx: TestSessionContext;
 
-	beforeEach(() => {
-		ctx = createTestSession({
+	beforeEach(async () => {
+		ctx = await createTestSession({
 			systemPrompt: "You are a helpful assistant. Reply with just a few words.",
 			streamFn: treeNavigationStreamFn,
 		});
