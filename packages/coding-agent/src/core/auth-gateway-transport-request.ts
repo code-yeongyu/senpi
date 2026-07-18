@@ -1,4 +1,16 @@
 import { timingSafeEqual } from "node:crypto";
+
+function safeEqual(left: string, right: string): boolean {
+	const a = Buffer.from(left);
+	const b = Buffer.from(right);
+	if (a.length !== b.length) {
+		const padded = Buffer.alloc(b.length);
+		a.copy(padded, 0, 0, Math.min(a.length, padded.length));
+		timingSafeEqual(padded, b);
+		return false;
+	}
+	return timingSafeEqual(a, b);
+}
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ResolvedGatewayAuth } from "./auth-gateway-transport-auth.ts";
 import { writeGatewayResponse, writeJson } from "./auth-gateway-transport-response.ts";
@@ -48,18 +60,25 @@ export async function handleGatewayRequest(options: {
 		writeJson(response, 200, { ok: true, version: options.version }, corsHeaders);
 		return;
 	}
-	if (!isAuthorized(request, options.auth.token)) {
-		writeJson(response, 401, { error: "unauthorized" }, corsHeaders);
-		return;
-	}
 	const pathname = new URL(request.url ?? "/", "http://gateway.invalid").pathname;
 	const allowedMethods = GATEWAY_ROUTES.get(pathname);
+	// CORS preflight has no Authorization header; answer before bearer checks.
 	if (request.method === "OPTIONS") {
 		if (origin === undefined || allowedMethods === undefined || !preflightIsAllowed(request, allowedMethods)) {
 			writeJson(response, 404, { error: "route not found" }, corsHeaders);
 			return;
 		}
-		response.writeHead(204, corsHeaders).end();
+		response.writeHead(204, {
+			...(corsHeaders ?? {}),
+			"access-control-allow-methods": allowedMethods.join(", "),
+			"access-control-allow-headers":
+				"authorization, content-type, x-senpi-credential-selector, x-senpi-session-id",
+			"access-control-max-age": "600",
+		}).end();
+		return;
+	}
+	if (!isAuthorized(request, options.auth.token)) {
+		writeJson(response, 401, { error: "unauthorized" }, corsHeaders);
 		return;
 	}
 	if (allowedMethods === undefined || request.method === undefined || !allowedMethods.includes(request.method)) {
@@ -105,18 +124,13 @@ export async function handleGatewayRequest(options: {
 	}
 }
 
-function isAuthorized(request: IncomingMessage, expectedToken: string): boolean {
-	const authorization = request.headers.authorization;
-	if (typeof authorization !== "string" || !authorization.startsWith("Bearer ")) return false;
-	const suppliedBytes = Buffer.from(authorization.slice("Bearer ".length));
-	const expectedBytes = Buffer.from(expectedToken);
-	if (suppliedBytes.length !== expectedBytes.length) {
-		const padded = Buffer.alloc(expectedBytes.length);
-		suppliedBytes.copy(padded, 0, 0, Math.min(suppliedBytes.length, padded.length));
-		timingSafeEqual(padded, expectedBytes);
-		return false;
-	}
-	return timingSafeEqual(suppliedBytes, expectedBytes);
+function isAuthorized(request: IncomingMessage, token: string): boolean {
+	if (token.length < 32) return false;
+	const header = request.headers.authorization;
+	if (typeof header !== "string" || !header.startsWith("Bearer ")) return false;
+	const provided = header.slice("Bearer ".length).trim();
+	if (provided.length < 32) return false;
+	return safeEqual(provided, token);
 }
 
 function corsHeadersFor(origin: string): Readonly<Record<string, string>> {

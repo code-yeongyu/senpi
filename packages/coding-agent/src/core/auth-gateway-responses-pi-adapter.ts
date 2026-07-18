@@ -85,8 +85,22 @@ class ResponsesPiAdapter implements AuthGatewayResponsesPiAdapter {
 			runtimeCall(request.modelId, request.context, request.sessionId, input.signal),
 		);
 		if (result.kind !== "stream") return runtimeFailure(result);
-		if (!request.stream)
-			return { body: { message: await safeGatewayResult(result.stream) }, kind: "json", statusCode: 200 };
+		if (!request.stream) {
+			const message = await safeGatewayResult(result.stream);
+			if (message.stopReason === "error" || message.stopReason === "aborted") {
+				return {
+					body: {
+						error: {
+							message: message.errorMessage ?? message.stopReason,
+							type: message.stopReason === "aborted" ? "request_aborted" : "upstream_error",
+						},
+					},
+					kind: "json",
+					statusCode: message.stopReason === "aborted" ? 499 : 502,
+				};
+			}
+			return { body: { message }, kind: "json", statusCode: 200 };
+		}
 		return { frames: piGatewayFrames(result.stream), kind: "stream", statusCode: 200 };
 	}
 
@@ -99,6 +113,18 @@ class ResponsesPiAdapter implements AuthGatewayResponsesPiAdapter {
 		const responseId = this.nextResponseId();
 		if (!request.stream) {
 			const message = await safeGatewayResult(result.stream);
+			if (message.stopReason === "error" || message.stopReason === "aborted") {
+				return {
+					body: {
+						error: {
+							message: message.errorMessage ?? message.stopReason,
+							type: message.stopReason === "aborted" ? "request_aborted" : "upstream_error",
+						},
+					},
+					kind: "json",
+					statusCode: message.stopReason === "aborted" ? 499 : 502,
+				};
+			}
 			this.storeContext(responseId, appendGatewayAssistant(context, message));
 			return { body: gatewayResponseBody(responseId, result.model.id, message), kind: "json", statusCode: 200 };
 		}

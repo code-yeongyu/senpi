@@ -8,7 +8,7 @@ import {
 	startAuthGatewayTransport,
 } from "../../src/core/auth-gateway-transport.ts";
 
-const gatewayToken = "gateway-test-token";
+const gatewayToken = "gateway-test-token-0123456789abcdef";
 const allowedOrigin = "https://console.example.test";
 
 const handles: AuthGatewayTransportHandle[] = [];

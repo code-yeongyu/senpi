@@ -91,7 +91,7 @@ class GatewayObservabilityHandler {
 		for (const model of this.models) {
 			const key = `${model.provider}/${model.modelId}`;
 			if (activeProviders.has(model.provider) && !seen.has(key)) {
-				models.push({ id: model.modelId, object: "model", owned_by: model.provider });
+				models.push({ id: `${model.provider}/${model.modelId}`, object: "model", owned_by: model.provider });
 				seen.add(key);
 			}
 		}

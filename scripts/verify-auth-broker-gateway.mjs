@@ -141,6 +141,9 @@ function validateCheckReceipt(manifest, stored, now) {
 	if (!existsSync(path)) fail(`Check receipt disappeared: ${stored.path}`);
 	assertFresh(path, now);
 	if (sha256(path) !== stored.sha256) fail(`Check receipt hash mismatch: ${stored.path}`);
+	const text = readFileSync(path, "utf8");
+	if (text.trim().length < 16) fail(`Empty/too-short check receipt: ${stored.path}`);
+	if (/^(todo|tbd|n\/a|pass|ok)\s*$/i.test(text.trim())) fail(`Placeholder check receipt: ${stored.path}`);
 }
 function validateStoredReceipt(manifest, stored, isolated, now) {
 	if (stored === undefined || stored.exitCode !== 0 || typeof stored.path !== "string" || typeof stored.sha256 !== "string") fail("Malformed receipt");
@@ -191,6 +194,10 @@ function check(args) {
 	if (mode === "quality" && (manifest.score.provider < 28 || manifest.score.routing < 28 || manifest.score.gateway < 24 || manifest.score.total < 90)) fail("Quality threshold not met");
 	if (mode === "real-surface" && (!manifest.checks.find((item) => item.id === "gateway-transport")?.passed || !manifest.checks.find((item) => item.id === "gateway-stream-runtime")?.passed)) fail("Real surface evidence is incomplete");
 	if (mode === "scope" && (!manifest.checks.find((item) => item.id === "gateway-secret-boundary")?.passed || !manifest.checks.find((item) => item.id === "gateway-transport")?.passed)) fail("Scope evidence is incomplete");
+	// Never APPROVE with failing/missing checks — a fabricated score alone is insufficient.
+	const failed = manifest.checks.filter((item) => item.passed !== true).map((item) => item.id);
+	if (failed.length > 0) fail(`Checks not passed: ${failed.join(", ")}`);
+	if (manifest.score.total < 90) fail("Quality threshold not met");
 	const evidence = resolve(args.evidence ?? fail("--evidence is required"));
 	writeEvidence(evidence, APPROVE);
 }

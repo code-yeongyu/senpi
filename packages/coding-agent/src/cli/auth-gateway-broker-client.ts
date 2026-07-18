@@ -22,6 +22,31 @@ export class AuthGatewayBrokerConfigError extends Error {
 	}
 }
 
+/** Reject non-loopback http broker URLs before any bearer token is sent. */
+export function assertBrokerUrlAllowed(url: string): void {
+	let parsed: URL;
+	try {
+		parsed = new URL(url);
+	} catch {
+		throw new AuthGatewayBrokerConfigError(`Invalid SENPI_AUTH_BROKER_URL: ${url}`);
+	}
+	if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+		throw new AuthGatewayBrokerConfigError(`SENPI_AUTH_BROKER_URL must be http(s): ${url}`);
+	}
+	const host = parsed.hostname.toLowerCase();
+	const loopback =
+		host === "localhost" ||
+		host === "127.0.0.1" ||
+		host === "::1" ||
+		host === "[::1]" ||
+		host.endsWith(".localhost");
+	if (parsed.protocol === "http:" && !loopback) {
+		throw new AuthGatewayBrokerConfigError(
+			`SENPI_AUTH_BROKER_URL must be loopback for http (got ${host}); use https for remote brokers`,
+		);
+	}
+}
+
 export async function brokerConfig(
 	options: AuthGatewayBrokerOptions,
 	agentDir: string,
@@ -34,6 +59,7 @@ export async function brokerConfig(
 			"auth-gateway requires broker authentication: set SENPI_AUTH_BROKER_URL and SENPI_AUTH_BROKER_TOKEN",
 		);
 	}
+	assertBrokerUrlAllowed(url);
 	const token =
 		options.brokerToken ??
 		process.env.SENPI_AUTH_BROKER_TOKEN ??
@@ -56,6 +82,7 @@ export async function requiredBrokerConfig(
 }
 
 export function brokerStore(broker: AuthGatewayBrokerConfig): AuthBrokerRemoteStore {
+	// URL already validated in brokerConfig before token is read/returned.
 	return new AuthBrokerRemoteStore({
 		async request(request: unknown) {
 			const response = await fetch(new URL("/v1/broker", broker.url), {

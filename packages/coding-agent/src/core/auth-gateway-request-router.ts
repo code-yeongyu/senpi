@@ -3,6 +3,7 @@ import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/pro
 import type { AuthBrokerRemoteStore } from "./auth-broker-remote-store.ts";
 import { createAnthropicMessagesGatewayAdapter } from "./auth-gateway-anthropic-messages.ts";
 import type { AuthGatewayAuthorizedModel } from "./auth-gateway-observability.ts";
+import { modelForRequest, qualifyModel } from "./auth-gateway-model-select.ts";
 import { createAuthGatewayObservabilityHandler } from "./auth-gateway-observability.ts";
 import { createOpenAIChatGatewayAdapter } from "./auth-gateway-openai-chat.ts";
 import type { AuthGatewayAdapterResponse } from "./auth-gateway-protocol-adapter.ts";
@@ -103,29 +104,6 @@ function defaultModelResolver(provider: string, modelId: string): Model<Api> | u
 
 function isAuthorized(models: readonly AuthGatewayAuthorizedModel[], provider: string, modelId: string): boolean {
 	return models.some((model) => model.provider === provider && model.modelId === modelId);
-}
-
-function modelForRequest(
-	models: readonly AuthGatewayAuthorizedModel[],
-	body: unknown,
-	modelField: "model" | "modelId",
-): AuthGatewayAuthorizedModel | undefined {
-	if (!isRecord(body) || !(modelField in body)) return undefined;
-	const requested = body[modelField];
-	if (typeof requested !== "string") return undefined;
-	const separator = requested.indexOf("/");
-	if (separator > 0) {
-		const provider = requested.slice(0, separator);
-		const modelId = requested.slice(separator + 1);
-		return models.find((model) => model.provider === provider && model.modelId === modelId);
-	}
-	const matches = models.filter((model) => model.modelId === requested);
-	return matches.length === 1 ? matches[0] : undefined;
-}
-
-function qualifyModel(body: unknown, modelField: "model" | "modelId", model: AuthGatewayAuthorizedModel): unknown {
-	if (!isRecord(body)) return body;
-	return { ...body, [modelField]: `${model.provider}/${model.modelId}` };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
