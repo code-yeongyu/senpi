@@ -5,6 +5,7 @@ import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 let resolvedBranch = "main";
+let branchResolutionDelivered: (() => void) | null = null;
 
 vi.mock("child_process", () => ({
 	execFile: vi.fn(
@@ -15,15 +16,10 @@ vi.mock("child_process", () => ({
 			callback: (error: Error | null, stdout: string, stderr: string) => void,
 		) => {
 			if (args[1] === "symbolic-ref") {
-				setTimeout(
-					() =>
-						callback(
-							resolvedBranch ? null : new Error("detached"),
-							resolvedBranch ? `${resolvedBranch}\n` : "",
-							"",
-						),
-					0,
-				);
+				setTimeout(() => {
+					callback(resolvedBranch ? null : new Error("detached"), resolvedBranch ? `${resolvedBranch}\n` : "", "");
+					branchResolutionDelivered?.();
+				}, 0);
 				return;
 			}
 			setTimeout(() => callback(new Error("unsupported"), "", ""), 0);
@@ -87,6 +83,21 @@ async function waitFor(condition: () => boolean, timeoutMs = 10000): Promise<voi
 	}
 }
 
+/** Await an exact event with a bounded timeout - no polling. */
+async function awaitWithTimeout(event: Promise<void>, description: string, timeoutMs = 10000): Promise<void> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		await Promise.race([
+			event,
+			new Promise<never>((_resolve, reject) => {
+				timer = setTimeout(() => reject(new Error(`Timed out waiting for ${description}`)), timeoutMs);
+			}),
+		]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
 describe("FooterDataProvider reftable branch detection", () => {
 	let originalCwd: string;
 	let tempDir: string;
@@ -95,6 +106,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 		originalCwd = process.cwd();
 		tempDir = mkdtempSync(join(tmpdir(), "footer-data-provider-"));
 		resolvedBranch = "main";
+		branchResolutionDelivered = null;
 		vi.mocked(spawnSync).mockClear();
 		vi.mocked(execFile).mockClear();
 	});
@@ -178,8 +190,17 @@ describe("FooterDataProvider reftable branch detection", () => {
 			const onBranchChange = vi.fn();
 			provider.onBranchChange(onBranchChange);
 
+			// Subscribe to the exact async boundary before triggering the refresh: the
+			// mocked execFile delivers its branch resolution to the provider's in-flight
+			// refresh, and the provider's cache-compare/notify continuation drains with
+			// the current macrotask's microtasks. One setImmediate turn after delivery
+			// observes the settled state, so the not-notified assertion is non-vacuous.
+			const resolutionDelivered = new Promise<void>((resolve) => {
+				branchResolutionDelivered = resolve;
+			});
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
-			await waitFor(() => vi.mocked(execFile).mock.calls.length === 1);
+			await awaitWithTimeout(resolutionDelivered, "the reftable refresh to resolve the branch");
+			await new Promise<void>((resolve) => setImmediate(resolve));
 
 			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);
 			expect(vi.mocked(spawnSync)).not.toHaveBeenCalled();

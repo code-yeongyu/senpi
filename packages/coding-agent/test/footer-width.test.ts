@@ -144,4 +144,27 @@ describe("FooterComponent width handling", () => {
 			.join("\n");
 		expect(renderedFooter).toContain("CH25.0%");
 	});
+
+	it("marks Kimi Coding costs as subscription estimates", () => {
+		const session = createSession({
+			sessionName: "",
+			provider: "kimi-coding",
+			usage: {
+				input: 100,
+				output: 10,
+				cacheRead: 0,
+				cacheWrite: 0,
+				cost: { total: 1.234 },
+			},
+		});
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		// Fork footer renders one combined stats line; assert against the full render
+		// instead of upstream's two-line layout index.
+		const renderedFooter = footer
+			.render(120)
+			.map((line) => stripAnsi(line))
+			.join("\n");
+		expect(renderedFooter).toContain("$1.234 (sub)");
+	});
 });

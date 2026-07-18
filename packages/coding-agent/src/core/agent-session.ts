@@ -1489,6 +1489,8 @@ export class AgentSession {
 
 		const loadedSkills = this._resourceLoader.getSkills().skills;
 		const loadedContextFiles = this._resourceLoader.getAgentsFiles().agentsFiles;
+		const loaderSystemPrompt = this._resourceLoader.getSystemPrompt();
+		const loaderAppendSystemPrompt = this._resourceLoader.getAppendSystemPrompt();
 
 		this._baseSystemPromptOptions = {
 			cwd: this._cwd,
@@ -1498,7 +1500,10 @@ export class AgentSession {
 			toolSnippets,
 			promptGuidelines,
 		};
-		return buildDynamicSystemPrompt(this._baseSystemPromptOptions);
+		const basePrompt = loaderSystemPrompt ?? buildDynamicSystemPrompt(this._baseSystemPromptOptions);
+		return loaderAppendSystemPrompt.length > 0
+			? `${basePrompt}\n\n${loaderAppendSystemPrompt.join("\n\n")}`
+			: basePrompt;
 	}
 
 	/**
@@ -3241,6 +3246,10 @@ export class AgentSession {
 			{
 				registerProvider: (name, config) => {
 					this._modelRuntime.registerProvider(name, config);
+					this._refreshCurrentModelFromRegistry();
+				},
+				registerNativeProvider: (provider) => {
+					this._modelRuntime.registerNativeProvider(provider);
 					this._refreshCurrentModelFromRegistry();
 				},
 				unregisterProvider: (name) => {

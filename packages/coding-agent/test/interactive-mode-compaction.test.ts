@@ -198,4 +198,48 @@ describe("InteractiveMode compaction events", () => {
 		expect(rendered).toContain("OpenAI Responses WebSocket compaction");
 		expect(rendered).toContain("2 retained items");
 	});
+
+	test("preserves steering behavior when flushing into an active agent run", async () => {
+		const message = { text: "change direction", mode: "steer" as const };
+		const fakeThis = {
+			compactionQueuedMessages: [message],
+			compactionInFlightMessages: [] as (typeof message)[],
+			compactionTransferAbortControllers: new Map<typeof message, AbortController>(),
+			session: {
+				clearQueue: vi.fn(),
+				prompt: vi.fn().mockImplementation(
+					(
+						_text: string,
+						options?: {
+							preflightResult?: (success: boolean) => void;
+							promptDisposition?: (disposition: "handled" | "queued" | "started") => void;
+						},
+					) => {
+						options?.promptDisposition?.("started");
+						options?.preflightResult?.(true);
+						return Promise.resolve();
+					},
+				),
+				steer: vi.fn().mockResolvedValue(undefined),
+				followUp: vi.fn().mockResolvedValue(undefined),
+			},
+			isExtensionCommand: vi.fn().mockReturnValue(false),
+			updatePendingMessagesDisplay: vi.fn(),
+			showError: vi.fn(),
+		};
+
+		const flushCompactionQueue = Reflect.get(InteractiveMode.prototype, "flushCompactionQueue") as (
+			this: typeof fakeThis,
+			options?: { willRetry?: boolean },
+		) => Promise<void>;
+
+		await flushCompactionQueue.call(fakeThis, { willRetry: false });
+
+		expect(fakeThis.session.prompt).toHaveBeenCalledWith(
+			"change direction",
+			expect.objectContaining({ streamingBehavior: "steer" }),
+		);
+		expect(fakeThis.compactionQueuedMessages).toEqual([]);
+		expect(fakeThis.showError).not.toHaveBeenCalled();
+	});
 });

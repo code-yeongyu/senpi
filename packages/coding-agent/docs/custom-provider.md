@@ -30,10 +30,38 @@ See these complete provider examples:
 
 ## Quick Reference
 
+Extensions can register either a complete pi-ai `Provider` or use the legacy provider-config form. Prefer a complete provider when custom authentication, filtering, refresh, or streaming behavior is required. Pi composes `models.json` overrides above registered native providers.
+
 ```typescript
+import { createProvider, openAICompletionsApi } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@code-yeongyu/senpi";
 
 export default function (pi: ExtensionAPI) {
+  pi.registerProvider(createProvider({
+    id: "native-local",
+    name: "Native Local",
+    baseUrl: "http://localhost:8080/v1",
+    auth: {
+      apiKey: {
+        name: "Local server API key",
+        async login(interaction) {
+          return {
+            type: "api_key",
+            key: await interaction.prompt({ type: "secret", message: "API key" })
+          };
+        },
+        async resolve({ credential }) {
+          return credential?.key
+            ? { auth: { apiKey: credential.key }, source: "stored API key" }
+            : undefined;
+        }
+      }
+    },
+    models: [],
+    api: openAICompletionsApi()
+  }));
+
+  // Legacy provider-config form:
   // Override baseUrl for existing provider
   pi.registerProvider("anthropic", {
     baseUrl: "https://proxy.example.com"

@@ -1,7 +1,7 @@
 import { googleGeminiCliApi } from "../api/google-gemini-cli.lazy.ts";
 import { lazyOAuth } from "../auth/helpers.ts";
 import { loadGoogleAntigravityOAuth, loadGoogleGeminiCliOAuth } from "../auth/oauth/load.ts";
-import { createProvider, type Provider } from "../models.ts";
+import { createProvider } from "../models.ts";
 import { GOOGLE_ANTIGRAVITY_MODELS } from "./google-antigravity.models.ts";
 import { GOOGLE_GEMINI_CLI_MODELS } from "./google-gemini-cli.models.ts";
 
@@ -10,7 +10,7 @@ const createGoogleCcaProvider = (
 	name: string,
 	load: typeof loadGoogleGeminiCliOAuth,
 	models: typeof GOOGLE_GEMINI_CLI_MODELS | typeof GOOGLE_ANTIGRAVITY_MODELS,
-): Provider<"google-gemini-cli"> =>
+) =>
 	createProvider({
 		id,
 		name,

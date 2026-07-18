@@ -12,10 +12,17 @@
 ### Added
 
 - Added `antml` as a valid `compat.toolCallFormat` in custom `models.json` provider and model definitions: ANTML `<function_calls>`/`<invoke>` text-tool protocol with Claude-Code-style failure tolerance.
+- Added built-in llama.cpp router support with `/login` connection setup and `/llama` Hugging Face model search and downloads, explicit loading, unloading, and live progress. See [llama.cpp](docs/llama-cpp.md).
+- Added extension registration for complete pi-ai providers, including native authentication, model refresh, filtering, and streaming behavior.
 
 ### Changed
 
 ### Fixed
+
+- Fixed prompt-template defaults for all arguments (`${@:-default}` and `${ARGUMENTS:-default}`).
+- Fixed obsolete custom UI, custom tool, and custom editor examples in the extension documentation.
+- Fixed Kimi Coding sessions to show API-equivalent implied costs with the subscription indicator.
+- Fixed OpenAI Responses early stream endings to trigger automatic retry instead of ending the agent run.
 
 ### Removed
 

@@ -12,6 +12,10 @@
 
 ### Fixed
 
+- Fixed GitHub Copilot long-context pricing tiers in generated model metadata.
+- Fixed Kimi Coding subscription models to report API-equivalent implied costs when models.dev reports zero pricing.
+- Fixed OpenAI Responses early stream endings to be classified as retryable provider errors.
+
 ### Removed
 
 ## [2026.7.17-5] - 2026-07-17

@@ -766,6 +766,47 @@ Content`,
 		});
 	});
 
+	describe("system prompt options", () => {
+		it("should use the systemPrompt option as inline text", async () => {
+			const loader = new DefaultResourceLoader({ cwd, agentDir, systemPrompt: "CLI system prompt." });
+			await loader.reload();
+
+			expect(loader.getSystemPrompt()).toBe("CLI system prompt.");
+		});
+
+		it("should read the systemPrompt option from a file path", async () => {
+			const promptPath = join(tempDir, "system-prompt.md");
+			writeFileSync(promptPath, "Prompt from file.");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir, systemPrompt: promptPath });
+			await loader.reload();
+
+			expect(loader.getSystemPrompt()).toBe("Prompt from file.");
+		});
+
+		it("should prefer the systemPrompt option over a legacy SYSTEM.md", async () => {
+			writeFileSync(join(agentDir, "SYSTEM.md"), "Global system prompt.");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir, systemPrompt: "CLI system prompt." });
+			await loader.reload();
+
+			expect(loader.getSystemPrompt()).toBe("CLI system prompt.");
+		});
+
+		it("should prefer appendSystemPrompt entries over a legacy APPEND_SYSTEM.md", async () => {
+			writeFileSync(join(agentDir, "APPEND_SYSTEM.md"), "Discovered append.");
+
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				appendSystemPrompt: ["First addition.", "Second addition."],
+			});
+			await loader.reload();
+
+			expect(loader.getAppendSystemPrompt()).toEqual(["First addition.", "Second addition."]);
+		});
+	});
+
 	describe("extension conflict detection", () => {
 		it("should detect tool conflicts between extensions", async () => {
 			// Create two extensions that register the same tool

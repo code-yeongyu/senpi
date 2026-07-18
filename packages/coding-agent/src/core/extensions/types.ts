@@ -25,6 +25,7 @@ import type {
 	Model,
 	OAuthCredentials,
 	OAuthLoginCallbacks,
+	Provider,
 	ProviderHeaders,
 	RefreshModelsContext,
 	SimpleStreamOptions,
@@ -1495,6 +1496,7 @@ export interface ExtensionAPI {
 	 *   }
 	 * });
 	 */
+	registerProvider(provider: Provider): void;
 	registerProvider(name: string, config: ProviderConfig): void;
 
 	/**
@@ -1603,6 +1605,8 @@ export type InlineExtension =
 			/** Display name shown as `<inline:name>` in the startup Extensions list. */
 			name: string;
 			factory: ExtensionFactory;
+			/** Omit this extension from the startup Extensions list. */
+			hidden?: boolean;
 	  };
 
 // ============================================================================
@@ -1702,13 +1706,41 @@ export type SetThinkingLevelHandler = (level: ThinkingLevel) => void;
 export type SetLabelHandler = (entryId: string, label: string | undefined) => void;
 
 /**
+ * Legacy provider-config registration queued during extension loading.
+ *
+ * `order` is a shared monotonic sequence across the legacy and native queues,
+ * assigned when queued. Flushers replay entries in this order so mixed
+ * legacy/native registrations keep last-registration-wins.
+ */
+export interface PendingProviderConfigRegistration {
+	name: string;
+	config: ProviderConfig;
+	extensionPath: string;
+	order: number;
+}
+
+/** Native pi-ai provider registration queued during extension loading. See PendingProviderConfigRegistration.order. */
+export interface PendingNativeProviderRegistration {
+	provider: Provider;
+	extensionPath: string;
+	order: number;
+}
+
+/** A queued pre-bind provider registration, tagged by kind, in original call order. */
+export type PendingProviderRegistration =
+	| ({ kind: "config" } & PendingProviderConfigRegistration)
+	| ({ kind: "native" } & PendingNativeProviderRegistration);
+
+/**
  * Shared state created by loader, used during registration and runtime.
  * Contains flag values (defaults set during registration, CLI values set after).
  */
 export interface ExtensionRuntimeState {
 	flagValues: Map<string, boolean | string>;
-	/** Provider registrations queued during extension loading, processed when runner binds */
-	pendingProviderRegistrations: Array<{ name: string; config: ProviderConfig; extensionPath: string }>;
+	/** Legacy provider-config registrations queued during extension loading, processed when runner binds. */
+	pendingProviderRegistrations: PendingProviderConfigRegistration[];
+	/** Native pi-ai provider registrations queued during extension loading, processed when runner binds. */
+	pendingNativeProviderRegistrations: PendingNativeProviderRegistration[];
 	/** Throws when this extension instance is stale after runtime replacement. */
 	assertActive: () => void;
 	/** Marks this extension instance as stale after runtime replacement or reload. */
@@ -1720,6 +1752,7 @@ export interface ExtensionRuntimeState {
 	 * After bindCore(): calls ModelRegistry directly for immediate effect.
 	 */
 	registerProvider: (name: string, config: ProviderConfig, extensionPath?: string) => void;
+	registerNativeProvider: (provider: Provider, extensionPath?: string) => void;
 	unregisterProvider: (name: string, extensionPath?: string) => void;
 }
 
@@ -1827,6 +1860,7 @@ export interface RegisteredMcpServerDeclaration {
 export interface Extension {
 	path: string;
 	resolvedPath: string;
+	hidden?: boolean;
 	sourceInfo: SourceInfo;
 	handlers: Map<string, HandlerFn[]>;
 	tools: Map<string, RegisteredTool>;
