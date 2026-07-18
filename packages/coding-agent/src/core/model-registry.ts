@@ -20,6 +20,7 @@ import {
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai/compat";
 import { registerOAuthProvider, resetOAuthProviders } from "@earendil-works/pi-ai/oauth";
+import { registerCustomRadiusOAuthProvider } from "./radius.ts";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { type Static, Type } from "typebox";
@@ -259,6 +260,8 @@ const ProviderConfigSchema = Type.Object({
 	cacheRetention: Type.Optional(CacheRetentionSchema),
 	compat: Type.Optional(ProviderCompatSchema),
 	authHeader: Type.Optional(Type.Boolean()),
+	/** Built-in OAuth factory id (currently only "radius") or full OAuth provider object via registerProvider. */
+	oauth: Type.Optional(Type.Union([Type.Literal("radius"), Type.String({ minLength: 1 })])),
 	whitelist: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
 	blacklist: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
 	models: Type.Optional(Type.Array(ModelDefinitionSchema)),
@@ -637,6 +640,14 @@ export class ModelRegistry {
 
 				this.storeProviderRequestConfig(providerName, providerConfig);
 
+				if (providerConfig.oauth === "radius") {
+					const gateway = providerConfig.baseUrl;
+					if (!gateway) {
+						throw new Error(`Provider ${providerName}: "baseUrl" is required when oauth is "radius".`);
+					}
+					registerCustomRadiusOAuthProvider(providerName, providerConfig.name, gateway);
+				}
+
 				if (providerConfig.modelOverrides) {
 					modelOverrides.set(providerName, new Map(Object.entries(providerConfig.modelOverrides)));
 					for (const [modelId, modelOverride] of Object.entries(providerConfig.modelOverrides)) {
@@ -678,7 +689,7 @@ export class ModelRegistry {
 				providerConfig.modelOverrides && Object.keys(providerConfig.modelOverrides).length > 0;
 
 			if (models.length === 0) {
-				// Override-only config: needs baseUrl, headers, compat, modelOverrides, extraBody, or some combination.
+				// Override-only config: needs baseUrl, headers, compat, modelOverrides, extraBody, oauth, or some combination.
 				if (
 					!providerConfig.baseUrl &&
 					!providerConfig.headers &&
@@ -686,11 +697,12 @@ export class ModelRegistry {
 					!providerConfig.cacheRetention &&
 					!hasModelOverrides &&
 					!providerConfig.extraBody &&
+					!providerConfig.oauth &&
 					!providerConfig.whitelist &&
 					!providerConfig.blacklist
 				) {
 					throw new Error(
-						`Provider ${providerName}: must specify "baseUrl", "headers", "compat", "cacheRetention", "modelOverrides", "extraBody", or "models".`,
+						`Provider ${providerName}: must specify "baseUrl", "headers", "compat", "cacheRetention", "modelOverrides", "extraBody", "oauth", or "models".`,
 					);
 				}
 			} else if (!isBuiltIn) {
@@ -942,7 +954,7 @@ export class ModelRegistry {
 					: undefined;
 			const pooledCredential =
 				apiKeyFromAuthStorage === undefined && configuredApiKey === undefined
-					? this.authStorage.selectPooledCredential(model.provider, pooledCredentialOptions)
+					? await this.authStorage.selectPooledCredential(model.provider, pooledCredentialOptions)
 					: undefined;
 			const apiKey = apiKeyFromAuthStorage ?? configuredApiKey ?? pooledCredential?.apiKey ?? undefined;
 
@@ -959,8 +971,18 @@ export class ModelRegistry {
 			);
 
 			let headers =
-				storedAuth?.headers || model.headers || providerHeaders || modelHeaders
-					? { ...storedAuth?.headers, ...model.headers, ...providerHeaders, ...modelHeaders }
+				storedAuth?.headers ||
+				pooledCredential?.headers ||
+				model.headers ||
+				providerHeaders ||
+				modelHeaders
+					? {
+							...storedAuth?.headers,
+							...pooledCredential?.headers,
+							...model.headers,
+							...providerHeaders,
+							...modelHeaders,
+						}
 					: undefined;
 
 			if (providerConfig?.authHeader) {

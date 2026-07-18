@@ -150,19 +150,19 @@ describe("multi-account credential contracts", () => {
 		await expect(firstRefresh).resolves.toBe("fresh-access-token");
 	});
 
-	it("preserves runtime and stored API-key precedence over a configured pool", () => {
+	it("preserves runtime and stored API-key precedence over a configured pool", async () => {
 		const vault = InMemoryCredentialVault.fromRecords([apiKeyRecord]);
 		const storage = AuthStorage.inMemory({ openai: { type: "api_key", key: "stored-api-key" } });
 		storage.setCredentialVault(vault);
-		expect(storage.selectPooledCredential("openai")).toBeUndefined();
+		await expect(storage.selectPooledCredential("openai")).resolves.toBeUndefined();
 		storage.remove("openai");
 		storage.setRuntimeApiKey("openai", "runtime-api-key");
-		expect(storage.selectPooledCredential("openai")).toBeUndefined();
+		await expect(storage.selectPooledCredential("openai")).resolves.toBeUndefined();
 		storage.removeRuntimeApiKey("openai");
-		const selected = storage.selectPooledCredential("openai");
+		const selected = await storage.selectPooledCredential("openai");
 		expect(selected?.apiKey).toBe("test-api-key-a");
 		selected?.reportOutcome("rate_limited");
-		expect(() => storage.selectPooledCredential("openai")).toThrow("No eligible credential is available");
+		await expect(storage.selectPooledCredential("openai")).rejects.toThrow("No eligible credential is available");
 	});
 	it("persists two redacted credential records and consumes one authenticated lease", () => {
 		// Given: two credentials from separate provider/type pools.
@@ -236,4 +236,53 @@ describe("multi-account credential contracts", () => {
 		expect(errorMessage).not.toContain(sentinel);
 		expect(logs.join("\n")).not.toContain(sentinel);
 	});
+
+	it("counts pool-only credentials as configured auth", () => {
+		const poolOnly = {
+			...apiKeyRecord,
+			pool: { provider: "custom-pool-provider", type: "api_key" as const },
+			identityKey: "pool-only",
+			credentialId: "pool-only-a",
+		};
+		const vault = InMemoryCredentialVault.fromRecords([poolOnly]);
+		const storage = AuthStorage.inMemory({});
+		expect(storage.hasAuth("custom-pool-provider")).toBe(false);
+		storage.setCredentialVault(vault);
+		expect(storage.hasAuth("custom-pool-provider")).toBe(true);
+	});
+
+	it("resolves pooled OAuth via provider getRequestAuth headers", async () => {
+		const { registerOAuthProvider, resetOAuthProviders } = await import("@earendil-works/pi-ai/oauth");
+		resetOAuthProviders();
+		registerOAuthProvider({
+			id: "openai",
+			name: "OpenAI",
+			login: async () => ({ access: "x", refresh: "y", expires: Date.now() + 60_000 }),
+			refreshToken: async (c) => c,
+			getApiKey: (c) => c.access,
+			getRequestAuth: async (c) => ({
+				apiKey: `exchanged:${c.access}`,
+				headers: { "x-project": String(c.projectId ?? "") },
+			}),
+		});
+		const vault = InMemoryCredentialVault.fromRecords([
+			{
+				...oauthRecord,
+				material: {
+					type: "oauth",
+					accessToken: "test-access-token-b",
+					refreshToken: "test-refresh-token-b",
+					expiresAt: Date.now() + 60_000,
+					extras: { projectId: "proj-123" },
+				},
+			},
+		]);
+		const storage = AuthStorage.inMemory({});
+		storage.setCredentialVault(vault);
+		const selected = await storage.selectPooledCredential("openai");
+		expect(selected?.apiKey).toBe("exchanged:test-access-token-b");
+		expect(selected?.headers).toEqual({ "x-project": "proj-123" });
+		resetOAuthProviders();
+	});
+
 });

@@ -81,7 +81,7 @@ export class SqliteCredentialVault implements CredentialVault {
 				record.createdAt,
 				record.updatedAt,
 				record.disabled?.at ?? null,
-				record.disabled?.cause ?? null,
+				record.disabled === undefined ? null : redactDisableCause(record.disabled.cause),
 			);
 	}
 
@@ -90,6 +90,24 @@ export class SqliteCredentialVault implements CredentialVault {
 			.prepare("UPDATE credentials SET disabled_at=?, disabled_cause=?, updated_at=? WHERE credential_id=?")
 			.run(at, redactDisableCause(cause), at, credentialId);
 		if (result.changes !== 1) throw new AuthBrokerError("Credential was not found");
+	}
+
+	/**
+	 * CAS-guarded disable: only marks the credential disabled when `expectedUpdatedAt`
+	 * still matches. Returns false when a concurrent re-login/refresh rotated the row.
+	 */
+	disableCredentialIfUnchanged(
+		credentialId: string,
+		expectedUpdatedAt: string,
+		cause: string,
+		at = new Date().toISOString(),
+	): boolean {
+		const result = this.db
+			.prepare(
+				"UPDATE credentials SET disabled_at=?, disabled_cause=?, updated_at=? WHERE credential_id=? AND disabled_at IS NULL AND updated_at=?",
+			)
+			.run(at, redactDisableCause(cause), at, credentialId, expectedUpdatedAt);
+		return result.changes === 1;
 	}
 
 	applyRefresh(
@@ -127,9 +145,12 @@ export class SqliteCredentialVault implements CredentialVault {
 		return this.transaction(() => {
 			const record = this.select(request);
 			const leaseId = randomUUID();
+			const issuedAt = new Date().toISOString();
+			const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
+			this.pruneExpiredLeases();
 			this.db
 				.prepare(
-					"INSERT INTO leases (lease_id, credential_id, authentication_hash, selector, pool, session_id) VALUES (?, ?, ?, ?, ?, ?)",
+					"INSERT INTO leases (lease_id, credential_id, authentication_hash, selector, pool, session_id, issued_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
 				)
 				.run(
 					leaseId,
@@ -138,6 +159,8 @@ export class SqliteCredentialVault implements CredentialVault {
 					JSON.stringify(request.selector),
 					JSON.stringify(request.pool),
 					request.sessionId ?? null,
+					issuedAt,
+					expiresAt,
 				);
 			return {
 				credentialId: record.credentialId,
@@ -152,10 +175,12 @@ export class SqliteCredentialVault implements CredentialVault {
 	consumeSelectionLease(request: ConsumeSelectionLeaseRequest): SelectionLease {
 		return this.transaction(() => {
 			const leaseRow = this.db
-				.prepare("SELECT authentication_hash, credential_id, consumed_at FROM leases WHERE lease_id=?")
+				.prepare("SELECT authentication_hash, credential_id, consumed_at, expires_at FROM leases WHERE lease_id=?")
 				.get(request.leaseId);
 			const lease = leaseRow === undefined ? undefined : parseLeaseRow(leaseRow);
 			if (lease === undefined || lease.consumed_at !== null)
+				throw new AuthBrokerError("Selection lease is no longer available");
+			if (lease.expires_at !== "" && lease.expires_at < new Date().toISOString())
 				throw new AuthBrokerError("Selection lease is no longer available");
 			if (!safeEqual(lease.authentication_hash, digest(request.authentication)))
 				throw new AuthBrokerError("Selection lease authentication failed");
@@ -218,8 +243,53 @@ export class SqliteCredentialVault implements CredentialVault {
 
 	private migrate(): void {
 		this.db.exec(`CREATE TABLE IF NOT EXISTS credentials (credential_id TEXT PRIMARY KEY, provider TEXT NOT NULL, type TEXT NOT NULL CHECK(type IN ('api_key','oauth')), identity_key TEXT NOT NULL, material TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, disabled_at TEXT, disabled_cause TEXT, UNIQUE(provider, type, identity_key));
-		CREATE TABLE IF NOT EXISTS leases (lease_id TEXT PRIMARY KEY, credential_id TEXT NOT NULL REFERENCES credentials(credential_id), authentication_hash TEXT NOT NULL, selector TEXT NOT NULL, pool TEXT NOT NULL, session_id TEXT, consumed_at TEXT, outcome TEXT);
+		CREATE TABLE IF NOT EXISTS leases (lease_id TEXT PRIMARY KEY, credential_id TEXT NOT NULL REFERENCES credentials(credential_id), authentication_hash TEXT NOT NULL, selector TEXT NOT NULL, pool TEXT NOT NULL, session_id TEXT, issued_at TEXT NOT NULL DEFAULT '', expires_at TEXT NOT NULL DEFAULT '', consumed_at TEXT, outcome TEXT);
 		CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
+		this.ensureLeaseColumns();
+	}
+
+	private ensureLeaseColumns(): void {
+		const columns = this.db
+			.prepare("PRAGMA table_info(leases)")
+			.all()
+			.map((row) => (row as { name?: unknown }).name)
+			.filter((name): name is string => typeof name === "string");
+		if (!columns.includes("issued_at")) this.db.exec("ALTER TABLE leases ADD COLUMN issued_at TEXT NOT NULL DEFAULT ''");
+		if (!columns.includes("expires_at")) this.db.exec("ALTER TABLE leases ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''");
+		this.db.exec("CREATE INDEX IF NOT EXISTS leases_expires_at_idx ON leases(expires_at)");
+	}
+
+	/** Drop expired unconsumed leases and old consumed leases past retention. */
+	pruneExpiredLeases(now = new Date(), retainConsumedMs = 24 * 60 * 60 * 1000): number {
+		const nowIso = now.toISOString();
+		const retainBefore = new Date(now.getTime() - retainConsumedMs).toISOString();
+		const run = () => {
+			const unconsumed = Number(
+				this.db
+					.prepare("DELETE FROM leases WHERE consumed_at IS NULL AND expires_at != '' AND expires_at < ?")
+					.run(nowIso).changes,
+			);
+			const consumed = Number(
+				this.db
+					.prepare("DELETE FROM leases WHERE consumed_at IS NOT NULL AND consumed_at < ?")
+					.run(retainBefore).changes,
+			);
+			return unconsumed + consumed;
+		};
+		// Allow callers already inside a BEGIN IMMEDIATE transaction (e.g. issueSelectionLease).
+		try {
+			this.db.exec("BEGIN IMMEDIATE");
+		} catch {
+			return run();
+		}
+		try {
+			const result = run();
+			this.db.exec("COMMIT");
+			return result;
+		} catch (error) {
+			this.db.exec("ROLLBACK");
+			throw error;
+		}
 	}
 
 	private select(request: SelectionLeaseRequest): CredentialRecord {
@@ -426,17 +496,16 @@ export class AuthBrokerService {
 			const expiresAt = record.material.expiresAt;
 			if (!Number.isFinite(expiresAt) || expiresAt > deadline) continue;
 			checked += 1;
+			const snapshotUpdatedAt = record.updatedAt;
 			try {
 				await this.refreshCredentialById(record.credentialId);
 				refreshed += 1;
 			} catch (error) {
 				if (isDefinitiveOAuthFailure(error instanceof Error ? error.message : String(error))) {
-					try {
-						this.vault.disableCredential(record.credentialId, "oauth refresh failed definitively");
+					// CAS: only disable if the row is still the same snapshot we tried to refresh.
+					// A re-login that rotates material keeps credential_id but bumps updatedAt.
+					if (this.vault.disableCredentialIfUnchanged(record.credentialId, snapshotUpdatedAt, "oauth refresh failed definitively")) {
 						disabled += 1;
-					} catch {
-						// A peer/login rotated the row since the snapshot; the live
-						// credential is intentionally kept. Leave it for the next sweep.
 					}
 				}
 			}
@@ -537,23 +606,34 @@ function parseMaterial(value: unknown): CredentialMaterial {
 		typeof material.accessToken === "string" &&
 		typeof material.refreshToken === "string" &&
 		typeof material.expiresAt === "number"
-	)
+	) {
+		const extras =
+			material.extras !== undefined &&
+			typeof material.extras === "object" &&
+			material.extras !== null &&
+			!Array.isArray(material.extras)
+				? (material.extras as Record<string, unknown>)
+				: undefined;
 		return {
 			accessToken: material.accessToken,
 			expiresAt: material.expiresAt,
 			refreshToken: material.refreshToken,
 			type: "oauth",
+			...(extras === undefined ? {} : { extras }),
 		};
+	}
 	throw new AuthBrokerError("Invalid broker database row");
 }
 function parseLeaseRow(row: Record<string, unknown>): {
 	readonly authentication_hash: string;
 	readonly credential_id: string;
 	readonly consumed_at: string | null;
+	readonly expires_at: string;
 } {
 	return {
 		authentication_hash: readString(row, "authentication_hash"),
 		credential_id: readString(row, "credential_id"),
 		consumed_at: readNullableString(row, "consumed_at"),
+		expires_at: typeof row.expires_at === "string" ? row.expires_at : "",
 	};
 }

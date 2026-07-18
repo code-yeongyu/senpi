@@ -3,7 +3,7 @@ import { chmod, lstat, mkdir, open, readFile, rename, stat, writeFile } from "no
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai/compat";
-import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
+import { getOAuthProvider, resolveOAuthStorageProvider } from "@earendil-works/pi-ai/oauth";
 import { getAgentDir, VERSION } from "../config.ts";
 import { AuthBrokerService, SqliteCredentialVault } from "../core/auth-broker.ts";
 import { AuthBrokerRefresher } from "../core/auth-broker-refresher.ts";
@@ -244,13 +244,14 @@ async function loginCommand(command: ParsedCommand, agentDir: string): Promise<A
 	if (provider === undefined) throw new AuthBrokerCommandError(`Unknown OAuth provider: ${providerId}`);
 	if (command.dryRun) return { exitCode: 0, stderr: "", stdout: `Would start OAuth login for ${providerId}\n` };
 	const credentials = await provider.login(loginCallbacks());
+	const storageProvider = resolveOAuthStorageProvider(providerId);
 	const vault = SqliteCredentialVault.open(vaultPath(agentDir));
 	try {
-		vault.upsertCredential(oauthRecord(providerId, command.identity ?? `oauth:${providerId}`, credentials));
+		vault.upsertCredential(oauthRecord(storageProvider, command.identity ?? `oauth:${storageProvider}`, credentials));
 	} finally {
 		vault.close();
 	}
-	return { exitCode: 0, stderr: "", stdout: `Logged in to ${providerId}\n` };
+	return { exitCode: 0, stderr: "", stdout: `Logged in to ${storageProvider}\n` };
 }
 
 async function serveCommand(command: ParsedCommand, agentDir: string): Promise<AuthBrokerCommandExecution> {
@@ -310,24 +311,43 @@ async function prompt(message: string): Promise<string> {
 	}
 }
 
+const OAUTH_CORE_FIELDS = new Set(["access", "refresh", "expires", "type"]);
+
+function oauthExtras(credentials: OAuthCredentials): Record<string, unknown> | undefined {
+	const extras: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(credentials)) {
+		if (OAUTH_CORE_FIELDS.has(key)) continue;
+		if (value !== undefined) extras[key] = value;
+	}
+	return Object.keys(extras).length > 0 ? extras : undefined;
+}
+
+function oauthCredentialsFromMaterial(material: Extract<CredentialMaterial, { type: "oauth" }>): OAuthCredentials {
+	return {
+		access: material.accessToken,
+		expires: material.expiresAt,
+		refresh: material.refreshToken,
+		...(material.extras ?? {}),
+	};
+}
+
 const refreshOAuthCredential = async (record: CredentialRecord): Promise<CredentialMaterial> => {
 	if (record.material.type !== "oauth") throw new AuthBrokerCommandError("Only OAuth credentials can be refreshed");
 	const provider = getOAuthProvider(record.pool.provider);
 	if (provider === undefined) throw new AuthBrokerCommandError(`Unknown OAuth provider: ${record.pool.provider}`);
-	const refreshed = await provider.refreshToken({
-		access: record.material.accessToken,
-		expires: record.material.expiresAt,
-		refresh: record.material.refreshToken,
-	});
+	const refreshed = await provider.refreshToken(oauthCredentialsFromMaterial(record.material));
+	const extras = oauthExtras(refreshed) ?? record.material.extras;
 	return {
 		accessToken: refreshed.access,
 		expiresAt: refreshed.expires,
 		refreshToken: refreshed.refresh,
 		type: "oauth",
+		...(extras === undefined ? {} : { extras }),
 	};
 };
 
 function oauthRecord(provider: string, identityKey: string, credentials: OAuthCredentials): CredentialRecord {
+	const extras = oauthExtras(credentials);
 	return {
 		createdAt: new Date().toISOString(),
 		credentialId: randomUUID(),
@@ -337,6 +357,7 @@ function oauthRecord(provider: string, identityKey: string, credentials: OAuthCr
 			expiresAt: credentials.expires,
 			refreshToken: credentials.refresh,
 			type: "oauth",
+			...(extras === undefined ? {} : { extras }),
 		},
 		pool: { provider, type: "oauth" },
 		updatedAt: new Date().toISOString(),

@@ -32,6 +32,8 @@ export type OAuthCredentialMaterial = {
 	readonly expiresAt: number;
 	readonly refreshToken: string;
 	readonly type: "oauth";
+	/** Provider-specific OAuth fields (e.g. Google projectId) preserved for refresh/request auth. */
+	readonly extras?: Readonly<Record<string, unknown>>;
 };
 
 export type CredentialMaterial = ApiKeyCredentialMaterial | OAuthCredentialMaterial;

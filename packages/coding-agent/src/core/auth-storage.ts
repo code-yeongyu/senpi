@@ -60,6 +60,7 @@ export type PooledCredentialOptions = {
 export type PooledCredentialSelection = {
 	apiKey: string;
 	credentialId: string;
+	headers?: Readonly<Record<string, string>>;
 	reportOutcome: (status: UsageReport["status"]) => void;
 };
 
@@ -393,6 +394,15 @@ export class AuthStorage {
 		if (this.runtimeOverrides.has(storageProvider)) return true;
 		if (this.data[storageProvider]) return true;
 		if (getEnvApiKey(provider)) return true;
+		// Pool-only setups are usable via selectPooledCredential / getApiKeyAndHeaders.
+		if (
+			this.credentialVault !== undefined &&
+			this.credentialVault
+				.metadataSnapshot()
+				.credentials.some((credential) => credential.pool.provider === storageProvider && credential.disabled === undefined)
+		) {
+			return true;
+		}
 		return false;
 	}
 
@@ -588,10 +598,10 @@ export class AuthStorage {
 			: { apiKey: provider.getApiKey(credentials) };
 	}
 
-	selectPooledCredential(
+	async selectPooledCredential(
 		providerId: string,
 		options: PooledCredentialOptions = {},
-	): PooledCredentialSelection | undefined {
+	): Promise<PooledCredentialSelection | undefined> {
 		const storageProvider = resolveOAuthStorageProvider(providerId);
 		if (
 			this.runtimeOverrides.has(storageProvider) ||
@@ -613,7 +623,7 @@ export class AuthStorage {
 			authentication: "local-auth-storage",
 			leaseId: pending.leaseId,
 		});
-		return selectionFromLease(lease);
+		return await selectionFromLease(providerId, lease);
 	}
 
 	/**
@@ -624,11 +634,41 @@ export class AuthStorage {
 	}
 }
 
-function selectionFromLease(lease: SelectionLease): PooledCredentialSelection {
-	const apiKey = lease.material.type === "api_key" ? lease.material.apiKey : lease.material.accessToken;
+async function selectionFromLease(
+	providerId: string,
+	lease: SelectionLease,
+): Promise<PooledCredentialSelection> {
+	if (lease.material.type === "api_key") {
+		return {
+			apiKey: lease.material.apiKey,
+			credentialId: lease.credentialId,
+			reportOutcome: (status) => {
+				lease.reportOutcome({ observedAt: new Date().toISOString(), status });
+			},
+		};
+	}
+	const provider = getOAuthProvider(providerId) ?? getOAuthProvider(lease.pool.provider);
+	const credentials: OAuthCredentials = {
+		access: lease.material.accessToken,
+		expires: lease.material.expiresAt,
+		refresh: lease.material.refreshToken,
+		...(lease.material.extras ?? {}),
+	};
+	let apiKey = lease.material.accessToken;
+	let headers: Readonly<Record<string, string>> | undefined;
+	if (provider !== undefined) {
+		if (supportsRequestAuth(provider)) {
+			const auth = await provider.getRequestAuth(credentials);
+			apiKey = auth.apiKey;
+			headers = auth.headers;
+		} else {
+			apiKey = provider.getApiKey(credentials);
+		}
+	}
 	return {
 		apiKey,
 		credentialId: lease.credentialId,
+		...(headers === undefined ? {} : { headers }),
 		reportOutcome: (status) => {
 			lease.reportOutcome({ observedAt: new Date().toISOString(), status });
 		},
