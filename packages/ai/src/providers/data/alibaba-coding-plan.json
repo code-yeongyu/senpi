@@ -1,0 +1,1 @@
+{"qwen3.5-plus":{"id":"qwen3.5-plus","name":"Qwen3.5 Plus","api":"openai-completions","provider":"alibaba-coding-plan","baseUrl":"https://coding-intl.dashscope.aliyuncs.com/v1","compat":{"supportsDeveloperRole":false},"reasoning":true,"input":["text","image"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"contextWindow":1000000,"maxTokens":65536}}

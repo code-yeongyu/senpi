@@ -53,6 +53,8 @@ export function neoRuntimeOptionsToRpcArgv(options: NeoRuntimeOptions): string[]
 	pushFlag(argv, "--no-prompt-templates", options.noPromptTemplates);
 	pushFlag(argv, "--no-themes", options.noThemes);
 	pushFlag(argv, "--no-context-files", options.noContextFiles);
+	pushValue(argv, "--system-prompt", options.systemPrompt);
+	pushRepeated(argv, "--append-system-prompt", options.appendSystemPrompt);
 
 	// Extension (unknown) flags: `--<name>` for boolean-true, `--<name> <value>` otherwise.
 	if (options.unknownFlags) {

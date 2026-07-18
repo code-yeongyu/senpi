@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Provider } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { DEFAULT_COMPACTION_SETTINGS } from "../src/core/compaction/index.ts";
@@ -82,6 +83,37 @@ describe("ExtensionRunner", () => {
 			},
 		],
 	};
+
+	const nativeProvider = (id: string, modelId = "native-model"): Provider => ({
+		id,
+		name: `Native ${id}`,
+		auth: {
+			apiKey: {
+				name: "Test key",
+				resolve: async () => ({ auth: { apiKey: "test-key" }, source: "test" }),
+			},
+		},
+		getModels: () => [
+			{
+				id: modelId,
+				name: modelId,
+				api: "openai-completions",
+				provider: id,
+				baseUrl: "https://native.test/v1",
+				reasoning: false,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 128000,
+				maxTokens: 4096,
+			},
+		],
+		stream: () => {
+			throw new Error("unused");
+		},
+		streamSimple: () => {
+			throw new Error("unused");
+		},
+	});
 
 	const extensionActions: ExtensionActions = {
 		sendMessage: () => {},
@@ -1396,6 +1428,75 @@ describe("ExtensionRunner", () => {
 
 			runtime.unregisterProvider("instant-provider");
 			expect(modelRegistry.find("instant-provider", "instant-model")).toBeUndefined();
+		});
+
+		it("flushes mixed pre-bind registrations in call order (native then legacy)", () => {
+			const runtime = createExtensionRuntime();
+			runtime.registerNativeProvider(nativeProvider("ord-native"));
+			runtime.registerProvider("ord-legacy", providerModelConfig);
+
+			const runner = new ExtensionRunner([], runtime, tempDir, sessionManager, modelRegistry);
+			const registrations: string[] = [];
+			runner.bindCore(extensionActions, extensionContextActions, {
+				registerProvider: (name) => {
+					registrations.push(`config:${name}`);
+				},
+				registerNativeProvider: (provider) => {
+					registrations.push(`native:${provider.id}`);
+				},
+			});
+
+			expect(registrations).toEqual(["native:ord-native", "config:ord-legacy"]);
+			expect(runtime.pendingProviderRegistrations).toHaveLength(0);
+			expect(runtime.pendingNativeProviderRegistrations).toHaveLength(0);
+		});
+
+		it("flushes mixed pre-bind registrations in call order (legacy then native)", () => {
+			const runtime = createExtensionRuntime();
+			runtime.registerProvider("ord-legacy-first", providerModelConfig);
+			runtime.registerNativeProvider(nativeProvider("ord-native"));
+			runtime.registerProvider("ord-legacy-last", providerModelConfig);
+
+			const runner = new ExtensionRunner([], runtime, tempDir, sessionManager, modelRegistry);
+			const registrations: string[] = [];
+			runner.bindCore(extensionActions, extensionContextActions, {
+				registerProvider: (name) => {
+					registrations.push(`config:${name}`);
+				},
+				registerNativeProvider: (provider) => {
+					registrations.push(`native:${provider.id}`);
+				},
+			});
+
+			expect(registrations).toEqual(["config:ord-legacy-first", "native:ord-native", "config:ord-legacy-last"]);
+		});
+
+		it("lets a later legacy registration replace an earlier native registration for the same provider", async () => {
+			const runtime = createExtensionRuntime();
+			runtime.registerNativeProvider(nativeProvider("mixed-provider"));
+			runtime.registerProvider("mixed-provider", providerModelConfig);
+
+			const runner = new ExtensionRunner([], runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			expect(modelRegistry.getRegisteredNativeProvider("mixed-provider")).toBeUndefined();
+			expect(modelRegistry.find("mixed-provider", "instant-model")).toBeDefined();
+			expect(modelRegistry.find("mixed-provider", "native-model")).toBeUndefined();
+			await expect(modelRegistry.refresh()).resolves.toBeUndefined();
+		});
+
+		it("lets a later native registration replace an earlier legacy registration for the same provider", async () => {
+			const runtime = createExtensionRuntime();
+			runtime.registerProvider("mixed-provider", providerModelConfig);
+			runtime.registerNativeProvider(nativeProvider("mixed-provider"));
+
+			const runner = new ExtensionRunner([], runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			expect(modelRegistry.getRegisteredNativeProvider("mixed-provider")).toBeDefined();
+			expect(modelRegistry.find("mixed-provider", "native-model")).toBeDefined();
+			expect(modelRegistry.find("mixed-provider", "instant-model")).toBeUndefined();
+			await expect(modelRegistry.refresh()).resolves.toBeUndefined();
 		});
 	});
 

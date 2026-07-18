@@ -1,37 +1,64 @@
 # changes.md — ai
 
-## Provider and OAuth catalog parity (2026-07-14)
+## Commit generated model catalog data for reproducible builds (2026-07-18)
 
 ### What changed
 
-- Added model catalogs and API-key discovery for supported coding providers, plus OAuth implementations for providers
-  whose credentials can be translated into the provider wire contract.
-- Added deterministic parity tests for provider registration, environment keys, OAuth exchanges, and generated catalogs.
-- Kept Kagi, Parallel, and Tavily out of the chat model catalog because their APIs are search-only.
+- `../../.gitignore`: removed the `packages/ai/src/providers/data/` ignore rule so generated catalog JSON is committed,
+  reviewed source, matching `src/models.generated.ts`.
+- `package.json`: the ordinary `build` no longer runs `generate-models`; it compiles, restores the CLI executable bit,
+  and copies the committed `src/providers/data/` into `dist`. Networked regeneration stays explicit via the
+  `generate-models` script, the root `generate:models` workflow, release tooling, and `prepublishOnly`.
+- `../../scripts/build-all.test.mjs`: the AI build config regression now asserts the ordinary build skips networked
+  generation, keeps the committed-data copy step, retains the explicit generator workflow, and leaves catalog JSON
+  unignored.
+- `README.md`: model-generation guidance now describes `src/providers/data/` as committed generated values.
 
 ### Why
 
-- /login and model resolution need one truthful provider catalog; credential placeholders that cannot serve chat
-  completions create selectable models that always fail at runtime.
+- The ordinary AI build fetched models.dev and provider APIs to regenerate ignored JSON catalog data, so a build could
+  emit an unreviewed or different catalog and failed entirely offline. The committed `.models.ts` shards import the
+  JSON at compile time, so the catalog must be committed generated source for the build to be reproducible.
 
 ### Why extension system couldn't handle this
 
-- Provider catalogs, generated models, credential discovery, and OAuth wire exchanges live in pi-ai before coding-agent
-  extensions are loaded.
+- Model inventory is generated before the coding-agent extension runtime is loaded, and package build scripts run
+  before any extension hook exists.
 
 ### Modified upstream files
 
-- scripts/generate-models.ts
-- src/env-api-keys.ts
-- src/types.ts
-- src/providers/all.ts
-- src/utils/oauth/index.ts
-- src/utils/oauth/load.ts
+- `package.json`
+- `README.md`
+- `../../.gitignore`
+- `../../scripts/build-all.test.mjs`
 
 ### Expected merge conflict zones
 
-- HIGH: generated model catalogs and provider unions when upstream refreshes provider metadata.
-- MEDIUM: OAuth registration and credential discovery when upstream changes auth APIs.
+- LOW: AI package build scripts if upstream changes the compiler command or bin generation flow.
+
+## Preserve stable Kimi Coding model IDs during catalog generation (2026-07-17)
+
+### What changed
+
+- `scripts/generate-models.ts`: added fallback metadata for `kimi-for-coding` and `kimi-k2-thinking` that live
+  `models.dev` metadata can override but cannot silently remove.
+
+### Why
+
+- Senpi's public model catalog and provider regressions still support these IDs. A transient upstream catalog omission
+  caused release-time model regeneration to remove them and fail static validation.
+
+### Why extension system couldn't handle this
+
+- Model inventory is generated before the coding-agent extension runtime is loaded.
+
+### Modified upstream files
+
+- `scripts/generate-models.ts`
+
+### Expected merge conflict zones
+
+- MEDIUM: the Kimi Coding generation block if upstream changes alias or fallback handling.
 
 ## Preserve the generated CLI executable bit during builds (2026-07-13)
 

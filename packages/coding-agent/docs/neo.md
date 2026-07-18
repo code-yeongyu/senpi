@@ -46,7 +46,8 @@ The daemon replies `{"type":"welcome","version":1}` or
 `{"type":"refuse","code":"bad_token|version_mismatch|unsupported_options|malformed_hello","reason":"..."}`.
 `runtimeOptions` is the typed `NeoRuntimeOptions` payload (every classic runtime
 flag: provider/model/models/thinking/api-key, session selection, approval, tool
-scoping, resource loading, extension flags, and raw initial inputs). Its field
+scoping, resource loading, system prompt overrides, extension flags, and raw
+initial inputs). Its field
 set is generated from the classic runtime-construction path by an extraction
 test — a new consumer of a `parsed.*` field fails the test until it is threaded
 through the payload or documented as a carve-out.

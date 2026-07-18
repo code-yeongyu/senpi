@@ -137,6 +137,24 @@ func TestParseNeoRuntimeArgv_ResourceLoadingRepeated(t *testing.T) {
 	}
 }
 
+func TestParseNeoRuntimeArgv_SystemPromptOverrides(t *testing.T) {
+	argv := []string{
+		"--system-prompt", "be terse",
+		"--append-system-prompt", "one",
+		"--append-system-prompt", "two",
+	}
+	opts, rest := ParseNeoRuntimeArgv(argv)
+	if len(rest) != 0 {
+		t.Fatalf("unexpected residual args: %v", rest)
+	}
+	if derefStr(opts.SystemPrompt) != "be terse" {
+		t.Fatalf("systemPrompt: %v", derefStr(opts.SystemPrompt))
+	}
+	if !reflect.DeepEqual(opts.AppendSystemPrompt, []string{"one", "two"}) {
+		t.Fatalf("appendSystemPrompt: %v", opts.AppendSystemPrompt)
+	}
+}
+
 func TestParseNeoRuntimeArgv_InitialInputsAndFileArgs(t *testing.T) {
 	// build-argv.ts emits positional messages RAW, then @file args re-prefixed
 	// with @. Our parser must recover messages and fileArgs (stripping the @).
