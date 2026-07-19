@@ -1,0 +1,28 @@
+{
+	"rules": [
+		{
+			"id": "handshake-pre-init-error-code",
+			"scenario": "handshake",
+			"classification": "known-gap",
+			"path": "frame.error.code",
+			"responseId": "pre-init",
+			"rationale": "Codex uses invalid-request (-32600) before initialization while Senpi currently uses its initialization-gate code (-32000); both reject with the same Not initialized message."
+		},
+		{
+			"id": "handshake-double-init-error-code",
+			"scenario": "handshake",
+			"classification": "known-gap",
+			"path": "frame.error.code",
+			"responseId": "double-init",
+			"rationale": "Codex uses invalid-request (-32600) for repeated initialize while Senpi currently uses its initialization-gate code (-32000); both reject with the same Already initialized message."
+		},
+		{
+			"id": "handshake-initialize-user-agent-brand",
+			"scenario": "handshake",
+			"classification": "allowlisted-delta",
+			"path": "frame.result.userAgent",
+			"responseId": "initialize",
+			"rationale": "Each server truthfully reports its own product name and version in the initialize userAgent."
+		}
+	]
+}
