@@ -10,7 +10,7 @@
 | 2 | `permission-system` | `permission-system/` | Full opencode-style permission port: rules, JSONL storage, prompts |
 | 3 | `gpt-apply-patch` | `gpt-apply-patch/` | Codex-style `apply_patch` tool with rich render + freeform grammar |
 | 4 | `prompt-preset` | `prompt-preset/` | Per-model system prompts (gpt-5.x, claude-fable-5, claude-opus-4-{5,6,7,8}, glm-5.2, kimi-k2-{6,7}, kimi-k3) |
-| 5 | `todowrite` | `todotools/` | Op-based oh-my-pi todo port; fully diverged from `../pi-extensions/pi-todotools` |
+| 5 | `todowrite` | `todotools/` | Op-based oh-my-pi todo port + `/todo` command; fully diverged from `../pi-extensions/pi-todotools` |
 | 6 | `redraws` | `redraws.ts` | Force-redraw event hooks for stable streaming visuals |
 | 7 | `anthropic-web-search` | `anthropic-web-search/` | Anthropic-native web search tool |
 | 8 | `anthropic-bash` | `anthropic-bash/` | Anthropic-native bash tool variant |
