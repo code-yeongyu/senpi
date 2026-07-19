@@ -1,7 +1,20 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import { ModelRegistry } from "../../../src/core/model-registry.ts";
-import { STABLE_CLIENT_REQUEST_METHODS } from "../../../src/modes/app-server/protocol/methods.ts";
 import { ServerCore } from "../../../src/modes/app-server/server/server-core.ts";
+
+type MethodGroups = {
+	readonly stable: readonly string[];
+	readonly experimental: readonly string[];
+};
+
+type CapabilityManifest = {
+	readonly implemented: MethodGroups;
+	readonly out: MethodGroups;
+};
+
+const capabilityManifestPath = join(process.cwd(), "test/qa/app-server/capability-manifest.json");
 
 const REAL_PROVIDER_ENV_KEYS = [
 	"ANTHROPIC_OAUTH_TOKEN",
@@ -97,19 +110,20 @@ await core.receive(connection.id, {
 	},
 });
 
-const implemented = new Set(["initialize", "model/list"]);
-const unimplementedStableMethods = STABLE_CLIENT_REQUEST_METHODS.filter((method) => !implemented.has(method));
+const manifest = readCapabilityManifest();
+const implementedStableMethods = new Set(manifest.implemented.stable);
+const unimplementedStableMethods = manifest.out.stable.filter((method) => !implementedStableMethods.has(method));
+const unimplementedExperimentalMethods = manifest.out.experimental;
+const unimplementedMethods = [...unimplementedStableMethods, ...unimplementedExperimentalMethods];
 const startedAt = Date.now();
-for (const [index, method] of unimplementedStableMethods.entries()) {
+for (const [index, method] of unimplementedMethods.entries()) {
 	await core.receive(connection.id, { kind: "request", message: { id: index + 10, method, params: {} } });
 }
-await core.receive(connection.id, { kind: "request", message: { id: 999, method: "thread/search", params: {} } });
 const elapsedMs = Date.now() - startedAt;
 
 const responses = sent.slice(1);
-const stableResponses = responses.slice(0, unimplementedStableMethods.length);
-for (const [index, method] of unimplementedStableMethods.entries()) {
-	const response = stableResponses[index];
+for (const [index, method] of unimplementedMethods.entries()) {
+	const response = responses[index];
 	if (!response || typeof response !== "object" || !("error" in response)) {
 		throw new Error(`expected ${method} to return -32601: ${JSON.stringify(response)}`);
 	}
@@ -118,22 +132,19 @@ for (const [index, method] of unimplementedStableMethods.entries()) {
 		throw new Error(`expected ${method} to return -32601: ${JSON.stringify(response)}`);
 	}
 }
-const threadSearchResponse = responses[responses.length - 1];
-if (
-	!threadSearchResponse ||
-	typeof threadSearchResponse !== "object" ||
-	!("error" in threadSearchResponse) ||
-	!hasErrorCode(threadSearchResponse.error, -32601)
-) {
-	throw new Error(`expected thread/search to stay unsupported: ${JSON.stringify(threadSearchResponse)}`);
-}
 if (elapsedMs >= 2000) {
 	throw new Error(`unimplemented method sweep exceeded 2s: ${elapsedMs}`);
 }
 
 console.log(`UNIMPLEMENTED_STABLE_COUNT=${unimplementedStableMethods.length}`);
-console.log(`THREAD_SEARCH_UNSUPPORTED=true`);
+console.log(`UNIMPLEMENTED_EXPERIMENTAL_COUNT=${unimplementedExperimentalMethods.length}`);
+console.log(`THREAD_SEARCH_UNSUPPORTED=${unimplementedMethods.includes("thread/search")}`);
 console.log(`SWEEP_UNDER_2S=${elapsedMs < 2000}`);
+
+function readCapabilityManifest(): CapabilityManifest {
+	const manifest: CapabilityManifest = JSON.parse(readFileSync(capabilityManifestPath, "utf8"));
+	return manifest;
+}
 
 function hasErrorCode(value: unknown, code: number): value is { readonly code: number } {
 	return typeof value === "object" && value !== null && "code" in value && value.code === code;

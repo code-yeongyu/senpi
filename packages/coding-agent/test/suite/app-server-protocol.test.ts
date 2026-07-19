@@ -25,6 +25,22 @@ import {
 
 const generatedDir = join(process.cwd(), "src/modes/app-server/protocol/generated");
 const generatedManifestPath = join(process.cwd(), "test/goldens/app-server-protocol-generated-tree.sha256");
+const capabilityManifestPath = join(process.cwd(), "test/qa/app-server/capability-manifest.json");
+
+type CapabilityManifest = {
+	readonly implemented: {
+		readonly stable: readonly string[];
+		readonly experimental: readonly string[];
+	};
+	readonly out: {
+		readonly stable: readonly string[];
+		readonly experimental: readonly string[];
+	};
+	readonly catalogCounts: {
+		readonly serverNotifications: number;
+		readonly serverRequests: number;
+	};
+};
 
 function expectSortedDistinct(methods: readonly string[]): void {
 	const sorted = [...methods].sort();
@@ -79,10 +95,21 @@ function sha256File(path: string): string {
 
 describe("app-server protocol metadata", () => {
 	it("ships the expected generated protocol method groups", () => {
-		expect(STABLE_CLIENT_REQUEST_METHODS).toHaveLength(90);
-		expect(EXPERIMENTAL_ONLY_CLIENT_REQUEST_METHODS).toHaveLength(34);
-		expect(SERVER_NOTIFICATION_METHODS).toHaveLength(69);
-		expect(SERVER_REQUEST_METHODS).toHaveLength(11);
+		const manifest = readCapabilityManifest();
+		expect(STABLE_CLIENT_REQUEST_METHODS).toHaveLength(
+			manifest.implemented.stable.length + manifest.out.stable.length,
+		);
+		expect(EXPERIMENTAL_ONLY_CLIENT_REQUEST_METHODS).toHaveLength(
+			manifest.implemented.experimental.length + manifest.out.experimental.length,
+		);
+		expect(SERVER_NOTIFICATION_METHODS).toHaveLength(manifest.catalogCounts.serverNotifications);
+		expect(SERVER_REQUEST_METHODS).toHaveLength(manifest.catalogCounts.serverRequests);
+		expect([...manifest.implemented.stable, ...manifest.out.stable].sort()).toEqual(
+			[...STABLE_CLIENT_REQUEST_METHODS].sort(),
+		);
+		expect([...manifest.implemented.experimental, ...manifest.out.experimental].sort()).toEqual(
+			[...EXPERIMENTAL_ONLY_CLIENT_REQUEST_METHODS].sort(),
+		);
 
 		expect(STABLE_CLIENT_REQUEST_METHODS).toContain("initialize");
 		expect(STABLE_CLIENT_REQUEST_METHODS).toContain("thread/start");
@@ -186,6 +213,8 @@ describe("app-server protocol metadata", () => {
 	});
 
 	it("loads method metadata from the runtime .js import path", () => {
+		const manifest = readCapabilityManifest();
+		const stableCount = manifest.implemented.stable.length + manifest.out.stable.length;
 		const result = spawnSync(
 			"npx",
 			[
@@ -201,6 +230,11 @@ describe("app-server protocol metadata", () => {
 
 		expect(result.stderr).toBe("");
 		expect(result.status).toBe(0);
-		expect(result.stdout.trim()).toBe("COUNT=90 true");
+		expect(result.stdout.trim()).toBe(`COUNT=${stableCount} true`);
 	});
 });
+
+function readCapabilityManifest(): CapabilityManifest {
+	const manifest: CapabilityManifest = JSON.parse(readFileSync(capabilityManifestPath, "utf8"));
+	return manifest;
+}
