@@ -310,4 +310,115 @@ describe("speculative compaction", () => {
 		expect(requestTexts[2]).toContain("second user");
 		expect(requestTexts[2]).not.toContain("kept recent user");
 	});
+
+	it("sends the conversation as native messages with a trailing summarization instruction", async () => {
+		// Given
+		const context = createContext();
+		const snapshot = createSpeculativeCompactionSnapshot(context, { generation: 1 });
+		context.registration.setResponses([fauxAssistantMessage("native summary")]);
+
+		// When
+		const result = snapshot ? await runExtensionCompaction(context, snapshot) : undefined;
+
+		// Then
+		expect(result?.summary).toBe("native summary");
+		const call = context.registration.getCallLog()[0];
+		expect(call).toBeDefined();
+		if (!call) throw new Error("expected a summarization request");
+		// Conversation travels as native messages, not one serialized dump.
+		expect(call.context.messages.length).toBeGreaterThan(1);
+		const firstText = messageText(call.context.messages[0]);
+		expect(firstText).toContain("first user");
+		expect(firstText).not.toContain("<conversation>");
+		const lastMessage = call.context.messages[call.context.messages.length - 1];
+		expect(lastMessage?.role).toBe("user");
+		expect(messageText(lastMessage)).toContain("[INTERNAL COMPACTION INSTRUCTION");
+	});
+
+	it("passes the agent system prompt and tools to the summarization request", async () => {
+		// Given
+		const context = createContext();
+		context.getSystemPrompt = () => "AGENT SYSTEM PROMPT";
+		const tools = [
+			{
+				name: "read",
+				description: "Read a file",
+				parameters: { type: "object", properties: {} },
+			},
+		];
+		const snapshot = createSpeculativeCompactionSnapshot(context, { generation: 1, tools });
+		context.registration.setResponses([fauxAssistantMessage("with tools")]);
+
+		// When
+		const result = snapshot ? await runExtensionCompaction(context, snapshot) : undefined;
+
+		// Then
+		expect(result?.summary).toBe("with tools");
+		const call = context.registration.getCallLog()[0];
+		expect(call?.context.systemPrompt).toBe("AGENT SYSTEM PROMPT");
+		expect(call?.context.tools?.map((tool) => tool.name)).toEqual(["read"]);
+	});
+
+	it("throws the provider error when the summarization request fails", async () => {
+		// Given
+		const context = createContext();
+		const snapshot = createSpeculativeCompactionSnapshot(context, { generation: 1 });
+		context.registration.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "faux: request blocked by provider policy",
+			}),
+		]);
+
+		// When / Then
+		await expect(snapshot ? runExtensionCompaction(context, snapshot) : undefined).rejects.toThrow(
+			"request blocked by provider policy",
+		);
+	});
+
+	it("returns undefined when the summarization stream is aborted", async () => {
+		// Given
+		const context = createContext();
+		const snapshot = createSpeculativeCompactionSnapshot(context, { generation: 1 });
+		context.registration.setResponses([
+			fauxAssistantMessage("partial summary before abort", { stopReason: "aborted" }),
+		]);
+
+		// When
+		const result = snapshot ? await runExtensionCompaction(context, snapshot) : undefined;
+
+		// Then
+		expect(result).toBeUndefined();
+	});
+
+	it("does not reject a successful summary because the summarized input was large", async () => {
+		// Given: summarized input (~86k tokens) is far above 60% of the window
+		// (100k * 0.6 = 60k) while still fitting in the window itself.
+		const context = createContext();
+		const window = 100_000;
+		context.getContextUsage = () => ({ tokens: 86_000, contextWindow: window, percent: 86 });
+		const snapshot = createSpeculativeCompactionSnapshot(context, { generation: 1 });
+		context.registration.setResponses([fauxAssistantMessage("large-input summary")]);
+
+		// When
+		const result = snapshot ? await runExtensionCompaction(context, snapshot) : undefined;
+
+		// Then
+		expect(result?.summary).toBe("large-input summary");
+	});
 });
+
+function messageText(message: { content: unknown } | undefined): string {
+	if (!message) return "";
+	const content = message.content;
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	const texts: string[] = [];
+	for (const part of content) {
+		if (typeof part !== "object" || part === null) continue;
+		if (!("type" in part) || part.type !== "text") continue;
+		if (!("text" in part) || typeof part.text !== "string") continue;
+		texts.push(part.text);
+	}
+	return texts.join("\n");
+}
