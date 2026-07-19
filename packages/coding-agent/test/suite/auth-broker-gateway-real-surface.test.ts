@@ -7,7 +7,7 @@ import { AuthBrokerService, SqliteCredentialVault } from "../../src/core/auth-br
 import { AUTH_BROKER_CAPABILITIES, AUTH_BROKER_PROTOCOL_VERSION } from "../../src/core/auth-broker-wire-contract.ts";
 import { type AuthGatewayTransportHandle, startAuthGatewayTransport } from "../../src/core/auth-gateway-transport.ts";
 
-const token = "gateway-real-surface-token";
+const token = "gateway-real-surface-token-xxxxxxxx";
 const handles: AuthGatewayTransportHandle[] = [];
 
 afterEach(async () => {
