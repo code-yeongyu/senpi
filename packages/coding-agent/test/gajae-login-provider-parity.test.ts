@@ -18,7 +18,10 @@ describe("Gajae /login provider parity", () => {
 		const providers = buildLoginProviderInfos(registry);
 		const providerIds = new Set(providers.map((provider) => provider.id));
 
-		expect([...providerIds]).toEqual(expect.arrayContaining([...GAJAE_PROVIDER_IDS]));
+		// Use set membership: login list is larger than the Gajae subset.
+		for (const id of GAJAE_PROVIDER_IDS) {
+			expect(providerIds.has(id), `missing login provider ${id}`).toBe(true);
+		}
 		expect(providers).toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({ id: "kimi-code", authType: "oauth" }),
@@ -32,7 +35,7 @@ describe("Gajae /login provider parity", () => {
 		expect(providers.filter((provider) => provider.id === "openai-codex-device")).toHaveLength(1);
 	});
 
-	it("stores device-code credentials under the OpenAI Codex provider", () => {
+	it("stores device-code credentials under the OpenAI Codex provider", async () => {
 		const authStorage = AuthStorage.inMemory();
 		authStorage.set("openai-codex-device", {
 			type: "oauth",
@@ -41,8 +44,11 @@ describe("Gajae /login provider parity", () => {
 			expires: Date.now() + 60_000,
 		});
 
-		expect(authStorage.list()).toEqual(["openai-codex"]);
+		// Canonical storage key is openai-codex; aliases resolve through storageKey.
+		expect(Object.keys(authStorage.getAll())).toEqual(["openai-codex"]);
 		expect(authStorage.get("openai-codex-device")).toEqual(authStorage.get("openai-codex"));
+		const listed = await authStorage.list();
+		expect(listed).toEqual([{ providerId: "openai-codex", type: "oauth" }]);
 		authStorage.remove("openai-codex-device");
 		expect(authStorage.has("openai-codex")).toBe(false);
 	});

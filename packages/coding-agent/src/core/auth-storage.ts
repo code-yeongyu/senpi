@@ -270,34 +270,45 @@ export class AuthStorage implements CredentialStore {
 		this.runtimeOverrides.delete(provider);
 	}
 
+	/** Map login aliases (e.g. openai-codex-device) to the canonical storage provider. */
+	private storageKey(provider: string): string {
+		try {
+			return resolveOAuthStorageProvider(provider as never);
+		} catch {
+			return provider;
+		}
+	}
+
 	get(provider: string): Credential | undefined {
-		return this.data[provider];
+		return this.data[this.storageKey(provider)];
 	}
 
 	getProviderEnv(provider: string): Record<string, string> | undefined {
-		const credential = this.data[provider];
+		const credential = this.data[this.storageKey(provider)];
 		return credential?.type === "api_key" && credential.env ? { ...credential.env } : undefined;
 	}
 
 	set(provider: string, credential: Credential): void {
+		const key = this.storageKey(provider);
 		this.storage.withLock((content) => {
-			const nextData = { ...this.parseStorageData(content), [provider]: credential };
+			const nextData = { ...this.parseStorageData(content), [key]: credential };
 			this.data = nextData;
 			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
 		});
 	}
 
 	remove(provider: string): void {
+		const key = this.storageKey(provider);
 		this.storage.withLock((content) => {
 			const nextData = { ...this.parseStorageData(content) };
-			delete nextData[provider];
+			delete nextData[key];
 			this.data = nextData;
 			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
 		});
 	}
 
 	has(provider: string): boolean {
-		return provider in this.data;
+		return this.storageKey(provider) in this.data;
 	}
 
 	setCredentialVault(vault: CredentialVault | undefined): void {
