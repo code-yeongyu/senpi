@@ -107,4 +107,61 @@ describe("createAntmlInvokeRecoveryStreamParser", () => {
 		// Then
 		expect(events).toEqual([{ type: "toolcall_start", index: 0, name: "Bash", id: "recovered-antml-0" }]);
 	});
+
+	it("preserves nested prompt-like invokes inside an active parameter", () => {
+		// Given
+		const parser = createAntmlInvokeRecoveryStreamParser([bashTool]);
+
+		// When
+		const events = [
+			...parser.feed(
+				'<invoke name="Bash"><parameter name="command">echo <invoke name="X"></invoke></parameter></invoke>',
+			),
+			...parser.finish(),
+		];
+
+		// Then
+		expect(events).toEqual([
+			{ type: "toolcall_start", index: 0, name: "Bash", id: "recovered-antml-0" },
+			{
+				type: "toolcall_delta",
+				index: 0,
+				argumentsDelta: '{"command":"echo <invoke name=\\"X\\"></invoke>"}',
+			},
+			{
+				type: "toolcall_end",
+				index: 0,
+				name: "Bash",
+				id: "recovered-antml-0",
+				arguments: { command: 'echo <invoke name="X"></invoke>' },
+			},
+		]);
+	});
+
+	it("consumes the wrapper close after a recovered call", () => {
+		// Given
+		const parser = createAntmlInvokeRecoveryStreamParser([bashTool]);
+
+		// When
+		const events = [
+			...parser.feed(
+				'<function_calls><invoke name="Bash"><parameter name="command">echo wrapped</parameter></invoke></function_calls>',
+			),
+			...parser.finish(),
+		];
+
+		// Then
+		expect(textOutput(events)).toBe("");
+		expect(toolCallEvents(events)).toEqual([
+			{ type: "toolcall_start", index: 0, name: "Bash", id: "recovered-antml-0" },
+			{ type: "toolcall_delta", index: 0, argumentsDelta: '{"command":"echo wrapped"}' },
+			{
+				type: "toolcall_end",
+				index: 0,
+				name: "Bash",
+				id: "recovered-antml-0",
+				arguments: { command: "echo wrapped" },
+			},
+		]);
+	});
 });

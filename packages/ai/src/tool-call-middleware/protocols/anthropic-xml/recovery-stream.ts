@@ -5,24 +5,30 @@ import { findFunctionCallsCloseTag, findFunctionCallsOpenTag } from "./invoke-st
 import { findInvokeOpenTag, isPotentialProtocolStart, scanInvokeBlock } from "./invoke-tag-scanner.ts";
 import {
 	ANTHROPIC_XML_MAX_RETAINED_FRAGMENT_LENGTH,
-	createClosingTagMatcher,
+	createPendingFragment,
 	type StreamBoundaryMatcher,
 } from "./stream-boundary.ts";
 import { createToolResolver } from "./tool-resolver.ts";
 
 type IdleState = { readonly kind: "idle"; tag: string };
-type WaitingState = { readonly kind: "function-calls"; readonly opening: string; content: string; tag: string };
+type WaitingState = {
+	readonly kind: "function-calls";
+	readonly opening: string;
+	readonly consumed: boolean;
+	content: string;
+	tag: string;
+};
 type ActiveState = {
 	readonly kind: "active";
 	readonly tool: Tool;
 	readonly index: number;
 	readonly id: string;
 	readonly closeMatcher: StreamBoundaryMatcher;
+	readonly continuesWrapper: boolean;
 	source: string;
 };
 type RecoveryState = IdleState | WaitingState | ActiveState | { readonly kind: "finished" };
 
-/** The existing partial-syntax check scans its input, so never invoke it on an unbounded candidate. */
 const MAX_PARTIAL_TAG_VALIDATION_LENGTH = 128;
 
 function emitText(events: StreamParserEvent[], text: string): void {
@@ -52,12 +58,20 @@ export function createInvokeRecoveryStreamParser(
 		});
 	}
 
-	function startKnownInvoke(events: StreamParserEvent[], opening: string, tool: Tool): void {
+	function startKnownInvoke(events: StreamParserEvent[], opening: string, tool: Tool, continuesWrapper = false): void {
 		const index = nextToolCallIndex;
 		nextToolCallIndex += 1;
 		const id = `recovered-antml-${index}`;
 		events.push({ type: "toolcall_start", index, name: tool.name, id });
-		state = { kind: "active", tool, index, id, closeMatcher: createClosingTagMatcher("invoke"), source: opening };
+		state = {
+			kind: "active",
+			tool,
+			index,
+			id,
+			closeMatcher: createPendingFragment("invoke", opening).matcher,
+			continuesWrapper,
+			source: opening,
+		};
 	}
 
 	function finishActive(events: StreamParserEvent[], active: ActiveState): void {
@@ -89,7 +103,9 @@ export function createInvokeRecoveryStreamParser(
 				errorMessage: "Recovered tool call arguments failed validation",
 			});
 		}
-		state = { kind: "idle", tag: "" };
+		state = active.continuesWrapper
+			? { kind: "function-calls", opening: "", consumed: true, content: "", tag: "" }
+			: { kind: "idle", tag: "" };
 	}
 
 	function overflowActive(events: StreamParserEvent[], active: ActiveState): void {
@@ -104,7 +120,9 @@ export function createInvokeRecoveryStreamParser(
 			incomplete: true,
 			errorMessage: "Tool call stream ended before completion",
 		});
-		state = { kind: "idle", tag: "" };
+		state = active.continuesWrapper
+			? { kind: "function-calls", opening: "", consumed: true, content: "", tag: "" }
+			: { kind: "idle", tag: "" };
 	}
 
 	function handleIdleTag(events: StreamParserEvent[], idle: IdleState): void {
@@ -121,7 +139,7 @@ export function createInvokeRecoveryStreamParser(
 		}
 		const wrapper = findFunctionCallsOpenTag(idle.tag, 0);
 		if (wrapper?.index === 0 && wrapper.length === idle.tag.length) {
-			state = { kind: "function-calls", opening: idle.tag, content: "", tag: "" };
+			state = { kind: "function-calls", opening: idle.tag, consumed: false, content: "", tag: "" };
 			return;
 		}
 		emitText(events, idle.tag);
@@ -165,8 +183,10 @@ export function createInvokeRecoveryStreamParser(
 			if (invoke?.index === 0 && invoke.length === waiting.tag.length) {
 				const tool = resolveTool(invoke.toolName);
 				if (tool) {
-					emitText(events, waiting.content.slice(0, -waiting.tag.length));
-					startKnownInvoke(events, waiting.tag, tool);
+					if (!waiting.consumed) {
+						emitText(events, waiting.content.slice(0, -waiting.tag.length));
+					}
+					startKnownInvoke(events, waiting.tag, tool, true);
 				} else {
 					emitText(events, waiting.opening + waiting.content);
 					state = { kind: "idle", tag: "" };
@@ -175,7 +195,9 @@ export function createInvokeRecoveryStreamParser(
 			}
 			const close = findFunctionCallsCloseTag(waiting.tag, 0);
 			if (close?.index === 0 && close.length === waiting.tag.length) {
-				emitText(events, waiting.opening + waiting.content);
+				if (!waiting.consumed) {
+					emitText(events, waiting.opening + waiting.content);
+				}
 				state = { kind: "idle", tag: "" };
 				return;
 			}
