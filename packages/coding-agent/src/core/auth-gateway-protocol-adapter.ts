@@ -8,6 +8,11 @@ export type AuthGatewayAdapterInput = {
 	readonly provider: string;
 	readonly selector?: AuthBrokerCredentialSelector;
 	readonly signal?: AbortSignal;
+	readonly streamOptions?: {
+		readonly maxTokens?: number;
+		readonly sessionId?: string;
+		readonly temperature?: number;
+	};
 };
 
 export type AuthGatewayAdapterStreamResult =

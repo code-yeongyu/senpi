@@ -15,6 +15,7 @@ export type AuthGatewayMtlsProfile = {
 
 export type AuthGatewayTransportRequest = {
 	readonly body: unknown | undefined;
+	readonly headers?: Readonly<Record<string, string | undefined>>;
 	readonly method: string;
 	readonly pathname: string;
 	readonly peerAddress: string | undefined;

@@ -4,7 +4,7 @@ import {
 	assertBrokerUrlAllowed,
 	brokerConfig,
 } from "../../src/cli/auth-gateway-broker-client.ts";
-import { modelForRequest } from "../../src/core/auth-gateway-model-select.ts";
+import { bareModel, modelForRequest, qualifyModel } from "../../src/core/auth-gateway-model-select.ts";
 
 describe("auth gateway review P1", () => {
 	it("rejects non-loopback http broker URLs before any token is used", async () => {
@@ -30,5 +30,12 @@ describe("auth gateway review P1", () => {
 			modelId: "gpt-4.1",
 		});
 		expect(modelForRequest(models, { model: "missing/nope" }, "model")).toBeUndefined();
+		const authorized = modelForRequest(models, { model: "openai/gpt-4.1" }, "model")!;
+		expect(bareModel({ model: "openai/gpt-4.1", messages: [] }, "model", authorized)).toMatchObject({
+			model: "gpt-4.1",
+		});
+		expect(qualifyModel({ model: "gpt-4.1" }, "model", authorized)).toMatchObject({
+			model: "openai/gpt-4.1",
+		});
 	});
 });

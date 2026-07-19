@@ -15,6 +15,8 @@ import type {
 	OAuthLoginCallbacks,
 } from "@earendil-works/pi-ai";
 import { findEnvKeys, getEnvApiKey } from "@earendil-works/pi-ai/compat";
+import type { OAuthCredentials, OAuthProviderInterface } from "@earendil-works/pi-ai/oauth";
+import { getOAuthProvider, resolveOAuthStorageProvider } from "@earendil-works/pi-ai/oauth";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
@@ -23,8 +25,6 @@ import { getAgentDir } from "../config.ts";
 import { normalizePath } from "../utils/paths.ts";
 import type { CredentialSelector, CredentialVault, SelectionLease, UsageReport } from "./auth-multi-account.ts";
 import { resolveConfigValue } from "./resolve-config-value.ts";
-import { getOAuthProvider, resolveOAuthStorageProvider } from "@earendil-works/pi-ai/oauth";
-import type { OAuthCredentials, OAuthProviderInterface } from "@earendil-works/pi-ai/oauth";
 
 type AuthStorageData = Record<string, Credential>;
 
@@ -300,7 +300,6 @@ export class AuthStorage implements CredentialStore {
 		return provider in this.data;
 	}
 
-
 	setCredentialVault(vault: CredentialVault | undefined): void {
 		this.credentialVault = vault;
 	}
@@ -338,12 +337,11 @@ export class AuthStorage implements CredentialStore {
 		}
 		const storageProvider = resolveOAuthStorageProvider(provider);
 		return (
-			this.credentialVault !== undefined &&
 			this.credentialVault
-				.metadataSnapshot()
+				?.metadataSnapshot()
 				.credentials.some(
 					(credential) => credential.pool.provider === storageProvider && credential.disabled === undefined,
-				)
+				) === true
 		);
 	}
 
@@ -521,10 +519,7 @@ function supportsRequestAuth(provider: OAuthProviderInterface): provider is Requ
 	return "getRequestAuth" in provider && typeof (provider as RequestAuthOAuthProvider).getRequestAuth === "function";
 }
 
-async function selectionFromLease(
-	providerId: string,
-	lease: SelectionLease,
-): Promise<PooledCredentialSelection> {
+async function selectionFromLease(providerId: string, lease: SelectionLease): Promise<PooledCredentialSelection> {
 	if (lease.material.type === "api_key") {
 		return {
 			apiKey: lease.material.apiKey,
@@ -561,4 +556,3 @@ async function selectionFromLease(
 		},
 	};
 }
-

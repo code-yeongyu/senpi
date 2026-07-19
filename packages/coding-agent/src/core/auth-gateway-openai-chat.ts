@@ -42,6 +42,7 @@ export function createOpenAIChatGatewayAdapter(options: {
 					provider: options.provider,
 					selector: selectorFromHeaders(request.headers),
 					signal: request.signal,
+					streamOptions: parsed.streamOptions,
 				});
 				if (result.kind === "model_not_found") return unknownModel();
 				if (result.kind !== "stream") return safeError(result.statusCode);
@@ -66,18 +67,29 @@ function parseOpenAIChatRequest(value: unknown): {
 	readonly context: Context;
 	readonly model: string;
 	readonly stream: boolean;
+	readonly streamOptions: { readonly maxTokens?: number; readonly temperature?: number } | undefined;
 } {
 	const record = readRecord(value);
 	exactKeys(record, ["max_completion_tokens", "max_tokens", "messages", "model", "stream", "temperature", "tools"]);
-	optionalNumber(record, "max_completion_tokens");
-	optionalNumber(record, "max_tokens");
-	optionalNumber(record, "temperature");
-	const messages = requiredArray(record, "messages").map(parseMessage);
+	const maxCompletionTokens = optionalNumber(record, "max_completion_tokens");
+	const maxTokens = optionalNumber(record, "max_tokens");
+	const temperature = optionalNumber(record, "temperature");
+	const rawMessages = requiredArray(record, "messages");
+	const toolNamesByCallId = openAiToolNamesByCallId(rawMessages);
+	const messages = rawMessages.map((entry) => parseMessage(entry, toolNamesByCallId));
 	const tools = record.tools === undefined ? undefined : parseTools(record.tools);
 	const system = messages
 		.filter((message) => message.role === "system")
 		.map((message) => message.content)
 		.join("\n");
+	const resolvedMaxTokens = maxCompletionTokens ?? maxTokens;
+	const streamOptions =
+		resolvedMaxTokens === undefined && temperature === undefined
+			? undefined
+			: {
+					...(resolvedMaxTokens === undefined ? {} : { maxTokens: resolvedMaxTokens }),
+					...(temperature === undefined ? {} : { temperature }),
+				};
 	return {
 		context: {
 			messages: messages.filter((message) => message.role !== "system"),
@@ -86,10 +98,31 @@ function parseOpenAIChatRequest(value: unknown): {
 		},
 		model: requiredString(record, "model"),
 		stream: optionalBoolean(record, "stream") ?? false,
+		streamOptions,
 	};
 }
 
-function parseMessage(value: unknown): Message | { readonly content: string; readonly role: "system" } {
+function openAiToolNamesByCallId(messages: readonly unknown[]): Map<string, string> {
+	const names = new Map<string, string>();
+	for (const entry of messages) {
+		if (!isRecord(entry) || entry.role !== "assistant" || !Array.isArray(entry.tool_calls)) continue;
+		for (const call of entry.tool_calls) {
+			if (!isRecord(call) || typeof call.id !== "string" || !isRecord(call.function)) continue;
+			const name = call.function.name;
+			if (typeof name === "string" && name.length > 0) names.set(call.id, name);
+		}
+	}
+	return names;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseMessage(
+	value: unknown,
+	toolNamesByCallId: ReadonlyMap<string, string>,
+): Message | { readonly content: string; readonly role: "system" } {
 	const record = readRecord(value);
 	const role = requiredString(record, "role");
 	if (role === "system" || role === "developer") {
@@ -102,13 +135,14 @@ function parseMessage(value: unknown): Message | { readonly content: string; rea
 	}
 	if (role === "tool") {
 		exactKeys(record, ["content", "role", "tool_call_id"]);
+		const toolCallId = requiredString(record, "tool_call_id");
 		return {
 			content: [{ text: textContent(record.content, "content"), type: "text" }],
 			isError: false,
 			role: "toolResult",
 			timestamp: 0,
-			toolCallId: requiredString(record, "tool_call_id"),
-			toolName: "tool",
+			toolCallId,
+			toolName: toolNamesByCallId.get(toolCallId) ?? "tool",
 		};
 	}
 	if (role === "assistant") {

@@ -11,6 +11,7 @@ function safeEqual(left: string, right: string): boolean {
 	}
 	return timingSafeEqual(a, b);
 }
+
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ResolvedGatewayAuth } from "./auth-gateway-transport-auth.ts";
 import { writeGatewayResponse, writeJson } from "./auth-gateway-transport-response.ts";
@@ -68,13 +69,15 @@ export async function handleGatewayRequest(options: {
 			writeJson(response, 404, { error: "route not found" }, corsHeaders);
 			return;
 		}
-		response.writeHead(204, {
-			...(corsHeaders ?? {}),
-			"access-control-allow-methods": allowedMethods.join(", "),
-			"access-control-allow-headers":
-				"authorization, content-type, x-senpi-credential-selector, x-senpi-session-id",
-			"access-control-max-age": "600",
-		}).end();
+		response
+			.writeHead(204, {
+				...(corsHeaders ?? {}),
+				"access-control-allow-methods": allowedMethods.join(", "),
+				"access-control-allow-headers":
+					"authorization, content-type, x-auth-broker-credential-id, x-auth-broker-identity-key, x-senpi-session-id",
+				"access-control-max-age": "600",
+			})
+			.end();
 		return;
 	}
 	if (!isAuthorized(request, options.auth.token)) {
@@ -103,6 +106,7 @@ export async function handleGatewayRequest(options: {
 				? { body: { error: "route adapter unavailable" }, statusCode: 501 }
 				: await options.onRequest({
 						body,
+						headers: selectorHeadersFromRequest(request),
 						method: request.method,
 						pathname,
 						peerAddress: resolvePeerAddress(request, options.trustedProxy),
@@ -146,6 +150,27 @@ function corsHeadersFor(origin: string): Readonly<Record<string, string>> {
 function preflightIsAllowed(request: IncomingMessage, allowedMethods: readonly string[]): boolean {
 	const requestedMethod = request.headers["access-control-request-method"];
 	return typeof requestedMethod === "string" && allowedMethods.includes(requestedMethod);
+}
+
+const SELECTOR_HEADER_NAMES = [
+	"x-auth-broker-credential-id",
+	"x-auth-broker-identity-key",
+	"x-senpi-session-id",
+] as const;
+
+function selectorHeadersFromRequest(
+	request: IncomingMessage,
+): Readonly<Record<string, string | undefined>> | undefined {
+	const headers: Record<string, string | undefined> = {};
+	let present = false;
+	for (const name of SELECTOR_HEADER_NAMES) {
+		const value = request.headers[name];
+		if (typeof value === "string") {
+			headers[name] = value;
+			present = true;
+		}
+	}
+	return present ? headers : undefined;
 }
 
 function resolvePeerAddress(request: IncomingMessage, trustedProxy: string | undefined): string | undefined {

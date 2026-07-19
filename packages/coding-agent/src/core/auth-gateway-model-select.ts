@@ -27,6 +27,12 @@ export function qualifyModel(
 	return { ...body, [modelField]: `${model.provider}/${model.modelId}` };
 }
 
+/** Rewrite body model field to bare modelId for adapters that pass it through as runtime modelId. */
+export function bareModel(body: unknown, modelField: "model" | "modelId", model: AuthGatewayAuthorizedModel): unknown {
+	if (!isRecord(body)) return body;
+	return { ...body, [modelField]: model.modelId };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }

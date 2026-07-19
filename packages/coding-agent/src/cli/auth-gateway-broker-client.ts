@@ -35,11 +35,7 @@ export function assertBrokerUrlAllowed(url: string): void {
 	}
 	const host = parsed.hostname.toLowerCase();
 	const loopback =
-		host === "localhost" ||
-		host === "127.0.0.1" ||
-		host === "::1" ||
-		host === "[::1]" ||
-		host.endsWith(".localhost");
+		host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]" || host.endsWith(".localhost");
 	if (parsed.protocol === "http:" && !loopback) {
 		throw new AuthGatewayBrokerConfigError(
 			`SENPI_AUTH_BROKER_URL must be loopback for http (got ${host}); use https for remote brokers`,

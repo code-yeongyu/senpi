@@ -60,6 +60,19 @@ describe("auth broker gateway verifier", () => {
 		const { evidence, manifest, plan } = fixture();
 		const write = run(["--write-manifest", "--evidence-root", evidence, "--out", manifest, "--plan", plan]);
 		expect(write.status).toBe(0);
+		const parsed = JSON.parse(readFileSync(manifest, "utf8")) as {
+			checks: Array<{ id: string; receipt: { path: string } }>;
+		};
+		const receiptPaths = new Set(parsed.checks.map((check) => check.receipt.path));
+		// Each of the 17 checks must point at its own structured receipt, not one shared tests file.
+		expect(parsed.checks).toHaveLength(17);
+		expect(receiptPaths.size).toBe(17);
+		for (const check of parsed.checks) {
+			expect(check.receipt.path).toMatch(new RegExp(`^checks/${check.id}\\.txt$`));
+			const body = readFileSync(join(evidence, check.receipt.path), "utf8");
+			expect(body).toContain(`check: ${check.id}`);
+			expect(body).toContain("exitCode: 0");
+		}
 		for (const mode of ["plan", "quality", "real-surface", "scope"]) {
 			const output = join(evidence, `${mode}.json`);
 			const result = run(["--check", mode, "--manifest", manifest, "--plan", plan, "--evidence", output]);

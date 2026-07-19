@@ -35,6 +35,7 @@ export function createAnthropicMessagesGatewayAdapter(options: {
 					provider: options.provider,
 					selector: selectorFromHeaders(request.headers),
 					signal: request.signal,
+					streamOptions: parsed.streamOptions,
 				});
 				if (result.kind === "model_not_found") return unknownModel();
 				if (result.kind !== "stream") return safeError(result.statusCode);
@@ -58,23 +59,48 @@ function parseAnthropicRequest(value: unknown): {
 	readonly context: Context;
 	readonly model: string;
 	readonly stream: boolean;
+	readonly streamOptions: { readonly maxTokens: number; readonly temperature?: number };
 } {
 	const record = readRecord(value);
 	exactKeys(record, ["max_tokens", "messages", "model", "stream", "system", "temperature", "tools"]);
-	optionalNumber(record, "temperature");
+	const temperature = optionalNumber(record, "temperature");
 	const maxTokens = optionalNumber(record, "max_tokens");
 	if (maxTokens === undefined || maxTokens < 1 || !Number.isInteger(maxTokens))
 		throw new AuthGatewayAdapterError("max_tokens");
 	const systemPrompt = record.system === undefined ? undefined : parseSystem(record.system);
+	const rawMessages = requiredArray(record, "messages");
+	const toolNamesByCallId = anthropicToolNamesByCallId(rawMessages);
 	return {
 		context: {
-			messages: requiredArray(record, "messages").flatMap(parseMessage),
+			messages: rawMessages.flatMap((entry) => parseMessage(entry, toolNamesByCallId)),
 			systemPrompt,
 			tools: record.tools === undefined ? undefined : parseTools(record.tools),
 		},
 		model: requiredString(record, "model"),
 		stream: optionalBoolean(record, "stream") ?? false,
+		streamOptions: {
+			maxTokens,
+			...(temperature === undefined ? {} : { temperature }),
+		},
 	};
+}
+
+function anthropicToolNamesByCallId(messages: readonly unknown[]): Map<string, string> {
+	const names = new Map<string, string>();
+	for (const entry of messages) {
+		if (!isRecord(entry) || entry.role !== "assistant" || !Array.isArray(entry.content)) continue;
+		for (const block of entry.content) {
+			if (!isRecord(block) || block.type !== "tool_use") continue;
+			if (typeof block.id === "string" && typeof block.name === "string" && block.name.length > 0) {
+				names.set(block.id, block.name);
+			}
+		}
+	}
+	return names;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function parseSystem(value: unknown): string {
@@ -90,16 +116,16 @@ function parseSystem(value: unknown): string {
 		.join("");
 }
 
-function parseMessage(value: unknown): readonly Message[] {
+function parseMessage(value: unknown, toolNamesByCallId: ReadonlyMap<string, string>): readonly Message[] {
 	const record = readRecord(value);
 	exactKeys(record, ["content", "role"]);
 	const role = requiredString(record, "role");
-	if (role === "user") return parseUser(record.content);
+	if (role === "user") return parseUser(record.content, toolNamesByCallId);
 	if (role === "assistant") return [parseAssistant(record.content)];
 	throw new AuthGatewayAdapterError("messages.role");
 }
 
-function parseUser(content: unknown): readonly Message[] {
+function parseUser(content: unknown, toolNamesByCallId: ReadonlyMap<string, string>): readonly Message[] {
 	if (typeof content === "string") return [{ content, role: "user", timestamp: 0 }];
 	if (!Array.isArray(content)) throw new AuthGatewayAdapterError("messages.content");
 	const messages: Message[] = [];
@@ -119,13 +145,14 @@ function parseUser(content: unknown): readonly Message[] {
 				messages.push({ content: text, role: "user", timestamp: 0 });
 				text = "";
 			}
+			const toolCallId = requiredString(record, "tool_use_id");
 			messages.push({
 				content: [{ text: textBlock(record.content), type: "text" }],
 				isError,
 				role: "toolResult",
 				timestamp: 0,
-				toolCallId: requiredString(record, "tool_use_id"),
-				toolName: "tool",
+				toolCallId,
+				toolName: toolNamesByCallId.get(toolCallId) ?? "tool",
 			});
 			continue;
 		}

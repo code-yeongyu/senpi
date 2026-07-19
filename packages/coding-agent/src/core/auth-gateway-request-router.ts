@@ -2,8 +2,8 @@ import type { Api, Model } from "@earendil-works/pi-ai/compat";
 import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { AuthBrokerRemoteStore } from "./auth-broker-remote-store.ts";
 import { createAnthropicMessagesGatewayAdapter } from "./auth-gateway-anthropic-messages.ts";
+import { bareModel, modelForRequest, qualifyModel } from "./auth-gateway-model-select.ts";
 import type { AuthGatewayAuthorizedModel } from "./auth-gateway-observability.ts";
-import { modelForRequest, qualifyModel } from "./auth-gateway-model-select.ts";
 import { createAuthGatewayObservabilityHandler } from "./auth-gateway-observability.ts";
 import { createOpenAIChatGatewayAdapter } from "./auth-gateway-openai-chat.ts";
 import type { AuthGatewayAdapterResponse } from "./auth-gateway-protocol-adapter.ts";
@@ -64,7 +64,12 @@ export function createAuthGatewayRequestRouter(options: AuthGatewayRequestRouter
 					await createOpenAIChatGatewayAdapter({
 						provider: authorizedModel.provider,
 						runtime,
-					}).handle({ body: request.body, signal: request.signal }),
+					}).handle({
+						// Chat adapter uses body.model as bare runtime modelId (provider is separate).
+						body: bareModel(request.body, "model", authorizedModel),
+						headers: request.headers,
+						signal: request.signal,
+					}),
 				);
 			}
 			if (request.pathname === "/v1/messages") {
@@ -72,7 +77,12 @@ export function createAuthGatewayRequestRouter(options: AuthGatewayRequestRouter
 					await createAnthropicMessagesGatewayAdapter({
 						provider: authorizedModel.provider,
 						runtime,
-					}).handle({ body: request.body, signal: request.signal }),
+					}).handle({
+						// Messages adapter uses body.model as bare runtime modelId (provider is separate).
+						body: bareModel(request.body, "model", authorizedModel),
+						headers: request.headers,
+						signal: request.signal,
+					}),
 				);
 			}
 			if (request.pathname === "/v1/responses") {
@@ -104,10 +114,6 @@ function defaultModelResolver(provider: string, modelId: string): Model<Api> | u
 
 function isAuthorized(models: readonly AuthGatewayAuthorizedModel[], provider: string, modelId: string): boolean {
 	return models.some((model) => model.provider === provider && model.modelId === modelId);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function transportResponse(

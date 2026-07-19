@@ -50,7 +50,7 @@ describe("auth gateway observability", () => {
 
 		// Then: only explicit enabled models are visible and concurrent usage shares one broker snapshot.
 		expect(models.body).toEqual({
-			data: [{ id: "gpt-authorized", object: "model", owned_by: "openai" }],
+			data: [{ id: "openai/gpt-authorized", object: "model", owned_by: "openai" }],
 			object: "list",
 		});
 		expect(usage[0]?.body).toEqual(usage[1]?.body);

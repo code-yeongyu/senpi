@@ -61,17 +61,18 @@ export function validateTransportOptions(
 	}
 }
 
+const MIN_GATEWAY_BEARER_LENGTH = 32;
+
 export async function resolveGatewayAuth(auth: AuthGatewayTransportAuth): Promise<ResolvedGatewayAuth> {
 	if (auth.kind === "token-value") {
-		if (auth.token.length === 0)
-			throw new AuthGatewayTransportConfigError("Auth gateway bearer token must not be empty.");
+		assertBearerStrength(auth.token, "Auth gateway bearer token");
 		return { path: undefined, token: auth.token };
 	}
 	await mkdir(dirname(auth.path), { mode: 0o700, recursive: true });
 	await chmod(dirname(auth.path), 0o700);
 	try {
 		const token = (await readFile(auth.path, "utf8")).trim();
-		if (token.length === 0) throw new AuthGatewayTransportConfigError("Auth gateway token file must not be empty.");
+		assertBearerStrength(token, "Auth gateway token file");
 		await chmod(auth.path, 0o600);
 		return { path: auth.path, token };
 	} catch (error: unknown) {
@@ -84,10 +85,18 @@ export async function resolveGatewayAuth(auth: AuthGatewayTransportAuth): Promis
 	} catch (error: unknown) {
 		if (!isNodeErrorCode(error, "EEXIST")) throw error;
 		const existing = (await readFile(auth.path, "utf8")).trim();
-		if (existing.length === 0)
-			throw new AuthGatewayTransportConfigError("Auth gateway token file must not be empty.");
+		assertBearerStrength(existing, "Auth gateway token file");
 		await chmod(auth.path, 0o600);
 		return { path: auth.path, token: existing };
+	}
+}
+
+function assertBearerStrength(token: string, label: string): void {
+	if (token.length === 0) {
+		throw new AuthGatewayTransportConfigError(`${label} must not be empty.`);
+	}
+	if (token.length < MIN_GATEWAY_BEARER_LENGTH) {
+		throw new AuthGatewayTransportConfigError(`${label} must be at least ${MIN_GATEWAY_BEARER_LENGTH} characters.`);
 	}
 }
 

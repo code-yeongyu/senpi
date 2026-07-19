@@ -76,7 +76,7 @@ describe("auth gateway command", () => {
 			// Then: only the explicitly authorized model is exposed, never the provider-wide catalog, and no secret leaks.
 			expect(result?.exitCode).toBe(0);
 			expect(models).toEqual({
-				data: [{ id: allowedModel.id, object: "model", owned_by: "openai" }],
+				data: [{ id: `openai/${allowedModel.id}`, object: "model", owned_by: "openai" }],
 				object: "list",
 			});
 			expect(JSON.stringify(models)).not.toContain(disallowedModel.id);
