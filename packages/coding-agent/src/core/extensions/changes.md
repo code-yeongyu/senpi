@@ -1,5 +1,16 @@
 # Core Extensions Changes
 
+## 2026-07-20 - recovery model config is public to provider extensions
+
+### What changed
+
+- `types.ts`: `ProviderModelConfig` now exposes optional `recoverTextToolCalls`, matching the composed provider model field. Extensions can register recovery-enabled, disabled, or inherited models without excess-property type errors.
+
+### Expected merge conflict zones
+
+- LOW: `types.ts` `ProviderModelConfig` model metadata fields.
+
+
 ## 2026-07-17 - video-in builtin extension and "video" input modality
 
 ### What changed
