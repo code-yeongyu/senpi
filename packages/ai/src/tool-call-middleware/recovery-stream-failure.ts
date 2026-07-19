@@ -30,6 +30,7 @@ export function terminateRecoveryStreamForFailure(
 	message.stopReason = "error";
 	message.errorMessage = details.errorMessage;
 	message.diagnostics = [
+		...(source.diagnostics ?? []),
 		{
 			type: details.diagnosticType,
 			timestamp: Date.now(),

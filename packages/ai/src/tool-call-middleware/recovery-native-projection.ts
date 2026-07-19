@@ -6,9 +6,7 @@ type ContentRange = { start: number; end: number };
 type NativeLifecycle = "started" | "ended";
 
 function cloneContentBlock(block: ContentBlock): ContentBlock {
-	if (block.type === "toolCall") {
-		return { ...block, arguments: { ...block.arguments } };
-	}
+	if (block.type === "toolCall") return { ...block, arguments: { ...block.arguments } };
 	return { ...block };
 }
 
@@ -25,6 +23,7 @@ export class RecoveryNativeProjection {
 	private readonly reservedIds = new Set<string>();
 	private readonly recoveredIds = new Set<string>();
 	private readonly recoveredIdByParserIndex = new Map<number, string>();
+	private highestProjectedInnerIndex = -1;
 	private nextRecoveredId = 0;
 
 	constructor(stream: AssistantMessageEventStream, message: AssistantMessage) {
@@ -41,20 +40,26 @@ export class RecoveryNativeProjection {
 	synchronizeLower(source: AssistantMessage, contentIndex: number): boolean {
 		for (let innerIndex = 0; innerIndex < contentIndex && innerIndex < source.content.length; innerIndex += 1) {
 			if (this.rangesByInnerIndex.has(innerIndex)) continue;
-			const block = source.content[innerIndex];
-			if (!block) continue;
-			if (block.type === "toolCall" && this.recoveredIds.has(block.id)) return false;
-			const outerIndex = this.message.content.length;
-			this.message.content.push(cloneContentBlock(block));
-			this.rangesByInnerIndex.set(innerIndex, { start: outerIndex, end: outerIndex + 1 });
+			if (!this.appendUnannounced(source, innerIndex)) return false;
 		}
 		return true;
 	}
 
-	startText(innerIndex: number): number {
-		const outerIndex = this.message.content.length;
-		this.rangesByInnerIndex.set(innerIndex, { start: outerIndex, end: outerIndex });
-		return outerIndex;
+	synchronizeRemaining(source: AssistantMessage): boolean {
+		for (let innerIndex = 0; innerIndex < source.content.length; innerIndex += 1) {
+			if (this.rangesByInnerIndex.has(innerIndex)) continue;
+			if (!this.appendUnannounced(source, innerIndex)) return false;
+		}
+		return true;
+	}
+
+	startText(innerIndex: number, outerIndex: number): boolean {
+		if (!this.recordRange(innerIndex, { start: outerIndex, end: this.message.content.length })) return false;
+		return true;
+	}
+
+	recordProjectedBlock(innerIndex: number, outerIndex: number): boolean {
+		return this.recordRange(innerIndex, { start: outerIndex, end: outerIndex + 1 });
 	}
 
 	extendText(innerIndex: number): void {
@@ -65,12 +70,12 @@ export class RecoveryNativeProjection {
 	projectNativeStart(source: AssistantMessage, innerIndex: number): "projected" | "collision" | "invalid" {
 		if (this.nativeLifecycleByInnerIndex.has(innerIndex) || this.rangesByInnerIndex.has(innerIndex)) return "invalid";
 		const block = source.content[innerIndex];
-		if (block?.type !== "toolCall") return "invalid";
+		if (block?.type !== "toolCall" || innerIndex <= this.highestProjectedInnerIndex) return "invalid";
 		if (this.recoveredIds.has(block.id)) return "collision";
 		this.reservedIds.add(block.id);
 		const outerIndex = this.message.content.length;
 		this.message.content.push(cloneContentBlock(block));
-		this.rangesByInnerIndex.set(innerIndex, { start: outerIndex, end: outerIndex + 1 });
+		if (!this.recordRange(innerIndex, { start: outerIndex, end: outerIndex + 1 })) return "invalid";
 		this.nativeLifecycleByInnerIndex.set(innerIndex, "started");
 		this.stream.push({ type: "toolcall_start", contentIndex: outerIndex, partial: this.message });
 		return "projected";
@@ -116,6 +121,22 @@ export class RecoveryNativeProjection {
 			}
 			return event;
 		});
+	}
+
+	private appendUnannounced(source: AssistantMessage, innerIndex: number): boolean {
+		const block = source.content[innerIndex];
+		if (!block || innerIndex <= this.highestProjectedInnerIndex) return false;
+		if (block.type === "toolCall" && this.recoveredIds.has(block.id)) return false;
+		const outerIndex = this.message.content.length;
+		this.message.content.push(cloneContentBlock(block));
+		return this.recordRange(innerIndex, { start: outerIndex, end: outerIndex + 1 });
+	}
+
+	private recordRange(innerIndex: number, range: ContentRange): boolean {
+		if (this.rangesByInnerIndex.has(innerIndex) || innerIndex <= this.highestProjectedInnerIndex) return false;
+		this.rangesByInnerIndex.set(innerIndex, range);
+		this.highestProjectedInnerIndex = innerIndex;
+		return true;
 	}
 
 	private allocateRecoveredId(): string {

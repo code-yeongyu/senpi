@@ -1,5 +1,8 @@
-import type { AssistantMessage, AssistantMessageEventStream, ToolCall, Usage } from "../types.ts";
+import type { AssistantMessage, AssistantMessageEventStream, TextContent, ToolCall } from "../types.ts";
+import type { AssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
+import { cloneAssistantMessageMetadata, syncAssistantMessageMetadata } from "./stream-message-metadata.ts";
+import { StreamThinkingProjection } from "./stream-thinking-projection.ts";
 import type { StreamParserEvent } from "./types.ts";
 
 type PartialToolCall = ToolCall & { partialJson: string };
@@ -13,38 +16,6 @@ function isPartialToolCall(block: AssistantMessage["content"][number] | undefine
 	return block?.type === "toolCall" && "partialJson" in block && typeof block.partialJson === "string";
 }
 
-function cloneUsage(usage: Usage): Usage {
-	return {
-		input: usage.input,
-		output: usage.output,
-		cacheRead: usage.cacheRead,
-		cacheWrite: usage.cacheWrite,
-		totalTokens: usage.totalTokens,
-		cost: {
-			input: usage.cost.input,
-			output: usage.cost.output,
-			cacheRead: usage.cost.cacheRead,
-			cacheWrite: usage.cost.cacheWrite,
-			total: usage.cost.total,
-		},
-	};
-}
-
-function createOuterMessage(message: AssistantMessage): AssistantMessage {
-	return {
-		role: "assistant",
-		api: message.api,
-		provider: message.provider,
-		model: message.model,
-		responseId: message.responseId,
-		content: [],
-		usage: cloneUsage(message.usage),
-		stopReason: message.stopReason,
-		errorMessage: message.errorMessage,
-		timestamp: message.timestamp,
-	};
-}
-
 function assertNever(value: never): never {
 	throw new Error(`Unexpected parser event: ${JSON.stringify(value)}`);
 }
@@ -56,27 +27,48 @@ export class StreamMessageProjection {
 	private currentInnerTextIndex: number | null = null;
 	private readonly textBlockIndexByInnerIndex = new Map<number, number | null>();
 	private readonly toolCallIndexByParserIndex = new Map<number, number>();
+	private readonly projectedDiagnostics: AssistantMessageDiagnostic[] = [];
+	private readonly thinking: StreamThinkingProjection;
+	private source: AssistantMessage;
 
 	constructor(stream: AssistantMessageEventStream, source: AssistantMessage) {
 		this.stream = stream;
-		this.message = createOuterMessage(source);
+		this.source = source;
+		this.message = cloneAssistantMessageMetadata(source, [], this.projectedDiagnostics);
+		this.thinking = new StreamThinkingProjection(stream, this.message);
 	}
 
 	sync(source: AssistantMessage): void {
-		this.message.api = source.api;
-		this.message.provider = source.provider;
-		this.message.model = source.model;
-		this.message.responseId = source.responseId;
-		this.message.usage = cloneUsage(source.usage);
-		this.message.stopReason = source.stopReason;
-		this.message.errorMessage = source.errorMessage;
-		this.message.timestamp = source.timestamp;
+		this.source = source;
+		syncAssistantMessageMetadata(this.message, source, this.projectedDiagnostics);
 	}
 
-	startText(contentIndex: number): void {
+	appendDiagnostic(diagnostic: AssistantMessageDiagnostic): void {
+		this.projectedDiagnostics.push(diagnostic);
+		syncAssistantMessageMetadata(this.message, this.source, this.projectedDiagnostics);
+	}
+
+	startText(contentIndex: number, sourceBlock?: AssistantMessage["content"][number]): number {
 		this.currentInnerTextIndex = contentIndex;
-		this.textBlockIndexByInnerIndex.set(contentIndex, null);
-		this.stream.push({ type: "text_start", contentIndex: this.message.content.length, partial: this.message });
+		const outerIndex = this.message.content.length;
+		const block: TextContent =
+			sourceBlock?.type === "text" ? { ...sourceBlock, text: "" } : { type: "text", text: "" };
+		this.message.content.push(block);
+		this.textBlockIndexByInnerIndex.set(contentIndex, outerIndex);
+		this.stream.push({ type: "text_start", contentIndex: outerIndex, partial: this.message });
+		return outerIndex;
+	}
+
+	startThinking(contentIndex: number, source: AssistantMessage): number {
+		return this.thinking.start(contentIndex, source);
+	}
+
+	projectThinkingDelta(contentIndex: number, delta: string, source: AssistantMessage): void {
+		this.thinking.delta(contentIndex, delta, source);
+	}
+
+	finishThinking(contentIndex: number, content: string, source: AssistantMessage): void {
+		this.thinking.end(contentIndex, content, source);
 	}
 
 	projectParserEvents(events: readonly StreamParserEvent[]): ParserProjectionResult {
@@ -147,7 +139,7 @@ export class StreamMessageProjection {
 	}
 
 	finalize(doneMessage: AssistantMessage, sawToolCall: boolean): AssistantMessage {
-		const finalMessage = { ...createOuterMessage(doneMessage), content: this.message.content };
+		const finalMessage = cloneAssistantMessageMetadata(doneMessage, this.message.content, this.projectedDiagnostics);
 		if (
 			(sawToolCall || this.hasFinalizedToolCallContent()) &&
 			(finalMessage.stopReason === "stop" || finalMessage.stopReason === "length")
@@ -177,6 +169,18 @@ export class StreamMessageProjection {
 	}
 
 	private startToolCall(event: Extract<StreamParserEvent, { type: "toolcall_start" }>): void {
+		if (this.currentInnerTextIndex != null) {
+			const textIndex = this.textBlockIndexByInnerIndex.get(this.currentInnerTextIndex);
+			const block = textIndex == null ? undefined : this.message.content[textIndex];
+			if (
+				textIndex === this.message.content.length - 1 &&
+				block?.type === "text" &&
+				block.text.length === 0 &&
+				block.textSignature === undefined
+			) {
+				this.message.content.pop();
+			}
+		}
 		const contentIndex = this.message.content.length;
 		const toolCall: PartialToolCall = {
 			type: "toolCall",

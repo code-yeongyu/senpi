@@ -1,4 +1,4 @@
-import type { AssistantMessage, AssistantMessageEventStream, ThinkingContent, Tool } from "../types.ts";
+import type { AssistantMessage, AssistantMessageEventStream, Tool } from "../types.ts";
 import { AssistantMessageEventStream as AssistantMessageEventStreamImpl } from "../utils/event-stream.ts";
 import { StreamMessageProjection } from "./stream-wrapper-shared.ts";
 import type { ToolCallProtocol } from "./types.ts";
@@ -15,7 +15,6 @@ export function wrapStreamWithToolCallMiddleware(
 		let projection: StreamMessageProjection | null = null;
 		let sawToolCall = false;
 		let parserHasPendingInput = false;
-		const thinkingBlockIndexByInnerIndex = new Map<number, number>();
 
 		const flushParser = (): void => {
 			if (!projection || !parserHasPendingInput) return;
@@ -35,7 +34,7 @@ export function wrapStreamWithToolCallMiddleware(
 					case "text_start":
 						if (!projection) break;
 						projection.sync(event.partial);
-						projection.startText(event.contentIndex);
+						projection.startText(event.contentIndex, event.partial.content[event.contentIndex]);
 						break;
 					case "text_delta": {
 						if (!projection) break;
@@ -50,48 +49,21 @@ export function wrapStreamWithToolCallMiddleware(
 						projection.sync(event.partial);
 						flushParser();
 						break;
-					case "thinking_start": {
+					case "thinking_start":
 						if (!projection) break;
 						projection.sync(event.partial);
-						const contentIndex = projection.message.content.length;
-						const block: ThinkingContent = { type: "thinking", thinking: "" };
-						projection.message.content.push(block);
-						thinkingBlockIndexByInnerIndex.set(event.contentIndex, contentIndex);
-						outerStream.push({ type: "thinking_start", contentIndex, partial: projection.message });
+						projection.startThinking(event.contentIndex, event.partial);
 						break;
-					}
-					case "thinking_delta": {
+					case "thinking_delta":
 						if (!projection) break;
 						projection.sync(event.partial);
-						const contentIndex = thinkingBlockIndexByInnerIndex.get(event.contentIndex);
-						if (contentIndex == null) break;
-						const block = projection.message.content[contentIndex];
-						if (block?.type !== "thinking") break;
-						block.thinking += event.delta;
-						outerStream.push({
-							type: "thinking_delta",
-							contentIndex,
-							delta: event.delta,
-							partial: projection.message,
-						});
+						projection.projectThinkingDelta(event.contentIndex, event.delta, event.partial);
 						break;
-					}
-					case "thinking_end": {
+					case "thinking_end":
 						if (!projection) break;
 						projection.sync(event.partial);
-						const contentIndex = thinkingBlockIndexByInnerIndex.get(event.contentIndex);
-						if (contentIndex == null) break;
-						const block = projection.message.content[contentIndex];
-						if (block?.type !== "thinking") break;
-						block.thinking = event.content;
-						outerStream.push({
-							type: "thinking_end",
-							contentIndex,
-							content: event.content,
-							partial: projection.message,
-						});
+						projection.finishThinking(event.contentIndex, event.content, event.partial);
 						break;
-					}
 					case "done": {
 						projection ??= new StreamMessageProjection(outerStream, event.message);
 						flushParser();

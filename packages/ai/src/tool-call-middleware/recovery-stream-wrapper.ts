@@ -1,33 +1,20 @@
-import type { AssistantMessage, AssistantMessageEventStream, Tool, ToolCall } from "../types.ts";
-import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
+import type { AssistantMessage, AssistantMessageEventStream, Tool } from "../types.ts";
 import { AssistantMessageEventStream as AssistantMessageEventStreamImpl } from "../utils/event-stream.ts";
 import { createAntmlInvokeRecoveryStreamParser } from "./protocols/antml/recovery-stream.ts";
 import { createRecoveryCodeMask, type RecoveryCodeMaskSegment } from "./recovery-code-mask.ts";
+import { appendRecoveryDiagnostic } from "./recovery-diagnostics.ts";
 import { RecoveryNativeProjection } from "./recovery-native-projection.ts";
 import { type RecoveryStreamFailure, terminateRecoveryStreamForFailure } from "./recovery-stream-failure.ts";
 import { StreamMessageProjection } from "./stream-wrapper-shared.ts";
 import type { StreamParserEvent } from "./types.ts";
-
-function appendRecoveryDiagnostic(message: AssistantMessage, toolCall: ToolCall): void {
-	appendAssistantMessageDiagnostic(message, {
-		type: "text_tool_call_recovery",
-		timestamp: Date.now(),
-		details: {
-			protocol: "antml",
-			toolName: toolCall.name,
-			id: toolCall.id,
-			status: toolCall.incomplete === true ? "incomplete" : "complete",
-		},
-	});
-}
 
 export function wrapStreamWithInvokeRecovery(
 	innerStream: AssistantMessageEventStream,
 	tools: readonly Tool[],
 ): AssistantMessageEventStream {
 	const outerStream = new AssistantMessageEventStreamImpl();
-	const parser = createAntmlInvokeRecoveryStreamParser(tools);
-	const mask = createRecoveryCodeMask();
+	let parser = createAntmlInvokeRecoveryStreamParser(tools);
+	let mask = createRecoveryCodeMask();
 
 	void (async (): Promise<void> => {
 		let projection: StreamMessageProjection | null = null;
@@ -57,7 +44,7 @@ export function wrapStreamWithInvokeRecovery(
 				if (event.type === "toolcall_start") activeInvoke = true;
 				if (event.type === "toolcall_end") {
 					activeInvoke = false;
-					for (const toolCall of result.completedToolCalls) appendRecoveryDiagnostic(projection.message, toolCall);
+					for (const toolCall of result.completedToolCalls) appendRecoveryDiagnostic(projection, toolCall);
 				}
 			}
 			if (currentInnerTextIndex != null) nativeProjection.extendText(currentInnerTextIndex);
@@ -95,9 +82,7 @@ export function wrapStreamWithInvokeRecovery(
 		const finalize = (source: AssistantMessage): AssistantMessage => {
 			if (!projection) return source;
 			projection.finalizeDanglingToolCalls();
-			const message = projection.finalize(source, sawToolCall);
-			if (projection.message.diagnostics) message.diagnostics = [...projection.message.diagnostics];
-			return message;
+			return projection.finalize(source, sawToolCall);
 		};
 
 		const terminateForFailure = (source: AssistantMessage, failure: RecoveryStreamFailure): void => {
@@ -119,6 +104,17 @@ export function wrapStreamWithInvokeRecovery(
 			return false;
 		};
 
+		const synchronizeTerminal = (source: AssistantMessage): boolean => {
+			projection ??= new StreamMessageProjection(outerStream, source);
+			nativeProjection ??= new RecoveryNativeProjection(outerStream, projection.message);
+			projection.sync(source);
+			nativeProjection.reserveVisibleIds(source);
+			finishText();
+			if (nativeProjection.synchronizeRemaining(source)) return true;
+			terminateForFailure(source, "collision");
+			return false;
+		};
+
 		try {
 			for await (const event of innerStream) {
 				switch (event.type) {
@@ -128,14 +124,23 @@ export function wrapStreamWithInvokeRecovery(
 						nativeProjection.reserveVisibleIds(event.partial);
 						outerStream.push({ type: "start", partial: projection.message });
 						break;
-					case "text_start":
+					case "text_start": {
 						if (!prepareContentEvent(event.partial, event.contentIndex) || !projection || !nativeProjection)
 							return;
 						currentInnerTextIndex = event.contentIndex;
-						nativeProjection.startText(event.contentIndex);
-						projection.startText(event.contentIndex);
+						parser = createAntmlInvokeRecoveryStreamParser(tools);
+						mask = createRecoveryCodeMask();
+						const outerIndex = projection.startText(
+							event.contentIndex,
+							event.partial.content[event.contentIndex],
+						);
+						if (!nativeProjection.startText(event.contentIndex, outerIndex)) {
+							terminateForFailure(event.partial, "invalid_native_event_order");
+							return;
+						}
 						textOpen = true;
 						break;
+					}
 					case "text_delta":
 						if (!prepareContentEvent(event.partial, event.contentIndex)) return;
 						feedText(event.delta);
@@ -145,10 +150,9 @@ export function wrapStreamWithInvokeRecovery(
 						finishText();
 						break;
 					case "done": {
-						projection ??= new StreamMessageProjection(outerStream, event.message);
-						finishText();
+						if (!synchronizeTerminal(event.message)) return;
 						const message = finalize(event.message);
-						const recovered = sawToolCall || projection.hasFinalizedToolCallContent();
+						const recovered = sawToolCall || message.content.some((block) => block.type === "toolCall");
 						const reason =
 							recovered && (event.reason === "stop" || event.reason === "length") ? "toolUse" : event.reason;
 						outerStream.push({ type: "done", reason, message });
@@ -161,8 +165,7 @@ export function wrapStreamWithInvokeRecovery(
 							outerStream.end(event.error);
 							return;
 						}
-						projection.sync(event.error);
-						finishText();
+						if (!synchronizeTerminal(event.error)) return;
 						const message = finalize(event.error);
 						if (projection.hasFinalizedToolCallContent()) {
 							message.stopReason = "toolUse";
@@ -202,17 +205,29 @@ export function wrapStreamWithInvokeRecovery(
 						}
 						sawToolCall = true;
 						break;
-					case "thinking_start":
+					case "thinking_start": {
+						if (!prepareContentEvent(event.partial, event.contentIndex) || !projection || !nativeProjection)
+							return;
+						const outerIndex = projection.startThinking(event.contentIndex, event.partial);
+						if (!nativeProjection.recordProjectedBlock(event.contentIndex, outerIndex)) {
+							terminateForFailure(event.partial, "invalid_native_event_order");
+							return;
+						}
+						break;
+					}
 					case "thinking_delta":
+						if (!prepareContentEvent(event.partial, event.contentIndex) || !projection) return;
+						projection.projectThinkingDelta(event.contentIndex, event.delta, event.partial);
+						break;
 					case "thinking_end":
-						if (!prepareContentEvent(event.partial, event.contentIndex)) return;
+						if (!prepareContentEvent(event.partial, event.contentIndex) || !projection) return;
+						projection.finishThinking(event.contentIndex, event.content, event.partial);
 						break;
 				}
 			}
 
 			const innerMessage = await innerStream.result();
-			projection ??= new StreamMessageProjection(outerStream, innerMessage);
-			finishText();
+			if (!synchronizeTerminal(innerMessage)) return;
 			outerStream.end(finalize(innerMessage));
 		} catch (error) {
 			if (!projection) {
