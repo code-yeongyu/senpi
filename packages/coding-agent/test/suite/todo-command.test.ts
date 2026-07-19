@@ -132,7 +132,7 @@ describe("todo markdown round-trip", () => {
 		expect(errors).toEqual([]);
 		expect(phases).toEqual([
 			{
-				name: "Todos",
+				name: "Tasks",
 				tasks: [
 					{ content: "First", status: "in_progress" },
 					{ content: "Second", status: "pending" },

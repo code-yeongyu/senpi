@@ -6,7 +6,7 @@
 // `[x]` completed, `[-]` abandoned.
 
 import { isAbsolute, resolve } from "node:path";
-import { normalizeInProgressTask, type TodoPhase, type TodoStatus } from "./state.ts";
+import { DEFAULT_INIT_PHASE, normalizeInProgressTask, type TodoPhase, type TodoStatus } from "./state.ts";
 
 const STATUS_TO_MARKER: Record<TodoStatus, string> = {
 	pending: " ",
@@ -37,7 +37,7 @@ export function resolveTodoMarkdownPath(input: string, cwd: string): string {
 
 /** Render todo phases as a Markdown checklist suitable for editing/copying. */
 export function phasesToMarkdown(phases: readonly TodoPhase[]): string {
-	if (phases.length === 0) return "# Todos\n";
+	if (phases.length === 0) return `# ${DEFAULT_INIT_PHASE}\n`;
 	const out: string[] = [];
 	for (let index = 0; index < phases.length; index += 1) {
 		if (index > 0) out.push("");
@@ -70,7 +70,7 @@ export function markdownToPhases(markdown: string): { phases: TodoPhase[]; error
 		const taskMatch = /^[-*+]\s*\[(.?)\]\s+(.+?)\s*$/.exec(trimmed);
 		if (taskMatch) {
 			if (!currentPhase) {
-				currentPhase = { name: "Todos", tasks: [] };
+				currentPhase = { name: DEFAULT_INIT_PHASE, tasks: [] };
 				phases.push(currentPhase);
 			}
 			const status = MARKER_TO_STATUS[taskMatch[1]];

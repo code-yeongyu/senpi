@@ -15,6 +15,7 @@ import { markdownToPhases, phasesToMarkdown, resolveTodoMarkdownPath } from "./m
 import {
 	applyOpsToPhases,
 	clonePhases,
+	DEFAULT_INIT_PHASE,
 	TODO_STATE_ENTRY_TYPE,
 	type TodoItem,
 	type TodoPhase,
@@ -171,7 +172,9 @@ export function registerTodoCommand(pi: ExtensionAPI, accessors: TodoCommandAcce
 	async function editInOverlay(ctx: ExtensionCommandContext): Promise<void> {
 		const current = accessors.getCurrentPhases();
 		const initialMarkdown =
-			current.length > 0 ? phasesToMarkdown(current) : "# Todos\n- [ ] (replace this with your tasks)\n";
+			current.length > 0
+				? phasesToMarkdown(current)
+				: `# ${DEFAULT_INIT_PHASE}\n- [ ] (replace this with your tasks)\n`;
 		const edited = await ctx.ui.editor("Edit todos (Markdown checklist)", initialMarkdown);
 		if (edited === undefined || edited === initialMarkdown) {
 			ctx.ui.notify("Todos unchanged.", "info");
@@ -263,7 +266,7 @@ export function registerTodoCommand(pi: ExtensionAPI, accessors: TodoCommandAcce
 		} else if (next.length > 0) {
 			targetPhase = next[next.length - 1];
 		} else {
-			targetPhase = { name: "Todos", tasks: [] };
+			targetPhase = { name: DEFAULT_INIT_PHASE, tasks: [] };
 			next.push(targetPhase);
 		}
 
