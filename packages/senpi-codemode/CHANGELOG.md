@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed the Python kernel's `tool.<name>()` proxy injecting an omp-only `i` ("py prelude") intent field into every bridged tool call. Senpi tool schemas never declare `i`, so strict tools (`additionalProperties: false`, e.g. `web_search`) rejected every eval-bridged call with `Validation failed for tool …: must not have additional properties`. Args now pass through verbatim, matching the JS/Ruby/Julia preludes.
+
 ### Removed
 
 ## [2026.7.17-5] - 2026-07-17
