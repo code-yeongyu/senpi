@@ -108,9 +108,15 @@ export function wrapStreamWithInvokeRecovery(
 
 		const prepareContentEvent = (source: AssistantMessage, contentIndex: number): boolean => {
 			if (!projection || !nativeProjection) return false;
+			if (!Number.isSafeInteger(contentIndex) || contentIndex < 0 || contentIndex >= source.content.length) {
+				terminateForFailure(source, "invalid_native_event_order");
+				return false;
+			}
 			projection.sync(source);
 			nativeProjection.reserveVisibleIds(source);
-			return nativeProjection.synchronizeLower(source, contentIndex);
+			if (nativeProjection.synchronizeLower(source, contentIndex)) return true;
+			terminateForFailure(source, "collision");
+			return false;
 		};
 
 		try {
@@ -123,27 +129,19 @@ export function wrapStreamWithInvokeRecovery(
 						outerStream.push({ type: "start", partial: projection.message });
 						break;
 					case "text_start":
-						if (!prepareContentEvent(event.partial, event.contentIndex) || !projection || !nativeProjection) {
-							terminateForFailure(event.partial, "collision");
+						if (!prepareContentEvent(event.partial, event.contentIndex) || !projection || !nativeProjection)
 							return;
-						}
 						currentInnerTextIndex = event.contentIndex;
 						nativeProjection.startText(event.contentIndex);
 						projection.startText(event.contentIndex);
 						textOpen = true;
 						break;
 					case "text_delta":
-						if (!prepareContentEvent(event.partial, event.contentIndex)) {
-							terminateForFailure(event.partial, "collision");
-							return;
-						}
+						if (!prepareContentEvent(event.partial, event.contentIndex)) return;
 						feedText(event.delta);
 						break;
 					case "text_end":
-						if (!prepareContentEvent(event.partial, event.contentIndex)) {
-							terminateForFailure(event.partial, "collision");
-							return;
-						}
+						if (!prepareContentEvent(event.partial, event.contentIndex)) return;
 						finishText();
 						break;
 					case "done": {
@@ -177,10 +175,7 @@ export function wrapStreamWithInvokeRecovery(
 						return;
 					}
 					case "toolcall_start": {
-						if (!prepareContentEvent(event.partial, event.contentIndex) || !nativeProjection) {
-							terminateForFailure(event.partial, "collision");
-							return;
-						}
+						if (!prepareContentEvent(event.partial, event.contentIndex) || !nativeProjection) return;
 						const status = nativeProjection.projectNativeStart(event.partial, event.contentIndex);
 						if (status !== "projected") {
 							terminateForFailure(
@@ -193,20 +188,14 @@ export function wrapStreamWithInvokeRecovery(
 						break;
 					}
 					case "toolcall_delta":
-						if (!prepareContentEvent(event.partial, event.contentIndex) || !nativeProjection) {
-							terminateForFailure(event.partial, "collision");
-							return;
-						}
+						if (!prepareContentEvent(event.partial, event.contentIndex) || !nativeProjection) return;
 						if (!nativeProjection.projectNativeDelta(event.partial, event.contentIndex, event.delta)) {
 							terminateForFailure(event.partial, "invalid_native_event_order");
 							return;
 						}
 						break;
 					case "toolcall_end":
-						if (!prepareContentEvent(event.partial, event.contentIndex) || !nativeProjection) {
-							terminateForFailure(event.partial, "collision");
-							return;
-						}
+						if (!prepareContentEvent(event.partial, event.contentIndex) || !nativeProjection) return;
 						if (!nativeProjection.projectNativeEnd(event.contentIndex, event.toolCall)) {
 							terminateForFailure(event.partial, "invalid_native_event_order");
 							return;
@@ -216,10 +205,7 @@ export function wrapStreamWithInvokeRecovery(
 					case "thinking_start":
 					case "thinking_delta":
 					case "thinking_end":
-						if (!prepareContentEvent(event.partial, event.contentIndex)) {
-							terminateForFailure(event.partial, "collision");
-							return;
-						}
+						if (!prepareContentEvent(event.partial, event.contentIndex)) return;
 						break;
 				}
 			}

@@ -6,6 +6,7 @@ import { collectEvents, createAssistantMessage, NativeStreamHarness } from "./in
 
 type InvalidNativeKind = "delta-before-start" | "end-before-start";
 type RepeatedNativeKind = "repeated-start" | "delta-after-end" | "repeated-end";
+type IterationCounter = { count: number };
 
 function nativeCall(id = "toolu-invalid"): ToolCall {
 	return { type: "toolCall", id, name: "NativeInvalid", arguments: { command: "echo invalid" } };
@@ -70,6 +71,38 @@ async function collectRepeatedSequence(tool: Tool, kind: RepeatedNativeKind) {
 	return { events, result: await wrapped.result() };
 }
 
+async function collectInvalidIndex(tool: Tool, contentIndex: number, counter: IterationCounter) {
+	const content = new Proxy<AssistantMessage["content"]>([], {
+		get(target, property, receiver) {
+			if (typeof property === "string" && /^\d+$/.test(property)) {
+				counter.count += 1;
+				throw new Error("synchronizeLower iteration sentinel");
+			}
+			return Reflect.get(target, property, receiver);
+		},
+	});
+	const inner = new AssistantMessageEventStream();
+	const wrapped = wrapStreamWithInvokeRecovery(inner, [tool]);
+	const partial = createAssistantMessage(content);
+	inner.push({ type: "start", partial: createAssistantMessage([]) });
+	inner.push({ type: "toolcall_delta", contentIndex, delta: "{}", partial });
+	inner.push({ type: "done", reason: "stop", message: partial });
+	const events = await collectEvents(wrapped);
+	return { events, result: await wrapped.result() };
+}
+
+async function collectValidSkippedLowerIndex(tool: Tool) {
+	const producer = new NativeStreamHarness();
+	const wrapped = wrapStreamWithInvokeRecovery(producer.inner, [tool]);
+	producer.start();
+	producer.appendProviderNative({ type: "providerNative", subtype: "fixture", raw: { preserved: true } });
+	const contentIndex = producer.startNative({ ...nativeCall("toolu-valid"), arguments: {} });
+	producer.endNative(contentIndex, nativeCall("toolu-valid"));
+	producer.finish();
+	const events = await collectEvents(wrapped);
+	return { events, result: await wrapped.result() };
+}
+
 function expectInvalidTerminal(events: readonly AssistantMessageEvent[], result: AssistantMessage): void {
 	expect(events.filter((event) => event.type === "error")).toHaveLength(1);
 	expect(events.filter((event) => event.type === "done")).toEqual([]);
@@ -108,6 +141,41 @@ export function registerInvokeRecoveryNativeLifecycleCases(tool: Tool): void {
 			expectInvalidTerminal(events, result);
 			expect(events.filter((event) => event.type.startsWith("toolcall_"))).toEqual([]);
 		}
+	});
+
+	it("fails closed for invalid native content indices without iterating", async () => {
+		const cases = [
+			{ label: "negative", index: -1 },
+			{ label: "fractional", index: 0.5 },
+			{ label: "NaN", index: Number.NaN },
+			{ label: "positive infinity", index: Number.POSITIVE_INFINITY },
+			{ label: "negative infinity", index: Number.NEGATIVE_INFINITY },
+			{ label: "unsafe integer", index: Number.MAX_SAFE_INTEGER + 1 },
+			{ label: "huge finite", index: 1_000_000_000 },
+			{ label: "out of range", index: 0 },
+		];
+		const counters = cases.map(() => ({ count: 0 }));
+		const outputs = await Promise.all(
+			cases.map(({ index }, caseIndex) => collectInvalidIndex(tool, index, counters[caseIndex]!)),
+		);
+
+		expect(counters.map(({ count }) => count)).toEqual(cases.map(() => 0));
+		for (const [caseIndex, { events, result }] of outputs.entries()) {
+			expectInvalidTerminal(events, result);
+			expect(
+				events.filter((event) => event.type.startsWith("toolcall_")),
+				cases[caseIndex]!.label,
+			).toEqual([]);
+			expect(JSON.stringify(result.diagnostics), cases[caseIndex]!.label).not.toContain("contentIndex");
+		}
+
+		const valid = await collectValidSkippedLowerIndex(tool);
+		expect(valid.result.content).toEqual([
+			{ type: "providerNative", subtype: "fixture", raw: { preserved: true } },
+			nativeCall("toolu-valid"),
+		]);
+		expect(valid.events.filter((event) => event.type === "toolcall_start")).toHaveLength(1);
+		expect(valid.events.filter((event) => event.type === "toolcall_end")).toHaveLength(1);
 	});
 
 	it("fails closed for repeated native starts and post-end events", async () => {

@@ -39,7 +39,7 @@ export class RecoveryNativeProjection {
 	}
 
 	synchronizeLower(source: AssistantMessage, contentIndex: number): boolean {
-		for (let innerIndex = 0; innerIndex < contentIndex; innerIndex += 1) {
+		for (let innerIndex = 0; innerIndex < contentIndex && innerIndex < source.content.length; innerIndex += 1) {
 			if (this.rangesByInnerIndex.has(innerIndex)) continue;
 			const block = source.content[innerIndex];
 			if (!block) continue;
