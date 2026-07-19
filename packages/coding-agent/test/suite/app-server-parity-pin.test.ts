@@ -243,6 +243,9 @@ describe("app-server parity characterization pins", () => {
 		const manifest = readManifest();
 		const sent: RpcEnvelope[] = [];
 		const core = new ServerCore({ codexHome: "/tmp/senpi-parity-pin" });
+		if (manifest.gates.experimentalApi.includes("thread/search")) {
+			core.registerMethod("thread/search", { experimental: true, handler: () => ({}) });
+		}
 		const connectionId = addCoreConnection(core, "gate-pin", sent);
 		const mutation = process.env.SENPI_APP_SERVER_PIN_MUTATION;
 		await initialize(core, connectionId, mutation === "experimental-gate");

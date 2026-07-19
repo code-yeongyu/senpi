@@ -19,12 +19,14 @@
       "turn/steer"
     ],
     "experimental": [
-      "remoteControl/status/read"
+      "remoteControl/status/read",
+      "thread/search"
     ]
   },
   "gates": {
     "experimentalApi": [
-      "remoteControl/status/read"
+      "remoteControl/status/read",
+      "thread/search"
     ]
   },
   "catalogCounts": {
@@ -144,7 +146,6 @@
       "thread/realtime/listVoices",
       "thread/realtime/start",
       "thread/realtime/stop",
-      "thread/search",
       "thread/searchOccurrences",
       "thread/settings/update",
       "thread/turns/list"

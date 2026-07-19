@@ -5,12 +5,14 @@ import type {
 	ThreadStartResponse,
 	ThreadUnsubscribeResponse,
 } from "../protocol/index.ts";
-import type { MethodRegistry, RegistryConnection, RpcRequest } from "../rpc/registry.ts";
+import type { MethodHandler, MethodRegistry, RegistryConnection, RpcRequest } from "../rpc/registry.ts";
 import type { NotificationRouter } from "../server/notifications.ts";
 import { ThreadArchiveState } from "./archive-state.ts";
 import { connectionId, objectValue, optionalString, requiredString } from "./handler-params.ts";
 import { listThreadsResponse, loadedThreadsResponse } from "./list-handlers.ts";
 import { type ThreadEntry, ThreadNotFoundError, type ThreadRegistry } from "./registry.ts";
+import { threadSearchResponse } from "./search.ts";
+import { ThreadSearchCache } from "./search-cache.ts";
 import { requestedApprovalPolicy, requestedStartModel } from "./start-options.ts";
 import type { TurnLog } from "./turn-log.ts";
 import { buildWireThread, NOT_LOADED_STATUS } from "./wire-thread.ts";
@@ -43,11 +45,21 @@ export function registerThreadLifecycleHandlers(
 	options: ThreadLifecycleHandlersOptions,
 ): ThreadLifecycleController {
 	const handlers = new ThreadLifecycleHandlers(options);
-	for (const [method, handler] of handlers.registrations()) {
-		registry.register(method, { handler, scope: method.startsWith("thread/") ? "thread" : "global" });
+	for (const registration of handlers.registrations()) {
+		registry.register(registration.method, {
+			handler: registration.handler,
+			scope: registration.method.startsWith("thread/") ? "thread" : "global",
+			experimental: registration.experimental,
+		});
 	}
 	return handlers;
 }
+
+type ThreadHandlerRegistration = {
+	readonly method: string;
+	readonly handler: MethodHandler;
+	readonly experimental?: boolean;
+};
 
 class ThreadLifecycleHandlers {
 	private readonly threads: ThreadRegistry;
@@ -55,6 +67,7 @@ class ThreadLifecycleHandlers {
 	private readonly notifications: NotificationRouter;
 	private readonly replayPendingApprovals: ((threadId: string, connectionId: string) => void) | undefined;
 	private readonly archiveState: ThreadArchiveState;
+	private readonly searchCache = new ThreadSearchCache();
 	private readonly idleUnloadMs: number;
 	private readonly idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -67,34 +80,52 @@ class ThreadLifecycleHandlers {
 		this.idleUnloadMs = Math.max(0, options.idleUnloadMinutes ?? DEFAULT_IDLE_UNLOAD_MINUTES) * 60 * 1000;
 	}
 
-	registrations(): ReadonlyArray<
-		readonly [
-			string,
-			(context: {
-				readonly connection: RegistryConnection;
-				readonly request: RpcRequest;
-			}) => Promise<unknown> | unknown,
-		]
-	> {
+	registrations(): readonly ThreadHandlerRegistration[] {
 		return [
-			["thread/start", (context) => this.start(context.connection, context.request)],
-			["thread/resume", (context) => this.resume(context.connection, context.request)],
-			["thread/fork", (context) => this.fork(context.connection, context.request)],
-			["thread/read", (context) => this.read(context.request)],
-			[
-				"thread/list",
-				(context) =>
+			{
+				method: "thread/start",
+				handler: (context) => this.start(context.connection, context.request),
+			},
+			{
+				method: "thread/resume",
+				handler: (context) => this.resume(context.connection, context.request),
+			},
+			{
+				method: "thread/fork",
+				handler: (context) => this.fork(context.connection, context.request),
+			},
+			{ method: "thread/read", handler: (context) => this.read(context.request) },
+			{
+				method: "thread/list",
+				handler: (context) =>
 					listThreadsResponse(context.request.params, {
 						threads: this.threads,
 						turnLog: this.turnLog,
 						archiveState: this.archiveState,
 					}),
-			],
-			["thread/loaded/list", (context) => loadedThreadsResponse(context.request.params, this.threads)],
-			["thread/name/set", (context) => this.setName(context.request)],
-			["thread/archive", (context) => this.archive(context.request)],
-			["thread/delete", (context) => this.delete(context.request)],
-			["thread/unsubscribe", (context) => this.unsubscribe(context.connection, context.request)],
+			},
+			{
+				method: "thread/loaded/list",
+				handler: (context) => loadedThreadsResponse(context.request.params, this.threads),
+			},
+			{ method: "thread/name/set", handler: (context) => this.setName(context.request) },
+			{ method: "thread/archive", handler: (context) => this.archive(context.request) },
+			{ method: "thread/delete", handler: (context) => this.delete(context.request) },
+			{
+				method: "thread/unsubscribe",
+				handler: (context) => this.unsubscribe(context.connection, context.request),
+			},
+			{
+				method: "thread/search",
+				experimental: true,
+				handler: (context) =>
+					threadSearchResponse(context.request.params, {
+						threads: this.threads,
+						turnLog: this.turnLog,
+						archiveState: this.archiveState,
+						cache: this.searchCache,
+					}),
+			},
 		];
 	}
 

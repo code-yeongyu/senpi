@@ -126,7 +126,7 @@ try {
 	await sendDocumented({ id: 14, method: "thread/archive", params: { threadId } });
 	await sendDocumented({ id: 15, method: "thread/delete", params: { threadId: forkId } });
 	await sendDocumented({ id: 16, method: "thread/unsubscribe", params: { threadId } });
-	await sendDocumented({ id: 17, method: "thread/search", params: { query: "docs" } });
+	await sendDocumented({ id: 17, method: "thread/search", params: { searchTerm: "docs" } });
 
 	if (!("result" in initialize.response)) {
 		throw new Error("initialize did not return a result");
