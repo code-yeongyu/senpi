@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
 	ThreadForkResponse,
 	ThreadReadResponse,
@@ -16,6 +17,7 @@ import { threadSearchResponse } from "./search.ts";
 import { ThreadSearchCache } from "./search-cache.ts";
 import { requestedApprovalPolicy, requestedStartModel } from "./start-options.ts";
 import type { TurnLog } from "./turn-log.ts";
+import { invalidRequest } from "./turn-runtime.ts";
 import { buildWireThread, NOT_LOADED_STATUS } from "./wire-thread.ts";
 
 export interface ThreadLifecycleHandlersOptions {
@@ -145,6 +147,10 @@ class ThreadLifecycleHandlers {
 						turnLog: this.turnLog,
 					}),
 			},
+			{
+				method: "thread/compact/start",
+				handler: (context) => this.compact(context.request),
+			},
 		];
 	}
 
@@ -205,6 +211,52 @@ class ThreadLifecycleHandlers {
 		entry.session.setSessionName(name);
 		this.notifications.broadcast({ method: "thread/name/updated", params: { threadId, threadName: name } });
 		return {};
+	}
+
+	private compact(request: RpcRequest): Record<string, never> {
+		const params = objectValue(request.params);
+		const threadId = requiredString(params.threadId, "threadId");
+		let entry: ThreadEntry;
+		try {
+			entry = this.threads.getLoadedThread(threadId);
+		} catch (error) {
+			if (error instanceof ThreadNotFoundError) {
+				throw invalidRequest(`thread not found: ${threadId}`);
+			}
+			throw error;
+		}
+
+		const turnId = randomUUID();
+		const item = { type: "contextCompaction", id: randomUUID() } as const;
+		const startedAtMs = Date.now();
+		this.turnLog.recordTurn(threadId, {
+			turnId,
+			startedAt: new Date(startedAtMs).toISOString(),
+			status: "running",
+		});
+		this.notifications.toThread(threadId, {
+			method: "item/started",
+			params: { threadId, turnId, item, startedAtMs },
+		});
+
+		void entry.session.compact().then(
+			() => this.completeCompaction(threadId, turnId, item),
+			() => this.completeCompaction(threadId, turnId, item),
+		);
+		return {};
+	}
+
+	private completeCompaction(
+		threadId: string,
+		turnId: string,
+		item: { readonly type: "contextCompaction"; readonly id: string },
+	): void {
+		this.turnLog.appendItem(threadId, turnId, item);
+		this.turnLog.completeTurn(threadId, turnId, "completed");
+		this.notifications.toThread(threadId, {
+			method: "item/completed",
+			params: { threadId, turnId, item, completedAtMs: Date.now() },
+		});
 	}
 
 	private async archive(request: RpcRequest): Promise<Record<string, never>> {

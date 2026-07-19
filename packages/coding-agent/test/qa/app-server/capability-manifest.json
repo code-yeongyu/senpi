@@ -5,6 +5,7 @@
       "initialize",
       "model/list",
       "thread/archive",
+      "thread/compact/start",
       "thread/delete",
       "thread/fork",
       "thread/list",
@@ -105,7 +106,6 @@
       "skills/extraRoots/set",
       "skills/list",
       "thread/approveGuardianDeniedAction",
-      "thread/compact/start",
       "thread/goal/clear",
       "thread/goal/get",
       "thread/goal/set",
@@ -173,7 +173,8 @@
       "thread/unsubscribe",
       "thread/search",
       "thread/turns/list",
-      "thread/items/list"
+      "thread/items/list",
+      "thread/compact/start"
     ]
   }
 }
