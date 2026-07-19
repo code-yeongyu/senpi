@@ -1,7 +1,7 @@
 import type { AssistantMessage, AssistantMessageEventStream } from "../types.ts";
 import type { StreamMessageProjection } from "./stream-wrapper-shared.ts";
 
-export type RecoveryStreamFailure = "collision" | "invalid_native_event_order";
+export type RecoveryStreamFailure = "collision" | "invalid_content_event_order" | "invalid_native_event_order";
 
 const failureDetails: Record<RecoveryStreamFailure, { diagnosticType: string; errorMessage: string; status: string }> =
 	{
@@ -9,6 +9,11 @@ const failureDetails: Record<RecoveryStreamFailure, { diagnosticType: string; er
 			diagnosticType: "text_tool_call_recovery_collision",
 			errorMessage: "Tool call ID collision in provider stream",
 			status: "collision",
+		},
+		invalid_content_event_order: {
+			diagnosticType: "text_tool_call_recovery_invalid_content_event",
+			errorMessage: "Invalid assistant content event order",
+			status: "invalid_content_event_order",
 		},
 		invalid_native_event_order: {
 			diagnosticType: "text_tool_call_recovery_invalid_native_event",

@@ -12,6 +12,8 @@ export type ParserProjectionResult = {
 	readonly completedToolCalls: readonly ToolCall[];
 };
 
+type StreamMessageProjectionOptions = { readonly preserveSourceMetadata?: boolean };
+
 function isPartialToolCall(block: AssistantMessage["content"][number] | undefined): block is PartialToolCall {
 	return block?.type === "toolCall" && "partialJson" in block && typeof block.partialJson === "string";
 }
@@ -29,32 +31,42 @@ export class StreamMessageProjection {
 	private readonly toolCallIndexByParserIndex = new Map<number, number>();
 	private readonly projectedDiagnostics: AssistantMessageDiagnostic[] = [];
 	private readonly thinking: StreamThinkingProjection;
+	private readonly preserveSourceMetadata: boolean;
 	private source: AssistantMessage;
 
-	constructor(stream: AssistantMessageEventStream, source: AssistantMessage) {
+	constructor(
+		stream: AssistantMessageEventStream,
+		source: AssistantMessage,
+		options: StreamMessageProjectionOptions = {},
+	) {
 		this.stream = stream;
 		this.source = source;
-		this.message = cloneAssistantMessageMetadata(source, [], this.projectedDiagnostics);
-		this.thinking = new StreamThinkingProjection(stream, this.message);
+		this.preserveSourceMetadata = options.preserveSourceMetadata === true;
+		this.message = cloneAssistantMessageMetadata(source, [], this.projectedDiagnostics, this.preserveSourceMetadata);
+		this.thinking = new StreamThinkingProjection(stream, this.message, this.preserveSourceMetadata);
 	}
 
 	sync(source: AssistantMessage): void {
 		this.source = source;
-		syncAssistantMessageMetadata(this.message, source, this.projectedDiagnostics);
+		syncAssistantMessageMetadata(this.message, source, this.projectedDiagnostics, this.preserveSourceMetadata);
 	}
 
 	appendDiagnostic(diagnostic: AssistantMessageDiagnostic): void {
 		this.projectedDiagnostics.push(diagnostic);
-		syncAssistantMessageMetadata(this.message, this.source, this.projectedDiagnostics);
+		syncAssistantMessageMetadata(this.message, this.source, this.projectedDiagnostics, this.preserveSourceMetadata);
 	}
 
 	startText(contentIndex: number, sourceBlock?: AssistantMessage["content"][number]): number {
 		this.currentInnerTextIndex = contentIndex;
 		const outerIndex = this.message.content.length;
-		const block: TextContent =
-			sourceBlock?.type === "text" ? { ...sourceBlock, text: "" } : { type: "text", text: "" };
-		this.message.content.push(block);
-		this.textBlockIndexByInnerIndex.set(contentIndex, outerIndex);
+		if (this.preserveSourceMetadata) {
+			const block: TextContent =
+				sourceBlock?.type === "text" ? { ...sourceBlock, text: "" } : { type: "text", text: "" };
+			this.message.content.push(block);
+			this.textBlockIndexByInnerIndex.set(contentIndex, outerIndex);
+		} else {
+			this.textBlockIndexByInnerIndex.set(contentIndex, null);
+		}
 		this.stream.push({ type: "text_start", contentIndex: outerIndex, partial: this.message });
 		return outerIndex;
 	}
@@ -139,7 +151,12 @@ export class StreamMessageProjection {
 	}
 
 	finalize(doneMessage: AssistantMessage, sawToolCall: boolean): AssistantMessage {
-		const finalMessage = cloneAssistantMessageMetadata(doneMessage, this.message.content, this.projectedDiagnostics);
+		const finalMessage = cloneAssistantMessageMetadata(
+			doneMessage,
+			this.message.content,
+			this.projectedDiagnostics,
+			this.preserveSourceMetadata,
+		);
 		if (
 			(sawToolCall || this.hasFinalizedToolCallContent()) &&
 			(finalMessage.stopReason === "stop" || finalMessage.stopReason === "length")

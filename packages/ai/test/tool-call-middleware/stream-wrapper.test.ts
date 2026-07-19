@@ -8,9 +8,11 @@ import {
 	registerStreamWrapperFinalizationCases,
 	registerStreamWrapperStopReasonCase,
 } from "./stream-wrapper-finalization-cases.ts";
+import { registerLegacyProjectionDifferentialCase } from "./stream-wrapper-legacy-differential-case.ts";
 
 describe("wrapStreamWithToolCallMiddleware", () => {
 	registerStreamWrapperBasicCases();
+	registerLegacyProjectionDifferentialCase();
 	registerStreamWrapperFinalizationCases();
 	registerStreamWrapperErrorCases();
 	registerStreamWrapperStopReasonCase();

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { wrapStreamWithInvokeRecovery } from "../../src/index.ts";
 import type { AssistantMessageEvent, Tool } from "../../src/types.ts";
 import { registerInvokeRecoveryContentExclusionCases } from "./invoke-recovery-content-exclusion-cases.ts";
+import { registerInvokeRecoveryContentOrderCases } from "./invoke-recovery-content-order-cases.ts";
 import { registerInvokeRecoveryNativeCases } from "./invoke-recovery-native-cases.ts";
 import { registerInvokeRecoveryNativeLifecycleCases } from "./invoke-recovery-native-lifecycle-cases.ts";
 import {
@@ -40,6 +41,7 @@ async function runText(chunks: readonly string[], reason: "stop" | "length" = "s
 
 describe("wrapStreamWithInvokeRecovery", () => {
 	registerInvokeRecoveryContentExclusionCases(bashTool);
+	registerInvokeRecoveryContentOrderCases(bashTool);
 	registerInvokeRecoveryNativeCases(bashTool);
 	registerInvokeRecoveryNativeLifecycleCases(bashTool);
 

@@ -9,16 +9,20 @@ export class StreamThinkingProjection {
 	private readonly stream: AssistantMessageEventStream;
 	private readonly message: AssistantMessage;
 	private readonly outerIndexByInnerIndex = new Map<number, number>();
+	private readonly preserveSourceMetadata: boolean;
 
-	constructor(stream: AssistantMessageEventStream, message: AssistantMessage) {
+	constructor(stream: AssistantMessageEventStream, message: AssistantMessage, preserveSourceMetadata: boolean) {
 		this.stream = stream;
 		this.message = message;
+		this.preserveSourceMetadata = preserveSourceMetadata;
 	}
 
 	start(innerIndex: number, source: AssistantMessage): number {
 		const sourceBlock = source.content[innerIndex];
 		const block: ThinkingContent =
-			sourceBlock?.type === "thinking" ? cloneThinking(sourceBlock) : { type: "thinking", thinking: "" };
+			this.preserveSourceMetadata && sourceBlock?.type === "thinking"
+				? cloneThinking(sourceBlock)
+				: { type: "thinking", thinking: "" };
 		const outerIndex = this.message.content.length;
 		this.message.content.push(block);
 		this.outerIndexByInnerIndex.set(innerIndex, outerIndex);
@@ -33,7 +37,7 @@ export class StreamThinkingProjection {
 		if (current?.type !== "thinking") return;
 		const sourceBlock = source.content[innerIndex];
 		this.message.content[outerIndex] =
-			sourceBlock?.type === "thinking"
+			this.preserveSourceMetadata && sourceBlock?.type === "thinking"
 				? cloneThinking(sourceBlock)
 				: cloneThinking(current, current.thinking + delta);
 		this.stream.push({ type: "thinking_delta", contentIndex: outerIndex, delta, partial: this.message });
@@ -46,7 +50,9 @@ export class StreamThinkingProjection {
 		if (current?.type !== "thinking") return;
 		const sourceBlock = source.content[innerIndex];
 		this.message.content[outerIndex] =
-			sourceBlock?.type === "thinking" ? cloneThinking(sourceBlock, content) : cloneThinking(current, content);
+			this.preserveSourceMetadata && sourceBlock?.type === "thinking"
+				? cloneThinking(sourceBlock, content)
+				: cloneThinking(current, content);
 		this.stream.push({ type: "thinking_end", contentIndex: outerIndex, content, partial: this.message });
 	}
 }
