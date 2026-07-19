@@ -159,7 +159,6 @@ export function builtinProviders(): Provider[] {
 		githubCopilotProvider(),
 		gitlabDuoProvider(),
 		googleProvider(),
-		googleProvider(),
 		googleGeminiCliProvider(),
 		googleAntigravityProvider(),
 		googleVertexProvider(),
