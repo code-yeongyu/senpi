@@ -93,21 +93,36 @@ export class SqliteCredentialVault implements CredentialVault {
 	}
 
 	/**
-	 * CAS-guarded disable: only marks the credential disabled when `expectedUpdatedAt`
-	 * still matches. Returns false when a concurrent re-login/refresh rotated the row.
+	 * CAS-guarded disable: only marks the credential disabled when the loaded
+	 * snapshot still matches. Prefer matching both `updatedAt` and material so a
+	 * re-login that keeps `credential_id` but rotates tokens is never disabled.
+	 * Returns false when a concurrent re-login/refresh rotated the row.
 	 */
 	disableCredentialIfUnchanged(
 		credentialId: string,
 		expectedUpdatedAt: string,
 		cause: string,
 		at = new Date().toISOString(),
+		expectedMaterial?: CredentialMaterial,
 	): boolean {
-		const result = this.db
-			.prepare(
-				"UPDATE credentials SET disabled_at=?, disabled_cause=?, updated_at=? WHERE credential_id=? AND disabled_at IS NULL AND updated_at=?",
-			)
-			.run(at, redactDisableCause(cause), at, credentialId, expectedUpdatedAt);
-		return result.changes === 1;
+		return this.transaction(() => {
+			const row = this.db
+				.prepare("SELECT material, updated_at, disabled_at FROM credentials WHERE credential_id=?")
+				.get(credentialId) as { material: string; updated_at: string; disabled_at: string | null } | undefined;
+			if (row === undefined || row.disabled_at !== null || row.updated_at !== expectedUpdatedAt) {
+				return false;
+			}
+			if (expectedMaterial !== undefined) {
+				const current = parseMaterial(JSON.parse(row.material));
+				if (!materialEquals(current, expectedMaterial)) return false;
+			}
+			const result = this.db
+				.prepare(
+					"UPDATE credentials SET disabled_at=?, disabled_cause=?, updated_at=? WHERE credential_id=? AND disabled_at IS NULL AND updated_at=?",
+				)
+				.run(at, redactDisableCause(cause), at, credentialId, expectedUpdatedAt);
+			return result.changes === 1;
+		});
 	}
 
 	applyRefresh(
@@ -254,8 +269,10 @@ export class SqliteCredentialVault implements CredentialVault {
 			.all()
 			.map((row) => (row as { name?: unknown }).name)
 			.filter((name): name is string => typeof name === "string");
-		if (!columns.includes("issued_at")) this.db.exec("ALTER TABLE leases ADD COLUMN issued_at TEXT NOT NULL DEFAULT ''");
-		if (!columns.includes("expires_at")) this.db.exec("ALTER TABLE leases ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''");
+		if (!columns.includes("issued_at"))
+			this.db.exec("ALTER TABLE leases ADD COLUMN issued_at TEXT NOT NULL DEFAULT ''");
+		if (!columns.includes("expires_at"))
+			this.db.exec("ALTER TABLE leases ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''");
 		this.db.exec("CREATE INDEX IF NOT EXISTS leases_expires_at_idx ON leases(expires_at)");
 	}
 
@@ -270,9 +287,8 @@ export class SqliteCredentialVault implements CredentialVault {
 					.run(nowIso).changes,
 			);
 			const consumed = Number(
-				this.db
-					.prepare("DELETE FROM leases WHERE consumed_at IS NOT NULL AND consumed_at < ?")
-					.run(retainBefore).changes,
+				this.db.prepare("DELETE FROM leases WHERE consumed_at IS NOT NULL AND consumed_at < ?").run(retainBefore)
+					.changes,
 			);
 			return unconsumed + consumed;
 		};
@@ -497,14 +513,23 @@ export class AuthBrokerService {
 			if (!Number.isFinite(expiresAt) || expiresAt > deadline) continue;
 			checked += 1;
 			const snapshotUpdatedAt = record.updatedAt;
+			const snapshotMaterial = record.material;
 			try {
 				await this.refreshCredentialById(record.credentialId);
 				refreshed += 1;
 			} catch (error) {
 				if (isDefinitiveOAuthFailure(error instanceof Error ? error.message : String(error))) {
 					// CAS: only disable if the row is still the same snapshot we tried to refresh.
-					// A re-login that rotates material keeps credential_id but bumps updatedAt.
-					if (this.vault.disableCredentialIfUnchanged(record.credentialId, snapshotUpdatedAt, "oauth refresh failed definitively")) {
+					// A re-login that rotates material keeps credential_id but changes material/updatedAt.
+					if (
+						this.vault.disableCredentialIfUnchanged(
+							record.credentialId,
+							snapshotUpdatedAt,
+							"oauth refresh failed definitively",
+							undefined,
+							snapshotMaterial,
+						)
+					) {
 						disabled += 1;
 					}
 				}
@@ -623,6 +648,20 @@ function parseMaterial(value: unknown): CredentialMaterial {
 		};
 	}
 	throw new AuthBrokerError("Invalid broker database row");
+}
+
+function materialEquals(left: CredentialMaterial, right: CredentialMaterial): boolean {
+	if (left.type !== right.type) return false;
+	if (left.type === "api_key" && right.type === "api_key") return left.apiKey === right.apiKey;
+	if (left.type === "oauth" && right.type === "oauth") {
+		return (
+			left.accessToken === right.accessToken &&
+			left.refreshToken === right.refreshToken &&
+			left.expiresAt === right.expiresAt &&
+			JSON.stringify(left.extras ?? null) === JSON.stringify(right.extras ?? null)
+		);
+	}
+	return false;
 }
 function parseLeaseRow(row: Record<string, unknown>): {
 	readonly authentication_hash: string;

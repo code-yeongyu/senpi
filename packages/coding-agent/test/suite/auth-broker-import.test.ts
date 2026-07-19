@@ -75,6 +75,7 @@ describe("auth broker import", () => {
 					disabled: { cause: "quota" },
 					email: "cli@example.test",
 					expired: "2099-12-31T23:59:59.000Z",
+					project_id: "import-project-id",
 					provider: "claude",
 					refresh_token: `${secret}-cli-refresh`,
 					type: "claude",
@@ -104,13 +105,15 @@ describe("auth broker import", () => {
 				provider: "openai-codex",
 				type: "oauth",
 			});
-			expect(
-				vault.metadataSnapshot().credentials.find(({ identityKey }) => identityKey === "cli@example.test")
-					?.disabled,
-			).toEqual({
+			const cliCredential = vault.load().find((credential) => credential.identityKey === "cli@example.test");
+			expect(cliCredential?.disabled).toEqual({
 				at: "2026-07-12T00:00:00.000Z",
 				cause: "quota",
 			});
+			expect(cliCredential?.material.type).toBe("oauth");
+			if (cliCredential?.material.type === "oauth") {
+				expect(cliCredential.material.extras).toEqual({ projectId: "import-project-id" });
+			}
 		} finally {
 			vault.close();
 		}

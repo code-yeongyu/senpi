@@ -75,17 +75,19 @@ describe("auth broker review P1 regressions", () => {
 		const fixture = vaultPath();
 		try {
 			const vault = SqliteCredentialVault.open(fixture.path);
+			const oldMaterial = {
+				type: "oauth" as const,
+				accessToken: "old",
+				refreshToken: "refresh-a",
+				expiresAt: Date.now() - 1_000,
+			};
 			vault.upsertCredential(
 				oauthRecord({
-					material: {
-						type: "oauth",
-						accessToken: "old",
-						refreshToken: "refresh-a",
-						expiresAt: Date.now() - 1_000,
-					},
+					material: oldMaterial,
 				}),
 			);
 			const snapshotUpdatedAt = vault.credential("oauth-a").updatedAt;
+			const snapshotMaterial = vault.credential("oauth-a").material;
 
 			// Concurrent re-login keeps credential_id, bumps updatedAt + material.
 			vault.upsertCredential(
@@ -105,6 +107,55 @@ describe("auth broker review P1 regressions", () => {
 				"oauth-a",
 				snapshotUpdatedAt,
 				"oauth refresh failed definitively invalid_grant",
+				undefined,
+				snapshotMaterial,
+			);
+			expect(disabled).toBe(false);
+			expect(vault.credential("oauth-a").disabled).toBeUndefined();
+			expect((vault.credential("oauth-a").material as { accessToken: string }).accessToken).toBe("new-access");
+			vault.close();
+		} finally {
+			fixture.cleanup();
+		}
+	});
+
+	it("CAS-guards disable against material so same-updatedAt token rotation is safe", () => {
+		const fixture = vaultPath();
+		try {
+			const vault = SqliteCredentialVault.open(fixture.path);
+			const sharedUpdatedAt = "2026-07-19T00:00:00.000Z";
+			const oldMaterial = {
+				type: "oauth" as const,
+				accessToken: "old",
+				refreshToken: "refresh-a",
+				expiresAt: Date.now() - 1_000,
+			};
+			vault.upsertCredential(
+				oauthRecord({
+					updatedAt: sharedUpdatedAt,
+					material: oldMaterial,
+				}),
+			);
+			// Re-login keeps credential_id and happens to write the same updatedAt clock second
+			// but rotates material (identity-conflict upsert preserves id).
+			vault.upsertCredential(
+				oauthRecord({
+					updatedAt: sharedUpdatedAt,
+					material: {
+						type: "oauth",
+						accessToken: "new-access",
+						refreshToken: "new-refresh",
+						expiresAt: Date.now() + 60_000,
+						extras: { projectId: "proj-keep" },
+					},
+				}),
+			);
+			const disabled = vault.disableCredentialIfUnchanged(
+				"oauth-a",
+				sharedUpdatedAt,
+				"oauth refresh failed definitively invalid_grant",
+				undefined,
+				oldMaterial,
 			);
 			expect(disabled).toBe(false);
 			expect(vault.credential("oauth-a").disabled).toBeUndefined();
@@ -129,9 +180,9 @@ describe("auth broker review P1 regressions", () => {
 			const prunedBefore = admin.pruneExpiredLeases(new Date(Date.now() + 20 * 60_000));
 			expect(prunedBefore).toBeGreaterThanOrEqual(1);
 			admin.close();
-			expect(() =>
-				vault.consumeSelectionLease({ authentication: "auth", leaseId: pending.leaseId }),
-			).toThrow(/no longer available/i);
+			expect(() => vault.consumeSelectionLease({ authentication: "auth", leaseId: pending.leaseId })).toThrow(
+				/no longer available/i,
+			);
 			vault.close();
 		} finally {
 			fixture.cleanup();

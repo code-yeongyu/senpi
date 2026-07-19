@@ -616,8 +616,9 @@ function recordFromGajaeCredential(
 		);
 	}
 	if (credential.type === "oauth") {
-		assertExactKeys(credential, ["access", "expires", "refresh", "type"]);
+		assertExactKeys(credential, ["access", "expires", "projectId", "project_id", "refresh", "type"]);
 		const expiresAt = requiredFiniteNumber(credential, "expires");
+		const extras = oauthExtrasFromImportFields(credential);
 		return credentialRecord(
 			provider,
 			identityKey,
@@ -626,6 +627,7 @@ function recordFromGajaeCredential(
 				expiresAt,
 				refreshToken: requiredString(credential, "refresh"),
 				type: "oauth",
+				...(extras === undefined ? {} : { extras }),
 			},
 			timestamp,
 		);
@@ -670,6 +672,7 @@ function cliProxyV6Record(value: Record<string, unknown>, overrideProvider: stri
 	if (!Number.isFinite(expiresAt)) throw new AuthBrokerCommandError("CLIProxyAPI credential has invalid expiry");
 	const updatedAt =
 		optionalTimestamp(value, "updated_at") ?? optionalTimestamp(value, "created_at") ?? new Date().toISOString();
+	const extras = oauthExtrasFromImportFields(value);
 	return {
 		...credentialRecord(
 			provider,
@@ -679,6 +682,7 @@ function cliProxyV6Record(value: Record<string, unknown>, overrideProvider: stri
 				expiresAt,
 				refreshToken: requiredString(value, "refresh_token"),
 				type: "oauth",
+				...(extras === undefined ? {} : { extras }),
 			},
 			optionalTimestamp(value, "created_at") ?? updatedAt,
 		),
@@ -709,14 +713,30 @@ function parseCredentialMaterial(value: Record<string, unknown>, type: Credentia
 		if (value.type !== "api_key") throw new AuthBrokerCommandError("Credential material kind does not match pool");
 		return { apiKey: requiredString(value, "apiKey"), type };
 	}
-	assertExactKeys(value, ["accessToken", "expiresAt", "refreshToken", "type"]);
+	assertExactKeys(value, ["accessToken", "expiresAt", "extras", "refreshToken", "type"]);
 	if (value.type !== "oauth") throw new AuthBrokerCommandError("Credential material kind does not match pool");
+	const extras =
+		value.extras !== undefined &&
+		typeof value.extras === "object" &&
+		value.extras !== null &&
+		!Array.isArray(value.extras)
+			? (value.extras as Record<string, unknown>)
+			: undefined;
 	return {
 		accessToken: requiredString(value, "accessToken"),
 		expiresAt: requiredFiniteNumber(value, "expiresAt"),
 		refreshToken: requiredString(value, "refreshToken"),
 		type,
+		...(extras === undefined ? {} : { extras }),
 	};
+}
+
+/** Map import-side provider fields (CLIProxy project_id, Google projectId) into vault oauth extras. */
+function oauthExtrasFromImportFields(value: Record<string, unknown>): Record<string, unknown> | undefined {
+	const extras: Record<string, unknown> = {};
+	const projectId = optionalString(value, "projectId") ?? optionalString(value, "project_id");
+	if (projectId !== undefined) extras.projectId = projectId;
+	return Object.keys(extras).length > 0 ? extras : undefined;
 }
 
 function credentialType(value: unknown): CredentialMaterial["type"] {
