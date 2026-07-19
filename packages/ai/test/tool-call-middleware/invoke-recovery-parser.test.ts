@@ -164,4 +164,38 @@ describe("createAntmlInvokeRecoveryStreamParser", () => {
 			},
 		]);
 	});
+
+	it("preserves unknown invokes after a recovered wrapper call", () => {
+		// Given
+		const parser = createAntmlInvokeRecoveryStreamParser([bashTool]);
+
+		// When
+		const events = [
+			...parser.feed(
+				'<function_calls><invoke name="Bash"><parameter name="command">one</parameter></invoke><invoke name="Missing"></invoke></function_calls>',
+			),
+			...parser.finish(),
+		];
+
+		// Then
+		expect(textOutput(events)).toBe('<invoke name="Missing"></invoke>');
+		expect(toolCallEvents(events)).toHaveLength(3);
+	});
+
+	it("preserves tail text after a recovered wrapper call", () => {
+		// Given
+		const parser = createAntmlInvokeRecoveryStreamParser([bashTool]);
+
+		// When
+		const events = [
+			...parser.feed(
+				'<function_calls><invoke name="Bash"><parameter name="command">one</parameter></invoke>TAIL</function_calls>',
+			),
+			...parser.finish(),
+		];
+
+		// Then
+		expect(textOutput(events)).toBe("TAIL");
+		expect(toolCallEvents(events)).toHaveLength(3);
+	});
 });

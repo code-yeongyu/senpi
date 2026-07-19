@@ -1,8 +1,9 @@
 import type { Tool } from "../../../types.ts";
 import type { ParserOptions, StreamParser, StreamParserEvent } from "../../types.ts";
 import type { InvokeProtocolConfig } from "./invoke-protocol.ts";
-import { findFunctionCallsCloseTag, findFunctionCallsOpenTag } from "./invoke-stream-helpers.ts";
+import { findFunctionCallsOpenTag } from "./invoke-stream-helpers.ts";
 import { findInvokeOpenTag, isPotentialProtocolStart, scanInvokeBlock } from "./invoke-tag-scanner.ts";
+import { RecoveryWrapperState } from "./recovery-wrapper-state.ts";
 import {
 	ANTHROPIC_XML_MAX_RETAINED_FRAGMENT_LENGTH,
 	createPendingFragment,
@@ -11,23 +12,17 @@ import {
 import { createToolResolver } from "./tool-resolver.ts";
 
 type IdleState = { readonly kind: "idle"; tag: string };
-type WaitingState = {
-	readonly kind: "function-calls";
-	readonly opening: string;
-	readonly consumed: boolean;
-	content: string;
-	tag: string;
-};
+type WrapperState = { readonly kind: "wrapper"; readonly scanner: RecoveryWrapperState };
 type ActiveState = {
 	readonly kind: "active";
 	readonly tool: Tool;
 	readonly index: number;
 	readonly id: string;
 	readonly closeMatcher: StreamBoundaryMatcher;
-	readonly continuesWrapper: boolean;
+	readonly wrapper: RecoveryWrapperState | undefined;
 	source: string;
 };
-type RecoveryState = IdleState | WaitingState | ActiveState | { readonly kind: "finished" };
+type RecoveryState = IdleState | WrapperState | ActiveState | { readonly kind: "finished" };
 
 const MAX_PARTIAL_TAG_VALIDATION_LENGTH = 128;
 
@@ -37,11 +32,7 @@ function emitText(events: StreamParserEvent[], text: string): void {
 	}
 }
 
-/**
- * Incrementally recovers leaked ANTML invokes without changing the established
- * text-protocol stream parser. A known opening tag is the irreversible start
- * boundary; only a matching closing tag can make that call executable.
- */
+/** Recovery-only eager ANTML parser; existing text-protocol parser semantics remain unchanged. */
 export function createInvokeRecoveryStreamParser(
 	tools: readonly Tool[],
 	config: InvokeProtocolConfig,
@@ -58,7 +49,12 @@ export function createInvokeRecoveryStreamParser(
 		});
 	}
 
-	function startKnownInvoke(events: StreamParserEvent[], opening: string, tool: Tool, continuesWrapper = false): void {
+	function startKnownInvoke(
+		events: StreamParserEvent[],
+		opening: string,
+		tool: Tool,
+		wrapper?: RecoveryWrapperState,
+	): void {
 		const index = nextToolCallIndex;
 		nextToolCallIndex += 1;
 		const id = `recovered-antml-${index}`;
@@ -69,9 +65,13 @@ export function createInvokeRecoveryStreamParser(
 			index,
 			id,
 			closeMatcher: createPendingFragment("invoke", opening).matcher,
-			continuesWrapper,
+			wrapper,
 			source: opening,
 		};
+	}
+
+	function restoreAfterActive(active: ActiveState): void {
+		state = active.wrapper ? { kind: "wrapper", scanner: active.wrapper } : { kind: "idle", tag: "" };
 	}
 
 	function finishActive(events: StreamParserEvent[], active: ActiveState): void {
@@ -103,9 +103,7 @@ export function createInvokeRecoveryStreamParser(
 				errorMessage: "Recovered tool call arguments failed validation",
 			});
 		}
-		state = active.continuesWrapper
-			? { kind: "function-calls", opening: "", consumed: true, content: "", tag: "" }
-			: { kind: "idle", tag: "" };
+		restoreAfterActive(active);
 	}
 
 	function overflowActive(events: StreamParserEvent[], active: ActiveState): void {
@@ -120,9 +118,7 @@ export function createInvokeRecoveryStreamParser(
 			incomplete: true,
 			errorMessage: "Tool call stream ended before completion",
 		});
-		state = active.continuesWrapper
-			? { kind: "function-calls", opening: "", consumed: true, content: "", tag: "" }
-			: { kind: "idle", tag: "" };
+		restoreAfterActive(active);
 	}
 
 	function handleIdleTag(events: StreamParserEvent[], idle: IdleState): void {
@@ -139,7 +135,7 @@ export function createInvokeRecoveryStreamParser(
 		}
 		const wrapper = findFunctionCallsOpenTag(idle.tag, 0);
 		if (wrapper?.index === 0 && wrapper.length === idle.tag.length) {
-			state = { kind: "function-calls", opening: idle.tag, consumed: false, content: "", tag: "" };
+			state = { kind: "wrapper", scanner: new RecoveryWrapperState(idle.tag, resolveTool) };
 			return;
 		}
 		emitText(events, idle.tag);
@@ -169,44 +165,21 @@ export function createInvokeRecoveryStreamParser(
 		}
 	}
 
-	function feedWaitingCharacter(events: StreamParserEvent[], waiting: WaitingState, character: string): void {
-		waiting.content += character;
-		if (waiting.tag.length === 0 && character === "<") {
-			waiting.tag = "<";
-		} else if (waiting.tag.length > 0 && character === "<") {
-			waiting.tag = "<";
-		} else if (waiting.tag.length > 0) {
-			waiting.tag += character;
-		}
-		if (character === ">" && waiting.tag.length > 0) {
-			const invoke = findInvokeOpenTag(waiting.tag, 0);
-			if (invoke?.index === 0 && invoke.length === waiting.tag.length) {
-				const tool = resolveTool(invoke.toolName);
-				if (tool) {
-					if (!waiting.consumed) {
-						emitText(events, waiting.content.slice(0, -waiting.tag.length));
-					}
-					startKnownInvoke(events, waiting.tag, tool, true);
-				} else {
-					emitText(events, waiting.opening + waiting.content);
+	function feedWrapperCharacter(events: StreamParserEvent[], scanner: RecoveryWrapperState, character: string): void {
+		for (const action of scanner.feed(character)) {
+			if (action.type === "text" || action.type === "closed") {
+				emitText(events, action.text);
+				if (action.type === "closed") {
 					state = { kind: "idle", tag: "" };
 				}
-				return;
-			}
-			const close = findFunctionCallsCloseTag(waiting.tag, 0);
-			if (close?.index === 0 && close.length === waiting.tag.length) {
-				if (!waiting.consumed) {
-					emitText(events, waiting.opening + waiting.content);
-				}
+			} else if (action.type === "known") {
+				emitText(events, action.textBefore);
+				startKnownInvoke(events, action.opening, action.tool, scanner);
+			} else {
+				reportOverflow(action.retainedLength);
+				emitText(events, action.text);
 				state = { kind: "idle", tag: "" };
-				return;
 			}
-			waiting.tag = "";
-		}
-		if (waiting.opening.length + waiting.content.length === ANTHROPIC_XML_MAX_RETAINED_FRAGMENT_LENGTH) {
-			reportOverflow(waiting.opening.length + waiting.content.length);
-			emitText(events, waiting.opening + waiting.content);
-			state = { kind: "idle", tag: "" };
 		}
 	}
 
@@ -228,8 +201,8 @@ export function createInvokeRecoveryStreamParser(
 				}
 				if (state.kind === "idle") {
 					feedIdleCharacter(events, character, state);
-				} else if (state.kind === "function-calls") {
-					feedWaitingCharacter(events, state, character);
+				} else if (state.kind === "wrapper") {
+					feedWrapperCharacter(events, state.scanner, character);
 				} else {
 					feedActiveCharacter(events, state, character);
 				}
@@ -240,8 +213,8 @@ export function createInvokeRecoveryStreamParser(
 			const events: StreamParserEvent[] = [];
 			if (state.kind === "idle") {
 				emitText(events, state.tag);
-			} else if (state.kind === "function-calls") {
-				emitText(events, state.opening + state.content);
+			} else if (state.kind === "wrapper") {
+				emitText(events, state.scanner.finish());
 			}
 			state = { kind: "finished" };
 			return events;
