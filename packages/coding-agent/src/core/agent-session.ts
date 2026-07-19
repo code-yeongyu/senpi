@@ -3243,6 +3243,10 @@ export class AgentSession {
 					this._modelRuntime.registerProvider(name, config);
 					this._refreshCurrentModelFromRegistry();
 				},
+				registerNativeProvider: (provider) => {
+					this._modelRuntime.registerNativeProvider(provider);
+					this._refreshCurrentModelFromRegistry();
+				},
 				unregisterProvider: (name) => {
 					this._modelRuntime.unregisterProvider(name);
 					this._refreshCurrentModelFromRegistry();

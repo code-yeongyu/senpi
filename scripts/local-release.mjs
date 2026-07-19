@@ -218,6 +218,10 @@ function main() {
 	const binaryDirectory = join(outDir, "bun");
 	mkdirSync(tarballDirectory, { recursive: true });
 
+	if (!options.skipCheck || !options.skipTest) {
+		run("npm", ["--prefix", "packages/ai", "run", "generate-models"], { cwd: repoRoot });
+	}
+
 	if (!options.skipCheck) {
 		run("npm", ["run", "check"], { cwd: repoRoot });
 	}

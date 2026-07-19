@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, AuthResult, Model, Provider } from "@earendil-works/pi-ai";
 import { getAgentDir } from "../config.ts";
 import { AuthStorage } from "./auth-storage.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
@@ -141,8 +141,16 @@ export class ModelRegistry {
 		return this.runtime.getProviderAuthStatus(provider);
 	}
 
+	getProvider(provider: string): Provider | undefined {
+		return this.runtime.getProvider(provider);
+	}
+
 	getProviderDisplayName(provider: string): string {
 		return this.runtime.getProvider(provider)?.name ?? BUILT_IN_PROVIDER_DISPLAY_NAMES[provider] ?? provider;
+	}
+
+	getProviderAuth(provider: string): Promise<AuthResult | undefined> {
+		return this.runtime.getAuth(provider);
 	}
 
 	async getApiKeyForProvider(provider: string): Promise<string | undefined> {
@@ -157,8 +165,15 @@ export class ModelRegistry {
 		return this.authStorage.get(model.provider)?.type === "oauth" || this.runtime.isUsingOAuth(model.provider);
 	}
 
-	registerProvider(providerName: string, config: ProviderConfigInput): void {
-		this.runtime.registerProvider(providerName, config);
+	registerProvider(provider: Provider): void;
+	registerProvider(providerName: string, config: ProviderConfigInput): void;
+	registerProvider(providerOrName: Provider | string, config?: ProviderConfigInput): void {
+		if (typeof providerOrName === "string") {
+			if (!config) throw new Error("Provider config is required when registering by name");
+			this.runtime.registerProvider(providerOrName, config);
+			return;
+		}
+		this.runtime.registerNativeProvider(providerOrName);
 	}
 
 	unregisterProvider(providerName: string): void {
@@ -167,6 +182,10 @@ export class ModelRegistry {
 
 	getRegisteredProviderConfig(providerName: string): ProviderConfigInput | undefined {
 		return this.runtime.getRegisteredProviderConfig(providerName);
+	}
+
+	getRegisteredNativeProvider(providerName: string): Provider | undefined {
+		return this.runtime.getRegisteredNativeProvider(providerName);
 	}
 
 	getRegisteredProviderIds(): readonly string[] {
