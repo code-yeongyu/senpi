@@ -39,11 +39,30 @@ export async function stopTerminalSession(session: SessionRegistrySession): Prom
 	if (session.signal) await session.signal(DEFAULT_SIGNAL);
 }
 
-export async function waitForTerminalSessionExit(session: SessionRegistrySession): Promise<boolean> {
+export async function waitForTerminalSessionExit(session: SessionRegistrySession, graceMs?: number): Promise<boolean> {
 	if (isTerminalSessionExited(session)) return true;
 	// Invoke via the session object (not a detached reference) so `this` is preserved.
-	if (session.waitExit) await session.waitExit();
-	else if (session.wait) await session.wait();
-	else return false;
+	const wait = session.waitExit ? session.waitExit() : session.wait ? session.wait() : null;
+	if (wait === null) return false;
+	if (graceMs === undefined) {
+		await wait;
+		return isTerminalSessionExited(session);
+	}
+	let graceTimer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		const exitSettled = await Promise.race([
+			Promise.resolve(wait).then(() => true),
+			new Promise<false>((resolve) => {
+				graceTimer = setTimeout(() => resolve(false), graceMs);
+			}),
+		]);
+		if (!exitSettled) {
+			// The wait may still settle (or reject) long after we stopped caring.
+			void Promise.resolve(wait).catch(() => {});
+			return false;
+		}
+	} finally {
+		if (graceTimer) clearTimeout(graceTimer);
+	}
 	return isTerminalSessionExited(session);
 }

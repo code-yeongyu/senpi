@@ -1,46 +1,55 @@
 # changes
 
-## Credential broker and pooled selection (2026-07-14)
+## "video" input modality plumbed through provider composition (2026-07-17)
 
 ### What changed
 
-- Added the credential-vault, selection-lease, broker wire contract, remote store, and background OAuth refresh surfaces.
-- ModelRegistry and SDK requests can select pooled credentials, preserve session affinity, and report sanitized outcomes.
-- Restore now clears dependent leases before replacing credentials, and startup awaits the initial OAuth refresh sweep.
+- `provider-composer.ts`: model `input` arrays (config input, models.json override, custom model definition)
+  widened to `("text" | "image" | "video")[]`, tracking the pi-ai `Model.input` union. Enables the
+  kimi-coding `k3` video input capability and models.json overrides declaring video.
+- `remote-catalog-provider.ts`: `mergeModels` now unions `input` modalities (canonical text/image/video
+  order) when a pi.dev overlay entry replaces a builtin model. The overlay refreshes costs/limits but a
+  stale remote entry must not silently drop a fork-declared capability — the cached kimi-coding `k3`
+  entry in `models-store.json` otherwise strips `"video"` and deactivates the `read_video` tool.
 
-### Why
+### Why extension system couldn't handle this alone
 
-- Multi-account credentials require an atomic owner for selection, refresh, cooldown, and secret redaction instead of
-  duplicating those policies in individual providers.
+- The modality union is a core type shared with pi-ai; extensions consume it but cannot widen it.
 
-### Why extension system couldn't handle this
+### Expected merge conflict zones on next upstream sync
 
-- Credential resolution and model request construction occur in core before extension hooks can safely lease or refresh
-  secret material.
+- LOW: `provider-composer.ts` model field lists.
 
-### Expected merge conflict zones
-
-- HIGH: auth-storage.ts, model-registry.ts, and sdk.ts credential-resolution paths.
-- MEDIUM: broker wire contracts and vault schema when auth persistence changes upstream.
-
-
-## Provider login and model-resolution parity (2026-07-14)
+## Composed providers engage text tool-call compatibility middleware (2026-07-17)
 
 ### What changed
 
-- auth-providers.ts, model-resolver.ts, and provider-display-names.ts now consume the expanded pi-ai provider catalog
-  for consistent /login, display, and default-model behavior.
-- AuthStorage and ModelRegistry apply provider-specific OAuth request tokens and headers instead of reducing every
-  legacy credential to one raw string.
+- `provider-composer.ts`: composed provider `stream()` and `streamSimple()` now apply the text tool-call middleware when a model has `compat.toolCallFormat` and active tools. Custom `models.json` providers previously dispatched directly to their base or API provider, silently bypassing this compatibility behavior.
 
-### Why extension system couldn't handle this
+### Why extension system couldn't handle this alone
 
-- Login selection and startup model resolution run in core before user extensions can provide a replacement catalog.
+- Provider composition owns the final base-provider/API-provider stream dispatch before extensions receive model output, so extensions cannot insert the required context transformation and streaming parser on both paths.
 
 ### Expected merge conflict zones
 
-- MEDIUM: provider display/default maps when upstream changes model resolution or login discovery.
+- LOW: `provider-composer.ts` shared `streamWith()` dispatch and its `@earendil-works/pi-ai/compat` imports.
 
+## AnthropicMessagesCompat.supportsWebSearch in models.json schema (2026-07-16)
+
+### What changed
+
+- `model-config.ts` (`AnthropicMessagesCompatSchema`): added optional boolean `supportsWebSearch`, mirroring
+  `supportsWebSearchPreview` in `OpenAIResponsesCompatSchema`. This is the models.json opt-in for
+  Anthropic-compatible endpoints that genuinely support server-side web search (see `packages/ai/src/changes.md`
+  2026-07-16); without the schema entry the flag would fail models.json validation.
+
+### Why extension system couldn't handle this alone
+
+- models.json validation happens in core `model-config.ts` before any extension sees the model entry.
+
+### Expected merge conflict zones
+
+- LOW: `model-config.ts` compat schemas if upstream adds more compat flags.
 
 ## Skill-loading trigger reframed with cost asymmetry (2026-07-16)
 
@@ -881,3 +890,26 @@ If upstream modifies any compaction route (manual, threshold, overflow, pre-prom
 - Extended `packages/coding-agent/src/core/model-registry.ts` so `models.json` (and `pi.registerProvider()`) accepts `extraBody` at both provider and per-model level. `getApiKeyAndHeaders` now resolves `extraBody`, and `sdk.ts` merges provider/model extraBody with any call-site `extraBody` before invoking `streamSimple`.
 - This had to be done in core because `ThinkingLevel` is exported from `@mariozechner/pi-agent-core` and every UI/CLI/settings surface needed to be widened, and because `getApiKeyAndHeaders` + stream option composition live in core `ModelRegistry`/`sdk.ts`.
 - Expected merge-conflict zone on upstream sync: `model-registry.ts` schemas + `getApiKeyAndHeaders`, `sdk.ts` stream option composition, `cli/args.ts` validator, `settings-manager.ts` thinking level type, `agent-session.ts` thinking cycle list, interactive TUI thinking selector and border color map.
+
+## Credential broker and pooled selection (2026-07-14)
+
+### What changed
+
+- Added the credential-vault, selection-lease, broker wire contract, remote store, and background OAuth refresh surfaces.
+- ModelRegistry and SDK requests can select pooled credentials, preserve session affinity, and report sanitized outcomes.
+- Restore now clears dependent leases before replacing credentials, and startup awaits the initial OAuth refresh sweep.
+
+### Why
+
+- Multi-account credentials require an atomic owner for selection, refresh, cooldown, and secret redaction instead of
+  duplicating those policies in individual providers.
+
+### Why extension system couldn't handle this
+
+- Credential resolution and model request construction occur in core before extension hooks can safely lease or refresh
+  secret material.
+
+### Expected merge conflict zones
+
+- HIGH: auth-storage.ts, model-registry.ts, and sdk.ts credential-resolution paths.
+- MEDIUM: broker wire contracts and vault schema when auth persistence changes upstream.

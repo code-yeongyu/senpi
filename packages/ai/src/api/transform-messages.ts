@@ -8,9 +8,39 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { isVideoMimeType } from "../types.ts";
 
 const NON_VISION_USER_IMAGE_PLACEHOLDER = "(image omitted: model does not support images)";
 const NON_VISION_TOOL_IMAGE_PLACEHOLDER = "(tool image omitted: model does not support images)";
+const NO_VIDEO_USER_PLACEHOLDER = "(video omitted: model does not support video input)";
+const NO_VIDEO_TOOL_PLACEHOLDER = "(tool video omitted: model does not support video input)";
+
+function replaceMediaWithPlaceholder(
+	content: (TextContent | ImageContent)[],
+	placeholder: string,
+	matches: (block: ImageContent) => boolean,
+): (TextContent | ImageContent)[] {
+	if (!content.some((block) => block.type === "image" && matches(block))) {
+		return content;
+	}
+	const result: (TextContent | ImageContent)[] = [];
+	let previousWasPlaceholder = false;
+
+	for (const block of content) {
+		if (block.type === "image" && matches(block)) {
+			if (!previousWasPlaceholder) {
+				result.push({ type: "text", text: placeholder });
+			}
+			previousWasPlaceholder = true;
+			continue;
+		}
+
+		result.push(block);
+		previousWasPlaceholder = block.type === "text" && block.text === placeholder;
+	}
+
+	return result;
+}
 
 function replaceImagesWithPlaceholder(content: (TextContent | ImageContent)[], placeholder: string): TextContent[] {
 	const result: TextContent[] = [];
@@ -33,23 +63,39 @@ function replaceImagesWithPlaceholder(content: (TextContent | ImageContent)[], p
 }
 
 function downgradeUnsupportedImages<TApi extends Api>(messages: Message[], model: Model<TApi>): Message[] {
-	if (model.input.includes("image")) {
+	const supportsImages = model.input.includes("image");
+	const supportsVideo = model.input.includes("video");
+	if (supportsImages && supportsVideo) {
 		return messages;
 	}
 
 	return messages.map((msg) => {
 		if (msg.role === "user" && Array.isArray(msg.content)) {
-			return {
-				...msg,
-				content: replaceImagesWithPlaceholder(msg.content, NON_VISION_USER_IMAGE_PLACEHOLDER),
-			};
+			let content = msg.content;
+			// Video payloads ride ImageContent blocks; strip them first for models
+			// without the "video" modality so they never hit an incompatible wire.
+			if (!supportsVideo) {
+				content = replaceMediaWithPlaceholder(content, NO_VIDEO_USER_PLACEHOLDER, (b) =>
+					isVideoMimeType(b.mimeType),
+				);
+			}
+			if (!supportsImages) {
+				content = replaceImagesWithPlaceholder(content, NON_VISION_USER_IMAGE_PLACEHOLDER);
+			}
+			return { ...msg, content };
 		}
 
 		if (msg.role === "toolResult") {
-			return {
-				...msg,
-				content: replaceImagesWithPlaceholder(msg.content, NON_VISION_TOOL_IMAGE_PLACEHOLDER),
-			};
+			let content = msg.content;
+			if (!supportsVideo) {
+				content = replaceMediaWithPlaceholder(content, NO_VIDEO_TOOL_PLACEHOLDER, (b) =>
+					isVideoMimeType(b.mimeType),
+				);
+			}
+			if (!supportsImages) {
+				content = replaceImagesWithPlaceholder(content, NON_VISION_TOOL_IMAGE_PLACEHOLDER);
+			}
+			return { ...msg, content };
 		}
 
 		return msg;

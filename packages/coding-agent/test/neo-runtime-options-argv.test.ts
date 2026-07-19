@@ -64,25 +64,10 @@ describe("neoRuntimeOptionsToRpcArgv", () => {
 		);
 	});
 
-	it("emits system-prompt once and append-system-prompt per value", () => {
-		const argv = neoRuntimeOptionsToRpcArgv({
-			systemPrompt: "be terse",
-			appendSystemPrompt: ["one", "two"],
-		});
-		expect(argv).toEqual(
-			expect.arrayContaining([
-				"--system-prompt",
-				"be terse",
-				"--append-system-prompt",
-				"one",
-				"--append-system-prompt",
-				"two",
-			]),
-		);
-		expect(argv.filter((a) => a === "--system-prompt")).toHaveLength(1);
-		expect(argv.filter((a) => a === "--append-system-prompt")).toHaveLength(2);
-		expect(neoRuntimeOptionsToRpcArgv({})).not.toContain("--system-prompt");
-		expect(neoRuntimeOptionsToRpcArgv({})).not.toContain("--append-system-prompt");
+	it("does not emit legacy system-prompt overrides", () => {
+		const argv = neoRuntimeOptionsToRpcArgv({});
+		expect(argv).not.toContain("--system-prompt");
+		expect(argv).not.toContain("--append-system-prompt");
 	});
 
 	it("emits unknown (extension) flags", () => {

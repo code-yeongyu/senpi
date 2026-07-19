@@ -14,11 +14,10 @@
 
 ### Fixed
 
-- Fixed prompt-template defaults for all arguments (`${@:-default}` and `${ARGUMENTS:-default}`).
-- Fixed obsolete custom UI, custom tool, and custom editor examples in the extension documentation.
+- Fixed prompt-template defaults for all arguments (`${@:-default}` and `${ARGUMENTS:-default}`) ([#6695](https://github.com/earendil-works/pi/issues/6695)).
+- Fixed obsolete custom UI, custom tool, and custom editor examples in the extension documentation ([#6735](https://github.com/earendil-works/pi/issues/6735)).
 - Fixed Kimi Coding sessions to show API-equivalent implied costs with the subscription indicator.
-- Fixed OpenAI Responses early stream endings to trigger automatic retry instead of ending the agent run.
-
+- Fixed OpenAI Responses early stream endings to trigger automatic retry instead of ending the agent run ([#6727](https://github.com/earendil-works/pi/issues/6727)).
 ### Removed
 
 ## [2026.7.17-5] - 2026-07-17

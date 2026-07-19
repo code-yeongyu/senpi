@@ -257,3 +257,56 @@ describe("sessionIdPrefix", () => {
 		expect(sessionIdPrefix("pwsh.exe")).toBe("pwsh");
 	});
 });
+
+class HeldOpenSession implements SessionRegistrySession {
+	readonly command = "bash";
+	stopCalls = 0;
+
+	get isExited(): boolean {
+		return false;
+	}
+
+	stop(): void {
+		this.stopCalls += 1;
+	}
+
+	waitExit(): Promise<unknown> {
+		return new Promise(() => {});
+	}
+}
+
+async function resolvesWithin<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const watchdog = setTimeout(() => reject(new Error(`${label} hung past ${ms}ms`)), ms);
+		promise.then(
+			(value) => {
+				clearTimeout(watchdog);
+				resolve(value);
+			},
+			(error: unknown) => {
+				clearTimeout(watchdog);
+				reject(error);
+			},
+		);
+	});
+}
+
+describe("SessionRegistry stop grace", () => {
+	it("stop resolves within the grace when a killed session never reports exit", async () => {
+		const registry = new SessionRegistry({ stopExitGraceMs: 100 });
+		const session = new HeldOpenSession();
+		const entry = await registry.create({ session });
+
+		await expect(resolvesWithin(registry.stop(entry.id), 3000, "stop")).resolves.toBe(true);
+		expect(session.stopCalls).toBe(1);
+		expect(registry.get(entry.id)?.state).toBe("stopping");
+	});
+
+	it("teardown resolves while a killed session still holds its PTY open", async () => {
+		const registry = new SessionRegistry({ stopExitGraceMs: 100 });
+		await registry.create({ session: new HeldOpenSession() });
+
+		await expect(resolvesWithin(registry.teardown(), 3000, "teardown")).resolves.toBeUndefined();
+		expect(registry.size).toBe(0);
+	});
+});

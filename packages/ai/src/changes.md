@@ -1,35 +1,166 @@
 # AI Source Changes
 
-## 2026-07-14 - Provider and OAuth parity
+## 2026-07-17 - Video input modality for Kimi K3 (kimi-coding)
 
 ### What changed and why
 
-- Added supported provider factories, generated catalogs, and OAuth flows used by the coding-agent login surface.
-- Added provider-specific request and refresh behavior, including GitLab Duo direct-access exchange, Google account
-  transport, and Perplexity OTP state handling.
-- Legacy OAuth providers can expose request-scoped tokens and headers so compatibility consumers preserve GitLab Duo's
-  direct-access contract.
-- Search-only integrations are not exposed as chat providers.
+- `types.ts`: `Model.input` union gains `"video"`. No new message content type: video payloads ride the
+  existing `ImageContent` block with a `video/*` mimeType (helper `isVideoMimeType()` exported) to keep the
+  message contract and the upstream merge surface unchanged.
+- `api/transform-messages.ts`: `downgradeUnsupportedImages` now first replaces video-mime blocks with a
+  placeholder for models without the `"video"` modality (user and toolResult content), then applies the
+  existing image downgrade. Prevents cross-model replay from sending video blocks to providers that reject
+  them.
+- `api/anthropic-messages.ts`: `convertContentBlocks` and the user-message block mapping serialize
+  video-mime blocks as `{type:"video", source:{type:"base64", media_type, data}}` — the wire shape the
+  Kimi Anthropic-compatible endpoint accepts (verified against MoonshotAI/kimi-code kosong anthropic
+  provider). The block is not in the official SDK union, so it is cast like the existing `tool_reference`
+  escape hatch.
+- `scripts/generate-models.ts` + regenerated `providers/kimi-coding.models.ts`: kimi-coding `k3` declares
+  `input: ["text", "image", "video"]`.
 
 ### Files modified
 
-- api/google-gemini-cli.ts
-- auth/helpers.ts
-- providers/all.ts
-- types.ts
-- utils/oauth/index.ts
-- utils/oauth/load.ts
-- provider-specific files under providers/ and utils/oauth/
-
-### Why the higher-level extension system couldn't handle this alone
-
-- Authentication is resolved while constructing provider requests and generated model catalogs; extension hooks cannot
-  safely replace those credential and wire boundaries.
+- `types.ts`
+- `api/transform-messages.ts`
+- `api/anthropic-messages.ts`
+- `../scripts/generate-models.ts`
+- `providers/kimi-coding.models.ts` (generated)
+- `../test/transform-messages-video.test.ts`
 
 ### Expected merge conflict zones
 
-- HIGH: provider unions, OAuth registration, and generated catalogs.
-- MEDIUM: Google shared transport and provider-specific OAuth refresh paths.
+- LOW: `types.ts` `Model.input` union and `ImageContent` comment.
+- MEDIUM: `api/anthropic-messages.ts` `convertContentBlocks` / `convertToolResult` if upstream reworks
+  content serialization.
+- LOW: `api/transform-messages.ts` `downgradeUnsupportedImages`.
+
+## 2026-07-17 - Truncation-recovery contract for ToolCall and toolcall_end
+
+### What changed and why
+
+- Truncated text-protocol tool calls were silently dropped, leaked as raw markup, or executed from a
+  stale argument snapshot, with no public signal distinguishing a finalized (executable) call from
+  one the parser could only partially recover. Consumers had no contract for "this tool call is
+  incomplete; do not execute it; ask the model to retry."
+- `ToolCall` gains optional `incomplete?: true` and `errorMessage?: string`, set by the text tool-call
+  middleware when a truncated call could not be recovered. Carriers of `incomplete` MUST NOT be
+  executed; they are surfaced as a failed tool result so the model re-issues the call next turn.
+- The `toolcall_end` member of `AssistantMessageEvent` is redefined from an implicit "complete" to
+  "finalized": a `toolcall_end` is executable iff `incomplete !== true`. Flagged ends still terminate
+  the call (so the wrapper never holds a dangling partial) but are not executable. This is the
+  release-note surface for the redefinition.
+- `ToolCallFormat` gains `"morph-xml"` as the canonical id; `"xml"` is retained as a deprecated alias
+  resolving to the same protocol, so existing `models.json` configs and compiled consumers of
+  `getProtocol("xml")` keep working without a runtime normalization that rewrites stored config
+  values.
+- Flagged dangling-call diagnostics always append `Re-issue the tool call with complete arguments.` to parser-provided error messages without duplicating a final period.
+- `compat.ts` now publicly re-exports `getToolCallFormat`, `getProtocol`, `transformContext`, and `wrapStreamWithToolCallMiddleware` for composed providers that need the text tool-call middleware.
+
+### Files modified
+
+- `types.ts` (`ToolCall`, `AssistantMessageEvent.toolcall_end`, `OpenAICompletionsCompat.toolCallFormat` doc)
+- `tool-call-middleware/types.ts`, `tool-call-middleware/index.ts`, `tool-call-middleware/context-transformer.ts`
+- `../test/tool-call-middleware/context-transformer.test.ts`, `../test/tool-call-middleware/stream-integration.test.ts`
+
+### Why the higher-level extension system couldn't handle this alone
+
+- The canonical `ToolCall` shape, the `toolcall_end` event contract, and the `ToolCallFormat` union
+  are all exported from `pi-ai` and consumed by standalone `pi-ai` clients before any coding-agent
+  extension runs.
+
+### Expected merge conflict zones
+
+- LOW: `types.ts` around the `ToolCall` and `AssistantMessageEvent` declarations.
+- LOW: `tool-call-middleware/types.ts` `ToolCallFormat` union and `toolcall_end` variant.
+
+## 2026-07-17 - Moonshot root object-union compatibility
+
+### What changed and why
+
+- `utils/tool-schema-compat.ts`: Moonshot normalization now flattens a root `anyOf`/`oneOf` of object parameter
+  shapes into one `type: "object"` schema. Properties are merged and only branch-common required fields remain.
+  Kimi rejects a root combiner without `type`, but also rejects a sibling root `type` beside that combiner, so the
+  union must be represented as a permissive object at the function-parameter boundary.
+- `../test/openai-completions-tool-schema-compat.test.ts`: covers the real `click`-style coordinate/index union and
+  the final post-hook request payload.
+
+### Why the higher-level extension system couldn't handle this alone
+
+- The provider adapter owns the final wire schema after payload hooks and is the only layer shared by direct
+  Moonshot requests and custom Moonshot-compatible gateways.
+
+### Expected merge conflict zones
+
+- LOW: `utils/tool-schema-compat.ts` if upstream expands its provider-specific schema normalizers.
+
+## 2026-07-17 - Final-boundary Moonshot tool schema normalization
+
+### What changed and why
+
+- `api/openai-completions.ts`: re-normalizes function tool parameter schemas after `onPayload` and immediately before
+  the OpenAI SDK request. Payload hooks can replace or inject tools after the ordinary `convertTools` pass; those tools
+  previously bypassed the Moonshot/MFJS compatibility transform and could retain a parent `type` beside `anyOf`, which
+  Moonshot rejects with HTTP 400.
+- `../test/openai-completions-tool-schema-compat.test.ts`: captures the real HTTP request and locks the post-hook wire
+  shape.
+
+### Why the higher-level extension system couldn't handle this alone
+
+- `before_provider_request` is exposed through `onPayload`, so the provider adapter is the only layer that can validate
+  the complete tool list after every hook has run.
+
+### Expected merge conflict zones
+
+- LOW: `api/openai-completions.ts` around the `onPayload` callback and final request submission.
+
+## 2026-07-16 - Anthropic native web_search endpoint guard and server_tool_use input streaming
+
+### What changed and why
+
+- `types.ts`: added `AnthropicMessagesCompat.supportsWebSearch`. Default (resolved in
+  `getAnthropicCompat`): true only for the first-party `api.anthropic.com` endpoint; compatible providers and
+  provider overrides can
+  opt in per model via `compat`.
+- `api/anthropic-messages.ts`: `sanitizeUnsupportedNativeTools` now also strips hook-injected native `web_search_*`
+  tools when the resolved compat does not support them, mirroring the existing native computer tool guard and the
+  OpenAI Responses `web_search_preview` compat guard (2026-05-15). Anthropic-compatible endpoints such as kimi-coding
+  execute the server-side search but reject the replayed `server_tool_use` / `web_search_tool_result` blocks on the
+  next request (kimi-coding 400s with `tool_call_id is not found`), wedging the session. Named `tool_choice` is
+  preserved when a same-name function fallback remains and removed only when the retained tool list no longer
+  contains that choice.
+- `api/anthropic-messages.ts`: same-model provider-native replay also drops web-search server-tool blocks
+  (`server_tool_use` named `web_search` and `web_search_tool_result`) when the endpoint lacks `supportsWebSearch`.
+  Sessions that already recorded such blocks against an incompatible endpoint were permanently wedged — every
+  request replayed the rejected blocks; dropping the pair loses the searched context but unwedges the session.
+- `api/anthropic-messages.ts`: streaming now accumulates `input_json_delta` for Anthropic's confirmed
+  provider-native tool-use blocks (`server_tool_use` and beta `mcp_tool_use`) and merges the parsed input into the stored raw block at
+  `content_block_stop` (or in the abort/error finalizer for interrupted streams). Previously the block kept the
+  `content_block_start` snapshot (`input: {}`), so every same-model replay sent the server tool call with an empty
+  input. Unknown and result-shaped blocks are never touched; their raw provider payload must remain verbatim.
+
+### Files modified
+
+- `types.ts`
+- `api/anthropic-messages.ts`
+- `../test/anthropic-native-web-search-compat.test.ts`
+- `../test/anthropic-provider-native-replay.test.ts`
+- `../test/anthropic-web-search-replay-encryption.test.ts`
+- `../test/anthropic.provider-native.test.ts`
+- (see also `../../coding-agent/src/core/changes.md` for the models.json compat schema entry)
+
+### Why the higher-level extension system couldn't handle this alone
+
+- Extensions can inject native `web_search_*` tools via `before_provider_request`; the final payload is only known
+  after all hooks run, so the provider is the last reliable guard before SDK submission (same rationale as the
+  OpenAI Responses guard). Provider-native block capture during streaming happens inside `pi-ai` before any
+  extension sees the message.
+
+### Expected merge conflict zones
+
+- MEDIUM: `api/anthropic-messages.ts` around `getAnthropicCompat`, `sanitizeUnsupportedNativeTools`, and the
+  `content_block_delta` / `content_block_stop` streaming handlers.
+- LOW: `types.ts` `AnthropicMessagesCompat` if upstream adds more compat flags.
 
 ## 2026-07-14 - Anthropic web search replay encrypted content correction
 
@@ -324,3 +455,34 @@
 - `src/types.ts` `ThinkingLevel` union.
 - Each provider's `streamSimple<Provider>` reasoning mapping block.
 - `src/providers/simple-options.ts` exported reserved-key sets.
+
+## 2026-07-14 - Provider and OAuth parity
+
+### What changed and why
+
+- Added supported provider factories, generated catalogs, and OAuth flows used by the coding-agent login surface.
+- Added provider-specific request and refresh behavior, including GitLab Duo direct-access exchange, Google account
+  transport, and Perplexity OTP state handling.
+- Legacy OAuth providers can expose request-scoped tokens and headers so compatibility consumers preserve GitLab Duo's
+  direct-access contract.
+- Search-only integrations are not exposed as chat providers.
+
+### Files modified
+
+- api/google-gemini-cli.ts
+- auth/helpers.ts
+- providers/all.ts
+- types.ts
+- utils/oauth/index.ts
+- utils/oauth/load.ts
+- provider-specific files under providers/ and utils/oauth/
+
+### Why the higher-level extension system couldn't handle this alone
+
+- Authentication is resolved while constructing provider requests and generated model catalogs; extension hooks cannot
+  safely replace those credential and wire boundaries.
+
+### Expected merge conflict zones
+
+- HIGH: provider unions, OAuth registration, and generated catalogs.
+- MEDIUM: Google shared transport and provider-specific OAuth refresh paths.

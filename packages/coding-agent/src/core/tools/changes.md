@@ -113,3 +113,30 @@
 ### Files modified
 
 - `bash.ts`
+
+## Bash abort releases the wait despite surviving descendants (2026-07-18)
+
+### What changed
+
+- `bash.ts` (`createLocalBashOperations`): abort and timeout kills now also abort an internal `killedController`
+  whose signal is passed to `waitForChildProcess`. Once the tree has been killed, the wait stops preserving output
+  tails and resolves within a bounded grace even when an escaped descendant keeps the inherited stdout/stderr pipe
+  open (see `utils/changes.md` same date).
+
+### Why
+
+- ESC-abort (and timeout) killed the detached process group, but the tool only returns when
+  `waitForChildProcess` resolves. Descendants in their own process group that survived `kill(-pid)` and kept
+  chattering re-armed the idle grace forever: "Running bash" counted up for hours and repeated ESC was a no-op.
+
+- When the grace releases the wait while the child is still alive (kill pending), the pid stays in the
+  detached-children shutdown cleanup set until the child actually exits, and the child is `unref()`ed so an
+  abandoned handle cannot pin the event loop.
+
+### Why extension system couldn't handle this
+
+- The hang is inside the core tool's own exec/wait loop; extensions cannot interpose on it.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: the abort/timeout handler block inside `createLocalBashOperations`.

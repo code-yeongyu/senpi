@@ -24,6 +24,7 @@ import terminalExtension from "./terminal/index.ts";
 import todowriteExtension from "./todotools/index.ts";
 import toolPairGuardExtension from "./tool-pair-guard/index.ts";
 import tpsExtension from "./tps.ts";
+import videoInExtension from "./video-in/index.ts";
 import webfetchExtension from "./webfetch/index.ts";
 import websearchExtension from "./websearch/index.ts";
 
@@ -63,6 +64,7 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "session-observer", factory: sessionObserverExtension },
 	{ id: "websearch", factory: websearchExtension },
 	{ id: "webfetch", factory: webfetchExtension },
+	{ id: "video-in", factory: videoInExtension },
 	{ id: "nested-agents-md", factory: nestedAgentsMdExtension },
 	{ id: "rules", factory: piRulesExtension },
 	{ id: "goal", factory: goalExtension },
