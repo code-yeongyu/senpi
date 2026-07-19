@@ -72,10 +72,6 @@ export interface NeoRuntimeOptions {
 	readonly noThemes?: boolean;
 	readonly noContextFiles?: boolean;
 
-	// System prompt overrides (resourceLoaderOptions in the runtime path).
-	readonly systemPrompt?: string;
-	readonly appendSystemPrompt?: readonly string[];
-
 	/** Unknown flags (extension flags): name -> value. */
 	readonly unknownFlags?: Readonly<Record<string, boolean | string>>;
 
@@ -120,8 +116,6 @@ export const NEO_RUNTIME_OPTION_SOURCE_FIELDS = [
 	"noPromptTemplates",
 	"noThemes",
 	"noContextFiles",
-	"systemPrompt",
-	"appendSystemPrompt",
 	"unknownFlags",
 	"messages",
 	"fileArgs",

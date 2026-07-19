@@ -114,7 +114,13 @@ describe("video-in extension", () => {
 		const harness = createVideoInHarness();
 		const tool = harness.tools.get("read_video")!;
 		await expect(
-			tool.execute("call-1", { path: "clip.mp4" }, undefined, undefined, makeCtx(makeModel(["text", "image"]), "/tmp")),
+			tool.execute(
+				"call-1",
+				{ path: "clip.mp4" },
+				undefined,
+				undefined,
+				makeCtx(makeModel(["text", "image"]), "/tmp"),
+			),
 		).rejects.toThrow("does not support video input");
 	});
 
