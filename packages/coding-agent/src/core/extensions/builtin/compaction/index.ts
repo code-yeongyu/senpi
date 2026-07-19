@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Tool } from "@earendil-works/pi-ai";
 import type { CompactionResult } from "../../../compaction/index.ts";
 import { convertToLlm } from "../../../messages.ts";
 import type { CompactionEntry } from "../../../session-manager.ts";
@@ -162,6 +163,21 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 		| undefined;
 	const pendingMetadata = new Map<string, PendingCompactionMetadata>();
 
+	function getSummarizationTools(): Tool[] {
+		if (typeof pi.getAllTools !== "function") return [];
+		try {
+			return pi.getAllTools().map((tool) => ({
+				name: tool.name,
+				description: tool.description,
+				parameters: tool.parameters,
+			}));
+		} catch {
+			// Tool registry not bound yet (extension still loading); the summary
+			// request simply goes out without tool definitions.
+			return [];
+		}
+	}
+
 	function invalidateSpeculativeCompaction(): void {
 		speculativeGeneration++;
 		speculativeJob?.controller.abort();
@@ -171,7 +187,11 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 	function startSpeculativeCompaction(ctx: ExtensionContext, customInstructions: string): void {
 		if (speculativeJob) return;
 		const generation = ++speculativeGeneration;
-		const snapshot = createSpeculativeCompactionSnapshot(ctx, { generation, customInstructions });
+		const snapshot = createSpeculativeCompactionSnapshot(ctx, {
+			generation,
+			customInstructions,
+			tools: getSummarizationTools(),
+		});
 		if (!snapshot) return;
 
 		const controller = new AbortController();
@@ -266,7 +286,11 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 			}
 
 			const generation = ++speculativeGeneration;
-			const snapshot = createSpeculativeCompactionSnapshot(ctx, { generation, customInstructions });
+			const snapshot = createSpeculativeCompactionSnapshot(ctx, {
+				generation,
+				customInstructions,
+				tools: getSummarizationTools(),
+			});
 			if (!snapshot) {
 				const result = { applied: false, reason: "unavailable" } as const;
 				endCompactionFeedback(ctx, feedbackSignal, result);
@@ -314,10 +338,24 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 			preparation: event.preparation,
 			promptVariant: getPromptVariant(event),
 			customInstructions: event.customInstructions,
+			systemPrompt: ctx.getSystemPrompt(),
+			tools: getSummarizationTools(),
 		};
-		const compaction = await runExtensionCompaction(ctx, snapshot, event.signal, (delta) =>
-			ctx.updateCompaction?.({ reason: event.reason, delta }),
-		);
+		let compaction: CompactionResult | undefined;
+		try {
+			compaction = await runExtensionCompaction(ctx, snapshot, event.signal, (delta) =>
+				ctx.updateCompaction?.({ reason: event.reason, delta }),
+			);
+		} catch (error) {
+			// Surface the real provider failure (e.g. a policy refusal or rate
+			// limit) instead of letting it degrade into a bare "Compaction
+			// cancelled". Cancel rather than fall back: the core route would
+			// re-send the same conversation and burn tokens on the same failure.
+			const message = error instanceof Error ? error.message : String(error);
+			ctx.ui.notify(`Compaction failed: ${message}`, "error");
+			pendingMetadata.delete(event.requestId);
+			return { cancel: true };
+		}
 		if (!compaction) {
 			pendingMetadata.delete(event.requestId);
 			return { cancel: true };
@@ -428,7 +466,10 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 		handleTurnEnd(degradationState);
 		if (degradationState.recoveryTriggeredThisCycle) return;
 		if (state.lastYield && state.lastYield.savedTokens <= 0) {
-			void applyBlockingCompaction(ctx, RECOVERY_INSTRUCTIONS);
+			void applyBlockingCompaction(ctx, RECOVERY_INSTRUCTIONS).catch(() => {
+				// Fire-and-forget recovery: applyBlockingCompaction already ended
+				// user-visible feedback with the error message.
+			});
 		}
 	});
 
