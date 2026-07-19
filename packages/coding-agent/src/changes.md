@@ -1,5 +1,27 @@
 # changes
 
+## Paced streaming tool argument previews (2026-07-20)
+
+### What changed
+
+- `modes/interactive/tool-args-reveal.ts` paces append-only partial JSON independently per tool call, reusing the smooth
+  streaming FPS and catch-up policy while batching parser work and preserving UTF-16 surrogate boundaries.
+- `modes/interactive/interactive-mode.ts` flushes exact arguments before completion or execution and tears down reveal
+  state anywhere pending tool components are cleared.
+
+### Why
+
+- Provider bursts should not make large tool-call previews jump or force a full partial-JSON parse for every timer tick.
+
+### Why extension system couldn't handle this
+
+- Pending tool components and their streaming/execution transition state are private to the built-in interactive mode.
+
+### Expected merge conflict zones on next upstream sync
+
+- MEDIUM: interactive tool-call event handling and smooth-streaming settings callbacks.
+- LOW: the fork-only reveal controller.
+
 ## Smooth streaming reveal (2026-07-20)
 
 ### What changed
