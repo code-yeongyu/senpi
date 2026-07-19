@@ -1,5 +1,34 @@
 # Core Extensions Changes
 
+## 2026-07-19 - Port phased op-based todo tool
+
+### What changed
+
+- Rewrote `builtin/todotools/` around one `todo` tool with `init`,
+  `start`, `done`, `drop`, `rm`, `append`, and `view`
+  operations.
+- Added phased state, content-keyed task resolution, automatic promotion,
+  atomic failure behavior, compaction compatibility, and a static phase-aware
+  renderer while preserving the `todowrite` builtin id and
+  `todo-sidebar` widget key.
+
+### Why
+
+- The old pair required sending a complete flat snapshot on every mutation.
+  The op-based port makes incremental updates retry-safe and gives the model a
+  smaller, phase-aware contract.
+
+### Attribution
+
+- Ported and adapted from oh-my-pi commit
+  `9fd6e97113f5ed3a847e66d346970efdf8afcad9` (v17.0.5); see
+  `builtin/todotools/changes.md` and the repository `NOTICE.md`.
+
+### Expected merge conflict zones
+
+- HIGH: `builtin/todotools/`, `builtin/compaction/todo-bridge.ts`, and
+  todo-specific tests if upstream changes its todo or compaction contracts.
+
 ## 2026-07-17 - video-in builtin extension and "video" input modality
 
 ### What changed

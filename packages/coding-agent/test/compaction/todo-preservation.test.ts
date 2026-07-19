@@ -8,6 +8,7 @@ import {
 	restoreTodosIfMissing,
 	type TodoEntry,
 } from "../../src/core/extensions/builtin/compaction/todo-bridge.ts";
+import type { TodoPhase } from "../../src/core/extensions/builtin/todotools/state.ts";
 import {
 	type CustomEntry,
 	migrateSessionEntries,
@@ -74,6 +75,19 @@ afterEach(() => {
 let todoFixtureEntries: SessionEntry[] = [];
 let preCompactionTodos: FutureTodoEntry[] = [];
 let postCompactionTodos: FutureTodoEntry[] = [];
+const phasedTodos: TodoPhase[] = [
+	{
+		name: "Foundation",
+		tasks: [
+			{ content: "Keep content-keyed task", status: "completed" },
+			{ content: "Restore active task", status: "in_progress" },
+		],
+	},
+	{
+		name: "Verification",
+		tasks: [{ content: "Run deterministic checks", status: "pending" }],
+	},
+];
 
 beforeAll(() => {
 	const fixturePath = join(__dirname, "..", "fixtures", "compaction", "todo-preservation", "todos-then-compact.jsonl");
@@ -91,7 +105,7 @@ beforeAll(() => {
 });
 
 describe("compaction todo preservation", () => {
-	describe("Given a session with active todos sourced from the todowrite builtin (4 todos, 1 completed, 1 in_progress)", () => {
+	describe("Given a session with active todos sourced from the op-based todo builtin (4 todos, 1 completed, 1 in_progress)", () => {
 		describe("When session_before_compact fires and captureTodoSnapshot persists via pi.appendEntry", () => {
 			it("Then pi.appendEntry is called with 'compaction.todo-snapshot' carrying the full todo array", () => {
 				const registration = registerFauxProvider();
@@ -109,6 +123,18 @@ describe("compaction todo preservation", () => {
 				expect(data?.todos[1].status).toBe("in_progress");
 			});
 		});
+
+		describe("When a phased todo payload is captured", () => {
+			it("Then the compaction snapshot carries phases without requiring generated IDs", () => {
+				const pi = createFakePi();
+				captureTodoSnapshot(phasedTodos, pi);
+
+				const snapshotCall = pi.appendCalls.find((call) => call.customType === TODO_SNAPSHOT_CUSTOM_TYPE);
+				const data = snapshotCall?.data as { todos: TodoPhase[] } | undefined;
+				expect(data?.todos).toEqual(phasedTodos);
+				expect(data?.todos[0]?.tasks[1]?.content).toBe("Restore active task");
+			});
+		});
 	});
 
 	describe("Given a todo snapshot was captured and the post-compaction current state has no todos", () => {
@@ -122,6 +148,17 @@ describe("compaction todo preservation", () => {
 				expect(result.applied).toBe(true);
 				expect(result.restoredTodos).toEqual(preCompactionTodos);
 				expect(result.restoredTodos.map((todo) => todo.id)).toEqual(["todo-1", "todo-2", "todo-3", "todo-4"]);
+			});
+		});
+
+		describe("When a phased snapshot is restored into an empty phased state", () => {
+			it("Then the phase payload is re-injected verbatim", () => {
+				const pi = createFakePi();
+				const currentEmpty: TodoPhase[] = [];
+				const result = restoreTodosIfMissing(phasedTodos, currentEmpty, pi);
+
+				expect(result.applied).toBe(true);
+				expect(result.restoredTodos).toEqual(phasedTodos);
 			});
 		});
 	});
@@ -169,6 +206,28 @@ describe("compaction todo preservation", () => {
 
 				expect(restoredFromB.map((todo) => todo.id)).toEqual(["branch-b-todo-1"]);
 				expect(restoredFromB.find((todo) => todo.id === "branch-a-todo-1")).toBeUndefined();
+			});
+		});
+
+		describe("When a v2 senpi.todo-state entry is read", () => {
+			it("Then content-keyed phase tasks are available to the compaction bridge", () => {
+				const stateEntry: CustomEntry = {
+					type: "custom",
+					id: "state-phases",
+					parentId: "phase-root",
+					timestamp: "2025-01-15T17:03:00.000Z",
+					customType: "senpi.todo-state",
+					data: { schema: "v2", phases: phasedTodos },
+				};
+
+				const restored = findTodoEntriesFuture([stateEntry], { branchId: "phase-root" });
+
+				expect(restored.map((todo) => todo.content)).toEqual([
+					"Keep content-keyed task",
+					"Restore active task",
+					"Run deterministic checks",
+				]);
+				expect(restored.every((todo) => todo.id === undefined)).toBe(true);
 			});
 		});
 	});

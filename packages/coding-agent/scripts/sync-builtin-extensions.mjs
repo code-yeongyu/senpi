@@ -22,7 +22,8 @@ const DIR_SYNCS = [{ id: "bash-timeout", packageDir: "pi-bash-timeout" }];
 // test) without auto-overwriting the files. Port behavior changes manually.
 //   - gpt-apply-patch (pi-apply-patch): senpi keeps a refactored multi-file layout vs the
 //     upstream single-file monolith.
-//   - todowrite (pi-todotools): senpi removed the todo continuation feature.
+//   - todowrite (pi-todotools): senpi's todotools is an op-based port of oh-my-pi's todo tool;
+//     it is fully diverged from pi-todotools.
 //   - goal (pi-goal): senpi resolves the agent dir via config (getAgentDir) and types via
 //     ../../types.ts instead of the standalone package's local agentDir()/peer-dep imports.
 //   - websearch/webfetch/nested-agents-md/rules: vendored with transformVendoredSource, then

@@ -4,6 +4,8 @@
 
 ### Breaking Changes
 
+- Replaced the snapshot-style `todowrite`/`todoread` pair with one phased, op-based `todo` tool; the `todowrite` builtin extension id remains for loader compatibility.
+
 ### Added
 
 - Added `antml` as a valid `compat.toolCallFormat` in custom `models.json` provider and model definitions: ANTML `<function_calls>`/`<invoke>` text-tool protocol with Claude-Code-style failure tolerance.
