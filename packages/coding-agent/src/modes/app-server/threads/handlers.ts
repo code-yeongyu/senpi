@@ -4,7 +4,7 @@ import type {
 	ThreadResumeResponse,
 	ThreadStartResponse,
 	ThreadUnsubscribeResponse,
-} from "../protocol/generated/v2/index.ts";
+} from "../protocol/index.ts";
 import type { MethodRegistry, RegistryConnection, RpcRequest } from "../rpc/registry.ts";
 import type { NotificationRouter } from "../server/notifications.ts";
 import { ThreadArchiveState } from "./archive-state.ts";
@@ -104,7 +104,7 @@ class ThreadLifecycleHandlers {
 		const entry = await this.threads.createThread({ cwd, model: requestedStartModel(params) });
 		this.attachThread(entry);
 		this.subscribe(entry, connectionId(connection));
-		const response = this.runtimeResponse(entry, false, { approvalPolicy: requestedApprovalPolicy(params) });
+		const response = await this.runtimeResponse(entry, false, { approvalPolicy: requestedApprovalPolicy(params) });
 		this.notifications.broadcast({ method: "thread/started", params: { thread: response.thread } });
 		return response;
 	}
@@ -117,7 +117,7 @@ class ThreadLifecycleHandlers {
 			this.attachThread(entry);
 			this.subscribe(entry, connectionId(connection));
 			return {
-				...this.runtimeResponse(entry, true),
+				...(await this.runtimeResponse(entry, true)),
 				initialTurnsPage: null,
 			};
 		} catch (error) {
@@ -134,7 +134,7 @@ class ThreadLifecycleHandlers {
 		const entry = await this.threads.forkThread(sourceThreadId, { cwd: optionalString(params.cwd) ?? undefined });
 		this.attachThread(entry);
 		this.subscribe(entry, connectionId(connection));
-		const response = this.runtimeResponse(entry, true, { forkedFromId: sourceThreadId });
+		const response = await this.runtimeResponse(entry, true, { forkedFromId: sourceThreadId });
 		this.notifications.broadcast({ method: "thread/started", params: { thread: response.thread } });
 		return response;
 	}
@@ -144,7 +144,7 @@ class ThreadLifecycleHandlers {
 		const threadId = requiredString(params.threadId, "threadId");
 		const entry = await this.threads.resumeThread(threadId);
 		this.attachThread(entry);
-		return { thread: buildWireThread(entry, this.turnLog, params.includeTurns === true) };
+		return { thread: await buildWireThread(entry, this.turnLog, params.includeTurns === true) };
 	}
 
 	private async setName(request: RpcRequest): Promise<Record<string, never>> {
@@ -221,13 +221,15 @@ class ThreadLifecycleHandlers {
 		this.idleTimers.clear();
 	}
 
-	private runtimeResponse(
+	private async runtimeResponse(
 		entry: ThreadEntry,
 		includeTurns: boolean,
 		options: RuntimeResponseOptions = {},
-	): RuntimeThreadResponse {
+	): Promise<RuntimeThreadResponse> {
 		const model = entry.session.model;
-		const thread = buildWireThread(entry, this.turnLog, includeTurns, { forkedFromId: options.forkedFromId ?? null });
+		const thread = await buildWireThread(entry, this.turnLog, includeTurns, {
+			forkedFromId: options.forkedFromId ?? null,
+		});
 		return {
 			thread,
 			model: model?.id ?? "unknown",

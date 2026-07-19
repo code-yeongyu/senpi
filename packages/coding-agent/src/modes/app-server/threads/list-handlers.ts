@@ -26,7 +26,7 @@ export async function listThreadsResponse(
 	const threads = archived ? await archivedListThreads(page.threads, dependencies.archiveState) : page.threads;
 	const filtered = await filterByArchiveState(threads, archived, dependencies.archiveState);
 	return {
-		data: filtered.map((thread) => buildWireThread(thread, dependencies.turnLog, false)),
+		data: await Promise.all(filtered.map((thread) => buildWireThread(thread, dependencies.turnLog, false))),
 		nextCursor: page.nextCursor,
 		backwardsCursor: null,
 	};

@@ -1,5 +1,6 @@
-import { readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { enqueueThreadMutation, writeSidecarFileAtomic } from "./metadata-state.ts";
 import type { WireThread } from "./registry.ts";
 
 const ARCHIVE_SUFFIX = ".archived";
@@ -27,21 +28,24 @@ export class ThreadArchiveState {
 	}
 
 	async markArchived(thread: WireThread): Promise<void> {
-		const sidecarPath = sidecarPathForThread(thread);
-		await writeFile(
-			sidecarPath,
-			`${JSON.stringify({ archivedAt: new Date().toISOString(), thread } satisfies ArchivedThreadRecord)}\n`,
-			"utf8",
-		);
+		await enqueueThreadMutation(thread.id, async () => {
+			const sidecarPath = sidecarPathForThread(thread);
+			await writeSidecarFileAtomic(
+				sidecarPath,
+				`${JSON.stringify({ archivedAt: new Date().toISOString(), thread } satisfies ArchivedThreadRecord)}\n`,
+			);
+		});
 	}
 
 	async clearArchived(threadId: string): Promise<void> {
-		const threads = await this.listArchivedThreads();
-		await Promise.all(
-			threads
-				.filter((thread) => thread.id === threadId)
-				.map((thread) => rm(sidecarPathForThread(thread), { force: true })),
-		);
+		await enqueueThreadMutation(threadId, async () => {
+			const threads = await this.listArchivedThreads();
+			await Promise.all(
+				threads
+					.filter((thread) => thread.id === threadId)
+					.map((thread) => rm(sidecarPathForThread(thread), { force: true })),
+			);
+		});
 	}
 
 	async isArchived(thread: WireThread): Promise<boolean> {

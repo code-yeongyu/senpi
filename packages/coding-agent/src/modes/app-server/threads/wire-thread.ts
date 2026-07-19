@@ -1,22 +1,24 @@
 import { VERSION } from "../../../config.ts";
 import type { Thread, ThreadItem, ThreadStatus, Turn } from "../protocol/generated/v2/index.ts";
+import { ThreadMetadataState } from "./metadata-state.ts";
 import type { ThreadEntry, WireThread } from "./registry.ts";
 import type { LoggedTurn, TurnLog, WireItem } from "./turn-log.ts";
 
 const ACTIVE_STATUS: ThreadStatus = { type: "active", activeFlags: [] };
 const IDLE_STATUS: ThreadStatus = { type: "idle" };
 export const NOT_LOADED_STATUS: ThreadStatus = { type: "notLoaded" };
+const metadataState = new ThreadMetadataState();
 
 export interface BuildWireThreadOptions {
 	readonly forkedFromId?: string | null;
 }
 
-export function buildWireThread(
+export async function buildWireThread(
 	entry: ThreadEntry | WireThread,
 	turnLog: TurnLog,
 	includeTurns: boolean,
 	options: BuildWireThreadOptions = {},
-): Thread {
+): Promise<Thread> {
 	const model = "session" in entry ? entry.session.model : undefined;
 	const wire = "session" in entry ? entryToWire(entry) : entry;
 	const createdAt = isoSeconds(wire.createdAt);
@@ -40,7 +42,7 @@ export function buildWireThread(
 		threadSource: null,
 		agentNickname: null,
 		agentRole: null,
-		gitInfo: null,
+		gitInfo: await metadataState.readGitInfo(wire),
 		name: wire.name,
 		turns: includeTurns ? threadTurns(entry, turnLog) : [],
 	};
