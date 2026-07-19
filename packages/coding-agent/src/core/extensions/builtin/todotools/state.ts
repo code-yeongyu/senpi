@@ -73,9 +73,9 @@ function parseTodoStatus(value: unknown): TodoStatus | undefined {
 	return isTodoStatus(value) ? value : undefined;
 }
 
-function parseTodoItem(value: unknown): TodoItem | undefined {
+function parseTodoItem(value: unknown, options?: { lenient?: boolean }): TodoItem | undefined {
 	if (!isRecord(value) || typeof value.content !== "string") return undefined;
-	const status = parseTodoStatus(value.status);
+	const status = parseTodoStatus(value.status) ?? (options?.lenient ? "pending" : undefined);
 	return status ? { content: value.content, status } : undefined;
 }
 
@@ -105,7 +105,10 @@ function parseLegacyTodos(value: unknown): TodoPhase[] | undefined {
 	if (!Array.isArray(value)) return undefined;
 	const tasks: TodoItem[] = [];
 	for (const todo of value) {
-		const parsed = parseTodoItem(todo);
+		// Legacy todowrite persisted arbitrary status strings (e.g. "blocked").
+		// Preserve those entries instead of dropping the whole list: unknown
+		// statuses become "pending" so the task survives migration as open work.
+		const parsed = parseTodoItem(todo, { lenient: true });
 		if (!parsed) return undefined;
 		tasks.push(parsed);
 	}
@@ -255,6 +258,7 @@ export function initPhases(entry: TodoOpEntry, errors: string[]): TodoPhase[] {
 	for (const listEntry of list) {
 		if (seenPhases.has(listEntry.phase)) errors.push(`Duplicate phase "${listEntry.phase}" in init list`);
 		seenPhases.add(listEntry.phase);
+		if (listEntry.items.length === 0) errors.push(`Phase "${listEntry.phase}" has no tasks in init list`);
 		for (const content of listEntry.items) {
 			if (seenTasks.has(content)) errors.push(`Duplicate task "${content}" in init list`);
 			seenTasks.add(content);

@@ -43,7 +43,10 @@ const TodoOperationSchema = Type.Union([
 
 const TodoPhaseInputSchema = Type.Object({
 	phase: Type.String({ description: "Phase name" }),
-	items: Type.Array(Type.String({ description: "Task content" }), { description: "Tasks for this phase" }),
+	items: Type.Array(Type.String({ description: "Task content" }), {
+		description: "Tasks for this phase",
+		minItems: 1,
+	}),
 });
 
 export const TODO_PARAMS_SCHEMA = Type.Object({

@@ -317,6 +317,123 @@ describe("todo extension", () => {
 		).toHaveLength(stateEntriesBeforeFailure);
 	});
 
+	it("rejects an init containing an empty phase atomically", async () => {
+		// Given a valid persisted list
+		const harness = await createHarnessWithTodoExtension();
+		harnesses.push(harness);
+		harness.setResponses([
+			...responsesForTodo({ op: "init", items: ["Keep me"] }),
+			...responsesForTodo({
+				op: "init",
+				list: [
+					{ phase: "Filled", items: ["New task"] },
+					{ phase: "Empty", items: [] },
+				],
+			}),
+			...responsesForTodo({ op: "view" }),
+		]);
+
+		// When an init carrying an empty nested phase is applied
+		await harness.session.prompt("init");
+		const stateEntriesBefore = harness.sessionManager
+			.getBranch()
+			.filter((entry) => entry.type === "custom" && entry.customType === TODO_STATE_ENTRY_TYPE).length;
+		await harness.session.prompt("invalid init");
+		const failedResult = getLatestTodoResult(harness);
+
+		// Then the batch is rejected wholesale and nothing new is persisted
+		expect(failedResult.isError).toBe(true);
+		expect(
+			harness.sessionManager
+				.getBranch()
+				.filter((entry) => entry.type === "custom" && entry.customType === TODO_STATE_ENTRY_TYPE),
+		).toHaveLength(stateEntriesBefore);
+
+		// And the previous list is fully intact
+		await harness.session.prompt("view");
+		expect(phasesFromResult(getLatestTodoResult(harness))).toEqual([
+			{ name: "Tasks", tasks: [{ content: "Keep me", status: "in_progress" }] },
+		]);
+	});
+
+	it("moves the in_progress pointer back to an earlier phase after out-of-order completion", async () => {
+		// Given two phases where the later phase's task was started out of order
+		const harness = await createHarnessWithTodoExtension();
+		harnesses.push(harness);
+		harness.setResponses([
+			...responsesForTodo({
+				op: "init",
+				list: [
+					{ phase: "Foundation", items: ["Lay groundwork", "Wire modules"] },
+					{ phase: "Verification", items: ["Run suite"] },
+				],
+			}),
+			...responsesForTodo({ op: "start", task: "Run suite" }),
+			...responsesForTodo({ op: "done", task: "Run suite" }),
+		]);
+
+		// When the out-of-order task completes
+		await harness.session.prompt("init");
+		await harness.session.prompt("start later phase");
+		await harness.session.prompt("finish later phase");
+
+		// Then the pointer auto-promotes BACK to the earliest open task in phase 1
+		expect(phasesFromResult(getLatestTodoResult(harness))).toEqual([
+			{
+				name: "Foundation",
+				tasks: [
+					{ content: "Lay groundwork", status: "in_progress" },
+					{ content: "Wire modules", status: "pending" },
+				],
+			},
+			{ name: "Verification", tasks: [{ content: "Run suite", status: "completed" }] },
+		]);
+	});
+
+	it("view performs no normalization and no write even on invalid persisted state", async () => {
+		// Given persisted state that illegally carries two in_progress tasks
+		const invalidPhases: TodoPhase[] = [
+			{
+				name: "Tasks",
+				tasks: [
+					{ content: "First", status: "in_progress" },
+					{ content: "Second", status: "in_progress" },
+				],
+			},
+		];
+		const setCalls: TodoPhase[][] = [];
+		let appendCalls = 0;
+		let capturedTool: ToolDefinition<typeof TODO_PARAMS_SCHEMA> | undefined;
+		const mockPi = {
+			registerTool(tool: ToolDefinition<typeof TODO_PARAMS_SCHEMA>) {
+				capturedTool = tool;
+			},
+			appendEntry() {
+				appendCalls += 1;
+			},
+		} as Pick<ExtensionAPI, "registerTool" | "appendEntry"> as ExtensionAPI;
+		registerTodoTool(mockPi, {
+			getCurrentPhases: () => invalidPhases,
+			setCurrentPhases: (phases) => {
+				setCalls.push(phases);
+			},
+			syncWidget: () => {},
+		});
+		if (!capturedTool?.execute) throw new Error("Expected todo tool with execute");
+		const ctx = { sessionManager: { getSessionFile: () => undefined } } as unknown as Parameters<
+			NonNullable<ToolDefinition<typeof TODO_PARAMS_SCHEMA>["execute"]>
+		>[4];
+
+		// When view runs against the invalid state
+		const result = await capturedTool.execute("view-call", { op: "view" }, undefined as never, undefined, ctx);
+
+		// Then both in_progress rows are echoed untouched and nothing is written
+		const details = result.details as { phases?: TodoPhase[] } | undefined;
+		expect(details?.phases).toEqual(invalidPhases);
+		expect(setCalls).toHaveLength(0);
+		expect(appendCalls).toBe(0);
+	});
+
 	it("round-trips phased state through session entries", async () => {
 		// Given a file-backed session
 		const harness = await createHarnessWithTodoExtension({ persistSession: true });
@@ -331,6 +448,32 @@ describe("todo extension", () => {
 			{ name: "Persisted", tasks: [{ content: "Reload me", status: "in_progress" }] },
 		]);
 		expect(harness.sessionManager.getSessionFile()).toBeDefined();
+	});
+
+	it("preserves legacy todos with non-canonical statuses as pending", () => {
+		// Given a legacy flat entry carrying a status outside the v2 allowlist
+		const sessionManager = SessionManager.inMemory();
+		sessionManager.appendMessage(userMsg("legacy"));
+		sessionManager.appendCustomEntry(TODO_STATE_ENTRY_TYPE, {
+			todos: [
+				{ content: "Old blocked", status: "blocked", priority: "high" },
+				{ content: "Old done", status: "completed", priority: "low" },
+			],
+		});
+
+		// When the branch state is read
+		const phases = getLatestPhasesFromBranchEntries(sessionManager.getBranch());
+
+		// Then the unknown status survives migration as open (pending) work
+		expect(phases).toEqual([
+			{
+				name: "Tasks",
+				tasks: [
+					{ content: "Old blocked", status: "pending" },
+					{ content: "Old done", status: "completed" },
+				],
+			},
+		]);
 	});
 
 	it("migrates legacy flat todos and cancelled status", () => {
