@@ -1,5 +1,30 @@
 # changes
 
+## Incremental assistant message re-render (2026-07-19)
+
+### What changed
+
+- `modes/interactive/components/assistant-message.ts`: assistant content is now planned as flat render descriptors
+  and reconciled against the previous child list. Unchanged children stay mounted, growing text/thinking Markdown
+  updates through `Markdown.setText()`, and structural changes rebuild only the divergent suffix.
+- `../test/assistant-message-incremental-render.test.ts`: exact raw-render parity covers text, thinking,
+  provider-native blocks, error tails, hidden thinking, expansion, and output padding; identity assertions pin the
+  incremental reuse contract.
+
+### Why
+
+- Streaming updates previously cleared the entire content container, so every delta recreated all Markdown children
+  and discarded their instance render caches even when only the final block grew.
+
+### Why extension system couldn't handle this
+
+- The built-in assistant component owns transcript child identity, disposal, render caching, and OSC marker behavior;
+  extensions cannot reconcile its private render tree.
+
+### Expected merge conflict zones on next upstream sync
+
+- MEDIUM: `modes/interactive/components/assistant-message.ts` around content construction and streaming cache reuse.
+
 ## Neo launch handoff and daemon dispatch (2026-07-06)
 
 ### What changed
