@@ -16,6 +16,7 @@ export type Goal = {
 	threadId: string;
 	objective: string;
 	status: GoalStatus;
+	tokenBudget?: number;
 	tokensUsed: number;
 	timeUsedSeconds: number;
 	createdAt: number;

@@ -255,6 +255,7 @@ function isGoal(value: unknown): value is Goal {
 		typeof value.threadId === "string" &&
 		typeof value.objective === "string" &&
 		isGoalStatus(value.status) &&
+		(value.tokenBudget === undefined || isNonNegativeSafeInteger(value.tokenBudget)) &&
 		isNonNegativeSafeInteger(value.tokensUsed) &&
 		isNonNegativeSafeInteger(value.timeUsedSeconds) &&
 		isNonNegativeSafeInteger(value.createdAt) &&
