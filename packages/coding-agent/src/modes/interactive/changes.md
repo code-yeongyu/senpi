@@ -1,5 +1,31 @@
 # changes
 
+## paced streaming tool argument previews (2026-07-20)
+
+### What changed
+
+- `tool-args-reveal.ts`: adds per-tool-call pacing for streaming partial JSON. The first usable prefix appears
+  immediately, later append-only growth follows the smooth-streaming cadence, parsing is batched in at least 64
+  UTF-16-unit increments, and reveal boundaries never split surrogate pairs.
+- `interactive-mode.ts`: routes in-flight tool arguments through the controller, flushes exact arguments at message and
+  execution boundaries, cancels stale state on direct-update paths, publishes buffered arguments before teardown, and
+  refreshes timers after live smooth streaming setting changes.
+
+### Why
+
+- Large tool arguments can arrive in provider bursts. Parsing and rendering every burst makes previews jump abruptly
+  and repeatedly reparses nearly identical JSON prefixes.
+
+### Why extension system couldn't handle this
+
+- Extensions cannot own the built-in pending-tool component map or coordinate its private argument updates with
+  assistant-message, tool-execution, settings, and teardown lifecycles.
+
+### Expected merge conflict zones
+
+- MEDIUM: `interactive-mode.ts` around streamed tool-call handling and lifecycle flushes.
+- LOW: the fork-only argument reveal controller.
+
 ## smooth streaming reveal (2026-07-20)
 
 ### What changed

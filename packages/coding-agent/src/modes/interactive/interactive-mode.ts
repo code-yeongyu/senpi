@@ -168,6 +168,7 @@ import {
 	theme,
 } from "./theme/theme.ts";
 import { InteractiveThemeController } from "./theme/theme-controller.ts";
+import { ToolArgsRevealController } from "./tool-args-reveal.ts";
 import {
 	blendWorkingStatusShimmerRgbColor,
 	formatActiveToolWorkingLabel,
@@ -211,6 +212,11 @@ type ToolExecutionStartEvent = Extract<AgentSessionEvent, { type: "tool_executio
 type ToolExecutionEndEvent = Extract<AgentSessionEvent, { type: "tool_execution_end" }>;
 type ToolHookStatusStartEvent = Extract<AgentSessionEvent, { type: "tool_hook_status"; phase: "start" }>;
 type ToolHookStatusEvent = Extract<AgentSessionEvent, { type: "tool_hook_status" }>;
+
+function getStreamingToolCallPartialJson(content: unknown): string | undefined {
+	if (typeof content !== "object" || content === null || !("partialJson" in content)) return undefined;
+	return typeof content.partialJson === "string" ? content.partialJson : undefined;
+}
 
 function formatToolHookTerminalTitle(event: ToolHookStatusStartEvent): string {
 	const hookName = sanitizeWorkingStatusPlainText(event.hookName) || "hook";
@@ -455,6 +461,7 @@ export class InteractiveMode {
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
 	private streamingMessage: AssistantMessage | undefined = undefined;
 	private readonly streamingReveal: StreamingRevealController;
+	private readonly toolArgsReveal: ToolArgsRevealController;
 
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
@@ -565,6 +572,11 @@ export class InteractiveMode {
 			getSmoothStreaming: () => this.settingsManager.getSmoothStreaming(),
 			getSmoothStreamingFps: () => this.settingsManager.getSmoothStreamingFps(),
 			getHideThinkingBlock: () => this.hideThinkingBlock,
+			requestRender: () => this.ui.requestRender(),
+		});
+		this.toolArgsReveal = new ToolArgsRevealController({
+			getSmoothStreaming: () => this.settingsManager.getSmoothStreaming(),
+			getSmoothStreamingFps: () => this.settingsManager.getSmoothStreamingFps(),
 			requestRender: () => this.ui.requestRender(),
 		});
 		this.applySmoothStreamingRenderFps();
@@ -2087,6 +2099,7 @@ export class InteractiveMode {
 	}
 
 	private clearPendingTools(): void {
+		this.toolArgsReveal.flushAll();
 		for (const component of this.pendingTools.values()) {
 			component.stopAnimation();
 		}
@@ -3310,8 +3323,9 @@ export class InteractiveMode {
 
 					for (const content of this.streamingMessage.content) {
 						if (content.type === "toolCall") {
-							if (!this.pendingTools.has(content.id)) {
-								const component = new ToolExecutionComponent(
+							let component = this.pendingTools.get(content.id);
+							if (!component) {
+								component = new ToolExecutionComponent(
 									content.name,
 									content.id,
 									content.arguments,
@@ -3326,11 +3340,13 @@ export class InteractiveMode {
 								component.setExpanded(this.toolOutputExpanded);
 								this.chatContainer.addChild(component);
 								this.pendingTools.set(content.id, component);
+							}
+							const partialJson = getStreamingToolCallPartialJson(content);
+							if (partialJson && this.settingsManager.getSmoothStreaming()) {
+								this.toolArgsReveal.update(content.id, component, partialJson);
 							} else {
-								const component = this.pendingTools.get(content.id);
-								if (component) {
-									component.updateArgs(content.arguments);
-								}
+								this.toolArgsReveal.finish(content.id);
+								component.updateArgs(content.arguments);
 							}
 						}
 					}
@@ -3343,6 +3359,14 @@ export class InteractiveMode {
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
 					this.streamingReveal.stop();
+					for (const content of this.streamingMessage.content) {
+						if (content.type !== "toolCall") continue;
+						const component = this.pendingTools.get(content.id);
+						if (component && !this.toolArgsReveal.flush(content.id, content.arguments)) {
+							component.updateArgs(content.arguments);
+						}
+					}
+					this.toolArgsReveal.flushAll();
 					let errorMessage: string | undefined;
 					if (this.streamingMessage.stopReason === "aborted") {
 						errorMessage = abortedErrorLabel(undefined, this.session.retryAttempt);
@@ -3395,6 +3419,9 @@ export class InteractiveMode {
 					this.chatContainer.addChild(component);
 					this.pendingTools.set(event.toolCallId, component);
 				}
+				if (!this.toolArgsReveal.flush(event.toolCallId, event.args)) {
+					component.updateArgs(event.args);
+				}
 				component.markExecutionStarted();
 				this.ui.requestRender();
 				break;
@@ -3415,6 +3442,7 @@ export class InteractiveMode {
 
 			case "tool_execution_end": {
 				this.handleToolExecutionEnd(event);
+				this.toolArgsReveal.finish(event.toolCallId);
 				const component = this.pendingTools.get(event.toolCallId);
 				if (component) {
 					component.updateResult({ ...event.result, isError: event.isError });
@@ -4687,6 +4715,7 @@ export class InteractiveMode {
 					onSmoothStreamingChange: (enabled) => {
 						this.settingsManager.setSmoothStreaming(enabled);
 						this.applySmoothStreamingRenderFps();
+						this.toolArgsReveal.refresh();
 						if (this.streamingMessage) {
 							this.streamingReveal.setTarget(this.streamingMessage);
 						}
@@ -4694,6 +4723,7 @@ export class InteractiveMode {
 					},
 					onSmoothStreamingFpsChange: (fps) => {
 						this.settingsManager.setSmoothStreamingFps(fps);
+						this.toolArgsReveal.refresh();
 						if (this.settingsManager.getSmoothStreaming()) {
 							this.applySmoothStreamingRenderFps();
 							if (this.streamingMessage) {

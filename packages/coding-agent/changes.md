@@ -1,5 +1,19 @@
 # Local fork changes
 
+## 2026-07-20 — paced streaming tool argument preview coverage
+
+- Changed:
+  - `test/tool-args-reveal.test.ts`: deterministic fake-timer coverage for initial visibility, monotonic catch-up,
+    64-unit parse batching, surrogate-safe slicing, exact per-call/all-call flushes, disabled-setting cancellation, and
+    live FPS refreshes.
+  - `test/suite/regressions/4167-thinking-toggle-pending-tool-render.test.ts`: extends the prototype harness with the
+    tool-argument reveal flush seam used when pending components are rebuilt.
+- Why: streamed tool arguments need the same stable cadence as assistant text without exposing malformed Unicode or
+  allowing a stale timer to overwrite exact execution arguments.
+- What changed: focused package test coverage; runtime changes are tracked in the nearest `src/**/changes.md` files.
+- Why the extension system could not handle this: the tests pin private interactive pending-tool and timer lifecycles.
+- Merge-conflict risk: low. The suite and controller are fork-only; runtime wiring risk is documented under `src/`.
+
 ## 2026-07-20 — smooth streaming reveal test coverage
 
 - Changed:
