@@ -473,7 +473,8 @@ export class TUI extends Container {
 	private renderRequested = false;
 	private renderTimer: NodeJS.Timeout | undefined;
 	private lastRenderAt = 0;
-	private static readonly MIN_RENDER_INTERVAL_MS = 16;
+	/** Minimum interval between scheduled renders. Default preserves the historic ~60fps cap. */
+	#minRenderIntervalMs = 16;
 	private inputRenderPending = false;
 	private cursorRow = 0; // Logical cursor row (end of rendered content)
 	private hardwareCursorRow = 0; // Actual terminal cursor row (may differ due to IME positioning)
@@ -953,12 +954,22 @@ export class TUI extends Container {
 		process.nextTick(() => this.scheduleRender());
 	}
 
+	/**
+	 * Cap the render scheduler at `fps` frames per second. Values are clamped
+	 * to 30-120fps (120fps yields an 8ms minimum interval). Never calling this
+	 * preserves the historic 16ms (~60fps) throttle.
+	 */
+	setMaxRenderFps(fps: number): void {
+		const clamped = Math.min(120, Math.max(30, Math.round(fps)));
+		this.#minRenderIntervalMs = Math.floor(1000 / clamped);
+	}
+
 	private scheduleRender(): void {
 		if (this.stopped || this.renderTimer || !this.renderRequested) {
 			return;
 		}
 		const elapsed = performance.now() - this.lastRenderAt;
-		const delay = Math.max(0, TUI.MIN_RENDER_INTERVAL_MS - elapsed);
+		const delay = Math.max(0, this.#minRenderIntervalMs - elapsed);
 		this.renderTimer = setTimeout(() => {
 			this.renderTimer = undefined;
 			if (this.stopped || !this.renderRequested) {
