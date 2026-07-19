@@ -1,5 +1,30 @@
 # changes
 
+## incremental assistant message re-render (2026-07-19)
+
+### What changed
+
+- `components/assistant-message.ts`: replaces full child teardown on every assistant streaming delta with a flat
+  descriptor reconciliation. Stable children are reused, same-kind Markdown changes update in place, and the first
+  kind/text/list divergence rebuilds only the remaining suffix.
+- `../../../test/assistant-message-incremental-render.test.ts`: compares incremental output byte-for-byte with fresh
+  components across the supported block shapes and verifies leading and growing Markdown identities remain stable.
+
+### Why
+
+- Clearing the content container made every streamed token recreate preceding Markdown components, keeping their
+  instance caches cold and repeatedly re-lexing already-finished blocks.
+
+### Why extension system couldn't handle this
+
+- Assistant transcript child reconciliation is private host-renderer state; an extension cannot retain or replace the
+  built-in component's nested children.
+
+### Expected merge conflict zones
+
+- MEDIUM: `components/assistant-message.ts` around descriptor construction, child reconciliation, and render-cache
+  invalidation.
+
 ## eval tool call single-box render (2026-07-17)
 
 ### What changed
