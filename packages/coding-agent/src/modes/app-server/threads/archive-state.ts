@@ -48,6 +48,17 @@ export class ThreadArchiveState {
 		});
 	}
 
+	async unarchive(threadId: string): Promise<WireThread | undefined> {
+		return enqueueThreadMutation(threadId, async () => {
+			const thread = (await this.listArchivedThreads()).find((candidate) => candidate.id === threadId);
+			if (!thread) {
+				return undefined;
+			}
+			await rm(sidecarPathForThread(thread), { force: true });
+			return thread;
+		});
+	}
+
 	async isArchived(thread: WireThread): Promise<boolean> {
 		const path = sidecarPathForThread(thread);
 		try {

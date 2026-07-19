@@ -14,11 +14,13 @@ import {
 import {
 	registerThreadLifecycleHandlers,
 	type ThreadLifecycleController,
+	type ThreadLifecycleHandlersOptions,
 } from "../../src/modes/app-server/threads/handlers.ts";
 import { ThreadRegistry, type ThreadRegistryOptions } from "../../src/modes/app-server/threads/registry.ts";
 import { TurnLog } from "../../src/modes/app-server/threads/turn-log.ts";
 
-type HarnessOptions = Pick<ThreadRegistryOptions, "createSession">;
+type HarnessOptions = Pick<ThreadRegistryOptions, "createSession"> &
+	Pick<ThreadLifecycleHandlersOptions, "deferUntilResponded">;
 
 export const roots: string[] = [];
 
@@ -91,6 +93,7 @@ export function createHarnessForRoot(
 		threads,
 		turnLog,
 		notifications,
+		deferUntilResponded: options.deferUntilResponded,
 		idleUnloadMinutes: 5,
 	});
 	return { connection, registry, threads, turnLog, notifications, lifecycle };

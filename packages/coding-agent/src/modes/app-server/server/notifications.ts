@@ -49,6 +49,7 @@ const BROADCAST_NOTIFICATION_METHODS = new Set([
 	"thread/closed",
 	"thread/deleted",
 	"thread/archived",
+	"thread/unarchived",
 	"thread/name/updated",
 	"thread/tokenUsage/updated",
 ]);

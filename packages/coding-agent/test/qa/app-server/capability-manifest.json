@@ -14,6 +14,7 @@
       "thread/read",
       "thread/resume",
       "thread/start",
+      "thread/unarchive",
       "thread/unsubscribe",
       "turn/interrupt",
       "turn/start",
@@ -115,7 +116,6 @@
       "thread/metadata/update",
       "thread/rollback",
       "thread/shellCommand",
-      "thread/unarchive",
       "windowsSandbox/readiness",
       "windowsSandbox/setupStart"
     ],

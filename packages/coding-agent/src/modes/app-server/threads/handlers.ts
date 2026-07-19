@@ -4,6 +4,7 @@ import type {
 	ThreadReadResponse,
 	ThreadResumeResponse,
 	ThreadStartResponse,
+	ThreadUnarchiveResponse,
 	ThreadUnsubscribeResponse,
 } from "../protocol/index.ts";
 import type { MethodHandler, MethodRegistry, RegistryConnection, RpcRequest } from "../rpc/registry.ts";
@@ -26,6 +27,7 @@ export interface ThreadLifecycleHandlersOptions {
 	readonly notifications: NotificationRouter;
 	readonly idleUnloadMinutes?: number;
 	readonly replayPendingApprovals?: (threadId: string, connectionId: string) => void;
+	readonly deferUntilResponded?: (connectionId: string, action: () => Promise<void> | void) => boolean;
 }
 
 type RuntimeThreadResponse = ThreadStartResponse | ThreadResumeResponse | ThreadForkResponse;
@@ -69,6 +71,9 @@ class ThreadLifecycleHandlers {
 	private readonly turnLog: TurnLog;
 	private readonly notifications: NotificationRouter;
 	private readonly replayPendingApprovals: ((threadId: string, connectionId: string) => void) | undefined;
+	private readonly deferUntilResponded:
+		| ((connectionId: string, action: () => Promise<void> | void) => boolean)
+		| undefined;
 	private readonly archiveState: ThreadArchiveState;
 	private readonly searchCache = new ThreadSearchCache();
 	private readonly idleUnloadMs: number;
@@ -79,6 +84,7 @@ class ThreadLifecycleHandlers {
 		this.turnLog = options.turnLog;
 		this.notifications = options.notifications;
 		this.replayPendingApprovals = options.replayPendingApprovals;
+		this.deferUntilResponded = options.deferUntilResponded;
 		this.archiveState = new ThreadArchiveState(options.threads.getSessionDir());
 		this.idleUnloadMs = Math.max(0, options.idleUnloadMinutes ?? DEFAULT_IDLE_UNLOAD_MINUTES) * 60 * 1000;
 	}
@@ -113,6 +119,10 @@ class ThreadLifecycleHandlers {
 			},
 			{ method: "thread/name/set", handler: (context) => this.setName(context.request) },
 			{ method: "thread/archive", handler: (context) => this.archive(context.request) },
+			{
+				method: "thread/unarchive",
+				handler: (context) => this.unarchive(context.connection, context.request),
+			},
 			{ method: "thread/delete", handler: (context) => this.delete(context.request) },
 			{
 				method: "thread/unsubscribe",
@@ -282,6 +292,29 @@ class ThreadLifecycleHandlers {
 		return {};
 	}
 
+	private async unarchive(connection: RegistryConnection, request: RpcRequest): Promise<ThreadUnarchiveResponse> {
+		const params = objectValue(request.params);
+		const threadId = requiredString(params.threadId, "threadId");
+		const archivedThread = await this.archiveState.unarchive(threadId);
+		if (!archivedThread) {
+			throw invalidRequest(`thread not found: ${threadId}`);
+		}
+
+		const wireThread = {
+			...archivedThread,
+			status: { type: "notLoaded" } as const,
+			updatedAt: bumpedUpdatedAt(archivedThread.updatedAt),
+		};
+		const thread = await buildWireThread(wireThread, this.turnLog, false);
+		const notify = (): void => {
+			this.notifications.broadcast({ method: "thread/unarchived", params: { threadId } });
+		};
+		if (this.deferUntilResponded?.(connectionId(connection), notify) !== true) {
+			notify();
+		}
+		return { thread };
+	}
+
 	private unsubscribe(connection: RegistryConnection, request: RpcRequest): ThreadUnsubscribeResponse {
 		const params = objectValue(request.params);
 		const threadId = requiredString(params.threadId, "threadId");
@@ -402,4 +435,11 @@ class ThreadLifecycleHandlers {
 		clearTimeout(timer);
 		this.idleTimers.delete(threadId);
 	}
+}
+
+function bumpedUpdatedAt(previous: string): string {
+	const previousMs = Date.parse(previous);
+	const nowMs = Date.now();
+	const nextMs = Number.isFinite(previousMs) ? Math.max(nowMs, previousMs + 1) : nowMs;
+	return new Date(nextMs).toISOString();
 }

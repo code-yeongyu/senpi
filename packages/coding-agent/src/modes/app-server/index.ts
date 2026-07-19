@@ -170,6 +170,7 @@ function createAppServerRuntime(requestShutdown: (reason: string) => void): AppS
 		threads,
 		turnLog,
 		notifications,
+		deferUntilResponded: (connectionId, action) => core.deferUntilResponded(connectionId, action),
 		idleUnloadMinutes: 30,
 		replayPendingApprovals: (threadId) => {
 			approvals.replayPendingForThread(threadId);
