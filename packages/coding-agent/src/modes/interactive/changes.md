@@ -1,5 +1,30 @@
 # changes
 
+## smooth streaming reveal (2026-07-20)
+
+### What changed
+
+- `streaming-reveal.ts`: adds append-aware grapheme counting/slicing and a real-time reveal controller with 90
+  units/second minimum velocity, a 267ms catchup horizon, 1–100ms delta clamping, and configurable 30–120fps ticks.
+- `interactive-mode.ts`: routes assistant start/update events through one controller, flushes final content directly,
+  stops pacing on abort/session teardown, resyncs live thinking visibility, and applies the TUI FPS cap.
+- `components/settings-selector.ts`: adds “Smooth streaming” and “Streaming fps” controls.
+
+### Why
+
+- Bursty provider deltas should appear as a readable, steady reveal without splitting Korean, emoji ZWJ, combining, or
+  other grapheme clusters.
+
+### Why extension system couldn't handle this
+
+- Extensions cannot replace the built-in in-flight assistant component or coordinate its render timer with session
+  teardown and TUI scheduling.
+
+### Expected merge conflict zones
+
+- MEDIUM: `interactive-mode.ts` assistant event handling and settings callbacks.
+- LOW: the fork-only controller and new selector items.
+
 ## incremental assistant message re-render (2026-07-19)
 
 ### What changed

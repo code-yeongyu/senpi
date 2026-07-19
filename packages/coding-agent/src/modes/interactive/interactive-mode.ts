@@ -153,6 +153,7 @@ import { UserMessageSelectorComponent } from "./components/user-message-selector
 import { restoreInteractiveStderr, takeOverInteractiveStderr } from "./interactive-stderr-guard.ts";
 import { getModelSearchText } from "./model-search.ts";
 import { resolveStartupToolPaths } from "./startup-tools.ts";
+import { DEFAULT_SMOOTH_FPS, StreamingRevealController } from "./streaming-reveal.ts";
 import {
 	getAvailableThemes,
 	getAvailableThemesWithPaths,
@@ -453,11 +454,18 @@ export class InteractiveMode {
 	// Streaming message tracking
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
 	private streamingMessage: AssistantMessage | undefined = undefined;
+	private readonly streamingReveal: StreamingRevealController;
 
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
 	private requestStreamingRender(): void {
 		this.ui.requestRender();
+	}
+	private applySmoothStreamingRenderFps(): void {
+		const fps = this.settingsManager.getSmoothStreaming()
+			? this.settingsManager.getSmoothStreamingFps()
+			: DEFAULT_SMOOTH_FPS;
+		this.ui.setMaxRenderFps(fps);
 	}
 
 	// Tool output expansion state
@@ -553,6 +561,13 @@ export class InteractiveMode {
 			new ProcessTerminal({ onExternalStdoutWrite: appendHiddenTuiStdout }),
 			this.settingsManager.getShowHardwareCursor(),
 		);
+		this.streamingReveal = new StreamingRevealController({
+			getSmoothStreaming: () => this.settingsManager.getSmoothStreaming(),
+			getSmoothStreamingFps: () => this.settingsManager.getSmoothStreamingFps(),
+			getHideThinkingBlock: () => this.hideThinkingBlock,
+			requestRender: () => this.ui.requestRender(),
+		});
+		this.applySmoothStreamingRenderFps();
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
 		this.headerContainer = new Container();
 		this.loadedResourcesContainer = new Container();
@@ -1827,6 +1842,7 @@ export class InteractiveMode {
 		this.footerDataProvider.setCwd(this.sessionManager.getCwd());
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
 		this.outputPad = this.settingsManager.getOutputPad();
+		this.applySmoothStreamingRenderFps();
 		this.ui.setShowHardwareCursor(this.settingsManager.getShowHardwareCursor());
 		const clearOnShrink = this.settingsManager.getClearOnShrink();
 		this.ui.setClearOnShrink(clearOnShrink);
@@ -1878,6 +1894,7 @@ export class InteractiveMode {
 		this.compactionQueuedMessages = [];
 		this.compactionInFlightMessages = [];
 		this.compactionTransferAbortControllers.clear();
+		this.streamingReveal.stop();
 		this.streamingComponent = undefined;
 		this.streamingMessage = undefined;
 		this.clearPendingTools();
@@ -3281,7 +3298,7 @@ export class InteractiveMode {
 					this.streamingComponent.setExpanded(this.toolOutputExpanded);
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
-					this.streamingComponent.updateContent(this.streamingMessage);
+					this.streamingReveal.begin(this.streamingComponent, this.streamingMessage);
 					this.requestStreamingRender();
 				}
 				break;
@@ -3289,7 +3306,7 @@ export class InteractiveMode {
 			case "message_update":
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
-					this.streamingComponent.updateContent(this.streamingMessage);
+					this.streamingReveal.setTarget(this.streamingMessage);
 
 					for (const content of this.streamingMessage.content) {
 						if (content.type === "toolCall") {
@@ -3325,6 +3342,7 @@ export class InteractiveMode {
 				if (event.message.role === "user") break;
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
+					this.streamingReveal.stop();
 					let errorMessage: string | undefined;
 					if (this.streamingMessage.stopReason === "aborted") {
 						errorMessage = abortedErrorLabel(undefined, this.session.retryAttempt);
@@ -3413,6 +3431,7 @@ export class InteractiveMode {
 				this.clearStatusIndicator("working");
 				this.clearActiveToolExecutionStatus();
 				this.clearToolHookStatuses();
+				this.streamingReveal.stop();
 				if (this.streamingComponent) {
 					this.chatContainer.removeChild(this.streamingComponent);
 					this.streamingComponent = undefined;
@@ -4198,7 +4217,7 @@ export class InteractiveMode {
 		// If streaming, re-add the streaming component with updated visibility and re-render
 		if (this.streamingComponent && this.streamingMessage) {
 			this.streamingComponent.setHideThinkingBlock(this.hideThinkingBlock);
-			this.streamingComponent.updateContent(this.streamingMessage);
+			this.streamingReveal.resyncVisibility();
 			this.chatContainer.addChild(this.streamingComponent);
 		}
 
@@ -4574,6 +4593,8 @@ export class InteractiveMode {
 					terminalTheme: this.themeController.getTerminalTheme(),
 					availableThemes: getAvailableThemes(),
 					hideThinkingBlock: this.hideThinkingBlock,
+					smoothStreaming: this.settingsManager.getSmoothStreaming(),
+					smoothStreamingFps: this.settingsManager.getSmoothStreamingFps(),
 					collapseChangelog: this.settingsManager.getCollapseChangelog(),
 					enableInstallTelemetry: this.settingsManager.getEnableInstallTelemetry(),
 					doubleEscapeAction: this.settingsManager.getDoubleEscapeAction(),
@@ -4656,6 +4677,29 @@ export class InteractiveMode {
 						}
 						this.chatContainer.clear();
 						this.rebuildChatFromMessages();
+						if (this.streamingComponent && this.streamingMessage) {
+							this.streamingComponent.setHideThinkingBlock(hidden);
+							this.streamingReveal.resyncVisibility();
+							this.chatContainer.addChild(this.streamingComponent);
+						}
+						this.ui.requestRender();
+					},
+					onSmoothStreamingChange: (enabled) => {
+						this.settingsManager.setSmoothStreaming(enabled);
+						this.applySmoothStreamingRenderFps();
+						if (this.streamingMessage) {
+							this.streamingReveal.setTarget(this.streamingMessage);
+						}
+						this.ui.requestRender();
+					},
+					onSmoothStreamingFpsChange: (fps) => {
+						this.settingsManager.setSmoothStreamingFps(fps);
+						if (this.settingsManager.getSmoothStreaming()) {
+							this.applySmoothStreamingRenderFps();
+							if (this.streamingMessage) {
+								this.streamingReveal.setTarget(this.streamingMessage);
+							}
+						}
 					},
 					onShowCacheMissNoticesChange: (shown) => {
 						this.settingsManager.setShowCacheMissNotices(shown);
@@ -6480,6 +6524,7 @@ export class InteractiveMode {
 	}
 
 	stop(): void {
+		this.streamingReveal.stop();
 		if (this.settingsManager.getShowTerminalProgress()) {
 			this.ui.terminal.setProgress(false);
 		}
