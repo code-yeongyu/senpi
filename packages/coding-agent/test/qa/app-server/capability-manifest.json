@@ -20,6 +20,7 @@
       "turn/steer"
     ],
     "experimental": [
+      "remoteControl/client/list",
       "remoteControl/status/read",
       "thread/search",
       "thread/turns/list",
@@ -28,6 +29,7 @@
   },
   "gates": {
     "experimentalApi": [
+      "remoteControl/client/list",
       "remoteControl/status/read",
       "thread/search",
       "thread/turns/list",
@@ -131,7 +133,6 @@
       "process/resizePty",
       "process/spawn",
       "process/writeStdin",
-      "remoteControl/client/list",
       "remoteControl/client/revoke",
       "remoteControl/disable",
       "remoteControl/enable",

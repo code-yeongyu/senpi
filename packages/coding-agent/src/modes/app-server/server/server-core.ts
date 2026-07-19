@@ -46,10 +46,13 @@ export class ServerCore {
 
 	constructor(options: ServerCoreOptions = {}) {
 		this.registry = options.registry ?? createRegistry();
-		registerAppServerModelMethods(this.registry, { modelRegistry: options.modelRegistry });
 		this.codexHome = options.codexHome ?? getAgentDir();
 		this.version = options.version ?? VERSION;
 		this.now = options.now ?? Date.now;
+		registerAppServerModelMethods(this.registry, {
+			modelRegistry: options.modelRegistry,
+			agentDir: this.codexHome,
+		});
 	}
 
 	addConnection(input: ConnectionInput): Connection {
