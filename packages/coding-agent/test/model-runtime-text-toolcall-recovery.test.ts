@@ -1,7 +1,8 @@
 import {
 	type Api,
-	AssistantMessageEventStream,
+	type AssistantMessageEventStream,
 	type Context,
+	createAssistantMessageEventStream,
 	type Model,
 	type Provider,
 	Type,
@@ -38,7 +39,7 @@ function model(id: string, overrides: Partial<Model<Api>> = {}): Model<Api> {
 }
 
 function scriptedStream(wireModel: Model<Api>): AssistantMessageEventStream {
-	const stream = new AssistantMessageEventStream();
+	const stream = createAssistantMessageEventStream();
 	const usage = {
 		input: 1,
 		output: 1,

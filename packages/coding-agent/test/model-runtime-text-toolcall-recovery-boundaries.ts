@@ -1,8 +1,10 @@
 import {
+	type Api,
+	type AssistantMessage,
 	type AssistantMessageEvent,
-	AssistantMessageEventStream,
 	type AssistantMessageEventStream as AssistantStream,
 	type Context,
+	createAssistantMessageEventStream,
 	type Model,
 	type Provider,
 	Type,
@@ -15,7 +17,7 @@ const tools: Context["tools"] = [
 	{ name: "Echo", description: "Echo text", parameters: Type.Object({ value: Type.String() }) },
 ];
 
-function model(id: string): Model {
+function model(id: string): Model<Api> {
 	return {
 		id,
 		name: id,
@@ -30,35 +32,38 @@ function model(id: string): Model {
 	};
 }
 
-function errorStream(selected: Model, reason: "error" | "aborted"): AssistantMessageEventStream {
-	const stream = new AssistantMessageEventStream();
+function errorMessage(selected: Model<Api>, reason: "error" | "aborted"): AssistantMessage {
+	return {
+		role: "assistant",
+		api: selected.api,
+		provider: selected.provider,
+		model: selected.id,
+		content: [],
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: reason,
+		errorMessage: reason,
+		timestamp: 1,
+	};
+}
+
+function errorStream(selected: Model<Api>, reason: "error" | "aborted"): AssistantStream {
+	const stream = createAssistantMessageEventStream();
 	queueMicrotask(() => {
-		const error = {
-			role: "assistant" as const,
-			api: selected.api,
-			provider: selected.provider,
-			model: selected.id,
-			content: [],
-			usage: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-				totalTokens: 0,
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-			},
-			stopReason: reason,
-			errorMessage: reason,
-			timestamp: 1,
-		};
-		stream.push({ type: "error", reason, error });
+		stream.push({ type: "error", reason, error: errorMessage(selected, reason) });
 	});
 	return stream;
 }
 
 async function runtimeWithStreams(
-	streamFactory: (selected: Model) => AssistantStream,
-): Promise<{ runtime: ModelRuntime; selected: Model; calls: { stream: number; simple: number } }> {
+	streamFactory: (selected: Model<Api>) => AssistantStream,
+): Promise<{ runtime: ModelRuntime; selected: Model<Api>; calls: { stream: number; simple: number } }> {
 	const selectedModel = model("claude-boundary");
 	const calls = { stream: 0, simple: 0 };
 	const provider: Provider = {
@@ -96,23 +101,7 @@ function cancellableStream(onReturn: () => Promise<void>): AssistantStream {
 						done: false,
 						value: {
 							type: "start",
-							partial: errorStream(model("unused"), "error").queue[0]?.error ?? {
-								role: "assistant",
-								api: "anthropic-messages",
-								provider: "runtime-recovery",
-								model: "claude-boundary",
-								content: [],
-								usage: {
-									input: 0,
-									output: 0,
-									cacheRead: 0,
-									cacheWrite: 0,
-									totalTokens: 0,
-									cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-								},
-								stopReason: "stop",
-								timestamp: 1,
-							},
+							partial: errorMessage(model("unused"), "error"),
 						},
 					};
 				},
@@ -176,14 +165,14 @@ export function registerModelRuntimeRecoveryBoundaryCases(): void {
 
 	it("creates independent recovery wrappers for concurrent runtime calls", async () => {
 		const concurrent = await runtimeWithStreams((selected) => {
-			const stream = new AssistantMessageEventStream();
+			const stream = createAssistantMessageEventStream();
 			const text = '<invoke name="Echo"><parameter name="value">hello</parameter></invoke>';
-			const partial = errorStream(selected, "error").queue[0]?.error ?? {
-				role: "assistant" as const,
+			const partial: AssistantMessage = {
+				role: "assistant",
 				api: selected.api,
 				provider: selected.provider,
 				model: selected.id,
-				content: [{ type: "text" as const, text }],
+				content: [{ type: "text", text }],
 				usage: {
 					input: 0,
 					output: 0,
@@ -192,7 +181,7 @@ export function registerModelRuntimeRecoveryBoundaryCases(): void {
 					totalTokens: 0,
 					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 				},
-				stopReason: "stop" as const,
+				stopReason: "stop",
 				timestamp: 1,
 			};
 			queueMicrotask(() => {
