@@ -9,6 +9,8 @@ import {
 import { describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
+import { probeModelRuntimeImport } from "./helpers/esm-import-graph-probe.ts";
+import { registerModelRuntimeRecoveryBoundaryCases } from "./model-runtime-text-toolcall-recovery-boundaries.ts";
 
 const leak = '<invoke name="Echo"><parameter name="value">hello</parameter></invoke>';
 const tools: Context["tools"] = [
@@ -154,8 +156,20 @@ describe("ModelRuntime text tool-call recovery", () => {
 	});
 
 	it("does not import the AI compat entrypoint", () => {
-		expect(Object.keys(process.moduleLoadList).some((entry) => entry.includes("@earendil-works/pi-ai/compat"))).toBe(
-			false,
-		);
+		const repoRoot = new URL("../../..", import.meta.url).pathname;
+		for (const target of ["source", "built"] as const) {
+			const result = probeModelRuntimeImport(repoRoot, target);
+			const graph = result.entries.map((entry) => `${entry.specifier ?? ""} ${entry.url}`).join("\n");
+			expect(graph).toContain("@earendil-works/pi-ai");
+			const compatEntries = result.entries.filter(
+				(entry) =>
+					entry.specifier === "@earendil-works/pi-ai/compat" ||
+					/\/pi-ai\/(?:src|dist)\/compat\.(?:ts|js)$/u.test(entry.url),
+			);
+			expect(compatEntries).toEqual([]);
+			expect(result.globalsAdded.filter((key) => !key.startsWith("Symbol("))).toEqual([]);
+		}
 	});
+
+	registerModelRuntimeRecoveryBoundaryCases();
 });

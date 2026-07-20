@@ -7,6 +7,8 @@ import {
 	type AuthResult,
 	type Context,
 	type Credential,
+	getProtocol,
+	getToolCallFormat,
 	lazyStream,
 	type Model,
 	type ModelAuth,
@@ -18,14 +20,9 @@ import {
 	type RefreshModelsContext,
 	type SimpleStreamOptions,
 	type StreamOptions,
-} from "@earendil-works/pi-ai";
-import {
-	getApiProvider,
-	getProtocol,
-	getToolCallFormat,
 	transformContext,
 	wrapStreamWithToolCallMiddleware,
-} from "@earendil-works/pi-ai/compat";
+} from "@earendil-works/pi-ai";
 import type { ModelConfig, ModelsJsonModel, ModelsJsonModelOverride, ModelsJsonProvider } from "./model-config.ts";
 import {
 	clearConfigValueCache,
@@ -513,7 +510,7 @@ export function composeModelProvider(
 					? base.streamSimple(model, context, options as SimpleStreamOptions)
 					: base.stream(model, context, options);
 			}
-			const api = getApiProvider(model.api);
+			const api = (await import("@earendil-works/pi-ai/compat")).getApiProvider(model.api);
 			if (!api) throw new Error(`No API provider registered for api: ${model.api}`);
 			return simple
 				? api.streamSimple(model, context, options as SimpleStreamOptions)

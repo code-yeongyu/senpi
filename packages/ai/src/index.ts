@@ -31,12 +31,19 @@ export type {
 	OAuthSelectOption,
 	OAuthSelectPrompt,
 } from "./compat/extension-oauth-types.ts";
+export * from "./env-api-keys.ts";
 export * from "./images-models.ts";
 export * from "./models.ts";
 export * from "./models-store.ts";
 export * from "./providers/faux.ts";
 export * from "./session-resources.ts";
-export { shouldRecoverTextToolCalls } from "./tool-call-middleware/index.ts";
+export {
+	getProtocol,
+	getToolCallFormat,
+	shouldRecoverTextToolCalls,
+	transformContext,
+	wrapStreamWithToolCallMiddleware,
+} from "./tool-call-middleware/index.ts";
 export { wrapStreamWithInvokeRecovery } from "./tool-call-middleware/recovery-stream-wrapper.ts";
 export * from "./types.ts";
 export * from "./utils/diagnostics.ts";
