@@ -2,7 +2,12 @@ import { Box, Container, Spacer, Text } from "@earendil-works/pi-tui";
 import type { AgentToolResult, ToolRenderContext } from "../../types.ts";
 import { defineTool } from "../../types.ts";
 import { applyPatchDetailed, buildPartialFailureText } from "./apply.ts";
-import { APPLY_PATCH_FREEFORM_DESCRIPTION, APPLY_PATCH_JSON_DESCRIPTION, APPLY_PATCH_LARK_GRAMMAR, APPLY_PATCH_PARAMS } from "./constants.ts";
+import {
+	APPLY_PATCH_FREEFORM_DESCRIPTION,
+	APPLY_PATCH_JSON_DESCRIPTION,
+	APPLY_PATCH_LARK_GRAMMAR,
+	APPLY_PATCH_PARAMS,
+} from "./constants.ts";
 import { normalizeApplyPatchArguments } from "./params.ts";
 import { parsePatch } from "./parser.ts";
 import { createPendingPatchUpdate } from "./preview.ts";
