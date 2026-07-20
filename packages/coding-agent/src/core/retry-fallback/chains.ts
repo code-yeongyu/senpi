@@ -20,7 +20,7 @@ function availableModels(lookup: FallbackModelLookup): Model<Api>[] {
 
 function selectorReference(raw: string): { reference: string; thinkingLevel?: ThinkingLevel } | undefined {
 	const trimmed = raw.trim();
-	if (!trimmed || !trimmed.includes("/") || trimmed.includes("*")) return undefined;
+	if (!trimmed.includes("/") || trimmed.includes("*")) return undefined;
 
 	const lastColon = trimmed.lastIndexOf(":");
 	if (lastColon === -1) return { reference: trimmed };
