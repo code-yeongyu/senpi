@@ -1,5 +1,34 @@
 # changes
 
+## Wave 2 app-server parity verifier corrections (2026-07-20)
+
+### What changed
+
+- `modes/app-server/protocol/`: corrected fuzzy-search result keys to Codex's snake-case wire names and completed the
+  handwritten thread-item/history facade so runtime modules no longer import generated protocol files directly.
+- `modes/app-server/threads/`: made source-kind parsing strict, separated user-activity recency from general updates,
+  persisted unarchive timestamp bumps, rejected non-`u32` history limits, and recorded rejected compactions as failed
+  without fabricating a completed item.
+- `modes/app-server/server/models.ts`: validates `remoteControl/client/list` parameters before returning the honest
+  no-remote-control internal error.
+- `test/qa/app-server/`: extended the Todo 8–12 drivers for the rejected edge cases and made the compaction fixture
+  exercise explicit manual compaction without being preempted by automatic compaction.
+
+### Why
+
+- Independent parity verification found boundary-validation, persistence, timestamp, import-layer, and failure-path
+  mismatches that the first wave's happy-path tests did not distinguish from Codex HEAD behavior.
+
+### Why extension system couldn't handle this
+
+- These contracts are JSON-RPC parsing, thread persistence/projection, and app-server lifecycle behavior below the
+  extension boundary.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: the fork-only `modes/app-server/` and app-server QA surfaces. Preserve Codex wire names and re-run the focused
+  verifier drivers if upstream session timestamp or compaction behavior changes.
+
 ## Codex HEAD app-server catalogs, facade, and terminal envelopes (2026-07-20)
 
 ### What changed
