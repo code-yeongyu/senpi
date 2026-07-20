@@ -2160,22 +2160,59 @@ export class AgentSession {
 			throw new Error(`No API key for ${model.provider}/${model.id}`);
 		}
 
+		return await this._switchActiveModel(model, {
+			persistDefault: true,
+			appendSessionEntry: true,
+			emitModelSelect: true,
+			invalidateCompaction: true,
+		});
+	}
+
+	private async _switchActiveModel(
+		model: Model<any>,
+		opts: {
+			persistDefault: boolean;
+			appendSessionEntry: boolean;
+			entryReason?: "fallback" | "fallback-revert";
+			emitModelSelect: boolean;
+			invalidateCompaction: boolean;
+			ephemeralThinkingLevel?: ThinkingLevel;
+		},
+	): Promise<SystemPromptChangeEvent | undefined> {
 		const previousModel = this.model;
-		const invalidatesCompaction = this._modelSelectionChangesContext(previousModel, model);
-		if (invalidatesCompaction) {
+		if (opts.invalidateCompaction && this._modelSelectionChangesContext(previousModel, model)) {
 			this._invalidateCompactionForModelSelection();
 		}
-		const thinkingLevel = this._getThinkingLevelForModelSwitch();
+		const thinkingLevel = this._getThinkingLevelForModelSwitch(opts.ephemeralThinkingLevel);
 		this.agent.state.model = model;
-		this.sessionManager.appendModelChange(model.provider, model.id);
-		this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
+		if (opts.appendSessionEntry) {
+			this.sessionManager.appendModelChange(
+				model.provider,
+				model.id,
+				opts.entryReason,
+				previousModel?.provider,
+				previousModel?.id,
+			);
+		}
+		if (opts.persistDefault) {
+			this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
+		}
 
 		const scopedMatch = this._scopedModels.find((sm) => modelsAreEqual(sm.model, model));
 		this._currentServiceTier = this._resolveServiceTier(model, scopedMatch?.serviceTier);
 
-		this.setThinkingLevel(thinkingLevel);
+		if (opts.ephemeralThinkingLevel !== undefined) {
+			this._applyEphemeralThinkingLevel(thinkingLevel);
+		} else {
+			this.setThinkingLevel(thinkingLevel);
+		}
 
+		if (!opts.emitModelSelect) return undefined;
 		return await this._emitModelSelect(model, previousModel, "set");
+	}
+
+	private _applyEphemeralThinkingLevel(level: ThinkingLevel): void {
+		this.agent.state.thinkingLevel = level;
 	}
 
 	/**
