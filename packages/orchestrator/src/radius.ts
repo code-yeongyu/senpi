@@ -1,7 +1,6 @@
 // allow: SIZE_OK - upstream experimental Radius client kept cohesive during this merge; split in a dedicated behavior-locked refactor.
 import { hostname, platform } from "node:os";
-import { readStoredCredential } from "@code-yeongyu/senpi";
-import type { OAuthCredential } from "@earendil-works/pi-ai";
+import { type OAuthCredential, readStoredCredential } from "@code-yeongyu/senpi";
 import { getOrchestratorDir, getSocketPath, VERSION } from "./config.ts";
 import { loadMachine, saveMachine } from "./storage.ts";
 import type { InstanceRecord, MachineRecord, RadiusRegistration } from "./types.ts";

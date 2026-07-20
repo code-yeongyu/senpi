@@ -1,5 +1,50 @@
 # Core Extensions Changes
 
+## 2026-07-19 - Port phased op-based todo tool
+
+### What changed
+
+- Rewrote `builtin/todotools/` around one `todo` tool with `init`,
+  `start`, `done`, `drop`, `rm`, `append`, and `view`
+  operations.
+- Added phased state, content-keyed task resolution, automatic promotion,
+  atomic failure behavior, compaction compatibility, and a static phase-aware
+  renderer while preserving the `todowrite` builtin id and
+  `todo-sidebar` widget key.
+
+### Why
+
+- The old pair required sending a complete flat snapshot on every mutation.
+  The op-based port makes incremental updates retry-safe and gives the model a
+  smaller, phase-aware contract.
+
+### Attribution
+
+- Ported and adapted from oh-my-pi commit
+  `9fd6e97113f5ed3a847e66d346970efdf8afcad9` (v17.0.5); see
+  `builtin/todotools/changes.md` and the repository `NOTICE.md`.
+
+### Expected merge conflict zones
+
+- HIGH: `builtin/todotools/`, `builtin/compaction/todo-bridge.ts`, and
+  todo-specific tests if upstream changes its todo or compaction contracts.
+
+## 2026-07-17 - video-in builtin extension and "video" input modality
+
+### What changed
+
+- `types.ts`: `ProviderModelConfig.input` widened to `("text" | "image" | "video")[]`, tracking the pi-ai
+  `Model.input` union (kimi-coding `k3` declares video input).
+- New builtin `builtin/video-in/`: registers a `read_video` tool that attaches a local video file
+  (mp4/mpeg/mov/webm/mkv/avi/flv/3gp, ≤100MB) as a base64 `video/*` ImageContent block. The tool is
+  activated/deactivated on `session_start` and `model_select` based on `model.input.includes("video")`,
+  so it is only exposed to video-capable models. Registered in `builtin/index.ts` after `webfetch`.
+
+### Expected merge conflict zones
+
+- LOW: `types.ts` `ProviderModelConfig.input`.
+- LOW: `builtin/index.ts` import block and `builtinExtensions` array tail.
+
 ## 2026-07-19 - model_select handlers observe live systemPromptOptions
 
 ### What changed

@@ -1,8 +1,9 @@
 import type { Tool } from "../../../types.ts";
 import { validateToolArguments } from "../../../utils/validation.ts";
 import type { ParserOptions, StreamParser, StreamParserEvent } from "../../types.ts";
-import { coerceParameters } from "./coerce-parameters.ts";
 import { findNextInvokeMatch } from "./invoke-match.ts";
+import type { InvokeProtocolConfig } from "./invoke-protocol.ts";
+import { anthropicXmlInvokeConfig } from "./invoke-protocol.ts";
 import {
 	findIncompleteInvokeOpenTag,
 	findInvokeOpenTag,
@@ -11,7 +12,7 @@ import {
 	scanInvokeBlock,
 	scanTruncatedInvokeBlock,
 } from "./invoke-tag-scanner.ts";
-import { parseAnthropicXmlGeneratedText } from "./parse.ts";
+import { parseInvokeGeneratedText } from "./parse.ts";
 import {
 	ANTHROPIC_XML_MAX_RETAINED_FRAGMENT_LENGTH,
 	createPendingFragment,
@@ -28,7 +29,6 @@ const FUNCTION_CALLS_COMPLETE_TAG = /^<\s*\/?\s*function_calls\s*>/;
 const FUNCTION_CALLS_OPEN_PREFIX = "<function_calls>";
 const FUNCTION_CALLS_CLOSE_PREFIX = "</function_calls>";
 const EAGER_OPEN_TAG_SCAN_LENGTH = 128;
-const RETAINED_FRAGMENT_OVERFLOW_MESSAGE = `Anthropic XML streaming fragment exceeded the ${ANTHROPIC_XML_MAX_RETAINED_FRAGMENT_LENGTH}-character retained-input limit.`;
 
 type FunctionCallsTag = {
 	readonly index: number;
@@ -90,11 +90,12 @@ function reportError(options: ParserOptions | undefined, message: string, toolCa
 }
 
 function coerceStreamParameters(
-	parameters: Parameters<typeof coerceParameters>[0],
+	parameters: Parameters<InvokeProtocolConfig["coerce"]>[0],
 	tool: Tool,
+	config: InvokeProtocolConfig,
 	allowJsonSchemaFallback = false,
 ): Record<string, unknown> | null {
-	const coercedParameters = coerceParameters(parameters, tool);
+	const coercedParameters = config.coerce(parameters, tool);
 	if (coercedParameters !== null || !allowJsonSchemaFallback) {
 		return coercedParameters;
 	}
@@ -114,8 +115,14 @@ function coerceStreamParameters(
 	return argumentsRecord;
 }
 
-export function createAnthropicXmlStreamParser(tools: Tool[], options?: ParserOptions): StreamParser {
+export function createInvokeStreamParser(
+	tools: Tool[],
+	config: InvokeProtocolConfig,
+	options?: ParserOptions,
+): StreamParser {
 	const resolveTool = createToolResolver(tools);
+	const retainedFragmentOverflowMessage = `${config.label} streaming fragment exceeded the ${ANTHROPIC_XML_MAX_RETAINED_FRAGMENT_LENGTH}-character retained-input limit.`;
+	const truncatedAtFinishMessage = `${config.label} tool call truncated at finish`;
 	let buffer = "";
 	let nextToolCallIndex = 0;
 	let pendingFragment: PendingFragment | null = null;
@@ -128,7 +135,7 @@ export function createAnthropicXmlStreamParser(tools: Tool[], options?: ParserOp
 		const retainedFragment = buffer;
 		buffer = "";
 		pendingFragment = null;
-		reportError(options, RETAINED_FRAGMENT_OVERFLOW_MESSAGE, retainedFragment);
+		reportError(options, retainedFragmentOverflowMessage, retainedFragment);
 
 		const events: StreamParserEvent[] = [];
 		if (shouldEmitRawToolCallTextOnError(options)) {
@@ -164,7 +171,7 @@ export function createAnthropicXmlStreamParser(tools: Tool[], options?: ParserOp
 
 				const wrapperEnd = functionCallsCloseTag.index + functionCallsCloseTag.length;
 				const wrapperContent = buffer.slice(functionCallsOpenTag.length, functionCallsCloseTag.index);
-				if (parseAnthropicXmlGeneratedText(wrapperContent, tools).length > 0) {
+				if (parseInvokeGeneratedText(wrapperContent, tools, config).length > 0) {
 					buffer = wrapperContent + buffer.slice(wrapperEnd);
 				} else {
 					emitText(events, buffer.slice(0, wrapperEnd));
@@ -212,14 +219,14 @@ export function createAnthropicXmlStreamParser(tools: Tool[], options?: ParserOp
 
 				const index = nextToolCallIndex;
 				nextToolCallIndex += 1;
-				const id = `anthropic-xml-tool-${index}`;
+				const id = `${config.idPrefix}-${index}`;
 				const argumentsRecord = block.parameters
-					? coerceStreamParameters(block.parameters, tool, allowJsonSchemaFallback)
+					? coerceStreamParameters(block.parameters, tool, config, allowJsonSchemaFallback)
 					: null;
 				if (argumentsRecord === null) {
 					reportError(
 						options,
-						"Could not process streaming Anthropic XML tool call, keeping original text.",
+						`Could not process streaming ${config.label} tool call, keeping original text.`,
 						originalCallText,
 					);
 					if (shouldEmitRawToolCallTextOnError(options)) {
@@ -310,13 +317,13 @@ export function createAnthropicXmlStreamParser(tools: Tool[], options?: ParserOp
 			const tool = invokeOpenTag?.index === 0 ? resolveTool(invokeOpenTag.toolName) : undefined;
 			if (invokeOpenTag && tool) {
 				const scannedBlock = scanTruncatedInvokeBlock(buffer, invokeOpenTag);
-				const coercedArguments = coerceStreamParameters(scannedBlock.parameters, tool, true);
+				const coercedArguments = coerceStreamParameters(scannedBlock.parameters, tool, config, true);
 				let recoveredArguments: Record<string, unknown> | null = null;
 				if (scannedBlock.isStructurallyComplete && coercedArguments !== null) {
 					try {
 						recoveredArguments = validateToolArguments(tool, {
 							type: "toolCall",
-							id: "anthropic-xml-finish-recovery",
+							id: `${config.protocol}-finish-recovery`,
 							name: tool.name,
 							arguments: coercedArguments,
 						});
@@ -327,7 +334,7 @@ export function createAnthropicXmlStreamParser(tools: Tool[], options?: ParserOp
 
 				const index = nextToolCallIndex;
 				nextToolCallIndex += 1;
-				const id = `anthropic-xml-tool-${index}`;
+				const id = `${config.idPrefix}-${index}`;
 				const argumentsRecord = recoveredArguments ?? coercedArguments ?? {};
 				events.push({ type: "toolcall_start", index, name: tool.name, id });
 				events.push({ type: "toolcall_delta", index, argumentsDelta: JSON.stringify(argumentsRecord) });
@@ -343,16 +350,16 @@ export function createAnthropicXmlStreamParser(tools: Tool[], options?: ParserOp
 						incomplete: true,
 						errorMessage: "Tool call was truncated mid-arguments",
 					});
-					options?.onError?.("Anthropic XML tool call truncated at finish", {
-						protocol: "anthropic-xml",
+					options?.onError?.(truncatedAtFinishMessage, {
+						protocol: config.protocol,
 						retainedLength: buffer.length,
 					});
 				}
 			} else if (invokeOpenTag?.index === 0) {
 				emitText(events, buffer);
 			} else if (isPotentialProtocolStart(buffer)) {
-				options?.onError?.("Anthropic XML tool call truncated at finish", {
-					protocol: "anthropic-xml",
+				options?.onError?.(truncatedAtFinishMessage, {
+					protocol: config.protocol,
 					retainedLength: buffer.length,
 				});
 			} else {
@@ -362,4 +369,8 @@ export function createAnthropicXmlStreamParser(tools: Tool[], options?: ParserOp
 			return events;
 		},
 	};
+}
+
+export function createAnthropicXmlStreamParser(tools: Tool[], options?: ParserOptions): StreamParser {
+	return createInvokeStreamParser(tools, anthropicXmlInvokeConfig, options);
 }

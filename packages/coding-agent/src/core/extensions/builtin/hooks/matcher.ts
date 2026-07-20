@@ -18,6 +18,7 @@ const TOOL_MATCHER_ALIASES: Readonly<Record<string, readonly string[]>> = {
 	grep: ["Grep", "Search", "grep_app"],
 	ls: ["LS", "List", "list"],
 	read: ["Read", "open", "read_file"],
+	todo: ["Todo"],
 	todoread: ["TodoRead"],
 	todowrite: ["TodoWrite"],
 	update_goal: ["UpdateGoal"],

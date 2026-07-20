@@ -14,6 +14,19 @@ import type { Readable } from "node:stream";
 import crossSpawn from "cross-spawn";
 
 const EXIT_STDIO_GRACE_MS = 250;
+const ABORT_EXIT_GRACE_MS = 5000;
+
+export interface WaitForChildProcessOptions {
+	/**
+	 * Abort when the caller has killed the process and no longer needs its
+	 * output. The wait then stops preserving stdio tails (descendants that
+	 * survived the kill can no longer hold it open) and resolves as soon as
+	 * the process exits, or after `abortExitGraceMs` if it never does.
+	 */
+	signal?: AbortSignal;
+	/** Post-abort deadline for `exit` before resolving anyway. Default 5s. */
+	abortExitGraceMs?: number;
+}
 
 export function spawnProcess(
 	command: string,
@@ -45,13 +58,20 @@ export function spawnProcessSync(
  * the grace timer is re-armed on every chunk, so an actively writing descendant keeps
  * us reading, while a quiet inherited handle (e.g. a Windows daemonized descendant
  * that never lets `close` fire) still releases us after the grace elapses.
+ *
+ * When `options.signal` aborts, the caller has killed the process and
+ * abandoned its output: tail preservation ends, the pipes are destroyed, and
+ * the wait resolves on `exit` — or after `abortExitGraceMs` when the kill
+ * never lands (uninterruptible IO, failed taskkill).
  */
-export function waitForChildProcess(child: ChildProcess): Promise<number | null> {
+export function waitForChildProcess(child: ChildProcess, options?: WaitForChildProcessOptions): Promise<number | null> {
 	return new Promise((resolve, reject) => {
 		let settled = false;
 		let exited = false;
 		let exitCode: number | null = null;
 		let postExitTimer: NodeJS.Timeout | undefined;
+		let abortGraceTimer: NodeJS.Timeout | undefined;
+		let detachAbortListener: (() => void) | undefined;
 		let stdoutEnded = child.stdout === null;
 		let stderrEnded = child.stderr === null;
 
@@ -59,6 +79,14 @@ export function waitForChildProcess(child: ChildProcess): Promise<number | null>
 			if (postExitTimer) {
 				clearTimeout(postExitTimer);
 				postExitTimer = undefined;
+			}
+			if (abortGraceTimer) {
+				clearTimeout(abortGraceTimer);
+				abortGraceTimer = undefined;
+			}
+			if (detachAbortListener) {
+				detachAbortListener();
+				detachAbortListener = undefined;
 			}
 			child.removeListener("error", onError);
 			child.removeListener("exit", onExit);
@@ -126,6 +154,21 @@ export function waitForChildProcess(child: ChildProcess): Promise<number | null>
 			finalize(code);
 		};
 
+		const onAbortRelease = () => {
+			// The caller killed the process and abandoned its output: destroy our
+			// read ends so surviving descendants cannot re-arm the idle grace
+			// forever, then wait only for `exit`, bounded by the abort grace.
+			child.stdout?.destroy();
+			child.stderr?.destroy();
+			stdoutEnded = true;
+			stderrEnded = true;
+			if (exited) {
+				maybeFinalizeAfterExit();
+				return;
+			}
+			abortGraceTimer = setTimeout(() => finalize(exitCode), options?.abortExitGraceMs ?? ABORT_EXIT_GRACE_MS);
+		};
+
 		child.stdout?.once("end", onStdoutEnd);
 		child.stderr?.once("end", onStderrEnd);
 		child.stdout?.on("data", onData);
@@ -133,5 +176,15 @@ export function waitForChildProcess(child: ChildProcess): Promise<number | null>
 		child.once("error", onError);
 		child.once("exit", onExit);
 		child.once("close", onClose);
+
+		const abortSignal = options?.signal;
+		if (abortSignal) {
+			if (abortSignal.aborted) {
+				onAbortRelease();
+			} else {
+				abortSignal.addEventListener("abort", onAbortRelease, { once: true });
+				detachAbortListener = () => abortSignal.removeEventListener("abort", onAbortRelease);
+			}
+		}
 	});
 }

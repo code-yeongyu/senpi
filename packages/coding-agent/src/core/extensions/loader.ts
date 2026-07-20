@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as _bundledPiAgentCore from "@earendil-works/pi-agent-core";
+import type { Provider } from "@earendil-works/pi-ai";
 import * as _bundledPiAiCompat from "@earendil-works/pi-ai/compat";
 import * as _bundledPiAiOauth from "@earendil-works/pi-ai/oauth";
 import * as _bundledPiAiProviders from "@earendil-works/pi-ai/providers/all";
@@ -40,6 +41,7 @@ import type {
 	ExtensionRuntime,
 	LoadExtensionsResult,
 	MessageRenderer,
+	PendingProviderRegistration,
 	ProviderConfig,
 	RegisteredCommand,
 	RegisteredMcpServerDeclaration,
@@ -237,6 +239,9 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
 	};
 	const state: { staleMessage?: string } = {};
+	// Shared sequence across the legacy and native pre-bind queues so flushers
+	// can replay registrations in original call order (last-registration-wins).
+	let nextProviderRegistrationOrder = 0;
 	const assertActive = () => {
 		if (state.staleMessage) {
 			throw new Error(state.staleMessage);
@@ -262,6 +267,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		setThinkingLevel: notInitialized,
 		flagValues: new Map(),
 		pendingProviderRegistrations: [],
+		pendingNativeProviderRegistrations: [],
 		assertActive,
 		invalidate: (message) => {
 			state.staleMessage ??=
@@ -271,14 +277,48 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		// Pre-bind: queue registrations so bindCore() can flush them once the
 		// model registry is available. bindCore() replaces both with direct calls.
 		registerProvider: (name, config, extensionPath = "<unknown>") => {
-			runtime.pendingProviderRegistrations.push({ name, config, extensionPath });
+			runtime.pendingProviderRegistrations.push({
+				name,
+				config,
+				extensionPath,
+				order: nextProviderRegistrationOrder++,
+			});
+		},
+		registerNativeProvider: (provider, extensionPath = "<unknown>") => {
+			runtime.pendingNativeProviderRegistrations.push({
+				provider,
+				extensionPath,
+				order: nextProviderRegistrationOrder++,
+			});
 		},
 		unregisterProvider: (name) => {
 			runtime.pendingProviderRegistrations = runtime.pendingProviderRegistrations.filter((r) => r.name !== name);
+			runtime.pendingNativeProviderRegistrations = runtime.pendingNativeProviderRegistrations.filter(
+				(r) => r.provider.id !== name,
+			);
 		},
 	};
 
 	return runtime;
+}
+
+/**
+ * Drain queued pre-bind provider registrations in original call order.
+ *
+ * Legacy (name/config) and native registrations queue in separate arrays during
+ * extension loading, each stamped with a shared sequence number. Flushers replay
+ * entries ordered by that sequence so mixed registerProvider(name, config) /
+ * registerProvider(provider) calls keep last-registration-wins. Clears both queues.
+ */
+export function drainPendingProviderRegistrations(runtime: ExtensionRuntime): PendingProviderRegistration[] {
+	const drained: PendingProviderRegistration[] = [
+		...runtime.pendingProviderRegistrations.map((entry) => ({ kind: "config" as const, ...entry })),
+		...runtime.pendingNativeProviderRegistrations.map((entry) => ({ kind: "native" as const, ...entry })),
+	];
+	drained.sort((a, b) => a.order - b.order);
+	runtime.pendingProviderRegistrations = [];
+	runtime.pendingNativeProviderRegistrations = [];
+	return drained;
 }
 
 /**
@@ -449,9 +489,14 @@ function createExtensionAPI(
 			runtime.setThinkingLevel(level);
 		},
 
-		registerProvider(name: string, config: ProviderConfig) {
+		registerProvider(providerOrName: Provider | string, config?: ProviderConfig) {
 			runtime.assertActive();
-			runtime.registerProvider(name, config, extension.path);
+			if (typeof providerOrName === "string") {
+				if (!config) throw new Error("Provider config is required when registering by name");
+				runtime.registerProvider(providerOrName, config, extension.path);
+				return;
+			}
+			runtime.registerNativeProvider(providerOrName, extension.path);
 		},
 
 		unregisterProvider(name: string) {

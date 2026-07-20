@@ -10,7 +10,7 @@ function serializeToolValue(value: unknown): string {
 	return String(value);
 }
 
-function renderToolDefinitions(tools: Tool[]): string {
+export function renderToolDefinitions(tools: Tool[]): string {
 	const json = JSON.stringify(
 		tools.map((tool) => ({
 			name: tool.name,

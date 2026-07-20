@@ -12,6 +12,7 @@ import { buildGpt54Prompt } from "./gpt-5.4.ts";
 import { buildGpt55Prompt } from "./gpt-5.5.ts";
 import { buildGpt56Prompt } from "./gpt-5.6.ts";
 import { buildGpt5Prompt } from "./gpt-5.ts";
+import { buildGrok45Prompt } from "./grok-4.5.ts";
 import { buildKimiK26Prompt } from "./kimi-k2-6.ts";
 import { buildKimiK27Prompt } from "./kimi-k2-7.ts";
 import { buildKimiK3Prompt } from "./kimi-k3.ts";
@@ -89,6 +90,16 @@ function isGlm52Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasGlm52Signal(model.id) || (model.name !== undefined && hasGlm52Signal(model.name));
 }
 
+function hasGrok45Signal(value: string): boolean {
+	// Match any Grok 4.5 id shape: grok-4.5, grok4.5, grok45, grok-4p5, provider:model,
+	// path/prefix ids, and trailing tags (:thinking, -latest). Keep 4.3 / 4.20 / 3 out.
+	return /(?:^|[/@:._-])grok(?:[._-]|p)?4(?:[._-]|p)?5(?:$|[/@._:-])/.test(normalizeModelId(value));
+}
+
+function isGrok45Model(model: ModelWithPromptPresetMetadata): boolean {
+	return hasGrok45Signal(model.id) || (model.name !== undefined && hasGrok45Signal(model.name));
+}
+
 function isClaudeFable5Model(modelId: string): boolean {
 	return normalizeModelId(modelId).includes("fable-5");
 }
@@ -148,6 +159,9 @@ export function resolvePresetName(
 	if (isGlm52Model(model)) {
 		return "glm-5.2";
 	}
+	if (isGrok45Model(model)) {
+		return "grok-4.5";
+	}
 	return undefined;
 }
 
@@ -167,6 +181,8 @@ function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPrompt
 			return { name, prompt: buildGpt5Prompt(options) };
 		case "glm-5.2":
 			return { name, prompt: buildGlm52Prompt(options) };
+		case "grok-4.5":
+			return { name, prompt: buildGrok45Prompt(options) };
 		case "kimi-k3":
 			return { name, prompt: buildKimiK3Prompt(options) };
 		case "kimi-k2-7":

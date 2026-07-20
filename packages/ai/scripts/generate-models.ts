@@ -14,6 +14,7 @@ import type {
 	Api,
 	KnownProvider,
 	Model,
+	ModelCost,
 	OpenAICompletionsCompat,
 	OpenAIResponsesCompat,
 } from "../src/types.ts";
@@ -26,10 +27,12 @@ function readGeneratorOptions(args: string[]): {
 	strict: boolean;
 	jsonOnly: boolean;
 	jsonOutputDir: string | undefined;
+	pretty: boolean;
 } {
 	let strict = false;
 	let jsonOnly = false;
 	let jsonOutputDir: string | undefined;
+	let pretty = false;
 
 	for (let index = 0; index < args.length; index++) {
 		const arg = args[index];
@@ -39,6 +42,10 @@ function readGeneratorOptions(args: string[]): {
 		}
 		if (arg === "--json-only") {
 			jsonOnly = true;
+			continue;
+		}
+		if (arg === "--pretty") {
+			pretty = true;
 			continue;
 		}
 		if (arg === "--json-output") {
@@ -51,7 +58,7 @@ function readGeneratorOptions(args: string[]): {
 	}
 
 	if (jsonOnly && !jsonOutputDir) throw new Error("--json-only requires --json-output");
-	return { strict, jsonOnly, jsonOutputDir };
+	return { strict, jsonOnly, jsonOutputDir, pretty };
 }
 
 const generatorOptions = readGeneratorOptions(process.argv.slice(2));
@@ -70,6 +77,16 @@ interface ModelsDevModel {
 		output?: number;
 		cache_read?: number;
 		cache_write?: number;
+		tiers?: {
+			input?: number;
+			output?: number;
+			cache_read?: number;
+			cache_write?: number;
+			tier?: {
+				type?: string;
+				size?: number;
+			};
+		}[];
 	};
 	modalities?: {
 		input?: string[];
@@ -259,6 +276,15 @@ const KIMI_CODING_STABLE_MODELS = {
 		modalities: { input: ["text"] },
 	},
 } satisfies Record<string, ModelsDevModel>;
+// Kimi Coding is subscription-backed, so models.dev reports zero cost. Use the
+// equivalent Moonshot API rates to estimate the value of subscription usage.
+const KIMI_CODING_IMPLIED_COSTS: Record<string, Model<Api>["cost"]> = {
+	k2p7: { input: 0.95, output: 4, cacheRead: 0.19, cacheWrite: 0 },
+	k3: KIMI_K3_COST,
+	"kimi-for-coding": { input: 0.95, output: 4, cacheRead: 0.19, cacheWrite: 0 },
+	"kimi-for-coding-highspeed": { input: 1.9, output: 8, cacheRead: 0.38, cacheWrite: 0 },
+	"kimi-k2-thinking": { input: 0.6, output: 2.5, cacheRead: 0.15, cacheWrite: 0 },
+};
 const OPENROUTER_KIMI_K3_MODEL_IDS = new Set(["moonshotai/kimi-k3", "~moonshotai/kimi-latest"]);
 
 const ANT_LING_RING_THINKING_LEVEL_MAP = {
@@ -761,6 +787,30 @@ function normalizeNvidiaModelId(modelId: string): string {
 
 function roundCost(value: number): number {
 	return Number(value.toFixed(6));
+}
+
+function getModelsDevCost(cost: ModelsDevModel["cost"]): ModelCost {
+	const tiers = cost?.tiers?.flatMap((tier) => {
+		const context = tier.tier;
+		if (context?.type !== "context" || context.size === undefined) return [];
+		return [
+			{
+				inputTokensAbove: context.size,
+				input: tier.input || 0,
+				output: tier.output || 0,
+				cacheRead: tier.cache_read || 0,
+				cacheWrite: tier.cache_write || 0,
+			},
+		];
+	});
+
+	return {
+		input: cost?.input || 0,
+		output: cost?.output || 0,
+		cacheRead: cost?.cache_read || 0,
+		cacheWrite: cost?.cache_write || 0,
+		...(tiers && tiers.length > 0 ? { tiers } : {}),
+	};
 }
 
 async function fetchNvidiaNimModelIds(): Promise<Map<string, string>> {
@@ -1585,12 +1635,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					baseUrl: "https://api.individual.githubcopilot.com",
 					reasoning: m.reasoning === true,
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
-					cost: {
-						input: m.cost?.input || 0,
-						output: m.cost?.output || 0,
-						cacheRead: m.cost?.cache_read || 0,
-						cacheWrite: m.cost?.cache_write || 0,
-					},
+					cost: getModelsDevCost(m.cost),
 					contextWindow: m.limit?.context || 128000,
 					maxTokens: m.limit?.output || 8192,
 					headers: { ...COPILOT_STATIC_HEADERS },
@@ -1664,6 +1709,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				const normalizedName = kimiAliases.has(modelId) ? "Kimi For Coding" : m.name || normalizedId;
 				const isKimiK3 = normalizedId === "k3";
 				const allowEmptySignature = isKimiK3 || normalizedId === "kimi-for-coding";
+				const impliedCost = KIMI_CODING_IMPLIED_COSTS[normalizedId];
 
 				models.push({
 					id: normalizedId,
@@ -1679,12 +1725,18 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					},
 					reasoning: isKimiK3 || m.reasoning === true,
 					...(isKimiK3 ? { thinkingLevelMap: KIMI_K3_THINKING_LEVEL_MAP } : {}),
-					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					// K3 accepts video input on the Kimi coding endpoint (kimi-code parity:
+					// Anthropic-compatible `{type:"video"}` content blocks).
+					input: isKimiK3
+						? ["text", "image", "video"]
+						: m.modalities?.input?.includes("image")
+							? ["text", "image"]
+							: ["text"],
 					cost: {
-						input: m.cost?.input || 0,
-						output: m.cost?.output || 0,
-						cacheRead: m.cost?.cache_read || 0,
-						cacheWrite: m.cost?.cache_write || 0,
+						input: m.cost?.input || impliedCost?.input || 0,
+						output: m.cost?.output || impliedCost?.output || 0,
+						cacheRead: m.cost?.cache_read || impliedCost?.cacheRead || 0,
+						cacheWrite: m.cost?.cache_write || impliedCost?.cacheWrite || 0,
 					},
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
@@ -2478,74 +2530,57 @@ async function generateModels() {
 	}
 
 	const sortedProviderIds = Object.keys(providers).sort();
+	const jsonProviders: Record<string, Record<string, Model<any>>> = {};
+	for (const providerId of sortedProviderIds) {
+		jsonProviders[providerId] = {};
+		for (const modelId of Object.keys(providers[providerId]).sort()) {
+			jsonProviders[providerId][modelId] = providers[providerId][modelId];
+		}
+	}
+	const writeJson = (path: string, value: unknown) =>
+		writeFileSync(path, `${JSON.stringify(value, null, generatorOptions.pretty ? 2 : undefined)}\n`);
 
 	if (!generatorOptions.jsonOnly) {
-		// Generate TypeScript files: one catalog per provider plus an aggregator
+		// Generate TypeScript structural catalogs and adjacent JSON values.
 		const generatedHeader = `// This file is auto-generated by scripts/generate-models.ts
 // Do not edit manually - run 'npm run generate-models' to update
 
 `;
 		const catalogConstName = (providerId: string) =>
 			`${providerId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_MODELS`;
+		const providersDir = join(packageRoot, "src/providers");
+		const dataDir = join(providersDir, "data");
 
-		function emitModel(model: Model<any>, indent: string): string {
-			let output = `${indent}"${model.id}": {\n`;
-			output += `${indent}\tid: "${model.id}",\n`;
-			output += `${indent}\tname: "${model.name}",\n`;
-			output += `${indent}\tapi: "${model.api}",\n`;
-			output += `${indent}\tprovider: "${model.provider}",\n`;
-			if (model.baseUrl !== undefined) {
-				output += `${indent}\tbaseUrl: "${model.baseUrl}",\n`;
-			}
-			if (model.headers) {
-				output += `${indent}\theaders: ${JSON.stringify(model.headers)},\n`;
-			}
-			if (model.compat) {
-				output += `${indent}\tcompat: ${JSON.stringify(model.compat)},\n`;
-			}
-			output += `${indent}\treasoning: ${model.reasoning},\n`;
-			if (model.thinkingLevelMap) {
-				output += `${indent}\tthinkingLevelMap: ${JSON.stringify(model.thinkingLevelMap)},\n`;
-			}
-			output += `${indent}\tinput: [${model.input.map(i => `"${i}"`).join(", ")}],\n`;
-			output += `${indent}\tcost: {\n`;
-			output += `${indent}\t\tinput: ${model.cost.input},\n`;
-			output += `${indent}\t\toutput: ${model.cost.output},\n`;
-			output += `${indent}\t\tcacheRead: ${model.cost.cacheRead},\n`;
-			output += `${indent}\t\tcacheWrite: ${model.cost.cacheWrite},\n`;
-			if (model.cost.tiers) {
-				output += `${indent}\t\ttiers: ${JSON.stringify(model.cost.tiers)},\n`;
-			}
-			output += `${indent}\t},\n`;
-			output += `${indent}\tcontextWindow: ${model.contextWindow},\n`;
-			output += `${indent}\tmaxTokens: ${model.maxTokens},\n`;
-			output += `${indent}} satisfies Model<"${model.api}">,\n`;
-			return output;
+		function emitModelShape(model: Model<any>, indent: string): string {
+			return `${indent}${JSON.stringify(model.id)}: Model<${JSON.stringify(model.api)}> & {\n${indent}\tid: ${JSON.stringify(model.id)};\n${indent}\tprovider: ${JSON.stringify(model.provider)};\n${indent}};\n`;
 		}
 
-		const providersDir = join(packageRoot, "src/providers");
-
-		// Remove stale per-provider catalogs
+		// Remove stale per-provider catalogs and their generated values.
 		for (const entry of readdirSync(providersDir)) {
 			if (entry.endsWith(".models.ts")) {
 				rmSync(join(providersDir, entry));
 			}
 		}
+		rmSync(dataDir, { recursive: true, force: true });
+		mkdirSync(dataDir, { recursive: true });
 
-		// Per-provider catalogs (sorted for deterministic output)
+		// Per-provider catalog structure and values (sorted for deterministic output).
 		for (const providerId of sortedProviderIds) {
 			const models = providers[providerId];
-			let output = generatedHeader;
-			output += `import type { Model } from "../types.ts";\n\n`;
-			output += `export const ${catalogConstName(providerId)} = {\n`;
 			const sortedModelIds = Object.keys(models).sort();
+			let output = generatedHeader;
+			output += `import values from "./data/${providerId}.json" with { type: "json" };\n`;
+			output += `import type { Model } from "../types.ts";\n\n`;
+			output += `export const ${catalogConstName(providerId)} = values as {\n`;
 			for (const modelId of sortedModelIds) {
-				output += emitModel(models[modelId], "\t");
+				output += emitModelShape(models[modelId], "\t");
 			}
-			output += `} as const;\n`;
+			output += `};\n`;
 			writeFileSync(join(providersDir, `${providerId}.models.ts`), output);
+			writeJson(join(dataDir, `${providerId}.json`), jsonProviders[providerId]);
 		}
-		console.log(`Generated ${sortedProviderIds.length} catalogs under src/providers/`);
+		console.log(`Generated ${sortedProviderIds.length} catalog structures under src/providers/`);
+		console.log("Generated JSON model values under src/providers/data/");
 
 		// Aggregator
 		let output = generatedHeader;
@@ -2562,18 +2597,9 @@ async function generateModels() {
 	}
 
 	if (generatorOptions.jsonOutputDir) {
-		const jsonProviders: Record<string, Record<string, Model<any>>> = {};
-		for (const providerId of sortedProviderIds) {
-			jsonProviders[providerId] = {};
-			for (const modelId of Object.keys(providers[providerId]).sort()) {
-				jsonProviders[providerId][modelId] = providers[providerId][modelId];
-			}
-		}
-
 		const providerOutputDir = join(generatorOptions.jsonOutputDir, "providers");
 		rmSync(generatorOptions.jsonOutputDir, { recursive: true, force: true });
 		mkdirSync(providerOutputDir, { recursive: true });
-		const writeJson = (path: string, value: unknown) => writeFileSync(path, `${JSON.stringify(value)}\n`);
 		writeJson(join(generatorOptions.jsonOutputDir, "models.json"), jsonProviders);
 		writeJson(join(generatorOptions.jsonOutputDir, "providers.json"), sortedProviderIds);
 		for (const providerId of sortedProviderIds) {

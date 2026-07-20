@@ -1,28 +1,28 @@
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import { registerTodoCommand } from "./commands.ts";
 import { TASK_MANAGEMENT_SECTION } from "./prompt.ts";
-import { getLatestTodosFromBranchEntries, getTodoWidgetLines, type TodoItem } from "./state.ts";
-import { registerTodoReadTool } from "./tools/todoread.ts";
-import { registerTodoWriteTool } from "./tools/todowrite.ts";
+import { clonePhases, getLatestPhasesFromBranchEntries, getTodoWidgetLines, type TodoPhase } from "./state.ts";
+import { registerTodoTool } from "./tools/todo.ts";
 
-function getLatestTodos(ctx: ExtensionContext): TodoItem[] {
-	return getLatestTodosFromBranchEntries(ctx.sessionManager.getBranch());
+function getLatestPhases(ctx: ExtensionContext): TodoPhase[] {
+	return getLatestPhasesFromBranchEntries(ctx.sessionManager.getBranch());
 }
 
 export default function todotoolsExtension(pi: ExtensionAPI): void {
-	let currentTodos: TodoItem[] = [];
+	let currentPhases: TodoPhase[] = [];
 
-	const getCurrentTodos = (): TodoItem[] => currentTodos;
+	const getCurrentPhases = (): TodoPhase[] => clonePhases(currentPhases);
 
-	const setCurrentTodos = (todos: TodoItem[]): void => {
-		currentTodos = todos;
+	const setCurrentPhases = (phases: TodoPhase[]): void => {
+		currentPhases = clonePhases(phases);
 	};
 
 	const syncWidget = (ctx: ExtensionContext): void => {
-		ctx.ui.setWidget("todo-sidebar", getTodoWidgetLines(currentTodos));
+		ctx.ui.setWidget("todo-sidebar", getTodoWidgetLines(currentPhases));
 	};
 
 	const syncFromSession = (ctx: ExtensionContext): void => {
-		currentTodos = getLatestTodos(ctx);
+		currentPhases = getLatestPhases(ctx);
 		syncWidget(ctx);
 	};
 
@@ -40,21 +40,52 @@ export default function todotoolsExtension(pi: ExtensionAPI): void {
 		};
 	});
 
-	registerTodoWriteTool(pi, { getCurrentTodos, setCurrentTodos, syncWidget });
-	registerTodoReadTool(pi, getCurrentTodos);
+	registerTodoTool(pi, { getCurrentPhases, setCurrentPhases, syncWidget });
+	registerTodoCommand(pi, { getCurrentPhases, setCurrentPhases, syncWidget });
 }
 
+export { findPhaseFuzzy, findTaskFuzzy, registerTodoCommand, tokenizeTodoArgs } from "./commands.ts";
+export { markdownToPhases, phasesToMarkdown, resolveTodoMarkdownPath } from "./markdown.ts";
 export { TASK_MANAGEMENT_SECTION } from "./prompt.ts";
 export {
+	appendItems,
+	applyEntry,
+	applyOpsToPhases,
+	applyParams,
+	clonePhases,
+	cloneTask,
+	DEFAULT_INIT_PHASE,
+	findPhaseByName,
+	findTaskByContent,
+	formatSummary,
+	getCompletionTransitions,
+	getLatestPhasesFromBranchEntries,
 	getLatestTodosFromBranchEntries,
+	getTaskTargets,
 	getTodoMarker,
 	getTodoResultLines,
 	getTodoWidgetLines,
+	initPhases,
 	isIncompleteTodo,
 	isTerminalTodoStatus,
 	isTodoItem,
 	isTodoItemArray,
+	isTodoPhase,
+	isTodoPhaseArray,
+	nextActionableTask,
+	normalizeInProgressTask,
+	removeTasks,
+	resolvePhaseOrError,
+	resolveTaskOrError,
 	sanitizeTodoText,
 	TODO_STATE_ENTRY_TYPE,
+	type TodoCompletionTransition,
 	type TodoItem,
+	type TodoOpEntry,
+	type TodoOperation,
+	type TodoPhase,
+	type TodoStateEntry,
+	type TodoStatus,
+	type TodoToolDetails,
 } from "./state.ts";
+export { phaseRomanNumeral } from "./tools/todo.ts";

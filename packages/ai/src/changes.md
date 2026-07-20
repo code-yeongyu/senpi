@@ -1,5 +1,40 @@
 # AI Source Changes
 
+## 2026-07-17 - Video input modality for Kimi K3 (kimi-coding)
+
+### What changed and why
+
+- `types.ts`: `Model.input` union gains `"video"`. No new message content type: video payloads ride the
+  existing `ImageContent` block with a `video/*` mimeType (helper `isVideoMimeType()` exported) to keep the
+  message contract and the upstream merge surface unchanged.
+- `api/transform-messages.ts`: `downgradeUnsupportedImages` now first replaces video-mime blocks with a
+  placeholder for models without the `"video"` modality (user and toolResult content), then applies the
+  existing image downgrade. Prevents cross-model replay from sending video blocks to providers that reject
+  them.
+- `api/anthropic-messages.ts`: `convertContentBlocks` and the user-message block mapping serialize
+  video-mime blocks as `{type:"video", source:{type:"base64", media_type, data}}` — the wire shape the
+  Kimi Anthropic-compatible endpoint accepts (verified against MoonshotAI/kimi-code kosong anthropic
+  provider). The block is not in the official SDK union, so it is cast like the existing `tool_reference`
+  escape hatch.
+- `scripts/generate-models.ts` + regenerated `providers/kimi-coding.models.ts`: kimi-coding `k3` declares
+  `input: ["text", "image", "video"]`.
+
+### Files modified
+
+- `types.ts`
+- `api/transform-messages.ts`
+- `api/anthropic-messages.ts`
+- `../scripts/generate-models.ts`
+- `providers/kimi-coding.models.ts` (generated)
+- `../test/transform-messages-video.test.ts`
+
+### Expected merge conflict zones
+
+- LOW: `types.ts` `Model.input` union and `ImageContent` comment.
+- MEDIUM: `api/anthropic-messages.ts` `convertContentBlocks` / `convertToolResult` if upstream reworks
+  content serialization.
+- LOW: `api/transform-messages.ts` `downgradeUnsupportedImages`.
+
 ## 2026-07-19 - Name-preserving apply_patch replay characterization and policy coverage
 
 ### What changed and why

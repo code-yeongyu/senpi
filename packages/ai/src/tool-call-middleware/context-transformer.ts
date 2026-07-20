@@ -15,6 +15,13 @@ import {
 	parseAnthropicXmlGeneratedText,
 } from "./protocols/anthropic-xml/index.ts";
 import {
+	antmlFormatToolCall,
+	antmlFormatToolResponse,
+	antmlFormatToolsSystemPrompt,
+	createAntmlStreamParser,
+	parseAntmlGeneratedText,
+} from "./protocols/antml/index.ts";
+import {
 	gemma4CreateStreamParser,
 	gemma4FormatToolCall,
 	gemma4FormatToolResponse,
@@ -85,6 +92,14 @@ const gemma4Protocol: ToolCallProtocol = {
 	createStreamParser: gemma4CreateStreamParser,
 };
 
+const antmlProtocol: ToolCallProtocol = {
+	formatToolsSystemPrompt: antmlFormatToolsSystemPrompt,
+	formatToolResponse: antmlFormatToolResponse,
+	formatToolCall: antmlFormatToolCall,
+	parseGeneratedText: parseAntmlGeneratedText,
+	createStreamParser: createAntmlStreamParser,
+};
+
 const anthropicXmlProtocol: ToolCallProtocol = {
 	formatToolsSystemPrompt: anthropicXmlFormatToolsSystemPrompt,
 	formatToolResponse: anthropicXmlFormatToolResponse,
@@ -98,6 +113,7 @@ const anthropicXmlProtocol: ToolCallProtocol = {
  */
 const protocolRegistry: Record<ToolCallFormat, ToolCallProtocol> = {
 	"anthropic-xml": anthropicXmlProtocol,
+	antml: antmlProtocol,
 	hermes: hermesProtocol,
 	xml: morphXmlProtocol,
 	"morph-xml": morphXmlProtocol,

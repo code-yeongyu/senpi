@@ -3,6 +3,33 @@
 Fork tracker for `src/modes/rpc/` — this directory exists upstream, so every
 fork change here is a merge-conflict surface on upstream syncs.
 
+## System-prompt options threaded through NeoRuntimeOptions (2026-07-18)
+
+### What changed
+
+- `neo-runtime-options.ts`: `NeoRuntimeOptions` gained `systemPrompt` /
+  `appendSystemPrompt`, both added to `NEO_RUNTIME_OPTION_SOURCE_FIELDS` so the
+  extraction test covers them.
+- `neo-runtime-options-argv.ts`: the daemon re-emits them as `--system-prompt`
+  and repeated `--append-system-prompt` in the per-connection worker argv.
+- Go mirror: `packages/neo/internal/bridge/runtimeopts.go` gained the matching
+  payload fields and `--system-prompt` / `--append-system-prompt` parse entries.
+
+### Why
+
+- `main.ts` consumes `parsed.systemPrompt` / `parsed.appendSystemPrompt` in the
+  runtime-construction path (`resourceLoaderOptions`); without handshake fields a
+  neo client silently lost both flags when going through the shared daemon.
+
+### Why extension system couldn't handle this
+
+- The handshake payload and daemon worker argv are fork protocol surfaces, not
+  extension hooks.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: all touched modules are fork-only.
+
 ## Auth RPC commands and capability-gated custom-UI notice (2026-07-06)
 
 ### What changed

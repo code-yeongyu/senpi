@@ -135,7 +135,9 @@ For each built-in provider, pi maintains a list of tool-capable models. Configur
 - Xiaomi MiMo Token Plan (Amsterdam)
 - Xiaomi MiMo Token Plan (Singapore)
 
-See [docs/providers.md](docs/providers.md) for detailed setup instructions.
+Pi also supports the llama.cpp router server. Configure it with `/login llama.cpp`, manage downloads and loaded models with `/llama`, then select a loaded model with `/model`. See [docs/llama-cpp.md](docs/llama-cpp.md) for setup and usage.
+
+See [docs/providers.md](docs/providers.md) for other provider setup instructions.
 
 **Custom providers & models:** Add providers via `~/.pi/agent/models.json` if they speak a supported API (OpenAI, Anthropic, Google). For custom APIs or OAuth, use extensions. See [docs/models.md](docs/models.md) and [docs/custom-provider.md](docs/custom-provider.md).
 
@@ -173,7 +175,8 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 
 | Command | Description |
 |---------|-------------|
-| `/login`, `/logout` | OAuth authentication |
+| `/login`, `/logout` | Manage provider credentials |
+| [`/llama`](docs/llama-cpp.md) | Download, load, and unload llama.cpp router models |
 | `/model` | Switch models |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
 | `/settings` | Thinking level, theme, message delivery, transport |

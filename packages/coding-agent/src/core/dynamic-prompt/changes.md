@@ -1,5 +1,24 @@
 # changes.md — dynamic-prompt
 
+## CLI system-prompt overrides reapplied in `_rebuildSystemPrompt()` (2026-07-18)
+
+### What changed
+
+- `agent-session.ts`: `_rebuildSystemPrompt()` again honors the resource loader's `getSystemPrompt()` / `getAppendSystemPrompt()` (populated from `--system-prompt` / `--append-system-prompt`). A loader system prompt replaces the generated dynamic base; loader appends are joined with `\n\n` and appended to whichever base was chosen. With no CLI overrides the generated prompt is byte-identical to before.
+- `test/agent-session-system-prompt.test.ts` (new): pins override-replaces-base and append-joins-base behavior through `createAgentSession`.
+
+### Why
+
+The upstream sync restored `systemPrompt` / `appendSystemPrompt` storage on `DefaultResourceLoader`, but the 2026-04-05 dynamic-prompt fork change had dropped the consumer, silently ignoring both CLI flags.
+
+### Why extension system couldn't handle this
+
+Same as the original builder fork: the base prompt assembly is core-owned; extensions can only modify it per-turn via `before_agent_start`.
+
+### Expected merge conflict zones
+
+- `agent-session.ts` `_rebuildSystemPrompt()` tail. Resolution: keep the loader-override selection and append join; thread any new upstream `buildSystemPrompt` parameters through `_baseSystemPromptOptions` equivalents instead.
+
 ## Workstation block + execution-context instruction (2026-07-17)
 
 ### What changed

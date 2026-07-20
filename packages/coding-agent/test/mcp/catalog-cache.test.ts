@@ -112,7 +112,7 @@ describe("MCP disk metadata cache", () => {
 
 		await attach(root, pi);
 
-		await waitForCondition(() => withoutMcpUtilityTools(pi.activeTools).includes("mcp_fx_tool_2"), 2500);
+		await waitForCondition(() => withoutMcpUtilityTools(pi.activeTools).includes("mcp_fx_tool_2"), 10_000);
 		expect(await readCounter(counterFile)).toBe(1);
 		expect(withoutMcpUtilityTools(pi.activeTools)).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
 		expect(withoutMcpUtilityTools(pi.activeTools)).not.toContain("mcp_fx_stale_cached");

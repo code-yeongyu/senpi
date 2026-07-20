@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -89,7 +90,7 @@ describe("build-all", () => {
 		assert.equal(cleaned.npm_config_registry, "https://registry.npmjs.org/");
 	});
 
-	it("keeps generated model updates out of ordinary ai builds and preserves the CLI mode", () => {
+	it("builds ai from committed catalog data without networked generation", () => {
 		// Given
 		const packageJson = JSON.parse(readFileSync(join(root, "packages/ai/package.json"), "utf8"));
 		const scripts = packageJson.scripts;
@@ -97,12 +98,20 @@ describe("build-all", () => {
 		// When
 		const buildScript = scripts.build;
 		const prepublishScript = scripts.prepublishOnly;
+		const ignoreCheck = spawnSync("git", ["check-ignore", "packages/ai/src/providers/data/anthropic.json"], {
+			cwd: root,
+		});
 
 		// Then
 		assert.equal(scripts.prebuild, undefined);
-		assert.equal(buildScript, "tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js");
-		assert.equal(buildScript.includes("generate-models"), false);
+		assert.doesNotMatch(buildScript, /generate-models/);
+		assert.match(buildScript, /^tsgo -p tsconfig\.build\.json/);
+		assert.match(buildScript, /shx chmod \+x dist\/cli\.js/);
+		assert.match(buildScript, /shx cp -r src\/providers\/data dist\/providers\/data$/);
+		assert.match(scripts["generate-models"], /generate-models\.ts/);
 		assert.match(prepublishScript, /generate-models\.ts/);
 		assert.match(prepublishScript, /generate-image-models\.ts/);
+		assert.notEqual(ignoreCheck.status, 0);
+		assert.ok(readdirSync(join(root, "packages/ai/src/providers/data")).some((file) => file.endsWith(".json")));
 	});
 });

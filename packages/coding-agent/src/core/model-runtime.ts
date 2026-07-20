@@ -94,10 +94,12 @@ export class ModelRuntime implements Models {
 	private readonly credentials: RuntimeCredentials;
 	private readonly defaultBuiltins: ReadonlyMap<string, Provider>;
 	private readonly builtins = new Map<string, Provider>();
+	private readonly nativeExtensionProviders = new Map<string, Provider>();
 	private readonly extensionProviders = new Map<string, ProviderConfigInput>();
 	private readonly compositionErrors = new Map<string, string>();
 	private readonly modelsPath: string | undefined;
 	private readonly allowModelNetwork: boolean;
+	private readonly modelRefreshTimeoutMs: number;
 	private config: ModelConfig;
 	private snapshot: ModelRuntimeSnapshot = {
 		all: [],
@@ -117,11 +119,13 @@ export class ModelRuntime implements Models {
 		modelsStore: ModelsStore,
 		providers: readonly Provider[],
 		allowModelNetwork: boolean,
+		modelRefreshTimeoutMs: number,
 	) {
 		this.credentials = credentials;
 		this.config = config;
 		this.modelsPath = modelsPath;
 		this.allowModelNetwork = allowModelNetwork;
+		this.modelRefreshTimeoutMs = modelRefreshTimeoutMs;
 		this.defaultBuiltins = new Map(providers.map((provider) => [provider.id, provider]));
 		for (const [providerId, provider] of this.defaultBuiltins) this.builtins.set(providerId, provider);
 		this.models = createModels({ credentials, modelsStore });
@@ -150,12 +154,13 @@ export class ModelRuntime implements Models {
 			modelsStore,
 			providers,
 			options.allowModelNetwork ?? process.env.PI_OFFLINE === undefined,
+			options.modelRefreshTimeoutMs ?? 15_000,
 		);
 		runtime.configureRadiusProviders();
 		runtime.rebuildProviders();
 		const controller = new AbortController();
 		const timeout = runtime.allowModelNetwork
-			? setTimeout(() => controller.abort(), options.modelRefreshTimeoutMs ?? 15_000)
+			? setTimeout(() => controller.abort(), runtime.modelRefreshTimeoutMs)
 			: undefined;
 		try {
 			await runtime.refresh({ allowNetwork: runtime.allowModelNetwork, signal: controller.signal });
@@ -188,6 +193,7 @@ export class ModelRuntime implements Models {
 			modelsStore,
 			providers,
 			options.allowModelNetwork ?? false,
+			options.modelRefreshTimeoutMs ?? 15_000,
 		);
 		runtime.configureRadiusProviders();
 		runtime.rebuildProviders();
@@ -212,7 +218,12 @@ export class ModelRuntime implements Models {
 	}
 
 	private providerIds(): Set<string> {
-		return new Set([...this.builtins.keys(), ...this.config.getProviderIds(), ...this.extensionProviders.keys()]);
+		return new Set([
+			...this.builtins.keys(),
+			...this.nativeExtensionProviders.keys(),
+			...this.config.getProviderIds(),
+			...this.extensionProviders.keys(),
+		]);
 	}
 
 	private recomposeProvider(providerId: string): void {
@@ -221,7 +232,7 @@ export class ModelRuntime implements Models {
 			this.compositionErrors.delete(providerId);
 			return;
 		}
-		const base = this.builtins.get(providerId);
+		const base = this.nativeExtensionProviders.get(providerId) ?? this.builtins.get(providerId);
 		const extension = this.extensionProviders.get(providerId);
 		if (!base && !this.config.getProvider(providerId) && !extension) {
 			this.models.deleteProvider(providerId);
@@ -375,7 +386,11 @@ export class ModelRuntime implements Models {
 	}
 
 	getRegisteredProviderIds(): readonly string[] {
-		return [...this.extensionProviders.keys()];
+		return [...new Set([...this.extensionProviders.keys(), ...this.nativeExtensionProviders.keys()])];
+	}
+
+	getRegisteredNativeProvider(providerId: string): Provider | undefined {
+		return this.nativeExtensionProviders.get(providerId);
 	}
 
 	/** @internal Compatibility fallback for ModelRegistry when provider auth is unconfigured. */
@@ -567,10 +582,33 @@ export class ModelRuntime implements Models {
 		return result;
 	}
 
-	registerProvider(providerId: string, config: ProviderConfigInput): void {
+	/**
+	 * Providers registered after startup missed the create() refresh. Load their catalogs
+	 * under the runtime network policy, bounded like startup, so newly registered models are
+	 * usable without a manual refresh. Offline policy restores from the store only and never
+	 * touches the network.
+	 */
+	private refreshAfterRegistration(): Promise<ModelsRefreshResult> {
+		if (!this.allowModelNetwork) return this.refresh({ allowNetwork: false });
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), this.modelRefreshTimeoutMs);
+		return this.refresh({ allowNetwork: true, signal: controller.signal }).finally(() => clearTimeout(timeout));
+	}
+
+	registerNativeProvider(provider: Provider): Promise<ModelsRefreshResult> {
+		if (!provider.id.trim()) throw new Error("Provider id must not be empty.");
+		this.extensionProviders.delete(provider.id);
+		this.nativeExtensionProviders.set(provider.id, provider);
+		this.recomposeProvider(provider.id);
+		this.updateModelSnapshot();
+		return this.refreshAfterRegistration();
+	}
+
+	registerProvider(providerId: string, config: ProviderConfigInput): Promise<ModelsRefreshResult> {
 		// Validate the incoming registration on its own, like the legacy registry:
 		// a broken re-registration must throw without touching the stored config.
 		validateExtensionProvider(providerId, this.builtins.get(providerId), this.config.getProvider(providerId), config);
+		this.nativeExtensionProviders.delete(providerId);
 		// Re-registration merges defined values over the previous registration and
 		// preserves undefined ones, matching the legacy ModelRegistry contract.
 		const previous = this.extensionProviders.get(providerId);
@@ -601,11 +639,12 @@ export class ModelRuntime implements Models {
 				available: this.snapshot.all.filter((model) => configuredProviders.has(model.provider)),
 			};
 		}
-		void this.refresh({ allowNetwork: false });
+		return this.refreshAfterRegistration();
 	}
 
 	unregisterProvider(providerId: string): void {
 		this.extensionProviders.delete(providerId);
+		this.nativeExtensionProviders.delete(providerId);
 		this.recomposeProvider(providerId);
 		this.updateModelSnapshot();
 		void this.refresh({ allowNetwork: false });

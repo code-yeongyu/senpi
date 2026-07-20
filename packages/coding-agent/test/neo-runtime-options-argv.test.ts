@@ -64,6 +64,12 @@ describe("neoRuntimeOptionsToRpcArgv", () => {
 		);
 	});
 
+	it("does not emit legacy system-prompt overrides", () => {
+		const argv = neoRuntimeOptionsToRpcArgv({});
+		expect(argv).not.toContain("--system-prompt");
+		expect(argv).not.toContain("--append-system-prompt");
+	});
+
 	it("emits unknown (extension) flags", () => {
 		const argv = neoRuntimeOptionsToRpcArgv({ unknownFlags: { plan: true, mode: "fast", off: false } });
 		expect(argv).toEqual(expect.arrayContaining(["--plan", "--mode", "fast"]));

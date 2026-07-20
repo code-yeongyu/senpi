@@ -4,7 +4,7 @@
 
 import { basename } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Model, ProviderHeaders } from "@earendil-works/pi-ai";
+import type { ImageContent, Model, Provider, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../utils/ansi.ts";
@@ -13,6 +13,7 @@ import type { KeybindingsConfig } from "../keybindings.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { SessionManager } from "../session-manager.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
+import { drainPendingProviderRegistrations } from "./loader.ts";
 import type {
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
@@ -399,6 +400,7 @@ export class ExtensionRunner {
 		contextActions: ExtensionContextActions,
 		providerActions?: {
 			registerProvider?: (name: string, config: ProviderConfig) => void;
+			registerNativeProvider?: (provider: Provider) => void;
 			unregisterProvider?: (name: string) => void;
 		},
 	): void {
@@ -440,24 +442,31 @@ export class ExtensionRunner {
 		this.getLoadedHookSourcesFn = contextActions.getLoadedHookSources;
 		this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
 
-		// Flush provider registrations queued during extension loading
-		for (const { name, config, extensionPath } of this.runtime.pendingProviderRegistrations) {
+		// Flush provider registrations queued during extension loading, replaying the
+		// original call order so last-registration-wins holds across mixed
+		// legacy (name/config) and native registrations.
+		for (const registration of drainPendingProviderRegistrations(this.runtime)) {
 			try {
-				if (providerActions?.registerProvider) {
-					providerActions.registerProvider(name, config);
+				if (registration.kind === "config") {
+					if (providerActions?.registerProvider) {
+						providerActions.registerProvider(registration.name, registration.config);
+					} else {
+						this.modelRegistry.registerProvider(registration.name, registration.config);
+					}
+				} else if (providerActions?.registerNativeProvider) {
+					providerActions.registerNativeProvider(registration.provider);
 				} else {
-					this.modelRegistry.registerProvider(name, config);
+					this.modelRegistry.registerProvider(registration.provider);
 				}
 			} catch (err) {
 				this.emitError({
-					extensionPath,
+					extensionPath: registration.extensionPath,
 					event: "register_provider",
 					error: err instanceof Error ? err.message : String(err),
 					stack: err instanceof Error ? err.stack : undefined,
 				});
 			}
 		}
-		this.runtime.pendingProviderRegistrations = [];
 
 		// From this point on, provider registration/unregistration takes effect immediately
 		// without requiring a /reload.
@@ -467,6 +476,13 @@ export class ExtensionRunner {
 				return;
 			}
 			this.modelRegistry.registerProvider(name, config);
+		};
+		this.runtime.registerNativeProvider = (provider) => {
+			if (providerActions?.registerNativeProvider) {
+				providerActions.registerNativeProvider(provider);
+				return;
+			}
+			this.modelRegistry.registerProvider(provider);
 		};
 		this.runtime.unregisterProvider = (name) => {
 			if (providerActions?.unregisterProvider) {
