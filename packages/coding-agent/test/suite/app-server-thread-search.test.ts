@@ -1,4 +1,3 @@
-import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionManager } from "../../src/core/session-manager.ts";
@@ -11,6 +10,7 @@ import {
 	responseResult,
 	stringAt,
 } from "./app-server-thread-handlers-harness.ts";
+import { writeSearchSession } from "./app-server-thread-search-support.ts";
 
 describe("app-server thread/search", () => {
 	afterEach(async () => {
@@ -38,7 +38,7 @@ describe("app-server thread/search", () => {
 		const first = await registry.dispatch(connection, {
 			id: 2,
 			method: "thread/search",
-			params: { searchTerm: "  needle  " },
+			params: { searchTerm: "  needle  ", sourceKinds: ["appServer"] },
 		});
 		const firstResult = responseResult(first);
 		const firstPage = dataArray(firstResult);
@@ -47,32 +47,38 @@ describe("app-server thread/search", () => {
 		const second = await registry.dispatch(connection, {
 			id: 3,
 			method: "thread/search",
-			params: { searchTerm: "needle", cursor: nextCursor, limit: 2 },
+			params: { searchTerm: "needle", sourceKinds: ["appServer"], cursor: nextCursor, limit: 2 },
 		});
 		const backwards = await registry.dispatch(connection, {
 			id: 12,
 			method: "thread/search",
-			params: { searchTerm: "needle", cursor: firstResult.backwardsCursor, sortDirection: "asc", limit: 2 },
+			params: {
+				searchTerm: "needle",
+				sourceKinds: ["appServer"],
+				cursor: firstResult.backwardsCursor,
+				sortDirection: "asc",
+				limit: 2,
+			},
 		});
 		const backwardsWrongDirection = await registry.dispatch(connection, {
 			id: 13,
 			method: "thread/search",
-			params: { searchTerm: "needle", cursor: firstResult.backwardsCursor, limit: 2 },
+			params: { searchTerm: "needle", sourceKinds: ["appServer"], cursor: firstResult.backwardsCursor, limit: 2 },
 		});
 		const lowLimit = await registry.dispatch(connection, {
 			id: 4,
 			method: "thread/search",
-			params: { searchTerm: "needle", limit: 0 },
+			params: { searchTerm: "needle", sourceKinds: ["appServer"], limit: 0 },
 		});
 		const highLimit = await registry.dispatch(connection, {
 			id: 5,
 			method: "thread/search",
-			params: { searchTerm: "needle", limit: 1000 },
+			params: { searchTerm: "needle", sourceKinds: ["appServer"], limit: 1000 },
 		});
 		const archived = await registry.dispatch(connection, {
 			id: 10,
 			method: "thread/search",
-			params: { searchTerm: "needle", archived: true },
+			params: { searchTerm: "needle", sourceKinds: ["appServer"], archived: true },
 		});
 		const wrongSource = await registry.dispatch(connection, {
 			id: 11,
@@ -148,12 +154,12 @@ describe("app-server thread/search", () => {
 		const updated = await registry.dispatch(connection, {
 			id: 15,
 			method: "thread/search",
-			params: { searchTerm: "recency needle", sortKey: "updated_at" },
+			params: { searchTerm: "recency needle", sourceKinds: ["appServer"], sortKey: "updated_at" },
 		});
 		const recency = await registry.dispatch(connection, {
 			id: 16,
 			method: "thread/search",
-			params: { searchTerm: "recency needle", sortKey: "recency_at" },
+			params: { searchTerm: "recency needle", sourceKinds: ["appServer"], sortKey: "recency_at" },
 		});
 
 		// Then: the enum boundary is strict and recency follows user turns, not later assistant activity.
@@ -179,12 +185,12 @@ describe("app-server thread/search", () => {
 		const first = await registry.dispatch(connection, {
 			id: 8,
 			method: "thread/search",
-			params: { searchTerm: "needle", limit: 100 },
+			params: { searchTerm: "needle", sourceKinds: ["appServer"], limit: 100 },
 		});
 		const second = await registry.dispatch(connection, {
 			id: 9,
 			method: "thread/search",
-			params: { searchTerm: "needle", limit: 100 },
+			params: { searchTerm: "needle", sourceKinds: ["appServer"], limit: 100 },
 		});
 
 		// Then: both pages are stable and search never delegates to the full allMessagesText scan.
@@ -201,54 +207,3 @@ describe("app-server thread/search", () => {
 		expect(secondStats).toEqual({ hits: 200, misses: 200, entries: 200 });
 	});
 });
-
-type SearchSessionOptions = {
-	readonly userTimestamp?: string;
-	readonly assistantTimestamp?: string;
-};
-
-async function writeSearchSession(
-	root: string,
-	threadId: string,
-	text: string,
-	options: SearchSessionOptions = {},
-): Promise<string> {
-	const sessionDir = join(root, "sessions");
-	await mkdir(sessionDir, { recursive: true });
-	const sessionFile = join(sessionDir, `2026-07-02T00-00-00-000Z_${threadId}.jsonl`);
-	const messages = [
-		JSON.stringify({
-			type: "message",
-			id: `message-${threadId}`,
-			parentId: threadId,
-			timestamp: options.userTimestamp ?? "2026-07-02T00:00:01.000Z",
-			message: { role: "user", content: [{ type: "text", text }] },
-		}),
-	];
-	if (options.assistantTimestamp) {
-		messages.push(
-			JSON.stringify({
-				type: "message",
-				id: `assistant-${threadId}`,
-				parentId: `message-${threadId}`,
-				timestamp: options.assistantTimestamp,
-				message: { role: "assistant", content: [{ type: "text", text: "assistant activity" }] },
-			}),
-		);
-	}
-	await writeFile(
-		sessionFile,
-		[
-			JSON.stringify({
-				type: "session",
-				version: 3,
-				id: threadId,
-				timestamp: "2026-07-02T00:00:00.000Z",
-				cwd: root,
-			}),
-			...messages,
-			"",
-		].join("\n"),
-	);
-	return threadId;
-}

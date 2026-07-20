@@ -1,50 +1,19 @@
-import type {
-	ThreadSearchParams,
-	ThreadSearchResponse,
-	ThreadSearchResult,
-	ThreadSourceKind,
-} from "../protocol/index.ts";
-import { RpcHandlerError } from "../rpc/errors.ts";
+import type { ThreadSearchResponse, ThreadSearchResult } from "../protocol/index.ts";
 import type { ThreadArchiveState } from "./archive-state.ts";
-import { objectValue } from "./handler-params.ts";
 import type { ThreadRegistry, WireThread } from "./registry.ts";
 import { ThreadNotFoundError } from "./registry.ts";
 import type { SearchSessionRecord, ThreadSearchCache } from "./search-cache.ts";
+import { invalidSearch, type ParsedSearchParams, parseSearchParams, type SearchSortKey } from "./search-params.ts";
 import type { TurnLog } from "./turn-log.ts";
 import { buildWireThread } from "./wire-thread.ts";
 
-const DEFAULT_LIMIT = 25;
-const MAX_LIMIT = 100;
 const APP_SERVER_SOURCE = "appServer";
-const THREAD_SOURCE_KINDS = new Set<ThreadSourceKind>([
-	"cli",
-	"vscode",
-	"exec",
-	"appServer",
-	"subAgent",
-	"subAgentReview",
-	"subAgentCompact",
-	"subAgentThreadSpawn",
-	"subAgentOther",
-	"unknown",
-]);
-type SearchSortKey = NonNullable<ThreadSearchParams["sortKey"]>;
 
 export type ThreadSearchDependencies = {
 	readonly threads: ThreadRegistry;
 	readonly turnLog: TurnLog;
 	readonly archiveState: ThreadArchiveState;
 	readonly cache: ThreadSearchCache;
-};
-
-type ParsedSearchParams = {
-	readonly searchTerm: string;
-	readonly cursor: string | null;
-	readonly limit: number;
-	readonly sortKey: SearchSortKey;
-	readonly sortDirection: "asc" | "desc";
-	readonly sourceKinds: readonly ThreadSourceKind[];
-	readonly archived: boolean;
 };
 
 type SearchCursor = {
@@ -65,7 +34,7 @@ export async function threadSearchResponse(
 	const archivedIds = new Set((await dependencies.archiveState.listArchivedThreads()).map((thread) => thread.id));
 	const records = await searchRecords(dependencies);
 	const filtered = records.filter((record) => {
-		const sourceMatches = params.sourceKinds.length === 0 || params.sourceKinds.includes(APP_SERVER_SOURCE);
+		const sourceMatches = params.sourceKinds.includes(APP_SERVER_SOURCE);
 		const archiveMatches = archivedIds.has(record.thread.id) === params.archived;
 		return sourceMatches && archiveMatches && record.searchableText.toLocaleLowerCase().includes(params.searchTerm);
 	});
@@ -126,64 +95,6 @@ async function toSearchResult(
 		if (!(error instanceof ThreadNotFoundError)) throw error;
 	}
 	return { thread, snippet: literalSnippet(record.searchableText, searchTerm) };
-}
-
-function parseSearchParams(value: unknown): ParsedSearchParams {
-	const params = objectValue(value);
-	const rawTerm = params.searchTerm;
-	if (typeof rawTerm !== "string" || rawTerm.trim().length === 0) {
-		throw invalidSearch("thread/search requires a non-empty searchTerm");
-	}
-	const sortKey = readSortKey(params.sortKey);
-	const sortDirection = readSortDirection(params.sortDirection);
-	const sourceKinds = readSourceKinds(params.sourceKinds);
-	return {
-		searchTerm: rawTerm.trim().toLocaleLowerCase(),
-		cursor: readCursor(params.cursor),
-		limit: clampLimit(params.limit),
-		sortKey,
-		sortDirection,
-		sourceKinds,
-		archived: params.archived === true,
-	};
-}
-
-function readSortKey(value: unknown): SearchSortKey {
-	if (value === undefined || value === null) return "created_at";
-	if (value === "created_at" || value === "updated_at" || value === "recency_at") return value;
-	throw invalidSearch("thread/search received an invalid sortKey");
-}
-
-function readSortDirection(value: unknown): "asc" | "desc" {
-	if (value === undefined || value === null) return "desc";
-	if (value === "asc" || value === "desc") return value;
-	throw invalidSearch("thread/search received an invalid sortDirection");
-}
-
-function readSourceKinds(value: unknown): readonly ThreadSourceKind[] {
-	if (value === undefined || value === null) return [];
-	if (!Array.isArray(value) || value.some((source) => !isThreadSourceKind(source))) {
-		throw invalidSearch("thread/search received an invalid sourceKinds");
-	}
-	return [...new Set(value)].sort();
-}
-
-function isThreadSourceKind(value: unknown): value is ThreadSourceKind {
-	return typeof value === "string" && THREAD_SOURCE_KINDS.has(value as ThreadSourceKind);
-}
-
-function readCursor(value: unknown): string | null {
-	if (value === undefined || value === null) return null;
-	if (typeof value === "string") return value;
-	throw invalidSearch("thread/search received an invalid cursor");
-}
-
-function clampLimit(value: unknown): number {
-	if (value === undefined || value === null) return DEFAULT_LIMIT;
-	if (typeof value !== "number" || !Number.isFinite(value)) {
-		throw invalidSearch("thread/search received an invalid limit");
-	}
-	return Math.min(MAX_LIMIT, Math.max(1, Math.trunc(value)));
 }
 
 function compareRecords(
@@ -284,8 +195,4 @@ function literalSnippet(text: string, term: string): string {
 	const start = Math.max(0, index - 80);
 	const end = Math.min(text.length, index + term.length + 80);
 	return `${start > 0 ? "... " : ""}${text.slice(start, end)}${end < text.length ? " ..." : ""}`;
-}
-
-function invalidSearch(message: string): RpcHandlerError {
-	return new RpcHandlerError({ code: -32600, message });
 }

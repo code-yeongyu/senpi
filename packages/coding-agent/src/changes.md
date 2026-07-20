@@ -6,9 +6,10 @@
 
 - `modes/app-server/protocol/`: corrected fuzzy-search result keys to Codex's snake-case wire names and completed the
   handwritten thread-item/history facade so runtime modules no longer import generated protocol files directly.
-- `modes/app-server/threads/`: made source-kind parsing strict, separated user-activity recency from general updates,
-  persisted unarchive timestamp bumps, rejected non-`u32` history limits, and recorded rejected compactions as failed
-  without fabricating a completed item.
+- `modes/app-server/threads/`: made source-kind parsing strict, applied Codex's interactive-session default when search
+  source filters are omitted or empty, rejected malformed search `u32`/boolean fields, separated user-activity recency
+  from general updates, persisted unarchive timestamp bumps, rejected non-`u32` history limits, and recorded rejected
+  compactions as failed without fabricating a completed item.
 - `modes/app-server/server/models.ts`: validates `remoteControl/client/list` parameters before returning the honest
   no-remote-control internal error.
 - `test/qa/app-server/`: extended the Todo 8–12 drivers for the rejected edge cases and made the compaction fixture
