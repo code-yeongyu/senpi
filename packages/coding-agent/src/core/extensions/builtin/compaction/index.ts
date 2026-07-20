@@ -315,9 +315,23 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_before_compact", async (event, ctx) => {
 		invalidateSpeculativeCompaction();
-		if (cap.shouldRejectByCap(state, { reason: event.reason }).cancel) return { cancel: true };
-		if (breaker.isTripped(state, Date.now()) && !breaker.shouldBypass(state, { reason: event.reason }))
-			return { cancel: true };
+		if (cap.shouldRejectByCap(state, { reason: event.reason }).cancel) {
+			return {
+				cancel: true,
+				rejectionCause: "per-turn-cap",
+				reason: "per-turn compaction cap reached for this turn",
+			};
+		}
+		const now = Date.now();
+		if (breaker.isTripped(state, now) && !breaker.shouldBypass(state, { reason: event.reason })) {
+			const remainingMs = state.trippedAt !== null ? Math.max(0, state.trippedAt + breaker.COOLDOWN_MS - now) : 0;
+			const remainingSec = Math.ceil(remainingMs / 1000);
+			return {
+				cancel: true,
+				rejectionCause: "circuit-breaker",
+				reason: `compaction circuit breaker cooling down (${remainingSec}s left)`,
+			};
+		}
 
 		capturePendingMetadata(event.requestId, ctx);
 
@@ -351,14 +365,15 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 			// limit) instead of letting it degrade into a bare "Compaction
 			// cancelled". Cancel rather than fall back: the core route would
 			// re-send the same conversation and burn tokens on the same failure.
+			// The reason threads into compaction_end.errorMessage so the UI shows
+			// the real provider message; ctx.ui.notify would be a duplicate toast.
 			const message = error instanceof Error ? error.message : String(error);
-			ctx.ui.notify(`Compaction failed: ${message}`, "error");
 			pendingMetadata.delete(event.requestId);
-			return { cancel: true };
+			return { cancel: true, reason: `compaction generator failed: ${message}` };
 		}
 		if (!compaction) {
 			pendingMetadata.delete(event.requestId);
-			return { cancel: true };
+			return { cancel: true, reason: "compaction generator returned no summary" };
 		}
 
 		return {
@@ -401,8 +416,10 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 			}
 			return;
 		}
+		// Rejection feedback is emitted by core via compaction_end.errorMessage;
+		// duplicating it as a ctx.ui.notify toast produces double surfaces while
+		// the compaction status indicator is still animating (plan §1 Q3).
 		state = breaker.recordFailure(state, Date.now(), { route: event.reason });
-		ctx.ui.notify(`Compaction rejected: ${event.rejectionCause ?? "unknown"}`, "warning");
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
