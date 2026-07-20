@@ -83,7 +83,9 @@ export default function nestedAgentsMd(pi: ExtensionAPI): void {
 		return { content: [...event.content, textBlock] };
 	});
 
-	pi.on("session_compact", async (_event, ctx) => {
+	pi.on("session_compact", async (event, ctx) => {
+		// Rejected compactions do not mutate session state; keep the cache warm.
+		if (!event.accepted) return;
 		const sessionKey = getSessionKey(ctx);
 		cache.clearSession(sessionKey);
 		filesPerSession.delete(sessionKey);

@@ -274,11 +274,34 @@ type CompactionExecutionResult =
 			rejectionCause: CompactionRejectionCause;
 	  };
 
+/**
+ * Human-readable rejection message paired with a `CompactionRejectionCause`.
+ *
+ * Kept exhaustive over the union so the compiler flags any new cause that would
+ * otherwise reintroduce silent failures at the `compaction_end` UI seam.
+ */
+function describeCompactionRejection(cause: CompactionRejectionCause): string {
+	switch (cause) {
+		case "would-overflow":
+			return "Compaction rejected: the produced summary would still overflow the model context window. Reduce context (e.g. /new, drop attachments) or switch to a larger-context model.";
+		case "cancelled-by-extension":
+			return "Compaction rejected: cancelled by an extension.";
+		case "circuit-breaker":
+			return "Compaction rejected: the compaction circuit breaker is open after repeated failures. Wait for the cooldown and retry.";
+		case "per-turn-cap":
+			return "Compaction rejected: per-turn compaction cap reached for this turn.";
+	}
+}
+
 class CompactionRejectedError extends Error {
 	readonly rejectionCause: CompactionRejectionCause;
 
 	constructor(rejectionCause: CompactionRejectionCause) {
-		super(rejectionCause === "cancelled-by-extension" ? "Compaction cancelled" : "Compaction rejected");
+		super(
+			rejectionCause === "cancelled-by-extension"
+				? "Compaction cancelled"
+				: describeCompactionRejection(rejectionCause),
+		);
 		this.name = "CompactionRejectedError";
 		this.rejectionCause = rejectionCause;
 	}
@@ -2587,7 +2610,13 @@ export class AgentSession {
 					})) as SessionBeforeCompactResult | undefined;
 
 					if (extensionResult?.cancel) {
-						return await this._rejectCompaction(request, requestId, "cancelled-by-extension", true);
+						return await this._rejectCompaction(
+							request,
+							requestId,
+							extensionResult.rejectionCause ?? "cancelled-by-extension",
+							true,
+							extensionResult.reason,
+						);
 					}
 
 					if (extensionResult?.compaction) {
@@ -2706,7 +2735,19 @@ export class AgentSession {
 		requestId: string,
 		rejectionCause: CompactionRejectionCause,
 		aborted: boolean,
+		extensionReason?: string,
 	): Promise<CompactionExecutionResult> {
+		// Per plan Section 1: rejection must never be silent. The compaction_end event
+		// carries a non-empty human-readable errorMessage (unless the user aborted, where
+		// the aborted branch already renders "Compaction cancelled"). session_compact is
+		// also emitted with accepted:false so the compaction extension's circuit-breaker
+		// bookkeeping stops being dead code; other builtin session_compact handlers guard
+		// on event.accepted.
+		const trimmedExtensionReason = extensionReason?.trim();
+		const detailedMessage = trimmedExtensionReason
+			? `Compaction rejected: ${trimmedExtensionReason}`
+			: describeCompactionRejection(rejectionCause);
+		const errorMessage = aborted && !trimmedExtensionReason ? undefined : detailedMessage;
 		this._emit({
 			type: "compaction_end",
 			reason: request.reason,
@@ -2716,6 +2757,16 @@ export class AgentSession {
 			requestId,
 			accepted: false,
 			rejectionCause,
+			errorMessage,
+		});
+		await this._extensionRunner.emit({
+			type: "session_compact",
+			reason: request.reason,
+			requestId,
+			accepted: false,
+			rejectionCause,
+			fromExtension: false,
+			willRetry: false,
 		});
 		return { accepted: false, requestId, rejectionCause };
 	}

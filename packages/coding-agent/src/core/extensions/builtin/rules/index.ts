@@ -63,7 +63,9 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		return undefined;
 	});
 
-	pi.on("session_compact", async (_event, ctx) => {
+	pi.on("session_compact", async (event, ctx) => {
+		// Rejected compactions do not mutate session state; do not reset rules.
+		if (!event.accepted) return undefined;
 		engine.resetSession(ctx.cwd);
 		pi.appendEntry("pi-rules.scan", { cwd: ctx.cwd, reason: "compact" });
 		return undefined;
