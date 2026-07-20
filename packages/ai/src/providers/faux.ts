@@ -76,6 +76,7 @@ export function fauxAssistantMessage(
 	options: {
 		stopReason?: AssistantMessage["stopReason"];
 		errorMessage?: string;
+		stopDetails?: AssistantMessage["stopDetails"];
 		responseId?: string;
 		timestamp?: number;
 	} = {},
@@ -88,6 +89,7 @@ export function fauxAssistantMessage(
 		model: DEFAULT_MODEL_ID,
 		usage: DEFAULT_USAGE,
 		stopReason: options.stopReason ?? "stop",
+		stopDetails: options.stopDetails,
 		errorMessage: options.errorMessage,
 		responseId: options.responseId,
 		timestamp: options.timestamp ?? Date.now(),

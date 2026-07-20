@@ -421,6 +421,8 @@ export interface Usage {
 
 export type StopReason = "stop" | "length" | "toolUse" | "error" | "aborted";
 
+export type AssistantStopDetails = { type: "refusal"; explanation?: string } | { type: "sensitive" };
+
 export interface UserMessage {
 	role: "user";
 	content: string | (TextContent | ImageContent)[];
@@ -438,6 +440,7 @@ export interface AssistantMessage {
 	diagnostics?: AssistantMessageDiagnostic[]; // Redacted provider/runtime diagnostics for failures and recoveries.
 	usage: Usage;
 	stopReason: StopReason;
+	stopDetails?: AssistantStopDetails;
 	errorMessage?: string;
 	timestamp: number; // Unix timestamp in milliseconds
 }

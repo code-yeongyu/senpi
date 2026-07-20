@@ -1,5 +1,11 @@
 # AI Source Changes
 
+## 2026-07-20 - Typed classifier stop details
+
+- Added optional typed refusal/sensitive stop details to assistant messages, preserving Anthropic classifier outcomes through streaming and faux provider errors.
+- Exported `isClassifierRefusal` and excluded classifier outcomes from generic same-model retry classification.
+
+
 ## 2026-07-17 - Video input modality for Kimi K3 (kimi-coding)
 
 ### What changed and why
