@@ -1,5 +1,17 @@
 # Tool Call Middleware Changes
 
+## 2026-07-19 - Recovery termination and metadata fidelity
+
+### What changed and why
+
+- Invoke recovery now keeps abort terminals interrupted, strips executable calls from aborted or consumer-cancelled messages, and never converts them into successful `toolUse` turns.
+- One terminal path handles done, transport errors, iterator failures, exhaustion, and cancellation after flushing each active text parser exactly once. Dangling recovered calls finalize as incomplete and non-executable.
+- Recovery events now snapshot the corresponding source message metadata and complete usage/cost objects, preventing later partial mutations from rewriting previously emitted event metadata. The legacy text-protocol wrapper remains unchanged.
+
+### Why the extension system could not handle this
+
+- Termination, iterator, partial-message, and usage fidelity are properties of the provider-neutral stream wrapper before coding-agent extensions receive assistant events.
+
 ## 2026-07-18 - ANTML protocol with Claude-Code-style failure tolerance
 
 ### What changed and why

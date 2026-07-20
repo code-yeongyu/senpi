@@ -15,6 +15,8 @@ import {
 	TextStreamHarness,
 	textFrom,
 } from "./invoke-recovery-stream-fixtures.ts";
+import { registerInvokeRecoveryTerminalEdgeCases } from "./invoke-recovery-terminal-edge-cases.ts";
+import { registerInvokeRecoveryTerminationCases } from "./invoke-recovery-termination-cases.ts";
 
 const bashTool = {
 	name: "Bash",
@@ -44,6 +46,8 @@ describe("wrapStreamWithInvokeRecovery", () => {
 	registerInvokeRecoveryContentOrderCases(bashTool);
 	registerInvokeRecoveryNativeCases(bashTool);
 	registerInvokeRecoveryNativeLifecycleCases(bashTool);
+	registerInvokeRecoveryTerminationCases(bashTool);
+	registerInvokeRecoveryTerminalEdgeCases(bashTool);
 
 	it("reconstructs text toolCall text and starts before the closing invoke", { timeout: 1000 }, async () => {
 		// Given

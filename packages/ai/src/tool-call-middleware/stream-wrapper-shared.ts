@@ -28,6 +28,7 @@ export class StreamMessageProjection {
 	private readonly stream: AssistantMessageEventStream;
 	private currentInnerTextIndex: number | null = null;
 	private readonly textBlockIndexByInnerIndex = new Map<number, number | null>();
+	private readonly lastTextBlockIndexByInnerIndex = new Map<number, number>();
 	private readonly toolCallIndexByParserIndex = new Map<number, number>();
 	private readonly projectedDiagnostics: AssistantMessageDiagnostic[] = [];
 	private readonly thinking: StreamThinkingProjection;
@@ -64,6 +65,7 @@ export class StreamMessageProjection {
 				sourceBlock?.type === "text" ? { ...sourceBlock, text: "" } : { type: "text", text: "" };
 			this.message.content.push(block);
 			this.textBlockIndexByInnerIndex.set(contentIndex, outerIndex);
+			this.lastTextBlockIndexByInnerIndex.set(contentIndex, outerIndex);
 		} else {
 			this.textBlockIndexByInnerIndex.set(contentIndex, null);
 		}
@@ -116,7 +118,11 @@ export class StreamMessageProjection {
 		const outerContentIndex =
 			this.currentInnerTextIndex == null
 				? null
-				: (this.textBlockIndexByInnerIndex.get(this.currentInnerTextIndex) ?? null);
+				: (this.textBlockIndexByInnerIndex.get(this.currentInnerTextIndex) ??
+					(this.preserveSourceMetadata
+						? this.lastTextBlockIndexByInnerIndex.get(this.currentInnerTextIndex)
+						: null) ??
+					null);
 		if (outerContentIndex != null) {
 			const block = this.message.content[outerContentIndex];
 			if (block?.type === "text") {
@@ -177,6 +183,7 @@ export class StreamMessageProjection {
 			contentIndex = this.message.content.length;
 			this.message.content.push({ type: "text", text });
 			this.textBlockIndexByInnerIndex.set(this.currentInnerTextIndex, contentIndex);
+			this.lastTextBlockIndexByInnerIndex.set(this.currentInnerTextIndex, contentIndex);
 		} else {
 			const block = this.message.content[contentIndex];
 			if (block?.type !== "text") return;

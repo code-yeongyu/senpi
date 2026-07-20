@@ -1,8 +1,9 @@
-import type { AssistantMessage, AssistantMessageEventStream, Tool } from "../types.ts";
-import { AssistantMessageEventStream as AssistantMessageEventStreamImpl } from "../utils/event-stream.ts";
+import type { AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, Tool } from "../types.ts";
 import { type RecoveryContentKind, RecoveryContentLifecycle } from "./recovery-content-lifecycle.ts";
+import { RecoveryAssistantMessageEventStream } from "./recovery-event-stream.ts";
 import { RecoveryNativeProjection } from "./recovery-native-projection.ts";
 import { type RecoveryStreamFailure, terminateRecoveryStreamForFailure } from "./recovery-stream-failure.ts";
+import { RecoveryStreamTerminal } from "./recovery-stream-terminal.ts";
 import { RecoveryTextProjection } from "./recovery-text-projection.ts";
 import { StreamMessageProjection } from "./stream-wrapper-shared.ts";
 
@@ -10,14 +11,17 @@ export function wrapStreamWithInvokeRecovery(
 	innerStream: AssistantMessageEventStream,
 	tools: readonly Tool[],
 ): AssistantMessageEventStream {
-	const outerStream = new AssistantMessageEventStreamImpl();
+	const outerStream = new RecoveryAssistantMessageEventStream();
 
 	void (async (): Promise<void> => {
+		const innerIterator = innerStream[Symbol.asyncIterator]();
+		const innerEvents: AsyncIterable<AssistantMessageEvent> = { [Symbol.asyncIterator]: () => innerIterator };
 		let projection: StreamMessageProjection | null = null;
 		let nativeProjection: RecoveryNativeProjection | null = null;
 		let textProjection: RecoveryTextProjection | null = null;
 		let sawToolCall = false;
 		const contentLifecycle = new RecoveryContentLifecycle();
+		const terminal = new RecoveryStreamTerminal(outerStream);
 
 		const finishText = (): void => {
 			if (!textProjection) return;
@@ -25,11 +29,11 @@ export function wrapStreamWithInvokeRecovery(
 			textProjection = null;
 		};
 
-		const finalize = (source: AssistantMessage): AssistantMessage => {
-			if (!projection) return source;
-			projection.finalizeDanglingToolCalls();
-			return projection.finalize(source, sawToolCall);
-		};
+		outerStream.setCancellationHandler(() => {
+			void innerIterator.return?.();
+			finishText();
+			terminal.cancelled(projection);
+		});
 
 		const terminateForFailure = (source: AssistantMessage, failure: RecoveryStreamFailure): void => {
 			if (!projection) return;
@@ -93,7 +97,7 @@ export function wrapStreamWithInvokeRecovery(
 		};
 
 		try {
-			for await (const event of innerStream) {
+			for await (const event of innerEvents) {
 				switch (event.type) {
 					case "start":
 						projection = new StreamMessageProjection(outerStream, event.partial, {
@@ -127,34 +131,19 @@ export function wrapStreamWithInvokeRecovery(
 						finishText();
 						contentLifecycle.end(event.contentIndex, "text");
 						break;
-					case "done": {
-						if (!synchronizeTerminal(event.message)) return;
-						const message = finalize(event.message);
-						const recovered = sawToolCall || message.content.some((block) => block.type === "toolCall");
-						const reason =
-							recovered && (event.reason === "stop" || event.reason === "length") ? "toolUse" : event.reason;
-						outerStream.push({ type: "done", reason, message });
-						outerStream.end();
+					case "done":
+						if (!synchronizeTerminal(event.message) || !projection) return;
+						terminal.done(projection, event.message, sawToolCall, event.reason);
 						return;
-					}
-					case "error": {
+					case "error":
 						if (!projection) {
 							outerStream.push(event);
-							outerStream.end(event.error);
+							outerStream.end();
 							return;
 						}
 						if (!synchronizeTerminal(event.error)) return;
-						const message = finalize(event.error);
-						if (projection.hasFinalizedToolCallContent()) {
-							message.stopReason = "toolUse";
-							outerStream.push({ type: "done", reason: "toolUse", message });
-							outerStream.end(message);
-							return;
-						}
-						outerStream.push({ type: "error", reason: event.reason, error: message });
-						outerStream.end(message);
+						terminal.sourceError(projection, event.error, sawToolCall, event.reason);
 						return;
-					}
 					case "toolcall_start": {
 						if (!canStart(event.partial, event.contentIndex, "toolCall", "invalid_native_event_order")) return;
 						if (!prepareContentEvent(event.partial, event.contentIndex) || !nativeProjection) return;
@@ -214,20 +203,11 @@ export function wrapStreamWithInvokeRecovery(
 				}
 			}
 
-			const innerMessage = await innerStream.result();
-			if (!synchronizeTerminal(innerMessage)) return;
-			outerStream.end(finalize(innerMessage));
-		} catch (error) {
-			if (!projection) {
-				outerStream.fail(error);
-				return;
-			}
 			finishText();
-			const message = finalize(projection.message);
-			message.stopReason = "error";
-			message.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
-			outerStream.push({ type: "error", reason: "error", error: message });
-			outerStream.end();
+			terminal.exhausted(projection);
+		} catch (error) {
+			finishText();
+			terminal.iteratorFailure(projection, error);
 		}
 	})();
 
