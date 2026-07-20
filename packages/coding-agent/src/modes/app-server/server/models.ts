@@ -8,7 +8,13 @@ import { AuthStorage } from "../../../core/auth-storage.ts";
 import { ModelRegistry } from "../../../core/model-registry.ts";
 import { defaultModelPerProvider } from "../../../core/model-resolver.ts";
 import { getSupportedThinkingLevels } from "../../../core/thinking-levels.ts";
-import type { ModelListParams, ModelListResponse, Model as WireModel } from "../protocol/index.ts";
+import type {
+	ModelListParams,
+	ModelListResponse,
+	RemoteControlClientListParams,
+	Model as WireModel,
+} from "../protocol/index.ts";
+import { RpcHandlerError } from "../rpc/errors.ts";
 import type { MethodRegistry } from "../rpc/registry.ts";
 
 export interface AppServerModelRegistry {
@@ -53,7 +59,8 @@ export function registerAppServerModelMethods(
 	});
 	registry.register("remoteControl/client/list", {
 		experimental: true,
-		handler: () => {
+		handler: ({ request }) => {
+			parseRemoteControlClientListParams(request.params);
 			throw new Error("remote control is unavailable for this app-server");
 		},
 	});
@@ -358,6 +365,37 @@ function parseModelListParams(params: unknown): ModelListParams {
 		return {};
 	}
 	return { includeHidden: params.includeHidden === true };
+}
+
+function parseRemoteControlClientListParams(params: unknown): RemoteControlClientListParams {
+	if (!isRecord(params)) {
+		throw invalidRemoteControlParams("remoteControl/client/list requires params");
+	}
+	const environmentId = params.environmentId;
+	if (typeof environmentId !== "string") {
+		throw invalidRemoteControlParams("remoteControl/client/list requires a string environmentId");
+	}
+	const cursor = params.cursor;
+	if (cursor !== undefined && cursor !== null && typeof cursor !== "string") {
+		throw invalidRemoteControlParams("remoteControl/client/list received an invalid cursor");
+	}
+	const limit = params.limit;
+	if (
+		limit !== undefined &&
+		limit !== null &&
+		(typeof limit !== "number" || !Number.isInteger(limit) || limit < 0 || limit > 0xffff_ffff)
+	) {
+		throw invalidRemoteControlParams("remoteControl/client/list received an invalid limit");
+	}
+	const order = params.order;
+	if (order !== undefined && order !== null && order !== "asc" && order !== "desc") {
+		throw invalidRemoteControlParams("remoteControl/client/list received an invalid order");
+	}
+	return { environmentId, cursor, limit, order };
+}
+
+function invalidRemoteControlParams(message: string): RpcHandlerError {
+	return new RpcHandlerError({ code: -32600, message });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -341,6 +341,50 @@ describe("app-server model methods", () => {
 		}
 	});
 
+	it("validates remote-control client-list parameters before the no-handle error", async () => {
+		const harness = await createHarness();
+		try {
+			const experimental = createCoreWithConnection({
+				modelRegistry: harness.session.modelRegistry,
+				experimentalApi: true,
+			});
+			await initialize(experimental.core, experimental.id, true);
+			const malformedParams: readonly unknown[] = [
+				undefined,
+				{},
+				{ environmentId: 42 },
+				{ environmentId: "environment", cursor: 42 },
+				{ environmentId: "environment", order: "sideways" },
+				{ environmentId: "environment", limit: -1 },
+				{ environmentId: "environment", limit: 1.5 },
+				{ environmentId: "environment", limit: 0x1_0000_0000 },
+			];
+
+			for (const [index, params] of malformedParams.entries()) {
+				await experimental.core.receive(experimental.id, request(index + 2, "remoteControl/client/list", params));
+			}
+			await experimental.core.receive(
+				experimental.id,
+				request(20, "remoteControl/client/list", {
+					environmentId: "environment",
+					cursor: null,
+					limit: 0xffff_ffff,
+					order: "desc",
+				}),
+			);
+
+			for (const [index] of malformedParams.entries()) {
+				expect(experimental.sent[index + 1]).toMatchObject({ id: index + 2, error: { code: -32600 } });
+			}
+			expect(experimental.sent.at(-1)).toEqual({
+				id: 20,
+				error: { code: -32603, message: "remote control is unavailable for this app-server" },
+			});
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	it("returns clean method-not-found responses for unimplemented stable client methods within two seconds", async () => {
 		// Given: an initialized connection and the generated stable client method inventory.
 		const harness = await createHarness();

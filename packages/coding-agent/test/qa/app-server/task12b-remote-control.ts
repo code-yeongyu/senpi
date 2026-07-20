@@ -107,6 +107,27 @@ async function main(): Promise<void> {
 			-32603,
 			"remote control is unavailable for this app-server",
 		);
+		const invalidClientListParams: readonly unknown[] = [
+			undefined,
+			{},
+			{ environmentId: 42 },
+			{ environmentId: "local-only", cursor: 42 },
+			{ environmentId: "local-only", order: "sideways" },
+			{ environmentId: "local-only", limit: -1 },
+			{ environmentId: "local-only", limit: 1.5 },
+			{ environmentId: "local-only", limit: 0x1_0000_0000 },
+		];
+		for (const [index, params] of invalidClientListParams.entries()) {
+			assertRpcCode(
+				await sendRequest(
+					experimental[0] ?? fail("missing experimental client"),
+					210 + index,
+					"remoteControl/client/list",
+					params,
+				),
+				-32600,
+			);
+		}
 
 		await closeSockets(sockets);
 		await stopServer(server.child);
@@ -127,6 +148,7 @@ async function main(): Promise<void> {
 	console.log("STATUS_ENUM=disabled");
 	console.log("INSTALLATION_ID_STABLE=1");
 	console.log("CLIENT_LIST_ERROR=1");
+	console.log("CLIENT_LIST_PARAMS_VALIDATED=1");
 	console.log("EXIT=0");
 }
 
@@ -301,6 +323,13 @@ function assertRpcError(response: WireRecord, code: number, message: string): vo
 	const error = response.error;
 	assert.ok(isRecord(error));
 	assert.deepEqual(error, { code, message });
+}
+
+function assertRpcCode(response: WireRecord, code: number): void {
+	assert.ok("error" in response);
+	const error = response.error;
+	assert.ok(isRecord(error));
+	assert.equal(error.code, code);
 }
 
 async function closeSockets(sockets: WebSocket[]): Promise<void> {
