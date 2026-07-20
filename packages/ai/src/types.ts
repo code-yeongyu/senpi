@@ -672,6 +672,14 @@ export interface AnthropicMessagesCompat {
 	/** Whether to replay empty thinking signatures as `signature: ""` instead of converting thinking to text. Default: false. */
 	allowEmptySignature?: boolean;
 	/**
+	 * How to replay thinking blocks that have no usable Anthropic signature.
+	 * `"text"` demotes them to text; `"empty-signature"` preserves Anthropic's
+	 * thinking shape with `signature: ""`. Defaults to `"text"`; the legacy
+	 * `allowEmptySignature` setting remains a compatibility alias for
+	 * `"empty-signature"`.
+	 */
+	unsignedThinkingReplay?: "text" | "empty-signature";
+	/**
 	 * Whether the provider supports deferred tools loaded by `tool_reference`
 	 * blocks in tool results. Default: true for first-party Anthropic models
 	 * except Haiku and models older than Claude 4.5; false for other providers.

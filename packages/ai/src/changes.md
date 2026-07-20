@@ -1,5 +1,24 @@
 # AI Source Changes
 
+## 2026-07-20 - Retry unsigned Anthropic thinking replay as text
+
+### What changed and why
+
+- `AnthropicMessagesCompat.unsignedThinkingReplay` now explicitly controls replay of thinking blocks without a usable signature. The safe default is text replay for first-party/signing endpoints; the legacy `allowEmptySignature` flag remains an alias for Kimi-compatible empty-signature replay.
+- When an endpoint rejects an empty replay signature with a pre-stream HTTP 400 containing `Invalid signature in thinking block`, the Anthropic adapter rebuilds the request with unsigned thinking demoted to text and retries exactly once. That learned fallback is scoped to the session, base URL, and model ID, without mutating shared `Model` metadata.
+- Signed and redacted thinking replay remains byte-for-byte/native-state preserving. Non-signature 400s and errors after SSE content begins do not retry.
+
+### Files modified
+
+- `types.ts`
+- `api/anthropic-messages.ts`
+- `../test/anthropic-unsigned-thinking-replay.test.ts`
+
+### Expected merge conflict zones
+
+- LOW: `AnthropicMessagesCompat` replay options and Anthropic request creation.
+
+
 ## 2026-07-17 - Video input modality for Kimi K3 (kimi-coding)
 
 ### What changed and why
