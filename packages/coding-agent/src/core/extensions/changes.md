@@ -1,5 +1,49 @@
 # Core Extensions Changes
 
+## 2026-07-20 - session_compact discriminated union + rejection emission (plan §1)
+
+### What changed
+
+- `types.ts`: `SessionCompactEvent` is now the discriminated union
+  `SessionCompactAcceptedEvent | SessionCompactRejectedEvent`, keyed on
+  `accepted`. Accepted events keep the required `compactionEntry`; rejected
+  events carry the `rejectionCause` and set `compactionEntry: undefined`,
+  `fromExtension: false`, `willRetry: false`. The event doc now spells out that
+  rejections fire and that handlers must guard on `event.accepted` before
+  touching state that only exists on the accepted branch.
+- `../agent-session.ts`: `_rejectCompaction` emits `compaction_end` with a
+  non-empty human-readable `errorMessage` derived per `CompactionRejectionCause`
+  (exhaustive `switch` in `describeCompactionRejection`, so a new cause will
+  fail typecheck rather than reintroduce the silent path). It also emits the
+  `session_compact` extension event with `accepted: false, rejectionCause`,
+  making the builtin compaction extension's circuit-breaker `recordFailure`
+  bookkeeping reachable for the first time.
+- `builtin/rules/index.ts`, `builtin/nested-agents-md/index.ts`:
+  `session_compact` handlers now `return` immediately when `!event.accepted`
+  so a rejected compaction no longer resets rules-engine session state or
+  clears the nested-AGENTS.md cache. The compaction and hooks builtins were
+  already guarded via `if (event.accepted)`.
+
+### Why
+
+- Plan §1 root cause A: manual `/compact` with `_wouldCompactionOverflow`-based
+  rejection was fully silent — `compaction_end` carried no `errorMessage`, and
+  `session_compact` was only emitted on the accepted path, leaving the
+  compaction extension's `!accepted` branch dead. Users lost the entry point
+  to recovery advice.
+
+### Why extension system couldn't handle this alone
+
+- The union shape, exhaustive rejection copy, and the emission sites all live
+  in the core extension surface; extensions cannot add typed variants to
+  `SessionCompactEvent` or make core emit rejections.
+
+### Expected merge conflict zones
+
+- HIGH: `types.ts` around `SessionCompactEvent`; `agent-session.ts`
+  `_rejectCompaction` and its call sites.
+- LOW: builtin `session_compact` handlers gaining the `!event.accepted` guard.
+
 ## 2026-07-19 - Port phased op-based todo tool
 
 ### What changed

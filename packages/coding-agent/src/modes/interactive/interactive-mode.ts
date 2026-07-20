@@ -3523,8 +3523,15 @@ export class InteractiveMode {
 				this.clearStatusIndicator("compaction");
 				this.autoCompactionProgressText = "";
 				if (event.aborted) {
+					// Prefer the extension-provided reason over the generic "cancelled"
+					// label so per-turn-cap / circuit-breaker / provider-error cancels are
+					// no longer indistinguishable from a user-triggered abort.
+					const cancelMessage = event.errorMessage ?? "Compaction cancelled";
 					if (event.reason === "manual") {
-						this.showError("Compaction cancelled");
+						this.showError(cancelMessage);
+					} else if (event.errorMessage) {
+						this.chatContainer.addChild(new Spacer(1));
+						this.chatContainer.addChild(new Text(theme.fg("error", event.errorMessage), 1, 0));
 					} else {
 						this.showStatus("Auto-compaction cancelled");
 					}
@@ -3546,6 +3553,18 @@ export class InteractiveMode {
 					} else {
 						this.chatContainer.addChild(new Spacer(1));
 						this.chatContainer.addChild(new Text(theme.fg("error", event.errorMessage), 1, 0));
+					}
+				} else if (event.accepted === false) {
+					// Exhaustive fallback per plan Section 1: compaction_end must never fall
+					// through silently. Rejection events without an errorMessage still name
+					// the rejectionCause so the user knows /compact did nothing on purpose.
+					const cause = event.rejectionCause ?? "unknown";
+					const message = `Compaction failed (no result); cause: ${cause}`;
+					if (event.reason === "manual") {
+						this.showError(message);
+					} else {
+						this.chatContainer.addChild(new Spacer(1));
+						this.chatContainer.addChild(new Text(theme.fg("error", message), 1, 0));
 					}
 				}
 				void this.flushCompactionQueue({ willRetry: event.willRetry });

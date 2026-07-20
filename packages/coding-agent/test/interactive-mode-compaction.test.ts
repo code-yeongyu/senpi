@@ -148,6 +148,61 @@ describe("InteractiveMode compaction events", () => {
 		expect(fakeThis.flushCompactionQueue).toHaveBeenCalledWith({ willRetry: false });
 	});
 
+	test("surfaces a manual would-overflow rejection instead of silently swallowing it", async () => {
+		const fakeThis = {
+			isInitialized: true,
+			footer: { invalidate: vi.fn() },
+			autoCompactionEscapeHandler: undefined as (() => void) | undefined,
+			autoCompactionLoader: undefined,
+			defaultEditor: {},
+			statusContainer: { clear: vi.fn() },
+			chatContainer: { clear: vi.fn(), addChild: vi.fn() },
+			rebuildChatFromMessages: vi.fn(),
+			addMessageToChat: vi.fn(),
+			showError: vi.fn(),
+			showWarning: vi.fn(),
+			showStatus: vi.fn(),
+			clearStatusIndicator: vi.fn(),
+			flushCompactionQueue: vi.fn().mockResolvedValue(undefined),
+			settingsManager: { getShowTerminalProgress: () => false },
+			ui: { requestRender: vi.fn(), terminal: { setProgress: vi.fn() } },
+		};
+
+		const handleEvent = Reflect.get(InteractiveMode.prototype, "handleEvent") as (
+			this: typeof fakeThis,
+			event: {
+				type: "compaction_end";
+				reason: "manual";
+				result: undefined;
+				aborted: false;
+				willRetry: false;
+				accepted: false;
+				rejectionCause: "would-overflow";
+			},
+		) => Promise<void>;
+
+		await handleEvent.call(fakeThis, {
+			type: "compaction_end",
+			reason: "manual",
+			result: undefined,
+			aborted: false,
+			willRetry: false,
+			accepted: false,
+			rejectionCause: "would-overflow",
+		});
+
+		// The user typed /compact and the compaction was rejected because the summary
+		// would still overflow the context window. Silent failure is the bug: the user
+		// must see feedback that names the rejection cause.
+		const feedback = [
+			...fakeThis.showError.mock.calls.map((call) => String(call[0])),
+			...fakeThis.showWarning.mock.calls.map((call) => String(call[0])),
+			...fakeThis.showStatus.mock.calls.map((call) => String(call[0])),
+		].join("\n");
+		expect(feedback).toMatch(/would.?overflow|overflow|rejected/i);
+		expect(fakeThis.flushCompactionQueue).toHaveBeenCalledWith({ willRetry: false });
+	});
+
 	test("sanitizes a detached continuation launch failure before rendering", async () => {
 		const fakeThis = {
 			isInitialized: true,

@@ -1,5 +1,35 @@
 # changes
 
+## exhaustive compaction_end rendering (2026-07-20)
+
+### What changed
+
+- `interactive-mode.ts`: the `compaction_end` handler now has an exhaustive
+  fallback branch. When an event arrives with `accepted === false` but no
+  `errorMessage` on legacy shapes (or a future rejection cause the core
+  helper does not yet describe), the handler renders
+  `Compaction failed (no result); cause: <rejectionCause ?? "unknown">`
+  through `showError` for manual `/compact` and through an inline error line
+  for auto compaction. The pre-existing `aborted / result / errorMessage`
+  branches remain in place; the new branch is a defense-in-depth catch-all.
+
+### Why
+
+- Plan §1: manual `/compact` used to render nothing when core rejected the
+  proposed summary as would-overflow. Core now populates
+  `compaction_end.errorMessage` for every rejection, but the interactive
+  handler stays exhaustive so any future silent event shape is impossible.
+
+### Why extension system couldn't handle this alone
+
+- The interactive-mode compaction rendering pipeline is a built-in TUI seam;
+  extensions receive `compaction_end` but cannot install a fallback in the
+  built-in event switch.
+
+### Expected merge conflict zones
+
+- LOW: the `case "compaction_end":` block in `interactive-mode.ts`.
+
 ## paced streaming tool argument previews (2026-07-20)
 
 ### What changed

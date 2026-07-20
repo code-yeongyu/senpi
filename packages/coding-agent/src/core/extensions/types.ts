@@ -659,25 +659,45 @@ export interface SessionBeforeCompactEvent {
 	signal: AbortSignal;
 }
 
-/** Fired after context compaction. Rejections keep `reason` as the route source and explain why via `rejectionCause`. */
-export interface SessionCompactEvent {
+/**
+ * Fired after context compaction, including rejections. Discriminated on
+ * `accepted` so extension handlers get correct narrowing: only accepted events
+ * carry a `compactionEntry`; rejected events carry the `rejectionCause`. Prior
+ * to plan Section 1 the rejected shape was never emitted and its bookkeeping
+ * branches in builtin extensions were dead code.
+ */
+export type SessionCompactEvent = SessionCompactAcceptedEvent | SessionCompactRejectedEvent;
+
+export interface SessionCompactAcceptedEvent {
 	type: "session_compact";
 	/** Route source that requested compaction. Never source-swap this on rejection. */
 	reason: CompactionReason;
 	/** Unique identifier tying before/after compaction events for one request. */
 	requestId: string;
-	/** Whether the compaction result was accepted and appended to the session. */
-	accepted: boolean;
-	/**
-	 * Optional rejection explanation, only set when `accepted` is false.
-	 * Example: an extension cancelling manual compaction emits
-	 * `{ reason: "manual", accepted: false, rejectionCause: "cancelled-by-extension" }`, never `{ reason: "extension" }`.
-	 */
-	rejectionCause?: CompactionRejectionCause;
+	accepted: true;
+	rejectionCause?: never;
+	/** Appended compaction entry. Always present on accepted events. */
 	compactionEntry: CompactionEntry;
 	fromExtension: boolean;
 	/** True when the aborted turn is retried after this compaction (overflow recovery) */
 	willRetry: boolean;
+}
+
+export interface SessionCompactRejectedEvent {
+	type: "session_compact";
+	reason: CompactionReason;
+	requestId: string;
+	accepted: false;
+	/**
+	 * Why this compaction attempt was rejected. Example: an extension cancelling
+	 * manual compaction emits
+	 * `{ reason: "manual", accepted: false, rejectionCause: "cancelled-by-extension" }`,
+	 * never `{ reason: "extension" }`.
+	 */
+	rejectionCause: CompactionRejectionCause;
+	compactionEntry?: undefined;
+	fromExtension: false;
+	willRetry: false;
 }
 
 /** Fired before an extension runtime is torn down due to quit, reload, or session replacement. */
@@ -1200,6 +1220,19 @@ export interface SessionBeforeForkResult {
 export interface SessionBeforeCompactResult {
 	cancel?: boolean;
 	compaction?: CompactionResult;
+	/**
+	 * Optional structured cause when cancelling. Threaded into the
+	 * `compaction_end` event's `rejectionCause` and reused for extension
+	 * bookkeeping (circuit breaker, per-turn cap, etc.). Defaults to
+	 * `"cancelled-by-extension"`.
+	 */
+	rejectionCause?: CompactionRejectionCause;
+	/**
+	 * Optional human-readable reason threaded into the `compaction_end` event's
+	 * `errorMessage`. Prefer a short imperative sentence ("per-turn compaction
+	 * cap reached", "circuit breaker cooling down (2s left)").
+	 */
+	reason?: string;
 }
 
 export interface SessionBeforeTreeResult {

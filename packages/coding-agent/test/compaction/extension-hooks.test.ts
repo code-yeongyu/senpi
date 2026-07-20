@@ -173,15 +173,17 @@ describe("Compaction extension hooks", () => {
 				expect(result.summary).toBe(customSummary);
 				const compactEvents = capturedEvents.filter(isSessionCompactEvent);
 				expect(compactEvents).toHaveLength(1);
-				expect(compactEvents[0]?.fromExtension).toBe(true);
-				expect(compactEvents[0]?.compactionEntry.summary).toBe(customSummary);
+				const first = compactEvents[0];
+				if (!first?.accepted) throw new Error("expected accepted session_compact event");
+				expect(first.fromExtension).toBe(true);
+				expect(first.compactionEntry.summary).toBe(customSummary);
 			});
 		});
 	});
 
 	describe("Given a session_before_compact handler that returns cancel", () => {
 		describe("When compaction is triggered", () => {
-			it("Then no compaction occurs and no session_compact event is emitted", async () => {
+			it("Then no compaction occurs and a rejected session_compact event is emitted", async () => {
 				// given
 				const extension = createExtension(() => ({ cancel: true }));
 				createSession([extension]);
@@ -193,7 +195,12 @@ describe("Compaction extension hooks", () => {
 				// then
 				await expect(result).rejects.toThrow("Compaction cancelled");
 				const compactEvents = capturedEvents.filter(isSessionCompactEvent);
-				expect(compactEvents).toHaveLength(0);
+				// Rejection is no longer silent: session_compact fires with accepted=false so
+				// extension bookkeeping (circuit breaker, notifications) becomes reachable.
+				expect(compactEvents).toHaveLength(1);
+				expect(compactEvents[0]?.accepted).toBe(false);
+				expect(compactEvents[0]?.rejectionCause).toBe("cancelled-by-extension");
+				expect(compactEvents[0]?.compactionEntry).toBeUndefined();
 			});
 		});
 	});
@@ -248,9 +255,10 @@ describe("Compaction extension hooks", () => {
 				// then
 				const compactEvents = capturedEvents.filter(isSessionCompactEvent);
 				expect(compactEvents).toHaveLength(1);
-				expect(compactEvents[0]?.accepted).toBe(true);
-				expect(compactEvents[0]?.compactionEntry.summary).toBe("Saved compaction summary");
-				expect(compactEvents[0]?.compactionEntry.tokensBefore).toBeGreaterThanOrEqual(0);
+				const first = compactEvents[0];
+				if (!first?.accepted) throw new Error("expected accepted session_compact event");
+				expect(first.compactionEntry.summary).toBe("Saved compaction summary");
+				expect(first.compactionEntry.tokensBefore).toBeGreaterThanOrEqual(0);
 			});
 		});
 	});
