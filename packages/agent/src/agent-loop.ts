@@ -16,6 +16,7 @@ import type {
 	AgentContext,
 	AgentEvent,
 	AgentLoopConfig,
+	AgentLoopTurnUpdate,
 	AgentMessage,
 	AgentTool,
 	AgentToolCall,
@@ -182,6 +183,17 @@ async function runLoop(
 	let firstTurn = true;
 	// Check for steering messages at start (user may have typed while waiting)
 	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
+	let drainedTerminatingQueue: "steering" | "followUp" | undefined;
+	const refreshTerminatingQueueDrain = async (): Promise<void> => {
+		if (!drainedTerminatingQueue || !config.restorePendingMessages) return;
+		await config.restorePendingMessages(drainedTerminatingQueue, pendingMessages);
+		pendingMessages = (await config.getSteeringMessages?.()) || [];
+		drainedTerminatingQueue = pendingMessages.length > 0 ? "steering" : undefined;
+		if (pendingMessages.length === 0) {
+			pendingMessages = (await config.getFollowUpMessages?.()) || [];
+			drainedTerminatingQueue = pendingMessages.length > 0 ? "followUp" : undefined;
+		}
+	};
 
 	// Outer loop: continues when queued follow-up messages arrive after agent would stop
 	while (true) {
@@ -193,6 +205,14 @@ async function runLoop(
 				await emit({ type: "turn_start" });
 			} else {
 				firstTurn = false;
+			}
+			if (drainedTerminatingQueue) {
+				await refreshTerminatingQueueDrain();
+				if (pendingMessages.length === 0) {
+					await emit({ type: "agent_end", messages: newMessages });
+					return;
+				}
+				drainedTerminatingQueue = undefined;
 			}
 
 			// Process pending messages (inject before next assistant response)
@@ -221,6 +241,7 @@ async function runLoop(
 
 			const toolResults: ToolResultMessage[] = [];
 			hasMoreToolCalls = false;
+			let toolBatchTerminated = false;
 			if (toolCalls.length > 0) {
 				// A native "length" stop means the output was cut off by the token limit,
 				// so every tool call in the message may carry truncated arguments. Text
@@ -231,6 +252,7 @@ async function runLoop(
 						? await failToolCallsFromTruncatedMessage(toolCalls, emit)
 						: await executeToolCalls(currentContext, message, config, signal, emit);
 				toolResults.push(...executedToolBatch.messages);
+				toolBatchTerminated = executedToolBatch.terminate;
 				hasMoreToolCalls = !executedToolBatch.terminate;
 
 				for (const result of toolResults) {
@@ -251,7 +273,36 @@ async function runLoop(
 				context: currentContext,
 				newMessages,
 			};
-			const nextTurnSnapshot = await config.prepareNextTurn?.(nextTurnContext);
+			if (toolBatchTerminated) {
+				if (await config.shouldStopAfterTurn?.(nextTurnContext)) {
+					await emit({ type: "agent_end", messages: newMessages });
+					return;
+				}
+
+				pendingMessages = (await config.getSteeringMessages?.()) || [];
+				if (pendingMessages.length > 0) {
+					drainedTerminatingQueue = "steering";
+				}
+				if (pendingMessages.length === 0) {
+					pendingMessages = (await config.getFollowUpMessages?.()) || [];
+					if (pendingMessages.length > 0) {
+						drainedTerminatingQueue = "followUp";
+					}
+				}
+				if (pendingMessages.length === 0) {
+					await emit({ type: "agent_end", messages: newMessages });
+					return;
+				}
+			}
+			let nextTurnSnapshot: AgentLoopTurnUpdate | undefined;
+			try {
+				nextTurnSnapshot = await config.prepareNextTurn?.(nextTurnContext);
+			} catch (error) {
+				if (drainedTerminatingQueue) {
+					await config.restorePendingMessages?.(drainedTerminatingQueue, pendingMessages);
+				}
+				throw error;
+			}
 			if (nextTurnSnapshot) {
 				currentContext = nextTurnSnapshot.context ?? currentContext;
 				config = {
@@ -265,20 +316,37 @@ async function runLoop(
 								: nextTurnSnapshot.thinkingLevel,
 				};
 			}
+			if (signal?.aborted) {
+				if (drainedTerminatingQueue) {
+					await config.restorePendingMessages?.(drainedTerminatingQueue, pendingMessages);
+				}
+				await emit({ type: "agent_end", messages: newMessages });
+				return;
+			}
+			if (drainedTerminatingQueue) {
+				await refreshTerminatingQueueDrain();
+				if (pendingMessages.length === 0) {
+					await emit({ type: "agent_end", messages: newMessages });
+					return;
+				}
+			}
 
 			if (
-				await config.shouldStopAfterTurn?.({
+				!toolBatchTerminated &&
+				(await config.shouldStopAfterTurn?.({
 					message,
 					toolResults,
 					context: currentContext,
 					newMessages,
-				})
+				}))
 			) {
 				await emit({ type: "agent_end", messages: newMessages });
 				return;
 			}
 
-			pendingMessages = (await config.getSteeringMessages?.()) || [];
+			if (!toolBatchTerminated) {
+				pendingMessages = (await config.getSteeringMessages?.()) || [];
+			}
 		}
 
 		// Agent would stop here. Check for follow-up messages.

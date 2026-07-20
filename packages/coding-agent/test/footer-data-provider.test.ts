@@ -118,6 +118,19 @@ describe("FooterDataProvider reftable branch detection", () => {
 		}
 	});
 
+	it("sets and clears the fallback footer status by key", () => {
+		const provider = new FooterDataProvider(tempDir);
+		try {
+			provider.setExtensionStatus("fallback", "fallback: faux/faux-2");
+			expect(Array.from(provider.getExtensionStatuses())).toEqual([["fallback", "fallback: faux/faux-2"]]);
+
+			provider.setExtensionStatus("fallback", undefined);
+			expect(Array.from(provider.getExtensionStatuses())).toEqual([]);
+		} finally {
+			provider.dispose();
+		}
+	});
+
 	it("uses HEAD directly in a regular repo from a nested directory", () => {
 		const repoDir = createPlainRepo(tempDir);
 		const nestedDir = join(repoDir, "src", "nested");

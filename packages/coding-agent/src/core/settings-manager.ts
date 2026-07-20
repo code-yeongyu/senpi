@@ -38,6 +38,9 @@ export interface RetrySettings {
 	maxRetries?: number; // default: 3
 	baseDelayMs?: number; // default: 2000 (exponential backoff: 2s, 4s, 8s)
 	provider?: ProviderRetrySettings;
+	modelFallback?: boolean; // default: true
+	fallbackChains?: Record<string, string[]>;
+	fallbackRevertPolicy?: "cooldown-expiry" | "never"; // default: "cooldown-expiry"
 }
 
 export interface TerminalSettings {
@@ -168,7 +171,10 @@ export interface NeoDaemonSettings {
 	idleShutdownMs?: number;
 }
 
-/** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
+/**
+ * Merge settings one object level deep: project/overrides take precedence.
+ * Nested settings such as retry.fallbackChains replace wholesale per scope.
+ */
 function deepMergeSettings(base: Settings, overrides: Settings): Settings {
 	const result: Settings = { ...base };
 
@@ -880,6 +886,95 @@ export class SettingsManager {
 			maxRetries: this.settings.retry?.maxRetries ?? 3,
 			baseDelayMs: this.settings.retry?.baseDelayMs ?? 2000,
 		};
+	}
+
+	/** Raw retry.fallbackChains value before sanitization, for startup validation warnings. */
+	getRawFallbackChains(): unknown {
+		return this.settings.retry?.fallbackChains;
+	}
+
+	getRetryFallbackSettings(): {
+		modelFallback: boolean;
+		chains: Readonly<Record<string, readonly string[]>>;
+		revertPolicy: "cooldown-expiry" | "never";
+	} {
+		const fallbackChains = this.settings.retry?.fallbackChains;
+		const chains: Record<string, readonly string[]> = {};
+		if (typeof fallbackChains === "object" && fallbackChains !== null && !Array.isArray(fallbackChains)) {
+			for (const [key, entries] of Object.entries(fallbackChains)) {
+				if (!Array.isArray(entries) || !entries.every((entry) => typeof entry === "string")) {
+					return {
+						modelFallback:
+							typeof this.settings.retry?.modelFallback === "boolean" ? this.settings.retry.modelFallback : true,
+						chains: {},
+						revertPolicy: this.settings.retry?.fallbackRevertPolicy === "never" ? "never" : "cooldown-expiry",
+					};
+				}
+				chains[key] = [...entries];
+			}
+		}
+		return {
+			modelFallback:
+				typeof this.settings.retry?.modelFallback === "boolean" ? this.settings.retry.modelFallback : true,
+			chains,
+			revertPolicy: this.settings.retry?.fallbackRevertPolicy === "never" ? "never" : "cooldown-expiry",
+		};
+	}
+
+	setFallbackChain(key: string, entries: string[]): void {
+		if (!this.globalSettings.retry) {
+			this.globalSettings.retry = {};
+		}
+		const chains = this.getGlobalFallbackChains();
+		this.globalSettings.retry.fallbackChains = { ...chains, [key]: [...entries] };
+		this.markModified("retry", "fallbackChains");
+		this.save();
+	}
+
+	removeFallbackChain(key: string): void {
+		const chains = this.getGlobalFallbackChains();
+		if (!(key in chains)) {
+			return;
+		}
+		if (!this.globalSettings.retry) {
+			this.globalSettings.retry = {};
+		}
+		delete chains[key];
+		this.globalSettings.retry.fallbackChains = chains;
+		this.markModified("retry", "fallbackChains");
+		this.save();
+	}
+
+	setModelFallbackEnabled(enabled: boolean): void {
+		if (!this.globalSettings.retry) {
+			this.globalSettings.retry = {};
+		}
+		this.globalSettings.retry.modelFallback = enabled;
+		this.markModified("retry", "modelFallback");
+		this.save();
+	}
+
+	setFallbackRevertPolicy(policy: "cooldown-expiry" | "never"): void {
+		if (!this.globalSettings.retry) {
+			this.globalSettings.retry = {};
+		}
+		this.globalSettings.retry.fallbackRevertPolicy = policy;
+		this.markModified("retry", "fallbackRevertPolicy");
+		this.save();
+	}
+
+	private getGlobalFallbackChains(): Record<string, string[]> {
+		const fallbackChains = this.globalSettings.retry?.fallbackChains;
+		if (typeof fallbackChains !== "object" || fallbackChains === null || Array.isArray(fallbackChains)) {
+			return {};
+		}
+		const chains: Record<string, string[]> = {};
+		for (const [key, entries] of Object.entries(fallbackChains)) {
+			if (Array.isArray(entries) && entries.every((entry) => typeof entry === "string")) {
+				chains[key] = [...entries];
+			}
+		}
+		return chains;
 	}
 
 	getHttpIdleTimeoutMs(): number {

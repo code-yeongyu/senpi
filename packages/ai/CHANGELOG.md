@@ -12,6 +12,22 @@
 
 ### Removed
 
+## [2026.7.20-2] - 2026-07-20
+
+### Breaking Changes
+
+### Added
+- Added typed classifier-refusal and sensitive-stop details to assistant messages.
+
+### Changed
+
+### Fixed
+- Fixed live tool-result replay pairing to preserve source-order boundaries, including delayed results and reused tool-call IDs.
+- Fixed Anthropic-compatible request replay to retry once with unsigned thinking rendered as text when an endpoint rejects its signature.
+- Fixed the generated Kimi Coding catalog release gate by migrating integration coverage from retired `k2p7` to the supported `kimi-for-coding` model.
+
+### Removed
+
 ## [2026.7.20] - 2026-07-20
 
 ### Breaking Changes

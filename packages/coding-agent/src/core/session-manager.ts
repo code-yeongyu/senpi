@@ -87,6 +87,11 @@ export interface ModelChangeEntry extends SessionEntryBase {
 	type: "model_change";
 	provider: string;
 	modelId: string;
+	/** Transient fallback changes are excluded from restored session defaults. */
+	reason?: "fallback" | "fallback-revert";
+	/** The model active before a fallback window, retained for restart restoration. */
+	originalProvider?: string;
+	originalModelId?: string;
 }
 
 export interface CompactionEntry<T = unknown> extends SessionEntryBase {
@@ -381,13 +386,24 @@ function buildSessionPath(
 function getSessionContextSettings(path: SessionEntry[]): Pick<SessionContext, "thinkingLevel" | "model"> {
 	let thinkingLevel = "off";
 	let model: { provider: string; modelId: string } | null = null;
+	let isInFallbackWindow = false;
 
 	for (const entry of path) {
 		if (entry.type === "thinking_level_change") {
 			thinkingLevel = entry.thinkingLevel;
 		} else if (entry.type === "model_change") {
-			model = { provider: entry.provider, modelId: entry.modelId };
-		} else if (entry.type === "message" && entry.message.role === "assistant") {
+			if (entry.reason === "fallback") {
+				if (!isInFallbackWindow && entry.originalProvider && entry.originalModelId) {
+					model = { provider: entry.originalProvider, modelId: entry.originalModelId };
+				}
+				isInFallbackWindow = true;
+			} else if (entry.reason === "fallback-revert") {
+				isInFallbackWindow = false;
+			} else {
+				isInFallbackWindow = false;
+				model = { provider: entry.provider, modelId: entry.modelId };
+			}
+		} else if (entry.type === "message" && entry.message.role === "assistant" && !isInFallbackWindow) {
 			model = { provider: entry.message.provider, modelId: entry.message.model };
 		}
 	}
@@ -1077,7 +1093,13 @@ export class SessionManager {
 	}
 
 	/** Append a model change as child of current leaf, then advance leaf. Returns entry id. */
-	appendModelChange(provider: string, modelId: string): string {
+	appendModelChange(
+		provider: string,
+		modelId: string,
+		reason?: "fallback" | "fallback-revert",
+		originalProvider?: string,
+		originalModelId?: string,
+	): string {
 		const entry: ModelChangeEntry = {
 			type: "model_change",
 			id: generateId(this.byId),
@@ -1085,6 +1107,9 @@ export class SessionManager {
 			timestamp: new Date().toISOString(),
 			provider,
 			modelId,
+			reason,
+			originalProvider,
+			originalModelId,
 		};
 		this._appendEntry(entry);
 		return entry.id;

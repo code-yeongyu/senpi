@@ -1666,6 +1666,62 @@ describe("agentLoop with AgentMessage", () => {
 		expect(convertedSecondTurnSystemPrompt).toBe("second prompt");
 	});
 
+	it("should stop before provider call 2 when prepareNextTurn aborts", async () => {
+		// given
+		const toolSchema = Type.Object({ value: Type.String() });
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			async execute(_toolCallId, params) {
+				return {
+					content: [{ type: "text", text: `echoed: ${params.value}` }],
+					details: { value: params.value },
+				};
+			},
+		};
+		const controller = new AbortController();
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			prepareNextTurn: async () => {
+				controller.abort();
+				return undefined;
+			},
+		};
+		let llmCalls = 0;
+		const stream = agentLoop([createUserMessage("echo something")], context, config, controller.signal, () => {
+			llmCalls++;
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (llmCalls === 1) {
+					const message = createAssistantMessage(
+						[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
+						"toolUse",
+					);
+					mockStream.push({ type: "done", reason: "toolUse", message });
+					return;
+				}
+				const message = createAssistantMessage([{ type: "text", text: "should not run" }]);
+				mockStream.push({ type: "done", reason: "stop", message });
+			});
+			return mockStream;
+		});
+
+		// when
+		const { events } = await collectAgentEvents(stream);
+
+		// then
+		expect(llmCalls).toBe(1);
+		expect(events.filter((event) => event.type === "agent_end")).toHaveLength(1);
+	});
+
 	it("should stop after the current turn when shouldStopAfterTurn returns true", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const executed: string[] = [];
@@ -1788,6 +1844,7 @@ describe("agentLoop with AgentMessage", () => {
 		const config: AgentLoopConfig = {
 			model: createModel(),
 			convertToLlm: identityConverter,
+			prepareNextTurn: vi.fn(async () => undefined),
 		};
 
 		let llmCalls = 0;
@@ -1811,8 +1868,79 @@ describe("agentLoop with AgentMessage", () => {
 
 		const messages = await stream.result();
 		expect(llmCalls).toBe(1);
+		expect(config.prepareNextTurn).not.toHaveBeenCalled();
 		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult"]);
 		expect(events.filter((event) => event.type === "turn_end")).toHaveLength(1);
+	});
+
+	it("should continue a terminating tool batch when steering is queued", async () => {
+		// given
+		const toolSchema = Type.Object({ value: Type.String() });
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			async execute(_toolCallId, params) {
+				return {
+					content: [{ type: "text", text: `echoed: ${params.value}` }],
+					details: { value: params.value },
+					terminate: true,
+				};
+			},
+		};
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+		const queuedMessage = createUserMessage("continue after termination");
+		let steeringPolls = 0;
+		let toolTurnPreparations = 0;
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			getSteeringMessages: async () => {
+				steeringPolls++;
+				return steeringPolls === 2 ? [queuedMessage] : [];
+			},
+			prepareNextTurn: async ({ toolResults }) => {
+				if (toolResults.length > 0) toolTurnPreparations++;
+				return undefined;
+			},
+		};
+		let llmCalls = 0;
+		let queuedMessageReachedCall2 = false;
+		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, (_model, ctx) => {
+			llmCalls++;
+			if (llmCalls === 2) {
+				queuedMessageReachedCall2 = ctx.messages.includes(queuedMessage);
+			}
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (llmCalls === 1) {
+					const message = createAssistantMessage(
+						[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
+						"toolUse",
+					);
+					mockStream.push({ type: "done", reason: "toolUse", message });
+					return;
+				}
+				const message = createAssistantMessage([{ type: "text", text: "done" }]);
+				mockStream.push({ type: "done", reason: "stop", message });
+			});
+			return mockStream;
+		});
+
+		// when
+		for await (const _event of stream) {
+			// consume
+		}
+
+		// then
+		expect(llmCalls).toBe(2);
+		expect(toolTurnPreparations).toBe(1);
+		expect(queuedMessageReachedCall2).toBe(true);
 	});
 
 	it("should continue after parallel tool calls when not all tool results terminate", async () => {

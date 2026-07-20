@@ -1,5 +1,64 @@
 # changes
 
+## model fallback lifecycle notices (2026-07-20)
+
+### What changed
+
+- `interactive-mode.ts`: renders fallback apply, success, revert, and exhaustion notices; maintains a keyed `fallback`
+  footer status while a fallback model is active; and suppresses the retry spinner for immediate fallback retries.
+- Startup now shows fallback-chain validation warnings that were calculated by `AgentSession` when the session was created.
+
+### Why
+
+- A fallback model change is user-visible state. The chat and footer now make the active model and its lifecycle clear
+  without adding synthetic messages to model context.
+
+### Why extension system couldn't handle this
+
+- Retry lifecycle events and session-start validation state are owned by the core session and rendered through the
+  built-in interactive event handler.
+
+### Expected merge conflict zones
+
+- LOW: `interactive-mode.ts` retry event switch and startup warning block.
+
+## exhaustive compaction_end rendering (2026-07-20)
+
+### What changed
+
+- `interactive-mode.ts`: the `compaction_end` handler no longer silently falls
+  through when a rejection carries no `errorMessage` (e.g. legacy shape). It
+  prefers the extension-provided `errorMessage` inside the `aborted` branch so
+  per-turn-cap / circuit-breaker / provider-error cancels render the real cause
+  instead of the generic "Compaction cancelled", and adds a fallback
+  `showError("Compaction failed (no result); cause: <rejectionCause>")` so no
+  future `compaction_end` shape can be ignored.
+
+### Why
+
+- Manual `/compact` used to render nothing when core rejected the summary as
+  overflow-would-still-happen. The handler only branched on `aborted / result /
+  errorMessage` and `_rejectCompaction` used to emit none of those fields for
+  `would-overflow`. Combined with core now populating `errorMessage`, the
+  interactive fallback closes plan §1.
+
+## abbreviated footer token notation (2026-07-20)
+
+### What changed
+
+- `components/footer.ts`: `formatTokens` now renders oh-my-pi-style K/M/B abbreviations (e.g. `546K`, `1M`, `1.5M`)
+  instead of comma-grouped `toLocaleString` output. The footer context-usage display now reads
+  `546K/1M (54.6%)` instead of `545,661/1,000,000 (54.6%)`; the same notation applies to the ↑/↓/cache counters and
+  the `interactive-mode.ts` token readouts that reuse `formatTokens`.
+
+### Why
+
+- Comma-grouped raw counts are wide and hard to scan in the status line; abbreviated notation matches oh-my-pi's
+  status-line style and keeps the footer compact at narrow widths.
+
+### Why extension system couldn't handle this
+
+- Footer token formatting is a core display primitive, not an extension-registered status segment.
 ## paced streaming tool argument previews (2026-07-20)
 
 ### What changed

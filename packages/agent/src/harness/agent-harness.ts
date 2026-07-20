@@ -418,6 +418,8 @@ export class AgentHarness<
 		setTurnState: (turnState: AgentHarnessTurnState<TSkill, TPromptTemplate, TTool>) => void,
 	): AgentLoopConfig {
 		const turnState = getTurnState();
+		let steeringQueueAtDrain = this.steerQueue;
+		let followUpQueueAtDrain = this.followUpQueue;
 		return {
 			model: turnState.model,
 			reasoning: turnState.thinkingLevel === "off" ? undefined : turnState.thinkingLevel,
@@ -459,8 +461,27 @@ export class AgentHarness<
 					thinkingLevel: nextTurnState.thinkingLevel,
 				};
 			},
-			getSteeringMessages: async () => this.drainQueuedMessages(this.steerQueue, this.steeringQueueMode),
-			getFollowUpMessages: async () => this.drainQueuedMessages(this.followUpQueue, this.followUpQueueMode),
+			getSteeringMessages: async () => {
+				steeringQueueAtDrain = this.steerQueue;
+				return this.drainQueuedMessages(steeringQueueAtDrain, this.steeringQueueMode);
+			},
+			getFollowUpMessages: async () => {
+				followUpQueueAtDrain = this.followUpQueue;
+				return this.drainQueuedMessages(followUpQueueAtDrain, this.followUpQueueMode);
+			},
+			restorePendingMessages: async (queue, messages) => {
+				const target = queue === "steering" ? this.steerQueue : this.followUpQueue;
+				const drainedQueue = queue === "steering" ? steeringQueueAtDrain : followUpQueueAtDrain;
+				if (target !== drainedQueue) return;
+				for (let index = messages.length - 1; index >= 0; index--) {
+					const message = messages[index];
+					if (message?.role !== "user") {
+						throw new AgentHarnessError("invalid_state", "Only user messages can be restored to input queues");
+					}
+					target.unshift(message);
+				}
+				await this.emitQueueUpdate();
+			},
 		};
 	}
 

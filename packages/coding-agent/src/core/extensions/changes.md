@@ -1,5 +1,52 @@
 # Core Extensions Changes
 
+## 2026-07-20 - Model fallback command builtin
+
+- Added the `model-fallback` builtin and `/fallback` command for viewing, creating, removing, enabling, and setting the revert policy for global retry fallback chains.
+- Quick-set form validates selectors before persisting; headless runs support quick-set and report that the menu requires interactive UI.
+- Registered `--no-model-fallback` and `SENPI_NO_FALLBACK=1` as the per-run fallback escape-hatch inputs.
+- `ExtensionContext.sessionSettings` delegates command writes to the active session's `SettingsManager`, so quick-set changes are immediately visible to the retry controller. Its read-only fallback status accessor powers the menu's live-state view.
+- `--no-model-fallback` and `SENPI_NO_FALLBACK=1` apply a non-persistent `retry.modelFallback=false` override at session bootstrap.
+
+
+## 2026-07-20 - session_compact `accepted: false` and structured cancel result
+
+### What changed
+
+- `types.ts`: `SessionBeforeCompactResult` gained optional `rejectionCause?: CompactionRejectionCause`
+  and `reason?: string` fields so extensions can attach a structured cause and a
+  human-readable detail when returning `{ cancel: true }`. `SessionCompactEvent.compactionEntry`
+  is now optional and only populated on `accepted: true` events, and the JSDoc
+  spells out that rejection events fire too.
+- `agent-session.ts`: `_rejectCompaction` populates `compaction_end.errorMessage`
+  with a message derived from `rejectionCause` (or the extension-provided
+  `reason` when present) and also emits a `session_compact` event with
+  `accepted: false`. Manual `/compact` used to swallow `would-overflow` and
+  extension cancels silently; this closes plan §1.
+- `builtin/nested-agents-md/index.ts`, `builtin/rules/index.ts`: `session_compact`
+  handlers now guard on `event.accepted` before mutating session state, since
+  the event fires on rejection too and there is no compaction entry to react to.
+
+### Why
+
+- `_rejectCompaction` emitted `compaction_end` with no `errorMessage` and the
+  interactive-mode handler had no branch for `aborted:false && !result && !errorMessage`,
+  so `/compact` rejected by `_wouldCompactionOverflow` was invisible. The
+  builtin compaction extension's `session_compact` `!accepted` branch was also
+  dead because core never emitted the rejection.
+
+### Why extension system couldn't handle this alone
+
+- The event union and the emit sites live in the core extension surface.
+  Extensions cannot add typed fields to `SessionCompactEvent` or make the core
+  emit rejections from outside.
+
+### Expected merge conflict zones
+
+- HIGH: `types.ts` around `SessionBeforeCompactResult` and `SessionCompactEvent`.
+- MEDIUM: `agent-session.ts` `_rejectCompaction` and `_executeCompaction` cancel branch.
+- LOW: builtin `session_compact` handlers guarding on `event.accepted`.
+
 ## 2026-07-19 - Port phased op-based todo tool
 
 ### What changed

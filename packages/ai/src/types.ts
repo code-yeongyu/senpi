@@ -449,6 +449,8 @@ export interface Usage {
 
 export type StopReason = "stop" | "length" | "toolUse" | "error" | "aborted";
 
+export type AssistantStopDetails = { type: "refusal"; explanation?: string } | { type: "sensitive" };
+
 export interface UserMessage {
 	role: "user";
 	content: string | (TextContent | ImageContent)[];
@@ -466,6 +468,7 @@ export interface AssistantMessage {
 	diagnostics?: AssistantMessageDiagnostic[]; // Redacted provider/runtime diagnostics for failures and recoveries.
 	usage: Usage;
 	stopReason: StopReason;
+	stopDetails?: AssistantStopDetails;
 	errorMessage?: string;
 	timestamp: number; // Unix timestamp in milliseconds
 }
@@ -699,6 +702,14 @@ export interface AnthropicMessagesCompat {
 	forceAdaptiveThinking?: boolean;
 	/** Whether to replay empty thinking signatures as `signature: ""` instead of converting thinking to text. Default: false. */
 	allowEmptySignature?: boolean;
+	/**
+	 * How to replay thinking blocks that have no usable Anthropic signature.
+	 * `"text"` demotes them to text; `"empty-signature"` preserves Anthropic's
+	 * thinking shape with `signature: ""`. Defaults to `"text"`; the legacy
+	 * `allowEmptySignature` setting remains a compatibility alias for
+	 * `"empty-signature"`.
+	 */
+	unsignedThinkingReplay?: "text" | "empty-signature";
 	/**
 	 * Whether the provider supports deferred tools loaded by `tool_reference`
 	 * blocks in tool results. Default: true for first-party Anthropic models

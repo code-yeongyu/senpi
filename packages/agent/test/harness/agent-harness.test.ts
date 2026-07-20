@@ -7,6 +7,7 @@ import {
 	type RegisterFauxProviderOptions,
 } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
+import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { AgentHarness } from "../../src/harness/agent-harness.ts";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
@@ -214,6 +215,74 @@ describe("AgentHarness", () => {
 		expect(abortResult.clearedFollowUp).toHaveLength(1);
 		expect(queueUpdates).toContainEqual({ steer: 0, followUp: 0, nextTurn: 1 });
 		expect(secondRequestText).toEqual(["first", "next", "second"]);
+	});
+
+	it.each([
+		"steering",
+		"followUp",
+	] as const)("does not restore drained %s input after abort replaces the queue during next-turn preparation", async (queue) => {
+		// given
+		const registration = newFaux();
+		const toolStarted = deferred();
+		const toolRelease = deferred();
+		const preparationStarted = deferred();
+		const preparationRelease = deferred();
+		const terminatingTool: AgentTool = {
+			name: "terminating",
+			label: "Terminating",
+			description: "Terminates after release",
+			parameters: Type.Object({}),
+			execute: async () => {
+				toolStarted.resolve();
+				await toolRelease.promise;
+				return { content: [{ type: "text", text: "done" }], details: {}, terminate: true };
+			},
+		};
+		const session = new Session(new InMemorySessionStorage());
+		const originalBuildContext = session.buildContext.bind(session);
+		let buildContextCalls = 0;
+		session.buildContext = async () => {
+			buildContextCalls++;
+			if (buildContextCalls === 2) {
+				preparationStarted.resolve();
+				await preparationRelease.promise;
+			}
+			return originalBuildContext();
+		};
+		const secondRequestText: string[] = [];
+		registration.setResponses([
+			fauxAssistantMessage(fauxToolCall("terminating", {}), { stopReason: "toolUse" }),
+			(context) => {
+				secondRequestText.push(...textFromUserMessages(context.messages));
+				return fauxAssistantMessage("second");
+			},
+		]);
+		const harness = new AgentHarness({
+			models,
+			env: new NodeExecutionEnv({ cwd: process.cwd() }),
+			session,
+			model: registration.getModel(),
+			tools: [terminatingTool],
+		});
+		const promptPromise = harness.prompt("first");
+		await toolStarted.promise;
+		if (queue === "steering") {
+			await harness.steer("withdrawn instruction");
+		} else {
+			await harness.followUp("withdrawn instruction");
+		}
+		toolRelease.resolve();
+		await preparationStarted.promise;
+
+		// when
+		const abortPromise = harness.abort();
+		preparationRelease.resolve();
+		await Promise.all([promptPromise, abortPromise]);
+		await harness.prompt("second");
+
+		// then
+		expect(registration.state.callCount).toBe(2);
+		expect(secondRequestText).toEqual(["first", "second"]);
 	});
 
 	it("drains follow-up messages one at a time after the agent would otherwise stop", async () => {

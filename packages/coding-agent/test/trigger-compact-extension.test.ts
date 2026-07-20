@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import triggerCompactExtension from "../examples/extensions/trigger-compact.ts";
 import { DEFAULT_COMPACTION_SETTINGS } from "../src/core/compaction/index.ts";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../src/core/extensions/index.ts";
+import { createInMemoryExtensionSessionSettings } from "./helpers/extension-session-settings.ts";
 
 function createContext(tokens: number | null, compact = vi.fn()): ExtensionContext {
 	return {
@@ -24,6 +25,7 @@ function createContext(tokens: number | null, compact = vi.fn()): ExtensionConte
 		getMessageRevision: () => 0,
 		applyCompaction: async () => ({ applied: false, reason: "rejected" }),
 		getCompactionSettings: () => DEFAULT_COMPACTION_SETTINGS,
+		sessionSettings: createInMemoryExtensionSessionSettings(),
 		getSystemPrompt: () => "",
 	};
 }

@@ -12,6 +12,7 @@ import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { SessionManager } from "../session-manager.ts";
+import { SettingsManager } from "../settings-manager.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
 import type {
@@ -291,6 +292,31 @@ export async function emitProjectTrustEvent(
 	return { errors };
 }
 
+function createNoOpSessionSettings(): ExtensionContextActions["sessionSettings"] {
+	const settings = SettingsManager.inMemory();
+	return {
+		getRetryFallbackSettings: () => settings.getRetryFallbackSettings(),
+		setFallbackChain: async (key, entries) => {
+			settings.setFallbackChain(key, [...entries]);
+			await settings.flush();
+		},
+		removeFallbackChain: async (key) => {
+			settings.removeFallbackChain(key);
+			await settings.flush();
+		},
+		setModelFallbackEnabled: async (enabled) => {
+			settings.setModelFallbackEnabled(enabled);
+			await settings.flush();
+		},
+		setFallbackRevertPolicy: async (policy) => {
+			settings.setFallbackRevertPolicy(policy);
+			await settings.flush();
+		},
+		reload: () => settings.reload(),
+		getFallbackStatus: () => undefined,
+	};
+}
+
 const noOpUIContext: ExtensionUIContext = {
 	select: async () => undefined,
 	confirm: async () => false,
@@ -347,6 +373,7 @@ export class ExtensionRunner {
 		reserveTokens: 16384,
 		keepRecentTokens: 20000,
 	});
+	private sessionSettingsFn: ExtensionContextActions["sessionSettings"] = createNoOpSessionSettings();
 	private compactFn: (options?: CompactOptions) => void = () => {};
 	private beginCompactionFn: ExtensionContextActions["beginCompaction"] = undefined;
 	private updateCompactionFn: ExtensionContextActions["updateCompaction"] = undefined;
@@ -432,6 +459,7 @@ export class ExtensionRunner {
 		this.shutdownHandler = contextActions.shutdown;
 		this.getContextUsageFn = contextActions.getContextUsage;
 		this.getCompactionSettingsFn = contextActions.getCompactionSettings;
+		this.sessionSettingsFn = contextActions.sessionSettings;
 		this.compactFn = contextActions.compact;
 		this.beginCompactionFn = contextActions.beginCompaction;
 		this.updateCompactionFn = contextActions.updateCompaction;
@@ -915,6 +943,10 @@ export class ExtensionRunner {
 			getCompactionSettings: () => {
 				runner.assertActive();
 				return runner.getCompactionSettingsFn();
+			},
+			get sessionSettings() {
+				runner.assertActive();
+				return runner.sessionSettingsFn;
 			},
 			compact: (options) => {
 				runner.assertActive();

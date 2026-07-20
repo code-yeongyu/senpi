@@ -1,5 +1,21 @@
 # changes
 
+## Model-fallback event pass-through (2026-07-20)
+
+### What changed
+
+- `test/suite/rpc-fallback-events.test.ts` verifies that a faux-provider fallback run sends
+  `retry_fallback_applied`, `retry_fallback_succeeded`, and `retry_fallback_exhausted` as LF-delimited RPC JSONL events.
+
+### Why
+
+- RPC forwards complete `AgentSessionEvent` payloads without an event whitelist; this test preserves that contract as
+  model-fallback lifecycle events evolve.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: test-only coverage of the existing connection-handler event subscription.
+
 Fork tracker for `src/modes/rpc/` — this directory exists upstream, so every
 fork change here is a merge-conflict surface on upstream syncs.
 
