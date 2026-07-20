@@ -50,7 +50,11 @@ describe("Documentation example", () => {
 	it("compact event should have correct fields", () => {
 		const checkCompactEvent = (pi: ExtensionAPI) => {
 			pi.on("session_compact", async (event: SessionCompactEvent) => {
-				// These should all be accessible
+				// The discriminated shape: only accepted events carry compactionEntry.
+				if (!event.accepted) {
+					expect(typeof event.rejectionCause).toBe("string");
+					return;
+				}
 				const entry = event.compactionEntry;
 				const fromExtension = event.fromExtension;
 

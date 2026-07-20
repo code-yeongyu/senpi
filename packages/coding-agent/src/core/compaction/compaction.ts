@@ -591,6 +591,41 @@ async function completeSummarization(
 	return stream.result();
 }
 
+async function transformSummarySource(
+	currentMessages: AgentMessage[],
+	previousSummary: string | undefined,
+	transformContext: ((messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>) | undefined,
+	signal: AbortSignal | undefined,
+): Promise<{ readonly messages: AgentMessage[]; readonly previousSummary: string | undefined }> {
+	if (!transformContext) return { messages: currentMessages, previousSummary };
+	if (!previousSummary) {
+		return { messages: await transformContext(currentMessages, signal), previousSummary: undefined };
+	}
+
+	const timestamps = new Set(currentMessages.map((message) => message.timestamp));
+	let summaryTimestamp = -1;
+	while (timestamps.has(summaryTimestamp)) {
+		summaryTimestamp--;
+	}
+	const transformed = await transformContext(
+		[
+			{
+				role: "user",
+				content: [{ type: "text", text: previousSummary }],
+				timestamp: summaryTimestamp,
+			},
+			...currentMessages,
+		],
+		signal,
+	);
+	const transformedSummary = transformed.filter((message) => message.timestamp === summaryTimestamp);
+	return {
+		messages: transformed.filter((message) => message.timestamp !== summaryTimestamp),
+		previousSummary:
+			transformedSummary.length > 0 ? serializeConversation(convertToLlm(transformedSummary)) : undefined,
+	};
+}
+
 /**
  * Generate a summary of the conversation using the LLM.
  * If previousSummary is provided, uses the update prompt to merge.
@@ -608,27 +643,31 @@ export async function generateSummary(
 	thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
 	env?: Record<string, string>,
+	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>,
 ): Promise<string> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
 	);
 
+	const transformedSource = await transformSummarySource(currentMessages, previousSummary, transformContext, signal);
+	const providerPreviousSummary = transformedSource.previousSummary;
+
 	// Use update prompt if we have a previous summary, otherwise initial prompt
-	let basePrompt = previousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
+	let basePrompt = providerPreviousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
 	if (customInstructions) {
 		basePrompt = `${basePrompt}\n\nAdditional focus: ${customInstructions}`;
 	}
 
 	// Serialize conversation to text so model doesn't try to continue it
 	// Convert to LLM messages first (handles custom types like bashExecution, custom, etc.)
-	const llmMessages = convertToLlm(currentMessages);
+	const llmMessages = convertToLlm(transformedSource.messages);
 	const conversationText = serializeConversation(llmMessages);
 
 	// Build the prompt with conversation wrapped in tags
 	let promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
-	if (previousSummary) {
-		promptText += `<previous-summary>\n${previousSummary}\n</previous-summary>\n\n`;
+	if (providerPreviousSummary) {
+		promptText += `<previous-summary>\n${providerPreviousSummary}\n</previous-summary>\n\n`;
 	}
 	promptText += basePrompt;
 
@@ -811,6 +850,7 @@ export async function compact(
 	thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
 	env?: Record<string, string>,
+	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>,
 ): Promise<CompactionResult> {
 	const {
 		firstKeptEntryId,
@@ -842,6 +882,7 @@ export async function compact(
 						thinkingLevel,
 						streamFn,
 						env,
+						transformContext,
 					)
 				: "No prior history.";
 		const turnPrefixResult = await generateTurnPrefixSummary(
@@ -855,6 +896,7 @@ export async function compact(
 			extraBody,
 			thinkingLevel,
 			streamFn,
+			transformContext,
 		);
 		// Merge into single summary
 		summary = `${historyResult}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult}`;
@@ -873,6 +915,7 @@ export async function compact(
 			thinkingLevel,
 			streamFn,
 			env,
+			transformContext,
 		);
 	}
 
@@ -906,12 +949,14 @@ async function generateTurnPrefixSummary(
 	extraBody?: Record<string, unknown>,
 	thinkingLevel?: ThinkingLevel,
 	streamFn?: SummarizationStreamFn,
+	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>,
 ): Promise<string> {
 	const maxTokens = Math.min(
 		Math.floor(0.5 * reserveTokens),
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
 	); // Smaller budget for turn prefix
-	const llmMessages = convertToLlm(messages);
+	const providerMessages = transformContext ? await transformContext(messages, signal) : messages;
+	const llmMessages = convertToLlm(providerMessages);
 	const conversationText = serializeConversation(llmMessages);
 	const promptText = `<conversation>\n${conversationText}\n</conversation>\n\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
 	const summarizationMessages = [

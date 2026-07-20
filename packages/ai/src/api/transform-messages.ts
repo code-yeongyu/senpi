@@ -228,69 +228,81 @@ export function transformMessages<TApi extends Api>(
 		return msg;
 	});
 
-	// Second pass: insert synthetic empty tool results for orphaned tool calls
-	// This preserves thinking signatures and satisfies API requirements
+	// Second pass: pair every replayable tool call with the earliest unconsumed
+	// result after its declaring assistant. Results are emitted adjacent to their
+	// calls because Anthropic requires that ordering. A reused ID starts a new
+	// pairing window, so a later result cannot repair an earlier call.
 	const result: Message[] = [];
-	let pendingToolCalls: ToolCall[] = [];
-	let existingToolResultIds = new Set<string>();
-	const insertSyntheticToolResults = () => {
-		if (pendingToolCalls.length > 0) {
-			for (const tc of pendingToolCalls) {
-				if (!existingToolResultIds.has(tc.id)) {
-					result.push({
-						role: "toolResult",
-						toolCallId: tc.id,
-						toolName: tc.name,
-						content: [{ type: "text", text: "No result provided" }],
-						isError: true,
-						timestamp: Date.now(),
-					} as ToolResultMessage);
-				}
-			}
-			pendingToolCalls = [];
-			existingToolResultIds = new Set();
+	const toolResultsById = new Map<string, { message: ToolResultMessage; sourceIndex: number; consumed: boolean }[]>();
+	const nextToolCallIndexById = new Map<string, number[]>();
+
+	for (let sourceIndex = 0; sourceIndex < transformed.length; sourceIndex++) {
+		const message = transformed[sourceIndex];
+		if (message.role === "toolResult") {
+			const entries = toolResultsById.get(message.toolCallId) ?? [];
+			entries.push({ message, sourceIndex, consumed: false });
+			toolResultsById.set(message.toolCallId, entries);
+			continue;
 		}
-	};
-
-	for (let i = 0; i < transformed.length; i++) {
-		const msg = transformed[i];
-
-		if (msg.role === "assistant") {
-			// If we have pending orphaned tool calls from a previous assistant, insert synthetic results now
-			insertSyntheticToolResults();
-
-			// Skip errored/aborted assistant messages entirely.
-			// These are incomplete turns that shouldn't be replayed:
-			// - May have partial content (reasoning without message, incomplete tool calls)
-			// - Replaying them can cause API errors (e.g., OpenAI "reasoning without following item")
-			// - The model should retry from the last valid state
-			const assistantMsg = msg as AssistantMessage;
-			if (assistantMsg.stopReason === "error" || assistantMsg.stopReason === "aborted") {
-				continue;
-			}
-
-			// Track tool calls from this assistant message
-			const toolCalls = assistantMsg.content.filter((b) => b.type === "toolCall") as ToolCall[];
-			if (toolCalls.length > 0) {
-				pendingToolCalls = toolCalls;
-				existingToolResultIds = new Set();
-			}
-
-			result.push(msg);
-		} else if (msg.role === "toolResult") {
-			existingToolResultIds.add(msg.toolCallId);
-			result.push(msg);
-		} else if (msg.role === "user") {
-			// User message interrupts tool flow - insert synthetic results for orphaned calls
-			insertSyntheticToolResults();
-			result.push(msg);
-		} else {
-			result.push(msg);
+		if (message.role !== "assistant" || message.stopReason === "error" || message.stopReason === "aborted") {
+			continue;
+		}
+		for (const block of message.content) {
+			if (block.type !== "toolCall") continue;
+			const indexes = nextToolCallIndexById.get(block.id) ?? [];
+			indexes.push(sourceIndex);
+			nextToolCallIndexById.set(block.id, indexes);
 		}
 	}
 
-	// If the conversation ends with unresolved tool calls, synthesize results now.
-	insertSyntheticToolResults();
+	for (let sourceIndex = 0; sourceIndex < transformed.length; sourceIndex++) {
+		const message = transformed[sourceIndex];
+		if (message.role === "toolResult") {
+			const entry = toolResultsById
+				.get(message.toolCallId)
+				?.find((candidate) => candidate.sourceIndex === sourceIndex);
+			if (!entry?.consumed) result.push(message);
+			continue;
+		}
+		if (message.role !== "assistant") {
+			result.push(message);
+			continue;
+		}
+
+		// Skip errored/aborted assistant messages entirely. These incomplete turns
+		// must not be revived merely because a matching result appears later.
+		if (message.stopReason === "error" || message.stopReason === "aborted") continue;
+
+		result.push(message);
+		for (const block of message.content) {
+			if (block.type !== "toolCall") continue;
+			const laterDeclarations = nextToolCallIndexById.get(block.id) ?? [];
+			const nextDeclarationIndex = laterDeclarations.find((index) => index > sourceIndex) ?? Infinity;
+			const matchedResult = toolResultsById
+				.get(block.id)
+				?.find(
+					(candidate) =>
+						!candidate.consumed &&
+						candidate.sourceIndex > sourceIndex &&
+						candidate.sourceIndex < nextDeclarationIndex,
+				);
+
+			if (matchedResult) {
+				matchedResult.consumed = true;
+				result.push(matchedResult.message);
+				continue;
+			}
+
+			result.push({
+				role: "toolResult",
+				toolCallId: block.id,
+				toolName: block.name,
+				content: [{ type: "text", text: "No result provided" }],
+				isError: true,
+				timestamp: Date.now(),
+			} as ToolResultMessage);
+		}
+	}
 
 	return result;
 }

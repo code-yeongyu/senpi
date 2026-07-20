@@ -10,6 +10,7 @@ import type {
 	SessionCompactEvent,
 } from "../../src/core/extensions/index.ts";
 import type { CompactionEntry, SessionEntry } from "../../src/core/session-manager.ts";
+import { createInMemoryExtensionSessionSettings } from "../helpers/extension-session-settings.ts";
 
 const CHECKPOINT_CUSTOM_TYPE = "compaction.agent-checkpoint";
 const TODO_SNAPSHOT_CUSTOM_TYPE = "compaction.todo-snapshot";
@@ -81,6 +82,7 @@ function createExtensionContext(entries: SessionEntry[]): ExtensionContext {
 		shutdown: vi.fn(),
 		getContextUsage: () => undefined,
 		getCompactionSettings: () => DEFAULT_COMPACTION_SETTINGS,
+		sessionSettings: createInMemoryExtensionSessionSettings(),
 		compact: vi.fn(),
 		getMessageRevision: () => 1,
 		applyCompaction: async () => ({ applied: false, reason: "rejected" }),

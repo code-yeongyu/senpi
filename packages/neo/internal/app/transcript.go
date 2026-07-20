@@ -45,20 +45,24 @@ const (
 // feed entry, with the surface that owns it instead. The exhaustiveness test
 // asserts handled ∪ ignored ∪ deferred covers the whole mirror.
 var transcriptIgnoredEvents = map[string]string{
-	"agent_settled":          "RPC completion marker; transcript state is finalized by agent_end/message_end",
-	"turn_start":             "turn boundaries render nothing; content arrives via message_* events",
-	"turn_end":               "turn boundaries render nothing; tool results arrive via tool_execution_end",
-	"compaction_start":       "status-indicator surface (shell status line, todo 7)",
-	"compaction_progress":    "status-indicator surface (shell status line, todo 7)",
-	"entry_appended":         "custom entry renderers are extension-owned (todo 6); classic renders nothing without one",
-	"session_info_changed":   "terminal title + footer surface (todo 7/9)",
-	"system_prompt_change":   "status-line surface (shell status line, todo 7)",
-	"thinking_level_changed": "footer surface (todo 7)",
-	"auto_retry_start":       "retry status-indicator surface (shell status line, todo 7)",
-	"auto_retry_end":         "retry status-indicator surface (shell status line, todo 7)",
-	"auth_login_url":         "auth login overlay (todo 13)",
-	"auth_login_end":         "auth login overlay (todo 13)",
-	"extension_error":        "delivered as ExtensionErrorMsg by the session adapter demux, never as an EventMsg",
+	"agent_settled":            "RPC completion marker; transcript state is finalized by agent_end/message_end",
+	"turn_start":               "turn boundaries render nothing; content arrives via message_* events",
+	"turn_end":                 "turn boundaries render nothing; tool results arrive via tool_execution_end",
+	"compaction_start":         "status-indicator surface (shell status line, todo 7)",
+	"compaction_progress":      "status-indicator surface (shell status line, todo 7)",
+	"entry_appended":           "custom entry renderers are extension-owned (todo 6); classic renders nothing without one",
+	"session_info_changed":     "terminal title + footer surface (todo 7/9)",
+	"system_prompt_change":     "status-line surface (shell status line, todo 7)",
+	"thinking_level_changed":   "footer surface (todo 7)",
+	"auto_retry_start":         "retry status-indicator surface (shell status line, todo 7)",
+	"auto_retry_end":           "retry status-indicator surface (shell status line, todo 7)",
+	"retry_fallback_applied":   "fallback status rendering is not part of Neo's transcript projection",
+	"retry_fallback_succeeded": "fallback status rendering is not part of Neo's transcript projection",
+	"retry_fallback_reverted":  "fallback status rendering is not part of Neo's transcript projection",
+	"retry_fallback_exhausted": "fallback status rendering is not part of Neo's transcript projection",
+	"auth_login_url":           "auth login overlay (todo 13)",
+	"auth_login_end":           "auth login overlay (todo 13)",
+	"extension_error":          "delivered as ExtensionErrorMsg by the session adapter demux, never as an EventMsg",
 }
 
 // Transcript translates the session adapter's EventMsg stream into transcript

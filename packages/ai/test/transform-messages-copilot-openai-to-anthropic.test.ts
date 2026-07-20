@@ -273,4 +273,123 @@ describe("OpenAI to Anthropic session migration for Copilot Claude", () => {
 			content: [{ type: "text", text: "No result provided" }],
 		});
 	});
+
+	it("moves a delayed normalized tool result ahead of an intervening user turn", () => {
+		const model = makeCopilotClaudeModel();
+		const messages: Message[] = [
+			{ role: "user", content: "read", timestamp: Date.now() },
+			makeAssistantMessage([{ type: "toolCall", id: "call|one", name: "read", arguments: {} }]),
+			{ role: "user", content: "while waiting", timestamp: Date.now() },
+			{
+				role: "toolResult",
+				toolCallId: "call|one",
+				toolName: "read",
+				content: [{ type: "text", text: "file contents" }],
+				isError: false,
+				timestamp: Date.now(),
+			},
+		];
+
+		const result = transformMessages(messages, model, anthropicNormalizeToolCallId);
+
+		expect(
+			result.map((message) =>
+				message.role === "toolResult" ? `${message.role}:${message.toolCallId}` : message.role,
+			),
+		).toEqual(["user", "assistant", "toolResult:call_one", "user"]);
+	});
+
+	it("pairs each multi-call tool use with one real result or one synthetic error", () => {
+		const model = makeCopilotClaudeModel();
+		const messages: Message[] = [
+			{ role: "user", content: "run", timestamp: Date.now() },
+			makeAssistantMessage([
+				{ type: "toolCall", id: "first", name: "read", arguments: {} },
+				{ type: "toolCall", id: "second", name: "bash", arguments: {} },
+			]),
+			{
+				role: "toolResult",
+				toolCallId: "first",
+				toolName: "read",
+				content: [{ type: "text", text: "done" }],
+				isError: false,
+				timestamp: Date.now(),
+			},
+		];
+
+		const result = transformMessages(messages, model, anthropicNormalizeToolCallId);
+
+		expect(
+			result
+				.slice(1)
+				.map((message) => (message.role === "toolResult" ? [message.toolCallId, message.isError] : message.role)),
+		).toEqual(["assistant", ["first", false], ["second", true]]);
+	});
+
+	it("does not attach an earlier orphaned reused ID result to a later call", () => {
+		const model = makeCopilotClaudeModel();
+		const messages: Message[] = [
+			{
+				role: "toolResult",
+				toolCallId: "reused",
+				toolName: "read",
+				content: [{ type: "text", text: "orphan" }],
+				isError: false,
+				timestamp: Date.now(),
+			},
+			{ role: "user", content: "second", timestamp: Date.now() },
+			makeAssistantMessage([{ type: "toolCall", id: "reused", name: "read", arguments: {} }]),
+			{
+				role: "toolResult",
+				toolCallId: "reused",
+				toolName: "read",
+				content: [{ type: "text", text: "second result" }],
+				isError: false,
+				timestamp: Date.now(),
+			},
+		];
+
+		const result = transformMessages(messages, model, anthropicNormalizeToolCallId);
+		const toolResults = result.filter((message) => message.role === "toolResult");
+
+		expect(toolResults.map((message) => message.content)).toEqual([
+			[{ type: "text", text: "orphan" }],
+			[{ type: "text", text: "second result" }],
+		]);
+		expect(result.map((message) => message.role)).toEqual(["toolResult", "user", "assistant", "toolResult"]);
+	});
+
+	it("does not let a later reused-ID result repair the prior assistant turn", () => {
+		const model = makeCopilotClaudeModel();
+		const messages: Message[] = [
+			{ role: "user", content: "first", timestamp: Date.now() },
+			makeAssistantMessage([{ type: "toolCall", id: "reused", name: "read", arguments: {} }]),
+			{ role: "user", content: "second", timestamp: Date.now() },
+			makeAssistantMessage([{ type: "toolCall", id: "reused", name: "read", arguments: {} }]),
+			{
+				role: "toolResult",
+				toolCallId: "reused",
+				toolName: "read",
+				content: [{ type: "text", text: "second result" }],
+				isError: false,
+				timestamp: Date.now(),
+			},
+		];
+
+		const result = transformMessages(messages, model, anthropicNormalizeToolCallId);
+		const toolResults = result.filter((message) => message.role === "toolResult");
+
+		expect(toolResults.map((message) => [message.isError, message.content])).toEqual([
+			[true, [{ type: "text", text: "No result provided" }]],
+			[false, [{ type: "text", text: "second result" }]],
+		]);
+		expect(result.map((message) => message.role)).toEqual([
+			"user",
+			"assistant",
+			"toolResult",
+			"user",
+			"assistant",
+			"toolResult",
+		]);
+	});
 });

@@ -216,6 +216,9 @@ var eventTypes = []string{
 	"system_prompt_change", // SystemPromptChangeEvent
 	"thinking_level_changed",
 	"auto_retry_start", "auto_retry_end",
+	// --- retry fallback lifecycle (agent-session.ts) ---
+	"retry_fallback_applied", "retry_fallback_succeeded",
+	"retry_fallback_reverted", "retry_fallback_exhausted",
 	// --- auth login flow (task 13): additive, event-only completion ---
 	"auth_login_url", "auth_login_end",
 	// --- emitted by the connection handler (not in AgentSessionEvent) ---

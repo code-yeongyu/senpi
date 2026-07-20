@@ -1,5 +1,23 @@
 # Builtin compaction extension changes
 
+## Structured rejection reasons on session_before_compact (2026-07-20)
+
+- `index.ts` cancel paths now attach a structured `rejectionCause` plus a
+  human-readable `reason` on the `SessionBeforeCompactResult`:
+  - per-turn cap → `{ rejectionCause: "per-turn-cap", reason: "per-turn compaction cap reached for this turn" }`.
+  - tripped circuit breaker → `{ rejectionCause: "circuit-breaker", reason: "compaction circuit breaker cooling down (Ns left)" }` with the real remaining cooldown.
+  - summarization threw → `{ reason: "compaction generator failed: <message>" }` (no `rejectionCause`; core defaults to `cancelled-by-extension`).
+  - summarization returned no summary → `{ reason: "compaction generator returned no summary" }`.
+  Core threads these into `compaction_end.errorMessage` so `/compact` produces a
+  specific line instead of the bare "Compaction cancelled" the plan flagged.
+- `ctx.ui.notify("Compaction rejected: ...", "warning")` was removed from the
+  `session_compact` `!accepted` branch and `ctx.ui.notify("Compaction failed: ...", "error")`
+  was removed from the provider-throw cancel path. Both facts now travel through
+  the canonical `compaction_end` event; duplicating them as toasts produced
+  double surfaces while the compaction status indicator was still animating
+  (plan §1 Q3). `breaker.recordFailure` in the `!accepted` branch stays live now
+  that core actually emits the rejection event.
+
 ## Native-form summarization requests and honest compaction errors (2026-07-20)
 
 - `speculative.ts` no longer serializes the conversation into one `<conversation>` text dump for the

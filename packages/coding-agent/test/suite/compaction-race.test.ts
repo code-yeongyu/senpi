@@ -144,7 +144,12 @@ describe("AgentSession compaction race handling", () => {
 		}
 
 		expect(harness.faux.state.callCount).toBe(2);
-		expect(getUserTexts(harness)).toEqual([initialPrompt, "prompt during compaction"]);
+		const secondCall = harness.faux.getCallLog()[1];
+		expect(
+			secondCall?.context.messages.some((message) => hasCompactionSummary(message, "slow threshold summary")),
+		).toBe(true);
+		expect(secondCall?.context.messages.some((message) => contextHasText(message, initialPrompt))).toBe(false);
+		expect(getUserTexts(harness)).toEqual(["prompt during compaction"]);
 	});
 
 	it("given overflow compaction has a queued follow-up when a new prompt arrives, when recovery finishes, then queued messages drain before the new prompt", async () => {
@@ -233,6 +238,11 @@ describe("AgentSession compaction race handling", () => {
 
 		// then
 		expect(harness.faux.state.callCount).toBe(2);
-		expect(getUserTexts(harness)).toEqual([initialPrompt, "after compaction prompt"]);
+		const secondCall = harness.faux.getCallLog()[1];
+		expect(
+			secondCall?.context.messages.some((message) => hasCompactionSummary(message, "normal threshold summary")),
+		).toBe(true);
+		expect(secondCall?.context.messages.some((message) => contextHasText(message, initialPrompt))).toBe(false);
+		expect(getUserTexts(harness)).toEqual(["after compaction prompt"]);
 	});
 });

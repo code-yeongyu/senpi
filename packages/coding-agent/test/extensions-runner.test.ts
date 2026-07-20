@@ -1,3 +1,4 @@
+import { createInMemoryExtensionSessionSettings } from "./helpers/extension-session-settings.ts";
 import { createModelRegistry } from "./model-runtime-test-utils.ts";
 /**
  * Tests for ExtensionRunner - conflict detection, error handling, tool wrapping.
@@ -147,6 +148,7 @@ describe("ExtensionRunner", () => {
 		getMessageRevision: () => 0,
 		applyCompaction: async () => ({ applied: false, reason: "rejected" }),
 		getCompactionSettings: () => DEFAULT_COMPACTION_SETTINGS,
+		sessionSettings: createInMemoryExtensionSessionSettings(),
 		getSystemPrompt: () => "",
 		getLoadedHookSources: () => ({
 			agentDir: tempDir,

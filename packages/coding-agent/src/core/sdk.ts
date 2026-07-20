@@ -420,6 +420,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		sessionManager,
 		settingsManager,
 		cwd,
+		agentDir,
 		scopedModels,
 		favoriteModels,
 		resourceLoader,

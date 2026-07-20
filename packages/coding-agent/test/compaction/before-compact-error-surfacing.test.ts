@@ -133,7 +133,7 @@ function createEvent(): SessionBeforeCompactEvent {
 }
 
 describe("session_before_compact error surfacing", () => {
-	it("notifies the real provider error and cancels when summarization fails", async () => {
+	it("cancels with a structured reason (no duplicate toast) when summarization fails", async () => {
 		// Given
 		const harness = createHarness();
 		harness.registration.setResponses([
@@ -146,11 +146,13 @@ describe("session_before_compact error surfacing", () => {
 		// When
 		const result = await harness.beforeCompact(createEvent(), harness.ctx);
 
-		// Then
-		expect(result).toEqual({ cancel: true });
-		expect(harness.notifications).toHaveLength(1);
-		expect(harness.notifications[0]?.message).toContain("request blocked by provider policy");
-		expect(harness.notifications[0]?.level).toBe("error");
+		// Then: the real provider error is threaded into the cancel reason so core
+		// can surface it via compaction_end.errorMessage. The ctx.ui.notify path is
+		// intentionally removed to avoid double surfacing while the compaction
+		// status indicator is animating (plan §1 Q3).
+		expect(result?.cancel).toBe(true);
+		expect(result?.reason ?? "").toContain("request blocked by provider policy");
+		expect(harness.notifications).toHaveLength(0);
 	});
 
 	it("returns the generated compaction with the agent system prompt on the request", async () => {

@@ -106,7 +106,7 @@ describe("Anthropic forceAdaptiveThinking compat override", () => {
 	});
 
 	it.each([
-		["k2p7", "medium", "medium"],
+		["kimi-for-coding", "medium", "medium"],
 		["k3", "max", "max"],
 		["kimi-for-coding-highspeed", "medium", "medium"],
 		["kimi-k2-thinking", "medium", "medium"],

@@ -109,7 +109,7 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	// Together AI
 	{ provider: "together", model: "moonshotai/Kimi-K2.6", label: "together-kimi-k2.6" },
 	// Kimi For Coding
-	{ provider: "kimi-coding", model: "k3", label: "kimi-coding-k3" },
+	{ provider: "kimi-coding", model: "kimi-for-coding", label: "kimi-coding-kimi-for-coding" },
 	// Mistral
 	{ provider: "mistral", model: "devstral-medium-latest", label: "mistral-devstral-medium" },
 	// MiniMax

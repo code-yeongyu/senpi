@@ -3,6 +3,7 @@ import type { AssistantMessage, Context, Model, StreamOptions, Usage } from "@ea
 import { readFileSync } from "fs";
 import { join } from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createInMemoryExtensionSessionSettings } from "./helpers/extension-session-settings.ts";
 
 const { completeMock } = vi.hoisted(() => ({
 	completeMock: vi.fn(),
@@ -273,6 +274,7 @@ function createExtensionContext(overrides: Partial<ExtensionContext>): Extension
 		endCompaction: vi.fn(),
 		getSystemPrompt: () => "",
 		...overrides,
+		sessionSettings: overrides.sessionSettings ?? createInMemoryExtensionSessionSettings(),
 	};
 }
 

@@ -12,6 +12,7 @@ import type {
 	AnthropicMessagesCompat,
 	Api,
 	AssistantMessage,
+	AssistantStopDetails,
 	CacheRetention,
 	Context,
 	ImageContent,
@@ -230,6 +231,30 @@ const UNSUPPORTED_NATIVE_COMPUTER_TOOL_MODEL_MARKERS = [
 	"opus-4.8",
 ] as const;
 
+type UnsignedThinkingReplay = "text" | "empty-signature";
+
+// A provider can reject its own empty signatures. Learn that capability for one
+// conversation without changing the shared model definition used by other sessions.
+const unsignedThinkingTextReplayFallbacks = new Set<string>();
+
+function unsignedThinkingFallbackKey(
+	model: Model<"anthropic-messages">,
+	sessionId: string | undefined,
+): string | undefined {
+	return sessionId === undefined ? undefined : `${sessionId}\u0000${model.baseUrl}\u0000${model.id}`;
+}
+
+function isInvalidUnsignedThinkingSignatureError(error: unknown): boolean {
+	return (
+		typeof error === "object" &&
+		error !== null &&
+		"status" in error &&
+		(error as { status?: unknown }).status === 400 &&
+		error instanceof Error &&
+		/Invalid signature in thinking block/i.test(error.message)
+	);
+}
+
 function getAnthropicCompat(
 	model: Model<"anthropic-messages">,
 ): Required<Omit<AnthropicMessagesCompat, "forceAdaptiveThinking">> {
@@ -250,6 +275,8 @@ function getAnthropicCompat(
 		supportsForcedToolChoice:
 			model.compat?.supportsForcedToolChoice ?? !CLAUDE_FABLE_OR_MYTHOS_MODEL_ID.test(model.id),
 		allowEmptySignature: model.compat?.allowEmptySignature ?? false,
+		unsignedThinkingReplay:
+			model.compat?.unsignedThinkingReplay ?? (model.compat?.allowEmptySignature ? "empty-signature" : "text"),
 		supportsToolReferences: model.compat?.supportsToolReferences ?? defaultSupportsToolReferences(model),
 		// Default: first-party Anthropic only. Anthropic-compatible providers
 		// (kimi-coding, fireworks, copilot, gateways) may execute the server-side
@@ -953,32 +980,54 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				client = created.client;
 				isOAuth = created.isOAuthToken;
 			}
-			let params = buildParams(model, context, isOAuth, options);
-			const nextParams = await options?.onPayload?.(params, model);
-			if (nextParams !== undefined) {
-				params = nextParams as MessageCreateParamsStreaming;
-			}
-			params = sanitizeAdaptiveThinkingPayload(model, params, options);
-			params = sanitizeUnsupportedNativeTools(model, params);
-			const payloadRequestMetadata = extractPayloadRequestMetadata(params);
-			params = payloadRequestMetadata.params;
-			const requestOptions = {
-				...(options?.signal ? { signal: options.signal } : {}),
-				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
-				maxRetries: options?.maxRetries ?? 0,
-				...(payloadRequestMetadata.headers ? { headers: payloadRequestMetadata.headers } : {}),
+			const fallbackKey = unsignedThinkingFallbackKey(model, options?.sessionId);
+			let unsignedThinkingReplay: UnsignedThinkingReplay =
+				fallbackKey && unsignedThinkingTextReplayFallbacks.has(fallbackKey)
+					? "text"
+					: getAnthropicCompat(model).unsignedThinkingReplay;
+			const createRequest = async (): Promise<{ params: MessageCreateParamsStreaming; response: Response }> => {
+				let params = buildParams(model, context, isOAuth, options, unsignedThinkingReplay);
+				const nextParams = await options?.onPayload?.(params, model);
+				if (nextParams !== undefined) {
+					params = nextParams as MessageCreateParamsStreaming;
+				}
+				params = sanitizeAdaptiveThinkingPayload(model, params, options);
+				params = sanitizeUnsupportedNativeTools(model, params);
+				const payloadRequestMetadata = extractPayloadRequestMetadata(params);
+				params = payloadRequestMetadata.params;
+				const requestOptions = {
+					...(options?.signal ? { signal: options.signal } : {}),
+					...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
+					maxRetries: options?.maxRetries ?? 0,
+					...(payloadRequestMetadata.headers ? { headers: payloadRequestMetadata.headers } : {}),
+				};
+				try {
+					const response = await client.messages.create({ ...params, stream: true }, requestOptions).asResponse();
+					return { params, response };
+				} catch (error) {
+					if (isForcedToolChoiceUnsupportedError(error, isForcedAnthropicToolChoice(params.tool_choice))) {
+						params = omitToolChoiceParam(params);
+						const response = await client.messages
+							.create({ ...params, stream: true }, requestOptions)
+							.asResponse();
+						return { params, response };
+					}
+					throw error;
+				}
 			};
-			let response: Response;
+			let request: { params: MessageCreateParamsStreaming; response: Response };
 			try {
-				response = await client.messages.create({ ...params, stream: true }, requestOptions).asResponse();
+				request = await createRequest();
 			} catch (error) {
-				if (isForcedToolChoiceUnsupportedError(error, isForcedAnthropicToolChoice(params.tool_choice))) {
-					params = omitToolChoiceParam(params);
-					response = await client.messages.create({ ...params, stream: true }, requestOptions).asResponse();
+				if (unsignedThinkingReplay !== "text" && isInvalidUnsignedThinkingSignatureError(error)) {
+					unsignedThinkingReplay = "text";
+					if (fallbackKey) unsignedThinkingTextReplayFallbacks.add(fallbackKey);
+					request = await createRequest();
 				} else {
 					throw error;
 				}
 			}
+			const { response } = request;
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
@@ -1149,6 +1198,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						output.stopReason = stopReasonResult.stopReason;
 						if (stopReasonResult.errorMessage) {
 							output.errorMessage = stopReasonResult.errorMessage;
+						}
+						if (stopReasonResult.stopDetails) {
+							output.stopDetails = stopReasonResult.stopDetails;
 						}
 					}
 					// Only update usage fields if present (not null).
@@ -1458,6 +1510,7 @@ function buildParams(
 	context: Context,
 	isOAuthToken: boolean,
 	options?: AnthropicOptions,
+	unsignedThinkingReplay = getAnthropicCompat(model).unsignedThinkingReplay,
 ): MessageCreateParamsStreaming {
 	const compat = getAnthropicCompat(model);
 	const { cacheControl } = getCacheControl(model, options?.cacheRetention ?? model.cacheRetention, options?.env);
@@ -1492,7 +1545,7 @@ function buildParams(
 			model,
 			isOAuthToken,
 			cacheControl,
-			compat.allowEmptySignature,
+			unsignedThinkingReplay,
 			deferredToolNames,
 			normalizeToolName,
 		),
@@ -1662,7 +1715,7 @@ function convertMessages(
 	model: Model<"anthropic-messages">,
 	isOAuthToken: boolean,
 	cacheControl?: CacheControlEphemeral,
-	allowEmptySignature = false,
+	unsignedThinkingReplay: UnsignedThinkingReplay = "text",
 	deferredToolNames: ReadonlySet<string> = new Set(),
 	normalizeToolName: (name: string) => string = (name) => name,
 ): MessageParam[] {
@@ -1774,7 +1827,7 @@ function convertMessages(
 					// and accept empty signatures, so let marked models preserve the block.
 					if (!hasThinkingSignature) {
 						blocks.push(
-							allowEmptySignature
+							unsignedThinkingReplay === "empty-signature"
 								? {
 										type: "thinking",
 										thinking: sanitizeSurrogates(block.thinking),
@@ -1907,7 +1960,8 @@ function convertTools(
 function mapStopReason(
 	reason: Anthropic.Messages.StopReason | string,
 	stopDetails?: RefusalStopDetails | null,
-): { stopReason: StopReason; errorMessage?: string } {
+): { stopReason: StopReason; errorMessage?: string; stopDetails?: AssistantStopDetails } {
+	const explanation = stopDetails?.explanation;
 	switch (reason) {
 		case "end_turn":
 			return { stopReason: "stop" };
@@ -1918,14 +1972,15 @@ function mapStopReason(
 		case "refusal":
 			return {
 				stopReason: "error",
-				errorMessage: stopDetails?.explanation || `The model refused to complete the request`,
+				errorMessage: explanation || `The model refused to complete the request`,
+				stopDetails: explanation == null ? { type: "refusal" } : { type: "refusal", explanation },
 			};
 		case "pause_turn": // Stop is good enough -> resubmit
 			return { stopReason: "stop" };
 		case "stop_sequence":
 			return { stopReason: "stop" }; // We don't supply stop sequences, so this should never happen
 		case "sensitive": // Content flagged by safety filters (not yet in SDK types)
-			return { stopReason: "error" };
+			return { stopReason: "error", stopDetails: { type: "sensitive" } };
 		default:
 			// Handle unknown stop reasons gracefully (API may add new values)
 			throw new Error(`Unhandled stop reason: ${reason}`);

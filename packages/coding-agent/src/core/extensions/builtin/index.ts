@@ -11,6 +11,7 @@ import historySearchExtension from "./history-search/index.ts";
 import hooksExtension from "./hooks/index.ts";
 import importReproExtension from "./import-repro.ts";
 import mcpExtension from "./mcp/index.ts";
+import modelFallbackExtension from "./model-fallback/index.ts";
 import nestedAgentsMdExtension from "./nested-agents-md/index.ts";
 import openaiWebSearchExtension from "./openai-web-search/index.ts";
 import permissionSystemExtension from "./permission-system/index.ts";
@@ -53,6 +54,7 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "anthropic-bash", factory: anthropicBashExtension },
 	{ id: "openai-web-search", factory: openaiWebSearchExtension },
 	{ id: "service-tier", factory: serviceTierExtension },
+	{ id: "model-fallback", factory: modelFallbackExtension },
 	{ id: "bash-timeout", factory: bashTimeoutExtension },
 	// Terminal follows bash-timeout so its injected default reaches the PTY bash, and follows
 	// anthropic-bash so mutual-exclusion (companion step-aside) is evaluated after it registers.
