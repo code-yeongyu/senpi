@@ -15,6 +15,13 @@ import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "./provider-display-names.ts";
 /** Built-in model providers (used to decide API-key vs oauth login eligibility). */
 const BUILT_IN_MODEL_PROVIDERS = new Set<string>(getProviders());
 
+/**
+ * Built-in providers that appear in display names / model catalogs but only
+ * support OAuth (serialized token+project credentials). Keep them out of the
+ * API-key login list so /login does not advertise a path that cannot work.
+ */
+const OAUTH_ONLY_MODEL_PROVIDERS = new Set(["openai-codex-device", "google-gemini-cli", "google-antigravity"]);
+
 /** One provider entry for a login/logout selector. */
 export interface AuthProviderInfo {
 	id: string;
@@ -25,7 +32,8 @@ export interface AuthProviderInfo {
 /**
  * Whether a provider should be offered for API-key login.
  *
- * - A provider with a built-in display name is always API-key eligible.
+ * - OAuth-only model providers are never API-key eligible.
+ * - A provider with a built-in display name is otherwise API-key eligible.
  * - A built-in model provider without a display name is not (it authenticates
  *   via oauth or is otherwise not an API-key login target).
  * - Any other provider is API-key eligible unless it is an oauth provider.
@@ -35,6 +43,9 @@ export function isApiKeyLoginProvider(
 	oauthProviderIds: ReadonlySet<string>,
 	builtInProviderIds: ReadonlySet<string> = BUILT_IN_MODEL_PROVIDERS,
 ): boolean {
+	if (OAUTH_ONLY_MODEL_PROVIDERS.has(providerId)) {
+		return false;
+	}
 	if (BUILT_IN_PROVIDER_DISPLAY_NAMES[providerId]) {
 		return true;
 	}

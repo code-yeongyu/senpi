@@ -24,6 +24,10 @@
 					"path": "security.md"
 				},
 				{
+					"title": "Auth Broker and Gateway",
+					"path": "auth-broker-gateway.md"
+				},
+				{
 					"title": "Containerization",
 					"path": "containerization.md"
 				},

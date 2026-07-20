@@ -15,12 +15,15 @@ import type {
 	OAuthLoginCallbacks,
 } from "@earendil-works/pi-ai";
 import { findEnvKeys, getEnvApiKey } from "@earendil-works/pi-ai/compat";
+import type { OAuthCredentials, OAuthProviderInterface } from "@earendil-works/pi-ai/oauth";
+import { getOAuthProvider, resolveOAuthStorageProvider } from "@earendil-works/pi-ai/oauth";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../config.ts";
 import { normalizePath } from "../utils/paths.ts";
+import type { CredentialSelector, CredentialVault, SelectionLease, UsageReport } from "./auth-multi-account.ts";
 import { resolveConfigValue } from "./resolve-config-value.ts";
 
 type AuthStorageData = Record<string, Credential>;
@@ -36,6 +39,18 @@ export type AuthStatus = {
 export interface GetApiKeyOptions {
 	includeFallback?: boolean;
 }
+
+export type PooledCredentialOptions = {
+	selector?: CredentialSelector;
+	sessionId?: string;
+};
+
+export type PooledCredentialSelection = {
+	apiKey: string;
+	credentialId: string;
+	headers?: Readonly<Record<string, string>>;
+	reportOutcome: (status: UsageReport["status"]) => void;
+};
 
 type LockResult<T> = {
 	result: T;
@@ -193,6 +208,7 @@ export class InMemoryAuthStorageBackend implements AuthStorageBackend {
  * Credential storage backed by a JSON file.
  */
 export class AuthStorage implements CredentialStore {
+	private credentialVault: CredentialVault | undefined;
 	private data: AuthStorageData = {};
 	private readonly runtimeOverrides = new Map<string, string>();
 	private errors: Error[] = [];
@@ -254,38 +270,90 @@ export class AuthStorage implements CredentialStore {
 		this.runtimeOverrides.delete(provider);
 	}
 
+	/** Map login aliases (e.g. openai-codex-device) to the canonical storage provider. */
+	private storageKey(provider: string): string {
+		try {
+			return resolveOAuthStorageProvider(provider as never);
+		} catch {
+			return provider;
+		}
+	}
+
 	get(provider: string): Credential | undefined {
-		return this.data[provider];
+		return this.data[this.storageKey(provider)];
 	}
 
 	getProviderEnv(provider: string): Record<string, string> | undefined {
-		const credential = this.data[provider];
+		const credential = this.data[this.storageKey(provider)];
 		return credential?.type === "api_key" && credential.env ? { ...credential.env } : undefined;
 	}
 
 	set(provider: string, credential: Credential): void {
+		const key = this.storageKey(provider);
 		this.storage.withLock((content) => {
-			const nextData = { ...this.parseStorageData(content), [provider]: credential };
+			const nextData = { ...this.parseStorageData(content), [key]: credential };
 			this.data = nextData;
 			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
 		});
 	}
 
 	remove(provider: string): void {
+		const key = this.storageKey(provider);
 		this.storage.withLock((content) => {
 			const nextData = { ...this.parseStorageData(content) };
-			delete nextData[provider];
+			delete nextData[key];
 			this.data = nextData;
 			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
 		});
 	}
 
 	has(provider: string): boolean {
-		return provider in this.data;
+		return this.storageKey(provider) in this.data;
+	}
+
+	setCredentialVault(vault: CredentialVault | undefined): void {
+		this.credentialVault = vault;
+	}
+
+	async selectPooledCredential(
+		providerId: string,
+		options: PooledCredentialOptions = {},
+	): Promise<PooledCredentialSelection | undefined> {
+		const storageProvider = resolveOAuthStorageProvider(providerId);
+		if (this.credentialVault === undefined) return undefined;
+		// Local/runtime credentials take precedence over pool selection.
+		if (this.hasLocalCredential(storageProvider)) return undefined;
+		const pool = this.credentialVault
+			.metadataSnapshot()
+			.credentials.find((credential) => credential.pool.provider === storageProvider)?.pool;
+		if (pool === undefined) return undefined;
+		const pending = this.credentialVault.issueSelectionLease(
+			{ pool, selector: options.selector ?? { kind: "automatic" }, sessionId: options.sessionId },
+			"local-auth-storage",
+		);
+		const lease = this.credentialVault.consumeSelectionLease({
+			authentication: "local-auth-storage",
+			leaseId: pending.leaseId,
+		});
+		return await selectionFromLease(providerId, lease);
+	}
+
+	private hasLocalCredential(storageProvider: string): boolean {
+		return this.has(storageProvider) || this.runtimeOverrides.has(storageProvider);
 	}
 
 	hasAuth(provider: string): boolean {
-		return this.runtimeOverrides.has(provider) || this.has(provider) || getEnvApiKey(provider) !== undefined;
+		if (this.runtimeOverrides.has(provider) || this.has(provider) || getEnvApiKey(provider) !== undefined) {
+			return true;
+		}
+		const storageProvider = resolveOAuthStorageProvider(provider);
+		return (
+			this.credentialVault
+				?.metadataSnapshot()
+				.credentials.some(
+					(credential) => credential.pool.provider === storageProvider && credential.disabled === undefined,
+				) === true
+		);
 	}
 
 	getAuthStatus(provider: string): AuthStatus {
@@ -293,6 +361,16 @@ export class AuthStorage implements CredentialStore {
 		if (this.runtimeOverrides.has(provider)) return { configured: true, source: "runtime", label: "--api-key" };
 		const envName = findEnvKeys(provider)?.[0];
 		if (envName && process.env[envName]) return { configured: true, source: "environment", label: envName };
+		const storageProvider = resolveOAuthStorageProvider(provider);
+		if (
+			this.credentialVault
+				?.metadataSnapshot()
+				.credentials.some(
+					(credential) => credential.pool.provider === storageProvider && credential.disabled === undefined,
+				)
+		) {
+			return { configured: true, source: "stored", label: "credential-pool" };
+		}
 		return { configured: false };
 	}
 
@@ -450,4 +528,52 @@ export function readStoredCredential(
 	} catch {
 		return undefined;
 	}
+}
+
+type RequestAuthOAuthProvider = OAuthProviderInterface & {
+	getRequestAuth: (
+		credentials: OAuthCredentials,
+	) => Promise<{ apiKey: string; headers?: Readonly<Record<string, string>> }>;
+};
+
+function supportsRequestAuth(provider: OAuthProviderInterface): provider is RequestAuthOAuthProvider {
+	return "getRequestAuth" in provider && typeof (provider as RequestAuthOAuthProvider).getRequestAuth === "function";
+}
+
+async function selectionFromLease(providerId: string, lease: SelectionLease): Promise<PooledCredentialSelection> {
+	if (lease.material.type === "api_key") {
+		return {
+			apiKey: lease.material.apiKey,
+			credentialId: lease.credentialId,
+			reportOutcome: (status) => {
+				lease.reportOutcome({ observedAt: new Date().toISOString(), status });
+			},
+		};
+	}
+	const provider = getOAuthProvider(providerId) ?? getOAuthProvider(lease.pool.provider);
+	const credentials: OAuthCredentials = {
+		access: lease.material.accessToken,
+		expires: lease.material.expiresAt,
+		refresh: lease.material.refreshToken,
+		...(lease.material.extras ?? {}),
+	};
+	let apiKey = lease.material.accessToken;
+	let headers: Readonly<Record<string, string>> | undefined;
+	if (provider !== undefined) {
+		if (supportsRequestAuth(provider)) {
+			const auth = await provider.getRequestAuth(credentials);
+			apiKey = auth.apiKey;
+			headers = auth.headers;
+		} else {
+			apiKey = provider.getApiKey(credentials);
+		}
+	}
+	return {
+		apiKey,
+		credentialId: lease.credentialId,
+		...(headers === undefined ? {} : { headers }),
+		reportOutcome: (status) => {
+			lease.reportOutcome({ observedAt: new Date().toISOString(), status });
+		},
+	};
 }

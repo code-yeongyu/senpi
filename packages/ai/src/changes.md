@@ -126,6 +126,42 @@
 - LOW: `types.ts` around the `ToolCall` and `AssistantMessageEvent` declarations.
 - LOW: `tool-call-middleware/types.ts` `ToolCallFormat` union and `toolcall_end` variant.
 
+## 2026-07-14 - Provider and OAuth parity
+
+### What changed and why
+
+- Added supported provider factories, generated catalogs, and OAuth flows used by the coding-agent login surface.
+- Added provider-specific request and refresh behavior, including GitLab Duo direct-access exchange, Google account
+  transport, and Perplexity OTP state handling.
+- Legacy OAuth providers can expose request-scoped tokens and headers so compatibility consumers preserve GitLab Duo's
+  direct-access contract.
+- Search-only integrations are not exposed as chat providers.
+- Dropped duplicate xAI browser OAuth in favor of main's device-code flow.
+- Cursor uses Connect transport; GitLab PAT exchange applies to API keys; GitLab GPT-5.1 uses chat completions;
+  Perplexity session OAuth is not advertised as API auth; Google CCA providers are OAuth-only in /login.
+
+### Files modified
+
+- api/google-gemini-cli.ts
+- api/cursor-connect.ts
+- auth/helpers.ts
+- auth/oauth/*
+- providers/all.ts
+- types.ts
+- bun-oauth.ts
+- provider-specific files under providers/ and auth/oauth/
+
+### Why the higher-level extension system couldn't handle this alone
+
+- The canonical `ToolCall` shape, the `toolcall_end` event contract, and the `ToolCallFormat` union
+  are all exported from `pi-ai` and consumed by standalone `pi-ai` clients before any coding-agent
+  extension runs.
+
+### Expected merge conflict zones
+
+- LOW: `types.ts` around the `ToolCall` and `AssistantMessageEvent` declarations.
+- LOW: `tool-call-middleware/types.ts` `ToolCallFormat` union and `toolcall_end` variant.
+
 ## 2026-07-17 - Moonshot root object-union compatibility
 
 ### What changed and why

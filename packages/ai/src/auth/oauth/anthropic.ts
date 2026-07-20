@@ -7,9 +7,10 @@
 
 import type { Server } from "node:http";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
-import type { AuthInteraction, OAuthAuth, OAuthCredential } from "../types.ts";
+import type { OAuthAuth } from "../types.ts";
 import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.ts";
 import { generatePKCE } from "./pkce.ts";
+import type { OAuthCredentials, OAuthLoginCallbacks, OAuthPrompt, OAuthProviderInterface } from "./types.ts";
 
 type CallbackServerInfo = {
 	server: Server;
@@ -192,7 +193,7 @@ async function exchangeAuthorizationCode(
 	state: string,
 	verifier: string,
 	redirectUri: string,
-): Promise<OAuthCredential> {
+): Promise<OAuthCredentials> {
 	let responseBody: string;
 	try {
 		responseBody = await postJson(TOKEN_URL, {
@@ -219,21 +220,27 @@ async function exchangeAuthorizationCode(
 	}
 
 	return {
-		type: "oauth",
 		refresh: tokenData.refresh_token,
 		access: tokenData.access_token,
 		expires: Date.now() + tokenData.expires_in * 1000 - 5 * 60 * 1000,
 	};
 }
 
-async function loginAnthropic(interaction: AuthInteraction): Promise<OAuthCredential> {
+/**
+ * Login with Anthropic OAuth (authorization code + PKCE)
+ */
+export async function loginAnthropic(options: {
+	onAuth: (info: { url: string; instructions?: string }) => void;
+	onPrompt: (prompt: OAuthPrompt) => Promise<string>;
+	onProgress?: (message: string) => void;
+	onManualCodeInput?: () => Promise<string>;
+}): Promise<OAuthCredentials> {
 	const { verifier, challenge } = await generatePKCE();
 	const server = await startCallbackServer(verifier);
-	const manualAbort = new AbortController();
+
 	let code: string | undefined;
 	let state: string | undefined;
-	let manualInput: string | undefined;
-	let manualError: Error | undefined;
+	let redirectUriForExchange = REDIRECT_URI;
 
 	try {
 		const authParams = new URLSearchParams({
@@ -246,58 +253,93 @@ async function loginAnthropic(interaction: AuthInteraction): Promise<OAuthCreden
 			code_challenge_method: "S256",
 			state: verifier,
 		});
-		interaction.notify({
-			type: "auth_url",
+
+		options.onAuth({
 			url: `${AUTHORIZE_URL}?${authParams.toString()}`,
 			instructions:
 				"Complete login in your browser. If the browser is on another machine, paste the final redirect URL here.",
 		});
 
-		const manualPromise = interaction
-			.prompt({
-				type: "manual_code",
-				message: "Complete login in your browser, or paste the authorization code / redirect URL here:",
-				placeholder: REDIRECT_URI,
-				signal: manualAbort.signal,
-			})
-			.then((input) => {
-				manualInput = input;
-				server.cancelWait();
-			})
-			.catch((error) => {
-				manualError = error instanceof Error ? error : new Error(String(error));
-				server.cancelWait();
-			});
+		if (options.onManualCodeInput) {
+			let manualInput: string | undefined;
+			let manualError: Error | undefined;
+			const manualPromise = options
+				.onManualCodeInput()
+				.then((input) => {
+					manualInput = input;
+					server.cancelWait();
+				})
+				.catch((err) => {
+					manualError = err instanceof Error ? err : new Error(String(err));
+					server.cancelWait();
+				});
 
-		const result = await server.waitForCode();
-		if (manualError) throw manualError;
-		if (result?.code) {
-			code = result.code;
-			state = result.state;
-		} else if (manualInput) {
-			const parsed = parseAuthorizationInput(manualInput);
-			if (parsed.state && parsed.state !== verifier) throw new Error("OAuth state mismatch");
+			const result = await server.waitForCode();
+
+			if (manualError) {
+				throw manualError;
+			}
+
+			if (result?.code) {
+				code = result.code;
+				state = result.state;
+				redirectUriForExchange = REDIRECT_URI;
+			} else if (manualInput) {
+				const parsed = parseAuthorizationInput(manualInput);
+				if (parsed.state && parsed.state !== verifier) {
+					throw new Error("OAuth state mismatch");
+				}
+				code = parsed.code;
+				state = parsed.state ?? verifier;
+			}
+
+			if (!code) {
+				await manualPromise;
+				if (manualError) {
+					throw manualError;
+				}
+				if (manualInput) {
+					const parsed = parseAuthorizationInput(manualInput);
+					if (parsed.state && parsed.state !== verifier) {
+						throw new Error("OAuth state mismatch");
+					}
+					code = parsed.code;
+					state = parsed.state ?? verifier;
+				}
+			}
+		} else {
+			const result = await server.waitForCode();
+			if (result?.code) {
+				code = result.code;
+				state = result.state;
+				redirectUriForExchange = REDIRECT_URI;
+			}
+		}
+
+		if (!code) {
+			const input = await options.onPrompt({
+				message: "Paste the authorization code or full redirect URL:",
+				placeholder: REDIRECT_URI,
+			});
+			const parsed = parseAuthorizationInput(input);
+			if (parsed.state && parsed.state !== verifier) {
+				throw new Error("OAuth state mismatch");
+			}
 			code = parsed.code;
 			state = parsed.state ?? verifier;
 		}
 
 		if (!code) {
-			await manualPromise;
-			if (manualError) throw manualError;
-			if (manualInput) {
-				const parsed = parseAuthorizationInput(manualInput);
-				if (parsed.state && parsed.state !== verifier) throw new Error("OAuth state mismatch");
-				code = parsed.code;
-				state = parsed.state ?? verifier;
-			}
+			throw new Error("Missing authorization code");
 		}
 
-		if (!code) throw new Error("Missing authorization code");
-		if (!state) throw new Error("Missing OAuth state");
-		interaction.notify({ type: "progress", message: "Exchanging authorization code for tokens..." });
-		return exchangeAuthorizationCode(code, state, verifier, REDIRECT_URI);
+		if (!state) {
+			throw new Error("Missing OAuth state");
+		}
+
+		options.onProgress?.("Exchanging authorization code for tokens...");
+		return exchangeAuthorizationCode(code, state, verifier, redirectUriForExchange);
 	} finally {
-		manualAbort.abort();
 		server.server.close();
 	}
 }
@@ -305,7 +347,7 @@ async function loginAnthropic(interaction: AuthInteraction): Promise<OAuthCreden
 /**
  * Refresh Anthropic OAuth token
  */
-async function refreshAnthropicToken(refreshToken: string): Promise<OAuthCredential> {
+export async function refreshAnthropicToken(refreshToken: string): Promise<OAuthCredentials> {
 	let responseBody: string;
 	try {
 		responseBody = await postJson(TOKEN_URL, {
@@ -332,7 +374,6 @@ async function refreshAnthropicToken(refreshToken: string): Promise<OAuthCredent
 	}
 
 	return {
-		type: "oauth",
 		refresh: data.refresh_token,
 		access: data.access_token,
 		expires: Date.now() + data.expires_in * 1000 - 5 * 60 * 1000,
@@ -341,10 +382,59 @@ async function refreshAnthropicToken(refreshToken: string): Promise<OAuthCredent
 
 export const anthropicOAuth: OAuthAuth = {
 	name: "Anthropic (Claude Pro/Max)",
-	login: loginAnthropic,
-	refresh: (credential) => refreshAnthropicToken(credential.refresh),
+
+	async login(callbacks) {
+		// The manual_code prompt races the local callback server; abort it once
+		// the flow settles so the UI can dismiss the pending input.
+		const manualAbort = new AbortController();
+		try {
+			const credentials = await loginAnthropic({
+				onAuth: (info) => callbacks.notify({ type: "auth_url", url: info.url, instructions: info.instructions }),
+				onProgress: (message) => callbacks.notify({ type: "progress", message }),
+				onPrompt: (prompt) =>
+					callbacks.prompt({ type: "text", message: prompt.message, placeholder: prompt.placeholder }),
+				onManualCodeInput: () =>
+					callbacks.prompt({
+						type: "manual_code",
+						message: "Complete login in your browser, or paste the authorization code / redirect URL here:",
+						placeholder: REDIRECT_URI,
+						signal: manualAbort.signal,
+					}),
+			});
+			return { ...credentials, type: "oauth" };
+		} finally {
+			manualAbort.abort();
+		}
+	},
+
+	async refresh(credential) {
+		return { ...(await refreshAnthropicToken(credential.refresh)), type: "oauth" };
+	},
 
 	async toAuth(credential) {
 		return { apiKey: credential.access };
+	},
+};
+
+export const anthropicOAuthProvider: OAuthProviderInterface = {
+	id: "anthropic",
+	name: "Anthropic (Claude Pro/Max)",
+	usesCallbackServer: true,
+
+	async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
+		return loginAnthropic({
+			onAuth: callbacks.onAuth,
+			onPrompt: callbacks.onPrompt,
+			onProgress: callbacks.onProgress,
+			onManualCodeInput: callbacks.onManualCodeInput,
+		});
+	},
+
+	async refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
+		return refreshAnthropicToken(credentials.refresh);
+	},
+
+	getApiKey(credentials: OAuthCredentials): string {
+		return credentials.access;
 	},
 };

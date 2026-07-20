@@ -60,11 +60,30 @@
 
 ### Why extension system couldn't handle this alone
 
+
 - Provider composition owns the final base-provider/API-provider stream dispatch before extensions receive model output, so extensions cannot insert the required context transformation and streaming parser on both paths.
 
 ### Expected merge conflict zones
 
 - LOW: `provider-composer.ts` shared `streamWith()` dispatch and its `@earendil-works/pi-ai/compat` imports.
+
+## Provider login and model-resolution parity (2026-07-14)
+
+### What changed
+
+- auth-providers.ts, model-resolver.ts, and provider-display-names.ts now consume the expanded pi-ai provider catalog
+  for consistent /login, display, and default-model behavior.
+- AuthStorage and ModelRegistry apply provider-specific OAuth request tokens and headers instead of reducing every
+  legacy credential to one raw string.
+- OAuth-only Google CCA providers and openai-codex-device are excluded from API-key login eligibility.
+
+### Why extension system couldn't handle this
+
+- Login selection and startup model resolution run in core before user extensions can provide a replacement catalog.
+
+### Expected merge conflict zones
+
+- MEDIUM: provider display/default maps when upstream changes model resolution or login discovery.
 
 ## AnthropicMessagesCompat.supportsWebSearch in models.json schema (2026-07-16)
 
@@ -74,6 +93,7 @@
   `supportsWebSearchPreview` in `OpenAIResponsesCompatSchema`. This is the models.json opt-in for
   Anthropic-compatible endpoints that genuinely support server-side web search (see `packages/ai/src/changes.md`
   2026-07-16); without the schema entry the flag would fail models.json validation.
+
 
 ### Why extension system couldn't handle this alone
 
@@ -922,3 +942,51 @@ If upstream modifies any compaction route (manual, threshold, overflow, pre-prom
 - Extended `packages/coding-agent/src/core/model-registry.ts` so `models.json` (and `pi.registerProvider()`) accepts `extraBody` at both provider and per-model level. `getApiKeyAndHeaders` now resolves `extraBody`, and `sdk.ts` merges provider/model extraBody with any call-site `extraBody` before invoking `streamSimple`.
 - This had to be done in core because `ThinkingLevel` is exported from `@mariozechner/pi-agent-core` and every UI/CLI/settings surface needed to be widened, and because `getApiKeyAndHeaders` + stream option composition live in core `ModelRegistry`/`sdk.ts`.
 - Expected merge-conflict zone on upstream sync: `model-registry.ts` schemas + `getApiKeyAndHeaders`, `sdk.ts` stream option composition, `cli/args.ts` validator, `settings-manager.ts` thinking level type, `agent-session.ts` thinking cycle list, interactive TUI thinking selector and border color map.
+
+## Auth gateway provider proxy (2026-07-14)
+### What changed
+
+- Added loopback transport, bearer authentication, provider adapters, broker-backed runtime selection, and redacted
+  diagnostics for OpenAI Chat, Anthropic Messages, Responses, and pi streams.
+- HTTP disconnect signals now reach provider runtimes; SSE frames use the real transport response path.
+- Responses chaining uses opaque capability IDs and a bounded retained-context store.
+- Default credential diagnostics report metadata-backed `configured` state without consuming a one-use broker lease.
+- Provider runtime selection forwards stable session identifiers to the broker for credential affinity.
+
+### Why
+
+- Gateway credential injection must happen at the final provider request boundary without exposing broker material to
+  clients or extensions.
+
+### Why extension system couldn't handle this
+
+- The standalone gateway owns HTTP authentication, request cancellation, streaming framing, and broker lease outcomes
+  outside an interactive agent session.
+
+### Expected merge conflict zones
+
+- MEDIUM: provider request/stream option construction and main CLI dispatch.
+- LOW: fork-only auth-gateway transport and adapter modules.
+
+## Credential broker and pooled selection (2026-07-14)
+
+### What changed
+
+- Added the credential-vault, selection-lease, broker wire contract, remote store, and background OAuth refresh surfaces.
+- ModelRegistry and SDK requests can select pooled credentials, preserve session affinity, and report sanitized outcomes.
+- Restore now clears dependent leases before replacing credentials, and startup awaits the initial OAuth refresh sweep.
+
+### Why
+
+- Multi-account credentials require an atomic owner for selection, refresh, cooldown, and secret redaction instead of
+  duplicating those policies in individual providers.
+
+### Why extension system couldn't handle this
+
+- Credential resolution and model request construction occur in core before extension hooks can safely lease or refresh
+  secret material.
+
+### Expected merge conflict zones
+
+- HIGH: auth-storage.ts, model-registry.ts, and sdk.ts credential-resolution paths.
+- MEDIUM: broker wire contracts and vault schema when auth persistence changes upstream.

@@ -10,8 +10,9 @@ import type {
 } from "@earendil-works/pi-ai/compat";
 import { getApiProvider, getSupportedThinkingLevels } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { type CredentialRecord, InMemoryCredentialVault } from "../src/core/auth-multi-account.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { clearApiKeyCache, type ModelRegistry, type ProviderConfigInput } from "../src/core/model-registry.ts";
+import { clearApiKeyCache, ModelRegistry, type ProviderConfigInput } from "../src/core/model-registry.ts";
 
 import { createModelRegistry } from "./model-runtime-test-utils.ts";
 
@@ -1340,6 +1341,94 @@ describe("ModelRegistry", () => {
 				],
 			};
 		}
+
+		test("uses runtime, stored, provider config, then pooled credentials in that order", async () => {
+			const pooledRecord: CredentialRecord = {
+				createdAt: "2026-07-11T00:00:00.000Z",
+				credentialId: "pooled-account",
+				identityKey: "operator:pooled-account",
+				material: { type: "api_key", apiKey: "pooled-api-key" },
+				pool: { provider: "custom-provider", type: "api_key" },
+				updatedAt: "2026-07-11T00:00:00.000Z",
+			};
+			authStorage.setCredentialVault(InMemoryCredentialVault.fromRecords([pooledRecord]));
+			writeRawModelsJson({ "custom-provider": providerWithApiKey("provider-config-key") });
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const model = registry.find("custom-provider", "test-model");
+			expect(model).toBeDefined();
+
+			expect(await registry.getApiKeyAndHeaders(model!)).toMatchObject({ ok: true, apiKey: "provider-config-key" });
+			authStorage.set("custom-provider", { type: "api_key", key: "stored-api-key" });
+			expect(await registry.getApiKeyAndHeaders(model!)).toMatchObject({ ok: true, apiKey: "stored-api-key" });
+			authStorage.setRuntimeApiKey("custom-provider", "runtime-api-key");
+			expect(await registry.getApiKeyAndHeaders(model!)).toMatchObject({ ok: true, apiKey: "runtime-api-key" });
+			authStorage.removeRuntimeApiKey("custom-provider");
+			authStorage.remove("custom-provider");
+			const poolOnlyRegistry = ModelRegistry.inMemory(authStorage);
+			expect(await poolOnlyRegistry.getApiKeyAndHeaders(model!)).toMatchObject({
+				ok: true,
+				apiKey: "pooled-api-key",
+			});
+		});
+
+		test("broken configured command does not defeat runtime or stored auth", async () => {
+			writeRawModelsJson({ "custom-provider": providerWithApiKey("!exit 1") });
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const model = registry.find("custom-provider", "test-model");
+			expect(model).toBeDefined();
+
+			authStorage.setRuntimeApiKey("custom-provider", "runtime-api-key");
+			expect(await registry.getApiKeyAndHeaders(model!)).toMatchObject({ ok: true, apiKey: "runtime-api-key" });
+			authStorage.removeRuntimeApiKey("custom-provider");
+			authStorage.set("custom-provider", { type: "api_key", key: "stored-api-key" });
+			expect(await registry.getApiKeyAndHeaders(model!)).toMatchObject({ ok: true, apiKey: "stored-api-key" });
+			authStorage.remove("custom-provider");
+			expect(await registry.getApiKeyAndHeaders(model!)).toMatchObject({ ok: false });
+		});
+
+		test("redacts a selected failing configured command", async () => {
+			const sentinel = "configured-command-secret-sentinel";
+			writeRawModelsJson({
+				"custom-provider": providerWithApiKey(`!sh -c 'echo ${sentinel} >&2; exit 1'`),
+			});
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const model = registry.find("custom-provider", "test-model");
+			expect(model).toBeDefined();
+
+			const auth = await registry.getApiKeyAndHeaders(model!);
+			expect(auth).toMatchObject({ ok: false });
+			if (!auth.ok) {
+				expect(auth.error).toContain(
+					'Failed to resolve API key for provider "custom-provider" from configured shell command',
+				);
+				expect(auth.error).not.toContain(sentinel);
+			}
+		});
+
+		test("missing configured environment key does not defeat runtime or stored auth", async () => {
+			const envVarName = "TEST_API_KEY_MISSING_PRECEDENCE_98765";
+			const originalEnv = process.env[envVarName];
+			delete process.env[envVarName];
+			try {
+				writeRawModelsJson({ "custom-provider": providerWithApiKey(`$${envVarName}`) });
+				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+				const model = registry.find("custom-provider", "test-model");
+				expect(model).toBeDefined();
+
+				authStorage.setRuntimeApiKey("custom-provider", "runtime-api-key");
+				expect(await registry.getApiKeyAndHeaders(model!)).toMatchObject({ ok: true, apiKey: "runtime-api-key" });
+				authStorage.removeRuntimeApiKey("custom-provider");
+				authStorage.set("custom-provider", { type: "api_key", key: "stored-api-key" });
+				expect(await registry.getApiKeyAndHeaders(model!)).toMatchObject({ ok: true, apiKey: "stored-api-key" });
+				authStorage.remove("custom-provider");
+				const auth = await registry.getApiKeyAndHeaders(model!);
+				expect(auth).toMatchObject({ ok: false });
+				if (!auth.ok) expect(auth.error).toContain(`from environment variable: ${envVarName}`);
+			} finally {
+				if (originalEnv === undefined) delete process.env[envVarName];
+				else process.env[envVarName] = originalEnv;
+			}
+		});
 
 		test("apiKey with ! prefix executes command and uses stdout", async () => {
 			writeRawModelsJson({

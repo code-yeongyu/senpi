@@ -1,0 +1,1 @@
+{"claude-opus-4-6":{"id":"claude-opus-4-6","name":"Anthropic Opus 4.6","api":"openai-completions","provider":"litellm","baseUrl":"http://localhost:4000/v1","reasoning":true,"thinkingLevelMap":{"xhigh":"xhigh","max":"max"},"input":["text","image"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"contextWindow":1000000,"maxTokens":128000}}

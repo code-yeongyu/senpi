@@ -108,11 +108,12 @@ describe("app-server thread cold lifecycle handlers", () => {
 	});
 
 	it("unloads idle threads after the configured no-subscriber delay", async () => {
-		vi.useFakeTimers();
 		// Given: a started thread becomes idle with no subscribers.
+		// Async harness setup runs under real timers; fake timers cover only the idle countdown.
 		const { connection, registry, root } = await createHarness();
 		const started = await registry.dispatch(connection, { id: 9, method: "thread/start", params: { cwd: root } });
 		const threadId = stringAt(objectAt(responseResult(started), "thread"), "id");
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		await registry.dispatch(connection, { id: 10, method: "thread/unsubscribe", params: { threadId } });
 		connection.received.length = 0;
 
@@ -127,7 +128,6 @@ describe("app-server thread cold lifecycle handlers", () => {
 	});
 
 	it("unloads a thread whose last subscriber vanished on transport close", async () => {
-		vi.useFakeTimers();
 		// Given: a started thread whose only subscriber's socket drops without thread/unsubscribe.
 		const { connection, registry, root, notifications, lifecycle, threads } = await createHarness();
 		const observer = new FakeConnection("conn-observer");
@@ -136,6 +136,8 @@ describe("app-server thread cold lifecycle handlers", () => {
 		const threadId = stringAt(objectAt(responseResult(started), "thread"), "id");
 		observer.received.length = 0;
 
+		// Fake timers only for the idle-unload countdown after the last subscriber leaves.
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		// When: the transport reports the closed connection and the idle delay elapses.
 		const emptied = notifications.removeConnection(connection.id);
 		for (const emptiedThreadId of emptied) {
@@ -153,11 +155,11 @@ describe("app-server thread cold lifecycle handlers", () => {
 	});
 
 	it("clears pending idle-unload timers on dispose", async () => {
-		vi.useFakeTimers();
 		// Given: a thread with a scheduled idle unload.
 		const { connection, registry, root, lifecycle, threads } = await createHarness();
 		const started = await registry.dispatch(connection, { id: 9, method: "thread/start", params: { cwd: root } });
 		const threadId = stringAt(objectAt(responseResult(started), "thread"), "id");
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		await registry.dispatch(connection, { id: 10, method: "thread/unsubscribe", params: { threadId } });
 
 		// When: the server shuts down before the timer fires.

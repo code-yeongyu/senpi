@@ -1,6 +1,11 @@
 # Changelog
 
 ## [Unreleased]
+### Breaking Changes
+
+### Added
+
+- Added `anthropic-xml` as a valid `compat.toolCallFormat` in custom `models.json` provider and model definitions.
 
 ### Breaking Changes
 
@@ -171,8 +176,11 @@
 - Added inherited Kimi K3 model availability and deferred tool loading for compatible providers.
 - Added `ModelRuntime` as the canonical async SDK and internal model/auth facade while retaining the fork's `AuthStorage`, `ModelRegistry`, and corresponding `CreateAgentSessionOptions` compatibility APIs.
 
-### Changed
 
+### Changed
+- Hardened the GPT-5.6 prompt preset's stop contract to Hephaestus parity: the intent line now declares a binding per-turn stop condition, and the Stop Rules section became a Stop Goal that makes stopping mandatory and immediate once every done-condition holds.
+### Fixed
+### Removed
 - Tuned the `gpt-5.6` system prompt preset against the oh-my-opencode Hephaestus GPT-5.6 prompts: verification wording now names validators senpi can actually run (type check/lint instead of a nonexistent diagnostics tool), parallel tool calls are the stated default with serial as the exception and no `;`/`&&` chaining of unrelated shell steps, todo items are named by deliverable and reconciled at turn end, and bracketed `【F:...】`-style citations are banned from output.
 - Reframed the skill-loading trigger in every system prompt to load skills on loose description match, stating the cost asymmetry (an irrelevant load costs little; a missed relevant skill degrades the work).
 - Added an instruction-file precedence rule to the dynamic system prompt's Project Context section: instruction files bind files under their directory, deeper files win on conflict, and explicit user instructions override.
@@ -185,6 +193,7 @@
 - Fixed cloning or forking a session before its first assistant response to explain that the session must be saved first.
 
 ### Removed
+
 
 ## [0.80.9] - 2026-07-16
 
