@@ -1,5 +1,31 @@
 # changes
 
+- `core/agent-session.ts` now centralizes active-model switching, preserving manual selection behavior while supporting non-persistent, non-notifying ephemeral fallback switches.
+- `core/session-manager.ts` records optional fallback model-change metadata and restores the primary model rather than a fallback-period assistant model after restart.
+
+- `core/retry-fallback/validate.ts`: validate fallback-chain configuration with deterministic warnings.
+
+- `core/retry-fallback/log.ts`: add a bounded, sanitized 0600 NDJSON fallback debug logger.
+
+## Retry fallback settings (2026-07-20)
+
+### What changed
+
+- `core/settings-manager.ts` now persists global per-model retry fallback chains, fallback enablement, and the
+  fallback revert policy. Reads provide safe defaults when those optional settings are unset or malformed.
+- Project `retry` settings retain the established one-level merge behavior: a project `fallbackChains` map replaces
+  the global map rather than merging individual chain keys.
+
+### Why
+
+- Model fallback behavior needs a durable, user-configurable chain without adding another settings file or allowing
+  fallback controls to write project settings.
+
+
+- `core/retry-fallback/chains.ts`: adds pure, canonical selector parsing and fallback-chain resolution.
+
+- `core/retry-fallback/cooldown.ts`: adds per-session, lazy-expiry selector cooldowns with provider retry-after and error-derived durations.
+
 ## Model-runtime upstream model id and model-config service tier (2026-07-19)
 
 ### What changed
