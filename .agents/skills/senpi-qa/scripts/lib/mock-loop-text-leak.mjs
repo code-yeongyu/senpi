@@ -10,16 +10,28 @@ export function appendTextToolLeakChecks(checks, outcome) {
 	for (const check of outcome.checks) checks.ok(check.name, check.pass, check.detail);
 }
 
-export async function runTextToolLeakCommand({ apiName, truncated, driveTurn }) {
+export function dispatchTextToolLeakCommand(apiName, truncated, driveTurn, evidenceSlug) {
+	runTextToolLeakCommand({ apiName, truncated, driveTurn, evidenceSlug })
+		.then((pass) => process.exit(pass ? 0 : 1))
+		.catch((error) => {
+			process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
+			process.exit(1);
+		});
+}
+
+export async function runTextToolLeakCommand({ apiName, truncated, driveTurn, evidenceSlug }) {
 	installCleanupHooks();
 	const checks = createChecks(
 		`mock-loop.mjs ${truncated ? "--with-truncated-text-tool-leak" : "--with-text-tool-leak"} --api ${apiName}`,
 	);
-	appendTextToolLeakChecks(checks, await runTextToolLeakScenario({ apiName, truncated, driveTurn }));
+	appendTextToolLeakChecks(
+		checks,
+		await runTextToolLeakScenario({ apiName, truncated, driveTurn, evidenceSlug }),
+	);
 	return checks.finish();
 }
 
-export async function runTextToolLeakScenario({ apiName, truncated, driveTurn }) {
+export async function runTextToolLeakScenario({ apiName, truncated, driveTurn, evidenceSlug }) {
 	const guard = guardRealAuth();
 	const mode = truncated ? "truncated" : "complete";
 	const executionMarker = `SENPI-QA-TEXT-LEAK-EXECUTED:${apiName}:${mode}`;
@@ -95,7 +107,7 @@ export async function runTextToolLeakScenario({ apiName, truncated, driveTurn })
 			);
 		}
 
-		receiptDir = evidenceDir(`mock-loop-text-leak-${apiName}-${mode}`);
+		receiptDir = evidenceDir(evidenceSlug || `mock-loop-text-leak-${apiName}-${mode}`);
 		writeFileSync(
 			join(receiptDir, "receipt.json"),
 			`${JSON.stringify(

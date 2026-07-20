@@ -47,7 +47,7 @@ import {
 import { dispatchExitCode, flagValue, parseToolArgs, positionalAfter } from "./lib/mock-loop-cli.mjs";
 import {
 	appendTextToolLeakChecks,
-	runTextToolLeakCommand,
+	dispatchTextToolLeakCommand,
 	runTextToolLeakScenario,
 	TEXT_LEAK_APIS,
 } from "./lib/mock-loop-text-leak.mjs";
@@ -224,24 +224,14 @@ if (argv[0] === "--self-test") {
 		process.stderr.write(`text-tool leak modes require one of: ${TEXT_LEAK_APIS.join(", ")}\n`);
 		process.exit(2);
 	}
-	runTextToolLeakCommand({ apiName: leakApi, truncated: false, driveTurn })
-		.then((pass) => process.exit(pass ? 0 : 1))
-		.catch((e) => {
-		process.stderr.write(`${e instanceof Error ? e.stack : String(e)}\n`);
-		process.exit(1);
-		});
+	dispatchTextToolLeakCommand(leakApi, false, driveTurn, flagValue(argv, "--evidence"));
 } else if (argv[0] === "--with-truncated-text-tool-leak") {
 	const leakApi = api || "openai-completions";
 	if (!TEXT_LEAK_APIS.includes(leakApi)) {
 		process.stderr.write(`text-tool leak modes require one of: ${TEXT_LEAK_APIS.join(", ")}\n`);
 		process.exit(2);
 	}
-	runTextToolLeakCommand({ apiName: leakApi, truncated: true, driveTurn })
-		.then((pass) => process.exit(pass ? 0 : 1))
-		.catch((e) => {
-		process.stderr.write(`${e instanceof Error ? e.stack : String(e)}\n`);
-		process.exit(1);
-		});
+	dispatchTextToolLeakCommand(leakApi, true, driveTurn, flagValue(argv, "--evidence"));
 } else if (argv[0] === "--with-mcp-tool") {
 	Promise.resolve()
 		.then(() => {
