@@ -7,6 +7,7 @@ import { registerInvokeRecoveryContentExclusionCases } from "./invoke-recovery-c
 import { registerInvokeRecoveryContentOrderCases } from "./invoke-recovery-content-order-cases.ts";
 import { registerInvokeRecoveryNativeCases } from "./invoke-recovery-native-cases.ts";
 import { registerInvokeRecoveryNativeLifecycleCases } from "./invoke-recovery-native-lifecycle-cases.ts";
+import { registerInvokeRecoverySnapshotCancelCases } from "./invoke-recovery-snapshot-cancel-cases.ts";
 import {
 	collectEvents,
 	collectIterator,
@@ -48,6 +49,7 @@ describe("wrapStreamWithInvokeRecovery", () => {
 	registerInvokeRecoveryNativeLifecycleCases(bashTool);
 	registerInvokeRecoveryTerminationCases(bashTool);
 	registerInvokeRecoveryTerminalEdgeCases(bashTool);
+	registerInvokeRecoverySnapshotCancelCases(bashTool);
 
 	it("reconstructs text toolCall text and starts before the closing invoke", { timeout: 1000 }, async () => {
 		// Given

@@ -20,6 +20,7 @@ export function wrapStreamWithInvokeRecovery(
 		let nativeProjection: RecoveryNativeProjection | null = null;
 		let textProjection: RecoveryTextProjection | null = null;
 		let sawToolCall = false;
+		let cancellationRequested = false;
 		const contentLifecycle = new RecoveryContentLifecycle();
 		const terminal = new RecoveryStreamTerminal(outerStream);
 
@@ -29,14 +30,21 @@ export function wrapStreamWithInvokeRecovery(
 			textProjection = null;
 		};
 
-		outerStream.setCancellationHandler(() => {
-			void innerIterator.return?.();
-			finishText();
-			terminal.cancelled(projection);
+		outerStream.setCancellationHandler(async () => {
+			cancellationRequested = true;
+			try {
+				await innerIterator.return?.();
+				finishText();
+				terminal.cancelled(projection);
+			} catch (error) {
+				finishText();
+				terminal.iteratorFailure(projection, error);
+				throw error;
+			}
 		});
 
 		const terminateForFailure = (source: AssistantMessage, failure: RecoveryStreamFailure): void => {
-			if (!projection) return;
+			if (!projection || !outerStream.markSourceClosed()) return;
 			finishText();
 			terminateRecoveryStreamForFailure(outerStream, projection, source, failure);
 		};
@@ -98,6 +106,7 @@ export function wrapStreamWithInvokeRecovery(
 
 		try {
 			for await (const event of innerEvents) {
+				if (cancellationRequested) continue;
 				switch (event.type) {
 					case "start":
 						projection = new StreamMessageProjection(outerStream, event.partial, {
@@ -133,15 +142,18 @@ export function wrapStreamWithInvokeRecovery(
 						break;
 					case "done":
 						if (!synchronizeTerminal(event.message) || !projection) return;
+						if (!outerStream.markSourceClosed()) return;
 						terminal.done(projection, event.message, sawToolCall, event.reason);
 						return;
 					case "error":
 						if (!projection) {
+							if (!outerStream.markSourceClosed()) return;
 							outerStream.push(event);
 							outerStream.end();
 							return;
 						}
 						if (!synchronizeTerminal(event.error)) return;
+						if (!outerStream.markSourceClosed()) return;
 						terminal.sourceError(projection, event.error, sawToolCall, event.reason);
 						return;
 					case "toolcall_start": {
@@ -203,9 +215,11 @@ export function wrapStreamWithInvokeRecovery(
 				}
 			}
 
+			if (cancellationRequested || !outerStream.markSourceClosed()) return;
 			finishText();
 			terminal.exhausted(projection);
 		} catch (error) {
+			if (cancellationRequested || !outerStream.markSourceClosed()) return;
 			finishText();
 			terminal.iteratorFailure(projection, error);
 		}

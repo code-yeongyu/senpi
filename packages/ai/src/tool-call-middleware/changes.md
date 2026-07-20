@@ -6,7 +6,8 @@
 
 - Invoke recovery now keeps abort terminals interrupted, strips executable calls from aborted or consumer-cancelled messages, and never converts them into successful `toolUse` turns.
 - One terminal path handles done, transport errors, iterator failures, exhaustion, and cancellation after flushing each active text parser exactly once. Dangling recovered calls finalize as incomplete and non-executable.
-- Recovery events now snapshot the corresponding source message metadata and complete usage/cost objects, preventing later partial mutations from rewriting previously emitted event metadata. The legacy text-protocol wrapper remains unchanged.
+- Recovery events now snapshot the corresponding source message metadata and complete usage/cost objects, preventing later partial mutations from rewriting previously emitted event metadata. The snapshotter recursively clones enumerable plain objects and arrays with cycle/alias preservation while retaining exotic values by reference.
+- Consumer cancellation now awaits upstream iterator cleanup, shares one promise across concurrent returns, and is disabled once a natural terminal or wrapper-owned IteratorClose begins. The legacy text-protocol wrapper remains unchanged.
 
 ### Why the extension system could not handle this
 
