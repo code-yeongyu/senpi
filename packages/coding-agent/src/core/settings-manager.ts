@@ -899,17 +899,18 @@ export class SettingsManager {
 			for (const [key, entries] of Object.entries(fallbackChains)) {
 				if (!Array.isArray(entries) || !entries.every((entry) => typeof entry === "string")) {
 					return {
-						modelFallback: typeof this.settings.retry?.modelFallback === "boolean" ? this.settings.retry.modelFallback : true,
+						modelFallback:
+							typeof this.settings.retry?.modelFallback === "boolean" ? this.settings.retry.modelFallback : true,
 						chains: {},
-						revertPolicy:
-							this.settings.retry?.fallbackRevertPolicy === "never" ? "never" : "cooldown-expiry",
+						revertPolicy: this.settings.retry?.fallbackRevertPolicy === "never" ? "never" : "cooldown-expiry",
 					};
 				}
 				chains[key] = [...entries];
 			}
 		}
 		return {
-			modelFallback: typeof this.settings.retry?.modelFallback === "boolean" ? this.settings.retry.modelFallback : true,
+			modelFallback:
+				typeof this.settings.retry?.modelFallback === "boolean" ? this.settings.retry.modelFallback : true,
 			chains,
 			revertPolicy: this.settings.retry?.fallbackRevertPolicy === "never" ? "never" : "cooldown-expiry",
 		};

@@ -23,15 +23,15 @@ const models = [
 describe("fallback chain selectors", () => {
 	it("parses case-insensitive selectors and preserves colon-containing model ids", () => {
 		expect(parseFallbackSelector("OpenAI/gpt-5.4:HIGH", models)).toMatchObject({
-		provider: "openai",
-		id: "gpt-5.4",
-		thinkingLevel: "high",
-	});
+			provider: "openai",
+			id: "gpt-5.4",
+			thinkingLevel: "high",
+		});
 		expect(parseFallbackSelector("OPENROUTER/qwen/qwen3-coder:exacto:MAX", models)).toMatchObject({
-		provider: "openrouter",
-		id: "qwen/qwen3-coder:exacto",
-		thinkingLevel: "max",
-	});
+			provider: "openrouter",
+			id: "qwen/qwen3-coder:exacto",
+			thinkingLevel: "max",
+		});
 	});
 
 	it("canonicalizes aliases to a dated-only registry model", () => {
@@ -67,13 +67,13 @@ describe("fallback chain selectors", () => {
 
 	it("canonicalizes chain keys and entries at load", () => {
 		expect(
-		canonicalizeFallbackChains(
-			{
-				"OpenAI/gpt-5.4:HIGH": ["ANTHROPIC/claude-sonnet-4-5:MAX"],
-				default: ["anthropic/claude-sonnet-4-5"],
-			},
-			models,
-		),
+			canonicalizeFallbackChains(
+				{
+					"OpenAI/gpt-5.4:HIGH": ["ANTHROPIC/claude-sonnet-4-5:MAX"],
+					default: ["anthropic/claude-sonnet-4-5"],
+				},
+				models,
+			),
 		).toEqual({ "openai/gpt-5.4:high": ["anthropic/claude-sonnet-4-5:max"] });
 	});
 
@@ -89,11 +89,7 @@ describe("fallback chain selectors", () => {
 	});
 
 	it("returns candidates after the current entry, using base matching when thinking differs", () => {
-		const entries = [
-			"anthropic/claude-sonnet-4-5:max",
-			"openrouter/qwen/qwen3-coder:exacto",
-			"openai/gpt-5.4",
-		];
+		const entries = ["anthropic/claude-sonnet-4-5:max", "openrouter/qwen/qwen3-coder:exacto", "openai/gpt-5.4"];
 
 		expect(candidatesAfter(entries, "openai/primary:high")).toEqual(entries);
 		expect(candidatesAfter(entries, "openai/gpt-5.4:high")).toEqual([]);

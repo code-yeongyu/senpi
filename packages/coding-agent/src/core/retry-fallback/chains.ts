@@ -57,7 +57,8 @@ export function parseFallbackSelector(raw: string, lookup: FallbackModelLookup):
 		models,
 		{ allowInvalidThinkingLevelFallback: false },
 	);
-	if (!parsed.model || parsed.warning || parsed.model.provider.toLowerCase() !== provider.toLowerCase()) return undefined;
+	if (!parsed.model || parsed.warning || parsed.model.provider.toLowerCase() !== provider.toLowerCase())
+		return undefined;
 	if (parsedReference.thinkingLevel && !parsed.thinkingLevel) return undefined;
 
 	return {
