@@ -1,6 +1,7 @@
 import { ENV_SESSION_DIR, getAgentDir } from "../../config.ts";
+import { getMcpService } from "../../core/extensions/builtin/mcp/service.ts";
 import { DefaultResourceLoader } from "../../core/resource-loader.ts";
-import { type CreateAgentSessionOptions, type CreateAgentSessionResult, createAgentSession } from "../../core/sdk.ts";
+import { type CreateAgentSessionOptions, createAgentSession } from "../../core/sdk.ts";
 import {
 	APP_SERVER_LISTEN_USAGE,
 	type AppServerCliArgs,
@@ -19,7 +20,8 @@ import { NotificationRouter } from "./server/notifications.ts";
 import type { ServerCore } from "./server/server-core.ts";
 import { registerAppServerSkillMethods } from "./server/skills.ts";
 import { registerThreadLifecycleHandlers, type ThreadLifecycleController } from "./threads/handlers.ts";
-import { ThreadNotFoundError, ThreadRegistry } from "./threads/registry.ts";
+import { createMcpWireStatusAdapter, createProcessMcpWireStatusAdapter } from "./threads/mcp-wire-status.ts";
+import { type AppServerSessionResult, ThreadNotFoundError, ThreadRegistry } from "./threads/registry.ts";
 import { TurnLog } from "./threads/turn-log.ts";
 import { createTurnEngine, type TurnEngineApi } from "./threads/turns.ts";
 import { type StdioTransport, startStdioTransport } from "./transports/stdio.ts";
@@ -133,10 +135,15 @@ type AppServerRuntime = {
 	readonly dispose: () => void;
 };
 
-function createAppServerRuntime(requestShutdown: (reason: string) => void): AppServerRuntime {
+export function createAppServerRuntime(requestShutdown: (reason: string) => void): AppServerRuntime {
 	const notifications = new NotificationRouter();
 	const registry = createRegistry();
 	let threads: ThreadRegistry;
+	const processMcpWireStatusAdapter = createProcessMcpWireStatusAdapter({
+		agentDir: getAgentDir(),
+		cwd: process.cwd(),
+		env: process.env,
+	});
 	const approvals = new ApprovalBridge((threadId, message) => {
 		let subscriberCount = 0;
 		try {
@@ -155,6 +162,7 @@ function createAppServerRuntime(requestShutdown: (reason: string) => void): AppS
 		agentDir: getAgentDir(),
 		sessionDir: process.env[ENV_SESSION_DIR],
 		createSession: (options) => createBoundAppServerSession(options, approvals, notifications, requestShutdown),
+		mcpWireStatusAdapter: processMcpWireStatusAdapter,
 	});
 	const core = createRoutedServerCore(
 		registry,
@@ -208,23 +216,28 @@ async function createBoundAppServerSession(
 	approvals: ApprovalBridge,
 	notifications: NotificationRouter,
 	requestShutdown: (reason: string) => void,
-): Promise<CreateAgentSessionResult> {
+): Promise<AppServerSessionResult> {
 	const result = await createAgentSession(options);
 	const threadId = result.session.sessionId;
 	await result.session.bindExtensions({
 		uiContext: createAppServerUIContext(approvals, threadId),
-		mode: "rpc",
+		mode: "app-server",
 		shutdownHandler: () => requestShutdown("extension shutdown"),
 		onError: (error) => {
 			notifications.toThread(threadId, { method: "error", params: error });
 		},
 	});
+	// The MCP service captures this session's attach state under its session id.
+	// Convert that captured state into a session-owned adapter before the entry is
+	// registered; later requests never consult the service-global lifecycle view.
+	const mcpService = getMcpService();
+	const mcpWireStatusAdapter = createMcpWireStatusAdapter(mcpService.getWireStatusSnapshot(threadId));
 	result.session.subscribe((event) => {
 		if (event.type === "agent_end") {
 			approvals.cancelPendingForThread(threadId);
 		}
 	});
-	return result;
+	return { ...result, mcpWireStatusAdapter };
 }
 
 function registerTurnHandlers(registry: MethodRegistry, turns: TurnEngineApi): void {

@@ -1,10 +1,12 @@
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { ExtensionAPI, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
-import { detectLiteralBearerWarnings, resolveServerAuth } from "./auth/context.ts";
+import { detectLiteralBearerWarnings, resolveAuthMode, resolveServerAuth } from "./auth/context.ts";
 import { collectToolCatalog } from "./catalog.ts";
 import { getValidCachedServer, readMcpCatalogCache } from "./catalog-cache.ts";
 import { loadMcpConfig, mergeExtensionMcpServers, resolveSkillMcpServer, visitSpawnableMcpServers } from "./config.ts";
 import type { McpServerConfig, ResolvedMcpConfig, ResolvedMcpServer } from "./config-schema.ts";
 import { ServerConnection } from "./connection.ts";
+import { collectAllPages } from "./expose/pagination.ts";
 import { mapMcpCatalogNames } from "./expose/register.ts";
 import type { McpSessionRegistration } from "./expose/session.ts";
 import type { McpServerExposureStatus } from "./expose/status.ts";
@@ -30,6 +32,14 @@ import type {
 	McpServiceSnapshot,
 	McpSessionContext,
 	McpSessionOptions,
+	McpWireAuthStatus,
+	McpWireJsonValue,
+	McpWireResource,
+	McpWireResourceTemplate,
+	McpWireServerInfo,
+	McpWireStatusServer,
+	McpWireStatusSnapshot,
+	McpWireTool,
 } from "./service-types.ts";
 import {
 	connectAndRefreshMcpCatalog,
@@ -37,6 +47,10 @@ import {
 	raceMcpStartupConnect,
 	shouldRaceMcpStartup,
 } from "./startup-race.ts";
+
+type ListedTool = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
+type ListedResource = Awaited<ReturnType<Client["listResources"]>>["resources"][number];
+type ListedResourceTemplate = Awaited<ReturnType<Client["listResourceTemplates"]>>["resourceTemplates"][number];
 
 export { registerToolsPreservingActiveSet } from "./active-set.ts";
 
@@ -57,6 +71,9 @@ export class McpService {
 	#historyScanned = false;
 	#sessionOptions: McpSessionOptions = {};
 	#pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool"> | undefined;
+	#attachQueue: Promise<void> = Promise.resolve();
+	#latestWireStatus: McpWireStatusSnapshot = { servers: [] };
+	readonly #wireStatusBySession = new Map<string, McpWireStatusSnapshot>();
 	readonly #connections = new Map<string, McpConnectionEntry>();
 	readonly #connectionKeysByName = new Map<string, string>();
 
@@ -66,31 +83,39 @@ export class McpService {
 		_pi?: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
 		options: McpSessionOptions = {},
 	): Promise<void> {
-		this.#sessionContext = ctx;
-		this.#sessionStartCount += 1;
-		this.#lastSessionStartReason = event.reason;
-		const config = loadMcpConfig({
-			agentDir: options.agentDir,
-			cwd: ctx.cwd,
-			env: options.env,
-			projectTrusted: options.projectTrusted ?? ctx.isProjectTrusted(),
+		const attach = this.#attachQueue.then(async () => {
+			this.#sessionContext = ctx;
+			this.#sessionStartCount += 1;
+			this.#lastSessionStartReason = event.reason;
+			const config = loadMcpConfig({
+				agentDir: options.agentDir,
+				cwd: ctx.cwd,
+				env: options.env,
+				projectTrusted: options.projectTrusted ?? ctx.isProjectTrusted(),
+			});
+			mergeExtensionMcpServers(config, ctx.getRegisteredMcpServers?.() ?? []);
+			this.#config = config;
+			this.#pi = _pi;
+			this.#authAgentDir = options.agentDir;
+			this.#authEnv = options.env;
+			this.#sessionOptions = options;
+			const toolRefreshGeneration = this.#toolRefreshGeneration + 1;
+			this.#toolRefreshGeneration = toolRefreshGeneration;
+			await this.#syncFromConfig(config, options, event.reason !== "reload", _pi, toolRefreshGeneration);
+			if (_pi !== undefined) await this.#registerDirectTools(_pi);
+			// Replay promotion markers from the (possibly resumed) session history
+			// BEFORE the first turn: the request tool snapshot is taken before the
+			// per-turn context event fires, so the context-event replay alone lands
+			// one turn late. Doing it here puts restored tools on the very first
+			// wire payload after a --continue/resume.
+			if (_pi !== undefined) this.#rehydrateFromSessionHistory(ctx);
+			if (shouldCaptureWireStatus(ctx)) await this.#captureWireStatus(ctx.sessionManager?.getSessionId?.());
 		});
-		mergeExtensionMcpServers(config, ctx.getRegisteredMcpServers?.() ?? []);
-		this.#config = config;
-		this.#pi = _pi;
-		this.#authAgentDir = options.agentDir;
-		this.#authEnv = options.env;
-		this.#sessionOptions = options;
-		const toolRefreshGeneration = this.#toolRefreshGeneration + 1;
-		this.#toolRefreshGeneration = toolRefreshGeneration;
-		await this.#syncFromConfig(config, options, event.reason !== "reload", _pi, toolRefreshGeneration);
-		if (_pi !== undefined) await this.#registerDirectTools(_pi);
-		// Replay promotion markers from the (possibly resumed) session history
-		// BEFORE the first turn: the request tool snapshot is taken before the
-		// per-turn context event fires, so the context-event replay alone lands
-		// one turn late. Doing it here puts restored tools on the very first
-		// wire payload after a --continue/resume.
-		if (_pi !== undefined) this.#rehydrateFromSessionHistory(ctx);
+		this.#attachQueue = attach.then(
+			() => undefined,
+			() => undefined,
+		);
+		await attach;
 	}
 
 	/**
@@ -126,6 +151,9 @@ export class McpService {
 			this.#toolRefreshGeneration = toolRefreshGeneration;
 			await this.#syncFromConfig(config, this.#sessionOptions, false, pi, toolRefreshGeneration);
 			await this.#registerDirectTools(pi);
+			if (this.#sessionContext !== null && shouldCaptureWireStatus(this.#sessionContext)) {
+				await this.#captureWireStatus(this.#sessionContext.sessionManager?.getSessionId?.());
+			}
 		}
 		return warnings;
 	}
@@ -169,6 +197,8 @@ export class McpService {
 		this.#lastDisposeReason = reason;
 		this.#sessionContext = null;
 		this.#config = null;
+		this.#wireStatusBySession.clear();
+		this.#latestWireStatus = { servers: [] };
 		const entries = [...this.#connections.values()];
 		this.#connections.clear();
 		this.#connectionKeysByName.clear();
@@ -226,6 +256,17 @@ export class McpService {
 			hasSessionContext: this.#sessionContext !== null,
 			connectionCount: this.#connections.size,
 		};
+	}
+
+	/**
+	 * Return the attach-time inventory captured for one session. This is the
+	 * handoff consumed by the app-server's session-owned adapter; it deliberately
+	 * does not expose or derive from the lifecycle-only server snapshots.
+	 */
+	getWireStatusSnapshot(sessionId?: string): McpWireStatusSnapshot {
+		return sessionId === undefined
+			? this.#latestWireStatus
+			: (this.#wireStatusBySession.get(sessionId) ?? { servers: [] });
 	}
 
 	async #syncFromConfig(
@@ -407,6 +448,77 @@ export class McpService {
 		return buildMcpServerSnapshot(name, this.#config?.servers[name], connection, this.#entryForName(name));
 	}
 
+	async #captureWireStatus(sessionId: string | undefined): Promise<void> {
+		const config = this.#config;
+		if (config === null) return;
+		const servers = await Promise.all(
+			Object.keys(config.servers)
+				.sort()
+				.map((name) => this.#captureWireStatusServer(name, config.servers[name])),
+		);
+		const snapshot: McpWireStatusSnapshot = { servers };
+		this.#latestWireStatus = snapshot;
+		if (sessionId !== undefined) this.#wireStatusBySession.set(sessionId, snapshot);
+	}
+
+	async #captureWireStatusServer(name: string, server: ResolvedMcpServer | undefined): Promise<McpWireStatusServer> {
+		const entry = this.#entryForName(name);
+		const connection = entry?.connection;
+		const connected = connection?.state === "connected";
+		const cached = entry?.cachedCatalog;
+		let tools = cached?.tools ?? [];
+		let resources = cached?.resources ?? [];
+		let resourceTemplates: ListedResourceTemplate[] = [];
+		let serverInfo: McpWireServerInfo | null = null;
+
+		if (connected && connection !== undefined) {
+			const client = connection.client;
+			const version = client.getServerVersion();
+			if (version !== undefined) serverInfo = mapWireServerInfo(version);
+			if (cached === undefined) {
+				try {
+					tools = (
+						await collectAllPages<ListedTool>((cursor) =>
+							client.listTools(cursor === undefined ? {} : { cursor }),
+						)
+					).items;
+				} catch (error: unknown) {
+					if (!(error instanceof Error)) throw error;
+					tools = [];
+				}
+				try {
+					resources = (
+						await collectAllPages<ListedResource>((cursor) =>
+							client.listResources(cursor === undefined ? {} : { cursor }),
+						)
+					).items;
+				} catch (error: unknown) {
+					if (!(error instanceof Error)) throw error;
+					resources = [];
+				}
+			}
+			try {
+				resourceTemplates = (
+					await collectAllPages<ListedResourceTemplate>((cursor) =>
+						client.listResourceTemplates(cursor === undefined ? {} : { cursor }),
+					)
+				).items;
+			} catch (error: unknown) {
+				if (!(error instanceof Error)) throw error;
+				resourceTemplates = [];
+			}
+		}
+
+		return {
+			name,
+			serverInfo,
+			tools: tools.map(mapWireTool),
+			resources: resources.map(mapWireResource),
+			resourceTemplates: resourceTemplates.map(mapWireResourceTemplate),
+			authStatus: wireAuthStatus(entry, server),
+		};
+	}
+
 	#entryForName(name: string): McpConnectionEntry | undefined {
 		const key = this.#connectionKeysByName.get(name);
 		return key === undefined ? undefined : this.#connections.get(key);
@@ -440,6 +552,99 @@ export class McpService {
 	getNativeToolSearchSetting(): "auto" | boolean | undefined {
 		return this.#config?.settings.nativeToolSearch;
 	}
+}
+
+function wireAuthStatus(
+	entry: McpConnectionEntry | undefined,
+	server: ResolvedMcpServer | undefined,
+): McpWireAuthStatus {
+	const mode = entry?.authPlan?.mode ?? (server?.config === undefined ? "none" : resolveAuthMode(server.config));
+	switch (mode) {
+		case "none":
+			return "unsupported";
+		case "bearer":
+			return entry?.connection.state === "needs_auth" ? "notLoggedIn" : "bearerToken";
+		case "oauth":
+			return entry?.authPlan?.provider?.tokens() === undefined ? "notLoggedIn" : "oAuth";
+		default:
+			return assertNever(mode);
+	}
+}
+
+function shouldCaptureWireStatus(ctx: McpSessionContext): boolean {
+	return ctx.mode === "app-server";
+}
+
+function mapWireServerInfo(info: NonNullable<ReturnType<Client["getServerVersion"]>>): McpWireServerInfo {
+	return {
+		name: info.name,
+		title: info.title ?? null,
+		version: info.version,
+		description: info.description ?? null,
+		icons: info.icons?.map(toWireJsonValue) ?? null,
+		websiteUrl: info.websiteUrl ?? null,
+	};
+}
+
+function mapWireTool(tool: ListedTool): McpWireTool {
+	return {
+		name: tool.name,
+		...(tool.title === undefined ? {} : { title: tool.title }),
+		...(tool.description === undefined ? {} : { description: tool.description }),
+		inputSchema: toWireJsonValue(tool.inputSchema),
+		...(tool.outputSchema === undefined ? {} : { outputSchema: toWireJsonValue(tool.outputSchema) }),
+		...(tool.annotations === undefined ? {} : { annotations: toWireJsonValue(tool.annotations) }),
+		...(tool.icons === undefined ? {} : { icons: tool.icons.map(toWireJsonValue) }),
+		...(tool._meta === undefined ? {} : { _meta: toWireJsonValue(tool._meta) }),
+	};
+}
+
+function mapWireResource(resource: ListedResource): McpWireResource {
+	return {
+		uri: resource.uri,
+		name: resource.name,
+		...(resource.title === undefined ? {} : { title: resource.title }),
+		...(resource.description === undefined ? {} : { description: resource.description }),
+		...(resource.mimeType === undefined ? {} : { mimeType: resource.mimeType }),
+		...(resource.size === undefined ? {} : { size: resource.size }),
+		...(resource.annotations === undefined ? {} : { annotations: toWireJsonValue(resource.annotations) }),
+		...(resource.icons === undefined ? {} : { icons: resource.icons.map(toWireJsonValue) }),
+		...(resource._meta === undefined ? {} : { _meta: toWireJsonValue(resource._meta) }),
+	};
+}
+
+function mapWireResourceTemplate(template: ListedResourceTemplate): McpWireResourceTemplate {
+	return {
+		uriTemplate: template.uriTemplate,
+		name: template.name,
+		...(template.title === undefined ? {} : { title: template.title }),
+		...(template.description === undefined ? {} : { description: template.description }),
+		...(template.mimeType === undefined ? {} : { mimeType: template.mimeType }),
+		...(template.annotations === undefined ? {} : { annotations: toWireJsonValue(template.annotations) }),
+		...(template.icons === undefined ? {} : { icons: template.icons.map(toWireJsonValue) }),
+		...(template._meta === undefined ? {} : { _meta: toWireJsonValue(template._meta) }),
+	};
+}
+
+function toWireJsonValue(value: unknown): McpWireJsonValue {
+	if (value === null || typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
+		return value;
+	}
+	if (Array.isArray(value)) return value.map(toWireJsonValue);
+	if (isRecord(value)) {
+		const object: Record<string, McpWireJsonValue | undefined> = {};
+		for (const [key, child] of Object.entries(value)) object[key] = toWireJsonValue(child);
+		return object;
+	}
+	return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function assertNever(value: never): never {
+	throw new Error(`Unhandled MCP auth mode: ${JSON.stringify(value)}`);
 }
 
 let service: McpService | null = null;

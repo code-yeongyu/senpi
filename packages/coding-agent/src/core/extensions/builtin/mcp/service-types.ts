@@ -6,13 +6,82 @@ import type { ServerConnection, ServerConnectionState } from "./connection.ts";
 import type { McpLogger } from "./log.ts";
 
 export type McpDisposeReason = Extract<SessionShutdownEvent["reason"], "quit" | "reload">;
+
+export type McpWireJsonValue =
+	| null
+	| boolean
+	| number
+	| string
+	| readonly McpWireJsonValue[]
+	| { readonly [key: string]: McpWireJsonValue | undefined };
+
+export type McpWireAuthStatus = "unsupported" | "notLoggedIn" | "bearerToken" | "oAuth";
+
+export type McpWireServerInfo = {
+	readonly name: string;
+	readonly title: string | null;
+	readonly version: string;
+	readonly description: string | null;
+	readonly icons: readonly McpWireJsonValue[] | null;
+	readonly websiteUrl: string | null;
+};
+
+export type McpWireTool = {
+	readonly name: string;
+	readonly title?: string;
+	readonly description?: string;
+	readonly inputSchema: McpWireJsonValue;
+	readonly outputSchema?: McpWireJsonValue;
+	readonly annotations?: McpWireJsonValue;
+	readonly icons?: readonly McpWireJsonValue[];
+	readonly _meta?: McpWireJsonValue;
+};
+
+export type McpWireResource = {
+	readonly annotations?: McpWireJsonValue;
+	readonly description?: string;
+	readonly mimeType?: string;
+	readonly name: string;
+	readonly size?: number;
+	readonly title?: string;
+	readonly uri: string;
+	readonly icons?: readonly McpWireJsonValue[];
+	readonly _meta?: McpWireJsonValue;
+};
+
+export type McpWireResourceTemplate = {
+	readonly annotations?: McpWireJsonValue;
+	readonly uriTemplate: string;
+	readonly name: string;
+	readonly title?: string;
+	readonly description?: string;
+	readonly mimeType?: string;
+	readonly icons?: readonly McpWireJsonValue[];
+	readonly _meta?: McpWireJsonValue;
+};
+
+export type McpWireStatusServer = {
+	readonly name: string;
+	readonly serverInfo: McpWireServerInfo | null;
+	readonly tools: readonly McpWireTool[];
+	readonly resources: readonly McpWireResource[];
+	readonly resourceTemplates: readonly McpWireResourceTemplate[];
+	readonly authStatus: McpWireAuthStatus;
+};
+
+export type McpWireStatusSnapshot = {
+	readonly servers: readonly McpWireStatusServer[];
+};
+
 export type McpSessionContext = Pick<ExtensionContext, "cwd" | "isProjectTrusted"> & {
+	mode?: ExtensionContext["mode"];
 	/**
 	 * Session history access, present on the real ExtensionContext. Only
 	 * getEntries is needed (attach-time promotion rehydration); keeping the
 	 * requirement narrow lets tests pass a two-line fake.
 	 */
-	sessionManager?: Pick<ExtensionContext["sessionManager"], "getEntries">;
+	sessionManager?: Pick<ExtensionContext["sessionManager"], "getEntries"> &
+		Partial<Pick<ExtensionContext["sessionManager"], "getSessionId">>;
 	/**
 	 * Extension-declared MCP servers. Read on every attach so reattach/reload
 	 * paths pick up the current declarations without caching them in the MCP
