@@ -1004,6 +1004,11 @@ export class AgentSession {
 		return undefined;
 	}
 
+	private _isAssistantFromBeforeLatestCompaction(assistantMessage: AssistantMessage): boolean {
+		const compactionEntry = getLatestCompactionEntry(this.sessionManager.getBranch());
+		return compactionEntry !== null && assistantMessage.timestamp <= new Date(compactionEntry.timestamp).getTime();
+	}
+
 	private _replaceMessageInPlace(target: AgentMessage, replacement: AgentMessage): void {
 		// Agent-core stores the finalized message object in its state before emitting message_end.
 		// SessionManager persistence happens later in _processAgentEvent() with event.message.
@@ -1614,7 +1619,7 @@ export class AgentSession {
 			const lastAssistant = this._findLastAssistantMessage();
 			if (lastAssistant) {
 				const compacted = await this._checkCompaction(lastAssistant, false, "pre_prompt");
-				if (!compacted) {
+				if (!compacted && !this._isAssistantFromBeforeLatestCompaction(lastAssistant)) {
 					const settings = this.settingsManager.getCompactionSettings();
 					const contextTokens = estimateContextTokens(
 						filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
@@ -2692,9 +2697,7 @@ export class AgentSession {
 		// compaction boundary. This prevents a stale pre-compaction usage/error
 		// from retriggering compaction on the first prompt after compaction.
 		const compactionEntry = getLatestCompactionEntry(this.sessionManager.getBranch());
-		const assistantIsFromBeforeCompaction =
-			compactionEntry !== null && assistantMessage.timestamp <= new Date(compactionEntry.timestamp).getTime();
-		if (assistantIsFromBeforeCompaction) {
+		if (this._isAssistantFromBeforeLatestCompaction(assistantMessage)) {
 			return false;
 		}
 

@@ -1,5 +1,25 @@
 # Changes
 
+## 2026-07-20 - Terminating queue recovery survives compaction preparation
+
+### What changed and why
+
+- `agent-loop.ts` re-polls a terminating turn's drained steering or follow-up queue after next-turn preparation, restoring it on preparation failure or abort and continuing only with work that remains queued.
+- This keeps queued recovery input owned by agent-core while coding-agent compaction settles, preventing a queued prompt from being dropped or dispatched from stale history.
+
+### Files modified
+
+- `packages/agent/src/agent-loop.ts`
+- `packages/agent/test/agent.test.ts`
+
+### Why the extension system could not handle this
+
+- Queue draining, restoration, and next-turn preparation run inside the agent loop before coding-agent extensions can observe or safely requeue the consumed messages.
+
+### Expected merge conflict zones on next upstream sync
+
+- MEDIUM: `packages/agent/src/agent-loop.ts` around terminating tool batches, queue polling, and next-turn preparation.
+
 ## 2026-07-06 - Stream idle timeout aborts the dangling provider request
 
 ### What changed and why
