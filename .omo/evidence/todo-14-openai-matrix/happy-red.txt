@@ -1,0 +1,32 @@
+
+--- effective both-entry-point mutation ---
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.9 [39m[90m/Users/yeongyu/local-workspaces/senpi-wt/claude-xml-toolcall-recovery/packages/coding-agent[39m
+
+ [31m×[39m test/claude-xml-toolcall-recovery-openai.test.ts[2m > [22mClaude XML tool-call recovery through OpenAI completions wire format[2m > [22mexecutes a complete leaked invoke through raw OpenAI SSE and replays tool_calls[33m 6612[2mms[22m[39m
+[31m   → stream terminal signal was not written[39m
+ [31m×[39m test/claude-xml-toolcall-recovery-openai.test.ts[2m > [22mClaude XML tool-call recovery through OpenAI completions wire format[2m > [22msafe-fails a truncated leaked invoke through raw OpenAI SSE and replays an error tool message[33m 6074[2mms[22m[39m
+[31m   → stream terminal signal was not written[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 2 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m test/claude-xml-toolcall-recovery-openai.test.ts[2m > [22mClaude XML tool-call recovery through OpenAI completions wire format[2m > [22mexecutes a complete leaked invoke through raw OpenAI SSE and replays tool_calls
+[41m[1m FAIL [22m[49m test/claude-xml-toolcall-recovery-openai.test.ts[2m > [22mClaude XML tool-call recovery through OpenAI completions wire format[2m > [22msafe-fails a truncated leaked invoke through raw OpenAI SSE and replays an error tool message
+[31m[1mError[22m: stream terminal signal was not written[39m
+[36m [2m❯[22m Timeout.<anonymous> test/support/openai-recovery-wire.ts:[2m28:36[22m[39m
+    [90m 26|[39m   promise[33m,[39m
+    [90m 27|[39m   [35mnew[39m [33mPromise[39m[33m<[39mnever[33m>[39m((_[33m,[39m reject) [33m=>[39m {
+    [90m 28|[39m    timer [33m=[39m [34msetTimeout[39m(() [33m=>[39m [34mreject[39m([35mnew[39m [33mError[39m(message))[33m,[39m [34m2_000[39m)[33m;[39m
+    [90m   |[39m                                    [31m^[39m
+    [90m 29|[39m   })[33m,[39m
+    [90m 30|[39m  ])[33m.[39m[35mfinally[39m(() [33m=>[39m {
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[90m (2)[39m
+[2m   Start at [22m 12:43:36
+[2m   Duration [22m 17.36s[2m (transform 2.94s, setup 20ms, import 4.55s, tests 12.69s, environment 0ms)[22m
+
+mutation_exit=1

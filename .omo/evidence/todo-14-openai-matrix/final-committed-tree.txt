@@ -1,0 +1,8 @@
+Todo 14 final committed-tree contract
+
+The standalone committed-tree driver is .omo/evidence/todo-14-openai-matrix/run-openai-matrix.mts.
+Run: npx tsx .omo/evidence/todo-14-openai-matrix/run-openai-matrix.mts
+Expected: complete requests=2/start=1/end=1/close=1/execution=1; truncated requests=2/start=1/end=1/close=0/execution=0.
+The immutable raw receipt records sanitized headers, raw request bodies, lifecycle events, persisted messages, and counters for both scenarios.
+Focused tests, related OpenAI parser/serializer/retry tests, Todo 11-13 runtime/incomplete tests, root tsgo, AI/agent/coding-agent builds, browser smoke, Biome, diff check, and LOC gate passed before staging.
+The commit receipt under .omo/evidence/commits/todo-14.commit binds this staged tree to the normal-hook commit.

@@ -1,0 +1,34 @@
+{
+  "complete": {
+    "requests": 2,
+    "events": [
+      "text_start",
+      "text_delta",
+      "toolcall_start",
+      "toolcall_delta",
+      "toolcall_end",
+      "text_end",
+      "text_start",
+      "text_delta",
+      "text_end"
+    ],
+    "closeCount": 1,
+    "executeCount": 1
+  },
+  "truncated": {
+    "requests": 2,
+    "events": [
+      "text_start",
+      "text_delta",
+      "toolcall_start",
+      "text_end",
+      "toolcall_end",
+      "text_start",
+      "text_delta",
+      "text_end"
+    ],
+    "closeCount": 0,
+    "executeCount": 0
+  }
+}
+receipt_byte_equal=1
