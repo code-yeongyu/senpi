@@ -206,6 +206,9 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the senpi version update check. Use `--
 | `retry.enabled` | boolean | `true` | Enable automatic agent-level retry on transient errors |
 | `retry.maxRetries` | number | `3` | Maximum agent-level retry attempts |
 | `retry.baseDelayMs` | number | `2000` | Base delay for agent-level exponential backoff (2s, 4s, 8s) |
+| `retry.modelFallback` | boolean | `true` | Let eligible retry failures advance through configured per-model fallback chains |
+| `retry.fallbackChains` | `Record<string, string[]>` | `{}` | Ordered exact model-selector to fallback-selector chains |
+| `retry.fallbackRevertPolicy` | `"cooldown-expiry"` \| `"never"` | `"cooldown-expiry"` | Automatic primary-model restoration policy |
 | `retry.provider.timeoutMs` | number | `300000` | Provider/SDK request timeout and stream idle timeout in milliseconds |
 | `retry.provider.maxRetries` | number | `0` | Provider/SDK retry attempts |
 | `retry.provider.maxRetryDelayMs` | number | `60000` | Max server-requested delay before failing (60s) |
@@ -228,6 +231,38 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
   }
 }
 ```
+
+#### Model fallback chains
+
+`retry.fallbackChains` maps one exact primary-model selector to an ordered list of fallback selectors. A selector is `provider/model` with an optional `:thinking-level` suffix. For example, this switches Fable 5 to Kimi K3 at `max` thinking when an eligible failure occurs:
+
+```json
+{
+  "retry": {
+    "modelFallback": true,
+    "fallbackChains": {
+      "anthropic/claude-fable-5": ["ccapi/kimi-k3:max"]
+    },
+    "fallbackRevertPolicy": "cooldown-expiry"
+  }
+}
+```
+
+A chain is only for the exact primary model it names: selector lookup first considers an exact thinking-level selector, then the same `provider/model` without its thinking suffix. Wildcard selectors, role keys such as `default`, and other catch-all chains are not supported.
+
+A fallback entry with `:thinking-level` requests that level on the target model; a bare entry inherits the current thinking level. Either value is clamped to the target model's supported levels. When an unpinned fallback later returns to the primary, it restores the original thinking level unless you changed it while using the fallback.
+
+`/fallback` writes these settings to the global settings file. Project settings are still merged when read; because `fallbackChains` is a nested map, a project `retry.fallbackChains` replaces the global map rather than merging individual chain keys.
+
+#### Fallback behavior and diagnostics
+
+With `retry.enabled` and `retry.modelFallback` enabled, Senpi can switch from a transient or eligible hard provider failure to the next configured candidate. The switch continues the current turn without changing the existing conversation prefix, preserving prompt-cache inputs; fallback lifecycle events are never added to model context. Returning to a primary model happens only at a turn boundary, never while a response is streaming.
+
+Anthropic streaming refusals are identified from typed `stopDetails`. A configured candidate receives an immediate **pinned** fallback switch with a user-visible fallback notice: Senpi does not retry the refusing model and a pinned fallback never auto-reverts. Set `retry.fallbackRevertPolicy` to `"cooldown-expiry"` (the default) to return an unpinned fallback to its primary after the primary's cooldown expires, or `"never"` to keep the fallback until you change models.
+
+Fallback decisions are process-local. A `senpi-task` or subagent child process reads its own settings and maintains its own in-memory suppression state; it does not affect its parent process. Disable fallback for one run without changing settings with `--no-model-fallback` or `SENPI_NO_FALLBACK=1`.
+
+For diagnostics, Senpi writes sanitized NDJSON records for candidate skips, cooldowns, switches, reverts, manual clears, and validation warnings to `<agentDir>/logs/fallback.log`. The file is mode `0600` and rotates at 5 MB (`fallback.log.1`).
 
 ### Message Delivery
 

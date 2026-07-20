@@ -72,6 +72,7 @@ export interface HarnessOptions {
 	excludedToolNames?: string[];
 	resourceLoader?: ResourceLoader;
 	extensionFactories?: Array<InlineExtension | CreateTestExtensionsResultInput>;
+	extensionFlagValues?: Map<string, boolean | string>;
 	withConfiguredAuth?: boolean;
 	upstreamModelId?: string;
 	serviceTier?: "auto" | "flex" | "priority";
@@ -79,6 +80,7 @@ export interface HarnessOptions {
 	prepareNextTurnWithContext?: AgentOptions["prepareNextTurnWithContext"];
 	persistSession?: boolean;
 	autoTitleSessions?: boolean;
+	fallbackNow?: () => number;
 }
 
 export interface Harness {
@@ -94,6 +96,7 @@ export interface Harness {
 	appendResponses: (responses: FauxResponseStep[]) => void;
 	getPendingResponseCount: () => number;
 	events: AgentSessionEvent[];
+	getExtensionRunner(): ExtensionRunner;
 	eventsOfType<T extends AgentSessionEvent["type"]>(type: T): Extract<AgentSessionEvent, { type: T }>[];
 	tempDir: string;
 	cleanup: () => void;
@@ -190,6 +193,11 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 	const extensionsResult = options.extensionFactories
 		? await createTestExtensionsResult(options.extensionFactories, tempDir)
 		: undefined;
+	if (extensionsResult && options.extensionFlagValues) {
+		for (const [name, value] of options.extensionFlagValues) {
+			extensionsResult.runtime.flagValues.set(name, value);
+		}
+	}
 	const resourceLoader =
 		options.resourceLoader ?? createTestResourceLoader(extensionsResult ? { extensionsResult } : undefined);
 
@@ -198,6 +206,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		sessionManager,
 		settingsManager,
 		cwd: tempDir,
+		agentDir: join(tempDir, "agent"),
 		modelRuntime: getModelRuntime(modelRegistry),
 		resourceLoader,
 		baseToolsOverride: toolMap,
@@ -206,6 +215,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		excludedToolNames: options.excludedToolNames,
 		extensionRunnerRef,
 		autoTitleSessions: options.autoTitleSessions,
+		fallbackNow: options.fallbackNow,
 	});
 
 	const events: AgentSessionEvent[] = [];
@@ -225,6 +235,11 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		appendResponses: fauxProvider.appendResponses,
 		getPendingResponseCount: fauxProvider.getPendingResponseCount,
 		events,
+		getExtensionRunner() {
+			const runner = extensionRunnerRef.current;
+			if (!runner) throw new Error("Extension runner was not initialized");
+			return runner;
+		},
 		eventsOfType<T extends AgentSessionEvent["type"]>(type: T) {
 			return events.filter((event): event is Extract<AgentSessionEvent, { type: T }> => event.type === type);
 		},

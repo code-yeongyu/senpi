@@ -14,7 +14,7 @@ describe("AgentSession model and extension characterization", () => {
 		}
 	});
 
-	it("setModel saves the model and emits model_select", async () => {
+	it("setModel preserves its model-selection persistence and lifecycle contract", async () => {
 		const modelEvents: string[] = [];
 		const harness = await createHarness({
 			models: [
@@ -32,9 +32,16 @@ describe("AgentSession model and extension characterization", () => {
 		harnesses.push(harness);
 		const nextModel = harness.getModel("faux-2")!;
 
+		const initialRevision = harness.session.getMessageRevision();
+		harness.session.setThinkingLevel("high");
 		await harness.session.setModel(nextModel);
 
 		expect(harness.session.model?.id).toBe("faux-2");
+		expect(harness.session.getMessageRevision()).toBeGreaterThan(initialRevision);
+		expect(harness.session.thinkingLevel).toBe("high");
+		expect(harness.settingsManager.getDefaultProvider()).toBe(nextModel.provider);
+		expect(harness.settingsManager.getDefaultModel()).toBe(nextModel.id);
+		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("high");
 		expect(modelEvents).toEqual(["faux-1->faux-2:set"]);
 		expect(
 			harness.sessionManager

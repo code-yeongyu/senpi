@@ -12,6 +12,7 @@ import type {
 	AnthropicMessagesCompat,
 	Api,
 	AssistantMessage,
+	AssistantStopDetails,
 	CacheRetention,
 	Context,
 	ImageContent,
@@ -1198,6 +1199,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						if (stopReasonResult.errorMessage) {
 							output.errorMessage = stopReasonResult.errorMessage;
 						}
+						if (stopReasonResult.stopDetails) {
+							output.stopDetails = stopReasonResult.stopDetails;
+						}
 					}
 					// Only update usage fields if present (not null).
 					// Preserves input_tokens from message_start when proxies omit it in message_delta.
@@ -1956,7 +1960,8 @@ function convertTools(
 function mapStopReason(
 	reason: Anthropic.Messages.StopReason | string,
 	stopDetails?: RefusalStopDetails | null,
-): { stopReason: StopReason; errorMessage?: string } {
+): { stopReason: StopReason; errorMessage?: string; stopDetails?: AssistantStopDetails } {
+	const explanation = stopDetails?.explanation;
 	switch (reason) {
 		case "end_turn":
 			return { stopReason: "stop" };
@@ -1967,14 +1972,15 @@ function mapStopReason(
 		case "refusal":
 			return {
 				stopReason: "error",
-				errorMessage: stopDetails?.explanation || `The model refused to complete the request`,
+				errorMessage: explanation || `The model refused to complete the request`,
+				stopDetails: explanation == null ? { type: "refusal" } : { type: "refusal", explanation },
 			};
 		case "pause_turn": // Stop is good enough -> resubmit
 			return { stopReason: "stop" };
 		case "stop_sequence":
 			return { stopReason: "stop" }; // We don't supply stop sequences, so this should never happen
 		case "sensitive": // Content flagged by safety filters (not yet in SDK types)
-			return { stopReason: "error" };
+			return { stopReason: "error", stopDetails: { type: "sensitive" } };
 		default:
 			// Handle unknown stop reasons gracefully (API may add new values)
 			throw new Error(`Unhandled stop reason: ${reason}`);

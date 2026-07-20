@@ -290,6 +290,30 @@ export interface ExtensionUIContext {
 // Extension Context
 // ============================================================================
 
+export interface RetryFallbackSettings {
+	modelFallback: boolean;
+	chains: Readonly<Record<string, readonly string[]>>;
+	revertPolicy: "cooldown-expiry" | "never";
+}
+
+export interface RetryFallbackStatus {
+	active: boolean;
+	currentModel?: string;
+	originalSelector?: string;
+	pinned: boolean;
+}
+
+/** Narrow session-owned settings access for extensions that manage retry fallback. */
+export interface ExtensionSessionSettings {
+	getRetryFallbackSettings(): RetryFallbackSettings;
+	setFallbackChain(key: string, entries: readonly string[]): Promise<void>;
+	removeFallbackChain(key: string): Promise<void>;
+	setModelFallbackEnabled(enabled: boolean): Promise<void>;
+	setFallbackRevertPolicy(policy: "cooldown-expiry" | "never"): Promise<void>;
+	reload(): Promise<void>;
+	getFallbackStatus(): RetryFallbackStatus | undefined;
+}
+
 export interface ContextUsage {
 	/** Estimated context tokens, or null if unknown (e.g. right after compaction, before next LLM response). */
 	tokens: number | null;
@@ -365,6 +389,8 @@ export interface ExtensionContext {
 	getContextUsage(): ContextUsage | undefined;
 	/** Get resolved compaction settings from global/project/user overrides. */
 	getCompactionSettings(): CompactionPreparation["settings"];
+	/** Manage retry fallback through the SettingsManager owned by this session. */
+	sessionSettings: ExtensionSessionSettings;
 	/** Trigger compaction without awaiting completion. */
 	compact(options?: CompactOptions): void;
 	/** Start user-visible compaction feedback before an extension has a precomputed summary to apply. */
@@ -1281,6 +1307,8 @@ export interface RegisteredCommand {
 	name: string;
 	sourceInfo: SourceInfo;
 	description?: string;
+	/** Compact usage hint shown alongside the command in compatible UIs. */
+	argumentHint?: string;
 	getArgumentCompletions?: (argumentPrefix: string) => AutocompleteItem[] | null | Promise<AutocompleteItem[] | null>;
 	handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 }
@@ -1826,6 +1854,7 @@ export interface ExtensionContextActions {
 	shutdown: () => void;
 	getContextUsage: () => ContextUsage | undefined;
 	getCompactionSettings: () => CompactionPreparation["settings"];
+	sessionSettings: ExtensionSessionSettings;
 	compact: (options?: CompactOptions) => void;
 	beginCompaction?: (options: BeginCompactionOptions) => AbortSignal | undefined;
 	updateCompaction?: (options: UpdateCompactionOptions) => void;

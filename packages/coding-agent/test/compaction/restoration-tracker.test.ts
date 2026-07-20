@@ -19,6 +19,7 @@ import type {
 	ToolCallEventResult,
 } from "../../src/core/extensions/index.ts";
 import type { SessionEntry } from "../../src/core/session-manager.ts";
+import { createInMemoryExtensionSessionSettings } from "../helpers/extension-session-settings.ts";
 
 interface RestorationGateHarness {
 	toolCall: ExtensionHandler<ToolCallEvent, ToolCallEventResult>;
@@ -90,6 +91,7 @@ function createGateExtensionContext(settings: CompactionSettings): ExtensionCont
 		shutdown: vi.fn(),
 		getContextUsage: () => undefined,
 		getCompactionSettings: () => settings,
+		sessionSettings: createInMemoryExtensionSessionSettings(),
 		compact: vi.fn(),
 		getMessageRevision: () => 1,
 		applyCompaction: async () => ({ applied: false, reason: "rejected" }),

@@ -12,6 +12,7 @@ Extensions are TypeScript modules that extend pi's behavior. They can subscribe 
 - **User interaction** - Prompt users via `ctx.ui` (select, confirm, input, notify)
 - **Custom UI components** - Full TUI components with keyboard input via `ctx.ui.custom()` for complex interactions
 - **Custom commands** - Register commands like `/mycommand` via `pi.registerCommand()`
+- **Model fallback** - The bundled [`/fallback`](#bundled-fallback-command) command manages global per-model retry chains. Use `/fallback <target> <fallback1> [fallback2 ...]` for scripts, or `/fallback` in the TUI to view and edit chains. `--no-model-fallback` and `SENPI_NO_FALLBACK=1` disable it for one run.
 - **Session persistence** - Store state that survives restarts via `pi.appendEntry()`
 - **Custom rendering** - Control how tool calls/results and messages appear in TUI
 
@@ -31,6 +32,7 @@ See [examples/extensions/](../examples/extensions/) for working implementations.
 ## Table of Contents
 
 - [Quick Start](#quick-start)
+- [Bundled /fallback Command](#bundled-fallback-command)
 - [Extension Locations](#extension-locations)
 - [Available Imports](#available-imports)
 - [Writing an Extension](#writing-an-extension)
@@ -105,6 +107,32 @@ Test with `--extension` (or `-e`) flag:
 ```bash
 pi -e ./my-extension.ts
 ```
+
+## Bundled /fallback Command
+
+The bundled `model-fallback` extension registers `/fallback` to manage global per-model retry fallback chains. The command writes through the active session settings manager, so a saved chain is available to the current session's next retry without restarting Senpi. See [Settings](settings.md#model-fallback-chains) for selector syntax and runtime behavior.
+
+Use the quick-set form in scripts or any non-TUI mode:
+
+```text
+/fallback anthropic/claude-fable-5 ccapi/kimi-k3:max
+```
+
+The first argument is the exact primary model selector; each later argument is an ordered fallback selector. Quick-set validates selectors before saving. At least one fallback is required:
+
+```text
+/fallback <target> <fallback1> [fallback2 ...]
+```
+
+Run `/fallback` without arguments in the TUI for a menu that can:
+
+- show configured chains and live fallback state;
+- add or edit a chain by choosing the target, each fallback, and either an explicit or inherited thinking level;
+- remove a chain;
+- toggle `retry.modelFallback`; and
+- choose `retry.fallbackRevertPolicy` (`cooldown-expiry` or `never`).
+
+Use quick-set in non-TUI modes; the no-argument menu requires interactive UI. Pass `--no-model-fallback` or set `SENPI_NO_FALLBACK=1` to disable fallback for that process without modifying saved settings.
 
 ## Extension Locations
 

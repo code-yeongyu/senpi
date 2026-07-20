@@ -1,5 +1,14 @@
 # Core Extensions Changes
 
+## 2026-07-20 - Model fallback command builtin
+
+- Added the `model-fallback` builtin and `/fallback` command for viewing, creating, removing, enabling, and setting the revert policy for global retry fallback chains.
+- Quick-set form validates selectors before persisting; headless runs support quick-set and report that the menu requires interactive UI.
+- Registered `--no-model-fallback` and `SENPI_NO_FALLBACK=1` as the per-run fallback escape-hatch inputs.
+- `ExtensionContext.sessionSettings` delegates command writes to the active session's `SettingsManager`, so quick-set changes are immediately visible to the retry controller. Its read-only fallback status accessor powers the menu's live-state view.
+- `--no-model-fallback` and `SENPI_NO_FALLBACK=1` apply a non-persistent `retry.modelFallback=false` override at session bootstrap.
+
+
 ## 2026-07-20 - session_compact `accepted: false` and structured cancel result
 
 ### What changed

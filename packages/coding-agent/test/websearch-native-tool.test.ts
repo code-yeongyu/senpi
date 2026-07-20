@@ -1,6 +1,5 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { DEFAULT_COMPACTION_SETTINGS } from "../src/core/compaction/index.ts";
 import { createWebSearchTool } from "../src/core/extensions/builtin/websearch/websearch/tool.ts";
@@ -10,6 +9,7 @@ import type {
 } from "../src/core/extensions/builtin/websearch/websearch/types.ts";
 import type { ExtensionContext } from "../src/core/extensions/types.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
+import { createInMemoryExtensionSessionSettings } from "./helpers/extension-session-settings.ts";
 
 function successfulSearchResponse(): Response {
 	return new Response(
@@ -53,6 +53,7 @@ function toolContext(model: Model<Api> | undefined, modelRegistry: ModelRegistry
 		shutdown: vi.fn(),
 		getContextUsage: () => undefined,
 		getCompactionSettings: () => DEFAULT_COMPACTION_SETTINGS,
+		sessionSettings: createInMemoryExtensionSessionSettings(),
 		compact: vi.fn(),
 		getMessageRevision: () => 0,
 		applyCompaction: async () => ({ applied: false, reason: "rejected" }),

@@ -11,6 +11,7 @@ import {
 	type Ruleset,
 } from "../../src/core/extensions/builtin/permission-system/types.ts";
 import type { ExtensionContext, ExtensionUIContext } from "../../src/core/extensions/types.ts";
+import { createInMemoryExtensionSessionSettings } from "../helpers/extension-session-settings.ts";
 
 // =============================================================================
 // Test Helpers
@@ -83,6 +84,7 @@ function createMockContext(overrides: { hasUI?: boolean; ui?: ExtensionUIContext
 		getMessageRevision: vi.fn().mockReturnValue(0),
 		applyCompaction: vi.fn().mockResolvedValue({ applied: false, reason: "rejected" }),
 		getCompactionSettings: vi.fn().mockReturnValue(DEFAULT_COMPACTION_SETTINGS),
+		sessionSettings: createInMemoryExtensionSessionSettings(),
 		getSystemPrompt: vi.fn().mockReturnValue(""),
 	};
 }
