@@ -210,7 +210,7 @@ export async function runScenario(scenario: Scenario) {
 				recoverTextToolCalls: true,
 				input: ["text"],
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-				contextWindow: 10_000,
+				contextWindow: 200_000,
 				maxTokens: 1_000,
 			},
 		],
