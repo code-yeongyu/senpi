@@ -4,6 +4,7 @@
     "stable": [
       "initialize",
       "model/list",
+      "mcpServerStatus/list",
       "experimentalFeature/list",
       "permissionProfile/list",
       "thread/archive",
@@ -101,7 +102,6 @@
       "mcpServer/oauth/login",
       "mcpServer/resource/read",
       "mcpServer/tool/call",
-      "mcpServerStatus/list",
       "modelProvider/capabilities/read",
       "plugin/install",
       "plugin/installed",

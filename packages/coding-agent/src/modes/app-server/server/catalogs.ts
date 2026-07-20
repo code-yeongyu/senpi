@@ -10,6 +10,10 @@ import type {
 	CollaborationModeListResponse,
 	ExperimentalFeature,
 	ExperimentalFeatureListParams,
+	McpServerStatus,
+	McpServerStatusDetail,
+	McpServerStatusListParams,
+	McpServerStatusListResponse,
 	PermissionProfileListParams,
 	PermissionProfileSummary,
 } from "../protocol/index.ts";
@@ -22,7 +26,7 @@ export interface RegisterAppServerCatalogMethodsOptions {
 	readonly modelRegistry?: AppServerModelRegistry;
 	readonly agentDir?: string;
 	readonly serverCwd?: string;
-	readonly threads?: Pick<ThreadRegistry, "getLoadedThread">;
+	readonly threads?: Pick<ThreadRegistry, "getLoadedThread" | "getMcpWireStatusAdapter">;
 }
 
 const PERMISSION_PROFILES = [
@@ -71,6 +75,24 @@ export function registerAppServerCatalogMethods(
 			return paginateCatalog(EXPERIMENTAL_FEATURES, params.cursor, params.limit, "experimentalFeature/list");
 		},
 	});
+
+	registry.register("mcpServerStatus/list", {
+		scope: "global",
+		handler: ({ request }) => {
+			const params = parseMcpServerStatusListParams(request.params);
+			validateThreadId(params.threadId, options.threads, "mcpServerStatus/list");
+			const adapter = options.threads?.getMcpWireStatusAdapter(params.threadId);
+			const detail = params.detail ?? "full";
+			const statuses = adapter?.getServerStatuses() ?? [];
+			const visibleStatuses = statuses.map((status) => applyMcpServerStatusDetail(status, detail));
+			return paginateCatalog(
+				visibleStatuses,
+				params.cursor,
+				params.limit,
+				"mcpServerStatus/list",
+			) satisfies McpServerStatusListResponse;
+		},
+	});
 }
 
 function defaultModelId(models: readonly PiModel<Api>[]): string {
@@ -98,6 +120,38 @@ function parseExperimentalFeatureListParams(value: unknown): ExperimentalFeature
 		limit: optionalNumber(params.limit, "experimentalFeature/list", "limit"),
 		threadId: optionalString(params.threadId, "experimentalFeature/list", "threadId"),
 	};
+}
+
+function parseMcpServerStatusListParams(value: unknown): McpServerStatusListParams {
+	const params = parseObjectParams(value, "mcpServerStatus/list");
+	return {
+		cursor: optionalString(params.cursor, "mcpServerStatus/list", "cursor"),
+		limit: optionalNumber(params.limit, "mcpServerStatus/list", "limit"),
+		detail: optionalMcpServerStatusDetail(params.detail),
+		threadId: optionalString(params.threadId, "mcpServerStatus/list", "threadId"),
+	};
+}
+
+function optionalMcpServerStatusDetail(value: unknown): McpServerStatusDetail | null | undefined {
+	if (value === undefined || value === null) return value;
+	if (value === "full" || value === "toolsAndAuthOnly") return value;
+	throw invalidCatalogParams("mcpServerStatus/list detail must be full, toolsAndAuthOnly, or null");
+}
+
+function applyMcpServerStatusDetail(server: McpServerStatus, detail: McpServerStatusDetail): McpServerStatus {
+	switch (detail) {
+		case "full":
+			return server;
+		case "toolsAndAuthOnly":
+			return {
+				...server,
+				serverInfo: null,
+				resources: [],
+				resourceTemplates: [],
+			};
+		default:
+			return assertNever(detail);
+	}
 }
 
 function parseObjectParams(value: unknown, method: string): Record<string, unknown> {
@@ -166,4 +220,8 @@ function invalidCatalogParams(message: string): RpcHandlerError {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function assertNever(value: never): never {
+	throw new Error(`Unhandled MCP server status detail: ${JSON.stringify(value)}`);
 }

@@ -28,7 +28,7 @@ export interface ServerCoreOptions {
 	readonly modelRegistry?: AppServerModelRegistry;
 	readonly codexHome?: string;
 	readonly serverCwd?: string;
-	readonly threads?: Pick<ThreadRegistry, "getLoadedThread" | "listLoaded">;
+	readonly threads?: Pick<ThreadRegistry, "getLoadedThread" | "listLoaded" | "getMcpWireStatusAdapter">;
 	readonly version?: string;
 	readonly now?: () => number;
 }
