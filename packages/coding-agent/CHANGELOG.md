@@ -5,10 +5,16 @@
 ### Breaking Changes
 
 ### Added
+- Added configurable per-model retry fallback chains and the `/fallback` command, including scoped cooldowns, automatic primary-model reversion, model-fallback events in RPC/app-server consumers, and interactive fallback status.
+- Added progress updates that identify the active web-search provider for each attempt.
 
 ### Changed
+- Abbreviated interactive footer token counts using K/M/B notation.
 
 ### Fixed
+- Fixed goal token accounting during active turns so `get_goal`, updates, completion, and shutdown checkpoints include streamed usage without double counting or charging usage before a goal was created.
+- Fixed compaction recovery to preserve queued input and transforms, reject unsafe or oversize compactions visibly, and avoid stale compaction barriers.
+- Fixed coding-agent model fallback behavior for classifier refusals, hard failures, invalid chains, and self-referential candidates.
 
 ### Removed
 

@@ -9,6 +9,7 @@
 ### Changed
 
 ### Fixed
+- Fixed terminating turns to retain queued steering and follow-up input through compaction preparation failures and aborts.
 
 ### Removed
 
