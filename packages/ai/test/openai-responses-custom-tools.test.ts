@@ -95,4 +95,60 @@ describe("openai responses custom tool support", () => {
 			},
 		]);
 	});
+
+	it("preserves persisted custom tool calls without active tool definitions", () => {
+		const context: Context = {
+			messages: [
+				{
+					role: "assistant",
+					content: [
+						{
+							type: "toolCall",
+							id: "call_1|custom",
+							name: "apply_patch",
+							arguments: { input: "*** Begin Patch\n*** End Patch" },
+						},
+					],
+					api: "openai-responses",
+					provider: "openai",
+					model: "gpt-5",
+					usage: {
+						input: 1,
+						output: 1,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 2,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "toolUse",
+					timestamp: 1,
+				},
+				{
+					role: "toolResult",
+					toolCallId: "call_1|custom",
+					toolName: "apply_patch",
+					content: [{ type: "text", text: "ok" }],
+					details: undefined,
+					isError: false,
+					timestamp: 2,
+				},
+			],
+			tools: [],
+		};
+
+		expect(convertResponsesMessages(model, context, new Set(["openai"]))).toMatchObject([
+			{
+				type: "custom_tool_call",
+				call_id: "call_1",
+				name: "apply_patch",
+				input: "*** Begin Patch\n*** End Patch",
+			},
+			{
+				type: "custom_tool_call_output",
+				call_id: "call_1",
+				name: "apply_patch",
+				output: "ok",
+			},
+		]);
+	});
 });
