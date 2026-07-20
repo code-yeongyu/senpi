@@ -6,6 +6,7 @@
 
 - OpenAI Responses replay now treats the persisted `|custom` tool-call ID suffix as authoritative for both calls and outputs.
 - This preserves `custom_tool_call` / `custom_tool_call_output` wire shapes during compaction, where summary generation intentionally supplies no active tools.
+- Cross-model and cross-API ID normalization preserves the reserved suffix while continuing to normalize the call ID and ordinary function item IDs.
 - Without this fallback, historical freeform calls such as `apply_patch` were misclassified as function calls and replayed with `id: "custom"`, which Codex rejects because function-call item IDs must start with `fc_`.
 
 ### Files modified

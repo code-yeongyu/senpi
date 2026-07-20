@@ -96,7 +96,10 @@ describe("openai responses custom tool support", () => {
 		]);
 	});
 
-	it("preserves persisted custom tool calls without active tool definitions", () => {
+	it.each([
+		["different model", "openai-responses", "gpt-4.1"],
+		["different API", "openai-completions", "gpt-5"],
+	] as const)("preserves persisted custom tool calls from a %s without active tool definitions", (_case, api, id) => {
 		const context: Context = {
 			messages: [
 				{
@@ -109,9 +112,9 @@ describe("openai responses custom tool support", () => {
 							arguments: { input: "*** Begin Patch\n*** End Patch" },
 						},
 					],
-					api: "openai-responses",
+					api,
 					provider: "openai",
-					model: "gpt-5",
+					model: id,
 					usage: {
 						input: 1,
 						output: 1,
