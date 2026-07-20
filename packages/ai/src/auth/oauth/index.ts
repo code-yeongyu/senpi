@@ -16,7 +16,6 @@ export * from "./gitlab-duo.ts";
 export { googleAntigravityOAuthProvider, loginAntigravity, refreshAntigravityToken } from "./google-antigravity.ts";
 export { googleGeminiCliOAuthProvider, loginGeminiCli, refreshGoogleCloudToken } from "./google-gemini-cli.ts";
 export * from "./kilo.ts";
-export * from "./kimi-code.ts";
 export {
 	loadAnthropicOAuth,
 	loadCursorOAuth,
@@ -25,7 +24,6 @@ export {
 	loadGoogleAntigravityOAuth,
 	loadGoogleGeminiCliOAuth,
 	loadKiloOAuth,
-	loadKimiCodeOAuth,
 	loadOpenAICodexDeviceOAuth,
 	loadOpenAICodexOAuth,
 	loadPerplexityOAuth,
@@ -53,7 +51,6 @@ import { gitlabDuoOAuthProvider } from "./gitlab-duo.ts";
 import { googleAntigravityOAuthProvider } from "./google-antigravity.ts";
 import { googleGeminiCliOAuthProvider } from "./google-gemini-cli.ts";
 import { kiloOAuthProvider } from "./kilo.ts";
-import { kimiCodeOAuthProvider } from "./kimi-code.ts";
 import { openaiCodexOAuthProvider } from "./openai-codex.ts";
 import { openaiCodexDeviceOAuthProvider } from "./openai-codex-device.ts";
 import type { OAuthCredentials, OAuthProviderId, OAuthProviderInfo, OAuthProviderInterface } from "./types.ts";
@@ -68,7 +65,6 @@ const providers: OAuthProviderInterface[] = [
 	gitlabDuoOAuthProvider,
 	// Perplexity session OAuth is not advertised for model-request login.
 	kiloOAuthProvider,
-	kimiCodeOAuthProvider,
 	xaiOAuthProvider,
 	googleGeminiCliOAuthProvider,
 	googleAntigravityOAuthProvider,

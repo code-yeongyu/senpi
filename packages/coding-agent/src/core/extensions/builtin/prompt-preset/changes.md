@@ -1,5 +1,21 @@
 # prompt-preset Extension Changes
 
+## Todo tool prompt naming (2026-07-19)
+
+### What changed
+
+- Updated the GPT-5.5, GPT-5.6, and GLM-5.2 todo-discipline text to call the
+  unified `todo` tool instead of the removed `todowrite` tool surface.
+
+### Why
+
+- The builtin extension keeps the historical `todowrite` id for loader
+  compatibility, but models now receive one registered tool named `todo`.
+
+### Expected merge conflict zones
+
+- LOW: the three model preset prompt strings and their phrase-pinning tests.
+
 ## Grok 4.5 preset (unreleased — 2026-07-17)
 
 Grok 4.5 has **not** been formally merged. Do not invent `v1`/`v2`/… edition labels for unreleased retunes — keep a single current section for this feature until it lands.

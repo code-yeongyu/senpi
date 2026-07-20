@@ -118,4 +118,11 @@ export {
 	TUI,
 } from "./tui.ts";
 // Utilities
-export { sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.ts";
+export {
+	getGraphemeSegmenter,
+	getWordSegmenter,
+	sliceByColumn,
+	truncateToWidth,
+	visibleWidth,
+	wrapTextWithAnsi,
+} from "./utils.ts";

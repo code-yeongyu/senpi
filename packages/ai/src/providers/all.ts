@@ -24,7 +24,6 @@ import { googleVertexProvider } from "./google-vertex.ts";
 import { groqProvider } from "./groq.ts";
 import { huggingfaceProvider } from "./huggingface.ts";
 import { kiloProvider } from "./kilo.ts";
-import { kimiCodeProvider } from "./kimi-code.ts";
 import { kimiCodingProvider } from "./kimi-coding.ts";
 import { litellmProvider } from "./litellm.ts";
 import { lmStudioProvider } from "./lm-studio.ts";
@@ -165,7 +164,6 @@ export function builtinProviders(): Provider[] {
 		groqProvider(),
 		huggingfaceProvider(),
 		kiloProvider(),
-		kimiCodeProvider(),
 		kimiCodingProvider(),
 		litellmProvider(),
 		lmStudioProvider(),

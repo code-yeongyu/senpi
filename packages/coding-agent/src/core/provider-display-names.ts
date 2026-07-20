@@ -41,7 +41,6 @@ export const BUILT_IN_PROVIDER_DISPLAY_NAMES: Record<string, string> = {
 	"gitlab-duo": "GitLab Duo",
 	perplexity: "Perplexity",
 	kilo: "Kilo",
-	"kimi-code": "Kimi Code",
 	"google-gemini-cli": "Google Gemini CLI (Cloud Code Assist)",
 	"google-antigravity": "Google Antigravity",
 	"openai-codex-device": "OpenAI Codex (device)",

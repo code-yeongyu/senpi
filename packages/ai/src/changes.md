@@ -35,6 +35,19 @@
   content serialization.
 - LOW: `api/transform-messages.ts` `downgradeUnsupportedImages`.
 
+## 2026-07-19 - Name-preserving apply_patch replay characterization and policy coverage
+
+### What changed and why
+
+- Added characterization + policy-table coverage for replaying mixed edit/apply_patch
+  history across every KnownApi: Responses targets serialize a historical apply_patch call
+  as `custom_tool_call` when a freeform apply_patch is declared and as `function_call`
+  (name preserved, JSON `{input}` args) otherwise; Completions/Anthropic/Google/Bedrock/
+  Mistral/pi-messages keep the stored name with native JSON-typed call entries.
+- No production change was required: existing converters already implement the
+  name-preserving truth table. Tests pin both branches plus per-API shape assertions so a
+  future regression cannot silently rename or drop historical patch calls.
+
 ## 2026-07-17 - Truncation-recovery contract for ToolCall and toolcall_end
 
 ### What changed and why
@@ -62,6 +75,42 @@
 - `types.ts` (`ToolCall`, `AssistantMessageEvent.toolcall_end`, `OpenAICompletionsCompat.toolCallFormat` doc)
 - `tool-call-middleware/types.ts`, `tool-call-middleware/index.ts`, `tool-call-middleware/context-transformer.ts`
 - `../test/tool-call-middleware/context-transformer.test.ts`, `../test/tool-call-middleware/stream-integration.test.ts`
+
+### Why the higher-level extension system couldn't handle this alone
+
+- The canonical `ToolCall` shape, the `toolcall_end` event contract, and the `ToolCallFormat` union
+  are all exported from `pi-ai` and consumed by standalone `pi-ai` clients before any coding-agent
+  extension runs.
+
+### Expected merge conflict zones
+
+- LOW: `types.ts` around the `ToolCall` and `AssistantMessageEvent` declarations.
+- LOW: `tool-call-middleware/types.ts` `ToolCallFormat` union and `toolcall_end` variant.
+
+## 2026-07-14 - Provider and OAuth parity
+
+### What changed and why
+
+- Added supported provider factories, generated catalogs, and OAuth flows used by the coding-agent login surface.
+- Added provider-specific request and refresh behavior, including GitLab Duo direct-access exchange, Google account
+  transport, and Perplexity OTP state handling.
+- Legacy OAuth providers can expose request-scoped tokens and headers so compatibility consumers preserve GitLab Duo's
+  direct-access contract.
+- Search-only integrations are not exposed as chat providers.
+- Dropped duplicate xAI browser OAuth in favor of main's device-code flow.
+- Cursor uses Connect transport; GitLab PAT exchange applies to API keys; GitLab GPT-5.1 uses chat completions;
+  Perplexity session OAuth is not advertised as API auth; Google CCA providers are OAuth-only in /login.
+
+### Files modified
+
+- api/google-gemini-cli.ts
+- api/cursor-connect.ts
+- auth/helpers.ts
+- auth/oauth/*
+- providers/all.ts
+- types.ts
+- bun-oauth.ts
+- provider-specific files under providers/ and auth/oauth/
 
 ### Why the higher-level extension system couldn't handle this alone
 
@@ -455,34 +504,3 @@
 - `src/types.ts` `ThinkingLevel` union.
 - Each provider's `streamSimple<Provider>` reasoning mapping block.
 - `src/providers/simple-options.ts` exported reserved-key sets.
-
-## 2026-07-14 - Provider and OAuth parity
-
-### What changed and why
-
-- Added supported provider factories, generated catalogs, and OAuth flows used by the coding-agent login surface.
-- Added provider-specific request and refresh behavior, including GitLab Duo direct-access exchange, Google account
-  transport, and Perplexity OTP state handling.
-- Legacy OAuth providers can expose request-scoped tokens and headers so compatibility consumers preserve GitLab Duo's
-  direct-access contract.
-- Search-only integrations are not exposed as chat providers.
-
-### Files modified
-
-- api/google-gemini-cli.ts
-- auth/helpers.ts
-- providers/all.ts
-- types.ts
-- utils/oauth/index.ts
-- utils/oauth/load.ts
-- provider-specific files under providers/ and utils/oauth/
-
-### Why the higher-level extension system couldn't handle this alone
-
-- Authentication is resolved while constructing provider requests and generated model catalogs; extension hooks cannot
-  safely replace those credential and wire boundaries.
-
-### Expected merge conflict zones
-
-- HIGH: provider unions, OAuth registration, and generated catalogs.
-- MEDIUM: Google shared transport and provider-specific OAuth refresh paths.

@@ -24,7 +24,6 @@ import { GOOGLE_VERTEX_MODELS } from "./providers/google-vertex.models.ts";
 import { GROQ_MODELS } from "./providers/groq.models.ts";
 import { HUGGINGFACE_MODELS } from "./providers/huggingface.models.ts";
 import { KILO_MODELS } from "./providers/kilo.models.ts";
-import { KIMI_CODE_MODELS } from "./providers/kimi-code.models.ts";
 import { KIMI_CODING_MODELS } from "./providers/kimi-coding.models.ts";
 import { LITELLM_MODELS } from "./providers/litellm.models.ts";
 import { LM_STUDIO_MODELS } from "./providers/lm-studio.models.ts";
@@ -88,7 +87,6 @@ export const MODELS = {
 	"groq": GROQ_MODELS,
 	"huggingface": HUGGINGFACE_MODELS,
 	"kilo": KILO_MODELS,
-	"kimi-code": KIMI_CODE_MODELS,
 	"kimi-coding": KIMI_CODING_MODELS,
 	"litellm": LITELLM_MODELS,
 	"lm-studio": LM_STUDIO_MODELS,

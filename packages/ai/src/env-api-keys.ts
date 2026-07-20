@@ -100,7 +100,6 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		groq: "GROQ_API_KEY",
 		huggingface: "HF_TOKEN",
 		kilo: "KILO_API_KEY",
-		"kimi-code": "KIMI_API_KEY",
 		"kimi-coding": "KIMI_API_KEY",
 		litellm: "LITELLM_API_KEY",
 		"lm-studio": "LM_STUDIO_API_KEY",

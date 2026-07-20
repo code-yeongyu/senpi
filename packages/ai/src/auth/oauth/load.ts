@@ -20,7 +20,6 @@ type OAuthFlowLoaders = {
 	gitlabDuo: () => OAuthAuth | Promise<OAuthAuth>;
 	perplexity: () => OAuthAuth | Promise<OAuthAuth>;
 	kilo: () => OAuthAuth | Promise<OAuthAuth>;
-	kimiCode: () => OAuthAuth | Promise<OAuthAuth>;
 	xai: () => OAuthAuth | Promise<OAuthAuth>;
 	googleGeminiCli: () => OAuthAuth | Promise<OAuthAuth>;
 	googleAntigravity: () => OAuthAuth | Promise<OAuthAuth>;
@@ -73,11 +72,6 @@ export const loadPerplexityOAuth = async (): Promise<OAuthAuth> => {
 export const loadKiloOAuth = async (): Promise<OAuthAuth> => {
 	if (bundledLoaders) return bundledLoaders.kilo();
 	return ((await importOAuthModule("./kilo.ts")) as { kiloOAuth: OAuthAuth }).kiloOAuth;
-};
-
-export const loadKimiCodeOAuth = async (): Promise<OAuthAuth> => {
-	if (bundledLoaders) return bundledLoaders.kimiCode();
-	return ((await importOAuthModule("./kimi-code.ts")) as { kimiCodeOAuth: OAuthAuth }).kimiCodeOAuth;
 };
 
 export const loadXaiOAuth = async (): Promise<OAuthAuth> => {

@@ -98,16 +98,14 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 			"ls",
 			"read",
 			"read_video",
-			"todoread",
-			"todowrite",
+			"todo",
 			"update_goal",
 			"web_search",
 			"webfetch",
 			"write",
 		]);
 		expect(session.getActiveToolNames()).toEqual([
-			"todowrite",
-			"todoread",
+			"todo",
 			"web_search",
 			"webfetch",
 			"create_goal",
@@ -148,8 +146,7 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 
 		expect(session.getActiveToolNames()).toEqual([
 			"apply_patch",
-			"todowrite",
-			"todoread",
+			"todo",
 			"web_search",
 			"webfetch",
 			"read_video",
@@ -157,7 +154,7 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 			"update_goal",
 			"get_goal",
 		]);
-		expect(session.systemPrompt).toContain("- todowrite:");
+		expect(session.systemPrompt).toContain("- todo:");
 		expect(session.systemPrompt).not.toContain("- read:");
 		session.dispose();
 	});

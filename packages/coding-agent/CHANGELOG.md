@@ -6,6 +6,21 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.7.20] - 2026-07-20
+
+### Breaking Changes
+
+- Replaced the snapshot-style `todowrite`/`todoread` pair with one phased, op-based `todo` tool; the `todowrite` builtin extension id remains for loader compatibility.
+
+### Added
+
+- Added a `/todo` command for user-side todo management: view, overlay `edit` (Markdown checklist), `copy`, `export`/`import` (default `TODO.md`), and fuzzy-matched `append`/`start`/`done`/`drop`/`rm`; user edits persist as `senpi.todo-state` entries and notify the agent next turn.
 - Added `antml` as a valid `compat.toolCallFormat` in custom `models.json` provider and model definitions: ANTML `<function_calls>`/`<invoke>` text-tool protocol with Claude-Code-style failure tolerance.
 - Added built-in llama.cpp router support with `/login` connection setup and `/llama` Hugging Face model search and downloads, explicit loading, unloading, and live progress. See [llama.cpp](docs/llama-cpp.md).
 - Added extension registration for complete pi-ai providers, including native authentication, model refresh, filtering, and streaming behavior.

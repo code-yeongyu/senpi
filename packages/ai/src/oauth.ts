@@ -17,7 +17,6 @@ export {
 	loadGoogleAntigravityOAuth,
 	loadGoogleGeminiCliOAuth,
 	loadKiloOAuth,
-	loadKimiCodeOAuth,
 	loadOpenAICodexDeviceOAuth,
 	loadOpenAICodexOAuth,
 	loadPerplexityOAuth,

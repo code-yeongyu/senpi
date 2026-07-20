@@ -69,10 +69,6 @@ export const NVIDIA_MODELS = values as {
 		id: "openai/gpt-oss-20b";
 		provider: "nvidia";
 	};
-	"qwen/qwen3.5-122b-a10b": Model<"openai-completions"> & {
-		id: "qwen/qwen3.5-122b-a10b";
-		provider: "nvidia";
-	};
 	"stepfun-ai/step-3.5-flash": Model<"openai-completions"> & {
 		id: "stepfun-ai/step-3.5-flash";
 		provider: "nvidia";

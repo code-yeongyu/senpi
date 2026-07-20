@@ -126,20 +126,6 @@ const KIMI_STATIC_HEADERS = {
 	"User-Agent": "KimiCLI/1.5",
 } as const;
 
-const KIMI_CODE_STATIC_HEADERS = {
-	"User-Agent": "KimiCLI/1.5",
-	"X-Msh-Platform": "kimi_cli",
-} as const;
-
-const KIMI_CODE_COMPAT: OpenAICompletionsCompat = {
-	supportsStore: false,
-	supportsDeveloperRole: false,
-	supportsReasoningEffort: false,
-	maxTokensField: "max_tokens",
-	supportsStrictMode: false,
-	thinkingFormat: "zai",
-};
-
 const TOGETHER_BASE_URL = "https://api.together.ai/v1";
 const TOGETHER_BASE_COMPAT: OpenAICompletionsCompat = {
 	supportsStore: false,
@@ -3039,84 +3025,6 @@ async function generateModels() {
 		},
 	]);
 	allModels.push(...googleGeminiCliModels, ...googleAntigravityModels);
-
-	// Kimi Code OAuth uses Kimi's coding endpoint rather than the API-key-only
-	// kimi-coding provider. Keep the bundled set explicit because the endpoint's
-	// unauthenticated model catalog is not available during generation.
-	const kimiCodeModels: Model<"openai-completions">[] = [
-		{
-			id: "kimi-for-coding",
-			name: "Kimi For Coding",
-			api: "openai-completions",
-			provider: "kimi-code",
-			baseUrl: "https://api.kimi.com/coding/v1",
-			headers: KIMI_CODE_STATIC_HEADERS,
-			compat: KIMI_CODE_COMPAT,
-			reasoning: true,
-			input: ["text", "image"],
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			contextWindow: 262144,
-			maxTokens: 32000,
-		},
-		{
-			id: "kimi-k2",
-			name: "Kimi K2",
-			api: "openai-completions",
-			provider: "kimi-code",
-			baseUrl: "https://api.kimi.com/coding/v1",
-			headers: KIMI_CODE_STATIC_HEADERS,
-			compat: KIMI_CODE_COMPAT,
-			reasoning: false,
-			input: ["text"],
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			contextWindow: 262144,
-			maxTokens: 262144,
-		},
-		{
-			id: "kimi-k2-turbo-preview",
-			name: "Kimi K2 Turbo Preview",
-			api: "openai-completions",
-			provider: "kimi-code",
-			baseUrl: "https://api.kimi.com/coding/v1",
-			headers: KIMI_CODE_STATIC_HEADERS,
-			compat: KIMI_CODE_COMPAT,
-			reasoning: true,
-			input: ["text"],
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			contextWindow: 262144,
-			maxTokens: 32000,
-		},
-		{
-			id: "kimi-k2.5",
-			name: "Kimi K2.5",
-			api: "openai-completions",
-			provider: "kimi-code",
-			baseUrl: "https://api.kimi.com/coding/v1",
-			headers: KIMI_CODE_STATIC_HEADERS,
-			compat: KIMI_CODE_COMPAT,
-			reasoning: true,
-			input: ["text", "image"],
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			contextWindow: 262144,
-			maxTokens: 65536,
-		},
-		{
-			id: "kimi-k2.7-code",
-			name: "Kimi K2.7 Code",
-			api: "openai-completions",
-			provider: "kimi-code",
-			baseUrl: "https://api.kimi.com/coding/v1",
-			headers: KIMI_CODE_STATIC_HEADERS,
-			compat: KIMI_CODE_COMPAT,
-			reasoning: true,
-			thinkingLevelMap: { off: null },
-			input: ["text", "image"],
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			contextWindow: 262144,
-			maxTokens: 65536,
-		},
-	];
-	allModels.push(...kimiCodeModels);
 
 	for (const model of allModels) {
 		applyThinkingLevelMetadata(model);

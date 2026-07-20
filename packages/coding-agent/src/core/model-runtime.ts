@@ -492,9 +492,18 @@ export class ModelRuntime implements Models {
 			resolution.env || providerOptions.env
 				? { ...(resolution.env ?? {}), ...(providerOptions.env ?? {}) }
 				: undefined;
+		const upstreamModelId = compatibility.upstreamModelId;
+		const requestModel =
+			resolution.auth.baseUrl || upstreamModelId
+				? {
+						...model,
+						...(upstreamModelId ? { id: upstreamModelId } : {}),
+						...(resolution.auth.baseUrl ? { baseUrl: resolution.auth.baseUrl } : {}),
+					}
+				: model;
 		return {
 			provider,
-			model: resolution.auth.baseUrl ? { ...model, baseUrl: resolution.auth.baseUrl } : model,
+			model: requestModel,
 			options: {
 				...providerOptions,
 				apiKey: providerOptions.apiKey ?? resolution.auth.apiKey,

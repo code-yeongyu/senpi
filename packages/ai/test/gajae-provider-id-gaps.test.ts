@@ -27,17 +27,22 @@ describe("Gajae provider ID gaps", () => {
 		}
 	});
 
-	it("registers Kimi OAuth models and the OpenAI device-code model alias", () => {
-		const providers = new Map(builtinProviders().map((provider) => [provider.id, provider]));
-		const kimi = providers.get("kimi-code");
-		expect(kimi?.auth.oauth?.name).toBe("Kimi Code");
-		expect(kimi?.getModels().map((model) => model.id)).toEqual([
-			"kimi-for-coding",
-			"kimi-k2",
-			"kimi-k2-turbo-preview",
-			"kimi-k2.5",
-			"kimi-k2.7-code",
-		]);
+	it("registers one Kimi Coding provider and the OpenAI device-code model alias", async () => {
+		const allProviders = builtinProviders();
+		const providers = new Map(allProviders.map((provider) => [provider.id, provider]));
+		const kimiProviders = allProviders.filter((provider) => provider.id.startsWith("kimi-"));
+		expect(kimiProviders.map((provider) => provider.id)).toEqual(["kimi-coding"]);
+
+		const kimi = providers.get("kimi-coding");
+		const auth = kimi?.auth.apiKey;
+		if (!auth) throw new Error("Missing kimi-coding API-key auth");
+		const resolved = await auth.resolve({
+			ctx: {
+				env: async (name) => (name === "KIMI_API_KEY" ? "test-key" : undefined),
+				fileExists: async () => false,
+			},
+		});
+		expect(resolved).toMatchObject({ auth: { apiKey: "test-key" }, source: "KIMI_API_KEY" });
 
 		const codex = providers.get("openai-codex");
 		const device = providers.get("openai-codex-device");

@@ -4,7 +4,7 @@ import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 
 const GAJAE_PROVIDER_IDS = [
-	"kimi-code",
+	"kimi-coding",
 	"openai-codex-device",
 	"minimax-code",
 	"minimax-code-cn",
@@ -24,7 +24,7 @@ describe("Gajae /login provider parity", () => {
 		}
 		expect(providers).toEqual(
 			expect.arrayContaining([
-				expect.objectContaining({ id: "kimi-code", authType: "oauth" }),
+				expect.objectContaining({ id: "kimi-coding", authType: "api_key" }),
 				expect.objectContaining({ id: "openai-codex-device", authType: "oauth" }),
 				expect.objectContaining({ id: "minimax-code", authType: "api_key" }),
 				expect.objectContaining({ id: "minimax-code-cn", authType: "api_key" }),

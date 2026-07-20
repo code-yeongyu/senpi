@@ -31,9 +31,9 @@ function durationText(durationMs: number): string {
 	return durationMs >= 1000 ? `${Math.round(durationMs / 1000)}s` : `${durationMs}ms`;
 }
 
-function attemptLabel(details: SearchDetails): string {
-	return details.attempts
-		? details.attempts
+function attemptLabel(attempts: SearchDetails["attempts"]): string {
+	return attempts
+		? attempts
 				.map(
 					(attempt) =>
 						`${attempt.entryId ? `${attempt.provider}/${attempt.entryId}` : attempt.provider}:${attempt.error ? "failed" : attempt.resultsCount}`,
@@ -66,6 +66,18 @@ export function renderSearchResult(
 	if (options.isPartial) {
 		const details = result.details;
 		if (isSearchProgressDetails(details)) {
+			if (details.currentProvider) {
+				const total = details.providerLabels.length;
+				const position = Math.min((details.attempts?.length ?? 0) + 1, Math.max(total, 1));
+				const step = total > 1 ? ` [${position}/${total}]` : "";
+				const line = theme.fg(
+					"warning",
+					`Searching "${shorten(details.query, 80)}" via ${details.currentProvider}${step} (max ${details.maxResults})`,
+				);
+				const attempts = attemptLabel(details.attempts);
+				const rows = options.expanded && attempts ? [line, theme.fg("muted", `route ${attempts}`)] : [line];
+				return new Text(rows.join("\n"), 0, 0);
+			}
 			const route = details.providerLabels.length > 0 ? details.providerLabels.join(" -> ") : "configured providers";
 			return new Text(
 				theme.fg("warning", `Searching "${shorten(details.query, 80)}" via ${route} (max ${details.maxResults})`),
@@ -94,7 +106,7 @@ export function renderSearchResult(
 
 	if (count === 0) return new Text(summary, 0, 0);
 
-	const attempts = attemptLabel(details);
+	const attempts = attemptLabel(details.attempts);
 	const rows = options.expanded && attempts ? [summary, theme.fg("muted", `route ${attempts}`)] : [summary];
 	const visibleLimit = options.expanded ? 8 : 3;
 	for (const item of details.results.slice(0, visibleLimit)) {

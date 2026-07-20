@@ -1,5 +1,28 @@
 # TUI delta rendering fork changes
 
+## 2026-07-19: configurable render fps cap and shared segmenter exports
+
+### What changed
+
+- `packages/tui/src/tui.ts`: the static 16ms render throttle (`MIN_RENDER_INTERVAL_MS`) is now an instance field
+  `#minRenderIntervalMs` (default 16ms — behavior unchanged for existing callers) plus `setMaxRenderFps(fps)`:
+  fps is clamped to 30-120 and stored as `Math.floor(1000 / fps)` (120fps ⇒ 8ms interval).
+- `packages/tui/src/index.ts`: exports `getGraphemeSegmenter` and `getWordSegmenter` from `utils.ts` so consumers
+  (smooth-streaming reveal in coding-agent) share the single `Intl.Segmenter` instances.
+- Tests: `packages/tui/test/render-fps-cap.test.ts` (mocked-timer throttle-delay assertions) and
+  `packages/tui/test/segmenter-exports.test.ts` (root re-export identity).
+
+### Why this cannot be expressed externally
+
+The render throttle is `TUI`-private scheduler state; extensions and components can request renders but cannot
+safely replace the minimum frame interval. The segmenters already existed as module singletons in `utils.ts` — only
+the package-root export surface was missing.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/tui.ts` around the scheduler field declarations and `scheduleRender()`.
+- LOW: `packages/tui/src/index.ts` around the `utils.ts` re-export list.
+
 ## 2026-07-04: terminal ownership and restart hardening
 
 ### What changed

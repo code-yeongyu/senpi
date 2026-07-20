@@ -1,5 +1,104 @@
 # changes
 
+## Model-runtime upstream model id and model-config service tier (2026-07-19)
+
+### What changed
+
+- `core/model-runtime.ts`: `prepareRequest()` now swaps the wire model id to the models.json/extension
+  `upstreamModelId`. Previously only the compaction and websearch extensions honored it, so main-loop requests sent
+  the configured alias id (e.g. `gpt-5.6-terra-fast`) verbatim and upstreams rejected the unknown model.
+- `core/agent-session.ts`: `_currentServiceTier` now falls back to the model's configured `serviceTier` from the
+  compatibility request config (models.json / extension model definition) when no scoped/favorite tier is set
+  (`_resolveServiceTier`). The builtin service-tier extension then injects `service_tier` into OpenAI Responses
+  payloads through `before_provider_request`, so client-configured priority tiers reach the wire.
+
+### Why
+
+- models.json `-fast` pseudo-models declare `upstreamModelId` + `serviceTier: priority` so priority-tier requests are
+  client-controlled instead of proxy-side per-model overrides; the main request path must honor them.
+  (`extraBody.service_tier` is not a viable channel: it is an OpenAI Responses reserved body key.)
+
+### Why extension system couldn't handle this
+
+- `prepareRequest()` is the core chokepoint every stream/complete call funnels through; extensions cannot rewrite the
+  wire model id for the main loop, and the builtin service-tier extension only sees the session tier, which never
+  reflected model-level configuration.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `model-runtime.ts` `prepareRequest()` body; `agent-session.ts` service-tier assignment sites.
+
+## Paced streaming tool argument previews (2026-07-20)
+
+### What changed
+
+- `modes/interactive/tool-args-reveal.ts` paces append-only partial JSON independently per tool call, reusing the smooth
+  streaming FPS and catch-up policy while batching parser work and preserving UTF-16 surrogate boundaries.
+- `modes/interactive/interactive-mode.ts` flushes exact arguments before completion or execution and tears down reveal
+  state anywhere pending tool components are cleared.
+
+### Why
+
+- Provider bursts should not make large tool-call previews jump or force a full partial-JSON parse for every timer tick.
+
+### Why extension system couldn't handle this
+
+- Pending tool components and their streaming/execution transition state are private to the built-in interactive mode.
+
+### Expected merge conflict zones on next upstream sync
+
+- MEDIUM: interactive tool-call event handling and smooth-streaming settings callbacks.
+- LOW: the fork-only reveal controller.
+
+## Smooth streaming reveal (2026-07-20)
+
+### What changed
+
+- `modes/interactive/streaming-reveal.ts`: adds a grapheme-safe, time-based controller that reveals streamed assistant
+  text at a stable perceived rate from 30–120fps, catches up bounded backlogs, and flushes immediately at tool-call and
+  lifecycle boundaries.
+- `core/settings-manager.ts` and the interactive settings selector persist smooth-streaming enablement and FPS.
+- `modes/interactive/interactive-mode.ts` routes assistant deltas through the controller and tears it down on final,
+  abort, session-switch, and shutdown paths.
+
+### Why
+
+- Provider chunks often arrive in bursts; rendering each burst verbatim makes otherwise fast responses visually jumpy.
+
+### Why extension system couldn't handle this
+
+- The controller owns private in-flight assistant component updates, TUI render scheduling, and session lifecycle state.
+
+### Expected merge conflict zones on next upstream sync
+
+- MEDIUM: interactive assistant event handling and settings-selector plumbing.
+- LOW: the fork-only reveal controller and settings accessors.
+
+## Incremental assistant message re-render (2026-07-19)
+
+### What changed
+
+- `modes/interactive/components/assistant-message.ts`: assistant content is now planned as flat render descriptors
+  and reconciled against the previous child list. Unchanged children stay mounted, growing text/thinking Markdown
+  updates through `Markdown.setText()`, and structural changes rebuild only the divergent suffix.
+- `../test/assistant-message-incremental-render.test.ts`: exact raw-render parity covers text, thinking,
+  provider-native blocks, error tails, hidden thinking, expansion, and output padding; identity assertions pin the
+  incremental reuse contract.
+
+### Why
+
+- Streaming updates previously cleared the entire content container, so every delta recreated all Markdown children
+  and discarded their instance render caches even when only the final block grew.
+
+### Why extension system couldn't handle this
+
+- The built-in assistant component owns transcript child identity, disposal, render caching, and OSC marker behavior;
+  extensions cannot reconcile its private render tree.
+
+### Expected merge conflict zones on next upstream sync
+
+- MEDIUM: `modes/interactive/components/assistant-message.ts` around content construction and streaming cache reuse.
+
 ## Neo launch handoff and daemon dispatch (2026-07-06)
 
 ### What changed

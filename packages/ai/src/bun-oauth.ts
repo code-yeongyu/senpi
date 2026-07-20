@@ -5,7 +5,6 @@ import { gitlabDuoOAuth } from "./auth/oauth/gitlab-duo.ts";
 import { googleAntigravityOAuth } from "./auth/oauth/google-antigravity.ts";
 import { googleGeminiCliOAuth } from "./auth/oauth/google-gemini-cli.ts";
 import { kiloOAuth } from "./auth/oauth/kilo.ts";
-import { kimiCodeOAuth } from "./auth/oauth/kimi-code.ts";
 import { registerBundledOAuthFlowLoaders } from "./auth/oauth/load.ts";
 import { openaiCodexOAuth } from "./auth/oauth/openai-codex.ts";
 import { openaiCodexDeviceOAuth } from "./auth/oauth/openai-codex-device.ts";
@@ -24,7 +23,6 @@ export function registerBunOAuthFlows(): void {
 		gitlabDuo: () => gitlabDuoOAuth,
 		perplexity: () => perplexityOAuth,
 		kilo: () => kiloOAuth,
-		kimiCode: () => kimiCodeOAuth,
 		xai: () => xaiOAuth,
 		googleGeminiCli: () => googleGeminiCliOAuth,
 		googleAntigravity: () => googleAntigravityOAuth,

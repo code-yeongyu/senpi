@@ -472,6 +472,51 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("smooth streaming", () => {
+		it("defaults smooth streaming on at 60 fps", () => {
+			// Given
+			const manager = SettingsManager.inMemory();
+
+			// When / Then
+			expect(manager.getSmoothStreaming()).toBe(true);
+			expect(manager.getSmoothStreamingFps()).toBe(60);
+		});
+
+		it.each([
+			[29, 30],
+			[30, 30],
+			[90, 90],
+			[120, 120],
+			[121, 120],
+		] as const)("clamps configured streaming fps %s to %s", (configuredFps, expectedFps) => {
+			// Given
+			const manager = SettingsManager.inMemory({ smoothStreamingFps: configuredFps });
+
+			// When
+			const fps = manager.getSmoothStreamingFps();
+
+			// Then
+			expect(fps).toBe(expectedFps);
+		});
+
+		it("persists smooth streaming settings", async () => {
+			// Given
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			// When
+			manager.setSmoothStreaming(false);
+			manager.setSmoothStreamingFps(90);
+			await manager.flush();
+
+			// Then
+			expect(manager.getSmoothStreaming()).toBe(false);
+			expect(manager.getSmoothStreamingFps()).toBe(90);
+			const savedSettings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8"));
+			expect(savedSettings.smoothStreaming).toBe(false);
+			expect(savedSettings.smoothStreamingFps).toBe(90);
+		});
+	});
+
 	describe("shellCommandPrefix", () => {
 		it("should load shellCommandPrefix from settings", () => {
 			const settingsPath = join(agentDir, "settings.json");

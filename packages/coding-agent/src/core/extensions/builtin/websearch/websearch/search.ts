@@ -244,11 +244,14 @@ function attemptFromDetails(details: SearchDetails): SearchAttempt {
 	return attempt;
 }
 
+export type SearchAttemptListener = (providerLabel: string, attempts: readonly SearchAttempt[]) => void;
+
 export async function performSearch(
 	config: WebsearchConfig,
 	request: SearchRequest,
 	signal?: AbortSignal,
 	routingState?: SearchRoutingState,
+	onAttempt?: SearchAttemptListener,
 ): Promise<SearchDetails> {
 	const startedAt = Date.now();
 	const state = routingState ?? createSearchRoutingState(config.providers.length);
@@ -260,6 +263,7 @@ export async function performSearch(
 	for (const index of order) {
 		const provider = config.providers[index];
 		if (!provider) continue;
+		onAttempt?.(entryLabel(provider), attempts);
 		const details = await performProviderSearch(provider, request, signal);
 		attempts.push(attemptFromDetails(details));
 

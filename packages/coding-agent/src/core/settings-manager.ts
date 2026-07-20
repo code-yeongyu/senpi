@@ -116,6 +116,8 @@ export interface Settings {
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettings;
 	hideThinkingBlock?: boolean;
+	smoothStreaming?: boolean; // default: true
+	smoothStreamingFps?: number; // default: 60, clamped to 30-120 when read
 	showCacheMissNotices?: boolean; // default: false - show transcript notices for significant prompt-cache misses
 	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
@@ -938,6 +940,18 @@ export class SettingsManager {
 		return this.settings.hideThinkingBlock ?? false;
 	}
 
+	getSmoothStreaming(): boolean {
+		return this.settings.smoothStreaming ?? true;
+	}
+
+	getSmoothStreamingFps(): number {
+		const fps = this.settings.smoothStreamingFps;
+		if (typeof fps !== "number" || !Number.isFinite(fps)) {
+			return 60;
+		}
+		return Math.min(120, Math.max(30, fps));
+	}
+
 	getShowCacheMissNotices(): boolean {
 		return this.settings.showCacheMissNotices ?? false;
 	}
@@ -957,6 +971,18 @@ export class SettingsManager {
 	setHideThinkingBlock(hide: boolean): void {
 		this.globalSettings.hideThinkingBlock = hide;
 		this.markModified("hideThinkingBlock");
+		this.save();
+	}
+
+	setSmoothStreaming(enabled: boolean): void {
+		this.globalSettings.smoothStreaming = enabled;
+		this.markModified("smoothStreaming");
+		this.save();
+	}
+
+	setSmoothStreamingFps(fps: number): void {
+		this.globalSettings.smoothStreamingFps = fps;
+		this.markModified("smoothStreamingFps");
 		this.save();
 	}
 

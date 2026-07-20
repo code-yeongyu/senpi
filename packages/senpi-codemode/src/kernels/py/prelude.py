@@ -326,7 +326,6 @@ class ToolCallable:
                 f"tool.{self._name}(...) expects a dict of arguments (got {type(args).__name__})"
             )
         merged.update(kwargs)
-        merged.setdefault("i", "py prelude")
         return bridge_post(
             "/call",
             {"callId": f"py-{uuid.uuid4()}", "toolName": self._name, "args": merged},

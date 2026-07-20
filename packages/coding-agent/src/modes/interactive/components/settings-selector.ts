@@ -66,6 +66,8 @@ export interface SettingsConfig {
 	terminalTheme: TerminalTheme;
 	availableThemes: string[];
 	hideThinkingBlock: boolean;
+	smoothStreaming: boolean;
+	smoothStreamingFps: number;
 	showCacheMissNotices: boolean;
 	collapseChangelog: boolean;
 	enableInstallTelemetry: boolean;
@@ -97,6 +99,8 @@ export interface SettingsCallbacks {
 	onThemeChange: (theme: string) => void;
 	onThemePreview?: (theme: string) => void;
 	onHideThinkingBlockChange: (hidden: boolean) => void;
+	onSmoothStreamingChange: (enabled: boolean) => void;
+	onSmoothStreamingFpsChange: (fps: number) => void;
 	onShowCacheMissNoticesChange: (shown: boolean) => void;
 	onCollapseChangelogChange: (collapsed: boolean) => void;
 	onEnableInstallTelemetryChange: (enabled: boolean) => void;
@@ -525,6 +529,20 @@ export class SettingsSelectorComponent extends Container {
 				values: ["true", "false"],
 			},
 			{
+				id: "smooth-streaming",
+				label: "Smooth streaming",
+				description: "Reveal streamed assistant text at a steady pace",
+				currentValue: config.smoothStreaming ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
+				id: "streaming-fps",
+				label: "Streaming fps",
+				description: "Maximum frame rate for smooth streaming",
+				currentValue: String(config.smoothStreamingFps),
+				values: ["30", "60", "90", "120"],
+			},
+			{
 				id: "cache-miss-notices",
 				label: "Cache miss notices",
 				description: "Show transcript notices for significant prompt-cache misses",
@@ -773,6 +791,12 @@ export class SettingsSelectorComponent extends Container {
 					}
 					case "hide-thinking":
 						callbacks.onHideThinkingBlockChange(newValue === "true");
+						break;
+					case "smooth-streaming":
+						callbacks.onSmoothStreamingChange(newValue === "true");
+						break;
+					case "streaming-fps":
+						callbacks.onSmoothStreamingFpsChange(parseInt(newValue, 10));
 						break;
 					case "cache-miss-notices":
 						callbacks.onShowCacheMissNoticesChange(newValue === "true");

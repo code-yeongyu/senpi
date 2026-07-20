@@ -1,5 +1,81 @@
 # changes
 
+## paced streaming tool argument previews (2026-07-20)
+
+### What changed
+
+- `tool-args-reveal.ts`: adds per-tool-call pacing for streaming partial JSON. The first usable prefix appears
+  immediately, later append-only growth follows the smooth-streaming cadence, parsing is batched in at least 64
+  UTF-16-unit increments, and reveal boundaries never split surrogate pairs.
+- `interactive-mode.ts`: routes in-flight tool arguments through the controller, flushes exact arguments at message and
+  execution boundaries, cancels stale state on direct-update paths, publishes buffered arguments before teardown, and
+  refreshes timers after live smooth streaming setting changes.
+
+### Why
+
+- Large tool arguments can arrive in provider bursts. Parsing and rendering every burst makes previews jump abruptly
+  and repeatedly reparses nearly identical JSON prefixes.
+
+### Why extension system couldn't handle this
+
+- Extensions cannot own the built-in pending-tool component map or coordinate its private argument updates with
+  assistant-message, tool-execution, settings, and teardown lifecycles.
+
+### Expected merge conflict zones
+
+- MEDIUM: `interactive-mode.ts` around streamed tool-call handling and lifecycle flushes.
+- LOW: the fork-only argument reveal controller.
+
+## smooth streaming reveal (2026-07-20)
+
+### What changed
+
+- `streaming-reveal.ts`: adds append-aware grapheme counting/slicing and a real-time reveal controller with 90
+  units/second minimum velocity, a 267ms catchup horizon, 1–100ms delta clamping, and configurable 30–120fps ticks.
+- `interactive-mode.ts`: routes assistant start/update events through one controller, flushes final content directly,
+  stops pacing on abort/session teardown, resyncs live thinking visibility, and applies the TUI FPS cap.
+- `components/settings-selector.ts`: adds “Smooth streaming” and “Streaming fps” controls.
+
+### Why
+
+- Bursty provider deltas should appear as a readable, steady reveal without splitting Korean, emoji ZWJ, combining, or
+  other grapheme clusters.
+
+### Why extension system couldn't handle this
+
+- Extensions cannot replace the built-in in-flight assistant component or coordinate its render timer with session
+  teardown and TUI scheduling.
+
+### Expected merge conflict zones
+
+- MEDIUM: `interactive-mode.ts` assistant event handling and settings callbacks.
+- LOW: the fork-only controller and new selector items.
+
+## incremental assistant message re-render (2026-07-19)
+
+### What changed
+
+- `components/assistant-message.ts`: replaces full child teardown on every assistant streaming delta with a flat
+  descriptor reconciliation. Stable children are reused, same-kind Markdown changes update in place, and the first
+  kind/text/list divergence rebuilds only the remaining suffix.
+- `../../../test/assistant-message-incremental-render.test.ts`: compares incremental output byte-for-byte with fresh
+  components across the supported block shapes and verifies leading and growing Markdown identities remain stable.
+
+### Why
+
+- Clearing the content container made every streamed token recreate preceding Markdown components, keeping their
+  instance caches cold and repeatedly re-lexing already-finished blocks.
+
+### Why extension system couldn't handle this
+
+- Assistant transcript child reconciliation is private host-renderer state; an extension cannot retain or replace the
+  built-in component's nested children.
+
+### Expected merge conflict zones
+
+- MEDIUM: `components/assistant-message.ts` around descriptor construction, child reconciliation, and render-cache
+  invalidation.
+
 ## eval tool call single-box render (2026-07-17)
 
 ### What changed

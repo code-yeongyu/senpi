@@ -276,6 +276,27 @@ describe("ModelRuntime auth options", () => {
 		expect(runtime.getCompatibilityRequestConfig(model!).upstreamModelId).toBe("canonical-model");
 	});
 
+	it("sends the configured upstream model id on requests", async () => {
+		const runtime = await ModelRuntime.create({ credentials: AuthStorage.inMemory(), modelsPath: null });
+		let capturedModelId: string | undefined;
+		runtime.registerProvider("tier-provider", {
+			baseUrl: "https://example.test/v1",
+			apiKey: "generated-key",
+			api: "openai-responses",
+			streamSimple: (streamedModel, _context, _options) => {
+				capturedModelId = streamedModel.id;
+				throw new Error("captured");
+			},
+			models: [{ ...testModel("fast-alias"), upstreamModelId: "canonical-model", serviceTier: "priority" as const }],
+		});
+		const model = runtime.getModel("tier-provider", "fast-alias");
+		expect(model).toBeDefined();
+
+		await runtime.completeSimple(model!, { messages: [] });
+
+		expect(capturedModelId).toBe("canonical-model");
+	});
+
 	it("does not fabricate an API key method for an extension OAuth-only provider", async () => {
 		const runtime = await ModelRuntime.create({ credentials: AuthStorage.inMemory(), modelsPath: null });
 		runtime.registerProvider("extension-oauth", {

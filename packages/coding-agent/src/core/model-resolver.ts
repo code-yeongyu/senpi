@@ -39,7 +39,6 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	groq: "openai/gpt-oss-120b",
 	huggingface: "moonshotai/Kimi-K2.6",
 	kilo: "claude-sonnet-4-6",
-	"kimi-code": "kimi-for-coding",
 	"kimi-coding": "kimi-for-coding",
 	litellm: "default",
 	"lm-studio": "default",

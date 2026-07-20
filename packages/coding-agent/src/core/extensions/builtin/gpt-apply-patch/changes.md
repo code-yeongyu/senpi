@@ -1,5 +1,25 @@
 # changes
 
+## Capability-driven dual-variant exposure (2026-07-19)
+
+### What changed
+
+- `extension.ts`: replaced the Responses-only gate with `getApplyPatchWireMode(model)` ->
+  `freeform | json | none`. Responses-family `gpt-*` models keep the freeform variant;
+  `gpt-*` models on `openai-completions` now receive apply_patch as a plain JSON function
+  tool; every other API and non-`gpt-*` id keeps `edit`/`write`.
+- `tool.ts`/`constants.ts`/`types.ts`: `createApplyPatchTool(variant)` produces a JSON
+  variant (`APPLY_PATCH_JSON_DESCRIPTION`, no `freeform`) alongside the freeform default.
+- The toolset swap now records exactly which edit-family tools it removed and restores
+  only that owned set on switch-back (composition-safe; MCP promotions and deliberate
+  disables survive round trips).
+
+### Why
+
+- `gpt-*` models served through OpenAI-compatible proxies on `openai-completions` never
+  received apply_patch. The documented Completions restriction is deliberately superseded:
+  apply_patch is exposed there as a JSON function tool, mirroring the oh-my-pi reference.
+
 ## Responses-family API gate (2026-06-10)
 
 ### What changed
