@@ -693,7 +693,7 @@ describe("AI Providers Unicode Surrogate Pair Tests", () => {
 	);
 
 	describe.skipIf(!process.env.KIMI_API_KEY)("Kimi For Coding Provider Unicode Handling", () => {
-		const llm = getModel("kimi-coding", "k2p7");
+		const llm = getModel("kimi-coding", "kimi-for-coding");
 
 		it("should handle emoji in tool results", { retry: 3, timeout: 30000 }, async () => {
 			await testEmojiInToolResults(llm);
