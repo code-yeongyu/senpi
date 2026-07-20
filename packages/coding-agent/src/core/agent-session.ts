@@ -43,6 +43,7 @@ import type {
 } from "@earendil-works/pi-ai/compat";
 import {
 	cleanupSessionResources,
+	isClassifierRefusal,
 	isContextOverflow,
 	isRetryableAssistantError,
 	modelsAreEqual,
@@ -914,6 +915,10 @@ export class AgentSession {
 		const lastAssistant = this._lastAssistantMessage ?? this._findLastAssistantInMessages(messages);
 		if (!lastAssistant || !this._isRetryableError(lastAssistant)) {
 			return false;
+		}
+
+		if (isClassifierRefusal(lastAssistant)) {
+			return this._retryAttempt + 1 <= settings.maxRetries && this._retryFallback.canTryFallback();
 		}
 
 		if (this._retryAttempt + 1 > settings.maxRetries) {
@@ -3593,10 +3598,11 @@ export class AgentSession {
 	 * Context overflow errors are NOT retryable (handled by compaction instead).
 	 */
 	private _isRetryableError(message: AssistantMessage): boolean {
-		if (!message.errorMessage) return false;
-
 		// Context overflow is handled by compaction, not retry.
 		if (isContextOverflow(message, this.model?.contextWindow ?? 0)) return false;
+
+		if (isClassifierRefusal(message)) return true;
+		if (!message.errorMessage) return false;
 
 		if (message.stopReason === "aborted") {
 			return /timed? out|timeout/i.test(message.errorMessage);
@@ -3659,35 +3665,55 @@ export class AgentSession {
 			});
 		}
 
-		this._retryAttempt++;
 		const errorMessage = message.errorMessage || "Unknown error";
+		const isRefusal = isClassifierRefusal(message);
 		let switchedFallback = false;
-		if (this._retryAttempt > settings.maxRetries) {
-			switchedFallback = await this._retryFallback.tryFallback("transient", {
-				errorMessage,
-				retryAfterMs: this._getProviderRetryDelayMs(errorMessage),
-			});
-			if (switchedFallback) {
-				// The new model receives a fresh retry budget; the failed model does not.
-				this._retryAttempt = 1;
-			} else {
+		if (isRefusal) {
+			// Refusals are only retried through a new chain candidate. They never use
+			// same-model retries or the transient over-budget fallback escape hatch.
+			if (this._retryAttempt + 1 > settings.maxRetries) {
+				this._resolveRetry();
+				return false;
+			}
+			switchedFallback = await this._retryFallback.tryFallback("refusal", {});
+			if (!switchedFallback) {
 				const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
 				if (exhaustedChainKey) {
 					this._emit({ type: "retry_fallback_exhausted", chainKey: exhaustedChainKey, lastError: errorMessage });
 				}
-				this._emit({
-					type: "auto_retry_end",
-					success: false,
-					attempt: this._retryAttempt - 1,
-					finalError: message.errorMessage,
-				});
-				this._retryAttempt = 0;
 				this._resolveRetry();
 				return false;
 			}
+			this._retryAttempt++;
+		} else {
+			this._retryAttempt++;
+			if (this._retryAttempt > settings.maxRetries) {
+				switchedFallback = await this._retryFallback.tryFallback("transient", {
+					errorMessage,
+					retryAfterMs: this._getProviderRetryDelayMs(errorMessage),
+				});
+				if (switchedFallback) {
+					// The new model receives a fresh retry budget; the failed model does not.
+					this._retryAttempt = 1;
+				} else {
+					const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
+					if (exhaustedChainKey) {
+						this._emit({ type: "retry_fallback_exhausted", chainKey: exhaustedChainKey, lastError: errorMessage });
+					}
+					this._emit({
+						type: "auto_retry_end",
+						success: false,
+						attempt: this._retryAttempt - 1,
+						finalError: message.errorMessage,
+					});
+					this._retryAttempt = 0;
+					this._resolveRetry();
+					return false;
+				}
+			}
 		}
 
-		const providerDelayMs = this._getProviderRetryDelayMs(errorMessage);
+		const providerDelayMs = isRefusal ? undefined : this._getProviderRetryDelayMs(errorMessage);
 		const maxRetryDelayMs = this.settingsManager.getProviderRetrySettings().maxRetryDelayMs;
 		if (providerDelayMs !== undefined && providerDelayMs > maxRetryDelayMs) {
 			this._emit({

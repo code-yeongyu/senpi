@@ -74,7 +74,7 @@ export class RetryFallbackController {
 	}
 
 	canTryFallback(): boolean {
-		return this.nextCandidate() !== undefined;
+		return this.nextCandidate(false) !== undefined;
 	}
 
 	async tryFallback(
@@ -106,7 +106,7 @@ export class RetryFallbackController {
 		return true;
 	}
 
-	private nextCandidate(): { chainKey: string; selector: FallbackSelector; model: Model<Api> } | undefined {
+	private nextCandidate(reserve = true): { chainKey: string; selector: FallbackSelector; model: Model<Api> } | undefined {
 		const settings = this.deps.getSettings();
 		const current = this.deps.getCurrentSelector();
 		if (!settings.modelFallback || !current) return undefined;
@@ -114,9 +114,7 @@ export class RetryFallbackController {
 		const chainKey = resolveChainKey(current.model, current.thinkingLevel, chains) ?? this.state?.chainKey;
 		const entries = chainKey ? chains[chainKey] : undefined;
 		if (!chainKey || !entries) return undefined;
-		let foundCandidate = false;
 		for (const raw of candidatesAfter(entries, formatSelector(current.model, current.thinkingLevel))) {
-			foundCandidate = true;
 			const selector = parseFallbackSelector(raw, this.deps.registry);
 			if (!selector) {
 				this.skip(raw, "unknown");
@@ -140,10 +138,10 @@ export class RetryFallbackController {
 				this.skip(raw, "unknown");
 				continue;
 			}
-			this.triedSelectors.add(base);
+			if (reserve) this.triedSelectors.add(base);
 			return { chainKey, selector, model };
 		}
-		if (foundCandidate) this.lastExhaustedChainKey = chainKey;
+		this.lastExhaustedChainKey = chainKey;
 		return undefined;
 	}
 
