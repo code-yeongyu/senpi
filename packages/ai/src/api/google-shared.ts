@@ -7,7 +7,7 @@ import type { Context, ImageContent, Model, ProviderNativeContent, StopReason, T
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { transformMessages } from "./transform-messages.ts";
 
-type GoogleApiType = "google-generative-ai" | "google-vertex";
+type GoogleApiType = "google-generative-ai" | "google-gemini-cli" | "google-vertex";
 
 /**
  * Thinking level for Gemini 3 models.

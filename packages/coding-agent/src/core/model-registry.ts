@@ -95,6 +95,26 @@ export class ModelRegistry {
 			const resolution = await this.runtime.getAuth(model);
 			const compatibility = this.runtime.getCompatibilityRequestConfig(model, resolution?.env);
 			if (!resolution) {
+				// Fall back to multi-account credential pool when configured.
+				const pooled = await this.authStorage.selectPooledCredential?.(model.provider);
+				if (pooled?.apiKey) {
+					const headers = {
+						...(compatibility.headers
+							? Object.fromEntries(
+									Object.entries(compatibility.headers).filter(
+										(entry): entry is [string, string] => entry[1] !== null,
+									),
+								)
+							: {}),
+						...(pooled.headers ?? {}),
+					};
+					return {
+						ok: true,
+						apiKey: pooled.apiKey,
+						headers: Object.keys(headers).length > 0 ? headers : undefined,
+						extraBody: compatibility.extraBody,
+					};
+				}
 				if (compatibility.authHeader) {
 					return { ok: false, error: `No API key found for "${model.provider}"` };
 				}

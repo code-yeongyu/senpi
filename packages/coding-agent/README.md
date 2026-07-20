@@ -139,6 +139,8 @@ Pi also supports the llama.cpp router server. Configure it with `/login llama.cp
 
 See [docs/providers.md](docs/providers.md) for other provider setup instructions.
 
+For pooled local credential management, run `senpi auth-broker --help`.
+
 **Custom providers & models:** Add providers via `~/.pi/agent/models.json` if they speak a supported API (OpenAI, Anthropic, Google). For custom APIs or OAuth, use extensions. See [docs/models.md](docs/models.md) and [docs/custom-provider.md](docs/custom-provider.md).
 
 ---

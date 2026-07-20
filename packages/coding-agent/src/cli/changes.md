@@ -1,26 +1,23 @@
 # changes
 
-## System-prompt flags forwarded to the neo launcher argv (2026-07-18)
+## Auth broker command (2026-07-14)
 
 ### What changed
 
-- `neo/build-argv.ts`: forwards `--system-prompt` and repeated
-  `--append-system-prompt` from the parsed classic argv so the Go client can put
-  them in the handshake `runtimeOptions` (daemon side in
-  `../modes/rpc/changes.md` 2026-07-18).
-
-### Why
-
-- The launcher forwards every runtime-relevant flag; these two were parsed but
-  dropped, so neo clients silently lost them through the shared daemon.
+- Added the auth-broker serve, token, login, logout, import, backup, restore, and migrate command surface.
+- Startup completes the initial expiring-token sweep before accepting selection requests.
+- Backup, restore, and migration operations validate manifests and preserve restricted permissions.
 
 ### Why extension system couldn't handle this
 
-- Pre-runtime launcher argv construction; extensions are not loaded yet.
+- The standalone broker must run before an interactive coding-agent session and owns process signals, loopback HTTP,
+  token files, and SQLite lifecycle.
 
-### Expected merge conflict zones on next upstream sync
+### Expected merge conflict zones
 
-- LOW: `neo/` is fork-only.
+- MEDIUM: main command dispatch and CLI bootstrap.
+- LOW: fork-only auth-broker command and server modules.
+
 
 ## Neo launcher flags and daemon plumbing (2026-07-06)
 

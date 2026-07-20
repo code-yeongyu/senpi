@@ -2,11 +2,15 @@ import type { ApiKeyAuth, OAuthAuth } from "./types.ts";
 
 /**
  * Standard api-key auth: a stored credential key wins, otherwise the first
- * set env var resolves. Includes a `login` that prompts for the key.
- * Providers with non-standard resolution (provider env, ambient files, IAM)
- * write their own `ApiKeyAuth`.
+ * set env var resolves, followed by an optional local-server fallback key.
+ * Includes a `login` that prompts for the key. Providers with non-standard
+ * resolution (provider env, ambient files, IAM) write their own `ApiKeyAuth`.
  */
-export function envApiKeyAuth(name: string, envVars: readonly string[]): ApiKeyAuth {
+export function envApiKeyAuth(
+	name: string,
+	envVars: readonly string[],
+	options?: { fallbackApiKey?: string },
+): ApiKeyAuth {
 	return {
 		name,
 		login: async (interaction) => {
@@ -18,6 +22,9 @@ export function envApiKeyAuth(name: string, envVars: readonly string[]): ApiKeyA
 			for (const envVar of envVars) {
 				const value = await ctx.env(envVar);
 				if (value) return { auth: { apiKey: value }, source: envVar };
+			}
+			if (options?.fallbackApiKey) {
+				return { auth: { apiKey: options.fallbackApiKey }, source: "built-in fallback" };
 			}
 			return undefined;
 		},
