@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DefaultResourceLoader } from "../../../src/core/resource-loader.ts";
+import { SettingsManager } from "../../../src/core/settings-manager.ts";
 import type { ExtensionAPI } from "../../../src/index.ts";
 
 const noop: (pi: ExtensionAPI) => void = () => {};
@@ -73,6 +74,30 @@ describe("inline extension naming", () => {
 		await loader.reload();
 
 		expect(inlineExtensionPaths(loader)).toEqual(["<inline:my-provider>", "<inline:my-commands>"]);
+	});
+
+	it("preserves hidden state for named factories", async () => {
+		const { cwd, agentDir } = fixture("hidden");
+		const loader = new DefaultResourceLoader({
+			cwd,
+			agentDir,
+			// DefaultResourceLoader loads the fork's builtin and bundled extensions by default.
+			// Isolate this fixture to only the inline factory via the real settings allowlist so the
+			// length-1 assertion below keeps proving exact loader contents, not a filtered subset.
+			settingsManager: SettingsManager.inMemory({ enabledBuiltinExtensions: [] }),
+			noSkills: true,
+			noPromptTemplates: true,
+			noThemes: true,
+			extensionFactories: [{ name: "built-in", factory: noop, hidden: true }],
+		});
+
+		await loader.reload();
+
+		const result = loader.getExtensions();
+
+		expect(result.extensions).toHaveLength(1);
+		expect(result.extensions[0].path).toBe("<inline:built-in>");
+		expect(result.extensions[0].hidden).toBe(true);
 	});
 
 	it("supports mixed bare and named factories", async () => {

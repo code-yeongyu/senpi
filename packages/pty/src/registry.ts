@@ -37,6 +37,8 @@ import { SessionRegistryCapacityError } from "./registry-types.ts";
 
 const DEFAULT_MAX_SESSIONS = 32;
 const DEFAULT_COMMAND = "bash";
+const DEFAULT_STOP_EXIT_GRACE_MS = 5000;
+const MAX_STOP_EXIT_GRACE_MS = 2_147_483_647;
 
 export class SessionRegistry<TSession extends SessionRegistrySession = SessionRegistrySession> {
 	private readonly entries = new Map<string, StoredSessionRegistryEntry<TSession>>();
@@ -47,9 +49,16 @@ export class SessionRegistry<TSession extends SessionRegistrySession = SessionRe
 	private readonly platform: string;
 	private sequence = 0;
 	readonly maxSessions: number;
+	private readonly stopExitGraceMs: number;
 
 	constructor(options: SessionRegistryOptions<TSession> = {}) {
 		this.maxSessions = normalizeMaxSessions(options.maxSessions);
+		this.stopExitGraceMs =
+			options.stopExitGraceMs !== undefined &&
+			Number.isFinite(options.stopExitGraceMs) &&
+			options.stopExitGraceMs > 0
+				? Math.min(options.stopExitGraceMs, MAX_STOP_EXIT_GRACE_MS)
+				: DEFAULT_STOP_EXIT_GRACE_MS;
 		this.createSession = options.createSession ?? null;
 		this.killProcess = options.killProcess ?? defaultKillProcess;
 		this.now = options.now ?? Date.now;
@@ -193,7 +202,7 @@ export class SessionRegistry<TSession extends SessionRegistrySession = SessionRe
 		await this.cleanupDetachedChildren(entry);
 		if (entry.state !== "exited") {
 			await stopTerminalSession(entry.session);
-			if (await waitForTerminalSessionExit(entry.session)) {
+			if (await waitForTerminalSessionExit(entry.session, this.stopExitGraceMs)) {
 				this.markExited(entry);
 			} else {
 				entry.state = "stopping";

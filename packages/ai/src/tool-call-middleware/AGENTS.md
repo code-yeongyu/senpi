@@ -17,7 +17,8 @@ tool-call-middleware/
 │   ├── gemma4.ts               # Gemma 4 delimiter format `<|tool_call>call:name{…}<tool_call|>`
 │   ├── json-mix.ts             # Shared JSON-mix helper (Hermes + delimited variants)
 │   ├── xml-tool-tag-scanner.ts # Streaming XML tag boundary scanner
-│   └── anthropic-xml/          # Legacy <invoke>/<parameter> parser, coercion, scanner, formatter, stream parser
+│   ├── anthropic-xml/          # Legacy <invoke>/<parameter> parser, coercion, scanner, formatter, stream parser
+│   └── antml/                  # ANTML <function_calls>/<invoke> protocol with Claude-Code-style failure tolerance
 ├── TESTING.md                  # Manual test commands per protocol (OpenRouter live API)
 └── changes.md                  # Fork tracker: morph-xml strict mode, yaml+xml, stream error preservation
 ```

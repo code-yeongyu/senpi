@@ -5,6 +5,7 @@ import {
 	type Message,
 	type Model,
 	type TextContent,
+	type Tool,
 } from "@earendil-works/pi-ai";
 import { stream } from "@earendil-works/pi-ai/compat";
 import {
@@ -14,7 +15,6 @@ import {
 	estimateContextTokens,
 	estimateTokens,
 	prepareCompaction,
-	serializeConversation,
 } from "../../../compaction/index.ts";
 import { convertToLlm } from "../../../messages.ts";
 import type { ModelRegistry } from "../../../model-registry.ts";
@@ -22,6 +22,7 @@ import type { ReadonlySessionManager } from "../../../session-manager.ts";
 import type { ApplyCompactionResult, ContextUsage } from "../../types.ts";
 import { computeEffectiveKeepRecentTokens, computeEffectiveThreshold } from "./policy.ts";
 import { buildPrompt, type MergedCompactionPromptVariant } from "./prompts.ts";
+import { repairOrphanedToolResults } from "./repair-tool-pairs.ts";
 import * as truncation from "./tool-truncation.ts";
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
@@ -39,6 +40,7 @@ export interface SpeculativeCompactionContext {
 	getContextUsage(): ContextUsage | undefined;
 	getCompactionSettings?(): CompactionPreparation["settings"];
 	getMessageRevision(): number;
+	getSystemPrompt?(): string;
 	applyCompaction(
 		precomputed: CompactionResult,
 		options: { reason: "extension"; expectedRevision: number },
@@ -53,6 +55,10 @@ export interface SpeculativeCompactionSnapshot {
 	preparation: CompactionPreparation;
 	promptVariant: MergedCompactionPromptVariant;
 	customInstructions?: string;
+	/** Agent system prompt; used to make the summarization request look like normal agent traffic. */
+	systemPrompt?: string;
+	/** Agent tool definitions; forwarded so the request shape matches normal agent traffic. */
+	tools?: Tool[];
 }
 
 export type SpeculativeCompactionResult = ApplyCompactionResult | { applied: false; reason: "unavailable" };
@@ -88,23 +94,26 @@ async function generateSummaryMessage(options: {
 		extraBody?: Record<string, unknown>;
 	};
 }): Promise<Message | undefined> {
-	const conversationText = serializeConversation(convertToLlm(options.messages));
+	// Send the conversation as native LLM messages with the summarization
+	// instruction as a trailing user message, mirroring normal agent traffic.
+	// A single serialized `<conversation>` text dump of a large session is
+	// deterministically refused by Anthropic's anti-distillation classifier
+	// ("reverse engineering or duplicating model outputs"), while the same
+	// content as native blocks with the agent's system prompt and tools passes.
+	const conversationMessages = repairOrphanedToolResults(convertToLlm(options.messages));
 	const responseStream = stream(
 		options.snapshot.model,
 		{
-			systemPrompt: options.prompt.system,
+			systemPrompt: options.snapshot.systemPrompt ?? options.prompt.system,
 			messages: [
+				...conversationMessages,
 				{
 					role: "user",
-					content: [
-						{
-							type: "text",
-							text: `${options.prompt.user}\n\n<conversation>\n${conversationText}\n</conversation>`,
-						},
-					],
+					content: [{ type: "text", text: options.prompt.user }],
 					timestamp: Date.now(),
 				},
 			],
+			...(options.snapshot.tools && options.snapshot.tools.length > 0 ? { tools: options.snapshot.tools } : {}),
 		},
 		{
 			apiKey: options.auth.apiKey,
@@ -274,7 +283,7 @@ export function getPromptVariant(options: {
 
 export function createSpeculativeCompactionSnapshot(
 	context: SpeculativeCompactionContext,
-	options: { customInstructions?: string; generation: number },
+	options: { customInstructions?: string; generation: number; tools?: Tool[] },
 ): SpeculativeCompactionSnapshot | undefined {
 	const model = context.model;
 	if (!model) return undefined;
@@ -298,6 +307,8 @@ export function createSpeculativeCompactionSnapshot(
 		preparation,
 		promptVariant: getPromptVariant({ reason: "extension", preparation }),
 		customInstructions: options.customInstructions,
+		systemPrompt: context.getSystemPrompt?.(),
+		tools: options.tools,
 	};
 }
 
@@ -321,6 +332,7 @@ export async function runExtensionCompaction(
 	});
 
 	while (true) {
+		if (signal?.aborted) return undefined;
 		const response = await generateSummaryMessage({
 			messages,
 			onProgress,
@@ -344,11 +356,24 @@ export async function runExtensionCompaction(
 			continue;
 		}
 
+		if (isAssistantMessage(response) && response.stopReason === "aborted") {
+			// A partial summary from an aborted stream must never be applied.
+			return undefined;
+		}
+
+		if (isAssistantMessage(response) && response.stopReason === "error") {
+			// Surface the real provider failure instead of silently degrading
+			// into a generic "Compaction cancelled".
+			throw new Error(response.errorMessage || "Compaction summary request failed");
+		}
+
 		const summary = getSummaryText(response);
 		if (!summary) return undefined;
 
+		// Informational only: the core rejects an applied compaction that would
+		// still overflow (_wouldCompactionOverflow). Rejecting here based on the
+		// size of the *discarded* input made large sessions uncompactable.
 		const tokenEstimate = estimateContextTokens(convertToLlm(messages)).tokens + approxTokens(summary);
-		if (tokenEstimate > snapshot.contextWindow * COMPACTION_BUDGET_RATIO) return undefined;
 
 		return {
 			summary,

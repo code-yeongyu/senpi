@@ -53,7 +53,7 @@
 		"generate-models": "tsx scripts/generate-models.ts",
 		"generate-model-catalog": "tsx scripts/generate-models.ts --strict --json-only --json-output ../../.artifacts/model-catalog",
 		"generate-image-models": "tsx scripts/generate-image-models.ts",
-		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js",
+		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js && shx rm -rf dist/providers/data && shx cp -r src/providers/data dist/providers/data",
 		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
 		"dev:tsc": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
 		"test": "vitest --run",

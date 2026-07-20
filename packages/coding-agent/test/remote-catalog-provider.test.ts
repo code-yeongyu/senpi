@@ -115,4 +115,44 @@ describe("remote catalog provider", () => {
 		expect(provider.getModels().map((entry) => entry.id)).toEqual(["static"]);
 		expect(await store.read(provider.id)).toMatchObject({ models: [], checkedAt: expect.any(Number) });
 	});
+
+	it("never drops builtin-declared input modalities when the overlay replaces a model", async () => {
+		const staticModel = { ...model("k3"), input: ["text", "image", "video"] as Model<"openai-completions">["input"] };
+		const remoteModel = { ...model("k3"), input: ["text", "image"] as Model<"openai-completions">["input"] };
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response(JSON.stringify({ k3: remoteModel }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			}),
+		);
+		const provider = withRemoteCatalog(
+			createProvider({
+				id: "test-provider",
+				auth: { apiKey: { name: "Test", resolve: async () => ({ auth: {} }) } },
+				models: [staticModel],
+				api: {
+					stream: () => {
+						throw new Error("not used");
+					},
+					streamSimple: () => {
+						throw new Error("not used");
+					},
+				},
+			}),
+		);
+		const store = new InMemoryModelsStore();
+
+		await provider.refreshModels?.({
+			credential: { type: "api_key" },
+			store: {
+				read: () => store.read(provider.id),
+				write: (entry) => store.write(provider.id, entry),
+				delete: () => store.delete(provider.id),
+			},
+			allowNetwork: true,
+		});
+
+		const merged = provider.getModels().find((entry) => entry.id === "k3");
+		expect(merged?.input).toEqual(["text", "image", "video"]);
+	});
 });

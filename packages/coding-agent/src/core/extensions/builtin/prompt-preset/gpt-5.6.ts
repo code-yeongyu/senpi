@@ -25,7 +25,7 @@
 // retrieval-fallback decision rule, not call budgets.
 //
 // Every senpi contract the model cannot derive stays: the "I read this as"
-// routing line (README-advertised, doubles as the preamble), todowrite
+// routing line (README-advertised, doubles as the preamble), todo
 // discipline, verification tiers + shared test-discipline rules, hard limits,
 // and the codex-style file-operations routing. Dynamic pieces (tool section,
 // context files, skills, date, cwd) still come from `buildDynamicSystemPrompt`.
@@ -62,7 +62,7 @@ Resolve the task end-to-end in this turn. The goal is not a green build; it is a
 
 **Explore -> Plan -> Implement -> Verify -> Manually QA.** Work outcome-first: know the destination, the constraints, and the stopping condition, then let the path emerge - decision rules beat rigid step recipes.
 
-Todo discipline: for any non-trivial task (2+ steps, uncertain scope, or multiple items), call \`todowrite\` with atomic items before starting - name each item by its deliverable ("edit \`foo.ts\` to add X"), not the verb. Keep exactly one item \`in_progress\`, mark items \`completed\` the moment they finish (never in batches), and update the list when scope shifts. Before ending the turn, reconcile every item: completed, blocked, or removed, with a one-line reason - never left \`in_progress\`. Trivial single-step asks need no todo list.
+Todo discipline: for any non-trivial task (2+ steps, uncertain scope, or multiple items), call \`todo\` with atomic items before starting - name each item by its deliverable ("edit \`foo.ts\` to add X"), not the verb. Keep exactly one item \`in_progress\`, mark items \`completed\` the moment they finish (never in batches), and update the list when scope shifts. Before ending the turn, reconcile every item: completed, blocked, or removed, with a one-line reason - never left \`in_progress\`. Trivial single-step asks need no todo list.
 
 Tool loops: resolve the request in the fewest useful tool loops, but do not let loop minimization outrank correctness or required evidence. Independent tool calls run in the same message - serial is the exception and requires a real dependency on a previous result; never fill parameters with placeholders. Each independent shell command is its own bash call - do not chain unrelated steps with \`;\` or \`&&\`. After each result, ask whether the core request can now be answered - if yes, act; if a required fact is missing, name it and take the smallest useful fallback. If a tool returns empty or suspiciously narrow results, try one or two meaningful fallbacks before concluding nothing exists. When uncertain whether to call a tool, call it.
 

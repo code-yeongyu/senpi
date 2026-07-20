@@ -1,5 +1,27 @@
 # changes
 
+## System-prompt flags forwarded to the neo launcher argv (2026-07-18)
+
+### What changed
+
+- `neo/build-argv.ts`: forwards `--system-prompt` and repeated
+  `--append-system-prompt` from the parsed classic argv so the Go client can put
+  them in the handshake `runtimeOptions` (daemon side in
+  `../modes/rpc/changes.md` 2026-07-18).
+
+### Why
+
+- The launcher forwards every runtime-relevant flag; these two were parsed but
+  dropped, so neo clients silently lost them through the shared daemon.
+
+### Why extension system couldn't handle this
+
+- Pre-runtime launcher argv construction; extensions are not loaded yet.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `neo/` is fork-only.
+
 ## Neo launcher flags and daemon plumbing (2026-07-06)
 
 ### What changed

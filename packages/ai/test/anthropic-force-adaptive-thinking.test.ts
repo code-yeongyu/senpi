@@ -108,7 +108,6 @@ describe("Anthropic forceAdaptiveThinking compat override", () => {
 	it.each([
 		["k2p7", "medium", "medium"],
 		["k3", "max", "max"],
-		["kimi-for-coding", "medium", "medium"],
 		["kimi-for-coding-highspeed", "medium", "medium"],
 		["kimi-k2-thinking", "medium", "medium"],
 	] as const)("uses adaptive thinking effort without a token budget for Kimi Coding %s", async (modelId, reasoning, effort) => {

@@ -13,8 +13,13 @@ export type PatchChunk = {
 	isEndOfFile: boolean;
 };
 
-export type BaselineState = {
-	nonGptToolNames: string[];
+export type ApplyPatchWireMode = "freeform" | "json" | "none";
+
+export type ApplyPatchToolVariant = Exclude<ApplyPatchWireMode, "none">;
+
+export type ApplyPatchToolsetState = {
+	/** Exactly the edit-family tools this extension removed at the last non-GPT to GPT transition. */
+	removedEditToolNames: string[];
 };
 
 export type FreeformToolFormat = {
@@ -121,8 +126,8 @@ export type ApplyPatchToolDefinition = ToolDefinition<
 	typeof APPLY_PATCH_PARAMS,
 	ApplyPatchToolDetails | undefined,
 	ApplyPatchRenderState
-> & { freeform: FreeformToolFormat };
+>;
 
-export type ApplyPatchExtensionAPI = Pick<ExtensionAPI, "on" | "getActiveTools" | "setActiveTools"> & {
+export type ApplyPatchExtensionAPI = Pick<ExtensionAPI, "on" | "getActiveTools" | "getAllTools" | "setActiveTools"> & {
 	registerTool: (tool: ApplyPatchToolDefinition) => void;
 };

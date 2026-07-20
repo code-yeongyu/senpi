@@ -351,7 +351,13 @@ export interface ThinkingContent {
 export interface ImageContent {
 	type: "image";
 	data: string; // base64 encoded image data
-	mimeType: string; // e.g., "image/jpeg", "image/png"
+	mimeType: string; // e.g., "image/jpeg", "image/png". Video payloads (e.g. "video/mp4") ride this
+	// same block for models that declare the "video" input modality; use isVideoMimeType() to branch.
+}
+
+/** True when an ImageContent block actually carries video data (e.g. "video/mp4"). */
+export function isVideoMimeType(mimeType: string): boolean {
+	return mimeType.toLowerCase().startsWith("video/");
 }
 
 export interface ToolCall {
@@ -574,7 +580,7 @@ export interface OpenAICompletionsCompat {
 	/**
 	 * Tool call format for models that don't natively support tool calling.
 	 * When set, the middleware will intercept tool calls and format them as text.
-	 * Supported values: "hermes", "morph-xml", "xml" (deprecated alias for "morph-xml"), "yaml-xml", "gemma4-delimiter", "anthropic-xml"
+	 * Supported values: "hermes", "morph-xml", "xml" (deprecated alias for "morph-xml"), "yaml-xml", "gemma4-delimiter", "anthropic-xml", "antml"
 	 */
 	toolCallFormat?: string;
 	/** Cache control convention for prompt caching. "anthropic" applies Anthropic-style `cache_control` markers to the system prompt, last tool definition, and last user/assistant text content. */
@@ -799,7 +805,7 @@ export interface Model<TApi extends Api> {
 	 * Missing keys use provider defaults. null marks a level as unsupported.
 	 */
 	thinkingLevelMap?: ThinkingLevelMap;
-	input: ("text" | "image")[];
+	input: ("text" | "image" | "video")[];
 	cost: ModelCost;
 	contextWindow: number;
 	maxTokens: number;

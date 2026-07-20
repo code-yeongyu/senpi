@@ -137,7 +137,11 @@ describe.skipIf(!(await hasPython3()))("PythonKernel live", () => {
 				valueRepr: expect.stringContaining("'echoed': True"),
 			});
 			expect(requests).toHaveLength(1);
-			expect(requests[0]).toMatchObject({ toolName: "echo_tool", args: { q: "hi" } });
+			expect(requests[0]?.toolName).toBe("echo_tool");
+			// Strict equality: the prelude must forward args verbatim — no injected
+			// harness fields (e.g. omp's `i` intent key) that strict tool schemas
+			// (additionalProperties: false) would reject at executeTool validation.
+			expect(requests[0]?.args).toEqual({ q: "hi" });
 			expect(requests[0]?.callId).toMatch(/^py-/);
 		} finally {
 			await kernel.close();

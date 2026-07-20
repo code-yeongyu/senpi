@@ -49,6 +49,10 @@ type NeoRuntimeOptions struct {
 	NoThemes          *bool    `json:"noThemes,omitempty"`
 	NoContextFiles    *bool    `json:"noContextFiles,omitempty"`
 
+	// System prompt overrides (resourceLoaderOptions in the runtime path).
+	SystemPrompt       *string  `json:"systemPrompt,omitempty"`
+	AppendSystemPrompt []string `json:"appendSystemPrompt,omitempty"`
+
 	// Unknown flags (extension flags): name -> bool|string.
 	UnknownFlags map[string]any `json:"unknownFlags,omitempty"`
 
@@ -118,6 +122,9 @@ var recognizedFlags = map[string]argvFlag{
 	"--no-prompt-templates": {kind: kindBool, on: func(o *NeoRuntimeOptions) { o.NoPromptTemplates = boolPtr(true) }},
 	"--no-themes":           {kind: kindBool, on: func(o *NeoRuntimeOptions) { o.NoThemes = boolPtr(true) }},
 	"--no-context-files":    {kind: kindBool, on: func(o *NeoRuntimeOptions) { o.NoContextFiles = boolPtr(true) }},
+
+	"--system-prompt":        {kind: kindString, set: func(o *NeoRuntimeOptions, v string) { o.SystemPrompt = strPtr(v) }},
+	"--append-system-prompt": {kind: kindString, set: func(o *NeoRuntimeOptions, v string) { o.AppendSystemPrompt = append(o.AppendSystemPrompt, v) }},
 }
 
 // launcherLocalFlags are consumed before the runtime-options parser (they select

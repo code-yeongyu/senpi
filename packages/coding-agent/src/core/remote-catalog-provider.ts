@@ -5,12 +5,28 @@ import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 const DEFAULT_CATALOG_BASE_URL = "https://pi.dev";
 export const REMOTE_CATALOG_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
+const INPUT_MODALITY_ORDER = ["text", "image", "video"] as const;
+
+/**
+ * Union of input modalities, in canonical order. The remote overlay refreshes
+ * costs/limits but may lag behind fork-declared capabilities (e.g. kimi-coding
+ * k3 video input), so a catalog entry must never silently drop a modality the
+ * built-in model already declares.
+ */
+function mergeInputModalities(baseline: Model<Api>["input"], dynamic: Model<Api>["input"]): Model<Api>["input"] {
+	const set = new Set([...(dynamic ?? []), ...(baseline ?? [])]);
+	return INPUT_MODALITY_ORDER.filter((modality) => set.has(modality));
+}
+
 function mergeModels(baseline: readonly Model<Api>[], dynamic: readonly Model<Api>[]): Model<Api>[] {
 	const merged = [...baseline];
 	for (const model of dynamic) {
 		const index = merged.findIndex((entry) => entry.id === model.id);
-		if (index >= 0) merged[index] = model;
-		else merged.push(model);
+		if (index >= 0) {
+			merged[index] = { ...model, input: mergeInputModalities(merged[index].input, model.input) };
+		} else {
+			merged.push(model);
+		}
 	}
 	return merged;
 }

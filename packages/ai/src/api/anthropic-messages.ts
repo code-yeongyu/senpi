@@ -29,6 +29,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { isVideoMimeType } from "../types.ts";
 import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
@@ -139,6 +140,17 @@ const fromClaudeCodeName = (name: string, tools?: Tool[]) => {
 /**
  * Convert content blocks to Anthropic API format
  */
+/**
+ * Anthropic-compatible video input block (not in the official SDK types).
+ * Kimi's Anthropic-compatible endpoint accepts `{type:"video"}` content blocks
+ * with the same source shape as images (verified against MoonshotAI/kimi-code
+ * kosong anthropic provider).
+ */
+interface AnthropicVideoBlock {
+	type: "video";
+	source: { type: "base64"; media_type: string; data: string };
+}
+
 function convertContentBlocks(content: (TextContent | ImageContent)[]):
 	| string
 	| Array<
@@ -151,6 +163,7 @@ function convertContentBlocks(content: (TextContent | ImageContent)[]):
 						data: string;
 					};
 			  }
+			| AnthropicVideoBlock
 	  > {
 	// If only text blocks, return as concatenated string for simplicity
 	const hasImages = content.some((c) => c.type === "image");
@@ -166,6 +179,16 @@ function convertContentBlocks(content: (TextContent | ImageContent)[]):
 				text: sanitizeSurrogates(block.text),
 			};
 		}
+		if (isVideoMimeType(block.mimeType)) {
+			return {
+				type: "video" as const,
+				source: {
+					type: "base64" as const,
+					media_type: block.mimeType,
+					data: block.data,
+				},
+			};
+		}
 		return {
 			type: "image" as const,
 			source: {
@@ -176,7 +199,7 @@ function convertContentBlocks(content: (TextContent | ImageContent)[]):
 		};
 	});
 
-	// If only images (no text), add placeholder text block
+	// If only media (no text), add placeholder text block
 	const hasText = blocks.some((b) => b.type === "text");
 	if (!hasText) {
 		blocks.unshift({
@@ -1614,7 +1637,9 @@ function convertToolResult(
 			tool_name: isOAuthToken ? toClaudeCodeName(name) : name,
 		});
 	}
-	const convertedContent = convertContentBlocks(msg.content);
+	// The video block variant is not in the SDK's ContentBlockParam union, so the
+	// converted array is cast through the same escape hatch as tool_reference blocks.
+	const convertedContent = convertContentBlocks(msg.content) as string | ContentBlockParam[];
 	// Anthropic rejects tool references mixed with ordinary tool-result content.
 	return {
 		toolResult: {
@@ -1622,7 +1647,7 @@ function convertToolResult(
 			tool_use_id: msg.toolCallId,
 			content: references.length > 0 ? references : convertedContent,
 			is_error: msg.isError,
-		},
+		} as unknown as ContentBlockParam,
 		siblingContent:
 			references.length === 0
 				? []
@@ -1666,6 +1691,15 @@ function convertMessages(
 							type: "text",
 							text: sanitizeSurrogates(item.text),
 						};
+					} else if (isVideoMimeType(item.mimeType)) {
+						return {
+							type: "video",
+							source: {
+								type: "base64",
+								media_type: item.mimeType,
+								data: item.data,
+							},
+						} satisfies AnthropicVideoBlock as unknown as ContentBlockParam;
 					} else {
 						return {
 							type: "image",

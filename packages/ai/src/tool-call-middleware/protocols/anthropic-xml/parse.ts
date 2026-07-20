@@ -1,11 +1,17 @@
 import type { Tool } from "../../../types.ts";
 import type { ParsedToolCall, ParserOptions } from "../../types.ts";
-import { coerceParameters } from "./coerce-parameters.ts";
 import { findNextInvokeMatch } from "./invoke-match.ts";
+import type { InvokeProtocolConfig } from "./invoke-protocol.ts";
+import { anthropicXmlInvokeConfig } from "./invoke-protocol.ts";
 import { findInvokeOpenTag, scanInvokeBlock } from "./invoke-tag-scanner.ts";
 import { createToolResolver } from "./tool-resolver.ts";
 
-export function parseAnthropicXmlGeneratedText(text: string, tools: Tool[], options?: ParserOptions): ParsedToolCall[] {
+export function parseInvokeGeneratedText(
+	text: string,
+	tools: Tool[],
+	config: InvokeProtocolConfig,
+	options?: ParserOptions,
+): ParsedToolCall[] {
 	if (text.length === 0 || tools.length === 0) {
 		return [];
 	}
@@ -47,9 +53,9 @@ export function parseAnthropicXmlGeneratedText(text: string, tools: Tool[], opti
 			continue;
 		}
 
-		const argumentsRecord = block.parameters ? coerceParameters(block.parameters, tool) : null;
+		const argumentsRecord = block.parameters ? config.coerce(block.parameters, tool) : null;
 		if (!argumentsRecord) {
-			options?.onError?.("Could not process anthropic-xml tool call, keeping original text.", {
+			options?.onError?.(`Could not process ${config.protocol} tool call, keeping original text.`, {
 				toolCall: originalCallText,
 			});
 			continue;
@@ -59,4 +65,8 @@ export function parseAnthropicXmlGeneratedText(text: string, tools: Tool[], opti
 	}
 
 	return parsedToolCalls;
+}
+
+export function parseAnthropicXmlGeneratedText(text: string, tools: Tool[], options?: ParserOptions): ParsedToolCall[] {
+	return parseInvokeGeneratedText(text, tools, anthropicXmlInvokeConfig, options);
 }

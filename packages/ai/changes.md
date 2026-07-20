@@ -1,5 +1,41 @@
 # changes.md — ai
 
+## Commit generated model catalog data for reproducible builds (2026-07-18)
+
+### What changed
+
+- `../../.gitignore`: removed the `packages/ai/src/providers/data/` ignore rule so generated catalog JSON is committed,
+  reviewed source, matching `src/models.generated.ts`.
+- `package.json`: the ordinary `build` no longer runs `generate-models`; it compiles, restores the CLI executable bit,
+  and copies the committed `src/providers/data/` into `dist`. Networked regeneration stays explicit via the
+  `generate-models` script, the root `generate:models` workflow, release tooling, and `prepublishOnly`.
+- `../../scripts/build-all.test.mjs`: the AI build config regression now asserts the ordinary build skips networked
+  generation, keeps the committed-data copy step, retains the explicit generator workflow, and leaves catalog JSON
+  unignored.
+- `README.md`: model-generation guidance now describes `src/providers/data/` as committed generated values.
+
+### Why
+
+- The ordinary AI build fetched models.dev and provider APIs to regenerate ignored JSON catalog data, so a build could
+  emit an unreviewed or different catalog and failed entirely offline. The committed `.models.ts` shards import the
+  JSON at compile time, so the catalog must be committed generated source for the build to be reproducible.
+
+### Why extension system couldn't handle this
+
+- Model inventory is generated before the coding-agent extension runtime is loaded, and package build scripts run
+  before any extension hook exists.
+
+### Modified upstream files
+
+- `package.json`
+- `README.md`
+- `../../.gitignore`
+- `../../scripts/build-all.test.mjs`
+
+### Expected merge conflict zones
+
+- LOW: AI package build scripts if upstream changes the compiler command or bin generation flow.
+
 ## Preserve stable Kimi Coding model IDs during catalog generation (2026-07-17)
 
 ### What changed
