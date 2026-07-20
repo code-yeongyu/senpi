@@ -192,6 +192,41 @@ describe("ModelRuntime text tool-call recovery", () => {
 		expect(forcedResult.content).toContainEqual(
 			expect.objectContaining({ type: "toolCall", id: "recovered-antml-0" }),
 		);
+
+		const customRuntime = await ModelRuntime.create({
+			credentials: AuthStorage.inMemory(),
+			modelsPath: null,
+			allowModelNetwork: false,
+		});
+		let customStreams = 0;
+		await customRuntime.registerProvider("extension-custom-recovery", {
+			name: "Extension custom recovery",
+			api: "openai-responses",
+			apiKey: "test-key",
+			baseUrl: "https://extension-custom.test/v1",
+			streamSimple: (wireModel) => {
+				customStreams++;
+				return scriptedStream(wireModel);
+			},
+			models: [
+				{
+					id: "extension-selected-claude",
+					name: "Extension selected Claude",
+					reasoning: false,
+					input: ["text"],
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+					contextWindow: 1000,
+					maxTokens: 100,
+				},
+			],
+		});
+		const customSelected = customRuntime.getModel("extension-custom-recovery", "extension-selected-claude");
+		if (!customSelected) throw new Error("Extension custom provider model was not registered");
+		const customResult = await customRuntime.streamSimple(customSelected, { messages: [], tools }).result();
+		expect(customSelected.provider).toBe("extension-custom-recovery");
+		expect(customSelected.api).toBe("openai-responses");
+		expect(customResult.content).toContainEqual(expect.objectContaining({ id: "recovered-antml-0" }));
+		expect(customStreams).toBe(1);
 	});
 
 	it("does not import the AI compat entrypoint", () => {

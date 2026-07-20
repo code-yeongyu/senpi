@@ -15,14 +15,6 @@ import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 import { createTestResourceLoader } from "./utilities.ts";
 
-const echoTool: AgentTool = {
-	name: "Echo",
-	label: "Echo",
-	description: "Echo text",
-	parameters: Type.Object({ value: Type.String() }),
-	execute: async () => ({ content: [{ type: "text", text: "echoed" }], details: undefined }),
-};
-
 function message(text: string, stopReason: AssistantMessage["stopReason"]): AssistantMessage {
 	return {
 		role: "assistant",
@@ -51,17 +43,25 @@ function textStream(text: string, terminal: "done" | "error") {
 		stream.push({ type: "text_start", contentIndex: 0, partial });
 		stream.push({ type: "text_delta", contentIndex: 0, delta: text, partial });
 		if (terminal === "error") {
-			stream.push({
-				type: "error",
-				reason: "error",
-				error: { ...partial, errorMessage: "overloaded_error" },
-			});
+			stream.push({ type: "error", reason: "error", error: { ...partial, errorMessage: "overloaded_error" } });
 			return;
 		}
 		stream.push({ type: "text_end", contentIndex: 0, content: text, partial });
 		stream.push({ type: "done", reason: "stop", message: partial });
 	});
 	return stream;
+}
+
+async function bounded<T>(promise: Promise<T>, label: string): Promise<T> {
+	let timeout: ReturnType<typeof setTimeout> | undefined;
+	const failure = new Promise<never>((_resolve, reject) => {
+		timeout = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), 2000);
+	});
+	try {
+		return await Promise.race([promise, failure]);
+	} finally {
+		if (timeout) clearTimeout(timeout);
+	}
 }
 
 export function registerAgentSessionRecoveryRetryBoundaryCase(
@@ -71,27 +71,38 @@ export function registerAgentSessionRecoveryRetryBoundaryCase(
 	it("creates a fresh recovery wrapper when AgentSession auto-retry re-invokes streamFn", async () => {
 		const selected = getModel("anthropic", "claude-sonnet-4-5");
 		if (!selected) throw new Error("Claude retry fixture model is unavailable");
+		const executeArgs: string[] = [];
+		const echoTool: AgentTool = {
+			name: "Echo",
+			label: "Echo",
+			description: "Echo text",
+			parameters: Type.Object({ value: Type.String() }),
+			execute: async (_toolCallId, params) => {
+				if (typeof params === "object" && params !== null && "value" in params)
+					executeArgs.push(String(params.value));
+				return { content: [{ type: "text", text: "echoed" }], details: undefined };
+			},
+		};
 		let calls = 0;
 		const agent = new Agent({
 			getApiKey: () => "test-key",
 			initialState: { model: selected, systemPrompt: "Test", tools: [echoTool] },
 			streamFn: () => {
 				calls++;
-				if (calls === 1) {
-					return wrapStreamWithInvokeRecovery(textStream("<invoke na", "error"), [echoTool]);
-				}
-				if (calls === 2) {
+				if (calls === 1) return wrapStreamWithInvokeRecovery(textStream("<invoke na", "error"), [echoTool]);
+				if (calls === 2) return wrapStreamWithInvokeRecovery(textStream('<invoke name="Ec', "error"), [echoTool]);
+				if (calls === 3) {
 					return wrapStreamWithInvokeRecovery(
 						textStream('<invoke name="Echo"><parameter name="value">second-attempt</parameter></invoke>', "done"),
 						[echoTool],
 					);
 				}
-				return textStream("Final answer", "done");
+				return textStream("Final", "done");
 			},
 		});
 		const directory = tempDir();
 		const settings = SettingsManager.create(directory, directory);
-		settings.applyOverrides({ retry: { enabled: true, maxRetries: 1, baseDelayMs: 1 } });
+		settings.applyOverrides({ retry: { enabled: true, maxRetries: 2, baseDelayMs: 1 } });
 		const auth = AuthStorage.create(join(directory, "auth.json"));
 		await auth.modify("anthropic", async () => ({ type: "api_key", key: "test-key" }));
 		const registry = await createModelRegistry(auth, directory);
@@ -105,21 +116,41 @@ export function registerAgentSessionRecoveryRetryBoundaryCase(
 			baseToolsOverride: { Echo: echoTool },
 		});
 		setSession(created);
-		let retryStarted!: () => void;
-		const retrySignal = new Promise<void>((resolve) => (retryStarted = resolve));
-		const recovered: AssistantMessage[] = [];
+		const retryAttempts: number[] = [];
+		const assistantMessages: AssistantMessage[] = [];
+		const toolLifecycle: string[] = [];
+		let retriesObserved!: () => void;
+		const retryEvents = new Promise<void>((resolve) => (retriesObserved = resolve));
 		created.subscribe((event) => {
-			if (event.type === "auto_retry_start") retryStarted();
-			if (event.type === "message_end" && event.message.role === "assistant") recovered.push(event.message);
+			if (event.type === "auto_retry_start") {
+				retryAttempts.push(event.attempt);
+				if (retryAttempts.length === 2) retriesObserved();
+			}
+			if (event.type === "message_end" && event.message.role === "assistant") assistantMessages.push(event.message);
+			if (event.type === "tool_execution_start" || event.type === "tool_execution_end") {
+				toolLifecycle.push(`${event.type}:${event.toolName}`);
+			}
 		});
 		const prompt = created.prompt("Test");
-		await retrySignal;
-		await prompt;
-		const retriedCall = recovered
+		await bounded(retryEvents, "two auto_retry_start events");
+		await bounded(prompt, "AgentSession prompt completion");
+
+		const failed = assistantMessages.filter((entry) => entry.stopReason === "error");
+		const retriedCalls = assistantMessages
 			.flatMap((entry) => entry.content)
-			.find((content) => content.type === "toolCall" && content.arguments.value === "second-attempt");
-		expect(calls).toBe(3);
-		expect(retriedCall).toMatchObject({ id: "recovered-antml-0", arguments: { value: "second-attempt" } });
-		expect(JSON.stringify(recovered)).not.toContain("<invoke nasecond-attempt");
+			.filter((entry) => entry.type === "toolCall");
+		expect(retryAttempts).toEqual([1, 2]);
+		expect(failed.map((entry) => entry.content)).toEqual([
+			[{ type: "text", text: "<invoke na" }],
+			[{ type: "text", text: '<invoke name="Ec' }],
+		]);
+		expect(retriedCalls).toEqual([
+			expect.objectContaining({ id: "recovered-antml-0", arguments: { value: "second-attempt" } }),
+		]);
+		expect(executeArgs).toEqual(["second-attempt"]);
+		expect(toolLifecycle).toEqual(["tool_execution_start:Echo", "tool_execution_end:Echo"]);
+		expect(assistantMessages.at(-1)?.content).toEqual([{ type: "text", text: "Final" }]);
+		expect(calls).toBe(4);
+		expect(created.isStreaming).toBe(false);
 	});
 }
