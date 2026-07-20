@@ -1,5 +1,23 @@
 # AI Source Changes
 
+## 2026-07-20 - Live tool-result pairing by source position
+
+### What changed and why
+
+- `api/transform-messages.ts`: live history normalization now indexes tool results and replayable tool calls by
+  source position. Each tool call consumes the earliest still-unconsumed matching result after its declaring
+  assistant, emits that result adjacent to the assistant turn, or emits exactly one synthetic error result.
+  A repeated ID establishes a new pairing window, so a delayed result cannot attach to an earlier call or be
+  replayed twice across an intervening user turn. Aborted and errored assistant turns remain excluded.
+- `../test/transform-messages-copilot-openai-to-anthropic.test.ts`: covers delayed normalized results across a
+  user turn, partial multi-call results, reused IDs with prior orphaned results, trailing unresolved calls, and
+  Anthropic-required tool-result adjacency.
+
+### Expected merge conflict zones
+
+- LOW: `api/transform-messages.ts` second-pass tool-result normalization.
+
+
 ## 2026-07-17 - Video input modality for Kimi K3 (kimi-coding)
 
 ### What changed and why
