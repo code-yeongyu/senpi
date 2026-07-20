@@ -1,5 +1,25 @@
 # changes
 
+## exhaustive compaction_end rendering (2026-07-20)
+
+### What changed
+
+- `interactive-mode.ts`: the `compaction_end` handler no longer silently falls
+  through when a rejection carries no `errorMessage` (e.g. legacy shape). It
+  prefers the extension-provided `errorMessage` inside the `aborted` branch so
+  per-turn-cap / circuit-breaker / provider-error cancels render the real cause
+  instead of the generic "Compaction cancelled", and adds a fallback
+  `showError("Compaction failed (no result); cause: <rejectionCause>")` so no
+  future `compaction_end` shape can be ignored.
+
+### Why
+
+- Manual `/compact` used to render nothing when core rejected the summary as
+  overflow-would-still-happen. The handler only branched on `aborted / result /
+  errorMessage` and `_rejectCompaction` used to emit none of those fields for
+  `would-overflow`. Combined with core now populating `errorMessage`, the
+  interactive fallback closes plan §1.
+
 ## abbreviated footer token notation (2026-07-20)
 
 ### What changed
@@ -17,7 +37,6 @@
 ### Why extension system couldn't handle this
 
 - Footer token formatting is a core display primitive, not an extension-registered status segment.
-
 ## paced streaming tool argument previews (2026-07-20)
 
 ### What changed
