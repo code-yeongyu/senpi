@@ -12,6 +12,7 @@
 ### Files modified
 
 - `api/openai-responses-shared.ts`
+- `../test/openai-responses-custom-tools.test.ts`
 
 ### Why an extension could not handle this
 

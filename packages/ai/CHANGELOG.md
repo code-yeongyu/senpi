@@ -10,7 +10,7 @@
 
 ### Fixed
 
-- Fixed OpenAI Responses compaction replay misclassifying persisted custom/freeform tool calls when active tool definitions are unavailable.
+- Fixed OpenAI Responses replay misclassifying persisted custom/freeform tool calls during compaction and model or API switches.
 
 ### Removed
 

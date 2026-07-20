@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed OpenAI Responses compaction and model/API-switch replay misclassifying persisted custom/freeform tool calls.
+
 ### Removed
 
 ## [2026.7.20-2] - 2026-07-20
