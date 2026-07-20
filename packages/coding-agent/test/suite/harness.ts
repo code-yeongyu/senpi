@@ -74,6 +74,7 @@ export interface HarnessOptions {
 	extensionFactories?: Array<InlineExtension | CreateTestExtensionsResultInput>;
 	withConfiguredAuth?: boolean;
 	upstreamModelId?: string;
+	serviceTier?: "auto" | "flex" | "priority";
 	onPayload?: (payload: unknown) => void;
 	persistSession?: boolean;
 	autoTitleSessions?: boolean;
@@ -145,6 +146,8 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 					registeredModel.id === model.id && options.upstreamModelId !== undefined
 						? options.upstreamModelId
 						: undefined,
+				serviceTier:
+					registeredModel.id === model.id && options.serviceTier !== undefined ? options.serviceTier : undefined,
 			})),
 		});
 	}

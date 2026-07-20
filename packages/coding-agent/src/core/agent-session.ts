@@ -496,7 +496,7 @@ export class AgentSession {
 		const initialModel = this.agent.state.model;
 		if (initialModel) {
 			const scopedMatch = this._scopedModels.find((sm) => modelsAreEqual(sm.model, initialModel));
-			this._currentServiceTier = scopedMatch?.serviceTier;
+			this._currentServiceTier = this._resolveServiceTier(initialModel, scopedMatch?.serviceTier);
 		}
 
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
@@ -1196,6 +1196,19 @@ export class AgentSession {
 
 	get serviceTier(): ServiceTier | undefined {
 		return this._currentServiceTier;
+	}
+
+	/**
+	 * Explicit scoped/favorite tiers win; otherwise fall back to the model's
+	 * configured serviceTier from models.json/extension compatibility config.
+	 */
+	private _resolveServiceTier(
+		model: Model<any> | undefined,
+		explicit: ServiceTier | undefined,
+	): ServiceTier | undefined {
+		if (explicit) return explicit;
+		if (!model) return undefined;
+		return this._modelRuntime.getCompatibilityRequestConfig(model).serviceTier;
 	}
 
 	/** Whether the session is currently processing an agent run or post-run continuation. */
@@ -2152,7 +2165,7 @@ export class AgentSession {
 		this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
 
 		const scopedMatch = this._scopedModels.find((sm) => modelsAreEqual(sm.model, model));
-		this._currentServiceTier = scopedMatch?.serviceTier;
+		this._currentServiceTier = this._resolveServiceTier(model, scopedMatch?.serviceTier);
 
 		this.setThinkingLevel(thinkingLevel);
 
@@ -2199,7 +2212,7 @@ export class AgentSession {
 		this.agent.state.model = next.model;
 		this.sessionManager.appendModelChange(next.model.provider, next.model.id);
 		this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
-		this._currentServiceTier = next.serviceTier;
+		this._currentServiceTier = this._resolveServiceTier(next.model, next.serviceTier);
 
 		// Apply thinking level.
 		// - Explicit favorite model thinking level overrides current session level
