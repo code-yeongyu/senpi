@@ -86,6 +86,25 @@ Response:
 {"id":2,"result":{"data":[{"id":"anthropic/claude-opus-4-8","model":"claude-opus-4-8","upgrade":null,"upgradeInfo":null,"availabilityNux":null,"displayName":"Claude Opus 4.8","description":"","hidden":false,"supportedReasoningEfforts":[{"reasoningEffort":"minimal","description":""},{"reasoningEffort":"low","description":""},{"reasoningEffort":"medium","description":""},{"reasoningEffort":"high","description":""},{"reasoningEffort":"xhigh","description":""},{"reasoningEffort":"max","description":""}],"defaultReasoningEffort":"medium","inputModalities":["text"],"supportsPersonality":false,"additionalSpeedTiers":[],"serviceTiers":[],"defaultServiceTier":null,"isDefault":true}],"nextCursor":null}}
 ```
 
+### config/read and configRequirements/read
+
+`config/read` intentionally exposes only the settings that have a direct Senpi mapping. The effective config uses the
+requested `cwd` to resolve project settings; when `includeLayers` is true, the response includes the `user` settings
+file followed by the project `.senpi/settings.json` layer. Settings without a wire mapping are omitted from both the
+effective config and layer payloads.
+
+| Wire key | Senpi source | Unset behavior |
+|---|---|---|
+| `model` | `SettingsManager` default model id | `null` |
+| `model_provider` | `SettingsManager` default provider | `null` |
+| `approval_policy` | Senpi permission posture | always `"never"` |
+| `sandbox_mode` | Senpi permission posture | always `"danger-full-access"` |
+| `model_reasoning_effort` | `SettingsManager` default thinking level | `null` |
+
+The response uses `user` and `project` layer origins only when the corresponding setting is present in that layer;
+fixed Senpi posture values have no fabricated settings origin. `configRequirements/read` returns
+`{"requirements":null}` because Senpi has no requirements source.
+
 ### remoteControl/status/read
 
 Read the current remote-control status stub. This method requires `capabilities.experimentalApi: true`.
