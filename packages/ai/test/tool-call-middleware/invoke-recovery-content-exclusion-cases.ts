@@ -61,7 +61,7 @@ function expectFullMetadata(message: AssistantMessage): void {
 	});
 }
 
-async function runAllMetadataScenario(tool: Tool) {
+export async function runAllMetadataScenario(tool: Tool) {
 	const producer = new MetadataStreamHarness();
 	const wrapped = wrapStreamWithInvokeRecovery(producer.inner, [tool]);
 	producer.start();
