@@ -1,6 +1,7 @@
 import { type Api, getModel, type Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { validateFallbackChains } from "../../src/core/retry-fallback/validate.ts";
+import { createHarness } from "./harness.ts";
 
 const primary = getModel("openai", "gpt-5.4");
 const fallback = getModel("anthropic", "claude-sonnet-4-5");
@@ -16,6 +17,19 @@ const registry = {
 };
 
 describe("validateFallbackChains", () => {
+	it("exposes the warnings calculated when the session starts", async () => {
+		const harness = await createHarness({
+			settings: { retry: { fallbackChains: { smol: ["faux/faux-1"] } } },
+		});
+		try {
+			expect(harness.session.fallbackValidationWarnings).toEqual([
+				'Fallback chain key "smol" must use a provider/model selector; roles are unsupported.',
+			]);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	it.each([
 		{
 			name: "non-object values",

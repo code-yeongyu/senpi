@@ -1,5 +1,27 @@
 # changes
 
+## model fallback lifecycle notices (2026-07-20)
+
+### What changed
+
+- `interactive-mode.ts`: renders fallback apply, success, revert, and exhaustion notices; maintains a keyed `fallback`
+  footer status while a fallback model is active; and suppresses the retry spinner for immediate fallback retries.
+- Startup now shows fallback-chain validation warnings that were calculated by `AgentSession` when the session was created.
+
+### Why
+
+- A fallback model change is user-visible state. The chat and footer now make the active model and its lifecycle clear
+  without adding synthetic messages to model context.
+
+### Why extension system couldn't handle this
+
+- Retry lifecycle events and session-start validation state are owned by the core session and rendered through the
+  built-in interactive event handler.
+
+### Expected merge conflict zones
+
+- LOW: `interactive-mode.ts` retry event switch and startup warning block.
+
 ## paced streaming tool argument previews (2026-07-20)
 
 ### What changed

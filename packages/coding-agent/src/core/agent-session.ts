@@ -477,6 +477,7 @@ export class AgentSession {
 
 	private _modelRuntime: ModelRuntime;
 	private _modelRegistry: ModelRegistry;
+	private readonly _fallbackValidationWarnings: readonly string[];
 	private readonly _retryFallback: RetryFallbackController;
 
 	// Tool registry for extension getTools/setTools
@@ -513,10 +514,11 @@ export class AgentSession {
 		this._modelRuntime = modelRuntime;
 		this._modelRegistry = config.modelRegistry ?? new ModelRegistry(modelRuntime);
 		const fallbackLogger = createFallbackLogger(config.agentDir ?? getAgentDir());
-		for (const warning of validateFallbackChains(
+		this._fallbackValidationWarnings = validateFallbackChains(
 			this.settingsManager.getRetryFallbackSettings().chains,
 			this._modelRegistry,
-		)) {
+		);
+		for (const warning of this._fallbackValidationWarnings) {
 			fallbackLogger.warn("validation_warning", { warning });
 		}
 		this._retryFallback = new RetryFallbackController({
@@ -3447,6 +3449,11 @@ export class AgentSession {
 				},
 			},
 		);
+	}
+
+	/** Fallback-chain configuration warnings calculated when this session started. */
+	get fallbackValidationWarnings(): readonly string[] {
+		return this._fallbackValidationWarnings;
 	}
 
 	private _refreshToolRegistry(options?: { activeToolNames?: string[]; includeAllExtensionTools?: boolean }): void {
