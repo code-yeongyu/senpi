@@ -1,15 +1,16 @@
-import { loadEntriesFromFile, SessionManager } from "../../../core/session-manager.ts";
+import { loadEntriesFromFile, type SessionEntry, SessionManager } from "../../../core/session-manager.ts";
 import type {
 	ThreadItemEntry,
 	ThreadItemsListResponse,
 	ThreadTurnsListResponse,
 	TurnItemsView,
 } from "../protocol/index.ts";
+import type { ThreadArchiveState } from "./archive-state.ts";
 import { objectValue } from "./handler-params.ts";
 import { type HistoryValue, invalidHistory, paginateHistory } from "./history-pagination.ts";
-import type { ThreadEntry, ThreadRegistry } from "./registry.ts";
+import type { ThreadEntry, ThreadRegistry, WireThread } from "./registry.ts";
 import { ThreadNotFoundError } from "./registry.ts";
-import type { TurnLog } from "./turn-log.ts";
+import type { LoggedTurn, TurnLog } from "./turn-log.ts";
 import { loggedTurnToWireTurn, type ThreadHistorySource, turnsForEntry, wireItemToThreadItem } from "./wire-thread.ts";
 
 const DEFAULT_TURNS_LIMIT = 25;
@@ -19,6 +20,7 @@ const MAX_ITEMS_LIMIT = 100;
 const MAX_U32 = 0xffff_ffff;
 
 export type ThreadHistoryDependencies = {
+	readonly archiveState: ThreadArchiveState;
 	readonly threads: ThreadRegistry;
 	readonly turnLog: TurnLog;
 };
@@ -28,7 +30,7 @@ export async function threadTurnsListResponse(
 	dependencies: ThreadHistoryDependencies,
 ): Promise<ThreadTurnsListResponse> {
 	const params = parseTurnsParams(requestParams);
-	const entry = await historyThread(dependencies.threads, params.threadId);
+	const entry = await historyThread(dependencies.threads, dependencies.archiveState, params.threadId);
 	const turns = turnsForEntry(entry, dependencies.turnLog).map((turn) => ({
 		key: turn.turnId,
 		value: loggedTurnToWireTurn(turn, params.itemsView),
@@ -44,12 +46,20 @@ export async function threadTurnsListResponse(
 	return page;
 }
 
+export async function threadHistoryTurns(
+	threadId: string,
+	dependencies: ThreadHistoryDependencies,
+): Promise<readonly LoggedTurn[]> {
+	const entry = await historyThread(dependencies.threads, dependencies.archiveState, threadId);
+	return turnsForEntry(entry, dependencies.turnLog);
+}
+
 export async function threadItemsListResponse(
 	requestParams: unknown,
 	dependencies: ThreadHistoryDependencies,
 ): Promise<ThreadItemsListResponse> {
 	const params = parseItemsParams(requestParams);
-	const entry = await historyThread(dependencies.threads, params.threadId);
+	const entry = await historyThread(dependencies.threads, dependencies.archiveState, params.threadId);
 	const items: HistoryValue<ThreadItemEntry>[] = [];
 	for (const turn of turnsForEntry(entry, dependencies.turnLog)) {
 		if (params.turnId !== null && params.turnId !== turn.turnId) continue;
@@ -110,7 +120,11 @@ function parseItemsParams(value: unknown): ParsedItemsParams {
 	};
 }
 
-async function historyThread(threads: ThreadRegistry, threadId: string): Promise<ThreadEntry | ThreadHistorySource> {
+async function historyThread(
+	threads: ThreadRegistry,
+	archiveState: ThreadArchiveState,
+	threadId: string,
+): Promise<ThreadEntry | ThreadHistorySource | WireThread> {
 	try {
 		return threads.getLoadedThread(threadId);
 	} catch (error: unknown) {
@@ -119,29 +133,16 @@ async function historyThread(threads: ThreadRegistry, threadId: string): Promise
 	const sessionDir = threads.getSessionDir();
 	const sessions = sessionDir ? await SessionManager.listAll(sessionDir) : await SessionManager.listAll();
 	const session = sessions.find((candidate) => candidate.id === threadId);
-	if (!session) throw invalidHistory(`thread not found: ${threadId}`);
-	return {
-		id: threadId,
-		createdAt: session.created.toISOString(),
-		userMessages: loadEntriesFromFile(session.path).flatMap((entry) => {
-			if (entry.type !== "message" || entry.message.role !== "user") return [];
-			const text = userMessageText(entry.message.content);
-			return text.length > 0 ? [{ entryId: entry.id, text }] : [];
-		}),
-	};
-}
-
-function userMessageText(content: unknown): string {
-	if (typeof content === "string") return content;
-	if (!Array.isArray(content)) return "";
-	return content
-		.flatMap((item) =>
-			typeof item === "object" && item !== null && "type" in item && item.type === "text" && "text" in item
-				? [item.text]
-				: [],
-		)
-		.filter((text): text is string => typeof text === "string")
-		.join("");
+	if (session) {
+		return {
+			id: threadId,
+			createdAt: session.created.toISOString(),
+			entries: loadEntriesFromFile(session.path).filter((entry): entry is SessionEntry => entry.type !== "session"),
+		};
+	}
+	const archivedThread = (await archiveState.listArchivedThreads()).find((thread) => thread.id === threadId);
+	if (archivedThread) return archivedThread;
+	throw invalidHistory(`thread not found: ${threadId}`);
 }
 
 function parseSortDirection(value: unknown, fallback: "asc" | "desc", method: string): "asc" | "desc" {

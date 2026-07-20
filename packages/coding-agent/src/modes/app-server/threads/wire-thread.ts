@@ -1,4 +1,5 @@
 import { VERSION } from "../../../config.ts";
+import type { SessionEntry } from "../../../core/session-manager.ts";
 import type { Thread, ThreadItem, ThreadStatus, Turn, TurnItemsView } from "../protocol/index.ts";
 import { ThreadMetadataState } from "./metadata-state.ts";
 import type { ThreadEntry, WireThread } from "./registry.ts";
@@ -18,7 +19,7 @@ export interface BuildWireThreadOptions {
 export type ThreadHistorySource = {
 	readonly id: string;
 	readonly createdAt: string;
-	readonly userMessages: readonly { readonly entryId: string; readonly text: string }[];
+	readonly entries: readonly SessionEntry[];
 };
 
 export async function buildWireThread(
@@ -89,21 +90,61 @@ export function turnsForEntry(entry: ThreadEntry | WireThread | ThreadHistorySou
 	if (loggedTurns.length > 0) {
 		return loggedTurns;
 	}
-	const userMessages =
-		"session" in entry
-			? entry.session.getUserMessagesForForking()
-			: "userMessages" in entry
-				? entry.userMessages
-				: [];
-	return userMessages.map((message, index) => ({
-		turnId: `turn-${index + 1}`,
-		startedAt: entry.createdAt,
-		completedAt: null,
-		durationMs: null,
-		error: null,
-		status: "completed",
-		items: [{ id: message.entryId, type: "userMessage", content: [] }],
-	}));
+	const entries =
+		"session" in entry ? entry.session.sessionManager.getEntries() : "entries" in entry ? entry.entries : [];
+	return turnsFromSessionEntries(entries, entry.createdAt);
+}
+
+function turnsFromSessionEntries(entries: readonly SessionEntry[], fallbackStartedAt: string): LoggedTurn[] {
+	const turns: LoggedTurn[] = [];
+	let current: LoggedTurn | undefined;
+	for (const entry of entries) {
+		if (entry.type !== "message") continue;
+		if (entry.message.role === "user") {
+			current = {
+				turnId: `turn-${turns.length + 1}`,
+				startedAt: entry.timestamp || fallbackStartedAt,
+				completedAt: null,
+				durationMs: null,
+				error: null,
+				status: "completed",
+				items: [{ id: entry.id, type: "userMessage", content: userInputContent(entry.message.content) }],
+			};
+			turns.push(current);
+			continue;
+		}
+		if (entry.message.role !== "assistant" || !current) continue;
+		const text = assistantText(entry.message.content);
+		if (text.length === 0) continue;
+		current.items.push({
+			id: entry.id,
+			type: "agentMessage",
+			text,
+			phase: null,
+			memoryCitation: null,
+		});
+	}
+	return turns;
+}
+
+function userInputContent(content: unknown): WireItem[] {
+	if (typeof content === "string") return [{ type: "text", text: content, text_elements: [] }];
+	if (!Array.isArray(content)) return [];
+	return content.flatMap((item) => {
+		if (!isRecord(item) || item.type !== "text" || typeof item.text !== "string") return [];
+		return [{ type: "text", text: item.text, text_elements: [] }];
+	});
+}
+
+function assistantText(content: unknown): string {
+	if (!Array.isArray(content)) return "";
+	return content
+		.flatMap((item) => (isRecord(item) && item.type === "text" && typeof item.text === "string" ? [item.text] : []))
+		.join("");
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function threadTurns(entry: ThreadEntry | WireThread, turnLog: TurnLog): Turn[] {

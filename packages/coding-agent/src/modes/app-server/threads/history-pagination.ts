@@ -11,7 +11,7 @@ type HistoryCursor = {
 	readonly kind: HistoryKind;
 	readonly threadId: string;
 	readonly turnId: string | null;
-	readonly sortDirection: "asc" | "desc";
+	readonly sortDirection: "asc" | "desc" | null;
 	readonly anchor: string;
 	readonly includeAnchor: boolean;
 };
@@ -56,6 +56,17 @@ export function invalidHistory(message: string): RpcHandlerError {
 	return new RpcHandlerError({ code: -32600, message });
 }
 
+export function inclusiveTurnHistoryCursor(threadId: string, turnId: string): string {
+	return encodeCursor({
+		kind: "turn",
+		threadId,
+		turnId: null,
+		sortDirection: null,
+		anchor: turnId,
+		includeAnchor: true,
+	});
+}
+
 function windowFromCursor<T>(values: readonly HistoryValue<T>[], cursor: HistoryCursor): readonly HistoryValue<T>[] {
 	const anchorIndex = values.findIndex((value) => value.key === cursor.anchor);
 	if (anchorIndex < 0) throw invalidHistory("invalid cursor: anchor is no longer present");
@@ -66,7 +77,7 @@ function encodeCursor(options: {
 	readonly kind: HistoryKind;
 	readonly threadId: string;
 	readonly turnId: string | null;
-	readonly sortDirection: "asc" | "desc";
+	readonly sortDirection: "asc" | "desc" | null;
 	readonly anchor: string;
 	readonly includeAnchor: boolean;
 }): string {
@@ -92,9 +103,11 @@ function decodeCursor(value: string, options: Omit<HistoryPaginationOptions, "li
 	if (parsed.kind !== options.kind || parsed.threadId !== options.threadId || parsed.turnId !== options.turnId) {
 		throw invalidHistory("invalid cursor: cursor is not scoped to this history request");
 	}
-	const directionMatches = parsed.sortDirection === options.sortDirection;
-	if (parsed.includeAnchor ? directionMatches : !directionMatches) {
-		throw invalidHistory("invalid cursor: cursor direction does not match the request");
+	if (parsed.sortDirection !== null) {
+		const directionMatches = parsed.sortDirection === options.sortDirection;
+		if (parsed.includeAnchor ? directionMatches : !directionMatches) {
+			throw invalidHistory("invalid cursor: cursor direction does not match the request");
+		}
 	}
 	return parsed;
 }
@@ -106,7 +119,7 @@ function isHistoryCursor(value: unknown): value is HistoryCursor {
 		(record.kind === "turn" || record.kind === "item") &&
 		typeof record.threadId === "string" &&
 		(record.turnId === null || typeof record.turnId === "string") &&
-		(record.sortDirection === "asc" || record.sortDirection === "desc") &&
+		(record.sortDirection === null || record.sortDirection === "asc" || record.sortDirection === "desc") &&
 		typeof record.anchor === "string" &&
 		typeof record.includeAnchor === "boolean"
 	);

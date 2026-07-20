@@ -16,6 +16,7 @@ import { listThreadsResponse, loadedThreadsResponse } from "./list-handlers.ts";
 import { type ThreadEntry, ThreadNotFoundError, type ThreadRegistry } from "./registry.ts";
 import { threadSearchResponse } from "./search.ts";
 import { ThreadSearchCache } from "./search-cache.ts";
+import { threadSearchOccurrencesResponse } from "./search-occurrences.ts";
 import { requestedApprovalPolicy, requestedStartModel } from "./start-options.ts";
 import type { TurnLog } from "./turn-log.ts";
 import { invalidRequest } from "./turn-runtime.ts";
@@ -140,10 +141,21 @@ class ThreadLifecycleHandlers {
 					}),
 			},
 			{
+				method: "thread/searchOccurrences",
+				experimental: true,
+				handler: (context) =>
+					threadSearchOccurrencesResponse(context.request.params, {
+						archiveState: this.archiveState,
+						threads: this.threads,
+						turnLog: this.turnLog,
+					}),
+			},
+			{
 				method: "thread/turns/list",
 				experimental: true,
 				handler: (context) =>
 					threadTurnsListResponse(context.request.params, {
+						archiveState: this.archiveState,
 						threads: this.threads,
 						turnLog: this.turnLog,
 					}),
@@ -153,6 +165,7 @@ class ThreadLifecycleHandlers {
 				experimental: true,
 				handler: (context) =>
 					threadItemsListResponse(context.request.params, {
+						archiveState: this.archiveState,
 						threads: this.threads,
 						turnLog: this.turnLog,
 					}),
