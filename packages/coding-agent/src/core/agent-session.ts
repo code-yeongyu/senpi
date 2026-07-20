@@ -33,9 +33,11 @@ import { prepareAgentToolCall } from "@earendil-works/pi-agent-core";
 import type {
 	Api,
 	AssistantMessage,
+	AuthResult,
 	ImageContent,
 	Message,
 	Model,
+	ProviderHeaders,
 	SimpleStreamOptions,
 	TextContent,
 } from "@earendil-works/pi-ai/compat";
@@ -107,8 +109,9 @@ import type {
 	CompactionRejectionCause,
 } from "./extensions/types.ts";
 import { type BashExecutionMessage, type CustomMessage, filterContextExcludedMessages } from "./messages.ts";
-import type { ModelRegistry } from "./model-registry.ts";
+import { ModelRegistry } from "./model-registry.ts";
 import { getModelNarrowingPatterns, resolveModelScope } from "./model-resolver.ts";
+import type { ModelRuntime } from "./model-runtime.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
@@ -202,6 +205,12 @@ export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
 // Types
 // ============================================================================
 
+function withoutDeletedHeaders(headers: ProviderHeaders | undefined): Record<string, string> | undefined {
+	return headers
+		? Object.fromEntries(Object.entries(headers).filter((entry): entry is [string, string] => entry[1] !== null))
+		: undefined;
+}
+
 export interface AgentSessionConfig {
 	agent: Agent;
 	sessionManager: SessionManager;
@@ -215,8 +224,10 @@ export interface AgentSessionConfig {
 	resourceLoader: ResourceLoader;
 	/** SDK custom tools registered outside extensions */
 	customTools?: ToolDefinition[];
-	/** Model registry for API key resolution and model discovery */
-	modelRegistry: ModelRegistry;
+	/** Canonical model/auth runtime used by coding-agent internals. */
+	modelRuntime?: ModelRuntime;
+	/** Legacy model facade retained for extensions and SDK consumers. */
+	modelRegistry?: ModelRegistry;
 	/** Initial active built-in tool names. Default: [read, bash, edit, write] */
 	initialActiveToolNames?: string[];
 	/** Optional allowlist of tool names. When provided, only these tool names are exposed. */
@@ -246,6 +257,7 @@ interface CompactionExecutionRequest {
 	skipAbortedCheck?: boolean;
 	lastAssistantMessage?: AgentMessage;
 	precomputed?: CompactionResult;
+	agentMessagesAtStart?: readonly AgentMessage[];
 }
 
 type CompactionExecutionResult =
@@ -279,6 +291,12 @@ class RequiredCompactionError extends Error {
 	}
 }
 
+class MissingModelAccessError extends Error {
+	constructor() {
+		super("AgentSession requires modelRuntime or modelRegistry");
+		this.name = "MissingModelAccessError";
+	}
+}
 export interface ExtensionBindings {
 	uiContext?: ExtensionUIContext;
 	mode?: ExtensionMode;
@@ -444,7 +462,7 @@ export class AgentSession {
 	private _extensionErrorListener?: ExtensionErrorListener;
 	private _extensionErrorUnsubscriber?: () => void;
 
-	// Model registry for API key resolution
+	private _modelRuntime: ModelRuntime;
 	private _modelRegistry: ModelRegistry;
 
 	// Tool registry for extension getTools/setTools
@@ -468,7 +486,12 @@ export class AgentSession {
 		this._resourceLoader = config.resourceLoader;
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
-		this._modelRegistry = config.modelRegistry;
+		const modelRuntime = config.modelRuntime ?? config.modelRegistry?.modelRuntime;
+		if (!modelRuntime) {
+			throw new MissingModelAccessError();
+		}
+		this._modelRuntime = modelRuntime;
+		this._modelRegistry = config.modelRegistry ?? new ModelRegistry(modelRuntime);
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._allowedToolNames = config.allowedToolNames ? new Set(config.allowedToolNames) : undefined;
@@ -480,7 +503,7 @@ export class AgentSession {
 		const initialModel = this.agent.state.model;
 		if (initialModel) {
 			const scopedMatch = this._scopedModels.find((sm) => modelsAreEqual(sm.model, initialModel));
-			this._currentServiceTier = scopedMatch?.serviceTier;
+			this._currentServiceTier = this._resolveServiceTier(initialModel, scopedMatch?.serviceTier);
 		}
 
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
@@ -493,7 +516,10 @@ export class AgentSession {
 		});
 	}
 
-	/** Model registry for API key resolution and model discovery */
+	get modelRuntime(): ModelRuntime {
+		return this._modelRuntime;
+	}
+
 	get modelRegistry(): ModelRegistry {
 		return this._modelRegistry;
 	}
@@ -504,18 +530,26 @@ export class AgentSession {
 		extraBody?: Record<string, unknown>;
 		env?: Record<string, string>;
 	}> {
-		const result = await this._modelRegistry.getApiKeyAndHeaders(model);
-		if (!result.ok) {
-			if (result.error.startsWith("No API key found")) {
+		let result: AuthResult | undefined;
+		try {
+			result = await this._modelRuntime.getAuth(model);
+		} catch (error) {
+			const cause = error instanceof Error ? error.cause : undefined;
+			if (cause instanceof Error && cause.message === "authHeader requires a resolved API key") {
 				throw new Error(formatNoApiKeyFoundMessage(model.provider));
 			}
-			throw new Error(result.error);
+			throw error;
 		}
-		if (result.apiKey) {
-			return { apiKey: result.apiKey, headers: result.headers, extraBody: result.extraBody, env: result.env };
+		if (result?.auth.apiKey) {
+			return {
+				apiKey: result.auth.apiKey,
+				headers: withoutDeletedHeaders(result.auth.headers),
+				extraBody: this._modelRuntime.getCompatibilityRequestConfig(model).extraBody,
+				env: result.env,
+			};
 		}
 
-		const isOAuth = this._modelRegistry.isUsingOAuth(model);
+		const isOAuth = this._modelRuntime.isUsingOAuth(model.provider);
 		if (isOAuth) {
 			throw new Error(
 				`Authentication failed for "${model.provider}". ` +
@@ -536,10 +570,20 @@ export class AgentSession {
 			return this._getRequiredRequestAuth(model);
 		}
 
-		const result = await this._modelRegistry.getApiKeyAndHeaders(model);
-		return result.ok
-			? { apiKey: result.apiKey, headers: result.headers, extraBody: result.extraBody, env: result.env }
-			: {};
+		const compatibility = this._modelRuntime.getCompatibilityRequestConfig(model);
+		try {
+			const result = await this._modelRuntime.getAuth(model);
+			return result
+				? {
+						apiKey: result.auth.apiKey,
+						headers: withoutDeletedHeaders(result.auth.headers),
+						extraBody: compatibility.extraBody,
+						env: result.env,
+					}
+				: { extraBody: compatibility.extraBody };
+		} catch {
+			return { extraBody: compatibility.extraBody };
+		}
 	}
 
 	/**
@@ -700,7 +744,8 @@ export class AgentSession {
 
 	private _modelSelectionChangesContext(previousModel: Model<any> | undefined, nextModel: Model<any>): boolean {
 		if (!modelsAreEqual(previousModel, nextModel)) return true;
-		return previousModel?.contextWindow !== nextModel.contextWindow;
+		if (previousModel?.contextWindow !== nextModel.contextWindow) return true;
+		return previousModel?.api !== nextModel.api;
 	}
 
 	private _invalidateCompactionForModelSelection(): void {
@@ -1193,6 +1238,19 @@ export class AgentSession {
 		return this._currentServiceTier;
 	}
 
+	/**
+	 * Explicit scoped/favorite tiers win; otherwise fall back to the model's
+	 * configured serviceTier from models.json/extension compatibility config.
+	 */
+	private _resolveServiceTier(
+		model: Model<any> | undefined,
+		explicit: ServiceTier | undefined,
+	): ServiceTier | undefined {
+		if (explicit) return explicit;
+		if (!model) return undefined;
+		return this._modelRuntime.getCompatibilityRequestConfig(model).serviceTier;
+	}
+
 	/** Whether the session is currently processing an agent run or post-run continuation. */
 	get isStreaming(): boolean {
 		return this._isAgentRunActive;
@@ -1409,7 +1467,7 @@ export class AgentSession {
 
 	private _getCurrentFavoriteModels(): SessionModelEntry[] {
 		const availableById = new Map(
-			this._modelRegistry.getAvailable().map((model) => [`${model.provider}/${model.id}`, model]),
+			this._modelRuntime.getAvailableSnapshot().map((model) => [`${model.provider}/${model.id}`, model]),
 		);
 		const narrowedModelIds =
 			this._scopedModels.length > 0
@@ -1484,6 +1542,8 @@ export class AgentSession {
 
 		const loadedSkills = this._resourceLoader.getSkills().skills;
 		const loadedContextFiles = this._resourceLoader.getAgentsFiles().agentsFiles;
+		const loaderSystemPrompt = this._resourceLoader.getSystemPrompt();
+		const loaderAppendSystemPrompt = this._resourceLoader.getAppendSystemPrompt();
 
 		this._baseSystemPromptOptions = {
 			cwd: this._cwd,
@@ -1493,7 +1553,10 @@ export class AgentSession {
 			toolSnippets,
 			promptGuidelines,
 		};
-		return buildDynamicSystemPrompt(this._baseSystemPromptOptions);
+		const basePrompt = loaderSystemPrompt ?? buildDynamicSystemPrompt(this._baseSystemPromptOptions);
+		return loaderAppendSystemPrompt.length > 0
+			? `${basePrompt}\n\n${loaderAppendSystemPrompt.join("\n\n")}`
+			: basePrompt;
 	}
 
 	/**
@@ -1602,8 +1665,11 @@ export class AgentSession {
 				throw new Error(formatNoModelSelectedMessage());
 			}
 
-			if (!this._modelRegistry.hasConfiguredAuth(this.model)) {
-				const isOAuth = this._modelRegistry.isUsingOAuth(this.model);
+			const hasConfiguredAuth =
+				this._modelRuntime.hasConfiguredAuth(this.model.provider) ||
+				(await this._modelRuntime.checkAuth(this.model.provider)) !== undefined;
+			if (!hasConfiguredAuth) {
+				const isOAuth = this._modelRuntime.isUsingOAuth(this.model.provider);
 				if (isOAuth) {
 					throw new Error(
 						`Authentication failed for "${this.model.provider}". ` +
@@ -2141,7 +2207,7 @@ export class AgentSession {
 	 * @throws Error if no auth is configured for the model
 	 */
 	async setModel(model: Model<any>): Promise<SystemPromptChangeEvent | undefined> {
-		if (!this._modelRegistry.hasConfiguredAuth(model)) {
+		if (!(await this._modelRuntime.checkAuth(model.provider))) {
 			throw new Error(`No API key for ${model.provider}/${model.id}`);
 		}
 
@@ -2156,7 +2222,7 @@ export class AgentSession {
 		this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
 
 		const scopedMatch = this._scopedModels.find((sm) => modelsAreEqual(sm.model, model));
-		this._currentServiceTier = scopedMatch?.serviceTier;
+		this._currentServiceTier = this._resolveServiceTier(model, scopedMatch?.serviceTier);
 
 		this.setThinkingLevel(thinkingLevel);
 
@@ -2203,7 +2269,7 @@ export class AgentSession {
 		this.agent.state.model = next.model;
 		this.sessionManager.appendModelChange(next.model.provider, next.model.id);
 		this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
-		this._currentServiceTier = next.serviceTier;
+		this._currentServiceTier = this._resolveServiceTier(next.model, next.serviceTier);
 
 		// Apply thinking level.
 		// - Explicit favorite model thinking level overrides current session level
@@ -2479,6 +2545,7 @@ export class AgentSession {
 
 	private async _executeCompaction(request: CompactionExecutionRequest): Promise<CompactionExecutionResult> {
 		const finishCompactionWork = this._sessionWorkBarrier.begin();
+		const agentMessagesAtStart = request.agentMessagesAtStart ?? this.agent.state.messages.slice();
 		try {
 			if (!this.model) {
 				throw new Error(formatNoModelSelectedMessage());
@@ -2568,7 +2635,14 @@ export class AgentSession {
 			}
 
 			const sessionContext = this.sessionManager.buildSessionContext();
-			this.agent.state.messages = sessionContext.messages;
+			const currentAgentMessages = this.agent.state.messages;
+			const hasUnchangedPrefix = agentMessagesAtStart.every(
+				(message, index) => currentAgentMessages[index] === message,
+			);
+			const messagesAppendedDuringCompaction = hasUnchangedPrefix
+				? currentAgentMessages.slice(agentMessagesAtStart.length)
+				: [];
+			this.agent.state.messages = [...sessionContext.messages, ...messagesAppendedDuringCompaction];
 			compactionResult.estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
 			this._incrementMessageRevision();
 
@@ -2691,7 +2765,11 @@ export class AgentSession {
 		// shouldn't trigger compaction for the new model.
 		const sameModel =
 			this.model &&
-			isSameOverflowSource(assistantMessage, this.model, this._modelRegistry.getUpstreamModelId(this.model));
+			isSameOverflowSource(
+				assistantMessage,
+				this.model,
+				this._modelRuntime.getCompatibilityRequestConfig(this.model).upstreamModelId,
+			);
 
 		// Skip compaction checks if this assistant message is older than the latest
 		// compaction boundary. This prevents a stale pre-compaction usage/error
@@ -2862,6 +2940,7 @@ export class AgentSession {
 	 */
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
 		const finishCompactionWork = this._sessionWorkBarrier.begin();
+		const agentMessagesAtStart = this.agent.state.messages.slice();
 		this._emit({ type: "compaction_start", reason });
 		const autoCompactionController = new AbortController();
 		this._autoCompactionAbortController = autoCompactionController;
@@ -2879,8 +2958,8 @@ export class AgentSession {
 				return false;
 			}
 
-			const authResult = await this._modelRegistry.getApiKeyAndHeaders(this.model);
-			if (this.agent.streamFn === streamSimple && (!authResult.ok || !authResult.apiKey)) {
+			const authResult = await this._modelRuntime.getAuth(this.model);
+			if (this.agent.streamFn === streamSimple && !authResult?.auth.apiKey) {
 				if (reason === "overflow") this._overflowRecoveryAttempted = false;
 				this._emit({
 					type: "compaction_end",
@@ -2908,7 +2987,7 @@ export class AgentSession {
 				return false;
 			}
 
-			const execution = await this._executeCompaction({ reason, willRetry });
+			const execution = await this._executeCompaction({ reason, willRetry, agentMessagesAtStart });
 			if (!execution.accepted) {
 				if (reason === "overflow") this._overflowRecoveryAttempted = false;
 				return false;
@@ -3074,7 +3153,7 @@ export class AgentSession {
 			return;
 		}
 
-		const refreshedModel = this._modelRegistry.find(currentModel.provider, currentModel.id);
+		const refreshedModel = this._modelRuntime.getModel(currentModel.provider, currentModel.id);
 		if (!refreshedModel || refreshedModel === currentModel) {
 			return;
 		}
@@ -3151,7 +3230,7 @@ export class AgentSession {
 				refreshTools: () => this._refreshToolRegistry(),
 				getCommands,
 				setModel: async (model) => {
-					if (!this.modelRegistry.hasConfiguredAuth(model)) return false;
+					if (!this._modelRuntime.hasConfiguredAuth(model.provider)) return false;
 					await this.setModel(model);
 					return true;
 				},
@@ -3236,11 +3315,15 @@ export class AgentSession {
 			},
 			{
 				registerProvider: (name, config) => {
-					this._modelRegistry.registerProvider(name, config);
+					this._modelRuntime.registerProvider(name, config);
+					this._refreshCurrentModelFromRegistry();
+				},
+				registerNativeProvider: (provider) => {
+					this._modelRuntime.registerNativeProvider(provider);
 					this._refreshCurrentModelFromRegistry();
 				},
 				unregisterProvider: (name) => {
-					this._modelRegistry.unregisterProvider(name);
+					this._modelRuntime.unregisterProvider(name);
 					this._refreshCurrentModelFromRegistry();
 				},
 			},
@@ -3400,17 +3483,17 @@ export class AgentSession {
 		await this.settingsManager.reload();
 		this.syncQueueModesFromSettings();
 		resetApiProviders();
-		this._modelRegistry.refresh();
+		await this._modelRuntime.reloadConfig();
 		this.setScopedModels(
 			await resolveModelScope(
 				getModelNarrowingPatterns({
 					legacyEnabledPatterns: this.settingsManager.getEnabledModels(),
 				}),
-				this._modelRegistry,
+				this._modelRuntime,
 			),
 		);
 		this.setFavoriteModels(
-			await resolveModelScope(this.settingsManager.getFavoriteModels() ?? [], this._modelRegistry),
+			await resolveModelScope(this.settingsManager.getFavoriteModels() ?? [], this._modelRuntime),
 		);
 		await this._resourceLoader.reload();
 		this._buildRuntime({
@@ -3847,7 +3930,7 @@ export class AgentSession {
 			let summaryDetails: unknown;
 			if (options.summarize && entriesToSummarize.length > 0 && !extensionSummary) {
 				const model = this.model!;
-				const { apiKey, headers, extraBody, env } = await this._getRequiredRequestAuth(model);
+				const { apiKey, headers, extraBody, env } = await this._getCompactionRequestAuth(model);
 				const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
 				const result = await generateBranchSummary(entriesToSummarize, {
 					model,

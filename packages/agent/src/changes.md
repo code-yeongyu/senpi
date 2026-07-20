@@ -1,5 +1,44 @@
 # Changes
 
+## 2026-07-17 - Truncation-recovery flagged-call failure and proxy payload
+
+### What changed and why
+
+- A tool call that the text tool-call middleware could only partially recover now arrives at the
+  agent loop carrying `incomplete: true`. Previously a truncated text-protocol call could be silently
+  dropped, leaked as raw markup, or executed from stale arguments; the loop had no way to treat a
+  partially recovered call as a failure and ask the model to retry.
+- `prepareToolCall` now produces an immediate error outcome for any flagged call (an `isError` tool
+  result carrying a retry diagnostic such as "Re-issue the tool call"), skipping
+  validation/hooks/execution while preserving source-order event emission in the same scheduler. The
+  existing native `length` stop rule is preserved for provider-native streams; only the text-middleware
+  wrapper converts a terminal `length` to `toolUse` when tool-call activity was finalized.
+- The flagged error result keeps the inner loop alive (`failToolCallsFromTruncatedMessage` already
+  returns `{ terminate: false }`), so the loop streams another assistant turn and the model re-issues
+  the truncated call — the retry contract.
+- Flagged-call diagnostics always append `Re-issue the tool call with complete arguments.` to parser-provided error messages without duplicating a final period.
+- `proxy.ts` `toolcall_end` wire event gains an optional full `toolCall` payload so a flagged call
+  (which emits no argument deltas) can still be delivered to clients. The client prefers the payload
+  and falls back to delta reconstruction; against an older server that omits it, the client degrades
+  to the legacy delta-only path. The producing server is external; the in-repo deliverable is the
+  wire type, the client merge, and the skew-degradation tests.
+
+### Files modified
+
+- `agent-loop.ts`
+- `proxy.ts`
+- `../test/agent-loop.test.ts`, `../test/proxy-events.test.ts`
+
+### Why the extension system could not handle this
+
+- Flagged-call routing into an immediate error outcome, the retry decision, and the proxy wire type
+  all live inside `pi-agent-core` before coding-agent extensions or mode renderers participate.
+
+### Expected merge conflict zones on next upstream sync
+
+- MEDIUM: `agent-loop.ts` around `prepareToolCall` and `failToolCallsFromTruncatedMessage`.
+- LOW: `proxy.ts` around the `toolcall_end` wire event and client reconstruction.
+
 ## 2026-07-20 - Terminating queue recovery survives compaction preparation
 
 ### What changed and why

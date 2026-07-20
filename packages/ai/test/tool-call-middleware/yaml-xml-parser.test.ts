@@ -6,6 +6,7 @@ import {
 	yamlXmlFormatToolCall,
 } from "../../src/tool-call-middleware/protocols/yaml-xml.ts";
 import type { Tool } from "../../src/types.ts";
+import { FIXTURE_TOOLS, TRUNCATION_FIXTURES } from "./truncation-fixtures.ts";
 
 function seededRandom(seed: number): () => number {
 	let current = seed;
@@ -392,7 +393,7 @@ describe("createYamlXmlStreamParser", () => {
 		]);
 	});
 
-	it("force-completes unfinished yaml tool calls at finish when the content is parseable", () => {
+	it("force-completes unfinished yaml tool calls at finish only when the arguments validate", () => {
 		// given
 		const parser = createYamlXmlStreamParser([weatherTool]);
 
@@ -413,7 +414,7 @@ describe("createYamlXmlStreamParser", () => {
 		]);
 	});
 
-	it("suppresses unfinished invalid yaml tool calls at finish by default", () => {
+	it("flags unfinished invalid yaml tool calls at finish by default", () => {
 		// given
 		const onError = vi.fn();
 		const parser = createYamlXmlStreamParser([weatherTool], { onError });
@@ -422,11 +423,25 @@ describe("createYamlXmlStreamParser", () => {
 		const allEvents = [...parser.feed("<get_weather>\n[invalid: yaml:"), ...parser.finish()];
 
 		// then
-		expect(allEvents).toEqual([]);
-		expect(onError).toHaveBeenCalled();
+		expect(allEvents).toEqual([
+			{ type: "toolcall_start", index: 0, name: "get_weather", id: "yaml-xml-tool-0" },
+			{
+				type: "toolcall_end",
+				index: 0,
+				name: "get_weather",
+				id: "yaml-xml-tool-0",
+				arguments: {},
+				incomplete: true,
+				errorMessage: "Tool call was truncated mid-arguments",
+			},
+		]);
+		expect(onError).toHaveBeenCalledWith("Could not complete streaming YAML XML tool call at finish.", {
+			protocol: "yaml-xml",
+			retainedLength: "\n[invalid: yaml:".length,
+		});
 	});
 
-	it("emits unfinished invalid yaml tool calls at finish when raw fallback is enabled", () => {
+	it("never emits raw unfinished yaml tool markup at finish when raw fallback is enabled", () => {
 		// given
 		const parser = createYamlXmlStreamParser([weatherTool], { emitRawToolCallTextOnError: true });
 
@@ -434,7 +449,120 @@ describe("createYamlXmlStreamParser", () => {
 		const allEvents = [...parser.feed("<get_weather>\n[invalid: yaml:"), ...parser.finish()];
 
 		// then
-		expect(allEvents).toEqual([{ type: "text", text: "<get_weather>\n[invalid: yaml:" }]);
+		expect(allEvents).toEqual([
+			{ type: "toolcall_start", index: 0, name: "get_weather", id: "yaml-xml-tool-0" },
+			{
+				type: "toolcall_end",
+				index: 0,
+				name: "get_weather",
+				id: "yaml-xml-tool-0",
+				arguments: {},
+				incomplete: true,
+				errorMessage: "Tool call was truncated mid-arguments",
+			},
+		]);
+	});
+
+	it.each(TRUNCATION_FIXTURES["yaml-xml"])("handles truncation fixture $title", (fixture) => {
+		// given
+		const onError = vi.fn();
+		const parser = createYamlXmlStreamParser(FIXTURE_TOOLS, { onError, emitRawToolCallTextOnError: true });
+
+		// when
+		const allEvents = [...parser.feed(fixture.input), ...parser.finish()];
+		const toolCallEvents = allEvents.filter((event) => event.type.startsWith("toolcall_"));
+		const toolCallEnds = allEvents.filter((event) => event.type === "toolcall_end");
+		const text = allEvents
+			.filter((event) => event.type === "text")
+			.map((event) => event.text)
+			.join("");
+
+		// then
+		if (fixture.expected.kind === "recovered") {
+			expect(toolCallEnds).toHaveLength(1);
+			expect(toolCallEnds[0]).toMatchObject({
+				type: "toolcall_end",
+				name: fixture.tool,
+				arguments: fixture.expected.arguments,
+			});
+			expect(toolCallEnds[0]).not.toHaveProperty("incomplete");
+			expect(text).not.toContain(fixture.input);
+			return;
+		}
+
+		if (fixture.expected.kind === "incomplete") {
+			expect(toolCallEnds).toHaveLength(1);
+			expect(toolCallEnds[0]).toMatchObject({ type: "toolcall_end", name: fixture.tool, incomplete: true });
+			expect(text).not.toContain(fixture.input);
+			expect(JSON.stringify(onError.mock.calls)).not.toContain(fixture.input);
+			return;
+		}
+
+		expect(toolCallEvents).toEqual([]);
+		expect(text).toContain(fixture.input);
+	});
+
+	it("flags EOF immediately after an opening tag when required arguments are missing", () => {
+		// given
+		const parser = createYamlXmlStreamParser(FIXTURE_TOOLS);
+
+		// when
+		const allEvents = [...parser.feed("<get_weather>"), ...parser.finish()];
+
+		// then
+		expect(allEvents).toEqual([
+			{ type: "toolcall_start", index: 0, name: "get_weather", id: "yaml-xml-tool-0" },
+			{
+				type: "toolcall_end",
+				index: 0,
+				name: "get_weather",
+				id: "yaml-xml-tool-0",
+				arguments: {},
+				incomplete: true,
+				errorMessage: "Tool call was truncated mid-arguments",
+			},
+		]);
+	});
+
+	it("recovers EOF immediately after an opening tag when empty arguments validate", () => {
+		// given
+		const parser = createYamlXmlStreamParser(FIXTURE_TOOLS);
+
+		// when
+		const allEvents = [...parser.feed("<get_location>"), ...parser.finish()];
+
+		// then
+		expect(allEvents).toEqual([
+			{ type: "toolcall_start", index: 0, name: "get_location", id: "yaml-xml-tool-0" },
+			{ type: "toolcall_end", index: 0, name: "get_location", id: "yaml-xml-tool-0", arguments: {} },
+		]);
+	});
+
+	it("ends a started malformed complete call as incomplete without changing its raw-text policy", () => {
+		// given
+		const parser = createYamlXmlStreamParser([weatherTool], { emitRawToolCallTextOnError: true });
+
+		// when
+		const allEvents = [
+			...parser.feed("<get_weather>\ncity: Seoul\n"),
+			...parser.feed("[invalid: yaml:\n</get_weather>"),
+			...parser.finish(),
+		];
+
+		// then
+		expect(allEvents).toContainEqual({
+			type: "toolcall_end",
+			index: 0,
+			name: "get_weather",
+			id: "yaml-xml-tool-0",
+			arguments: {},
+			incomplete: true,
+			errorMessage: "Tool call arguments could not be parsed",
+		});
+		expect(allEvents).toContainEqual({
+			type: "text",
+			text: "<get_weather>\ncity: Seoul\n[invalid: yaml:\n</get_weather>",
+		});
 	});
 
 	it.each([0, 1, 7, 13, 21])("keeps yaml xml parsing stable across random chunk splits (seed %s)", (seed) => {

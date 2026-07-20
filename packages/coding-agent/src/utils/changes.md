@@ -137,3 +137,28 @@
 ### Expected merge conflict zones on next upstream sync
 
 - LOW: version-check URL and user-agent formatting utilities.
+
+## Bash abort/timeout wait release (2026-07-18)
+
+### What changed
+
+- `child-process.ts`: `waitForChildProcess` accepts `options?: { signal?: AbortSignal; abortExitGraceMs?: number }`.
+  When the signal aborts (the caller has killed the process and abandoned its output), tail preservation ends: the
+  stdio pipes are destroyed so descendants that survived the kill cannot re-arm the post-exit idle grace forever,
+  and the wait resolves on `exit` — or after `abortExitGraceMs` (default 5s) when the kill never lands
+  (uninterruptible IO, failed `taskkill`).
+
+### Why
+
+- Aborting (ESC) or timing out a bash command killed the process group but completion still waited on
+  `waitForChildProcess`, whose pi#5303 idle grace re-arms on every chunk. A daemonized/`detached` descendant that
+  escaped the group kill and kept writing into the inherited pipe pinned the tool — and the agent's abort — forever.
+
+### Why extension system couldn't handle this
+
+- The wait lives inside the core bash tool's local execution backend; no extension hook can release a promise the
+  core tool is awaiting.
+
+### Expected merge conflict zones on next upstream sync
+
+- MEDIUM: `waitForChildProcess` signature and the listener wiring around the pi#5303 idle-grace logic.

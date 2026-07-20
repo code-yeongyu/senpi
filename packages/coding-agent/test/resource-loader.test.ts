@@ -7,12 +7,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CONFIG_DIR_NAME } from "../src/config.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ExtensionRunner } from "../src/core/extensions/runner.ts";
-import { ModelRegistry } from "../src/core/model-registry.ts";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import type { Skill } from "../src/core/skills.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
+
+import { createModelRegistry } from "./model-runtime-test-utils.ts";
 
 describe("DefaultResourceLoader", () => {
 	let tempDir: string;
@@ -408,7 +409,7 @@ export default function(pi) {
 
 			const sessionManager = SessionManager.inMemory();
 			const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-			const modelRegistry = ModelRegistry.create(authStorage);
+			const modelRegistry = await createModelRegistry(authStorage);
 			const runner = new ExtensionRunner(
 				extensionsResult.extensions,
 				extensionsResult.runtime,
@@ -765,6 +766,47 @@ Content`,
 		});
 	});
 
+	describe("system prompt options", () => {
+		it("should use the systemPrompt option as inline text", async () => {
+			const loader = new DefaultResourceLoader({ cwd, agentDir, systemPrompt: "CLI system prompt." });
+			await loader.reload();
+
+			expect(loader.getSystemPrompt()).toBe("CLI system prompt.");
+		});
+
+		it("should read the systemPrompt option from a file path", async () => {
+			const promptPath = join(tempDir, "system-prompt.md");
+			writeFileSync(promptPath, "Prompt from file.");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir, systemPrompt: promptPath });
+			await loader.reload();
+
+			expect(loader.getSystemPrompt()).toBe("Prompt from file.");
+		});
+
+		it("should prefer the systemPrompt option over a legacy SYSTEM.md", async () => {
+			writeFileSync(join(agentDir, "SYSTEM.md"), "Global system prompt.");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir, systemPrompt: "CLI system prompt." });
+			await loader.reload();
+
+			expect(loader.getSystemPrompt()).toBe("CLI system prompt.");
+		});
+
+		it("should prefer appendSystemPrompt entries over a legacy APPEND_SYSTEM.md", async () => {
+			writeFileSync(join(agentDir, "APPEND_SYSTEM.md"), "Discovered append.");
+
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				appendSystemPrompt: ["First addition.", "Second addition."],
+			});
+			await loader.reload();
+
+			expect(loader.getAppendSystemPrompt()).toEqual(["First addition.", "Second addition."]);
+		});
+	});
+
 	describe("extension conflict detection", () => {
 		it("should detect tool conflicts between extensions", async () => {
 			// Create two extensions that register the same tool
@@ -865,7 +907,7 @@ export default function(pi: ExtensionAPI) {
 
 			const sessionManager = SessionManager.inMemory();
 			const authStorage = AuthStorage.create(join(tempDir, "auth-explicit.json"));
-			const modelRegistry = ModelRegistry.create(authStorage);
+			const modelRegistry = await createModelRegistry(authStorage);
 			const runner = new ExtensionRunner(
 				extensionsResult.extensions,
 				extensionsResult.runtime,

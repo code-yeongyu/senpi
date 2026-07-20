@@ -7,7 +7,12 @@ exports[`buildEvalPrompt > renders the all with spawns prompt 1`] = `
 <instruction>
 **One eval call = one cell = one logical step.** State persists per language across separate eval calls and tool calls, and \`task\` subagents — define helpers, datasets, and clients in one call, then later calls reuse them directly.
 
-Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after \`reset\`, a kernel crash, or a \`NameError\`/\`ReferenceError\` proving the state is gone. Parallelize work *within* a cell with the \`parallel(thunks)\` helper, not by batching steps.
+Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after \`reset\`, a kernel crash, or a \`NameError\`/\`ReferenceError\` proving the state is gone.
+
+**EVAL IS YOUR PRIMARY EXECUTION SURFACE.** Any step that needs MORE THAN ONE tool call MUST be written as ONE cell — NEVER as a chain of single tool calls.
+- **PLAN THE WHOLE STEP, THEN BATCH IT.** Enumerate every read/search/lookup the step needs and dispatch ALL independent ones through \`parallel(thunks)\` in one cell.
+- **WRITE REAL CODE, NOT CALL LISTS.** Loop or comprehend over file sets with \`read()\`/stdlib, branch \`if\`/\`else\` per case, post-process \`tool.<name>()\` results programmatically, and wrap EVERY risky call in try/except so ONE failure NEVER kills the batch.
+- **DISTILL IN-KERNEL.** Filter, diff, and aggregate in code before returning; return facts, NOT dumps.
 
 Fields:
 
@@ -67,7 +72,7 @@ Pipe handles through stage helpers to build a dependency graph — acyclic waves
 </dag>
 
 <critical>
-Prior top-level names (\`data\`, \`sessions\`, helpers, imports) survive into the next eval call — reuse them; NEVER re-import, re-require, or re-declare a helper. Re-read a file only if it may have changed since the last read. Re-run setup only after \`reset\`, a crash, or a \`NameError\`/\`ReferenceError\`.
+Prior top-level names (\`data\`, \`sessions\`, helpers, imports) survive into the next eval call — reuse them; NEVER re-import, re-require, or re-declare a helper. Re-read a file only if it may have changed since the last read.
 </critical>
 
 <examples>
@@ -75,49 +80,31 @@ Prior top-level names (\`data\`, \`sessions\`, helpers, imports) survive into th
 \`\`\`json
 {
   "language": "py",
-  "title": "imports",
-  "code": "import json\\nfrom pathlib import Path"
+  "title": "collect targets",
+  "code": "from pathlib import Path\\nfrom collections import Counter\\nfiles = [p for p in Path('src').rglob('*.ts') if 'test' not in p.parts]\\nprint(len(files))"
 }
 \`\`\`
 
-### Second call — reuse, do NOT re-import
+### Second call — reuse \`files\`, batch-read in one cell
 \`\`\`json
 {
   "language": "py",
-  "title": "load config",
-  "code": "data = json.loads(read('package.json'))\\ndisplay(data)"
+  "title": "scan usages",
+  "code": "hits = Counter()\\nfor p in files:\\n    hits[p.name] = read(p).count('legacyClient')\\ndisplay({k: v for k, v in hits.items() if v})"
 }
 \`\`\`
 
-### Third call — reuse the loaded config
+### Third call — reuse results, fan out session tools in parallel
 \`\`\`json
 {
   "language": "py",
-  "title": "scan deps",
-  "code": "display(sorted(data['dependencies']))"
-}
-\`\`\`
-
-### Ruby first call — set up once
-\`\`\`json
-{
-  "language": "rb",
-  "title": "setup",
-  "code": "require 'json'\\npkg_path = 'package.json'"
-}
-\`\`\`
-
-### Ruby second call — reuse, do NOT re-require
-\`\`\`json
-{
-  "language": "rb",
-  "title": "load config",
-  "code": "pkg = JSON.parse(read(pkg_path))\\ndisplay(pkg.keys.sort)"
+  "title": "confirm callsites",
+  "code": "dirs = ['src/core', 'src/tools']\\ndisplay(parallel([lambda d=d: tool.grep({'pattern': 'legacyClient', 'path': d}) for d in dirs]))"
 }
 \`\`\`
 </examples>",
   "promptGuidelines": [
-    "Use eval for incremental code execution when a persistent JS, Python, Ruby, or Julia kernel is available.",
+    "**EVAL FIRST.** Any step needing MORE THAN ONE tool call MUST be ONE eval cell: run independent calls in parallel, wrap risky calls in try/except, and return distilled facts — NEVER a chain of single tool calls.",
     "Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language.",
   ],
   "promptSnippet": "Run one incremental code cell in a persistent language kernel.",
@@ -131,7 +118,12 @@ exports[`buildEvalPrompt > renders the js without spawns prompt 1`] = `
 <instruction>
 **One eval call = one cell = one logical step.** State persists per language across separate eval calls and tool calls — define helpers, datasets, and clients in one call, then later calls reuse them directly.
 
-Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after \`reset\`, a kernel crash, or a \`NameError\`/\`ReferenceError\` proving the state is gone. Parallelize work *within* a cell with the \`parallel(thunks)\` helper, not by batching steps.
+Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after \`reset\`, a kernel crash, or a \`NameError\`/\`ReferenceError\` proving the state is gone.
+
+**EVAL IS YOUR PRIMARY EXECUTION SURFACE.** Any step that needs MORE THAN ONE tool call MUST be written as ONE cell — NEVER as a chain of single tool calls.
+- **PLAN THE WHOLE STEP, THEN BATCH IT.** Enumerate every read/search/lookup the step needs and dispatch ALL independent ones through \`parallel(thunks)\` in one cell.
+- **WRITE REAL CODE, NOT CALL LISTS.** Loop or comprehend over file sets with \`read()\`/stdlib, branch \`if\`/\`else\` per case, post-process \`tool.<name>()\` results programmatically, and wrap EVERY risky call in try/except so ONE failure NEVER kills the batch.
+- **DISTILL IN-KERNEL.** Filter, diff, and aggregate in code before returning; return facts, NOT dumps.
 
 Fields:
 
@@ -175,10 +167,10 @@ phase(title) → None
 </prelude>
 
 <critical>
-Prior top-level names (\`data\`, \`sessions\`, helpers, imports) survive into the next eval call — reuse them; NEVER re-import, re-require, or re-declare a helper. Re-read a file only if it may have changed since the last read. Re-run setup only after \`reset\`, a crash, or a \`NameError\`/\`ReferenceError\`.
+Prior top-level names (\`data\`, \`sessions\`, helpers, imports) survive into the next eval call — reuse them; NEVER re-import, re-require, or re-declare a helper. Re-read a file only if it may have changed since the last read.
 </critical>",
   "promptGuidelines": [
-    "Use eval for incremental code execution when a persistent JS, Python, Ruby, or Julia kernel is available.",
+    "**EVAL FIRST.** Any step needing MORE THAN ONE tool call MUST be ONE eval cell: run independent calls in parallel, wrap risky calls in try/except, and return distilled facts — NEVER a chain of single tool calls.",
     "Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language.",
   ],
   "promptSnippet": "Run one incremental code cell in a persistent language kernel.",
@@ -192,7 +184,12 @@ exports[`buildEvalPrompt > renders the js-py without spawns prompt 1`] = `
 <instruction>
 **One eval call = one cell = one logical step.** State persists per language across separate eval calls and tool calls — define helpers, datasets, and clients in one call, then later calls reuse them directly.
 
-Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after \`reset\`, a kernel crash, or a \`NameError\`/\`ReferenceError\` proving the state is gone. Parallelize work *within* a cell with the \`parallel(thunks)\` helper, not by batching steps.
+Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after \`reset\`, a kernel crash, or a \`NameError\`/\`ReferenceError\` proving the state is gone.
+
+**EVAL IS YOUR PRIMARY EXECUTION SURFACE.** Any step that needs MORE THAN ONE tool call MUST be written as ONE cell — NEVER as a chain of single tool calls.
+- **PLAN THE WHOLE STEP, THEN BATCH IT.** Enumerate every read/search/lookup the step needs and dispatch ALL independent ones through \`parallel(thunks)\` in one cell.
+- **WRITE REAL CODE, NOT CALL LISTS.** Loop or comprehend over file sets with \`read()\`/stdlib, branch \`if\`/\`else\` per case, post-process \`tool.<name>()\` results programmatically, and wrap EVERY risky call in try/except so ONE failure NEVER kills the batch.
+- **DISTILL IN-KERNEL.** Filter, diff, and aggregate in code before returning; return facts, NOT dumps.
 
 Fields:
 
@@ -237,7 +234,7 @@ phase(title) → None
 </prelude>
 
 <critical>
-Prior top-level names (\`data\`, \`sessions\`, helpers, imports) survive into the next eval call — reuse them; NEVER re-import, re-require, or re-declare a helper. Re-read a file only if it may have changed since the last read. Re-run setup only after \`reset\`, a crash, or a \`NameError\`/\`ReferenceError\`.
+Prior top-level names (\`data\`, \`sessions\`, helpers, imports) survive into the next eval call — reuse them; NEVER re-import, re-require, or re-declare a helper. Re-read a file only if it may have changed since the last read.
 </critical>
 
 <examples>
@@ -245,31 +242,31 @@ Prior top-level names (\`data\`, \`sessions\`, helpers, imports) survive into th
 \`\`\`json
 {
   "language": "py",
-  "title": "imports",
-  "code": "import json\\nfrom pathlib import Path"
+  "title": "collect targets",
+  "code": "from pathlib import Path\\nfrom collections import Counter\\nfiles = [p for p in Path('src').rglob('*.ts') if 'test' not in p.parts]\\nprint(len(files))"
 }
 \`\`\`
 
-### Second call — reuse, do NOT re-import
+### Second call — reuse \`files\`, batch-read in one cell
 \`\`\`json
 {
   "language": "py",
-  "title": "load config",
-  "code": "data = json.loads(read('package.json'))\\ndisplay(data)"
+  "title": "scan usages",
+  "code": "hits = Counter()\\nfor p in files:\\n    hits[p.name] = read(p).count('legacyClient')\\ndisplay({k: v for k, v in hits.items() if v})"
 }
 \`\`\`
 
-### Third call — reuse the loaded config
+### Third call — reuse results, fan out session tools in parallel
 \`\`\`json
 {
   "language": "py",
-  "title": "scan deps",
-  "code": "display(sorted(data['dependencies']))"
+  "title": "confirm callsites",
+  "code": "dirs = ['src/core', 'src/tools']\\ndisplay(parallel([lambda d=d: tool.grep({'pattern': 'legacyClient', 'path': d}) for d in dirs]))"
 }
 \`\`\`
 </examples>",
   "promptGuidelines": [
-    "Use eval for incremental code execution when a persistent JS, Python, Ruby, or Julia kernel is available.",
+    "**EVAL FIRST.** Any step needing MORE THAN ONE tool call MUST be ONE eval cell: run independent calls in parallel, wrap risky calls in try/except, and return distilled facts — NEVER a chain of single tool calls.",
     "Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language.",
   ],
   "promptSnippet": "Run one incremental code cell in a persistent language kernel.",

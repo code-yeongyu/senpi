@@ -13,6 +13,7 @@ export function buildMcpServerSnapshot(
 		name,
 		configState: server?.state ?? "removed",
 		configHash: server?.configHash ?? null,
+		source: server?.source ?? null,
 		sourcePath: server?.sourcePath ?? null,
 		lifecycleState:
 			connection?.state === "idle" && connection.generation === 0 && entry?.cachedCatalog !== undefined

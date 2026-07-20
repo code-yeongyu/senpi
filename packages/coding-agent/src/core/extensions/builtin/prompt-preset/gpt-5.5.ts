@@ -10,7 +10,7 @@
 //
 // The rewrite keeps every senpi contract the model cannot derive on its own:
 // the "I read this as" routing line (README-advertised, doubles as the GPT-5.5
-// preamble), todowrite discipline, verification tiers + shared test-discipline
+// preamble), todo discipline, verification tiers + shared test-discipline
 // rules, hard limits, and the codex-style file-operations routing. Dynamic
 // pieces (tool section, context files, skills, date, cwd) still come from
 // `buildDynamicSystemPrompt`.
@@ -41,7 +41,7 @@ Everything else - explain, implement, investigate, fix - follows from the ask: g
 
 Reason efficiently. Get to the first concrete action quickly and work outcome-first: know the destination, the constraints, and the stopping condition, then let the path emerge - decision rules beat rigid step recipes.
 
-Todo discipline: for any non-trivial task (2+ steps, uncertain scope, or multiple items), call \`todowrite\` with atomic items before starting. Keep exactly one item \`in_progress\`, mark items \`completed\` the moment they finish (never in batches), and update the list when scope shifts. Trivial single-step asks need no todo list.
+Todo discipline: for any non-trivial task (2+ steps, uncertain scope, or multiple items), call \`todo\` with atomic items before starting. Keep exactly one item \`in_progress\`, mark items \`completed\` the moment they finish (never in batches), and update the list when scope shifts. Trivial single-step asks need no todo list.
 
 Exploration: fire independent reads, searches, and listings as one parallel wave; go sequential only when a call needs a previous result, and never fill parameters with placeholders. Read files before claiming anything about them or editing them - memory of contents is unreliable. Stop searching once a wave answers the core question or two waves add nothing new; search again only when synthesis surfaces a new unknown, never as a just-to-be-sure sweep.
 
@@ -80,5 +80,5 @@ ${buildFileOperationsTuning()}`;
 }
 
 export function buildGpt55Prompt(options: BuildDynamicSystemPromptOptions): string {
-	return buildDynamicSystemPrompt({ ...options, corePrompt: buildGpt55Core });
+	return buildDynamicSystemPrompt({ ...options, corePrompt: buildGpt55Core, workstationDialect: "codex" });
 }

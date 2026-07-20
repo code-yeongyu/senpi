@@ -2,6 +2,130 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.7.20] - 2026-07-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.7.17-5] - 2026-07-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.7.17-4] - 2026-07-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.7.17-3] - 2026-07-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.7.17-2] - 2026-07-17
+
+### Added
+
+### Changed
+
+### Fixed
+
+## [2026.7.17] - 2026-07-17
+
+### Added
+
+### Changed
+
+### Fixed
+
+## [2026.7.16-3] - 2026-07-16
+
+### Added
+
+### Changed
+
+### Fixed
+
+## [2026.7.16-2] - 2026-07-16
+
+### Added
+
+### Changed
+
+### Fixed
+
+## [2026.7.16] - 2026-07-16
+
+### Added
+
+### Changed
+
+### Fixed
+
+## [0.80.9] - 2026-07-16
+
+## [0.80.8] - 2026-07-16
+
+### Fixed
+
+- Fixed terminal output to normalize tab characters consistently ([#6697](https://github.com/earendil-works/pi-mono/pull/6697) by [@xz-dev](https://github.com/xz-dev)).
+
+## [2026.7.14-3] - 2026-07-14
+
+### Added
+
+### Changed
+
+### Fixed
+
+## [2026.7.14-2] - 2026-07-14
+
+### Added
+
+### Changed
+
+### Fixed
+
+## [2026.7.14] - 2026-07-14
+
 ### Added
 
 ### Changed

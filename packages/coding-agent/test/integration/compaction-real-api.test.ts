@@ -1,3 +1,4 @@
+import { createModelRegistry, getModelRuntime } from "../model-runtime-test-utils.ts";
 /**
  * Integration tests for compaction using real LLM APIs.
  *
@@ -35,7 +36,7 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction extensions (real AP
 	let tempDir: string;
 	let capturedEvents: Array<SessionBeforeCompactEvent | SessionCompactEvent>;
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		tempDir = join(tmpdir(), `pi-compaction-extensions-test-${Date.now()}`);
 		mkdirSync(tempDir, { recursive: true });
 		capturedEvents = [];
@@ -86,10 +87,12 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction extensions (real AP
 			commands: new Map(),
 			flags: new Map(),
 			shortcuts: new Map(),
+			mcpServers: new Map(),
+			registrationCwd: process.cwd(),
 		};
 	}
 
-	function createSession(extensions: Extension[]) {
+	async function createSession(extensions: Extension[]) {
 		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		const agent = new Agent({
 			getApiKey: () => API_KEY,
@@ -104,7 +107,7 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction extensions (real AP
 		const settingsManager = SettingsManager.create(tempDir, tempDir);
 		settingsManager.applyOverrides({ compaction: { keepRecentTokens: 1 } });
 		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-		const modelRegistry = ModelRegistry.create(authStorage);
+		const modelRegistry = await createModelRegistry(authStorage);
 
 		const runtime = createExtensionRuntime();
 		const resourceLoader = {
@@ -117,7 +120,7 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction extensions (real AP
 			sessionManager,
 			settingsManager,
 			cwd: tempDir,
-			modelRegistry,
+			modelRuntime: getModelRuntime(modelRegistry),
 			resourceLoader,
 		});
 
@@ -126,7 +129,7 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction extensions (real AP
 
 	it("should emit before_compact and compact events", async () => {
 		const extension = createExtension();
-		createSession([extension]);
+		await createSession([extension]);
 
 		await session.prompt("What is 2+2? Reply with just the number.");
 		await session.agent.waitForIdle();
@@ -161,7 +164,7 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction extensions (real AP
 
 	it("should allow extensions to cancel compaction", async () => {
 		const extension = createExtension(() => ({ cancel: true }));
-		createSession([extension]);
+		await createSession([extension]);
 
 		await session.prompt("What is 2+2? Reply with just the number.");
 		await session.agent.waitForIdle();
@@ -187,7 +190,7 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction extensions (real AP
 			}
 			return undefined;
 		});
-		createSession([extension]);
+		await createSession([extension]);
 
 		await session.prompt("What is 2+2? Reply with just the number.");
 		await session.agent.waitForIdle();
@@ -211,7 +214,7 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction extensions (real AP
 
 	it("should include entries in compact event after compaction is saved", async () => {
 		const extension = createExtension();
-		createSession([extension]);
+		await createSession([extension]);
 
 		await session.prompt("What is 2+2? Reply with just the number.");
 		await session.agent.waitForIdle();
@@ -259,9 +262,11 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction extensions (real AP
 			commands: new Map(),
 			flags: new Map(),
 			shortcuts: new Map(),
+			mcpServers: new Map(),
+			registrationCwd: process.cwd(),
 		};
 
-		createSession([throwingExtension]);
+		await createSession([throwingExtension]);
 
 		await session.prompt("What is 2+2? Reply with just the number.");
 		await session.agent.waitForIdle();
@@ -308,6 +313,8 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction extensions (real AP
 			commands: new Map(),
 			flags: new Map(),
 			shortcuts: new Map(),
+			mcpServers: new Map(),
+			registrationCwd: process.cwd(),
 		};
 
 		const extension2: Extension = {
@@ -339,9 +346,11 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction extensions (real AP
 			commands: new Map(),
 			flags: new Map(),
 			shortcuts: new Map(),
+			mcpServers: new Map(),
+			registrationCwd: process.cwd(),
 		};
 
-		createSession([extension1, extension2]);
+		await createSession([extension1, extension2]);
 
 		await session.prompt("What is 2+2? Reply with just the number.");
 		await session.agent.waitForIdle();
@@ -358,7 +367,7 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction extensions (real AP
 			capturedBeforeEvent = event;
 			return undefined;
 		});
-		createSession([extension]);
+		await createSession([extension]);
 
 		await session.prompt("What is 2+2? Reply with just the number.");
 		await session.agent.waitForIdle();
@@ -380,8 +389,9 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction extensions (real AP
 
 		expect(Array.isArray(event.branchEntries)).toBe(true);
 
+		// sessionManager and model runtime remain available on the session.
 		expect(typeof session.sessionManager.getEntries).toBe("function");
-		expect(typeof session.modelRegistry.getApiKeyAndHeaders).toBe("function");
+		expect(typeof session.modelRuntime.getAuth).toBe("function");
 
 		const entries = session.sessionManager.getEntries();
 		expect(Array.isArray(entries)).toBe(true);
@@ -403,7 +413,7 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction extensions (real AP
 			}
 			return undefined;
 		});
-		createSession([extension]);
+		await createSession([extension]);
 
 		await session.prompt("What is 2+2? Reply with just the number.");
 		await session.agent.waitForIdle();

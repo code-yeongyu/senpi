@@ -1,6 +1,6 @@
 # builtin/prompt-preset
 
-Builtin extension #3. On `before_agent_start` and `model_select`, picks a system prompt preset by **model family** (gpt-5.x through gpt-5.6, claude-fable-5, claude-opus-4-{5,6,7,8}, glm-5.2, kimi-k2-{6,7}) and falls back to the senpi dynamic prompt when nothing matches. Renders the active preset name in the startup header. After 2026-04-30, presets are thin wrappers around `buildDynamicSystemPrompt()` carrying only model-specific tuning.
+Builtin extension #3. On `before_agent_start` and `model_select`, picks a system prompt preset by **model family** (gpt-5.x through gpt-5.6, claude-fable-5, claude-opus-4-{5,6,7,8}, glm-5.2, kimi-k2-{6,7}, kimi-k3) and falls back to the senpi dynamic prompt when nothing matches. Renders the active preset name in the startup header. After 2026-04-30, presets are thin wrappers around `buildDynamicSystemPrompt()` carrying only model-specific tuning.
 
 ## FILES
 
@@ -15,7 +15,7 @@ prompt-preset/
 ├── gpt-5.3-codex.ts     # GPT-5.3 Codex preset
 ├── gpt-5.4.ts           # GPT-5.4 preset
 ├── gpt-5.5.ts           # GPT-5.5 preset — full-core rewrite via `corePrompt` (outcome-first, per the GPT-5.5 prompting guide)
-├── gpt-5.6.ts           # GPT-5.6 series preset (sol/terra/luna) — full-core rewrite via `corePrompt`; Hephaestus-parity autonomous deep worker (implement-don't-propose, Manual QA Gate, stop rules) under GPT-5.6 doctrine
+├── gpt-5.6.ts           # GPT-5.6 series preset (sol/terra/luna) — full-core rewrite via `corePrompt`; Hephaestus-parity autonomous deep worker (implement-don't-propose, Manual QA Gate, binding stop contract: declared per-turn stop condition + Stop Goal) under GPT-5.6 doctrine
 ├── claude-fable-5.ts    # Claude Fable 5 preset
 ├── claude-opus-4-5.ts   # Claude Opus 4.5 preset
 ├── claude-opus-4-6.ts   # Claude Opus 4.6 preset
@@ -24,6 +24,7 @@ prompt-preset/
 ├── glm-5-2.ts           # GLM 5.2 preset
 ├── kimi-k2-6.ts         # Kimi K2.6 preset
 ├── kimi-k2-7.ts         # Kimi K2.7 preset
+├── kimi-k3.ts           # Kimi K3 preset — K2-family loop discipline + Opus 4.8/Fable 5 distillation traits
 └── changes.md           # Fork tracker (model-family rename 2026-04-30, file-operations 2026-05-07)
 ```
 

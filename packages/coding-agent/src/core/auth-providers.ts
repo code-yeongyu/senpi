@@ -87,7 +87,7 @@ export function buildLoginProviderInfos(
 export function buildLogoutProviderInfos(modelRegistry: ModelRegistry): AuthProviderInfo[] {
 	const authStorage = modelRegistry.authStorage;
 	const options: AuthProviderInfo[] = [];
-	for (const providerId of authStorage.list()) {
+	for (const providerId of Object.keys(authStorage.getAll())) {
 		const credential = authStorage.get(providerId);
 		if (!credential) {
 			continue;

@@ -13,6 +13,11 @@ name: Release
         required: false
         type: boolean
         default: false
+      publish-only:
+        description: 'Publish an already prepared version through GitHub OIDC; requires version.'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -61,6 +66,7 @@ jobs:
         run: git checkout -- packages/ai/src/models.generated.ts packages/ai/src/image-models.generated.ts package-lock.json
 
       - name: Run release
+        if: inputs.publish-only != true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SENPI_SKIP_PM_VERIFY: '1'
@@ -73,3 +79,36 @@ jobs:
             ARGS+=(--dry-run)
           fi
           npm run release -- "${ARGS[@]}"
+
+      - name: Publish prepared version
+        if: inputs.publish-only == true
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          test -n "$EXPECTED_VERSION" || {
+            echo "publish-only requires an explicit version" >&2
+            exit 1
+          }
+          ACTUAL_VERSION="$(node -p 'require("./packages/coding-agent/package.json").version')"
+          test "$ACTUAL_VERSION" = "$EXPECTED_VERSION" || {
+            echo "expected $EXPECTED_VERSION, found $ACTUAL_VERSION" >&2
+            exit 1
+          }
+          npm run check
+          CI=1 npm test
+          node scripts/publish.mjs
+
+      - name: Workflow summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Release"
+            echo
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Job status | ${{ job.status }} |"
+            echo "| Mode | ${{ inputs.publish-only && 'publish-only' || 'release' }} |"
+            echo "| Version | ${{ inputs.version || 'auto' }} |"
+            echo "| Commit | ${{ github.sha }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

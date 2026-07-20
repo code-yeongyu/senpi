@@ -1,6 +1,6 @@
 # Providers
 
-Senpi supports subscription-based providers via OAuth and API key providers via environment variables or auth file. For each provider, senpi knows all available models. The list is updated with every senpi release.
+Pi supports subscription-based providers via OAuth and API key providers via environment variables or auth file. Built-in catalogs ship with pi; configured providers may refresh newer catalogs and cache them in `~/.pi/agent/models-store.json` for offline use.
 
 ## Table of Contents
 
@@ -8,6 +8,7 @@ Senpi supports subscription-based providers via OAuth and API key providers via 
 - [API Keys](#api-keys)
 - [Auth File](#auth-file)
 - [Cloud Providers](#cloud-providers)
+- [llama.cpp](#llamacpp)
 - [Custom Providers](#custom-providers)
 - [Resolution Order](#resolution-order)
 
@@ -18,8 +19,10 @@ Use `/login` in interactive mode, then select a provider:
 - ChatGPT Plus/Pro (Codex)
 - Claude Pro/Max
 - GitHub Copilot
+- xAI (Grok/X subscription)
+- Radius
 
-Use `/logout` to clear credentials. Tokens are stored in `~/.senpi/agent/auth.json` and auto-refresh when expired.
+Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired.
 
 ### OpenAI Codex
 
@@ -35,6 +38,15 @@ Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party h
 - Press Enter for github.com, or enter your GitHub Enterprise Server domain
 - If you get "model not supported", enable it in VS Code: Copilot Chat → model selector → select model → "Enable"
 
+### xAI (Grok/X subscription)
+
+- Run `/login xai`, then select **Use a subscription**
+- `XAI_API_KEY` remains available through **Use an API key**
+
+### Radius
+
+Radius is a dynamic `pi-messages` gateway. `/login radius` stores OAuth tokens in `auth.json`; the gateway catalog is refreshed independently and cached in `models-store.json`. Custom Radius gateways can be declared in `models.json` with `"oauth": "radius"` and a gateway `baseUrl`.
+
 ## API Keys
 
 ### Environment Variables or Auth File
@@ -43,7 +55,7 @@ Use `/login` in interactive mode and select a provider to store an API key in `a
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-senpi
+pi
 ```
 
 | Provider | Environment Variable | `auth.json` key |
@@ -68,6 +80,7 @@ senpi
 | ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` | `zai-coding-cn` |
 | OpenCode Zen | `OPENCODE_API_KEY` | `opencode` |
 | OpenCode Go | `OPENCODE_API_KEY` | `opencode-go` |
+| Radius | `RADIUS_API_KEY` | `radius` |
 | Hugging Face | `HF_TOKEN` | `huggingface` |
 | Fireworks | `FIREWORKS_API_KEY` | `fireworks` |
 | Together AI | `TOGETHER_API_KEY` | `together` |
@@ -79,11 +92,11 @@ senpi
 | Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` | `xiaomi-token-plan-ams` |
 | Xiaomi MiMo Token Plan (Singapore) | `XIAOMI_TOKEN_PLAN_SGP_API_KEY` | `xiaomi-token-plan-sgp` |
 
-Reference for environment variables and `auth.json` keys: [`const envMap`](https://github.com/code-yeongyu/senpi/blob/main/packages/ai/src/env-api-keys.ts) in [`packages/ai/src/env-api-keys.ts`](https://github.com/code-yeongyu/senpi/blob/main/packages/ai/src/env-api-keys.ts).
+Reference for environment variables and `auth.json` keys: [`const envMap`](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/env-api-keys.ts) in [`packages/ai/src/env-api-keys.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/env-api-keys.ts).
 
 #### Auth File
 
-Store credentials in `~/.senpi/agent/auth.json`:
+Store credentials in `~/.pi/agent/auth.json`:
 
 ```json
 {
@@ -191,14 +204,14 @@ export AWS_REGION=us-west-2
 Also supports ECS task roles (`AWS_CONTAINER_CREDENTIALS_*`) and IRSA (`AWS_WEB_IDENTITY_TOKEN_FILE`).
 
 ```bash
-senpi --provider amazon-bedrock --model us.anthropic.claude-sonnet-4-20250514-v1:0
+pi --provider amazon-bedrock --model us.anthropic.claude-sonnet-4-20250514-v1:0
 ```
 
 Prompt caching is enabled automatically for Claude models whose ID contains a recognizable model name (base models and system-defined inference profiles). For application inference profiles (whose ARNs don't contain the model name), set `AWS_BEDROCK_FORCE_CACHE=1` to enable cache points:
 
 ```bash
 export AWS_BEDROCK_FORCE_CACHE=1
-senpi --provider amazon-bedrock --model arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123
+pi --provider amazon-bedrock --model arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123
 ```
 
 If you are connecting to a Bedrock API proxy, the following environment variables can be used:
@@ -222,7 +235,7 @@ export AWS_BEDROCK_FORCE_HTTP1=1
 export CLOUDFLARE_API_KEY=...           # or use /login
 export CLOUDFLARE_ACCOUNT_ID=...
 export CLOUDFLARE_GATEWAY_ID=...        # create at dash.cloudflare.com → AI → AI Gateway
-senpi --provider cloudflare-ai-gateway --model "claude-sonnet-4-5"
+pi --provider cloudflare-ai-gateway --model "claude-sonnet-4-5"
 ```
 
 Routes to OpenAI, Anthropic, and Workers AI through Cloudflare AI Gateway. Workers AI uses the Unified API (`/compat`) and prefixed model IDs (`workers-ai/@cf/...`). OpenAI uses the OpenAI passthrough route (`/openai`) with native OpenAI model IDs such as `gpt-5.1`. Anthropic uses the Anthropic passthrough route (`/anthropic`) with native Anthropic model IDs such as `claude-sonnet-4-5`.
@@ -236,7 +249,7 @@ AI Gateway authentication uses `CLOUDFLARE_API_KEY` as `cf-aig-authorization`. U
 | Stored BYOK | Cloudflare token only | Cloudflare injects provider keys stored in the AI Gateway dashboard |
 | Inline BYOK | Cloudflare token plus upstream `Authorization` header | The request supplies the upstream provider key |
 
-For normal senpi usage, prefer unified billing or stored BYOK. Inline BYOK requires configuring an additional upstream `Authorization` header for the Cloudflare AI Gateway provider, for example via a `models.json` provider/model override.
+For normal pi usage, prefer unified billing or stored BYOK. Inline BYOK requires configuring an additional upstream `Authorization` header for the Cloudflare AI Gateway provider, for example via a `models.json` provider/model override.
 
 ### Cloudflare Workers AI
 
@@ -245,10 +258,10 @@ For normal senpi usage, prefer unified billing or stored BYOK. Inline BYOK requi
 ```bash
 export CLOUDFLARE_API_KEY=...           # or use /login
 export CLOUDFLARE_ACCOUNT_ID=...
-senpi --provider cloudflare-workers-ai --model "@cf/moonshotai/kimi-k2.6"
+pi --provider cloudflare-workers-ai --model "@cf/moonshotai/kimi-k2.6"
 ```
 
-Senpi automatically sets `x-session-affinity` for [prefix caching](https://developers.cloudflare.com/workers-ai/features/prompt-caching/) discounts.
+Pi automatically sets `x-session-affinity` for [prefix caching](https://developers.cloudflare.com/workers-ai/features/prompt-caching/) discounts.
 
 ### Google Vertex AI
 
@@ -261,6 +274,12 @@ export GOOGLE_CLOUD_LOCATION=us-central1
 ```
 
 Or set `GOOGLE_APPLICATION_CREDENTIALS` to a service account key file.
+
+## llama.cpp
+
+Pi supports the llama.cpp router server. Configure it with `/login llama.cpp`, manage loaded models with `/llama`, and select a loaded model with `/model`.
+
+See [llama.cpp](llama-cpp.md) for server setup, model directory layout, environment variables, and command usage.
 
 ## Custom Providers
 

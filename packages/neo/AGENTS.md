@@ -40,3 +40,4 @@ neo-test.sh           Source test launcher
 - Root `npm run check:neo` is the repository integration gate.
 - UI changes run the matching `go run ./internal/<area>/qaharness` command and verify captured manifests with `node qa/xterm-render.mjs verify-manifest <manifest.json>` at representative widths.
 - Protocol changes require bridge fixture, transport, handshake, and exhaustive compatibility tests.
+- Read `internal/bridge/AGENTS.md` for protocol/daemon work and `internal/ui/AGENTS.md` for visual or interaction work.

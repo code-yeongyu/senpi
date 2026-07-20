@@ -1,3 +1,4 @@
+import { createModelRegistry } from "./model-runtime-test-utils.ts";
 /**
  * Tests for ExtensionRunner - conflict detection, error handling, tool wrapping.
  */
@@ -6,6 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Provider } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { DEFAULT_COMPACTION_SETTINGS } from "../src/core/compaction/index.ts";
@@ -28,7 +30,7 @@ import type {
 	ProviderConfig,
 } from "../src/core/extensions/types.ts";
 import { KeybindingsManager, type KeyId } from "../src/core/keybindings.ts";
-import { ModelRegistry } from "../src/core/model-registry.ts";
+import type { ModelRegistry } from "../src/core/model-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 
 describe("ExtensionRunner", () => {
@@ -38,13 +40,13 @@ describe("ExtensionRunner", () => {
 	let modelRegistry: ModelRegistry;
 	const defaultKeybindings = new KeybindingsManager().getEffectiveConfig();
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-runner-test-"));
 		extensionsDir = path.join(tempDir, "extensions");
 		fs.mkdirSync(extensionsDir);
 		sessionManager = SessionManager.inMemory();
 		const authStorage = AuthStorage.create(path.join(tempDir, "auth.json"));
-		modelRegistry = ModelRegistry.create(authStorage);
+		modelRegistry = await createModelRegistry(authStorage);
 	});
 
 	afterEach(() => {
@@ -81,6 +83,37 @@ describe("ExtensionRunner", () => {
 			},
 		],
 	};
+
+	const nativeProvider = (id: string, modelId = "native-model"): Provider => ({
+		id,
+		name: `Native ${id}`,
+		auth: {
+			apiKey: {
+				name: "Test key",
+				resolve: async () => ({ auth: { apiKey: "test-key" }, source: "test" }),
+			},
+		},
+		getModels: () => [
+			{
+				id: modelId,
+				name: modelId,
+				api: "openai-completions",
+				provider: id,
+				baseUrl: "https://native.test/v1",
+				reasoning: false,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 128000,
+				maxTokens: 4096,
+			},
+		],
+		stream: () => {
+			throw new Error("unused");
+		},
+		streamSimple: () => {
+			throw new Error("unused");
+		},
+	});
 
 	const extensionActions: ExtensionActions = {
 		sendMessage: () => {},
@@ -1330,7 +1363,7 @@ describe("ExtensionRunner", () => {
 	});
 
 	describe("provider registration", () => {
-		it("bindCore ignores invalid queued registrations and reports extension error", () => {
+		it("bindCore ignores invalid queued registrations and reports extension error", async () => {
 			const runtime = createExtensionRuntime();
 			const brokenProviderConfig: ProviderConfig = {
 				streamSimple: () => {
@@ -1347,7 +1380,7 @@ describe("ExtensionRunner", () => {
 			expect(errors).toEqual([
 				'/tmp/broken-extension.ts: Provider broken-provider: "api" is required when registering streamSimple.',
 			]);
-			expect(() => modelRegistry.refresh()).not.toThrow();
+			await expect(modelRegistry.refresh()).resolves.toBeUndefined();
 		});
 
 		it("pre-bind unregister removes all queued registrations for a provider", () => {
@@ -1395,6 +1428,75 @@ describe("ExtensionRunner", () => {
 
 			runtime.unregisterProvider("instant-provider");
 			expect(modelRegistry.find("instant-provider", "instant-model")).toBeUndefined();
+		});
+
+		it("flushes mixed pre-bind registrations in call order (native then legacy)", () => {
+			const runtime = createExtensionRuntime();
+			runtime.registerNativeProvider(nativeProvider("ord-native"));
+			runtime.registerProvider("ord-legacy", providerModelConfig);
+
+			const runner = new ExtensionRunner([], runtime, tempDir, sessionManager, modelRegistry);
+			const registrations: string[] = [];
+			runner.bindCore(extensionActions, extensionContextActions, {
+				registerProvider: (name) => {
+					registrations.push(`config:${name}`);
+				},
+				registerNativeProvider: (provider) => {
+					registrations.push(`native:${provider.id}`);
+				},
+			});
+
+			expect(registrations).toEqual(["native:ord-native", "config:ord-legacy"]);
+			expect(runtime.pendingProviderRegistrations).toHaveLength(0);
+			expect(runtime.pendingNativeProviderRegistrations).toHaveLength(0);
+		});
+
+		it("flushes mixed pre-bind registrations in call order (legacy then native)", () => {
+			const runtime = createExtensionRuntime();
+			runtime.registerProvider("ord-legacy-first", providerModelConfig);
+			runtime.registerNativeProvider(nativeProvider("ord-native"));
+			runtime.registerProvider("ord-legacy-last", providerModelConfig);
+
+			const runner = new ExtensionRunner([], runtime, tempDir, sessionManager, modelRegistry);
+			const registrations: string[] = [];
+			runner.bindCore(extensionActions, extensionContextActions, {
+				registerProvider: (name) => {
+					registrations.push(`config:${name}`);
+				},
+				registerNativeProvider: (provider) => {
+					registrations.push(`native:${provider.id}`);
+				},
+			});
+
+			expect(registrations).toEqual(["config:ord-legacy-first", "native:ord-native", "config:ord-legacy-last"]);
+		});
+
+		it("lets a later legacy registration replace an earlier native registration for the same provider", async () => {
+			const runtime = createExtensionRuntime();
+			runtime.registerNativeProvider(nativeProvider("mixed-provider"));
+			runtime.registerProvider("mixed-provider", providerModelConfig);
+
+			const runner = new ExtensionRunner([], runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			expect(modelRegistry.getRegisteredNativeProvider("mixed-provider")).toBeUndefined();
+			expect(modelRegistry.find("mixed-provider", "instant-model")).toBeDefined();
+			expect(modelRegistry.find("mixed-provider", "native-model")).toBeUndefined();
+			await expect(modelRegistry.refresh()).resolves.toBeUndefined();
+		});
+
+		it("lets a later native registration replace an earlier legacy registration for the same provider", async () => {
+			const runtime = createExtensionRuntime();
+			runtime.registerProvider("mixed-provider", providerModelConfig);
+			runtime.registerNativeProvider(nativeProvider("mixed-provider"));
+
+			const runner = new ExtensionRunner([], runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			expect(modelRegistry.getRegisteredNativeProvider("mixed-provider")).toBeDefined();
+			expect(modelRegistry.find("mixed-provider", "native-model")).toBeDefined();
+			expect(modelRegistry.find("mixed-provider", "instant-model")).toBeUndefined();
+			await expect(modelRegistry.refresh()).resolves.toBeUndefined();
 		});
 	});
 
@@ -1490,6 +1592,86 @@ describe("ExtensionRunner", () => {
 			expect(errors).toHaveLength(1);
 			expect(errors[0].event).toBe("before_provider_headers");
 			expect(errors[0].error).toContain("header handler boom");
+		});
+	});
+
+	describe("getRegisteredMcpServers", () => {
+		it("returns declarations from all extensions with distinct names", async () => {
+			const a = await loadExtensionFromFactory(
+				(pi) => pi.registerMcpServer("alpha", { type: "stdio", command: "node", args: ["a.js"] }),
+				tempDir,
+				createEventBus(),
+				createExtensionRuntime(),
+				"<ext-a>",
+			);
+			const b = await loadExtensionFromFactory(
+				(pi) => pi.registerMcpServer("beta", { type: "stdio", command: "node" }),
+				tempDir,
+				createEventBus(),
+				createExtensionRuntime(),
+				"<ext-b>",
+			);
+			const runner = new ExtensionRunner([a, b], createExtensionRuntime(), tempDir, sessionManager, modelRegistry);
+			const servers = runner.getRegisteredMcpServers();
+			expect(servers.map((s) => s.name).sort()).toEqual(["alpha", "beta"]);
+			expect(servers.find((s) => s.name === "alpha")?.extensionPath).toBe("<ext-a>");
+		});
+
+		it("first extension wins on name collision and warns naming both paths", async () => {
+			const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+			const a = await loadExtensionFromFactory(
+				(pi) => pi.registerMcpServer("dup", { type: "stdio", command: "first" }),
+				tempDir,
+				createEventBus(),
+				createExtensionRuntime(),
+				"<ext-a>",
+			);
+			const b = await loadExtensionFromFactory(
+				(pi) => pi.registerMcpServer("dup", { type: "stdio", command: "second" }),
+				tempDir,
+				createEventBus(),
+				createExtensionRuntime(),
+				"<ext-b>",
+			);
+			const runner = new ExtensionRunner([a, b], createExtensionRuntime(), tempDir, sessionManager, modelRegistry);
+			const servers = runner.getRegisteredMcpServers();
+			expect(servers).toHaveLength(1);
+			expect(servers[0]?.extensionPath).toBe("<ext-a>");
+			expect(servers[0]?.config.command).toBe("first");
+			const warning = warn.mock.calls.map((c) => c.join(" ")).find((t) => t.includes("dup"));
+			expect(warning).toContain("<ext-a>");
+			expect(warning).toContain("<ext-b>");
+			warn.mockRestore();
+		});
+
+		it("returns an empty array when no extension declares MCP servers", () => {
+			const runner = new ExtensionRunner([], createExtensionRuntime(), tempDir, sessionManager, modelRegistry);
+			expect(runner.getRegisteredMcpServers()).toEqual([]);
+		});
+
+		it("exposes the aggregate via ExtensionContext in session_start handlers", async () => {
+			let captured: ReturnType<typeof runner.getRegisteredMcpServers> | undefined;
+			const a = await loadExtensionFromFactory(
+				(pi) => pi.registerMcpServer("gamma", { type: "stdio", command: "node" }),
+				tempDir,
+				createEventBus(),
+				createExtensionRuntime(),
+				"<ext-a>",
+			);
+			const b = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("session_start", (_event, ctx) => {
+						captured = ctx.getRegisteredMcpServers?.();
+					});
+				},
+				tempDir,
+				createEventBus(),
+				createExtensionRuntime(),
+				"<ext-b>",
+			);
+			const runner = new ExtensionRunner([a, b], createExtensionRuntime(), tempDir, sessionManager, modelRegistry);
+			await runner.emit({ type: "session_start", reason: "startup" });
+			expect(captured?.map((s) => s.name)).toEqual(["gamma"]);
 		});
 	});
 });

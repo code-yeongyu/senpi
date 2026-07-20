@@ -110,7 +110,10 @@ describe("vendored websearch native tool", () => {
 		);
 
 		// then
-		expect(progress).toHaveLength(1);
+		expect(progress).toHaveLength(2);
+		expect(progress[0]?.currentProvider).toBeUndefined();
+		expect(progress[1]?.currentProvider).toBe("openai/native");
+		expect(progress[1]?.attempts).toEqual([]);
 		const providerLabels = progress[0]?.providerLabels ?? [];
 		expect(providerLabels).toHaveLength(4);
 		expect(providerLabels[0]).toBe("native/openai");

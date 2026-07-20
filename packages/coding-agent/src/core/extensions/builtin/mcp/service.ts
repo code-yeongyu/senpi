@@ -2,7 +2,7 @@ import type { ExtensionAPI, SessionShutdownEvent, SessionStartEvent } from "../.
 import { detectLiteralBearerWarnings, resolveServerAuth } from "./auth/context.ts";
 import { collectToolCatalog } from "./catalog.ts";
 import { getValidCachedServer, readMcpCatalogCache } from "./catalog-cache.ts";
-import { loadMcpConfig, resolveSkillMcpServer, visitSpawnableMcpServers } from "./config.ts";
+import { loadMcpConfig, mergeExtensionMcpServers, resolveSkillMcpServer, visitSpawnableMcpServers } from "./config.ts";
 import type { McpServerConfig, ResolvedMcpConfig, ResolvedMcpServer } from "./config-schema.ts";
 import { ServerConnection } from "./connection.ts";
 import { mapMcpCatalogNames } from "./expose/register.ts";
@@ -75,6 +75,7 @@ export class McpService {
 			env: options.env,
 			projectTrusted: options.projectTrusted ?? ctx.isProjectTrusted(),
 		});
+		mergeExtensionMcpServers(config, ctx.getRegisteredMcpServers?.() ?? []);
 		this.#config = config;
 		this.#pi = _pi;
 		this.#authAgentDir = options.agentDir;
@@ -146,7 +147,7 @@ export class McpService {
 	}
 
 	/** Reveal skill-owned tools (todo 37): activation is effective the next
-	 * turn, exactly like an mcp_search promotion. Unknown names are ignored. */
+	 * turn, exactly like an tool_search promotion. Unknown names are ignored. */
 	activateSkillMcpTools(names: readonly string[]): void {
 		this.#tierBRegistration?.activate(names);
 	}
@@ -380,7 +381,7 @@ export class McpService {
 	}
 
 	/**
-	 * Replay mcp_search activation markers from session history through the
+	 * Replay tool_search activation markers from session history through the
 	 * live tier-B activation path (see tool-search.ts). Returns newly activated
 	 * names; safe to call repeatedly (already-active names are skipped).
 	 */

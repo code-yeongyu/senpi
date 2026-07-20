@@ -567,6 +567,24 @@ describe("ToolExecutionComponent parity", () => {
 		expect(rendered).not.toContain("two\n\n");
 	});
 
+	test("does not syntax-highlight read errors based on the requested file path", () => {
+		const component = new ToolExecutionComponent(
+			"read",
+			"tool-read-error-highlighting",
+			{ path: "config.exs", offset: 120, limit: 130 },
+			{},
+			createReadToolDefinition(process.cwd()),
+			createFakeTui(),
+			process.cwd(),
+		);
+		const error = "Offset 120 is beyond end of file (96 lines total)";
+		component.updateResult({ content: [{ type: "text", text: error }], details: undefined, isError: true }, false);
+
+		const rendered = component.render(120).join("\n");
+		expect(stripAnsi(rendered)).toContain(error);
+		expect(rendered).toContain(theme.fg("toolOutput", error));
+	});
+
 	test("collapses ordinary read results until expanded", () => {
 		const component = new ToolExecutionComponent(
 			"read",

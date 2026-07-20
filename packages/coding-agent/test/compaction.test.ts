@@ -34,6 +34,7 @@ import {
 	calculateContextTokens,
 	DEFAULT_COMPACTION_SETTINGS,
 	estimateContextTokens,
+	estimateTokens,
 	findCutPoint,
 	getLastAssistantUsage,
 	prepareCompaction,
@@ -481,6 +482,50 @@ describe("estimateContextTokens", () => {
 		expect(estimate.lastUsageIndex).toBe(1);
 		expect(estimate.trailingTokens).toBeGreaterThan(0);
 		expect(estimate.tokens).toBe(150 + estimate.trailingTokens);
+	});
+});
+
+describe("estimateTokens base64 weighting", () => {
+	const base64Run = "iVBORw0KGgoAAAANSUhEUg".repeat(4096); // ~90K unbroken base64 chars
+
+	it("weights long base64 runs in tool results near 1 token per char", () => {
+		const message: AgentMessage = {
+			role: "toolResult",
+			toolCallId: "call-1",
+			toolName: "get_app_state",
+			content: [{ type: "text", text: `{"screenshot":{"url":"data:image/png;base64,${base64Run}"}}` }],
+			details: undefined,
+			isError: false,
+			timestamp: Date.now(),
+		};
+
+		// chars/4 alone would report ~25% of the run length; providers count ~1
+		// token per base64 char, which previously let 1M-token prompts pass the
+		// pre-flight compaction check (session 019f711b: estimated 319K, actual 1.03M).
+		expect(estimateTokens(message)).toBeGreaterThanOrEqual(base64Run.length);
+	});
+
+	it("keeps the chars/4 heuristic for prose without long runs", () => {
+		const prose = "The quick brown fox jumps over the lazy dog. ".repeat(100);
+		expect(estimateTokens(createUserMessage(prose))).toBe(Math.ceil(prose.length / 4));
+	});
+
+	it("does not weight short base64-ish identifiers", () => {
+		const text = "commit 0123456789abcdef0123456789abcdef01234567 fixed the bug";
+		expect(estimateTokens(createUserMessage(text))).toBe(Math.ceil(text.length / 4));
+	});
+
+	it("weights base64 embedded in bash output", () => {
+		const message: AgentMessage = {
+			role: "bashExecution",
+			command: "base64 screenshot.png",
+			output: base64Run,
+			exitCode: 0,
+			cancelled: false,
+			truncated: false,
+			timestamp: Date.now(),
+		};
+		expect(estimateTokens(message)).toBeGreaterThanOrEqual(base64Run.length);
 	});
 });
 

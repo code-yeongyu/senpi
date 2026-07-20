@@ -263,6 +263,7 @@ describe("skills", () => {
 
 			expect(introText).toContain("The following skills provide specialized instructions");
 			expect(introText).toContain("Use the read tool to load a skill's file");
+			expect(introText).toContain("even loosely matches");
 		});
 
 		it("should escape XML special characters", () => {

@@ -45,3 +45,41 @@ correctness the plan targets — is fully prevented by deactivation.
 `session.waitExit()` via the session object rather than a detached reference, so class-based
 sessions (pi-pty `TerminalSession`) keep their `this` binding under `SessionRegistry.stop/
 teardown`. Regression test: `packages/pty/test/registry.test.ts`.
+
+## Fast-exit PTY output drain (2026-07-14)
+
+- `crates/senpi-pty/src/session.rs`: synchronous and background waits close the PTY writer/master
+  and join the reader before reporting exit, preserving final output from fast-exiting commands.
+- `crates/senpi-pty/src/lib.rs`: native data callbacks wait until the JavaScript callback has run,
+  preserve callback exceptions, and unblock only when the thread-safe function reports N-API
+  environment teardown, so the reader join guarantees delivery without leaking a blocked thread.
+- `core/extensions/builtin/terminal/runtime-session.ts`: constructs `TerminalSession` explicitly,
+  registers output/exit listeners, then calls `start()` so startup output cannot beat subscription.
+
+This ordering belongs below the extension layer: an extension cannot change native PTY teardown or
+subscribe before a session created by the convenience factory has already started. During upstream
+merges, preserve the close-writer → close-master → join-reader sequence, the N-API delivery
+acknowledgement, and listener-before-start construction. Expected conflict zones are native session
+lifecycle code, the N-API `startPtySession` callback, and terminal runtime construction.
+
+## Foreground abort/timeout must release the tool (2026-07-18)
+
+- `tools/bash.ts`: foreground abort now sends one decisive group `SIGKILL` (the pi-pty `kill()` is one-shot
+  idempotent, so a first gentle SIGTERM would block escalation and a SIGTERM-ignoring command pinned the agent
+  forever). The exit wait is raced against `KILLED_SESSION_EXIT_GRACE_MS` (new in `shared.ts`, 5s) armed on abort
+  and on `timeoutMs + grace`: the native wait joins the PTY reader thread, which blocks while any surviving
+  descendant (own process group, inherited slave fd) holds the PTY open — previously ESC appeared dead while
+  "Running bash" counted up for hours. When the grace releases the wait, the session entry may settle later
+  through the registry's own `onExit` subscription (an unkillable holder can keep it `stopping`).
+- Aborted foreground runs now report `Command aborted` (core bash parity) instead of `Command exited with code
+  137`; timeout-grace releases report the standard `Command timed out after N seconds`.
+- A signal already aborted at execute-entry returns `Command aborted` without spawning a session; the
+  timeout-grace timer is not armed when `timeoutMs + grace` exceeds the 32-bit `setTimeout` range (no false
+  early timeout); on a grace release the tool sweeps the session via `ctx.manager.stop(id)` (fire-and-forget).
+- `@earendil-works/pi-pty` `SessionRegistry` gained `stopExitGraceMs` (default 5s): `stop()`/`teardown()` now
+  bound their exit wait and mark a never-settling session `stopping` instead of hanging — without this, the
+  terminal extension's awaited `manager.teardown()` made `/exit` hang on the same held-open PTY. Residual: a
+  `stopping` entry still occupies a registry slot until its exit finally settles (capacity cap 32).
+- Regression coverage: `test/terminal-bash-abort.test.ts` (pre-aborted signal spawns nothing, SIGTERM-ignoring
+  command, PTY held open across abort and timeout, plain-run pin) and `packages/pty/test/registry.test.ts`
+  (bounded stop/teardown on a session that never reports exit).

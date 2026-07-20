@@ -1,5 +1,35 @@
 # Local fork changes
 
+## 2026-07-20 — paced streaming tool argument preview coverage
+
+- Changed:
+  - `test/tool-args-reveal.test.ts`: deterministic fake-timer coverage for initial visibility, monotonic catch-up,
+    64-unit parse batching, surrogate-safe slicing, exact per-call/all-call flushes, disabled-setting cancellation, and
+    live FPS refreshes.
+  - `test/suite/regressions/4167-thinking-toggle-pending-tool-render.test.ts`: extends the prototype harness with the
+    tool-argument reveal flush seam used when pending components are rebuilt.
+  - `test/interactive-mode-status.test.ts`: extends the active-tool lifecycle fixture with the tool-argument reveal
+    flush/finish seams and direct exact-argument update surface.
+- Why: streamed tool arguments need the same stable cadence as assistant text without exposing malformed Unicode or
+  allowing a stale timer to overwrite exact execution arguments.
+- What changed: focused package test coverage; runtime changes are tracked in the nearest `src/**/changes.md` files.
+- Why the extension system could not handle this: the tests pin private interactive pending-tool and timer lifecycles.
+- Merge-conflict risk: low. The suite and controller are fork-only; runtime wiring risk is documented under `src/`.
+
+## 2026-07-20 — smooth streaming reveal test coverage
+
+- Changed:
+  - `test/streaming-reveal.test.ts`: deterministic coverage for incremental grapheme counting and slicing, display
+    message construction, fps-invariant reveal timing, and controller lifecycle behavior.
+  - `test/settings-manager.test.ts`: defaults, clamping, and persistence coverage for smooth-streaming settings.
+  - `test/interactive-mode-compaction-queue-session-rebind.test.ts`: session-rebind test doubles now include the reveal
+    controller `stop` seam so the full CI suite exercises the updated `InteractiveMode` shape.
+- Why: the interactive reveal must remain Unicode-safe and time-based across 30–120fps, including live setting and
+  visibility changes.
+- What changed: test-only package surface; runtime changes are tracked in the nearest `src/**/changes.md` files.
+- Why the extension system could not handle this: the tests exercise private built-in TUI lifecycle and settings state.
+- Merge-conflict risk: low. Both suites are focused additions to the package test surface.
+
 ## 2026-07-07 — pi-pty workspace dependency groundwork
 
 - Changed:

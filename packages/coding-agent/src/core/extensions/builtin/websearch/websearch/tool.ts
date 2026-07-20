@@ -49,6 +49,12 @@ function providerLabel(provider: SearchProviderEntry): string {
 }
 
 function formatSearchProgressText(details: SearchProgressDetails): string {
+	if (details.currentProvider) {
+		const total = details.providerLabels.length;
+		const position = Math.min((details.attempts?.length ?? 0) + 1, Math.max(total, 1));
+		const step = total > 1 ? ` [${position}/${total}]` : "";
+		return `Searching "${details.query}" via ${details.currentProvider}${step} (max ${details.maxResults})`;
+	}
 	const route = details.providerLabels.length > 0 ? details.providerLabels.join(" -> ") : "configured providers";
 	return `Searching "${details.query}" via ${route} (max ${details.maxResults})`;
 }
@@ -112,7 +118,17 @@ export function createWebSearchTool(getConfig: ConfigProvider): WebSearchTool {
 				...(params.allowed_domains === undefined ? {} : { allowedDomains: params.allowed_domains }),
 				...(params.blocked_domains === undefined ? {} : { blockedDomains: params.blocked_domains }),
 			};
-			const details = await performSearch(config, request, signal, routingState);
+			const details = await performSearch(config, request, signal, routingState, (providerLabel, attempts) => {
+				const attemptProgress: SearchProgressDetails = {
+					...progressDetails,
+					currentProvider: providerLabel,
+					attempts: [...attempts],
+				};
+				onUpdate?.({
+					content: [{ type: "text", text: formatSearchProgressText(attemptProgress) }],
+					details: attemptProgress,
+				});
+			});
 			return { content: [{ type: "text", text: formatSearchText(details) }], details };
 		},
 		renderCall: (args, theme) => renderSearchCall(args, theme),

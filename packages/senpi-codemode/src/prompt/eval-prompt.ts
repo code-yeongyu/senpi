@@ -14,6 +14,36 @@ export interface EvalPromptParts {
 export interface EvalPromptOptions {
 	readonly spawns: boolean;
 	readonly spawnDefaultAgent?: string;
+	/** Active model id; selects the emphasis dialect of the batching guidance. */
+	readonly modelId?: string;
+	/** Preformatted host line (e.g. "darwin arm64 · Apple M5 Max · 18 cores"); enables the host-sizing note. */
+	readonly hostLine?: string;
+}
+
+/** Prompt dialect for the eval-first batching emphasis. */
+export type EvalEmphasisStyle = "default" | "claude" | "codex" | "kimi";
+
+const CLAUDE_MODEL_RE = /(^|[/.:])claude[-.]/i;
+const GLM_MODEL_RE = /(^|[/.:@-])glm[-.]?\d/i;
+const KIMI_MODEL_RE = /(^|[/.:])kimi[-.]/i;
+const OPENAI_MODEL_RE = /(^|[/.:])(gpt|chatgpt|codex)[-.]|(^|[/.:])o[134](?:[-.]|$)/i;
+
+/**
+ * Selects the eval-first batching dialect for a model id:
+ * - `claude`: Claude/GLM — direct imperatives; both are steered most reliably
+ *   by explicit tagged directives (GLM prompting guidance routes to Claude's).
+ * - `codex`: OpenAI reasoning families — terse bounded rules, no emphasis spam.
+ * - `kimi`: Kimi K-series — maximum-emphasis POSITIVE imperatives (uppercase/
+ *   bold DO-framing); all-caps NEVER prohibitions stay out because they make
+ *   K-series overthink instead of comply.
+ * - `default`: everything else (and no model) — maximum-emphasis fallback.
+ */
+export function evalEmphasisStyle(modelId: string | undefined): EvalEmphasisStyle {
+	if (!modelId) return "default";
+	if (CLAUDE_MODEL_RE.test(modelId) || GLM_MODEL_RE.test(modelId)) return "claude";
+	if (KIMI_MODEL_RE.test(modelId)) return "kimi";
+	if (OPENAI_MODEL_RE.test(modelId)) return "codex";
+	return "default";
 }
 
 type ContextValue = string | boolean;
@@ -25,37 +55,28 @@ type EvalPromptExample = {
 	readonly code: string;
 };
 
-// senpi ToolDefinition has no examples field, so description embeds parity examples.
+// senpi ToolDefinition has no examples field, so description embeds the examples.
+// ADAPTATION: payloads diverge from omp's json-config chain to teach batch read,
+// comprehension filtering, and parallel tool.<name> fan-out while keeping the
+// three-cell reuse narrative.
 const REUSE_CHAIN_EXAMPLES = [
 	{
 		caption: "First call — set up once",
 		language: "py",
-		title: "imports",
-		code: "import json\nfrom pathlib import Path",
+		title: "collect targets",
+		code: "from pathlib import Path\nfrom collections import Counter\nfiles = [p for p in Path('src').rglob('*.ts') if 'test' not in p.parts]\nprint(len(files))",
 	},
 	{
-		caption: "Second call — reuse, do NOT re-import",
+		caption: "Second call — reuse `files`, batch-read in one cell",
 		language: "py",
-		title: "load config",
-		code: "data = json.loads(read('package.json'))\ndisplay(data)",
+		title: "scan usages",
+		code: "hits = Counter()\nfor p in files:\n    hits[p.name] = read(p).count('legacyClient')\ndisplay({k: v for k, v in hits.items() if v})",
 	},
 	{
-		caption: "Third call — reuse the loaded config",
+		caption: "Third call — reuse results, fan out session tools in parallel",
 		language: "py",
-		title: "scan deps",
-		code: "display(sorted(data['dependencies']))",
-	},
-	{
-		caption: "Ruby first call — set up once",
-		language: "rb",
-		title: "setup",
-		code: "require 'json'\npkg_path = 'package.json'",
-	},
-	{
-		caption: "Ruby second call — reuse, do NOT re-require",
-		language: "rb",
-		title: "load config",
-		code: "pkg = JSON.parse(read(pkg_path))\ndisplay(pkg.keys.sort)",
+		title: "confirm callsites",
+		code: "dirs = ['src/core', 'src/tools']\ndisplay(parallel([lambda d=d: tool.grep({'pattern': 'legacyClient', 'path': d}) for d in dirs]))",
 	},
 ] as const satisfies readonly EvalPromptExample[];
 
@@ -64,7 +85,26 @@ const EVAL_PROMPT_TEMPLATE = `Run one step of code in a persistent kernel.
 <instruction>
 **One eval call = one cell = one logical step.** State persists per language across separate eval calls and tool calls{{#if spawns}}, and \`task\` subagents{{/if}} — define helpers, datasets, and clients in one call, then later calls reuse them directly.
 
-Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after \`reset\`, a kernel crash, or a \`NameError\`/\`ReferenceError\` proving the state is gone. Parallelize work *within* a cell with the \`parallel(thunks)\` helper, not by batching steps.
+Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after \`reset\`, a kernel crash, or a \`NameError\`/\`ReferenceError\` proving the state is gone.
+
+{{#if styleClaude}}<eval_first_batching>
+\`eval\` is your default execution surface: if a step needs more than one tool call, write ONE cell that performs the whole step — never issue the calls one at a time.
+- Enumerate every lookup the step needs, then run all independent ones simultaneously with \`parallel(thunks)\` inside the cell; keep calls sequential only when one result feeds the next.
+- Write real code around the calls: loop or comprehend over file sets with \`read()\`/stdlib, branch per case, and wrap risky calls in try/except so one failure degrades only its item — recover or retry inside the cell, keep the batch alive.
+- Post-process \`tool.<name>()\` results programmatically and return distilled facts, not raw dumps.
+</eval_first_batching>{{/if}}{{#if styleCodex}}Route multi-call steps through eval: one cell per step, independent lookups dispatched together via \`parallel(thunks)\`; keep work sequential only when one result determines the next action.
+- Loop or comprehend over file sets with \`read()\`/stdlib instead of reading files one call at a time; post-process \`tool.<name>()\` results programmatically.
+- Wrap failable calls in try/except inside the cell; a failed item degrades only itself. After two distinct failed strategies for the same fact, fall back to direct tool calls.
+- Reduce large results in-kernel to the facts the task needs before returning.{{/if}}{{#if styleKimi}}**EVAL IS YOUR SUPERPOWER — MAKE IT YOUR DEFAULT WAY TO ACT.** Before any step, think: "how do I execute this WHOLE step in ONE parallelized cell?" — then write that ONE cell.
+- **BATCH EVERYTHING AT ONCE:** enumerate EVERY independent lookup the step needs and dispatch them ALL simultaneously with \`parallel(thunks)\` in that cell; keep calls sequential only when one result feeds the next.
+- **WRITE REAL CODE, NOT CALL CHAINS:** loop or comprehend over file sets with \`read()\`/stdlib, post-process \`tool.<name>()\` results programmatically, and put try/except around each risky call so the rest of the batch completes.
+- **DISTILL IN-KERNEL:** filter and aggregate results in code, then return ONLY the distilled facts.{{/if}}{{#if styleDefault}}**EVAL IS YOUR PRIMARY EXECUTION SURFACE.** Any step that needs MORE THAN ONE tool call MUST be written as ONE cell — NEVER as a chain of single tool calls.
+- **PLAN THE WHOLE STEP, THEN BATCH IT.** Enumerate every read/search/lookup the step needs and dispatch ALL independent ones through \`parallel(thunks)\` in one cell.
+- **WRITE REAL CODE, NOT CALL LISTS.** Loop or comprehend over file sets with \`read()\`/stdlib, branch \`if\`/\`else\` per case, post-process \`tool.<name>()\` results programmatically, and wrap EVERY risky call in try/except so ONE failure NEVER kills the batch.
+- **DISTILL IN-KERNEL.** Filter, diff, and aggregate in code before returning; return facts, NOT dumps.{{/if}}
+{{#if hostLine}}
+Host: {{hostLine}} — cells execute here. Size \`parallel(thunks)\` pools to its cores; \`tool.<name>()\` shell commands must fit this platform, even when the code you are writing targets another machine.
+{{/if}}
 
 Fields:
 
@@ -125,7 +165,7 @@ Pipe handles through stage helpers to build a dependency graph — acyclic waves
 {{/if}}
 
 <critical>
-Prior top-level names (\`data\`, \`sessions\`, helpers, imports) survive into the next eval call — reuse them; NEVER re-import, re-require, or re-declare a helper. Re-read a file only if it may have changed since the last read. Re-run setup only after \`reset\`, a crash, or a \`NameError\`/\`ReferenceError\`.
+Prior top-level names (\`data\`, \`sessions\`, helpers, imports) survive into the next eval call — reuse them; NEVER re-import, re-require, or re-declare a helper. Re-read a file only if it may have changed since the last read.
 </critical>`;
 
 export function buildEvalPrompt(
@@ -136,6 +176,7 @@ export function buildEvalPrompt(
 		throw new Error("no kernels enabled for eval prompt");
 	}
 	const spawnDefaultAgent = options.spawnDefaultAgent ?? "task";
+	const style = evalEmphasisStyle(options.modelId);
 	const context: Context = {
 		py: enabled.py,
 		js: enabled.js,
@@ -143,6 +184,11 @@ export function buildEvalPrompt(
 		jl: enabled.jl,
 		spawns: options.spawns,
 		spawnDefaultAgent,
+		styleClaude: style === "claude",
+		styleCodex: style === "codex",
+		styleKimi: style === "kimi",
+		styleDefault: style === "default",
+		hostLine: options.hostLine ?? "",
 	};
 	const examples = REUSE_CHAIN_EXAMPLES.filter((example) => enabled[example.language])
 		.map((example) => {
@@ -162,11 +208,25 @@ export function buildEvalPrompt(
 		description,
 		promptSnippet: "Run one incremental code cell in a persistent language kernel.",
 		promptGuidelines: [
-			"Use eval for incremental code execution when a persistent JS, Python, Ruby, or Julia kernel is available.",
+			BATCHING_GUIDELINES[style],
 			"Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language.",
 		],
 	};
 }
+
+/**
+ * System-prompt guideline per emphasis dialect. The default dialect carries
+ * maximum emphasis so unmapped models still batch through eval; the others are
+ * tuned to what steers that family reliably.
+ */
+const BATCHING_GUIDELINES: Record<EvalEmphasisStyle, string> = {
+	default:
+		"**EVAL FIRST.** Any step needing MORE THAN ONE tool call MUST be ONE eval cell: run independent calls in parallel, wrap risky calls in try/except, and return distilled facts — NEVER a chain of single tool calls.",
+	claude:
+		"Prefer eval for any step needing more than one tool call: one cell that runs independent calls in parallel, handles per-call failures in code, and returns distilled facts.",
+	codex: "Route multi-call steps through eval: one cell per step, independent calls dispatched in parallel; fall back to direct tool calls when one call is sufficient or each result changes the next decision.",
+	kimi: "**EVAL IS YOUR SUPERPOWER — DEFAULT TO IT.** Execute EVERY multi-call step as ONE eval cell: run ALL independent calls simultaneously via parallel(thunks), handle failures per item in code, and return ONLY distilled facts.",
+};
 
 function renderTemplate(template: string, context: Context): string {
 	let index = 0;

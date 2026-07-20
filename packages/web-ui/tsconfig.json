@@ -3,6 +3,8 @@
 	"compilerOptions": {
 		"lib": ["ES2022", "DOM", "DOM.Iterable"],
 		"noEmit": true,
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
 		"paths": {
 			"@earendil-works/pi-agent-core": ["../agent/src/index.ts"],
 			"@earendil-works/pi-ai/base": ["../ai/src/base.ts"],

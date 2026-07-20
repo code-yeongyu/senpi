@@ -196,7 +196,6 @@ async function prepareTerminatingOverLimitPrompt(
 	harness: Harness,
 	contextWindow: number,
 	reserveTokens: number,
-	largeToolResult: string,
 ): Promise<void> {
 	const seedTimestamp = Date.now() - 2_000;
 	harness.sessionManager.appendMessage({
@@ -490,7 +489,7 @@ describe("AgentSession compaction characterization", () => {
 		expect(terminatingToolCall.usage.totalTokens).toBeLessThan(threshold);
 		expect(persistedContext.tokens).toBeGreaterThan(threshold);
 		expect(harness.faux.state.callCount).toBe(1);
-		expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
+		expect(harness.eventsOfType("compaction_start").map((event) => event.reason)).toEqual(["threshold"]);
 
 		// when
 		await harness.session.prompt("continue after the terminating tool");
@@ -501,7 +500,6 @@ describe("AgentSession compaction characterization", () => {
 		expect(call2Context).toContain(largeToolResult);
 		expect(call2Context).not.toContain("prior terminating context ");
 		expect(harness.faux.state.callCount).toBe(2);
-		expect(harness.eventsOfType("compaction_start").filter((event) => event.reason === "pre_prompt")).toHaveLength(1);
 	});
 
 	it("stops before a separate prompt provider call when required pre-prompt compaction is cancelled", async () => {
@@ -520,7 +518,7 @@ describe("AgentSession compaction characterization", () => {
 			],
 		});
 		harnesses.push(harness);
-		await prepareTerminatingOverLimitPrompt(harness, contextWindow, reserveTokens, largeToolResult);
+		await prepareTerminatingOverLimitPrompt(harness, contextWindow, reserveTokens);
 
 		// when / then
 		await expect(harness.session.prompt("continue after cancelled compaction")).rejects.toThrow(
@@ -545,7 +543,7 @@ describe("AgentSession compaction characterization", () => {
 			extensionFactories: [createResultToolExtension(largeToolResult, oversizedSummary, true)],
 		});
 		harnesses.push(harness);
-		await prepareTerminatingOverLimitPrompt(harness, contextWindow, reserveTokens, largeToolResult);
+		await prepareTerminatingOverLimitPrompt(harness, contextWindow, reserveTokens);
 
 		// when / then
 		await expect(harness.session.prompt("continue after oversized compaction")).rejects.toThrow(

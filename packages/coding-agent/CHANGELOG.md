@@ -2,13 +2,284 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
 ### Added
 
 ### Changed
 
 ### Fixed
 
-- Compacted context after tool results cross the threshold before issuing the next provider request, applied provider-bound context transforms to current and persisted summary content, and stopped safely when required compaction could not complete.
+### Removed
+
+## [2026.7.20] - 2026-07-20
+
+### Breaking Changes
+
+- Replaced the snapshot-style `todowrite`/`todoread` pair with one phased, op-based `todo` tool; the `todowrite` builtin extension id remains for loader compatibility.
+
+### Added
+
+- Added a `/todo` command for user-side todo management: view, overlay `edit` (Markdown checklist), `copy`, `export`/`import` (default `TODO.md`), and fuzzy-matched `append`/`start`/`done`/`drop`/`rm`; user edits persist as `senpi.todo-state` entries and notify the agent next turn.
+- Added `antml` as a valid `compat.toolCallFormat` in custom `models.json` provider and model definitions: ANTML `<function_calls>`/`<invoke>` text-tool protocol with Claude-Code-style failure tolerance.
+- Added built-in llama.cpp router support with `/login` connection setup and `/llama` Hugging Face model search and downloads, explicit loading, unloading, and live progress. See [llama.cpp](docs/llama-cpp.md).
+- Added extension registration for complete pi-ai providers, including native authentication, model refresh, filtering, and streaming behavior.
+
+### Changed
+
+### Fixed
+
+- Fixed prompt-template defaults for all arguments (`${@:-default}` and `${ARGUMENTS:-default}`) ([#6695](https://github.com/earendil-works/pi/issues/6695)).
+- Fixed obsolete custom UI, custom tool, and custom editor examples in the extension documentation ([#6735](https://github.com/earendil-works/pi/issues/6735)).
+- Fixed Kimi Coding sessions to show API-equivalent implied costs with the subscription indicator.
+- Fixed OpenAI Responses early stream endings to trigger automatic retry instead of ending the agent run ([#6727](https://github.com/earendil-works/pi/issues/6727)).
+### Removed
+
+## [2026.7.17-5] - 2026-07-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.7.17-4] - 2026-07-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed Kimi/Moonshot function parameters with root object unions by flattening them into a compatible object schema.
+
+### Removed
+
+## [2026.7.17-3] - 2026-07-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Renamed the MCP discovery tool from `mcp_search` to `tool_search` so its public name matches its behavior ([#227](https://github.com/code-yeongyu/senpi/pull/227)).
+
+### Fixed
+
+- Fixed payload hooks reintroducing Moonshot-incompatible function schemas by normalizing the final tool list after `onPayload` and immediately before request submission.
+
+### Removed
+
+## [2026.7.17-2] - 2026-07-17
+
+### Breaking Changes
+
+### Added
+
+- Added a `<workstation>` block (OS/kernel, arch, CPU, GPU, terminal) to the dynamic system prompt, followed by a dialect-tuned execution-context instruction telling the model that `bash`/`eval` run on this workstation while written code may target other machines. Presets pass their model-family dialect (Claude/GLM, GPT, Kimi); the fallback prompt uses a maximum-emphasis default.
+
+### Changed
+
+### Fixed
+
+- Fixed Kimi K3 prompt preset tuning to discourage overthinking and keep concise tool use ([#225](https://github.com/code-yeongyu/senpi/pull/225)).
+- Fixed Moonshot-flavored OpenAI backends by normalizing tool parameters through a dedicated compatibility layer so function schemas and result images are accepted by Moonshot's API ([#225](https://github.com/code-yeongyu/senpi/pull/225)).
+
+### Removed
+
+## [2026.7.17] - 2026-07-17
+
+### Breaking Changes
+
+### Added
+
+- Added a Kimi K3 prompt preset for catalog models using `kimi-k3` or the Kimi Coding `k3` id ([#220](https://github.com/code-yeongyu/senpi/pull/220)).
+
+### Changed
+
+### Fixed
+
+- Fixed interactive tool renderers to receive result-presence context, allowing self-framed tools to replace their pending view instead of stacking duplicate output ([#223](https://github.com/code-yeongyu/senpi/pull/223)).
+- Fixed the active goal footer to update elapsed time live while preserving accounting parity and stopping the ticker outside active TUI goals ([#221](https://github.com/code-yeongyu/senpi/pull/221)).
+- Fixed builtin webfetch output to cap model-facing content at 50 KB, preserve a UTF-8-safe leading prefix, and report truncation metadata instead of forcing compaction with oversized responses ([#222](https://github.com/code-yeongyu/senpi/pull/222)).
+- Fixed Anthropic native web search gating and replay sanitization for compatible endpoints while preserving the function-tool fallback and allowing explicit `compat.supportsWebSearch` model configuration ([#213](https://github.com/code-yeongyu/senpi/pull/213) by [@tmdgusya](https://github.com/tmdgusya)).
+
+### Removed
+
+## [2026.7.16-3] - 2026-07-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed inherited OpenCode Go catalog metadata to include Grok 4.5 and Kimi K3, and refreshed OpenRouter pricing metadata from upstream v0.80.10.
+
+### Removed
+
+## [2026.7.16-2] - 2026-07-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed inherited Kimi K3 pricing metadata for Moonshot AI and Moonshot AI China.
+- Fixed inherited catalog generation restoring xAI models removed in 0.80.9 ([#6736](https://github.com/earendil-works/pi/issues/6736)).
+
+### Removed
+
+## [2026.7.16] - 2026-07-16
+
+### Breaking Changes
+
+- Changed `AuthStorage.list()` from a synchronous provider-ID list to asynchronous non-secret credential metadata matching the pi-ai `CredentialStore` contract.
+
+### Added
+
+- Added inherited Kimi K3 model availability and deferred tool loading for compatible providers.
+- Added `ModelRuntime` as the canonical async SDK and internal model/auth facade while retaining the fork's `AuthStorage`, `ModelRegistry`, and corresponding `CreateAgentSessionOptions` compatibility APIs.
+
+### Changed
+
+- Tuned the `gpt-5.6` system prompt preset against the oh-my-opencode Hephaestus GPT-5.6 prompts: verification wording now names validators senpi can actually run (type check/lint instead of a nonexistent diagnostics tool), parallel tool calls are the stated default with serial as the exception and no `;`/`&&` chaining of unrelated shell steps, todo items are named by deliverable and reconciled at turn end, and bracketed `【F:...】`-style citations are banned from output.
+- Reframed the skill-loading trigger in every system prompt to load skills on loose description match, stating the cost asymmetry (an irrelevant load costs little; a missed relevant skill degrades the work).
+- Added an instruction-file precedence rule to the dynamic system prompt's Project Context section: instruction files bind files under their directory, deeper files win on conflict, and explicit user instructions override.
+
+### Fixed
+
+- Fixed automatic compaction to preserve user, OMO steer, and goal follow-up messages appended while compacted context is rebuilt.
+- Fixed SDK-created sessions to inherit the configured agent stream idle timeout.
+- Fixed inherited Cloudflare endpoint placeholder resolution and lazy provider final-message forwarding.
+- Fixed cloning or forking a session before its first assistant response to explain that the session must be saved first.
+
+### Removed
+
+## [0.80.9] - 2026-07-16
+
+### New Features
+
+- **Kimi K3 and deferred tool loading** — Use Kimi K3 across built-in providers, including progressive extension tool activation through Kimi’s native protocol. See [Dynamic Tool Loading](docs/extensions.md#dynamic-tool-loading), [OpenAI Compatibility](docs/models.md#openai-compatibility), and the [`kimi-deferred-tools.ts`](examples/extensions/kimi-deferred-tools.ts) example.
+
+### Added
+
+- Added inherited Kimi K3 support for Kimi Coding, Moonshot AI, Moonshot AI China, OpenRouter, and Vercel AI Gateway.
+- Added Kimi deferred tool loading for extension-driven tool activation. See [Dynamic Tool Loading](docs/extensions.md#dynamic-tool-loading), [OpenAI Compatibility](docs/models.md#openai-compatibility), and the [`kimi-deferred-tools.ts`](examples/extensions/kimi-deferred-tools.ts) example.
+
+### Changed
+
+- Changed xAI login to use a prefilled device-authorization link labeled “Sign in with SuperGrok or X Premium,” and changed the default xAI model to Grok 4.5 ([#6734](https://github.com/earendil-works/pi-mono/pull/6734) by [@Jaaneek](https://github.com/Jaaneek)).
+
+### Fixed
+
+- Fixed inherited Kimi K3 output limits for Vercel AI Gateway and OpenRouter models.
+- Fixed cloning or forking a session before its first assistant response to explain that the session must be saved first.
+
+### Removed
+
+- Removed Grok 3, Grok 3 Fast, Grok 4.20 variants, and Grok Code Fast 1 from the built-in xAI model catalog ([#6734](https://github.com/earendil-works/pi-mono/pull/6734) by [@Jaaneek](https://github.com/Jaaneek)).
+
+## [0.80.8] - 2026-07-16
+
+### New Features
+
+- **Unified model runtime and provider authentication** — `ModelRuntime` centralizes model configuration, provider-owned `/login`, and dynamic provider catalogs. See [Providers](docs/providers.md).
+- **Live model catalog refresh** — `/model` refreshes configured providers in the background, and `pi update --models` forces an immediate refresh. See [Install and Manage](docs/packages.md#install-and-manage).
+- **xAI device-code OAuth and Grok 4.5 Responses support** — Sign in to xAI with a device code and use Grok 4.5 with low, medium, or high thinking. See [xAI](docs/providers.md#xai-grokx-subscription).
+
+### Breaking Changes
+
+- Replaced the SDK's `CreateAgentSessionOptions.authStorage` and `modelRegistry` options with the async `modelRuntime` option. `AuthStorage` and its storage backends are no longer exported; use `ModelRuntime` (or a custom pi-ai `CredentialStore`), or `readStoredCredential()` for one-off reads of auth.json.
+- Removed redundant `ModelRuntime.getAll()`, `find()`, `getSnapshot()`, and `getAuthOptions()` projections. Use the pi-ai `Models` methods `getModels()`, `getModel()`, `getProviders()`, and `checkAuth()` directly.
+- Replaced SDK request-auth assembly through `ModelRegistry.getApiKeyAndHeaders()` with `ModelRuntime.getAuth()`. Passing a provider ID returns provider-scoped auth; passing a model also resolves built-in, `models.json`, and extension model headers.
+- Changed extension-facing `ModelRegistry.refresh()` from synchronous `void` to `Promise<void>` because `models.json` loading is asynchronous. Extensions must await it before making synchronous registry reads.
+- Moved canonical dynamic catalog refresh to async `ModelRuntime.refresh()`/pi-ai `Models.refresh()`. Legacy extension OAuth `modifyModels` remains supported as a synchronous compatibility projection after credential initialization.
+
+### Added
+
+- Added `ModelRuntime` as the canonical async SDK and internal model/auth facade while preserving the synchronous extension-facing `ModelRegistry` API. `ModelRuntime.create()` accepts any pi-ai `CredentialStore` through its `credentials` option.
+- Added provider-owned `/login` discovery directly from registered pi-ai providers, including ambient auth status and informational links.
+- Added file-backed dynamic catalogs in `models-store.json`, per-provider pi.dev catalog overlays, and Radius gateway support including offline migration from legacy credential-cached catalogs.
+- Added extension provider `refreshModels(context)` support for dynamic model discovery with optional provider-controlled persistence.
+- Added `pi update --models` to force an immediate model catalog refresh without updating pi or extensions.
+- Added inherited xAI device-code OAuth login and Grok 4.5 OpenAI Responses support, with low, medium, and high thinking levels ([#6651](https://github.com/earendil-works/pi-mono/pull/6651) by [@Jaaneek](https://github.com/Jaaneek)).
+
+### Changed
+
+- Changed `ModelRuntime` to compose built-in providers, immutable `models.json` configuration, and extension overlays through ad-hoc pi-ai provider methods.
+- Changed `ModelRuntime` to own final request assembly: `getAuth(model)` includes configured model headers, stream methods resolve auth once, and `before_provider_headers` runs as the Models-only header transform before provider dispatch.
+- Changed `/model` to render the current model snapshot immediately, refresh configured providers in the background, and update the open selector with partial results or timeout errors.
+
+### Fixed
+
+- Fixed configured-provider catalog refresh to parse pi.dev's model-ID keyed responses, throttle checks to once per four hours, send the versioned pi user agent, treat unimplemented routes as unavailable overlays, and show concise refresh status in `/model`.
+- Fixed adjacent assistant thinking blocks to render as one thinking section.
+- Fixed inherited OpenAI Codex session IDs longer than 64 characters to meet the API limit ([#6630](https://github.com/earendil-works/pi-mono/issues/6630)).
+- Fixed inherited terminal output to normalize tab characters consistently ([#6697](https://github.com/earendil-works/pi-mono/pull/6697) by [@xz-dev](https://github.com/xz-dev)).
+- Fixed the Windows terminal title after checking npm packages ([#6629](https://github.com/earendil-works/pi-mono/issues/6629)).
+- Fixed Bun standalone binaries to bundle OAuth adapters for interactive logins.
+
+## [2026.7.14-3] - 2026-07-14
+
+### Added
+
+- Added Radius gateway support for custom `models.json` providers, including Radius OAuth login and dynamic model discovery.
+- Added inherited forced tool-call support for OpenAI Responses and OpenAI Codex models ([#6588](https://github.com/earendil-works/pi-mono/pull/6588)).
+
+### Changed
+
+- Stopped including the current date in the system prompt so prompts no longer bake in stale date context ([#6621](https://github.com/earendil-works/pi/issues/6621)).
+- Stopped sending OpenAI Responses session-id fields to OpenCode models that opt out of session IDs ([#6645](https://github.com/earendil-works/pi-mono/pull/6645) by [@davidbrai](https://github.com/davidbrai)).
+
+### Fixed
+
+- Clarified the interactive `/login` option labels.
+- Fixed `senpi uninstall` under npm to pass `--legacy-peer-deps`, avoiding uninstall failures from unrelated peer dependency conflicts ([#6604](https://github.com/earendil-works/pi-mono/pull/6604) by [@davidbrai](https://github.com/davidbrai)).
+- Fixed branch summaries when the selected model uses ambient auth instead of a literal API key ([#6595](https://github.com/earendil-works/pi-mono/pull/6595) by [@davidbrai](https://github.com/davidbrai)).
+- Fixed inherited Anthropic empty-usage handling, OpenAI/Azure Responses encrypted reasoning replay, Bedrock stop-reason errors, OpenRouter and Responses WebSocket session affinity, and GitHub Copilot MAI-Code routing from the upstream AI package.
+
+### Removed
+
+## [2026.7.14-2] - 2026-07-14
+
+### Added
+
+- Added `anthropic-xml` as a valid `compat.toolCallFormat` in custom `models.json` provider and model definitions.
+
+### Changed
+
+- Hardened the GPT-5.6 prompt preset's stop contract to Hephaestus parity: the intent line now declares a binding per-turn stop condition, and the Stop Rules section became a Stop Goal that makes stopping mandatory and immediate once every done-condition holds.
+
+### Fixed
+
+- Preserved Anthropic server-side web search `encrypted_content` during same-model replay so follow-up turns no longer fail after native web searches ([#208](https://github.com/code-yeongyu/senpi/pull/208)).
+- Preserved final output from fast-exiting persistent-terminal commands by draining native PTY readers before exit and subscribing before session startup ([#207](https://github.com/code-yeongyu/senpi/pull/207)).
+
+### Removed
+
+## [2026.7.14] - 2026-07-14
+
+### Added
+
+### Changed
+
+- Improved the bundled `eval` tool instructions and examples to teach persistent-state reuse, batch file processing, and parallel session-tool fan-out within a single cell.
+
+### Fixed
+
 - Fixed built-in web search discovery so model aliases sharing a provider endpoint no longer multiply serial fallback attempts, aborting a search stops pending native authentication discovery, and dotted private host spellings are rejected before auth or fetch ([upstream #5](https://github.com/code-yeongyu/pi-websearch/pull/5), [upstream #6](https://github.com/code-yeongyu/pi-websearch/pull/6)).
 
 ### Removed

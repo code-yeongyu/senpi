@@ -1,20 +1,34 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { createApplyPatchTool } from "./tool.ts";
-import type { ApplyPatchExtensionAPI, BaselineState } from "./types.ts";
+import type {
+	ApplyPatchExtensionAPI,
+	ApplyPatchToolsetState,
+	ApplyPatchToolVariant,
+	ApplyPatchWireMode,
+} from "./types.ts";
 
-// apply_patch ships as a freeform custom tool, which only the OpenAI Responses-family
-// APIs can carry (openai-completions throws on freeform tools). Gate on the model's API
-// rather than a provider allowlist so OpenAI-compatible custom providers (e.g. a proxy
-// exposing gpt-5.5 via openai-responses) also swap edit/write for apply_patch.
 const APPLY_PATCH_FREEFORM_APIS = new Set<Api>([
 	"openai-responses",
 	"azure-openai-responses",
 	"openai-codex-responses",
 ]);
+const APPLY_PATCH_JSON_APIS = new Set<Api>(["openai-completions"]);
 const EDIT_TOOL_NAMES = new Set(["write", "edit"]);
+const APPLY_PATCH_NAME = "apply_patch";
+
+function isGptId(model: Pick<Model<string>, "api" | "id"> | undefined): model is Pick<Model<string>, "api" | "id"> {
+	return model?.id.startsWith("gpt-") ?? false;
+}
+
+export function getApplyPatchWireMode(model: Pick<Model<string>, "api" | "id"> | undefined): ApplyPatchWireMode {
+	if (!isGptId(model)) return "none";
+	if (APPLY_PATCH_FREEFORM_APIS.has(model.api)) return "freeform";
+	if (APPLY_PATCH_JSON_APIS.has(model.api)) return "json";
+	return "none";
+}
 
 export function isOpenAIGptModel(model: Pick<Model<string>, "api" | "id"> | undefined): boolean {
-	return model !== undefined && APPLY_PATCH_FREEFORM_APIS.has(model.api) && model.id.startsWith("gpt-");
+	return getApplyPatchWireMode(model) === "freeform";
 }
 
 function hasEditTools(toolNames: string[]): boolean {
@@ -22,54 +36,62 @@ function hasEditTools(toolNames: string[]): boolean {
 }
 
 function withoutApplyPatch(toolNames: string[]): string[] {
-	return toolNames.filter((toolName) => toolName !== "apply_patch");
+	return toolNames.filter((toolName) => toolName !== APPLY_PATCH_NAME);
 }
 
 function replaceEditToolsWithApplyPatch(toolNames: string[]): string[] {
+	const hadApplyPatch = toolNames.includes(APPLY_PATCH_NAME);
+	const insertIndex = toolNames.findIndex(
+		(toolName) => EDIT_TOOL_NAMES.has(toolName) || toolName === APPLY_PATCH_NAME,
+	);
 	const filteredToolNames = withoutApplyPatch(toolNames).filter((toolName) => !EDIT_TOOL_NAMES.has(toolName));
-	if (!hasEditTools(toolNames)) return filteredToolNames;
-	return [...filteredToolNames, "apply_patch"];
-}
-
-function restoreEditToolsFromBaseline(currentToolNames: string[], baselineToolNames: string[]): string[] {
-	const restoredToolNames = [
-		...withoutApplyPatch(currentToolNames),
-		...baselineToolNames.filter((toolName) => EDIT_TOOL_NAMES.has(toolName)),
-	];
-	return [...new Set(restoredToolNames)];
+	if (!hasEditTools(toolNames) && !hadApplyPatch) return filteredToolNames;
+	const at = insertIndex === -1 ? filteredToolNames.length : Math.min(insertIndex, filteredToolNames.length);
+	return [...filteredToolNames.slice(0, at), APPLY_PATCH_NAME, ...filteredToolNames.slice(at)];
 }
 
 function syncToolset(
-	pi: Pick<ApplyPatchExtensionAPI, "getActiveTools" | "setActiveTools">,
+	pi: ApplyPatchExtensionAPI,
 	model: Model<string> | undefined,
-	state: BaselineState,
+	state: ApplyPatchToolsetState & { activeVariant?: ApplyPatchToolVariant },
+	variants: Readonly<Record<ApplyPatchToolVariant, ReturnType<typeof createApplyPatchTool>>>,
 ): void {
+	const mode = getApplyPatchWireMode(model);
 	const currentToolNames = pi.getActiveTools();
-	if (isOpenAIGptModel(model)) {
-		if (hasEditTools(currentToolNames)) state.nonGptToolNames = withoutApplyPatch(currentToolNames);
+	if (mode !== "none") {
+		if (state.activeVariant !== mode) {
+			pi.registerTool(variants[mode]);
+			state.activeVariant = mode;
+		}
+		const activeEdit = currentToolNames.filter((toolName) => EDIT_TOOL_NAMES.has(toolName));
+		if (activeEdit.length > 0) state.removedEditToolNames = activeEdit;
 		pi.setActiveTools(replaceEditToolsWithApplyPatch(currentToolNames));
 		return;
 	}
-
-	if (state.nonGptToolNames.length > 0) {
-		const restoredToolNames = restoreEditToolsFromBaseline(currentToolNames, state.nonGptToolNames);
-		state.nonGptToolNames = restoredToolNames;
-		pi.setActiveTools(restoredToolNames);
+	if (state.removedEditToolNames.length === 0) {
+		if (currentToolNames.includes(APPLY_PATCH_NAME)) pi.setActiveTools(withoutApplyPatch(currentToolNames));
 		return;
 	}
-
-	state.nonGptToolNames = withoutApplyPatch(currentToolNames);
-	pi.setActiveTools(state.nonGptToolNames);
+	const registeredNames = new Set(pi.getAllTools().map((tool) => tool.name));
+	const restorable = state.removedEditToolNames.filter((toolName) => registeredNames.has(toolName));
+	const restored = [...withoutApplyPatch(currentToolNames), ...restorable];
+	state.removedEditToolNames = [];
+	pi.setActiveTools([...new Set(restored)]);
 }
 
 export function registerApplyPatchExtension(pi: ApplyPatchExtensionAPI): void {
-	const state: BaselineState = { nonGptToolNames: [] };
-	pi.registerTool(createApplyPatchTool());
+	const state: ApplyPatchToolsetState & { activeVariant?: ApplyPatchToolVariant } = { removedEditToolNames: [] };
+	const variants = {
+		freeform: createApplyPatchTool("freeform"),
+		json: createApplyPatchTool("json"),
+	} as const;
+	state.activeVariant = "freeform";
+	pi.registerTool(variants.freeform);
 	pi.on("session_start", async (_event, ctx) => {
-		syncToolset(pi, ctx.model, state);
+		syncToolset(pi, ctx.model, state, variants);
 	});
 	pi.on("model_select", async (event) => {
-		syncToolset(pi, event.model, state);
+		syncToolset(pi, event.model, state, variants);
 	});
 }
 

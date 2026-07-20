@@ -42,11 +42,11 @@ interface ToolShape {
 	name: string;
 	json: string;
 }
-// Scope to MCP tools (mcp_search + mcp_<server>_<tool>); the harness's default
+// Scope to MCP tools (tool_search + mcp_<server>_<tool>); the harness's default
 // base tools (bash/read/write) are separate senpi cost, not MCP resident cost.
 function toolShapes(context: { tools?: { name: string; parameters?: unknown }[] }): ToolShape[] {
 	return (context.tools ?? [])
-		.filter((tool) => tool.name.startsWith("mcp_"))
+		.filter((tool) => tool.name.startsWith("mcp_") || tool.name === "tool_search")
 		.map((tool) => ({ name: tool.name, json: JSON.stringify(tool) }))
 		.sort(byName);
 }
@@ -64,7 +64,7 @@ async function harnessFor(root: TestRoot): Promise<Harness> {
 }
 
 describe("todo32 tier-B: searchThreshold flip", () => {
-	it("10 filtered tools stay direct; 11 flip to search mode (only mcp_search resident)", async () => {
+	it("10 filtered tools stay direct; 11 flip to search mode (only tool_search resident)", async () => {
 		const tenRoot = mcpRoot("flip-10");
 		writeConfig(tenRoot, { fx: stdioServer(["--tools", "10"]) });
 		const ten = await harnessFor(tenRoot);
@@ -77,7 +77,7 @@ describe("todo32 tier-B: searchThreshold flip", () => {
 		]);
 		await ten.session.prompt("go");
 		expect(tenTools).toHaveLength(10);
-		expect(tenTools).not.toContain("mcp_search");
+		expect(tenTools).not.toContain("tool_search");
 
 		const elevenRoot = mcpRoot("flip-11");
 		writeConfig(elevenRoot, { fx: stdioServer(["--tools", "11"]) });
@@ -90,7 +90,7 @@ describe("todo32 tier-B: searchThreshold flip", () => {
 			},
 		]);
 		await eleven.session.prompt("go");
-		expect(elevenTools).toEqual(["mcp_search"]);
+		expect(elevenTools).toEqual(["tool_search"]);
 	});
 });
 
@@ -108,7 +108,7 @@ describe("todo32 tier-B: exposure override matrix", () => {
 		]);
 		await direct.session.prompt("go");
 		expect(directTools).toHaveLength(15);
-		expect(directTools).not.toContain("mcp_search");
+		expect(directTools).not.toContain("tool_search");
 
 		const searchRoot = mcpRoot("override-search");
 		writeConfig(searchRoot, { fx: { ...stdioServer(["--tools", "5"]), exposure: "search" } });
@@ -121,7 +121,7 @@ describe("todo32 tier-B: exposure override matrix", () => {
 			},
 		]);
 		await search.session.prompt("go");
-		expect(searchTools).toEqual(["mcp_search"]);
+		expect(searchTools).toEqual(["tool_search"]);
 	});
 });
 
@@ -143,7 +143,7 @@ describe("todo32 tier-B: resident token cost", () => {
 			},
 		]);
 		await harness.session.prompt("go");
-		expect(residentNames).toEqual(["mcp_search"]);
+		expect(residentNames).toEqual(["tool_search"]);
 		// Method: chars/4 char-per-token approximation over the serialized tools array.
 		const approxTokens = Math.ceil(residentJson.length / 4);
 		expect(approxTokens).toBeLessThan(1000);
@@ -160,12 +160,12 @@ describe("todo32 tier-B: stubSwap keeps the tools array byte-stable", () => {
 			(context) => {
 				turns.push(toolShapes(context));
 				// Exact-name promote just mcp_fx_tool_5.
-				return fauxAssistantMessage(fauxToolCall("mcp_search", { query: "tool_5" }), { stopReason: "toolUse" });
+				return fauxAssistantMessage(fauxToolCall("tool_search", { query: "tool_5" }), { stopReason: "toolUse" });
 			},
 			(context) => {
 				turns.push(toolShapes(context));
 				// Flap: search the same tool again.
-				return fauxAssistantMessage(fauxToolCall("mcp_search", { query: "tool_5" }), { stopReason: "toolUse" });
+				return fauxAssistantMessage(fauxToolCall("tool_search", { query: "tool_5" }), { stopReason: "toolUse" });
 			},
 			(context) => {
 				turns.push(toolShapes(context));
@@ -175,7 +175,7 @@ describe("todo32 tier-B: stubSwap keeps the tools array byte-stable", () => {
 		await harness.session.prompt("promote tool_5");
 
 		const [turn1, turn2, turn3] = turns as [ToolShape[], ToolShape[], ToolShape[]];
-		// stubSwap keeps all 12 tools + mcp_search resident every turn (stable length).
+		// stubSwap keeps all 12 tools + tool_search resident every turn (stable length).
 		expect(turn1).toHaveLength(13);
 		expect(turn2).toHaveLength(13);
 		expect(turn3).toHaveLength(13);

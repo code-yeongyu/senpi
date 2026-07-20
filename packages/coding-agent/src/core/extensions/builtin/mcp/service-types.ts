@@ -13,6 +13,17 @@ export type McpSessionContext = Pick<ExtensionContext, "cwd" | "isProjectTrusted
 	 * requirement narrow lets tests pass a two-line fake.
 	 */
 	sessionManager?: Pick<ExtensionContext["sessionManager"], "getEntries">;
+	/**
+	 * Extension-declared MCP servers. Read on every attach so reattach/reload
+	 * paths pick up the current declarations without caching them in the MCP
+	 * builtin.
+	 */
+	getRegisteredMcpServers?: () => readonly {
+		name: string;
+		config: Record<string, unknown>;
+		extensionPath: string;
+		registrationCwd: string;
+	}[];
 };
 
 export interface McpSessionOptions {
@@ -36,6 +47,7 @@ export interface McpServerSnapshot {
 	name: string;
 	configState: ResolvedMcpServer["state"] | "removed";
 	configHash: string | null;
+	source: ResolvedMcpServer["source"] | null;
 	sourcePath: string | null;
 	lifecycleState: ServerConnectionState | "cached" | "not_spawned";
 	generation: number | null;

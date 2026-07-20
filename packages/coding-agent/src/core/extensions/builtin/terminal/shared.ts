@@ -24,6 +24,13 @@ export const DEFAULT_MAX_SESSIONS = 32;
 export const MAX_SESSION_OUTPUT_CHARS = 1_000_000;
 /** Grace window used to capture a background command's early output before returning its id. */
 export const BACKGROUND_START_GRACE_MS = 250;
+/**
+ * After a foreground session has been killed (abort or timeout), how long to keep
+ * waiting for its exit to settle before releasing the tool anyway. A surviving
+ * descendant that holds the PTY open (or a kill that never lands) must not keep
+ * the agent blocked forever.
+ */
+export const KILLED_SESSION_EXIT_GRACE_MS = 5000;
 export const DEFAULT_OUTPUT_WAIT_TIMEOUT_SECONDS = 30;
 
 /**

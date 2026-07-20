@@ -8,6 +8,20 @@ import type {
 	UserMessage,
 } from "../types.ts";
 import {
+	anthropicXmlFormatToolCall,
+	anthropicXmlFormatToolResponse,
+	anthropicXmlFormatToolsSystemPrompt,
+	createAnthropicXmlStreamParser,
+	parseAnthropicXmlGeneratedText,
+} from "./protocols/anthropic-xml/index.ts";
+import {
+	antmlFormatToolCall,
+	antmlFormatToolResponse,
+	antmlFormatToolsSystemPrompt,
+	createAntmlStreamParser,
+	parseAntmlGeneratedText,
+} from "./protocols/antml/index.ts";
+import {
 	gemma4CreateStreamParser,
 	gemma4FormatToolCall,
 	gemma4FormatToolResponse,
@@ -78,12 +92,31 @@ const gemma4Protocol: ToolCallProtocol = {
 	createStreamParser: gemma4CreateStreamParser,
 };
 
+const antmlProtocol: ToolCallProtocol = {
+	formatToolsSystemPrompt: antmlFormatToolsSystemPrompt,
+	formatToolResponse: antmlFormatToolResponse,
+	formatToolCall: antmlFormatToolCall,
+	parseGeneratedText: parseAntmlGeneratedText,
+	createStreamParser: createAntmlStreamParser,
+};
+
+const anthropicXmlProtocol: ToolCallProtocol = {
+	formatToolsSystemPrompt: anthropicXmlFormatToolsSystemPrompt,
+	formatToolResponse: anthropicXmlFormatToolResponse,
+	formatToolCall: anthropicXmlFormatToolCall,
+	parseGeneratedText: parseAnthropicXmlGeneratedText,
+	createStreamParser: createAnthropicXmlStreamParser,
+};
+
 /**
  * Protocol registry mapping format strings to protocol implementations.
  */
 const protocolRegistry: Record<ToolCallFormat, ToolCallProtocol> = {
+	"anthropic-xml": anthropicXmlProtocol,
+	antml: antmlProtocol,
 	hermes: hermesProtocol,
 	xml: morphXmlProtocol,
+	"morph-xml": morphXmlProtocol,
 	"yaml-xml": yamlXmlProtocol,
 	"gemma4-delimiter": gemma4Protocol,
 };
@@ -154,6 +187,8 @@ function transformMessage(message: Message, protocol: ToolCallProtocol): Message
 
 /**
  * Transforms an AssistantMessage, converting ToolCall content blocks to text.
+ *
+ * Flagged incomplete calls replay as canonical formatted calls from their sanitized parsed arguments; the paired error toolResult (created by agent-loop/pair-repair) is what tells the model the call failed — raw truncated markup never re-enters context.
  */
 function transformAssistantMessage(message: AssistantMessage, protocol: ToolCallProtocol): AssistantMessage {
 	// Check if message has any ToolCall content blocks

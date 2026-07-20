@@ -25,7 +25,13 @@ async function captureMessages(
 ): Promise<readonly CapturedMessage[]> {
 	let capturedMessages: readonly CapturedMessage[] | undefined;
 	const stream = streamSimple(
-		{ ...model, baseUrl: "http://127.0.0.1:9" },
+		{
+			...model,
+			baseUrl: "http://127.0.0.1:9",
+			// The localhost override only captures the payload; this test exercises
+			// first-party replay semantics rather than endpoint capability detection.
+			compat: { ...model.compat, supportsWebSearch: true },
+		},
 		{ messages },
 		{
 			apiKey: "fake-key",
@@ -47,7 +53,7 @@ async function captureMessages(
 }
 
 describe("Anthropic web search replay encryption", () => {
-	it("omits encrypted_content from replayed web search results", async () => {
+	it("preserves encrypted_content byte-for-byte in replayed web search results", async () => {
 		const model = getModel("anthropic", "claude-fable-5");
 		const assistant: AssistantMessage = {
 			role: "assistant",
@@ -96,6 +102,7 @@ describe("Anthropic web search replay encryption", () => {
 						title: "Example",
 						url: "https://example.com",
 						page_age: "2026-07-07",
+						encrypted_content: "opaque-ciphertext",
 					},
 				],
 			},

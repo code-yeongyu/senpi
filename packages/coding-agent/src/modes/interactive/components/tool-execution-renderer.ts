@@ -102,6 +102,7 @@ export class ToolExecutionRenderer extends Container {
 			showImages: this.state.showImages,
 			imageProtocol: getCapabilities().images,
 			isError: this.state.result?.isError ?? false,
+			hasResult: this.state.result !== undefined,
 			spinnerFrame: this.state.spinnerFrame,
 		};
 	}

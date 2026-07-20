@@ -14,6 +14,7 @@ export interface RenderContextOptions {
 	readonly imageProtocol?: ImageProtocol;
 	readonly isError?: boolean;
 	readonly spinnerFrame?: number;
+	readonly hasResult?: boolean;
 	readonly args?: EvalToolInput;
 }
 
@@ -48,6 +49,7 @@ export function callContext(input?: EvalComponent | RenderContextOptions): CallC
 		showImages: options.showImages ?? false,
 		imageProtocol: options.imageProtocol ?? null,
 		isError: options.isError ?? false,
+		...(options.hasResult === undefined ? {} : { hasResult: options.hasResult }),
 		...(options.spinnerFrame === undefined ? {} : { spinnerFrame: options.spinnerFrame }),
 	};
 }

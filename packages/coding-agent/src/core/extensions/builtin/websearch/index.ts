@@ -1,4 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import { isAnthropicWebSearchEnabled, supportsNativeAnthropicWebSearch } from "../anthropic-web-search/index.ts";
+import { isOpenaiWebSearchEnabled, supportsNativeOpenAiWebSearch } from "../openai-web-search/index.ts";
 
 import { loadWebsearchConfig } from "./websearch/config.ts";
 import { createWebSearchTool } from "./websearch/tool.ts";
@@ -8,13 +10,18 @@ const STATUS_KEY = "pi-websearch";
 const WIDGET_KEY = "pi-websearch";
 const NATIVE_BYPASS_MESSAGE = "Native provider web search is handled by the built-in provider extension.";
 
-type ProviderModelContext = {
-	provider?: string;
-	api?: string;
-};
+type NativeCapableModel = Parameters<typeof supportsNativeAnthropicWebSearch>[0] &
+	Parameters<typeof supportsNativeOpenAiWebSearch>[0];
 
-function isProviderNativeBypass(model: ProviderModelContext | undefined): boolean {
-	return model?.provider === "openai" || model?.provider === "anthropic";
+// Defer to the provider-native server-side web_search only when the builtin
+// injecting extension will actually add it for this exact model (first-party
+// endpoint or explicit compat opt-in, and not disabled via env). A provider id
+// of "anthropic"/"openai" alone is not enough: proxied baseUrls (ccapi, quotio,
+// …) never receive the native tool, so bypassing there leaves no web search.
+function isProviderNativeBypass(model: NativeCapableModel): boolean {
+	if (supportsNativeAnthropicWebSearch(model)) return isAnthropicWebSearchEnabled();
+	if (supportsNativeOpenAiWebSearch(model)) return isOpenaiWebSearchEnabled();
+	return false;
 }
 
 export default function (pi: ExtensionAPI): void {
@@ -54,11 +61,19 @@ export default function (pi: ExtensionAPI): void {
 
 	pi.registerTool(createWebSearchTool(() => state));
 
-	pi.on("session_start", async (_event, ctx) => {
-		state = isProviderNativeBypass(ctx.model)
+	async function refreshState(model: NativeCapableModel, ctx: ExtensionContext): Promise<void> {
+		state = isProviderNativeBypass(model)
 			? { ok: false, reason: "provider_native_bypass", message: NATIVE_BYPASS_MESSAGE }
 			: await loadWebsearchConfig({ cwd: ctx.cwd });
 		updateUi(ctx);
+	}
+
+	pi.on("session_start", async (_event, ctx) => {
+		await refreshState(ctx.model, ctx);
+	});
+
+	pi.on("model_select", async (event, ctx) => {
+		await refreshState(event.model, ctx);
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {

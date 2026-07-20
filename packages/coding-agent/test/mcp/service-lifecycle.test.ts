@@ -18,7 +18,7 @@ import {
 	tool,
 	writeProjectConfig,
 } from "./fixtures/service-lifecycle.ts";
-import { assertProcessDead } from "./fixtures/spawn-fixture.ts";
+import { assertProcessDead, stdioFixtureCommand } from "./fixtures/spawn-fixture.ts";
 
 const cleanupTasks: Array<() => Promise<void>> = [];
 
@@ -187,6 +187,75 @@ describe("McpService session lifecycle", () => {
 			await assertProcessDead(pid);
 		}
 		expect(service.getServerSnapshots()).toEqual([]);
+	});
+
+	it("does not respawn an extension-declared server with the same config hash", async () => {
+		const root = makeRoot("ext-reattach", cleanupTasks);
+		const counterFile = join(root.agentDir, "ext-reattach-spawns.txt");
+		const fixture = stdioFixtureCommand();
+		const decl = {
+			name: "fixture",
+			config: {
+				type: "stdio" as const,
+				...fixture,
+				args: [...fixture.args, "--tools", "1", "--spawn-counter-file", counterFile],
+			},
+			extensionPath: "<ext>",
+			registrationCwd: root.cwd,
+		};
+		const ctx = { cwd: root.cwd, isProjectTrusted: () => true, getRegisteredMcpServers: () => [decl] };
+		const service = getMcpService();
+
+		await service.attachSession({ type: "session_start", reason: "startup" }, ctx, fakePi(), {
+			agentDir: root.agentDir,
+		});
+		const pid1 = requiredPid(service, "fixture");
+		expect(await readCounter(counterFile)).toBe(1);
+
+		await service.handleSessionShutdown({ type: "session_shutdown", reason: "new" });
+		await service.attachSession({ type: "session_start", reason: "new" }, ctx, fakePi(), {
+			agentDir: root.agentDir,
+		});
+		const pid2 = requiredPid(service, "fixture");
+
+		expect(pid2).toBe(pid1);
+		expect(await readCounter(counterFile)).toBe(1);
+	});
+
+	it("respawns an extension-declared server on reload", async () => {
+		const root = makeRoot("ext-reload", cleanupTasks);
+		const counterFile = join(root.agentDir, "ext-reload-spawns.txt");
+		const fixture = stdioFixtureCommand();
+		const decl = {
+			name: "fixture",
+			config: {
+				type: "stdio" as const,
+				...fixture,
+				args: [...fixture.args, "--tools", "1", "--spawn-counter-file", counterFile],
+			},
+			extensionPath: "<ext>",
+			registrationCwd: root.cwd,
+		};
+		const ctx = { cwd: root.cwd, isProjectTrusted: () => true, getRegisteredMcpServers: () => [decl] };
+		const serviceBeforeReload = getMcpService();
+
+		await serviceBeforeReload.attachSession({ type: "session_start", reason: "startup" }, ctx, fakePi(), {
+			agentDir: root.agentDir,
+		});
+		const pid1 = requiredPid(serviceBeforeReload, "fixture");
+		await serviceBeforeReload.handleSessionShutdown({ type: "session_shutdown", reason: "reload" });
+		await assertProcessDead(pid1);
+
+		const serviceAfterReload = getMcpService();
+		await serviceAfterReload.attachSession({ type: "session_start", reason: "reload" }, ctx, fakePi(), {
+			agentDir: root.agentDir,
+		});
+		const pid2 = requiredPid(serviceAfterReload, "fixture");
+
+		expect(serviceAfterReload).not.toBe(serviceBeforeReload);
+		expect(pid2).not.toBe(pid1);
+		expect(await readCounter(counterFile)).toBe(2);
+		await assertAlive(pid2);
 	});
 });
 

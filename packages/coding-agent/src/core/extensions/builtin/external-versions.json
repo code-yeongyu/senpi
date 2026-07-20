@@ -27,7 +27,7 @@
 		},
 		"webfetch": {
 			"packageName": "pi-webfetch",
-			"version": "0.1.1",
+			"version": "0.1.2",
 			"source": "../pi-extensions/pi-webfetch"
 		},
 		"nested-agents-md": {

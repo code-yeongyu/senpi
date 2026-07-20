@@ -49,7 +49,7 @@ describe("GLM 5.2 prompt preset", () => {
 		expect(preset?.name).toBe("glm-5.2");
 		expect(preset?.prompt).toContain("running on GLM 5.2");
 		expect(preset?.prompt).toContain("absolute certainty");
-		expect(preset?.prompt).toContain("todowrite");
+		expect(preset?.prompt).toContain("todo");
 		expect(preset?.prompt).not.toContain("apply_patch");
 	});
 

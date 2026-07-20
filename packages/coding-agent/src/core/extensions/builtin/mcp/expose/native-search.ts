@@ -17,7 +17,7 @@ export const ANTHROPIC_TOOL_SEARCH_NAME = "tool_search";
 export const ANTHROPIC_MAX_TOOLS = 10000;
 
 export interface AnthropicNativeInjectionConfig {
-	/** Never defer this tool (our custom mcp_search), and it is non-deferrable. */
+	/** Never defer this tool (our custom tool_search), and it is non-deferrable. */
 	readonly searchToolName?: string;
 	/** True for MCP catalog tools eligible for deferral. */
 	readonly isDeferrable: (toolName: string) => boolean;
@@ -102,7 +102,7 @@ export class AnthropicNativeToolSearchAdapter {
 		if (status !== 400 || !this.#injectedLastRequest || this.#disabled) return;
 		this.#disabled = true;
 		this.#fallbackReason =
-			"Anthropic returned 400 for native tool-search; disabled it and fell back to local mcp_search for this session.";
+			"Anthropic returned 400 for native tool-search; disabled it and fell back to local tool_search for this session.";
 		this.#deps.onFallback?.(this.#fallbackReason);
 	}
 

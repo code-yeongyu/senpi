@@ -1,5 +1,59 @@
 # changes.md — dynamic-prompt
 
+## CLI system-prompt overrides reapplied in `_rebuildSystemPrompt()` (2026-07-18)
+
+### What changed
+
+- `agent-session.ts`: `_rebuildSystemPrompt()` again honors the resource loader's `getSystemPrompt()` / `getAppendSystemPrompt()` (populated from `--system-prompt` / `--append-system-prompt`). A loader system prompt replaces the generated dynamic base; loader appends are joined with `\n\n` and appended to whichever base was chosen. With no CLI overrides the generated prompt is byte-identical to before.
+- `test/agent-session-system-prompt.test.ts` (new): pins override-replaces-base and append-joins-base behavior through `createAgentSession`.
+
+### Why
+
+The upstream sync restored `systemPrompt` / `appendSystemPrompt` storage on `DefaultResourceLoader`, but the 2026-04-05 dynamic-prompt fork change had dropped the consumer, silently ignoring both CLI flags.
+
+### Why extension system couldn't handle this
+
+Same as the original builder fork: the base prompt assembly is core-owned; extensions can only modify it per-turn via `before_agent_start`.
+
+### Expected merge conflict zones
+
+- `agent-session.ts` `_rebuildSystemPrompt()` tail. Resolution: keep the loader-override selection and append join; thread any new upstream `buildSystemPrompt` parameters through `_baseSystemPromptOptions` equivalents instead.
+
+## Workstation block + execution-context instruction (2026-07-17)
+
+### What changed
+
+- `workstation.ts` (new): synchronous host-facts collector (`os.platform`/`type`/`release`/`arch`, CPU model with `/proc/cpuinfo` fallback on Linux, core count via `os.availableParallelism()`, Apple-Silicon GPU derivation, TERM_PROGRAM terminal) cached per process, plus `buildWorkstationSection()` rendering a `<workstation>` facts block followed by an execution-context instruction in one of four dialects (`default` max-emphasis, `claude` tagged imperatives, `codex` terse, `kimi` positive constraints). The instruction names the active local executors (`bash`/`eval`) from `selectedTools`.
+- `build.ts`: `BuildDynamicSystemPromptOptions.workstationDialect?: WorkstationDialect`; the section is assembled right before the date/cwd footer (applies to `corePrompt` presets too).
+- All 15 `prompt-preset` builders pass their family dialect.
+
+### Why extension system couldn't handle this alone
+
+- The workstation facts belong to every prompt (fallback included), and the instruction must sit directly under the facts block for context proximity; a preset-level `tuningSection` lands before context files, far from the footer.
+
+### Expected merge conflict zones
+
+- LOW: `build.ts` footer assembly if upstream reshapes it. Resolution: keep the workstation push before the date/cwd push.
+
+## AGENTS.md precedence contract in Project Context (2026-07-16)
+
+### What changed
+
+- `build.ts`: the `## Project Context` section now opens with one precedence line: project instruction files (inline and `[Directory Context: ...]` blocks injected by nested-agents-md) bind files under their directory, deeper files win on conflict, explicit user instructions override. Ported from omo Hephaestus's `# AGENTS.md` section.
+- `build.test.ts` pins "deeper files win on conflict".
+
+### Why
+
+- senpi injects nested AGENTS.md content at read time but stated no precedence rule anywhere, leaving root-vs-nested conflicts as unresolved contradictions - the exact instability the GPT-5.6 guide warns about ("conflicting rules can create more instability than missing detail"). One ~25-token line closes the contradiction channel for every preset.
+
+### Why extension system couldn't handle this
+
+- `buildContextFilesSection` is core-owned and shared by every preset and the fallback prompt.
+
+### Expected merge conflict zones
+
+- LOW: `build.ts` context-section header block.
+
 ## Token diet for shared sections (2026-07-02)
 
 ### What changed

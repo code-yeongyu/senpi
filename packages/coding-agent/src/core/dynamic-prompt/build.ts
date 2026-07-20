@@ -10,6 +10,7 @@ import { categorizeTools } from "./tool-categorization.ts";
 import { buildToolSection } from "./tool-section.ts";
 import type { AvailableTool } from "./types.ts";
 import { buildVerificationSection } from "./verification.ts";
+import { buildWorkstationSection, type WorkstationDialect } from "./workstation.ts";
 
 /** Context handed to a `corePrompt` override so it can reuse the dynamic pieces. */
 export interface DynamicPromptCoreContext {
@@ -32,6 +33,12 @@ export interface BuildDynamicSystemPromptOptions {
 	 * date, and cwd assembly stay in this builder.
 	 */
 	corePrompt?: (context: DynamicPromptCoreContext) => string;
+	/**
+	 * Wording dialect for the workstation execution-context instruction.
+	 * Presets pass their model family; the fallback prompt uses `default`
+	 * (maximum emphasis).
+	 */
+	workstationDialect?: WorkstationDialect;
 }
 
 function buildContextFilesSection(contextFiles: Array<{ path: string; content: string }>): string {
@@ -39,7 +46,12 @@ function buildContextFilesSection(contextFiles: Array<{ path: string; content: s
 		return "";
 	}
 
-	const lines = ["## Project Context", ""];
+	const lines = [
+		"## Project Context",
+		"",
+		"Project instruction files (below, and in [Directory Context: ...] blocks injected during reads) bind files under their directory; deeper files win on conflict; explicit user instructions override.",
+		"",
+	];
 	for (const contextFile of contextFiles) {
 		lines.push(`### ${contextFile.path}`, "", contextFile.content.trimEnd(), "");
 	}
@@ -91,6 +103,14 @@ export function buildDynamicSystemPrompt(options: BuildDynamicSystemPromptOption
 	if (skillsSection) {
 		sections.push(skillsSection);
 	}
+
+	sections.push(
+		"",
+		buildWorkstationSection({
+			selectedTools: options.selectedTools,
+			dialect: options.workstationDialect ?? "default",
+		}),
+	);
 
 	sections.push("", `Current date: ${date}`, `Current working directory: ${promptCwd}`);
 

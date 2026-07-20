@@ -243,9 +243,10 @@ async function runLoop(
 			hasMoreToolCalls = false;
 			let toolBatchTerminated = false;
 			if (toolCalls.length > 0) {
-				// A "length" stop means the output was cut off by the token limit, so
-				// every tool call in the message may carry truncated arguments. Fail
-				// them all instead of executing potentially borked calls.
+				// A native "length" stop means the output was cut off by the token limit,
+				// so every tool call in the message may carry truncated arguments. Text
+				// tool-call middleware finalizes its calls as "toolUse", leaving only
+				// native, unwrapped length responses for this message-wide safeguard.
 				const executedToolBatch =
 					message.stopReason === "length"
 						? await failToolCallsFromTruncatedMessage(toolCalls, emit)
@@ -600,6 +601,13 @@ async function readNextAssistantEvent(
 	});
 }
 
+function createIncompleteToolCallErrorMessage(toolName: string, errorMessage?: string): string {
+	if (errorMessage !== undefined) {
+		return `${errorMessage}${errorMessage.endsWith(".") ? "" : "."} Re-issue the tool call with complete arguments.`;
+	}
+	return `Tool call "${toolName}" was not executed: the response ended before the tool call was complete because it hit the output token limit. Re-issue the tool call with complete arguments.`;
+}
+
 /**
  * Fail all tool calls from an assistant message that was truncated by the
  * output token limit. Streamed tool-call arguments are finalized with a
@@ -621,9 +629,7 @@ async function failToolCallsFromTruncatedMessage(
 		});
 		const finalized: FinalizedToolCallOutcome = {
 			toolCall,
-			result: createErrorToolResult(
-				`Tool call "${toolCall.name}" was not executed: the response hit the output token limit, so its arguments may be truncated. Re-issue the tool call with complete arguments.`,
-			),
+			result: createErrorToolResult(createIncompleteToolCallErrorMessage(toolCall.name)),
 			isError: true,
 		};
 		await emitToolExecutionEnd(finalized, emit);
@@ -913,6 +919,15 @@ async function prepareToolCall(
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
 ): Promise<PreparedToolCall | ImmediateToolCallOutcome> {
+	if (toolCall.incomplete === true) {
+		return {
+			kind: "immediate",
+			toolCall,
+			result: createErrorToolResult(createIncompleteToolCallErrorMessage(toolCall.name, toolCall.errorMessage)),
+			isError: true,
+		};
+	}
+
 	const tool = currentContext.tools?.find((t) => t.name === toolCall.name);
 	if (!tool) {
 		return {

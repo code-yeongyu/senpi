@@ -4,6 +4,8 @@ import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
 import { createExtensionRuntime, loadExtensionFromFactory } from "../../src/core/extensions/loader.ts";
 import type { Extension, SessionShutdownEvent, SessionStartEvent } from "../../src/core/extensions/types.ts";
+import { fakePi } from "./fixtures/service-lifecycle.ts";
+import { stdioFixtureCommand } from "./fixtures/spawn-fixture.ts";
 
 describe("mcp builtin extension load", () => {
 	beforeEach(() => {
@@ -88,6 +90,39 @@ describe("mcp builtin extension load", () => {
 			sessionStartCount: 1,
 			hasSessionContext: true,
 		});
+	});
+
+	it("registers tools from an extension-declared MCP server with source=extension", async () => {
+		const fixture = stdioFixtureCommand();
+		const pi = fakePi();
+		await getMcpService().attachSession(
+			{ type: "session_start", reason: "startup" },
+			{
+				cwd: process.cwd(),
+				isProjectTrusted: () => true,
+				getRegisteredMcpServers: () => [
+					{
+						name: "fixture",
+						config: { type: "stdio", ...fixture, args: [...fixture.args, "--tools", "2"] },
+						extensionPath: "<ext>",
+						registrationCwd: process.cwd(),
+					},
+				],
+			},
+			pi,
+		);
+
+		const snapshot = getMcpService()
+			.getServerSnapshots()
+			.find((s) => s.name === "fixture");
+		const tools = getMcpService()
+			.getTierBSearchable()
+			.map((t) => t.name)
+			.filter((n) => n.startsWith("mcp_fixture_"));
+		expect(snapshot?.source).toBe("extension");
+		expect(tools.length).toBeGreaterThan(0);
+		expect(pi.activeTools).toContain("mcp_fixture_tool_1");
+		await getMcpService().dispose("quit");
 	});
 });
 

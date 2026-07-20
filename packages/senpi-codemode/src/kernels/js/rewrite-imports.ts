@@ -31,9 +31,9 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 
 function nodeFrom(value: unknown): AstNode | undefined {
 	if (!isRecord(value)) return undefined;
-	const type = value["type"];
-	const start = value["start"];
-	const end = value["end"];
+	const type = value.type;
+	const start = value.start;
+	const end = value.end;
 	if (typeof type !== "string" || typeof start !== "number" || typeof end !== "number") return undefined;
 	return { type, start, end, value };
 }
@@ -131,7 +131,7 @@ function rewriteImportDeclaration(node: ImportDeclaration): string {
 
 function dynamicImportEdit(node: AstNode): TextEdit | undefined {
 	if (node.type !== "CallExpression") return undefined;
-	const callee = nodeFrom(node.value["callee"]);
+	const callee = nodeFrom(node.value.callee);
 	if (callee?.type !== "Import") return undefined;
 	return { start: callee.start, end: callee.end, text: DYNAMIC_IMPORT_CALLEE };
 }

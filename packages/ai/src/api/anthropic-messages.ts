@@ -29,6 +29,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { isVideoMimeType } from "../types.ts";
 import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
@@ -139,6 +140,17 @@ const fromClaudeCodeName = (name: string, tools?: Tool[]) => {
 /**
  * Convert content blocks to Anthropic API format
  */
+/**
+ * Anthropic-compatible video input block (not in the official SDK types).
+ * Kimi's Anthropic-compatible endpoint accepts `{type:"video"}` content blocks
+ * with the same source shape as images (verified against MoonshotAI/kimi-code
+ * kosong anthropic provider).
+ */
+interface AnthropicVideoBlock {
+	type: "video";
+	source: { type: "base64"; media_type: string; data: string };
+}
+
 function convertContentBlocks(content: (TextContent | ImageContent)[]):
 	| string
 	| Array<
@@ -151,6 +163,7 @@ function convertContentBlocks(content: (TextContent | ImageContent)[]):
 						data: string;
 					};
 			  }
+			| AnthropicVideoBlock
 	  > {
 	// If only text blocks, return as concatenated string for simplicity
 	const hasImages = content.some((c) => c.type === "image");
@@ -166,6 +179,16 @@ function convertContentBlocks(content: (TextContent | ImageContent)[]):
 				text: sanitizeSurrogates(block.text),
 			};
 		}
+		if (isVideoMimeType(block.mimeType)) {
+			return {
+				type: "video" as const,
+				source: {
+					type: "base64" as const,
+					media_type: block.mimeType,
+					data: block.data,
+				},
+			};
+		}
 		return {
 			type: "image" as const,
 			source: {
@@ -176,7 +199,7 @@ function convertContentBlocks(content: (TextContent | ImageContent)[]):
 		};
 	});
 
-	// If only images (no text), add placeholder text block
+	// If only media (no text), add placeholder text block
 	const hasText = blocks.some((b) => b.type === "text");
 	if (!hasText) {
 		blocks.unshift({
@@ -228,6 +251,12 @@ function getAnthropicCompat(
 			model.compat?.supportsForcedToolChoice ?? !CLAUDE_FABLE_OR_MYTHOS_MODEL_ID.test(model.id),
 		allowEmptySignature: model.compat?.allowEmptySignature ?? false,
 		supportsToolReferences: model.compat?.supportsToolReferences ?? defaultSupportsToolReferences(model),
+		// Default: first-party Anthropic only. Anthropic-compatible providers
+		// (kimi-coding, fireworks, copilot, gateways) may execute the server-side
+		// search but reject the replayed server_tool_use / web_search_tool_result
+		// blocks on the next request (kimi-coding 400s with `tool_call_id is not
+		// found`).
+		supportsWebSearch: model.compat?.supportsWebSearch ?? isAnthropicApiBaseUrl(model.baseUrl),
 	};
 }
 
@@ -359,24 +388,6 @@ function isReplayableAnthropicProviderNativeBlock(raw: unknown): raw is ContentB
 	return isRecord(raw) && typeof raw.type === "string" && REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES.has(raw.type);
 }
 
-function stripEncryptedContentFromWebSearchResult(raw: Record<string, unknown>): Record<string, unknown> {
-	const { encrypted_content: _encryptedContent, ...rest } = raw;
-	return rest;
-}
-
-function sanitizeReplayableAnthropicProviderNativeBlock(raw: unknown): ContentBlockParam | undefined {
-	if (!isReplayableAnthropicProviderNativeBlock(raw)) return undefined;
-	if (!isRecord(raw) || raw.type !== "web_search_tool_result" || !Array.isArray(raw.content)) return raw;
-
-	return {
-		...raw,
-		content: raw.content.map((item) => {
-			if (!isRecord(item) || item.type !== "web_search_result") return item;
-			return stripEncryptedContentFromWebSearchResult(item);
-		}),
-	} as ContentBlockParam;
-}
-
 function isSameAnthropicModel(message: AssistantMessage, model: Model<"anthropic-messages">): boolean {
 	return message.provider === model.provider && message.api === model.api && message.model === model.id;
 }
@@ -408,6 +419,23 @@ function lastAnthropicFallbackBoundary(content: AssistantMessage["content"]): nu
 
 function isAnthropicServerToolUseBlock(raw: unknown): raw is { readonly type: "server_tool_use"; readonly id: string } {
 	return isRecord(raw) && raw.type === "server_tool_use" && typeof raw.id === "string";
+}
+
+// Only tool_use-shaped provider-native blocks (server_tool_use, mcp_tool_use)
+// stream their input via input_json_delta. Result-shaped blocks must replay
+// byte-for-byte (encrypted_content), so never merge an `input` into them.
+function isProviderNativeToolUseBlock(raw: unknown): boolean {
+	return isRecord(raw) && (raw.type === "server_tool_use" || raw.type === "mcp_tool_use");
+}
+
+// Endpoints without `supportsWebSearch` reject replayed web-search server-tool
+// blocks (kimi-coding 400s with `tool_call_id is not found`), wedging every
+// subsequent request of the session. Dropping the pair loses the searched
+// context but keeps the conversation usable.
+function isAnthropicWebSearchReplayBlock(raw: unknown): boolean {
+	if (!isRecord(raw)) return false;
+	if (raw.type === "web_search_tool_result") return true;
+	return raw.type === "server_tool_use" && raw.name === "web_search";
 }
 
 // tool_use ids referenced by server-tool result blocks in content[0, boundary).
@@ -559,6 +587,10 @@ function rejectsComputerUseBeta(model: Model<"anthropic-messages">): boolean {
 	);
 }
 
+function isAnthropicWebSearchToolType(toolType: string): boolean {
+	return toolType.startsWith("web_search_");
+}
+
 function sanitizeUnsupportedNativeTools(
 	model: Model<"anthropic-messages">,
 	params: MessageCreateParamsStreaming,
@@ -568,10 +600,10 @@ function sanitizeUnsupportedNativeTools(
 	const headerSanitization = rejectsComputerUseBeta(model)
 		? removeComputerUseBetaHeader(headers)
 		: ({ changed: false } as const);
+	const rejectsNativeWebSearch = !getAnthropicCompat(model).supportsWebSearch;
 	const tools = payload.tools;
 	const sanitized: AnthropicPayloadWithRequestMetadata = { ...payload };
 	let changed = false;
-	const removedToolNames = new Set<string>();
 
 	if (Array.isArray(tools)) {
 		const supportedTools: typeof tools = [];
@@ -581,12 +613,10 @@ function sanitizeUnsupportedNativeTools(
 			if (
 				isRecord(hookTool) &&
 				typeof hookTool.type === "string" &&
-				rejectsNativeComputerTool(model, hookTool.type)
+				(rejectsNativeComputerTool(model, hookTool.type) ||
+					(rejectsNativeWebSearch && isAnthropicWebSearchToolType(hookTool.type)))
 			) {
 				changed = true;
-				if (typeof hookTool.name === "string") {
-					removedToolNames.add(hookTool.name);
-				}
 				continue;
 			}
 
@@ -613,8 +643,12 @@ function sanitizeUnsupportedNativeTools(
 
 	if (changed && isRecord(sanitized.tool_choice)) {
 		const toolChoiceName = sanitized.tool_choice.name;
+		const hasSelectedTool =
+			typeof toolChoiceName === "string" &&
+			Array.isArray(sanitized.tools) &&
+			sanitized.tools.some((tool) => isRecord(tool) && tool.name === toolChoiceName);
 		const shouldRemoveToolChoice =
-			(typeof toolChoiceName === "string" && removedToolNames.has(toolChoiceName)) || sanitized.tools === undefined;
+			sanitized.tools === undefined || (typeof toolChoiceName === "string" && !hasSelectedTool);
 		if (shouldRemoveToolChoice) {
 			delete sanitized.tool_choice;
 		}
@@ -952,7 +986,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				| (ThinkingContent & { index?: number })
 				| (TextContent & { index?: number })
 				| ((ToolCall & { partialJson: string }) & { index?: number })
-				| (ProviderNativeContent & { index?: number });
+				| (ProviderNativeContent & { partialJson?: string; index?: number });
 			const blocks = output.content as Block[];
 
 			for await (const event of iterateAnthropicEvents(response, options?.signal)) {
@@ -1057,6 +1091,11 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 								delta: event.delta.partial_json,
 								partial: output,
 							});
+						} else if (block && block.type === "providerNative" && isProviderNativeToolUseBlock(block.raw)) {
+							// Server-side tool blocks (server_tool_use) stream their input
+							// the same way tool_use does; the block captured at
+							// content_block_start still has `input: {}`.
+							block.partialJson = (block.partialJson ?? "") + event.delta.partial_json;
 						}
 					} else if (event.delta.type === "signature_delta") {
 						const index = blocks.findIndex((b) => b.index === event.index);
@@ -1096,6 +1135,12 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 								toolCall: block,
 								partial: output,
 							});
+						} else if (block.type === "providerNative") {
+							const partialJson = block.partialJson;
+							delete block.partialJson;
+							if (partialJson !== undefined && isRecord(block.raw)) {
+								block.raw = { ...block.raw, input: parseStreamingJson(partialJson) };
+							}
 						}
 					}
 				} else if (event.type === "message_delta") {
@@ -1108,25 +1153,27 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					}
 					// Only update usage fields if present (not null).
 					// Preserves input_tokens from message_start when proxies omit it in message_delta.
-					if (event.usage.input_tokens != null) {
-						output.usage.input = event.usage.input_tokens;
-					}
-					if (event.usage.output_tokens != null) {
-						output.usage.output = event.usage.output_tokens;
-					}
-					if (event.usage.cache_read_input_tokens != null) {
-						output.usage.cacheRead = event.usage.cache_read_input_tokens;
-					}
-					if (event.usage.cache_creation_input_tokens != null) {
-						output.usage.cacheWrite = event.usage.cache_creation_input_tokens;
-					}
-					// Anthropic reports reasoning tokens in `output_tokens_details.thinking_tokens` on the
-					// final message_delta usage (a subset of output_tokens). SDK 0.91.1 omits the field from
-					// its Usage type, so read it through a narrow cast. Verified against the live API.
-					const thinkingTokens = (event.usage as { output_tokens_details?: { thinking_tokens?: number } })
-						.output_tokens_details?.thinking_tokens;
-					if (thinkingTokens != null) {
-						output.usage.reasoning = thinkingTokens;
+					if (event.usage) {
+						if (event.usage.input_tokens != null) {
+							output.usage.input = event.usage.input_tokens;
+						}
+						if (event.usage.output_tokens != null) {
+							output.usage.output = event.usage.output_tokens;
+						}
+						if (event.usage.cache_read_input_tokens != null) {
+							output.usage.cacheRead = event.usage.cache_read_input_tokens;
+						}
+						if (event.usage.cache_creation_input_tokens != null) {
+							output.usage.cacheWrite = event.usage.cache_creation_input_tokens;
+						}
+						// Anthropic reports reasoning tokens in `output_tokens_details.thinking_tokens` on the
+						// final message_delta usage (a subset of output_tokens). SDK 0.91.1 omits the field from
+						// its Usage type, so read it through a narrow cast. Verified against the live API.
+						const thinkingTokens = (event.usage as { output_tokens_details?: { thinking_tokens?: number } })
+							.output_tokens_details?.thinking_tokens;
+						if (thinkingTokens != null) {
+							output.usage.reasoning = thinkingTokens;
+						}
 					}
 					// Anthropic doesn't provide total_tokens, compute from components
 					output.usage.totalTokens =
@@ -1148,6 +1195,13 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 		} catch (error) {
 			for (const block of output.content) {
 				delete (block as { index?: number }).index;
+				// An aborted stream never reaches content_block_stop; keep whatever
+				// provider-native input accumulated, mirroring toolCall's partial
+				// arguments.
+				const scratch = (block as { partialJson?: string }).partialJson;
+				if (block.type === "providerNative" && scratch !== undefined && isRecord(block.raw)) {
+					block.raw = { ...block.raw, input: parseStreamingJson(scratch) };
+				}
 				// partialJson is only a streaming scratch buffer; never persist it.
 				delete (block as { partialJson?: string }).partialJson;
 			}
@@ -1583,7 +1637,9 @@ function convertToolResult(
 			tool_name: isOAuthToken ? toClaudeCodeName(name) : name,
 		});
 	}
-	const convertedContent = convertContentBlocks(msg.content);
+	// The video block variant is not in the SDK's ContentBlockParam union, so the
+	// converted array is cast through the same escape hatch as tool_reference blocks.
+	const convertedContent = convertContentBlocks(msg.content) as string | ContentBlockParam[];
 	// Anthropic rejects tool references mixed with ordinary tool-result content.
 	return {
 		toolResult: {
@@ -1591,7 +1647,7 @@ function convertToolResult(
 			tool_use_id: msg.toolCallId,
 			content: references.length > 0 ? references : convertedContent,
 			is_error: msg.isError,
-		},
+		} as unknown as ContentBlockParam,
 		siblingContent:
 			references.length === 0
 				? []
@@ -1615,6 +1671,7 @@ function convertMessages(
 	// Tool calls from a declined pre-fallback attempt are dropped from their
 	// assistant turn below; drop their tool_results in lockstep so none dangle.
 	const discardedFallbackToolCallIds = collectDiscardedFallbackToolCallIds(transformedMessages, model);
+	const rejectsNativeWebSearchReplay = !getAnthropicCompat(model).supportsWebSearch;
 
 	for (let i = 0; i < transformedMessages.length; i++) {
 		const msg = transformedMessages[i];
@@ -1634,6 +1691,15 @@ function convertMessages(
 							type: "text",
 							text: sanitizeSurrogates(item.text),
 						};
+					} else if (isVideoMimeType(item.mimeType)) {
+						return {
+							type: "video",
+							source: {
+								type: "base64",
+								media_type: item.mimeType,
+								data: item.data,
+							},
+						} satisfies AnthropicVideoBlock as unknown as ContentBlockParam;
 					} else {
 						return {
 							type: "image",
@@ -1734,9 +1800,12 @@ function convertMessages(
 						input: block.arguments ?? {},
 					});
 				} else if (block.type === "providerNative") {
-					if (isSameModel) {
-						const replayableBlock = sanitizeReplayableAnthropicProviderNativeBlock(block.raw);
-						if (replayableBlock) blocks.push(replayableBlock);
+					if (
+						isSameModel &&
+						isReplayableAnthropicProviderNativeBlock(block.raw) &&
+						!(rejectsNativeWebSearchReplay && isAnthropicWebSearchReplayBlock(block.raw))
+					) {
+						blocks.push(block.raw);
 					}
 				}
 			}

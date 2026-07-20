@@ -1,19 +1,23 @@
 import type { CustomEntry, SessionEntry } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import type { TodoPhase } from "../todotools/state.ts";
 
 const TODO_SNAPSHOT_CUSTOM_TYPE = "compaction.todo-snapshot";
 const TODO_SNAPSHOT_SCHEMA = "senpi.compaction.todo-snapshot.v1";
+const TODO_STATE_ENTRY_TYPE = "senpi.todo-state";
 
 export interface TodoEntry {
-	id: string;
+	id?: string;
 	content?: string;
 	text?: string;
-	status?: "pending" | "in_progress" | "completed" | "cancelled";
+	status?: string;
 }
+
+export type TodoSnapshotItems = TodoEntry[] | TodoPhase[];
 
 export interface TodoSnapshotPayload {
 	schema: typeof TODO_SNAPSHOT_SCHEMA;
-	todos: TodoEntry[] | SessionEntry[];
+	todos: TodoSnapshotItems | SessionEntry[];
 	capturedAt: number;
 }
 
@@ -28,13 +32,39 @@ interface SendMessageTarget extends AppendEntryTarget {
 	): void;
 }
 
-interface RestoreResult {
+export interface RestoreResult<T extends TodoSnapshotItems = TodoSnapshotItems> {
 	applied: boolean;
-	restoredTodos: TodoEntry[];
+	restoredTodos: T;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function isTodoStatus(value: unknown): value is TodoEntry["status"] {
+	// Legacy todowrite entries carried arbitrary status strings (e.g. "blocked").
+	// The bridge is a pass-through snapshot carrier, not a validator: preserve
+	// every string-status entry so restore never silently drops legacy todos.
+	return value === undefined || typeof value === "string";
+}
+
+function isTodoEntry(value: unknown): value is TodoEntry {
+	if (!isRecord(value)) return false;
+	const hasId = typeof value.id === "string";
+	const hasContent = typeof value.content === "string" || typeof value.text === "string";
+	return (hasId || hasContent) && isTodoStatus(value.status);
+}
+
+function isTodoPhase(value: unknown): value is TodoPhase {
+	if (!isRecord(value) || typeof value.name !== "string" || !Array.isArray(value.tasks)) return false;
+	return value.tasks.every(isTodoEntry);
 }
 
 function isCustomTodoEntry(entry: SessionEntry): entry is CustomEntry {
-	return entry.type === "custom" && entry.customType.startsWith("todowrite");
+	return (
+		entry.type === "custom" &&
+		(entry.customType.startsWith("todowrite") || entry.customType === TODO_STATE_ENTRY_TYPE)
+	);
 }
 
 function isLegacyTodoListEntry(entry: SessionEntry): entry is CustomEntry {
@@ -43,22 +73,22 @@ function isLegacyTodoListEntry(entry: SessionEntry): entry is CustomEntry {
 
 function readTodosFromEntry(entry: CustomEntry): TodoEntry[] {
 	const data = entry.data;
-	if (typeof data !== "object" || data === null || !("todos" in data) || !Array.isArray(data.todos)) {
-		return [];
+	if (!isRecord(data)) return [];
+	if (Array.isArray(data.todos)) return data.todos.filter(isTodoEntry);
+	if (Array.isArray(data.phases)) {
+		return data.phases.filter(isTodoPhase).flatMap((phase) => phase.tasks);
 	}
-	return data.todos.filter((todo): todo is TodoEntry => {
-		return typeof todo === "object" && todo !== null && "id" in todo && typeof todo.id === "string";
-	});
+	return [];
 }
 
 function findLatestTodoSnapshot(ctx: ExtensionContext): TodoSnapshotPayload | null {
 	const entries = ctx.sessionManager.getEntries();
-	for (let index = entries.length - 1; index >= 0; index--) {
+	for (let index = entries.length - 1; index >= 0; index -= 1) {
 		const entry = entries[index];
 		if (entry.type !== "custom" || entry.customType !== TODO_SNAPSHOT_CUSTOM_TYPE) continue;
 		const data = entry.data;
-		if (typeof data === "object" && data !== null && "schema" in data && data.schema === TODO_SNAPSHOT_SCHEMA) {
-			return data as TodoSnapshotPayload;
+		if (isRecord(data) && data.schema === TODO_SNAPSHOT_SCHEMA && Array.isArray(data.todos)) {
+			return data as unknown as TodoSnapshotPayload;
 		}
 	}
 	return null;
@@ -72,7 +102,7 @@ export function findTodoEntries(
 ): SessionEntry[] | TodoEntry[] {
 	if (Array.isArray(ctxOrEntries)) {
 		return ctxOrEntries
-			.filter(isLegacyTodoListEntry)
+			.filter((entry) => isLegacyTodoListEntry(entry) || isCustomTodoEntry(entry))
 			.filter((entry) => options?.branchId === undefined || entry.parentId === options.branchId)
 			.flatMap(readTodosFromEntry);
 	}
@@ -93,9 +123,9 @@ export function persistTodoSnapshot(pi: AppendEntryTarget, snapshot: TodoSnapsho
 }
 
 export function captureTodoSnapshot(pi: ExtensionAPI, ctx: ExtensionContext): void;
-export function captureTodoSnapshot(currentTodos: TodoEntry[], pi: AppendEntryTarget, branchId?: string): void;
+export function captureTodoSnapshot(currentTodos: TodoSnapshotItems, pi: AppendEntryTarget, branchId?: string): void;
 export function captureTodoSnapshot(
-	piOrTodos: ExtensionAPI | TodoEntry[],
+	piOrTodos: ExtensionAPI | TodoSnapshotItems,
 	ctxOrPi: ExtensionContext | AppendEntryTarget,
 	_branchId?: string,
 ): void {
@@ -113,14 +143,14 @@ export function captureTodoSnapshot(
 }
 
 export function restoreTodosIfMissing(pi: ExtensionAPI, ctx: ExtensionContext): void;
-export function restoreTodosIfMissing(
-	snapshot: TodoEntry[],
-	currentTodos: TodoEntry[],
+export function restoreTodosIfMissing<T extends TodoSnapshotItems>(
+	snapshot: T,
+	currentTodos: T,
 	pi: AppendEntryTarget,
-): RestoreResult;
+): RestoreResult<T>;
 export function restoreTodosIfMissing(
-	piOrSnapshot: ExtensionAPI | TodoEntry[],
-	ctxOrCurrentTodos: ExtensionContext | TodoEntry[],
+	piOrSnapshot: ExtensionAPI | TodoSnapshotItems,
+	ctxOrCurrentTodos: ExtensionContext | TodoSnapshotItems,
 	_pi?: AppendEntryTarget,
 ): undefined | RestoreResult {
 	if (Array.isArray(piOrSnapshot) && Array.isArray(ctxOrCurrentTodos)) {
@@ -140,7 +170,7 @@ export function restoreTodosIfMissing(
 	pi.sendMessage(
 		{
 			customType: "compaction.todo-restore-request",
-			content: `Restore missing todowrite todos from snapshot: ${JSON.stringify(snapshot.todos)}`,
+			content: `Restore missing todo tasks from snapshot: ${JSON.stringify(snapshot.todos)}`,
 			display: false,
 			details: snapshot,
 		},

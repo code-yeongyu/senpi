@@ -7,8 +7,9 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Agent, type StreamFn } from "@earendil-works/pi-agent-core";
-import { getModel, type OAuthCredentials, type OAuthProvider } from "@earendil-works/pi-ai/compat";
-import { getOAuthApiKey } from "@earendil-works/pi-ai/oauth";
+import type { OAuthCredentials } from "@earendil-works/pi-ai";
+import { getModel } from "@earendil-works/pi-ai/compat";
+import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { createEventBus } from "../src/core/event-bus.ts";
@@ -19,11 +20,11 @@ import type {
 	LoadExtensionsResult,
 } from "../src/core/extensions/index.ts";
 import { createExtensionRuntime, loadExtensionFromFactory } from "../src/core/extensions/loader.ts";
-import { ModelRegistry } from "../src/core/model-registry.ts";
 import type { ResourceLoader } from "../src/core/resource-loader.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createCodingTools } from "../src/index.ts";
+import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 
 /**
  * API key for authenticated tests. Tests using this should be wrapped in
@@ -89,23 +90,15 @@ export async function resolveApiKey(provider: string): Promise<string | undefine
 	}
 
 	if (entry.type === "oauth") {
-		// Build OAuthCredentials record for getOAuthApiKey
-		const oauthCredentials: Record<string, OAuthCredentials> = {};
-		for (const [key, value] of Object.entries(storage)) {
-			if (value.type === "oauth") {
-				const { type: _, ...creds } = value;
-				oauthCredentials[key] = creds;
-			}
+		const oauth = builtinProviders().find((candidate) => candidate.id === provider)?.auth.oauth;
+		if (!oauth) return undefined;
+		let credential = entry;
+		if (Date.now() >= credential.expires) {
+			credential = await oauth.refresh(credential);
+			storage[provider] = credential;
+			saveAuthStorage(storage);
 		}
-
-		const result = await getOAuthApiKey(provider as OAuthProvider, oauthCredentials);
-		if (!result) return undefined;
-
-		// Save refreshed credentials back to auth.json
-		storage[provider] = { type: "oauth", ...result.newCredentials };
-		saveAuthStorage(storage);
-
-		return result.apiKey;
+		return (await oauth.toAuth(credential)).apiKey;
 	}
 
 	return undefined;
@@ -243,7 +236,7 @@ export function createTestResourceLoader(options: CreateTestResourceLoaderOption
  * Create an AgentSession for testing with proper setup and cleanup.
  * Use this for e2e tests that need real LLM calls.
  */
-export function createTestSession(options: TestSessionOptions = {}): TestSessionContext {
+export async function createTestSession(options: TestSessionOptions = {}): Promise<TestSessionContext> {
 	const tempDir = join(tmpdir(), `pi-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(tempDir, { recursive: true });
 
@@ -266,15 +259,15 @@ export function createTestSession(options: TestSessionOptions = {}): TestSession
 	}
 
 	const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-	if (API_KEY) authStorage.setRuntimeApiKey("anthropic", API_KEY);
-	const modelRegistry = ModelRegistry.create(authStorage, tempDir);
+	if (API_KEY) await authStorage.modify("anthropic", async () => ({ type: "api_key", key: API_KEY }));
+	const modelRegistry = await createModelRegistry(authStorage, tempDir);
 
 	const session = new AgentSession({
 		agent,
 		sessionManager,
 		settingsManager,
 		cwd: tempDir,
-		modelRegistry,
+		modelRuntime: getModelRuntime(modelRegistry),
 		resourceLoader: createTestResourceLoader(),
 	});
 

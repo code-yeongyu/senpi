@@ -2,6 +2,7 @@ import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { fauxAssistantMessage, fauxText, registerFauxProvider } from "../../src/providers/faux.ts";
 import { stream, streamSimple } from "../../src/stream.ts";
+import { getToolCallFormat } from "../../src/tool-call-middleware/index.ts";
 import type { Context, Model, Tool } from "../../src/types.ts";
 
 function userMessage(content: string) {
@@ -386,6 +387,14 @@ describe("streamSimple() with tool-call-middleware integration", () => {
 });
 
 describe("getToolCallFormat edge cases", () => {
+	it("accepts the canonical morph-xml format and deprecated xml alias", () => {
+		const faux = registerFauxProvider({ api: "openai-completions" });
+		registrations.push(faux);
+
+		expect(getToolCallFormat(createModelWithToolCallFormat(faux, "morph-xml"))).toBe("morph-xml");
+		expect(getToolCallFormat(createModelWithToolCallFormat(faux, "xml"))).toBe("xml");
+	});
+
 	it("returns undefined for non-openai-completions API models", async () => {
 		// given
 		const faux = registerFauxProvider({

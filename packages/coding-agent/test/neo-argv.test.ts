@@ -37,6 +37,12 @@ describe("buildNeoArgv — flag passthrough", () => {
 		["no-prompt-templates", ["--no-prompt-templates"], ["--no-prompt-templates"]],
 		["no-themes", ["--no-themes"], ["--no-themes"]],
 		["no-context-files", ["--no-context-files"], ["--no-context-files"]],
+		["system-prompt", ["--system-prompt", "be terse"], ["--system-prompt", "be terse"]],
+		[
+			"append-system-prompt (multiple)",
+			["--append-system-prompt", "one", "--append-system-prompt", "two"],
+			["--append-system-prompt", "one", "--append-system-prompt", "two"],
+		],
 		["tools", ["--tools", "read,bash"], ["--tools", "read,bash"]],
 		["exclude-tools", ["--exclude-tools", "write"], ["--exclude-tools", "write"]],
 		["no-tools", ["--no-tools"], ["--no-tools"]],

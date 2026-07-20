@@ -149,6 +149,7 @@ type ActiveToolLifecycleThis = TerminalTitleThis & {
 		string,
 		{
 			markExecutionStarted(): void;
+			updateArgs(args: unknown): void;
 			updateResult(result: unknown): void;
 		}
 	>;
@@ -160,6 +161,11 @@ type ActiveToolLifecycleThis = TerminalTitleThis & {
 	settingsManager: {
 		getImageWidthCells(): number;
 		getShowImages(): boolean;
+	};
+	toolArgsReveal: {
+		flush(id: string, args: unknown): boolean;
+		finish(id: string): void;
+		flushAll(): void;
 	};
 	toolOutputExpanded: boolean;
 	workingMessage: string | undefined;
@@ -331,6 +337,7 @@ describe("InteractiveMode terminal title state", () => {
 		const setMessage = vi.fn();
 		const toolComponent = {
 			markExecutionStarted: vi.fn(),
+			updateArgs: vi.fn(),
 			updateResult: vi.fn(),
 		};
 		const fakeThis: ActiveToolLifecycleThis = {
@@ -365,6 +372,11 @@ describe("InteractiveMode terminal title state", () => {
 			},
 			startToolHookStatusTimer: vi.fn(),
 			stopToolHookStatusTimer: vi.fn(),
+			toolArgsReveal: {
+				flush: vi.fn(() => false),
+				finish: vi.fn(),
+				flushAll: vi.fn(),
+			},
 			toolOutputExpanded: false,
 			workingMessage: "Thinking",
 			workingMessageBeforeActiveTool: undefined,
@@ -729,7 +741,7 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 		type FakeInteractiveMode = {
 			session: {
 				scopedModels: Array<{ model: TestModel }>;
-				modelRegistry: { getAvailable: () => TestModel[] };
+				modelRuntime: { getAvailable: () => TestModel[] };
 				promptTemplates: [];
 				extensionRunner: { getRegisteredCommands: () => [] };
 				resourceLoader: { getSkills: () => { skills: [] } };
@@ -752,7 +764,7 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 		const fakeThis: FakeInteractiveMode = {
 			session: {
 				scopedModels: [],
-				modelRegistry: { getAvailable: () => models },
+				modelRuntime: { getAvailable: () => models },
 				promptTemplates: [],
 				extensionRunner: { getRegisteredCommands: () => [] },
 				resourceLoader: { getSkills: () => ({ skills: [] }) },
@@ -779,7 +791,7 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 		type FakeInteractiveMode = {
 			session: {
 				scopedModels: [];
-				modelRegistry: { getAvailable: () => [] };
+				modelRuntime: { getAvailable: () => [] };
 				promptTemplates: [];
 				extensionRunner: { getRegisteredCommands: () => [] };
 				resourceLoader: { getSkills: () => { skills: [] } };
@@ -799,7 +811,7 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 		const fakeThis: FakeInteractiveMode = {
 			session: {
 				scopedModels: [],
-				modelRegistry: { getAvailable: () => [] },
+				modelRuntime: { getAvailable: () => [] },
 				promptTemplates: [],
 				extensionRunner: { getRegisteredCommands: () => [] },
 				resourceLoader: { getSkills: () => ({ skills: [] }) },

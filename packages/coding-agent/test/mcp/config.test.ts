@@ -1,6 +1,10 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadMcpConfig, McpConfigValidationError } from "../../src/core/extensions/builtin/mcp/config.ts";
+import {
+	loadMcpConfig,
+	McpConfigValidationError,
+	mergeExtensionMcpServers,
+} from "../../src/core/extensions/builtin/mcp/config.ts";
 import { makeRoot, writeJson } from "./config-test-helpers.ts";
 
 const TOKEN_EXPR = "$" + "{TOKEN}";
@@ -196,6 +200,64 @@ describe("mcp config", () => {
 		expect(result.servers.keepAlive.config).toMatchObject({
 			command: "node",
 			lifecycle: "keep-alive",
+		});
+	});
+
+	describe("mergeExtensionMcpServers", () => {
+		const extDecl = (
+			name: string,
+			config: { type: "stdio"; command: string; exposure?: "direct" | "search" | "auto" | "proxy" },
+		) => ({
+			name,
+			config,
+			extensionPath: "<ext>",
+			registrationCwd: "/tmp/ext",
+		});
+
+		it("lets trusted global entries win over extension declarations", () => {
+			const root = makeRoot();
+			writeJson(join(root.agentDir, "mcp.json"), { mcpServers: { dup: { command: "global" } } });
+			const config = loadMcpConfig({ agentDir: root.agentDir, cwd: root.cwd, projectTrusted: true });
+			mergeExtensionMcpServers(config, [extDecl("dup", { type: "stdio", command: "ext" })]);
+			expect(config.servers.dup).toMatchObject({ source: "global", state: "enabled" });
+			expect(config.diagnostics.some((d) => d.includes("dup") && d.includes("global"))).toBe(true);
+		});
+
+		it("lets trusted disabled entries win and keeps the server disabled", () => {
+			const root = makeRoot();
+			writeJson(join(root.agentDir, "mcp.json"), { mcpServers: { dup: { command: "global", enabled: false } } });
+			const config = loadMcpConfig({ agentDir: root.agentDir, cwd: root.cwd, projectTrusted: true });
+			mergeExtensionMcpServers(config, [extDecl("dup", { type: "stdio", command: "ext" })]);
+			expect(config.servers.dup).toMatchObject({ source: "global", state: "disabled" });
+		});
+
+		it("replaces untrusted placeholders and records a diagnostic", () => {
+			const root = makeRoot();
+			writeJson(join(root.cwd, ".senpi", "mcp.json"), { mcpServers: { shadow: { command: "evil" } } });
+			const config = loadMcpConfig({ agentDir: root.agentDir, cwd: root.cwd, projectTrusted: false });
+			expect(config.servers.shadow?.state).toBe("untrusted");
+			mergeExtensionMcpServers(config, [extDecl("shadow", { type: "stdio", command: "node" })]);
+			expect(config.servers.shadow).toMatchObject({ source: "extension", state: "enabled" });
+			expect(config.diagnostics.some((d) => d.includes("shadow") && d.includes("untrusted"))).toBe(true);
+		});
+
+		it("inserts fresh names with source extension, preserving exposure and defaulting cwd", () => {
+			const root = makeRoot();
+			const config = loadMcpConfig({ agentDir: root.agentDir, cwd: root.cwd, projectTrusted: true });
+			mergeExtensionMcpServers(config, [extDecl("fresh", { type: "stdio", command: "node", exposure: "direct" })]);
+			expect(config.servers.fresh).toMatchObject({ source: "extension", state: "enabled" });
+			expect(config.servers.fresh?.config?.exposure).toBe("direct");
+			expect(config.servers.fresh?.config?.cwd).toBe("/tmp/ext");
+		});
+
+		it("keeps configHash stable for identical declarations", () => {
+			const root = makeRoot();
+			const config = loadMcpConfig({ agentDir: root.agentDir, cwd: root.cwd, projectTrusted: true });
+			mergeExtensionMcpServers(config, [extDecl("stable", { type: "stdio", command: "node" })]);
+			const first = config.servers.stable?.configHash;
+			delete (config.servers as Record<string, unknown>).stable;
+			mergeExtensionMcpServers(config, [extDecl("stable", { type: "stdio", command: "node" })]);
+			expect(config.servers.stable?.configHash).toBe(first);
 		});
 	});
 

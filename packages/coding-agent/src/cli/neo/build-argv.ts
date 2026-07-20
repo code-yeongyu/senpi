@@ -65,6 +65,8 @@ export function buildNeoArgv(parsed: Args, options: BuildNeoArgvOptions): string
 	pushFlag(argv, "--no-prompt-templates", parsed.noPromptTemplates);
 	pushFlag(argv, "--no-themes", parsed.noThemes);
 	pushFlag(argv, "--no-context-files", parsed.noContextFiles);
+	pushValue(argv, "--system-prompt", parsed.systemPrompt);
+	pushRepeated(argv, "--append-system-prompt", parsed.appendSystemPrompt);
 
 	// Initial inputs — RAW, no expansion in the launcher.
 	for (const message of parsed.messages) {

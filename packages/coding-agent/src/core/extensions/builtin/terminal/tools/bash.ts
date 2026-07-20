@@ -1,5 +1,12 @@
 import { type Static, Type } from "typebox";
-import { BACKGROUND_START_GRACE_MS, DEFAULT_COLS, DEFAULT_ROWS, TERMINAL_BASH_TOOL } from "../shared.ts";
+import type { TerminalRuntimeSession } from "../runtime-session.ts";
+import {
+	BACKGROUND_START_GRACE_MS,
+	DEFAULT_COLS,
+	DEFAULT_ROWS,
+	KILLED_SESSION_EXIT_GRACE_MS,
+	TERMINAL_BASH_TOOL,
+} from "../shared.ts";
 import { errorResult, type TerminalToolContext, type TerminalToolResult, textResult } from "./context.ts";
 import { describeExit, spawnCommandSession } from "./spawn.ts";
 
@@ -33,6 +40,56 @@ function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
+type ForegroundWaitOutcome = "exited" | "abort_grace" | "timeout_grace";
+
+/**
+ * Wait for the session's exit to settle, but stop waiting a bounded grace after
+ * the session has been killed. The native wait joins the PTY reader thread,
+ * which blocks while any surviving descendant holds the PTY open — without the
+ * grace, an aborted or timed-out command can pin the agent forever.
+ */
+function raceExitWithKillGrace(
+	runtime: TerminalRuntimeSession,
+	signal: AbortSignal | undefined,
+	timeoutMs: number | undefined,
+): Promise<ForegroundWaitOutcome> {
+	return new Promise((resolve, reject) => {
+		let settled = false;
+		let abortGraceTimer: ReturnType<typeof setTimeout> | undefined;
+		let timeoutGraceTimer: ReturnType<typeof setTimeout> | undefined;
+		let armAbortGrace: (() => void) | undefined;
+		const settle = (finish: () => void) => {
+			if (settled) return;
+			settled = true;
+			if (abortGraceTimer) clearTimeout(abortGraceTimer);
+			if (timeoutGraceTimer) clearTimeout(timeoutGraceTimer);
+			if (signal && armAbortGrace) signal.removeEventListener("abort", armAbortGrace);
+			finish();
+		};
+		runtime.session.waitExit().then(
+			() => settle(() => resolve("exited")),
+			(error: unknown) => settle(() => reject(error instanceof Error ? error : new Error(String(error)))),
+		);
+		if (timeoutMs !== undefined) {
+			const timeoutGraceDeadlineMs = timeoutMs + KILLED_SESSION_EXIT_GRACE_MS;
+			// Beyond the 32-bit setTimeout range the deadline cannot be represented;
+			// keep the unbounded wait rather than firing a false early timeout.
+			if (timeoutGraceDeadlineMs <= MAX_TIMEOUT_MS) {
+				timeoutGraceTimer = setTimeout(() => settle(() => resolve("timeout_grace")), timeoutGraceDeadlineMs);
+			}
+		}
+		if (signal) {
+			armAbortGrace = () => {
+				abortGraceTimer ??= setTimeout(() => settle(() => resolve("abort_grace")), KILLED_SESSION_EXIT_GRACE_MS);
+			};
+			if (signal.aborted) armAbortGrace();
+			else signal.addEventListener("abort", armAbortGrace, { once: true });
+		}
+	});
+}
+
 async function runForeground(
 	ctx: TerminalToolContext,
 	input: PtyBashInput,
@@ -41,25 +98,41 @@ async function runForeground(
 	signal: AbortSignal | undefined,
 	cwd: string | undefined,
 ): Promise<TerminalToolResult> {
+	if (signal?.aborted) return errorResult("Command aborted");
 	const timeoutMs = input.timeout !== undefined ? Math.trunc(input.timeout * 1000) : undefined;
-	const { runtime } = await spawnCommandSession(ctx, { command: input.command, cols, rows, timeoutMs, cwd });
-	const onAbort = () => runtime.session.kill();
+	const { id, runtime } = await spawnCommandSession(ctx, { command: input.command, cols, rows, timeoutMs, cwd });
+	// Interrupt means "stop now": SIGKILL the whole process group in one shot.
+	// kill() is one-shot idempotent, so a gentle SIGTERM first would block any
+	// escalation, and a SIGTERM-ignoring command would pin the agent forever.
+	const onAbort = () => runtime.session.kill("SIGKILL");
 	if (signal) {
 		if (signal.aborted) onAbort();
 		else signal.addEventListener("abort", onAbort, { once: true });
 	}
+	let outcome: ForegroundWaitOutcome;
 	try {
-		await runtime.session.waitExit();
+		outcome = await raceExitWithKillGrace(runtime, signal, timeoutMs);
 	} finally {
 		signal?.removeEventListener("abort", onAbort);
 	}
 
+	if (outcome !== "exited") {
+		// Sweep the never-settling session: the bounded registry stop marks it
+		// `stopping`, so later /exit teardown cannot hang on its exit wait.
+		void ctx.manager.stop(id).catch(() => {});
+	}
 	const output = runtime.fullOutput().trimEnd();
-	const status = describeExit(runtime);
+	// Aborted runs report "Command aborted" (core bash parity) whether the exit
+	// settled normally or the kill grace released the wait. `outcome` matters
+	// beyond that only for the timeout grace, where exitResult is still null.
+	if (signal?.aborted) {
+		return errorResult(`${output ? `${output}\n\n` : ""}Command aborted`);
+	}
 	const exit = runtime.exitResult;
-	if (exit?.timedOut) {
+	if (outcome === "timeout_grace" || exit?.timedOut) {
 		return errorResult(`${output ? `${output}\n\n` : ""}Command timed out after ${input.timeout} seconds`);
 	}
+	const status = describeExit(runtime);
 	if (exit && exit.exitCode !== 0 && exit.exitCode !== null) {
 		return errorResult(`${output ? `${output}\n\n` : ""}Command exited with code ${exit.exitCode}`);
 	}

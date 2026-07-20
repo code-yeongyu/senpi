@@ -244,15 +244,33 @@ export function shouldCompact(contextTokens: number, contextWindow: number, sett
 
 const ESTIMATED_IMAGE_CHARS = 4800;
 
+/**
+ * Long unbroken base64-ish runs (base64 payloads, data URLs, hex dumps) tokenize
+ * near 1 token per character, not the ~4 chars/token of prose. Weight such runs
+ * 4x so the shared chars/4 heuristic stays conservative for them; otherwise a
+ * 1 MB inline screenshot estimates at ~256K tokens while providers count ~1M.
+ */
+const BASE64_RUN_RE = /[A-Za-z0-9+/=_-]{512,}/g;
+const BASE64_CHAR_WEIGHT = 4;
+
+function weightedChars(text: string): number {
+	let chars = text.length;
+	BASE64_RUN_RE.lastIndex = 0;
+	for (const match of text.matchAll(BASE64_RUN_RE)) {
+		chars += match[0].length * (BASE64_CHAR_WEIGHT - 1);
+	}
+	return chars;
+}
+
 function estimateTextAndImageContentChars(content: string | Array<{ type: string; text?: string }>): number {
 	if (typeof content === "string") {
-		return content.length;
+		return weightedChars(content);
 	}
 
 	let chars = 0;
 	for (const block of content) {
 		if (block.type === "text" && block.text) {
-			chars += block.text.length;
+			chars += weightedChars(block.text);
 		} else if (block.type === "image") {
 			chars += ESTIMATED_IMAGE_CHARS;
 		}
@@ -282,7 +300,7 @@ export function estimateTokens(message: AgentMessage): number {
 				} else if (block.type === "thinking") {
 					chars += block.thinking.length;
 				} else if (block.type === "toolCall") {
-					chars += block.name.length + JSON.stringify(block.arguments).length;
+					chars += block.name.length + weightedChars(JSON.stringify(block.arguments));
 				}
 			}
 			return Math.ceil(chars / 4);
@@ -293,7 +311,7 @@ export function estimateTokens(message: AgentMessage): number {
 			return Math.ceil(chars / 4);
 		}
 		case "bashExecution": {
-			chars = message.command.length + message.output.length;
+			chars = message.command.length + weightedChars(message.output);
 			return Math.ceil(chars / 4);
 		}
 		case "branchSummary":

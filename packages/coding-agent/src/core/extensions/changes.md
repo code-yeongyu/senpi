@@ -1,5 +1,149 @@
 # Core Extensions Changes
 
+## 2026-07-19 - Port phased op-based todo tool
+
+### What changed
+
+- Rewrote `builtin/todotools/` around one `todo` tool with `init`,
+  `start`, `done`, `drop`, `rm`, `append`, and `view`
+  operations.
+- Added phased state, content-keyed task resolution, automatic promotion,
+  atomic failure behavior, compaction compatibility, and a static phase-aware
+  renderer while preserving the `todowrite` builtin id and
+  `todo-sidebar` widget key.
+
+### Why
+
+- The old pair required sending a complete flat snapshot on every mutation.
+  The op-based port makes incremental updates retry-safe and gives the model a
+  smaller, phase-aware contract.
+
+### Attribution
+
+- Ported and adapted from oh-my-pi commit
+  `9fd6e97113f5ed3a847e66d346970efdf8afcad9` (v17.0.5); see
+  `builtin/todotools/changes.md` and the repository `NOTICE.md`.
+
+### Expected merge conflict zones
+
+- HIGH: `builtin/todotools/`, `builtin/compaction/todo-bridge.ts`, and
+  todo-specific tests if upstream changes its todo or compaction contracts.
+
+## 2026-07-17 - video-in builtin extension and "video" input modality
+
+### What changed
+
+- `types.ts`: `ProviderModelConfig.input` widened to `("text" | "image" | "video")[]`, tracking the pi-ai
+  `Model.input` union (kimi-coding `k3` declares video input).
+- New builtin `builtin/video-in/`: registers a `read_video` tool that attaches a local video file
+  (mp4/mpeg/mov/webm/mkv/avi/flv/3gp, ≤100MB) as a base64 `video/*` ImageContent block. The tool is
+  activated/deactivated on `session_start` and `model_select` based on `model.input.includes("video")`,
+  so it is only exposed to video-capable models. Registered in `builtin/index.ts` after `webfetch`.
+
+### Expected merge conflict zones
+
+- LOW: `types.ts` `ProviderModelConfig.input`.
+- LOW: `builtin/index.ts` import block and `builtinExtensions` array tail.
+
+## 2026-07-19 - model_select handlers observe live systemPromptOptions
+
+### What changed
+- `src/core/extensions/runner.ts`: `emitModelSelect` spreads a fresh
+  `systemPromptOptions` from `getSystemPromptOptionsFn()` into each handler's event, so
+  toolset-swapping handlers (gpt-apply-patch) and prompt-rebuilding handlers
+  (prompt-preset) stay consistent within one model switch.
+
+## 2026-07-17 - Factory-time `pi.registerMcpServer()` API
+
+### What changed
+- `src/core/extensions/builtin/mcp/config-schema.ts`: added `"extension"` to
+  `McpServerSource`; exported a public raw `McpServerDeclaration` type and a
+  single-server `validateMcpServerDeclaration(name, raw)` validator.
+- `src/core/extensions/types.ts`: added `ExtensionAPI.registerMcpServer(name,
+  config)`, `RegisteredMcpServerDeclaration`, and `Extension.mcpServers` +
+  `registrationCwd` storage; added optional
+  `ExtensionContext.getRegisteredMcpServers()`.
+- `src/core/extensions/loader.ts`: `createExtension` stores `registrationCwd`;
+  `createExtensionAPI` implements `registerMcpServer` with synchronous
+  ServerSchema + endpoint validation that throws only for the declaring
+  extension.
+- `src/core/extensions/runner.ts`: added
+  `ExtensionRunner.getRegisteredMcpServers()` with first-wins aggregation and a
+  conflict warning naming both extension paths; exposed it on
+  `ExtensionContext`.
+- `src/core/extensions/index.ts` + `src/index.ts`: re-export `McpServerDeclaration`.
+- `docs/extensions.md`: documented the factory-time-only contract, validation,
+  precedence, cwd defaulting, reload, and child-session behavior.
+
+### Why
+- Extensions need a first-class way to declare MCP servers that are available on
+  turn 1. Factory-time registration is the only seam that runs before
+  `session_start`, so servers can be connected and their tools registered before
+  the first model request.
+
+### Why extension system couldn't handle this alone
+- This is a public extension API addition: the declaration type, validator,
+  per-extension storage, runner aggregation, and context accessor all live in
+  the extension system.
+
+### Expected merge conflict zones
+- HIGH: `types.ts` around `ExtensionAPI` and `Extension` definitions.
+- MEDIUM: `loader.ts` `createExtension` / `createExtensionAPI`.
+- MEDIUM: `runner.ts` around `createContext()` and the aggregation helpers.
+- LOW: `src/index.ts` extension type re-exports.
+
+## 2026-07-17 - Tool renderer hasResult context
+
+### What changed
+
+- Added optional `ToolRenderContext.hasResult`, true once a partial or final result exists for a tool call.
+- Lets a call renderer that draws self-contained framing (e.g. codemode `eval`) yield to the result renderer instead
+  of stacking a duplicate block, since `ToolExecutionRenderer.update()` renders call-then-result into one container.
+
+### Why
+
+- `renderCall` previously had no way to detect that a result had arrived: `isPartial` is true both for "no result yet"
+  and "partial result", so a self-framing call renderer kept drawing its own box on top of the result box.
+
+### Why extension system couldn't handle this alone
+
+- `ToolRenderContext` is a public host-to-extension contract, and result presence for a tool row is owned by the
+  interactive renderer (`modes/interactive/components/tool-execution-renderer.ts`).
+
+### Expected merge conflict zones
+
+- MEDIUM: `types.ts` around `ToolRenderContext` as upstream adds renderer context fields.
+- LOW: `modes/interactive/components/tool-execution-renderer.ts` around `getRenderContext()`.
+
+## 2026-07-16 - anthropic-web-search gated to endpoints that support server-side web search
+
+### What changed
+
+- `builtin/anthropic-web-search/index.ts`: the extension now gates on the model instead of the API type,
+  mirroring `builtin/openai-web-search`. `supportsNativeAnthropicWebSearch(target)` is true for the first-party
+  `api.anthropic.com` endpoint or an explicit `compat.supportsWebSearch` opt-in. For unsupported
+  `anthropic-messages` endpoints the extension no longer
+  injects `web_search_20250305`, no longer strips a function-tool `web_search` (pi-websearch keeps working as the
+  fallback), strips any hook-injected native `web_search_*` variant plus an orphaned `tool_choice`, and skips the
+  web-search system prompt section.
+- `test/suite/anthropic-web-search-extension.test.ts`: added kimi-coding-shaped regression coverage for
+  non-injection, native-variant stripping, compat opt-in, and prompt-section gating.
+
+### Why
+
+- Anthropic-compatible endpoints such as kimi-coding accept the injected native tool and execute the server-side
+  search, but reject the replayed `server_tool_use` / `web_search_tool_result` blocks on the next request
+  (kimi-coding 400s with `tool_call_id is not found`), wedging the session mid-turn.
+
+### Why extension system couldn't handle this alone
+
+- It can (this is the extension-side half); `pi-ai` additionally strips unsupported `web_search_*` tools after all
+  hooks run (see `packages/ai/src/changes.md` 2026-07-16) so payloads from other extensions are covered too.
+
+### Expected merge conflict zones
+
+- MEDIUM: `builtin/anthropic-web-search/index.ts` if upstream reshapes native web tool payload handling.
+- LOW: `test/suite/anthropic-web-search-extension.test.ts` fixtures.
 ## 2026-07-10 - Tool renderer image protocol context
 
 ### What changed

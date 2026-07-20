@@ -1,5 +1,55 @@
 # mcp Extension Changes
 
+## Trust-aware merge for extension-declared MCP servers (2026-07-17)
+
+### What changed
+- `config-schema.ts`: added `"extension"` to the `McpServerSource` union;
+  exported `McpServerDeclaration` and `validateMcpServerDeclaration`.
+- `config.ts`: added `resolveExtensionMcpServer` (preserves declared
+  `exposure`/`directTools`/filters/lifecycle/`enabled`, defaults stdio `cwd` to
+  the extension's registration cwd) and `mergeExtensionMcpServers` with
+  trust-aware rules: trusted file sources win (including `enabled:false`),
+  extension declarations replace `untrusted` placeholders with a diagnostic.
+
+### Why
+- The new `pi.registerMcpServer()` extension API needs a merge seam that
+  respects the existing trust model: user config must still win, and untrusted
+  project placeholders must not block extension-provided defaults.
+
+### Why extension system couldn't handle this alone
+- The merge runs inside the MCP builtin but consumes runner-aggregated
+  declarations; the builtin cannot know trust rules or normalize server configs.
+
+### Expected merge conflict zones
+- MEDIUM: `config.ts` around `resolveSkillMcpServer` and the trusted/untrusted
+  merge helpers.
+
+## Attach extension-declared MCP servers on every session attach (2026-07-17)
+
+### What changed
+- `service-types.ts`: `McpSessionContext` gained optional
+  `getRegisteredMcpServers`; `McpServerSnapshot` gained a `source` field.
+- `service-snapshot.ts`: populates `source` from the resolved server.
+- `status.ts`: status rows now render `origin=<source>`.
+- `service.ts`: `attachSession` calls `mergeExtensionMcpServers` from
+  `ctx.getRegisteredMcpServers()` on every invocation, so session start,
+  reattach, and `/mcp` command paths all pick up current declarations.
+- `docs/mcp.md`: documented the `extension` source and cross-linked to
+  `extensions.md`.
+
+### Why
+- Declarations are aggregated by the runner, but the MCP builtin must read them
+  from the context on every attach to survive reattach and reload without
+  caching stale declarations.
+
+### Why extension system couldn't handle this alone
+- The runner owns the aggregation and context accessor; the builtin only sees
+  the narrow `McpSessionContext` passed into `attachSession`.
+
+### Expected merge conflict zones
+- LOW: `service.ts` `attachSession` ordering.
+- LOW: `status.ts` row format.
+
 ## Overview
 Built-in MCP (Model Context Protocol) client support as an in-tree builtin
 extension. Fork-native: upstream pi-mono deliberately ships no MCP support, so
@@ -49,7 +99,7 @@ every file under `builtin/mcp/` is fork-owned. Uses the exact-pinned official
 - `expose/tier-b.ts`: `registerMcpTierBTools` now returns a
   `McpTierBRegistration` handle (`searchable` + `rehydrateFromHistory`) instead
   of a bare searchable array; the rehydrate closure replays history activation
-  markers through the SAME activation path `mcp_search` uses (stub swap +
+  markers through the SAME activation path `tool_search` uses (stub swap +
   stable ordering), skipping already-active names.
 - `service.ts`: stores the tier-B handle per registration and exposes
   `rehydrateActiveToolsFromHistory(messages)` plus a once-per-registration
@@ -86,14 +136,14 @@ every file under `builtin/mcp/` is fork-owned. Uses the exact-pinned official
   name+description with a server-name field boost; normalised exact-name match
   (hyphen/underscore/case-insensitive) short-circuits before BM25; snake/camel/
   kebab tokenizer; deterministic ranking (tie-break by ascending name).
-- New `expose/tool-search.ts`: always-active `mcp_search` tool that ranks the
+- New `expose/tool-search.ts`: always-active `tool_search` tool that ranks the
   full catalog and promotes matches via `setActiveTools` (union, stable-sorted,
-  effective next turn). Results embed a stable `[mcp_search:activated]` marker;
+  effective next turn). Results embed a stable `[tool_search:activated]` marker;
   `rehydrateActiveToolsFromHistory` replays activations after compaction/restart,
   restoring only names still in the catalog.
 - New `expose/tier-b.ts`: completes `exposure:"auto"`. A server above
   `searchThreshold` enters SEARCH mode — full catalog registered, only
-  directTools active, `mcp_search` active. Prompt-cache mitigations: stable
+  directTools active, `tool_search` active. Prompt-cache mitigations: stable
   name sort; activation turns accept a cache miss (default mode); opt-in
   `settings.stubSwap` registers 30-70-token stubs so the tools array is
   length-stable and only the promoted entry's bytes change (stub -> full).
@@ -104,14 +154,14 @@ every file under `builtin/mcp/` is fork-owned. Uses the exact-pinned official
   and the Tier-B search catalog share one collision-resolved naming source.
 - `expose/session.ts`: registration routes through `registerMcpTierBTools`.
 - `expose/status.ts`: `/mcp status` reports total exposed tools + a search-mode
-  hint (`N active now, M searchable via mcp_search`).
+  hint (`N active now, M searchable via tool_search`).
 - New `expose/native-search.ts` (todo 33, Anthropic half — spike verdict
   GO-pure-extension): `addAnthropicNativeToolSearch` injects the native
   `tool_search_tool_bm25_20251119` tool + per-tool `defer_loading:true` under
   the HARD RULES (never defer the search tool, never defer+cache_control on one
   tool, >=1 non-deferred, <=10k tools), idempotently per rebuilt request;
   `AnthropicNativeToolSearchAdapter` disables native + falls back to local
-  mcp_search on an injected 400. `index.ts` registers a `before_provider_request`
+  tool_search on an injected 400. `index.ts` registers a `before_provider_request`
   (inject) + `after_provider_response` (400 detector) handler pair — a no-op
   unless `settings.nativeToolSearch` is auto|true and the model is
   anthropic-messages. The OpenAI half is deferred (spike = GO-with-ai-seam;
@@ -133,7 +183,7 @@ every file under `builtin/mcp/` is fork-owned. Uses the exact-pinned official
 Large MCP servers (30+ tools) blow the context budget if every tool is resident.
 Tier-B keeps inactive tools at ZERO payload contribution (proven by
 before_provider_request/context.tools capture: a 30-tool search-mode server
-resides in <1k tokens) while `mcp_search` gives the model on-demand access. This
+resides in <1k tokens) while `tool_search` gives the model on-demand access. This
 is the provider-agnostic P3 path that ships regardless of the native-search
 spike outcome (todo 29).
 

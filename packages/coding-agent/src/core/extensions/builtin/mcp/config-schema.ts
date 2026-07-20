@@ -93,9 +93,11 @@ export type McpServerConfig = Static<typeof ServerSchema> & {
 	exposure: "auto" | "direct" | "search" | "proxy";
 	logLevel: Static<typeof LogLevelSchema>;
 };
+/** Public raw type for extension-declared MCP servers. */
+export type McpServerDeclaration = Static<typeof ServerSchema>;
 export type McpSettings = Required<Pick<Static<typeof SettingsSchema>, "toolPrefix">> &
 	Omit<Static<typeof SettingsSchema>, "toolPrefix">;
-export type McpServerSource = "global" | "claude" | "project" | "skill";
+export type McpServerSource = "global" | "claude" | "project" | "skill" | "extension";
 export type McpServerState = "enabled" | "disabled" | "untrusted";
 
 export interface ResolvedMcpServer {
@@ -136,6 +138,32 @@ export function getServerEndpointValidationError(config: RawConfig): string | un
 }
 
 export const validateConfig = Compile(ConfigSchema);
+const validateServer = Compile(ServerSchema);
+
+/**
+ * Validate a single extension-declared MCP server.
+ * Returns a descriptive error string, or null when valid.
+ */
+export function validateMcpServerDeclaration(name: string, raw: unknown): string | null {
+	if (!validateServer.Check(raw)) {
+		const error = Array.from(validateServer.Errors(raw))[0];
+		const path =
+			error.instancePath
+				.replace(/^\//, "")
+				.split("/")
+				.map((p) => p.replace(/~1/g, "/").replace(/~0/g, "~"))
+				.join(".") || "$";
+		const message = error.message === "must be array" ? "Expected array" : error.message;
+		return `Invalid MCP server declaration "${name}": ${path}: ${message}`;
+	}
+	const server = raw as McpServerDeclaration;
+	const endpointError = getServerEndpointValidationError({ mcpServers: { [name]: server } });
+	if (endpointError) {
+		return `Invalid MCP server declaration "${name}": ${endpointError}`;
+	}
+	return null;
+}
+
 export const defaultSettings: McpSettings = {
 	outputGuard: { maxBytes: 50 * 1024, maxLines: 2000 },
 	searchThreshold: 10,

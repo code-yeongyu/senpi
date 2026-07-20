@@ -6,7 +6,8 @@ the persistent-kernel `eval` tool for JavaScript, Python, Ruby, and Julia.
 ## STRUCTURE
 
 ```text
-src/index.ts                     Extension factory and session-start re-registration
+src/index.ts                     Extension factory: registers baseline eval, re-registers at session_start after runtime resolution, re-registers on model_select when active model changes
+src/prompt/                      Model-aware eval prompt templates and batching dialect selection
 src/config/                      Settings schema, defaults, env overrides
 src/extension/                   Session generations and kernel ownership
 src/tool/                        Eval schema, cell execution, status events, rendering
@@ -27,6 +28,7 @@ test/                            Vitest contracts and the omp parity ledger
 
 - `eval` is registered at extension load and re-registered at `session_start`
   after settings, interpreter availability, and active task-tool names resolve.
+- Eval prompt dialect is selected from the active model id; host/workstation context is explicit; renderer/status semantics are structured.
 - Session generations fence old kernels and callbacks. A retired generation
   must not emit into a newer session.
 - Kernels persist state per language, while per-cell callbacks are rebound for
@@ -52,6 +54,8 @@ test/                            Vitest contracts and the omp parity ledger
 | Task | Path |
 | --- | --- |
 | Register or narrow eval | `src/index.ts`, `src/tool/eval-tool.ts` |
+| Prompt behavior | `src/prompt/eval-prompt.ts` |
+| Call/result rendering | `src/tool/render.ts` |
 | Cell settlement and output | `src/tool/cell-handler.ts`, `src/output/` |
 | Session and kernel ownership | `src/extension/session-manager.ts`, `src/index.ts` |
 | Bridge auth and protocol | `src/bridge/` |

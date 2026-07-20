@@ -1,5 +1,5 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
+import { type Component, Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
 import { formatProviderNativeBody, formatProviderNativeSummary } from "../../provider-native-rendering.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createBoundedRenderSignature } from "./render-signature.ts";
@@ -8,13 +8,34 @@ const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
-/**
- * Component that renders a complete assistant message
- */
+type MarkdownDescriptorKind = "text-md" | "thinking-md";
+type TextDescriptorKind = "thinking-label" | "provider-native-summary" | "provider-native-body" | "error-text";
+type RenderDescriptorKind = "spacer" | MarkdownDescriptorKind | TextDescriptorKind;
+type RenderDescriptor = { readonly kind: RenderDescriptorKind; readonly text: string };
+
+const SPACER_DESCRIPTOR = { kind: "spacer", text: "" } as const satisfies RenderDescriptor;
+
+function assertNever(value: never): never {
+	throw new TypeError(`Unexpected assistant render variant: ${String(value)}`);
+}
+
+function isVisibleContent(content: AssistantMessage["content"][number], providerNativeVisible: boolean): boolean {
+	switch (content.type) {
+		case "text":
+			return Boolean(content.text.trim());
+		case "thinking":
+			return Boolean(content.thinking.trim());
+		case "providerNative":
+			return providerNativeVisible;
+		case "toolCall":
+			return false;
+		default:
+			return assertNever(content);
+	}
+}
+
 export class AssistantMessageComponent extends Container {
-	private cachedLines?: string[];
-	private cachedSignature?: string;
-	private cachedWidth?: number;
+	private renderCache?: { readonly lines: string[]; readonly signature: string; readonly width: number };
 	private contentContainer: Container;
 	private hideThinkingBlock: boolean;
 	private markdownTheme: MarkdownTheme;
@@ -22,6 +43,7 @@ export class AssistantMessageComponent extends Container {
 	private outputPad: number;
 	private lastMessage?: AssistantMessage;
 	private lastMessageSignature?: string;
+	private renderDescriptors: readonly RenderDescriptor[] = [];
 	private hasToolCalls = false;
 	private expanded = false;
 
@@ -43,61 +65,44 @@ export class AssistantMessageComponent extends Container {
 		this.contentContainer = new Container();
 		this.addChild(this.contentContainer);
 
-		if (message) {
-			this.updateContent(message);
-		}
+		if (message) this.updateContent(message);
 	}
 
 	override invalidate(): void {
-		this.invalidateRenderCache();
+		this.renderCache = undefined;
 		super.invalidate();
-		if (this.lastMessage) {
-			this.lastMessageSignature = undefined;
-			this.updateContent(this.lastMessage);
-		}
+		this.renderDescriptors = [];
+		this.refreshContent();
 	}
 
 	setHideThinkingBlock(hide: boolean): void {
 		if (this.hideThinkingBlock === hide) return;
 		this.hideThinkingBlock = hide;
-		if (this.lastMessage) {
-			this.lastMessageSignature = undefined;
-			this.updateContent(this.lastMessage);
-		}
+		this.refreshContent();
 	}
 
 	setHiddenThinkingLabel(label: string): void {
 		if (this.hiddenThinkingLabel === label) return;
 		this.hiddenThinkingLabel = label;
-		if (this.lastMessage) {
-			this.lastMessageSignature = undefined;
-			this.updateContent(this.lastMessage);
-		}
+		this.refreshContent();
 	}
 
 	setExpanded(expanded: boolean): void {
-		if (this.expanded === expanded) {
-			return;
-		}
+		if (this.expanded === expanded) return;
 		this.expanded = expanded;
-		if (this.lastMessage) {
-			this.lastMessageSignature = undefined;
-			this.updateContent(this.lastMessage);
-		}
+		this.refreshContent();
 	}
 
 	setOutputPad(padding: number): void {
 		this.outputPad = padding;
-		if (this.lastMessage) {
-			this.lastMessageSignature = undefined;
-			this.updateContent(this.lastMessage);
-		}
+		this.renderDescriptors = [];
+		this.refreshContent();
 	}
 
 	override render(width: number): string[] {
 		const signature = this.lastMessageSignature ?? "";
-		if (this.cachedLines && this.cachedWidth === width && this.cachedSignature === signature) {
-			return [...this.cachedLines];
+		if (this.renderCache?.width === width && this.renderCache.signature === signature) {
+			return [...this.renderCache.lines];
 		}
 
 		const lines = super.render(width);
@@ -120,107 +125,132 @@ export class AssistantMessageComponent extends Container {
 			return;
 		}
 		this.lastMessageSignature = messageSignature;
-		this.invalidateRenderCache();
+		this.renderCache = undefined;
+		this.hasToolCalls = message.content.some((content) => content.type === "toolCall");
+		const descriptors = this.createRenderDescriptors(message);
+		this.reconcileRenderDescriptors(descriptors);
+	}
 
-		// Clear content container
-		this.contentContainer.clear();
-
-		const hasVisibleContent = message.content.some(
-			(c) =>
-				(c.type === "text" && c.text.trim()) ||
-				(c.type === "thinking" && c.thinking.trim()) ||
-				c.type === "providerNative",
-		);
-
-		if (hasVisibleContent) {
-			this.contentContainer.addChild(new Spacer(1));
-		}
-
-		// Render content in order
+	private createRenderDescriptors(message: AssistantMessage): readonly RenderDescriptor[] {
+		const descriptors: RenderDescriptor[] = [];
+		if (message.content.some((content) => isVisibleContent(content, true))) descriptors.push(SPACER_DESCRIPTOR);
 		for (let i = 0; i < message.content.length; i++) {
 			const content = message.content[i];
-			if (content.type === "text" && content.text.trim()) {
-				// Assistant text messages with no background - trim the text
-				// Set paddingY=0 to avoid extra spacing before tool executions
-				this.contentContainer.addChild(new Markdown(content.text.trim(), this.outputPad, 0, this.markdownTheme));
-			} else if (content.type === "thinking" && content.thinking.trim()) {
-				// Add spacing only when another visible assistant content block follows.
-				// This avoids a superfluous blank line before separately-rendered tool execution blocks.
-				const hasVisibleContentAfter = message.content
-					.slice(i + 1)
-					.some((c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()));
-
-				if (this.hideThinkingBlock) {
-					// Show static thinking label when hidden
-					this.contentContainer.addChild(
-						new Text(theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel)), this.outputPad, 0),
-					);
-					if (hasVisibleContentAfter) {
-						this.contentContainer.addChild(new Spacer(1));
-					}
-				} else {
-					// Thinking traces in thinkingText color, italic
-					this.contentContainer.addChild(
-						new Markdown(content.thinking.trim(), this.outputPad, 0, this.markdownTheme, {
-							color: (text: string) => theme.fg("thinkingText", text),
-							italic: true,
-						}),
-					);
-					if (hasVisibleContentAfter) {
-						this.contentContainer.addChild(new Spacer(1));
-					}
+			switch (content.type) {
+				case "text": {
+					const text = content.text.trim();
+					if (text) descriptors.push({ kind: "text-md", text });
+					break;
 				}
-			} else if (content.type === "providerNative") {
-				this.contentContainer.addChild(
-					new Text(theme.fg("muted", formatProviderNativeSummary(message, content, this.expanded)), 1, 0),
-				);
-				this.contentContainer.addChild(
-					new Text(theme.fg("dim", formatProviderNativeBody(content, this.expanded)), 3, 0),
-				);
-				const hasVisibleContentAfter = message.content
-					.slice(i + 1)
-					.some(
-						(c) =>
-							(c.type === "text" && c.text.trim()) ||
-							(c.type === "thinking" && c.thinking.trim()) ||
-							c.type === "providerNative",
-					);
-				if (hasVisibleContentAfter) {
-					this.contentContainer.addChild(new Spacer(1));
+				case "thinking": {
+					const thinkingBlocks: string[] = [];
+					for (; i < message.content.length; i++) {
+						const thinkingContent = message.content[i];
+						if (thinkingContent.type !== "thinking") break;
+						const thinking = thinkingContent.thinking.trim();
+						if (thinking) thinkingBlocks.push(thinking);
+					}
+					i--;
+					if (thinkingBlocks.length === 0) break;
+					const text = this.hideThinkingBlock
+						? theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel))
+						: thinkingBlocks.join("\n\n");
+					descriptors.push({ kind: this.hideThinkingBlock ? "thinking-label" : "thinking-md", text });
+					if (message.content.slice(i + 1).some((following) => isVisibleContent(following, false)))
+						descriptors.push(SPACER_DESCRIPTOR);
+					break;
 				}
+				case "providerNative":
+					descriptors.push(
+						{
+							kind: "provider-native-summary",
+							text: theme.fg("muted", formatProviderNativeSummary(message, content, this.expanded)),
+						},
+						{
+							kind: "provider-native-body",
+							text: theme.fg("dim", formatProviderNativeBody(content, this.expanded)),
+						},
+					);
+					if (message.content.slice(i + 1).some((following) => isVisibleContent(following, true)))
+						descriptors.push(SPACER_DESCRIPTOR);
+					break;
+				case "toolCall":
+					break;
+				default:
+					assertNever(content);
 			}
 		}
-
-		// Check if incomplete/failed - show after partial content.
-		// For aborted/error tool calls, tool execution components show the error.
-		// Length stops can happen before a tool call is complete, so surface them here too.
-		const hasToolCalls = message.content.some((c) => c.type === "toolCall");
-		this.hasToolCalls = hasToolCalls;
-		if (message.stopReason === "length") {
-			this.contentContainer.addChild(new Spacer(1));
-			this.contentContainer.addChild(
-				new Text(
-					theme.fg(
-						"error",
-						"Error: Model stopped because it reached the maximum output token limit. The response may be incomplete.",
-					),
-					this.outputPad,
-					0,
-				),
-			);
-		} else if (!hasToolCalls) {
-			if (message.stopReason === "aborted") {
+		const addError = (text: string): void => {
+			descriptors.push(SPACER_DESCRIPTOR, { kind: "error-text", text: theme.fg("error", text) });
+		};
+		switch (message.stopReason) {
+			case "length":
+				addError(
+					"Error: Model stopped because it reached the maximum output token limit. The response may be incomplete.",
+				);
+				break;
+			case "aborted": {
+				if (this.hasToolCalls) break;
 				const abortMessage =
 					message.errorMessage && message.errorMessage !== "Request was aborted"
 						? message.errorMessage
 						: "Operation aborted";
-				this.contentContainer.addChild(new Spacer(1));
-				this.contentContainer.addChild(new Text(theme.fg("error", abortMessage), this.outputPad, 0));
-			} else if (message.stopReason === "error") {
-				const errorMsg = message.errorMessage || "Unknown error";
-				this.contentContainer.addChild(new Spacer(1));
-				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), this.outputPad, 0));
+				addError(abortMessage);
+				break;
 			}
+			case "error":
+				if (!this.hasToolCalls) addError(`Error: ${message.errorMessage || "Unknown error"}`);
+				break;
+			case "stop":
+			case "toolUse":
+				break;
+			default:
+				assertNever(message.stopReason);
+		}
+		return descriptors;
+	}
+
+	private reconcileRenderDescriptors(descriptors: readonly RenderDescriptor[]): void {
+		let divergentIndex = 0;
+		const sharedLength = Math.min(this.renderDescriptors.length, descriptors.length);
+		while (divergentIndex < sharedLength) {
+			const previous = this.renderDescriptors[divergentIndex];
+			const next = descriptors[divergentIndex];
+			const child = this.contentContainer.children[divergentIndex];
+			if (!previous || !next || !child || previous.kind !== next.kind) break;
+			if (previous.text !== next.text) {
+				if ((next.kind === "text-md" || next.kind === "thinking-md") && child instanceof Markdown) {
+					child.setText(next.text);
+				} else break;
+			}
+			divergentIndex++;
+		}
+		for (const child of this.contentContainer.children.splice(divergentIndex)) child.dispose?.();
+		for (const descriptor of descriptors.slice(divergentIndex))
+			this.contentContainer.addChild(this.createRenderChild(descriptor));
+		this.renderDescriptors = descriptors;
+	}
+
+	private createRenderChild(descriptor: RenderDescriptor): Component {
+		switch (descriptor.kind) {
+			case "spacer":
+				return new Spacer(1);
+			case "text-md":
+				return new Markdown(descriptor.text, this.outputPad, 0, this.markdownTheme);
+			case "thinking-md":
+				return new Markdown(descriptor.text, this.outputPad, 0, this.markdownTheme, {
+					color: (text: string) => theme.fg("thinkingText", text),
+					italic: true,
+				});
+			case "thinking-label":
+			case "error-text":
+				return new Text(descriptor.text, this.outputPad, 0);
+			case "provider-native-summary":
+				return new Text(descriptor.text, 1, 0);
+			case "provider-native-body":
+				return new Text(descriptor.text, 3, 0);
+			default:
+				return assertNever(descriptor.kind);
 		}
 	}
 
@@ -235,14 +265,12 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	private cacheRender(width: number, signature: string, lines: string[]): void {
-		this.cachedWidth = width;
-		this.cachedSignature = signature;
-		this.cachedLines = [...lines];
+		this.renderCache = { lines: [...lines], signature, width };
 	}
 
-	private invalidateRenderCache(): void {
-		this.cachedLines = undefined;
-		this.cachedSignature = undefined;
-		this.cachedWidth = undefined;
+	private refreshContent(): void {
+		if (!this.lastMessage) return;
+		this.lastMessageSignature = undefined;
+		this.updateContent(this.lastMessage);
 	}
 }

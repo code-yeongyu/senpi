@@ -2,6 +2,114 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.7.20] - 2026-07-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.7.17-5] - 2026-07-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.7.17-4] - 2026-07-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.7.17-3] - 2026-07-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.7.17-2] - 2026-07-17
+
+### Added
+
+### Fixed
+
+## [2026.7.17] - 2026-07-17
+
+### Added
+
+### Fixed
+
+## [2026.7.16-3] - 2026-07-16
+
+### Added
+
+### Fixed
+
+## [2026.7.16-2] - 2026-07-16
+
+### Added
+
+### Fixed
+
+## [2026.7.16] - 2026-07-16
+
+### Added
+
+### Fixed
+
+## [0.80.9] - 2026-07-16
+
+## [0.80.8] - 2026-07-16
+
+## [0.80.7] - 2026-07-14
+
+## [2026.7.14-3] - 2026-07-14
+
+### Added
+
+### Fixed
+
+## [2026.7.14-2] - 2026-07-14
+
+### Added
+
+### Fixed
+
+## [2026.7.14] - 2026-07-14
+
 ### Added
 
 ### Fixed

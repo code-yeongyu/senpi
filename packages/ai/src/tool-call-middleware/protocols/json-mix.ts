@@ -1,4 +1,5 @@
 import type { Tool } from "../../types.ts";
+import { validateToolArguments } from "../../utils/validation.ts";
 import type { ParsedToolCall, ParserOptions, StreamParser, StreamParserEvent } from "../types.ts";
 
 type JsonMixOptions = {
@@ -416,6 +417,30 @@ function extractArgumentsProgress(toolCallJson: string): {
 	};
 }
 
+function extractBestEffortArguments(toolCallJson: string): Record<string, unknown> {
+	const { argumentsText } = extractArgumentsProgress(toolCallJson);
+	if (!argumentsText) {
+		return {};
+	}
+
+	try {
+		const argumentsValue = parseRelaxedJson(argumentsText);
+		return isRecord(argumentsValue) ? argumentsValue : {};
+	} catch {
+		return {};
+	}
+}
+
+function stripTrailingToolCallEndPrefix(raw: string, toolCallEnd: string): string {
+	const withoutWhitespace = raw.trimEnd();
+	for (let length = Math.min(toolCallEnd.length - 1, withoutWhitespace.length); length > 0; length -= 1) {
+		if (withoutWhitespace.endsWith(toolCallEnd.slice(0, length))) {
+			return withoutWhitespace.slice(0, -length).trimEnd();
+		}
+	}
+	return withoutWhitespace;
+}
+
 type JsonMixStreamState = {
 	activeToolCall: {
 		index: number;
@@ -511,6 +536,17 @@ function finalizeToolCall(
 		parserOptions?.onError?.("Could not process JSON tool call, keeping original text.", {
 			toolCall: fullSegment,
 		});
+		if (state.activeToolCall) {
+			events.push({
+				type: "toolcall_end",
+				index: state.activeToolCall.index,
+				name: state.activeToolCall.name,
+				id: state.activeToolCall.id,
+				arguments: extractBestEffortArguments(state.currentToolCallJson),
+				incomplete: true,
+				errorMessage: "Tool call arguments could not be parsed",
+			});
+		}
 		if (shouldEmitRawToolCallTextOnError(parserOptions)) {
 			emitText(events, fullSegment);
 		}
@@ -693,13 +729,116 @@ export function createJsonMixStreamParser(
 			const events: StreamParserEvent[] = [];
 
 			if (state.isInsideToolCall) {
-				const unfinishedToolCall = `${options.toolCallStart}${state.currentToolCallJson}${state.buffer}`;
-				parserOptions?.onError?.("Could not complete streaming JSON tool call at finish.", {
-					toolCall: unfinishedToolCall,
-				});
-				if (shouldEmitRawToolCallTextOnError(parserOptions)) {
-					emitText(events, unfinishedToolCall);
+				const raw = state.currentToolCallJson + state.buffer;
+				const remainder = stripTrailingToolCallEndPrefix(raw, options.toolCallEnd);
+				const parsedToolCall = parseToolCallJson(remainder, tools);
+				const resolvedTool = parsedToolCall ? tools.find((tool) => tool.name === parsedToolCall.name) : undefined;
+
+				if (parsedToolCall && resolvedTool) {
+					try {
+						validateToolArguments(resolvedTool, {
+							type: "toolCall",
+							id: state.activeToolCall?.id ?? options.createToolCallId(state.toolCallCount),
+							name: parsedToolCall.name,
+							arguments: parsedToolCall.arguments,
+						});
+
+						if (!state.activeToolCall) {
+							state.activeToolCall = {
+								index: state.toolCallCount,
+								id: options.createToolCallId(state.toolCallCount),
+								name: parsedToolCall.name,
+								emittedArguments: "",
+							};
+							state.toolCallCount += 1;
+							events.push({
+								type: "toolcall_start",
+								index: state.activeToolCall.index,
+								name: state.activeToolCall.name,
+								id: state.activeToolCall.id,
+							});
+						}
+
+						const canonicalArguments = JSON.stringify(parsedToolCall.arguments);
+						if (canonicalArguments !== state.activeToolCall.emittedArguments) {
+							const argumentsDelta = canonicalArguments.slice(state.activeToolCall.emittedArguments.length);
+							if (argumentsDelta.length > 0) {
+								events.push({
+									type: "toolcall_delta",
+									index: state.activeToolCall.index,
+									argumentsDelta,
+								});
+							}
+						}
+
+						events.push({
+							type: "toolcall_end",
+							index: state.activeToolCall.index,
+							name: parsedToolCall.name,
+							id: state.activeToolCall.id,
+							arguments: parsedToolCall.arguments,
+						});
+						state.activeToolCall = null;
+						state.currentToolCallJson = "";
+						state.isInsideToolCall = false;
+						state.buffer = "";
+						return events;
+					} catch (validationError) {
+						// Fall through to the sanitized incomplete-call recovery below; validation errors can contain raw arguments.
+						void validationError;
+					}
 				}
+
+				const name = extractTopLevelStringProperty(remainder, "name");
+				const knownTool = name ? tools.find((tool) => tool.name === name) : undefined;
+				const activeToolCall = state.activeToolCall;
+				if (knownTool || activeToolCall) {
+					const toolCallName = activeToolCall?.name ?? knownTool?.name;
+					if (toolCallName) {
+						const toolCall = activeToolCall ?? {
+							index: state.toolCallCount,
+							id: options.createToolCallId(state.toolCallCount),
+							name: toolCallName,
+							emittedArguments: "",
+						};
+						if (!activeToolCall) {
+							state.toolCallCount += 1;
+							events.push({
+								type: "toolcall_start",
+								index: toolCall.index,
+								name: toolCall.name,
+								id: toolCall.id,
+							});
+						}
+						events.push({
+							type: "toolcall_end",
+							index: toolCall.index,
+							name: toolCall.name,
+							id: toolCall.id,
+							arguments: extractBestEffortArguments(remainder),
+							incomplete: true,
+							errorMessage: "Tool call was truncated mid-arguments",
+						});
+					}
+					parserOptions?.onError?.("Could not complete streaming JSON tool call at finish.", {
+						protocol: "hermes",
+						retainedLength: raw.length,
+					});
+				} else if (name) {
+					parserOptions?.onError?.("Could not complete streaming JSON tool call at finish.", {
+						protocol: "hermes",
+						retainedLength: raw.length,
+					});
+					if (shouldEmitRawToolCallTextOnError(parserOptions)) {
+						emitText(events, `${options.toolCallStart}${raw}`);
+					}
+				} else {
+					parserOptions?.onError?.("Could not complete streaming JSON tool call at finish.", {
+						protocol: "hermes",
+						retainedLength: raw.length,
+					});
+				}
+
 				state.activeToolCall = null;
 				state.currentToolCallJson = "";
 				state.isInsideToolCall = false;

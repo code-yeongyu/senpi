@@ -330,40 +330,40 @@ function statusIcon(op: string): string {
 function formatStatusEvent(event: EvalStatusEvent, theme: Theme | undefined): string {
 	const op = event.op;
 	const icon = style(theme, "muted", statusIcon(op));
-	const error = eventString(event["error"]);
+	const error = eventString(event.error);
 	if (error !== undefined) return `${icon} ${style(theme, "warning", op)}: ${style(theme, "dim", error)}`;
 	const parts: string[] = [];
 	switch (op) {
 		case "read": {
-			parts.push(`${eventNumber(event["chars"] ?? event["bytes"])} chars`);
-			const path = eventString(event["path"]);
+			parts.push(`${eventNumber(event.chars ?? event.bytes)} chars`);
+			const path = eventString(event.path);
 			if (path !== undefined) parts.push(`from ${path}`);
 			break;
 		}
 		case "write": {
-			parts.push(`${eventNumber(event["chars"] ?? event["bytes"])} chars`);
-			const path = eventString(event["path"]);
+			parts.push(`${eventNumber(event.chars ?? event.bytes)} chars`);
+			const path = eventString(event.path);
 			if (path !== undefined) parts.push(`to ${path}`);
 			break;
 		}
 		case "cat":
-			parts.push(plural(eventNumber(event["files"]), "file", "files"));
-			parts.push(`${eventNumber(event["chars"])} chars`);
+			parts.push(plural(eventNumber(event.files), "file", "files"));
+			parts.push(`${eventNumber(event.chars)} chars`);
 			break;
 		case "ls":
-			parts.push(plural(eventNumber(event["count"]), "entry", "entries"));
+			parts.push(plural(eventNumber(event.count), "entry", "entries"));
 			break;
 		case "env": {
-			const action = eventString(event["action"]);
-			const key = eventString(event["key"]);
-			const value = eventString(event["value"]) ?? "";
+			const action = eventString(event.action);
+			const key = eventString(event.key);
+			const value = eventString(event.value) ?? "";
 			if (action === "set" && key !== undefined) parts.push(`set ${key}=${value.slice(0, 30)}`);
 			else if (action === "get" && key !== undefined) parts.push(`${key}=${value.slice(0, 30)}`);
-			else parts.push(plural(eventNumber(event["count"]), "variable", "variables"));
+			else parts.push(plural(eventNumber(event.count), "variable", "variables"));
 			break;
 		}
 		case "git_status": {
-			if (event["clean"] === true) parts.push("clean");
+			if (event.clean === true) parts.push("clean");
 			else {
 				const changes: string[] = [];
 				for (const key of ["staged", "modified", "untracked"] as const) {
@@ -372,41 +372,41 @@ function formatStatusEvent(event: EvalStatusEvent, theme: Theme | undefined): st
 				}
 				parts.push(changes.join(", ") || "unknown");
 			}
-			const branch = eventString(event["branch"]);
+			const branch = eventString(event.branch);
 			if (branch !== undefined) parts.push(`on ${branch}`);
 			break;
 		}
 		case "git_diff":
-			parts.push(plural(eventNumber(event["lines"]), "line", "lines"));
-			if (event["staged"] === true) parts.push("staged");
+			parts.push(plural(eventNumber(event.lines), "line", "lines"));
+			if (event.staged === true) parts.push("staged");
 			break;
 		case "git_log":
-			parts.push(plural(eventNumber(event["commits"]), "commit", "commits"));
+			parts.push(plural(eventNumber(event.commits), "commit", "commits"));
 			break;
 		case "run":
 		case "sh": {
-			const command = eventString(event["command"] ?? event["cmd"]);
+			const command = eventString(event.command ?? event.cmd);
 			if (command !== undefined) parts.push(command);
-			if (typeof event["exitCode"] === "number") parts.push(`exit ${event["exitCode"]}`);
+			if (typeof event.exitCode === "number") parts.push(`exit ${event.exitCode}`);
 			break;
 		}
 		case "completion": {
-			const model = eventString(event["model"]);
-			const tier = eventString(event["tier"]);
+			const model = eventString(event.model);
+			const tier = eventString(event.tier);
 			if (model !== undefined) parts.push(model);
 			if (tier !== undefined && tier !== model) parts.push(tier);
-			parts.push(`${eventNumber(event["chars"])} chars`);
+			parts.push(`${eventNumber(event.chars)} chars`);
 			break;
 		}
 		case "log":
-			parts.push(eventString(event["message"]) ?? "");
+			parts.push(eventString(event.message) ?? "");
 			break;
 		case "phase":
-			parts.push(eventString(event["title"]) ?? "");
+			parts.push(eventString(event.title) ?? "");
 			break;
 		default: {
-			if (event["count"] !== undefined) parts.push(String(event["count"]));
-			const path = eventString(event["path"]);
+			if (event.count !== undefined) parts.push(String(event.count));
+			const path = eventString(event.path);
 			if (path !== undefined) parts.push(path);
 		}
 	}
@@ -443,7 +443,7 @@ function coalesceAgentEvents(events: readonly EvalStatusEvent[]): EvalStatusEven
 	const rows: EvalStatusEvent[] = [];
 	const indexes = new Map<string, number>();
 	for (const event of events) {
-		const id = eventString(event["id"]);
+		const id = eventString(event.id);
 		if (id === undefined) {
 			rows.push(event);
 			continue;
@@ -480,13 +480,13 @@ function renderAgentProgressEvents(events: readonly EvalStatusEvent[], environme
 	// Senpi Theme has no tree-token API; fixed ├/└/│ glyphs intentionally mirror omp.
 	for (const [index, event] of rows.entries()) {
 		const isLast = index === rows.length - 1;
-		const status = agentStatus(event["status"]);
+		const status = agentStatus(event.status);
 		const presentation = agentPresentation(status, environment.spinnerFrame);
-		const id = eventString(event["id"]) ?? "agent";
+		const id = eventString(event.id) ?? "agent";
 		const styledId = environment.theme === undefined ? id : environment.theme.bold(id);
 		let body = `${style(environment.theme, presentation.color, presentation.icon)} ${styledId} ${presentation.label}`;
 		if (status === "completed" || status === "failed" || status === "aborted") {
-			const duration = eventNumber(event["durationMs"]);
+			const duration = eventNumber(event.durationMs);
 			if (duration > 0) body += ` · ${style(environment.theme, "dim", formatDuration(duration))}`;
 		}
 		const branch = isLast ? "└ " : "├ ";
@@ -496,8 +496,8 @@ function renderAgentProgressEvents(events: readonly EvalStatusEvent[], environme
 			renderPrefixed(body, environment, { prefix: branch, continuation: continuation, color: "dim" }),
 		);
 		if (status !== "running") continue;
-		const currentTool = eventString(event["currentTool"]);
-		const lastIntent = eventString(event["lastIntent"]);
+		const currentTool = eventString(event.currentTool);
+		const lastIntent = eventString(event.lastIntent);
 		if (currentTool === undefined && lastIntent === undefined) continue;
 		const detail =
 			currentTool === undefined
@@ -725,6 +725,12 @@ export function renderEvalCall(
 	context: RenderContext,
 ): EvalRenderComponent {
 	const component = componentFor(context);
+	if (context.hasResult === true) {
+		// The result renderer owns the full pending -> running -> done frame once a result exists.
+		// Rendering the call frame too would stack a duplicate box, so yield to it here.
+		component.setBlocks([]);
+		return component;
+	}
 	if (theme === undefined && context.spinnerFrame === undefined) {
 		const title = args.title === undefined ? "" : ` ${args.title}`;
 		const reset = args.reset === true ? " reset" : "";

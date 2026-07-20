@@ -73,6 +73,12 @@ export interface SessionRegistryOptions<TSession extends SessionRegistrySession 
 	readonly killProcess?: (target: number, signal: TerminalSessionSignal) => void;
 	readonly now?: () => number;
 	readonly platform?: string;
+	/**
+	 * How long `stop()` waits for a killed session to report exit before marking
+	 * it `stopping` and returning. Guards against sessions whose exit never
+	 * settles (e.g. a surviving descendant holding the PTY open). Default 5s.
+	 */
+	readonly stopExitGraceMs?: number;
 }
 
 export type StoredSessionRegistryEntry<TSession extends SessionRegistrySession> = {

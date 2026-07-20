@@ -1,5 +1,46 @@
 # prompt-preset Extension Changes
 
+## Todo tool prompt naming (2026-07-19)
+
+### What changed
+
+- Updated the GPT-5.5, GPT-5.6, and GLM-5.2 todo-discipline text to call the
+  unified `todo` tool instead of the removed `todowrite` tool surface.
+
+### Why
+
+- The builtin extension keeps the historical `todowrite` id for loader
+  compatibility, but models now receive one registered tool named `todo`.
+
+### Expected merge conflict zones
+
+- LOW: the three model preset prompt strings and their phrase-pinning tests.
+
+## Grok 4.5 preset (unreleased — 2026-07-17)
+
+Grok 4.5 has **not** been formally merged. Do not invent `v1`/`v2`/… edition labels for unreleased retunes — keep a single current section for this feature until it lands.
+
+### What changed (current branch state)
+- `grok-4.5.ts`: rewritten as a full-core preset via the `corePrompt` override (same shape as `gpt-5.5.ts` / `gpt-5.6.ts`). The role is now **CEO / orchestrator**, not a sibling tuningSection: Grok 4.5 acts as the single human-facing surface, delegates implementation work to background worker subprocesses spawned via `bash` as `senpi --print -p "..." --model <worker>` invocations (background `&` for parallel, output to temp files, `read` to collect), framed against GPT-5.6 prompting doctrine (implement-don't-propose, Manual QA Gate, binding stop contract). It consults a separate `senpi --print` review invocation before deploying non-trivial changes (the Oracle pattern), audits worker evidence rather than relaying self-report, and reports synthesized outcomes to the user. Trivial one-line fixes stay direct.
+- senpi does NOT expose a `task` / `subagent` / `spawn` tool to the model - the built-in tool surface is bash/edit/read/write/grep/ls/find. So the CEO delegates through the concrete primitive it has (`bash` spawning `senpi --print` subprocesses), mirroring the gpt-5.6.ts rule of never naming tools that do not exist here. An earlier draft of this preset referenced a `task` tool with `category: "deep"` / `"ultrabrain"` values; that was a defect (those are the *orchestrator-side* task tool's categories, not anything the senpi agent exposes to Grok), and the regression test now explicitly pins that those names do not appear in the preset.
+- Reuses `buildTestDisciplineSection()` and `buildFileOperationsTuning()` so shared rules stay single-sourced. Dynamic pieces (tool section, context files, skills, date, cwd) still come from `buildDynamicSystemPrompt`.
+- Prior tuningSection content (act-once-context-sufficient, claim-auditing, no-promise-endings, context-limit continuation) was superseded by the CEO core, which subsumes those rules into the CEO's audit + reporting duties and the binding Stop Goal. The Mario benchmark rationale is preserved below for history.
+- Benchmark evidence from the prior tuningSection version is under `local-ignore/qa-evidence/20260717-grok45-mario-benchmark/`.
+- `presets.ts`: `hasGrok45Signal` / `isGrok45Model` unchanged (match any Grok 4.5 id shape without catching `grok-4.3` / `grok-4.20-*` / `grok-3`).
+- `settings.ts`: `"grok-4.5"` joins `PromptPresetName` / `VALID_PRESETS` (unchanged).
+- `test/suite/prompt-presets-grok-4-5.test.ts`: id resolution, negative neighbors, settings force, and catalog coverage unchanged. The old tuning-string regex pins and the 900–1800 character tuning-size guard were replaced with CEO-signal assertions (acting as the CEO and orchestrator; delegate implementation to background workers via `bash`; `senpi --print`; GPT-5.6 prompting doctrine; implement-don't-propose; Manual QA Gate; consult Oracle before deploying; you are the human surface; Stop Goal; STOPPING IS MANDATORY AND IMMEDIATE; `apply_patch` and `### Test Discipline` present; routing-line preserved). Also pins that the preset does NOT name a nonexistent `task`/`category`/`run_in_background` tool.
+
+### Why
+- The CEO role is not a small addendum on top of the default identity — it is a different operating posture (orchestrator + human surface, not implementer), which the `tuningSection` shape cannot express. The `corePrompt` override is the documented path for full-role rewrites (per `AGENTS.md` and the gpt-5.5/5.6 precedent). The Mario benchmark established that evidence-grounded continuation and claim-auditing are the right Grok 4.5 execution discipline; the CEO core subsumes those into the CEO's audit + reporting duties and the Stop Goal rather than duplicating them.
+- Delegation framing against GPT-5.6 doctrine is chosen because the gpt-5.6 preset already encodes that doctrine for the implementation-worker role; the CEO points its worker children at the same doctrine so worker behavior matches what gpt-5.6 would do in-session.
+
+### Why extension system couldn't handle this differently
+- Preset selection and family tuning are owned by this builtin; no core prompt code changed.
+
+### Expected merge conflict zones on next upstream sync
+- LOW: `presets.ts` Grok matcher / `settings.ts` union if upstream adds its own Grok preset.
+- LOW: `grok-4.5.ts` wording and Grok test phrase pins.
+
 ## Overview
 Per-model prompt preset extension. Selects a tuned system prompt based on the active model and exposes it through the dynamic prompt builder.
 
@@ -10,6 +51,71 @@ Per-model prompt preset extension. Selects a tuned system prompt based on the ac
 - `gpt-5.ts` / `gpt-5.2.ts` / `gpt-5.3-codex.ts` / `gpt-5.4.ts` / `gpt-5.5.ts` / `gpt-5.6.ts` - GPT-5.x preset prompt builders.
 - `claude-opus-4-{5,6,7}.ts` / `kimi-k2-{6,7}.ts` - Other family presets.
 - `file-operations.ts` - Shared codex-style "File operations" tuning block consumed by every GPT-5.x preset.
+
+## Kimi K3 preset (2026-07-17)
+
+### What changed
+- `kimi-k3.ts`: new preset for the Kimi K3 family. K3 is distilled from Claude Opus 4.8 and Claude Fable 5 on top of the K2-line, so the tuning blends the three: K2 Thinking-class loop discipline (commit to one path, act directly on mechanical work, deep reasoning only where correctness is at risk — per the K2.6/K2.7 presets), Opus 4.8 traits (scope literalism with explicit scope statement; prefer tool calls over reasoning past a lookup-able fact), and Fable 5 traits (act when you have enough information; recommendation-not-survey; audit progress claims against tool results; no text-only promise endings — do the work; outcome-first final summaries in complete sentences; no context-limit wrap-up).
+- `presets.ts`: `hasKimiK3Signal` matches `kimi-k3` boundaries plus the bare `k3` id (the `kimi-coding` provider's catalog id); checked via id or display name, ordered before the K2.7/K2.6 checks. Dispatch case added.
+- `settings.ts`: `"kimi-k3"` joins `PromptPresetName` and `VALID_PRESETS`.
+- `docs/settings.md`, `AGENTS.md`: preset lists updated.
+- `test/suite/prompt-presets-kimi-k3.test.ts`: resolution across kimi-coding/moonshotai/moonshotai-cn/openrouter/vercel-ai-gateway/opencode-go ids (incl. `:thinking` tag and display-name matching), non-routing of K2.x/`kimi-for-coding`/`kimi-latest`/`grok-3`, K2.x/K3 tuning isolation, settings + model-metadata override, catalog sweep.
+
+### Why
+- Kimi K3 shipped in the model catalogs (packages/ai) without a preset, so it fell back to the untuned dynamic prompt. Its lineage (K2 base, Opus 4.8 + Fable 5 distillation) means the documented behavioral quirks of all three families apply, and each tuning line addresses a quirk documented in the respective prompting guide.
+
+### Why extension system couldn't handle this differently
+- Content-only addition inside this builtin; follows the thin-wrapper preset architecture (tuningSection only).
+
+### Expected merge conflict zones on next upstream sync
+- LOW: `kimi-k3.ts` is fork-only; `presets.ts`/`settings.ts` touch shared lists — trivial adjacent-line conflicts if upstream adds presets.
+
+## Kimi K3 tuning tightening against overthinking (2026-07-17)
+
+### What changed
+- `kimi-k3.ts`: rewrote the `tuningSection` to focus on the K2.6-style loop-discipline signal. Dropped the Opus 4.8 scope-literalism paragraph and the Fable 5 claim-audit / no-promise-ending paragraphs because the shared core already covers verification tiers and the "act, then report" execution stance; restating them in the tuning diluted the anti-overthinking message and added self-reflection loops. The new tuning is shorter, mirrors the proven K2.7 shape, and explicitly adds the K2.6 filler-verification ban.
+- `test/suite/prompt-presets-kimi-k3.test.ts`: replaced the `audit each claim` pin with `evidence-first` and `skip filler verification language`; updated the K2.6/K3 isolation assertion from the shared phrase to K2.6's exact opener so the test still guards against accidental preset drift.
+
+### Why
+- K3 was overthinking on clear, mechanical, or already-specified work — restating requests, re-deriving established facts, and using filler verification language. The previous tuning tried to prevent this while also carrying scope-literalism and claim-audit instructions; the extra instructions competed for attention and gave the model more opportunities to loop. The K2.6/K2.7 presets solve the same problem with a single, high-signal paragraph.
+
+### Why extension system couldn't handle this differently
+- Content-only change inside the existing builtin `tuningSection`; no core prompt code changed.
+
+### Expected merge conflict zones on next upstream sync
+- LOW: `kimi-k3.ts` is fork-only; the extension test only touches K3-specific assertions.
+
+## GPT-5.6 omo-parity refinements (2026-07-16)
+
+### What changed
+- `gpt-5.6.ts`: rebound the Verification tiers and Manual QA Gate framing from "diagnostics" to "type check / lint" - senpi exposes no diagnostics/LSP tool, and GPT-5.6 follows prompt contracts literally, so the old wording named a validator that does not exist (category A: wrong info). Reframed the tool-loops paragraph as an inverted default ("Independent tool calls run in the same message - serial is the exception and requires a real dependency") and added the shell no-chaining rule (each independent command is its own bash call; no `;`/`&&` for unrelated steps), both from omo Hephaestus 5.6. Todo discipline gains deliverable-not-verb item naming and a turn-end reconciliation rule (completed/blocked/removed, never left `in_progress`) from the omo-codex Hephaestus variant's Task Tracking. The file-reference rule now bans `【F:...†L...】`-style bracketed citations - a Codex-served-model prior the terminal renders broken.
+- NOT ported from omo (re-confirmed): `bg_`/`ses_` ID contracts, delegation tables, Oracle escalation, "user does not see command outputs" (false for senpi's TUI), review-lane SHA idempotence (omo-workflow-specific). **Banked for a future spawn tool:** the GOAL / STOP WHEN / EVIDENCE spawn-label contract plus its anti-Goodhart clause (fill labels with outcomes, never mechanisms; judge a child by returned EVIDENCE against its STOP WHEN, never self-report). When a senpi extension grows a spawn surface, this belongs in that tool's description, not this core preset.
+- `prompt-presets-extension.test.ts`: pins "serial is the exception", "reconcile every item", "type check", and the absence of `lsp_diagnostics`.
+
+### Why
+- Part-by-part comparison against omo's Hephaestus 5.6 prompts (omo-opencode `gpt-5-6.ts` + omo-codex `gpt-5.6.md`) surfaced post-port additions worth adopting and one senpi-side defect (phantom "diagnostics" validator). Edits follow the prompt-engineering skill: each lands at the source section, net growth is under ~80 tokens against the diagnostics rewording, and duplicated rules were merged rather than appended.
+
+### Why extension system couldn't handle this differently
+- Content-only change inside this builtin's existing `corePrompt` override; no core prompt code changed.
+
+### Expected merge conflict zones on next upstream sync
+- LOW: `gpt-5.6.ts` is fork-only; conflicts only if upstream adds its own GPT-5.6 preset.
+
+## GPT-5.6 binding stop contract (2026-07-14)
+
+### What changed
+- `gpt-5.6.ts`: ported the Hephaestus stop-contract hardening that landed in oh-my-opencode after the 2026-07-13 parity rewrite (omo commits 03753d38c, a0a89aa6d, 8482f2c9a on `packages/omo-codex/plugin/components/rules/bundled-rules/hephaestus/gpt-5.6.md`). The Intent Gate routing line now declares a per-turn stop condition ("I'll stop right away when [the exact, observable condition that ends this turn]") and names it BINDING. `## Stop Rules` became `## Stop Goal`: the done-conditions moved from a prose run-on into a bulleted list, stop-time "run verification once more" was replaced with "confirm each item against evidence already captured" (the extra validation loop at stop time was itself a stop-goal violation), and stopping is now explicit - mandatory and immediate, no re-polish, no bonus refactor, every action past the stop goal is a defect.
+- NOT ported: the GOAL / STOP WHEN / EVIDENCE spawn-label contract (omo commits 4cdac71d6, 53dc9f0a1). It binds `spawn_agent` messages, and senpi has no subagent tools; per the GPT-5.6 guide, the stop-contract-propagation clause only applies "when the prompt spawns subagents".
+- `prompt-presets-extension.test.ts`: the gpt-5.6 resolution test pins `## Stop Goal` (and the absence of `## Stop Rules`), the declared-stop-condition line, `BINDING`, and `STOPPING IS MANDATORY AND IMMEDIATE`.
+
+### Why
+- GPT-5.6 persists past the finish line: without an explicit stop contract it keeps validating and re-polishing after the work is done. The GPT-5.6 prompting guide made stop rules mandatory and added the "declared, binding stop condition" as part 4 of the stop contract; Hephaestus adopted it upstream on 2026-07-14, and this port keeps the senpi preset at parity.
+
+### Why extension system couldn't handle this differently
+- Content-only change inside this builtin's existing `corePrompt` override; no core prompt code changed.
+
+### Expected merge conflict zones on next upstream sync
+- LOW: `gpt-5.6.ts` is fork-only; conflicts only if upstream adds its own GPT-5.6 preset.
 
 ## GPT-5.6 Hephaestus-parity core rewrite (2026-07-13)
 

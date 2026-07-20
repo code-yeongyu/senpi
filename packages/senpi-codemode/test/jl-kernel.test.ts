@@ -94,79 +94,94 @@ describe("JuliaKernel", () => {
 			}
 		},
 	);
-	it.skipIf(!hasJulia())("matches helper, status, markdown, and auto-display contracts", async () => {
-		const root = await mkdtemp(join(tmpdir(), "senpi-jl-kernel-parity-"));
-		const localRoot = join(root, "local");
-		const messages: KernelToHostMessage[] = [];
-		const toolCalls: { readonly toolName: string; readonly args: unknown }[] = [];
-		const server = await startBridgeServer({
-			token: "parity-token",
-			onCall: async (request) => {
-				toolCalls.push({ toolName: request.toolName, args: request.args });
-				return "agent-result";
-			},
-			onEmit: async () => {},
-			onCompletion: async () => "unused",
-		});
-		try {
-			const kernel = JuliaKernel.start({
-				cwd: root,
-				sessionId: "jl-parity",
-				connection: { port: server.port, token: server.token, localRoots: { local: localRoot } },
-				onMessage: (message) => messages.push(message),
+	it.skipIf(!hasJulia())(
+		"matches helper, status, markdown, and auto-display contracts",
+		async () => {
+			const root = await mkdtemp(join(tmpdir(), "senpi-jl-kernel-parity-"));
+			const localRoot = join(root, "local");
+			const messages: KernelToHostMessage[] = [];
+			const toolCalls: { readonly toolName: string; readonly args: unknown }[] = [];
+			const server = await startBridgeServer({
+				token: "parity-token",
+				onCall: async (request) => {
+					toolCalls.push({ toolName: request.toolName, args: request.args });
+					return "agent-result";
+				},
+				onEmit: async () => {},
+				onCompletion: async () => "unused",
 			});
 			try {
-				const coldStartTimeoutMs = 60_000;
-				const warmTimeoutMs = 8_000;
-				// Given: a live kernel with a local:// root and loopback bridge.
-				// When: cells exercise the documented Julia helper and REPL surface.
-				const literal = await kernel.run({ cellId: "literal", code: "1 + 1", timeoutMs: coldStartTimeoutMs });
-				const assignment = await kernel.run({ cellId: "assignment", code: "answer = 5", timeoutMs: warmTimeoutMs });
-				const nilValue = await kernel.run({ cellId: "nil", code: "nothing", timeoutMs: warmTimeoutMs });
-				const environment = await kernel.run({
-					cellId: "environment",
-					code: 'env("SENPI_JL_PARITY", "value"); env("SENPI_JL_PARITY")',
-					timeoutMs: warmTimeoutMs,
+				const kernel = JuliaKernel.start({
+					cwd: root,
+					sessionId: "jl-parity",
+					connection: { port: server.port, token: server.token, localRoots: { local: localRoot } },
+					onMessage: (message) => messages.push(message),
 				});
-				const agent = await kernel.run({
-					cellId: "agent",
-					code: 'write("local://nested/value.txt", "hello"); agent("summarize")',
-					timeoutMs: warmTimeoutMs,
-				});
-				const output = await kernel.run({ cellId: "output", code: 'output("st_123")', timeoutMs: warmTimeoutMs });
-				await kernel.run({
-					cellId: "markdown",
-					code: 'display(Dict("type" => "markdown", "text" => "# Heading"))',
-					timeoutMs: warmTimeoutMs,
-				});
+				try {
+					const coldStartTimeoutMs = 60_000;
+					const warmTimeoutMs = 8_000;
+					// Given: a live kernel with a local:// root and loopback bridge.
+					// When: cells exercise the documented Julia helper and REPL surface.
+					const literal = await kernel.run({ cellId: "literal", code: "1 + 1", timeoutMs: coldStartTimeoutMs });
+					const assignment = await kernel.run({
+						cellId: "assignment",
+						code: "answer = 5",
+						timeoutMs: warmTimeoutMs,
+					});
+					const nilValue = await kernel.run({ cellId: "nil", code: "nothing", timeoutMs: warmTimeoutMs });
+					const environment = await kernel.run({
+						cellId: "environment",
+						code: 'env("SENPI_JL_PARITY", "value"); env("SENPI_JL_PARITY")',
+						timeoutMs: warmTimeoutMs,
+					});
+					const agent = await kernel.run({
+						cellId: "agent",
+						code: 'write("local://nested/value.txt", "hello"); agent("summarize")',
+						timeoutMs: warmTimeoutMs,
+					});
+					const output = await kernel.run({
+						cellId: "output",
+						code: 'output("st_123")',
+						timeoutMs: warmTimeoutMs,
+					});
+					await kernel.run({
+						cellId: "markdown",
+						code: 'display(Dict("type" => "markdown", "text" => "# Heading"))',
+						timeoutMs: warmTimeoutMs,
+					});
 
-				// Then: only eligible final expressions auto-display and helpers use the bridge contract.
-				expect(literal).toMatchObject({ ok: true, valueRepr: "2" });
-				expect(assignment).toMatchObject({ ok: true });
-				if (assignment.ok) expect(assignment.valueRepr).toBeUndefined();
-				expect(nilValue).toMatchObject({ ok: true });
-				if (nilValue.ok) expect(nilValue.valueRepr).toBeUndefined();
-				expect(environment).toMatchObject({ ok: true, valueRepr: '"value"' });
-				expect(agent).toMatchObject({ ok: true, valueRepr: '"agent-result"' });
-				expect(output).toMatchObject({ ok: true, valueRepr: '"agent-result"' });
-				expect(toolCalls).toContainEqual({ toolName: "__agent__", args: { prompt: "summarize", agent: "task" } });
-				expect(toolCalls).toContainEqual({ toolName: "__output__", args: { ids: ["st_123"], format: "raw" } });
-				expect(await readFile(join(localRoot, "nested", "value.txt"), "utf8")).toBe("hello");
-				expect(messages.some((message) => message.type === "status" && message.event.op === "env")).toBe(true);
-				expect(messages.some((message) => message.type === "status" && message.event.op === "write")).toBe(true);
-				expect(messages).toContainEqual({
-					type: "display",
-					mimeType: "text/markdown",
-					dataBase64: Buffer.from("# Heading", "utf8").toString("base64"),
-				});
+					// Then: only eligible final expressions auto-display and helpers use the bridge contract.
+					expect(literal).toMatchObject({ ok: true, valueRepr: "2" });
+					expect(assignment).toMatchObject({ ok: true });
+					if (assignment.ok) expect(assignment.valueRepr).toBeUndefined();
+					expect(nilValue).toMatchObject({ ok: true });
+					if (nilValue.ok) expect(nilValue.valueRepr).toBeUndefined();
+					expect(environment).toMatchObject({ ok: true, valueRepr: '"value"' });
+					expect(agent).toMatchObject({ ok: true, valueRepr: '"agent-result"' });
+					expect(output).toMatchObject({ ok: true, valueRepr: '"agent-result"' });
+					expect(toolCalls).toContainEqual({
+						toolName: "__agent__",
+						args: { prompt: "summarize", agent: "task" },
+					});
+					expect(toolCalls).toContainEqual({ toolName: "__output__", args: { ids: ["st_123"], format: "raw" } });
+					expect(await readFile(join(localRoot, "nested", "value.txt"), "utf8")).toBe("hello");
+					expect(messages.some((message) => message.type === "status" && message.event.op === "env")).toBe(true);
+					expect(messages.some((message) => message.type === "status" && message.event.op === "write")).toBe(true);
+					expect(messages).toContainEqual({
+						type: "display",
+						mimeType: "text/markdown",
+						dataBase64: Buffer.from("# Heading", "utf8").toString("base64"),
+					});
+				} finally {
+					await kernel.close();
+				}
 			} finally {
-				await kernel.close();
+				await server.close();
+				await rm(root, { recursive: true, force: true });
 			}
-		} finally {
-			await server.close();
-			await rm(root, { recursive: true, force: true });
-		}
-	});
+		},
+		120_000,
+	);
 	it.skipIf(!hasJulia())("preserves input order under cooperative jitter", async () => {
 		const root = await mkdtemp(join(tmpdir(), "senpi-jl-parallel-order-"));
 		const kernel = JuliaKernel.start({

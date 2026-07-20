@@ -4,15 +4,19 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../../src/config.ts";
+import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { createEventBus } from "../../src/core/event-bus.ts";
 import mcpExtension from "../../src/core/extensions/builtin/mcp/index.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
 import { createExtensionRuntime, loadExtensionFromFactory } from "../../src/core/extensions/loader.ts";
+import { ExtensionRunner } from "../../src/core/extensions/runner.ts";
 import type { Extension, SessionStartEvent } from "../../src/core/extensions/types.ts";
+import { ModelRegistry } from "../../src/core/model-registry.ts";
+import { SessionManager } from "../../src/core/session-manager.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 import { createCtx, createUi, lastNotification, normalize, notification } from "./fixtures/commands.ts";
 import { toolResultTexts } from "./fixtures/register-call.ts";
-import { cleanupRoots, makeRoot, setConfig, stdioServer, type TestRoot } from "./fixtures/service-lifecycle.ts";
+import { cleanupRoots, fakePi, makeRoot, setConfig, stdioServer, type TestRoot } from "./fixtures/service-lifecycle.ts";
 import { stdioFixtureCommand } from "./fixtures/spawn-fixture.ts";
 
 const cleanupTasks: Array<() => Promise<void>> = [];
@@ -57,13 +61,13 @@ describe("/mcp command suite", () => {
 
 		expect(normalize(ui.selectCalls[0]?.title, root)).toMatchInlineSnapshot(`
 			"MCP servers
-			disabled disabled state=not_spawned source=<agentDir>/mcp.json tools=? uptime=n/a calls=0 errors=0 latency=0ms reconnects=0
-			fx enabled state=connected source=<agentDir>/mcp.json tools=2 uptime=<1s calls=0 errors=0 latency=0ms reconnects=0"
+			disabled disabled state=not_spawned origin=global source=<agentDir>/mcp.json tools=? uptime=n/a calls=0 errors=0 latency=0ms reconnects=0
+			fx enabled state=connected origin=global source=<agentDir>/mcp.json tools=2 uptime=<1s calls=0 errors=0 latency=0ms reconnects=0"
 		`);
 		expect(normalize(lastNotification(ui)?.message, root)).toMatchInlineSnapshot(`
 			"MCP status
-			disabled disabled state=not_spawned source=<agentDir>/mcp.json tools=? uptime=n/a calls=0 errors=0 latency=0ms reconnects=0
-			fx enabled state=connected source=<agentDir>/mcp.json tools=2 uptime=<1s calls=0 errors=0 latency=0ms reconnects=0"
+			disabled disabled state=not_spawned origin=global source=<agentDir>/mcp.json tools=? uptime=n/a calls=0 errors=0 latency=0ms reconnects=0
+			fx enabled state=connected origin=global source=<agentDir>/mcp.json tools=2 uptime=<1s calls=0 errors=0 latency=0ms reconnects=0"
 		`);
 	});
 
@@ -191,6 +195,64 @@ describe("/mcp command suite", () => {
 			expect.arrayContaining(["mcp_fx_tool_1", "mcp_fx_tool_2"]),
 		);
 		expect(toolResultTexts(harness, "mcp_fx_tool_2")).toEqual(["fixture tool_2 value=fresh mode=alpha"]);
+	});
+
+	it("retains an extension-declared server through the /mcp reconnect reattach path", async () => {
+		const root = makeCommandRoot("reattach-ext");
+		const fixture = stdioFixtureCommand();
+		const decl = {
+			name: "fixture",
+			config: {
+				type: "stdio" as const,
+				...fixture,
+				args: [...fixture.args, "--tools", "1"],
+			},
+			extensionPath: "<ext>",
+			registrationCwd: root.cwd,
+		};
+		const ctxWithDecl = {
+			cwd: root.cwd,
+			isProjectTrusted: () => true,
+			getRegisteredMcpServers: () => [decl],
+		};
+		const pi = fakePi();
+		await getMcpService().attachSession({ type: "session_start", reason: "startup" }, ctxWithDecl, pi, {
+			agentDir: root.agentDir,
+		});
+		expect(
+			getMcpService()
+				.getServerSnapshots()
+				.some((s) => s.name === "fixture" && s.source === "extension"),
+		).toBe(true);
+
+		const ext = await loadExtensionFromFactory(
+			(api) => {
+				api.registerMcpServer("fixture", decl.config);
+			},
+			root.cwd,
+			createEventBus(),
+			createExtensionRuntime(),
+			"<ext>",
+		);
+		const authStorage = AuthStorage.create(join(root.agentDir, "auth.json"));
+		const runner = new ExtensionRunner(
+			[ext],
+			createExtensionRuntime(),
+			root.cwd,
+			SessionManager.inMemory(),
+			await ModelRegistry.create(authStorage),
+		);
+		runner.setUIContext(createUi(), "tui");
+		const ctx = runner.createCommandContext();
+
+		const { command } = await loadCommand();
+		await command.handler("reconnect fixture", ctx);
+
+		const snapshot = getMcpService()
+			.getServerSnapshots()
+			.find((s) => s.name === "fixture");
+		expect(snapshot?.source).toBe("extension");
+		expect(pi.activeTools).toContain("mcp_fixture_tool_1");
 	});
 
 	it("reports fixture test success with elapsed milliseconds", async () => {

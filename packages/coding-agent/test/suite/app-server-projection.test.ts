@@ -64,7 +64,11 @@ function completed(item: Record<string, unknown>) {
 	return { method: "item/completed", params: { ...itemScope, completedAtMs: 1234, item } };
 }
 
-function commandItem(status: "inProgress" | "completed", aggregatedOutput: string | null, exitCode: number | null) {
+function commandItem(
+	status: "inProgress" | "completed" | "failed",
+	aggregatedOutput: string | null,
+	exitCode: number | null,
+) {
 	return {
 		type: "commandExecution",
 		id: "tool-1",
@@ -225,6 +229,52 @@ describe("app-server AgentEvent projector", () => {
 			completed(commandCompleted),
 		]);
 		expect(turns[0]?.items).toEqual([commandCompleted]);
+	});
+
+	it("completes incomplete tool calls as failed when execution returns an error", () => {
+		// Given: the agent loop finalized a truncated call, then emitted its immediate error result.
+		const message = assistant([
+			{
+				type: "toolCall",
+				id: "tool-1",
+				name: "bash",
+				arguments: { command: "printf ok" },
+				incomplete: true,
+				errorMessage: "truncated",
+			},
+		]);
+		const { outputs, turns, projector } = collect([
+			{
+				type: "message_update",
+				message,
+				assistantMessageEvent: {
+					type: "toolcall_end",
+					contentIndex: 0,
+					toolCall: {
+						type: "toolCall",
+						id: "tool-1",
+						name: "bash",
+						arguments: { command: "printf ok" },
+						incomplete: true,
+						errorMessage: "truncated",
+					},
+					partial: message,
+				},
+			},
+			{
+				type: "tool_execution_end",
+				toolCallId: "tool-1",
+				toolName: "bash",
+				result: { content: [{ type: "text", text: "truncated" }], details: {} },
+				isError: true,
+			},
+		]);
+
+		// Then: the real history item remains visible, but the execution result closes it as failed.
+		const failed = commandItem("failed", "truncated", null);
+		expect(outputs).toEqual([started(commandItem("inProgress", null, null)), completed(failed)]);
+		expect(turns[0]?.items).toEqual([failed]);
+		expect(projector.finalize()).toEqual([]);
 	});
 
 	it("keeps in-flight tool items open across message boundaries within one turn", () => {

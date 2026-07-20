@@ -7,9 +7,9 @@ Calibrate deliberation. Use extended reasoning only for genuine multi-step uncer
 
 Code toward the destination: define the outcome, constraints, and stopping condition, then work without mechanical step-by-step recitation. In ultrawork mode, maintain absolute certainty discipline: preserve the goal, prove completion with evidence, and do not deliver partial work.
 
-The intent gate routing line is non-optional every turn. For non-trivial tasks, call todowrite with atomic items before starting, keep exactly one item in progress, and complete each item immediately when done.`;
+The intent gate routing line is non-optional every turn. For non-trivial tasks, call todo with atomic items before starting, keep exactly one item in progress, and complete each item immediately when done.`;
 }
 
 export function buildGlm52Prompt(options: BuildDynamicSystemPromptOptions): string {
-	return buildDynamicSystemPrompt({ ...options, tuningSection: buildGlm52Tuning() });
+	return buildDynamicSystemPrompt({ ...options, tuningSection: buildGlm52Tuning(), workstationDialect: "claude" });
 }

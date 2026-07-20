@@ -2,9 +2,9 @@ import { anthropicMessagesApi } from "../api/anthropic-messages.lazy.ts";
 
 import type { AnthropicOptions } from "../api/anthropic-messages.ts";
 import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
+import { loadAnthropicOAuth } from "../auth/oauth/load.ts";
 import { createProvider, type Provider } from "../models.ts";
 import type { SimpleStreamOptions, StreamFunction } from "../types.ts";
-import { loadAnthropicOAuth } from "../utils/oauth/load.ts";
 import { ANTHROPIC_MODELS } from "./anthropic.models.ts";
 
 const anthropicStreams = anthropicMessagesApi();
