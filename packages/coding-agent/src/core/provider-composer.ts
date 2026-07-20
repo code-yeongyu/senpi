@@ -7,6 +7,7 @@ import {
 	type AuthResult,
 	type Context,
 	type Credential,
+	getApiProvider,
 	getProtocol,
 	getToolCallFormat,
 	lazyStream,
@@ -510,7 +511,7 @@ export function composeModelProvider(
 					? base.streamSimple(model, context, options as SimpleStreamOptions)
 					: base.stream(model, context, options);
 			}
-			const api = (await import("@earendil-works/pi-ai/compat")).getApiProvider(model.api);
+			const api = getApiProvider(model.api);
 			if (!api) throw new Error(`No API provider registered for api: ${model.api}`);
 			return simple
 				? api.streamSimple(model, context, options as SimpleStreamOptions)

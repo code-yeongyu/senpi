@@ -1,6 +1,5 @@
 export type { Static, TSchema } from "typebox";
 export { Type } from "typebox";
-
 // Core only, side-effect free: no generated catalogs, no provider factories,
 // no api-registry, no OAuth implementations, no compat. Provider factories
 // live under "@earendil-works/pi-ai/providers/*", API implementations under
@@ -18,6 +17,7 @@ export type { OpenAICodexResponsesOptions, OpenAICodexWebSocketDebugStats } from
 export type { OpenAICompletionsOptions } from "./api/openai-completions.ts";
 export type { OpenAIResponsesOptions } from "./api/openai-responses.ts";
 export type { PiMessagesEvent, PiMessagesOptions, PiMessagesRewriteImpact } from "./api/pi-messages.ts";
+export { getApiProvider } from "./api-registry.ts";
 export * from "./auth/context.ts";
 export * from "./auth/credential-store.ts";
 export * from "./auth/helpers.ts";
