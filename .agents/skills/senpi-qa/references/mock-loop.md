@@ -62,6 +62,38 @@ take precedence for built-in providers and reach even the localhost fake.
 `--with-tool` scripts two turns (model → `bash` tool call → final text) to prove
 the full loop iterates. It passes `--approve` for project trust.
 
+`--with-text-tool-leak` and `--with-truncated-text-tool-leak` exercise Claude
+XML recovery through the real source CLI for `anthropic-messages` and
+`openai-completions`:
+
+```bash
+node .agents/skills/senpi-qa/scripts/mock-loop.mjs \
+  --with-text-tool-leak \
+  --api anthropic-messages
+
+node .agents/skills/senpi-qa/scripts/mock-loop.mjs \
+  --with-truncated-text-tool-leak \
+  --api openai-completions
+```
+
+The complete mode emits a leaked `<invoke name="bash">` as assistant text,
+asserts that Bash executes exactly once, verifies the second model request
+contains the tool output without leaked XML, and completes on a scripted final
+turn. The truncated mode emits a started call without `</invoke>`, uses a
+sentinel-writing command, and proves that the sentinel is never created while
+the second request contains `Re-issue the tool call with complete arguments.`
+
+Each run hashes the real auth file before and after, uses only the isolated
+`models.json` mock credential, removes its sandbox, and writes a sanitized
+receipt under:
+
+```text
+local-ignore/qa-evidence/<date>-mock-loop-text-leak-<api>-<complete|truncated>/
+```
+
+`--self-test` includes all four API/mode combinations. Unknown commands are
+classified as usage errors, write usage to stderr, and exit with status `2`.
+
 `--with-mcp-tool <tool> --tool-args '<json object>'` uses the same two-turn
 loop but requires a fixture MCP-style tool name such as `mcp_fx_tool_1`. The
 script generates a sandbox extension that registers the requested
