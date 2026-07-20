@@ -1,5 +1,18 @@
 # changes
 
+## Claude text tool-call recovery (2026-07-20)
+
+### What changed
+
+- `core/model-runtime.ts`: both streaming entry points conditionally wrap prepared provider streams through the side-effect-free AI recovery API, using the original selected model and non-empty tools while keeping provider retries/auth/request preparation underneath a single wrapper.
+- `core/model-config.ts` and `core/provider-composer.ts`: custom definitions, built-in overrides, and extension models accept the top-level tri-state `recoverTextToolCalls` boolean without using `compat`.
+- Session and agent-loop integration tests prove complete and truncated raw Anthropic/OpenAI SSE recovery, safe non-execution, persisted native history, provider-native next-turn replay, original historical XML preservation, and retry-attempt isolation.
+- The isolated senpi-qa mock loop now exposes complete/truncated leak modes for both supported APIs, hashes real auth before/after, and captures cleanup/evidence receipts.
+
+### Why
+
+- Provider-specific middleware cannot enforce the cross-provider persistence, retry, abort, ordering, and execution boundaries required after a model leaks XML as assistant text.
+
 ## Incremental assistant message re-render (2026-07-19)
 
 ### What changed

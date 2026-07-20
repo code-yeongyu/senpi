@@ -6,6 +6,7 @@
 
 ### Added
 
+- Added configurable Claude text tool-call recovery across both `ModelRuntime` streaming entry points, `models.json` definitions/overrides, persisted sessions, and isolated Anthropic/OpenAI mock-loop QA.
 - Added `antml` as a valid `compat.toolCallFormat` in custom `models.json` provider and model definitions: ANTML `<function_calls>`/`<invoke>` text-tool protocol with Claude-Code-style failure tolerance.
 - Added built-in llama.cpp router support with `/login` connection setup and `/llama` Hugging Face model search and downloads, explicit loading, unloading, and live progress. See [llama.cpp](docs/llama-cpp.md).
 - Added extension registration for complete pi-ai providers, including native authentication, model refresh, filtering, and streaming behavior.
