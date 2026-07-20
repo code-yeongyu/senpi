@@ -717,7 +717,8 @@ export class AgentSession {
 
 	private _modelSelectionChangesContext(previousModel: Model<any> | undefined, nextModel: Model<any>): boolean {
 		if (!modelsAreEqual(previousModel, nextModel)) return true;
-		return previousModel?.contextWindow !== nextModel.contextWindow;
+		if (previousModel?.contextWindow !== nextModel.contextWindow) return true;
+		return previousModel?.api !== nextModel.api;
 	}
 
 	private _invalidateCompactionForModelSelection(): void {

@@ -1031,7 +1031,11 @@ export class ExtensionRunner {
 
 			for (const handler of handlers) {
 				try {
-					const handlerResult = await handler(event, ctx);
+					// Re-read live prompt options per handler: an earlier handler that swaps
+					// the active toolset (gpt-apply-patch) must let later handlers
+					// (prompt-preset) rebuild from the post-swap tools in the same emission.
+					const liveEvent: ModelSelectEvent = { ...event, systemPromptOptions: this.getSystemPromptOptionsFn() };
+					const handlerResult = await handler(liveEvent, ctx);
 					if (handlerResult) {
 						const nextResult = handlerResult as ModelSelectEventResult;
 						if (nextResult.systemPrompt !== undefined || nextResult.systemPromptName !== undefined) {

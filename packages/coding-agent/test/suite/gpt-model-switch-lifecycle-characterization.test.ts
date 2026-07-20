@@ -37,6 +37,7 @@ interface LifecycleRow {
 	provider: string;
 	modelId: string;
 	expectedTools: string[];
+	expectedApplyPatchVariant: "custom" | "function" | undefined;
 	expectedHistory: string[];
 }
 
@@ -95,6 +96,7 @@ const LIFECYCLE_ROWS: LifecycleRow[] = [
 		provider: "openai",
 		modelId: "gpt-5.5",
 		expectedTools: ["read", "bash", "apply_patch"],
+		expectedApplyPatchVariant: "custom",
 		expectedHistory: [
 			"custom_tool_call:apply_patch",
 			"function_call:edit",
@@ -108,12 +110,12 @@ const LIFECYCLE_ROWS: LifecycleRow[] = [
 		api: "openai-responses",
 		provider: "openai",
 		modelId: "gpt-5.5",
-		// DEFECT: reload loses apply_patch because no edit-family tool remains to swap.
-		expectedTools: ["read", "bash"],
+		expectedTools: ["read", "bash", "apply_patch"],
+		expectedApplyPatchVariant: "custom",
 		expectedHistory: [
-			"function_call:apply_patch",
+			"custom_tool_call:apply_patch",
 			"function_call:edit",
-			"function_call_output:call_patch",
+			"custom_tool_call_output:apply_patch",
 			"function_call_output:call_edit",
 		],
 	},
@@ -124,6 +126,7 @@ const LIFECYCLE_ROWS: LifecycleRow[] = [
 		provider: "anthropic",
 		modelId: "claude-sonnet",
 		expectedTools: ["read", "bash", "edit", "write"],
+		expectedApplyPatchVariant: undefined,
 		expectedHistory: ["tool_use:apply_patch", "tool_use:edit", "tool_result:call_patch", "tool_result:call_edit"],
 	},
 	{
@@ -132,8 +135,8 @@ const LIFECYCLE_ROWS: LifecycleRow[] = [
 		api: "openai-completions",
 		provider: "openai",
 		modelId: "gpt-5.5",
-		// DEFECT: completions GPT sessions retain edit/write instead of a JSON apply_patch tool.
-		expectedTools: ["read", "bash", "edit", "write"],
+		expectedTools: ["read", "bash", "apply_patch"],
+		expectedApplyPatchVariant: "function",
 		expectedHistory: ["tool_call:apply_patch", "tool_call:edit", "tool_result:call_patch", "tool_result:call_edit"],
 	},
 	{
@@ -143,6 +146,7 @@ const LIFECYCLE_ROWS: LifecycleRow[] = [
 		provider: "openai",
 		modelId: "gpt-5.5",
 		expectedTools: ["read", "bash", "apply_patch"],
+		expectedApplyPatchVariant: "custom",
 		expectedHistory: [
 			"custom_tool_call:apply_patch",
 			"function_call:edit",
@@ -158,6 +162,7 @@ const LIFECYCLE_ROWS: LifecycleRow[] = [
 		provider: "anthropic",
 		modelId: "claude-sonnet",
 		expectedTools: ["read", "bash", "edit", "write"],
+		expectedApplyPatchVariant: undefined,
 		expectedHistory: ["tool_use:apply_patch", "tool_use:edit", "tool_result:call_patch", "tool_result:call_edit"],
 	},
 ];
@@ -256,6 +261,19 @@ function toolNames(payload: unknown): string[] {
 		const nestedName = field(nestedFunction, "name");
 		return nestedName ? [nestedName] : [];
 	});
+}
+
+function applyPatchVariant(payload: unknown): "custom" | "function" | undefined {
+	for (const tool of recordsAt(payload, "tools")) {
+		if (field(tool, "name") === "apply_patch") {
+			return field(tool, "type") === "custom" ? "custom" : "function";
+		}
+		const nestedFunction = tool.function;
+		if (isRecord(nestedFunction) && field(nestedFunction, "name") === "apply_patch") {
+			return "function";
+		}
+	}
+	return undefined;
 }
 
 function responsesHistory(payload: unknown): string[] {
@@ -436,7 +454,7 @@ describe("GPT model-switch lifecycle characterization", () => {
 		while (cleanups.length > 0) await cleanups.pop()?.();
 	});
 
-	it("s7 leaves system-prompt tool guidance stale after a mid-session switch", async () => {
+	it("s7 updates system-prompt tool guidance atomically with a mid-session switch", async () => {
 		// Given
 		const harness = await createHarness({
 			api: "anthropic-messages",
@@ -452,15 +470,28 @@ describe("GPT model-switch lifecycle characterization", () => {
 		// When
 		await harness.session.setModel({ ...target, api: "openai-responses" });
 
-		// Then
+		// Then: one switch updates the active toolset and the prompt guidance in the same turn.
 		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch"]);
-		// DEFECT: the preset rebuilt from the pre-swap tool snapshot.
+		expect(harness.session.systemPrompt).toContain("- apply_patch:");
+		expect(harness.session.systemPrompt).not.toContain("- edit:");
+		expect(harness.session.systemPrompt).not.toContain("- write:");
+
+		// When: switching back to a non-GPT model.
+		const anthropicTarget = harness.getModel("claude-sonnet");
+		if (!anthropicTarget) throw new Error("Missing claude-sonnet model");
+		await harness.session.setModel(anthropicTarget);
+
+		// Then: guidance tracks the restored edit tools.
+		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "edit", "write"]);
 		expect(harness.session.systemPrompt).toContain("- edit:");
-		expect(harness.session.systemPrompt).toContain("- write:");
 		expect(harness.session.systemPrompt).not.toContain("- apply_patch:");
 	});
 
-	it("s8 suppresses model_select when only the API changes", async () => {
+	it("s8 emits model_select when only the API changes", async () => {
+		// Mutation-proofed: suppressing the `api` comparison in
+		// AgentSession._modelSelectionChangesContext makes this test fail because no
+		// model_select emission and no tool/prompt refresh is observed
+		// (mutated-FAIL log: task-4-atomicity/mutation-api-gate-fail.log).
 		// Given
 		const selectedApis: string[] = [];
 		const harness = await createHarness({
@@ -469,6 +500,7 @@ describe("GPT model-switch lifecycle characterization", () => {
 			models: [{ id: "gpt-5.5", contextWindow: 128_000 }],
 			extensionFactories: [
 				gptApplyPatchExtension,
+				promptPresetExtension,
 				(pi) => {
 					pi.on("model_select", (event) => {
 						selectedApis.push(event.model.api);
@@ -480,14 +512,16 @@ describe("GPT model-switch lifecycle characterization", () => {
 		await harness.session.bindExtensions({});
 		const initialModel = harness.session.model;
 		if (!initialModel) throw new Error("Missing initial model");
+		const initialRevision = harness.session.getMessageRevision();
 
 		// When
 		await harness.session.setModel({ ...initialModel, api: "openai-responses" });
 
-		// Then
-		// DEFECT: provider/id/contextWindow equality hides an API-only context change.
-		expect(selectedApis).toEqual([]);
-		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "edit", "write"]);
+		// Then: provider/id/contextWindow equality must not hide an API-only context change.
+		expect(selectedApis).toEqual(["openai-responses"]);
+		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch"]);
+		expect(harness.session.systemPrompt).toContain("- apply_patch:");
+		expect(harness.session.getMessageRevision()).toBeGreaterThan(initialRevision);
 	});
 
 	it("s9 omits compacted-away calls while retaining a target-valid apply_patch pair", () => {
@@ -538,6 +572,7 @@ describe("GPT model-switch lifecycle characterization", () => {
 				label: row.label,
 				reason: observedReason,
 				tools: toolNames(payload),
+				applyPatchVariant: applyPatchVariant(payload),
 				history: payloadHistory(payload, row.api),
 			});
 		}
@@ -547,6 +582,7 @@ describe("GPT model-switch lifecycle characterization", () => {
 				label: row.label,
 				reason: row.reason,
 				tools: row.expectedTools,
+				applyPatchVariant: row.expectedApplyPatchVariant,
 				history: row.expectedHistory,
 			})),
 		);
