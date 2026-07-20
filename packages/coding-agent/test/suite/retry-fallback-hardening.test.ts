@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
-import { createHarness, type Harness } from "./harness.ts";
 import type { Settings } from "../../src/core/settings-manager.ts";
+import { createHarness, type Harness } from "./harness.ts";
 
 const primary = "faux/faux-1";
 const fallback = "faux/faux-2";
@@ -74,7 +74,6 @@ describe("retry fallback hardening", () => {
 		expect(harness.eventsOfType("retry_fallback_applied")).toHaveLength(1);
 		expect(harness.faux.getCallLog()[1]?.modelId).toBe("faux-2");
 	});
-
 
 	it("submits a clean full request for a responses-API fallback candidate", async () => {
 		const harness = await createHarness({
