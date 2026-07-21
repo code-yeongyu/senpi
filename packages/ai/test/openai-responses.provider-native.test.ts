@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { getModel } from "../src/models.ts";
+import { getModel } from "../src/compat.ts";
 import { streamOpenAIResponses } from "../src/providers/openai-responses.ts";
 import { convertResponsesMessages } from "../src/providers/openai-responses-shared.ts";
 import type { AssistantMessage, Context, ProviderNativeContent } from "../src/types.ts";

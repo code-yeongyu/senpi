@@ -122,7 +122,6 @@
 - LOW: the fork-only `modes/app-server/` tree. Re-derive catalogs and facade shapes from the new Codex source before
   resolving conflicts; never hand-edit `protocol/generated/**`.
 
-||||||| 9ee0c4a3e
 ## Parallel side questions via `/btw` (2026-07-21)
 
 ### What changed

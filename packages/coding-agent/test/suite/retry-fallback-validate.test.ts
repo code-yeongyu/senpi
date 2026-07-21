@@ -1,4 +1,5 @@
-import { type Api, getModel, type Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { getModel } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import { validateFallbackChains } from "../../src/core/retry-fallback/validate.ts";
 import { createHarness } from "./harness.ts";

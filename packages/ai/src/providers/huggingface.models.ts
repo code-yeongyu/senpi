@@ -5,6 +5,38 @@ import values from "./data/huggingface.json" with { type: "json" };
 import type { Model } from "../types.ts";
 
 export const HUGGINGFACE_MODELS = values as {
+	"deepseek-ai/DeepSeek-R1": Model<"openai-completions"> & {
+		id: "deepseek-ai/DeepSeek-R1";
+		provider: "huggingface";
+	};
+	"deepseek-ai/DeepSeek-R1-0528": Model<"openai-completions"> & {
+		id: "deepseek-ai/DeepSeek-R1-0528";
+		provider: "huggingface";
+	};
+	"deepseek-ai/DeepSeek-V3.2": Model<"openai-completions"> & {
+		id: "deepseek-ai/DeepSeek-V3.2";
+		provider: "huggingface";
+	};
+	"deepseek-ai/DeepSeek-V4-Flash": Model<"openai-completions"> & {
+		id: "deepseek-ai/DeepSeek-V4-Flash";
+		provider: "huggingface";
+	};
+	"deepseek-ai/DeepSeek-V4-Pro": Model<"openai-completions"> & {
+		id: "deepseek-ai/DeepSeek-V4-Pro";
+		provider: "huggingface";
+	};
+	"google/gemma-4-26B-A4B-it": Model<"openai-completions"> & {
+		id: "google/gemma-4-26B-A4B-it";
+		provider: "huggingface";
+	};
+	"google/gemma-4-31B-it": Model<"openai-completions"> & {
+		id: "google/gemma-4-31B-it";
+		provider: "huggingface";
+	};
+	"meta-llama/Llama-3.3-70B-Instruct": Model<"openai-completions"> & {
+		id: "meta-llama/Llama-3.3-70B-Instruct";
+		provider: "huggingface";
+	};
 	"MiniMaxAI/MiniMax-M2": Model<"openai-completions"> & {
 		id: "MiniMaxAI/MiniMax-M2";
 		provider: "huggingface";
@@ -23,6 +55,38 @@ export const HUGGINGFACE_MODELS = values as {
 	};
 	"MiniMaxAI/MiniMax-M3": Model<"openai-completions"> & {
 		id: "MiniMaxAI/MiniMax-M3";
+		provider: "huggingface";
+	};
+	"moonshotai/Kimi-K2-Instruct": Model<"openai-completions"> & {
+		id: "moonshotai/Kimi-K2-Instruct";
+		provider: "huggingface";
+	};
+	"moonshotai/Kimi-K2-Instruct-0905": Model<"openai-completions"> & {
+		id: "moonshotai/Kimi-K2-Instruct-0905";
+		provider: "huggingface";
+	};
+	"moonshotai/Kimi-K2-Thinking": Model<"openai-completions"> & {
+		id: "moonshotai/Kimi-K2-Thinking";
+		provider: "huggingface";
+	};
+	"moonshotai/Kimi-K2.5": Model<"openai-completions"> & {
+		id: "moonshotai/Kimi-K2.5";
+		provider: "huggingface";
+	};
+	"moonshotai/Kimi-K2.6": Model<"openai-completions"> & {
+		id: "moonshotai/Kimi-K2.6";
+		provider: "huggingface";
+	};
+	"moonshotai/Kimi-K2.7-Code": Model<"openai-completions"> & {
+		id: "moonshotai/Kimi-K2.7-Code";
+		provider: "huggingface";
+	};
+	"openai/gpt-oss-120b": Model<"openai-completions"> & {
+		id: "openai/gpt-oss-120b";
+		provider: "huggingface";
+	};
+	"openai/gpt-oss-20b": Model<"openai-completions"> & {
+		id: "openai/gpt-oss-20b";
 		provider: "huggingface";
 	};
 	"Qwen/Qwen3-235B-A22B": Model<"openai-completions"> & {
@@ -85,84 +149,20 @@ export const HUGGINGFACE_MODELS = values as {
 		id: "Qwen/Qwen3.6-35B-A3B";
 		provider: "huggingface";
 	};
-	"XiaomiMiMo/MiMo-V2-Flash": Model<"openai-completions"> & {
-		id: "XiaomiMiMo/MiMo-V2-Flash";
-		provider: "huggingface";
-	};
-	"XiaomiMiMo/MiMo-V2.5-Pro": Model<"openai-completions"> & {
-		id: "XiaomiMiMo/MiMo-V2.5-Pro";
-		provider: "huggingface";
-	};
-	"deepseek-ai/DeepSeek-R1": Model<"openai-completions"> & {
-		id: "deepseek-ai/DeepSeek-R1";
-		provider: "huggingface";
-	};
-	"deepseek-ai/DeepSeek-R1-0528": Model<"openai-completions"> & {
-		id: "deepseek-ai/DeepSeek-R1-0528";
-		provider: "huggingface";
-	};
-	"deepseek-ai/DeepSeek-V3.2": Model<"openai-completions"> & {
-		id: "deepseek-ai/DeepSeek-V3.2";
-		provider: "huggingface";
-	};
-	"deepseek-ai/DeepSeek-V4-Flash": Model<"openai-completions"> & {
-		id: "deepseek-ai/DeepSeek-V4-Flash";
-		provider: "huggingface";
-	};
-	"deepseek-ai/DeepSeek-V4-Pro": Model<"openai-completions"> & {
-		id: "deepseek-ai/DeepSeek-V4-Pro";
-		provider: "huggingface";
-	};
-	"google/gemma-4-26B-A4B-it": Model<"openai-completions"> & {
-		id: "google/gemma-4-26B-A4B-it";
-		provider: "huggingface";
-	};
-	"google/gemma-4-31B-it": Model<"openai-completions"> & {
-		id: "google/gemma-4-31B-it";
-		provider: "huggingface";
-	};
-	"meta-llama/Llama-3.3-70B-Instruct": Model<"openai-completions"> & {
-		id: "meta-llama/Llama-3.3-70B-Instruct";
-		provider: "huggingface";
-	};
-	"moonshotai/Kimi-K2-Instruct": Model<"openai-completions"> & {
-		id: "moonshotai/Kimi-K2-Instruct";
-		provider: "huggingface";
-	};
-	"moonshotai/Kimi-K2-Instruct-0905": Model<"openai-completions"> & {
-		id: "moonshotai/Kimi-K2-Instruct-0905";
-		provider: "huggingface";
-	};
-	"moonshotai/Kimi-K2-Thinking": Model<"openai-completions"> & {
-		id: "moonshotai/Kimi-K2-Thinking";
-		provider: "huggingface";
-	};
-	"moonshotai/Kimi-K2.5": Model<"openai-completions"> & {
-		id: "moonshotai/Kimi-K2.5";
-		provider: "huggingface";
-	};
-	"moonshotai/Kimi-K2.6": Model<"openai-completions"> & {
-		id: "moonshotai/Kimi-K2.6";
-		provider: "huggingface";
-	};
-	"moonshotai/Kimi-K2.7-Code": Model<"openai-completions"> & {
-		id: "moonshotai/Kimi-K2.7-Code";
-		provider: "huggingface";
-	};
-	"openai/gpt-oss-120b": Model<"openai-completions"> & {
-		id: "openai/gpt-oss-120b";
-		provider: "huggingface";
-	};
-	"openai/gpt-oss-20b": Model<"openai-completions"> & {
-		id: "openai/gpt-oss-20b";
-		provider: "huggingface";
-	};
 	"stepfun-ai/Step-3.5-Flash": Model<"openai-completions"> & {
 		id: "stepfun-ai/Step-3.5-Flash";
 		provider: "huggingface";
 	};
 	"stepfun-ai/Step-3.7-Flash": Model<"openai-completions"> & {
 		id: "stepfun-ai/Step-3.7-Flash";
+		provider: "huggingface";
+	};
+	"XiaomiMiMo/MiMo-V2-Flash": Model<"openai-completions"> & {
+		id: "XiaomiMiMo/MiMo-V2-Flash";
+		provider: "huggingface";
+	};
+	"XiaomiMiMo/MiMo-V2.5-Pro": Model<"openai-completions"> & {
+		id: "XiaomiMiMo/MiMo-V2.5-Pro";
 		provider: "huggingface";
 	};
 	"zai-org/GLM-4.5": Model<"openai-completions"> & {

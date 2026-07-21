@@ -6,9 +6,13 @@
 
 ### Added
 
+- Added upstream v0.81.1 stream function plumbing for agent and harness callers, plus SQLite-backed session storage harness coverage.
+
 ### Changed
 
 ### Fixed
+
+- Fixed agent-loop stream function compatibility for extensions and SDK callers while preserving fork session behavior.
 
 ### Removed
 

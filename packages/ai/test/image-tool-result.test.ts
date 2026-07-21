@@ -10,7 +10,6 @@ type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
-import { getLiveEnvApiKey, OPENROUTER_LIVE_TEST_FLAG } from "./live-api-gates.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 // Resolve OAuth tokens at module level (async, runs before tests)
@@ -20,7 +19,6 @@ const oauthTokens = await Promise.all([
 	resolveApiKey("openai-codex"),
 ]);
 const [anthropicOAuthToken, githubCopilotToken, openaiCodexToken] = oauthTokens;
-const openRouterApiKey = getLiveEnvApiKey("OPENROUTER_API_KEY", OPENROUTER_LIVE_TEST_FLAG);
 
 /**
  * Test that tool results containing only images work correctly across all providers.
@@ -276,7 +274,7 @@ describe("Tool Results with Images", () => {
 		});
 	});
 
-	describe.skipIf(!openRouterApiKey)("OpenRouter Provider (glm-4.5v)", () => {
+	describe.skipIf(!process.env.OPENROUTER_API_KEY)("OpenRouter Provider (glm-4.5v)", () => {
 		const llm = getModel("openrouter", "z-ai/glm-4.5v");
 
 		it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
@@ -383,8 +381,8 @@ describe("Tool Results with Images", () => {
 		},
 	);
 
-	describe.skipIf(!process.env.ALIBABA_TOKEN_PLAN_API_KEY)("Alibaba Token Plan Provider (qwen3.7-plus)", () => {
-		const llm = getModel("alibaba-token-plan", "qwen3.7-plus");
+	describe.skipIf(!process.env.QWEN_TOKEN_PLAN_API_KEY)("Qwen Token Plan Provider (qwen3.7-max)", () => {
+		const llm = getModel("qwen-token-plan", "qwen3.7-max");
 
 		it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
 			await handleToolWithImageResult(llm);
@@ -395,7 +393,19 @@ describe("Tool Results with Images", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.KIMI_API_KEY)("Kimi For Coding Provider", () => {
+	describe.skipIf(!process.env.QWEN_TOKEN_PLAN_CN_API_KEY)("Qwen Token Plan (CN) Provider (qwen3.7-max)", () => {
+		const llm = getModel("qwen-token-plan-cn", "qwen3.7-max");
+
+		it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithImageResult(llm);
+		});
+
+		it("should handle tool result with text and image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithTextAndImageResult(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.KIMI_API_KEY)("Kimi For Coding Provider (kimi-for-coding)", () => {
 		const llm = getModel("kimi-coding", "kimi-for-coding");
 
 		it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {

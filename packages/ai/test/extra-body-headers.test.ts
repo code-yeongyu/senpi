@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getModel } from "../src/models.ts";
+import { getModel } from "../src/compat.ts";
 import "../src/providers/register-builtins.ts";
 import { streamSimple } from "../src/stream.ts";
 import type { Api, Context, Model } from "../src/types.ts";

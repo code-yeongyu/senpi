@@ -15,7 +15,6 @@
 import { describe, expect, it } from "vitest";
 import { complete, getModel } from "../src/compat.ts";
 import type { Api, Context, Model, StreamOptions, Usage } from "../src/types.ts";
-import { getLiveEnvApiKey, OPENROUTER_LIVE_TEST_FLAG } from "./live-api-gates.ts";
 
 type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 
@@ -31,7 +30,6 @@ const oauthTokens = await Promise.all([
 	resolveApiKey("openai-codex"),
 ]);
 const [anthropicOAuthToken, githubCopilotToken, openaiCodexToken] = oauthTokens;
-const openRouterApiKey = getLiveEnvApiKey("OPENROUTER_API_KEY", OPENROUTER_LIVE_TEST_FLAG);
 
 // Generate a long system prompt to trigger caching (>2k bytes for most providers)
 const LONG_SYSTEM_PROMPT = `You are a helpful assistant. Be concise in your responses.
@@ -241,10 +239,7 @@ describe("totalTokens field", () => {
 	// =========================================================================
 
 	describe.skipIf(!process.env.XAI_API_KEY)("xAI", () => {
-		it("grok-4.3 - should return totalTokens equal to sum of components", {
-			retry: 3,
-			timeout: 60000,
-		}, async () => {
+		it("grok-4.3 - should return totalTokens equal to sum of components", { retry: 3, timeout: 60000 }, async () => {
 			const llm = getModel("xai", "grok-4.3");
 
 			console.log(`\nxAI / ${llm.id}:`);
@@ -552,19 +547,43 @@ describe("totalTokens field", () => {
 	});
 
 	// =========================================================================
-	// Alibaba Token Plan
+	// Qwen Token Plan
 	// =========================================================================
 
-	describe.skipIf(!process.env.ALIBABA_TOKEN_PLAN_API_KEY)("Alibaba Token Plan", () => {
+	describe.skipIf(!process.env.QWEN_TOKEN_PLAN_API_KEY)("Qwen Token Plan", () => {
 		it("qwen3.7-max - should return totalTokens equal to sum of components", {
 			retry: 3,
 			timeout: 60000,
 		}, async () => {
-			const llm = getModel("alibaba-token-plan", "qwen3.7-max");
+			const llm = getModel("qwen-token-plan", "qwen3.7-max");
 
-			console.log(`\nAlibaba Token Plan / ${llm.id}:`);
+			console.log(`\nQwen Token Plan / ${llm.id}:`);
 			const { first, second } = await testTotalTokensWithCache(llm, {
-				apiKey: process.env.ALIBABA_TOKEN_PLAN_API_KEY,
+				apiKey: process.env.QWEN_TOKEN_PLAN_API_KEY,
+			});
+
+			logUsage("First request", first);
+			logUsage("Second request", second);
+
+			assertTotalTokensEqualsComponents(first);
+			assertTotalTokensEqualsComponents(second);
+		});
+	});
+
+	// =========================================================================
+	// Qwen Token Plan CN
+	// =========================================================================
+
+	describe.skipIf(!process.env.QWEN_TOKEN_PLAN_CN_API_KEY)("Qwen Token Plan (CN)", () => {
+		it("qwen3.7-max - should return totalTokens equal to sum of components", {
+			retry: 3,
+			timeout: 60000,
+		}, async () => {
+			const llm = getModel("qwen-token-plan-cn", "qwen3.7-max");
+
+			console.log(`\nQwen Token Plan CN / ${llm.id}:`);
+			const { first, second } = await testTotalTokensWithCache(llm, {
+				apiKey: process.env.QWEN_TOKEN_PLAN_CN_API_KEY,
 			});
 
 			logUsage("First request", first);
@@ -580,7 +599,7 @@ describe("totalTokens field", () => {
 	// =========================================================================
 
 	describe.skipIf(!process.env.KIMI_API_KEY)("Kimi For Coding", () => {
-		it("Kimi For Coding - should return totalTokens equal to sum of components", {
+		it("kimi-for-coding - should return totalTokens equal to sum of components", {
 			retry: 3,
 			timeout: 60000,
 		}, async () => {
@@ -623,7 +642,7 @@ describe("totalTokens field", () => {
 	// OpenRouter - Multiple backend providers
 	// =========================================================================
 
-	describe.skipIf(!openRouterApiKey)("OpenRouter", () => {
+	describe.skipIf(!process.env.OPENROUTER_API_KEY)("OpenRouter", () => {
 		it("anthropic/claude-sonnet-4 - should return totalTokens equal to sum of components", {
 			retry: 3,
 			timeout: 60000,
@@ -631,7 +650,7 @@ describe("totalTokens field", () => {
 			const llm = getModel("openrouter", "anthropic/claude-sonnet-4");
 
 			console.log(`\nOpenRouter / ${llm.id}:`);
-			const { first, second } = await testTotalTokensWithCache(llm, { apiKey: openRouterApiKey });
+			const { first, second } = await testTotalTokensWithCache(llm, { apiKey: process.env.OPENROUTER_API_KEY });
 
 			logUsage("First request", first);
 			logUsage("Second request", second);
@@ -647,7 +666,7 @@ describe("totalTokens field", () => {
 			const llm = getModel("openrouter", "deepseek/deepseek-chat");
 
 			console.log(`\nOpenRouter / ${llm.id}:`);
-			const { first, second } = await testTotalTokensWithCache(llm, { apiKey: openRouterApiKey });
+			const { first, second } = await testTotalTokensWithCache(llm, { apiKey: process.env.OPENROUTER_API_KEY });
 
 			logUsage("First request", first);
 			logUsage("Second request", second);
@@ -663,7 +682,7 @@ describe("totalTokens field", () => {
 			const llm = getModel("openrouter", "mistralai/mistral-small-3.2-24b-instruct");
 
 			console.log(`\nOpenRouter / ${llm.id}:`);
-			const { first, second } = await testTotalTokensWithCache(llm, { apiKey: openRouterApiKey });
+			const { first, second } = await testTotalTokensWithCache(llm, { apiKey: process.env.OPENROUTER_API_KEY });
 
 			logUsage("First request", first);
 			logUsage("Second request", second);
@@ -679,7 +698,7 @@ describe("totalTokens field", () => {
 			const llm = getModel("openrouter", "google/gemini-2.5-flash");
 
 			console.log(`\nOpenRouter / ${llm.id}:`);
-			const { first, second } = await testTotalTokensWithCache(llm, { apiKey: openRouterApiKey });
+			const { first, second } = await testTotalTokensWithCache(llm, { apiKey: process.env.OPENROUTER_API_KEY });
 
 			logUsage("First request", first);
 			logUsage("Second request", second);
@@ -695,7 +714,7 @@ describe("totalTokens field", () => {
 			const llm = getModel("openrouter", "deepseek/deepseek-chat");
 
 			console.log(`\nOpenRouter / ${llm.id}:`);
-			const { first, second } = await testTotalTokensWithCache(llm, { apiKey: openRouterApiKey });
+			const { first, second } = await testTotalTokensWithCache(llm, { apiKey: process.env.OPENROUTER_API_KEY });
 
 			logUsage("First request", first);
 			logUsage("Second request", second);

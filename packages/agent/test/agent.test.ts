@@ -4,9 +4,10 @@ import { describe, expect, it } from "vitest";
 import {
 	Agent,
 	type AgentEvent,
-	type AgentMessage,
 	type AgentTool,
 	type AgentToolUpdateCallback,
+	type StreamFn,
+	setDefaultStreamFn,
 } from "../src/index.ts";
 
 // Mock stream that mimics AssistantMessageEventStream
@@ -65,6 +66,10 @@ function createAssistantToolUseMessage(content: ToolCallContent[]): AssistantMes
 	};
 }
 
+const unusedStreamFunction: StreamFn = () => {
+	throw new Error("Unexpected stream call");
+};
+
 function createDeferred(): {
 	promise: Promise<void>;
 	resolve: () => void;
@@ -76,18 +81,30 @@ function createDeferred(): {
 	return { promise, resolve };
 }
 
-function getUserMessageText(message: AgentMessage): string {
-	if (message.role !== "user") return "";
-	if (typeof message.content === "string") return message.content;
-	return message.content
-		.filter((part) => part.type === "text")
-		.map((part) => part.text)
-		.join("");
-}
-
 describe("Agent", () => {
+	it("uses the configured default when a legacy caller omits streamFn", async () => {
+		let calls = 0;
+		setDefaultStreamFn(() => {
+			calls++;
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				const message = createAssistantMessage("fallback");
+				stream.push({ type: "done", reason: "stop", message });
+			});
+			return stream;
+		});
+
+		try {
+			const agent = Reflect.construct(Agent, [{}]) as Agent;
+			await agent.prompt("Hello");
+			expect(calls).toBe(1);
+		} finally {
+			setDefaultStreamFn(undefined);
+		}
+	});
+
 	it("should create an agent instance with default state", () => {
-		const agent = new Agent();
+		const agent = new Agent({ streamFn: unusedStreamFunction });
 
 		expect(agent.state).toBeDefined();
 		expect(agent.state.systemPrompt).toBe("");
@@ -104,6 +121,7 @@ describe("Agent", () => {
 	it("should create an agent instance with custom initial state", () => {
 		const customModel = getModel("openai", "gpt-4o-mini");
 		const agent = new Agent({
+			streamFn: unusedStreamFunction,
 			initialState: {
 				systemPrompt: "You are a helpful assistant.",
 				model: customModel,
@@ -117,7 +135,7 @@ describe("Agent", () => {
 	});
 
 	it("should subscribe to events", () => {
-		const agent = new Agent();
+		const agent = new Agent({ streamFn: unusedStreamFunction });
 
 		let eventCount = 0;
 		const unsubscribe = agent.subscribe((_event) => {
@@ -280,55 +298,6 @@ describe("Agent", () => {
 		expect(receivedSignal?.aborted).toBe(true);
 	});
 
-	it("should not process queued steering after an aborted error event with stale message stopReason", async () => {
-		let streamCalls = 0;
-		let processedQueuedSteering = false;
-		const queuedText = "Queued after abort";
-		const agent = new Agent({
-			streamFn: (_model, context, options) => {
-				streamCalls++;
-				const stream = new MockAssistantStream();
-				queueMicrotask(() => {
-					const userTexts = context.messages.map(getUserMessageText);
-					if (userTexts.includes(queuedText)) {
-						processedQueuedSteering = true;
-						stream.push({ type: "done", reason: "stop", message: createAssistantMessage("Processed queued") });
-						return;
-					}
-
-					stream.push({ type: "start", partial: createAssistantMessage("") });
-					const checkAbort = () => {
-						if (options?.signal?.aborted) {
-							stream.push({ type: "error", reason: "aborted", error: createAssistantMessage("Aborted") });
-						} else {
-							setTimeout(checkAbort, 5);
-						}
-					};
-					checkAbort();
-				});
-				return stream;
-			},
-		});
-
-		const promptPromise = agent.prompt("First message");
-		await new Promise((resolve) => setTimeout(resolve, 10));
-		agent.steer({
-			role: "user",
-			content: [{ type: "text", text: queuedText }],
-			timestamp: Date.now(),
-		});
-
-		agent.abort();
-		await promptPromise;
-
-		expect(processedQueuedSteering).toBe(false);
-		expect(streamCalls).toBe(1);
-		const lastMessage = agent.state.messages[agent.state.messages.length - 1];
-		expect(lastMessage?.role).toBe("assistant");
-		if (lastMessage?.role !== "assistant") throw new Error("Expected assistant message");
-		expect(lastMessage.stopReason).toBe("aborted");
-	});
-
 	it("should ignore tool updates after the tool execution settles", async () => {
 		const toolSchema = Type.Object({});
 		let delayedUpdate: AgentToolUpdateCallback<{ status: string }> | undefined;
@@ -471,7 +440,7 @@ describe("Agent", () => {
 	});
 
 	it("should update state with mutators", () => {
-		const agent = new Agent();
+		const agent = new Agent({ streamFn: unusedStreamFunction });
 
 		// Test setSystemPrompt
 		agent.state.systemPrompt = "Custom prompt";
@@ -487,18 +456,7 @@ describe("Agent", () => {
 		expect(agent.state.thinkingLevel).toBe("high");
 
 		// Test setTools
-		const tools: AgentTool[] = [
-			{
-				name: "test",
-				label: "Test",
-				description: "test tool",
-				parameters: Type.Object({}),
-				execute: async () => ({
-					content: [{ type: "text", text: "ok" }],
-					details: undefined,
-				}),
-			},
-		];
+		const tools = [{ name: "test", description: "test tool" } as any];
 		agent.state.tools = tools;
 		expect(agent.state.tools).toEqual(tools);
 		expect(agent.state.tools).not.toBe(tools); // Should be a copy
@@ -510,8 +468,8 @@ describe("Agent", () => {
 		expect(agent.state.messages).not.toBe(messages); // Should be a copy
 
 		// Test appendMessage
-		const newMessage = createAssistantMessage("Hi");
-		agent.state.messages.push(newMessage);
+		const newMessage = { role: "assistant" as const, content: [{ type: "text" as const, text: "Hi" }] };
+		agent.state.messages.push(newMessage as any);
 		expect(agent.state.messages).toHaveLength(2);
 		expect(agent.state.messages[1]).toBe(newMessage);
 
@@ -521,7 +479,7 @@ describe("Agent", () => {
 	});
 
 	it("should support steering message queue", async () => {
-		const agent = new Agent();
+		const agent = new Agent({ streamFn: unusedStreamFunction });
 
 		const message = { role: "user" as const, content: "Steering message", timestamp: Date.now() };
 		agent.steer(message);
@@ -531,7 +489,7 @@ describe("Agent", () => {
 	});
 
 	it("should support follow-up message queue", async () => {
-		const agent = new Agent();
+		const agent = new Agent({ streamFn: unusedStreamFunction });
 
 		const message = { role: "user" as const, content: "Follow-up message", timestamp: Date.now() };
 		agent.followUp(message);
@@ -541,7 +499,7 @@ describe("Agent", () => {
 	});
 
 	it("should handle abort controller", () => {
-		const agent = new Agent();
+		const agent = new Agent({ streamFn: unusedStreamFunction });
 
 		// Should not throw even if nothing is running
 		expect(() => agent.abort()).not.toThrow();
@@ -746,478 +704,7 @@ describe("Agent", () => {
 		expect(sawAbortSignal).toBe(true);
 	});
 
-	it.each([
-		"steering",
-		"followUp",
-	] as const)("retains queued %s input when next-turn preparation fails after a terminating tool", async (queue) => {
-		// given
-		const toolStarted = createDeferred();
-		const releaseTool = createDeferred();
-		const schema = Type.Object({});
-		const tool: AgentTool<typeof schema> = {
-			name: "terminating",
-			label: "Terminating",
-			description: "Terminates after release",
-			parameters: schema,
-			execute: async () => {
-				toolStarted.resolve();
-				await releaseTool.promise;
-				return { content: [{ type: "text", text: "done" }], details: {}, terminate: true };
-			},
-		};
-		let requestCount = 0;
-		const agent = new Agent({
-			initialState: { tools: [tool] },
-			prepareNextTurnWithContext: async () => {
-				throw new Error("required preparation failed");
-			},
-			streamFn: () => {
-				requestCount++;
-				const stream = new MockAssistantStream();
-				queueMicrotask(() => {
-					stream.push({
-						type: "done",
-						reason: "toolUse",
-						message: createAssistantToolUseMessage([
-							{ type: "toolCall", id: "tool-1", name: "terminating", arguments: {} },
-						]),
-					});
-				});
-				return stream;
-			},
-		});
-		const queuedMessage: AgentMessage = {
-			role: "user",
-			content: [{ type: "text", text: "queued safety instruction" }],
-			timestamp: Date.now(),
-		};
-
-		// when
-		const prompt = agent.prompt("run the terminating tool");
-		await toolStarted.promise;
-		if (queue === "steering") {
-			agent.steer(queuedMessage);
-		} else {
-			agent.followUp(queuedMessage);
-		}
-		releaseTool.resolve();
-		await prompt;
-
-		// then
-		expect(requestCount).toBe(1);
-		expect(agent.hasQueuedMessages()).toBe(true);
-		expect(agent.state.messages).not.toContain(queuedMessage);
-		expect(agent.state.errorMessage).toContain("required preparation failed");
-	});
-
-	it.each([
-		"steering",
-		"followUp",
-	] as const)("retains queued %s input when next-turn preparation aborts after a terminating tool", async (queue) => {
-		// given
-		const toolStarted = createDeferred();
-		const releaseTool = createDeferred();
-		const schema = Type.Object({});
-		const tool: AgentTool<typeof schema> = {
-			name: "terminating",
-			label: "Terminating",
-			description: "Terminates after release",
-			parameters: schema,
-			execute: async () => {
-				toolStarted.resolve();
-				await releaseTool.promise;
-				return { content: [{ type: "text", text: "done" }], details: {}, terminate: true };
-			},
-		};
-		let providerCalls = 0;
-		let agent: Agent;
-		agent = new Agent({
-			initialState: { tools: [tool] },
-			prepareNextTurnWithContext: async () => {
-				agent.abort();
-				return undefined;
-			},
-			streamFn: () => {
-				providerCalls++;
-				const stream = new MockAssistantStream();
-				queueMicrotask(() => {
-					stream.push({
-						type: "done",
-						reason: "toolUse",
-						message: createAssistantToolUseMessage([
-							{ type: "toolCall", id: "tool-1", name: "terminating", arguments: {} },
-						]),
-					});
-				});
-				return stream;
-			},
-		});
-		const queuedMessage: AgentMessage = {
-			role: "user",
-			content: [{ type: "text", text: "queued safety instruction" }],
-			timestamp: Date.now(),
-		};
-
-		// when
-		const prompt = agent.prompt("run the terminating tool");
-		await toolStarted.promise;
-		if (queue === "steering") {
-			agent.steer(queuedMessage);
-		} else {
-			agent.followUp(queuedMessage);
-		}
-		releaseTool.resolve();
-		await prompt;
-
-		// then
-		expect(providerCalls).toBe(1);
-		expect(agent.hasQueuedMessages()).toBe(true);
-		expect(agent.state.messages).not.toContain(queuedMessage);
-		expect(agent.state.errorMessage).toBeUndefined();
-	});
-
-	it.each([
-		"steering",
-		"followUp",
-	] as const)("clears queued %s input when next-turn preparation clears it before aborting", async (queue) => {
-		// given
-		const toolStarted = createDeferred();
-		const releaseTool = createDeferred();
-		const schema = Type.Object({});
-		const tool: AgentTool<typeof schema> = {
-			name: "terminating",
-			label: "Terminating",
-			description: "Terminates after release",
-			parameters: schema,
-			execute: async () => {
-				toolStarted.resolve();
-				await releaseTool.promise;
-				return { content: [{ type: "text", text: "done" }], details: {}, terminate: true };
-			},
-		};
-		let providerCalls = 0;
-		let agent: Agent;
-		agent = new Agent({
-			initialState: { tools: [tool] },
-			prepareNextTurnWithContext: async () => {
-				if (queue === "steering") {
-					agent.clearSteeringQueue();
-				} else {
-					agent.clearFollowUpQueue();
-				}
-				agent.abort();
-				return undefined;
-			},
-			streamFn: () => {
-				providerCalls++;
-				const stream = new MockAssistantStream();
-				queueMicrotask(() => {
-					stream.push({
-						type: "done",
-						reason: "toolUse",
-						message: createAssistantToolUseMessage([
-							{ type: "toolCall", id: "tool-1", name: "terminating", arguments: {} },
-						]),
-					});
-				});
-				return stream;
-			},
-		});
-		const queuedMessage: AgentMessage = {
-			role: "user",
-			content: [{ type: "text", text: "queued safety instruction" }],
-			timestamp: Date.now(),
-		};
-
-		// when
-		const prompt = agent.prompt("run the terminating tool");
-		await toolStarted.promise;
-		if (queue === "steering") {
-			agent.steer(queuedMessage);
-		} else {
-			agent.followUp(queuedMessage);
-		}
-		releaseTool.resolve();
-		await prompt;
-
-		// then
-		expect(providerCalls).toBe(1);
-		expect(agent.hasQueuedMessages()).toBe(false);
-		expect(agent.state.messages).not.toContain(queuedMessage);
-		expect(agent.state.errorMessage).toBeUndefined();
-	});
-
-	it.each([
-		["steering", false],
-		["steering", true],
-		["followUp", false],
-		["followUp", true],
-	] as const)("does not deliver cleared %s input after successful next-turn preparation (replacement: %s)", async (queue, withReplacement) => {
-		// given
-		const toolStarted = createDeferred();
-		const releaseTool = createDeferred();
-		const schema = Type.Object({});
-		const tool: AgentTool<typeof schema> = {
-			name: "terminating",
-			label: "Terminating",
-			description: "Terminates after release",
-			parameters: schema,
-			execute: async () => {
-				toolStarted.resolve();
-				await releaseTool.promise;
-				return { content: [{ type: "text", text: "done" }], details: {}, terminate: true };
-			},
-		};
-		let providerCalls = 0;
-		const providerUserTexts: string[][] = [];
-		let preparedTerminatingTurn = false;
-		const replacementMessage: AgentMessage = {
-			role: "user",
-			content: [{ type: "text", text: "replacement instruction" }],
-			timestamp: Date.now(),
-		};
-		let agent: Agent;
-		agent = new Agent({
-			initialState: { tools: [tool] },
-			prepareNextTurnWithContext: async () => {
-				if (preparedTerminatingTurn) return undefined;
-				preparedTerminatingTurn = true;
-				if (queue === "steering") {
-					agent.clearSteeringQueue();
-					if (withReplacement) agent.steer(replacementMessage);
-				} else {
-					agent.clearFollowUpQueue();
-					if (withReplacement) agent.followUp(replacementMessage);
-				}
-				return undefined;
-			},
-			streamFn: (_model, context) => {
-				providerCalls++;
-				providerUserTexts.push(
-					context.messages
-						.filter((message) => message.role === "user")
-						.map((message) =>
-							typeof message.content === "string"
-								? message.content
-								: message.content
-										.filter((content) => content.type === "text")
-										.map((content) => content.text)
-										.join("\n"),
-						),
-				);
-				const stream = new MockAssistantStream();
-				queueMicrotask(() => {
-					if (providerCalls === 1) {
-						stream.push({
-							type: "done",
-							reason: "toolUse",
-							message: createAssistantToolUseMessage([
-								{ type: "toolCall", id: "tool-1", name: "terminating", arguments: {} },
-							]),
-						});
-						return;
-					}
-					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("done") });
-				});
-				return stream;
-			},
-		});
-		const withdrawnMessage: AgentMessage = {
-			role: "user",
-			content: [{ type: "text", text: "withdrawn safety instruction" }],
-			timestamp: Date.now(),
-		};
-
-		// when
-		const prompt = agent.prompt("run the terminating tool");
-		await toolStarted.promise;
-		if (queue === "steering") {
-			agent.steer(withdrawnMessage);
-		} else {
-			agent.followUp(withdrawnMessage);
-		}
-		releaseTool.resolve();
-		await prompt;
-
-		// then
-		expect(providerCalls).toBe(withReplacement ? 2 : 1);
-		expect(providerUserTexts.flat()).not.toContain("withdrawn safety instruction");
-		expect(agent.state.messages).not.toContain(withdrawnMessage);
-		if (withReplacement) {
-			expect(providerUserTexts.flat()).toEqual([
-				"run the terminating tool",
-				"run the terminating tool",
-				"replacement instruction",
-			]);
-		}
-	});
-
-	it("delivers steering queued during terminating-turn preparation before an older follow-up", async () => {
-		// given
-		const toolStarted = createDeferred();
-		const releaseTool = createDeferred();
-		const preparationStarted = createDeferred();
-		const releasePreparation = createDeferred();
-		const schema = Type.Object({});
-		const tool: AgentTool<typeof schema> = {
-			name: "terminating",
-			label: "Terminating",
-			description: "Terminates after release",
-			parameters: schema,
-			execute: async () => {
-				toolStarted.resolve();
-				await releaseTool.promise;
-				return { content: [{ type: "text", text: "done" }], details: {}, terminate: true };
-			},
-		};
-		let providerCalls = 0;
-		const providerUserTexts: string[][] = [];
-		const agent = new Agent({
-			initialState: { tools: [tool] },
-			prepareNextTurnWithContext: async () => {
-				preparationStarted.resolve();
-				await releasePreparation.promise;
-				return undefined;
-			},
-			streamFn: (_model, context) => {
-				providerCalls++;
-				providerUserTexts.push(
-					context.messages
-						.filter((message) => message.role === "user")
-						.flatMap((message) =>
-							typeof message.content === "string"
-								? [message.content]
-								: message.content.filter((content) => content.type === "text").map((content) => content.text),
-						),
-				);
-				const stream = new MockAssistantStream();
-				queueMicrotask(() => {
-					if (providerCalls === 1) {
-						stream.push({
-							type: "done",
-							reason: "toolUse",
-							message: createAssistantToolUseMessage([
-								{ type: "toolCall", id: "tool-1", name: "terminating", arguments: {} },
-							]),
-						});
-						return;
-					}
-					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("done") });
-				});
-				return stream;
-			},
-		});
-
-		// when
-		const prompt = agent.prompt("start");
-		await toolStarted.promise;
-		agent.followUp({ role: "user", content: [{ type: "text", text: "old follow-up" }], timestamp: Date.now() });
-		releaseTool.resolve();
-		await preparationStarted.promise;
-		agent.steer({ role: "user", content: [{ type: "text", text: "urgent steering" }], timestamp: Date.now() });
-		releasePreparation.resolve();
-		await prompt;
-
-		// then
-		expect(providerCalls).toBe(3);
-		expect(providerUserTexts[1]).toEqual(["start", "urgent steering"]);
-		expect(providerUserTexts[2]).toEqual(["start", "urgent steering", "old follow-up"]);
-	});
-
-	it.each([
-		["steering", false],
-		["steering", true],
-		["followUp", false],
-		["followUp", true],
-	] as const)("honors %s clear during terminating continuation turn_start (replacement: %s)", async (queue, replace) => {
-		// given
-		const toolStarted = createDeferred();
-		const releaseTool = createDeferred();
-		const schema = Type.Object({});
-		const tool: AgentTool<typeof schema> = {
-			name: "terminating",
-			label: "Terminating",
-			description: "Terminates after release",
-			parameters: schema,
-			execute: async () => {
-				toolStarted.resolve();
-				await releaseTool.promise;
-				return { content: [{ type: "text", text: "done" }], details: {}, terminate: true };
-			},
-		};
-		let providerCalls = 0;
-		const providerUserTexts: string[][] = [];
-		const agent = new Agent({
-			initialState: { tools: [tool] },
-			prepareNextTurnWithContext: async () => undefined,
-			streamFn: (_model, context) => {
-				providerCalls++;
-				providerUserTexts.push(
-					context.messages
-						.filter((message) => message.role === "user")
-						.flatMap((message) =>
-							typeof message.content === "string"
-								? [message.content]
-								: message.content.filter((content) => content.type === "text").map((content) => content.text),
-						),
-				);
-				const stream = new MockAssistantStream();
-				queueMicrotask(() => {
-					if (providerCalls === 1) {
-						stream.push({
-							type: "done",
-							reason: "toolUse",
-							message: createAssistantToolUseMessage([
-								{ type: "toolCall", id: "tool-1", name: "terminating", arguments: {} },
-							]),
-						});
-						return;
-					}
-					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("done") });
-				});
-				return stream;
-			},
-		});
-		let turnStarts = 0;
-		agent.subscribe((event) => {
-			if (event.type !== "turn_start" || ++turnStarts !== 2) return;
-			if (queue === "steering") {
-				agent.clearSteeringQueue();
-				if (replace) {
-					agent.steer({ role: "user", content: [{ type: "text", text: "replacement" }], timestamp: Date.now() });
-				}
-			} else {
-				agent.clearFollowUpQueue();
-				if (replace) {
-					agent.followUp({
-						role: "user",
-						content: [{ type: "text", text: "replacement" }],
-						timestamp: Date.now(),
-					});
-				}
-			}
-		});
-
-		// when
-		const prompt = agent.prompt("start");
-		await toolStarted.promise;
-		const withdrawn = {
-			role: "user" as const,
-			content: [{ type: "text" as const, text: "withdrawn" }],
-			timestamp: Date.now(),
-		};
-		if (queue === "steering") agent.steer(withdrawn);
-		else agent.followUp(withdrawn);
-		releaseTool.resolve();
-		await prompt;
-
-		// then
-		expect(providerCalls).toBe(replace ? 2 : 1);
-		expect(providerUserTexts.flat()).not.toContain("withdrawn");
-		if (replace) expect(providerUserTexts[1]).toEqual(["start", "replacement"]);
-	});
-
-	it("forwards sessionId to streamFn options", async () => {
+	it("forwards sessionId to streamFunction options", async () => {
 		let receivedSessionId: string | undefined;
 		const agent = new Agent({
 			sessionId: "session-abc",

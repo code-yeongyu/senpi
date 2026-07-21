@@ -5,6 +5,46 @@ import values from "./data/openrouter.json" with { type: "json" };
 import type { Model } from "../types.ts";
 
 export const OPENROUTER_MODELS = values as {
+	"~anthropic/claude-fable-latest": Model<"openai-completions"> & {
+		id: "~anthropic/claude-fable-latest";
+		provider: "openrouter";
+	};
+	"~anthropic/claude-haiku-latest": Model<"openai-completions"> & {
+		id: "~anthropic/claude-haiku-latest";
+		provider: "openrouter";
+	};
+	"~anthropic/claude-opus-latest": Model<"openai-completions"> & {
+		id: "~anthropic/claude-opus-latest";
+		provider: "openrouter";
+	};
+	"~anthropic/claude-sonnet-latest": Model<"openai-completions"> & {
+		id: "~anthropic/claude-sonnet-latest";
+		provider: "openrouter";
+	};
+	"~google/gemini-flash-latest": Model<"openai-completions"> & {
+		id: "~google/gemini-flash-latest";
+		provider: "openrouter";
+	};
+	"~google/gemini-pro-latest": Model<"openai-completions"> & {
+		id: "~google/gemini-pro-latest";
+		provider: "openrouter";
+	};
+	"~moonshotai/kimi-latest": Model<"openai-completions"> & {
+		id: "~moonshotai/kimi-latest";
+		provider: "openrouter";
+	};
+	"~openai/gpt-latest": Model<"openai-completions"> & {
+		id: "~openai/gpt-latest";
+		provider: "openrouter";
+	};
+	"~openai/gpt-mini-latest": Model<"openai-completions"> & {
+		id: "~openai/gpt-mini-latest";
+		provider: "openrouter";
+	};
+	"~x-ai/grok-latest": Model<"openai-completions"> & {
+		id: "~x-ai/grok-latest";
+		provider: "openrouter";
+	};
 	"ai21/jamba-large-1.7": Model<"openai-completions"> & {
 		id: "ai21/jamba-large-1.7";
 		provider: "openrouter";
@@ -1039,46 +1079,6 @@ export const OPENROUTER_MODELS = values as {
 	};
 	"z-ai/glm-5v-turbo": Model<"openai-completions"> & {
 		id: "z-ai/glm-5v-turbo";
-		provider: "openrouter";
-	};
-	"~anthropic/claude-fable-latest": Model<"openai-completions"> & {
-		id: "~anthropic/claude-fable-latest";
-		provider: "openrouter";
-	};
-	"~anthropic/claude-haiku-latest": Model<"openai-completions"> & {
-		id: "~anthropic/claude-haiku-latest";
-		provider: "openrouter";
-	};
-	"~anthropic/claude-opus-latest": Model<"openai-completions"> & {
-		id: "~anthropic/claude-opus-latest";
-		provider: "openrouter";
-	};
-	"~anthropic/claude-sonnet-latest": Model<"openai-completions"> & {
-		id: "~anthropic/claude-sonnet-latest";
-		provider: "openrouter";
-	};
-	"~google/gemini-flash-latest": Model<"openai-completions"> & {
-		id: "~google/gemini-flash-latest";
-		provider: "openrouter";
-	};
-	"~google/gemini-pro-latest": Model<"openai-completions"> & {
-		id: "~google/gemini-pro-latest";
-		provider: "openrouter";
-	};
-	"~moonshotai/kimi-latest": Model<"openai-completions"> & {
-		id: "~moonshotai/kimi-latest";
-		provider: "openrouter";
-	};
-	"~openai/gpt-latest": Model<"openai-completions"> & {
-		id: "~openai/gpt-latest";
-		provider: "openrouter";
-	};
-	"~openai/gpt-mini-latest": Model<"openai-completions"> & {
-		id: "~openai/gpt-mini-latest";
-		provider: "openrouter";
-	};
-	"~x-ai/grok-latest": Model<"openai-completions"> & {
-		id: "~x-ai/grok-latest";
 		provider: "openrouter";
 	};
 };

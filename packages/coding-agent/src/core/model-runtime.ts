@@ -64,7 +64,9 @@ export interface CreateModelRuntimeOptions {
 	modelsPath?: string | null;
 	modelsStore?: ModelsStore;
 	modelsStorePath?: string;
+	/** Allow create() to refresh model catalogs over the network. Defaults to false. */
 	allowModelNetwork?: boolean;
+	/** Timeout for the create-time network model refresh. */
 	modelRefreshTimeoutMs?: number;
 	catalogBaseUrl?: string;
 }
@@ -146,7 +148,15 @@ export class ModelRuntime implements Models {
 		const providers = builtinProviderCatalog
 			.builtinProviders()
 			.map((provider) =>
-				provider.id === "radius" ? provider : withRemoteCatalog(provider, options.catalogBaseUrl),
+				provider.id === "radius"
+					? provider
+					: withRemoteCatalog(
+							provider,
+							options.catalogBaseUrl,
+							builtinProviderCatalog.getBuiltinModelDataUrl(
+								provider.id as builtinProviderCatalog.BuiltinProvider,
+							),
+						),
 			);
 		const runtime = new ModelRuntime(
 			credentials,
@@ -159,12 +169,11 @@ export class ModelRuntime implements Models {
 		);
 		runtime.configureRadiusProviders();
 		runtime.rebuildProviders();
-		const controller = new AbortController();
-		const timeout = runtime.allowModelNetwork
-			? setTimeout(() => controller.abort(), runtime.modelRefreshTimeoutMs)
-			: undefined;
+		const refreshFromNetwork = runtime.allowModelNetwork && options.allowModelNetwork === true;
+		const controller = refreshFromNetwork ? new AbortController() : undefined;
+		const timeout = controller ? setTimeout(() => controller.abort(), runtime.modelRefreshTimeoutMs) : undefined;
 		try {
-			await runtime.refresh({ allowNetwork: runtime.allowModelNetwork, signal: controller.signal });
+			await runtime.refresh({ allowNetwork: refreshFromNetwork, signal: controller?.signal });
 		} finally {
 			if (timeout) clearTimeout(timeout);
 		}
@@ -432,7 +441,11 @@ export class ModelRuntime implements Models {
 		};
 	}
 
-	async setRuntimeApiKey(providerId: string, apiKey: string): Promise<void> {
+	async setRuntimeApiKey(
+		providerId: string,
+		apiKey: string,
+		refreshOptions: ModelsRefreshOptions = {},
+	): Promise<void> {
 		this.credentials.setRuntimeApiKey(providerId, apiKey);
 		const auth = new Map(this.snapshot.auth).set(providerId, { type: "api_key", source: "runtime API key" });
 		const configuredProviders = new Set(this.snapshot.configuredProviders).add(providerId);
@@ -444,7 +457,7 @@ export class ModelRuntime implements Models {
 			storedProviders,
 			available: this.snapshot.all.filter((model) => configuredProviders.has(model.provider)),
 		};
-		await this.refresh({ allowNetwork: this.allowModelNetwork });
+		await this.refresh(refreshOptions);
 	}
 
 	async removeRuntimeApiKey(providerId: string): Promise<void> {

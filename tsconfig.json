@@ -27,6 +27,9 @@
 			"@earendil-works/pi-agent-core/*": [
 				"./packages/agent/src/*"
 			],
+			"@earendil-works/pi-storage-sqlite-node": [
+				"./packages/storage/sqlite-node/src/index.ts"
+			],
 			"@earendil-works/pi-coding-agent": [
 				"./packages/coding-agent/src/index.ts"
 			],
@@ -36,17 +39,17 @@
 			"@earendil-works/pi-coding-agent/*": [
 				"./packages/coding-agent/src/*"
 			],
-			"@earendil-works/pi-orchestrator": [
-				"./packages/orchestrator/src/index.ts"
+			"@earendil-works/pi-server": [
+				"./packages/server/src/index.ts"
 			],
-			"@earendil-works/pi-orchestrator/*": [
-				"./packages/orchestrator/src/*"
+			"@earendil-works/pi-server/*": [
+				"./packages/server/src/*"
 			],
 			"@code-yeongyu/senpi-orchestrator": [
-				"./packages/orchestrator/src/index.ts"
+				"./packages/server/src/index.ts"
 			],
 			"@code-yeongyu/senpi-orchestrator/*": [
-				"./packages/orchestrator/src/*"
+				"./packages/server/src/*"
 			],
 			"typebox": [
 				"./node_modules/typebox"
@@ -89,6 +92,8 @@
 	"include": [
 		"packages/*/src/**/*",
 		"packages/*/test/**/*",
+		"packages/storage/*/src/**/*",
+		"packages/storage/*/test/**/*",
 		"packages/coding-agent/examples/**/*"
 	],
 	"exclude": [

@@ -5,10 +5,6 @@ import values from "./data/alibaba-token-plan.json" with { type: "json" };
 import type { Model } from "../types.ts";
 
 export const ALIBABA_TOKEN_PLAN_MODELS = values as {
-	"MiniMax-M2.5": Model<"openai-completions"> & {
-		id: "MiniMax-M2.5";
-		provider: "alibaba-token-plan";
-	};
 	"deepseek-v3.2": Model<"openai-completions"> & {
 		id: "deepseek-v3.2";
 		provider: "alibaba-token-plan";
@@ -43,6 +39,10 @@ export const ALIBABA_TOKEN_PLAN_MODELS = values as {
 	};
 	"kimi-k2.7-code": Model<"openai-completions"> & {
 		id: "kimi-k2.7-code";
+		provider: "alibaba-token-plan";
+	};
+	"MiniMax-M2.5": Model<"openai-completions"> & {
+		id: "MiniMax-M2.5";
 		provider: "alibaba-token-plan";
 	};
 	"qwen3.6-flash": Model<"openai-completions"> & {

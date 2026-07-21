@@ -11,7 +11,7 @@ import {
 	type ToolResultMessage,
 	validateToolArguments,
 } from "@earendil-works/pi-ai";
-import { streamSimple } from "@earendil-works/pi-ai/compat";
+import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
 	AgentContext,
 	AgentEvent,
@@ -34,8 +34,8 @@ export function agentLoop(
 	prompts: AgentMessage[],
 	context: AgentContext,
 	config: AgentLoopConfig,
-	signal?: AbortSignal,
-	streamFn?: StreamFn,
+	signal: AbortSignal | undefined,
+	streamFn: StreamFn,
 ): EventStream<AgentEvent, AgentMessage[]> {
 	const stream = createAgentStream();
 
@@ -66,8 +66,8 @@ export function agentLoop(
 export function agentLoopContinue(
 	context: AgentContext,
 	config: AgentLoopConfig,
-	signal?: AbortSignal,
-	streamFn?: StreamFn,
+	signal: AbortSignal | undefined,
+	streamFn: StreamFn,
 ): EventStream<AgentEvent, AgentMessage[]> {
 	if (context.messages.length === 0) {
 		throw new Error("Cannot continue: no messages in context");
@@ -99,8 +99,8 @@ export async function runAgentLoop(
 	context: AgentContext,
 	config: AgentLoopConfig,
 	emit: AgentEventSink,
-	signal?: AbortSignal,
-	streamFn?: StreamFn,
+	signal: AbortSignal | undefined,
+	streamFn: StreamFn,
 ): Promise<AgentMessage[]> {
 	const newMessages: AgentMessage[] = [...prompts];
 	const currentContext: AgentContext = {
@@ -115,7 +115,7 @@ export async function runAgentLoop(
 		await emit({ type: "message_end", message: prompt });
 	}
 
-	await runLoop(currentContext, newMessages, config, signal, emit, streamFn);
+	await runLoop(currentContext, newMessages, config, signal, emit, streamFn ?? getDefaultStreamFn());
 	return newMessages;
 }
 
@@ -123,8 +123,8 @@ export async function runAgentLoopContinue(
 	context: AgentContext,
 	config: AgentLoopConfig,
 	emit: AgentEventSink,
-	signal?: AbortSignal,
-	streamFn?: StreamFn,
+	signal: AbortSignal | undefined,
+	streamFn: StreamFn,
 ): Promise<AgentMessage[]> {
 	if (context.messages.length === 0) {
 		throw new Error("Cannot continue: no messages in context");
@@ -140,7 +140,7 @@ export async function runAgentLoopContinue(
 	await emit({ type: "agent_start" });
 	await emit({ type: "turn_start" });
 
-	await runLoop(currentContext, newMessages, config, signal, emit, streamFn);
+	await runLoop(currentContext, newMessages, config, signal, emit, streamFn ?? getDefaultStreamFn());
 	return newMessages;
 }
 
@@ -176,7 +176,7 @@ async function runLoop(
 	initialConfig: AgentLoopConfig,
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
-	streamFn?: StreamFn,
+	streamFunction: StreamFn,
 ): Promise<void> {
 	let currentContext = initialContext;
 	let config = initialConfig;
@@ -227,7 +227,7 @@ async function runLoop(
 			}
 
 			// Stream assistant response
-			const message = await streamAssistantResponse(currentContext, config, signal, emit, streamFn);
+			const message = await streamAssistantResponse(currentContext, config, signal, emit, streamFunction);
 			newMessages.push(message);
 
 			if (message.stopReason === "error" || message.stopReason === "aborted") {
@@ -373,7 +373,7 @@ async function streamAssistantResponse(
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
-	streamFn?: StreamFn,
+	streamFunction: StreamFn,
 ): Promise<AssistantMessage> {
 	let partialMessage: AssistantMessage | null = null;
 	let addedPartial = false;
@@ -408,8 +408,6 @@ async function streamAssistantResponse(
 			messages: llmMessages,
 			tools: context.tools,
 		};
-
-		const streamFunction = streamFn || streamSimple;
 
 		// Resolve API key (important for expiring tokens)
 		const resolvedApiKey =
@@ -1064,6 +1062,7 @@ async function finalizeExecutedToolCall(
 					...result,
 					content: afterResult.content ?? result.content,
 					details: afterResult.details ?? result.details,
+					usage: afterResult.usage ?? result.usage,
 					terminate: afterResult.terminate ?? result.terminate,
 				};
 				isError = afterResult.isError ?? isError;
@@ -1107,6 +1106,7 @@ function createToolResultMessage(finalized: FinalizedToolCallOutcome): ToolResul
 		// so the null never enters session history or provider payloads.
 		content: finalized.result.content ?? [],
 		details: finalized.result.details,
+		usage: finalized.result.usage,
 		...(finalized.result.addedToolNames?.length ? { addedToolNames: finalized.result.addedToolNames } : {}),
 		isError: finalized.isError,
 		timestamp: Date.now(),

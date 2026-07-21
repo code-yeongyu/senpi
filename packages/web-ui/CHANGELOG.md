@@ -8,6 +8,8 @@
 
 ### Changed
 
+- Updated the browser example and agent interface for the current streaming API shape.
+
 ### Fixed
 
 ### Removed

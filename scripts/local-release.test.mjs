@@ -141,9 +141,10 @@ function writeLocalReleaseFixture(repoRoot) {
 		["packages/pty", "@earendil-works/pi-pty"],
 		["packages/tui", "@earendil-works/pi-tui"],
 		["packages/agent", "@earendil-works/pi-agent-core"],
+		["packages/storage/sqlite-node", "@earendil-works/pi-storage-sqlite-node"],
 		["packages/senpi-codemode", "@code-yeongyu/senpi-codemode"],
 		["packages/coding-agent", "@code-yeongyu/senpi"],
-		["packages/orchestrator", "@code-yeongyu/senpi-orchestrator"],
+		["packages/server", "@code-yeongyu/senpi-orchestrator"],
 	]) {
 		writeJson(join(repoRoot, directory, "package.json"), { name, version: "0.0.0" });
 		mkdirSync(join(repoRoot, directory, "dist"), { recursive: true });

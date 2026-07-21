@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed paste registry synchronization when deleting paste markers and cleared inverted cursor state on exit.
+
 ### Removed
 
 ## [2026.7.20-2] - 2026-07-20
