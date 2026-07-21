@@ -153,6 +153,10 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 			return;
 		}
 
+		// A component may re-emit its unchanged registration when it receives the
+		// ready event from rebuildWatchers. Rebuilding for that same payload emits
+		// ready again and creates an unbounded synchronous rebuild loop.
+		if (registrations.get(payload.id) === payload) return;
 		registrations.set(payload.id, payload);
 		pending.delete(payload.id);
 		logger.info("registration_added", { id: payload.id });
@@ -542,8 +546,18 @@ function externalTargetToWatchTarget(
 	return {
 		kind: "dir-recursive",
 		path,
+		// Literal filters also declare explicitly watched dot-directories. Without
+		// this, an external ancestor target filtered to ".omo" drops its creation
+		// event before the validator can inspect the new config beneath it.
+		allowList: literalFilterNames(filterGlobs),
 		filter: (relativePath) => matchesConfigWatchFilter(relativePath, filterGlobs),
 	};
+}
+
+function literalFilterNames(filterGlobs: readonly string[] | undefined): string[] | undefined {
+	if (!filterGlobs) return undefined;
+	const literalNames = filterGlobs.filter((filterGlob) => !filterGlob.includes("*") && !filterGlob.includes("/") && !filterGlob.includes("\\\\"));
+	return literalNames.length > 0 ? literalNames : undefined;
 }
 
 function groupChangedPaths(paths: readonly string[], targets: readonly ActiveTarget[]): Map<string, string[]> {

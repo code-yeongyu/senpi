@@ -12,6 +12,7 @@ import configReloadExtension, {
 import type { ConfigReloadLogger } from "../../src/core/extensions/builtin/config-reload/log.ts";
 import {
 	CONFIG_WATCH_CHANGED,
+	CONFIG_WATCH_READY,
 	CONFIG_WATCH_REGISTER,
 	CONFIG_WATCH_REJECTED,
 	CONFIG_WATCH_RELOADED,
@@ -320,6 +321,25 @@ describe("config reload builtin extension", () => {
 		});
 	});
 
+	it("detects an external literal-filtered dot directory when it is created", async () => {
+		vi.useFakeTimers();
+		const fixture = await createFixture();
+		const ancestorDir = join(fixture.harness.tempDir, "ancestor");
+		mkdirSync(ancestorDir);
+		fixture.events.emit(CONFIG_WATCH_REGISTER, {
+			id: "omo-ancestor",
+			displayName: ".omo ancestor",
+			targets: [{ path: ancestorDir, kind: "dir", filterGlobs: [".omo"] }],
+		});
+		const omoDir = join(ancestorDir, ".omo");
+		mkdirSync(omoDir);
+
+		await settleChange(fixture, ancestorDir, ".omo");
+
+		expect(fixture.reload).toHaveBeenCalledTimes(1);
+		expect(fixture.notifications.some((message) => message.includes(omoDir))).toBe(true);
+	});
+
 	it("rejects syntactically invalid settings before reload and logs the rejection", async () => {
 		vi.useFakeTimers();
 		const fixture = await createFixture();
@@ -425,6 +445,31 @@ describe("config reload builtin extension", () => {
 		});
 
 		expect(watches.activeListenerCount(externalDir)).toBe(1);
+	});
+
+	it("does not rebuild recursively when ready re-emits the identical registration", async () => {
+		const agentDir = mkdtempSync(join(tmpdir(), "senpi-config-reload-idempotent-registration-"));
+		agentDirs.push(agentDir);
+		writeJson(join(agentDir, "settings.json"), { theme: "dark" });
+		const bus = createEventBus();
+		const watches = createWatchProbe();
+		const extension = createManualExtension(bus);
+		const registration = {
+			id: "omo",
+			displayName: ".omo config",
+			targets: [{ path: join(agentDir, "omo"), kind: "dir" as const }],
+		};
+		bus.on(CONFIG_WATCH_READY, () => bus.emit(CONFIG_WATCH_REGISTER, registration));
+		configReloadExtension(extension.api, { agentDir, subscribe: watches.subscribe, logger: silentLogger() });
+
+		await invoke(
+			extension.handlers,
+			"session_start",
+			{ type: "session_start", reason: "startup" } satisfies SessionStartEvent,
+			fakeContext({ cwd: agentDir }),
+		);
+
+		expect(watches.subscribeCalls.filter((path) => path === join(agentDir, "omo"))).toHaveLength(1);
 	});
 
 	it("buffers factory-time registrations until session_start", async () => {
