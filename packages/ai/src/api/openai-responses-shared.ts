@@ -40,6 +40,8 @@ import { transformMessages } from "./transform-messages.ts";
 // Utilities
 // =============================================================================
 
+const CUSTOM_TOOL_CALL_ITEM_ID = "custom";
+
 function encodeTextSignatureV1(id: string, phase?: TextSignatureV1["phase"]): string {
 	const payload: TextSignatureV1 = { v: 1, id };
 	if (phase) payload.phase = phase;
@@ -153,9 +155,14 @@ export function convertResponsesMessages<TApi extends Api>(
 		const [callId, itemId] = id.split("|");
 		const normalizedCallId = normalizeIdPart(callId);
 		const isForeignToolCall = source.provider !== model.provider || source.api !== model.api;
-		let normalizedItemId = isForeignToolCall ? buildForeignResponsesItemId(itemId) : normalizeIdPart(itemId);
+		let normalizedItemId =
+			itemId === CUSTOM_TOOL_CALL_ITEM_ID
+				? itemId
+				: isForeignToolCall
+					? buildForeignResponsesItemId(itemId)
+					: normalizeIdPart(itemId);
 		// OpenAI Responses API requires item id to start with "fc"
-		if (!normalizedItemId.startsWith("fc_")) {
+		if (normalizedItemId !== CUSTOM_TOOL_CALL_ITEM_ID && !normalizedItemId.startsWith("fc_")) {
 			normalizedItemId = normalizeIdPart(`fc_${normalizedItemId}`);
 		}
 		return `${normalizedCallId}|${normalizedItemId}`;
@@ -253,7 +260,7 @@ export function convertResponsesMessages<TApi extends Api>(
 						itemId = undefined;
 					}
 
-					if (isFreeformToolName(toolCall.name, context.tools)) {
+					if (itemIdRaw === CUSTOM_TOOL_CALL_ITEM_ID || isFreeformToolName(toolCall.name, context.tools)) {
 						output.push({
 							type: "custom_tool_call",
 							call_id: callId,
@@ -280,7 +287,7 @@ export function convertResponsesMessages<TApi extends Api>(
 				.join("\n");
 			const hasImages = msg.content.some((c): c is ImageContent => c.type === "image");
 			const hasText = textResult.length > 0;
-			const [callId] = msg.toolCallId.split("|");
+			const [callId, itemIdRaw] = msg.toolCallId.split("|");
 
 			let output: string | ResponseFunctionCallOutputItemList;
 			if (hasImages && model.input.includes("image")) {
@@ -307,7 +314,7 @@ export function convertResponsesMessages<TApi extends Api>(
 			} else {
 				output = sanitizeSurrogates(hasText ? textResult : hasImages ? "(see attached image)" : "(no tool output)");
 			}
-			if (isFreeformToolName(msg.toolName, context.tools)) {
+			if (itemIdRaw === CUSTOM_TOOL_CALL_ITEM_ID || isFreeformToolName(msg.toolName, context.tools)) {
 				messages.push({
 					type: "custom_tool_call_output",
 					call_id: callId,
@@ -456,7 +463,7 @@ export async function processResponsesStream<TApi extends Api>(
 			const input = item.input || "";
 			const block: StreamingToolCall = {
 				type: "toolCall",
-				id: `${item.call_id}|custom`,
+				id: `${item.call_id}|${CUSTOM_TOOL_CALL_ITEM_ID}`,
 				name: item.name,
 				arguments: { input },
 				partialJson: JSON.stringify({ input }),

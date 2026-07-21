@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Fixed OpenAI Responses replay misclassifying persisted custom/freeform tool calls during compaction and model or API switches.
+
 ### Removed
 
 ## [2026.7.20-2] - 2026-07-20

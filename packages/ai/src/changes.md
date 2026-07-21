@@ -1,5 +1,27 @@
 # AI Source Changes
 
+## 2026-07-20 - Preserve persisted custom tool replay without active definitions
+
+### What changed and why
+
+- OpenAI Responses replay now treats the persisted `|custom` tool-call ID suffix as authoritative for both calls and outputs.
+- This preserves `custom_tool_call` / `custom_tool_call_output` wire shapes during compaction, where summary generation intentionally supplies no active tools.
+- Cross-model and cross-API ID normalization preserves the reserved suffix while continuing to normalize the call ID and ordinary function item IDs.
+- Without this fallback, historical freeform calls such as `apply_patch` were misclassified as function calls and replayed with `id: "custom"`, which Codex rejects because function-call item IDs must start with `fc_`.
+
+### Files modified
+
+- `api/openai-responses-shared.ts`
+- `../test/openai-responses-custom-tools.test.ts`
+
+### Why an extension could not handle this
+
+- The invalid item is produced inside provider request serialization before the compaction summary request is sent. Extensions cannot safely rewrite this internal Responses wire payload while preserving call/output pairing.
+
+### Expected merge-conflict zones
+
+- Low risk around custom/freeform tool classification in `convertResponsesMessages()`.
+
 ## 2026-07-20 - Typed classifier stop details
 
 - Added optional typed refusal/sensitive stop details to assistant messages, preserving Anthropic classifier outcomes through streaming and faux provider errors.
