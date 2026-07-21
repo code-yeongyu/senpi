@@ -48,6 +48,30 @@ function createSession(options: {
 		},
 		sessionManager: {
 			getEntries: () => entries,
+			getUsageTotals: () => {
+				const totals = {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					cost: 0,
+					latestCacheHitRate: undefined as number | undefined,
+				};
+				for (const entry of entries) {
+					if (entry.type === "message" && entry.message.role === "assistant") {
+						totals.input += entry.message.usage.input;
+						totals.output += entry.message.usage.output;
+						totals.cacheRead += entry.message.usage.cacheRead;
+						totals.cacheWrite += entry.message.usage.cacheWrite;
+						totals.cost += entry.message.usage.cost.total;
+						const latestPromptTokens =
+							entry.message.usage.input + entry.message.usage.cacheRead + entry.message.usage.cacheWrite;
+						totals.latestCacheHitRate =
+							latestPromptTokens > 0 ? (entry.message.usage.cacheRead / latestPromptTokens) * 100 : undefined;
+					}
+				}
+				return totals;
+			},
 			getSessionName: () => options.sessionName,
 			getCwd: () => "/tmp/project",
 		},
