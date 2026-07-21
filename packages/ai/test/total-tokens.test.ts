@@ -552,6 +552,30 @@ describe("totalTokens field", () => {
 	});
 
 	// =========================================================================
+	// Alibaba Token Plan
+	// =========================================================================
+
+	describe.skipIf(!process.env.ALIBABA_TOKEN_PLAN_API_KEY)("Alibaba Token Plan", () => {
+		it("qwen3.7-max - should return totalTokens equal to sum of components", {
+			retry: 3,
+			timeout: 60000,
+		}, async () => {
+			const llm = getModel("alibaba-token-plan", "qwen3.7-max");
+
+			console.log(`\nAlibaba Token Plan / ${llm.id}:`);
+			const { first, second } = await testTotalTokensWithCache(llm, {
+				apiKey: process.env.ALIBABA_TOKEN_PLAN_API_KEY,
+			});
+
+			logUsage("First request", first);
+			logUsage("Second request", second);
+
+			assertTotalTokensEqualsComponents(first);
+			assertTotalTokensEqualsComponents(second);
+		});
+	});
+
+	// =========================================================================
 	// Kimi For Coding
 	// =========================================================================
 

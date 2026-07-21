@@ -74,6 +74,7 @@ const PROVIDER_KEYS = [
 	"GROQ_API_KEY",
 	"XAI_API_KEY",
 	"DEEPSEEK_API_KEY",
+	"ALIBABA_TOKEN_PLAN_API_KEY",
 ];
 
 function hasCmd(cmd) {

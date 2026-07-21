@@ -34,6 +34,7 @@ export type KnownImagesApi = "openrouter-images";
 export type ImagesApi = KnownImagesApi | (string & {});
 
 export type KnownProvider =
+	| "alibaba-token-plan"
 	| "amazon-bedrock"
 	| "ant-ling"
 	| "anthropic"
