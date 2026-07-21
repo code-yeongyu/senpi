@@ -1,5 +1,6 @@
 import { Container, Spacer, type TUI } from "@earendil-works/pi-tui";
 import type { ToolDef } from "../../../core/tools/index.ts";
+import { readToolProgress } from "../tool-progress.ts";
 import { createBoundedRenderSignature } from "./render-signature.ts";
 import { ToolExecutionImages } from "./tool-execution-images.ts";
 import { ToolExecutionRenderer } from "./tool-execution-renderer.ts";
@@ -182,7 +183,9 @@ export class ToolExecutionComponent extends Container {
 	private updateSpinnerAnimation(): void {
 		const isStreamingArgs = !this.argsComplete && ["edit", "write", "apply_patch"].includes(this.identity.toolName);
 		const isPartialTask = this.isPartial && this.identity.toolName === "task" && this.result !== undefined;
-		if (isStreamingArgs || isPartialTask) this.startSpinnerAnimation();
+		const isPartialProgress =
+			this.isPartial && this.result !== undefined && readToolProgress(this.result.details) !== undefined;
+		if (isStreamingArgs || isPartialTask || isPartialProgress) this.startSpinnerAnimation();
 		else this.stopSpinnerAnimation();
 	}
 
