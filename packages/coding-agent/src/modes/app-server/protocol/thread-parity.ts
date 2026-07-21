@@ -68,6 +68,15 @@ export type ThreadItem = {
 	readonly type: string;
 	readonly [key: string]: JsonValue | undefined;
 };
+export type PatchChangeKind =
+	| { readonly type: "add" }
+	| { readonly type: "delete" }
+	| { readonly type: "update"; readonly move_path: string | null };
+export type FileUpdateChange = {
+	readonly path: string;
+	readonly kind: PatchChangeKind;
+	readonly diff: string;
+};
 export type ThreadItemEntry = { readonly turnId: string; readonly item: ThreadItem };
 export type ThreadItemsListParams = {
 	readonly threadId: string;

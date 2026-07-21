@@ -1,5 +1,34 @@
 # changes
 
+## App-server web-search projection and cumulative turn diffs (2026-07-21)
+
+### What changed
+
+- `modes/app-server/threads/`: projects only OpenAI `web_search_call` metadata into the structured Codex `webSearch`
+  shape, preserves readable generic provider-native items for other subtypes, and emits subscriber-only
+  `turn/diff/updated` notifications rebuilt from per-tool patches in file-change source order.
+- `core/tools/` and `core/extensions/builtin/gpt-apply-patch/`: preserve source-backed unified patches for real edit,
+  write, multi-file, partial-success, repeated same-path, dependent sequential, and move-only results.
+- Non-empty app-server `fileChange` changes use the generated v2 tagged kind shape; moves retain the source path,
+  expose the destination in `move_path`, and carry an applicable delete/add-or-update representation.
+- `test/suite/` and `test/qa/app-server/`: cover final web-search payload fidelity, concurrent completion ordering, real
+  mutation result shapes, per-turn reset, notification envelopes, subscriber routing, and a zero-token source-CLI run.
+
+### Why
+
+- Codex app-server clients render native web-search activity and live file-change previews from these item and
+  notification contracts; synthesized fields and missing diffs break that client experience.
+
+### Why extension system couldn't handle this
+
+- Provider-native item projection, turn-scoped diff state, and subscriber notification routing are app-server protocol
+  infrastructure below the extension boundary; source patches must be captured by each mutation tool before apply.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: the fork-only `modes/app-server/threads/projection*.ts` implementation and its app-server QA fixtures.
+- MEDIUM: write/apply_patch result details where source baselines are captured.
+
 ## Fuzzy file search one-shot and sessions (2026-07-21)
 
 ### What changed

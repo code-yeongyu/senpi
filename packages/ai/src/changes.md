@@ -1,5 +1,20 @@
 # AI Source Changes
 
+## 2026-07-21 - OpenAI Responses provider-native completion reconciliation
+
+### What changed and why
+
+- `api/openai-responses-shared.ts`: opaque output items now occupy the existing output-index slot map, so
+  `response.output_item.done` replaces the partial `added` payload with the final provider item. OpenAI web-search
+  actions commonly arrive only on the done frame; retaining the added placeholder lost the final query/action before
+  session persistence and app-server projection.
+- `../test/openai-responses.provider-native.test.ts`: covers an action-less added web-search item followed by the
+  completed done item.
+
+### Expected merge conflict zones
+
+- LOW: `api/openai-responses-shared.ts` output-slot creation and `response.output_item.done` finalization.
+
 ## 2026-07-17 - Video input modality for Kimi K3 (kimi-coding)
 
 ### What changed and why

@@ -1,5 +1,28 @@
 # core/tools changes
 
+## source-backed write result patches (2026-07-21)
+
+### What changed
+
+- `unified-diff.ts`: added the shared old-path/new-path unified patch generator used by file-mutation result contracts.
+- `write.ts` and `write-result.ts`: local writes snapshot the prior file content and return an add/update unified patch;
+  custom operation backends keep their existing behavior when no trustworthy baseline is available.
+- `edit-diff.ts`: retains its public `generateUnifiedPatch()` API while delegating patch formatting to the shared seam.
+
+### Why
+
+- App-server `turn/diff/updated` notifications need the real write result to describe the source mutation. Successful
+  writes previously returned no details, so clients could not display or accumulate them.
+
+### Why extension system couldn't handle this
+
+- The baseline must be captured inside the core write tool's serialized mutation window before the file is overwritten.
+
+### Expected merge conflict zones on next upstream sync
+
+- MEDIUM: `write.ts` execution result details.
+- LOW: `edit-diff.ts` unified-patch wrapper and the fork-only result modules.
+
 ## bash timeout validation sync (2026-07-02)
 
 ### What changed

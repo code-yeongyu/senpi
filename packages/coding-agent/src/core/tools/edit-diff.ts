@@ -6,6 +6,7 @@ import * as Diff from "diff";
 import { constants } from "fs";
 import { access, readFile } from "fs/promises";
 import { resolveToCwd } from "./path-utils.ts";
+import { createUnifiedPatch } from "./unified-diff.ts";
 
 export function detectLineEnding(content: string): "\r\n" | "\n" {
 	const crlfIdx = content.indexOf("\r\n");
@@ -367,10 +368,7 @@ export function applyEditsToNormalizedContent(
 
 /** Generate a standard unified patch. */
 export function generateUnifiedPatch(path: string, oldContent: string, newContent: string, contextLines = 4): string {
-	return Diff.createTwoFilesPatch(path, path, oldContent, newContent, undefined, undefined, {
-		context: contextLines,
-		headerOptions: Diff.FILE_HEADERS_ONLY,
-	});
+	return createUnifiedPatch(path, path, oldContent, newContent, contextLines);
 }
 
 /**

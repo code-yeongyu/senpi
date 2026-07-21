@@ -34,6 +34,7 @@ export type ApplyPatchPreviewFile = {
 	movePath?: string;
 	operation: ApplyPatchOperation;
 	diff: string;
+	patch?: string;
 	added: number;
 	removed: number;
 };
@@ -59,9 +60,15 @@ export type ApplyPatchProgress = {
 export type ApplyPatchProgressCallback = (progress: ApplyPatchProgress) => Promise<void> | void;
 
 export type ApplyPatchFailure = {
+	operationIndex: number;
 	filePath: string;
 	operation: ApplyPatchOperation;
 	message: string;
+};
+
+export type AppliedPatchOperation = {
+	operationIndex: number;
+	preview: ApplyPatchPreviewFile;
 };
 
 export type ApplyPatchRecoveryInstructions = {
@@ -77,6 +84,7 @@ export type ApplyPatchResult = {
 	recoveryInstructions: ApplyPatchRecoveryInstructions;
 	details: {
 		fuzz: number;
+		appliedOperations: AppliedPatchOperation[];
 	};
 };
 

@@ -11,6 +11,12 @@ import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { normalizeDisplayText, renderToolPath, replaceTabs, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
+import {
+	createWriteDetails,
+	formatWriteResult,
+	readLocalWriteBaseline,
+	type WriteToolDetails,
+} from "./write-result.ts";
 
 const writeSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to write (relative or absolute)" }),
@@ -185,28 +191,12 @@ function formatWriteCall(
 	return text;
 }
 
-function formatWriteResult(
-	result: { content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>; isError?: boolean },
-	theme: Theme,
-): string | undefined {
-	if (!result.isError) {
-		return undefined;
-	}
-	const output = result.content
-		.filter((c) => c.type === "text")
-		.map((c) => c.text || "")
-		.join("\n");
-	if (!output) {
-		return undefined;
-	}
-	return `\n${theme.fg("error", output)}`;
-}
-
 export function createWriteToolDefinition(
 	cwd: string,
 	options?: WriteToolOptions,
-): ToolDefinition<typeof writeSchema, undefined> {
+): ToolDefinition<typeof writeSchema, WriteToolDetails | undefined> {
 	const ops = options?.operations ?? defaultWriteOperations;
+	const readBaseline = options?.operations ? undefined : readLocalWriteBaseline;
 	return {
 		name: "write",
 		label: "write",
@@ -234,6 +224,8 @@ export function createWriteToolDefinition(
 				};
 
 				throwIfAborted();
+				const baseline = readBaseline ? await readBaseline(absolutePath) : ({ kind: "unavailable" } as const);
+				throwIfAborted();
 				// Create parent directories if needed.
 				await ops.mkdir(dir);
 				throwIfAborted();
@@ -244,7 +236,7 @@ export function createWriteToolDefinition(
 
 				return {
 					content: [{ type: "text", text: `Successfully wrote ${content.length} bytes to ${path}` }],
-					details: undefined,
+					details: createWriteDetails(path, content, baseline),
 				};
 			});
 		},
