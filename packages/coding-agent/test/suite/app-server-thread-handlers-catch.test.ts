@@ -33,8 +33,8 @@ describe("app-server thread lifecycle registry errors", () => {
 	});
 
 	it("surfaces unexpected registry errors during idle unload", async () => {
-		vi.useFakeTimers();
 		// Given: a subscribed thread whose idle unload lookup fails unexpectedly after unsubscribe.
+		// Create the harness under real timers first; enable fake timers only for the countdown.
 		const { connection, root, threads } = await createHarness();
 		const entry = await threads.createThread({ cwd: root });
 		const notifications = new NotificationRouter({ connections: [connection], threads: [entry] });
@@ -56,6 +56,8 @@ describe("app-server thread lifecycle registry errors", () => {
 			throw new Error("synthetic idle unload failure");
 		};
 
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+
 		// When: unsubscribe schedules the idle unload timer.
 		await expect(
 			handlerRegistry.dispatch(connection, {
@@ -66,6 +68,6 @@ describe("app-server thread lifecycle registry errors", () => {
 		).resolves.toEqual({ id: 24, result: { status: "unsubscribed" } });
 
 		// Then: the idle timer reports the unexpected registry error instead of swallowing it.
-		await expect(vi.runOnlyPendingTimersAsync()).rejects.toThrow("synthetic idle unload failure");
+		await expect(vi.advanceTimersByTimeAsync(0)).rejects.toThrow("synthetic idle unload failure");
 	});
 });

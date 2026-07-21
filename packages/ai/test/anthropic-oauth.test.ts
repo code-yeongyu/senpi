@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { anthropicOAuth } from "../src/auth/oauth/anthropic.ts";
+import { anthropicOAuth, loginAnthropic, refreshAnthropicToken } from "../src/auth/oauth/anthropic.ts";
 import type { AuthEvent, AuthPrompt } from "../src/auth/types.ts";
 
 function jsonResponse(body: unknown, status: number = 200): Response {
@@ -53,16 +53,18 @@ describe.sequential("Anthropic OAuth", () => {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
-		const credentials = await anthropicOAuth.login({
-			notify: (event) => {
-				if (event.type === "auth_url") authUrl = event.url;
+		const credentials = await loginAnthropic({
+			onAuth: (info) => {
+				authUrl = info.url;
 			},
-			prompt: async (prompt) => {
-				if (prompt.type !== "manual_code") throw new Error(`Unexpected prompt: ${prompt.type}`);
+			onPrompt: async () => "",
+			onManualCodeInput: async () => {
 				const url = new URL(authUrl);
 				const state = url.searchParams.get("state");
 				const redirectUri = url.searchParams.get("redirect_uri");
-				if (!state || !redirectUri) throw new Error("Missing OAuth state or redirect_uri in auth URL");
+				if (!state || !redirectUri) {
+					throw new Error("Missing OAuth state or redirect_uri in auth URL");
+				}
 				return `${redirectUri}?code=manual-code&state=${state}`;
 			},
 		});
@@ -89,12 +91,7 @@ describe.sequential("Anthropic OAuth", () => {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
-		const credentials = await anthropicOAuth.refresh({
-			type: "oauth",
-			access: "old-access-token",
-			refresh: "refresh-token",
-			expires: 0,
-		});
+		const credentials = await refreshAnthropicToken("refresh-token");
 
 		expect(credentials.access).toBe("new-access-token");
 		expect(credentials.refresh).toBe("new-refresh-token");

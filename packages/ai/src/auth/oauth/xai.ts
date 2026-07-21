@@ -4,6 +4,7 @@
 
 import type { AuthInteraction, OAuthAuth, OAuthCredential } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
+import type { OAuthCredentials, OAuthLoginCallbacks, OAuthProviderInterface } from "./types.ts";
 
 const XAI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
 const XAI_SCOPE = "openid profile email offline_access grok-cli:access api:access";
@@ -235,4 +236,56 @@ export const xaiOAuth: OAuthAuth = {
 	async toAuth(credential) {
 		return { apiKey: credential.access };
 	},
+};
+
+/**
+ * Legacy OAuthProviderInterface adapter for the compat registry in index.ts.
+ * Canonical Models auth uses `xaiOAuth` (AuthInteraction / device-code).
+ */
+export const xaiOAuthProvider: OAuthProviderInterface = {
+	id: "xai",
+	name: "xAI (Grok/X subscription)",
+
+	async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
+		const credential = await loginXai({
+			signal: callbacks.signal,
+			prompt: async (prompt) => {
+				if (prompt.type === "select") {
+					const selected = await callbacks.onSelect({
+						message: prompt.message,
+						options: prompt.options,
+					});
+					if (selected === undefined) throw new Error("Login cancelled");
+					return selected;
+				}
+				return callbacks.onPrompt({
+					message: prompt.message,
+					placeholder: "placeholder" in prompt ? prompt.placeholder : undefined,
+				});
+			},
+			notify: (event) => {
+				if (event.type === "device_code") {
+					callbacks.onDeviceCode({
+						userCode: event.userCode,
+						verificationUri: event.verificationUri,
+						intervalSeconds: event.intervalSeconds,
+						expiresInSeconds: event.expiresInSeconds,
+					});
+					return;
+				}
+				if (event.type === "auth_url") {
+					callbacks.onAuth({ url: event.url, instructions: event.instructions });
+					return;
+				}
+				if (event.type === "progress") {
+					callbacks.onProgress?.(event.message);
+				}
+			},
+		});
+		const { type: _type, ...credentials } = credential;
+		return credentials;
+	},
+
+	refreshToken: (credentials) => refreshXaiToken(credentials.refresh),
+	getApiKey: (credentials) => credentials.access,
 };

@@ -66,22 +66,24 @@
 
 - LOW: `provider-composer.ts` shared `streamWith()` dispatch and its `@earendil-works/pi-ai/compat` imports.
 
-## AnthropicMessagesCompat.supportsWebSearch in models.json schema (2026-07-16)
+## Provider login and model-resolution parity (2026-07-14)
 
 ### What changed
 
-- `model-config.ts` (`AnthropicMessagesCompatSchema`): added optional boolean `supportsWebSearch`, mirroring
-  `supportsWebSearchPreview` in `OpenAIResponsesCompatSchema`. This is the models.json opt-in for
-  Anthropic-compatible endpoints that genuinely support server-side web search (see `packages/ai/src/changes.md`
-  2026-07-16); without the schema entry the flag would fail models.json validation.
+- auth-providers.ts, model-resolver.ts, and provider-display-names.ts now consume the expanded pi-ai provider catalog
+  for consistent /login, display, and default-model behavior.
+- AuthStorage and ModelRegistry apply provider-specific OAuth request tokens and headers instead of reducing every
+  legacy credential to one raw string.
+- OAuth-only Google CCA providers and openai-codex-device are excluded from API-key login eligibility.
 
-### Why extension system couldn't handle this alone
+### Why extension system couldn't handle this
 
-- models.json validation happens in core `model-config.ts` before any extension sees the model entry.
+- Login selection and startup model resolution run in core before user extensions can provide a replacement catalog.
 
 ### Expected merge conflict zones
 
-- LOW: `model-config.ts` compat schemas if upstream adds more compat flags.
+- MEDIUM: provider display/default maps when upstream changes model resolution or login discovery.
+
 
 ## Skill-loading trigger reframed with cost asymmetry (2026-07-16)
 

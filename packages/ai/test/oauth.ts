@@ -8,8 +8,8 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
-import type { OAuthCredentials } from "../src/auth/types.ts";
-import { builtinProviders } from "../src/providers/all.ts";
+import { getOAuthApiKey } from "../src/auth/oauth/index.ts";
+import type { OAuthCredentials, OAuthProvider } from "../src/auth/oauth/types.ts";
 import { isOAuthLiveApiTestEnabled } from "./live-api-gates.ts";
 
 const AUTH_PATH = join(homedir(), ".pi", "agent", "auth.json");
@@ -68,18 +68,28 @@ export async function resolveApiKey(provider: string): Promise<string | undefine
 	}
 
 	if (entry.type === "oauth") {
-		const oauth = builtinProviders().find((candidate) => candidate.id === provider)?.auth.oauth;
-		if (!oauth) return undefined;
-		let credential = entry;
-		try {
-			if (Date.now() >= credential.expires) credential = await oauth.refresh(credential);
-		} catch (error) {
-			console.log(JSON.stringify(error));
-			return undefined;
+		// Build OAuthCredentials record for getOAuthApiKey
+		const oauthCredentials: Record<string, OAuthCredentials> = {};
+		for (const [key, value] of Object.entries(storage)) {
+			if (value.type === "oauth") {
+				const { type: _, ...creds } = value;
+				oauthCredentials[key] = creds;
+			}
 		}
-		storage[provider] = credential;
+
+		let result: { newCredentials: OAuthCredentials; apiKey: string } | null = null;
+		try {
+			result = await getOAuthApiKey(provider as OAuthProvider, oauthCredentials);
+		} catch (e) {
+			console.log(JSON.stringify(e));
+		}
+		if (!result) return undefined;
+
+		// Save refreshed credentials back to auth.json
+		storage[provider] = { type: "oauth", ...result.newCredentials };
 		saveAuthStorage(storage);
-		return (await oauth.toAuth(credential)).apiKey;
+
+		return result.apiKey;
 	}
 
 	return undefined;

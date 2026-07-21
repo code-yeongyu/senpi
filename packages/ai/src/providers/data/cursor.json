@@ -1,0 +1,1 @@
+{"default":{"id":"default","name":"Auto","api":"cursor-connect","provider":"cursor","baseUrl":"https://api2.cursor.sh","reasoning":false,"input":["text","image"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"contextWindow":200000,"maxTokens":64000}}

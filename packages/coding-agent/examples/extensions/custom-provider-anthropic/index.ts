@@ -46,7 +46,7 @@ import {
 } from "@earendil-works/pi-ai";
 
 // =============================================================================
-// OAuth implementation adapted for the legacy extension compatibility interface.
+// OAuth Implementation (copied from packages/ai/src/auth/oauth/anthropic.ts)
 // =============================================================================
 
 const decode = (s: string) => atob(s);

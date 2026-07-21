@@ -660,10 +660,12 @@ describe("ToolExecutionComponent parity", () => {
 			);
 
 			const collapsed = stripAnsi(component.render(120).join("\n"));
-			expect(collapsed).toContain(scenario.compact);
-			expect(collapsed).not.toContain(scenario.hidden);
+			// Flatten whitespace so long absolute paths that wrap at render width still match.
+			const collapsedFlat = collapsed.replace(/\s+/g, " ").trim();
+			expect(collapsedFlat).toContain(scenario.compact);
+			expect(collapsedFlat).not.toContain(scenario.hidden);
 			if (scenario.absent) {
-				expect(collapsed).not.toContain(scenario.absent);
+				expect(collapsedFlat).not.toContain(scenario.absent);
 			}
 
 			component.setExpanded(true);
