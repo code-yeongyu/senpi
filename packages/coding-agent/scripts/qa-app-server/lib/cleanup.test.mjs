@@ -1,14 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { test } from "node:test";
+import { test } from "vitest";
 import { cleanupAllAndWait, trackChild } from "./cleanup.mjs";
 
 const fixturePath = fileURLToPath(new URL("./cleanup-fixture.mjs", import.meta.url));
 
-test(
+test.skipIf(process.platform === "win32")(
 	"cleanupAllAndWait removes the owned process group when its leader exits before a SIGTERM-resistant child",
-	{ skip: process.platform === "win32" },
 	async () => {
 		// Given: a detached leader and same-group leaf with opposite SIGTERM behavior.
 		const leader = spawn(process.execPath, [fixturePath, "leader"], {
