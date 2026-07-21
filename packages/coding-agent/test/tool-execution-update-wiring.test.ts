@@ -151,6 +151,44 @@ describe("InteractiveMode tool execution update wiring", () => {
 		expect(updateResult).toHaveBeenCalledOnce();
 	});
 
+	test("stops pending tool result reveal ticks when the session is rebound", async () => {
+		const updateResult = vi.fn<ToolComponent["updateResult"]>();
+		const fixture = createFixture(() => true, { updateResult });
+
+		await handleEvent.call(fixture, {
+			type: "tool_execution_update",
+			toolCallId: "tool-a",
+			toolName: "bash",
+			args: {},
+			partialResult: partialResult("one"),
+		});
+		await handleEvent.call(fixture, {
+			type: "tool_execution_update",
+			toolCallId: "tool-a",
+			toolName: "bash",
+			args: {},
+			partialResult: partialResult("one two three four"),
+		});
+		expect(updateResult).toHaveBeenCalledOnce();
+
+		const renderCurrentSessionState = (
+			InteractiveMode.prototype as unknown as {
+				renderCurrentSessionState(this: Record<string, unknown>): void;
+			}
+		).renderCurrentSessionState;
+		renderCurrentSessionState.call({
+			...fixture,
+			loadedResourcesContainer: { clear: vi.fn() },
+			chatContainer: { clear: vi.fn() },
+			pendingMessagesContainer: { clear: vi.fn() },
+			compactionTransferAbortControllers: new Map(),
+			renderInitialMessages: vi.fn(),
+		});
+		await vi.advanceTimersByTimeAsync(1_000);
+
+		expect(updateResult).toHaveBeenCalledOnce();
+	});
+
 	test("applies partial tool results directly when smooth streaming is disabled", async () => {
 		const updateResult = vi.fn<ToolComponent["updateResult"]>();
 		const fixture = createFixture(() => false, { updateResult });

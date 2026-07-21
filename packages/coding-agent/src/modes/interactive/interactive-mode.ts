@@ -1930,6 +1930,7 @@ export class InteractiveMode {
 		this.compactionInFlightMessages = [];
 		this.compactionTransferAbortControllers.clear();
 		this.streamingReveal.stop();
+		this.toolResultReveal.stop();
 		this.streamingComponent = undefined;
 		this.streamingMessage = undefined;
 		this.clearPendingTools();
