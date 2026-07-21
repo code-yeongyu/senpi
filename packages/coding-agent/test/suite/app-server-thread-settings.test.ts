@@ -82,7 +82,7 @@ describe("app-server thread settings handlers", () => {
 		});
 	});
 
-	it("gates the request and suppresses notifications for a no-op", async () => {
+	it("accepts null model and effort as no-overrides", async () => {
 		const harness = await createHarness();
 		const threadId = threadIdFromResponse(
 			await harness.registry.dispatch(harness.connection, {
@@ -91,9 +91,47 @@ describe("app-server thread settings handlers", () => {
 				params: { cwd: harness.root },
 			}),
 		);
+		const entry = harness.threads.getLoadedThread(threadId);
+		const initialModel = entry.session.model;
+		const initialEffort = entry.session.thinkingLevel;
+		harness.connection.received.length = 0;
+
+		// Explicit null has the same no-override meaning as an omitted optional field.
+		expect(
+			responseResult(
+				await harness.registry.dispatch(harness.connection, {
+					id: 5,
+					method: "thread/settings/update",
+					params: { threadId, model: null },
+				}),
+			),
+		).toEqual({});
+		expect(
+			responseResult(
+				await harness.registry.dispatch(harness.connection, {
+					id: 6,
+					method: "thread/settings/update",
+					params: { threadId, effort: null },
+				}),
+			),
+		).toEqual({});
+		expect(entry.session.model).toBe(initialModel);
+		expect(entry.session.thinkingLevel).toBe(initialEffort);
+		expect(harness.connection.received).toEqual([]);
+	});
+
+	it("gates the request and suppresses notifications for a no-op", async () => {
+		const harness = await createHarness();
+		const threadId = threadIdFromResponse(
+			await harness.registry.dispatch(harness.connection, {
+				id: 7,
+				method: "thread/start",
+				params: { cwd: harness.root },
+			}),
+		);
 		harness.connection.received.length = 0;
 		const noOp = await harness.registry.dispatch(harness.connection, {
-			id: 5,
+			id: 8,
 			method: "thread/settings/update",
 			params: { threadId, effort: "off" },
 		});
@@ -103,12 +141,12 @@ describe("app-server thread settings handlers", () => {
 		const stable = new FakeConnection("stable");
 		stable.capabilities.experimentalApi = false;
 		const stableResponse = await harness.registry.dispatch(stable, {
-			id: 6,
+			id: 9,
 			method: "thread/settings/update",
 			params: { threadId, effort: "high" },
 		});
 		expect(stableResponse).toEqual({
-			id: 6,
+			id: 9,
 			error: { code: -32600, message: "thread/settings/update requires experimentalApi capability" },
 		});
 	});

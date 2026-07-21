@@ -95,7 +95,7 @@ class ThreadSettingsHandlers {
 }
 
 function parseModel(params: Readonly<Record<string, unknown>>, entry: ThreadEntry): Model<Api> | undefined {
-	if (!Object.hasOwn(params, "model")) return undefined;
+	if (!Object.hasOwn(params, "model") || params.model === null) return undefined;
 	if (typeof params.model !== "string" || params.model.length === 0) {
 		throw invalidParams("Invalid params: model must be a non-empty string");
 	}
@@ -114,7 +114,7 @@ function parseEffort(
 	model: Model<Api> | undefined,
 	entry: ThreadEntry,
 ): ThinkingLevel | undefined {
-	if (!Object.hasOwn(params, "effort")) return undefined;
+	if (!Object.hasOwn(params, "effort") || params.effort === null) return undefined;
 	if (typeof params.effort !== "string") {
 		throw invalidParams("Invalid params: effort must be a string");
 	}

@@ -136,6 +136,7 @@ describe("app-server parity characterization pins", () => {
 	it("enforces each manifest experimentalApi gate", async () => {
 		const manifest = readManifest();
 		expect(manifest.gates.experimentalApi).toContain("thread/searchOccurrences");
+		expect(manifest.gates.experimentalApi).toContain("thread/settings/update");
 		const sent: RpcEnvelope[] = [];
 		const core = new ServerCore({ codexHome: "/tmp/senpi-parity-pin" });
 		for (const method of manifest.gates.experimentalApi) {
