@@ -35,19 +35,37 @@ import {
 	ALL_APIS,
 	API_PRESETS,
 	assertMcpFixtureToolName,
+	checkRealAuthUnchanged,
 	hermeticEnv,
 	mcpFixtureForToolName,
+	safeErrorReason,
 	validateMcpFixtureToolResult,
 	writeMcpFixtureExtension,
 	writeMockModelsJson,
 	writeToolEvidence,
 } from "./lib/mock-loop-support.mjs";
+import { dispatchExitCode, flagValue, parseToolArgs, positionalAfter } from "./lib/mock-loop-cli.mjs";
+import {
+	appendTextToolLeakChecks,
+	dispatchTextToolLeakCommand,
+	runTextToolLeakScenario,
+	TEXT_LEAK_APIS,
+} from "./lib/mock-loop-text-leak.mjs";
 
-async function driveTurn({ apiName, turns, prompt, extraArgs = [], prepareSandbox, timeoutMs = 90000 }) {
+async function driveTurn({
+	apiName,
+	turns,
+	prompt,
+	extraArgs = [],
+	prepareSandbox,
+	timeoutMs = 90000,
+	modelOverrides,
+}) {
 	const p = API_PRESETS[apiName];
 	const box = makeSandbox(`mock-loop-${apiName}`);
-	const server = await startFakeModelServer({ turns });
-	writeMockModelsJson(box.agentDir, server, apiName);
+	const resolvedTurns = typeof turns === "function" ? turns(box) : turns;
+	const server = await startFakeModelServer({ turns: resolvedTurns });
+	writeMockModelsJson(box.agentDir, server, apiName, modelOverrides);
 	const prepared = prepareSandbox ? await prepareSandbox(box) : {};
 	const args = [
 		"--provider",
@@ -85,9 +103,20 @@ async function selfTest(onlyApi) {
 	const checks = createChecks("mock-loop.mjs --self-test");
 	const guard = guardRealAuth();
 	const apis = onlyApi ? [onlyApi] : ALL_APIS;
-	for (const api of apis) await checkApi(checks, api);
+	for (const api of apis) {
+		await checkApi(checks, api);
+		if (TEXT_LEAK_APIS.includes(api)) {
+			appendTextToolLeakChecks(checks, await runTextToolLeakScenario({ apiName: api, truncated: false, driveTurn }));
+			appendTextToolLeakChecks(checks, await runTextToolLeakScenario({ apiName: api, truncated: true, driveTurn }));
+		}
+	}
 	checks.ok("zero real provider calls (only localhost fake hit)", true, "all baseUrls point at 127.0.0.1");
 	checkRealAuthUnchanged(checks, guard);
+	checks.ok(
+		"unknown command dispatch is classified as usage error 2",
+		dispatchExitCode(["--unknown-command"]) === 2,
+		"direct CLI QA verifies stderr usage and process exit 2",
+	);
 	process.exit(checks.finish() ? 0 : 1);
 }
 
@@ -173,26 +202,10 @@ async function run(prompt, apiName, slug) {
 }
 
 const argv = process.argv.slice(2);
-const flag = (name) => {
-	const i = argv.indexOf(name);
-	return i >= 0 ? argv[i + 1] : undefined;
-};
-const api = flag("--api");
+const api = flagValue(argv, "--api");
 if (api && !API_PRESETS[api]) {
 	process.stderr.write(`unknown --api ${api}. valid: ${ALL_APIS.join(", ")}\n`);
 	process.exit(2);
-}
-
-function parseToolArgs() {
-	const raw = flag("--tool-args");
-	if (!raw) return {};
-	try {
-		const parsed = JSON.parse(raw);
-		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
-	} catch (error) {
-		throw new Error(`--tool-args must be a JSON object: invalid JSON (${safeErrorReason(error)})`);
-	}
-	throw new Error("--tool-args must be a JSON object");
 }
 
 if (argv[0] === "--self-test") {
@@ -205,58 +218,54 @@ if (argv[0] === "--self-test") {
 		process.stderr.write(`${e instanceof Error ? e.stack : String(e)}\n`);
 		process.exit(1);
 	});
+} else if (argv[0] === "--with-text-tool-leak") {
+	const leakApi = api || "openai-completions";
+	if (!TEXT_LEAK_APIS.includes(leakApi)) {
+		process.stderr.write(`text-tool leak modes require one of: ${TEXT_LEAK_APIS.join(", ")}\n`);
+		process.exit(2);
+	}
+	dispatchTextToolLeakCommand(leakApi, false, driveTurn, flagValue(argv, "--evidence"));
+} else if (argv[0] === "--with-truncated-text-tool-leak") {
+	const leakApi = api || "openai-completions";
+	if (!TEXT_LEAK_APIS.includes(leakApi)) {
+		process.stderr.write(`text-tool leak modes require one of: ${TEXT_LEAK_APIS.join(", ")}\n`);
+		process.exit(2);
+	}
+	dispatchTextToolLeakCommand(leakApi, true, driveTurn, flagValue(argv, "--evidence"));
 } else if (argv[0] === "--with-mcp-tool") {
 	Promise.resolve()
 		.then(() => {
-			const toolName = flag("--tool-name") || positionalAfter("--with-mcp-tool") || "mcp_fx_tool_1";
-			return withMcpTool(api || "openai-completions", toolName, parseToolArgs(), flag("--evidence"));
+			const toolName =
+				flagValue(argv, "--tool-name") || positionalAfter(argv, "--with-mcp-tool") || "mcp_fx_tool_1";
+			return withMcpTool(
+				api || "openai-completions",
+				toolName,
+				parseToolArgs(argv),
+				flagValue(argv, "--evidence"),
+			);
 		})
 		.catch((e) => {
 			process.stderr.write(`${e instanceof Error ? e.stack : String(e)}\n`);
 			process.exit(1);
 		});
 } else if (argv[0] === "--run") {
-	run(argv[1] || "say hello", api || "openai-completions", flag("--evidence")).catch((e) => {
+	run(argv[1] || "say hello", api || "openai-completions", flagValue(argv, "--evidence")).catch((e) => {
 		process.stderr.write(`${e instanceof Error ? e.stack : String(e)}\n`);
 		process.exit(1);
 	});
 } else {
-	process.stdout.write(
+	process.stderr.write(
 		[
 			"senpi-qa Channel 3 — Mock loop (zero real API calls)",
 			"  node mock-loop.mjs --self-test [--api <name>]   round-trip 1 or all 3 wire formats",
 			"  node mock-loop.mjs --with-tool [--api <name>]   full loop with a bash tool call",
+			"  node mock-loop.mjs --with-text-tool-leak --api <anthropic-messages|openai-completions>",
+			"  node mock-loop.mjs --with-truncated-text-tool-leak --api <anthropic-messages|openai-completions>",
 			"  node mock-loop.mjs --with-mcp-tool <tool> [--tool-args JSON]",
 			"  node mock-loop.mjs --run <prompt> [--api <name>]",
 			`  APIs: ${ALL_APIS.join(", ")}`,
 			"",
 		].join("\n"),
 	);
-}
-
-function positionalAfter(command) {
-	const start = argv.indexOf(command);
-	if (start < 0) return undefined;
-	const valuedFlags = new Set(["--api", "--tool-name", "--tool-args", "--evidence"]);
-	for (let index = start + 1; index < argv.length; index++) {
-		const arg = argv[index];
-		if (valuedFlags.has(arg)) {
-			index++;
-			continue;
-		}
-		if (!arg.startsWith("--")) return arg;
-	}
-	return undefined;
-}
-
-function checkRealAuthUnchanged(checks, guard) {
-	try {
-		checks.ok("real auth unchanged", guard.assertUnchanged(), guard.path);
-	} catch (error) {
-		checks.ok("real auth unchanged", false, `credential guard failed at ${guard.path}: ${safeErrorReason(error)}`);
-	}
-}
-
-function safeErrorReason(error) {
-	return error instanceof Error ? error.name : typeof error;
+	process.exitCode = 2;
 }

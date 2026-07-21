@@ -32,6 +32,7 @@ function baseHttp(url: string, extra: Partial<McpServerConfig> = {}): McpServerC
 		lifecycle: "lazy",
 		connectTimeoutMs: 4000,
 		requestTimeoutMs: 4000,
+		startupTimeoutMs: 250,
 		idleTimeoutMin: 10,
 		exposure: "auto",
 		logLevel: "info",

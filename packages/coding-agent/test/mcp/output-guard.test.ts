@@ -7,6 +7,7 @@ import { applyMcpOutputGuard } from "../../src/core/extensions/builtin/mcp/guard
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
 import {
 	attach,
+	awaitMcpToolRegistration,
 	capturingPi,
 	mcpRoot as makeMcpRoot,
 	registeredTool,
@@ -46,6 +47,7 @@ describe("MCP output guard", () => {
 		setConfig(root, { fx: stdioServer(["--tools", "0", "--huge-output-tool", "1048576/4096"]) });
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 
 		const result = await registeredTool(pi, "mcp_fx_huge_output_tool").execute(
 			"tc-huge",
@@ -70,6 +72,7 @@ describe("MCP output guard", () => {
 		setConfig(root, { fx: stdioServer(["--tools", "1"]) });
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 
 		const result = await registeredTool(pi, "mcp_fx_tool_1").execute(
 			"tc-small",
@@ -103,6 +106,7 @@ describe("MCP output guard", () => {
 		setConfig(root, { fx: stdioServer(["--tools", "0", "--huge-output-tool", "65536/256"]) });
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 		const tool = registeredTool(pi, "mcp_fx_huge_output_tool");
 
 		const [first, second] = await Promise.all([
@@ -122,6 +126,7 @@ describe("MCP output guard", () => {
 		setConfig(root, { fx: stdioServer(["--tools", "0", "--huge-output-tool", "65536/256"]) });
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 
 		const result = await registeredTool(pi, "mcp_fx_huge_output_tool").execute(
 			"tc-cleanup",
@@ -153,6 +158,7 @@ describe("MCP output guard", () => {
 		);
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 
 		await expect(
 			registeredTool(pi, "mcp_fx_iserror_tool").execute("tc-error", {}, undefined, undefined, testContext()),
@@ -167,6 +173,7 @@ describe("MCP output guard", () => {
 		setConfig(root, { fx: stdioServer(["--tools", "0", "--huge-output-tool", "65536/256"]) });
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 
 		const result = await registeredTool(pi, "mcp_fx_huge_output_tool").execute(
 			"tc-unwritable",

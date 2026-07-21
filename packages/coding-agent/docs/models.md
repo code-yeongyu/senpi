@@ -209,6 +209,7 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
 | `contextWindow` | No | `128000` | Context window size in tokens |
 | `maxTokens` | No | `16384` | Maximum output tokens |
 | `cost` | No | all zeros | Per-million-token rates with optional request-wide input pricing tiers |
+| `recoverTextToolCalls` | No | Claude ID default | Enables or disables recovery of leaked Claude XML tool calls from streamed assistant text. This is a top-level model field, not a `compat` field. |
 | `compat` | No | provider `compat` | Provider compatibility overrides. Merged with provider-level `compat` when both are set. |
 
 A cost tier supplies a complete alternate rate set and applies to the full request when total input usage (`input + cacheRead + cacheWrite`) exceeds `inputTokensAbove`. When multiple tiers match, the highest threshold wins.
@@ -236,6 +237,106 @@ A cost tier supplies a complete alternate rate set and applies to the full reque
 Current behavior:
 - `/model`, `--list-models`, and the interactive footer display entries by model `id`.
 - The configured `name` is used for model matching and secondary model detail text. It does not replace the footer/status-bar model id.
+
+## Claude text tool-call recovery
+
+Some Claude-family models or compatible gateways may accidentally emit a
+supported tool call as XML assistant text instead of a native provider tool
+call. Senpi can recover these calls while the response is streaming, execute a
+complete validated call through the normal agent loop, and persist it as native
+tool-call history for the next request.
+
+The setting is the top-level boolean `recoverTextToolCalls`. Non-boolean values
+in `models.json` are rejected.
+
+### Recovery activation precedence
+
+| Priority | Condition | Result |
+|----------|-----------|--------|
+| 1 | The model has a configured text tool-call protocol | Disabled |
+| 2 | `recoverTextToolCalls` is explicitly `true` or `false` | Configured boolean |
+| 3 | The original selected model id matches the Claude boundary rule | Claude ID default |
+
+The default boundary rule is
+`/(^|[^a-z0-9])claude([^a-z0-9]|$)/i`. It is evaluated against the
+original selected model id, before a provider alias or request hook rewrites
+the wire model id. Recovery is provider/API independent and is skipped when
+the request has no tools.
+
+Explicitly disable recovery for a Claude model:
+
+```json
+{
+  "providers": {
+    "anthropic": {
+      "modelOverrides": {
+        "anthropic/claude-sonnet-4": {
+          "recoverTextToolCalls": false
+        }
+      }
+    }
+  }
+}
+```
+
+Explicitly enable recovery for a non-Claude custom alias:
+
+```json
+{
+  "providers": {
+    "custom-proxy": {
+      "baseUrl": "https://proxy.example.com/v1",
+      "apiKey": "$CUSTOM_PROXY_KEY",
+      "api": "openai-completions",
+      "models": [
+        {
+          "id": "model-without-claude-name",
+          "recoverTextToolCalls": true
+        }
+      ]
+    }
+  }
+}
+```
+
+Text tool-call protocols retain exclusive ownership of text parsing. If
+`toolCallFormat` resolves for a model, recovery stays disabled even when
+`recoverTextToolCalls` is explicitly `true`.
+
+### Recovery scan boundaries
+
+| Content | Scanned | Behavior |
+|---------|---------|----------|
+| Ordinary assistant text | Yes | Supported leaked invokes may become native tool calls |
+| Inline and fenced code | No | Preserved byte-for-byte as text |
+| Thinking and redacted thinking | No | Preserved with signatures and metadata |
+| Provider-native and native tool-call blocks | No | Passed through without XML inspection |
+| Historical persisted messages | No | Replayed as stored; legacy XML text is not rewritten |
+
+The recognized syntax is limited to bare `invoke`/`parameter`/`function_calls`
+tags and their exact lowercase `antml:` variants. Unknown tools, ambiguous tool
+names, unrelated tags, and arbitrary namespace prefixes remain text.
+
+### Recovery outcomes
+
+| Condition | Outcome |
+|-----------|---------|
+| Complete valid call | Execute once |
+| Incomplete or invalid call | Do not execute |
+| Caller abort | Interrupted; do not execute |
+| Late native ID collision | Fail closed; do not execute |
+
+An incomplete call is persisted as an incomplete native tool call and produces
+a safe error result asking the model to re-issue complete arguments. A caller
+abort always remains interrupted, even if a complete leaked call was already
+recognized. Native/recovered ID collisions discovered after an event was
+emitted terminate with an error instead of renaming provider IDs.
+
+Recovered calls are persisted and replayed in each provider's native format.
+Senpi does not migrate or rewrite older stored assistant text. The next
+prompt-cache suffix may change after recovery because new messages contain
+native tool-call history instead of leaked XML; that cache-key change is
+expected.
 
 ### Thinking Level Map
 
@@ -340,7 +441,7 @@ Use `modelOverrides` to customize built-in models and matching extension-registe
 }
 ```
 
-`modelOverrides` supports these fields per model: `name`, `reasoning`, `thinkingLevelMap`, `input`, `cost` (partial), `contextWindow`, `maxTokens`, `headers`, `compat`.
+`modelOverrides` supports these fields per model: `name`, `reasoning`, `thinkingLevelMap`, `input`, `cost` (partial), `contextWindow`, `maxTokens`, `headers`, `recoverTextToolCalls`, `compat`.
 
 Direct OpenAI GPT-5.6 Sol, Terra, and Luna default to a `272000` context window so requests remain within OpenAI's short-context pricing tier. To opt into OpenAI's 1.05M context window, increase it for each model you use:
 

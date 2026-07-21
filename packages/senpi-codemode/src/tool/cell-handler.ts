@@ -18,6 +18,8 @@ import type { EvalKernel, EvalStatusEvent, EvalToolDetails, EvalToolInput } from
 
 type ResolvedToolReply = { readonly value: unknown; readonly toolCallOk: boolean };
 
+const LIVE_OUTPUT_PREVIEW_LINES = 8;
+
 export interface CellState {
 	readonly input: EvalToolInput;
 	readonly signal: AbortSignal;
@@ -257,10 +259,20 @@ export class CellHandler {
 		};
 	}
 
+	#liveUpdateText(): string {
+		const title = this.#state.input.title === undefined ? "" : ` ${this.#state.input.title}`;
+		const aggregateOutput = this.#output.aggregateText();
+		const outputLines = aggregateOutput.split("\n");
+		const hasTrailingNewline = aggregateOutput.endsWith("\n");
+		if (hasTrailingNewline) outputLines.pop();
+		const output = `${outputLines.slice(-LIVE_OUTPUT_PREVIEW_LINES).join("\n")}${hasTrailingNewline ? "\n" : ""}`;
+		return `1/1 cells ${this.#state.status}\n[1] ${this.#state.input.language}${title} ${this.#state.status}${output.length === 0 ? "" : `\n${output}`}`;
+	}
+
 	#emitUpdate(isError: boolean): void {
 		if (!this.#state.active) return;
 		this.#state.onUpdate?.({
-			content: [{ type: "text", text: this.#output.aggregateText() }],
+			content: [{ type: "text", text: this.#liveUpdateText() }],
 			details: this.#details(undefined, isError),
 		});
 	}

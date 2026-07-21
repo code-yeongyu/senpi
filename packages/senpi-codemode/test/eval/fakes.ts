@@ -1,4 +1,5 @@
 import { DEFAULT_COMPACTION_SETTINGS, type ExtensionContext } from "@code-yeongyu/senpi";
+import { createInMemoryExtensionSessionSettings } from "../../../coding-agent/test/helpers/extension-session-settings.ts";
 import type { KernelToHostMessage } from "../../src/bridge/protocol.ts";
 import type { EvalKernel, EvalKernelManager } from "../../src/tool/eval-tool.ts";
 import type { EvalKernelRunInput } from "../../src/tool/types.ts";
@@ -229,6 +230,7 @@ export function fakeExtensionContext(): ExtensionContext {
 		shutdown: () => {},
 		getContextUsage: () => undefined,
 		getCompactionSettings: () => DEFAULT_COMPACTION_SETTINGS,
+		sessionSettings: createInMemoryExtensionSessionSettings(),
 		compact: () => {},
 		getMessageRevision: () => 0,
 		applyCompaction: async () => ({ applied: false, reason: "rejected" }),

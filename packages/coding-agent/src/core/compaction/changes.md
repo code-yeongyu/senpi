@@ -1,5 +1,38 @@
 # changes.md — compaction
 
+## Summarization stream idle watchdog (2026-07-21)
+
+### What changed
+
+- `stream-watchdog.ts` (new, fork-owned): `consumeStreamWithIdleTimeout()` drains an event stream
+  and throws `StreamIdleTimeoutError` when no provider event arrives within the idle budget
+  (default 300s, `DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS`, matching the agent stream idle-timeout
+  default). On trip it aborts a request-local controller and returns the iterator; caller aborts
+  end the wait quietly so ESC still reads as the stream's own aborted result.
+- `compaction.ts` `completeSummarization()`: both the `streamSimple` and custom-`streamFn` routes
+  now consume the summarization stream through the watchdog under a request-local
+  `AbortController` linked to the caller's signal, instead of awaiting `completeSimple()` /
+  `stream.result()` with no bound.
+
+### Why
+
+Local compaction summarization had no timeout at any layer: a stalled provider/gateway connection
+hung the session on "Compacting…" forever (observed: 11+ minutes, recovered only by ESC abort).
+The agent loop has had this protection for main turns (`StreamIdleTimeoutError` in
+packages/agent); this ports the same guarantee to compaction requests.
+
+### Why extension system couldn't handle this
+
+- The core `compact()` fallback route (`session_before_compact` handlers returning no result)
+  dispatches its own summarization request inside core; extensions cannot bound a request they
+  never see.
+
+### Expected merge conflict zones
+
+- MEDIUM: `compaction.ts` around `completeSummarization()` and the pi-ai/compat import
+  (`completeSimple` → `streamSimple`).
+- NONE: `stream-watchdog.ts` is a new file.
+
 ## Base64-aware token estimation (2026-07-18)
 
 ### What changed

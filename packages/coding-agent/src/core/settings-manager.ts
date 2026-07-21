@@ -1,6 +1,6 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Transport } from "@earendil-works/pi-ai";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
@@ -38,6 +38,9 @@ export interface RetrySettings {
 	maxRetries?: number; // default: 3
 	baseDelayMs?: number; // default: 2000 (exponential backoff: 2s, 4s, 8s)
 	provider?: ProviderRetrySettings;
+	modelFallback?: boolean; // default: true
+	fallbackChains?: Record<string, string[]>;
+	fallbackRevertPolicy?: "cooldown-expiry" | "never"; // default: "cooldown-expiry"
 }
 
 export interface TerminalSettings {
@@ -116,6 +119,8 @@ export interface Settings {
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettings;
 	hideThinkingBlock?: boolean;
+	smoothStreaming?: boolean; // default: true
+	smoothStreamingFps?: number; // default: 60, clamped to 30-120 when read
 	showCacheMissNotices?: boolean; // default: false - show transcript notices for significant prompt-cache misses
 	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
@@ -166,7 +171,10 @@ export interface NeoDaemonSettings {
 	idleShutdownMs?: number;
 }
 
-/** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
+/**
+ * Merge settings one object level deep: project/overrides take precedence.
+ * Nested settings such as retry.fallbackChains replace wholesale per scope.
+ */
 function deepMergeSettings(base: Settings, overrides: Settings): Settings {
 	const result: Settings = { ...base };
 
@@ -210,6 +218,85 @@ function parseTimeoutSetting(value: unknown, settingName: string): number | unde
 
 export type SettingsScope = "global" | "project";
 
+const SELF_WRITE_TTL_MS = 15_000;
+const MAX_SELF_WRITES_PER_PATH = 8;
+const selfWritesByPath = new Map<string, Map<string, number>>();
+let selfWriteClock: () => number = Date.now;
+
+function recordSelfWrite(absPath: string, content: string): void {
+	const now = selfWriteClock();
+	const writes = selfWritesByPath.get(absPath) ?? new Map<string, number>();
+
+	for (const [hash, recordedAt] of writes) {
+		if (now - recordedAt > SELF_WRITE_TTL_MS) {
+			writes.delete(hash);
+		}
+	}
+
+	const hash = createHash("sha256").update(content).digest("hex");
+	writes.delete(hash);
+	writes.set(hash, now);
+	while (writes.size > MAX_SELF_WRITES_PER_PATH) {
+		const oldestHash = writes.keys().next().value;
+		if (oldestHash === undefined) {
+			break;
+		}
+		writes.delete(oldestHash);
+	}
+	selfWritesByPath.set(absPath, writes);
+}
+
+/**
+ * Returns whether a settings content hash was recently written by this process.
+ * A matching entry is consumed so a later identical external edit is not suppressed.
+ */
+export function wasSelfWrite(absPath: string, hash: string): boolean {
+	const writes = selfWritesByPath.get(absPath);
+	if (!writes) {
+		return false;
+	}
+
+	const now = selfWriteClock();
+	for (const [trackedHash, recordedAt] of writes) {
+		if (now - recordedAt > SELF_WRITE_TTL_MS) {
+			writes.delete(trackedHash);
+		}
+	}
+
+	if (!writes.delete(hash)) {
+		if (writes.size === 0) {
+			selfWritesByPath.delete(absPath);
+		}
+		return false;
+	}
+	if (writes.size === 0) {
+		selfWritesByPath.delete(absPath);
+	}
+	return true;
+}
+
+/** Test-only hook for isolating process-wide self-write tracker state. */
+export function __resetSelfWriteTrackerForTests(): void {
+	selfWritesByPath.clear();
+}
+
+/** Test-only hook for deterministically advancing the self-write tracker clock. */
+export function __setSelfWriteTrackerClockForTests(clock: (() => number) | undefined = undefined): void {
+	selfWriteClock = clock ?? Date.now;
+}
+
+/** Returns the absolute settings path for a filesystem-backed storage scope. */
+export function getSettingsPath(cwd: string, agentDir: string, scope: SettingsScope): string {
+	return scope === "global"
+		? join(resolvePath(agentDir), "settings.json")
+		: join(resolvePath(cwd), CONFIG_DIR_NAME, "settings.json");
+}
+
+/** Returns the stable virtual path used to identify in-memory settings storage writes. */
+export function getInMemorySettingsPath(scope: SettingsScope): string {
+	return scope === "global" ? "/__senpi_in_memory__/settings.json" : "/__senpi_in_memory__/.senpi/settings.json";
+}
+
 export interface SettingsManagerCreateOptions {
 	projectTrusted?: boolean;
 }
@@ -228,10 +315,8 @@ export class FileSettingsStorage implements SettingsStorage {
 	private projectSettingsPath: string;
 
 	constructor(cwd: string, agentDir: string) {
-		const resolvedCwd = resolvePath(cwd);
-		const resolvedAgentDir = resolvePath(agentDir);
-		this.globalSettingsPath = join(resolvedAgentDir, "settings.json");
-		this.projectSettingsPath = join(resolvedCwd, CONFIG_DIR_NAME, "settings.json");
+		this.globalSettingsPath = getSettingsPath(cwd, agentDir, "global");
+		this.projectSettingsPath = getSettingsPath(cwd, agentDir, "project");
 	}
 
 	private acquireLockSyncWithRetry(path: string): () => void {
@@ -283,6 +368,7 @@ export class FileSettingsStorage implements SettingsStorage {
 					release = this.acquireLockSyncWithRetry(path);
 				}
 				writeFileSync(path, next, "utf-8");
+				recordSelfWrite(path, next);
 			}
 		} finally {
 			if (release) {
@@ -305,6 +391,7 @@ export class InMemorySettingsStorage implements SettingsStorage {
 			} else {
 				this.project = next;
 			}
+			recordSelfWrite(getInMemorySettingsPath(scope), next);
 		}
 	}
 }
@@ -880,6 +967,95 @@ export class SettingsManager {
 		};
 	}
 
+	/** Raw retry.fallbackChains value before sanitization, for startup validation warnings. */
+	getRawFallbackChains(): unknown {
+		return this.settings.retry?.fallbackChains;
+	}
+
+	getRetryFallbackSettings(): {
+		modelFallback: boolean;
+		chains: Readonly<Record<string, readonly string[]>>;
+		revertPolicy: "cooldown-expiry" | "never";
+	} {
+		const fallbackChains = this.settings.retry?.fallbackChains;
+		const chains: Record<string, readonly string[]> = {};
+		if (typeof fallbackChains === "object" && fallbackChains !== null && !Array.isArray(fallbackChains)) {
+			for (const [key, entries] of Object.entries(fallbackChains)) {
+				if (!Array.isArray(entries) || !entries.every((entry) => typeof entry === "string")) {
+					return {
+						modelFallback:
+							typeof this.settings.retry?.modelFallback === "boolean" ? this.settings.retry.modelFallback : true,
+						chains: {},
+						revertPolicy: this.settings.retry?.fallbackRevertPolicy === "never" ? "never" : "cooldown-expiry",
+					};
+				}
+				chains[key] = [...entries];
+			}
+		}
+		return {
+			modelFallback:
+				typeof this.settings.retry?.modelFallback === "boolean" ? this.settings.retry.modelFallback : true,
+			chains,
+			revertPolicy: this.settings.retry?.fallbackRevertPolicy === "never" ? "never" : "cooldown-expiry",
+		};
+	}
+
+	setFallbackChain(key: string, entries: string[]): void {
+		if (!this.globalSettings.retry) {
+			this.globalSettings.retry = {};
+		}
+		const chains = this.getGlobalFallbackChains();
+		this.globalSettings.retry.fallbackChains = { ...chains, [key]: [...entries] };
+		this.markModified("retry", "fallbackChains");
+		this.save();
+	}
+
+	removeFallbackChain(key: string): void {
+		const chains = this.getGlobalFallbackChains();
+		if (!(key in chains)) {
+			return;
+		}
+		if (!this.globalSettings.retry) {
+			this.globalSettings.retry = {};
+		}
+		delete chains[key];
+		this.globalSettings.retry.fallbackChains = chains;
+		this.markModified("retry", "fallbackChains");
+		this.save();
+	}
+
+	setModelFallbackEnabled(enabled: boolean): void {
+		if (!this.globalSettings.retry) {
+			this.globalSettings.retry = {};
+		}
+		this.globalSettings.retry.modelFallback = enabled;
+		this.markModified("retry", "modelFallback");
+		this.save();
+	}
+
+	setFallbackRevertPolicy(policy: "cooldown-expiry" | "never"): void {
+		if (!this.globalSettings.retry) {
+			this.globalSettings.retry = {};
+		}
+		this.globalSettings.retry.fallbackRevertPolicy = policy;
+		this.markModified("retry", "fallbackRevertPolicy");
+		this.save();
+	}
+
+	private getGlobalFallbackChains(): Record<string, string[]> {
+		const fallbackChains = this.globalSettings.retry?.fallbackChains;
+		if (typeof fallbackChains !== "object" || fallbackChains === null || Array.isArray(fallbackChains)) {
+			return {};
+		}
+		const chains: Record<string, string[]> = {};
+		for (const [key, entries] of Object.entries(fallbackChains)) {
+			if (Array.isArray(entries) && entries.every((entry) => typeof entry === "string")) {
+				chains[key] = [...entries];
+			}
+		}
+		return chains;
+	}
+
 	getHttpIdleTimeoutMs(): number {
 		return parseTimeoutSetting(this.settings.httpIdleTimeoutMs, "httpIdleTimeoutMs") ?? DEFAULT_HTTP_IDLE_TIMEOUT_MS;
 	}
@@ -938,6 +1114,18 @@ export class SettingsManager {
 		return this.settings.hideThinkingBlock ?? false;
 	}
 
+	getSmoothStreaming(): boolean {
+		return this.settings.smoothStreaming ?? true;
+	}
+
+	getSmoothStreamingFps(): number {
+		const fps = this.settings.smoothStreamingFps;
+		if (typeof fps !== "number" || !Number.isFinite(fps)) {
+			return 60;
+		}
+		return Math.min(120, Math.max(30, fps));
+	}
+
 	getShowCacheMissNotices(): boolean {
 		return this.settings.showCacheMissNotices ?? false;
 	}
@@ -957,6 +1145,18 @@ export class SettingsManager {
 	setHideThinkingBlock(hide: boolean): void {
 		this.globalSettings.hideThinkingBlock = hide;
 		this.markModified("hideThinkingBlock");
+		this.save();
+	}
+
+	setSmoothStreaming(enabled: boolean): void {
+		this.globalSettings.smoothStreaming = enabled;
+		this.markModified("smoothStreaming");
+		this.save();
+	}
+
+	setSmoothStreamingFps(fps: number): void {
+		this.globalSettings.smoothStreamingFps = fps;
+		this.markModified("smoothStreamingFps");
 		this.save();
 	}
 

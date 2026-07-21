@@ -40,3 +40,11 @@ export function getToolCallFormat<TApi extends Api>(model: Model<TApi>): ToolCal
 	}
 	return undefined;
 }
+
+export function shouldRecoverTextToolCalls<TApi extends Api>(model: Model<TApi>): boolean {
+	if (getToolCallFormat(model) !== undefined) return false;
+	if (model.recoverTextToolCalls !== undefined) {
+		return typeof model.recoverTextToolCalls === "boolean" ? model.recoverTextToolCalls : false;
+	}
+	return /(^|[^a-z0-9])claude([^a-z0-9]|$)/i.test(model.id);
+}

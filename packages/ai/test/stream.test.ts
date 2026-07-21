@@ -1019,8 +1019,8 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.KIMI_API_KEY)("Kimi For Coding Provider (k2p7 via Anthropic Messages)", () => {
-		const llm = getModel("kimi-coding", "k2p7");
+	describe.skipIf(!process.env.KIMI_API_KEY)("Kimi For Coding Provider via Anthropic Messages", () => {
+		const llm = getModel("kimi-coding", "kimi-for-coding");
 
 		it("should complete basic text generation", { retry: 3 }, async () => {
 			await basicTextGeneration(llm);
@@ -1140,6 +1140,37 @@ describe("Generate E2E Tests", () => {
 		"Xiaomi MiMo Token Plan Provider (Xiaomi MiMo-V2.5-Pro via Anthropic Messages, SGP region)",
 		() => {
 			const llm = getModel("xiaomi-token-plan-sgp", "mimo-v2.5-pro");
+			const thinkingOptions = {
+				thinkingEnabled: true,
+				reasoningEffort: "high",
+			} satisfies StreamOptionsWithExtras;
+
+			it("should complete basic text generation", { retry: 3 }, async () => {
+				await basicTextGeneration(llm);
+			});
+
+			it("should handle tool calling", { retry: 3 }, async () => {
+				await handleToolCall(llm);
+			});
+
+			it("should handle streaming", { retry: 3 }, async () => {
+				await handleStreaming(llm);
+			});
+
+			it("should handle thinking mode", { retry: 3 }, async () => {
+				await handleThinking(llm, thinkingOptions);
+			});
+
+			it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
+				await multiTurn(llm, thinkingOptions);
+			});
+		},
+	);
+
+	describe.skipIf(!process.env.ALIBABA_TOKEN_PLAN_API_KEY)(
+		"Alibaba Token Plan Provider (Qwen3.7 Max via OpenAI Completions)",
+		() => {
+			const llm = getModel("alibaba-token-plan", "qwen3.7-max");
 			const thinkingOptions = {
 				thinkingEnabled: true,
 				reasoningEffort: "high",

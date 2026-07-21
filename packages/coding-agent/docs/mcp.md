@@ -87,6 +87,15 @@ Per-request timeout. Default `30000`.
 ### `connectTimeoutMs`
 Connect + initialize handshake timeout. Default `15000`.
 
+### `startupTimeoutMs`
+Bounded startup window (ms) that a server's first connect + catalog fetch is
+raced against during session attach. A server that does not settle inside the
+window keeps connecting in the background and surfaces its tools when ready, so
+a slow or wedged server never blocks the first turn. Default `250`. Set higher
+to wait for tools before the first turn, `0` to never wait. The
+`SENPI_MCP_STARTUP_TIMEOUT_MS` environment variable overrides this for every
+server.
+
 ### `includeTools`
 Glob allowlist (`*` wildcards) over server-side tool names. Default: all.
 
@@ -199,7 +208,7 @@ Extension-declared servers use bare names (no prefix).
 | `degraded` | transient failure; auto-reconnect with backoff is running | wait, or `/mcp reconnect <name>` |
 | tools missing | server filtered/disabled, or hidden behind search | check `includeTools`/`excludeTools`, ask the model to `tool_search` |
 | child exits at spawn (EOF) | bad `command`/`args`/`env` | `/mcp logs <name>` shows the captured stderr |
-| slow first call | lazy server cold boot | use `lifecycle:"eager"` or `"keep-alive"` |
+| slow first call | lazy server cold boot (tools attach in the background) | raise `startupTimeoutMs`, or use `lifecycle:"eager"` / `"keep-alive"` |
 
 ## Security notes
 

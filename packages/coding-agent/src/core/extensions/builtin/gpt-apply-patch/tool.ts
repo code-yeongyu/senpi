@@ -2,7 +2,12 @@ import { Box, Container, Spacer, Text } from "@earendil-works/pi-tui";
 import type { AgentToolResult, ToolRenderContext } from "../../types.ts";
 import { defineTool } from "../../types.ts";
 import { applyPatchDetailed, buildPartialFailureText } from "./apply.ts";
-import { APPLY_PATCH_FREEFORM_DESCRIPTION, APPLY_PATCH_LARK_GRAMMAR, APPLY_PATCH_PARAMS } from "./constants.ts";
+import {
+	APPLY_PATCH_FREEFORM_DESCRIPTION,
+	APPLY_PATCH_JSON_DESCRIPTION,
+	APPLY_PATCH_LARK_GRAMMAR,
+	APPLY_PATCH_PARAMS,
+} from "./constants.ts";
 import { normalizeApplyPatchArguments } from "./params.ts";
 import { parsePatch } from "./parser.ts";
 import { createPendingPatchUpdate } from "./preview.ts";
@@ -65,11 +70,11 @@ function renderTextResult(
 	return component;
 }
 
-export function createApplyPatchTool(): ApplyPatchToolDefinition {
+export function createApplyPatchTool(variant: "freeform" | "json" = "freeform"): ApplyPatchToolDefinition {
 	const tool = defineTool<typeof APPLY_PATCH_PARAMS, ApplyPatchToolDetails | undefined, ApplyPatchRenderState>({
 		name: "apply_patch",
 		label: "ApplyPatch",
-		description: APPLY_PATCH_FREEFORM_DESCRIPTION,
+		description: variant === "json" ? APPLY_PATCH_JSON_DESCRIPTION : APPLY_PATCH_FREEFORM_DESCRIPTION,
 		parameters: APPLY_PATCH_PARAMS,
 		prepareArguments: normalizeApplyPatchArguments,
 		promptSnippet: "Apply Codex-format file patches with apply_patch",
@@ -157,6 +162,7 @@ export function createApplyPatchTool(): ApplyPatchToolDefinition {
 		},
 	});
 
+	if (variant === "json") return tool;
 	return Object.assign(tool, {
 		freeform: { type: "grammar", syntax: "lark", definition: APPLY_PATCH_LARK_GRAMMAR } satisfies FreeformToolFormat,
 	});

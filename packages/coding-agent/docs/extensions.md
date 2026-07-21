@@ -12,6 +12,7 @@ Extensions are TypeScript modules that extend pi's behavior. They can subscribe 
 - **User interaction** - Prompt users via `ctx.ui` (select, confirm, input, notify)
 - **Custom UI components** - Full TUI components with keyboard input via `ctx.ui.custom()` for complex interactions
 - **Custom commands** - Register commands like `/mycommand` via `pi.registerCommand()`
+- **Model fallback** - The bundled [`/fallback`](#bundled-fallback-command) command manages global per-model retry chains. Use `/fallback <target> <fallback1> [fallback2 ...]` for scripts, or `/fallback` in the TUI to view and edit chains. `--no-model-fallback` and `SENPI_NO_FALLBACK=1` disable it for one run.
 - **Session persistence** - Store state that survives restarts via `pi.appendEntry()`
 - **Custom rendering** - Control how tool calls/results and messages appear in TUI
 
@@ -31,6 +32,7 @@ See [examples/extensions/](../examples/extensions/) for working implementations.
 ## Table of Contents
 
 - [Quick Start](#quick-start)
+- [Bundled /fallback Command](#bundled-fallback-command)
 - [Extension Locations](#extension-locations)
 - [Available Imports](#available-imports)
 - [Writing an Extension](#writing-an-extension)
@@ -45,6 +47,7 @@ See [examples/extensions/](../examples/extensions/) for working implementations.
 - [ExtensionContext](#extensioncontext)
 - [ExtensionCommandContext](#extensioncommandcontext)
 - [ExtensionAPI Methods](#extensionapi-methods)
+- [Config reload](#config-reload)
 - [State Management](#state-management)
 - [Custom Tools](#custom-tools)
   - [Dynamic Tool Loading](#dynamic-tool-loading)
@@ -105,6 +108,32 @@ Test with `--extension` (or `-e`) flag:
 ```bash
 pi -e ./my-extension.ts
 ```
+
+## Bundled /fallback Command
+
+The bundled `model-fallback` extension registers `/fallback` to manage global per-model retry fallback chains. The command writes through the active session settings manager, so a saved chain is available to the current session's next retry without restarting Senpi. See [Settings](settings.md#model-fallback-chains) for selector syntax and runtime behavior.
+
+Use the quick-set form in scripts or any non-TUI mode:
+
+```text
+/fallback anthropic/claude-fable-5 ccapi/kimi-k3:max
+```
+
+The first argument is the exact primary model selector; each later argument is an ordered fallback selector. Quick-set validates selectors before saving. At least one fallback is required:
+
+```text
+/fallback <target> <fallback1> [fallback2 ...]
+```
+
+Run `/fallback` without arguments in the TUI for a menu that can:
+
+- show configured chains and live fallback state;
+- add or edit a chain by choosing the target, each fallback, and either an explicit or inherited thinking level;
+- remove a chain;
+- toggle `retry.modelFallback`; and
+- choose `retry.fallbackRevertPolicy` (`cooldown-expiry` or `never`).
+
+Use quick-set in non-TUI modes; the no-argument menu requires interactive UI. Pass `--no-model-fallback` or set `SENPI_NO_FALLBACK=1` to disable fallback for that process without modifying saved settings.
 
 ## Extension Locations
 
@@ -1717,6 +1746,55 @@ pi.events.on("my:event", (data) => { ... });
 pi.events.emit("my:event", { ... });
 ```
 
+## Config reload
+
+Senpi's default-on `config-reload` builtin watches configured global surfaces and trusted project-local `.senpi` surfaces. A real content change requests the normal full session reload when the agent is idle; busy or compacting sessions defer it until a safe idle edge. Parseable built-in files (`settings.json`, `models.json`, and `keybindings.json`) are validated before reload, so a rejected edit keeps the running configuration active.
+
+Configure it in `settings.json` with optional fields; omitted fields use the defaults shown here. Invalid `configReload` fields are ignored individually, so a malformed block falls back to these defaults rather than disabling watching:
+
+```json
+{
+  "configReload": {
+    "enabled": true,
+    "debounceMs": 200,
+    "watch": {
+      "settings": true,
+      "models": true,
+      "keybindings": true,
+      "prompts": true,
+      "skills": true,
+      "extensions": true
+    }
+  }
+}
+```
+
+`skills` covers skill paths declared in settings as well as trusted project skills. Themes, credentials, sessions, and reload logs are not watched. Project config surfaces require project trust.
+
+### `config-watch:*` event protocol
+
+Extensions can register additional reloadable surfaces on the shared in-process `pi.events` bus. The channels are `config-watch:register`, `config-watch:unregister`, `config-watch:ready`, `config-watch:changed`, `config-watch:reloaded`, and `config-watch:rejected`. Registrations with the same `id` are last-wins. The registration wire shape is:
+
+```typescript
+{
+  id: string;
+  displayName: string;
+  targets: Array<{
+    path: string;
+    kind: "file" | "dir";
+    filterGlobs?: string[]; // simple name/suffix patterns, for example ["omo.json", "omo.jsonc"]
+  }>;
+  validate?: (changedPaths: readonly string[]) =>
+    | { ok: true }
+    | { ok: false; errors: string[] }
+    | Promise<{ ok: true } | { ok: false; errors: string[] }>;
+}
+```
+
+`config-watch:changed` emits `{ registrationId, paths, deferred }`; `config-watch:reloaded` emits `{ registrationId, paths }`; and `config-watch:rejected` emits `{ registrationId, paths, errors }`. `config-watch:ready` emits `{ enabled }`. Treat all event payloads as untrusted at the receiver boundary.
+
+In TUI mode the builtin requests the host reload action and shows notifications. RPC hosts without a reload action intentionally run in degraded mode: watchers remain active and `config-watch:changed` still emits, but no reload is requested. Print mode starts no watchers so a short-lived process can exit normally.
+
 ### pi.registerProvider(name, config)
 
 Register or override a model provider dynamically. Useful for proxies, custom endpoints, or team-wide model configurations.
@@ -2898,7 +2976,7 @@ const highlighted = highlightCode(code, lang, theme);
 | Interactive | `"tui"` | `true` | Full TUI with terminal rendering |
 | RPC (`--mode rpc`) | `"rpc"` | `true` | Dialogs and notifications via JSON protocol; `custom()` returns `undefined`. See [rpc.md](rpc.md) |
 | JSON (`--mode json`) | `"json"` | `false` | Event stream to stdout; UI methods are no-ops |
-| Print (`-p`) | `"print"` | `false` | Extensions run but can't prompt |
+| Print (`-p`) | `"print"` | `false` | Extensions run but can't prompt; `config-reload` deliberately starts no filesystem watchers |
 
 Use `ctx.mode === "tui"` before TUI-specific features (`custom()`, component factories, terminal input). Use `ctx.hasUI` before dialog and notification methods that work in both TUI and RPC modes.
 

@@ -7,6 +7,43 @@
 ### Added
 
 - Documented the Codex HEAD app-server parity surface, protocol provenance, intentional `-32601` boundaries, and the source-oracle differential QA harness. The documentation now calls out deliberate behavior differences, including post-restart history reconstruction, aggregated turn diffs, partial thread settings, and honest account reads.
+||||||| 9ee0c4a3e
+- Added configurable Claude text tool-call recovery across both `ModelRuntime` streaming entry points, `models.json` definitions/overrides, persisted sessions, and isolated Anthropic/OpenAI mock-loop QA.
+
+### Changed
+
+### Fixed
+- Fixed the interactive render hot path re-materializing the entire session every frame: `SessionManager.getEntries()`, no-arg `getBranch()`, and `getSessionName()` are now memoized behind a monotonic mutation counter, eliminating repeated deep copies of large sessions at frame rate.
+
+### Removed
+
+## [2026.7.20-2] - 2026-07-20
+
+### Breaking Changes
+
+### Added
+- Added configurable per-model retry fallback chains and the `/fallback` command, including scoped cooldowns, automatic primary-model reversion, model-fallback events in RPC/app-server consumers, and interactive fallback status.
+- Added progress updates that identify the active web-search provider for each attempt.
+
+### Changed
+- Abbreviated interactive footer token counts using K/M/B notation.
+
+### Fixed
+- Fixed goal token accounting during active turns so `get_goal`, updates, completion, and shutdown checkpoints include streamed usage without double counting or charging usage before a goal was created.
+- Fixed compaction recovery to preserve queued input and transforms, reject unsafe or oversize compactions visibly, and avoid stale compaction barriers.
+- Fixed coding-agent model fallback behavior for classifier refusals, hard failures, invalid chains, and self-referential candidates.
+
+### Removed
+
+## [2026.7.20] - 2026-07-20
+
+### Breaking Changes
+
+- Replaced the snapshot-style `todowrite`/`todoread` pair with one phased, op-based `todo` tool; the `todowrite` builtin extension id remains for loader compatibility.
+
+### Added
+
+- Added a `/todo` command for user-side todo management: view, overlay `edit` (Markdown checklist), `copy`, `export`/`import` (default `TODO.md`), and fuzzy-matched `append`/`start`/`done`/`drop`/`rm`; user edits persist as `senpi.todo-state` entries and notify the agent next turn.
 - Added `antml` as a valid `compat.toolCallFormat` in custom `models.json` provider and model definitions: ANTML `<function_calls>`/`<invoke>` text-tool protocol with Claude-Code-style failure tolerance.
 - Added built-in llama.cpp router support with `/login` connection setup and `/llama` Hugging Face model search and downloads, explicit loading, unloading, and live progress. See [llama.cpp](docs/llama-cpp.md).
 - Added extension registration for complete pi-ai providers, including native authentication, model refresh, filtering, and streaming behavior.

@@ -28,6 +28,8 @@ import {
 	type ProviderHeaders,
 	type SimpleStreamOptions,
 	type StreamOptions,
+	shouldRecoverTextToolCalls,
+	wrapStreamWithInvokeRecovery,
 } from "@earendil-works/pi-ai";
 import * as builtinProviderCatalog from "@earendil-works/pi-ai/providers/all";
 import { getAgentDir } from "../config.ts";
@@ -111,7 +113,6 @@ export class ModelRuntime implements Models {
 	private availabilityRefresh: Promise<void> | undefined;
 	private availabilityInitialized = false;
 	private availabilityError: string | undefined;
-
 	private constructor(
 		credentials: RuntimeCredentials,
 		config: ModelConfig,
@@ -328,15 +329,12 @@ export class ModelRuntime implements Models {
 	getProviders(): readonly Provider[] {
 		return this.models.getProviders();
 	}
-
 	getProvider(providerId: string): Provider | undefined {
 		return this.models.getProvider(providerId);
 	}
-
 	getModels(providerId?: string): readonly Model<Api>[] {
 		return this.models.getModels(providerId);
 	}
-
 	getModel(providerId: string, modelId: string): Model<Api> | undefined {
 		return this.models.getModel(providerId, modelId);
 	}
@@ -344,7 +342,6 @@ export class ModelRuntime implements Models {
 	async checkAuth(providerId: string): Promise<AuthCheck | undefined> {
 		return this.models.checkAuth(providerId);
 	}
-
 	async getAvailable(providerId?: string): Promise<readonly Model<Api>[]> {
 		if (providerId) {
 			if (this.availabilityRefresh) {
@@ -492,9 +489,18 @@ export class ModelRuntime implements Models {
 			resolution.env || providerOptions.env
 				? { ...(resolution.env ?? {}), ...(providerOptions.env ?? {}) }
 				: undefined;
+		const upstreamModelId = compatibility.upstreamModelId;
+		const requestModel =
+			resolution.auth.baseUrl || upstreamModelId
+				? {
+						...model,
+						...(upstreamModelId ? { id: upstreamModelId } : {}),
+						...(resolution.auth.baseUrl ? { baseUrl: resolution.auth.baseUrl } : {}),
+					}
+				: model;
 		return {
 			provider,
-			model: resolution.auth.baseUrl ? { ...model, baseUrl: resolution.auth.baseUrl } : model,
+			model: requestModel,
 			options: {
 				...providerOptions,
 				apiKey: providerOptions.apiKey ?? resolution.auth.apiKey,
@@ -515,11 +521,14 @@ export class ModelRuntime implements Models {
 				model,
 				options as (StreamOptions & ModelsStreamTransforms) | undefined,
 			);
-			return prepared.provider.stream(
+			const inner = prepared.provider.stream(
 				prepared.model as Model<TApi>,
 				context,
 				prepared.options as ApiStreamOptions<TApi>,
 			);
+			return shouldRecoverTextToolCalls(model) && context.tools?.length
+				? wrapStreamWithInvokeRecovery(inner, context.tools)
+				: inner;
 		});
 	}
 
@@ -530,18 +539,18 @@ export class ModelRuntime implements Models {
 	): Promise<AssistantMessage> {
 		return this.stream(model, context, options).result();
 	}
-
 	streamSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): AssistantMessageEventStream {
 		return lazyStream(model, async () => {
 			const prepared = await this.prepareRequest(model, options);
-			return prepared.provider.streamSimple(prepared.model, context, prepared.options as SimpleStreamOptions);
+			const inner = prepared.provider.streamSimple(prepared.model, context, prepared.options as SimpleStreamOptions);
+			return shouldRecoverTextToolCalls(model) && context.tools?.length
+				? wrapStreamWithInvokeRecovery(inner, context.tools)
+				: inner;
 		});
 	}
-
 	completeSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): Promise<AssistantMessage> {
 		return this.streamSimple(model, context, options).result();
 	}
-
 	async login(providerId: string, type: AuthType, interaction: AuthInteraction): Promise<Credential> {
 		const credential = await this.models.login(providerId, type, interaction);
 		await this.refresh({ allowNetwork: this.allowModelNetwork });

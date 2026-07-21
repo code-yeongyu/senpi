@@ -1,5 +1,24 @@
 # changes
 
+## Config-reload recursive watch option (2026-07-21)
+
+### What changed
+
+- `fs-watch.ts`: `watchWithErrorHandler` now accepts an additive optional Node `WatchOptions` argument, allowing callers to request recursive directory watches while retaining its existing error handling.
+
+### Why
+
+- The config-reload watch engine watches directories rather than individual files so editor atomic-save rename-replaces remain observable.
+
+### Why extension system couldn't handle this
+
+- The watcher wrapper is a shared leaf utility used by core and mode code.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `watchWithErrorHandler` parameter list and `fs.watch` invocation.
+
+
 ## Shell resolution for persistent terminals (2026-07-07)
 
 ### What changed

@@ -42,6 +42,8 @@ export function startFakeModelServer({ port = 0, turns = [{ text: "OK" }] } = {}
 			requests.push({
 				method: req.method,
 				url: req.url,
+				raw,
+				body,
 				authorization: req.headers.authorization || null,
 				apiKeyHeader: req.headers["x-api-key"] || null,
 				model: body.model,

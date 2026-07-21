@@ -7,6 +7,7 @@ import { disposeMcpReconnect } from "../../src/core/extensions/builtin/mcp/recon
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
 import {
 	attach,
+	awaitMcpToolRegistration,
 	capturingPi,
 	mcpRoot as makeMcpRoot,
 	registeredTool,
@@ -40,6 +41,7 @@ describe("MCP ping-on-call health", () => {
 		setConfig(root, { fx: stdioServer(["--tools", "1", "--pid-file", pidFile]) });
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 
 		const first = await tool.execute("tc-first", { value: "first" }, undefined, undefined, testContext());
@@ -62,6 +64,7 @@ describe("MCP ping-on-call health", () => {
 		setConfig(root, { fx: stdioServer(["--tools", "1", "--ping-counter-file", pingCounterFile]) });
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 
 		await tool.execute("tc-first", { value: "first" }, undefined, undefined, testContext());
@@ -86,6 +89,7 @@ describe("MCP ping-on-call health", () => {
 		});
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 		// This test's contract is the STALE-CALL PING path only: exactly one renewal
 		// attempt, surfaced as a bounded typed error. The background reconnect
 		// controller independently reacts to the SIGKILL's "degraded" transition on
@@ -119,6 +123,7 @@ describe("MCP ping-on-call health", () => {
 		});
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 
 		const [first, second] = await Promise.all([

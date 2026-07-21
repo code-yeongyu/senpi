@@ -40,6 +40,7 @@ export const ServerSchema = Type.Object(
 		idleTimeoutMin: Type.Optional(Type.Number()),
 		requestTimeoutMs: Type.Optional(Type.Number()),
 		connectTimeoutMs: Type.Optional(Type.Number()),
+		startupTimeoutMs: Type.Optional(Type.Number()),
 		includeTools: Type.Optional(Type.Array(Type.String())),
 		excludeTools: Type.Optional(Type.Array(Type.String())),
 		directTools: Type.Optional(Type.Union([Type.Boolean(), Type.Array(Type.String())])),
@@ -89,6 +90,7 @@ export type McpServerConfig = Static<typeof ServerSchema> & {
 	lifecycle: "lazy" | "eager" | "keep-alive";
 	connectTimeoutMs: number;
 	requestTimeoutMs: number;
+	startupTimeoutMs: number;
 	idleTimeoutMin: number;
 	exposure: "auto" | "direct" | "search" | "proxy";
 	logLevel: Static<typeof LogLevelSchema>;

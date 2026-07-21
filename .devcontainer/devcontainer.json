@@ -26,6 +26,9 @@
 		},
 		"GEMINI_API_KEY": {
 			"description": "(Optional) Google Gemini API key (senpi's default provider is google)."
+		},
+		"ALIBABA_TOKEN_PLAN_API_KEY": {
+			"description": "(Optional) Alibaba Cloud Model Studio Token Plan API key (ap-southeast-1)."
 		}
 	},
 	"customizations": {

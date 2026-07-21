@@ -1,5 +1,6 @@
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
+import { parseAntmlGeneratedText } from "../../src/tool-call-middleware/protocols/antml/parse.ts";
 import { createAntmlStreamParser } from "../../src/tool-call-middleware/protocols/antml/stream.ts";
 import type { StreamParserEvent } from "../../src/tool-call-middleware/types.ts";
 import type { Tool } from "../../src/types.ts";
@@ -65,6 +66,40 @@ describe("createAntmlStreamParser", () => {
 		expect(toolCallEnds(events)).toHaveLength(1);
 		expect(textOutput(events)).toBe("Before  after");
 		expect(textOutput(events)).not.toContain("function_calls");
+	});
+
+	it("parses bare and antml-namespaced tags identically across split boundaries", () => {
+		const bare =
+			'<function_calls><invoke name="Bash"><parameter name="command">echo hi</parameter></invoke></function_calls>';
+		const namespaced =
+			'<antml:function_calls><antml:invoke name="Bash"><antml:parameter name="command">echo hi</antml:parameter></antml:invoke></antml:function_calls>';
+		const expectedParser = createAntmlStreamParser([bashTool]);
+		const expectedEvents = [...expectedParser.feed(bare), ...expectedParser.finish()];
+
+		expect(parseAntmlGeneratedText(namespaced, [bashTool])).toEqual(parseAntmlGeneratedText(bare, [bashTool]));
+		for (let split = 0; split <= namespaced.length; split += 1) {
+			const parser = createAntmlStreamParser([bashTool]);
+			const events = [
+				...parser.feed(namespaced.slice(0, split)),
+				...parser.feed(namespaced.slice(split)),
+				...parser.finish(),
+			];
+			expect(events).toEqual(expectedEvents);
+		}
+	});
+
+	it("keeps unsupported namespace and tag names as bounded text", () => {
+		for (const input of [
+			'<foo:invoke name="Bash"><foo:parameter name="command">echo hi</foo:parameter></foo:invoke>',
+			'<ant:invoke name="Bash"><ant:parameter name="command">echo hi</ant:parameter></ant:invoke>',
+			"before <tool>after",
+		]) {
+			const parser = createAntmlStreamParser([bashTool]);
+			const events = [...parser.feed(input), ...parser.finish()];
+
+			expect(textOutput(events)).toBe(input);
+			expect(events.filter((event) => event.type.startsWith("toolcall_"))).toEqual([]);
+		}
 	});
 
 	it("repairs sloppy nested arguments in the streaming path", () => {

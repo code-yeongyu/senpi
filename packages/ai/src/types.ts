@@ -8,9 +8,11 @@ import type { OpenAICodexResponsesOptions } from "./api/openai-codex-responses.t
 import type { OpenAICompletionsOptions } from "./api/openai-completions.ts";
 import type { OpenAIResponsesOptions } from "./api/openai-responses.ts";
 import type { PiMessagesOptions } from "./api/pi-messages.ts";
+import type { Model } from "./model.ts";
 import type { AssistantMessageDiagnostic } from "./utils/diagnostics.ts";
 import type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 
+export type { Model } from "./model.ts";
 export type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 
 export type KnownApi =
@@ -32,6 +34,7 @@ export type KnownImagesApi = "openrouter-images";
 export type ImagesApi = KnownImagesApi | (string & {});
 
 export type KnownProvider =
+	| "alibaba-token-plan"
 	| "amazon-bedrock"
 	| "ant-ling"
 	| "anthropic"
@@ -421,6 +424,8 @@ export interface Usage {
 
 export type StopReason = "stop" | "length" | "toolUse" | "error" | "aborted";
 
+export type AssistantStopDetails = { type: "refusal"; explanation?: string } | { type: "sensitive" };
+
 export interface UserMessage {
 	role: "user";
 	content: string | (TextContent | ImageContent)[];
@@ -438,6 +443,7 @@ export interface AssistantMessage {
 	diagnostics?: AssistantMessageDiagnostic[]; // Redacted provider/runtime diagnostics for failures and recoveries.
 	usage: Usage;
 	stopReason: StopReason;
+	stopDetails?: AssistantStopDetails;
 	errorMessage?: string;
 	timestamp: number; // Unix timestamp in milliseconds
 }
@@ -672,6 +678,14 @@ export interface AnthropicMessagesCompat {
 	/** Whether to replay empty thinking signatures as `signature: ""` instead of converting thinking to text. Default: false. */
 	allowEmptySignature?: boolean;
 	/**
+	 * How to replay thinking blocks that have no usable Anthropic signature.
+	 * `"text"` demotes them to text; `"empty-signature"` preserves Anthropic's
+	 * thinking shape with `signature: ""`. Defaults to `"text"`; the legacy
+	 * `allowEmptySignature` setting remains a compatibility alias for
+	 * `"empty-signature"`.
+	 */
+	unsignedThinkingReplay?: "text" | "empty-signature";
+	/**
 	 * Whether the provider supports deferred tools loaded by `tool_reference`
 	 * blocks in tool results. Default: true for first-party Anthropic models
 	 * except Haiku and models older than Claude 4.5; false for other providers.
@@ -790,36 +804,6 @@ export interface ModelCostTier extends ModelCostRates {
 export interface ModelCost extends ModelCostRates {
 	/** Request-wide pricing tiers. The highest matching input threshold applies to the full request. */
 	tiers?: ModelCostTier[];
-}
-
-// Model interface for the unified model system
-export interface Model<TApi extends Api> {
-	id: string;
-	name: string;
-	api: TApi;
-	provider: ProviderId;
-	baseUrl: string;
-	reasoning: boolean;
-	/**
-	 * Maps pi thinking levels to provider/model-specific values.
-	 * Missing keys use provider defaults. null marks a level as unsupported.
-	 */
-	thinkingLevelMap?: ThinkingLevelMap;
-	input: ("text" | "image" | "video")[];
-	cost: ModelCost;
-	contextWindow: number;
-	maxTokens: number;
-	headers?: Record<string, string>;
-	/** Default prompt-cache retention preference when the request omits one. */
-	cacheRetention?: CacheRetention;
-	/** Compatibility overrides for OpenAI-compatible APIs. If not set, auto-detected from baseUrl. */
-	compat?: TApi extends "openai-completions"
-		? OpenAICompletionsCompat
-		: TApi extends "openai-responses" | "openai-codex-responses"
-			? OpenAIResponsesCompat
-			: TApi extends "anthropic-messages"
-				? AnthropicMessagesCompat
-				: never;
 }
 
 export interface ImagesModel<TApi extends ImagesApi>

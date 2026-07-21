@@ -5,10 +5,6 @@ import values from "./data/kimi-coding.json" with { type: "json" };
 import type { Model } from "../types.ts";
 
 export const KIMI_CODING_MODELS = values as {
-	"k2p7": Model<"anthropic-messages"> & {
-		id: "k2p7";
-		provider: "kimi-coding";
-	};
 	"k3": Model<"anthropic-messages"> & {
 		id: "k3";
 		provider: "kimi-coding";

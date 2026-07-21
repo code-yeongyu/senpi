@@ -149,6 +149,7 @@ describe("MCP idle lifecycle", () => {
 		setConfig(root, { fx: { ...stdioServer(["--tools", "1"]), idleTimeoutMin: 0.001 } });
 		const pi = capturingPi();
 		await attach(root, pi);
+		await waitForCondition(() => getMcpService().getConnection("fx")?.state === "connected", 30_000);
 		const connection = getMcpService().getConnection("fx");
 		if (connection === undefined) throw new Error("missing fx connection");
 

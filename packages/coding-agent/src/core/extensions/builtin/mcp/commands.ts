@@ -3,6 +3,7 @@ import { handleMcpAuthCommand } from "./auth/commands-auth-dispatch.ts";
 import { addGlobalMcpServer, setGlobalMcpServerEnabled } from "./config-edit.ts";
 import type { McpServerConfig } from "./config-schema.ts";
 import { getMcpService } from "./service.ts";
+import { MCP_STARTUP_RACE_MS } from "./startup-race.ts";
 import { buildMcpStatusRows, formatMcpStatus } from "./status.ts";
 
 const SUBCOMMANDS = [
@@ -211,6 +212,7 @@ function baseServer(endpoint: Pick<McpServerConfig, "type"> & Partial<McpServerC
 		lifecycle: "lazy",
 		logLevel: "info",
 		requestTimeoutMs: 30_000,
+		startupTimeoutMs: MCP_STARTUP_RACE_MS,
 		...endpoint,
 	};
 }

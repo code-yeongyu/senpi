@@ -8,6 +8,7 @@ import {
 import {
 	assertAlive,
 	attach,
+	awaitMcpConnected,
 	cleanupRoots,
 	fakePi,
 	makeRoot,
@@ -16,6 +17,7 @@ import {
 	setConfig,
 	stdioServer,
 	tool,
+	waitForCondition,
 	writeProjectConfig,
 } from "./fixtures/service-lifecycle.ts";
 import { assertProcessDead, stdioFixtureCommand } from "./fixtures/spawn-fixture.ts";
@@ -42,6 +44,7 @@ describe("McpService session lifecycle", () => {
 		const service = getMcpService();
 
 		await attach(service, root, "startup");
+		await awaitMcpConnected(service, "shared");
 		const firstPid = service.getConnection("shared")?.getRootPid();
 		await service.handleSessionShutdown({ type: "session_shutdown", reason: "new" });
 		await attach(service, root, "new");
@@ -64,12 +67,14 @@ describe("McpService session lifecycle", () => {
 		const serviceBeforeReload = getMcpService();
 
 		await attach(serviceBeforeReload, root, "startup");
+		await awaitMcpConnected(serviceBeforeReload, "reloadable");
 		const firstPid = requiredPid(serviceBeforeReload, "reloadable");
 		await serviceBeforeReload.handleSessionShutdown({ type: "session_shutdown", reason: "reload" });
 		await assertProcessDead(firstPid);
 
 		const serviceAfterReload = getMcpService();
 		await attach(serviceAfterReload, root, "reload");
+		await awaitMcpConnected(serviceAfterReload, "reloadable");
 		const secondPid = requiredPid(serviceAfterReload, "reloadable");
 
 		expect(serviceAfterReload).not.toBe(serviceBeforeReload);
@@ -89,6 +94,8 @@ describe("McpService session lifecycle", () => {
 		const service = getMcpService();
 
 		await attach(service, root, "startup");
+		await awaitMcpConnected(service, "changed");
+		await awaitMcpConnected(service, "stable");
 		const changedPidBefore = requiredPid(service, "changed");
 		const stablePidBefore = requiredPid(service, "stable");
 		await service.handleSessionShutdown({ type: "session_shutdown", reason: "new" });
@@ -98,6 +105,7 @@ describe("McpService session lifecycle", () => {
 			stable: stdioServer(["--tools", "1", "--spawn-counter-file", stableCounter]),
 		});
 		await attach(service, root, "new");
+		await awaitMcpConnected(service, "changed");
 		const changedPidAfter = requiredPid(service, "changed");
 		const stablePidAfter = requiredPid(service, "stable");
 
@@ -124,6 +132,7 @@ describe("McpService session lifecycle", () => {
 		const service = getMcpService();
 
 		await attach(service, root, "startup", false);
+		await awaitMcpConnected(service, "live");
 		const livePid = requiredPid(service, "live");
 		expect(await readCounter(liveCounter)).toBe(1);
 		await expect(readCounter(disabledCounter)).rejects.toMatchObject({ code: "ENOENT" });
@@ -156,6 +165,7 @@ describe("McpService session lifecycle", () => {
 		const service = getMcpService();
 
 		await attach(service, root, "startup");
+		await waitForCondition(() => service.getConnection("needsAuth")?.state === "degraded", 10_000);
 
 		expect(service.getConnection("needsAuth")?.getRootPid()).toBeNull();
 		expect(service.getServerSnapshots()).toMatchObject([
@@ -180,6 +190,8 @@ describe("McpService session lifecycle", () => {
 		const service = getMcpService();
 
 		await attach(service, root, "startup");
+		await awaitMcpConnected(service, "first");
+		await awaitMcpConnected(service, "second");
 		const pids = [requiredPid(service, "first"), requiredPid(service, "second")];
 		await service.handleSessionShutdown({ type: "session_shutdown", reason: "quit" });
 
@@ -209,6 +221,7 @@ describe("McpService session lifecycle", () => {
 		await service.attachSession({ type: "session_start", reason: "startup" }, ctx, fakePi(), {
 			agentDir: root.agentDir,
 		});
+		await awaitMcpConnected(service, "fixture");
 		const pid1 = requiredPid(service, "fixture");
 		expect(await readCounter(counterFile)).toBe(1);
 
@@ -242,6 +255,7 @@ describe("McpService session lifecycle", () => {
 		await serviceBeforeReload.attachSession({ type: "session_start", reason: "startup" }, ctx, fakePi(), {
 			agentDir: root.agentDir,
 		});
+		await awaitMcpConnected(serviceBeforeReload, "fixture");
 		const pid1 = requiredPid(serviceBeforeReload, "fixture");
 		await serviceBeforeReload.handleSessionShutdown({ type: "session_shutdown", reason: "reload" });
 		await assertProcessDead(pid1);
@@ -250,6 +264,7 @@ describe("McpService session lifecycle", () => {
 		await serviceAfterReload.attachSession({ type: "session_start", reason: "reload" }, ctx, fakePi(), {
 			agentDir: root.agentDir,
 		});
+		await awaitMcpConnected(serviceAfterReload, "fixture");
 		const pid2 = requiredPid(serviceAfterReload, "fixture");
 
 		expect(serviceAfterReload).not.toBe(serviceBeforeReload);

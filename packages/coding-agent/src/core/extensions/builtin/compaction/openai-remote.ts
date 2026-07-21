@@ -291,7 +291,9 @@ function convertToolCall(block: ToolCall): OpenAiFunctionCallItem {
 	const [callId = block.id, itemId] = block.id.split("|");
 	return {
 		type: "function_call",
-		...(itemId ? { id: itemId } : {}),
+		// The Responses API rejects item ids not beginning with "fc"; custom tool
+		// calls carry the "<call_id>|custom" sentinel, not a server-issued id.
+		...(itemId?.startsWith("fc") ? { id: itemId } : {}),
 		call_id: callId,
 		name: block.name,
 		arguments: JSON.stringify(block.arguments ?? {}),

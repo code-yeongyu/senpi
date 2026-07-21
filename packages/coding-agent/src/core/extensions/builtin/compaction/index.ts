@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Tool } from "@earendil-works/pi-ai";
 import type { CompactionResult } from "../../../compaction/index.ts";
 import { convertToLlm } from "../../../messages.ts";
 import type { CompactionEntry } from "../../../session-manager.ts";
@@ -35,6 +36,7 @@ import {
 	runExtensionCompaction,
 	type SpeculativeCompactionResult,
 	type SpeculativeCompactionSnapshot,
+	SummaryGenerationError,
 } from "./speculative.ts";
 import { type CompactionExtensionState, createInitialState, resetTurnCounter } from "./state.ts";
 import * as todoBridge from "./todo-bridge.ts";
@@ -162,6 +164,21 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 		| undefined;
 	const pendingMetadata = new Map<string, PendingCompactionMetadata>();
 
+	function getSummarizationTools(): Tool[] {
+		if (typeof pi.getAllTools !== "function") return [];
+		try {
+			return pi.getAllTools().map((tool) => ({
+				name: tool.name,
+				description: tool.description,
+				parameters: tool.parameters,
+			}));
+		} catch {
+			// Tool registry not bound yet (extension still loading); the summary
+			// request simply goes out without tool definitions.
+			return [];
+		}
+	}
+
 	function invalidateSpeculativeCompaction(): void {
 		speculativeGeneration++;
 		speculativeJob?.controller.abort();
@@ -171,7 +188,11 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 	function startSpeculativeCompaction(ctx: ExtensionContext, customInstructions: string): void {
 		if (speculativeJob) return;
 		const generation = ++speculativeGeneration;
-		const snapshot = createSpeculativeCompactionSnapshot(ctx, { generation, customInstructions });
+		const snapshot = createSpeculativeCompactionSnapshot(ctx, {
+			generation,
+			customInstructions,
+			tools: getSummarizationTools(),
+		});
 		if (!snapshot) return;
 
 		const controller = new AbortController();
@@ -266,15 +287,28 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 			}
 
 			const generation = ++speculativeGeneration;
-			const snapshot = createSpeculativeCompactionSnapshot(ctx, { generation, customInstructions });
+			const snapshot = createSpeculativeCompactionSnapshot(ctx, {
+				generation,
+				customInstructions,
+				tools: getSummarizationTools(),
+			});
 			if (!snapshot) {
 				const result = { applied: false, reason: "unavailable" } as const;
 				endCompactionFeedback(ctx, feedbackSignal, result);
 				return result;
 			}
-			const compaction = await runExtensionCompaction(ctx, snapshot, feedbackSignal, (delta) =>
-				ctx.updateCompaction?.({ reason: "extension", delta }),
-			);
+			let compaction: CompactionResult | undefined;
+			try {
+				compaction = await runExtensionCompaction(ctx, snapshot, feedbackSignal, (delta) =>
+					ctx.updateCompaction?.({ reason: "extension", delta }),
+				);
+			} catch (error) {
+				// Auto-path parity: summary-generation failures (missing credentials,
+				// text-less response) degrade to "unavailable" exactly as before
+				// instead of erroring the turn; the precise reason still surfaces on
+				// the session_before_compact route.
+				if (!(error instanceof SummaryGenerationError)) throw error;
+			}
 			const result = await applyGeneratedCompaction(ctx, snapshot, () => speculativeGeneration, compaction);
 			endCompactionFeedback(ctx, feedbackSignal, result);
 			return result;
@@ -291,9 +325,23 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_before_compact", async (event, ctx) => {
 		invalidateSpeculativeCompaction();
-		if (cap.shouldRejectByCap(state, { reason: event.reason }).cancel) return { cancel: true };
-		if (breaker.isTripped(state, Date.now()) && !breaker.shouldBypass(state, { reason: event.reason }))
-			return { cancel: true };
+		if (cap.shouldRejectByCap(state, { reason: event.reason }).cancel) {
+			return {
+				cancel: true,
+				rejectionCause: "per-turn-cap",
+				reason: "per-turn compaction cap reached for this turn",
+			};
+		}
+		const now = Date.now();
+		if (breaker.isTripped(state, now) && !breaker.shouldBypass(state, { reason: event.reason })) {
+			const remainingMs = state.trippedAt !== null ? Math.max(0, state.trippedAt + breaker.COOLDOWN_MS - now) : 0;
+			const remainingSec = Math.ceil(remainingMs / 1000);
+			return {
+				cancel: true,
+				rejectionCause: "circuit-breaker",
+				reason: `compaction circuit breaker cooling down (${remainingSec}s left)`,
+			};
+		}
 
 		capturePendingMetadata(event.requestId, ctx);
 
@@ -314,13 +362,37 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 			preparation: event.preparation,
 			promptVariant: getPromptVariant(event),
 			customInstructions: event.customInstructions,
+			systemPrompt: ctx.getSystemPrompt(),
+			tools: getSummarizationTools(),
 		};
-		const compaction = await runExtensionCompaction(ctx, snapshot, event.signal, (delta) =>
-			ctx.updateCompaction?.({ reason: event.reason, delta }),
-		);
+		let compaction: CompactionResult | undefined;
+		try {
+			compaction = await runExtensionCompaction(ctx, snapshot, event.signal, (delta) =>
+				ctx.updateCompaction?.({ reason: event.reason, delta }),
+			);
+		} catch (error) {
+			// Surface the real provider failure (e.g. a policy refusal or rate
+			// limit) instead of letting it degrade into a bare "Compaction
+			// cancelled". Cancel rather than fall back: the core route would
+			// re-send the same conversation and burn tokens on the same failure.
+			// The reason threads into compaction_end.errorMessage so the UI shows
+			// the real provider message; ctx.ui.notify would be a duplicate toast.
+			pendingMetadata.delete(event.requestId);
+			if (error instanceof SummaryGenerationError) {
+				return { cancel: true, reason: error.message };
+			}
+			const message = error instanceof Error ? error.message : String(error);
+			return { cancel: true, reason: `compaction generator failed: ${message}` };
+		}
 		if (!compaction) {
 			pendingMetadata.delete(event.requestId);
-			return { cancel: true };
+			if (event.signal.aborted) {
+				// User abort: returning no reason lets agent-session's aborted branch
+				// render the plain "Compaction cancelled" instead of a misleading
+				// "returned no summary" rejection.
+				return { cancel: true };
+			}
+			return { cancel: true, reason: "compaction generator returned no summary" };
 		}
 
 		return {
@@ -363,8 +435,10 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 			}
 			return;
 		}
+		// Rejection feedback is emitted by core via compaction_end.errorMessage;
+		// duplicating it as a ctx.ui.notify toast produces double surfaces while
+		// the compaction status indicator is still animating (plan §1 Q3).
 		state = breaker.recordFailure(state, Date.now(), { route: event.reason });
-		ctx.ui.notify(`Compaction rejected: ${event.rejectionCause ?? "unknown"}`, "warning");
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
@@ -428,7 +502,10 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 		handleTurnEnd(degradationState);
 		if (degradationState.recoveryTriggeredThisCycle) return;
 		if (state.lastYield && state.lastYield.savedTokens <= 0) {
-			void applyBlockingCompaction(ctx, RECOVERY_INSTRUCTIONS);
+			void applyBlockingCompaction(ctx, RECOVERY_INSTRUCTIONS).catch(() => {
+				// Fire-and-forget recovery: applyBlockingCompaction already ended
+				// user-visible feedback with the error message.
+			});
 		}
 	});
 

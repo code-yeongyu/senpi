@@ -72,6 +72,7 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 	}
 
 	const envMap: Record<string, string> = {
+		"alibaba-token-plan": "ALIBABA_TOKEN_PLAN_API_KEY",
 		"ant-ling": "ANT_LING_API_KEY",
 		openai: "OPENAI_API_KEY",
 		"azure-openai-responses": "AZURE_OPENAI_API_KEY",

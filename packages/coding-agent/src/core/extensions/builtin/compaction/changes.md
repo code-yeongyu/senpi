@@ -1,5 +1,131 @@
 # Builtin compaction extension changes
 
+## Omit non-"fc" item ids in remote-compaction tool-call replay (2026-07-22)
+
+- `openai-remote.ts` `convertToolCall()` now spreads the replayed item `id` only when it
+  begins with "fc", matching the Responses API item-id rule. A custom tool call stored as
+  `<call_id>|custom` previously produced `id: "custom"` in remote-compaction input, which
+  the API rejects with `Invalid 'input[N].id': 'custom'`.
+- Tests: `test/compaction/openai-remote-compaction.test.ts` (sentinel omission in the
+  remote request input) and `test/compaction/custom-tool-call-id-replay.test.ts`
+  (wire-level: drives `runExtensionCompaction` against a local Responses server that
+  enforces the id rule, proving the poisoned history compacts successfully).
+
+Expected upstream conflict zones: `builtin/compaction/openai-remote.ts` `convertToolCall()`.
+
+## Diagnosable summary-generation failures + thinking headroom (2026-07-21)
+
+- `speculative.ts` `runExtensionCompaction()` no longer collapses every non-summary
+  outcome into a silent `undefined` (which the handler could only report as
+  "compaction generator returned no summary"). It now resolves `undefined` **only
+  for aborts** and throws a typed `SummaryGenerationError` otherwise:
+  - missing/unresolvable credentials → `kind: "auth"`,
+    `summarization credentials unavailable: <registry error>`.
+  - a completed response with zero text blocks (adaptive-thinking models can burn
+    the whole output budget on thinking; tool-forwarding means a model can also
+    answer with a bare tool call) → `kind: "empty-summary"`,
+    `summarization response contained no text (stopReason: <reason>)`.
+- `index.ts` `session_before_compact` handler maps outcomes precisely:
+  - `SummaryGenerationError` → `{ cancel: true, reason: error.message }` so
+    `/compact` shows the real diagnosis via `compaction_end.errorMessage`.
+  - aborted generation with `event.signal.aborted` → `{ cancel: true }` with **no
+    reason**, letting agent-session's aborted branch render the plain
+    "Compaction cancelled" instead of the misleading "returned no summary"
+    (core hardcodes `aborted: true` for extension cancels and suppresses
+    `errorMessage` only when no extension reason is present).
+  - any other `undefined` keeps the legacy "compaction generator returned no
+    summary" reason as a defensive fallback.
+- `index.ts` `applyBlockingCompaction()` catches `SummaryGenerationError` and
+  degrades to the legacy "unavailable" outcome, so automatic routes
+  (hard-limit/proactive/turn-end recovery/degradation monitor) behave exactly as
+  before instead of erroring the turn; the precise reason still surfaces when the
+  hook route runs.
+- Summarization output budget: the flat `MAX_SUMMARY_TOKENS = 8192` became
+  `summaryMaxTokens(model, contextWindow)` =
+  `min(32768, model.maxTokens, floor(contextWindow / 2))` (the headroom cap
+  applies when the model reports no output cap). Adaptive-thinking models emit
+  reasoning tokens before the summary text, so the 8192 cap could be consumed
+  entirely by thinking and end the stream with zero text — the exact "returned
+  no summary" failure this change diagnoses. The half-window clamp reserves
+  half the window for input so providers enforcing input + output <=
+  contextWindow no longer reject requests up-front (catalog models with
+  contextWindow == maxTokens); oversized conversations still flow through the
+  existing overflow-retry prune. Models with `maxTokens < 8192` also stop
+  receiving an over-cap request.
+- Abort precedence: `runExtensionCompaction()` checks the caller signal before
+  and after credential resolution, so a user abort can never surface as a
+  "summarization credentials unavailable" rejection.
+- Tests: `test/compaction/speculative-compaction.test.ts` (typed errors, token
+  caps) and `test/compaction/before-compact-error-surfacing.test.ts` (handler
+  reason mapping, abort-without-reason).
+
+Expected upstream conflict zones: `builtin/compaction/speculative.ts` around the
+auth check, `getSummaryText` consumption, and stream options;
+`builtin/compaction/index.ts` `session_before_compact` cancel paths and
+`applyBlockingCompaction`.
+
+## Idle watchdog on local summarization streams (2026-07-21)
+
+- `speculative.ts` `generateSummaryMessage` now drives the summarization stream through a
+  request-local `AbortController` (linked to the caller's signal) and
+  `consumeStreamWithIdleTimeout()` (`core/compaction/stream-watchdog.ts`,
+  `DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS` = 300s, matching the agent stream idle-timeout default).
+  A provider connection that goes silent mid-summary — previously an unbounded "Compacting…"
+  stall recoverable only by ESC — now tears the request down and throws `StreamIdleTimeoutError`,
+  which the existing failure paths surface as `compaction generator failed: Summarization stream
+  stalled …` (manual/blocking route) or reject the speculative job. Caller aborts still read as
+  the stream's own aborted result, unchanged from the pre-watchdog behavior.
+- This stays in the builtin extension because the summarization request lifecycle is
+  extension-owned; the shared helper and the core `compact()` route live in
+  `core/compaction/` (see `core/compaction/changes.md`).
+
+Expected upstream conflict zones: `builtin/compaction/speculative.ts` around
+`generateSummaryMessage`.
+
+## Structured rejection reasons on session_before_compact (2026-07-20)
+
+- `index.ts` cancel paths now attach a structured `rejectionCause` plus a
+  human-readable `reason` on the `SessionBeforeCompactResult`:
+  - per-turn cap → `{ rejectionCause: "per-turn-cap", reason: "per-turn compaction cap reached for this turn" }`.
+  - tripped circuit breaker → `{ rejectionCause: "circuit-breaker", reason: "compaction circuit breaker cooling down (Ns left)" }` with the real remaining cooldown.
+  - summarization threw → `{ reason: "compaction generator failed: <message>" }` (no `rejectionCause`; core defaults to `cancelled-by-extension`).
+  - summarization returned no summary → `{ reason: "compaction generator returned no summary" }`.
+  Core threads these into `compaction_end.errorMessage` so `/compact` produces a
+  specific line instead of the bare "Compaction cancelled" the plan flagged.
+- `ctx.ui.notify("Compaction rejected: ...", "warning")` was removed from the
+  `session_compact` `!accepted` branch and `ctx.ui.notify("Compaction failed: ...", "error")`
+  was removed from the provider-throw cancel path. Both facts now travel through
+  the canonical `compaction_end` event; duplicating them as toasts produced
+  double surfaces while the compaction status indicator was still animating
+  (plan §1 Q3). `breaker.recordFailure` in the `!accepted` branch stays live now
+  that core actually emits the rejection event.
+
+## Native-form summarization requests and honest compaction errors (2026-07-20)
+
+- `speculative.ts` no longer serializes the conversation into one `<conversation>` text dump for the
+  summarization request. Anthropic's anti-distillation classifier deterministically refuses large
+  serialized transcripts ("reverse engineering or duplicating model outputs"), which made `/compact`
+  fail with a bare "Compaction cancelled" on big sessions (reproduced at ~340k tokens; the same
+  content passes as native blocks). `generateSummaryMessage` now sends the conversation as native
+  LLM messages (via `convertToLlm` + `repairOrphanedToolResults`) with the merged compaction prompt
+  as a trailing user message, plus the agent's system prompt and tool definitions on the request so
+  it matches normal agent traffic.
+- `runExtensionCompaction` stops swallowing provider failures: an `error` stop reason now throws
+  with the provider's message, an `aborted` stream returns undefined (a partial summary is never
+  applied), and the post-generation `COMPACTION_BUDGET_RATIO` rejection is gone — it measured the
+  size of the *discarded* input, deterministically rejecting successful summaries of large sessions;
+  the core `_wouldCompactionOverflow` check still guards the applied result.
+- `index.ts` surfaces generation failures on the manual/blocking `session_before_compact` route via
+  `ctx.ui.notify(..., "error")` before cancelling, and the fire-and-forget `turn_end` recovery
+  compaction now catches rejections so a thrown summarization error cannot become an unhandled
+  rejection.
+- This stays in the builtin extension because the summarization request shape and failure policy are
+  extension-owned; core compaction (`core/compaction/compaction.ts`) is untouched.
+
+Expected upstream conflict zones: `builtin/compaction/speculative.ts` around
+`generateSummaryMessage`/`runExtensionCompaction`, and `builtin/compaction/index.ts` around the
+`session_before_compact` handler and snapshot construction.
+
 ## Truncation-recovery error placeholders for incomplete tool calls (2026-07-17)
 
 - A truncated text-protocol tool call that the middleware could only partially recover now reaches

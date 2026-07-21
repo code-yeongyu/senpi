@@ -36,6 +36,13 @@ type RenderSessionItems = (
 type RenderSessionContextThis = {
 	activeToolExecutions: Map<string, string>;
 	pendingTools: Map<string, ToolExecutionComponent>;
+	toolArgsReveal: { finish(id: string): void; flushAll(): void };
+	toolResultReveal: {
+		update(id: string, component: unknown, partialResult: unknown): boolean;
+		finish(id: string): void;
+		stop(): void;
+		refresh(): void;
+	};
 	chatContainer: Container;
 	footer: { invalidate(): void };
 	ui: Pick<TUI, "requestRender">;
@@ -69,6 +76,8 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 	return {
 		activeToolExecutions: new Map<string, string>(),
 		pendingTools: new Map<string, ToolExecutionComponent>(),
+		toolArgsReveal: { finish: vi.fn(), flushAll: vi.fn() },
+		toolResultReveal: { update: vi.fn(() => false), finish: vi.fn(), stop: vi.fn(), refresh: vi.fn() },
 		chatContainer,
 		footer: { invalidate: vi.fn() },
 		ui: { requestRender: vi.fn() },

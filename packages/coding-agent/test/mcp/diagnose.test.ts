@@ -186,6 +186,7 @@ function serverConfig(overrides: Partial<McpServerConfig> = {}): McpServerConfig
 		lifecycle: "lazy",
 		logLevel: "info",
 		requestTimeoutMs: 30_000,
+		startupTimeoutMs: 250,
 		type: "stdio",
 		...overrides,
 	};

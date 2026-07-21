@@ -13,6 +13,7 @@ import type { McpServerExposureStatus } from "./expose/status.ts";
 import { cleanupMcpOutputArtifacts } from "./guard/output-guard.ts";
 import { markMcpConnectionNeedsAuth } from "./health.ts";
 import { configureMcpConnectionLifecycle, disposeMcpConnectionLifecycle } from "./idle.ts";
+import { refreshMcpInstructionsForSession } from "./instructions.ts";
 import { createMcpLogger } from "./log.ts";
 import {
 	buildMcpTombstoneDefinition,
@@ -43,8 +44,8 @@ import type {
 } from "./service-types.ts";
 import {
 	connectAndRefreshMcpCatalog,
-	ignoreStartupNeedsAuth,
 	raceMcpStartupConnect,
+	resolveMcpStartupTimeoutMs,
 	shouldRaceMcpStartup,
 } from "./startup-race.ts";
 
@@ -354,18 +355,33 @@ export class McpService {
 			this.#connections.set(key, entry);
 			this.#connectionKeysByName.set(name, key);
 			this.#wireListChanged(entry);
-			if (shouldRaceMcpStartup(server.config.lifecycle)) {
+			// Every startup connect is bounded by the startup race and continues in
+			// the background past the deadline (eager/keep-alive always; a cold lazy
+			// server that has no cached catalog also races so a slow/wedged server
+			// never gates attachSession -> before_agent_start -> the first turn).
+			// A cached lazy server needs no startup connect: its tools come from the
+			// cache and it connects on demand at tool-call time.
+			if (shouldRaceMcpStartup(server.config.lifecycle) || cachedCatalog === undefined) {
 				connects.push(
 					raceMcpStartupConnect({
 						entry,
 						pi,
-						registerDirectTools: (targetPi) => this.#registerDirectTools(targetPi),
+						registerDirectTools: async (targetPi) => {
+							await this.#registerDirectTools(targetPi);
+							// A raced attach ran its history replay before this catalog
+							// existed; replay now so restored tools still land on the
+							// first turn's payload (idempotent: already-active names skip).
+							if (this.#sessionContext !== null) this.#rehydrateFromSessionHistory(this.#sessionContext);
+							// The session instructions block was likewise captured at attach
+							// time, before this server connected; rebuild it so the first
+							// turn carries this server's instructions after a raced connect.
+							refreshMcpInstructionsForSession(this);
+						},
 						serverConfig: server.config,
 						shouldRefreshTools: () => !this.#disposed && this.#toolRefreshGeneration === toolRefreshGeneration,
+						deadlineMs: resolveMcpStartupTimeoutMs(server.config.startupTimeoutMs),
 					}),
 				);
-			} else if (cachedCatalog === undefined) {
-				connects.push(ignoreStartupNeedsAuth(entry, connectAndRefreshMcpCatalog(entry, server.config)));
 			}
 		}
 		await Promise.all(connects);

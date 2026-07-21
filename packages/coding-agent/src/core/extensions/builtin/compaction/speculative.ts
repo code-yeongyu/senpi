@@ -5,6 +5,7 @@ import {
 	type Message,
 	type Model,
 	type TextContent,
+	type Tool,
 } from "@earendil-works/pi-ai";
 import { stream } from "@earendil-works/pi-ai/compat";
 import {
@@ -14,20 +15,25 @@ import {
 	estimateContextTokens,
 	estimateTokens,
 	prepareCompaction,
-	serializeConversation,
 } from "../../../compaction/index.ts";
+import {
+	consumeStreamWithIdleTimeout,
+	DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
+} from "../../../compaction/stream-watchdog.ts";
 import { convertToLlm } from "../../../messages.ts";
 import type { ModelRegistry } from "../../../model-registry.ts";
 import type { ReadonlySessionManager } from "../../../session-manager.ts";
 import type { ApplyCompactionResult, ContextUsage } from "../../types.ts";
 import { computeEffectiveKeepRecentTokens, computeEffectiveThreshold } from "./policy.ts";
 import { buildPrompt, type MergedCompactionPromptVariant } from "./prompts.ts";
+import { repairOrphanedToolResults } from "./repair-tool-pairs.ts";
 import * as truncation from "./tool-truncation.ts";
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 const COMPACTION_BUDGET_RATIO = 0.6;
 const EMERGENCY_CONTEXT_TARGET_RATIO = 0.95;
-const MAX_SUMMARY_TOKENS = 8192;
+const SUMMARY_TOKEN_HEADROOM = 32_768;
+const SUMMARY_CONTEXT_WINDOW_RESERVE_RATIO = 0.5;
 const SUMMARY_SCHEMA = "senpi.compaction.summary.v1";
 type CompactionProgressCallback = (delta: string) => void;
 type PruneStep = { messages: AgentMessage[]; removedTokens: number };
@@ -39,6 +45,7 @@ export interface SpeculativeCompactionContext {
 	getContextUsage(): ContextUsage | undefined;
 	getCompactionSettings?(): CompactionPreparation["settings"];
 	getMessageRevision(): number;
+	getSystemPrompt?(): string;
 	applyCompaction(
 		precomputed: CompactionResult,
 		options: { reason: "extension"; expectedRevision: number },
@@ -53,12 +60,48 @@ export interface SpeculativeCompactionSnapshot {
 	preparation: CompactionPreparation;
 	promptVariant: MergedCompactionPromptVariant;
 	customInstructions?: string;
+	/** Agent system prompt; used to make the summarization request look like normal agent traffic. */
+	systemPrompt?: string;
+	/** Agent tool definitions; forwarded so the request shape matches normal agent traffic. */
+	tools?: Tool[];
 }
 
 export type SpeculativeCompactionResult = ApplyCompactionResult | { applied: false; reason: "unavailable" };
 
 function approxTokens(text: string): number {
 	return Math.ceil(text.length / 4);
+}
+
+/**
+ * Summary-generation failure with a user-facing diagnosis. Distinct from a
+ * user abort (which resolves `undefined`): callers surface `message` on the
+ * manual route and degrade to "unavailable" on automatic routes.
+ */
+export class SummaryGenerationError extends Error {
+	readonly kind: "auth" | "empty-summary";
+
+	constructor(kind: "auth" | "empty-summary", message: string) {
+		super(message);
+		this.name = "SummaryGenerationError";
+		this.kind = kind;
+	}
+}
+
+/**
+ * Output budget for one summarization request. Adaptive-thinking models emit
+ * reasoning tokens before the summary text, so the legacy flat 8192 cap could
+ * be consumed entirely by thinking, ending the stream with zero text blocks.
+ * Grant generous headroom, clamped to what the model can actually emit and to
+ * half the context window: providers that enforce input + output <= window
+ * would otherwise reject the request for models advertising contextWindow ==
+ * maxTokens (every summarization request also carries conversation input).
+ */
+function summaryMaxTokens(model: Model<any>, contextWindow: number): number {
+	const headroom = model.maxTokens > 0 ? Math.min(SUMMARY_TOKEN_HEADROOM, model.maxTokens) : SUMMARY_TOKEN_HEADROOM;
+	if (contextWindow > 0) {
+		return Math.min(headroom, Math.floor(contextWindow * SUMMARY_CONTEXT_WINDOW_RESERVE_RATIO));
+	}
+	return headroom;
 }
 
 function getSummaryText(message: Message): string {
@@ -88,38 +131,58 @@ async function generateSummaryMessage(options: {
 		extraBody?: Record<string, unknown>;
 	};
 }): Promise<Message | undefined> {
-	const conversationText = serializeConversation(convertToLlm(options.messages));
-	const responseStream = stream(
-		options.snapshot.model,
-		{
-			systemPrompt: options.prompt.system,
-			messages: [
-				{
-					role: "user",
-					content: [
-						{
-							type: "text",
-							text: `${options.prompt.user}\n\n<conversation>\n${conversationText}\n</conversation>`,
-						},
-					],
-					timestamp: Date.now(),
-				},
-			],
-		},
-		{
-			apiKey: options.auth.apiKey,
-			headers: options.auth.headers,
-			extraBody: options.auth.extraBody,
-			maxTokens: MAX_SUMMARY_TOKENS,
-			signal: options.signal,
-		},
-	);
-	for await (const event of responseStream) {
-		if (event.type === "text_delta" && event.delta) {
-			options.onProgress?.(event.delta);
-		}
+	// Send the conversation as native LLM messages with the summarization
+	// instruction as a trailing user message, mirroring normal agent traffic.
+	// A single serialized `<conversation>` text dump of a large session is
+	// deterministically refused by Anthropic's anti-distillation classifier
+	// ("reverse engineering or duplicating model outputs"), while the same
+	// content as native blocks with the agent's system prompt and tools passes.
+	const conversationMessages = repairOrphanedToolResults(convertToLlm(options.messages));
+	// Request-local controller: the idle watchdog must be able to tear down a
+	// stalled summarization request without aborting the caller's own signal.
+	const requestController = new AbortController();
+	const onCallerAbort = () => requestController.abort(options.signal?.reason);
+	if (options.signal) {
+		if (options.signal.aborted) onCallerAbort();
+		else options.signal.addEventListener("abort", onCallerAbort, { once: true });
 	}
-	return await responseStream.result();
+	try {
+		const responseStream = stream(
+			options.snapshot.model,
+			{
+				systemPrompt: options.snapshot.systemPrompt ?? options.prompt.system,
+				messages: [
+					...conversationMessages,
+					{
+						role: "user",
+						content: [{ type: "text", text: options.prompt.user }],
+						timestamp: Date.now(),
+					},
+				],
+				...(options.snapshot.tools && options.snapshot.tools.length > 0 ? { tools: options.snapshot.tools } : {}),
+			},
+			{
+				apiKey: options.auth.apiKey,
+				headers: options.auth.headers,
+				extraBody: options.auth.extraBody,
+				maxTokens: summaryMaxTokens(options.snapshot.model, options.snapshot.contextWindow),
+				signal: requestController.signal,
+			},
+		);
+		await consumeStreamWithIdleTimeout(responseStream, {
+			idleTimeoutMs: DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
+			abort: () => requestController.abort(),
+			signal: options.signal,
+			onEvent: (event) => {
+				if (event.type === "text_delta" && event.delta) {
+					options.onProgress?.(event.delta);
+				}
+			},
+		});
+		return await responseStream.result();
+	} finally {
+		if (options.signal) options.signal.removeEventListener("abort", onCallerAbort);
+	}
 }
 
 function pruneToolResults(messages: AgentMessage[], contextWindow: number): AgentMessage[] {
@@ -274,7 +337,7 @@ export function getPromptVariant(options: {
 
 export function createSpeculativeCompactionSnapshot(
 	context: SpeculativeCompactionContext,
-	options: { customInstructions?: string; generation: number },
+	options: { customInstructions?: string; generation: number; tools?: Tool[] },
 ): SpeculativeCompactionSnapshot | undefined {
 	const model = context.model;
 	if (!model) return undefined;
@@ -298,17 +361,32 @@ export function createSpeculativeCompactionSnapshot(
 		preparation,
 		promptVariant: getPromptVariant({ reason: "extension", preparation }),
 		customInstructions: options.customInstructions,
+		systemPrompt: context.getSystemPrompt?.(),
+		tools: options.tools,
 	};
 }
 
+/**
+ * Generate a compaction summary for the snapshot. Resolves `undefined` only
+ * when the request was aborted (caller signal or an aborted stream); every
+ * other failure throws — {@link SummaryGenerationError} for diagnosable
+ * generation failures, the raw provider error otherwise. Abort is checked
+ * before and after credential resolution so a cancelled request never
+ * misreports as an auth failure.
+ */
 export async function runExtensionCompaction(
 	context: SpeculativeCompactionContext,
 	snapshot: SpeculativeCompactionSnapshot,
 	signal?: AbortSignal,
 	onProgress?: CompactionProgressCallback,
 ): Promise<CompactionResult | undefined> {
+	if (signal?.aborted) return undefined;
 	const auth = await context.modelRegistry?.getApiKeyAndHeaders(snapshot.model);
-	if (!auth?.ok || !auth.apiKey) return undefined;
+	if (signal?.aborted) return undefined;
+	if (!auth?.ok || !auth.apiKey) {
+		const detail = auth && !auth.ok ? auth.error : `no API key resolved for provider "${snapshot.model.provider}"`;
+		throw new SummaryGenerationError("auth", `summarization credentials unavailable: ${detail}`);
+	}
 
 	let messages = pruneToolResults(
 		[...snapshot.preparation.messagesToSummarize, ...snapshot.preparation.turnPrefixMessages],
@@ -321,6 +399,7 @@ export async function runExtensionCompaction(
 	});
 
 	while (true) {
+		if (signal?.aborted) return undefined;
 		const response = await generateSummaryMessage({
 			messages,
 			onProgress,
@@ -344,11 +423,30 @@ export async function runExtensionCompaction(
 			continue;
 		}
 
-		const summary = getSummaryText(response);
-		if (!summary) return undefined;
+		if (isAssistantMessage(response) && response.stopReason === "aborted") {
+			// A partial summary from an aborted stream must never be applied.
+			return undefined;
+		}
 
+		if (isAssistantMessage(response) && response.stopReason === "error") {
+			// Surface the real provider failure instead of silently degrading
+			// into a generic "Compaction cancelled".
+			throw new Error(response.errorMessage || "Compaction summary request failed");
+		}
+
+		const summary = getSummaryText(response);
+		if (!summary) {
+			const stopReason = isAssistantMessage(response) ? response.stopReason : "unknown";
+			throw new SummaryGenerationError(
+				"empty-summary",
+				`summarization response contained no text (stopReason: ${stopReason})`,
+			);
+		}
+
+		// Informational only: the core rejects an applied compaction that would
+		// still overflow (_wouldCompactionOverflow). Rejecting here based on the
+		// size of the *discarded* input made large sessions uncompactable.
 		const tokenEstimate = estimateContextTokens(convertToLlm(messages)).tokens + approxTokens(summary);
-		if (tokenEstimate > snapshot.contextWindow * COMPACTION_BUDGET_RATIO) return undefined;
 
 		return {
 			summary,

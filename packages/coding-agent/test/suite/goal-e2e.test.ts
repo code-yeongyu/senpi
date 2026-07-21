@@ -61,6 +61,40 @@ describe("goal extension end-to-end through the real AgentSession", () => {
 		expect(JSON.parse(updateResults[0] ?? "{}").goal).toMatchObject({ status: "complete" });
 	}, 20_000);
 
+	it("reports token usage accumulated after goal creation when update_goal completes mid-run", async () => {
+		const harness = await createHarness({ extensionFactories: [goalExtension] });
+		harnesses.push(harness);
+
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_goal", { objective: "Track tokens" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_goal", { status: "complete" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage("goal achieved"),
+		]);
+		await harness.session.prompt("set the goal and finish it");
+
+		const assistantUsages = harness.sessionManager
+			.getEntries()
+			.filter((entry) => entry.type === "message")
+			.map((entry) => entry.message)
+			.filter((message): message is typeof message & { role: "assistant" } => message.role === "assistant")
+			.map((message) => (message as { usage: { input: number; output: number } }).usage);
+		expect(assistantUsages).toHaveLength(3);
+
+		// The goal is created by the first assistant message's tool call, so only the
+		// second message (the one invoking update_goal) is charged at completion time.
+		const chargedUsage = assistantUsages[1];
+		const expectedTokens = (chargedUsage?.input ?? 0) + (chargedUsage?.output ?? 0);
+		expect(expectedTokens).toBeGreaterThan(0);
+
+		const updateResults = toolResultTexts(harness, "update_goal");
+		expect(updateResults).toHaveLength(1);
+		const completed = JSON.parse(updateResults[0] ?? "{}");
+		expect(completed.goal.status).toBe("complete");
+		expect(completed.goal.tokensUsed).toBe(expectedTokens);
+	}, 20_000);
+
 	it("does not queue another hidden continuation after aborting a retrying goal turn", async () => {
 		const harness = await createHarness({
 			extensionFactories: [goalExtension],

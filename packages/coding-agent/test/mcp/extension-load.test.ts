@@ -4,6 +4,7 @@ import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
 import { createExtensionRuntime, loadExtensionFromFactory } from "../../src/core/extensions/loader.ts";
 import type { Extension, SessionShutdownEvent, SessionStartEvent } from "../../src/core/extensions/types.ts";
+import { awaitMcpToolRegistration } from "./fixtures/register-call.ts";
 import { fakePi } from "./fixtures/service-lifecycle.ts";
 import { stdioFixtureCommand } from "./fixtures/spawn-fixture.ts";
 
@@ -111,6 +112,7 @@ describe("mcp builtin extension load", () => {
 			},
 			pi,
 		);
+		await awaitMcpToolRegistration("fixture");
 
 		const snapshot = getMcpService()
 			.getServerSnapshots()

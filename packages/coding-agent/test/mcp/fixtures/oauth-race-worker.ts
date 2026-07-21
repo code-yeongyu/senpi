@@ -108,6 +108,7 @@ async function runtimeAttempt(
 		lifecycle: "lazy",
 		logLevel: "info",
 		requestTimeoutMs: 4000,
+		startupTimeoutMs: 250,
 		type: "http",
 		url: mcpUrl,
 	};

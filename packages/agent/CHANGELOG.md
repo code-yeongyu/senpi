@@ -12,6 +12,31 @@
 
 ### Removed
 
+## [2026.7.20-2] - 2026-07-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+- Fixed terminating turns to retain queued steering and follow-up input through compaction preparation failures and aborts.
+
+### Removed
+
+## [2026.7.20] - 2026-07-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.7.17-5] - 2026-07-17
 
 ### Breaking Changes
@@ -91,6 +116,8 @@
 ### Changed
 
 ### Fixed
+
+- Skipped next-turn preparation when every tool result terminates the current batch and no queued message requires another provider turn, retained queued input when next-turn preparation fails, and stopped before provider continuation when next-turn preparation aborts.
 
 ### Removed
 

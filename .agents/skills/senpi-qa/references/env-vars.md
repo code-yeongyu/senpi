@@ -27,6 +27,7 @@ The first present key wins; `devenv-setup.mjs` seeds `.env.local` from it.
 `MISTRAL_API_KEY`, `MINIMAX_API_KEY`, `MOONSHOT_API_KEY`, `KIMI_API_KEY`,
 `OPENCODE_API_KEY`, `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID` /
 `CLOUDFLARE_GATEWAY_ID`), `XIAOMI_API_KEY` (+ regional token-plan keys),
+`ALIBABA_TOKEN_PLAN_API_KEY`,
 `HF_TOKEN`, and the AWS Bedrock / Google Vertex variable sets.
 
 When you add a provider, add its key here AND to the `.devcontainer`

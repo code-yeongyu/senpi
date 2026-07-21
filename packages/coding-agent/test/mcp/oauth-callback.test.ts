@@ -67,6 +67,7 @@ function makeHarness(dir: string, mcpUrl: string, overrides: Partial<McpServerCo
 		lifecycle: "lazy",
 		connectTimeoutMs: 4000,
 		requestTimeoutMs: 4000,
+		startupTimeoutMs: 250,
 		idleTimeoutMin: 10,
 		exposure: "auto",
 		logLevel: "info",

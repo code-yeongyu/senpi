@@ -46,7 +46,7 @@ export function hermeticEnv(boxEnv) {
 	return env;
 }
 
-export function writeMockModelsJson(agentDir, server, apiName) {
+export function writeMockModelsJson(agentDir, server, apiName, modelOverrides = {}) {
 	const preset = API_PRESETS[apiName];
 	const baseUrl = preset.baseUrl(server);
 	const config = {
@@ -63,6 +63,7 @@ export function writeMockModelsJson(agentDir, server, apiName) {
 						contextWindow: 128000,
 						maxTokens: 4096,
 						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+						...modelOverrides,
 					},
 				],
 			},
@@ -187,7 +188,15 @@ function readFixtureCalls(path) {
 		});
 }
 
-function safeErrorReason(error) {
+export function checkRealAuthUnchanged(checks, guard) {
+	try {
+		checks.ok("real auth unchanged", guard.assertUnchanged(), guard.path);
+	} catch (error) {
+		checks.ok("real auth unchanged", false, `credential guard failed at ${guard.path}: ${safeErrorReason(error)}`);
+	}
+}
+
+export function safeErrorReason(error) {
 	return error instanceof Error ? error.name : typeof error;
 }
 

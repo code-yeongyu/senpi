@@ -1,5 +1,32 @@
 # Tool Call Middleware Changes
 
+## 2026-07-20 - Claude leaked invoke recovery
+
+### What changed and why
+
+- Added provider-neutral Claude text tool-call recovery for leaked bare or exact lowercase `antml:` invokes, with strict tag/namespace recognition, eager bounded parsing, and validation-gated argument coercion.
+- Recovery scans only ordinary assistant text. Inline/fenced code, thinking/redacted thinking, provider-native blocks, native tool calls, and historical messages remain untouched.
+- Mixed native/recovered content preserves source order, IDs, signatures, metadata, usage/cost snapshots, and stable partial indices. Native-first ID conflicts are skipped; late collisions and malformed native event order fail closed.
+- Complete calls execute through the normal agent loop and persist as native history. Incomplete, invalid, overflowed, aborted, or collided calls remain non-executable and produce redacted diagnostics.
+- Parser, code-mask, wrapper, metadata, termination, collision, UTF-16/resource, persistence, and provider replay behavior is covered by focused regression and standalone surface drivers.
+
+### Why the extension system could not handle this
+
+- Recovery must observe raw provider-neutral assistant text before the coding-agent loop executes tools, while preserving per-event partials, provider-native ordering, cancellation, and transport metadata.
+
+## 2026-07-19 - Recovery termination and metadata fidelity
+
+### What changed and why
+
+- Invoke recovery now keeps abort terminals interrupted, strips executable calls from aborted or consumer-cancelled messages, and never converts them into successful `toolUse` turns.
+- One terminal path handles done, transport errors, iterator failures, exhaustion, and cancellation after flushing each active text parser exactly once. Dangling recovered calls finalize as incomplete and non-executable.
+- Recovery events now snapshot the corresponding source message metadata and complete usage/cost objects, preventing later partial mutations from rewriting previously emitted event metadata. The snapshotter recursively clones enumerable plain objects and arrays with cycle/alias preservation while retaining exotic values by reference.
+- Consumer cancellation now awaits upstream iterator cleanup, shares one promise across concurrent returns, and is disabled once a natural terminal or wrapper-owned IteratorClose begins. The legacy text-protocol wrapper remains unchanged.
+
+### Why the extension system could not handle this
+
+- Termination, iterator, partial-message, and usage fidelity are properties of the provider-neutral stream wrapper before coding-agent extensions receive assistant events.
+
 ## 2026-07-18 - ANTML protocol with Claude-Code-style failure tolerance
 
 ### What changed and why

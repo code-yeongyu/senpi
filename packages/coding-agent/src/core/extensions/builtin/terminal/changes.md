@@ -3,6 +3,38 @@
 The persistent-terminal tool suite (`bash` swapped to PTY-backed + `bash_output`,
 `kill_bash`, `bash_input`, `bash_resize`). Backed by `@earendil-works/pi-pty`.
 
+## Model-facing output is sanitized and bounded (2026-07-21)
+
+### What changed
+
+- `output-format.ts` (new): `sanitizeTerminalOutput()` strips ANSI escape sequences (OSC/CSI/
+  designate/single-char) and folds carriage-return/backspace redraw semantics so spinner and
+  progress frames collapse to their final visible state; `formatTerminalToolOutput()` then
+  tail-truncates to the core-bash budget (`TERMINAL_TOOL_MAX_LINES` 2000 / `TERMINAL_TOOL_MAX_BYTES`
+  50 KB via `core/tools/truncate.ts`) with an "earlier output dropped" marker.
+- `tools/bash.ts`: foreground results now go through `formatTerminalToolOutput()` instead of
+  returning the raw scrollback (up to 1 MB of ANSI soup) verbatim; truncated results carry
+  `details.truncation`. Background start-grace output is formatted the same way.
+- `tools/bash.ts` + `tools/spawn.ts` + `shared.ts`: foreground spawns merge
+  `FOREGROUND_ENV_OVERRIDES` (`NO_COLOR=1`, `TERM=dumb`, `COLORTERM=`, `PAGER/GIT_PAGER/GH_PAGER=cat`,
+  codex-style) over `ctx.getEnv()` so cooperative tools never emit spinner/color frames; background
+  (interactive) sessions keep the user's real `TERM`.
+- `tools/bash-output.ts`: `bash_output` log-view deltas are sanitized and bounded the same way.
+
+### Why
+
+A single `gh run view --log-failed` returned 999,998 chars (the 1 MB session buffer) straight into
+the conversation — context jumped 154k → 404k tokens and forced an emergency compaction; a
+`gh pr checks --watch` result was 118k chars of raw spinner frames. Real session evidence:
+`--Users-yeongyu-local-workspaces-omo--/2026-07-21T03-07-29-890Z_019f82a4-...` (two compactions
+within 15 minutes, both driven by oversized bash results).
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `tools/bash.ts` `runForeground` result construction and `runBackground` early-output block.
+- LOW: `tools/bash-output.ts` log-view result construction.
+- LOW: `tools/spawn.ts` `SpawnRequest` shape and `manager.create` env merge.
+
 ## Core files touched (2026-07-07)
 
 - `core/extensions/builtin/index.ts`: register `terminal` after `bash-timeout`/`anthropic-bash`

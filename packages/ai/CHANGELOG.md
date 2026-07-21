@@ -6,6 +6,37 @@
 
 ### Added
 
+- Added Claude text tool-call recovery for leaked bare or `antml:` invokes, with code/thinking exclusions, eager streaming projection, native-call ordering, fail-closed collision and abort handling, bounded parsing, and native history replay support.
+- Added the `alibaba-token-plan` provider for Alibaba Cloud Model Studio prepaid Token Plan (OpenAI-compatible `ap-southeast-1` endpoint) with a generated Qwen/GLM/DeepSeek/Kimi/MiniMax catalog, per-family thinking compat, `ALIBABA_TOKEN_PLAN_API_KEY` env detection, and opt-in live coverage across the provider test matrix.
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.7.20-2] - 2026-07-20
+
+### Breaking Changes
+
+### Added
+- Added typed classifier-refusal and sensitive-stop details to assistant messages.
+
+### Changed
+
+### Fixed
+- Fixed live tool-result replay pairing to preserve source-order boundaries, including delayed results and reused tool-call IDs.
+- Fixed Anthropic-compatible request replay to retry once with unsigned thinking rendered as text when an endpoint rejects its signature.
+- Fixed the generated Kimi Coding catalog release gate by migrating integration coverage from retired `k2p7` to the supported `kimi-for-coding` model.
+
+### Removed
+
+## [2026.7.20] - 2026-07-20
+
+### Breaking Changes
+
+### Added
+
 - Added the `antml` tool-call protocol: ANTML `<function_calls>`/`<invoke>` format with Claude-Code-style failure tolerance (parameter aliases, unknown-key filtering, unicode escape repair), validation-gated so repaired calls must still pass the tool schema.
 
 ### Changed

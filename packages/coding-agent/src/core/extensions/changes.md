@@ -1,5 +1,115 @@
 # Core Extensions Changes
 
+## 2026-07-21 - Config-reload builtin registration
+
+### What changed
+
+- Registered the default-on `config-reload` builtin after settings-dependent builtins and before final `mcp` registration. It hash-gates configuration filesystem changes, validates parseable built-in surfaces before requesting the existing session reload flow, and publishes the `config-watch:*` in-process protocol for external registrations.
+
+### Why
+
+The reload-request context seam below lets the builtin reuse the host reload path without making reload a model tool. Keeping MCP last preserves its provider-payload observation ordering.
+
+
+## 2026-07-21 - Extension reload request seam
+
+### What changed
+
+- `ExtensionContext` now exposes optional `requestReload()` and `isCompacting()` accessors. The runner promotes a host-provided command reload action into event and tool contexts, coalescing concurrent requests; hosts without that action expose no reload method.
+- `AgentSession` binds `isCompacting()` to its unified auto/manual/branch-summary controller state. Interactive shortcut contexts expose the same pair.
+
+### Why
+
+Config-reload extensions need to request the existing host reload flow only when available and defer while compaction is active. A resolved interactive request is not proof of reload because the host deliberately warn-drops reloads while streaming or compacting.
+
+
+## 2026-07-20 - recovery model config is public to provider extensions
+
+### What changed
+
+- `types.ts`: `ProviderModelConfig` now exposes optional `recoverTextToolCalls`, matching the composed provider model field. Extensions can register recovery-enabled, disabled, or inherited models without excess-property type errors.
+
+### Expected merge conflict zones
+
+- LOW: `types.ts` `ProviderModelConfig` model metadata fields.
+
+
+## 2026-07-20 - Model fallback command builtin
+
+- Added the `model-fallback` builtin and `/fallback` command for viewing, creating, removing, enabling, and setting the revert policy for global retry fallback chains.
+- Quick-set form validates selectors before persisting; headless runs support quick-set and report that the menu requires interactive UI.
+- Registered `--no-model-fallback` and `SENPI_NO_FALLBACK=1` as the per-run fallback escape-hatch inputs.
+- `ExtensionContext.sessionSettings` delegates command writes to the active session's `SettingsManager`, so quick-set changes are immediately visible to the retry controller. Its read-only fallback status accessor powers the menu's live-state view.
+- `--no-model-fallback` and `SENPI_NO_FALLBACK=1` apply a non-persistent `retry.modelFallback=false` override at session bootstrap.
+
+
+## 2026-07-20 - session_compact `accepted: false` and structured cancel result
+
+### What changed
+
+- `types.ts`: `SessionBeforeCompactResult` gained optional `rejectionCause?: CompactionRejectionCause`
+  and `reason?: string` fields so extensions can attach a structured cause and a
+  human-readable detail when returning `{ cancel: true }`. `SessionCompactEvent.compactionEntry`
+  is now optional and only populated on `accepted: true` events, and the JSDoc
+  spells out that rejection events fire too.
+- `agent-session.ts`: `_rejectCompaction` populates `compaction_end.errorMessage`
+  with a message derived from `rejectionCause` (or the extension-provided
+  `reason` when present) and also emits a `session_compact` event with
+  `accepted: false`. Manual `/compact` used to swallow `would-overflow` and
+  extension cancels silently; this closes plan §1.
+- `builtin/nested-agents-md/index.ts`, `builtin/rules/index.ts`: `session_compact`
+  handlers now guard on `event.accepted` before mutating session state, since
+  the event fires on rejection too and there is no compaction entry to react to.
+
+### Why
+
+- `_rejectCompaction` emitted `compaction_end` with no `errorMessage` and the
+  interactive-mode handler had no branch for `aborted:false && !result && !errorMessage`,
+  so `/compact` rejected by `_wouldCompactionOverflow` was invisible. The
+  builtin compaction extension's `session_compact` `!accepted` branch was also
+  dead because core never emitted the rejection.
+
+### Why extension system couldn't handle this alone
+
+- The event union and the emit sites live in the core extension surface.
+  Extensions cannot add typed fields to `SessionCompactEvent` or make the core
+  emit rejections from outside.
+
+### Expected merge conflict zones
+
+- HIGH: `types.ts` around `SessionBeforeCompactResult` and `SessionCompactEvent`.
+- MEDIUM: `agent-session.ts` `_rejectCompaction` and `_executeCompaction` cancel branch.
+- LOW: builtin `session_compact` handlers guarding on `event.accepted`.
+
+## 2026-07-19 - Port phased op-based todo tool
+
+### What changed
+
+- Rewrote `builtin/todotools/` around one `todo` tool with `init`,
+  `start`, `done`, `drop`, `rm`, `append`, and `view`
+  operations.
+- Added phased state, content-keyed task resolution, automatic promotion,
+  atomic failure behavior, compaction compatibility, and a static phase-aware
+  renderer while preserving the `todowrite` builtin id and
+  `todo-sidebar` widget key.
+
+### Why
+
+- The old pair required sending a complete flat snapshot on every mutation.
+  The op-based port makes incremental updates retry-safe and gives the model a
+  smaller, phase-aware contract.
+
+### Attribution
+
+- Ported and adapted from oh-my-pi commit
+  `9fd6e97113f5ed3a847e66d346970efdf8afcad9` (v17.0.5); see
+  `builtin/todotools/changes.md` and the repository `NOTICE.md`.
+
+### Expected merge conflict zones
+
+- HIGH: `builtin/todotools/`, `builtin/compaction/todo-bridge.ts`, and
+  todo-specific tests if upstream changes its todo or compaction contracts.
+
 ## 2026-07-17 - video-in builtin extension and "video" input modality
 
 ### What changed
@@ -15,6 +125,14 @@
 
 - LOW: `types.ts` `ProviderModelConfig.input`.
 - LOW: `builtin/index.ts` import block and `builtinExtensions` array tail.
+
+## 2026-07-19 - model_select handlers observe live systemPromptOptions
+
+### What changed
+- `src/core/extensions/runner.ts`: `emitModelSelect` spreads a fresh
+  `systemPromptOptions` from `getSystemPromptOptionsFn()` into each handler's event, so
+  toolset-swapping handlers (gpt-apply-patch) and prompt-rebuilding handlers
+  (prompt-preset) stay consistent within one model switch.
 
 ## 2026-07-17 - Factory-time `pi.registerMcpServer()` API
 

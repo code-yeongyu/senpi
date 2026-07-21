@@ -7,6 +7,9 @@ import {
 	type AuthResult,
 	type Context,
 	type Credential,
+	getApiProvider,
+	getProtocol,
+	getToolCallFormat,
 	lazyStream,
 	type Model,
 	type ModelAuth,
@@ -18,14 +21,9 @@ import {
 	type RefreshModelsContext,
 	type SimpleStreamOptions,
 	type StreamOptions,
-} from "@earendil-works/pi-ai";
-import {
-	getApiProvider,
-	getProtocol,
-	getToolCallFormat,
 	transformContext,
 	wrapStreamWithToolCallMiddleware,
-} from "@earendil-works/pi-ai/compat";
+} from "@earendil-works/pi-ai";
 import type { ModelConfig, ModelsJsonModel, ModelsJsonModelOverride, ModelsJsonProvider } from "./model-config.ts";
 import {
 	clearConfigValueCache,
@@ -63,6 +61,7 @@ export interface ProviderConfigInput {
 		upstreamModelId?: string;
 		serviceTier?: "auto" | "flex" | "priority";
 		promptPreset?: string;
+		recoverTextToolCalls?: boolean;
 		api?: Api;
 		baseUrl?: string;
 		reasoning: boolean;
@@ -118,6 +117,7 @@ function applyModelOverride(model: Model<Api>, override: ModelsJsonModelOverride
 		...model,
 		name: override.name ?? model.name,
 		promptPreset: override.promptPreset ?? (model as Model<Api> & { promptPreset?: string }).promptPreset,
+		recoverTextToolCalls: override.recoverTextToolCalls ?? model.recoverTextToolCalls,
 		reasoning: override.reasoning ?? model.reasoning,
 		thinkingLevelMap: override.thinkingLevelMap
 			? override.thinkingLevelMapMode === "replace"
@@ -165,6 +165,7 @@ function modelFromJson(
 		id: definition.id,
 		name: definition.name ?? definition.id,
 		promptPreset: definition.promptPreset,
+		recoverTextToolCalls: definition.recoverTextToolCalls,
 		api: api as Api,
 		provider: providerId,
 		baseUrl,

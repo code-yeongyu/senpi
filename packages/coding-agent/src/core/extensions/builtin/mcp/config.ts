@@ -16,6 +16,7 @@ import {
 	type ResolvedMcpServer,
 	validateConfig,
 } from "./config-schema.ts";
+import { MCP_STARTUP_RACE_MS } from "./startup-race.ts";
 
 export class McpConfigValidationError extends Error {
 	constructor(message: string) {
@@ -293,6 +294,7 @@ function normalizeServer(server: NonNullable<RawConfig["mcpServers"]>[string]): 
 		lifecycle: server.lifecycle ?? "lazy",
 		logLevel: server.logLevel ?? "info",
 		requestTimeoutMs: server.requestTimeoutMs ?? 30_000,
+		startupTimeoutMs: server.startupTimeoutMs ?? MCP_STARTUP_RACE_MS,
 		type,
 		...server,
 	};
@@ -332,7 +334,13 @@ function interpolateString(value: string, path: string, env: Record<string, stri
 }
 
 function hashConfig(config: McpServerConfig): string {
-	return createHash("sha256").update(stableStringify(config)).digest("hex");
+	// startupTimeoutMs is a client-side startup-race policy, not a connection or
+	// catalog-shape input. Excluding it from the identity hash keeps the catalog
+	// cache valid across upgrades (configs written before the field existed hash
+	// identically) and avoids a needless reconnect when only the window changes.
+	const hashable: Record<string, unknown> = { ...config };
+	delete hashable.startupTimeoutMs;
+	return createHash("sha256").update(stableStringify(hashable)).digest("hex");
 }
 
 function stableStringify(value: unknown): string {

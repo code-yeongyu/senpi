@@ -250,6 +250,12 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	getFollowUpMessages?: () => Promise<AgentMessage[]>;
 
 	/**
+	 * Restores messages previously returned by a queue callback when next-turn preparation cannot continue.
+	 * Restored messages must be placed before messages queued after the drain.
+	 */
+	restorePendingMessages?: (queue: "steering" | "followUp", messages: AgentMessage[]) => Promise<void> | void;
+
+	/**
 	 * Tool execution mode.
 	 * - "sequential": execute tool calls one by one
 	 * - "parallel": preflight tool calls sequentially, then execute allowed tools in concurrent waves;

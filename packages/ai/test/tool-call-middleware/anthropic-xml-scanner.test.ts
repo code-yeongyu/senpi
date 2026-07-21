@@ -175,4 +175,10 @@ describe("getSafeInvokeTextLength", () => {
 		// then
 		expect(safeLength).toBe(text.length);
 	});
+
+	it("keeps unsupported namespace and tag names as bounded text", () => {
+		for (const text of ["<foo:invoke", "<ant:invoke", "<tool>"]) {
+			expect(getSafeInvokeTextLength(text)).toBe(text.length);
+		}
+	});
 });

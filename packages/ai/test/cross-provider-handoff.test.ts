@@ -109,7 +109,7 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	// Together AI
 	{ provider: "together", model: "moonshotai/Kimi-K2.6", label: "together-kimi-k2.6" },
 	// Kimi For Coding
-	{ provider: "kimi-coding", model: "k2p7", label: "kimi-coding-k2p7" },
+	{ provider: "kimi-coding", model: "kimi-for-coding", label: "kimi-coding-kimi-for-coding" },
 	// Mistral
 	{ provider: "mistral", model: "devstral-medium-latest", label: "mistral-devstral-medium" },
 	// MiniMax
@@ -130,6 +130,10 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	{ provider: "xiaomi-token-plan-cn", model: "mimo-v2.5-pro", label: "xiaomi-token-plan-cn-mimo-v2.5-pro" },
 	{ provider: "xiaomi-token-plan-ams", model: "mimo-v2.5-pro", label: "xiaomi-token-plan-ams-mimo-v2.5-pro" },
 	{ provider: "xiaomi-token-plan-sgp", model: "mimo-v2.5-pro", label: "xiaomi-token-plan-sgp-mimo-v2.5-pro" },
+	// Alibaba Token Plan (families currently served by the endpoint: Qwen, GLM, DeepSeek)
+	{ provider: "alibaba-token-plan", model: "qwen3.7-max", label: "alibaba-token-plan-qwen3.7-max" },
+	{ provider: "alibaba-token-plan", model: "glm-5.2", label: "alibaba-token-plan-glm-5.2" },
+	{ provider: "alibaba-token-plan", model: "deepseek-v4-pro", label: "alibaba-token-plan-deepseek-v4-pro" },
 ];
 
 // Cached context structure

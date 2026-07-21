@@ -22,6 +22,7 @@ import { registerMcpServiceDirectTools } from "../../src/core/extensions/builtin
 import type { McpConnectionEntry } from "../../src/core/extensions/builtin/mcp/service-types.ts";
 import { connectAndRefreshMcpCatalog } from "../../src/core/extensions/builtin/mcp/startup-race.ts";
 import { capturingPi, registeredTool, testContext, textContent } from "./fixtures/register-call.ts";
+import { waitForCondition } from "./fixtures/service-lifecycle.ts";
 import { type IdpFixture, spawnOAuthIdp } from "./fixtures/spawn-idp.ts";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -63,6 +64,7 @@ function makeHarness(
 		lifecycle: "lazy",
 		connectTimeoutMs: 4000,
 		requestTimeoutMs: 4000,
+		startupTimeoutMs: 250,
 		idleTimeoutMin: 10,
 		exposure: "auto",
 		logLevel: "info",
@@ -385,6 +387,7 @@ describe("headless oauth flows", () => {
 			pi,
 			{ agentDir: dir },
 		);
+		await waitForCondition(() => service.getConnection("fix")?.state === "needs_auth", 10_000);
 
 		expect(service.getServerSnapshots()).toMatchObject([
 			{
@@ -412,6 +415,7 @@ describe("headless oauth flows", () => {
 			capturingPi(),
 			{ agentDir: dir },
 		);
+		await waitForCondition(() => service.getConnection("fix")?.state === "connected", 10_000);
 		expect(service.getConnection("fix")?.state).toBe("connected");
 		await poisonRefreshToken(harness);
 

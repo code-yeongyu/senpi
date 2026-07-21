@@ -1,5 +1,60 @@
 # changes
 
+## Streaming steer/followUp submissions bypass the session-work barrier (2026-07-21)
+
+### What changed
+
+- `agent-session.ts` (`prompt()`): a submission with a `streamingBehavior` while a run is active and not
+  compacting now queues immediately instead of awaiting `_waitForSettledSessionWork()`. Scheduled
+  queued-message continuations (goal chains, queued follow-ups) hold the `SessionWorkBarrier` for the
+  entire remaining run, so the old gate trapped typed input inside `prompt()` — invisible, unqueued, and
+  undelivered — until the whole chain settled or the user pressed Esc.
+- If the run ends while the bypassed input is being expanded, `prompt()` re-serializes with remaining
+  session work and re-queues when a scheduled continuation started a new run in the meantime.
+
+### Why extension system couldn't handle this alone
+
+- The trap sits between core-owned `prompt()` serialization and the core continuation scheduler; both are
+  private `AgentSession` lifecycle boundaries.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` `prompt()` entry serialization and the streaming queue dispatch branch.
+
+## Memoized materialized session views (2026-07-21)
+
+### What changed
+
+- `session-manager.ts`: added a monotonic `mutationCount` bumped by every mutator (`_appendEntry`, `branch()`,
+  `resetLeaf()`, `setSessionFile`, `newSession`, `createBranchedSession`). `getEntries()` is memoized on
+  `mutationCount`, no-arg `getBranch()` on `(leafId, mutationCount)` (explicit `fromId` bypasses), and
+  `getSessionName()` is O(1) via a cached value maintained on `appendSessionInfo`/`_buildIndex` (empty name still
+  clears the title). `getEntries()` now returns a shared cached array callers must not mutate.
+
+### Why extension system couldn't handle this alone
+
+- The mutation surface and resident-store materialization are private to `SessionManager`; external wrappers cannot
+  observe every invalidation point.
+
+### Expected merge conflict zones
+
+- LOW: private fields and the listed getters; upstream rarely touches `SessionManager` internals.
+
+## Smooth streaming settings (2026-07-20)
+
+### What changed
+
+- `settings-manager.ts`: added persisted `smoothStreaming` and `smoothStreamingFps` settings. Smoothing defaults on,
+  FPS defaults to 60, and reads clamp the configured value to 30–120.
+
+### Why extension system couldn't handle this alone
+
+- The built-in interactive renderer must read the setting before extensions load and while it owns an active stream.
+
+### Expected merge conflict zones
+
+- LOW: `Settings` fields and accessors near the existing thinking-visibility setting.
+
 ## "video" input modality plumbed through provider composition (2026-07-17)
 
 ### What changed
@@ -19,6 +74,23 @@
 ### Expected merge conflict zones on next upstream sync
 
 - LOW: `provider-composer.ts` model field lists.
+
+## Model-switch atomicity: live prompt options and api-change gate (2026-07-19)
+
+### What changed
+
+- `src/core/agent-session.ts`: `_modelSelectionChangesContext` now also fires on `api`
+  changes with identical provider, id, and context window, so wire-protocol-only model
+  changes trigger full toolset/prompt synchronization.
+- `src/core/extensions/runner.ts`: `emitModelSelect` re-reads live `systemPromptOptions`
+  per handler so an earlier handler that swaps the active toolset (gpt-apply-patch) lets
+  later handlers (prompt-preset) rebuild the system prompt from the post-swap tools in
+  the same emission.
+
+### Why extension system couldn't handle this alone
+
+- The stale-snapshot defect lives in the core emission path; extensions only consume the
+  combined `model_select` result.
 
 ## Composed providers engage text tool-call compatibility middleware (2026-07-17)
 

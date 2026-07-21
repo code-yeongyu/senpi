@@ -261,9 +261,14 @@ export function convertResponsesMessages<TApi extends Api>(
 							input: getFreeformToolInput(toolCall.arguments),
 						} satisfies ResponseCustomToolCallItem);
 					} else {
+						// The Responses API rejects function_call input items whose id does
+						// not begin with "fc". Custom tool calls replayed without their
+						// freeform tool (e.g. compaction summarization requests) carry the
+						// "<call_id>|custom" sentinel, not a server-issued id; omit it.
+						const replayableItemId = itemId?.startsWith("fc") ? itemId : undefined;
 						output.push({
 							type: "function_call",
-							id: itemId,
+							...(replayableItemId ? { id: replayableItemId } : {}),
 							call_id: callId,
 							name: toolCall.name,
 							arguments: JSON.stringify(toolCall.arguments),

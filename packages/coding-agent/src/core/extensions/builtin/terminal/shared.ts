@@ -34,6 +34,21 @@ export const KILLED_SESSION_EXIT_GRACE_MS = 5000;
 export const DEFAULT_OUTPUT_WAIT_TIMEOUT_SECONDS = 30;
 
 /**
+ * Non-interactive environment for foreground one-shot commands (codex-style):
+ * cooperative tools (`gh`, `git`, pagers, color libs) skip spinners/colors at
+ * the source instead of flooding the captured stream with redraw frames.
+ * Background sessions keep the user's real TERM for interactive apps.
+ */
+export const FOREGROUND_ENV_OVERRIDES: Readonly<Record<string, string>> = {
+	NO_COLOR: "1",
+	TERM: "dumb",
+	COLORTERM: "",
+	PAGER: "cat",
+	GIT_PAGER: "cat",
+	GH_PAGER: "cat",
+};
+
+/**
  * Named-key aliases the model can send via `bash_input {keys:[...]}`. Values are the
  * raw byte sequences a PTY expects (control chars + xterm cursor/function escapes).
  */

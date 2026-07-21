@@ -2,7 +2,9 @@ import type { ExtensionFactory } from "../types.ts";
 import anthropicBashExtension from "./anthropic-bash/index.ts";
 import anthropicWebSearchExtension from "./anthropic-web-search/index.ts";
 import bashTimeoutExtension from "./bash-timeout/index.ts";
+import btwExtension from "./btw/index.ts";
 import compactionExtension from "./compaction/index.ts";
+import configReloadExtension from "./config-reload/index.ts";
 import diffExtension from "./diff.ts";
 import filesExtension from "./files.ts";
 import goalExtension from "./goal/index.ts";
@@ -11,6 +13,7 @@ import historySearchExtension from "./history-search/index.ts";
 import hooksExtension from "./hooks/index.ts";
 import importReproExtension from "./import-repro.ts";
 import mcpExtension from "./mcp/index.ts";
+import modelFallbackExtension from "./model-fallback/index.ts";
 import nestedAgentsMdExtension from "./nested-agents-md/index.ts";
 import openaiWebSearchExtension from "./openai-web-search/index.ts";
 import permissionSystemExtension from "./permission-system/index.ts";
@@ -53,6 +56,7 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "anthropic-bash", factory: anthropicBashExtension },
 	{ id: "openai-web-search", factory: openaiWebSearchExtension },
 	{ id: "service-tier", factory: serviceTierExtension },
+	{ id: "model-fallback", factory: modelFallbackExtension },
 	{ id: "bash-timeout", factory: bashTimeoutExtension },
 	// Terminal follows bash-timeout so its injected default reaches the PTY bash, and follows
 	// anthropic-bash so mutual-exclusion (companion step-aside) is evaluated after it registers.
@@ -68,6 +72,9 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "nested-agents-md", factory: nestedAgentsMdExtension },
 	{ id: "rules", factory: piRulesExtension },
 	{ id: "goal", factory: goalExtension },
+	{ id: "btw", factory: btwExtension },
+	// Config reload follows settings-dependent builtins so reloads rebuild their resolved settings before MCP observes them.
+	{ id: "config-reload", factory: configReloadExtension },
 	// Keep MCP last so its eventual provider-payload tap observes all co-resident builtin mutations.
 	{ id: "mcp", factory: mcpExtension },
 ];

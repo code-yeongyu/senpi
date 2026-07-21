@@ -1,10 +1,56 @@
 import { type Static, Type } from "typebox";
+import type { AgentToolUpdateCallback } from "../../../types.ts";
+import { formatTerminalToolOutput } from "../output-format.ts";
 import type { TerminalRuntimeSession } from "../runtime-session.ts";
 import { DEFAULT_OUTPUT_WAIT_TIMEOUT_SECONDS, safeRegExp, TERMINAL_OUTPUT_TOOL } from "../shared.ts";
+import { createThrottledEmitter } from "./bash.ts";
 import { errorResult, type TerminalToolContext, type TerminalToolResult, textResult } from "./context.ts";
+import { renderBashOutputCall, renderBashOutputResult } from "./render.ts";
 import { describeExit } from "./spawn.ts";
 
 const MAX_OUTPUT_WAIT_TIMEOUT_SECONDS = 300;
+const STREAM_PREVIEW_MAX_BYTES = 64 * 1024;
+
+function truncateTailBytes(text: string, maxBytes: number): string {
+	const buffer = Buffer.from(text, "utf8");
+	if (buffer.length <= maxBytes) return text;
+	let start = buffer.length - maxBytes;
+	while (start < buffer.length && (buffer[start] & 0xc0) === 0x80) start++;
+	return buffer.subarray(start).toString("utf8");
+}
+
+class TailBuffer {
+	readonly #maxBytes: number;
+	#text = "";
+	#bytes = 0;
+
+	constructor(maxBytes: number) {
+		this.#maxBytes = Math.max(0, Math.floor(maxBytes));
+	}
+
+	append(text: string): void {
+		if (text.length === 0) return;
+		if (this.#maxBytes === 0) {
+			this.#text = "";
+			this.#bytes = 0;
+			return;
+		}
+		const incomingBytes = Buffer.byteLength(text, "utf8");
+		this.#text =
+			incomingBytes >= this.#maxBytes
+				? truncateTailBytes(text, this.#maxBytes)
+				: truncateTailBytes(this.#text + text, this.#maxBytes);
+		this.#bytes = Buffer.byteLength(this.#text, "utf8");
+	}
+
+	text(): string {
+		return this.#text;
+	}
+
+	bytes(): number {
+		return this.#bytes;
+	}
+}
 
 export const bashOutputSchema = Type.Object({
 	bash_id: Type.String({ description: "Session id returned by a run_in_background bash call." }),
@@ -59,7 +105,12 @@ export function createBashOutputTool(ctx: TerminalToolContext) {
 			"Read new output from a background bash session, or block until wait_for matches / the session exits / timeout. Use view:'screen' for a rendered full-screen snapshot.",
 		promptSnippet: "Read/subscribe to background bash session output (wait_for, filter, screen view)",
 		parameters: bashOutputSchema,
-		async execute(_toolCallId: string, input: BashOutputInput, signal?: AbortSignal): Promise<TerminalToolResult> {
+		async execute(
+			_toolCallId: string,
+			input: BashOutputInput,
+			signal?: AbortSignal,
+			onUpdate?: AgentToolUpdateCallback<Record<string, unknown> | undefined>,
+		): Promise<TerminalToolResult> {
 			const runtime = ctx.manager.get(input.bash_id);
 			if (!runtime) return errorResult(`No terminal session found with id: ${input.bash_id}`);
 
@@ -69,8 +120,43 @@ export function createBashOutputTool(ctx: TerminalToolContext) {
 					MAX_OUTPUT_WAIT_TIMEOUT_SECONDS,
 				);
 				const timeoutMs = Math.trunc(timeoutSeconds * 1000);
-				const outcome = await runtime.waitFor(input.wait_for, timeoutMs, signal);
-				if (outcome === "invalid_pattern") return errorResult(`Invalid wait_for regex: ${input.wait_for}`);
+				if (input.view === "screen") {
+					const outcome = await runtime.waitFor(input.wait_for, timeoutMs, signal);
+					if (outcome === "invalid_pattern") return errorResult(`Invalid wait_for regex: ${input.wait_for}`);
+				} else {
+					const startedAt = Date.now();
+					const progress = {
+						activity: `waiting for /${input.wait_for}/`,
+						startedAt,
+						...(input.timeout === undefined ? {} : { maxWaitMs: timeoutMs }),
+					};
+					const preview = new TailBuffer(STREAM_PREVIEW_MAX_BYTES);
+					const emit = () => {
+						onUpdate?.({
+							content: [
+								{
+									type: "text",
+									text: `${statusLine(runtime)}\n${formatTerminalToolOutput(applyFilter(preview.text(), input.filter)).text}`,
+								},
+							],
+							details: { progress },
+						});
+					};
+					onUpdate?.({ content: [{ type: "text", text: statusLine(runtime) }], details: { progress } });
+					const throttle = createThrottledEmitter(emit);
+					const unsubscribe = runtime.onOutput((chunk) => {
+						preview.append(chunk);
+						throttle.schedule();
+					});
+					try {
+						const outcome = await runtime.waitFor(input.wait_for, timeoutMs, signal);
+						if (outcome === "invalid_pattern") return errorResult(`Invalid wait_for regex: ${input.wait_for}`);
+					} finally {
+						throttle.flush();
+						unsubscribe();
+						throttle.dispose();
+					}
+				}
 			}
 
 			if (input.view === "screen") {
@@ -78,9 +164,11 @@ export function createBashOutputTool(ctx: TerminalToolContext) {
 			}
 
 			const delta = runtime.readDelta();
-			const filtered = applyFilter(delta.text, input.filter).trimEnd();
+			const formatted = formatTerminalToolOutput(applyFilter(delta.text, input.filter));
 			const dropped = delta.droppedChars > 0 ? `[${delta.droppedChars} earlier chars dropped]\n` : "";
-			return textResult(`${statusLine(runtime)}\n${dropped}${filtered || "(no new output)"}`);
+			return textResult(`${statusLine(runtime)}\n${dropped}${formatted.text || "(no new output)"}`);
 		},
+		renderCall: renderBashOutputCall,
+		renderResult: renderBashOutputResult,
 	};
 }

@@ -1,6 +1,8 @@
 import { Container, Spacer, type TUI } from "@earendil-works/pi-tui";
 import type { ToolDef } from "../../../core/tools/index.ts";
+import { readToolProgress } from "../tool-progress.ts";
 import { createBoundedRenderSignature } from "./render-signature.ts";
+import { hasCompletedTodoTasks, TODO_STRIKE_FRAME_INTERVAL_MS, TODO_STRIKE_TOTAL_FRAMES } from "./todo-strike.ts";
 import { ToolExecutionImages } from "./tool-execution-images.ts";
 import { ToolExecutionRenderer } from "./tool-execution-renderer.ts";
 import type { ToolExecutionIdentity, ToolExecutionRenderState, ToolExecutionResult } from "./tool-execution-types.ts";
@@ -26,6 +28,7 @@ export class ToolExecutionComponent extends Container {
 	private argsComplete = false;
 	private spinnerFrame?: number;
 	private spinnerInterval?: NodeJS.Timeout;
+	private todoStrikeInterval?: NodeJS.Timeout;
 	private result?: ToolExecutionResult;
 	private cachedLines?: string[];
 	private cachedSignature?: string;
@@ -90,6 +93,7 @@ export class ToolExecutionComponent extends Container {
 		if (!isPartial) this.argsComplete = true;
 		this.lastDisplaySignature = undefined;
 		this.updateSpinnerAnimation();
+		this.updateTodoStrikeAnimation();
 		this.updateDisplay();
 		this.images.updateResult(result);
 		this.invalidateRenderCache();
@@ -97,6 +101,12 @@ export class ToolExecutionComponent extends Container {
 
 	stopAnimation(): void {
 		this.stopSpinnerAnimation();
+		this.stopTodoStrikeAnimation();
+	}
+
+	override dispose(): void {
+		this.stopAnimation();
+		super.dispose();
 	}
 
 	setExpanded(expanded: boolean): void {
@@ -182,8 +192,52 @@ export class ToolExecutionComponent extends Container {
 	private updateSpinnerAnimation(): void {
 		const isStreamingArgs = !this.argsComplete && ["edit", "write", "apply_patch"].includes(this.identity.toolName);
 		const isPartialTask = this.isPartial && this.identity.toolName === "task" && this.result !== undefined;
-		if (isStreamingArgs || isPartialTask) this.startSpinnerAnimation();
+		const isPartialProgress =
+			this.isPartial && this.result !== undefined && readToolProgress(this.result.details) !== undefined;
+		if (isStreamingArgs || isPartialTask || isPartialProgress) this.startSpinnerAnimation();
 		else this.stopSpinnerAnimation();
+	}
+
+	private updateTodoStrikeAnimation(): void {
+		const shouldAnimate =
+			this.identity.toolName === "todo" &&
+			this.executionStarted &&
+			!this.isPartial &&
+			this.result !== undefined &&
+			!this.result.isError &&
+			hasCompletedTodoTasks(this.result.details);
+		if (!shouldAnimate) {
+			this.stopTodoStrikeAnimation();
+			return;
+		}
+		if (this.todoStrikeInterval) return;
+
+		this.spinnerFrame = 0;
+		this.todoStrikeInterval = setInterval(() => {
+			const next = (this.spinnerFrame ?? 0) + 1;
+			if (next > TODO_STRIKE_TOTAL_FRAMES) {
+				this.stopTodoStrikeAnimation();
+				return;
+			}
+			this.spinnerFrame = next;
+			this.invalidateRenderCache();
+			this.updateDisplay();
+			this.ui.requestRender();
+		}, TODO_STRIKE_FRAME_INTERVAL_MS);
+		this.todoStrikeInterval.unref?.();
+	}
+
+	private stopTodoStrikeAnimation(): void {
+		if (this.todoStrikeInterval) {
+			clearInterval(this.todoStrikeInterval);
+			this.todoStrikeInterval = undefined;
+		}
+		if (!this.spinnerInterval && this.spinnerFrame !== undefined) {
+			this.spinnerFrame = undefined;
+			this.invalidateRenderCache();
+			this.updateDisplay();
+			this.ui.requestRender();
+		}
 	}
 
 	private startSpinnerAnimation(): void {
@@ -201,7 +255,7 @@ export class ToolExecutionComponent extends Container {
 		if (!this.spinnerInterval) return;
 		clearInterval(this.spinnerInterval);
 		this.spinnerInterval = undefined;
-		this.spinnerFrame = undefined;
+		if (!this.todoStrikeInterval) this.spinnerFrame = undefined;
 		this.invalidateRenderCache();
 	}
 

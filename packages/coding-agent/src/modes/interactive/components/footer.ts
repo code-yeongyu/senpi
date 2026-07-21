@@ -17,10 +17,24 @@ function sanitizeStatusText(text: string): string {
 }
 
 /**
- * Format token counts for footer display.
+ * Format token counts for footer display using oh-my-pi-style K/M/B abbreviation.
+ * Examples: "999", "6.8K", "546K", "1M", "1.5M", "2B".
  */
 export function formatTokens(count: number): string {
-	return Math.round(count).toLocaleString("en-US");
+	const n = Math.round(count);
+	if (n < 1_000) return n.toString();
+	if (n < 10_000) return `${trim1(n / 1_000)}K`;
+	if (n < 1_000_000) return `${Math.round(n / 1_000)}K`;
+	if (n < 10_000_000) return `${trim1(n / 1_000_000)}M`;
+	if (n < 1_000_000_000) return `${Math.round(n / 1_000_000)}M`;
+	if (n < 10_000_000_000) return `${trim1(n / 1_000_000_000)}B`;
+	return `${Math.round(n / 1_000_000_000)}B`;
+}
+
+/** Format with up to 1 decimal place, dropping trailing `.0`. */
+function trim1(n: number): string {
+	const s = n.toFixed(1);
+	return s.endsWith(".0") ? s.slice(0, -2) : s;
 }
 
 export function formatCwdForFooter(cwd: string, home: string | undefined): string {
@@ -92,27 +106,15 @@ export class FooterComponent implements Component {
 	render(width: number): string[] {
 		const state = this.session.state;
 
-		let totalInput = 0;
-		let totalOutput = 0;
-		let totalCacheRead = 0;
-		let totalCacheWrite = 0;
-		let totalCost = 0;
-		let latestCacheHitRate: number | undefined;
-
-		for (const entry of this.session.sessionManager.getEntries()) {
-			if (entry.type === "message" && entry.message.role === "assistant") {
-				totalInput += entry.message.usage.input;
-				totalOutput += entry.message.usage.output;
-				totalCacheRead += entry.message.usage.cacheRead;
-				totalCacheWrite += entry.message.usage.cacheWrite;
-				totalCost += entry.message.usage.cost.total;
-
-				const latestPromptTokens =
-					entry.message.usage.input + entry.message.usage.cacheRead + entry.message.usage.cacheWrite;
-				latestCacheHitRate =
-					latestPromptTokens > 0 ? (entry.message.usage.cacheRead / latestPromptTokens) * 100 : undefined;
-			}
-		}
+		// O(1) running totals maintained by SessionManager (identical to summing
+		// usage over all entries; totals are not branch-scoped).
+		const usageTotals = this.session.sessionManager.getUsageTotals();
+		const totalInput = usageTotals.input;
+		const totalOutput = usageTotals.output;
+		const totalCacheRead = usageTotals.cacheRead;
+		const totalCacheWrite = usageTotals.cacheWrite;
+		const totalCost = usageTotals.cost;
+		const latestCacheHitRate = usageTotals.latestCacheHitRate;
 
 		// Calculate context usage from session (handles compaction correctly).
 		// After compaction, tokens are unknown until the next LLM response.

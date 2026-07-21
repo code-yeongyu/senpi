@@ -1,9 +1,18 @@
+import { createHash } from "crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CONFIG_DIR_NAME } from "../src/config.ts";
-import { SettingsManager } from "../src/core/settings-manager.ts";
+import {
+	__resetSelfWriteTrackerForTests,
+	__setSelfWriteTrackerClockForTests,
+	getInMemorySettingsPath,
+	getSettingsPath,
+	InMemorySettingsStorage,
+	SettingsManager,
+	wasSelfWrite,
+} from "../src/core/settings-manager.ts";
 
 describe("SettingsManager", () => {
 	const testDir = join(process.cwd(), "test-settings-tmp");
@@ -472,6 +481,51 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("smooth streaming", () => {
+		it("defaults smooth streaming on at 60 fps", () => {
+			// Given
+			const manager = SettingsManager.inMemory();
+
+			// When / Then
+			expect(manager.getSmoothStreaming()).toBe(true);
+			expect(manager.getSmoothStreamingFps()).toBe(60);
+		});
+
+		it.each([
+			[29, 30],
+			[30, 30],
+			[90, 90],
+			[120, 120],
+			[121, 120],
+		] as const)("clamps configured streaming fps %s to %s", (configuredFps, expectedFps) => {
+			// Given
+			const manager = SettingsManager.inMemory({ smoothStreamingFps: configuredFps });
+
+			// When
+			const fps = manager.getSmoothStreamingFps();
+
+			// Then
+			expect(fps).toBe(expectedFps);
+		});
+
+		it("persists smooth streaming settings", async () => {
+			// Given
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			// When
+			manager.setSmoothStreaming(false);
+			manager.setSmoothStreamingFps(90);
+			await manager.flush();
+
+			// Then
+			expect(manager.getSmoothStreaming()).toBe(false);
+			expect(manager.getSmoothStreamingFps()).toBe(90);
+			const savedSettings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8"));
+			expect(savedSettings.smoothStreaming).toBe(false);
+			expect(savedSettings.smoothStreamingFps).toBe(90);
+		});
+	});
+
 	describe("shellCommandPrefix", () => {
 		it("should load shellCommandPrefix from settings", () => {
 			const settingsPath = join(agentDir, "settings.json");
@@ -562,5 +616,123 @@ describe("SettingsManager", () => {
 			const manager = SettingsManager.create(projectDir, agentDir);
 			expect(manager.getShellPath()).toBe(homedir());
 		});
+	});
+});
+
+describe("SettingsManager self-write tracking", () => {
+	let now = 0;
+
+	beforeEach(() => {
+		now = 0;
+		__setSelfWriteTrackerClockForTests(() => now);
+		__resetSelfWriteTrackerForTests();
+	});
+
+	afterEach(() => {
+		__resetSelfWriteTrackerForTests();
+		__setSelfWriteTrackerClockForTests();
+	});
+
+	it("records file-backed writes process-wide by their resolved settings path", async () => {
+		const testDir = join(process.cwd(), "test-settings-self-write-tmp");
+		const agentDir = join(testDir, "agent");
+		const projectDir = join(testDir, "project");
+		mkdirSync(agentDir, { recursive: true });
+
+		try {
+			const manager = SettingsManager.create(projectDir, agentDir);
+			manager.setTheme("dark");
+			manager.setDefaultModel("test-model");
+			await manager.flush();
+
+			const settingsPath = getSettingsPath(projectDir, agentDir, "global");
+			const hash = createHash("sha256").update(readFileSync(settingsPath, "utf-8")).digest("hex");
+			expect(wasSelfWrite(settingsPath, hash)).toBe(true);
+		} finally {
+			rmSync(testDir, { recursive: true, force: true });
+		}
+	});
+
+	it("does not identify externally written content as a self-write", () => {
+		const testDir = join(process.cwd(), "test-settings-self-write-external-tmp");
+		const agentDir = join(testDir, "agent");
+		const projectDir = join(testDir, "project");
+		const settingsPath = getSettingsPath(projectDir, agentDir, "global");
+		mkdirSync(agentDir, { recursive: true });
+
+		try {
+			const content = JSON.stringify({ theme: "external" });
+			writeFileSync(settingsPath, content);
+			expect(wasSelfWrite(settingsPath, createHash("sha256").update(content).digest("hex"))).toBe(false);
+		} finally {
+			rmSync(testDir, { recursive: true, force: true });
+		}
+	});
+
+	it("records in-memory storage writes with the same tracker semantics", () => {
+		const storage = new InMemorySettingsStorage();
+		const content = JSON.stringify({ theme: "dark" });
+		storage.withLock("global", () => content);
+
+		const path = getInMemorySettingsPath("global");
+		expect(wasSelfWrite(path, createHash("sha256").update(content).digest("hex"))).toBe(true);
+	});
+
+	it("retains hashes for rapid consecutive writes", async () => {
+		const testDir = join(process.cwd(), "test-settings-self-write-rapid-tmp");
+		const agentDir = join(testDir, "agent");
+		const projectDir = join(testDir, "project");
+		mkdirSync(agentDir, { recursive: true });
+
+		try {
+			const manager = SettingsManager.create(projectDir, agentDir);
+			manager.setTheme("first");
+			manager.setTheme("second");
+			await manager.flush();
+
+			const path = getSettingsPath(projectDir, agentDir, "global");
+			const firstHash = createHash("sha256")
+				.update(JSON.stringify({ theme: "first" }, null, 2))
+				.digest("hex");
+			const secondHash = createHash("sha256")
+				.update(JSON.stringify({ theme: "second" }, null, 2))
+				.digest("hex");
+			expect(wasSelfWrite(path, firstHash)).toBe(true);
+			expect(wasSelfWrite(path, secondHash)).toBe(true);
+		} finally {
+			rmSync(testDir, { recursive: true, force: true });
+		}
+	});
+
+	it("expires entries after the tracker TTL", () => {
+		const storage = new InMemorySettingsStorage();
+		const content = JSON.stringify({ theme: "dark" });
+		storage.withLock("global", () => content);
+		now = 15_001;
+
+		expect(wasSelfWrite(getInMemorySettingsPath("global"), createHash("sha256").update(content).digest("hex"))).toBe(
+			false,
+		);
+	});
+
+	it("can reset the process-wide tracker between tests", () => {
+		const storage = new InMemorySettingsStorage();
+		const content = JSON.stringify({ theme: "dark" });
+		storage.withLock("global", () => content);
+		__resetSelfWriteTrackerForTests();
+
+		expect(wasSelfWrite(getInMemorySettingsPath("global"), createHash("sha256").update(content).digest("hex"))).toBe(
+			false,
+		);
+	});
+
+	it("consumes a matching hash so a later identical external edit is not suppressed", () => {
+		const storage = new InMemorySettingsStorage();
+		const content = JSON.stringify({ theme: "dark" });
+		const hash = createHash("sha256").update(content).digest("hex");
+		storage.withLock("global", () => content);
+
+		expect(wasSelfWrite(getInMemorySettingsPath("global"), hash)).toBe(true);
+		expect(wasSelfWrite(getInMemorySettingsPath("global"), hash)).toBe(false);
 	});
 });

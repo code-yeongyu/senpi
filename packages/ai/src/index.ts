@@ -1,6 +1,5 @@
 export type { Static, TSchema } from "typebox";
 export { Type } from "typebox";
-
 // Core only, side-effect free: no generated catalogs, no provider factories,
 // no api-registry, no OAuth implementations, no compat. Provider factories
 // live under "@earendil-works/pi-ai/providers/*", API implementations under
@@ -18,6 +17,7 @@ export type { OpenAICodexResponsesOptions, OpenAICodexWebSocketDebugStats } from
 export type { OpenAICompletionsOptions } from "./api/openai-completions.ts";
 export type { OpenAIResponsesOptions } from "./api/openai-responses.ts";
 export type { PiMessagesEvent, PiMessagesOptions, PiMessagesRewriteImpact } from "./api/pi-messages.ts";
+export { getApiProvider } from "./api-registry.ts";
 export * from "./auth/context.ts";
 export * from "./auth/credential-store.ts";
 export * from "./auth/helpers.ts";
@@ -31,17 +31,27 @@ export type {
 	OAuthSelectOption,
 	OAuthSelectPrompt,
 } from "./compat/extension-oauth-types.ts";
+export * from "./env-api-keys.ts";
 export * from "./images-models.ts";
 export * from "./models.ts";
 export * from "./models-store.ts";
 export * from "./providers/faux.ts";
 export * from "./session-resources.ts";
+export {
+	getProtocol,
+	getToolCallFormat,
+	shouldRecoverTextToolCalls,
+	transformContext,
+	wrapStreamWithToolCallMiddleware,
+} from "./tool-call-middleware/index.ts";
+export { wrapStreamWithInvokeRecovery } from "./tool-call-middleware/recovery-stream-wrapper.ts";
 export * from "./types.ts";
 export * from "./utils/diagnostics.ts";
 export * from "./utils/event-stream.ts";
 export * from "./utils/json-parse.ts";
 export * from "./utils/overflow.ts";
 export * from "./utils/retry.ts";
+export * from "./utils/stop-details.ts";
 export * from "./utils/tool-pair-repair.ts";
 export * from "./utils/typebox-helpers.ts";
 export * from "./utils/validation.ts";

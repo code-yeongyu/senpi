@@ -7,20 +7,15 @@ import { buildContinuationPrompt } from "./prompt.ts";
 import { accountGoalUsage, readGoal, updateGoal } from "./store.ts";
 import { goalStoreRef as buildGoalStoreRef } from "./store-ref.ts";
 import { registerGoalTools } from "./tool-registration.ts";
-import type { Goal, GoalAccountingMode, GoalStoreRef, TokenUsageSnapshot } from "./types.ts";
-import { isRecord } from "./types.ts";
+import { TurnUsageTracker } from "./turn-usage.ts";
+import type { Goal, GoalAccountingMode, GoalStoreRef } from "./types.ts";
 import { updateGoalUi } from "./ui.ts";
 
 const GOAL_CONTINUATION_MESSAGE_TYPE = "goal-continuation";
 const RESUME_GOAL_CHOICE = "Resume goal";
 const LEAVE_GOAL_PAUSED_CHOICE = "Leave paused";
-const EMPTY_USAGE: TokenUsageSnapshot = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 };
 const STALE_EXTENSION_CONTEXT_ERROR_PREFIX = "This extension ctx is stale after session replacement or reload.";
 
-type AssistantUsageMessage = {
-	role: "assistant";
-	usage: Record<string, unknown>;
-};
 type AgentGoalAccounting = {
 	goalId: string;
 	measuredFromMilliseconds: number;
@@ -30,6 +25,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	let agentTurnInProgress = false;
 	let agentGoalAccounting: AgentGoalAccounting | null = null;
 	let completedThisTurnGoalId: string | null = null;
+	const turnUsage = new TurnUsageTracker();
 
 	const goalTicker = new GoalElapsedTicker({
 		render: (renderCtx, renderGoal, live) => {
@@ -78,6 +74,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	pi.on("agent_start", async (_event, ctx) => {
 		agentTurnInProgress = true;
 		completedThisTurnGoalId = null;
+		turnUsage.reset();
 		const goal = await readGoal(goalStoreRef(ctx));
 		if (goal?.status === "active") {
 			beginAgentGoalAccounting(goal);
@@ -86,9 +83,13 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		}
 	});
 
+	pi.on("message_end", async (event) => {
+		turnUsage.noteMessageEnd(event.message);
+	});
+
 	pi.on("agent_end", async (event, ctx) => {
 		const mode: GoalAccountingMode = completedThisTurnGoalId === null ? "active" : "activeOrComplete";
-		const goal = await accountCurrentAgentTurn(ctx, collectAssistantUsage(event.messages), mode);
+		const goal = await accountCurrentAgentTurn(ctx, mode, event.messages);
 		agentTurnInProgress = false;
 		completedThisTurnGoalId = null;
 		if (goal?.status === "active") {
@@ -108,7 +109,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_shutdown", async (_event, ctx) => {
 		if (agentGoalAccounting !== null) {
-			await accountCurrentAgentTurn(ctx, EMPTY_USAGE, "active");
+			await accountCurrentAgentTurn(ctx, "active");
 		}
 		clearAgentGoalAccounting();
 		goalTicker.stop();
@@ -141,6 +142,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	function beginAgentGoalAccounting(goal: Goal): void {
 		if (goal.status !== "active") return;
 		if (agentGoalAccounting?.goalId === goal.id) return;
+		turnUsage.discardPending();
 		agentGoalAccounting = { goalId: goal.id, measuredFromMilliseconds: Date.now() };
 	}
 
@@ -187,13 +189,15 @@ export default function goalExtension(pi: ExtensionAPI): void {
 
 	async function accountCurrentAgentTurn(
 		ctx: ExtensionContext,
-		usage: TokenUsageSnapshot,
 		mode: GoalAccountingMode,
+		agentRunMessages?: unknown[],
 	): Promise<Goal | null> {
 		const accounting = agentGoalAccounting;
 		const ref = goalStoreRef(ctx);
 		if (accounting === null) return readGoal(ref);
 
+		const usage =
+			agentRunMessages === undefined ? turnUsage.takePending() : turnUsage.takeRemaining(agentRunMessages);
 		const now = Date.now();
 		const elapsedSeconds = Math.max(0, Math.round((now - accounting.measuredFromMilliseconds) / 1000));
 		const goal = await accountGoalUsage(ref, usage, elapsedSeconds, mode, accounting.goalId);
@@ -231,27 +235,4 @@ function queueHiddenGoalPrompt(pi: ExtensionAPI, content: string): void {
 
 function goalStoreRef(ctx: ExtensionContext): GoalStoreRef {
 	return buildGoalStoreRef(ctx.sessionManager, ctx.cwd);
-}
-
-function collectAssistantUsage(messages: unknown[]): TokenUsageSnapshot {
-	const usage: TokenUsageSnapshot = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 };
-	for (const message of messages) {
-		if (!isAssistantUsageMessage(message)) continue;
-		usage.input += numericUsageField(message.usage, "input");
-		usage.output += numericUsageField(message.usage, "output");
-		usage.cacheRead += numericUsageField(message.usage, "cacheRead");
-		usage.cacheWrite += numericUsageField(message.usage, "cacheWrite");
-		usage.totalTokens += numericUsageField(message.usage, "totalTokens");
-	}
-	return usage;
-}
-
-function isAssistantUsageMessage(message: unknown): message is AssistantUsageMessage {
-	if (!isRecord(message)) return false;
-	return message.role === "assistant" && isRecord(message.usage);
-}
-
-function numericUsageField(usage: Record<string, unknown>, key: string): number {
-	const value = usage[key];
-	return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }

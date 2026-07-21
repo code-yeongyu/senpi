@@ -1,5 +1,78 @@
 # mcp Extension Changes
 
+## Raced background registration replays session state (2026-07-21)
+
+### What changed
+- `service.ts` (`#syncFromConfig`): the `registerDirectTools` continuation that
+  runs when a raced startup connect finishes in the background now also
+  (a) replays `#rehydrateFromSessionHistory` from the stored session context
+  and (b) rebuilds the session `<mcp_instructions>` block via
+  `refreshMcpInstructionsForSession`. Both were captured once at attach
+  completion, which — after PR #260 routed cold lazy servers through the
+  bounded startup race — can predate the backgrounded connect, so a resumed
+  session lost its restored (tool_search-promoted) tools on the first turn
+  and the first turn's system prompt carried no server instructions.
+- Tests: `rehydration-wiring.test.ts` awaits the raced registration before
+  asserting the first-turn payload; `instructions.test.ts` attaches the
+  harness session explicitly and awaits registration; mcp suites broadly
+  await raced background completion via new fixture seams
+  (`awaitMcpToolRegistration`/`awaitMcpTool` in `fixtures/register-call.ts`,
+  `awaitMcpConnected` in `fixtures/service-lifecycle.ts`).
+
+### Why
+- The attach-time replay and instructions capture assume the catalog exists
+  when attach returns. The startup race deliberately breaks that assumption
+  for slow servers; the background continuation must refresh every piece of
+  session state derived from the catalog, not just the tool registrations.
+
+### Why extension system couldn't handle this alone
+- The continuation lives inside the MCP builtin's startup-race plumbing;
+  only the builtin holds the session context, tier-B registration, and the
+  instructions module state.
+
+### Expected merge conflict zones
+- LOW: `service.ts` `#syncFromConfig` raced-connect options block.
+
+## Non-blocking startup for cold lazy servers + configurable startup window (2026-07-21)
+
+### What changed
+- `service.ts` (`#syncFromConfig`): every startup connect now runs through
+  `raceMcpStartupConnect` — the branch condition became
+  `shouldRaceMcpStartup(lifecycle) || cachedCatalog === undefined`. A cold
+  `lazy` server (no cached catalog) previously took a fully-blocking
+  `connectAndRefreshMcpCatalog` awaited in `Promise.all(connects)`, so a slow
+  or wedged server (e.g. codegraph stuck indexing) gated `attachSession` ->
+  `before_agent_start` -> the first turn and the TUI silently swallowed
+  prompts. Now the connect is bounded by the startup race and finishes in the
+  background; a cached lazy server still needs no startup connect.
+- `startup-race.ts`: added `MCP_STARTUP_TIMEOUT_ENV`
+  (`SENPI_MCP_STARTUP_TIMEOUT_MS`) and `resolveMcpStartupTimeoutMs`, plus an
+  optional `deadlineMs` on `RaceMcpStartupConnectOptions` threaded into
+  `waitForMcpStartupRace`. Env override (global) > per-server config > default
+  `MCP_STARTUP_RACE_MS` (250); non-numeric/negative env ignored, `0` = never
+  wait.
+- `config-schema.ts` / `config.ts`: new per-server `startupTimeoutMs` field
+  (default 250), sitting beside `connectTimeoutMs`/`requestTimeoutMs`.
+- `docs/mcp.md`: documents `startupTimeoutMs` (required by
+  `scripts/check-mcp-docs.test.mjs`).
+
+### Why
+- A single misbehaving MCP server must never block the agent from starting a
+  turn. The eager/keep-alive paths already backgrounded slow connects via the
+  250ms startup race; the lazy cold path was the one remaining place that
+  blocked. Extending the same race to it closes the "prompt does nothing" bug
+  and makes the wait window operator-tunable.
+
+### Why extension system couldn't handle this alone
+- The blocking connect lives inside the MCP builtin's session-attach path;
+  only the builtin owns per-server lifecycle, the catalog cache, and the
+  startup race primitive.
+
+### Expected merge conflict zones
+- LOW/MEDIUM: `service.ts` `#syncFromConfig` connect branch; `startup-race.ts`
+  option/plumbing; `config-schema.ts`/`config.ts` timeout field lists.
+
+
 ## Trust-aware merge for extension-declared MCP servers (2026-07-17)
 
 ### What changed

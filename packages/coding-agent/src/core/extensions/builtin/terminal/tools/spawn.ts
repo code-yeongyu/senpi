@@ -11,6 +11,8 @@ export interface SpawnRequest {
 	readonly timeoutMs?: number;
 	/** Working directory override (execute-time `ctx.cwd`); falls back to the tool context cwd. */
 	readonly cwd?: string;
+	/** Environment overrides merged over `ctx.getEnv()` (foreground non-interactive env). */
+	readonly envOverrides?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -30,7 +32,7 @@ export async function spawnCommandSession(
 		command: shell.shell,
 		args,
 		cwd: request.cwd ?? ctx.cwd,
-		env: ctx.getEnv() as Record<string, string | undefined>,
+		env: { ...ctx.getEnv(), ...request.envOverrides } as Record<string, string | undefined>,
 		cols: request.cols,
 		rows: request.rows,
 		timeoutMs: request.timeoutMs,

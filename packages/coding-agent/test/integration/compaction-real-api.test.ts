@@ -156,6 +156,7 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction extensions (real AP
 		expect(beforeEvent.branchEntries).toBeDefined();
 
 		const afterEvent = compactEvents[0];
+		if (!afterEvent.accepted) throw new Error("expected accepted session_compact event");
 		expect(afterEvent.compactionEntry).toBeDefined();
 		expect(afterEvent.compactionEntry.summary.length).toBeGreaterThan(0);
 		expect(afterEvent.compactionEntry.tokensBefore).toBeGreaterThanOrEqual(0);
@@ -171,8 +172,14 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction extensions (real AP
 
 		await expect(session.compact()).rejects.toThrow("Compaction cancelled");
 
+		// Rejection is no longer silent: session_compact fires with accepted=false so
+		// extension bookkeeping (circuit breaker, notifications) becomes reachable.
 		const compactEvents = capturedEvents.filter((e) => e.type === "session_compact");
-		expect(compactEvents.length).toBe(0);
+		expect(compactEvents.length).toBe(1);
+		expect(compactEvents[0]?.accepted).toBe(false);
+		if (compactEvents[0]?.accepted === false) {
+			expect(compactEvents[0].rejectionCause).toBe("cancelled-by-extension");
+		}
 	}, 120000);
 
 	it("should allow extensions to provide custom compaction", async () => {
@@ -206,7 +213,7 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction extensions (real AP
 		expect(compactEvents.length).toBe(1);
 
 		const afterEvent = compactEvents[0];
-		if (afterEvent.type === "session_compact") {
+		if (afterEvent.type === "session_compact" && afterEvent.accepted) {
 			expect(afterEvent.compactionEntry.summary).toBe(customSummary);
 			expect(afterEvent.fromExtension).toBe(true);
 		}

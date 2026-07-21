@@ -1,5 +1,202 @@
 # changes
 
+## todo completion strike reveal (2026-07-21)
+
+### What changed
+
+- `components/todo-strike.ts` (new): pure, zero-import module exporting the strike
+  reveal constants (`TODO_STRIKE_HOLD_FRAMES = 2`, `TODO_STRIKE_REVEAL_FRAMES = 12`,
+  `TODO_STRIKE_TOTAL_FRAMES = 14`, `TODO_STRIKE_FRAME_INTERVAL_MS = 65`),
+  `strikeRevealCount(text, frame)` (frame-to-visible-char-count math over code
+  points), `partialStrikethrough(text, visibleChars, strike)` (code-point-safe
+  splitter; strike styling comes ONLY from the injected `strike` callback — no
+  raw ANSI literals), and `hasCompletedTodoTasks(details)`. Purity keeps the
+  todotools extension free of interactive-runtime dependencies on non-interactive
+  load paths and keeps the interactive core free of built-in-extension imports.
+- `components/tool-execution.ts`: `updateResult()` also calls
+  `updateTodoStrikeAnimation()`, which starts an `unref`'d, self-terminating
+  `setInterval` (65ms, stops after `TODO_STRIKE_TOTAL_FRAMES`) when the result is
+  a final non-error `todo` result with non-empty `completedTasks` AND
+  `this.executionStarted` is set. Each tick advances `spinnerFrame`, busts the
+  render cache, repaints, and requests a render; the settle tick restores the
+  static full-strike rendering. `stopTodoStrikeAnimation()` clears the interval
+  and resets `spinnerFrame` only when no spinner is running.
+  `stopSpinnerAnimation()` leaves `spinnerFrame` to the strike owner while a
+  strike is in flight. `stopAnimation()` also stops the strike. New
+  `override dispose()` calls `stopAnimation()` before `super.dispose()` so pi-tui
+  `Container.clear()`/`Container.dispose()` child propagation kills a mid-flight
+  interval on chat teardown (also closes the pre-existing spinner teardown hole).
+- `interactive-mode.ts`: new private `stopChatToolAnimations()` iterates
+  `this.chatContainer.children` and calls `stopAnimation()` on every
+  `ToolExecutionComponent`; `stop()` calls it immediately after
+  `clearPendingTools()`. A completed mid-strike todo block has already left
+  `pendingTools` (deleted at `tool_execution_end`) and `ui.stop()` does not
+  dispose the component tree, so without this the interval would repaint a
+  stopped UI until self-termination.
+
+### Why
+
+- A completion checkmark should land visibly. Without an animation, a finished
+  task row silently switches from accent to dim+strikethrough and the user can
+  miss which item just completed. A bounded ~910ms left-to-right reveal (2 hold
+  frames + 12 sweep frames at 65ms/frame) makes the just-completed task
+  unmistakable, then settles to byte-identical pre-change rendering.
+
+### Why extension system couldn't handle this
+
+- The strike interval is component-scoped and drives `ToolExecutionComponent`'s
+  render-cache invalidation, `spinnerFrame` render signature, and lifecycle hooks
+  (`updateResult`, `stopAnimation`, `dispose`); extensions cannot own built-in
+  component private state or hook `Container.clear()`/`dispose()` propagation,
+  and the per-frame repaint must route through the host's `requestRender` to
+  respect the TUI FPS cap.
+- The `executionStarted` rebuild-replay suppressor is core-private state set
+  only on the live path (`renderSessionItems` rebuilds never call
+  `markExecutionStarted()`); an extension cannot gate historical replay this way.
+
+### Expected merge conflict zones
+
+- MEDIUM: `components/tool-execution.ts` around `updateResult`, `stopAnimation`,
+  `dispose`, and the `spinnerFrame`-reset guard in `stopSpinnerAnimation`.
+- LOW: `interactive-mode.ts` around `stop()` and the new `stopChatToolAnimations`
+  helper.
+- LOW: the fork-only `components/todo-strike.ts` module.
+
+## model fallback lifecycle notices (2026-07-20)
+
+### What changed
+
+- `interactive-mode.ts`: renders fallback apply, success, revert, and exhaustion notices; maintains a keyed `fallback`
+  footer status while a fallback model is active; and suppresses the retry spinner for immediate fallback retries.
+- Startup now shows fallback-chain validation warnings that were calculated by `AgentSession` when the session was created.
+
+### Why
+
+- A fallback model change is user-visible state. The chat and footer now make the active model and its lifecycle clear
+  without adding synthetic messages to model context.
+
+### Why extension system couldn't handle this
+
+- Retry lifecycle events and session-start validation state are owned by the core session and rendered through the
+  built-in interactive event handler.
+
+### Expected merge conflict zones
+
+- LOW: `interactive-mode.ts` retry event switch and startup warning block.
+
+## exhaustive compaction_end rendering (2026-07-20)
+
+### What changed
+
+- `interactive-mode.ts`: the `compaction_end` handler no longer silently falls
+  through when a rejection carries no `errorMessage` (e.g. legacy shape). It
+  prefers the extension-provided `errorMessage` inside the `aborted` branch so
+  per-turn-cap / circuit-breaker / provider-error cancels render the real cause
+  instead of the generic "Compaction cancelled", and adds a fallback
+  `showError("Compaction failed (no result); cause: <rejectionCause>")` so no
+  future `compaction_end` shape can be ignored.
+
+### Why
+
+- Manual `/compact` used to render nothing when core rejected the summary as
+  overflow-would-still-happen. The handler only branched on `aborted / result /
+  errorMessage` and `_rejectCompaction` used to emit none of those fields for
+  `would-overflow`. Combined with core now populating `errorMessage`, the
+  interactive fallback closes plan §1.
+
+## abbreviated footer token notation (2026-07-20)
+
+### What changed
+
+- `components/footer.ts`: `formatTokens` now renders oh-my-pi-style K/M/B abbreviations (e.g. `546K`, `1M`, `1.5M`)
+  instead of comma-grouped `toLocaleString` output. The footer context-usage display now reads
+  `546K/1M (54.6%)` instead of `545,661/1,000,000 (54.6%)`; the same notation applies to the ↑/↓/cache counters and
+  the `interactive-mode.ts` token readouts that reuse `formatTokens`.
+
+### Why
+
+- Comma-grouped raw counts are wide and hard to scan in the status line; abbreviated notation matches oh-my-pi's
+  status-line style and keeps the footer compact at narrow widths.
+
+### Why extension system couldn't handle this
+
+- Footer token formatting is a core display primitive, not an extension-registered status segment.
+## paced streaming tool argument previews (2026-07-20)
+
+### What changed
+
+- `tool-args-reveal.ts`: adds per-tool-call pacing for streaming partial JSON. The first usable prefix appears
+  immediately, later append-only growth follows the smooth-streaming cadence, parsing is batched in at least 64
+  UTF-16-unit increments, and reveal boundaries never split surrogate pairs.
+- `interactive-mode.ts`: routes in-flight tool arguments through the controller, flushes exact arguments at message and
+  execution boundaries, cancels stale state on direct-update paths, publishes buffered arguments before teardown, and
+  refreshes timers after live smooth streaming setting changes.
+
+### Why
+
+- Large tool arguments can arrive in provider bursts. Parsing and rendering every burst makes previews jump abruptly
+  and repeatedly reparses nearly identical JSON prefixes.
+
+### Why extension system couldn't handle this
+
+- Extensions cannot own the built-in pending-tool component map or coordinate its private argument updates with
+  assistant-message, tool-execution, settings, and teardown lifecycles.
+
+### Expected merge conflict zones
+
+- MEDIUM: `interactive-mode.ts` around streamed tool-call handling and lifecycle flushes.
+- LOW: the fork-only argument reveal controller.
+
+## smooth streaming reveal (2026-07-20)
+
+### What changed
+
+- `streaming-reveal.ts`: adds append-aware grapheme counting/slicing and a real-time reveal controller with 90
+  units/second minimum velocity, a 267ms catchup horizon, 1–100ms delta clamping, and configurable 30–120fps ticks.
+- `interactive-mode.ts`: routes assistant start/update events through one controller, flushes final content directly,
+  stops pacing on abort/session teardown, resyncs live thinking visibility, and applies the TUI FPS cap.
+- `components/settings-selector.ts`: adds “Smooth streaming” and “Streaming fps” controls.
+
+### Why
+
+- Bursty provider deltas should appear as a readable, steady reveal without splitting Korean, emoji ZWJ, combining, or
+  other grapheme clusters.
+
+### Why extension system couldn't handle this
+
+- Extensions cannot replace the built-in in-flight assistant component or coordinate its render timer with session
+  teardown and TUI scheduling.
+
+### Expected merge conflict zones
+
+- MEDIUM: `interactive-mode.ts` assistant event handling and settings callbacks.
+- LOW: the fork-only controller and new selector items.
+
+## incremental assistant message re-render (2026-07-19)
+
+### What changed
+
+- `components/assistant-message.ts`: replaces full child teardown on every assistant streaming delta with a flat
+  descriptor reconciliation. Stable children are reused, same-kind Markdown changes update in place, and the first
+  kind/text/list divergence rebuilds only the remaining suffix.
+- `../../../test/assistant-message-incremental-render.test.ts`: compares incremental output byte-for-byte with fresh
+  components across the supported block shapes and verifies leading and growing Markdown identities remain stable.
+
+### Why
+
+- Clearing the content container made every streamed token recreate preceding Markdown components, keeping their
+  instance caches cold and repeatedly re-lexing already-finished blocks.
+
+### Why extension system couldn't handle this
+
+- Assistant transcript child reconciliation is private host-renderer state; an extension cannot retain or replace the
+  built-in component's nested children.
+
+### Expected merge conflict zones
+
+- MEDIUM: `components/assistant-message.ts` around descriptor construction, child reconciliation, and render-cache
+  invalidation.
+
 ## eval tool call single-box render (2026-07-17)
 
 ### What changed

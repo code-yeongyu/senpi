@@ -12,7 +12,12 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
-import { mcpRoot as makeMcpRoot, mcpExtensionFor, withoutMcpUtilityTools } from "./fixtures/register-call.ts";
+import {
+	attachHarnessSession,
+	mcpRoot as makeMcpRoot,
+	mcpExtensionFor,
+	withoutMcpUtilityTools,
+} from "./fixtures/register-call.ts";
 import type { TestRoot } from "./fixtures/service-lifecycle.ts";
 import { cleanupRoots, stdioServer } from "./fixtures/service-lifecycle.ts";
 
@@ -60,6 +65,9 @@ function names(shapes: ToolShape[]): string[] {
 async function harnessFor(root: TestRoot): Promise<Harness> {
 	const harness = await createHarness({ extensionFactories: [mcpExtensionFor(root.agentDir)] });
 	harnesses.push(harness);
+	// The harness never emits session_start on its own; attach + await the
+	// raced registration so the first prompt's tool snapshot is deterministic.
+	await attachHarnessSession(harness, "fx");
 	return harness;
 }
 

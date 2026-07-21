@@ -121,13 +121,13 @@ describe("eval tool output pipeline", () => {
 			cellTimeoutSeconds: 30,
 			executeTool: vi.fn(),
 		});
-		const updates: EvalToolDetails[] = [];
+		const updates: { readonly content: readonly ToolContent[]; readonly details: EvalToolDetails }[] = [];
 		const onUpdate: AgentToolUpdateCallback<EvalToolDetails> = (update) => {
-			updates.push(update.details);
+			updates.push(update);
 		};
 
 		// When
-		await tool.execute(
+		const toolResult = await tool.execute(
 			"live-cell",
 			{ language: "js", code: "print('first'); print('second')" },
 			undefined,
@@ -136,15 +136,59 @@ describe("eval tool output pipeline", () => {
 		);
 
 		// Then
-		const outputs = updates.flatMap((details) => {
-			const output = details.cells?.[0]?.output;
+		const outputs = updates.flatMap((update) => {
+			const output = update.details.cells?.[0]?.output;
 			return output === undefined ? [] : [output];
 		});
 		const firstIndex = outputs.indexOf("first\n");
 		const secondIndex = outputs.indexOf("first\nsecond\n");
 		expect(firstIndex).toBeGreaterThanOrEqual(0);
 		expect(secondIndex).toBeGreaterThan(firstIndex);
-		expect(updates.at(-1)?.cells?.[0]?.status).toBe("complete");
+
+		const firstLiveUpdate = updates.find((update) => update.details.cells?.[0]?.output === "first\n");
+		const secondLiveUpdate = updates.find((update) => update.details.cells?.[0]?.output === "first\nsecond\n");
+		expect(firstLiveUpdate).toMatchObject({
+			content: [{ type: "text", text: "1/1 cells running\n[1] js running\nfirst\n" }],
+			details: { cells: [{ output: "first\n", status: "running" }] },
+		});
+		expect(secondLiveUpdate).toMatchObject({
+			content: [{ type: "text", text: "1/1 cells running\n[1] js running\nfirst\nsecond\n" }],
+			details: { cells: [{ output: "first\nsecond\n", status: "running" }] },
+		});
+		expect(updates.at(-1)?.details.cells?.[0]?.status).toBe("complete");
+		expect(textOf(toolResult)).toBe("first\nsecond\ndone");
+	});
+
+	it("keeps the live content preview bounded to the active cell's latest eight lines", async () => {
+		// Given
+		const lines = Array.from({ length: 10 }, (_, index) => `line-${index + 1}\n`);
+		const kernel = new FakeKernel([
+			...lines.map((data) => ({ type: "text" as const, stream: "stdout" as const, data })),
+			result("bounded-live-cell", ""),
+		]);
+		const tool = createEvalTool({
+			enabledLanguages: { js: true, py: false, rb: false, jl: false },
+			kernelManager: new FakeManager([["js", kernel]]),
+			cellTimeoutSeconds: 30,
+			executeTool: vi.fn(),
+		});
+		const updates: { readonly content: readonly ToolContent[]; readonly details: EvalToolDetails }[] = [];
+
+		// When
+		await tool.execute(
+			"bounded-live-cell",
+			{ language: "js", code: "for (let i = 1; i <= 10; i++) print(i)" },
+			undefined,
+			(update) => updates.push(update),
+			fakeExtensionContext(),
+		);
+
+		// Then
+		const completeLiveUpdate = updates.find((update) => update.details.cells?.[0]?.output === lines.join(""));
+		expect(completeLiveUpdate).toMatchObject({
+			content: [{ type: "text", text: `1/1 cells running\n[1] js running\n${lines.slice(-8).join("")}` }],
+			details: { cells: [{ output: lines.join(""), status: "running" }] },
+		});
 	});
 
 	it("resizes display images and appends dimension notes to text output", async () => {

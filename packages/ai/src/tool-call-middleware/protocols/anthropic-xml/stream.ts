@@ -5,9 +5,20 @@ import { findNextInvokeMatch } from "./invoke-match.ts";
 import type { InvokeProtocolConfig } from "./invoke-protocol.ts";
 import { anthropicXmlInvokeConfig } from "./invoke-protocol.ts";
 import {
+	coerceStreamParameters,
+	emitText,
+	findFunctionCallsCloseTag,
+	findFunctionCallsOpenTag,
+	getSafeStreamTextLength,
+	isWhitespaceOrFunctionCallsClosePrefix,
+	overflowPendingFragment,
+	reportError,
+	reportTruncatedInvoke,
+	shouldEmitRawToolCallTextOnError,
+} from "./invoke-stream-helpers.ts";
+import {
 	findIncompleteInvokeOpenTag,
 	findInvokeOpenTag,
-	getSafeInvokeTextLength,
 	isPotentialProtocolStart,
 	scanInvokeBlock,
 	scanTruncatedInvokeBlock,
@@ -19,101 +30,8 @@ import {
 	type PendingFragment,
 } from "./stream-boundary.ts";
 import { createToolResolver } from "./tool-resolver.ts";
-import { decodeXmlEntities } from "./xml-entities.ts";
 
 export { ANTHROPIC_XML_MAX_RETAINED_FRAGMENT_LENGTH } from "./stream-boundary.ts";
-
-const FUNCTION_CALLS_OPEN_TAG = /<\s*function_calls\s*>/;
-const FUNCTION_CALLS_CLOSE_TAG = /<\s*\/\s*function_calls\s*>/;
-const FUNCTION_CALLS_COMPLETE_TAG = /^<\s*\/?\s*function_calls\s*>/;
-const FUNCTION_CALLS_OPEN_PREFIX = "<function_calls>";
-const FUNCTION_CALLS_CLOSE_PREFIX = "</function_calls>";
-const EAGER_OPEN_TAG_SCAN_LENGTH = 128;
-
-type FunctionCallsTag = {
-	readonly index: number;
-	readonly length: number;
-};
-
-function shouldEmitRawToolCallTextOnError(options?: ParserOptions): boolean {
-	return options?.emitRawToolCallTextOnError === true;
-}
-
-function emitText(events: StreamParserEvent[], text: string): void {
-	if (text.length > 0) {
-		events.push({ type: "text", text });
-	}
-}
-
-function findFunctionCallsTag(pattern: RegExp, text: string, fromIndex: number): FunctionCallsTag | null {
-	const match = pattern.exec(text.slice(fromIndex));
-	if (!match || match.index === undefined) {
-		return null;
-	}
-
-	return { index: fromIndex + match.index, length: match[0].length };
-}
-
-function isPotentialFunctionCallsTag(candidate: string): boolean {
-	if (FUNCTION_CALLS_COMPLETE_TAG.test(candidate)) {
-		return false;
-	}
-	const compactCandidate = candidate.replace(/\s/g, "");
-	return (
-		FUNCTION_CALLS_OPEN_PREFIX.startsWith(compactCandidate) ||
-		FUNCTION_CALLS_CLOSE_PREFIX.startsWith(compactCandidate)
-	);
-}
-
-function isWhitespaceOrFunctionCallsClosePrefix(text: string): boolean {
-	const compactText = text.replace(/\s/g, "");
-	return (
-		compactText.length === 0 ||
-		(FUNCTION_CALLS_CLOSE_PREFIX.startsWith(compactText) && compactText !== FUNCTION_CALLS_CLOSE_PREFIX)
-	);
-}
-
-function getSafeStreamTextLength(text: string): number {
-	const scannerSafeLength = getSafeInvokeTextLength(text);
-	const lastTagIndex = text.lastIndexOf("<");
-	if (lastTagIndex === -1) {
-		return scannerSafeLength;
-	}
-
-	return isPotentialFunctionCallsTag(text.slice(lastTagIndex))
-		? Math.min(scannerSafeLength, lastTagIndex)
-		: scannerSafeLength;
-}
-
-function reportError(options: ParserOptions | undefined, message: string, toolCall: string): void {
-	options?.onError?.(message, { toolCall });
-}
-
-function coerceStreamParameters(
-	parameters: Parameters<InvokeProtocolConfig["coerce"]>[0],
-	tool: Tool,
-	config: InvokeProtocolConfig,
-	allowJsonSchemaFallback = false,
-): Record<string, unknown> | null {
-	const coercedParameters = config.coerce(parameters, tool);
-	if (coercedParameters !== null || !allowJsonSchemaFallback) {
-		return coercedParameters;
-	}
-
-	const argumentsRecord: Record<string, unknown> = {};
-	for (const parameter of parameters) {
-		if (Object.hasOwn(argumentsRecord, parameter.name)) {
-			return null;
-		}
-		const rawValue = decodeXmlEntities(parameter.rawValue);
-		try {
-			argumentsRecord[parameter.name] = JSON.parse(rawValue);
-		} catch {
-			argumentsRecord[parameter.name] = rawValue;
-		}
-	}
-	return argumentsRecord;
-}
 
 export function createInvokeStreamParser(
 	tools: Tool[],
@@ -121,27 +39,15 @@ export function createInvokeStreamParser(
 	options?: ParserOptions,
 ): StreamParser {
 	const resolveTool = createToolResolver(tools);
-	const retainedFragmentOverflowMessage = `${config.label} streaming fragment exceeded the ${ANTHROPIC_XML_MAX_RETAINED_FRAGMENT_LENGTH}-character retained-input limit.`;
-	const truncatedAtFinishMessage = `${config.label} tool call truncated at finish`;
 	let buffer = "";
 	let nextToolCallIndex = 0;
 	let pendingFragment: PendingFragment | null = null;
 
-	function retainPendingFragment(kind: PendingFragment["kind"]): void {
-		pendingFragment = createPendingFragment(kind, buffer);
-	}
-
-	function overflowPendingFragment(): StreamParserEvent[] {
+	function overflowRetainedFragment(): StreamParserEvent[] {
 		const retainedFragment = buffer;
 		buffer = "";
 		pendingFragment = null;
-		reportError(options, retainedFragmentOverflowMessage, retainedFragment);
-
-		const events: StreamParserEvent[] = [];
-		if (shouldEmitRawToolCallTextOnError(options)) {
-			emitText(events, retainedFragment);
-		}
-		return events;
+		return overflowPendingFragment(options, config.label, retainedFragment);
 	}
 
 	function processBuffer(consumeFunctionCallsResidue = false, allowJsonSchemaFallback = false): StreamParserEvent[] {
@@ -150,7 +56,7 @@ export function createInvokeStreamParser(
 
 		while (buffer.length > 0) {
 			const invokeOpenTag = findInvokeOpenTag(buffer, 0);
-			const functionCallsOpenTag = findFunctionCallsTag(FUNCTION_CALLS_OPEN_TAG, buffer, 0);
+			const functionCallsOpenTag = findFunctionCallsOpenTag(buffer, 0);
 
 			if (functionCallsOpenTag && (!invokeOpenTag || functionCallsOpenTag.index <= invokeOpenTag.index)) {
 				if (functionCallsOpenTag.index > 0) {
@@ -159,13 +65,9 @@ export function createInvokeStreamParser(
 					continue;
 				}
 
-				const functionCallsCloseTag = findFunctionCallsTag(
-					FUNCTION_CALLS_CLOSE_TAG,
-					buffer,
-					functionCallsOpenTag.length,
-				);
+				const functionCallsCloseTag = findFunctionCallsCloseTag(buffer, functionCallsOpenTag.length);
 				if (!functionCallsCloseTag) {
-					retainPendingFragment("function-calls");
+					pendingFragment = createPendingFragment("function-calls", buffer);
 					break;
 				}
 
@@ -205,7 +107,7 @@ export function createInvokeStreamParser(
 					}
 				}
 				if (!block) {
-					retainPendingFragment("invoke");
+					pendingFragment = createPendingFragment("invoke", buffer);
 					break;
 				}
 
@@ -252,8 +154,8 @@ export function createInvokeStreamParser(
 
 			const safeLength = getSafeStreamTextLength(buffer);
 			if (safeLength === 0) {
-				if (buffer.length >= EAGER_OPEN_TAG_SCAN_LENGTH) {
-					retainPendingFragment("open-tag");
+				if (buffer.length >= 128) {
+					pendingFragment = createPendingFragment("open-tag", buffer);
 				}
 				break;
 			}
@@ -275,7 +177,7 @@ export function createInvokeStreamParser(
 			while (offset < textDelta.length) {
 				const capacity = ANTHROPIC_XML_MAX_RETAINED_FRAGMENT_LENGTH - buffer.length;
 				if (capacity === 0) {
-					events.push(...overflowPendingFragment());
+					events.push(...overflowRetainedFragment());
 					continue;
 				}
 
@@ -293,17 +195,17 @@ export function createInvokeStreamParser(
 				}
 
 				if (pendingFragment && buffer.length === ANTHROPIC_XML_MAX_RETAINED_FRAGMENT_LENGTH) {
-					events.push(...overflowPendingFragment());
+					events.push(...overflowRetainedFragment());
 				}
 			}
 			return events;
 		},
 		finish(): StreamParserEvent[] {
 			const events = processBuffer();
-			const functionCallsOpenTag = findFunctionCallsTag(FUNCTION_CALLS_OPEN_TAG, buffer, 0);
+			const functionCallsOpenTag = findFunctionCallsOpenTag(buffer, 0);
 			if (
 				functionCallsOpenTag?.index === 0 &&
-				findFunctionCallsTag(FUNCTION_CALLS_CLOSE_TAG, buffer, functionCallsOpenTag.length) === null
+				findFunctionCallsCloseTag(buffer, functionCallsOpenTag.length) === null
 			) {
 				buffer = buffer.slice(functionCallsOpenTag.length);
 				events.push(...processBuffer(true, true));
@@ -350,18 +252,12 @@ export function createInvokeStreamParser(
 						incomplete: true,
 						errorMessage: "Tool call was truncated mid-arguments",
 					});
-					options?.onError?.(truncatedAtFinishMessage, {
-						protocol: config.protocol,
-						retainedLength: buffer.length,
-					});
+					reportTruncatedInvoke(options, config, buffer.length);
 				}
 			} else if (invokeOpenTag?.index === 0) {
 				emitText(events, buffer);
 			} else if (isPotentialProtocolStart(buffer)) {
-				options?.onError?.(truncatedAtFinishMessage, {
-					protocol: config.protocol,
-					retainedLength: buffer.length,
-				});
+				reportTruncatedInvoke(options, config, buffer.length);
 			} else {
 				emitText(events, buffer);
 			}

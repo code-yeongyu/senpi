@@ -279,7 +279,6 @@ const KIMI_CODING_STABLE_MODELS = {
 // Kimi Coding is subscription-backed, so models.dev reports zero cost. Use the
 // equivalent Moonshot API rates to estimate the value of subscription usage.
 const KIMI_CODING_IMPLIED_COSTS: Record<string, Model<Api>["cost"]> = {
-	k2p7: { input: 0.95, output: 4, cacheRead: 0.19, cacheWrite: 0 },
 	k3: KIMI_K3_COST,
 	"kimi-for-coding": { input: 0.95, output: 4, cacheRead: 0.19, cacheWrite: 0 },
 	"kimi-for-coding-highspeed": { input: 1.9, output: 8, cacheRead: 0.38, cacheWrite: 0 },
@@ -1841,6 +1840,54 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					provider,
 					baseUrl,
 					compat: xiaomiCompat,
+					reasoning: m.reasoning === true,
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
+				});
+			}
+		}
+
+		// Alibaba Cloud Model Studio Token Plan (prepaid, OpenAI-compatible).
+		// The models.dev `alibaba-token-plan` catalog targets the ap-southeast-1
+		// endpoint; image/video models are skipped via the tool_call filter.
+		const alibabaTokenPlanBaseUrl = "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
+		const alibabaTokenPlanModels = data["alibaba-token-plan"]?.models;
+		if (alibabaTokenPlanModels) {
+			for (const [modelId, model] of Object.entries(alibabaTokenPlanModels)) {
+				const m = model as ModelsDevModel;
+				if (m.tool_call !== true) continue;
+
+				const compat: OpenAICompletionsCompat = {
+					supportsStore: false,
+					supportsDeveloperRole: false,
+					maxTokensField: "max_tokens",
+				};
+				const family = modelId.toLowerCase();
+				if (family.startsWith("qwen")) {
+					// DashScope compatible-mode toggles Qwen thinking via top-level enable_thinking.
+					compat.thinkingFormat = "qwen";
+				} else if (family.startsWith("deepseek")) {
+					compat.requiresReasoningContentOnAssistantMessages = true;
+					compat.thinkingFormat = "deepseek";
+				} else if (family.startsWith("kimi")) {
+					compat.thinkingFormat = "deepseek";
+					compat.supportsReasoningEffort = false;
+				}
+
+				models.push({
+					id: modelId,
+					name: m.name || modelId,
+					api: "openai-completions",
+					provider: "alibaba-token-plan",
+					baseUrl: alibabaTokenPlanBaseUrl,
+					compat,
 					reasoning: m.reasoning === true,
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {

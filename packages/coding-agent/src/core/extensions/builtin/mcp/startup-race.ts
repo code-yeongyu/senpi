@@ -9,6 +9,23 @@ import type { McpConnectionEntry } from "./service-types.ts";
 import { safeTimer } from "./wrap.ts";
 
 export const MCP_STARTUP_RACE_MS = 250;
+export const MCP_STARTUP_TIMEOUT_ENV = "SENPI_MCP_STARTUP_TIMEOUT_MS";
+
+/**
+ * Resolve the startup-race window (ms) a server's attach connect is bounded by.
+ * Precedence: the `SENPI_MCP_STARTUP_TIMEOUT_MS` env override (a global escape
+ * hatch) beats the per-server `startupTimeoutMs`, which beats the default. A
+ * non-numeric or negative env value is ignored; `0` is honored and makes the
+ * startup window non-blocking (connect is backgrounded immediately).
+ */
+export function resolveMcpStartupTimeoutMs(configured?: number): number {
+	const raw = process.env[MCP_STARTUP_TIMEOUT_ENV]?.trim();
+	if (raw !== undefined && raw.length > 0) {
+		const value = Number(raw);
+		if (Number.isFinite(value) && value >= 0) return value;
+	}
+	return configured ?? MCP_STARTUP_RACE_MS;
+}
 
 export type McpStartupRaceResult = "settled" | "timeout";
 export type McpToolRegistrar = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">;
@@ -19,6 +36,9 @@ interface RaceMcpStartupConnectOptions {
 	readonly registerDirectTools: (pi: McpToolRegistrar) => Promise<void>;
 	readonly serverConfig: ResolvedMcpServer["config"];
 	readonly shouldRefreshTools: () => boolean;
+	// Bounded startup window (ms) before the connect is backgrounded; defaults to
+	// MCP_STARTUP_RACE_MS when omitted.
+	readonly deadlineMs?: number;
 }
 
 export async function raceMcpStartupConnect(options: RaceMcpStartupConnectOptions): Promise<void> {
@@ -26,7 +46,7 @@ export async function raceMcpStartupConnect(options: RaceMcpStartupConnectOption
 		options.entry,
 		connectAndRefreshMcpCatalog(options.entry, options.serverConfig),
 	);
-	const result = await waitForMcpStartupRace(connect);
+	const result = await waitForMcpStartupRace(connect, options.deadlineMs);
 	if (result === "settled" || options.pi === undefined) return;
 	void connect.then(() => refreshMcpToolsAfterStartupRace(options));
 }

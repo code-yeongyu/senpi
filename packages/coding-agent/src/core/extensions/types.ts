@@ -290,6 +290,30 @@ export interface ExtensionUIContext {
 // Extension Context
 // ============================================================================
 
+export interface RetryFallbackSettings {
+	modelFallback: boolean;
+	chains: Readonly<Record<string, readonly string[]>>;
+	revertPolicy: "cooldown-expiry" | "never";
+}
+
+export interface RetryFallbackStatus {
+	active: boolean;
+	currentModel?: string;
+	originalSelector?: string;
+	pinned: boolean;
+}
+
+/** Narrow session-owned settings access for extensions that manage retry fallback. */
+export interface ExtensionSessionSettings {
+	getRetryFallbackSettings(): RetryFallbackSettings;
+	setFallbackChain(key: string, entries: readonly string[]): Promise<void>;
+	removeFallbackChain(key: string): Promise<void>;
+	setModelFallbackEnabled(enabled: boolean): Promise<void>;
+	setFallbackRevertPolicy(policy: "cooldown-expiry" | "never"): Promise<void>;
+	reload(): Promise<void>;
+	getFallbackStatus(): RetryFallbackStatus | undefined;
+}
+
 export interface ContextUsage {
 	/** Estimated context tokens, or null if unknown (e.g. right after compaction, before next LLM response). */
 	tokens: number | null;
@@ -359,12 +383,22 @@ export interface ExtensionContext {
 	abort(): void;
 	/** Whether there are queued messages waiting */
 	hasPendingMessages(): boolean;
+	/**
+	 * Request a full session reload when the host provides a reload action.
+	 * Interactive hosts may resolve without reloading while streaming or compacting, so
+	 * resolution alone does not confirm that a reload occurred.
+	 */
+	requestReload?(): Promise<void>;
+	/** Whether session compaction or branch summarization is currently running. */
+	isCompacting?(): boolean;
 	/** Gracefully shutdown pi and exit. Available in all contexts. */
 	shutdown(): void;
 	/** Get current context usage for the active model. */
 	getContextUsage(): ContextUsage | undefined;
 	/** Get resolved compaction settings from global/project/user overrides. */
 	getCompactionSettings(): CompactionPreparation["settings"];
+	/** Manage retry fallback through the SettingsManager owned by this session. */
+	sessionSettings: ExtensionSessionSettings;
 	/** Trigger compaction without awaiting completion. */
 	compact(options?: CompactOptions): void;
 	/** Start user-visible compaction feedback before an extension has a precomputed summary to apply. */
@@ -659,25 +693,45 @@ export interface SessionBeforeCompactEvent {
 	signal: AbortSignal;
 }
 
-/** Fired after context compaction. Rejections keep `reason` as the route source and explain why via `rejectionCause`. */
-export interface SessionCompactEvent {
+/**
+ * Fired after context compaction, including rejections. Discriminated on
+ * `accepted` so extension handlers get correct narrowing: only accepted events
+ * carry a `compactionEntry`; rejected events carry the `rejectionCause`. Prior
+ * to plan Section 1 the rejected shape was never emitted and its bookkeeping
+ * branches in builtin extensions were dead code.
+ */
+export type SessionCompactEvent = SessionCompactAcceptedEvent | SessionCompactRejectedEvent;
+
+export interface SessionCompactAcceptedEvent {
 	type: "session_compact";
 	/** Route source that requested compaction. Never source-swap this on rejection. */
 	reason: CompactionReason;
 	/** Unique identifier tying before/after compaction events for one request. */
 	requestId: string;
-	/** Whether the compaction result was accepted and appended to the session. */
-	accepted: boolean;
-	/**
-	 * Optional rejection explanation, only set when `accepted` is false.
-	 * Example: an extension cancelling manual compaction emits
-	 * `{ reason: "manual", accepted: false, rejectionCause: "cancelled-by-extension" }`, never `{ reason: "extension" }`.
-	 */
-	rejectionCause?: CompactionRejectionCause;
+	accepted: true;
+	rejectionCause?: never;
+	/** Appended compaction entry. Always present on accepted events. */
 	compactionEntry: CompactionEntry;
 	fromExtension: boolean;
 	/** True when the aborted turn is retried after this compaction (overflow recovery) */
 	willRetry: boolean;
+}
+
+export interface SessionCompactRejectedEvent {
+	type: "session_compact";
+	reason: CompactionReason;
+	requestId: string;
+	accepted: false;
+	/**
+	 * Why this compaction attempt was rejected. Example: an extension cancelling
+	 * manual compaction emits
+	 * `{ reason: "manual", accepted: false, rejectionCause: "cancelled-by-extension" }`,
+	 * never `{ reason: "extension" }`.
+	 */
+	rejectionCause: CompactionRejectionCause;
+	compactionEntry?: undefined;
+	fromExtension: false;
+	willRetry: false;
 }
 
 /** Fired before an extension runtime is torn down due to quit, reload, or session replacement. */
@@ -1200,6 +1254,19 @@ export interface SessionBeforeForkResult {
 export interface SessionBeforeCompactResult {
 	cancel?: boolean;
 	compaction?: CompactionResult;
+	/**
+	 * Optional structured cause when cancelling. Threaded into the
+	 * `compaction_end` event's `rejectionCause` and reused for extension
+	 * bookkeeping (circuit breaker, per-turn cap, etc.). Defaults to
+	 * `"cancelled-by-extension"`.
+	 */
+	rejectionCause?: CompactionRejectionCause;
+	/**
+	 * Optional human-readable reason threaded into the `compaction_end` event's
+	 * `errorMessage`. Prefer a short imperative sentence ("per-turn compaction
+	 * cap reached", "circuit breaker cooling down (2s left)").
+	 */
+	reason?: string;
 }
 
 export interface SessionBeforeTreeResult {
@@ -1248,6 +1315,8 @@ export interface RegisteredCommand {
 	name: string;
 	sourceInfo: SourceInfo;
 	description?: string;
+	/** Compact usage hint shown alongside the command in compatible UIs. */
+	argumentHint?: string;
 	getArgumentCompletions?: (argumentPrefix: string) => AutocompleteItem[] | null | Promise<AutocompleteItem[] | null>;
 	handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 }
@@ -1578,6 +1647,8 @@ export interface ProviderModelConfig {
 	baseUrl?: string;
 	/** Whether the model supports extended thinking. */
 	reasoning: boolean;
+	/** Whether supported text-encoded tool calls should be recovered from assistant text. */
+	recoverTextToolCalls?: boolean;
 	/** Maps pi thinking levels to provider/model-specific values; null marks a level unsupported. */
 	thinkingLevelMap?: Model<Api>["thinkingLevelMap"];
 	/** Supported input types. */
@@ -1790,9 +1861,11 @@ export interface ExtensionContextActions {
 	getSignal: () => AbortSignal | undefined;
 	abort: () => void;
 	hasPendingMessages: () => boolean;
+	isCompacting: () => boolean;
 	shutdown: () => void;
 	getContextUsage: () => ContextUsage | undefined;
 	getCompactionSettings: () => CompactionPreparation["settings"];
+	sessionSettings: ExtensionSessionSettings;
 	compact: (options?: CompactOptions) => void;
 	beginCompaction?: (options: BeginCompactionOptions) => AbortSignal | undefined;
 	updateCompaction?: (options: UpdateCompactionOptions) => void;

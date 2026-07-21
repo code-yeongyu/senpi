@@ -148,6 +148,7 @@ function serverConfig(overrides: Partial<McpServerConfig>): McpServerConfig {
 		lifecycle: "lazy",
 		connectTimeoutMs: 4000,
 		requestTimeoutMs: 4000,
+		startupTimeoutMs: 250,
 		idleTimeoutMin: 0,
 		exposure: "auto",
 		logLevel: "info",

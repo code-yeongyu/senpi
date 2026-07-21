@@ -40,6 +40,7 @@ export class TerminalRuntimeSession {
 	private droppedChars = 0;
 	private consumed = 0;
 	private readonly waiters = new Set<OutputWaiter>();
+	private readonly outputListeners = new Set<(chunk: string) => void>();
 	private unsubscribeData: (() => void) | null = null;
 
 	constructor(command: string, options: TerminalRuntimeOptions) {
@@ -50,7 +51,17 @@ export class TerminalRuntimeSession {
 			scrollback: options.scrollback ?? DEFAULT_SCROLLBACK,
 		});
 		this.session = new TerminalSession(options);
-		this.unsubscribeData = this.session.onData((chunk) => this.ingest(chunk));
+		this.unsubscribeData = this.session.onData((chunk) => {
+			const text = this.ingest(chunk);
+			if (text.length === 0) return;
+			for (const listener of this.outputListeners) {
+				try {
+					listener(text);
+				} catch {
+					// Output observers must not interfere with the session's ingest path.
+				}
+			}
+		});
 		this.session.onExit(() => this.settleWaiters("exited"));
 		this.session.start();
 	}
@@ -72,9 +83,9 @@ export class TerminalRuntimeSession {
 		return this.droppedChars + this.buffer.length;
 	}
 
-	private ingest(chunk: Uint8Array): void {
+	private ingest(chunk: Uint8Array): string {
 		const text = this.decoder.decode(chunk, { stream: true });
-		if (text.length === 0) return;
+		if (text.length === 0) return text;
 		void this.screen.feed(text);
 		this.buffer += text;
 		if (this.buffer.length > MAX_SESSION_OUTPUT_CHARS) {
@@ -86,6 +97,13 @@ export class TerminalRuntimeSession {
 			waiter.buffer += text;
 			if (waiter.regex.test(waiter.buffer)) this.resolveWaiter(waiter, "matched");
 		}
+		return text;
+	}
+
+	/** Subscribe to decoded output without affecting the read cursor. */
+	onOutput(listener: (chunk: string) => void): () => void {
+		this.outputListeners.add(listener);
+		return () => this.outputListeners.delete(listener);
 	}
 
 	/** Return output produced since the last read and advance the read cursor. */
@@ -143,6 +161,7 @@ export class TerminalRuntimeSession {
 	dispose(): void {
 		this.unsubscribeData?.();
 		this.unsubscribeData = null;
+		this.outputListeners.clear();
 		this.settleWaiters(this.exited ? "exited" : "timeout");
 		this.screen.dispose();
 	}

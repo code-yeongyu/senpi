@@ -15,6 +15,64 @@
 
 - LOW: `api/openai-responses-shared.ts` output-slot creation and `response.output_item.done` finalization.
 
+||||||| 9ee0c4a3e
+## 2026-07-22 - Omit non-"fc" item ids when replaying tool calls as function_call
+
+- `api/openai-responses-shared.ts` `convertResponsesMessages()`: a `function_call` input
+  item's `id` is now emitted only when it begins with "fc" — the Responses API rejects
+  anything else (`Invalid 'input[N].id': 'custom'. Expected an ID that begins with 'fc'.`).
+  Custom tool calls are stored with the `<call_id>|custom` sentinel (a `custom_tool_call`
+  output carries no server-issued item id), so replaying them without their freeform tool
+  registered — compaction summarization strips `freeform` from its tool list — previously
+  sent `id: "custom"` and hard-failed the whole request, tripping the compaction circuit
+  breaker. Omitting mirrors the existing different-model pairing-validation skip;
+  server-issued `fc_…` ids still replay unchanged.
+- `../test/openai-responses-custom-tools.test.ts`: sentinel omission plus a pin that
+  genuine `fc` ids survive same-model replay.
+
+### Expected merge conflict zones
+
+- LOW: `convertResponsesMessages` function_call emission branch.
+
+## 2026-07-20 - Typed classifier stop details
+
+- Added optional typed refusal/sensitive stop details to assistant messages, preserving Anthropic classifier outcomes through streaming and faux provider errors.
+- Exported `isClassifierRefusal` and excluded classifier outcomes from generic same-model retry classification.
+
+
+## 2026-07-20 - Live tool-result pairing by source position + Retry unsigned Anthropic thinking replay as text
+
+### What changed and why
+
+#### Live tool-result pairing by source position
+
+- `api/transform-messages.ts`: live history normalization now indexes tool results and replayable tool calls by
+  source position. Each tool call consumes the earliest still-unconsumed matching result after its declaring
+  assistant, emits that result adjacent to the assistant turn, or emits exactly one synthetic error result.
+  A repeated ID establishes a new pairing window, so a delayed result cannot attach to an earlier call or be
+  replayed twice across an intervening user turn. Aborted and errored assistant turns remain excluded.
+- `../test/transform-messages-copilot-openai-to-anthropic.test.ts`: covers delayed normalized results across a
+  user turn, partial multi-call results, reused IDs with prior orphaned results, trailing unresolved calls, and
+  Anthropic-required tool-result adjacency.
+
+#### Retry unsigned Anthropic thinking replay as text
+
+- `AnthropicMessagesCompat.unsignedThinkingReplay` now explicitly controls replay of thinking blocks without a usable signature. The safe default is text replay for first-party/signing endpoints; the legacy `allowEmptySignature` flag remains an alias for Kimi-compatible empty-signature replay.
+- When an endpoint rejects an empty replay signature with a pre-stream HTTP 400 containing `Invalid signature in thinking block`, the Anthropic adapter rebuilds the request with unsigned thinking demoted to text and retries exactly once. That learned fallback is scoped to the session, base URL, and model ID, without mutating shared `Model` metadata.
+- Signed and redacted thinking replay remains byte-for-byte/native-state preserving. Non-signature 400s and errors after SSE content begins do not retry.
+
+### Files modified
+
+- `api/transform-messages.ts`
+- `../test/transform-messages-copilot-openai-to-anthropic.test.ts`
+- `types.ts`
+- `api/anthropic-messages.ts`
+- `../test/anthropic-unsigned-thinking-replay.test.ts`
+
+### Expected merge conflict zones
+
+- LOW: `api/transform-messages.ts` second-pass tool-result normalization.
+- LOW: `AnthropicMessagesCompat` replay options and Anthropic request creation.
 ## 2026-07-17 - Video input modality for Kimi K3 (kimi-coding)
 
 ### What changed and why
@@ -49,6 +107,19 @@
 - MEDIUM: `api/anthropic-messages.ts` `convertContentBlocks` / `convertToolResult` if upstream reworks
   content serialization.
 - LOW: `api/transform-messages.ts` `downgradeUnsupportedImages`.
+
+## 2026-07-19 - Name-preserving apply_patch replay characterization and policy coverage
+
+### What changed and why
+
+- Added characterization + policy-table coverage for replaying mixed edit/apply_patch
+  history across every KnownApi: Responses targets serialize a historical apply_patch call
+  as `custom_tool_call` when a freeform apply_patch is declared and as `function_call`
+  (name preserved, JSON `{input}` args) otherwise; Completions/Anthropic/Google/Bedrock/
+  Mistral/pi-messages keep the stored name with native JSON-typed call entries.
+- No production change was required: existing converters already implement the
+  name-preserving truth table. Tests pin both branches plus per-API shape assertions so a
+  future regression cannot silently rename or drop historical patch calls.
 
 ## 2026-07-17 - Truncation-recovery contract for ToolCall and toolcall_end
 

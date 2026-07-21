@@ -22,6 +22,36 @@ codex-aligned tool naming, and budget-driven behavior removed. An optional
 - LOW in `types.ts` and `store.ts` around the additive compatibility field and stored-goal parser.
 - NONE in the tool schemas, continuation policy, usage accounting, or status model.
 
+## Mid-turn token usage accounting via message_end (2026-07-20)
+
+### What changed
+- New `turn-usage.ts`: `TurnUsageTracker` accumulates assistant usage from `message_end` events
+  (`pending`), tracks what mid-turn checkpoints already stored (`flushed`), and at `agent_end` accounts
+  only `collectAssistantUsage(messages) - flushed` (clamped per field) so nothing is double counted.
+- `index.ts`: subscribes to `message_end`, resets the tracker on `agent_start`, and
+  `accountCurrentAgentTurn(ctx, mode, agentRunMessages?)` now sources usage from the tracker
+  (pending for mid-turn checkpoints, remaining for `agent_end`) instead of taking a usage argument.
+  `beginAgentGoalAccounting` discards pending usage when a new accounting window opens so a goal
+  created or replaced mid-turn is not charged tokens streamed before it existed (matching the
+  existing time-window semantics).
+- `tool-registration.ts` / `command-registration.ts`: `accountCurrentAgentTurn` deps drop the
+  `EMPTY_USAGE` argument; `get_goal` checkpoints before reading so its snapshot carries fresh
+  tokens and elapsed time.
+
+### Why
+- Long goal-driven runs complete inside one agent turn; usage was only harvested at `agent_end`,
+  so `update_goal`/`get_goal` reported `tokensUsed: 0` after hours of work (observed: a completed
+  goal reporting `tokensUsed: 0, timeUsedSeconds: 6652` while the session had consumed ~379K tokens).
+
+### Why extension system couldn't handle this differently
+- `message_end` already delivers each finalized assistant message with usage through the public
+  `pi.on` API; the fix is entirely builtin-local with no core change.
+
+### Expected merge conflict zones on next upstream sync
+- MEDIUM in `index.ts` around `accountCurrentAgentTurn`/`agent_end` if standalone `pi-goal`
+  reworks usage accounting; the standalone package needs the same tracker on its next sync.
+- LOW in `tool-registration.ts`/`command-registration.ts` deps signatures.
+
 ## Live elapsed footer ticker (2026-07-17)
 
 ### What changed

@@ -66,6 +66,8 @@ it("starts a replacement-session flush while an old transfer remains pending", a
 		readonly pendingMessagesContainer: { clear(): void };
 		streamingComponent: undefined;
 		streamingMessage: undefined;
+		readonly streamingReveal: { stop: () => void };
+		readonly toolResultReveal: { stop: () => void };
 		readonly clearPendingTools: () => void;
 		readonly clearToolHookStatuses: () => void;
 		readonly renderInitialMessages: () => void;
@@ -91,6 +93,8 @@ it("starts a replacement-session flush while an old transfer remains pending", a
 		pendingMessagesContainer: { clear: vi.fn() },
 		streamingComponent: undefined,
 		streamingMessage: undefined,
+		streamingReveal: { stop: vi.fn() },
+		toolResultReveal: { stop: vi.fn() },
 		clearPendingTools: vi.fn(),
 		clearToolHookStatuses: vi.fn(),
 		renderInitialMessages: vi.fn(),
@@ -152,6 +156,8 @@ it("does not render an accepted old-session prompt failure after session rebind"
 		readonly pendingMessagesContainer: { clear(): void };
 		streamingComponent: undefined;
 		streamingMessage: undefined;
+		readonly streamingReveal: { stop: () => void };
+		readonly toolResultReveal: { stop: () => void };
 		readonly clearPendingTools: () => void;
 		readonly clearToolHookStatuses: () => void;
 		readonly renderInitialMessages: () => void;
@@ -178,6 +184,8 @@ it("does not render an accepted old-session prompt failure after session rebind"
 		pendingMessagesContainer: { clear: vi.fn() },
 		streamingComponent: undefined,
 		streamingMessage: undefined,
+		streamingReveal: { stop: vi.fn() },
+		toolResultReveal: { stop: vi.fn() },
 		clearPendingTools: vi.fn(),
 		clearToolHookStatuses: vi.fn(),
 		renderInitialMessages: vi.fn(),
