@@ -15,7 +15,6 @@
 
 - LOW: `api/openai-responses-shared.ts` output-slot creation and `response.output_item.done` finalization.
 
-||||||| 9ee0c4a3e
 ## 2026-07-22 - Omit non-"fc" item ids when replaying tool calls as function_call
 
 - `api/openai-responses-shared.ts` `convertResponsesMessages()`: a `function_call` input

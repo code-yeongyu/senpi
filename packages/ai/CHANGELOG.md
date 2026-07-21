@@ -6,10 +6,13 @@
 
 ### Added
 
+- Added the Qwen Token Plan providers for international and China regions, refreshed generated model/image catalogs, and added offline model-data validation for catalog-backed builds.
 - Added Claude text tool-call recovery for leaked bare or `antml:` invokes, with code/thinking exclusions, eager streaming projection, native-call ordering, fail-closed collision and abort handling, bounded parsing, and native history replay support.
 - Added the `alibaba-token-plan` provider for Alibaba Cloud Model Studio prepaid Token Plan (OpenAI-compatible `ap-southeast-1` endpoint) with a generated Qwen/GLM/DeepSeek/Kimi/MiniMax catalog, per-family thinking compat, `ALIBABA_TOKEN_PLAN_API_KEY` env detection, and opt-in live coverage across the provider test matrix.
 
 ### Changed
+
+- Merged upstream v0.81.1 AI runtime updates, including the side-effect-free API registry, shared text utilities, retry helpers, OpenAI Responses replay compatibility, and Kimi K3 thinking-level metadata fixes.
 
 ### Fixed
 
