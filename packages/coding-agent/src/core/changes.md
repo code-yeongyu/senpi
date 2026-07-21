@@ -1,5 +1,45 @@
 # changes
 
+## Streaming steer/followUp submissions bypass the session-work barrier (2026-07-21)
+
+### What changed
+
+- `agent-session.ts` (`prompt()`): a submission with a `streamingBehavior` while a run is active and not
+  compacting now queues immediately instead of awaiting `_waitForSettledSessionWork()`. Scheduled
+  queued-message continuations (goal chains, queued follow-ups) hold the `SessionWorkBarrier` for the
+  entire remaining run, so the old gate trapped typed input inside `prompt()` — invisible, unqueued, and
+  undelivered — until the whole chain settled or the user pressed Esc.
+- If the run ends while the bypassed input is being expanded, `prompt()` re-serializes with remaining
+  session work and re-queues when a scheduled continuation started a new run in the meantime.
+
+### Why extension system couldn't handle this alone
+
+- The trap sits between core-owned `prompt()` serialization and the core continuation scheduler; both are
+  private `AgentSession` lifecycle boundaries.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` `prompt()` entry serialization and the streaming queue dispatch branch.
+
+## Memoized materialized session views (2026-07-21)
+
+### What changed
+
+- `session-manager.ts`: added a monotonic `mutationCount` bumped by every mutator (`_appendEntry`, `branch()`,
+  `resetLeaf()`, `setSessionFile`, `newSession`, `createBranchedSession`). `getEntries()` is memoized on
+  `mutationCount`, no-arg `getBranch()` on `(leafId, mutationCount)` (explicit `fromId` bypasses), and
+  `getSessionName()` is O(1) via a cached value maintained on `appendSessionInfo`/`_buildIndex` (empty name still
+  clears the title). `getEntries()` now returns a shared cached array callers must not mutate.
+
+### Why extension system couldn't handle this alone
+
+- The mutation surface and resident-store materialization are private to `SessionManager`; external wrappers cannot
+  observe every invalidation point.
+
+### Expected merge conflict zones
+
+- LOW: private fields and the listed getters; upstream rarely touches `SessionManager` internals.
+
 ## Smooth streaming settings (2026-07-20)
 
 ### What changed

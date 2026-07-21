@@ -167,6 +167,12 @@ type ActiveToolLifecycleThis = TerminalTitleThis & {
 		finish(id: string): void;
 		flushAll(): void;
 	};
+	toolResultReveal: {
+		update(id: string, component: unknown, partialResult: unknown): boolean;
+		finish(id: string): void;
+		stop(): void;
+		refresh(): void;
+	};
 	toolOutputExpanded: boolean;
 	workingMessage: string | undefined;
 	workingMessageBeforeActiveTool: string | undefined;
@@ -376,6 +382,12 @@ describe("InteractiveMode terminal title state", () => {
 				flush: vi.fn(() => false),
 				finish: vi.fn(),
 				flushAll: vi.fn(),
+			},
+			toolResultReveal: {
+				update: vi.fn(() => false),
+				finish: vi.fn(),
+				stop: vi.fn(),
+				refresh: vi.fn(),
 			},
 			toolOutputExpanded: false,
 			workingMessage: "Thinking",

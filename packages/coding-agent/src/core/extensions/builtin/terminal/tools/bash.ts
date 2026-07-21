@@ -1,4 +1,5 @@
 import { type Static, Type } from "typebox";
+import type { AgentToolUpdateCallback } from "../../../types.ts";
 import { formatTerminalToolOutput } from "../output-format.ts";
 import type { TerminalRuntimeSession } from "../runtime-session.ts";
 import {
@@ -43,6 +44,62 @@ function delay(ms: number): Promise<void> {
 }
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
+const BASH_UPDATE_THROTTLE_MS = 100;
+
+export interface ThrottledEmitter {
+	schedule(): void;
+	flush(): void;
+	dispose(): void;
+}
+
+/**
+ * Emit immediately, then coalesce subsequent schedules into one trailing update.
+ * `dispose` intentionally discards a pending update so callers can stop cleanly.
+ */
+export function createThrottledEmitter(emit: () => void, throttleMs = BASH_UPDATE_THROTTLE_MS): ThrottledEmitter {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	let dirty = false;
+	let lastEmissionAt: number | undefined;
+
+	const emitIfDirty = () => {
+		if (!dirty) return;
+		dirty = false;
+		lastEmissionAt = Date.now();
+		emit();
+	};
+
+	const clearTimer = () => {
+		if (timer !== undefined) {
+			clearTimeout(timer);
+			timer = undefined;
+		}
+	};
+
+	return {
+		schedule() {
+			dirty = true;
+			if (timer !== undefined) return;
+			const elapsed = lastEmissionAt === undefined ? throttleMs : Date.now() - lastEmissionAt;
+			if (elapsed >= throttleMs) {
+				emitIfDirty();
+				return;
+			}
+			timer = setTimeout(() => {
+				timer = undefined;
+				emitIfDirty();
+			}, throttleMs - elapsed);
+		},
+		flush() {
+			clearTimer();
+			emitIfDirty();
+		},
+		dispose() {
+			clearTimer();
+			dirty = false;
+			lastEmissionAt = undefined;
+		},
+	};
+}
 
 type ForegroundWaitOutcome = "exited" | "abort_grace" | "timeout_grace";
 
@@ -99,6 +156,7 @@ async function runForeground(
 	rows: number,
 	signal: AbortSignal | undefined,
 	cwd: string | undefined,
+	onUpdate: AgentToolUpdateCallback | undefined,
 ): Promise<TerminalToolResult> {
 	if (signal?.aborted) return errorResult("Command aborted");
 	const timeoutMs = input.timeout !== undefined ? Math.trunc(input.timeout * 1000) : undefined;
@@ -110,6 +168,16 @@ async function runForeground(
 		cwd,
 		envOverrides: FOREGROUND_ENV_OVERRIDES,
 	});
+	const startedAt = Date.now();
+	const activity = `running ${input.command.slice(0, 80)}`;
+	const emitOutputUpdate = () => {
+		const text = formatTerminalToolOutput(runtime.fullOutput()).text.slice(-2000);
+		onUpdate?.({ content: [{ type: "text", text }], details: { progress: { activity, startedAt } } });
+	};
+	const updateEmitter = onUpdate ? createThrottledEmitter(emitOutputUpdate) : undefined;
+	onUpdate?.({ content: [], details: undefined });
+	const unsubscribeOutput = onUpdate ? runtime.onOutput(() => updateEmitter?.schedule()) : undefined;
+
 	// Interrupt means "stop now": SIGKILL the whole process group in one shot.
 	// kill() is one-shot idempotent, so a gentle SIGTERM first would block any
 	// escalation, and a SIGTERM-ignoring command would pin the agent forever.
@@ -123,6 +191,9 @@ async function runForeground(
 		outcome = await raceExitWithKillGrace(runtime, signal, timeoutMs);
 	} finally {
 		signal?.removeEventListener("abort", onAbort);
+		unsubscribeOutput?.();
+		updateEmitter?.flush();
+		updateEmitter?.dispose();
 	}
 
 	if (outcome !== "exited") {
@@ -191,14 +262,14 @@ export function createPtyBashTool(ctx: TerminalToolContext) {
 			_toolCallId: string,
 			input: PtyBashInput,
 			signal?: AbortSignal,
-			_onUpdate?: unknown,
+			onUpdate?: AgentToolUpdateCallback,
 			execCtx?: { cwd?: string },
 		): Promise<TerminalToolResult> {
 			const cols = resolveDimension(input.cols, ctx.defaultCols || DEFAULT_COLS);
 			const rows = resolveDimension(input.rows, ctx.defaultRows || DEFAULT_ROWS);
 			const cwd = execCtx?.cwd;
 			if (input.run_in_background) return runBackground(ctx, input, cols, rows, cwd);
-			return runForeground(ctx, input, cols, rows, signal, cwd);
+			return runForeground(ctx, input, cols, rows, signal, cwd, onUpdate);
 		},
 	};
 }

@@ -36,14 +36,7 @@ export function renderWebfetchResult(
 	if (options.isPartial) {
 		const details = result.details;
 		if (isWebfetchProgressDetails(details)) {
-			return new Text(
-				theme.fg(
-					"warning",
-					`Fetching ${shorten(details.url, URL_BUDGET)} as ${details.format} (${details.timeoutSeconds}s)`,
-				),
-				0,
-				0,
-			);
+			return new Text(theme.fg("warning", formatProgress(details)), 0, 0);
 		}
 		return new Text(theme.fg("warning", "Fetching..."), 0, 0);
 	}
@@ -117,8 +110,26 @@ function parseWebfetchArgs(args: unknown): WebfetchArgs {
 	return webfetchArgs;
 }
 
+function formatProgress(details: WebfetchProgressDetails): string {
+	const url = shorten(details.url, URL_BUDGET);
+	if (details.phase === "downloading") {
+		const downloaded = formatBytes(details.bytesRead ?? 0);
+		const total = details.totalBytes === undefined ? "" : ` / ${formatBytes(details.totalBytes)}`;
+		return `Downloading ${url}: ${downloaded}${total}`;
+	}
+	if (details.phase === "converting") {
+		return `Converting ${url} to ${details.format}`;
+	}
+	return `Fetching ${url} as ${details.format} (${details.timeoutSeconds}s)`;
+}
+
 function isWebfetchProgressDetails(details: WebfetchRenderDetails | unknown): details is WebfetchProgressDetails {
-	return typeof details === "object" && details !== null && "phase" in details && details.phase === "fetching";
+	return (
+		typeof details === "object" &&
+		details !== null &&
+		"phase" in details &&
+		(details.phase === "fetching" || details.phase === "downloading" || details.phase === "converting")
+	);
 }
 
 function isWebfetchDetails(details: WebfetchRenderDetails | unknown): details is WebfetchDetails {

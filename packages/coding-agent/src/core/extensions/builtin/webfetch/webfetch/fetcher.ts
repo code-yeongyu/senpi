@@ -25,6 +25,7 @@ export interface FetchOptions {
 	format: WebfetchFormat;
 	timeoutSeconds?: number;
 	signal?: AbortSignal;
+	onProgress?: (bytesRead: number, totalBytes?: number) => void;
 }
 
 export interface FetchResult {
@@ -70,7 +71,7 @@ export async function fetchUrl(options: FetchOptions): Promise<FetchResult> {
 			timeoutMs,
 		});
 
-		return await readHttpResponse(response, controller.signal);
+		return await readHttpResponse(response, controller.signal, options.onProgress);
 	} finally {
 		clearTimeout(timeout);
 		removeAbortForwarder();
@@ -180,9 +181,13 @@ async function requestUrl(options: RequestUrlOptions): Promise<HttpResponse> {
 	throw new WebfetchAbortError("Redirect resolution aborted");
 }
 
-async function readHttpResponse(response: HttpResponse, signal: AbortSignal): Promise<FetchResult> {
+async function readHttpResponse(
+	response: HttpResponse,
+	signal: AbortSignal,
+	onProgress: FetchOptions["onProgress"],
+): Promise<FetchResult> {
 	await rejectOversizedContentLength(response);
-	const body = await readResponseBody(response, signal);
+	const body = await readResponseBody(response, signal, onProgress);
 	return {
 		url: response.url,
 		status: response.status,
@@ -220,8 +225,13 @@ async function discardBody(body: ResponseBodyStream): Promise<void> {
 	}
 }
 
-async function readResponseBody(response: HttpResponse, signal: AbortSignal): Promise<Uint8Array> {
+async function readResponseBody(
+	response: HttpResponse,
+	signal: AbortSignal,
+	onProgress: FetchOptions["onProgress"],
+): Promise<Uint8Array> {
 	const chunks: Uint8Array[] = [];
+	const totalBytes = parseContentLength(response);
 	let total = 0;
 
 	try {
@@ -237,6 +247,7 @@ async function readResponseBody(response: HttpResponse, signal: AbortSignal): Pr
 				response.body.destroy();
 				throw new WebfetchResponseTooLargeError("Response too large (exceeds 5MB limit)");
 			}
+			onProgress?.(total, totalBytes);
 		}
 	} catch (error) {
 		if (signal.aborted) {
@@ -252,6 +263,13 @@ async function readResponseBody(response: HttpResponse, signal: AbortSignal): Pr
 		offset += chunk.length;
 	}
 	return body;
+}
+
+function parseContentLength(response: HttpResponse): number | undefined {
+	const contentLength = getHeader(response.headers, "content-length");
+	if (contentLength === "") return undefined;
+	const parsed = Number.parseInt(contentLength, 10);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
 function toUint8Array(chunk: unknown): Uint8Array {
