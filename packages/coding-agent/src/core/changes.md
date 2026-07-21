@@ -1,5 +1,26 @@
 # changes
 
+## Streaming steer/followUp submissions bypass the session-work barrier (2026-07-21)
+
+### What changed
+
+- `agent-session.ts` (`prompt()`): a submission with a `streamingBehavior` while a run is active and not
+  compacting now queues immediately instead of awaiting `_waitForSettledSessionWork()`. Scheduled
+  queued-message continuations (goal chains, queued follow-ups) hold the `SessionWorkBarrier` for the
+  entire remaining run, so the old gate trapped typed input inside `prompt()` — invisible, unqueued, and
+  undelivered — until the whole chain settled or the user pressed Esc.
+- If the run ends while the bypassed input is being expanded, `prompt()` re-serializes with remaining
+  session work and re-queues when a scheduled continuation started a new run in the meantime.
+
+### Why extension system couldn't handle this alone
+
+- The trap sits between core-owned `prompt()` serialization and the core continuation scheduler; both are
+  private `AgentSession` lifecycle boundaries.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` `prompt()` entry serialization and the streaming queue dispatch branch.
+
 ## Memoized materialized session views (2026-07-21)
 
 ### What changed
