@@ -367,6 +367,7 @@ export class ExtensionRunner {
 	private waitForIdleFn: () => Promise<void> = async () => {};
 	private abortFn: () => void = () => {};
 	private hasPendingMessagesFn: () => boolean = () => false;
+	private isCompactingFn: () => boolean = () => false;
 	private getContextUsageFn: () => ContextUsage | undefined = () => undefined;
 	private getCompactionSettingsFn: ExtensionContextActions["getCompactionSettings"] = () => ({
 		enabled: true,
@@ -399,7 +400,8 @@ export class ExtensionRunner {
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
 	private switchSessionHandler: SwitchSessionHandler = async () => ({ cancelled: false });
-	private reloadHandler: ReloadHandler = async () => {};
+	private reloadHandler: ReloadHandler | undefined;
+	private reloadRequestPromise: Promise<void> | undefined;
 	private shutdownHandler: ShutdownHandler = () => {};
 	private shortcutDiagnostics: ResourceDiagnostic[] = [];
 	private commandDiagnostics: ResourceDiagnostic[] = [];
@@ -456,6 +458,7 @@ export class ExtensionRunner {
 		this.getSignalFn = contextActions.getSignal;
 		this.abortFn = contextActions.abort;
 		this.hasPendingMessagesFn = contextActions.hasPendingMessages;
+		this.isCompactingFn = contextActions.isCompacting;
 		this.shutdownHandler = contextActions.shutdown;
 		this.getContextUsageFn = contextActions.getContextUsage;
 		this.getCompactionSettingsFn = contextActions.getCompactionSettings;
@@ -537,7 +540,17 @@ export class ExtensionRunner {
 		this.forkHandler = async () => ({ cancelled: false });
 		this.navigateTreeHandler = async () => ({ cancelled: false });
 		this.switchSessionHandler = async () => ({ cancelled: false });
-		this.reloadHandler = async () => {};
+		this.reloadHandler = undefined;
+	}
+
+	private requestReload(): Promise<void> {
+		if (!this.reloadHandler) return Promise.resolve();
+		if (!this.reloadRequestPromise) {
+			this.reloadRequestPromise = this.reloadHandler().finally(() => {
+				this.reloadRequestPromise = undefined;
+			});
+		}
+		return this.reloadRequestPromise;
 	}
 
 	setUIContext(uiContext?: ExtensionUIContext, mode: ExtensionMode = "print"): void {
@@ -932,6 +945,14 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.hasPendingMessagesFn();
 			},
+			get requestReload() {
+				runner.assertActive();
+				return runner.reloadHandler ? () => runner.requestReload() : undefined;
+			},
+			isCompacting: () => {
+				runner.assertActive();
+				return runner.isCompactingFn();
+			},
 			shutdown: () => {
 				runner.assertActive();
 				runner.shutdownHandler();
@@ -1021,7 +1042,7 @@ export class ExtensionRunner {
 		};
 		context.reload = () => {
 			this.assertActive();
-			return this.reloadHandler();
+			return this.requestReload();
 		};
 		return context;
 	}

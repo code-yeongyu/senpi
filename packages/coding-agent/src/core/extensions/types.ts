@@ -383,6 +383,14 @@ export interface ExtensionContext {
 	abort(): void;
 	/** Whether there are queued messages waiting */
 	hasPendingMessages(): boolean;
+	/**
+	 * Request a full session reload when the host provides a reload action.
+	 * Interactive hosts may resolve without reloading while streaming or compacting, so
+	 * resolution alone does not confirm that a reload occurred.
+	 */
+	requestReload?(): Promise<void>;
+	/** Whether session compaction or branch summarization is currently running. */
+	isCompacting?(): boolean;
 	/** Gracefully shutdown pi and exit. Available in all contexts. */
 	shutdown(): void;
 	/** Get current context usage for the active model. */
@@ -1853,6 +1861,7 @@ export interface ExtensionContextActions {
 	getSignal: () => AbortSignal | undefined;
 	abort: () => void;
 	hasPendingMessages: () => boolean;
+	isCompacting: () => boolean;
 	shutdown: () => void;
 	getContextUsage: () => ContextUsage | undefined;
 	getCompactionSettings: () => CompactionPreparation["settings"];

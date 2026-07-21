@@ -26,6 +26,7 @@ import {
 } from "../src/core/extensions/runner.ts";
 import type {
 	ExtensionActions,
+	ExtensionContext,
 	ExtensionContextActions,
 	ExtensionUIContext,
 	ProviderConfig,
@@ -142,6 +143,7 @@ describe("ExtensionRunner", () => {
 		getSignal: () => undefined,
 		abort: () => {},
 		hasPendingMessages: () => false,
+		isCompacting: () => false,
 		shutdown: () => {},
 		getContextUsage: () => undefined,
 		compact: () => {},
@@ -1499,6 +1501,67 @@ describe("ExtensionRunner", () => {
 			expect(modelRegistry.find("mixed-provider", "native-model")).toBeDefined();
 			expect(modelRegistry.find("mixed-provider", "instant-model")).toBeUndefined();
 			await expect(modelRegistry.refresh()).resolves.toBeUndefined();
+		});
+	});
+
+	describe("base context reload seam", () => {
+		it("exposes a wired reload handler to event contexts and coalesces concurrent requests", async () => {
+			const runtime = createExtensionRuntime();
+			let eventContext: ExtensionContext | undefined;
+			const extension = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("session_start", (_event, context) => {
+						eventContext = context;
+					});
+				},
+				tempDir,
+				createEventBus(),
+				runtime,
+			);
+			const runner = new ExtensionRunner([extension], runtime, tempDir, sessionManager, modelRegistry);
+			let releaseReload: (() => void) | undefined;
+			const reload = vi.fn(
+				() =>
+					new Promise<void>((resolve) => {
+						releaseReload = resolve;
+					}),
+			);
+
+			runner.bindCommandContext({
+				waitForIdle: async () => {},
+				newSession: async () => ({ cancelled: false }),
+				fork: async () => ({ cancelled: false }),
+				navigateTree: async () => ({ cancelled: false }),
+				switchSession: async () => ({ cancelled: false }),
+				reload,
+			});
+
+			await runner.emit({ type: "session_start", reason: "startup" });
+			expect(eventContext?.requestReload).toBeTypeOf("function");
+			const first = eventContext?.requestReload?.();
+			const second = eventContext?.requestReload?.();
+			expect(reload).toHaveBeenCalledTimes(1);
+			releaseReload?.();
+			await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
+		});
+
+		it("leaves requestReload undefined without a host reload action", () => {
+			const runtime = createExtensionRuntime();
+			const runner = new ExtensionRunner([], runtime, tempDir, sessionManager, modelRegistry);
+
+			expect(runner.createContext().requestReload).toBeUndefined();
+		});
+
+		it("reflects the bound compaction state", () => {
+			const runtime = createExtensionRuntime();
+			const runner = new ExtensionRunner([], runtime, tempDir, sessionManager, modelRegistry);
+			let compacting = true;
+
+			runner.bindCore(extensionActions, { ...extensionContextActions, isCompacting: () => compacting });
+			const context = runner.createContext();
+			expect(context.isCompacting?.()).toBe(true);
+			compacting = false;
+			expect(context.isCompacting?.()).toBe(false);
 		});
 	});
 

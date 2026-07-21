@@ -1958,6 +1958,8 @@ export class InteractiveMode {
 			signal: this.session.agent.signal,
 			abort: () => this.session.abort(),
 			hasPendingMessages: () => this.session.pendingMessageCount > 0,
+			requestReload: () => this.handleReloadCommand(),
+			isCompacting: () => this.session.isCompacting,
 			shutdown: () => {
 				this.shutdownRequested = true;
 			},
