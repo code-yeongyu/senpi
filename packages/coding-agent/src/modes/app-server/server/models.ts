@@ -335,11 +335,15 @@ function parseModelListParams(params: unknown): ModelListParams {
 	if (
 		limit !== undefined &&
 		limit !== null &&
-		(typeof limit !== "number" || !Number.isFinite(limit) || !Number.isInteger(limit))
+		(typeof limit !== "number" || !Number.isInteger(limit) || limit < 0 || limit > 0xffff_ffff)
 	) {
 		throw new RpcHandlerError({ code: -32600, message: "model/list received an invalid limit" });
 	}
-	return { cursor, limit, includeHidden: params.includeHidden === true };
+	const includeHidden = params.includeHidden;
+	if (includeHidden !== undefined && includeHidden !== null && typeof includeHidden !== "boolean") {
+		throw new RpcHandlerError({ code: -32600, message: "model/list received an invalid includeHidden" });
+	}
+	return { cursor, limit, includeHidden: includeHidden === true };
 }
 
 function parseRemoteControlClientListParams(params: unknown): RemoteControlClientListParams {
