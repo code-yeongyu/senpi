@@ -9,7 +9,13 @@ import {
 } from "./errors.ts";
 import type { Goal, GoalAccountingMode, GoalFile, GoalStoreRef, GoalUpdate, TokenUsageSnapshot } from "./types.ts";
 import { isRecord } from "./types.ts";
-import { validateObjective } from "./validation.ts";
+import {
+	isGoalStatus,
+	isNonNegativeSafeInteger,
+	resolveTokenBudget,
+	validateObjective,
+	validateTokenBudget,
+} from "./validation.ts";
 
 const STORE_VERSION = 1;
 
@@ -53,13 +59,13 @@ async function writeGoalFileAtomic(filePath: string, contents: string): Promise<
 	}
 }
 
-export async function createGoal(ref: GoalStoreRef, objective: string): Promise<Goal> {
+export async function createGoal(ref: GoalStoreRef, objective: string, tokenBudget?: number): Promise<Goal> {
 	if ((await readGoal(ref)) !== null) {
 		throw new GoalAlreadyExistsError("cannot create a new goal because this thread already has a goal");
 	}
 
 	const normalizedObjective = validateObjective(objective);
-	const now = nowSeconds();
+	const now = Math.trunc(Date.now() / 1000);
 	const goal: Goal = {
 		id: randomUUID(),
 		threadId: ref.threadId,
@@ -70,6 +76,7 @@ export async function createGoal(ref: GoalStoreRef, objective: string): Promise<
 		createdAt: now,
 		updatedAt: now,
 		lastStartedAt: now,
+		...(tokenBudget === undefined ? {} : { tokenBudget: validateTokenBudget(tokenBudget) }),
 	};
 	await writeGoal(ref, goal);
 	return goal;
@@ -80,9 +87,10 @@ export async function updateGoal(ref: GoalStoreRef, update: GoalUpdate): Promise
 	if (!current) throw new GoalNotFoundError("cannot update goal: no goal exists");
 
 	const objective = update.objective === undefined ? current.objective : validateObjective(update.objective);
-	const now = nowSeconds();
-	const hasObjectiveUpdate = update.objective !== undefined;
-	const replacesGoal = hasObjectiveUpdate && (objective !== current.objective || current.status === "complete");
+	const now = Math.trunc(Date.now() / 1000),
+		tokenBudget = resolveTokenBudget(current.tokenBudget, update.tokenBudget);
+	const hasObjectiveUpdate = update.objective !== undefined,
+		replacesGoal = hasObjectiveUpdate && (objective !== current.objective || current.status === "complete");
 	const requestedStatus = update.status ?? (hasObjectiveUpdate ? "active" : undefined);
 
 	if (replacesGoal) {
@@ -96,6 +104,7 @@ export async function updateGoal(ref: GoalStoreRef, update: GoalUpdate): Promise
 			timeUsedSeconds: 0,
 			createdAt: now,
 			updatedAt: now,
+			...(tokenBudget === undefined ? {} : { tokenBudget }),
 		};
 		if (status === "active") next.lastStartedAt = now;
 		if (status === "complete") next.completedAt = now;
@@ -110,6 +119,7 @@ export async function updateGoal(ref: GoalStoreRef, update: GoalUpdate): Promise
 		status,
 		updatedAt: now,
 	};
+	Object.assign(next, tokenBudget === undefined ? { tokenBudget: undefined } : { tokenBudget });
 
 	if (status === "active" && current.status !== "active") {
 		next.lastStartedAt = now;
@@ -145,7 +155,7 @@ export async function accountGoalUsage(
 	if (expectedGoalId !== undefined && goal.id !== expectedGoalId) return goal;
 	if (!canAccountGoalUsage(goal, mode)) return goal;
 
-	const now = nowSeconds();
+	const now = Math.trunc(Date.now() / 1000);
 	const next: Goal = {
 		...goal,
 		tokensUsed: goal.tokensUsed + goalTokenDeltaForUsage(usage),
@@ -255,6 +265,7 @@ function isGoal(value: unknown): value is Goal {
 		typeof value.threadId === "string" &&
 		typeof value.objective === "string" &&
 		isGoalStatus(value.status) &&
+		(value.tokenBudget === undefined || isNonNegativeSafeInteger(value.tokenBudget)) &&
 		isNonNegativeSafeInteger(value.tokensUsed) &&
 		isNonNegativeSafeInteger(value.timeUsedSeconds) &&
 		isNonNegativeSafeInteger(value.createdAt) &&
@@ -262,16 +273,4 @@ function isGoal(value: unknown): value is Goal {
 		(value.lastStartedAt === undefined || isNonNegativeSafeInteger(value.lastStartedAt)) &&
 		(value.completedAt === undefined || isNonNegativeSafeInteger(value.completedAt))
 	);
-}
-
-function isGoalStatus(value: unknown): value is Goal["status"] {
-	return value === "active" || value === "paused" || value === "complete";
-}
-
-function isNonNegativeSafeInteger(value: unknown): value is number {
-	return Number.isSafeInteger(value) && (value as number) >= 0;
-}
-
-function nowSeconds(): number {
-	return Math.trunc(Date.now() / 1000);
 }

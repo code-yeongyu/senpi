@@ -71,11 +71,41 @@ modelRegistry.registerProvider("task17-faux", {
 			maxTokens: 256,
 			baseUrl: "http://localhost:0",
 		},
+		{
+			id: "model-list-second",
+			name: "Task 17 Faux Second",
+			api: "faux",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 1024,
+			maxTokens: 256,
+			baseUrl: "http://localhost:0",
+		},
+		{
+			id: "model-list-third",
+			name: "Task 17 Faux Third",
+			api: "faux",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 1024,
+			maxTokens: 256,
+			baseUrl: "http://localhost:0",
+		},
 	],
 });
 
+const available = modelRegistry.getAvailable();
+const first = available[0];
+if (!first) throw new Error("task17 model fixture did not register");
+const hidden = { ...first, id: "model-list-hidden", name: "Task 17 Hidden", hidden: true };
+const core = new ServerCore({
+	modelRegistry: { getAvailable: () => [first, hidden, ...available.slice(1)] },
+	version: "2026.7.2",
+	codexHome: "/tmp/senpi-task17",
+});
 const sent: unknown[] = [];
-const core = new ServerCore({ modelRegistry, version: "2026.7.2", codexHome: "/tmp/senpi-task17" });
 const connection = core.addConnection({
 	id: "task17-model-list",
 	transportKind: "stdio",
@@ -98,23 +128,71 @@ await core.receive(connection.id, {
 });
 await core.receive(connection.id, {
 	kind: "request",
-	message: { id: 2, method: "model/list", params: { includeHidden: false } },
+	message: { id: 2, method: "model/list", params: { cursor: null, limit: 1, includeHidden: false } },
 });
 
-const response = sent[1];
-if (!response || typeof response !== "object" || !("result" in response)) {
-	throw new Error(`model/list did not return success: ${JSON.stringify(response)}`);
-}
-const result = response.result;
-if (!result || typeof result !== "object" || !("data" in result) || !Array.isArray(result.data)) {
-	throw new Error(`model/list result shape is invalid: ${JSON.stringify(result)}`);
-}
-const model = result.data.find(
+const firstResult = modelListResult(sent[1]);
+const firstModel = firstResult.data.find(
 	(entry) => typeof entry === "object" && entry !== null && entry.id === "task17-faux/model-list",
 );
-if (model?.defaultReasoningEffort !== "medium") {
-	throw new Error(`model/list returned invalid model payload: ${JSON.stringify(model)}`);
+if (firstModel?.defaultReasoningEffort !== "medium") {
+	throw new Error(`model/list returned invalid model payload: ${JSON.stringify(firstModel)}`);
 }
 
-console.log(`MODEL_LIST_COUNT=${result.data.length}`);
-console.log(`MODEL_LIST_FIRST=${model.id}`);
+await core.receive(connection.id, {
+	kind: "request",
+	message: { id: 3, method: "model/list", params: { cursor: firstResult.nextCursor, limit: 1 } },
+});
+await core.receive(connection.id, {
+	kind: "request",
+	message: { id: 4, method: "model/list", params: { limit: 100, includeHidden: true } },
+});
+
+const secondResult = modelListResult(sent[2]);
+const allResult = modelListResult(sent[3]);
+const paged =
+	firstResult.data.length === 1 &&
+	firstResult.nextCursor === "1" &&
+	secondResult.data.length === 1 &&
+	secondResult.data[0]?.model === "model-list-second"
+		? 1
+		: 0;
+const includeHiddenHonored = allResult.data.some(
+	(entry) => entry.hidden === true && entry.model === "model-list-hidden",
+)
+	? 1
+	: 0;
+console.log(`MODEL_LIST_COUNT=${firstResult.data.length}`);
+console.log(`MODEL_LIST_FIRST=${firstModel?.id ?? "missing"}`);
+console.log(`PAGED=${paged}`);
+console.log(`INCLUDE_HIDDEN_HONORED=${includeHiddenHonored}`);
+console.log("EXIT=0");
+if (paged !== 1 || includeHiddenHonored !== 1) {
+	throw new Error("task17 model/list assertions failed");
+}
+
+function modelListResult(value: unknown): {
+	readonly data: readonly Record<string, unknown>[];
+	readonly nextCursor: string | null;
+} {
+	if (!value || typeof value !== "object" || !("result" in value)) {
+		throw new Error(`model/list did not return success: ${JSON.stringify(value)}`);
+	}
+	const result = value.result;
+	if (!result || typeof result !== "object" || !("data" in result) || !Array.isArray(result.data)) {
+		throw new Error(`model/list result shape is invalid: ${JSON.stringify(result)}`);
+	}
+	const data = result.data.filter(isRecord);
+	if (data.length !== result.data.length || !("nextCursor" in result)) {
+		throw new Error(`model/list result entries are invalid: ${JSON.stringify(result)}`);
+	}
+	const nextCursor = result.nextCursor;
+	if (nextCursor !== null && typeof nextCursor !== "string") {
+		throw new Error(`model/list cursor is invalid: ${JSON.stringify(result)}`);
+	}
+	return { data, nextCursor };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}

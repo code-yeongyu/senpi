@@ -1,8 +1,8 @@
 # builtin/goal
 
 Builtin extension #16. Persistent per-thread **goal** tracking, ported from the
-standalone `pi-goal` extension with **zero dependency on it** and the **budget
-concept fully removed**. Registers the codex-aligned `create_goal` /
+standalone `pi-goal` extension with **zero dependency on it** and **budget-driven
+behavior fully removed**. Registers the codex-aligned `create_goal` /
 `update_goal` / `get_goal` tools plus a `/goal` command, persists a single goal
 per thread to a JSON file, and re-engages the agent toward an active goal via
 hidden continuation prompts.
@@ -13,7 +13,7 @@ hidden continuation prompts.
 goal/
 ├── index.ts          # Extension entry — tools + /goal command + session/agent lifecycle + usage accounting
 ├── store.ts          # File persistence: read/write/create/update/clear/accountGoalUsage
-├── types.ts          # Goal, GoalStatus (active|paused|complete), GoalFile, GoalStoreRef, GoalUpdate, snapshots
+├── types.ts          # Goal (+ inert tokenBudget compatibility metadata), GoalStatus, GoalFile, refs, snapshots
 ├── validation.ts     # validateObjective (trim + max length)
 ├── continuation.ts   # shouldQueueGoalContinuation* gating predicates
 ├── prompt.ts         # buildContinuationPrompt (untrusted-objective + completion audit)
@@ -22,16 +22,17 @@ goal/
 ├── ui.ts             # ctx.ui.setStatus footer segment for the active goal
 ├── elapsed-ticker.ts # GoalElapsedTicker + goalLiveElapsedSeconds (live footer refresh)
 ├── errors.ts         # Goal{AlreadyExists,NotFound}/store error classes
-└── changes.md        # Fork tracker (port + budget removal)
+└── changes.md        # Fork tracker (port + budget behavior removal + wire compatibility)
 ```
 
-## NO BUDGET
+## NO BUDGET-DRIVEN BEHAVIOR
 
-This is the deliberate divergence from `pi-goal` / codex `ext/goal`. There is no
-`tokenBudget`, no `budgetLimited`/`usageLimited` status, no budget-limit
-continuation, and no budget-driven status transition. `tokensUsed` and
-`timeUsedSeconds` are retained as display-only usage metrics. Status is exactly
-`active | paused | complete`.
+This is the deliberate divergence from `pi-goal` / codex `ext/goal`. `Goal` may
+persist an optional `tokenBudget` only as inert app-server wire-compatibility
+metadata. The builtin tools do not create or interpret it. There is no
+`budgetLimited`/`usageLimited` status, budget-limit continuation, or
+budget-driven status transition. `tokensUsed` and `timeUsedSeconds` remain
+display-only usage metrics. Status is exactly `active | paused | complete`.
 
 ## PERSISTENCE
 

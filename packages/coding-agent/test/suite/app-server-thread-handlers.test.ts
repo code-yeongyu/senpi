@@ -73,6 +73,33 @@ describe("app-server thread lifecycle handlers", () => {
 		expect(threads.getLoadedThread(threadId).subscribers.has(connection.id)).toBe(true);
 	});
 
+	it("defers thread/started until the successful start response is written", async () => {
+		// Given: lifecycle handlers whose request-scoped deferral is controlled by the test.
+		const { connection, root, threads } = await createHarness();
+		const notifications = new NotificationRouter({ connections: [connection] });
+		const deferred: Array<() => Promise<void> | void> = [];
+		const registry = createRegistry();
+		registerThreadLifecycleHandlers(registry, {
+			threads,
+			turnLog: new TurnLog(),
+			notifications,
+			deferUntilResponded: (_connectionId, action) => {
+				deferred.push(action);
+				return true;
+			},
+		});
+
+		// When: thread/start produces its response while dispatch still owns the response write.
+		const response = await registry.dispatch(connection, { id: 20, method: "thread/start", params: { cwd: root } });
+
+		// Then: no lifecycle notification races ahead of the response, and the deferred action emits it afterward.
+		expect(response).not.toHaveProperty("error");
+		expect(connection.received).toEqual([]);
+		expect(deferred).toHaveLength(1);
+		await deferred[0]?.();
+		expect(connection.received.map((frame) => frame.method)).toEqual(["thread/started"]);
+	});
+
 	it("passes requested model to thread creation and echoes requested approval policy", async () => {
 		// Given: a requested catalog model and a handler harness observing createSession options.
 		const requestedModel: Model<Api> = getModel("openai", "gpt-5");
@@ -167,7 +194,10 @@ describe("app-server thread lifecycle handlers", () => {
 
 		// Then: the queued terminal notification flushes to the connection before live use continues.
 		expect(response).not.toHaveProperty("error");
-		expect(connection.received.map((notification) => notification.method)).toEqual(["turn/completed"]);
+		expect(connection.received.map((notification) => notification.method)).toEqual([
+			"turn/completed",
+			"thread/status/changed",
+		]);
 		expect(entry.queuedTerminalNotifications).toEqual([]);
 		expect(entry.subscribers.has(connection.id)).toBe(true);
 	});
@@ -272,7 +302,11 @@ describe("app-server thread lifecycle handlers", () => {
 
 		// Then: the broadcast and read response expose the new name.
 		expect(connection.received).toEqual([
-			{ method: "thread/name/updated", params: { threadId, threadName: "Todo 12" } },
+			{
+				method: "thread/name/updated",
+				params: { threadId, threadName: "Todo 12" },
+				emittedAtMs: expect.any(Number),
+			},
 		]);
 		expect(objectAt(responseResult(read), "thread").name).toBe("Todo 12");
 	});

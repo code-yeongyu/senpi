@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "gaps": [
+    {
+      "id": "remote-control-client-unavailable",
+      "methods": ["remoteControl/client/list"],
+      "rationale": "Senpi deliberately reports that remote control is unavailable because it has no Codex remote-control handle; Codex's locally disabled no-handle response remains server-specific."
+    },
+    {
+      "id": "goal-status-subset",
+      "methods": ["thread/goal/set"],
+      "rationale": "Senpi's goal backing store supports active, paused, and complete only. Codex-only blocked, usageLimited, and budgetLimited statuses are rejected rather than fabricated."
+    },
+    {
+      "id": "history-after-restart",
+      "methods": ["thread/turns/list", "thread/items/list"],
+      "rationale": "After a process restart Senpi reconstructs user-message-only historical turns from its session log; live-turn pagination remains wire-shaped but cannot recreate Codex's persisted item detail."
+    },
+    {
+      "id": "honest-account-reads",
+      "methods": ["account/read", "account/rateLimits/read", "account/usage/read"],
+      "rationale": "The isolated Senpi cell truthfully has no Codex account and returns its honest API-key/unauthenticated posture instead of emulating Codex account state."
+    },
+    {
+      "id": "aggregated-turn-diff",
+      "methods": ["turn/diff/updated"],
+      "rationale": "Senpi aggregates projected file-change unified diffs while Codex derives the diff from its git-backed turn state; notification audience and ordering remain strict."
+    }
+  ],
+  "normalizations": [
+    {
+      "id": "server-user-agent-identity",
+      "field": "userAgent",
+      "rationale": "The normalized transcript replaces each truthful server product/version string with a server-identity marker so exact protocol comparison does not require Senpi to claim it is Codex."
+    }
+  ]
+}

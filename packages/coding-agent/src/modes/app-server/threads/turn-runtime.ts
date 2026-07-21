@@ -58,9 +58,15 @@ export interface TurnEngineOptions<Entry extends TurnEngineThreadEntry = TurnEng
 }
 
 export type TurnEngineApi = {
-	readonly startTurn: (params: TurnStartParams) => Promise<TurnStartResponse>;
+	readonly startTurn: (
+		params: TurnStartParams,
+		deferNotifications?: TurnNotificationDeferral,
+	) => Promise<TurnStartResponse>;
 	readonly steerTurn: (params: TurnSteerParams) => Promise<TurnSteerResponse>;
-	readonly interruptTurn: (params: TurnInterruptParams) => Promise<TurnInterruptResponse>;
+	readonly interruptTurn: (
+		params: TurnInterruptParams,
+		deferNotifications?: TurnNotificationDeferral,
+	) => Promise<TurnInterruptResponse>;
 	readonly completeTurn: (
 		threadId: ThreadId,
 		status?: Exclude<TurnWireStatus, "inProgress">,
@@ -73,6 +79,8 @@ export type ParsedInput = {
 	readonly content: readonly UserInput[];
 };
 
+export type TurnNotificationDeferral = (action: () => void) => boolean;
+
 export type PendingTurn = {
 	readonly turnId: string;
 	readonly startedAt: string;
@@ -80,6 +88,7 @@ export type PendingTurn = {
 	readonly resolve: () => void;
 	interrupted: boolean;
 	completed: boolean;
+	deferTerminalNotifications: TurnNotificationDeferral | undefined;
 };
 
 export function createTurnId(): string {
@@ -170,7 +179,9 @@ export function buildUserMessage(clientUserMessageId: string | null, content: re
 	};
 }
 
-export function wireItemToJson(item: WireItem): JsonValue {
+export type WireJsonObject = { readonly [key: string]: JsonValue | undefined };
+
+export function wireItemToJson(item: WireItem): WireJsonObject {
 	const jsonItem: { [key: string]: JsonValue | undefined } = {};
 	for (const [key, value] of Object.entries(item)) {
 		jsonItem[key] = unknownToJsonValue(value);

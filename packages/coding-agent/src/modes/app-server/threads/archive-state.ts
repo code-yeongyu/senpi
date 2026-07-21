@@ -1,5 +1,6 @@
-import { readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { readdir, readFile, rm, stat, utimes } from "node:fs/promises";
 import { join } from "node:path";
+import { enqueueThreadMutation, writeSidecarFileAtomic } from "./metadata-state.ts";
 import type { WireThread } from "./registry.ts";
 
 const ARCHIVE_SUFFIX = ".archived";
@@ -27,21 +28,36 @@ export class ThreadArchiveState {
 	}
 
 	async markArchived(thread: WireThread): Promise<void> {
-		const sidecarPath = sidecarPathForThread(thread);
-		await writeFile(
-			sidecarPath,
-			`${JSON.stringify({ archivedAt: new Date().toISOString(), thread } satisfies ArchivedThreadRecord)}\n`,
-			"utf8",
-		);
+		await enqueueThreadMutation(thread.id, async () => {
+			const sidecarPath = sidecarPathForThread(thread);
+			await writeSidecarFileAtomic(
+				sidecarPath,
+				`${JSON.stringify({ archivedAt: new Date().toISOString(), thread } satisfies ArchivedThreadRecord)}\n`,
+			);
+		});
 	}
 
 	async clearArchived(threadId: string): Promise<void> {
-		const threads = await this.listArchivedThreads();
-		await Promise.all(
-			threads
-				.filter((thread) => thread.id === threadId)
-				.map((thread) => rm(sidecarPathForThread(thread), { force: true })),
-		);
+		await enqueueThreadMutation(threadId, async () => {
+			const threads = await this.listArchivedThreads();
+			await Promise.all(
+				threads
+					.filter((thread) => thread.id === threadId)
+					.map((thread) => rm(sidecarPathForThread(thread), { force: true })),
+			);
+		});
+	}
+
+	async unarchive(threadId: string): Promise<WireThread | undefined> {
+		return enqueueThreadMutation(threadId, async () => {
+			const thread = (await this.listArchivedThreads()).find((candidate) => candidate.id === threadId);
+			if (!thread) {
+				return undefined;
+			}
+			const updatedAt = await touchThreadSession(thread);
+			await rm(sidecarPathForThread(thread), { force: true });
+			return { ...thread, updatedAt };
+		});
 	}
 
 	async isArchived(thread: WireThread): Promise<boolean> {
@@ -82,6 +98,17 @@ export class ThreadArchiveState {
 		}
 		return threads;
 	}
+}
+
+async function touchThreadSession(thread: WireThread): Promise<string> {
+	if (!thread.sessionPath) {
+		throw new Error(`Thread ${thread.id} has no session path to unarchive`);
+	}
+	const sessionStat = await stat(thread.sessionPath);
+	const previousMs = Date.parse(thread.updatedAt);
+	const nextMs = Math.max(Date.now(), sessionStat.mtimeMs + 1, Number.isFinite(previousMs) ? previousMs + 1 : 0);
+	await utimes(thread.sessionPath, sessionStat.atime, new Date(nextMs));
+	return new Date(nextMs).toISOString();
 }
 
 function sidecarPathForThread(thread: WireThread): string {

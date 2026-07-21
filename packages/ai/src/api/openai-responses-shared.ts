@@ -396,7 +396,8 @@ type StreamingToolCall = ToolCall & { partialJson: string };
 type ResponsesOutputSlot =
 	| { type: "thinking"; block: ThinkingContent; contentIndex: number }
 	| { type: "text"; block: TextContent; contentIndex: number }
-	| { type: "toolCall"; block: StreamingToolCall; contentIndex: number };
+	| { type: "toolCall"; block: StreamingToolCall; contentIndex: number }
+	| { type: "providerNative"; block: ProviderNativeContent; contentIndex: number };
 
 export async function processResponsesStream<TApi extends Api>(
 	openaiStream: AsyncIterable<ResponseStreamEvent>,
@@ -476,13 +477,15 @@ export async function processResponsesStream<TApi extends Api>(
 			stream.push({ type: "toolcall_start", contentIndex: slot.contentIndex, partial: output });
 			return slot;
 		}
-		return undefined;
-	};
-	const getOrCreateSlot = (
-		outputIndex: number,
-		item: ResponseOutputItem | ResponseCustomToolCallItem,
-	): ResponsesOutputSlot | undefined => {
-		return outputSlots.get(outputIndex) ?? createSlot(outputIndex, item);
+		const block = { type: "providerNative", subtype: item.type, raw: item } satisfies ProviderNativeContent;
+		output.content.push(block);
+		const slot = {
+			type: "providerNative",
+			block,
+			contentIndex: output.content.length - 1,
+		} satisfies ResponsesOutputSlot;
+		outputSlots.set(outputIndex, slot);
+		return slot;
 	};
 	// Azure OpenAI can omit reasoning.encrypted_content from response.output_item.done
 	// and provide it only in response.completed.response.output. Backfill the
@@ -545,14 +548,7 @@ export async function processResponsesStream<TApi extends Api>(
 		if (event.type === "response.created") {
 			output.responseId = event.response.id;
 		} else if (event.type === "response.output_item.added") {
-			const slot = createSlot(event.output_index, event.item);
-			if (!slot) {
-				output.content.push({
-					type: "providerNative",
-					subtype: event.item.type,
-					raw: event.item,
-				} satisfies ProviderNativeContent);
-			}
+			createSlot(event.output_index, event.item);
 		} else if (event.type === "response.reasoning_summary_text.delta") {
 			const slot = getSlot(event.output_index, "thinking");
 			if (!slot) continue;
@@ -634,7 +630,7 @@ export async function processResponsesStream<TApi extends Api>(
 			}
 		} else if (event.type === "response.output_item.done") {
 			const item = event.item;
-			const slot = getOrCreateSlot(event.output_index, item);
+			const slot = outputSlots.get(event.output_index) ?? createSlot(event.output_index, item);
 
 			if (item.type === "reasoning" && slot?.type === "thinking") {
 				const summaryText = item.summary?.map((s) => s.text).join("\n\n") || "";
@@ -681,6 +677,10 @@ export async function processResponsesStream<TApi extends Api>(
 					toolCall: slot.block,
 					partial: output,
 				});
+				outputSlots.delete(event.output_index);
+			} else if (slot?.type === "providerNative") {
+				slot.block.subtype = item.type;
+				slot.block.raw = item;
 				outputSlots.delete(event.output_index);
 			}
 		} else if (event.type === "response.completed" || event.type === "response.incomplete") {

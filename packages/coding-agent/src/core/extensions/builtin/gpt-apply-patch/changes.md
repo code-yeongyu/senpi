@@ -1,5 +1,29 @@
 # changes
 
+## Source-backed apply_patch result patches (2026-07-21)
+
+### What changed
+
+- `preview.ts` / `types.ts` / `apply.ts`: each successful sequential operation records its source-order index and the
+  source-backed preview built from the filesystem state immediately before that operation. Move previews use an
+  applicable delete-source plus add/update-destination patch.
+- `tool.ts`: completed previews are rebuilt from those successful operation records instead of destination-path matches.
+
+### Why
+
+- App-server clients consume mutation result details as unified diffs. Display rows were not parseable patches,
+  multi-file results lacked delimiters, partial success dropped successful changes, and move-only operations were empty.
+
+### Why extension system couldn't handle this
+
+- This builtin owns the per-operation source snapshot and final application result needed to preserve an honest patch
+  contract when several actions share a path or depend on earlier actions.
+
+### Expected merge conflict zones
+
+- LOW: preview construction and execute-result details in `preview.ts` / `apply.ts` / `tool.ts`.
+
+||||||| 9ee0c4a3e
 ## Capability-driven dual-variant exposure (2026-07-19)
 
 ### What changed

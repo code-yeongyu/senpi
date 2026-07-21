@@ -1,5 +1,7 @@
 import type { AssistantMessage, ProviderNativeContent } from "@earendil-works/pi-ai";
 import { formatProviderNativeBody, formatProviderNativeSummary } from "../../provider-native-rendering.ts";
+import { fileChangeProjection } from "./projection-file-changes.ts";
+import { webSearchItem } from "./projection-web-search.ts";
 import type { WireItem } from "./turn-log.ts";
 
 export type ToolItemType = "commandExecution" | "fileChange" | "mcpToolCall" | "dynamicToolCall";
@@ -13,7 +15,12 @@ export type ActiveToolItem = {
 	completed: boolean;
 };
 
-type ToolExecutionStatus = "inProgress" | "completed" | "failed";
+export type ToolExecutionStatus = "inProgress" | "completed" | "failed";
+
+export type ToolWireProjection = {
+	readonly item: WireItem;
+	readonly diff: string;
+};
 
 const MAX_TOOL_OUTPUT_BYTES = 256 * 1024;
 const MCP_TOOL_NAME_PATTERN = /^[^_]+__/;
@@ -100,10 +107,41 @@ export function dynamicToolCallItem(
 	};
 }
 
+export function toolWireProjection(input: {
+	readonly tool: ActiveToolItem;
+	readonly status: ToolExecutionStatus;
+	readonly cwd: string;
+	readonly result: unknown;
+	readonly isError: boolean;
+}): ToolWireProjection {
+	switch (input.tool.itemType) {
+		case "commandExecution":
+			return { item: commandExecutionItem(input.tool, input.status, input.cwd, input.result), diff: "" };
+		case "fileChange":
+			return fileChangeProjection({
+				id: input.tool.id,
+				name: input.tool.name,
+				args: input.tool.args,
+				status: input.status,
+				result: input.result,
+			});
+		case "mcpToolCall":
+			return { item: mcpToolCallItem(input.tool, input.status, input.result), diff: "" };
+		case "dynamicToolCall":
+			return {
+				item: dynamicToolCallItem(input.tool, input.status, input.result, input.isError),
+				diff: "",
+			};
+		default:
+			return assertNeverToolItem(input.tool.itemType);
+	}
+}
+
 export function providerNativeItem(id: string, message: AssistantMessage, content: ProviderNativeContent): WireItem {
+	if (content.subtype === "web_search_call") return webSearchItem(id, content);
 	const summary = formatProviderNativeSummary(message, content, true);
 	const body = formatProviderNativeBody(content, true);
-	return { type: "webSearch", id, query: body ? `${summary}\n${body}` : summary, action: null };
+	return { type: "webSearch", id, query: body ? `${summary}\n${body}` : summary, action: null, results: null };
 }
 
 export function buildWireItem(item: WireItem): WireItem {
@@ -169,4 +207,8 @@ function toJsonValue(value: unknown): unknown {
 
 function stringifyJson(value: unknown): string {
 	return JSON.stringify(value) ?? "";
+}
+
+function assertNeverToolItem(value: never): never {
+	throw new Error(`Unhandled tool item type: ${String(value)}`);
 }

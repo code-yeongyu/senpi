@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import type { SessionInfo } from "../../../core/session-manager.ts";
 import type { WireThread } from "./registry.ts";
 
@@ -8,11 +9,20 @@ export function buildDiskThread(info: SessionInfo): WireThread {
 		sessionPath: info.path,
 		cwd: info.cwd,
 		createdAt: info.created.toISOString(),
-		updatedAt: info.modified.toISOString(),
+		updatedAt: persistedUpdatedAt(info),
 		status: { type: "notLoaded" },
 		preview: info.firstMessage && info.firstMessage !== "(no messages)" ? info.firstMessage : null,
 		name: info.name ?? null,
 	};
+}
+
+function persistedUpdatedAt(info: SessionInfo): string {
+	try {
+		const persistedMs = Math.max(info.modified.getTime(), statSync(info.path).mtimeMs);
+		return new Date(persistedMs).toISOString();
+	} catch {
+		return info.modified.toISOString();
+	}
 }
 
 export function compareThreads(left: WireThread, right: WireThread): number {

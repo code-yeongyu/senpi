@@ -12,12 +12,13 @@ import {
 	startFakeModelServer,
 	writeMockModelsJson,
 } from "./lib/env.mjs";
-import { fail, httpStatus, pass } from "./lib/rpc.mjs";
+import { fail, httpStatus, initialize, pass, WebSocketRpcClient } from "./lib/rpc.mjs";
 
 const clientPath = "/Users/yeongyu/.agents/skills/use-codex-appserver/scripts/codex-query.ts";
 const transcript = [];
 const clientChildren = new Set();
 const outPath = flag("--out");
+let observer;
 installCleanupHooks();
 
 try {
@@ -25,7 +26,7 @@ try {
 	const scratch = makeScratch("app-server-real-client");
 	const fake = await startFakeModelServer([
 		{ text: "real-client-fast" },
-		{ chunks: Array.from({ length: 30 }, (_, index) => `slow-${index} `), delayMs: 1000 },
+		{ hold: true },
 	]);
 	writeMockModelsJson(scratch.agentDir, fake);
 	const port = await findQaPort(18995);
@@ -33,10 +34,11 @@ try {
 	server.stderr.on("data", (chunk) => transcript.push(`[server stderr] ${chunk.toString("utf8").trimEnd()}`));
 	await waitForFile(`${scratch.agentDir}/app-server/ws-token`, 30000);
 	await waitForReadyz(port);
+	const token = readGeneratedToken(scratch.agentDir);
 	const clientEnv = hermeticEnv({
 		...scratch.env,
 		HOST: `ws://127.0.0.1:${port}`,
-		CODEX_WS_TOKEN: readGeneratedToken(scratch.agentDir),
+		CODEX_WS_TOKEN: token,
 	});
 
 	const created = await runClient(["create", scratch.cwd], clientEnv, scratch.cwd, 30000, true);
@@ -52,10 +54,29 @@ try {
 	await runClient(["threads", "10"], clientEnv, scratch.cwd, 30000, true);
 	await runClient(["loaded"], clientEnv, scratch.cwd, 30000, true);
 
+	observer = await WebSocketRpcClient.connect(port, token, transcript, "observer");
+	await initialize(observer, "qa-real-client-observer");
+	await observer.request("thread/resume", { threadId }, 30000);
+	const observerMark = observer.mark();
 	const background = spawnClient(["msg", threadId, "slow prompt", "--timeout", "60"], clientEnv, scratch.cwd);
-	await pollActive(threadId, clientEnv, scratch.cwd);
+	await observer.waitForMessageEvent(
+		(message) => message.method === "turn/started" && message.params?.threadId === threadId,
+		observerMark,
+		30000,
+	);
+	transcript.push(`[observer assert] turn/started thread=${threadId} before steer/interrupt`);
 	await runClient(["steer", threadId, "please stop after this"], clientEnv, scratch.cwd, 30000, true);
+	const interruptMark = observer.mark();
 	await runClient(["interrupt", threadId], clientEnv, scratch.cwd, 30000, true);
+	const interrupted = await observer.waitForMessageEvent(
+		(message) => message.method === "turn/completed" && message.params?.threadId === threadId,
+		interruptMark,
+		30000,
+	);
+	if (interrupted.params?.turn?.status !== "interrupted") {
+		throw new Error(`interrupt terminal status was ${interrupted.params?.turn?.status ?? "missing"}`);
+	}
+	fake.releaseHolds();
 	const backgroundResult = await waitChild(background, 70000);
 	transcript.push(`[client bg exit] ${backgroundResult.code}`);
 	const finalRead = await runClient(["read", threadId, "--full"], clientEnv, scratch.cwd, 30000, true);
@@ -64,12 +85,12 @@ try {
 	}
 
 	await fake.stop();
-	scratch.cleanup();
 	pass(transcript, "real-client");
 } catch (error) {
 	fail(transcript, "real-client", error);
 	process.exitCode = 1;
 } finally {
+	observer?.close();
 	for (const child of clientChildren) {
 		if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
 	}
@@ -121,16 +142,6 @@ function waitChild(child, timeoutMs) {
 			rejectWait(error);
 		});
 	});
-}
-
-async function pollActive(threadId, env, cwd) {
-	const deadline = Date.now() + 10000;
-	while (Date.now() < deadline) {
-		const result = await runClient(["active"], env, cwd, 15000, true);
-		if (result.stdout.includes(threadId)) return;
-		await new Promise((resolve) => setTimeout(resolve, 500));
-	}
-	throw new Error(`thread ${threadId} did not become active`);
 }
 
 async function waitForFile(path, timeoutMs) {

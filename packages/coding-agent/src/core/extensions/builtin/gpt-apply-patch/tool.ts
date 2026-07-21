@@ -14,12 +14,26 @@ import { createPendingPatchUpdate } from "./preview.ts";
 import { getApplyPatchRenderState, renderPatchPreview } from "./preview-format.ts";
 import { renderStreamingPatchCall } from "./streaming-render.ts";
 import type {
+	ApplyPatchPreview,
 	ApplyPatchRenderState,
+	ApplyPatchResult,
 	ApplyPatchTheme,
 	ApplyPatchToolDefinition,
 	ApplyPatchToolDetails,
 	FreeformToolFormat,
 } from "./types.ts";
+
+function appliedPreview(result: ApplyPatchResult): ApplyPatchPreview | undefined {
+	const files = [...result.details.appliedOperations]
+		.sort((left, right) => left.operationIndex - right.operationIndex)
+		.map((operation) => operation.preview);
+	if (files.length === 0) return undefined;
+	return {
+		files,
+		added: files.reduce((total, file) => total + file.added, 0),
+		removed: files.reduce((total, file) => total + file.removed, 0),
+	};
+}
 
 function renderPreviewBox(
 	title: string,
@@ -91,16 +105,20 @@ export function createApplyPatchTool(variant: "freeform" | "json" = "freeform"):
 				const progressUpdate = await createPendingPatchUpdate(ctx.cwd, normalizedParams.input, progress, preview);
 				onUpdate?.({ content: [{ type: "text", text: progressUpdate.text }], details: progressUpdate.details });
 			});
+			const resultPreview = appliedPreview(result);
 			if (result.failures.length > 0) {
 				if (result.appliedFiles.length === 0) {
 					const firstFailure = result.failures[0];
 					if (firstFailure) throw new Error(firstFailure.message);
 				}
-				return { content: [{ type: "text", text: buildPartialFailureText(result) }], details: { result } };
+				return {
+					content: [{ type: "text", text: buildPartialFailureText(result) }],
+					details: resultPreview ? { preview: resultPreview, result } : { result },
+				};
 			}
 			return {
 				content: [{ type: "text", text: result.summaries.join("\n") }],
-				details: pendingUpdate.details?.preview ? { preview: pendingUpdate.details.preview, result } : { result },
+				details: resultPreview ? { preview: resultPreview, result } : { result },
 			};
 		},
 		renderCall(args, theme, context: ToolRenderContext<ApplyPatchRenderState, { input: string }>) {

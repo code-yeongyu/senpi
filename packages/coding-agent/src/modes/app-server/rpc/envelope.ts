@@ -28,9 +28,12 @@ export type RpcResponse = RpcSuccessResponse | RpcErrorResponse;
 export type RpcNotification = {
 	readonly method: string;
 	readonly params?: unknown;
+	readonly emittedAtMs?: number;
 };
 
 export type RpcEnvelope = RpcRequest | RpcResponse | RpcNotification;
+
+export type PopulatedRpcNotification = RpcNotification & { readonly emittedAtMs: number };
 
 export type ClassifiedIncoming =
 	| { readonly kind: "request"; readonly message: RpcRequest }
@@ -50,8 +53,23 @@ type JsonObject = {
 	readonly result?: unknown;
 };
 
+export function populateNotificationEnvelope(
+	notification: RpcNotification,
+	emittedAtMs?: number,
+): PopulatedRpcNotification {
+	return { ...notification, emittedAtMs: notification.emittedAtMs ?? emittedAtMs ?? Date.now() };
+}
+
+export function populateOutboundNotificationEnvelope(message: RpcEnvelope, emittedAtMs?: number): RpcEnvelope {
+	return isRpcNotification(message) ? populateNotificationEnvelope(message, emittedAtMs) : message;
+}
+
 function isJsonObject(value: unknown): value is JsonObject {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isRpcNotification(message: RpcEnvelope): message is RpcNotification {
+	return "method" in message && !("id" in message);
 }
 
 function hasOwn(value: JsonObject, key: string): boolean {

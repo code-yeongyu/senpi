@@ -89,8 +89,8 @@ describe("app-server error model", () => {
 			{ code: -32601, message: "Method not found: thread/missing" },
 			{ code: -32602, message: "Invalid params" },
 			{ code: -32001, message: "Server overloaded; retry later." },
-			{ code: -32000, message: "Not initialized" },
-			{ code: -32000, message: "Already initialized" },
+			{ code: -32600, message: "Not initialized" },
+			{ code: -32600, message: "Already initialized" },
 			{ code: -32600, message: "exp/m requires experimentalApi capability" },
 			{ code: -32603, message: "handler failed" },
 		]);
@@ -107,7 +107,7 @@ describe("app-server method registry", () => {
 		const response = await registry.dispatch(connection, { id: 1, method: "nope/missing", params: {} });
 
 		// Then: the initialize gate wins over method lookup.
-		expect(response).toEqual({ id: 1, error: { code: -32000, message: "Not initialized" } });
+		expect(response).toEqual({ id: 1, error: { code: -32600, message: "Not initialized" } });
 	});
 
 	it("returns method-not-found with the requested method after initialization", async () => {
@@ -192,6 +192,6 @@ describe("app-server method registry", () => {
 
 		// Then: pre-init initialize runs, but repeat initialize is rejected.
 		expect(first).toEqual({ id: 4, result: { userAgent: "senpi-test" } });
-		expect(second).toEqual({ id: 5, error: { code: -32000, message: "Already initialized" } });
+		expect(second).toEqual({ id: 5, error: { code: -32600, message: "Already initialized" } });
 	});
 });

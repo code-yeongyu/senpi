@@ -1,15 +1,17 @@
 #!/usr/bin/env node
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { qaPortRange } from "./lib/env.mjs";
+import { runNode } from "./lib/run-node.mjs";
 
 const scripts = Object.freeze([
 	["handshake", "handshake.mjs"],
 	["multiclient", "multiclient.mjs"],
 	["approval", "approval-roundtrip.mjs"],
 	["real-client", "real-client.mjs"],
+	["real-client-sweep", "real-client-sweep.mjs"],
 ]);
 const protectedLiveDaemonPort = 18000 + 789;
 
@@ -33,32 +35,6 @@ async function runProbe(name, script) {
 	if (result.code !== 0) throw new Error(`${script} exited ${result.code}`);
 	if (!result.stdout.includes(`PASS ${name}`)) throw new Error(`${script} did not print PASS ${name}`);
 	process.stdout.write(`PASS ${name}\n`);
-}
-
-function runNode(args, timeoutMs) {
-	return new Promise((resolveRun, rejectRun) => {
-		const child = spawn(process.execPath, args, { cwd: process.cwd(), env: process.env, stdio: ["ignore", "pipe", "pipe"] });
-		let stdout = "";
-		let stderr = "";
-		child.stdout.on("data", (chunk) => {
-			stdout += chunk.toString("utf8");
-		});
-		child.stderr.on("data", (chunk) => {
-			stderr += chunk.toString("utf8");
-		});
-		const timeout = setTimeout(() => {
-			child.kill("SIGKILL");
-			rejectRun(new Error(`${args.join(" ")} timed out after ${timeoutMs}ms`));
-		}, timeoutMs);
-		child.once("close", (code) => {
-			clearTimeout(timeout);
-			resolveRun({ code, stdout, stderr });
-		});
-		child.once("error", (error) => {
-			clearTimeout(timeout);
-			rejectRun(error);
-		});
-	});
 }
 
 async function assertNoQaPortListeners() {

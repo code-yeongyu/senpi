@@ -6,6 +6,8 @@
 
 ### Added
 
+- Documented the Codex HEAD app-server parity surface, protocol provenance, intentional `-32601` boundaries, and the source-oracle differential QA harness. The documentation now calls out deliberate behavior differences, including post-restart history reconstruction, aggregated turn diffs, partial thread settings, and honest account reads.
+||||||| 9ee0c4a3e
 - Added configurable Claude text tool-call recovery across both `ModelRuntime` streaming entry points, `models.json` definitions/overrides, persisted sessions, and isolated Anthropic/OpenAI mock-loop QA.
 
 ### Changed

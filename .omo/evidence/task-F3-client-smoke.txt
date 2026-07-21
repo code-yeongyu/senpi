@@ -1,0 +1,18 @@
+CELL=client-smoke PORT=18993 TOKEN=generated
+DAEMON_READY=1
+{
+  "status": "disabled",
+  "serverName": "senpi app-server",
+  "installationId": "df06d6f3-2825-4eb1-b26d-07526304534e",
+  "environmentId": null
+}
+CMD=status EXIT=0
+Total: 0
+CMD=threads EXIT=0
+Total: 0
+CMD=search qa EXIT=0
+CLEANUP_PORT_18993=occupied
+CLEANUP_CELL=removed
+CLEANUP_REPAIR_PORT_18993=listener-found
+92028     1 92008 senpi
+CLEANUP_REPAIR_PORT_18993=empty

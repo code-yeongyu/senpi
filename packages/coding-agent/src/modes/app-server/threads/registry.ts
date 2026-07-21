@@ -7,6 +7,11 @@ import {
 } from "../../../core/sdk.ts";
 import { type SessionInfo, SessionManager } from "../../../core/session-manager.ts";
 import { resolvePath } from "../../../utils/paths.ts";
+import {
+	createMcpWireStatusRegistry,
+	type McpWireStatusAdapter,
+	type McpWireStatusRegistry,
+} from "./mcp-wire-status.ts";
 import { buildDiskThread, compareThreads, decodeCursor, encodeCursor } from "./registry-listing.ts";
 
 export type ConnectionId = string;
@@ -47,7 +52,12 @@ export interface ThreadEntry {
 	taskQueue: Promise<void>;
 	createdAt: string;
 	updatedAt: string;
+	mcpWireStatusAdapter: McpWireStatusAdapter | undefined;
 }
+
+export type AppServerSessionResult = CreateAgentSessionResult & {
+	readonly mcpWireStatusAdapter?: McpWireStatusAdapter;
+};
 
 export interface CreateThreadOptions {
 	cwd: string;
@@ -67,7 +77,8 @@ export interface ListThreadsResult {
 export interface ThreadRegistryOptions {
 	agentDir?: string;
 	sessionDir?: string;
-	createSession?: (options: CreateAgentSessionOptions) => Promise<CreateAgentSessionResult>;
+	createSession?: (options: CreateAgentSessionOptions) => Promise<AppServerSessionResult>;
+	mcpWireStatusAdapter?: McpWireStatusAdapter;
 }
 
 export class ThreadNotFoundError extends Error {
@@ -85,25 +96,27 @@ export class ThreadRegistry {
 	private readonly deletedThreadIds = new Set<string>();
 	private readonly agentDir: string | undefined;
 	private readonly sessionDir: string | undefined;
-	private readonly createSession: (options: CreateAgentSessionOptions) => Promise<CreateAgentSessionResult>;
+	private readonly createSession: (options: CreateAgentSessionOptions) => Promise<AppServerSessionResult>;
+	private readonly mcpWireStatuses: McpWireStatusRegistry;
 
 	constructor(options: ThreadRegistryOptions = {}) {
 		this.agentDir = options.agentDir ? resolvePath(options.agentDir) : undefined;
 		this.sessionDir = options.sessionDir ? resolvePath(options.sessionDir) : undefined;
 		this.createSession = options.createSession ?? createAgentSession;
+		this.mcpWireStatuses = createMcpWireStatusRegistry(options.mcpWireStatusAdapter);
 	}
 
 	async createThread(options: CreateThreadOptions): Promise<ThreadEntry> {
 		const cwd = resolvePath(options.cwd);
 		const sessionManager = SessionManager.create(cwd, this.sessionDir);
-		const { session } = await this.createSession({
+		const result = await this.createSession({
 			cwd,
 			agentDir: this.agentDir,
 			sessionManager,
 			model: options.model,
 		});
-		this.deletedThreadIds.delete(session.sessionId);
-		return this.registerSession(session, cwd);
+		this.deletedThreadIds.delete(result.session.sessionId);
+		return this.registerSession(result.session, cwd, undefined, result.mcpWireStatusAdapter);
 	}
 
 	async resumeThread(threadId: string): Promise<ThreadEntry> {
@@ -121,12 +134,12 @@ export class ThreadRegistry {
 		}
 
 		const sessionManager = SessionManager.open(sessionInfo.path, this.sessionDir, sessionInfo.cwd || undefined);
-		const { session } = await this.createSession({
+		const result = await this.createSession({
 			cwd: sessionManager.getCwd(),
 			agentDir: this.agentDir,
 			sessionManager,
 		});
-		return this.registerSession(session, sessionManager.getCwd(), sessionInfo);
+		return this.registerSession(result.session, sessionManager.getCwd(), sessionInfo, result.mcpWireStatusAdapter);
 	}
 
 	async forkThread(threadId: string, options: Partial<CreateThreadOptions> = {}): Promise<ThreadEntry> {
@@ -137,14 +150,14 @@ export class ThreadRegistry {
 			sourceFile && existsSync(sourceFile)
 				? SessionManager.forkFrom(sourceFile, cwd, this.sessionDir)
 				: SessionManager.create(cwd, this.sessionDir, sourceFile ? { parentSession: sourceFile } : undefined);
-		const { session } = await this.createSession({
+		const result = await this.createSession({
 			cwd,
 			agentDir: this.agentDir,
 			sessionManager,
 			model: options.model,
 		});
-		this.deletedThreadIds.delete(session.sessionId);
-		return this.registerSession(session, cwd);
+		this.deletedThreadIds.delete(result.session.sessionId);
+		return this.registerSession(result.session, cwd, undefined, result.mcpWireStatusAdapter);
 	}
 
 	async deleteThread(threadId: string): Promise<boolean> {
@@ -152,6 +165,7 @@ export class ThreadRegistry {
 		if (loaded) {
 			loaded.session.dispose();
 			this.entries.delete(threadId);
+			this.mcpWireStatuses.removeThread(threadId);
 			this.deletedThreadIds.add(threadId);
 			const sessionFile = loaded.session.sessionFile;
 			if (sessionFile && existsSync(sessionFile)) {
@@ -217,9 +231,17 @@ export class ThreadRegistry {
 		return entry;
 	}
 
+	getMcpWireStatusAdapter(threadId?: string | null): McpWireStatusAdapter | undefined {
+		const adapter = this.mcpWireStatuses.resolve(threadId);
+		if (adapter !== undefined || threadId === undefined || threadId === null) return adapter;
+		this.getLoadedThread(threadId);
+		return undefined;
+	}
+
 	unloadThread(threadId: string): boolean {
 		const entry = this.entries.get(threadId);
 		entry?.session.dispose();
+		this.mcpWireStatuses.removeThread(threadId);
 		return this.entries.delete(threadId);
 	}
 
@@ -231,9 +253,18 @@ export class ThreadRegistry {
 		return this.sessionDir;
 	}
 
-	private registerSession(session: AgentSession, cwd: string, sessionInfo?: SessionInfo): ThreadEntry {
+	private registerSession(
+		session: AgentSession,
+		cwd: string,
+		sessionInfo?: SessionInfo,
+		mcpWireStatusAdapter?: McpWireStatusAdapter,
+	): ThreadEntry {
 		const existing = this.entries.get(session.sessionId);
 		if (existing) {
+			if (mcpWireStatusAdapter !== undefined) {
+				existing.mcpWireStatusAdapter = mcpWireStatusAdapter;
+				this.mcpWireStatuses.registerThread(session.sessionId, mcpWireStatusAdapter);
+			}
 			if (existing.session !== session) {
 				session.dispose();
 			}
@@ -252,8 +283,12 @@ export class ThreadRegistry {
 			taskQueue: Promise.resolve(),
 			createdAt: sessionInfo?.created.toISOString() ?? now,
 			updatedAt: sessionInfo?.modified.toISOString() ?? now,
+			mcpWireStatusAdapter,
 		};
 		this.entries.set(entry.id, entry);
+		if (mcpWireStatusAdapter !== undefined) {
+			this.mcpWireStatuses.registerThread(entry.id, mcpWireStatusAdapter);
+		}
 		return entry;
 	}
 

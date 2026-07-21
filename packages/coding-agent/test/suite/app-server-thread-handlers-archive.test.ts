@@ -11,6 +11,8 @@ import {
 	createHarness,
 	dataArray,
 	FakeConnection,
+	objectAt,
+	objectValue,
 	responseResult,
 	threadIdFromResponse,
 	threadIdsFromList,
@@ -100,7 +102,14 @@ describe("app-server thread archive lifecycle handlers", () => {
 		});
 
 		// Then: archive emits the typed notification, unloads the runtime, and list filters by archive state.
-		expect(connection.received).toEqual([{ method: "thread/archived", params: { threadId: archived } }]);
+		expect(connection.received).toEqual([
+			{
+				method: "thread/status/changed",
+				params: { threadId: archived, status: { type: "notLoaded" } },
+				emittedAtMs: expect.any(Number),
+			},
+			{ method: "thread/archived", params: { threadId: archived }, emittedAtMs: expect.any(Number) },
+		]);
 		expect(() => threads.getLoadedThread(archived)).toThrow();
 		expect(threadIdsFromList(defaultList)).toContain(active);
 		expect(threadIdsFromList(defaultList)).not.toContain(archived);
@@ -123,7 +132,14 @@ describe("app-server thread archive lifecycle handlers", () => {
 		const listed = await registry.dispatch(connection, { id: 24, method: "thread/list", params: {} });
 
 		// Then: the delete notification is broadcast and the thread no longer appears.
-		expect(connection.received).toEqual([{ method: "thread/deleted", params: { threadId } }]);
+		expect(connection.received).toEqual([
+			{
+				method: "thread/status/changed",
+				params: { threadId, status: { type: "notLoaded" } },
+				emittedAtMs: expect.any(Number),
+			},
+			{ method: "thread/deleted", params: { threadId }, emittedAtMs: expect.any(Number) },
+		]);
 		expect(dataArray(responseResult(loaded))).not.toContain(threadId);
 		expect(threadIdsFromList(listed)).not.toContain(threadId);
 	});
@@ -156,5 +172,89 @@ describe("app-server thread archive lifecycle handlers", () => {
 		expect([...dataArray(pageOneResult), ...dataArray(responseResult(pageTwo))].sort()).toEqual(
 			[first, second].sort(),
 		);
+	});
+
+	it("unarchives storage-only with notLoaded status before an explicit resume", async () => {
+		// Given: a persisted thread that is archived and therefore unloaded.
+		const deferredActions: Array<() => Promise<void> | void> = [];
+		const { connection, registry, root, threads } = await createHarness({
+			deferUntilResponded: (_connectionId, action) => {
+				deferredActions.push(action);
+				return true;
+			},
+		});
+		const threadId = "55555555-5555-4555-8555-555555555555";
+		await writePersistedSession(root, threadId);
+		await registry.dispatch(connection, { id: 31, method: "thread/archive", params: { threadId } });
+		const deferredArchive = deferredActions.shift();
+		if (!deferredArchive) throw new Error("archive did not defer its broadcast");
+		await deferredArchive();
+		connection.received.length = 0;
+		const archived = await registry.dispatch(connection, {
+			id: 32,
+			method: "thread/list",
+			params: { archived: true },
+		});
+		const archivedThread = objectValue(dataArray(responseResult(archived))[0]);
+		const archivedUpdatedAt = Number(archivedThread.updatedAt);
+
+		// When: the archived thread is unarchived without resuming its runtime.
+		const unarchived = await registry.dispatch(connection, {
+			id: 33,
+			method: "thread/unarchive",
+			params: { threadId },
+		});
+
+		// Then: the response is notLoaded with a bumped timestamp, and the runtime remains cold.
+		const unarchivedThread = objectAt(responseResult(unarchived), "thread");
+		expect(unarchivedThread.status).toEqual({ type: "notLoaded" });
+		const unarchivedUpdatedAt = unarchivedThread.updatedAt;
+		if (typeof unarchivedUpdatedAt !== "number") throw new Error("unarchived thread updatedAt must be numeric");
+		expect(unarchivedUpdatedAt).toBeGreaterThan(archivedUpdatedAt);
+		const coldList = await registry.dispatch(connection, { id: 37, method: "thread/list", params: {} });
+		const coldThread = dataArray(responseResult(coldList))
+			.map(objectValue)
+			.find((thread) => thread.id === threadId);
+		const coldUpdatedAt = coldThread?.updatedAt;
+		if (typeof coldUpdatedAt !== "number") throw new Error("cold thread updatedAt must be numeric");
+		expect(coldUpdatedAt).toBeGreaterThanOrEqual(unarchivedUpdatedAt);
+		expect(() => threads.getLoadedThread(threadId)).toThrow();
+		expect(connection.received).toEqual([]);
+		const deferredUnarchive = deferredActions[0];
+		if (!deferredUnarchive) {
+			throw new Error("unarchive did not defer its broadcast");
+		}
+		const frames: unknown[] = [unarchived];
+		await deferredUnarchive();
+		frames.push(...connection.received);
+		expect(frames[0]).toBe(unarchived);
+		expect(frames[1]).toEqual({
+			method: "thread/unarchived",
+			params: { threadId },
+			emittedAtMs: expect.any(Number),
+		});
+		expect(connection.received).toEqual([
+			{ method: "thread/unarchived", params: { threadId }, emittedAtMs: expect.any(Number) },
+		]);
+
+		// And: an explicit resume is the operation that loads the runtime.
+		const resumed = await registry.dispatch(connection, {
+			id: 34,
+			method: "thread/resume",
+			params: { threadId },
+		});
+		expect(objectAt(responseResult(resumed), "thread").status).toEqual({ type: "idle" });
+
+		// And: unknown and already-unarchived ids are invalid requests.
+		await expect(
+			registry.dispatch(connection, {
+				id: 35,
+				method: "thread/unarchive",
+				params: { threadId: "66666666-6666-4666-8666-666666666666" },
+			}),
+		).resolves.toMatchObject({ id: 35, error: { code: -32600 } });
+		await expect(
+			registry.dispatch(connection, { id: 36, method: "thread/unarchive", params: { threadId } }),
+		).resolves.toMatchObject({ id: 36, error: { code: -32600 } });
 	});
 });

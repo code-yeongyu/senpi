@@ -21,7 +21,11 @@ function messageWithoutJsonrpc(message: RpcEnvelope): RpcEnvelope {
 				? { id: message.id, method: message.method, params: message.params }
 				: { id: message.id, method: message.method };
 		}
-		return "params" in message ? { method: message.method, params: message.params } : { method: message.method };
+		return {
+			method: message.method,
+			...("params" in message ? { params: message.params } : {}),
+			...("emittedAtMs" in message ? { emittedAtMs: message.emittedAtMs } : {}),
+		};
 	}
 
 	if ("result" in message) {

@@ -1,0 +1,9 @@
+codex-cli 0.144.5
+VERSION_EXIT=0
+oracle=release-0.144.5
+ORACLE=release-0.144.5
+SCENARIO=handshake RESULT=pass
+HANDSHAKE_TRANSCRIPT_RECORDS=8
+LSOF_PORT_18994=empty
+CELL_CLEANUP=removed
+EXIT=0

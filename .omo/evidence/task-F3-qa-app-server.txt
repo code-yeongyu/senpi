@@ -1,0 +1,381 @@
+
+> @code-yeongyu/senpi@2026.7.17-5 qa:app-server
+> node scripts/qa-app-server/run-all.mjs
+
+PASS handshake
+[stdio >>] {"id":"stdio-1","method":"initialize","params":{"clientInfo":{"name":"qa-handshake","title":"qa-handshake","version":"0.0.0"},"capabilities":{"experimentalApi":true}}}
+[stdio stderr] senpi app-server listening on stdio://
+[stdio <<] {"id":"stdio-1","result":{"userAgent":"qa-handshake/2026.7.17-5 (Darwin 25.3.0; arm64) senpi_app_server","codexHome":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-handshake-9rXySg/agent","platformFamily":"unix","platformOs":"macos"}}
+[stdio >>] {"method":"initialized","params":{}}
+[stdio >>] {"id":"stdio-2","method":"thread/start","params":{"cwd":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-handshake-9rXySg/work","model":"mock/mock-model","modelProvider":"mock","approvalPolicy":"never"}}
+[stdio <<] {"id":"stdio-2","result":{"thread":{"id":"019f856e-3696-70ec-b213-83ed37e11258","sessionId":"019f856e-3696-70ec-b213-83ed37e11258","forkedFromId":null,"parentThreadId":null,"preview":"","ephemeral":false,"modelProvider":"mock","createdAt":1784650021.041,"updatedAt":1784650021.041,"recencyAt":1784650021.041,"status":{"type":"idle"},"path":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-handshake-9rXySg/sessions/2026-07-21T16-07-00-502Z_019f856e-3696-70ec-b213-83ed37e11258.jsonl","cwd":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-handshake-9rXySg/work","cliVersion":"2026.7.17-5","source":"appServer","threadSource":null,"agentNickname":null,"agentRole":null,"gitInfo":null,"name":null,"turns":[]},"model":"mock-model","modelProvider":"mock","serviceTier":null,"cwd":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-handshake-9rXySg/work","runtimeWorkspaceRoots":["/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-handshake-9rXySg/work"],"instructionSources":[],"approvalPolicy":"never","approvalsReviewer":"user","sandbox":{"type":"dangerFullAccess"},"activePermissionProfile":null,"reasoningEffort":"off","multiAgentMode":"explicitRequestOnly"}}
+[stdio <<] {"method":"thread/started","params":{"thread":{"id":"019f856e-3696-70ec-b213-83ed37e11258","sessionId":"019f856e-3696-70ec-b213-83ed37e11258","forkedFromId":null,"parentThreadId":null,"preview":"","ephemeral":false,"modelProvider":"mock","createdAt":1784650021.041,"updatedAt":1784650021.041,"recencyAt":1784650021.041,"status":{"type":"idle"},"path":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-handshake-9rXySg/sessions/2026-07-21T16-07-00-502Z_019f856e-3696-70ec-b213-83ed37e11258.jsonl","cwd":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-handshake-9rXySg/work","cliVersion":"2026.7.17-5","source":"appServer","threadSource":null,"agentNickname":null,"agentRole":null,"gitInfo":null,"name":null,"turns":[]}},"emittedAtMs":1784650021041}
+threadId=019f856e-3696-70ec-b213-83ed37e11258
+[stdio assert] notifications=1 emittedAtMs=populated serverRequests=0 emittedAtMs=absent
+PASS handshake
+[stdio stderr] app-server stdio closed: SIGTERM
+PASS handshake
+PASS multiclient
+[server stderr] app-server websocket token: /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-multiclient-IL0m1H/agent/app-server/ws-token
+[server stderr] senpi app-server listening on ws://127.0.0.1:18991
+readyz http://127.0.0.1:18991/readyz
+token /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-multiclient-IL0m1H/agent/app-server/ws-token
+authRejectStatus=401
+badTokenRejectStatus=401
+[A >>] {"id":"A-1","method":"initialize","params":{"clientInfo":{"name":"qa-multiclient-a","title":"qa-multiclient-a","version":"0.0.0"},"capabilities":{"experimentalApi":true}}}
+[A <<] {"id":"A-1","result":{"userAgent":"qa-multiclient-a/2026.7.17-5 (Darwin 25.3.0; arm64) senpi_app_server","codexHome":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-multiclient-IL0m1H/agent","platformFamily":"unix","platformOs":"macos"}}
+[A >>] {"method":"initialized","params":{}}
+[B >>] {"id":"B-1","method":"initialize","params":{"clientInfo":{"name":"qa-multiclient-b","title":"qa-multiclient-b","version":"0.0.0"},"capabilities":{"experimentalApi":true}}}
+[B <<] {"id":"B-1","result":{"userAgent":"qa-multiclient-b/2026.7.17-5 (Darwin 25.3.0; arm64) senpi_app_server","codexHome":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-multiclient-IL0m1H/agent","platformFamily":"unix","platformOs":"macos"}}
+[B >>] {"method":"initialized","params":{}}
+[A >>] {"id":"A-2","method":"thread/start","params":{"cwd":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-multiclient-IL0m1H/work","model":"mock/mock-model","modelProvider":"mock","approvalPolicy":"never"}}
+[A <<] {"id":"A-2","result":{"thread":{"id":"019f856e-5590-7c0f-aee0-0a1db9718e5d","sessionId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","forkedFromId":null,"parentThreadId":null,"preview":"","ephemeral":false,"modelProvider":"mock","createdAt":1784650028.836,"updatedAt":1784650028.836,"recencyAt":1784650028.836,"status":{"type":"idle"},"path":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-multiclient-IL0m1H/sessions/2026-07-21T16-07-08-433Z_019f856e-5590-7c0f-aee0-0a1db9718e5d.jsonl","cwd":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-multiclient-IL0m1H/work","cliVersion":"2026.7.17-5","source":"appServer","threadSource":null,"agentNickname":null,"agentRole":null,"gitInfo":null,"name":null,"turns":[]},"model":"mock-model","modelProvider":"mock","serviceTier":null,"cwd":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-multiclient-IL0m1H/work","runtimeWorkspaceRoots":["/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-multiclient-IL0m1H/work"],"instructionSources":[],"approvalPolicy":"never","approvalsReviewer":"user","sandbox":{"type":"dangerFullAccess"},"activePermissionProfile":null,"reasoningEffort":"off","multiAgentMode":"explicitRequestOnly"}}
+[A <<] {"method":"thread/started","params":{"thread":{"id":"019f856e-5590-7c0f-aee0-0a1db9718e5d","sessionId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","forkedFromId":null,"parentThreadId":null,"preview":"","ephemeral":false,"modelProvider":"mock","createdAt":1784650028.836,"updatedAt":1784650028.836,"recencyAt":1784650028.836,"status":{"type":"idle"},"path":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-multiclient-IL0m1H/sessions/2026-07-21T16-07-08-433Z_019f856e-5590-7c0f-aee0-0a1db9718e5d.jsonl","cwd":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-multiclient-IL0m1H/work","cliVersion":"2026.7.17-5","source":"appServer","threadSource":null,"agentNickname":null,"agentRole":null,"gitInfo":null,"name":null,"turns":[]}},"emittedAtMs":1784650028837}
+[B <<] {"method":"thread/started","params":{"thread":{"id":"019f856e-5590-7c0f-aee0-0a1db9718e5d","sessionId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","forkedFromId":null,"parentThreadId":null,"preview":"","ephemeral":false,"modelProvider":"mock","createdAt":1784650028.836,"updatedAt":1784650028.836,"recencyAt":1784650028.836,"status":{"type":"idle"},"path":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-multiclient-IL0m1H/sessions/2026-07-21T16-07-08-433Z_019f856e-5590-7c0f-aee0-0a1db9718e5d.jsonl","cwd":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-multiclient-IL0m1H/work","cliVersion":"2026.7.17-5","source":"appServer","threadSource":null,"agentNickname":null,"agentRole":null,"gitInfo":null,"name":null,"turns":[]}},"emittedAtMs":1784650028837}
+[A >>] {"id":"A-4","method":"turn/start","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","input":[{"type":"text","text":"first turn"}]}}
+[A <<] {"id":"A-4","result":{"turn":{"id":"417b18fb-6933-4592-b925-0ef713b8333b","items":[],"itemsView":"full","status":"inProgress","error":null,"startedAt":1784650028.863,"completedAt":null,"durationMs":null}}}
+[A <<] {"method":"thread/status/changed","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","status":{"type":"active","activeFlags":[]}},"emittedAtMs":1784650028952}
+[A <<] {"method":"turn/started","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","turn":{"id":"417b18fb-6933-4592-b925-0ef713b8333b","items":[],"itemsView":"full","status":"inProgress","error":null,"startedAt":1784650028.863,"completedAt":null,"durationMs":null}},"emittedAtMs":1784650028952}
+[B <<] {"method":"thread/status/changed","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","status":{"type":"active","activeFlags":[]}},"emittedAtMs":1784650028952}
+[A <<] {"method":"item/started","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","turnId":"417b18fb-6933-4592-b925-0ef713b8333b","item":{"type":"userMessage","id":"3b768115-f8ff-460e-a439-5ff9f64383d4","clientId":null,"content":[{"type":"text","text":"first turn","text_elements":[]}]},"startedAtMs":1784650028863},"emittedAtMs":1784650028953}
+[A <<] {"method":"item/completed","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","turnId":"417b18fb-6933-4592-b925-0ef713b8333b","item":{"type":"userMessage","id":"3b768115-f8ff-460e-a439-5ff9f64383d4","clientId":null,"content":[{"type":"text","text":"first turn","text_elements":[]}]},"completedAtMs":1784650028863},"emittedAtMs":1784650028953}
+[A <<] {"method":"item/started","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","turnId":"417b18fb-6933-4592-b925-0ef713b8333b","item":{"type":"agentMessage","id":"chatcmpl-mock:0","text":"","phase":null,"memoryCitation":null},"startedAtMs":1784650028963},"emittedAtMs":1784650028963}
+[A <<] {"method":"item/agentMessage/delta","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","turnId":"417b18fb-6933-4592-b925-0ef713b8333b","itemId":"chatcmpl-mock:0","delta":"multi-one"},"emittedAtMs":1784650028963}
+[A <<] {"method":"item/completed","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","turnId":"417b18fb-6933-4592-b925-0ef713b8333b","item":{"type":"agentMessage","id":"chatcmpl-mock:0","text":"multi-one","phase":null,"memoryCitation":null},"completedAtMs":1784650028963},"emittedAtMs":1784650028963}
+[A <<] {"method":"thread/status/changed","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","status":{"type":"idle"}},"emittedAtMs":1784650028968}
+[A <<] {"method":"turn/completed","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","turn":{"id":"417b18fb-6933-4592-b925-0ef713b8333b","items":[{"type":"userMessage","id":"3b768115-f8ff-460e-a439-5ff9f64383d4","clientId":null,"content":[{"type":"text","text":"first turn","text_elements":[]}]},{"type":"agentMessage","id":"chatcmpl-mock:0","text":"multi-one","phase":null,"memoryCitation":null}],"itemsView":"full","status":"completed","error":null,"startedAt":1784650028.863,"completedAt":1784650028.968,"durationMs":105}},"emittedAtMs":1784650028968}
+[B <<] {"method":"thread/status/changed","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","status":{"type":"idle"}},"emittedAtMs":1784650028968}
+[B >>] {"id":"B-5","method":"thread/resume","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d"}}
+[A <<] {"method":"thread/status/changed","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","status":{"type":"idle"}},"emittedAtMs":1784650029023}
+[B <<] {"method":"thread/status/changed","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","status":{"type":"idle"}},"emittedAtMs":1784650029023}
+[B <<] {"id":"B-5","result":{"thread":{"id":"019f856e-5590-7c0f-aee0-0a1db9718e5d","sessionId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","forkedFromId":null,"parentThreadId":null,"preview":"first turn","ephemeral":false,"modelProvider":"mock","createdAt":1784650028.836,"updatedAt":1784650028.968,"recencyAt":1784650028.968,"status":{"type":"idle"},"path":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-multiclient-IL0m1H/sessions/2026-07-21T16-07-08-433Z_019f856e-5590-7c0f-aee0-0a1db9718e5d.jsonl","cwd":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-multiclient-IL0m1H/work","cliVersion":"2026.7.17-5","source":"appServer","threadSource":null,"agentNickname":null,"agentRole":null,"gitInfo":null,"name":null,"turns":[{"id":"417b18fb-6933-4592-b925-0ef713b8333b","items":[{"type":"userMessage","id":"3b768115-f8ff-460e-a439-5ff9f64383d4","clientId":null,"content":[{"type":"text","text":"first turn","text_elements":[]}]},{"type":"agentMessage","id":"chatcmpl-mock:0","text":"multi-one","phase":null,"memoryCitation":null}],"itemsView":"full","status":"completed","error":null,"startedAt":1784650028.863,"completedAt":1784650028.968,"durationMs":105}]},"model":"mock-model","modelProvider":"mock","serviceTier":null,"cwd":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-multiclient-IL0m1H/work","runtimeWorkspaceRoots":["/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-multiclient-IL0m1H/work"],"instructionSources":[],"approvalPolicy":"never","approvalsReviewer":"user","sandbox":{"type":"dangerFullAccess"},"activePermissionProfile":null,"reasoningEffort":"off","multiAgentMode":"explicitRequestOnly","initialTurnsPage":null}}
+[A >>] {"id":"A-15","method":"turn/start","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","input":[{"type":"text","text":"second turn"}]}}
+[A <<] {"id":"A-15","result":{"turn":{"id":"0eff83e7-ec77-40c0-b556-0e34d56273f8","items":[],"itemsView":"full","status":"inProgress","error":null,"startedAt":1784650029.05,"completedAt":null,"durationMs":null}}}
+[A <<] {"method":"thread/status/changed","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","status":{"type":"active","activeFlags":[]}},"emittedAtMs":1784650029058}
+[A <<] {"method":"turn/started","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","turn":{"id":"0eff83e7-ec77-40c0-b556-0e34d56273f8","items":[],"itemsView":"full","status":"inProgress","error":null,"startedAt":1784650029.05,"completedAt":null,"durationMs":null}},"emittedAtMs":1784650029058}
+[B <<] {"method":"thread/status/changed","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","status":{"type":"active","activeFlags":[]}},"emittedAtMs":1784650029058}
+[B <<] {"method":"turn/started","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","turn":{"id":"0eff83e7-ec77-40c0-b556-0e34d56273f8","items":[],"itemsView":"full","status":"inProgress","error":null,"startedAt":1784650029.05,"completedAt":null,"durationMs":null}},"emittedAtMs":1784650029058}
+[A <<] {"method":"item/started","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","turnId":"0eff83e7-ec77-40c0-b556-0e34d56273f8","item":{"type":"userMessage","id":"fae531b9-056f-4eee-8ed3-b2ef560dccc7","clientId":null,"content":[{"type":"text","text":"second turn","text_elements":[]}]},"startedAtMs":1784650029050},"emittedAtMs":1784650029058}
+[B <<] {"method":"item/started","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","turnId":"0eff83e7-ec77-40c0-b556-0e34d56273f8","item":{"type":"userMessage","id":"fae531b9-056f-4eee-8ed3-b2ef560dccc7","clientId":null,"content":[{"type":"text","text":"second turn","text_elements":[]}]},"startedAtMs":1784650029050},"emittedAtMs":1784650029058}
+[B <<] {"method":"item/completed","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","turnId":"0eff83e7-ec77-40c0-b556-0e34d56273f8","item":{"type":"userMessage","id":"fae531b9-056f-4eee-8ed3-b2ef560dccc7","clientId":null,"content":[{"type":"text","text":"second turn","text_elements":[]}]},"completedAtMs":1784650029050},"emittedAtMs":1784650029058}
+[A <<] {"method":"item/completed","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","turnId":"0eff83e7-ec77-40c0-b556-0e34d56273f8","item":{"type":"userMessage","id":"fae531b9-056f-4eee-8ed3-b2ef560dccc7","clientId":null,"content":[{"type":"text","text":"second turn","text_elements":[]}]},"completedAtMs":1784650029050},"emittedAtMs":1784650029058}
+[A <<] {"method":"item/started","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","turnId":"0eff83e7-ec77-40c0-b556-0e34d56273f8","item":{"type":"agentMessage","id":"chatcmpl-mock:0","text":"","phase":null,"memoryCitation":null},"startedAtMs":1784650029062},"emittedAtMs":1784650029062}
+[A <<] {"method":"item/agentMessage/delta","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","turnId":"0eff83e7-ec77-40c0-b556-0e34d56273f8","itemId":"chatcmpl-mock:0","delta":"multi-two"},"emittedAtMs":1784650029062}
+[B <<] {"method":"item/started","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","turnId":"0eff83e7-ec77-40c0-b556-0e34d56273f8","item":{"type":"agentMessage","id":"chatcmpl-mock:0","text":"","phase":null,"memoryCitation":null},"startedAtMs":1784650029062},"emittedAtMs":1784650029062}
+[B <<] {"method":"item/agentMessage/delta","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","turnId":"0eff83e7-ec77-40c0-b556-0e34d56273f8","itemId":"chatcmpl-mock:0","delta":"multi-two"},"emittedAtMs":1784650029062}
+[A <<] {"method":"item/completed","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","turnId":"0eff83e7-ec77-40c0-b556-0e34d56273f8","item":{"type":"agentMessage","id":"chatcmpl-mock:0","text":"multi-two","phase":null,"memoryCitation":null},"completedAtMs":1784650029063},"emittedAtMs":1784650029063}
+[B <<] {"method":"item/completed","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","turnId":"0eff83e7-ec77-40c0-b556-0e34d56273f8","item":{"type":"agentMessage","id":"chatcmpl-mock:0","text":"multi-two","phase":null,"memoryCitation":null},"completedAtMs":1784650029063},"emittedAtMs":1784650029063}
+[A <<] {"method":"thread/status/changed","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","status":{"type":"idle"}},"emittedAtMs":1784650029064}
+[A <<] {"method":"turn/completed","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","turn":{"id":"0eff83e7-ec77-40c0-b556-0e34d56273f8","items":[{"type":"userMessage","id":"fae531b9-056f-4eee-8ed3-b2ef560dccc7","clientId":null,"content":[{"type":"text","text":"second turn","text_elements":[]}]},{"type":"agentMessage","id":"chatcmpl-mock:0","text":"multi-two","phase":null,"memoryCitation":null}],"itemsView":"full","status":"completed","error":null,"startedAt":1784650029.05,"completedAt":1784650029.064,"durationMs":14}},"emittedAtMs":1784650029064}
+[B <<] {"method":"thread/status/changed","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","status":{"type":"idle"}},"emittedAtMs":1784650029064}
+[B <<] {"method":"turn/completed","params":{"threadId":"019f856e-5590-7c0f-aee0-0a1db9718e5d","turn":{"id":"0eff83e7-ec77-40c0-b556-0e34d56273f8","items":[{"type":"userMessage","id":"fae531b9-056f-4eee-8ed3-b2ef560dccc7","clientId":null,"content":[{"type":"text","text":"second turn","text_elements":[]}]},{"type":"agentMessage","id":"chatcmpl-mock:0","text":"multi-two","phase":null,"memoryCitation":null}],"itemsView":"full","status":"completed","error":null,"startedAt":1784650029.05,"completedAt":1784650029.064,"durationMs":14}},"emittedAtMs":1784650029064}
+[A assert] notifications=20 emittedAtMs=populated serverRequests=0 emittedAtMs=absent
+[B assert] notifications=13 emittedAtMs=populated serverRequests=0 emittedAtMs=absent
+PASS multiclient
+PASS multiclient
+PASS approval
+[stdio >>] {"id":"stdio-1","method":"initialize","params":{"clientInfo":{"name":"qa-approval","title":"qa-approval","version":"0.0.0"},"capabilities":{"experimentalApi":true}}}
+[stdio stderr] senpi app-server listening on stdio://
+[stdio <<] {"id":"stdio-1","result":{"userAgent":"qa-approval/2026.7.17-5 (Darwin 25.3.0; arm64) senpi_app_server","codexHome":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-approval-uKhHps/agent","platformFamily":"unix","platformOs":"macos"}}
+[stdio >>] {"method":"initialized","params":{}}
+[stdio >>] {"id":"stdio-2","method":"thread/start","params":{"cwd":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-approval-uKhHps/work","model":"mock/mock-model","modelProvider":"mock","approvalPolicy":"on-request"}}
+[stdio <<] {"id":"stdio-2","result":{"thread":{"id":"019f856e-72f5-71c0-99e9-af5b2b354808","sessionId":"019f856e-72f5-71c0-99e9-af5b2b354808","forkedFromId":null,"parentThreadId":null,"preview":"","ephemeral":false,"modelProvider":"mock","createdAt":1784650036.282,"updatedAt":1784650036.282,"recencyAt":1784650036.282,"status":{"type":"idle"},"path":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-approval-uKhHps/sessions/2026-07-21T16-07-15-957Z_019f856e-72f5-71c0-99e9-af5b2b354808.jsonl","cwd":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-approval-uKhHps/work","cliVersion":"2026.7.17-5","source":"appServer","threadSource":null,"agentNickname":null,"agentRole":null,"gitInfo":null,"name":null,"turns":[]},"model":"mock-model","modelProvider":"mock","serviceTier":null,"cwd":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-approval-uKhHps/work","runtimeWorkspaceRoots":["/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-approval-uKhHps/work"],"instructionSources":[],"approvalPolicy":"on-request","approvalsReviewer":"user","sandbox":{"type":"dangerFullAccess"},"activePermissionProfile":null,"reasoningEffort":"off","multiAgentMode":"explicitRequestOnly"}}
+[stdio <<] {"method":"thread/started","params":{"thread":{"id":"019f856e-72f5-71c0-99e9-af5b2b354808","sessionId":"019f856e-72f5-71c0-99e9-af5b2b354808","forkedFromId":null,"parentThreadId":null,"preview":"","ephemeral":false,"modelProvider":"mock","createdAt":1784650036.282,"updatedAt":1784650036.282,"recencyAt":1784650036.282,"status":{"type":"idle"},"path":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-approval-uKhHps/sessions/2026-07-21T16-07-15-957Z_019f856e-72f5-71c0-99e9-af5b2b354808.jsonl","cwd":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-approval-uKhHps/work","cliVersion":"2026.7.17-5","source":"appServer","threadSource":null,"agentNickname":null,"agentRole":null,"gitInfo":null,"name":null,"turns":[]}},"emittedAtMs":1784650036282}
+[stdio >>] {"id":"stdio-4","method":"turn/start","params":{"threadId":"019f856e-72f5-71c0-99e9-af5b2b354808","input":[{"type":"text","text":"run echo hi"}]}}
+[stdio <<] {"id":"stdio-4","result":{"turn":{"id":"a651a5d7-1488-472c-9320-701a6ef4ff07","items":[],"itemsView":"full","status":"inProgress","error":null,"startedAt":1784650036.307,"completedAt":null,"durationMs":null}}}
+[stdio <<] {"method":"thread/status/changed","params":{"threadId":"019f856e-72f5-71c0-99e9-af5b2b354808","status":{"type":"active","activeFlags":[]}},"emittedAtMs":1784650036352}
+[stdio <<] {"method":"turn/started","params":{"threadId":"019f856e-72f5-71c0-99e9-af5b2b354808","turn":{"id":"a651a5d7-1488-472c-9320-701a6ef4ff07","items":[],"itemsView":"full","status":"inProgress","error":null,"startedAt":1784650036.307,"completedAt":null,"durationMs":null}},"emittedAtMs":1784650036352}
+[stdio <<] {"method":"item/started","params":{"threadId":"019f856e-72f5-71c0-99e9-af5b2b354808","turnId":"a651a5d7-1488-472c-9320-701a6ef4ff07","item":{"type":"userMessage","id":"3f00b8d3-bd38-493d-9ad7-702fbf219340","clientId":null,"content":[{"type":"text","text":"run echo hi","text_elements":[]}]},"startedAtMs":1784650036307},"emittedAtMs":1784650036352}
+[stdio <<] {"method":"item/completed","params":{"threadId":"019f856e-72f5-71c0-99e9-af5b2b354808","turnId":"a651a5d7-1488-472c-9320-701a6ef4ff07","item":{"type":"userMessage","id":"3f00b8d3-bd38-493d-9ad7-702fbf219340","clientId":null,"content":[{"type":"text","text":"run echo hi","text_elements":[]}]},"completedAtMs":1784650036307},"emittedAtMs":1784650036352}
+[stdio <<] {"method":"item/started","params":{"threadId":"019f856e-72f5-71c0-99e9-af5b2b354808","turnId":"a651a5d7-1488-472c-9320-701a6ef4ff07","item":{"type":"commandExecution","id":"call_1","command":"echo hi","cwd":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-approval-uKhHps/work","processId":null,"source":"agent","status":"inProgress","commandActions":[],"aggregatedOutput":null,"exitCode":null,"durationMs":null},"startedAtMs":1784650036361},"emittedAtMs":1784650036361}
+[stdio <<] {"id":0,"method":"item/commandExecution/requestApproval","params":{"threadId":"019f856e-72f5-71c0-99e9-af5b2b354808","turnId":"turn-approval","itemId":"approval-bash","startedAtMs":1784650036363,"approvalId":null,"environmentId":null,"reason":"Command: $ echo hi\n\nPatterns:\n  - echo","command":"echo hi","cwd":null,"availableDecisions":["accept","acceptForSession","decline","cancel"]}}
+[stdio >>] {"id":0,"result":{"decision":"accept"}}
+[stdio <<] {"method":"serverRequest/resolved","params":{"threadId":"019f856e-72f5-71c0-99e9-af5b2b354808","requestId":0},"emittedAtMs":1784650036386}
+[stdio <<] {"method":"item/completed","params":{"threadId":"019f856e-72f5-71c0-99e9-af5b2b354808","turnId":"a651a5d7-1488-472c-9320-701a6ef4ff07","item":{"type":"commandExecution","id":"call_1","command":"echo hi","cwd":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-approval-uKhHps/work","processId":null,"source":"agent","status":"completed","commandActions":[],"aggregatedOutput":"hi","exitCode":null,"durationMs":null},"completedAtMs":1784650036413},"emittedAtMs":1784650036413}
+[stdio <<] {"method":"item/started","params":{"threadId":"019f856e-72f5-71c0-99e9-af5b2b354808","turnId":"a651a5d7-1488-472c-9320-701a6ef4ff07","item":{"type":"agentMessage","id":"chatcmpl-mock:0","text":"","phase":null,"memoryCitation":null},"startedAtMs":1784650036419},"emittedAtMs":1784650036419}
+[stdio <<] {"method":"item/agentMessage/delta","params":{"threadId":"019f856e-72f5-71c0-99e9-af5b2b354808","turnId":"a651a5d7-1488-472c-9320-701a6ef4ff07","itemId":"chatcmpl-mock:0","delta":"approval complete"},"emittedAtMs":1784650036419}
+[stdio <<] {"method":"item/completed","params":{"threadId":"019f856e-72f5-71c0-99e9-af5b2b354808","turnId":"a651a5d7-1488-472c-9320-701a6ef4ff07","item":{"type":"agentMessage","id":"chatcmpl-mock:0","text":"approval complete","phase":null,"memoryCitation":null},"completedAtMs":1784650036420},"emittedAtMs":1784650036420}
+[stdio <<] {"method":"thread/status/changed","params":{"threadId":"019f856e-72f5-71c0-99e9-af5b2b354808","status":{"type":"idle"}},"emittedAtMs":1784650036424}
+[stdio <<] {"method":"turn/completed","params":{"threadId":"019f856e-72f5-71c0-99e9-af5b2b354808","turn":{"id":"a651a5d7-1488-472c-9320-701a6ef4ff07","items":[{"type":"userMessage","id":"3f00b8d3-bd38-493d-9ad7-702fbf219340","clientId":null,"content":[{"type":"text","text":"run echo hi","text_elements":[]}]},{"type":"commandExecution","id":"call_1","command":"echo hi","cwd":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-approval-uKhHps/work","processId":null,"source":"agent","status":"completed","commandActions":[],"aggregatedOutput":"hi","exitCode":null,"durationMs":null},{"type":"agentMessage","id":"chatcmpl-mock:0","text":"approval complete","phase":null,"memoryCitation":null}],"itemsView":"full","status":"completed","error":null,"startedAt":1784650036.307,"completedAt":1784650036.424,"durationMs":117}},"emittedAtMs":1784650036424}
+[stdio assert] notifications=13 emittedAtMs=populated serverRequests=1 emittedAtMs=absent
+PASS approval
+[stdio stderr] app-server stdio closed: stdin ended
+PASS approval
+PASS real-client
+[server stderr] app-server websocket token: /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-real-client-Mrw19v/agent/app-server/ws-token
+[server stderr] senpi app-server listening on ws://127.0.0.1:18995
+readyz http://127.0.0.1:18995/readyz
+[server stderr] token /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-real-client-Mrw19v/agent/app-server/ws-token
+[client >>] create /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-real-client-Mrw19v/work
+[client << exit=0] stdout=Created 019f856e-846f-71e5-9a82-d15295328a01
+  cwd: /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-real-client-Mrw19v/work
+  access: full (approvalPolicy=never, sandbox=danger-full-access)
+  next: msg 019f856e-846f-71e5-9a82-d15295328a01 "<text>"  |  read 019f856e-846f-71e5-9a82-d15295328a01 stderr=
+[client >>] msg 019f856e-846f-71e5-9a82-d15295328a01 short prompt --timeout 30
+[client << exit=0] stdout=[USER] short prompt
+[AGENT] real-client-fast
+turn b4d6b89b-5c71-473c-a622-ca9cfcd618b7 finished: completed stderr=
+[client >>] read 019f856e-846f-71e5-9a82-d15295328a01
+[client << exit=0] stdout=Thread: 019f856e-846f-71e5-9a82-d15295328a01
+Name: (none)
+Status: idle
+CWD: /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-real-client-Mrw19v/work
+Turns: 1
+
+--- Turn b4d6b89b-5c71-473c-a622-ca9cfcd618b7 status:completed (2 items) ---
+  [userMessage] [{"type":"text","text":"short prompt","text_elements":[]}]
+  [agentMessage] real-client-fast
+
+=== Final agent message (turn b4d6b89b-5c71-473c-a622-ca9cfcd618b7, completed) ===
+real-client-fast stderr=
+[client >>] threads 10
+[client << exit=0] stdout=[appServer] | 019f856e-846f-71e5-9a82-d15295328a01 | short prompt | idle
+Total: 1 stderr=
+[client >>] loaded
+[client << exit=0] stdout=Loaded threads: 1
+  019f856e-846f-71e5-9a82-d15295328a01 stderr=
+[observer >>] {"id":"observer-1","method":"initialize","params":{"clientInfo":{"name":"qa-real-client-observer","title":"qa-real-client-observer","version":"0.0.0"},"capabilities":{"experimentalApi":true}}}
+[observer <<] {"id":"observer-1","result":{"userAgent":"qa-real-client-observer/2026.7.17-5 (Darwin 25.3.0; arm64) senpi_app_server","codexHome":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-real-client-Mrw19v/agent","platformFamily":"unix","platformOs":"macos"}}
+[observer >>] {"method":"initialized","params":{}}
+[observer >>] {"id":"observer-2","method":"thread/resume","params":{"threadId":"019f856e-846f-71e5-9a82-d15295328a01"}}
+[observer <<] {"method":"thread/status/changed","params":{"threadId":"019f856e-846f-71e5-9a82-d15295328a01","status":{"type":"idle"}},"emittedAtMs":1784650041465}
+[observer <<] {"id":"observer-2","result":{"thread":{"id":"019f856e-846f-71e5-9a82-d15295328a01","sessionId":"019f856e-846f-71e5-9a82-d15295328a01","forkedFromId":null,"parentThreadId":null,"preview":"short prompt","ephemeral":false,"modelProvider":"mock","createdAt":1784650040.961,"updatedAt":1784650041.134,"recencyAt":1784650041.134,"status":{"type":"idle"},"path":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-real-client-Mrw19v/sessions/2026-07-21T16-07-20-431Z_019f856e-846f-71e5-9a82-d15295328a01.jsonl","cwd":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-real-client-Mrw19v/work","cliVersion":"2026.7.17-5","source":"appServer","threadSource":null,"agentNickname":null,"agentRole":null,"gitInfo":null,"name":null,"turns":[{"id":"b4d6b89b-5c71-473c-a622-ca9cfcd618b7","items":[{"type":"userMessage","id":"863436e2-9e88-4591-a36e-415e386b021d","clientId":null,"content":[{"type":"text","text":"short prompt","text_elements":[]}]},{"type":"agentMessage","id":"chatcmpl-mock:0","text":"real-client-fast","phase":null,"memoryCitation":null}],"itemsView":"full","status":"completed","error":null,"startedAt":1784650041.064,"completedAt":1784650041.134,"durationMs":70}]},"model":"mock-model","modelProvider":"mock","serviceTier":null,"cwd":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-real-client-Mrw19v/work","runtimeWorkspaceRoots":["/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-real-client-Mrw19v/work"],"instructionSources":[],"approvalPolicy":"never","approvalsReviewer":"user","sandbox":{"type":"dangerFullAccess"},"activePermissionProfile":null,"reasoningEffort":"off","multiAgentMode":"explicitRequestOnly","initialTurnsPage":null}}
+[client >>] msg 019f856e-846f-71e5-9a82-d15295328a01 slow prompt --timeout 60
+[observer <<] {"method":"thread/status/changed","params":{"threadId":"019f856e-846f-71e5-9a82-d15295328a01","status":{"type":"idle"}},"emittedAtMs":1784650041587}
+[observer <<] {"method":"thread/status/changed","params":{"threadId":"019f856e-846f-71e5-9a82-d15295328a01","status":{"type":"active","activeFlags":[]}},"emittedAtMs":1784650041596}
+[observer <<] {"method":"turn/started","params":{"threadId":"019f856e-846f-71e5-9a82-d15295328a01","turn":{"id":"d9af4ca7-8e38-46cb-a225-de9dfa97847b","items":[],"itemsView":"full","status":"inProgress","error":null,"startedAt":1784650041.588,"completedAt":null,"durationMs":null}},"emittedAtMs":1784650041596}
+[observer assert] turn/started thread=019f856e-846f-71e5-9a82-d15295328a01 before steer/interrupt
+[client >>] steer 019f856e-846f-71e5-9a82-d15295328a01 please stop after this
+[observer <<] {"method":"item/started","params":{"threadId":"019f856e-846f-71e5-9a82-d15295328a01","turnId":"d9af4ca7-8e38-46cb-a225-de9dfa97847b","item":{"type":"userMessage","id":"6492029a-1dd6-4afd-99e3-ca32aedbf663","clientId":null,"content":[{"type":"text","text":"slow prompt","text_elements":[]}]},"startedAtMs":1784650041588},"emittedAtMs":1784650041596}
+[observer <<] {"method":"item/completed","params":{"threadId":"019f856e-846f-71e5-9a82-d15295328a01","turnId":"d9af4ca7-8e38-46cb-a225-de9dfa97847b","item":{"type":"userMessage","id":"6492029a-1dd6-4afd-99e3-ca32aedbf663","clientId":null,"content":[{"type":"text","text":"slow prompt","text_elements":[]}]},"completedAtMs":1784650041588},"emittedAtMs":1784650041596}
+[observer <<] {"method":"thread/status/changed","params":{"threadId":"019f856e-846f-71e5-9a82-d15295328a01","status":{"type":"idle"}},"emittedAtMs":1784650041694}
+[observer <<] {"method":"item/started","params":{"threadId":"019f856e-846f-71e5-9a82-d15295328a01","turnId":"d9af4ca7-8e38-46cb-a225-de9dfa97847b","item":{"type":"userMessage","id":"4e658673-6ad2-4cc1-9735-0a7645f79d87","clientId":null,"content":[{"type":"text","text":"please stop after this","text_elements":[]}]},"startedAtMs":1784650041696},"emittedAtMs":1784650041696}
+[observer <<] {"method":"item/completed","params":{"threadId":"019f856e-846f-71e5-9a82-d15295328a01","turnId":"d9af4ca7-8e38-46cb-a225-de9dfa97847b","item":{"type":"userMessage","id":"4e658673-6ad2-4cc1-9735-0a7645f79d87","clientId":null,"content":[{"type":"text","text":"please stop after this","text_elements":[]}]},"completedAtMs":1784650041696},"emittedAtMs":1784650041696}
+[client << exit=0] stdout=steered turn d9af4ca7-8e38-46cb-a225-de9dfa97847b on 019f856e-846f-71e5-9a82-d15295328a01 stderr=
+[client >>] interrupt 019f856e-846f-71e5-9a82-d15295328a01
+[observer <<] {"method":"thread/status/changed","params":{"threadId":"019f856e-846f-71e5-9a82-d15295328a01","status":{"type":"idle"}},"emittedAtMs":1784650041785}
+[observer <<] {"method":"thread/status/changed","params":{"threadId":"019f856e-846f-71e5-9a82-d15295328a01","status":{"type":"idle"}},"emittedAtMs":1784650041791}
+[observer <<] {"method":"turn/completed","params":{"threadId":"019f856e-846f-71e5-9a82-d15295328a01","turn":{"id":"d9af4ca7-8e38-46cb-a225-de9dfa97847b","items":[{"type":"userMessage","id":"6492029a-1dd6-4afd-99e3-ca32aedbf663","clientId":null,"content":[{"type":"text","text":"slow prompt","text_elements":[]}]},{"type":"userMessage","id":"4e658673-6ad2-4cc1-9735-0a7645f79d87","clientId":null,"content":[{"type":"text","text":"please stop after this","text_elements":[]}]}],"itemsView":"full","status":"interrupted","error":null,"startedAt":1784650041.588,"completedAt":1784650041.791,"durationMs":203}},"emittedAtMs":1784650041791}
+[client << exit=0] stdout=interrupted turn d9af4ca7-8e38-46cb-a225-de9dfa97847b on 019f856e-846f-71e5-9a82-d15295328a01 stderr=
+[client << exit=1] stdout=[USER] slow prompt
+[AGENT]
+turn d9af4ca7-8e38-46cb-a225-de9dfa97847b finished: interrupted stderr=
+[client bg exit] 1
+[client >>] read 019f856e-846f-71e5-9a82-d15295328a01 --full
+[client << exit=0] stdout=Thread: 019f856e-846f-71e5-9a82-d15295328a01
+Name: (none)
+Status: idle
+CWD: /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-real-client-Mrw19v/work
+Turns: 2
+
+--- Turn b4d6b89b-5c71-473c-a622-ca9cfcd618b7 status:completed (2 items) ---
+  [userMessage] [{"type":"text","text":"short prompt","text_elements":[]}]
+  [agentMessage] real-client-fast
+
+--- Turn d9af4ca7-8e38-46cb-a225-de9dfa97847b status:interrupted (2 items) ---
+  [userMessage] [{"type":"text","text":"slow prompt","text_elements":[]}]
+  [userMessage] [{"type":"text","text":"please stop after this","text_elements":[]}]
+
+=== Final agent message (turn b4d6b89b-5c71-473c-a622-ca9cfcd618b7, completed) ===
+real-client-fast stderr=
+PASS real-client
+PASS real-client
+PASS real-client-sweep
+[server stderr] app-server websocket token: /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-real-client-sweep-x9LANW/agent/app-server/ws-token
+[server stderr] senpi app-server listening on ws://127.0.0.1:18991
+readyz http://127.0.0.1:18991/readyz
+[server stderr] token /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-real-client-sweep-x9LANW/agent/app-server/ws-token
+SWEEP_DAEMON_PORT=18991 SWEEP_CLIENT_PORT=18992 TOKEN=generated
+[client help >>] help
+[client << exit=0] stdout=usage: codex-query <command> [args] [flags]
+  status                                remote-control status
+  clients [--limit n]                   paired remote-control clients
+  threads [limit] [--sort created|updated|recency] [--dir asc|desc]
+          [--search term] [--cursor c] [--cwd path] [--archived]
+  search <term...> [--limit n]          full-text thread search (experimental)
+  active                                threads with a turn in flight
+  loaded                                thread ids loaded in server memory
+  read <threadId> [--full]              thread details with recent turns
+  answer <threadId>                     final agent message, full text
+  create <cwd> [--safe]                 start a new thread with full permissions
+                                        (approvalPolicy=never, sandbox=danger-full-access);
+                                        --safe uses the server's default sandbox
+  rename <threadId> <name...>           set thread name
+  archive <threadId>                    archive a thread
+  msg <threadId> <text...> [--timeout secs] [--decline]
+                                        send a message, stream the reply
+                                        (approvals auto-accepted; --decline to refuse)
+  steer <threadId> <text...>            inject input into the running turn
+  interrupt <threadId>                  stop the running turn
+HOST targets any app-server: unset = this machine, a known alias (mengmotaHost,
+mengmotaMac), any ssh-reachable name[:port], or a ws:// URL. CODEX_WS_TOKEN overrides
+the token lookup. stderr=
+HELP_CONNECTIONS=0
+[client status >>] status
+[wire status C->S] {"method":"initialize","id":1,"params":{"clientInfo":{"name":"codex-query","title":"codex-query","version":"0.2.0"},"capabilities":{"experimentalApi":true}}}
+[wire status C->S] {"method":"initialized","params":{}}
+[wire status C->S] {"method":"remoteControl/status/read","id":2,"params":{}}
+[client << exit=0] stdout={
+  "status": "disabled",
+  "serverName": "senpi app-server",
+  "installationId": "fb0f692a-933b-4d01-9902-51de55012a71",
+  "environmentId": null
+} stderr=
+[client clients >>] clients
+[wire clients C->S] {"method":"initialize","id":1,"params":{"clientInfo":{"name":"codex-query","title":"codex-query","version":"0.2.0"},"capabilities":{"experimentalApi":true}}}
+[wire clients C->S] {"method":"initialized","params":{}}
+[wire clients C->S] {"method":"remoteControl/status/read","id":2,"params":{}}
+[client << exit=1] stdout= stderr=remote control is not active (status: disabled)
+CLIENTS_APP_METHODS=remoteControl/status/read
+[client create >>] create /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-real-client-sweep-x9LANW/work
+[wire create C->S] {"method":"initialize","id":1,"params":{"clientInfo":{"name":"codex-query","title":"codex-query","version":"0.2.0"},"capabilities":{"experimentalApi":true}}}
+[wire create C->S] {"method":"initialized","params":{}}
+[wire create C->S] {"method":"thread/start","id":2,"params":{"cwd":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-real-client-sweep-x9LANW/work","approvalPolicy":"never","sandbox":"danger-full-access"}}
+[client << exit=0] stdout=Created 019f856e-a5c8-7cec-a65d-2e6fc719e7e9
+  cwd: /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-real-client-sweep-x9LANW/work
+  access: full (approvalPolicy=never, sandbox=danger-full-access)
+  next: msg 019f856e-a5c8-7cec-a65d-2e6fc719e7e9 "<text>"  |  read 019f856e-a5c8-7cec-a65d-2e6fc719e7e9 stderr=
+[client create-safe >>] create /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-real-client-sweep-x9LANW/work --safe
+[wire create-safe C->S] {"method":"initialize","id":1,"params":{"clientInfo":{"name":"codex-query","title":"codex-query","version":"0.2.0"},"capabilities":{"experimentalApi":true}}}
+[wire create-safe C->S] {"method":"initialized","params":{}}
+[wire create-safe C->S] {"method":"thread/start","id":2,"params":{"cwd":"/var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-real-client-sweep-x9LANW/work"}}
+[client << exit=0] stdout=Created 019f856e-a78a-7c47-999b-55cf4bc28ecf
+  cwd: /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-real-client-sweep-x9LANW/work
+  access: server default (--safe)
+  next: msg 019f856e-a78a-7c47-999b-55cf4bc28ecf "<text>"  |  read 019f856e-a78a-7c47-999b-55cf4bc28ecf stderr=
+[client threads >>] threads 10
+[wire threads C->S] {"method":"initialize","id":1,"params":{"clientInfo":{"name":"codex-query","title":"codex-query","version":"0.2.0"},"capabilities":{"experimentalApi":true}}}
+[wire threads C->S] {"method":"initialized","params":{}}
+[wire threads C->S] {"method":"thread/list","id":2,"params":{"limit":10,"archived":false}}
+[client << exit=0] stdout=[appServer] | 019f856e-a7c9-7496-8f15-3b1add0805ea | (untitled) | idle
+[appServer] | 019f856e-a78a-7c47-999b-55cf4bc28ecf | (untitled) | idle
+[appServer] | 019f856e-a5c8-7cec-a65d-2e6fc719e7e9 | (untitled) | idle
+Total: 3 stderr=
+[client active >>] active
+[wire active C->S] {"method":"initialize","id":1,"params":{"clientInfo":{"name":"codex-query","title":"codex-query","version":"0.2.0"},"capabilities":{"experimentalApi":true}}}
+[wire active C->S] {"method":"initialized","params":{}}
+[wire active C->S] {"method":"thread/list","id":2,"params":{"limit":100,"sortKey":"recency_at","sortDirection":"desc"}}
+[client << exit=0] stdout=Active: 0 (of 3 recent threads scanned) stderr=
+[client loaded >>] loaded
+[wire loaded C->S] {"method":"initialize","id":1,"params":{"clientInfo":{"name":"codex-query","title":"codex-query","version":"0.2.0"},"capabilities":{"experimentalApi":true}}}
+[wire loaded C->S] {"method":"initialized","params":{}}
+[wire loaded C->S] {"method":"thread/loaded/list","id":2,"params":{}}
+[client << exit=0] stdout=Loaded threads: 3
+  019f856e-a5c8-7cec-a65d-2e6fc719e7e9
+  019f856e-a78a-7c47-999b-55cf4bc28ecf
+  019f856e-a7c9-7496-8f15-3b1add0805ea stderr=
+[client rename >>] rename 019f856e-a5c8-7cec-a65d-2e6fc719e7e9 sweep archived thread
+[wire rename C->S] {"method":"initialize","id":1,"params":{"clientInfo":{"name":"codex-query","title":"codex-query","version":"0.2.0"},"capabilities":{"experimentalApi":true}}}
+[wire rename C->S] {"method":"initialized","params":{}}
+[wire rename C->S] {"method":"thread/name/set","id":2,"params":{"threadId":"019f856e-a5c8-7cec-a65d-2e6fc719e7e9","name":"sweep archived thread"}}
+[client << exit=0] stdout=Renamed 019f856e-a5c8-7cec-a65d-2e6fc719e7e9 -> "sweep archived thread" stderr=
+[client archive >>] archive 019f856e-a5c8-7cec-a65d-2e6fc719e7e9
+[wire archive C->S] {"method":"initialize","id":1,"params":{"clientInfo":{"name":"codex-query","title":"codex-query","version":"0.2.0"},"capabilities":{"experimentalApi":true}}}
+[wire archive C->S] {"method":"initialized","params":{}}
+[wire archive C->S] {"method":"thread/archive","id":2,"params":{"threadId":"019f856e-a5c8-7cec-a65d-2e6fc719e7e9"}}
+[client << exit=0] stdout=Archived 019f856e-a5c8-7cec-a65d-2e6fc719e7e9 stderr=
+[client msg-accept >>] msg 019f856e-a7c9-7496-8f15-3b1add0805ea accept this scripted command --timeout 30
+[wire msg-accept C->S] {"method":"initialize","id":1,"params":{"clientInfo":{"name":"codex-query","title":"codex-query","version":"0.2.0"},"capabilities":{"experimentalApi":true}}}
+[wire msg-accept C->S] {"method":"initialized","params":{}}
+[wire msg-accept C->S] {"method":"thread/resume","id":2,"params":{"threadId":"019f856e-a7c9-7496-8f15-3b1add0805ea"}}
+[wire msg-accept C->S] {"method":"turn/start","id":3,"params":{"threadId":"019f856e-a7c9-7496-8f15-3b1add0805ea","input":[{"type":"text","text":"accept this scripted command"}]}}
+[wire msg-accept S->C] {"id":0,"method":"item/commandExecution/requestApproval","params":{"threadId":"019f856e-a7c9-7496-8f15-3b1add0805ea","turnId":"turn-approval","itemId":"approval-bash","startedAtMs":1784650050178,"approvalId":null,"environmentId":null,"reason":"Command: $ echo sweep-accept\n\nPatterns:\n  - echo","command":"echo sweep-accept","cwd":null,"availableDecisions":["accept","acceptForSession","decline","cancel"]}}
+[wire msg-accept C->S] {"id":0,"result":{"decision":"acceptForSession"}}
+[wire msg-accept C->S] {"method":"thread/read","id":4,"params":{"threadId":"019f856e-a7c9-7496-8f15-3b1add0805ea","includeTurns":true}}
+[client << exit=0] stdout=[USER] accept this scripted command
+[AGENT] sweep accept completed
+turn 0b89c31f-43e7-4559-9477-2b583575af48 finished: completed stderr=[approval] item/commandExecution/requestApproval -> acceptForSession
+[client search >>] search sweep --limit 10
+[wire search C->S] {"method":"initialize","id":1,"params":{"clientInfo":{"name":"codex-query","title":"codex-query","version":"0.2.0"},"capabilities":{"experimentalApi":true}}}
+[wire search C->S] {"method":"initialized","params":{}}
+[wire search C->S] {"method":"thread/search","id":2,"params":{"searchTerm":"sweep","limit":10}}
+[client << exit=0] stdout=Total: 0 stderr=
+[client read >>] read 019f856e-a7c9-7496-8f15-3b1add0805ea --full
+[wire read C->S] {"method":"initialize","id":1,"params":{"clientInfo":{"name":"codex-query","title":"codex-query","version":"0.2.0"},"capabilities":{"experimentalApi":true}}}
+[wire read C->S] {"method":"initialized","params":{}}
+[wire read C->S] {"method":"thread/read","id":2,"params":{"threadId":"019f856e-a7c9-7496-8f15-3b1add0805ea","includeTurns":true}}
+[client << exit=0] stdout=Thread: 019f856e-a7c9-7496-8f15-3b1add0805ea
+Name: (none)
+Status: idle
+CWD: /var/folders/nj/hqfr8ndn5q56cqw7jqgbrck40000gn/T/senpi-app-server-real-client-sweep-x9LANW/work
+Turns: 1
+
+--- Turn 0b89c31f-43e7-4559-9477-2b583575af48 status:completed (3 items) ---
+  [userMessage] [{"type":"text","text":"accept this scripted command","text_elements":[]}]
+  [commandExecution]
+  [agentMessage] sweep accept completed
+
+=== Final agent message (turn 0b89c31f-43e7-4559-9477-2b583575af48, completed) ===
+sweep accept completed stderr=
+[client answer >>] answer 019f856e-a7c9-7496-8f15-3b1add0805ea
+[wire answer C->S] {"method":"initialize","id":1,"params":{"clientInfo":{"name":"codex-query","title":"codex-query","version":"0.2.0"},"capabilities":{"experimentalApi":true}}}
+[wire answer C->S] {"method":"initialized","params":{}}
+[wire answer C->S] {"method":"thread/read","id":2,"params":{"threadId":"019f856e-a7c9-7496-8f15-3b1add0805ea","includeTurns":true}}
+[client << exit=0] stdout=sweep accept completed stderr=(turn 0b89c31f-43e7-4559-9477-2b583575af48 — completed)
+[client msg-decline >>] msg 019f856e-a7c9-7496-8f15-3b1add0805ea decline this scripted command --decline --timeout 30
+[wire msg-decline C->S] {"method":"initialize","id":1,"params":{"clientInfo":{"name":"codex-query","title":"codex-query","version":"0.2.0"},"capabilities":{"experimentalApi":true}}}
+[wire msg-decline C->S] {"method":"initialized","params":{}}
+[wire msg-decline C->S] {"method":"thread/resume","id":2,"params":{"threadId":"019f856e-a7c9-7496-8f15-3b1add0805ea"}}
+[wire msg-decline C->S] {"method":"turn/start","id":3,"params":{"threadId":"019f856e-a7c9-7496-8f15-3b1add0805ea","input":[{"type":"text","text":"decline this scripted command"}]}}
+[wire msg-decline S->C] {"id":1,"method":"item/commandExecution/requestApproval","params":{"threadId":"019f856e-a7c9-7496-8f15-3b1add0805ea","turnId":"turn-approval","itemId":"approval-bash","startedAtMs":1784650050611,"approvalId":null,"environmentId":null,"reason":"Command: $ printf sweep-decline\n\nPatterns:\n  - printf","command":"printf sweep-decline","cwd":null,"availableDecisions":["accept","acceptForSession","decline","cancel"]}}
+[wire msg-decline C->S] {"id":1,"result":{"decision":"decline"}}
+[wire msg-decline C->S] {"method":"thread/read","id":4,"params":{"threadId":"019f856e-a7c9-7496-8f15-3b1add0805ea","includeTurns":true}}
+[client << exit=0] stdout=[USER] decline this scripted command
+[AGENT] sweep decline completed
+turn cf5e48af-6455-461b-b59f-c5020f6064c4 finished: completed stderr=[approval] item/commandExecution/requestApproval -> decline
+DECLINE_FIXTURE=tool-call DECISION=decline TERMINAL=completed
+[client msg-interrupted >>] msg 019f856e-a7c9-7496-8f15-3b1add0805ea hold until interrupted --timeout 60
+[wire msg-interrupted C->S] {"method":"initialize","id":1,"params":{"clientInfo":{"name":"codex-query","title":"codex-query","version":"0.2.0"},"capabilities":{"experimentalApi":true}}}
+[wire msg-interrupted C->S] {"method":"initialized","params":{}}
+[wire msg-interrupted C->S] {"method":"thread/resume","id":2,"params":{"threadId":"019f856e-a7c9-7496-8f15-3b1add0805ea"}}
+[wire msg-interrupted C->S] {"method":"turn/start","id":3,"params":{"threadId":"019f856e-a7c9-7496-8f15-3b1add0805ea","input":[{"type":"text","text":"hold until interrupted"}]}}
+[observer assert] turn/started thread=019f856e-a7c9-7496-8f15-3b1add0805ea before steer/interrupt
+[client steer >>] steer 019f856e-a7c9-7496-8f15-3b1add0805ea please stop after this
+[wire steer C->S] {"method":"initialize","id":1,"params":{"clientInfo":{"name":"codex-query","title":"codex-query","version":"0.2.0"},"capabilities":{"experimentalApi":true}}}
+[wire steer C->S] {"method":"initialized","params":{}}
+[wire steer C->S] {"method":"thread/resume","id":2,"params":{"threadId":"019f856e-a7c9-7496-8f15-3b1add0805ea"}}
+[wire steer C->S] {"method":"thread/read","id":3,"params":{"threadId":"019f856e-a7c9-7496-8f15-3b1add0805ea","includeTurns":true}}
+[wire steer C->S] {"method":"turn/steer","id":4,"params":{"threadId":"019f856e-a7c9-7496-8f15-3b1add0805ea","expectedTurnId":"a72c4b1c-1a4c-4be2-af61-6eb55bd12bb8","input":[{"type":"text","text":"please stop after this"}]}}
+[client << exit=0] stdout=steered turn a72c4b1c-1a4c-4be2-af61-6eb55bd12bb8 on 019f856e-a7c9-7496-8f15-3b1add0805ea stderr=
+[client interrupt >>] interrupt 019f856e-a7c9-7496-8f15-3b1add0805ea
+[wire interrupt C->S] {"method":"initialize","id":1,"params":{"clientInfo":{"name":"codex-query","title":"codex-query","version":"0.2.0"},"capabilities":{"experimentalApi":true}}}
+[wire interrupt C->S] {"method":"initialized","params":{}}
+[wire interrupt C->S] {"method":"thread/resume","id":2,"params":{"threadId":"019f856e-a7c9-7496-8f15-3b1add0805ea"}}
+[wire interrupt C->S] {"method":"thread/read","id":3,"params":{"threadId":"019f856e-a7c9-7496-8f15-3b1add0805ea","includeTurns":true}}
+[wire interrupt C->S] {"method":"turn/interrupt","id":4,"params":{"threadId":"019f856e-a7c9-7496-8f15-3b1add0805ea","turnId":"a72c4b1c-1a4c-4be2-af61-6eb55bd12bb8"}}
+[wire msg-interrupted C->S] {"method":"thread/read","id":4,"params":{"threadId":"019f856e-a7c9-7496-8f15-3b1add0805ea","includeTurns":true}}
+[client << exit=0] stdout=interrupted turn a72c4b1c-1a4c-4be2-af61-6eb55bd12bb8 on 019f856e-a7c9-7496-8f15-3b1add0805ea stderr=
+[client << exit=1] stdout=[USER] hold until interrupted
+[AGENT]
+turn a72c4b1c-1a4c-4be2-af61-6eb55bd12bb8 finished: interrupted stderr=
+BACKGROUND_MSG_EXIT=1 INTERRUPT_EXIT=0 STEER_EXIT=0 TERMINAL=interrupted
+OUT_API config/value/write CODE=-32601
+OUT_API plugin/list CODE=-32601
+OUT_API fs/readFile CODE=-32601
+OUT_API fs/readDirectory CODE=-32601
+OUT_API command/exec CODE=-32601
+CLI_M32601_COUNT=0
+OUT_API_M32601=5
+MODEL_REQUESTS=5 MODEL_PROVIDER=fake
+SWEEP_OUTCOMES=expected
+OUTCOME help expected=0 actual=0
+OUTCOME status expected=0 actual=0
+OUTCOME clients expected=1 actual=1
+OUTCOME create expected=0 actual=0
+OUTCOME create-safe expected=0 actual=0
+OUTCOME threads expected=0 actual=0
+OUTCOME active expected=0 actual=0
+OUTCOME loaded expected=0 actual=0
+OUTCOME rename expected=0 actual=0
+OUTCOME archive expected=0 actual=0
+OUTCOME msg-accept expected=0 actual=0
+OUTCOME search expected=0 actual=0
+OUTCOME read expected=0 actual=0
+OUTCOME answer expected=0 actual=0
+OUTCOME msg-decline expected=0 actual=0
+OUTCOME steer expected=0 actual=0
+OUTCOME interrupt expected=0 actual=0
+OUTCOME msg-interrupted expected=1 actual=1
+PASS real-client-sweep
+PASS real-client-sweep
+EXIT=0

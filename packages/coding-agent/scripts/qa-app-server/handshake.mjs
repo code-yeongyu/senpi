@@ -17,9 +17,9 @@ try {
 	if (typeof init?.userAgent !== "string") throw new Error(`initialize result missing userAgent: ${JSON.stringify(init)}`);
 	const thread = await client.request("thread/start", makeThreadStartParams(scratch.cwd));
 	transcript.push(`threadId=${requiredThreadId(thread)}`);
+	client.assertServerEnvelopes();
 	client.close();
 	await fake.stop();
-	scratch.cleanup();
 	pass(transcript, "handshake");
 } catch (error) {
 	fail(transcript, "handshake", error);

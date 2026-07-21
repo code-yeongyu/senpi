@@ -140,6 +140,7 @@ describe("app-server turn engine", () => {
 		expect(entry.status).toBe("active");
 		expect(entry.session.promptCalls).toEqual([{ text: "hello", source: "rpc" }]);
 		expect(notifications.map((notification) => notification.method)).toEqual([
+			"thread/status/changed",
 			"turn/started",
 			"item/started",
 			"item/completed",
@@ -151,13 +152,14 @@ describe("app-server turn engine", () => {
 		expect(entry.activeTurn).toBeNull();
 		expect(entry.status).toBe("idle");
 		expect(notifications.map((notification) => notification.method)).toEqual([
+			"thread/status/changed",
 			"turn/started",
 			"item/started",
 			"item/completed",
-			"turn/completed",
 			"thread/status/changed",
+			"turn/completed",
 		]);
-		expect(notifications[1]?.params).toMatchObject({
+		expect(notifications[2]?.params).toMatchObject({
 			threadId: "thread-a",
 			turnId: response.turn.id,
 			item: {

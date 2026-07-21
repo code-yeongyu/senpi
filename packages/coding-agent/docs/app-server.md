@@ -1,6 +1,7 @@
 # App Server Mode
 
-App Server mode exposes senpi as a Codex-compatible JSON-RPC server for app and editor integrations.
+App Server mode exposes Senpi as a Codex-compatible JSON-RPC server for app and editor integrations. See
+[App Server Daemon](app-server-daemon.md) when the listener should be managed as a background process.
 
 ## Starting App Server Mode
 
@@ -10,7 +11,9 @@ Primary websocket recipe:
 senpi app-server --listen ws://127.0.0.1:18990
 ```
 
-The websocket listener binds only to IP literal hosts. When `--ws-auth` is omitted, senpi creates or reuses a bearer token file at `${SENPI_CODING_AGENT_DIR:-~/.senpi/agent}/app-server/ws-token`, prints that path to stderr, and requires `Authorization: Bearer <token>` on websocket upgrades.
+The websocket listener binds only to IP literal hosts. When `--ws-auth` is omitted, Senpi creates or reuses a bearer
+token file at `${SENPI_CODING_AGENT_DIR:-~/.senpi/agent}/app-server/ws-token`, prints that path to stderr, and
+requires `Authorization: Bearer <token>` on websocket upgrades.
 
 ```bash
 token="$(cat ~/.senpi/agent/app-server/ws-token)"
@@ -28,33 +31,67 @@ For an embedded subprocess, use stdio:
 senpi app-server --listen stdio://
 ```
 
-`stdio://` is also the default when `--listen` is omitted. The command accepts `unix://` and `unix:///abs/path` in the `--listen` grammar for local-control socket addresses, but this document does not cover daemon lifecycle or control-socket management.
+`stdio://` is also the default when `--listen` is omitted. The command accepts `unix://` and
+`unix:///abs/path` in the `--listen` grammar for local-control socket addresses, but this document does not cover
+daemon lifecycle or control-socket management.
 
 ## Protocol Overview
 
-App Server mode speaks JSON-RPC-shaped messages without a `jsonrpc` field. A request has `id`, `method`, and optional `params`; a success response has `id` and `result`; an error response has `id` and `error`.
+App Server mode speaks JSON-RPC-shaped messages without a `jsonrpc` field. A request has `id`, `method`, and optional
+`params`; a success response has `id` and `result`; an error response has `id` and `error`.
 
-Clients must send `initialize` before any other request. Requests before initialization return `-32000 Not initialized`; a second `initialize` returns `-32000 Already initialized`. Methods that are not implemented return `-32601 Method not found`, including unsupported Codex methods such as `thread/search`.
+Clients must send `initialize` before any other request. Requests before initialization return `-32000 Not initialized`;
+a second `initialize` returns `-32000 Already initialized`. A request marked experimental requires
+`capabilities.experimentalApi: true`; without it, Senpi returns `-32600`. After initialization, methods in the
+[Intentional `-32601` Surface](#intentional--32601-surface) return `-32601 Method not found` rather than a partial or
+invented implementation.
 
-The protocol types are generated from `codex-cli 0.142.5` and adapted through the app-facing facade in `src/modes/app-server/protocol/`. Regenerate the raw pinned types with:
+All server notifications use the current Codex envelope and include `emittedAtMs`. Clients must tolerate notifications
+before, between, and after correlated responses, except where a method explicitly guarantees response-before-notification
+ordering below.
 
-```bash
-packages/coding-agent/scripts/generate-app-server-protocol.sh
+## Protocol Provenance
+
+The raw TypeScript fixture is pinned to Codex git
+[`0fb559f0f6e231a88ac02ea002d3ecd248e2b515`](https://github.com/openai/codex) (author date 2026-07-18), not to a
+published `codex-cli` package version. It is copied from:
+
+```text
+codex-rs/app-server-protocol/schema/typescript
 ```
 
-Wire compatibility is the JSON-RPC message shape documented here, not the raw generated TypeScript tree.
+Regenerate it from the source checkout with:
+
+```bash
+packages/coding-agent/scripts/generate-app-server-protocol.sh \
+  --from-checkout /Users/yeongyu/local-workspaces/codex
+```
+
+`src/modes/app-server/protocol/generated/` is evidence only: it remains byte-identical to Codex except for the local
+`package.json` compilation shim and is never a runtime dependency. Senpi's non-generated protocol facade is the runtime
+contract. It also supplies selected experimental request types because Codex's TypeScript exporter intentionally omits
+experimental request roots even though Codex serves them. See
+[`src/modes/app-server/protocol/README.md`](../src/modes/app-server/protocol/README.md) for the vendoring and facade
+rules.
 
 ## Framing
 
-For `stdio://`, each message is one UTF-8 JSON object followed by LF (`\n`). stdout is reserved for protocol frames; status and logs go to stderr.
+For `stdio://`, each message is one UTF-8 JSON object followed by LF (`\n`). stdout is reserved for protocol frames;
+status and logs go to stderr.
 
-For `ws://`, each websocket text frame is one JSON object. Binary frames are ignored. HTTP `Origin` headers are rejected, `/readyz` and `/healthz` return `ok\n` while the listener is accepting connections, and websocket clients that exceed outbound backpressure limits are closed with code `1013`.
+For `ws://`, each websocket text frame is one JSON object. Binary frames are ignored. HTTP `Origin` headers are rejected,
+`/readyz` and `/healthz` return `ok\n` while the listener is accepting connections, and websocket clients that exceed
+outbound backpressure limits are closed with code `1013`.
 
-## Methods
+## Live Examples
+
+The examples in this section are checked against a fresh isolated stdio server by
+`test/qa/app-server/task20-doc-example-check.ts`. Identifiers, timestamps, paths, and installed models naturally vary.
+The isolated checker has no configured model, so its `model/list` example intentionally has an empty `data` array.
 
 ### initialize
 
-Initialize the connection and declare client capabilities. The response shape below is backed by the fresh stdio run captured by `test/qa/app-server/task20-doc-example-check.ts`.
+Initialize the connection and declare client capabilities.
 
 Request:
 
@@ -68,11 +105,13 @@ Response:
 {"id":1,"result":{"userAgent":"task20-docs/2026.7.2 (Darwin 25.4.0; arm64) senpi_app_server","codexHome":"/tmp/senpi-task20-docs/agent","platformFamily":"unix","platformOs":"macos"}}
 ```
 
-`capabilities.experimentalApi` gates experimental methods and notifications. `capabilities.optOutNotificationMethods` may list notification method names the client does not want to receive.
+`capabilities.experimentalApi` gates experimental requests and experimental notifications.
+`capabilities.optOutNotificationMethods` may list notification method names the client does not want to receive.
 
 ### model/list
 
-List configured models. The live response contains the full model catalog; this reduced response keeps the same object field shape as the live wire output.
+List configured models. `includeHidden`, a numeric cursor, and a minimum page size of one are supported. Model records
+include Codex-compatible reasoning-effort, service-tier, and `isDefault` fields when a model is configured.
 
 Request:
 
@@ -83,12 +122,31 @@ Request:
 Response:
 
 ```json
-{"id":2,"result":{"data":[{"id":"anthropic/claude-opus-4-8","model":"claude-opus-4-8","upgrade":null,"upgradeInfo":null,"availabilityNux":null,"displayName":"Claude Opus 4.8","description":"","hidden":false,"supportedReasoningEfforts":[{"reasoningEffort":"minimal","description":""},{"reasoningEffort":"low","description":""},{"reasoningEffort":"medium","description":""},{"reasoningEffort":"high","description":""},{"reasoningEffort":"xhigh","description":""},{"reasoningEffort":"max","description":""}],"defaultReasoningEffort":"medium","inputModalities":["text"],"supportsPersonality":false,"additionalSpeedTiers":[],"serviceTiers":[],"defaultServiceTier":null,"isDefault":true}],"nextCursor":null}}
+{"id":2,"result":{"data":[],"nextCursor":null}}
 ```
+
+### config/read and configRequirements/read
+
+`config/read` intentionally exposes only settings with a direct Senpi mapping. The effective config uses the requested
+`cwd` to resolve project settings; when `includeLayers` is true, the response includes the user settings file followed by
+the project `.senpi/settings.json` layer. Settings without a wire mapping are omitted from both the effective config and
+layer payloads.
+
+| Wire key | Senpi source | Unset behavior |
+|---|---|---|
+| `model` | `SettingsManager` default model id | `null` |
+| `model_provider` | `SettingsManager` default provider | `null` |
+| `approval_policy` | Senpi permission posture | always `"never"` |
+| `sandbox_mode` | Senpi permission posture | always `"danger-full-access"` |
+| `model_reasoning_effort` | `SettingsManager` default thinking level | `null` |
+
+The response uses `user` and `project` layer origins only when the corresponding setting is present in that layer; fixed
+Senpi posture values have no fabricated settings origin. `configRequirements/read` returns `{"requirements":null}`
+because Senpi has no requirements source. Configuration writes are deliberately unsupported; see the `-32601` table.
 
 ### remoteControl/status/read
 
-Read the current remote-control status stub. This method requires `capabilities.experimentalApi: true`.
+Read Senpi's disabled remote-control status. This method requires `capabilities.experimentalApi: true`.
 
 Request:
 
@@ -99,7 +157,7 @@ Request:
 Response:
 
 ```json
-{"id":3,"result":{"status":"inactive"}}
+{"id":3,"result":{"status":"disabled","serverName":"senpi app-server","installationId":"00000000-0000-4000-8000-000000000000","environmentId":null}}
 ```
 
 Without the experimental capability, the same request returns:
@@ -121,7 +179,7 @@ Request:
 Response:
 
 ```json
-{"id":4,"result":{"thread":{"id":"019f2427-2ecd-743b-bfec-f7381ee0ccd2","sessionId":"019f2427-2ecd-743b-bfec-f7381ee0ccd2","forkedFromId":null,"parentThreadId":null,"preview":"","ephemeral":false,"modelProvider":"anthropic","createdAt":1783017975.555,"updatedAt":1783017975.555,"recencyAt":1783017975.555,"status":{"type":"idle"},"path":"/tmp/senpi-task20-docs/sessions/2026-07-02T18-46-15-501Z_019f2427-2ecd-743b-bfec-f7381ee0ccd2.jsonl","cwd":"/tmp/senpi-task20-docs/cwd","cliVersion":"2026.7.2","source":"appServer","threadSource":null,"agentNickname":null,"agentRole":null,"gitInfo":null,"name":null,"turns":[]},"model":"claude-opus-4-8","modelProvider":"anthropic","serviceTier":null,"cwd":"/tmp/senpi-task20-docs/cwd","runtimeWorkspaceRoots":["/tmp/senpi-task20-docs/cwd"],"instructionSources":[],"approvalPolicy":"never","approvalsReviewer":"user","sandbox":{"type":"dangerFullAccess"},"activePermissionProfile":null,"reasoningEffort":"medium","multiAgentMode":"explicitRequestOnly"}}
+{"id":4,"result":{"thread":{"id":"019f2427-2ecd-743b-bfec-f7381ee0ccd2","sessionId":"019f2427-2ecd-743b-bfec-f7381ee0ccd2","forkedFromId":null,"parentThreadId":null,"preview":"","ephemeral":false,"modelProvider":"unknown","createdAt":1783017975.555,"updatedAt":1783017975.555,"recencyAt":1783017975.555,"status":{"type":"idle"},"path":"/tmp/senpi-task20-docs/sessions/2026-07-02T18-46-15-501Z_019f2427-2ecd-743b-bfec-f7381ee0ccd2.jsonl","cwd":"/tmp/senpi-task20-docs/cwd","cliVersion":"2026.7.2","source":"appServer","threadSource":null,"agentNickname":null,"agentRole":null,"gitInfo":null,"name":null,"turns":[]},"model":"unknown","modelProvider":"unknown","serviceTier":null,"cwd":"/tmp/senpi-task20-docs/cwd","runtimeWorkspaceRoots":["/tmp/senpi-task20-docs/cwd"],"instructionSources":[],"approvalPolicy":"never","approvalsReviewer":"user","sandbox":{"type":"dangerFullAccess"},"activePermissionProfile":null,"reasoningEffort":null,"multiAgentMode":"explicitRequestOnly"}}
 ```
 
 The server may emit a `thread/started` notification before the correlated response.
@@ -139,7 +197,7 @@ Request:
 Response:
 
 ```json
-{"id":5,"result":{"thread":{"id":"019f2427-2ecd-743b-bfec-f7381ee0ccd2","sessionId":"019f2427-2ecd-743b-bfec-f7381ee0ccd2","forkedFromId":null,"parentThreadId":null,"preview":"","ephemeral":false,"modelProvider":"anthropic","createdAt":1783017975.555,"updatedAt":1783017975.555,"recencyAt":1783017975.555,"status":{"type":"idle"},"path":"/tmp/senpi-task20-docs/sessions/2026-07-02T18-46-15-501Z_019f2427-2ecd-743b-bfec-f7381ee0ccd2.jsonl","cwd":"/tmp/senpi-task20-docs/cwd","cliVersion":"2026.7.2","source":"appServer","threadSource":null,"agentNickname":null,"agentRole":null,"gitInfo":null,"name":null,"turns":[]},"model":"claude-opus-4-8","modelProvider":"anthropic","serviceTier":null,"cwd":"/tmp/senpi-task20-docs/cwd","runtimeWorkspaceRoots":["/tmp/senpi-task20-docs/cwd"],"instructionSources":[],"approvalPolicy":"never","approvalsReviewer":"user","sandbox":{"type":"dangerFullAccess"},"activePermissionProfile":null,"reasoningEffort":"medium","multiAgentMode":"explicitRequestOnly","initialTurnsPage":null}}
+{"id":5,"result":{"thread":{"id":"019f2427-2ecd-743b-bfec-f7381ee0ccd2","sessionId":"019f2427-2ecd-743b-bfec-f7381ee0ccd2","forkedFromId":null,"parentThreadId":null,"preview":"","ephemeral":false,"modelProvider":"unknown","createdAt":1783017975.555,"updatedAt":1783017975.555,"recencyAt":1783017975.555,"status":{"type":"idle"},"path":"/tmp/senpi-task20-docs/sessions/2026-07-02T18-46-15-501Z_019f2427-2ecd-743b-bfec-f7381ee0ccd2.jsonl","cwd":"/tmp/senpi-task20-docs/cwd","cliVersion":"2026.7.2","source":"appServer","threadSource":null,"agentNickname":null,"agentRole":null,"gitInfo":null,"name":null,"turns":[]},"model":"unknown","modelProvider":"unknown","serviceTier":null,"cwd":"/tmp/senpi-task20-docs/cwd","runtimeWorkspaceRoots":["/tmp/senpi-task20-docs/cwd"],"instructionSources":[],"approvalPolicy":"never","approvalsReviewer":"user","sandbox":{"type":"dangerFullAccess"},"activePermissionProfile":null,"reasoningEffort":null,"multiAgentMode":"explicitRequestOnly","initialTurnsPage":null}}
 ```
 
 ### thread/list
@@ -187,7 +245,7 @@ Request:
 Response:
 
 ```json
-{"id":8,"result":{"thread":{"id":"019f2427-2ecd-743b-bfec-f7381ee0ccd2","sessionId":"019f2427-2ecd-743b-bfec-f7381ee0ccd2","forkedFromId":null,"parentThreadId":null,"preview":"","ephemeral":false,"modelProvider":"anthropic","createdAt":1783017975.555,"updatedAt":1783017975.555,"recencyAt":1783017975.555,"status":{"type":"idle"},"path":"/tmp/senpi-task20-docs/sessions/2026-07-02T18-46-15-501Z_019f2427-2ecd-743b-bfec-f7381ee0ccd2.jsonl","cwd":"/tmp/senpi-task20-docs/cwd","cliVersion":"2026.7.2","source":"appServer","threadSource":null,"agentNickname":null,"agentRole":null,"gitInfo":null,"name":null,"turns":[]}}}
+{"id":8,"result":{"thread":{"id":"019f2427-2ecd-743b-bfec-f7381ee0ccd2","sessionId":"019f2427-2ecd-743b-bfec-f7381ee0ccd2","forkedFromId":null,"parentThreadId":null,"preview":"","ephemeral":false,"modelProvider":"unknown","createdAt":1783017975.555,"updatedAt":1783017975.555,"recencyAt":1783017975.555,"status":{"type":"idle"},"path":"/tmp/senpi-task20-docs/sessions/2026-07-02T18-46-15-501Z_019f2427-2ecd-743b-bfec-f7381ee0ccd2.jsonl","cwd":"/tmp/senpi-task20-docs/cwd","cliVersion":"2026.7.2","source":"appServer","threadSource":null,"agentNickname":null,"agentRole":null,"gitInfo":null,"name":null,"turns":[]}}}
 ```
 
 ### thread/name/set
@@ -219,7 +277,7 @@ Request:
 Response:
 
 ```json
-{"id":13,"result":{"thread":{"id":"019f2427-2f05-7415-818f-5946d46873fe","sessionId":"019f2427-2f05-7415-818f-5946d46873fe","forkedFromId":"019f2427-2ecd-743b-bfec-f7381ee0ccd2","parentThreadId":null,"preview":"","ephemeral":false,"modelProvider":"anthropic","createdAt":1783017975.583,"updatedAt":1783017975.583,"recencyAt":1783017975.583,"status":{"type":"idle"},"path":"/tmp/senpi-task20-docs/sessions/2026-07-02T18-46-15-557Z_019f2427-2f05-7415-818f-5946d46873fe.jsonl","cwd":"/tmp/senpi-task20-docs/fork","cliVersion":"2026.7.2","source":"appServer","threadSource":null,"agentNickname":null,"agentRole":null,"gitInfo":null,"name":null,"turns":[]},"model":"claude-opus-4-8","modelProvider":"anthropic","serviceTier":null,"cwd":"/tmp/senpi-task20-docs/fork","runtimeWorkspaceRoots":["/tmp/senpi-task20-docs/fork"],"instructionSources":[],"approvalPolicy":"never","approvalsReviewer":"user","sandbox":{"type":"dangerFullAccess"},"activePermissionProfile":null,"reasoningEffort":"medium","multiAgentMode":"explicitRequestOnly"}}
+{"id":13,"result":{"thread":{"id":"019f2427-2f05-7415-818f-5946d46873fe","sessionId":"019f2427-2f05-7415-818f-5946d46873fe","forkedFromId":"019f2427-2ecd-743b-bfec-f7381ee0ccd2","parentThreadId":null,"preview":"","ephemeral":false,"modelProvider":"unknown","createdAt":1783017975.583,"updatedAt":1783017975.583,"recencyAt":1783017975.583,"status":{"type":"idle"},"path":"/tmp/senpi-task20-docs/sessions/2026-07-02T18-46-15-557Z_019f2427-2f05-7415-818f-5946d46873fe.jsonl","cwd":"/tmp/senpi-task20-docs/fork","cliVersion":"2026.7.2","source":"appServer","threadSource":null,"agentNickname":null,"agentRole":null,"gitInfo":null,"name":null,"turns":[]},"model":"unknown","modelProvider":"unknown","serviceTier":null,"cwd":"/tmp/senpi-task20-docs/fork","runtimeWorkspaceRoots":["/tmp/senpi-task20-docs/fork"],"instructionSources":[],"approvalPolicy":"never","approvalsReviewer":"user","sandbox":{"type":"dangerFullAccess"},"activePermissionProfile":null,"reasoningEffort":null,"multiAgentMode":"explicitRequestOnly"}}
 ```
 
 ### thread/archive
@@ -256,7 +314,8 @@ Response:
 
 ### thread/unsubscribe
 
-Unsubscribe the current connection from a loaded thread. The live example below runs after `thread/archive`, so the thread has already unloaded and the response status is `notLoaded`.
+Unsubscribe the current connection from a loaded thread. The live example below runs after `thread/archive`, so the
+thread has already unloaded and the response status is `notLoaded`.
 
 Request:
 
@@ -272,7 +331,8 @@ Response:
 
 ### turn/start
 
-Start an agent turn on a loaded thread. A successful turn requires a loaded thread and model execution; this live no-token example documents the current error response for a missing thread.
+Start an agent turn on a loaded thread. A successful turn requires a loaded thread and model execution; this live
+no-token example documents the current error response for a missing thread.
 
 Request:
 
@@ -283,12 +343,13 @@ Request:
 Response:
 
 ```json
-{"id":12,"error":{"code":-32603,"message":"Thread not found: missing-thread"}}
+{"id":12,"error":{"code":-32600,"message":"Thread not found: missing-thread"}}
 ```
 
 ### turn/steer
 
-Queue steering text for an active turn. The live no-token example documents the current error response when the thread has no active turn.
+Queue steering text for an active turn. The live no-token example documents the current error response when the thread
+has no active turn.
 
 Request:
 
@@ -299,7 +360,7 @@ Request:
 Response:
 
 ```json
-{"id":11,"error":{"code":-32603,"message":"No active turn for thread 019f2427-2ecd-743b-bfec-f7381ee0ccd2"}}
+{"id":11,"error":{"code":-32600,"message":"No active turn for thread 019f2427-2ecd-743b-bfec-f7381ee0ccd2"}}
 ```
 
 ### turn/interrupt
@@ -320,52 +381,169 @@ Response:
 
 ### thread/search
 
-`thread/search` is part of the Codex request catalog, but senpi app-server does not implement it yet. It returns `-32601`.
+Search is experimental and requires `capabilities.experimentalApi: true`. `searchTerm` is case-insensitive; results use
+a literal snippet, opaque request-scoped cursors, a default limit of 25 (clamped to 1..100), descending
+`created_at` sort, and non-archived threads. Codex's default source filter is interactive (`cli` and `vscode`), so
+app-server-created threads require `sourceKinds:["appServer"]` to be included. The isolated example has no matching
+interactive thread.
 
 Request:
 
 ```json
-{"id":17,"method":"thread/search","params":{"query":"docs"}}
+{"id":17,"method":"thread/search","params":{"searchTerm":"docs"}}
 ```
 
 Response:
 
 ```json
-{"id":17,"error":{"code":-32601,"message":"Method not found: thread/search"}}
+{"id":17,"result":{"data":[],"nextCursor":null,"backwardsCursor":null}}
 ```
 
-## Implemented Method Inventory
+## Supported Request Methods
 
-Implemented stable methods:
+The following tables are the supported request surface. Entries marked **experimental** require
+`capabilities.experimentalApi: true`. Other request validation errors use the method's documented invalid-request or
+internal-error path; a listed method is not silently treated as unsupported.
 
-- `initialize`
-- `model/list`
-- `thread/start`, `thread/resume`, `thread/fork`, `thread/read`, `thread/list`, `thread/loaded/list`, `thread/name/set`, `thread/archive`, `thread/delete`, `thread/unsubscribe`
-- `turn/start`, `turn/steer`, `turn/interrupt`
+### Stable Methods
 
-Implemented experimental methods:
+| Method | Support and Senpi-specific behavior |
+|---|---|
+| `initialize` | Required once per connection before all other requests. |
+| `model/list` | Configured models only; supports `includeHidden`, numeric cursors, and Codex HEAD model/service-tier fields. |
+| `config/read` | Mapped settings subset only: model, provider, reasoning effort, and fixed Senpi permission posture. See [config/read and configRequirements/read](#configread-and-configrequirementsread). |
+| `configRequirements/read` | Returns `{requirements:null}` because Senpi has no Codex requirements source. |
+| `account/read` | Honest local credential state: `{account:{type:"apiKey"}}` only when a provider credential exists, otherwise `{account:null}`; `requiresOpenaiAuth:false`. |
+| `account/rateLimits/read` | Implemented as an honest invalid-request error because rate limits require a Codex account. |
+| `account/usage/read` | Implemented as an honest invalid-request error because token usage requires a Codex account. |
+| `skills/list` | Resource-loader skills and diagnostics, returned per requested working directory. |
+| `mcpServerStatus/list` | Per-loaded-session MCP status; `full` and `toolsAndAuthOnly` detail views with numeric pagination. |
+| `permissionProfile/list` | Senpi's actual single `dangerFullAccess`-equivalent profile. |
+| `experimentalFeature/list` | Numeric-cursor paginated Senpi feature catalog, currently allowed to be empty. |
+| `fuzzyFileSearch` | One-shot subsequence file search over requested roots; an empty query returns no results. |
+| `thread/start` | Creates, loads, and subscribes the calling connection to a session-backed thread. |
+| `thread/resume` | Loads a saved thread and subscribes the calling connection. |
+| `thread/read` | Reads a thread, optionally including turns. |
+| `thread/list` | Lists saved and loaded threads with forward and backward cursors. |
+| `thread/loaded/list` | Lists IDs loaded by this app-server process. |
+| `thread/fork` | Creates and loads a session-backed fork. |
+| `thread/name/set` | Changes the display name and broadcasts `thread/name/updated`. |
+| `thread/archive` | Archives and unloads a thread. |
+| `thread/unarchive` | Storage-only restore: returns `status:{type:"notLoaded"}` and then broadcasts `thread/unarchived`; it does not resume or attach the thread. |
+| `thread/delete` | Deletes a thread and its app-server sidecars. |
+| `thread/unsubscribe` | Detaches only the calling connection; a now-idle thread may unload later. |
+| `thread/compact/start` | Acknowledges immediately and compacts the loaded thread. Context-compaction items carry progress; Senpi intentionally does not emit `thread/compacted`. |
+| `thread/goal/set` | Persists a goal and broadcasts `thread/goal/updated` after the response. Accepts `active`, `paused`, and `complete`; `blocked`, `usageLimited`, and `budgetLimited` are rejected. `tokenBudget` follows omit/keep, `null`/clear, number/set semantics. |
+| `thread/goal/get` | Reads the persisted thread goal or `null`. |
+| `thread/goal/clear` | Clears a goal and broadcasts `thread/goal/cleared` only when a goal existed. |
+| `thread/metadata/update` | Persists `gitInfo` in an app-server sidecar and returns the updated wire thread. |
+| `turn/start` | Starts a turn on a loaded thread. |
+| `turn/steer` | Queues input for an active turn. |
+| `turn/interrupt` | Interrupts an active turn; an already-finished turn is a successful no-op. |
 
-- `remoteControl/status/read`, returning the inactive status stub
+### Experimental Methods
 
-Every other stable or experimental Codex request method currently returns `-32601 Method not found`, except experimental methods that first fail the capability gate with `-32600`.
+| Method | Support and Senpi-specific behavior |
+|---|---|
+| `remoteControl/status/read` | Returns the truthful disabled status, server name, stable local installation ID, and `environmentId:null`. |
+| `remoteControl/client/list` | Validates Codex-shaped parameters, then returns an honest internal error because this app-server has no remote-control handle. |
+| `collaborationMode/list` | Returns Senpi's one fixed collaboration preset. Its `reasoning_effort` member is intentionally snake_case, matching Codex. |
+| `thread/search` | Searches session text with source, archive, sort, and cursor filters. The default source filter excludes `appServer`; pass `sourceKinds:["appServer"]` for app-server threads. |
+| `thread/searchOccurrences` | Finds literal, case-insensitive UTF-16 ranges in a thread's visible user/final-agent messages; default limit 50, clamped to 1..250. |
+| `thread/turns/list` | Paginated turn history with `summary`, `full`, and `notLoaded` item views. Turn logs stay for the process lifetime, including idle unload/resume. After a process restart, reconstruction is intentionally lossy and contains user-message-only turns. |
+| `thread/items/list` | Paginated items, optionally limited to a turn. It has the same post-restart history limitation as `thread/turns/list`. |
+| `thread/settings/update` | **Partial:** supports only session-scoped `model` and `effort`. Unsupported setting fields fail with an invalid-request error; a successful change sends `thread/settings/updated` only to thread subscribers after the response. |
+| `fuzzyFileSearch/sessionStart` | Starts a session over requested roots. |
+| `fuzzyFileSearch/sessionUpdate` | Updates a session query and emits `fuzzyFileSearch/sessionUpdated` followed by `fuzzyFileSearch/sessionCompleted`. |
+| `fuzzyFileSearch/sessionStop` | Stops an existing fuzzy-search session. |
+
+`fuzzyFileSearch/sessionUpdated` and `fuzzyFileSearch/sessionCompleted` are intentionally not experimental-gated
+notifications, matching the Codex request/notification split.
 
 ## Notifications And Routing
 
-Clients must route two independent streams:
+Responses correlate to requests by `id`. Notifications have `method`, optional `params`, and a required `emittedAtMs`;
+they have no `id` and may arrive before, between, or after correlated responses unless noted below.
 
-- Responses correlate to requests by `id`.
-- Notifications have `method` and optional `params`, no `id`, and may arrive before, between, or after correlated responses.
-
-Broadcast notifications currently include thread lifecycle and status changes such as `thread/started`, `thread/status/changed`, `thread/closed`, `thread/deleted`, `thread/archived`, `thread/name/updated`, and `thread/tokenUsage/updated`. Thread-scoped notifications are delivered only to connections subscribed to that thread. Terminal notifications such as `turn/completed` and `error` are queued briefly when no subscriber is attached, then replayed to the next subscriber until the per-thread terminal queue limit is reached.
-
-Experimental notifications such as `remoteControl/status/changed` are delivered only when the connection initialized with `capabilities.experimentalApi: true`. Clients may opt out of specific notification method names during `initialize`.
+- Broadcast notifications include thread lifecycle updates, `thread/unarchived`, name changes, global goal updates, and
+  fuzzy-search session updates.
+- Thread-scoped notifications go only to subscribers of that thread. This includes turn lifecycle and item events,
+  `thread/settings/updated`, and `turn/diff/updated`.
+- `turn/diff/updated` is Senpi's cumulative aggregation of the projected file-change unified diffs for a turn, in item
+  order. It is intentionally not a byte-for-byte substitute for Codex's git-based diff text.
+- `thread/unarchive`, goal mutation, and a successful settings mutation send their response before the corresponding
+  notification. `thread/compact/start` responds before compaction begins.
+- `thread/compacted` is declared in the upstream protocol but is not emitted by Codex HEAD; Senpi does not emit it.
+- Terminal `turn/completed` and `error` notifications are queued briefly when no subscriber is attached, then replayed
+  to the next subscriber. The per-thread terminal queue is capped at 100 notifications.
+- Experimental notifications, including `thread/settings/updated`, are delivered only to connections that enabled
+  `experimentalApi`. Clients can opt out of specific notification method names during `initialize`.
 
 ## Approvals Flow
 
-When a running turn needs user approval, the server sends a request-like outbound message to subscribers of the affected thread. Approval request methods include `item/commandExecution/requestApproval` and `item/fileChange/requestApproval`.
+When a running turn needs user approval, the server sends a request-like outbound message to subscribers of the affected
+thread. Approval request methods include `item/commandExecution/requestApproval` and
+`item/fileChange/requestApproval`.
 
-Command approval decisions are `accept`, `acceptForSession`, `decline`, and `cancel`. `acceptForSession` is remembered for matching command approvals in the same thread. If no subscriber is attached, the approval is declined with a no-subscriber reason. When a turn ends, pending approvals for that thread are cancelled and `serverRequest/resolved` is emitted.
+Command approval decisions are `accept`, `acceptForSession`, `decline`, and `cancel`. `acceptForSession` is remembered
+for matching command approvals in the same thread. If no subscriber is attached, the approval is declined with a
+no-subscriber reason. When a turn ends, pending approvals for that thread are cancelled and `serverRequest/resolved` is
+emitted.
 
 ## Multi-Session Semantics
 
-Each app-server process can keep multiple loaded threads. `thread/start`, `thread/resume`, and `thread/fork` load a thread and subscribe the current connection. `thread/unsubscribe` detaches only that connection; the thread may unload after the idle timeout when it has no subscribers and no active turn. A websocket listener can serve multiple initialized clients concurrently. Stdio mode serves one process-owned connection.
+Each app-server process can keep multiple loaded threads. `thread/start`, `thread/resume`, and `thread/fork` load a
+thread and subscribe the current connection. `thread/unsubscribe` detaches only that connection; the thread may unload
+after the idle timeout when it has no subscribers and no active turn. A websocket listener can serve multiple initialized
+clients concurrently. Stdio mode serves one process-owned connection.
+
+The app-server `TurnLog` is retained for the lifetime of the process. Idle unload disposes the session but does not
+release its turn log, so unloading and then resuming a thread in the same process preserves full
+`thread/turns/list` and `thread/items/list` history. A process restart loses that in-memory log and falls back to the
+user-message-only reconstruction documented in the supported-method table.
+
+## Intentional `-32601` Surface
+
+The methods below intentionally return `-32601 Method not found` after initialization. This is an explicit compatibility
+boundary: Senpi does not claim to support an API without a local primitive. `thread/turns/items/list` is retired in
+Codex HEAD and is also intentionally `-32601`.
+
+| Area | Intentionally unsupported methods |
+|---|---|
+| Codex account and app flows | `account/login/cancel`, `account/login/start`, `account/logout`, `account/rateLimitResetCredit/consume`, `account/sendAddCreditsNudgeEmail`, `account/workspaceMessages/read`, `app/installed`, `app/list`, `app/read`, `getAuthStatus`, `getConversationSummary` |
+| Configuration writes and extension management | `config/batchWrite`, `config/mcpServer/reload`, `config/value/write`, `experimentalFeature/enablement/set`, `hooks/list`, `plugin/install`, `plugin/installed`, `plugin/list`, `plugin/read`, `plugin/share/checkout`, `plugin/share/delete`, `plugin/share/list`, `plugin/share/save`, `plugin/share/updateTargets`, `plugin/skill/read`, `plugin/uninstall`, `skills/config/write`, `skills/extraRoots/set` |
+| Direct filesystem and command APIs | `command/exec`, `command/exec/resize`, `command/exec/terminate`, `command/exec/write`, `fs/copy`, `fs/createDirectory`, `fs/getMetadata`, `fs/readDirectory`, `fs/readFile`, `fs/remove`, `fs/unwatch`, `fs/watch`, `fs/writeFile`, `gitDiffToRemote` |
+| MCP, marketplace, and external-agent operations | `marketplace/add`, `marketplace/remove`, `marketplace/upgrade`, `mcpServer/oauth/login`, `mcpServer/resource/read`, `mcpServer/tool/call`, `modelProvider/capabilities/read`, `externalAgentConfig/detect`, `externalAgentConfig/import`, `externalAgentConfig/import/readHistories`, `feedback/upload`, `review/start` |
+| Thread operations without a backing primitive | `thread/approveGuardianDeniedAction`, `thread/inject_items`, `thread/rollback`, `thread/shellCommand`, `thread/turns/items/list` |
+| Windows-only operations | `windowsSandbox/readiness`, `windowsSandbox/setupStart` |
+| Environments, processes, memory, and realtime | `environment/add`, `environment/info`, `environment/status`, `memory/reset`, `mock/experimentalMethod`, `process/kill`, `process/resizePty`, `process/spawn`, `process/writeStdin`, `thread/backgroundTerminals/clean`, `thread/backgroundTerminals/list`, `thread/backgroundTerminals/terminate`, `thread/decrement_elicitation`, `thread/increment_elicitation`, `thread/memoryMode/set`, `thread/realtime/appendAudio`, `thread/realtime/appendSpeech`, `thread/realtime/appendText`, `thread/realtime/listVoices`, `thread/realtime/start`, `thread/realtime/stop` |
+| Remote-control enrollment | `remoteControl/client/revoke`, `remoteControl/disable`, `remoteControl/enable`, `remoteControl/pairing/start`, `remoteControl/pairing/status` |
+
+The Codex-query skill's documented direct-call APIs are deliberately in this list: `config/value/write`, `plugin/list`,
+`fs/readFile`, `fs/readDirectory`, and `command/exec`. A clean `-32601` is the supported outcome for those direct calls;
+it is not a transient integration failure.
+
+## Differential Parity Harness
+
+The differential harness runs the Codex source app-server and Senpi side by side in an isolated, zero-credential cell
+against the same local fake model. It uses raw websocket frames, normalizes only machine-specific values such as IDs,
+timestamps, paths, and tokens, and preserves frame order, array order, and notification audience.
+
+From `packages/coding-agent`, build the pinned Codex oracle once, then run the available handshake scenario:
+
+```bash
+node scripts/qa-app-server/differential/build-oracle.mjs
+node scripts/qa-app-server/differential/run.mjs --scenario handshake
+```
+
+The build uses `/Users/yeongyu/local-workspaces/codex/codex-rs/Cargo.toml` and writes the binary under that checkout's
+`target/debug/`. The run uses only ports 18990 (fake model), 18991 (Codex), and 18992 (Senpi), creates a temporary cell,
+and checks that all three listeners are gone during cleanup. Do not run it in parallel with other app-server QA that
+uses the 18990-18999 range.
+
+`packages/coding-agent/scripts/qa-app-server/differential/allowlist.json` is a narrowly scoped gap ledger, not a way to
+hide parity failures. Every rule must identify one scenario and normalized frame path, have a non-empty rationale, and
+classify the difference as `known-gap` or `allowlisted-delta` (or the explicit harness/regression classifications).
+Unclassified differences fail the run. Audience, frame-order, array-order, sequence, and invalid-record differences are
+never allowlistable. A rule that no longer matches is a harness defect and fails the run, so resolved gaps must be
+removed instead of retained indefinitely.

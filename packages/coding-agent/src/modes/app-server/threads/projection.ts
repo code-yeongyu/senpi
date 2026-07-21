@@ -1,7 +1,7 @@
 import type { AssistantMessage, ToolCall } from "@earendil-works/pi-ai";
 import type { AgentSessionEvent } from "../../../core/agent-session.ts";
-import { codexErrorInfo, serializeCodexErrorInfo } from "../rpc/errors.ts";
 import { MessageItemProjector } from "./projection-message-items.ts";
+import { TurnDiffTracker } from "./projection-turn-diff.ts";
 import {
 	type AssistantMessageEvent,
 	assertNeverProjection,
@@ -16,12 +16,10 @@ import {
 	buildWireItem,
 	capCommandOutput,
 	classifyTool,
-	commandExecutionItem,
-	dynamicToolCallItem,
 	extractToolText,
-	mcpToolCallItem,
 	providerNativeItem,
 	remainingCommandOutputBytes,
+	toolWireProjection,
 } from "./projection-wire-items.ts";
 import type { WireItem } from "./turn-log.ts";
 
@@ -30,6 +28,7 @@ export class EventProjector {
 	private readonly messageItems: MessageItemProjector;
 	private readonly toolItems = new Map<string, ActiveToolItem>();
 	private readonly completedItemIds = new Set<string>();
+	private readonly turnDiff = new TurnDiffTracker();
 	private messageCounter = 0;
 	private activeMessageId: string | undefined;
 	private compactionItemId: string | undefined;
@@ -113,7 +112,7 @@ export class EventProjector {
 				};
 			case "error":
 				return {
-					notifications: [this.errorNotification(event.error.errorMessage ?? "Agent turn failed")],
+					notifications: [],
 					turnCompletion: {
 						status: event.reason === "aborted" ? "interrupted" : "failed",
 						errorMessage: event.error.errorMessage,
@@ -154,7 +153,7 @@ export class EventProjector {
 			completed: false,
 		};
 		this.toolItems.set(toolCall.id, active);
-		return [this.started(this.toolWireItem(active, false))];
+		return [this.started(this.projectToolItem(active, false).item)];
 	}
 
 	private rememberTool(toolCallId: string, toolName: string, args: unknown): void {
@@ -186,23 +185,28 @@ export class EventProjector {
 		if (tool.itemType === "commandExecution" && resultText) {
 			tool.output = capCommandOutput(resultText);
 		}
-		return [this.completed(this.toolWireItem(tool, true, isError, result))];
+		const projection = this.projectToolItem(tool, true, isError, result);
+		const cumulativeDiff = this.turnDiff.update(tool.id, projection.diff, this.toolItems.keys());
+		return [
+			this.completed(projection.item),
+			...(cumulativeDiff === undefined ? [] : [this.notification("turn/diff/updated", { diff: cumulativeDiff })]),
+		];
 	}
 
-	private toolWireItem(tool: ActiveToolItem, completed: boolean, isError = false, result?: unknown): WireItem {
+	private projectToolItem(
+		tool: ActiveToolItem,
+		completed: boolean,
+		isError = false,
+		result?: unknown,
+	): ReturnType<typeof toolWireProjection> {
 		const status = completed ? (isError ? "failed" : "completed") : "inProgress";
-		switch (tool.itemType) {
-			case "commandExecution":
-				return commandExecutionItem(tool, status, this.options.cwd ?? process.cwd(), result);
-			case "fileChange":
-				return { type: "fileChange", id: tool.id, changes: [], status };
-			case "mcpToolCall":
-				return mcpToolCallItem(tool, status, result);
-			case "dynamicToolCall":
-				return dynamicToolCallItem(tool, status, result, isError);
-			default:
-				return assertNeverProjection(tool.itemType);
-		}
+		return toolWireProjection({
+			tool,
+			status,
+			cwd: this.options.cwd ?? process.cwd(),
+			result,
+			isError,
+		});
 	}
 
 	private projectProviderNative(message: AssistantMessage): ProjectedNotification[] {
@@ -245,13 +249,6 @@ export class EventProjector {
 			this.options.turnLog?.appendItem(this.options.threadId, this.options.turnId, wireItem);
 		}
 		return this.notification("item/completed", { item: wireItem, completedAtMs: this.nowMs() });
-	}
-
-	private errorNotification(message: string): ProjectedNotification {
-		return this.notification("error", {
-			error: { message, codexErrorInfo: serializeCodexErrorInfo(codexErrorInfo.other()), additionalDetails: null },
-			willRetry: false,
-		});
 	}
 
 	private notification(method: string, params: Record<string, unknown>): ProjectedNotification {
