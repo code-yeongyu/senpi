@@ -1,4 +1,9 @@
-import { type FauxProviderRegistration, fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai";
+import {
+	type FauxProviderRegistration,
+	fauxAssistantMessage,
+	fauxThinking,
+	registerFauxProvider,
+} from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { type CompactionPreparation, DEFAULT_COMPACTION_SETTINGS } from "../../src/core/compaction/index.ts";
@@ -29,16 +34,19 @@ interface Harness {
 	ctx: ExtensionContext;
 }
 
-function createHarness(): Harness {
+function createHarness(options?: { withAuth?: boolean }): Harness {
+	const withAuth = options?.withAuth ?? true;
 	const registration = registerFauxProvider();
 	registrations.push(registration);
 	const model = registration.getModel();
 	const authStorage = AuthStorage.inMemory();
-	authStorage.setRuntimeApiKey(model.provider, "faux-key");
+	if (withAuth) {
+		authStorage.setRuntimeApiKey(model.provider, "faux-key");
+	}
 	const modelRegistry = ModelRegistry.inMemory(authStorage);
 	modelRegistry.registerProvider(model.provider, {
 		baseUrl: model.baseUrl,
-		apiKey: "faux-key",
+		...(withAuth ? { apiKey: "faux-key" } : {}),
 		api: registration.api,
 		models: registration.models.map((registeredModel) => ({
 			id: registeredModel.id,
@@ -120,7 +128,7 @@ function createPreparation(): CompactionPreparation {
 	};
 }
 
-function createEvent(): SessionBeforeCompactEvent {
+function createEvent(options?: { signal?: AbortSignal }): SessionBeforeCompactEvent {
 	return {
 		type: "session_before_compact",
 		reason: "manual",
@@ -128,7 +136,7 @@ function createEvent(): SessionBeforeCompactEvent {
 		requestId: "manual-compact-1",
 		preparation: createPreparation(),
 		branchEntries: [],
-		signal: new AbortController().signal,
+		signal: options?.signal ?? new AbortController().signal,
 	};
 }
 
@@ -168,5 +176,53 @@ describe("session_before_compact error surfacing", () => {
 		expect(harness.notifications).toHaveLength(0);
 		const call = harness.registration.getCallLog()[0];
 		expect(call?.context.systemPrompt).toBe("TEST AGENT SYSTEM PROMPT");
+	});
+
+	it("cancels with a stop-reason diagnosis when the summarization response has no text", async () => {
+		// Given: the model spends the whole output budget on thinking (adaptive
+		// reasoning models do this without being asked) and the stream ends at
+		// the token cap with zero text content.
+		const harness = createHarness();
+		harness.registration.setResponses([
+			fauxAssistantMessage([fauxThinking("token budget consumed by thinking")], { stopReason: "length" }),
+		]);
+
+		// When
+		const result = await harness.beforeCompact(createEvent(), harness.ctx);
+
+		// Then: the cancel reason names the real failure (no text + stop reason)
+		// instead of the undiagnosable "returned no summary".
+		expect(result?.cancel).toBe(true);
+		expect(result?.reason ?? "").toContain("no text");
+		expect(result?.reason ?? "").toContain("stopReason: length");
+	});
+
+	it("cancels with the credential error when summarization auth is unavailable", async () => {
+		// Given
+		const harness = createHarness({ withAuth: false });
+		harness.registration.setResponses([fauxAssistantMessage("never reached")]);
+
+		// When
+		const result = await harness.beforeCompact(createEvent(), harness.ctx);
+
+		// Then
+		expect(result?.cancel).toBe(true);
+		expect(result?.reason ?? "").toContain("credentials unavailable");
+	});
+
+	it("cancels without a reason when the user aborted the compaction signal", async () => {
+		// Given
+		const harness = createHarness();
+		harness.registration.setResponses([fauxAssistantMessage("never used")]);
+		const controller = new AbortController();
+		controller.abort();
+
+		// When
+		const result = await harness.beforeCompact(createEvent({ signal: controller.signal }), harness.ctx);
+
+		// Then: no extension reason means agent-session's aborted branch renders
+		// the plain "Compaction cancelled" instead of a misleading rejection error.
+		expect(result?.cancel).toBe(true);
+		expect(result && "reason" in result ? result.reason : undefined).toBeUndefined();
 	});
 });
