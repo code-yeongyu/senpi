@@ -230,6 +230,8 @@ export function fakeExtensionContext(): ExtensionContext {
 		shutdown: () => {},
 		getContextUsage: () => undefined,
 		getCompactionSettings: () => DEFAULT_COMPACTION_SETTINGS,
+		getLookAtSettings: () => ({ enabled: true, models: undefined }),
+		getImageSettings: () => ({ autoResize: true, blockImages: false }),
 		sessionSettings: createInMemoryExtensionSessionSettings(),
 		compact: () => {},
 		getMessageRevision: () => 0,

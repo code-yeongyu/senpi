@@ -82,6 +82,8 @@ function createExtensionContext(entries: SessionEntry[]): ExtensionContext {
 		shutdown: vi.fn(),
 		getContextUsage: () => undefined,
 		getCompactionSettings: () => DEFAULT_COMPACTION_SETTINGS,
+		getLookAtSettings: () => ({ enabled: true, models: undefined }),
+		getImageSettings: () => ({ autoResize: true, blockImages: false }),
 		sessionSettings: createInMemoryExtensionSessionSettings(),
 		compact: vi.fn(),
 		getMessageRevision: () => 1,

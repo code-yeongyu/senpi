@@ -12,6 +12,7 @@ import gptApplyPatchExtension from "./gpt-apply-patch/index.ts";
 import historySearchExtension from "./history-search/index.ts";
 import hooksExtension from "./hooks/index.ts";
 import importReproExtension from "./import-repro.ts";
+import lookAtExtension from "./look-at/index.ts";
 import mcpExtension from "./mcp/index.ts";
 import modelFallbackExtension from "./model-fallback/index.ts";
 import nestedAgentsMdExtension from "./nested-agents-md/index.ts";
@@ -69,6 +70,7 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "websearch", factory: websearchExtension },
 	{ id: "webfetch", factory: webfetchExtension },
 	{ id: "video-in", factory: videoInExtension },
+	{ id: "look-at", factory: lookAtExtension },
 	{ id: "nested-agents-md", factory: nestedAgentsMdExtension },
 	{ id: "rules", factory: piRulesExtension },
 	{ id: "goal", factory: goalExtension },

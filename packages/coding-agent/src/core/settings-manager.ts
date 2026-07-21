@@ -62,6 +62,11 @@ export interface ImageSettings {
 	blockImages?: boolean; // default: false - when true, prevents all images from being sent to LLM providers
 }
 
+export interface LookAtSettings {
+	enabled?: boolean; // default: true
+	models?: string[]; // default: undefined (use the default look-at chain)
+}
+
 export interface ThinkingBudgetsSettings {
 	minimal?: number;
 	low?: number;
@@ -143,6 +148,7 @@ export interface Settings {
 	enableSkillCommands?: boolean; // default: true - register skills as /skill:name commands
 	terminal?: TerminalSettings;
 	images?: ImageSettings;
+	lookAt?: LookAtSettings;
 	favoriteModels?: string[]; // Model patterns for Ctrl+P cycling (same format as --models CLI flag)
 	enabledModels?: string[]; // Legacy global model narrowing patterns (same format as --models CLI flag)
 	doubleEscapeAction?: "fork" | "tree" | "none"; // Action for double-escape with empty editor (default: "tree")

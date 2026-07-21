@@ -1,5 +1,16 @@
 # Core Extensions Changes
 
+## 2026-07-21 - Look-at and image settings context APIs
+
+### What changed
+
+- `ExtensionContext` now exposes `getLookAtSettings()` and `getImageSettings()`, with matching context actions wired through the runner, agent session, and interactive shortcut contexts.
+
+### Why
+
+Builtin look-at extensions need resolved look-at and image settings without accessing the core `SettingsManager` directly.
+
+
 ## 2026-07-21 - Config-reload builtin registration
 
 ### What changed

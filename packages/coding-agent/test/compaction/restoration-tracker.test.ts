@@ -91,6 +91,8 @@ function createGateExtensionContext(settings: CompactionSettings): ExtensionCont
 		shutdown: vi.fn(),
 		getContextUsage: () => undefined,
 		getCompactionSettings: () => settings,
+		getLookAtSettings: () => ({ enabled: true, models: undefined }),
+		getImageSettings: () => ({ autoResize: true, blockImages: false }),
 		sessionSettings: createInMemoryExtensionSessionSettings(),
 		compact: vi.fn(),
 		getMessageRevision: () => 1,
