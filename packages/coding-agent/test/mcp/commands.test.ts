@@ -15,8 +15,16 @@ import { ModelRegistry } from "../../src/core/model-registry.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 import { createCtx, createUi, lastNotification, normalize, notification } from "./fixtures/commands.ts";
-import { toolResultTexts } from "./fixtures/register-call.ts";
-import { cleanupRoots, fakePi, makeRoot, setConfig, stdioServer, type TestRoot } from "./fixtures/service-lifecycle.ts";
+import { attachHarnessSession, awaitMcpToolRegistration, toolResultTexts } from "./fixtures/register-call.ts";
+import {
+	awaitMcpConnected,
+	cleanupRoots,
+	fakePi,
+	makeRoot,
+	setConfig,
+	stdioServer,
+	type TestRoot,
+} from "./fixtures/service-lifecycle.ts";
 import { stdioFixtureCommand } from "./fixtures/spawn-fixture.ts";
 
 const cleanupTasks: Array<() => Promise<void>> = [];
@@ -55,6 +63,7 @@ describe("/mcp command suite", () => {
 		const { command, extension } = await loadCommand();
 		const ui = createUi({ selectResult: undefined });
 		await emitSessionStart(extension, root);
+		await awaitMcpConnected(getMcpService(), "fx");
 
 		await command.handler("", createCtx(root, ui));
 		await command.handler("status", createCtx(root, ui));
@@ -105,6 +114,9 @@ describe("/mcp command suite", () => {
 		const fixture = stdioFixtureCommand();
 		const addArgs = [fixture.command, ...fixture.args, "--tools", "2"].map((part) => JSON.stringify(part)).join(" ");
 		await harness.session.prompt(`/mcp add fx ${addArgs}`);
+		// The add path's reattach is race-bounded; await the background
+		// registration so /mcp status and the tool call see the connected server.
+		await awaitMcpToolRegistration("fx");
 		await harness.session.prompt("/mcp status");
 
 		harness.setResponses([
@@ -128,11 +140,13 @@ describe("/mcp command suite", () => {
 		const { command, extension } = await loadCommand();
 		const ui = createUi();
 		await emitSessionStart(extension, root);
+		await awaitMcpConnected(getMcpService(), "fx");
 
 		await command.handler("disable fx", createCtx(root, ui));
 		expect(JSON.parse(readFileSync(join(root.agentDir, "mcp.json"), "utf8")).mcpServers.fx.enabled).toBe(false);
 
 		await command.handler("enable fx", createCtx(root, ui));
+		await awaitMcpConnected(getMcpService(), "fx");
 		expect(JSON.parse(readFileSync(join(root.agentDir, "mcp.json"), "utf8")).mcpServers.fx.enabled).toBe(true);
 
 		await command.handler("logs fx", createCtx(root, ui));
@@ -156,6 +170,7 @@ describe("/mcp command suite", () => {
 			extensionFactories: [mcpExtension],
 		});
 		harnesses.push(harness);
+		await attachHarnessSession(harness, "fx");
 
 		harness.setResponses([
 			(context) => {
@@ -181,6 +196,7 @@ describe("/mcp command suite", () => {
 		expect(providerToolNames[providerToolNames.length - 1]).not.toContain("mcp_fx_tool_1");
 
 		await harness.session.prompt("/mcp enable fx");
+		await awaitMcpToolRegistration("fx");
 		harness.setResponses([
 			(context) => {
 				providerToolNames.push((context.tools ?? []).map((toolInfo) => toolInfo.name).sort());
@@ -219,6 +235,7 @@ describe("/mcp command suite", () => {
 		await getMcpService().attachSession({ type: "session_start", reason: "startup" }, ctxWithDecl, pi, {
 			agentDir: root.agentDir,
 		});
+		await awaitMcpToolRegistration("fixture");
 		expect(
 			getMcpService()
 				.getServerSnapshots()
@@ -247,6 +264,7 @@ describe("/mcp command suite", () => {
 
 		const { command } = await loadCommand();
 		await command.handler("reconnect fixture", ctx);
+		await awaitMcpToolRegistration("fixture");
 
 		const snapshot = getMcpService()
 			.getServerSnapshots()
@@ -261,6 +279,7 @@ describe("/mcp command suite", () => {
 		const { command, extension } = await loadCommand();
 		const ui = createUi();
 		await emitSessionStart(extension, root);
+		await awaitMcpConnected(getMcpService(), "fx");
 
 		await command.handler("test fx", createCtx(root, ui));
 
