@@ -44,14 +44,14 @@ export type ConfigReloadWatchEngineOptions = {
 type TargetState = {
 	readonly target: ResolvedWatchTarget;
 	readonly hashes: Map<string, string>;
-	readonly allowedDotDirectories: Set<string>;
+	readonly allowedDirectories: Set<string>;
 };
 
 type ResolvedWatchTarget = Omit<WatchTarget, "path"> & { readonly path: string };
 
 type ScanResult = {
 	readonly hashes: Map<string, string>;
-	readonly allowedDotDirectories: Set<string>;
+	readonly allowedDirectories: Set<string>;
 };
 
 const DEFAULT_DEBOUNCE_MS = 200;
@@ -90,7 +90,7 @@ export class ConfigReloadWatchEngine {
 			return {
 				target: resolvedTarget,
 				hashes: scan.hashes,
-				allowedDotDirectories: scan.allowedDotDirectories,
+				allowedDirectories: scan.allowedDirectories,
 			};
 		});
 
@@ -191,7 +191,7 @@ export class ConfigReloadWatchEngine {
 		changes: Map<string, { created: boolean; deleted: boolean }>,
 	): void {
 		const previousHashes = new Map(state.hashes);
-		const previousDirectories = new Set(state.allowedDotDirectories);
+		const previousDirectories = new Set(state.allowedDirectories);
 		const next = affected === null ? this.#scan(state.target) : this.#scanAffected(state.target, affected, state);
 
 		if (affected === null) {
@@ -199,11 +199,11 @@ export class ConfigReloadWatchEngine {
 			for (const [path, hash] of next.hashes) {
 				state.hashes.set(path, hash);
 			}
-			state.allowedDotDirectories.clear();
-			for (const path of next.allowedDotDirectories) {
-				state.allowedDotDirectories.add(path);
+			state.allowedDirectories.clear();
+			for (const path of next.allowedDirectories) {
+				state.allowedDirectories.add(path);
 			}
-			this.#compare(previousHashes, previousDirectories, state.hashes, state.allowedDotDirectories, changes);
+			this.#compare(previousHashes, previousDirectories, state.hashes, state.allowedDirectories, changes);
 			return;
 		}
 
@@ -213,22 +213,22 @@ export class ConfigReloadWatchEngine {
 				state.hashes.delete(path);
 			}
 		}
-		for (const path of [...state.allowedDotDirectories]) {
+		for (const path of [...state.allowedDirectories]) {
 			if (prefixes.some((prefix) => isWithin(path, prefix))) {
-				state.allowedDotDirectories.delete(path);
+				state.allowedDirectories.delete(path);
 			}
 		}
 		for (const [path, hash] of next.hashes) {
 			state.hashes.set(path, hash);
 		}
-		for (const path of next.allowedDotDirectories) {
-			state.allowedDotDirectories.add(path);
+		for (const path of next.allowedDirectories) {
+			state.allowedDirectories.add(path);
 		}
-		this.#compare(previousHashes, previousDirectories, state.hashes, state.allowedDotDirectories, changes);
+		this.#compare(previousHashes, previousDirectories, state.hashes, state.allowedDirectories, changes);
 	}
 
 	#scanAffected(target: ResolvedWatchTarget, affected: Set<string>, state: TargetState): ScanResult {
-		const result: ScanResult = { hashes: new Map(), allowedDotDirectories: new Set() };
+		const result: ScanResult = { hashes: new Map(), allowedDirectories: new Set() };
 		for (const relPath of affected) {
 			const absolutePath = join(target.path, relPath);
 			this.#scanPath(target, absolutePath, relPath, result, state);
@@ -237,7 +237,7 @@ export class ConfigReloadWatchEngine {
 	}
 
 	#scan(target: ResolvedWatchTarget): ScanResult {
-		const result: ScanResult = { hashes: new Map(), allowedDotDirectories: new Set() };
+		const result: ScanResult = { hashes: new Map(), allowedDirectories: new Set() };
 		this.#scanPath(target, target.path, "", result);
 		return result;
 	}
@@ -277,14 +277,14 @@ export class ConfigReloadWatchEngine {
 		}
 
 		const dotDirectory = relPath !== "" && basename(relPath).startsWith(".");
-		const allowedDotDirectory = dotDirectory && this.#isExplicitlyAllowedDotDirectory(target, relPath);
-		if (allowedDotDirectory) {
-			result.allowedDotDirectories.add(absolutePath);
+		const explicitlyAllowedDirectory = relPath !== "" && this.#isExplicitlyAllowedDirectory(target, relPath);
+		if (explicitlyAllowedDirectory) {
+			result.allowedDirectories.add(absolutePath);
 		}
 		if (relPath && target.kind === "dir") {
 			return;
 		}
-		if (dotDirectory && !allowedDotDirectory) {
+		if (dotDirectory && !explicitlyAllowedDirectory) {
 			return;
 		}
 		try {
@@ -296,7 +296,7 @@ export class ConfigReloadWatchEngine {
 				if (
 					child.isDirectory() &&
 					child.name.startsWith(".") &&
-					!this.#isExplicitlyAllowedDotDirectory(target, childRelPath)
+					!this.#isExplicitlyAllowedDirectory(target, childRelPath)
 				) {
 					continue;
 				}
@@ -350,7 +350,7 @@ export class ConfigReloadWatchEngine {
 		return target.filter?.(relPath) ?? true;
 	}
 
-	#isExplicitlyAllowedDotDirectory(target: ResolvedWatchTarget, relPath: string): boolean {
+	#isExplicitlyAllowedDirectory(target: ResolvedWatchTarget, relPath: string): boolean {
 		return (
 			target.allowList?.some((allowed) => relPath === allowed || relPath.startsWith(`${allowed}${sep}`)) ?? false
 		);

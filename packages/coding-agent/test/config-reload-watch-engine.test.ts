@@ -239,6 +239,29 @@ describe("config reload watch engine", () => {
 		]);
 	});
 
+	it("reports explicit allow-listed resource directory creation", () => {
+		vi.useFakeTimers();
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-config-reload-watch-"));
+		const source = eventSource();
+		const onRealChange = vi.fn();
+		createEngine({
+			targets: [{ id: "prompts-presence", kind: "dir", path: tempDir, allowList: ["prompts"] }],
+			subscribe: source.subscribe,
+			onRealChange,
+		});
+		const promptsDirectory = join(tempDir, "prompts");
+
+		mkdirSync(promptsDirectory);
+		source.emit("prompts");
+		vi.advanceTimersByTime(200);
+
+		expect(onRealChange).toHaveBeenCalledWith({
+			changedPaths: [promptsDirectory],
+			created: [promptsDirectory],
+			deleted: [],
+		});
+	});
+
 	it("reports hash errors and keeps other targets live", () => {
 		vi.useFakeTimers();
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-config-reload-watch-"));

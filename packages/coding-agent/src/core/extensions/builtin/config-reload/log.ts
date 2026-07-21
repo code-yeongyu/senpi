@@ -16,6 +16,7 @@ export type ConfigReloadLogEvent =
 	| "reload_requested"
 	| "reload_completed"
 	| "validation_rejected"
+	| "registration_rejected"
 	| "watcher_error"
 	| "registration_added"
 	| "registration_removed";
@@ -27,6 +28,7 @@ export interface ConfigReloadLogDetails {
 	reload_requested: { reason: string; paths: readonly string[] };
 	reload_completed: { durationMs: number };
 	validation_rejected: { registrationId: string; errorCount: number };
+	registration_rejected: { registrationId: string; errorCount: number };
 	watcher_error: { path: string; message: string };
 	registration_added: { id: string };
 	registration_removed: { id: string };
@@ -131,7 +133,8 @@ function formatEntry<Event extends ConfigReloadLogEvent>(
 		case "reload_completed":
 			entry.durationMs = finiteNumber((details as ConfigReloadLogDetails["reload_completed"]).durationMs);
 			break;
-		case "validation_rejected": {
+		case "validation_rejected":
+		case "registration_rejected": {
 			const eventDetails = details as ConfigReloadLogDetails["validation_rejected"];
 			entry.registrationId = safeText(eventDetails.registrationId);
 			entry.errorCount = finiteNumber(eventDetails.errorCount);

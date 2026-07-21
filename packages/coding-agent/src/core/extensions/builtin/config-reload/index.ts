@@ -66,6 +66,8 @@ type WatchTargetInput = Omit<WatchTarget, "id">;
 type ActiveTarget = {
 	readonly registrationId: string;
 	readonly target: WatchTarget;
+	/** Presence targets rebuild the watcher set once this missing path appears. */
+	readonly rearmOnCreation?: string;
 };
 
 type PendingChange = {
@@ -142,7 +144,7 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 			paths: [],
 			errors: [...errors],
 		});
-		logger.warn("validation_rejected", { registrationId, errorCount: errors.length });
+		logger.warn("registration_rejected", { registrationId, errorCount: errors.length });
 	};
 
 	const handleRegistration = (payload: unknown): void => {
@@ -178,6 +180,9 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	const processChange = async (change: RealChange): Promise<void> => {
 		if (reloadInFlight || !currentContext) return;
 		const groups = groupChangedPaths(change.changedPaths, activeTargets);
+		const rearmDirectoryWatch = change.created.some((path) =>
+			activeTargets.some((target) => target.rearmOnCreation === resolve(path)),
+		);
 		for (const [registrationId, paths] of groups) {
 			const watchedPaths = excludeSelfWrites(paths, engine, agentDir, currentContext.cwd, logger);
 			if (watchedPaths.length === 0) continue;
@@ -203,6 +208,7 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 			});
 			logger.info("change_detected", { registrationId, paths: watchedPaths, deferred });
 		}
+		if (rearmDirectoryWatch) rebuildWatchers(currentContext);
 		await flushPending();
 	};
 
@@ -452,8 +458,23 @@ function buildWatchTargets(options: {
 	readonly registrations: ReadonlyMap<string, ConfigWatchRegistration>;
 }): ActiveTarget[] {
 	const targets: ActiveTarget[] = [];
-	const addBuiltin = (id: string, target: WatchTargetInput): void => {
-		targets.push({ registrationId: BUILTIN_REGISTRATION_ID, target: { ...target, id } });
+	const addBuiltin = (id: string, target: WatchTargetInput, rearmOnCreation?: string): void => {
+		targets.push({ registrationId: BUILTIN_REGISTRATION_ID, target: { ...target, id }, rearmOnCreation });
+	};
+	const addBuiltinDirectory = (id: string, path: string): void => {
+		const resourcePath = resolve(path);
+		if (isExistingDirectory(resourcePath)) {
+			addBuiltin(id, { kind: "dir-recursive", path: resourcePath });
+			return;
+		}
+		const watchPath = nearestExistingDirectory(dirname(resourcePath));
+		const firstMissingSegment = relative(watchPath, resourcePath).split(sep)[0] || basename(resourcePath);
+		const createdPath = resolve(watchPath, firstMissingSegment);
+		addBuiltin(`${id}-presence`, {
+			kind: "dir",
+			path: watchPath,
+			allowList: [firstMissingSegment],
+		}, createdPath);
 	};
 	const { cwd, agentDir, projectTrusted, settings } = options;
 	const projectDir = joinConfigDir(cwd);
@@ -467,41 +488,49 @@ function buildWatchTargets(options: {
 		addBuiltin("builtin-global-json", { kind: "dir", path: agentDir, allowList: jsonAllowList });
 	}
 	if (settings.watch.prompts) {
-		addBuiltin("builtin-global-prompts", { kind: "dir-recursive", path: resolve(agentDir, "prompts") });
+		addBuiltinDirectory("builtin-global-prompts", resolve(agentDir, "prompts"));
 	}
 	if (settings.watch.extensions) {
-		addBuiltin("builtin-global-extensions", { kind: "dir-recursive", path: resolve(agentDir, "extensions") });
+		addBuiltinDirectory("builtin-global-extensions", resolve(agentDir, "extensions"));
 	}
 	if (settings.watch.skills) {
 		for (const [index, skillPath] of options.skillPaths.entries()) {
-			addBuiltin(`builtin-skill-${index}`, targetForSkillPath(resolvePath(skillPath, cwd, { trim: true })));
+			const target = targetForSkillPath(resolvePath(skillPath, cwd, { trim: true }));
+			if (target.kind === "dir-recursive") {
+				addBuiltinDirectory(`builtin-skill-${index}`, target.path);
+			} else {
+				addBuiltin(`builtin-skill-${index}`, target);
+			}
 		}
 	}
 
 	if (projectTrusted) {
+		const projectDirExists = isExistingDirectory(projectDir);
 		const projectWatchEnabled = Object.values(settings.watch).some(Boolean);
 		if (projectWatchEnabled) {
-			addBuiltin("builtin-project-presence", {
-				kind: "dir",
-				path: cwd,
-				allowList: [CONFIG_DIR_NAME],
-			});
+			addBuiltin(
+				"builtin-project-presence",
+				{ kind: "dir", path: cwd, allowList: [CONFIG_DIR_NAME] },
+				projectDirExists ? undefined : projectDir,
+			);
 		}
-		if (settings.watch.settings) {
-			addBuiltin("builtin-project-settings", {
-				kind: "dir",
-				path: projectDir,
-				allowList: ["settings.json"],
-			});
-		}
-		if (settings.watch.prompts) {
-			addBuiltin("builtin-project-prompts", { kind: "dir-recursive", path: resolve(projectDir, "prompts") });
-		}
-		if (settings.watch.skills) {
-			addBuiltin("builtin-project-skills", { kind: "dir-recursive", path: resolve(projectDir, "skills") });
-		}
-		if (settings.watch.extensions) {
-			addBuiltin("builtin-project-extensions", { kind: "dir-recursive", path: resolve(projectDir, "extensions") });
+		if (projectDirExists) {
+			if (settings.watch.settings) {
+				addBuiltin("builtin-project-settings", {
+					kind: "dir",
+					path: projectDir,
+					allowList: ["settings.json"],
+				});
+			}
+			if (settings.watch.prompts) {
+				addBuiltinDirectory("builtin-project-prompts", resolve(projectDir, "prompts"));
+			}
+			if (settings.watch.skills) {
+				addBuiltinDirectory("builtin-project-skills", resolve(projectDir, "skills"));
+			}
+			if (settings.watch.extensions) {
+				addBuiltinDirectory("builtin-project-extensions", resolve(projectDir, "extensions"));
+			}
 		}
 	}
 
@@ -516,6 +545,24 @@ function buildWatchTargets(options: {
 		}
 	}
 	return targets;
+}
+
+function isExistingDirectory(path: string): boolean {
+	try {
+		return lstatSync(path).isDirectory();
+	} catch {
+		return false;
+	}
+}
+
+function nearestExistingDirectory(path: string): string {
+	let candidate = resolve(path);
+	while (!isExistingDirectory(candidate)) {
+		const parent = dirname(candidate);
+		if (parent === candidate) return candidate;
+		candidate = parent;
+	}
+	return candidate;
 }
 
 function targetForSkillPath(path: string): WatchTargetInput {

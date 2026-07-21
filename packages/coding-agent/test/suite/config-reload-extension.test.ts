@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
@@ -319,6 +319,77 @@ describe("config reload builtin extension", () => {
 			paths: [externalPath],
 			errors: ["invalid external config"],
 		});
+	});
+
+	it("watches a missing builtin prompts directory through its parent and arms the real watcher on creation", async () => {
+		vi.useFakeTimers();
+		const agentDir = mkdtempSync(join(tmpdir(), "senpi-config-reload-missing-prompts-"));
+		agentDirs.push(agentDir);
+		writeJson(join(agentDir, "settings.json"), { theme: "dark" });
+		const watches = createWatchProbe();
+		const error = vi.fn();
+		const logger: ConfigReloadLogger = {
+			debug: vi.fn(),
+			info: vi.fn(),
+			warn: vi.fn(),
+			error,
+		};
+		const extension = createManualExtension(createEventBus());
+		const reload = vi.fn(async () => {});
+		const subscribe: ConfigReloadExtensionOptions["subscribe"] = (path, listener, options) => {
+			if (!existsSync(path)) throw Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" });
+			return watches.subscribe(path, listener, options);
+		};
+		configReloadExtension(extension.api, { agentDir, subscribe, logger });
+		const context = fakeContext({ cwd: agentDir, requestReload: reload });
+
+		await invoke(
+			extension.handlers,
+			"session_start",
+			{ type: "session_start", reason: "startup" } satisfies SessionStartEvent,
+			context,
+		);
+		expect(error).not.toHaveBeenCalled();
+		expect(watches.activeListenerCount(join(agentDir, "prompts"))).toBe(0);
+
+		const promptsDirectory = join(agentDir, "prompts");
+		mkdirSync(promptsDirectory);
+		watches.emit(agentDir, "prompts");
+		await vi.advanceTimersByTimeAsync(200);
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(reload).toHaveBeenCalledTimes(1);
+		expect(watches.activeListenerCount(promptsDirectory)).toBe(1);
+	});
+
+	it("keeps the existing builtin prompts directory change flow unchanged", async () => {
+		vi.useFakeTimers();
+		const agentDir = mkdtempSync(join(tmpdir(), "senpi-config-reload-existing-prompts-"));
+		agentDirs.push(agentDir);
+		const promptsDirectory = join(agentDir, "prompts");
+		mkdirSync(promptsDirectory);
+		writeJson(join(agentDir, "settings.json"), { theme: "dark" });
+		const watches = createWatchProbe();
+		const reload = vi.fn(async () => {});
+		const extension = createManualExtension(createEventBus());
+		configReloadExtension(extension.api, { agentDir, subscribe: watches.subscribe, logger: silentLogger() });
+
+		await invoke(
+			extension.handlers,
+			"session_start",
+			{ type: "session_start", reason: "startup" } satisfies SessionStartEvent,
+			fakeContext({ cwd: agentDir, requestReload: reload }),
+		);
+		expect(watches.activeListenerCount(promptsDirectory)).toBe(1);
+
+		writeFileSync(join(promptsDirectory, "existing.md"), "prompt");
+		watches.emit(promptsDirectory, "existing.md");
+		await vi.advanceTimersByTimeAsync(200);
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(reload).toHaveBeenCalledTimes(1);
 	});
 
 	it("detects an external literal-filtered dot directory when it is created", async () => {
@@ -807,12 +878,19 @@ describe("config reload builtin extension", () => {
 		const watches = createWatchProbe();
 		const watchSubscribe = vi.fn(watches.subscribe);
 		const hashFile = vi.fn((path: string) => createHash("sha256").update(readFileSync(path)).digest("hex"));
+		const warn = vi.fn();
+		const logger: ConfigReloadLogger = {
+			debug: vi.fn(),
+			info: vi.fn(),
+			warn,
+			error: vi.fn(),
+		};
 		const guarded = createManualExtension(bus);
 		configReloadExtension(guarded.api, {
 			agentDir,
 			subscribe: watchSubscribe,
 			hashFile,
-			logger: silentLogger(),
+			logger,
 		});
 		await invoke(
 			guarded.handlers,
@@ -841,6 +919,11 @@ describe("config reload builtin extension", () => {
 		expect(watchSubscribe).toHaveBeenCalledTimes(subscriptionsBefore);
 		expect(hashFile).toHaveBeenCalledTimes(hashesBefore);
 		expect(rejected).toHaveLength(4);
+		expect(warn).toHaveBeenCalledTimes(4);
+		expect(warn).toHaveBeenCalledWith("registration_rejected", {
+			registrationId: "auth-file",
+			errorCount: 1,
+		});
 		expect(
 			rejected.every((payload) => {
 				if (!payload || typeof payload !== "object" || !("errors" in payload)) return false;
