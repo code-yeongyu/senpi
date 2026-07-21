@@ -50,6 +50,15 @@ import {
 	createCustomMessage,
 } from "./messages.ts";
 
+export interface UsageTotals {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	cost: number;
+	latestCacheHitRate: number | undefined;
+}
+
 export const CURRENT_SESSION_VERSION = 3;
 
 export interface SessionHeader {
@@ -879,6 +888,18 @@ export class SessionManager {
 	private entriesCache: { mutation: number; entries: SessionEntry[] } | null = null;
 	private branchCache: { leafId: string | null; mutation: number; entries: SessionEntry[] } | null = null;
 	private sessionNameCache: string | undefined = undefined;
+	// Running usage totals over ALL entries (not branch-scoped), maintained
+	// incrementally on assistant-message append and rebuilt from scratch in
+	// _buildIndex()/newSession. Usage fields are numeric and unaffected by
+	// string externalization, so the resident form can be read directly.
+	private usageTotals: UsageTotals = {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		cost: 0,
+		latestCacheHitRate: undefined,
+	};
 
 	private constructor(
 		cwd: string,
@@ -961,6 +982,14 @@ export class SessionManager {
 		this.labelTimestampsById.clear();
 		this.leafId = null;
 		this.sessionNameCache = undefined;
+		this.usageTotals = {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			cost: 0,
+			latestCacheHitRate: undefined,
+		};
 		this.mutationCount++;
 		this.flushed = false;
 
@@ -977,10 +1006,19 @@ export class SessionManager {
 		this.labelTimestampsById.clear();
 		this.leafId = null;
 		this.sessionNameCache = undefined;
+		this.usageTotals = {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			cost: 0,
+			latestCacheHitRate: undefined,
+		};
 		for (const entry of this.fileEntries) {
 			if (entry.type === "session") continue;
 			this.byId.set(entry.id, entry);
 			this.leafId = entry.id;
+			this._accumulateUsage(entry);
 			if (entry.type === "session_info") {
 				// Empty names explicitly clear the session title.
 				this.sessionNameCache = entry.name?.trim() || undefined;
@@ -1072,8 +1110,34 @@ export class SessionManager {
 		this.fileEntries.push(residentEntry);
 		this.byId.set(residentEntry.id, residentEntry);
 		this.leafId = residentEntry.id;
+		this._accumulateUsage(residentEntry);
 		this.mutationCount++;
 		this._persist(residentEntry);
+	}
+
+	/**
+	 * Fold one entry into the running usage totals. Totals iterate ALL entries
+	 * (not branch-scoped), matching the footer hot path's historical semantics.
+	 */
+	private _accumulateUsage(entry: SessionEntry): void {
+		if (entry.type !== "message" || entry.message.role !== "assistant") return;
+		const usage = entry.message.usage;
+		this.usageTotals.input += usage.input;
+		this.usageTotals.output += usage.output;
+		this.usageTotals.cacheRead += usage.cacheRead;
+		this.usageTotals.cacheWrite += usage.cacheWrite;
+		this.usageTotals.cost += usage.cost?.total ?? 0;
+		const latestPromptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
+		this.usageTotals.latestCacheHitRate =
+			latestPromptTokens > 0 ? (usage.cacheRead / latestPromptTokens) * 100 : undefined;
+	}
+
+	/**
+	 * O(1) running usage totals across ALL session entries (not branch-scoped).
+	 * Maintained incrementally; identical to summing usage over getEntries().
+	 */
+	getUsageTotals(): UsageTotals {
+		return this.usageTotals;
 	}
 
 	/** Append a message as child of current leaf, then advance leaf. Returns entry id.
