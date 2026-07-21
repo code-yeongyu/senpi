@@ -173,6 +173,8 @@ function createSettingsManagerStub() {
 		getQuietStartup: () => false,
 		getClearOnShrink: () => false,
 		getShowTerminalProgress: () => false,
+		getSmoothStreaming: () => false,
+		getSmoothStreamingFps: () => 30,
 		getWarnings: () => ({}),
 	};
 }

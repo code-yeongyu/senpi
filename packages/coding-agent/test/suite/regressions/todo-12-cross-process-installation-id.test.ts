@@ -145,7 +145,8 @@ async function sendRequest(client: SourceClient, request: WireRecord): Promise<W
 async function nextResponse(client: SourceClient): Promise<unknown> {
 	let timeout: ReturnType<typeof setTimeout> | undefined;
 	const timeoutPromise = new Promise<never>((_resolve, reject) => {
-		timeout = setTimeout(() => reject(new Error("source app-server response timed out")), 30_000);
+		// Cold tsx startup on CI runners (single fork) can exceed 30s; keep the bound generous.
+		timeout = setTimeout(() => reject(new Error("source app-server response timed out")), 120_000);
 	});
 	try {
 		const next = await Promise.race([client.responses.next(), timeoutPromise]);
