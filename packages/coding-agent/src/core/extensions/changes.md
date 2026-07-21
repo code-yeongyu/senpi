@@ -1,5 +1,16 @@
 # Core Extensions Changes
 
+## 2026-07-21 - Config-reload builtin registration
+
+### What changed
+
+- Registered the default-on `config-reload` builtin after settings-dependent builtins and before final `mcp` registration. It hash-gates configuration filesystem changes, validates parseable built-in surfaces before requesting the existing session reload flow, and publishes the `config-watch:*` in-process protocol for external registrations.
+
+### Why
+
+The reload-request context seam below lets the builtin reuse the host reload path without making reload a model tool. Keeping MCP last preserves its provider-payload observation ordering.
+
+
 ## 2026-07-21 - Extension reload request seam
 
 ### What changed

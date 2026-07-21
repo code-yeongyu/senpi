@@ -47,6 +47,7 @@ See [examples/extensions/](../examples/extensions/) for working implementations.
 - [ExtensionContext](#extensioncontext)
 - [ExtensionCommandContext](#extensioncommandcontext)
 - [ExtensionAPI Methods](#extensionapi-methods)
+- [Config reload](#config-reload)
 - [State Management](#state-management)
 - [Custom Tools](#custom-tools)
   - [Dynamic Tool Loading](#dynamic-tool-loading)
@@ -1745,6 +1746,55 @@ pi.events.on("my:event", (data) => { ... });
 pi.events.emit("my:event", { ... });
 ```
 
+## Config reload
+
+Senpi's default-on `config-reload` builtin watches configured global surfaces and trusted project-local `.senpi` surfaces. A real content change requests the normal full session reload when the agent is idle; busy or compacting sessions defer it until a safe idle edge. Parseable built-in files (`settings.json`, `models.json`, and `keybindings.json`) are validated before reload, so a rejected edit keeps the running configuration active.
+
+Configure it in `settings.json` with optional fields; omitted fields use the defaults shown here. Invalid `configReload` fields are ignored individually, so a malformed block falls back to these defaults rather than disabling watching:
+
+```json
+{
+  "configReload": {
+    "enabled": true,
+    "debounceMs": 200,
+    "watch": {
+      "settings": true,
+      "models": true,
+      "keybindings": true,
+      "prompts": true,
+      "skills": true,
+      "extensions": true
+    }
+  }
+}
+```
+
+`skills` covers skill paths declared in settings as well as trusted project skills. Themes, credentials, sessions, and reload logs are not watched. Project config surfaces require project trust.
+
+### `config-watch:*` event protocol
+
+Extensions can register additional reloadable surfaces on the shared in-process `pi.events` bus. The channels are `config-watch:register`, `config-watch:unregister`, `config-watch:ready`, `config-watch:changed`, `config-watch:reloaded`, and `config-watch:rejected`. Registrations with the same `id` are last-wins. The registration wire shape is:
+
+```typescript
+{
+  id: string;
+  displayName: string;
+  targets: Array<{
+    path: string;
+    kind: "file" | "dir";
+    filterGlobs?: string[]; // simple name/suffix patterns, for example ["omo.json", "omo.jsonc"]
+  }>;
+  validate?: (changedPaths: readonly string[]) =>
+    | { ok: true }
+    | { ok: false; errors: string[] }
+    | Promise<{ ok: true } | { ok: false; errors: string[] }>;
+}
+```
+
+`config-watch:changed` emits `{ registrationId, paths, deferred }`; `config-watch:reloaded` emits `{ registrationId, paths }`; and `config-watch:rejected` emits `{ registrationId, paths, errors }`. `config-watch:ready` emits `{ enabled }`. Treat all event payloads as untrusted at the receiver boundary.
+
+In TUI mode the builtin requests the host reload action and shows notifications. RPC hosts without a reload action intentionally run in degraded mode: watchers remain active and `config-watch:changed` still emits, but no reload is requested. Print mode starts no watchers so a short-lived process can exit normally.
+
 ### pi.registerProvider(name, config)
 
 Register or override a model provider dynamically. Useful for proxies, custom endpoints, or team-wide model configurations.
@@ -2926,7 +2976,7 @@ const highlighted = highlightCode(code, lang, theme);
 | Interactive | `"tui"` | `true` | Full TUI with terminal rendering |
 | RPC (`--mode rpc`) | `"rpc"` | `true` | Dialogs and notifications via JSON protocol; `custom()` returns `undefined`. See [rpc.md](rpc.md) |
 | JSON (`--mode json`) | `"json"` | `false` | Event stream to stdout; UI methods are no-ops |
-| Print (`-p`) | `"print"` | `false` | Extensions run but can't prompt |
+| Print (`-p`) | `"print"` | `false` | Extensions run but can't prompt; `config-reload` deliberately starts no filesystem watchers |
 
 Use `ctx.mode === "tui"` before TUI-specific features (`custom()`, component factories, terminal input). Use `ctx.hasUI` before dialog and notification methods that work in both TUI and RPC modes.
 

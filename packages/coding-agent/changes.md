@@ -1,5 +1,13 @@
 # Local fork changes
 
+## 2026-07-21 — config-reload settings-manager seam
+
+- Changed: `src/core/settings-manager.ts` tracks recent process-written settings content hashes by absolute path, with bounded, expiring, consume-on-match entries shared across settings-manager and storage instances.
+- Why: the default-on config-reload builtin must ignore its own settings writes without suppressing a later identical external edit or losing rapid consecutive writes.
+- What changed: the exported `wasSelfWrite()` query and path helpers are fork-specific storage seams; the `configReload` setting augmentation remains owned by the builtin so core settings semantics stay unchanged when the builtin is unused.
+- Why the extension system could not handle this: the persistence write path is owned by `FileSettingsStorage` and `InMemorySettingsStorage`, outside extension lifecycle hooks.
+- Merge-conflict risk: medium around settings storage writes and exported settings-manager helpers.
+
 ## 2026-07-20 — paced streaming tool argument preview coverage
 
 - Changed:

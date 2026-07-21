@@ -523,9 +523,9 @@ describe("config reload builtin extension", () => {
 		await vi.advanceTimersByTimeAsync(200);
 
 		expect(changed).toHaveLength(2);
-		expect(
-			info.mock.calls.filter(([event]) => event === "reload_requested"),
-		).toEqual([["reload_requested", { reason: "requestReload unavailable", paths: [] }]]);
+		expect(info.mock.calls.filter(([event]) => event === "reload_requested")).toEqual([
+			["reload_requested", { reason: "requestReload unavailable", paths: [] }],
+		]);
 	});
 
 	it("does not construct project watchers when the session is untrusted", async () => {

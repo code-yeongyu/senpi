@@ -4,6 +4,7 @@ import anthropicWebSearchExtension from "./anthropic-web-search/index.ts";
 import bashTimeoutExtension from "./bash-timeout/index.ts";
 import btwExtension from "./btw/index.ts";
 import compactionExtension from "./compaction/index.ts";
+import configReloadExtension from "./config-reload/index.ts";
 import diffExtension from "./diff.ts";
 import filesExtension from "./files.ts";
 import goalExtension from "./goal/index.ts";
@@ -72,6 +73,8 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "rules", factory: piRulesExtension },
 	{ id: "goal", factory: goalExtension },
 	{ id: "btw", factory: btwExtension },
+	// Config reload follows settings-dependent builtins so reloads rebuild their resolved settings before MCP observes them.
+	{ id: "config-reload", factory: configReloadExtension },
 	// Keep MCP last so its eventual provider-payload tap observes all co-resident builtin mutations.
 	{ id: "mcp", factory: mcpExtension },
 ];
