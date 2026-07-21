@@ -99,6 +99,7 @@ describe("build-all", () => {
 
 		// When
 		const buildScript = scripts.build;
+		const offlineBuildScript = scripts["build:offline"];
 		const prepublishScript = scripts.prepublishOnly;
 		const ignoreCheck = spawnSync("git", ["check-ignore", "packages/ai/src/providers/data/anthropic.json"], {
 			cwd: root,
@@ -107,9 +108,10 @@ describe("build-all", () => {
 		// Then
 		assert.equal(scripts.prebuild, undefined);
 		assert.doesNotMatch(buildScript, /generate-models/);
-		assert.match(buildScript, /^tsgo -p tsconfig\.build\.json/);
-		assert.match(buildScript, /shx chmod \+x dist\/cli\.js/);
-		assert.match(buildScript, /shx cp -r src\/providers\/data dist\/providers\/data$/);
+		assert.equal(buildScript, "npm run build:offline");
+		assert.match(offlineBuildScript, /^npm run check:model-data && tsgo -p tsconfig\.build\.json/);
+		assert.match(offlineBuildScript, /shx chmod \+x dist\/cli\.js/);
+		assert.match(offlineBuildScript, /shx cp -r src\/providers\/data dist\/providers\/data$/);
 		assert.match(scripts["generate-models"], /generate-models\.ts/);
 		assert.match(prepublishScript, /generate-models\.ts/);
 		assert.match(prepublishScript, /generate-image-models\.ts/);

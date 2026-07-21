@@ -68,7 +68,7 @@ describe("local release package list", () => {
 		// When
 		const result = spawnSync(
 			process.execPath,
-			[join(process.cwd(), "scripts", "local-release.mjs"), "--skip-check", "--skip-install", "--out", outDir],
+			[join(process.cwd(), "scripts", "local-release.mjs"), "--skip-check", "--skip-test", "--skip-install", "--out", outDir],
 			{
 				cwd: repoRoot,
 				encoding: "utf8",

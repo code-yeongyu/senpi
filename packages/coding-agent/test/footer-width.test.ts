@@ -89,15 +89,18 @@ function createSession(options: {
 				};
 				for (const entry of entries) {
 					const message = entry.message;
-					if (entry.type === "message" && message?.role === "assistant") {
-						totals.input += message.usage.input;
-						totals.output += message.usage.output;
-						totals.cacheRead += message.usage.cacheRead;
-						totals.cacheWrite += message.usage.cacheWrite;
-						totals.cost += message.usage.cost.total;
-						const latestPromptTokens = message.usage.input + message.usage.cacheRead + message.usage.cacheWrite;
+					const usage = entry.type === "message" ? message?.usage : entry.usage;
+					if (usage !== undefined) {
+						totals.input += usage.input;
+						totals.output += usage.output;
+						totals.cacheRead += usage.cacheRead;
+						totals.cacheWrite += usage.cacheWrite;
+						totals.cost += usage.cost.total;
+					}
+					if (usage !== undefined && entry.type === "message" && message?.role === "assistant") {
+						const latestPromptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
 						totals.latestCacheHitRate =
-							latestPromptTokens > 0 ? (message.usage.cacheRead / latestPromptTokens) * 100 : undefined;
+							latestPromptTokens > 0 ? (usage.cacheRead / latestPromptTokens) * 100 : undefined;
 					}
 				}
 				return totals;
@@ -213,7 +216,10 @@ describe("FooterComponent width handling", () => {
 		});
 		const footer = new FooterComponent(session, createFooterData(1));
 
-		const statsLine = stripAnsi(footer.render(120)[1]);
+		const statsLine = footer
+			.render(120)
+			.map((line) => stripAnsi(line))
+			.join(" ");
 		expect(statsLine).toContain("$1.250");
 	});
 
