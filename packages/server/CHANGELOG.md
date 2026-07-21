@@ -8,6 +8,8 @@
 
 ### Changed
 
+- Renamed the experimental orchestrator workspace and internal server references to `packages/server`, while preserving fork-compatible Senpi runtime state paths ([#6898](https://github.com/earendil-works/pi/pull/6898) by [@cristinaponcela](https://github.com/cristinaponcela)).
+
 ### Fixed
 
 ### Removed

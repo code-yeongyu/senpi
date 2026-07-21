@@ -7,13 +7,19 @@
 ### Added
 
 - Documented the Codex HEAD app-server parity surface, protocol provenance, intentional `-32601` boundaries, and the source-oracle differential QA harness. The documentation now calls out deliberate behavior differences, including post-restart history reconstruction, aggregated turn diffs, partial thread settings, and honest account reads.
-||||||| 9ee0c4a3e
 - Added configurable Claude text tool-call recovery across both `ModelRuntime` streaming entry points, `models.json` definitions/overrides, persisted sessions, and isolated Anthropic/OpenAI mock-loop QA.
+- Added deterministic, checksummed release source archives with documented standalone binary rebuild instructions ([#6913](https://github.com/earendil-works/pi/pull/6913) by [@christianklotz](https://github.com/christianklotz)).
+- Added Qwen Token Plan and Qwen Token Plan China to built-in provider setup, default model resolution, and provider documentation ([#6858](https://github.com/earendil-works/pi/pull/6858) by [@QuintinShaw](https://github.com/QuintinShaw)).
+- Added `get_available_thinking_levels`, root-exported message and tool execution lifecycle event types, llama.cpp router/model-management support, full provider extension registration, and persisted usage accounting for tools, compaction, and branch summaries.
 
 ### Changed
 
 ### Fixed
 - Fixed the interactive render hot path re-materializing the entire session every frame: `SessionManager.getEntries()`, no-arg `getBranch()`, and `getSessionName()` are now memoized behind a monotonic mutation counter, eliminating repeated deep copies of large sessions at frame rate.
+- Fixed compaction and branch summarization to retry transient provider failures using the configured retry policy, with retry lifecycle events exposed to interactive, JSON, RPC, and SDK consumers ([#6901](https://github.com/earendil-works/pi/pull/6901) by [@davidbrai](https://github.com/davidbrai)).
+- Fixed inherited `streamFn` extension compatibility, Kimi thinking metadata, stored credential env resolution, OpenAI-compatible tool-call ID replay, OpenCode Responses routing, TUI cursor/text wrapping/paste behavior, Codex WebSocket UUIDs, GPT-5.6 context windows, and OpenAI Responses early stream retry classification.
+- Fixed startup and upgrade behavior by deferring model catalog refresh until interactive/RPC mode startup and preventing persisted remote catalogs from overriding newer bundled catalogs.
+- Fixed messages queued during compaction, read tool error rendering, prompt-template defaults, extension documentation examples, Kimi Coding pricing display, and llama.cpp download progress wording.
 
 ### Removed
 
