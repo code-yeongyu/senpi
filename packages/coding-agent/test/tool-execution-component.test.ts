@@ -43,6 +43,70 @@ function createFakeTuiWithRenderSpy(requestRender: () => void): TUI {
 	} as TUI;
 }
 
+function createCompletedTodoResult(isError = false): Parameters<ToolExecutionComponent["updateResult"]>[0] {
+	return {
+		content: [{ type: "text" as const, text: "ok" }],
+		details: {
+			op: "done",
+			phases: [{ name: "P", tasks: [{ content: "t", status: "completed" }] }],
+			storage: "memory" as const,
+			completedTasks: [{ phase: "P", content: "t" }],
+		},
+		isError,
+	};
+}
+
+function getSpinnerFrame(component: ToolExecutionComponent): number | undefined {
+	return (component as unknown as { spinnerFrame?: number }).spinnerFrame;
+}
+
+function captureTodoTool(): ToolDefinition<typeof TODO_PARAMS_SCHEMA> {
+	let capturedTool: ToolDefinition<typeof TODO_PARAMS_SCHEMA> | undefined;
+	const pi = {
+		registerTool(tool: ToolDefinition<typeof TODO_PARAMS_SCHEMA>) {
+			capturedTool = tool;
+		},
+		appendEntry() {},
+	};
+	registerTodoTool(pi as unknown as ExtensionAPI, {
+		getCurrentPhases: () => [],
+		setCurrentPhases: () => {},
+		syncWidget: () => {},
+	});
+	if (!capturedTool) throw new Error("Expected todo tool registration");
+	return capturedTool;
+}
+
+type InteractiveModeStopThis = {
+	streamingReveal: { stop(): void };
+	toolResultReveal: { stop(): void };
+	settingsManager: { getShowTerminalProgress(): boolean };
+	ui: { terminal: { setProgress(value: boolean): void }; stop(): void };
+	clearStatusIndicator(): void;
+	clearPendingTools(): void;
+	stopChatToolAnimations(): void;
+	clearActiveToolExecutionStatus(): void;
+	clearToolHookStatuses(): void;
+	themeController: { disableAutoSync(): void };
+	clearExtensionTerminalInputListeners(): void;
+	footer: { dispose(): void };
+	footerDataProvider: { dispose(): void };
+	unsubscribe: (() => void) | undefined;
+	isInitialized: boolean;
+	unregisterSignalHandlers(): void;
+};
+type InteractiveModeStopPrototype = {
+	stop(this: InteractiveModeStopThis): void;
+};
+type StopChatToolAnimationsThis = {
+	chatContainer: Container;
+	ui: Pick<TUI, "requestRender">;
+};
+
+type StopChatToolAnimationsPrototype = {
+	stopChatToolAnimations(this: StopChatToolAnimationsThis): void;
+};
+
 const markerTheme = {
 	fg: (name: string, text: string) => `<fg:${name}>${text}</fg:${name}>`,
 	bg: (name: string, text: string) => `<bg:${name}>${text}</bg:${name}>`,
@@ -698,243 +762,217 @@ describe("ToolExecutionComponent parity", () => {
 			expect(collapsed.indexOf(":120-329")).toBeLessThan(collapsed.indexOf("to expand"));
 		});
 	}
-});
 
-function completedTodoResult(isError = false) {
-	return {
-		content: [{ type: "text" as const, text: "ok" }],
-		details: {
-			op: "done",
-			phases: [{ name: "P", tasks: [{ content: "t", status: "completed" as const }] }],
-			storage: "memory" as const,
-			completedTasks: [{ phase: "P", content: "t" }],
-		},
-		isError,
-	};
-}
-
-function createTodoComponent(
-	requestRender = vi.fn(),
-	toolDefinition: ToolDefinition = createBaseToolDefinition("todo"),
-) {
-	return new ToolExecutionComponent(
-		"todo",
-		"todo-strike",
-		{},
-		{},
-		toolDefinition,
-		createFakeTuiWithRenderSpy(requestRender),
-		process.cwd(),
-	);
-}
-
-function captureTodoTool(): ToolDefinition<typeof TODO_PARAMS_SCHEMA> {
-	let capturedTool: ToolDefinition<typeof TODO_PARAMS_SCHEMA> | undefined;
-	const mockPi = {
-		registerTool(tool: ToolDefinition<typeof TODO_PARAMS_SCHEMA>) {
-			capturedTool = tool;
-		},
-		appendEntry() {},
-	} as Pick<ExtensionAPI, "registerTool" | "appendEntry"> as ExtensionAPI;
-
-	registerTodoTool(mockPi, {
-		getCurrentPhases: () => [],
-		setCurrentPhases: () => {},
-		syncWidget: () => {},
-	});
-	if (!capturedTool) throw new Error("Expected todo tool to be registered");
-	return capturedTool;
-}
-
-describe("ToolExecutionComponent todo completion strike animation", () => {
-	test("animates completed todo tasks through all strike frames and settles", () => {
+	test("animates completed todo tasks through the strike reveal and settles", () => {
 		vi.useFakeTimers();
 		try {
 			const requestRender = vi.fn();
-			const component = createTodoComponent(requestRender);
+			const component = new ToolExecutionComponent(
+				"todo",
+				"tool-todo-strike-happy",
+				{},
+				{},
+				createBaseToolDefinition("todo"),
+				createFakeTuiWithRenderSpy(requestRender),
+				process.cwd(),
+			);
 			component.markExecutionStarted();
-			component.updateResult(completedTodoResult());
-			const rendersBeforeFrame = requestRender.mock.calls.length;
+			component.updateResult(createCompletedTodoResult(), false);
 
+			const rendersBeforeFrame = requestRender.mock.calls.length;
 			vi.advanceTimersByTime(TODO_STRIKE_FRAME_INTERVAL_MS);
 			expect(requestRender.mock.calls.length).toBeGreaterThan(rendersBeforeFrame);
 
-			vi.advanceTimersByTime(TODO_STRIKE_FRAME_INTERVAL_MS * TODO_STRIKE_TOTAL_FRAMES);
-			const rendersAfterSettle = requestRender.mock.calls.length;
-			vi.advanceTimersByTime(650);
-			expect(requestRender.mock.calls.length).toBe(rendersAfterSettle);
+			vi.advanceTimersByTime(TODO_STRIKE_FRAME_INTERVAL_MS * (TODO_STRIKE_TOTAL_FRAMES + 1));
+			const rendersAfterCompletion = requestRender.mock.calls.length;
+			vi.advanceTimersByTime(2_000);
+			expect(requestRender.mock.calls.length).toBe(rendersAfterCompletion);
+			expect(getSpinnerFrame(component)).toBeUndefined();
 		} finally {
 			vi.useRealTimers();
 		}
 	});
 
-	test("does not animate errored todo results", () => {
+	const todoAnimationScenarios: Array<{
+		title: string;
+		result: Parameters<ToolExecutionComponent["updateResult"]>[0];
+		isPartial: boolean;
+	}> = [
+		{ title: "does not animate errored todo results", result: createCompletedTodoResult(true), isPartial: false },
+		{
+			title: "does not animate todo results without completedTasks",
+			result: {
+				content: [{ type: "text" as const, text: "ok" }],
+				details: { op: "done", phases: [], storage: "memory" },
+				isError: false,
+			},
+			isPartial: false,
+		},
+		{
+			title: "does not animate todo results with empty completedTasks",
+			result: {
+				content: [{ type: "text" as const, text: "ok" }],
+				details: { op: "done", phases: [], storage: "memory", completedTasks: [] },
+				isError: false,
+			},
+			isPartial: false,
+		},
+		{ title: "does not animate partial todo results", result: createCompletedTodoResult(), isPartial: true },
+	];
+	for (const scenario of todoAnimationScenarios) {
+		test(scenario.title, () => {
+			vi.useFakeTimers();
+			try {
+				const requestRender = vi.fn();
+				const component = new ToolExecutionComponent(
+					"todo",
+					`tool-todo-strike-${scenario.title}`,
+					{},
+					{},
+					createBaseToolDefinition("todo"),
+					createFakeTuiWithRenderSpy(requestRender),
+					process.cwd(),
+				);
+				component.markExecutionStarted();
+				component.updateResult(scenario.result, scenario.isPartial);
+				requestRender.mockClear();
+				vi.advanceTimersByTime(2_000);
+				expect(requestRender).not.toHaveBeenCalled();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+	}
+
+	test("stops completed todo strike animation on stopAnimation and dispose", () => {
 		vi.useFakeTimers();
 		try {
-			const requestRender = vi.fn();
-			const component = createTodoComponent(requestRender);
-			component.markExecutionStarted();
-			component.updateResult(completedTodoResult(true));
-			const rendersAfterResult = requestRender.mock.calls.length;
-			vi.advanceTimersByTime(2000);
-			expect(requestRender.mock.calls.length).toBe(rendersAfterResult);
+			for (const teardown of [
+				(component: ToolExecutionComponent) => component.stopAnimation(),
+				(component: ToolExecutionComponent) => component.dispose(),
+			]) {
+				const requestRender = vi.fn();
+				const component = new ToolExecutionComponent(
+					"todo",
+					"tool-todo-strike-teardown",
+					{},
+					{},
+					createBaseToolDefinition("todo"),
+					createFakeTuiWithRenderSpy(requestRender),
+					process.cwd(),
+				);
+				component.markExecutionStarted();
+				component.updateResult(createCompletedTodoResult(), false);
+				teardown(component);
+				requestRender.mockClear();
+				vi.advanceTimersByTime(2_000);
+				expect(requestRender).not.toHaveBeenCalled();
+			}
 		} finally {
 			vi.useRealTimers();
 		}
 	});
 
-	test("does not animate todo results without completed tasks", () => {
+	test("does not replay todo completion animation while rendering restored results", () => {
 		vi.useFakeTimers();
 		try {
 			const requestRender = vi.fn();
-			const component = createTodoComponent(requestRender);
-			component.markExecutionStarted();
-			const result = completedTodoResult();
-			result.details.completedTasks = [];
-			component.updateResult(result);
-			const rendersAfterResult = requestRender.mock.calls.length;
-			vi.advanceTimersByTime(2000);
-			expect(requestRender.mock.calls.length).toBe(rendersAfterResult);
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	test("does not animate partial todo results", () => {
-		vi.useFakeTimers();
-		try {
-			const requestRender = vi.fn();
-			const component = createTodoComponent(requestRender);
-			component.markExecutionStarted();
-			component.updateResult(completedTodoResult(), true);
-			const rendersAfterResult = requestRender.mock.calls.length;
-			vi.advanceTimersByTime(2000);
-			expect(requestRender.mock.calls.length).toBe(rendersAfterResult);
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	test("stops todo strike animation through stopAnimation", () => {
-		vi.useFakeTimers();
-		try {
-			const requestRender = vi.fn();
-			const component = createTodoComponent(requestRender);
-			component.markExecutionStarted();
-			component.updateResult(completedTodoResult());
-			component.stopAnimation();
-			const rendersAfterStop = requestRender.mock.calls.length;
-			vi.advanceTimersByTime(2000);
-			expect(requestRender.mock.calls.length).toBe(rendersAfterStop);
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	test("stops todo strike animation through dispose", () => {
-		vi.useFakeTimers();
-		try {
-			const requestRender = vi.fn();
-			const component = createTodoComponent(requestRender);
-			component.markExecutionStarted();
-			component.updateResult(completedTodoResult());
-			component.dispose();
-			const rendersAfterDispose = requestRender.mock.calls.length;
-			vi.advanceTimersByTime(2000);
-			expect(requestRender.mock.calls.length).toBe(rendersAfterDispose);
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	test("does not replay todo strike animation for rebuilt historical results", () => {
-		vi.useFakeTimers();
-		try {
-			const requestRender = vi.fn();
-			const component = createTodoComponent(requestRender, captureTodoTool());
-			component.updateResult(completedTodoResult());
-			const rendersAfterResult = requestRender.mock.calls.length;
-			vi.advanceTimersByTime(2000);
-			expect(requestRender.mock.calls.length).toBe(rendersAfterResult);
+			const component = new ToolExecutionComponent(
+				"todo",
+				"tool-todo-strike-restored",
+				{ op: "done", task: "t" },
+				{},
+				captureTodoTool(),
+				createFakeTuiWithRenderSpy(requestRender),
+				process.cwd(),
+			);
+			component.updateResult(createCompletedTodoResult(), false);
+			requestRender.mockClear();
+			vi.advanceTimersByTime(2_000);
+			expect(requestRender).not.toHaveBeenCalled();
 			expect(component.render(120).join("\n")).toContain(theme.strikethrough("[✓] t"));
 		} finally {
 			vi.useRealTimers();
 		}
 	});
 
-	test("stops completed todo strike animations when interactive mode stops", () => {
+	test("interactive mode stop wires chat tool animation teardown after clearPendingTools", () => {
+		const clearPendingTools = vi.fn();
+		const stopChatToolAnimations = vi.fn();
+		const fakeThis: InteractiveModeStopThis = {
+			streamingReveal: { stop: vi.fn() },
+			toolResultReveal: { stop: vi.fn() },
+			settingsManager: { getShowTerminalProgress: () => false },
+			ui: { terminal: { setProgress: vi.fn() }, stop: vi.fn() },
+			clearStatusIndicator: vi.fn(),
+			clearPendingTools,
+			stopChatToolAnimations,
+			clearActiveToolExecutionStatus: vi.fn(),
+			clearToolHookStatuses: vi.fn(),
+			themeController: { disableAutoSync: vi.fn() },
+			clearExtensionTerminalInputListeners: vi.fn(),
+			footer: { dispose: vi.fn() },
+			footerDataProvider: { dispose: vi.fn() },
+			unsubscribe: undefined,
+			isInitialized: false,
+			unregisterSignalHandlers: vi.fn(),
+		};
+		const prototype = InteractiveMode.prototype as unknown as InteractiveModeStopPrototype;
+		prototype.stop.call(fakeThis);
+		expect(stopChatToolAnimations).toHaveBeenCalledTimes(1);
+		expect(stopChatToolAnimations.mock.invocationCallOrder[0]).toBeGreaterThan(
+			clearPendingTools.mock.invocationCallOrder[0]!,
+		);
+	});
+
+	test("stops completed todo strike animation when interactive mode stops chat tool animations", () => {
 		vi.useFakeTimers();
 		try {
 			const requestRender = vi.fn();
-			const component = createTodoComponent(requestRender);
+			const component = new ToolExecutionComponent(
+				"todo",
+				"tool-todo-strike-mode-stop",
+				{},
+				{},
+				createBaseToolDefinition("todo"),
+				createFakeTuiWithRenderSpy(requestRender),
+				process.cwd(),
+			);
 			component.markExecutionStarted();
-			component.updateResult(completedTodoResult());
+			component.updateResult(createCompletedTodoResult(), false);
 			vi.advanceTimersByTime(TODO_STRIKE_FRAME_INTERVAL_MS);
 			const chatContainer = new Container();
 			chatContainer.addChild(component);
-			const proto = InteractiveMode.prototype as unknown as {
-				stopChatToolAnimations(this: { chatContainer: Container }): void;
-			};
-			proto.stopChatToolAnimations.call({ chatContainer });
-			const rendersAfterStop = requestRender.mock.calls.length;
-			vi.advanceTimersByTime(2000);
-			expect(requestRender.mock.calls.length).toBe(rendersAfterStop);
+			const fakeThis: StopChatToolAnimationsThis = { chatContainer, ui: { requestRender: vi.fn() } };
+			const prototype = InteractiveMode.prototype as unknown as StopChatToolAnimationsPrototype;
+			prototype.stopChatToolAnimations.call(fakeThis);
+			requestRender.mockClear();
+			vi.advanceTimersByTime(2_000);
+			expect(requestRender).not.toHaveBeenCalled();
 		} finally {
 			vi.useRealTimers();
 		}
 	});
 
-	test("wires stop to stop completed todo strike animations", () => {
-		const stopChatToolAnimations = vi.fn();
-		const proto = InteractiveMode.prototype as unknown as {
-			stop(this: {
-				streamingReveal: { stop(): void };
-				toolResultReveal: { stop(): void };
-				settingsManager: { getShowTerminalProgress(): boolean };
-				clearStatusIndicator(): void;
-				clearPendingTools(): void;
-				stopChatToolAnimations(): void;
-				clearActiveToolExecutionStatus(): void;
-				clearToolHookStatuses(): void;
-				themeController: { disableAutoSync(): void };
-				clearExtensionTerminalInputListeners(): void;
-				footer: { dispose(): void };
-				footerDataProvider: { dispose(): void };
-				unsubscribe: undefined;
-				isInitialized: false;
-				unregisterSignalHandlers(): void;
-			}): void;
-		};
-		proto.stop.call({
-			streamingReveal: { stop() {} },
-			toolResultReveal: { stop() {} },
-			settingsManager: { getShowTerminalProgress: () => false },
-			clearStatusIndicator() {},
-			clearPendingTools() {},
-			stopChatToolAnimations,
-			clearActiveToolExecutionStatus() {},
-			clearToolHookStatuses() {},
-			themeController: { disableAutoSync() {} },
-			clearExtensionTerminalInputListeners() {},
-			footer: { dispose() {} },
-			footerDataProvider: { dispose() {} },
-			unsubscribe: undefined,
-			isInitialized: false,
-			unregisterSignalHandlers() {},
-		});
-		expect(stopChatToolAnimations).toHaveBeenCalledTimes(1);
-	});
-
-	test("renders consecutive todo strike frames differently", () => {
+	test("invalidates memoized todo output for each strike animation frame", () => {
 		vi.useFakeTimers();
 		try {
 			const toolDefinition: ToolDefinition = {
 				...createBaseToolDefinition("todo"),
-				renderResult: (_result, _options, _theme, context) => new Text(`frame:${context.spinnerFrame}`, 0, 0),
+				renderResult: (_result, _options, _theme, context) =>
+					new Text(`frame:${String(context.spinnerFrame)}`, 0, 0),
 			};
-			const component = createTodoComponent(vi.fn(), toolDefinition);
+			const component = new ToolExecutionComponent(
+				"todo",
+				"tool-todo-strike-memo",
+				{},
+				{},
+				toolDefinition,
+				createFakeTuiWithRenderSpy(vi.fn()),
+				process.cwd(),
+			);
 			component.markExecutionStarted();
-			component.updateResult(completedTodoResult());
+			component.updateResult(createCompletedTodoResult(), false);
 			const firstFrame = component.render(120).join("\n");
 			vi.advanceTimersByTime(TODO_STRIKE_FRAME_INTERVAL_MS);
 			const secondFrame = component.render(120).join("\n");
