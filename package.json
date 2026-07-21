@@ -5,6 +5,7 @@
 	"workspaces": [
 		"packages/*",
 		"packages/pty",
+		"packages/storage/*",
 		"packages/coding-agent/examples/extensions/with-deps",
 		"packages/coding-agent/examples/extensions/custom-provider-anthropic",
 		"packages/coding-agent/examples/extensions/custom-provider-gitlab-duo",
@@ -28,6 +29,8 @@
 		"check:ts-imports": "node scripts/check-ts-relative-imports.mjs",
 		"verify:pms": "node scripts/verify-package-managers.mjs",
 		"generate:models": "npm --prefix packages/ai run generate-models && npm --prefix packages/ai run generate-image-models",
+		"hydrate:model-data": "npm --prefix packages/ai run hydrate-model-data",
+		"check:model-data": "npm --prefix packages/ai run check:model-data",
 		"generate:model-catalog": "npm --prefix packages/ai run generate-model-catalog",
 		"diff:model-catalog": "node scripts/diff-model-catalog.mjs",
 		"check:model-catalog": "node scripts/publish-model-catalog.mjs --input .artifacts/model-catalog --dry-run",

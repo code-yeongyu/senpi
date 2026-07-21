@@ -13,7 +13,6 @@ import { StringEnum } from "../src/utils/typebox-helpers.ts";
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.ts";
-import { getLiveEnvApiKey, OPENROUTER_LIVE_TEST_FLAG } from "./live-api-gates.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -26,7 +25,6 @@ const oauthTokens = await Promise.all([
 	resolveApiKey("openai-codex"),
 ]);
 const [anthropicOAuthToken, githubCopilotToken, openaiCodexToken] = oauthTokens;
-const openRouterApiKey = getLiveEnvApiKey("OPENROUTER_API_KEY", OPENROUTER_LIVE_TEST_FLAG);
 
 // Calculator tool definition (same as examples)
 // Note: Using StringEnum helper because Google's API doesn't support anyOf/const patterns
@@ -129,9 +127,9 @@ async function handleToolCall<TApi extends Api>(model: Model<TApi>, options?: St
 				expect(toolCall.name).toBe("math_operation");
 				JSON.parse(accumulatedToolArgs);
 				expect(toolCall.arguments).not.toBeUndefined();
-				expect(toolCall.arguments.a).toBe(15);
-				expect(toolCall.arguments.b).toBe(27);
-				expect(toolCall.arguments.operation).oneOf(["add", "subtract", "multiply", "divide"]);
+				expect((toolCall.arguments as any).a).toBe(15);
+				expect((toolCall.arguments as any).b).toBe(27);
+				expect((toolCall.arguments as any).operation).oneOf(["add", "subtract", "multiply", "divide"]);
 			}
 		}
 	}
@@ -812,7 +810,7 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!openRouterApiKey)("OpenRouter Provider (glm-4.5v via OpenAI Completions)", () => {
+	describe.skipIf(!process.env.OPENROUTER_API_KEY)("OpenRouter Provider (glm-4.5v via OpenAI Completions)", () => {
 		const llm = getModel("openrouter", "z-ai/glm-4.5v");
 
 		it("should complete basic text generation", { retry: 3 }, async () => {
@@ -1019,29 +1017,32 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.KIMI_API_KEY)("Kimi For Coding Provider via Anthropic Messages", () => {
-		const llm = getModel("kimi-coding", "kimi-for-coding");
+	describe.skipIf(!process.env.KIMI_API_KEY)(
+		"Kimi For Coding Provider (kimi-for-coding via Anthropic Messages)",
+		() => {
+			const llm = getModel("kimi-coding", "kimi-for-coding");
 
-		it("should complete basic text generation", { retry: 3 }, async () => {
-			await basicTextGeneration(llm);
-		});
+			it("should complete basic text generation", { retry: 3 }, async () => {
+				await basicTextGeneration(llm);
+			});
 
-		it("should handle tool calling", { retry: 3 }, async () => {
-			await handleToolCall(llm);
-		});
+			it("should handle tool calling", { retry: 3 }, async () => {
+				await handleToolCall(llm);
+			});
 
-		it("should handle streaming", { retry: 3 }, async () => {
-			await handleStreaming(llm);
-		});
+			it("should handle streaming", { retry: 3 }, async () => {
+				await handleStreaming(llm);
+			});
 
-		it("should handle thinking mode", { retry: 3 }, async () => {
-			await handleThinking(llm, { thinkingEnabled: true, thinkingBudgetTokens: 2048 });
-		});
+			it("should handle thinking mode", { retry: 3 }, async () => {
+				await handleThinking(llm, { thinkingEnabled: true, thinkingBudgetTokens: 2048 });
+			});
 
-		it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
-			await multiTurn(llm, { thinkingEnabled: true, thinkingBudgetTokens: 2048 });
-		});
-	});
+			it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
+				await multiTurn(llm, { thinkingEnabled: true, thinkingBudgetTokens: 2048 });
+			});
+		},
+	);
 
 	describe.skipIf(!process.env.XIAOMI_API_KEY)(
 		"Xiaomi MiMo (API billing) Provider (Xiaomi MiMo-V2.5-Pro via Anthropic Messages)",
@@ -1167,10 +1168,10 @@ describe("Generate E2E Tests", () => {
 		},
 	);
 
-	describe.skipIf(!process.env.ALIBABA_TOKEN_PLAN_API_KEY)(
-		"Alibaba Token Plan Provider (Qwen3.7 Max via OpenAI Completions)",
+	describe.skipIf(!process.env.QWEN_TOKEN_PLAN_API_KEY)(
+		"Qwen Token Plan Provider (Qwen3.7-Max, international)",
 		() => {
-			const llm = getModel("alibaba-token-plan", "qwen3.7-max");
+			const llm = getModel("qwen-token-plan", "qwen3.7-max");
 			const thinkingOptions = {
 				thinkingEnabled: true,
 				reasoningEffort: "high",
@@ -1197,6 +1198,34 @@ describe("Generate E2E Tests", () => {
 			});
 		},
 	);
+
+	describe.skipIf(!process.env.QWEN_TOKEN_PLAN_CN_API_KEY)("Qwen Token Plan Provider (Qwen3.7-Max, CN region)", () => {
+		const llm = getModel("qwen-token-plan-cn", "qwen3.7-max");
+		const thinkingOptions = {
+			thinkingEnabled: true,
+			reasoningEffort: "high",
+		} satisfies StreamOptionsWithExtras;
+
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(llm);
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(llm);
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(llm);
+		});
+
+		it("should handle thinking mode", { retry: 3 }, async () => {
+			await handleThinking(llm, thinkingOptions);
+		});
+
+		it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
+			await multiTurn(llm, thinkingOptions);
+		});
+	});
 
 	describe.skipIf(!process.env.ANT_LING_API_KEY)("Ant Ling Provider (Ling 2.6 Flash via OpenAI Completions)", () => {
 		const llm = getModel("ant-ling", "Ling-2.6-flash");

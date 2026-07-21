@@ -1,0 +1,50 @@
+{
+	"name": "@code-yeongyu/senpi-orchestrator",
+	"version": "2026.7.20-2",
+	"private": true,
+	"description": "experimental server package for senpi",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"bin": {
+		"server": "./dist/cli.js"
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
+		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js",
+		"test": "node --test --import tsx test/*.test.ts",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"keywords": [
+		"senpi",
+		"server"
+	],
+	"author": "Earendil Works",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/code-yeongyu/senpi.git",
+		"directory": "packages/server"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"dependencies": {
+		"@code-yeongyu/senpi": "2026.7.20-2"
+	},
+	"devDependencies": {
+		"shx": "0.4.0"
+	}
+}

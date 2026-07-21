@@ -34,14 +34,17 @@ describe("build-all", () => {
 			"packages/pty",
 			"packages/ai",
 			"packages/agent",
+			"packages/storage/sqlite-node",
 			"packages/coding-agent",
 			"packages/web-ui",
-			"packages/orchestrator",
+			"packages/server",
 		]);
 		assert.ok(index("packages/agent") > index("packages/ai"));
+		assert.ok(index("packages/storage/sqlite-node") > index("packages/ai"));
+		assert.ok(index("packages/storage/sqlite-node") > index("packages/agent"));
 		assert.ok(index("packages/coding-agent") > index("packages/agent"));
 		assert.ok(index("packages/web-ui") > index("packages/agent"));
-		assert.ok(index("packages/orchestrator") > index("packages/coding-agent"));
+		assert.ok(index("packages/server") > index("packages/coding-agent"));
 	});
 
 	it("builds pty beside tui in the first native-adjacent phase", () => {
@@ -97,6 +100,7 @@ describe("build-all", () => {
 
 		// When
 		const buildScript = scripts.build;
+		const offlineBuildScript = scripts["build:offline"];
 		const prepublishScript = scripts.prepublishOnly;
 		const ignoreCheck = spawnSync("git", ["check-ignore", "packages/ai/src/providers/data/anthropic.json"], {
 			cwd: root,
@@ -105,12 +109,14 @@ describe("build-all", () => {
 		// Then
 		assert.equal(scripts.prebuild, undefined);
 		assert.doesNotMatch(buildScript, /generate-models/);
-		assert.match(buildScript, /^tsgo -p tsconfig\.build\.json/);
-		assert.match(buildScript, /shx chmod \+x dist\/cli\.js/);
-		assert.match(buildScript, /shx cp -r src\/providers\/data dist\/providers\/data$/);
+		assert.equal(buildScript, "npm run build:offline");
+		assert.match(offlineBuildScript, /^npm run check:model-data && tsgo -p tsconfig\.build\.json/);
+		assert.match(offlineBuildScript, /shx chmod \+x dist\/cli\.js/);
+		assert.match(offlineBuildScript, /shx cp -r src\/providers\/data dist\/providers\/data$/);
 		assert.match(scripts["generate-models"], /generate-models\.ts/);
-		assert.match(prepublishScript, /generate-models\.ts/);
-		assert.match(prepublishScript, /generate-image-models\.ts/);
+		assert.match(scripts["generate-image-models"], /generate-image-models\.ts/);
+		assert.match(prepublishScript, /npm run generate-models/);
+		assert.match(prepublishScript, /npm run generate-image-models/);
 		assert.notEqual(ignoreCheck.status, 0);
 		assert.ok(readdirSync(join(root, "packages/ai/src/providers/data")).some((file) => file.endsWith(".json")));
 	});

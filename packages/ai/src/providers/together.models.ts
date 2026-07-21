@@ -5,30 +5,6 @@ import values from "./data/together.json" with { type: "json" };
 import type { Model } from "../types.ts";
 
 export const TOGETHER_MODELS = values as {
-	"MiniMaxAI/MiniMax-M2.7": Model<"openai-completions"> & {
-		id: "MiniMaxAI/MiniMax-M2.7";
-		provider: "together";
-	};
-	"MiniMaxAI/MiniMax-M3": Model<"openai-completions"> & {
-		id: "MiniMaxAI/MiniMax-M3";
-		provider: "together";
-	};
-	"Qwen/Qwen2.5-7B-Instruct-Turbo": Model<"openai-completions"> & {
-		id: "Qwen/Qwen2.5-7B-Instruct-Turbo";
-		provider: "together";
-	};
-	"Qwen/Qwen3.5-9B": Model<"openai-completions"> & {
-		id: "Qwen/Qwen3.5-9B";
-		provider: "together";
-	};
-	"Qwen/Qwen3.6-Plus": Model<"openai-completions"> & {
-		id: "Qwen/Qwen3.6-Plus";
-		provider: "together";
-	};
-	"Qwen/Qwen3.7-Max": Model<"openai-completions"> & {
-		id: "Qwen/Qwen3.7-Max";
-		provider: "together";
-	};
 	"deepseek-ai/DeepSeek-V4-Pro": Model<"openai-completions"> & {
 		id: "deepseek-ai/DeepSeek-V4-Pro";
 		provider: "together";
@@ -39,6 +15,14 @@ export const TOGETHER_MODELS = values as {
 	};
 	"meta-llama/Llama-3.3-70B-Instruct-Turbo": Model<"openai-completions"> & {
 		id: "meta-llama/Llama-3.3-70B-Instruct-Turbo";
+		provider: "together";
+	};
+	"MiniMaxAI/MiniMax-M2.7": Model<"openai-completions"> & {
+		id: "MiniMaxAI/MiniMax-M2.7";
+		provider: "together";
+	};
+	"MiniMaxAI/MiniMax-M3": Model<"openai-completions"> & {
+		id: "MiniMaxAI/MiniMax-M3";
 		provider: "together";
 	};
 	"moonshotai/Kimi-K2.6": Model<"openai-completions"> & {
@@ -59,6 +43,22 @@ export const TOGETHER_MODELS = values as {
 	};
 	"openai/gpt-oss-20b": Model<"openai-completions"> & {
 		id: "openai/gpt-oss-20b";
+		provider: "together";
+	};
+	"Qwen/Qwen2.5-7B-Instruct-Turbo": Model<"openai-completions"> & {
+		id: "Qwen/Qwen2.5-7B-Instruct-Turbo";
+		provider: "together";
+	};
+	"Qwen/Qwen3.5-9B": Model<"openai-completions"> & {
+		id: "Qwen/Qwen3.5-9B";
+		provider: "together";
+	};
+	"Qwen/Qwen3.6-Plus": Model<"openai-completions"> & {
+		id: "Qwen/Qwen3.6-Plus";
+		provider: "together";
+	};
+	"Qwen/Qwen3.7-Max": Model<"openai-completions"> & {
+		id: "Qwen/Qwen3.7-Max";
 		provider: "together";
 	};
 	"thinkingmachines/Inkling": Model<"openai-completions"> & {

@@ -1,19 +1,9 @@
+import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { generateBranchSummary, prepareBranchEntries } from "../src/core/compaction/index.ts";
 import type { SessionEntry } from "../src/core/session-manager.ts";
-
-const { completeSimpleMock } = vi.hoisted(() => ({
-	completeSimpleMock: vi.fn(),
-}));
-
-vi.mock("@earendil-works/pi-ai/compat", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("@earendil-works/pi-ai/compat")>();
-	return {
-		...actual,
-		completeSimple: completeSimpleMock,
-	};
-});
 
 function createModel(): Model<"anthropic-messages"> {
 	return {
@@ -50,6 +40,25 @@ function createAssistantResponse(text: string): AssistantMessage {
 	};
 }
 
+function createStreamFn(response: AssistantMessage): StreamFn {
+	return vi.fn<StreamFn>((model) => {
+		const stream = createAssistantMessageEventStream();
+		queueMicrotask(() => {
+			stream.push({
+				type: "done",
+				reason: "stop",
+				message: {
+					...response,
+					api: model.api,
+					provider: model.provider,
+					model: model.id,
+				},
+			});
+		});
+		return stream;
+	});
+}
+
 function createEntries(): SessionEntry[] {
 	return [
 		{
@@ -83,9 +92,10 @@ function createEntries(): SessionEntry[] {
 }
 
 describe("branch summarization custom messages", () => {
+	let streamFn: StreamFn;
+
 	beforeEach(() => {
-		completeSimpleMock.mockReset();
-		completeSimpleMock.mockResolvedValue(createAssistantResponse("## Goal\nKeep branch context"));
+		streamFn = createStreamFn(createAssistantResponse("## Goal\nKeep branch context"));
 	});
 
 	it("keeps custom messages in prepareBranchEntries", () => {
@@ -109,10 +119,11 @@ describe("branch summarization custom messages", () => {
 			model: createModel(),
 			apiKey: "test-key",
 			signal: new AbortController().signal,
+			streamFn,
 		});
 
 		// then
-		const promptText = completeSimpleMock.mock.calls[0][1].messages[0].content[0].text;
+		const promptText = JSON.stringify(vi.mocked(streamFn).mock.calls[0][1].messages);
 		expect(promptText).toContain("Investigate compaction regression.");
 		expect(promptText).toContain("I am checking branch summarization.");
 		expect(promptText).toContain("Remember the branch-specific observation.");

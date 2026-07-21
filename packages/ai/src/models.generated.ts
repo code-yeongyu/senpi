@@ -12,31 +12,33 @@ import { CLOUDFLARE_WORKERS_AI_MODELS } from "./providers/cloudflare-workers-ai.
 import { DEEPSEEK_MODELS } from "./providers/deepseek.models.ts";
 import { FIREWORKS_MODELS } from "./providers/fireworks.models.ts";
 import { GITHUB_COPILOT_MODELS } from "./providers/github-copilot.models.ts";
-import { GOOGLE_MODELS } from "./providers/google.models.ts";
 import { GOOGLE_VERTEX_MODELS } from "./providers/google-vertex.models.ts";
+import { GOOGLE_MODELS } from "./providers/google.models.ts";
 import { GROQ_MODELS } from "./providers/groq.models.ts";
 import { HUGGINGFACE_MODELS } from "./providers/huggingface.models.ts";
 import { KIMI_CODING_MODELS } from "./providers/kimi-coding.models.ts";
-import { MINIMAX_MODELS } from "./providers/minimax.models.ts";
 import { MINIMAX_CN_MODELS } from "./providers/minimax-cn.models.ts";
+import { MINIMAX_MODELS } from "./providers/minimax.models.ts";
 import { MISTRAL_MODELS } from "./providers/mistral.models.ts";
-import { MOONSHOTAI_MODELS } from "./providers/moonshotai.models.ts";
 import { MOONSHOTAI_CN_MODELS } from "./providers/moonshotai-cn.models.ts";
+import { MOONSHOTAI_MODELS } from "./providers/moonshotai.models.ts";
 import { NVIDIA_MODELS } from "./providers/nvidia.models.ts";
-import { OPENAI_MODELS } from "./providers/openai.models.ts";
 import { OPENAI_CODEX_MODELS } from "./providers/openai-codex.models.ts";
-import { OPENCODE_MODELS } from "./providers/opencode.models.ts";
+import { OPENAI_MODELS } from "./providers/openai.models.ts";
 import { OPENCODE_GO_MODELS } from "./providers/opencode-go.models.ts";
+import { OPENCODE_MODELS } from "./providers/opencode.models.ts";
 import { OPENROUTER_MODELS } from "./providers/openrouter.models.ts";
+import { QWEN_TOKEN_PLAN_CN_MODELS } from "./providers/qwen-token-plan-cn.models.ts";
+import { QWEN_TOKEN_PLAN_MODELS } from "./providers/qwen-token-plan.models.ts";
 import { TOGETHER_MODELS } from "./providers/together.models.ts";
 import { VERCEL_AI_GATEWAY_MODELS } from "./providers/vercel-ai-gateway.models.ts";
 import { XAI_MODELS } from "./providers/xai.models.ts";
-import { XIAOMI_MODELS } from "./providers/xiaomi.models.ts";
 import { XIAOMI_TOKEN_PLAN_AMS_MODELS } from "./providers/xiaomi-token-plan-ams.models.ts";
 import { XIAOMI_TOKEN_PLAN_CN_MODELS } from "./providers/xiaomi-token-plan-cn.models.ts";
 import { XIAOMI_TOKEN_PLAN_SGP_MODELS } from "./providers/xiaomi-token-plan-sgp.models.ts";
-import { ZAI_MODELS } from "./providers/zai.models.ts";
+import { XIAOMI_MODELS } from "./providers/xiaomi.models.ts";
 import { ZAI_CODING_CN_MODELS } from "./providers/zai-coding-cn.models.ts";
+import { ZAI_MODELS } from "./providers/zai.models.ts";
 
 export const MODELS = {
 	"alibaba-token-plan": ALIBABA_TOKEN_PLAN_MODELS,
@@ -50,29 +52,31 @@ export const MODELS = {
 	"deepseek": DEEPSEEK_MODELS,
 	"fireworks": FIREWORKS_MODELS,
 	"github-copilot": GITHUB_COPILOT_MODELS,
-	"google": GOOGLE_MODELS,
 	"google-vertex": GOOGLE_VERTEX_MODELS,
+	"google": GOOGLE_MODELS,
 	"groq": GROQ_MODELS,
 	"huggingface": HUGGINGFACE_MODELS,
 	"kimi-coding": KIMI_CODING_MODELS,
-	"minimax": MINIMAX_MODELS,
 	"minimax-cn": MINIMAX_CN_MODELS,
+	"minimax": MINIMAX_MODELS,
 	"mistral": MISTRAL_MODELS,
-	"moonshotai": MOONSHOTAI_MODELS,
 	"moonshotai-cn": MOONSHOTAI_CN_MODELS,
+	"moonshotai": MOONSHOTAI_MODELS,
 	"nvidia": NVIDIA_MODELS,
-	"openai": OPENAI_MODELS,
 	"openai-codex": OPENAI_CODEX_MODELS,
-	"opencode": OPENCODE_MODELS,
+	"openai": OPENAI_MODELS,
 	"opencode-go": OPENCODE_GO_MODELS,
+	"opencode": OPENCODE_MODELS,
 	"openrouter": OPENROUTER_MODELS,
+	"qwen-token-plan-cn": QWEN_TOKEN_PLAN_CN_MODELS,
+	"qwen-token-plan": QWEN_TOKEN_PLAN_MODELS,
 	"together": TOGETHER_MODELS,
 	"vercel-ai-gateway": VERCEL_AI_GATEWAY_MODELS,
 	"xai": XAI_MODELS,
-	"xiaomi": XIAOMI_MODELS,
 	"xiaomi-token-plan-ams": XIAOMI_TOKEN_PLAN_AMS_MODELS,
 	"xiaomi-token-plan-cn": XIAOMI_TOKEN_PLAN_CN_MODELS,
 	"xiaomi-token-plan-sgp": XIAOMI_TOKEN_PLAN_SGP_MODELS,
-	"zai": ZAI_MODELS,
+	"xiaomi": XIAOMI_MODELS,
 	"zai-coding-cn": ZAI_CODING_CN_MODELS,
+	"zai": ZAI_MODELS,
 } as const;

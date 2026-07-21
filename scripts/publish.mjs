@@ -14,6 +14,7 @@ import { assertSenpiPackedWorkspaceFiles, prepareSenpiBundledWorkspaces } from "
 const packages = [
 	{ directory: "packages/ai", name: "@earendil-works/pi-ai" },
 	{ directory: "packages/agent", name: "@earendil-works/pi-agent-core" },
+	{ directory: "packages/storage/sqlite-node", name: "@earendil-works/pi-storage-sqlite-node" },
 	{ directory: "packages/tui", name: "@earendil-works/pi-tui" },
 	{ directory: "packages/coding-agent", name: "@code-yeongyu/senpi" },
 ];

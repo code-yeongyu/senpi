@@ -42,7 +42,7 @@
 		}
 	},
 	"bin": {
-		"pi-ai": "./dist/cli.js"
+		"pi-ai": "dist/cli.js"
 	},
 	"files": [
 		"dist",
@@ -50,14 +50,17 @@
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
-		"generate-models": "tsx scripts/generate-models.ts",
-		"generate-model-catalog": "tsx scripts/generate-models.ts --strict --json-only --json-output ../../.artifacts/model-catalog",
-		"generate-image-models": "tsx scripts/generate-image-models.ts",
-		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js && shx rm -rf dist/providers/data && shx cp -r src/providers/data dist/providers/data",
+		"generate-models": "node scripts/generate-models.ts --strict",
+		"hydrate-model-data": "node scripts/generate-models.ts --strict --data-only",
+		"generate-model-catalog": "node scripts/generate-models.ts --strict --json-only --json-output ../../.artifacts/model-catalog",
+		"generate-image-models": "node scripts/generate-image-models.ts --strict",
+		"check:model-data": "node scripts/check-model-data.ts",
+		"build": "npm run build:offline",
+		"build:offline": "npm run check:model-data && tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js && shx rm -rf dist/providers/data && shx cp -r src/providers/data dist/providers/data",
 		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
 		"dev:tsc": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
 		"test": "vitest --run",
-		"prepublishOnly": "shx rm -rf dist && tsx scripts/generate-models.ts && tsx scripts/generate-image-models.ts && tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js"
+		"prepublishOnly": "npm run clean && npm run generate-models && npm run generate-image-models && npm run build:offline"
 	},
 	"dependencies": {
 		"@anthropic-ai/sdk": "0.91.1",

@@ -37,7 +37,7 @@ describe("agent session auto title routing", () => {
 	it("runs title generation through the session stream function", async () => {
 		const harness = await createAutoTitleHarness();
 		harnesses.push(harness);
-		harness.session.agent.streamFn = (model, context, options) => {
+		harness.session.agent.streamFunction = (model, context, options) => {
 			const streamOptions = {
 				...options,
 				serviceTier: "priority",
@@ -70,7 +70,7 @@ describe("agent session auto title routing", () => {
 			},
 		});
 		harnesses.push(harness);
-		harness.session.agent.streamFn = async (model, context, options) => {
+		harness.session.agent.streamFunction = async (model, context, options) => {
 			await options?.onPayload?.({ systemPrompt: context.systemPrompt, messages: context.messages }, model);
 			return streamSimple(model, context, options);
 		};

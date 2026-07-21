@@ -135,9 +135,9 @@ export class AgentInterface extends LitElement {
 		}
 		if (!this.session) return;
 
-		// Set default streamFn with proxy support if not already set
-		if (this.session.streamFn === streamSimple) {
-			this.session.streamFn = createStreamFn(async () => {
+		// Set default stream function with proxy support if not already set
+		if (this.session.streamFunction === streamSimple) {
+			this.session.streamFunction = createStreamFn(async () => {
 				const enabled = await getAppStorage().settings.get<boolean>("proxy.enabled");
 				return enabled ? (await getAppStorage().settings.get<string>("proxy.url")) || undefined : undefined;
 			});

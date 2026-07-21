@@ -1,28 +1,13 @@
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { type CompactionPreparation, compact, generateSummary } from "../src/core/compaction/index.ts";
-
-const { streamSimpleMock } = vi.hoisted(() => ({
-	streamSimpleMock: vi.fn(),
-}));
-
-vi.mock("@earendil-works/pi-ai/compat", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("@earendil-works/pi-ai/compat")>();
-	return {
-		...actual,
-		streamSimple: streamSimpleMock,
-	};
-});
-
-function fakeSummaryStream(response: AssistantMessage) {
-	return {
-		async *[Symbol.asyncIterator]() {
-			// The watchdog-driven consumer drains events; none are needed here.
-		},
-		result: async () => response,
-	};
-}
+import {
+	type CompactionPreparation,
+	compact,
+	generateSummary,
+	generateSummaryWithUsage,
+} from "../src/core/compaction/index.ts";
 
 function createModel(reasoning: boolean, maxTokens = 8192): Model<"anthropic-messages"> {
 	return {
@@ -59,14 +44,34 @@ const mockSummaryResponse: AssistantMessage = {
 
 const messages: AgentMessage[] = [{ role: "user", content: "Summarize this.", timestamp: Date.now() }];
 
+function createStreamFn(response: AssistantMessage): StreamFn {
+	return vi.fn<StreamFn>((model) => {
+		const stream = createAssistantMessageEventStream();
+		queueMicrotask(() => {
+			stream.push({
+				type: "done",
+				reason: "stop",
+				message: {
+					...response,
+					api: model.api,
+					provider: model.provider,
+					model: model.id,
+				},
+			});
+		});
+		return stream;
+	});
+}
+
 describe("generateSummary reasoning options", () => {
+	let streamFn: StreamFn;
+
 	beforeEach(() => {
-		streamSimpleMock.mockReset();
-		streamSimpleMock.mockReturnValue(fakeSummaryStream(mockSummaryResponse));
+		streamFn = createStreamFn(mockSummaryResponse);
 	});
 
 	it("uses the provided thinking level for reasoning-capable models", async () => {
-		await generateSummary(
+		const result = await generateSummaryWithUsage(
 			messages,
 			createModel(true),
 			2000,
@@ -77,13 +82,35 @@ describe("generateSummary reasoning options", () => {
 			undefined,
 			undefined,
 			"medium",
+			streamFn,
 		);
 
-		expect(streamSimpleMock).toHaveBeenCalledTimes(1);
-		expect(streamSimpleMock.mock.calls[0][2]).toMatchObject({
+		expect(result.text).toBe("## Goal\nTest summary");
+		expect(result.usage).toEqual(mockSummaryResponse.usage);
+
+		expect(streamFn).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(streamFn).mock.calls[0][2]).toMatchObject({
 			reasoning: "medium",
 			apiKey: "test-key",
 		});
+	});
+
+	it("preserves the string result from generateSummary", async () => {
+		await expect(
+			generateSummary(
+				messages,
+				createModel(false),
+				2000,
+				"test-key",
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				streamFn,
+			),
+		).resolves.toBe("## Goal\nTest summary");
 	});
 
 	it("does not set reasoning when thinking is off", async () => {
@@ -98,13 +125,14 @@ describe("generateSummary reasoning options", () => {
 			undefined,
 			undefined,
 			"off",
+			streamFn,
 		);
 
-		expect(streamSimpleMock).toHaveBeenCalledTimes(1);
-		expect(streamSimpleMock.mock.calls[0][2]).toMatchObject({
+		expect(streamFn).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(streamFn).mock.calls[0][2]).toMatchObject({
 			apiKey: "test-key",
 		});
-		expect(streamSimpleMock.mock.calls[0][2]).not.toHaveProperty("reasoning");
+		expect(vi.mocked(streamFn).mock.calls[0][2]).not.toHaveProperty("reasoning");
 	});
 
 	it("does not set reasoning for non-reasoning models", async () => {
@@ -119,13 +147,14 @@ describe("generateSummary reasoning options", () => {
 			undefined,
 			undefined,
 			"medium",
+			streamFn,
 		);
 
-		expect(streamSimpleMock).toHaveBeenCalledTimes(1);
-		expect(streamSimpleMock.mock.calls[0][2]).toMatchObject({
+		expect(streamFn).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(streamFn).mock.calls[0][2]).toMatchObject({
 			apiKey: "test-key",
 		});
-		expect(streamSimpleMock.mock.calls[0][2]).not.toHaveProperty("reasoning");
+		expect(vi.mocked(streamFn).mock.calls[0][2]).not.toHaveProperty("reasoning");
 	});
 
 	it("clamps compaction summary maxTokens to the model output cap", async () => {
@@ -139,8 +168,25 @@ describe("generateSummary reasoning options", () => {
 			settings: { enabled: true, reserveTokens: 500000, keepRecentTokens: 20000 },
 		};
 
-		await compact(preparation, createModel(false, 128000), "test-key");
+		const result = await compact(
+			preparation,
+			createModel(false, 128000),
+			"test-key",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			streamFn,
+		);
 
-		expect(streamSimpleMock.mock.calls.map((call) => call[2]?.maxTokens)).toEqual([128000, 128000]);
+		expect(result.usage).toEqual({
+			...mockSummaryResponse.usage,
+			input: 20,
+			output: 20,
+			totalTokens: 40,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		});
+		expect(vi.mocked(streamFn).mock.calls.map((call) => call[2]?.maxTokens)).toEqual([128000, 128000]);
 	});
 });
