@@ -267,6 +267,8 @@ function createExtensionContext(overrides: Partial<ExtensionContext>): Extension
 		shutdown: vi.fn(),
 		getContextUsage: () => undefined,
 		getCompactionSettings: () => DEFAULT_COMPACTION_SETTINGS,
+		getLookAtSettings: () => ({ enabled: true, models: undefined }),
+		getImageSettings: () => ({ autoResize: true, blockImages: false }),
 		compact: vi.fn(),
 		getMessageRevision: () => 0,
 		applyCompaction: async () => ({ applied: false, reason: "rejected" }),

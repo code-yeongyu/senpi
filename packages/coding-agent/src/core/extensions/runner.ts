@@ -374,6 +374,14 @@ export class ExtensionRunner {
 		reserveTokens: 16384,
 		keepRecentTokens: 20000,
 	});
+	private getLookAtSettingsFn: ExtensionContextActions["getLookAtSettings"] = () => ({
+		enabled: true,
+		models: undefined,
+	});
+	private getImageSettingsFn: ExtensionContextActions["getImageSettings"] = () => ({
+		autoResize: true,
+		blockImages: false,
+	});
 	private sessionSettingsFn: ExtensionContextActions["sessionSettings"] = createNoOpSessionSettings();
 	private compactFn: (options?: CompactOptions) => void = () => {};
 	private beginCompactionFn: ExtensionContextActions["beginCompaction"] = undefined;
@@ -462,6 +470,8 @@ export class ExtensionRunner {
 		this.shutdownHandler = contextActions.shutdown;
 		this.getContextUsageFn = contextActions.getContextUsage;
 		this.getCompactionSettingsFn = contextActions.getCompactionSettings;
+		this.getLookAtSettingsFn = contextActions.getLookAtSettings;
+		this.getImageSettingsFn = contextActions.getImageSettings;
 		this.sessionSettingsFn = contextActions.sessionSettings;
 		this.compactFn = contextActions.compact;
 		this.beginCompactionFn = contextActions.beginCompaction;
@@ -964,6 +974,14 @@ export class ExtensionRunner {
 			getCompactionSettings: () => {
 				runner.assertActive();
 				return runner.getCompactionSettingsFn();
+			},
+			getLookAtSettings: () => {
+				runner.assertActive();
+				return runner.getLookAtSettingsFn();
+			},
+			getImageSettings: () => {
+				runner.assertActive();
+				return runner.getImageSettingsFn();
 			},
 			get sessionSettings() {
 				runner.assertActive();

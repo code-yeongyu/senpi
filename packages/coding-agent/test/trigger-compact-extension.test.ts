@@ -25,6 +25,8 @@ function createContext(tokens: number | null, compact = vi.fn()): ExtensionConte
 		getMessageRevision: () => 0,
 		applyCompaction: async () => ({ applied: false, reason: "rejected" }),
 		getCompactionSettings: () => DEFAULT_COMPACTION_SETTINGS,
+		getLookAtSettings: () => ({ enabled: true, models: undefined }),
+		getImageSettings: () => ({ autoResize: true, blockImages: false }),
 		sessionSettings: createInMemoryExtensionSessionSettings(),
 		getSystemPrompt: () => "",
 	};

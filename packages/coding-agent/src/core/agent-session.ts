@@ -3485,6 +3485,18 @@ export class AgentSession {
 				},
 				getContextUsage: () => this.getContextUsage(),
 				getCompactionSettings: () => this.settingsManager.getCompactionSettings(),
+				getLookAtSettings: () => {
+					const global = this.settingsManager.getGlobalSettings().lookAt;
+					const project = this.settingsManager.getProjectSettings().lookAt;
+					return {
+						enabled: project?.enabled ?? global?.enabled ?? true,
+						models: project?.models ?? global?.models,
+					};
+				},
+				getImageSettings: () => ({
+					autoResize: this.settingsManager.getImageAutoResize(),
+					blockImages: this.settingsManager.getBlockImages(),
+				}),
 				sessionSettings: {
 					getRetryFallbackSettings: () => this.settingsManager.getRetryFallbackSettings(),
 					setFallbackChain: async (key, entries) => {

@@ -84,6 +84,8 @@ function createMockContext(overrides: { hasUI?: boolean; ui?: ExtensionUIContext
 		getMessageRevision: vi.fn().mockReturnValue(0),
 		applyCompaction: vi.fn().mockResolvedValue({ applied: false, reason: "rejected" }),
 		getCompactionSettings: vi.fn().mockReturnValue(DEFAULT_COMPACTION_SETTINGS),
+		getLookAtSettings: vi.fn().mockReturnValue({ enabled: true, models: undefined }),
+		getImageSettings: vi.fn().mockReturnValue({ autoResize: true, blockImages: false }),
 		sessionSettings: createInMemoryExtensionSessionSettings(),
 		getSystemPrompt: vi.fn().mockReturnValue(""),
 	};

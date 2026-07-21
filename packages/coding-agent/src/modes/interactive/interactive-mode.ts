@@ -1974,6 +1974,18 @@ export class InteractiveMode {
 			},
 			getContextUsage: () => this.session.getContextUsage(),
 			getCompactionSettings: () => this.settingsManager.getCompactionSettings(),
+			getLookAtSettings: () => {
+				const global = this.settingsManager.getGlobalSettings().lookAt;
+				const project = this.settingsManager.getProjectSettings().lookAt;
+				return {
+					enabled: project?.enabled ?? global?.enabled ?? true,
+					models: project?.models ?? global?.models,
+				};
+			},
+			getImageSettings: () => ({
+				autoResize: this.settingsManager.getImageAutoResize(),
+				blockImages: this.settingsManager.getBlockImages(),
+			}),
 			sessionSettings: extensionRunner.createContext().sessionSettings,
 			compact: (options) => {
 				void (async () => {

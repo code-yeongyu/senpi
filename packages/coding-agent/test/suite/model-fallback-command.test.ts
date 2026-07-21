@@ -117,6 +117,8 @@ async function context(dir: string, notices: string[], choices: string[] = []): 
 		shutdown: () => {},
 		getContextUsage: () => undefined,
 		getCompactionSettings: () => DEFAULT_COMPACTION_SETTINGS,
+		getLookAtSettings: () => ({ enabled: true, models: undefined }),
+		getImageSettings: () => ({ autoResize: true, blockImages: false }),
 		sessionSettings: {
 			getRetryFallbackSettings: () => settings.getRetryFallbackSettings(),
 			setFallbackChain: async (key: string, entries: readonly string[]) => {

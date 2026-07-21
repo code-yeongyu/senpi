@@ -397,6 +397,10 @@ export interface ExtensionContext {
 	getContextUsage(): ContextUsage | undefined;
 	/** Get resolved compaction settings from global/project/user overrides. */
 	getCompactionSettings(): CompactionPreparation["settings"];
+	/** Get resolved look-at settings from global/project/user overrides. */
+	getLookAtSettings(): { enabled: boolean; models: string[] | undefined };
+	/** Get resolved image settings from global/project/user overrides. */
+	getImageSettings(): { autoResize: boolean; blockImages: boolean };
 	/** Manage retry fallback through the SettingsManager owned by this session. */
 	sessionSettings: ExtensionSessionSettings;
 	/** Trigger compaction without awaiting completion. */
@@ -1865,6 +1869,8 @@ export interface ExtensionContextActions {
 	shutdown: () => void;
 	getContextUsage: () => ContextUsage | undefined;
 	getCompactionSettings: () => CompactionPreparation["settings"];
+	getLookAtSettings: () => { enabled: boolean; models: string[] | undefined };
+	getImageSettings: () => { autoResize: boolean; blockImages: boolean };
 	sessionSettings: ExtensionSessionSettings;
 	compact: (options?: CompactOptions) => void;
 	beginCompaction?: (options: BeginCompactionOptions) => AbortSignal | undefined;
