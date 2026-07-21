@@ -1,5 +1,26 @@
 # changes
 
+## todo completion strike animation (2026-07-21)
+
+### What changed
+
+- `components/todo-strike.ts` (new, fork-only): pure strike primitives — frame constants (`TODO_STRIKE_HOLD_FRAMES = 2`, `TODO_STRIKE_REVEAL_FRAMES = 12`, `TODO_STRIKE_FRAME_INTERVAL_MS = 65`), code-point-aware `strikeRevealCount` (hold-then-linear reveal), `partialStrikethrough` (prefix strike that never splits surrogate pairs), and `hasCompletedTodoTasks` (details shape guard).
+- `components/tool-execution.ts`: adds a `todoStrikeInterval` driver that, for a non-partial, non-error `todo` result with `completedTasks`, ticks the shared `spinnerFrame` 0→14 at 65ms (2 hold + 12 reveal frames) and self-stops at `TODO_STRIKE_TOTAL_FRAMES`. The driver is gated on `executionStarted` so replayed/rebuilt transcript rows never restart the sweep, and tears down via `stopAnimation()` and a new `override dispose()`.
+- `interactive-mode.ts`: adds `stopChatToolAnimations()` (iterates `chatContainer.children`, calls `stopAnimation()` on each `ToolExecutionComponent`) and invokes it in session teardown alongside `clearPendingTools()`.
+
+### Why
+
+- A completed todo row should read as a deliberate left-to-right strike sweep, not an instantaneous restyle. Animating only live executions and stopping on teardown keeps the sweep from replaying when the transcript is rebuilt.
+
+### Why extension system couldn't handle this
+
+- The pending/done tool row lifecycle, spinner frame, and per-component render cache are private `ToolExecutionComponent` state; extensions cannot own its interval or coordinate teardown with session shutdown.
+
+### Expected merge conflict zones
+
+- MEDIUM: `components/tool-execution.ts` around spinner/strike interval ownership and `dispose()`.
+- LOW: `interactive-mode.ts` teardown block; the fork-only `todo-strike.ts` module.
+
 ## model fallback lifecycle notices (2026-07-20)
 
 ### What changed

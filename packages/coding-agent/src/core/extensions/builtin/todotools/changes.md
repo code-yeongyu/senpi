@@ -69,3 +69,19 @@
   (no new custom type), so the branch scanner and compaction bridge read them
   unchanged; the agent notification is a hidden `todotools.user-edit` custom
   message delivered next turn.
+
+## 2026-07-21 - Progressive completion strikethrough reveal
+
+### What changed
+
+- `tools/todo.ts`: `renderTodoPhases` threads the renderer's `spinnerFrame` through to `formatTaskLine` and builds per-phase `completionKeys` (`Map<phaseName, Set<content>>`) from `completedTasks`, keyed by raw `transition.content`.
+- `formatTaskLine` strikes a completed row with `partialStrikethrough` when its raw `task.content` is in the phase's completion set and a frame is supplied; the reveal count is computed against the sanitized line (`${marker} ${sanitizeTodoText(content)}`), and once the frame settles or stops (`undefined`) the row falls back to full `theme.strikethrough(line)` — byte-identical to the pre-animation render.
+- Reuses `strikeRevealCount`/`partialStrikethrough` from the fork-only `modes/interactive/components/todo-strike.ts`.
+
+### Why
+
+- A completed todo row should sweep left-to-right rather than snap to struck. Keying the completion set on raw content (not the sanitized/marked line) keeps it stable across rendering details, and the settled state matches the original full strikethrough so the animation leaves no residual diff.
+
+### Expected merge conflict zones
+
+- MEDIUM: `tools/todo.ts` `renderTodoPhases`/`formatTaskLine` signatures and the cross-layer import of the fork-only `todo-strike.ts` module from `modes/interactive/components/`.

@@ -2123,6 +2123,12 @@ export class InteractiveMode {
 		this.applyTerminalTitle();
 	}
 
+	private stopChatToolAnimations(): void {
+		for (const child of this.chatContainer.children) {
+			if (child instanceof ToolExecutionComponent) child.stopAnimation();
+		}
+	}
+
 	private clearPendingTools(): void {
 		this.toolArgsReveal.flushAll();
 		for (const component of this.pendingTools.values()) {
@@ -6663,6 +6669,7 @@ export class InteractiveMode {
 		}
 		this.clearStatusIndicator();
 		this.clearPendingTools();
+		this.stopChatToolAnimations();
 		this.clearActiveToolExecutionStatus();
 		this.clearToolHookStatuses();
 		this.themeController.disableAutoSync();

@@ -7,6 +7,7 @@ import {
 	getTodoWidgetLines,
 	TODO_STATE_ENTRY_TYPE,
 	type TodoPhase,
+	type TodoToolDetails,
 } from "../../src/core/extensions/builtin/todotools/state.ts";
 import {
 	phaseRomanNumeral,
@@ -26,6 +27,33 @@ const TODO_EXTENSION_PATH = fileURLToPath(
 );
 const REPO_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
 type TodoParams = Static<typeof TODO_PARAMS_SCHEMA>;
+
+const markerTheme = {
+	fg: (name: string, text: string) => `<fg:${name}>${text}</fg:${name}>`,
+	bold: (text: string) => `<bold>${text}</bold>`,
+	strikethrough: (text: string) => `<s>${text}</s>`,
+};
+
+const animationResult = {
+	content: [{ type: "text", text: "summary" }],
+	details: {
+		op: "done",
+		storage: "memory",
+		phases: [
+			{
+				name: "Animation",
+				tasks: [
+					{ content: "Task A", status: "completed" },
+					{ content: "Task B", status: "completed" },
+					{ content: "Active task", status: "in_progress" },
+					{ content: "Dropped task", status: "abandoned" },
+					{ content: "Queued task", status: "pending" },
+				],
+			},
+		],
+		completedTasks: [{ phase: "Animation", content: "Task A" }],
+	},
+} satisfies { content: { type: "text"; text: string }[]; details: TodoToolDetails };
 
 beforeAll(() => initTheme("dark"));
 
@@ -585,6 +613,351 @@ describe("todo extension", () => {
 		expect(rendered).toContain("II. Auth — 1/1 done");
 		expect(rendered).toContain("III. Verification");
 		expect(rendered).toContain("[ ] Run checks");
+	});
+
+	it("preserves the settled todo renderer output", async () => {
+		const tool = await captureTodoTool();
+		if (!tool.renderResult) throw new Error("Expected todo result renderer");
+		const context: ToolRenderContext<unknown, TodoParams> = {
+			args: { op: "done", task: "Task A" },
+			toolCallId: "todo-settled-render",
+			invalidate: () => {},
+			lastComponent: undefined,
+			state: undefined,
+			cwd: REPO_ROOT,
+			executionStarted: true,
+			argsComplete: true,
+			isPartial: false,
+			expanded: false,
+			showImages: false,
+			isError: false,
+			spinnerFrame: undefined,
+		};
+		const component = tool.renderResult(
+			{
+				content: [{ type: "text", text: "summary" }],
+				details: {
+					op: "done",
+					storage: "memory",
+					phases: [
+						{
+							name: "Animation",
+							tasks: [
+								{ content: "Task A", status: "completed" },
+								{ content: "Task B", status: "completed" },
+								{ content: "Active task", status: "in_progress" },
+								{ content: "Dropped task", status: "abandoned" },
+								{ content: "Queued task", status: "pending" },
+							],
+						},
+					],
+					completedTasks: [{ phase: "Animation", content: "Task A" }],
+				},
+			},
+			{ expanded: false, isPartial: false },
+			markerTheme as never,
+			context,
+		);
+
+		const goldenContentLines = [
+			"<fg:accent><bold>I. Animation</bold></fg:accent>",
+			"  <fg:dim><s>[✓] Task A</s></fg:dim>",
+			"  <fg:dim><s>[✓] Task B</s></fg:dim>",
+			"  <fg:accent><bold>[•] Active task</bold></fg:accent>",
+			"  <fg:dim>[×] Dropped task</fg:dim>",
+			"  [ ] Queued task",
+		];
+		// render(160) pads every row to the render width with trailing spaces; pin those
+		// bytes structurally instead of committing literal end-of-line whitespace.
+		const golden = goldenContentLines.map((line) => line.padEnd(160)).join("\n");
+		expect(component.render(160).join("\n")).toBe(golden);
+	});
+
+	it.each([0, 1, 2])("holds the completion strike at frame %i", async (spinnerFrame) => {
+		const tool = await captureTodoTool();
+		if (!tool.renderResult) throw new Error("Expected todo result renderer");
+		const context: ToolRenderContext<unknown, TodoParams> = {
+			args: { op: "done", task: "Task A" },
+			toolCallId: "todo-hold-render",
+			invalidate: () => {},
+			lastComponent: undefined,
+			state: undefined,
+			cwd: REPO_ROOT,
+			executionStarted: true,
+			argsComplete: true,
+			isPartial: false,
+			expanded: false,
+			showImages: false,
+			isError: false,
+			spinnerFrame,
+		};
+		const rendered = tool
+			.renderResult(animationResult, { expanded: false, isPartial: false }, markerTheme as never, context)
+			.render(160)
+			.join("\n");
+
+		expect(rendered).toContain("<fg:dim>[✓] Task A</fg:dim>");
+		expect(rendered).toContain("<fg:dim><s>[✓] Task B</s></fg:dim>");
+		expect(rendered).not.toContain("<s>[✓] Task A</s>");
+	});
+
+	it("partially strikes only the newly completed task at frame 8", async () => {
+		const tool = await captureTodoTool();
+		if (!tool.renderResult) throw new Error("Expected todo result renderer");
+		const context: ToolRenderContext<unknown, TodoParams> = {
+			args: { op: "done", task: "Task A" },
+			toolCallId: "todo-partial-render",
+			invalidate: () => {},
+			lastComponent: undefined,
+			state: undefined,
+			cwd: REPO_ROOT,
+			executionStarted: true,
+			argsComplete: true,
+			isPartial: false,
+			expanded: false,
+			showImages: false,
+			isError: false,
+			spinnerFrame: 8,
+		};
+		const rendered = tool
+			.renderResult(animationResult, { expanded: false, isPartial: false }, markerTheme as never, context)
+			.render(160)
+			.join("\n");
+
+		expect(rendered).toContain("<fg:dim><s>[✓] T</s>ask A</fg:dim>");
+		expect(rendered).toContain("<fg:dim><s>[✓] Task B</s></fg:dim>");
+	});
+
+	it.each([14, 20])("settles the completion strike at frame %i", async (spinnerFrame) => {
+		const tool = await captureTodoTool();
+		if (!tool.renderResult) throw new Error("Expected todo result renderer");
+		const context: ToolRenderContext<unknown, TodoParams> = {
+			args: { op: "done", task: "Task A" },
+			toolCallId: "todo-complete-render",
+			invalidate: () => {},
+			lastComponent: undefined,
+			state: undefined,
+			cwd: REPO_ROOT,
+			executionStarted: true,
+			argsComplete: true,
+			isPartial: false,
+			expanded: false,
+			showImages: false,
+			isError: false,
+			spinnerFrame,
+		};
+		const rendered = tool
+			.renderResult(animationResult, { expanded: false, isPartial: false }, markerTheme as never, context)
+			.render(160)
+			.join("\n");
+
+		expect(rendered).toContain("<fg:dim><s>[✓] Task A</s></fg:dim>");
+	});
+
+	it("increases the strike reveal monotonically at animation boundaries", async () => {
+		const tool = await captureTodoTool();
+		if (!tool.renderResult) throw new Error("Expected todo result renderer");
+		const revealedCounts: number[] = [];
+		for (const spinnerFrame of [4, 8, 12]) {
+			const context: ToolRenderContext<unknown, TodoParams> = {
+				args: { op: "done", task: "Task A" },
+				toolCallId: `todo-boundary-${spinnerFrame}`,
+				invalidate: () => {},
+				lastComponent: undefined,
+				state: undefined,
+				cwd: REPO_ROOT,
+				executionStarted: true,
+				argsComplete: true,
+				isPartial: false,
+				expanded: false,
+				showImages: false,
+				isError: false,
+				spinnerFrame,
+			};
+			const rendered = tool
+				.renderResult(animationResult, { expanded: false, isPartial: false }, markerTheme as never, context)
+				.render(160)
+				.join("\n");
+			const match = rendered.match(/<fg:dim><s>(.*?)<\/s>/);
+			if (!match) throw new Error("Expected a partial strike marker");
+			revealedCounts.push([...match[1]].length);
+		}
+
+		expect(revealedCounts[0]).toBeLessThan(revealedCounts[1]!);
+		expect(revealedCounts[1]).toBeLessThan(revealedCounts[2]!);
+	});
+
+	it("renders error results as plain text without completion markers", async () => {
+		const tool = await captureTodoTool();
+		if (!tool.renderResult) throw new Error("Expected todo result renderer");
+		const context: ToolRenderContext<unknown, TodoParams> = {
+			args: { op: "done", task: "Task A" },
+			toolCallId: "todo-error-render",
+			invalidate: () => {},
+			lastComponent: undefined,
+			state: undefined,
+			cwd: REPO_ROOT,
+			executionStarted: true,
+			argsComplete: true,
+			isPartial: false,
+			expanded: false,
+			showImages: false,
+			isError: true,
+			spinnerFrame: 8,
+		};
+		const rendered = tool
+			.renderResult(
+				{ content: [{ type: "text", text: "unable to complete" }], details: animationResult.details },
+				{ expanded: false, isPartial: false },
+				markerTheme as never,
+				context,
+			)
+			.render(160)
+			.join("\n");
+
+		expect(rendered).toContain("unable to complete");
+		expect(rendered).not.toContain("<s>");
+	});
+
+	it("preserves ANSI strike coverage while wrapping a partial completion", async () => {
+		const tool = await captureTodoTool();
+		if (!tool.renderResult) throw new Error("Expected todo result renderer");
+		const longTask = "A completed task whose display text safely wraps across multiple physical rows";
+		const result = {
+			content: [{ type: "text", text: "summary" }],
+			details: {
+				op: "done",
+				storage: "memory" as const,
+				phases: [
+					{
+						name: "Wrap",
+						tasks: [
+							{ content: longTask, status: "completed" as const },
+							{ content: "Stable completed", status: "completed" as const },
+						],
+					},
+				],
+				completedTasks: [{ phase: "Wrap", content: longTask }],
+			},
+		} satisfies { content: { type: "text"; text: string }[]; details: TodoToolDetails };
+		const ansiTheme = {
+			fg: (_name: string, text: string) => text,
+			bold: (text: string) => text,
+			strikethrough: (text: string) => `\u001b[9m${text}\u001b[29m`,
+		};
+		const animatedContext: ToolRenderContext<unknown, TodoParams> = {
+			args: { op: "done", task: longTask },
+			toolCallId: "todo-wrap-animated",
+			invalidate: () => {},
+			lastComponent: undefined,
+			state: undefined,
+			cwd: REPO_ROOT,
+			executionStarted: true,
+			argsComplete: true,
+			isPartial: false,
+			expanded: false,
+			showImages: false,
+			isError: false,
+			spinnerFrame: 8,
+		};
+		const settledContext: ToolRenderContext<unknown, TodoParams> = {
+			args: { op: "done", task: longTask },
+			toolCallId: "todo-wrap-settled",
+			invalidate: () => {},
+			lastComponent: undefined,
+			state: undefined,
+			cwd: REPO_ROOT,
+			executionStarted: true,
+			argsComplete: true,
+			isPartial: false,
+			expanded: false,
+			showImages: false,
+			isError: false,
+			spinnerFrame: undefined,
+		};
+		const animatedLines = tool
+			.renderResult(result, { expanded: false, isPartial: false }, ansiTheme as never, animatedContext)
+			.render(24);
+		const settledLines = tool
+			.renderResult(result, { expanded: false, isPartial: false }, ansiTheme as never, settledContext)
+			.render(24);
+		const strikeCoverage = (lines: readonly string[]) => {
+			let striking = false;
+			return lines.map((physicalLine) => {
+				const line = physicalLine.trim();
+				let coverage = 0;
+				for (let index = 0; index < line.length; ) {
+					if (line.startsWith("\u001b[9m", index)) {
+						striking = true;
+						index += "\u001b[9m".length;
+						continue;
+					}
+					if (line.startsWith("\u001b[29m", index)) {
+						striking = false;
+						index += "\u001b[29m".length;
+						continue;
+					}
+					const glyph = String.fromCodePoint(line.codePointAt(index) ?? 0);
+					if (striking) coverage += 1;
+					index += glyph.length;
+				}
+				return coverage;
+			});
+		};
+		const stableLineIndex = (lines: readonly string[]) =>
+			lines.findIndex((line) => stripAnsi(line).trim().includes("Stable completed"));
+		const animatedStableIndex = stableLineIndex(animatedLines);
+		const settledStableIndex = stableLineIndex(settledLines);
+		if (animatedStableIndex < 0 || settledStableIndex < 0) throw new Error("Expected the stable completed row");
+		const animatedCoverage = strikeCoverage(animatedLines);
+		const settledCoverage = strikeCoverage(settledLines);
+
+		const fullDisplayLine = `[✓] ${longTask}`;
+		const expectedRevealCount = Math.ceil(([...fullDisplayLine].length * 6) / 12);
+		const wrappedRevealCount = animatedCoverage
+			.slice(0, animatedStableIndex)
+			.reduce((total, coverage) => total + coverage, 0);
+		// Text's physical rows reserve the two-space tree indentation before the SGR span.
+		expect(wrappedRevealCount + 2).toBe(expectedRevealCount);
+		expect(animatedCoverage[animatedStableIndex]).toBe(settledCoverage[settledStableIndex]);
+
+		// Positional assertion: within the animated task's wrapped rows, no glyph beyond
+		// the reveal boundary is struck — struck flags form a contiguous prefix.
+		const strikeFlags = (lines: readonly string[]) => {
+			let striking = false;
+			return lines.map((physicalLine) => {
+				// Mirror strikeCoverage: each physical row reserves tree indentation; strip
+				// it (and end padding) so flags track only display-line glyphs.
+				const line = physicalLine.trim();
+				const flags: boolean[] = [];
+				for (let index = 0; index < line.length; ) {
+					if (line.startsWith("\u001b[9m", index)) {
+						striking = true;
+						index += "\u001b[9m".length;
+						continue;
+					}
+					if (line.startsWith("\u001b[29m", index)) {
+						striking = false;
+						index += "\u001b[29m".length;
+						continue;
+					}
+					const glyph = String.fromCodePoint(line.codePointAt(index) ?? 0);
+					flags.push(striking);
+					index += glyph.length;
+				}
+				return flags;
+			});
+		};
+		const animatedFlags = (() => {
+			// Restrict to the animated task's own wrapped rows: from the first struck row
+			// to the stable completed row (excludes the unstruck phase header above it).
+			const firstStruck = animatedCoverage.findIndex((coverage) => coverage > 0);
+			if (firstStruck < 0) throw new Error("Expected a struck row");
+			return strikeFlags(animatedLines.slice(firstStruck, animatedStableIndex)).flatMap((flags) => flags);
+		})();
+		const firstUnstruck = animatedFlags.indexOf(false);
+		const struckBeyondBoundary = firstUnstruck >= 0 && animatedFlags.slice(firstUnstruck + 1).some((flag) => flag);
+		expect(struckBeyondBoundary).toBe(false);
 	});
 
 	it("registers exactly one todo tool with the op schema", async () => {

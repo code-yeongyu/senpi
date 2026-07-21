@@ -5,6 +5,7 @@
 
 import { Text } from "@earendil-works/pi-tui";
 import { type Static, Type } from "typebox";
+import { partialStrikethrough, strikeRevealCount } from "../../../../../modes/interactive/components/todo-strike.ts";
 import type { Theme } from "../../../../../modes/interactive/theme/theme.ts";
 import type {
 	AgentToolResult,
@@ -30,6 +31,8 @@ import {
 	type TodoStateEntry,
 	type TodoToolDetails,
 } from "../state.ts";
+
+const EMPTY_SET: ReadonlySet<string> = new Set();
 
 const TodoOperationSchema = Type.Union([
 	Type.Literal("init"),
@@ -148,12 +151,24 @@ function formatPhaseSummary(phase: TodoPhase, index: number, theme: Theme): stri
 	);
 }
 
-function formatTaskLine(task: TodoPhase["tasks"][number], theme: Theme): string {
+function formatTaskLine(
+	task: TodoPhase["tasks"][number],
+	theme: Theme,
+	completionKeys: ReadonlySet<string>,
+	frame: number | undefined,
+): string {
 	const content = sanitizeTodoText(task.content);
 	const line = `${getTodoMarker(task.status)} ${content}`;
 	switch (task.status) {
-		case "completed":
-			return theme.fg("dim", theme.strikethrough(line));
+		case "completed": {
+			const reveal = completionKeys.has(task.content) ? strikeRevealCount(line, frame) : undefined;
+			return reveal === undefined
+				? theme.fg("dim", theme.strikethrough(line))
+				: theme.fg(
+						"dim",
+						partialStrikethrough(line, reveal, (text) => theme.strikethrough(text)),
+					);
+		}
 		case "in_progress":
 			return theme.fg("accent", theme.bold(line));
 		case "abandoned":
@@ -196,7 +211,17 @@ function renderTodoPhases(
 	options: ToolRenderResultOptions,
 	args: TodoParams,
 	theme: Theme,
+	frame: number | undefined,
 ): string {
+	const completionKeysByPhase = new Map<string, Set<string>>();
+	for (const transition of completedTasks) {
+		let completionKeys = completionKeysByPhase.get(transition.phase);
+		if (!completionKeys) {
+			completionKeys = new Set();
+			completionKeysByPhase.set(transition.phase, completionKeys);
+		}
+		completionKeys.add(transition.content);
+	}
 	const visiblePhases = phases.filter((phase) => phase.tasks.length > 0);
 	if (visiblePhases.length === 0) return "";
 
@@ -211,7 +236,9 @@ function renderTodoPhases(
 			continue;
 		}
 		lines.push(formatPhaseHeader(phase.name, oneBasedIndex, theme));
-		for (const task of phase.tasks) lines.push(`  ${formatTaskLine(task, theme)}`);
+		for (const task of phase.tasks) {
+			lines.push(`  ${formatTaskLine(task, theme, completionKeysByPhase.get(phase.name) ?? EMPTY_SET, frame)}`);
+		}
 	}
 	return lines.join("\n");
 }
@@ -278,7 +305,14 @@ export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): vo
 				return new Text(theme.fg("toolOutput", getTextContent(result)), 0, 0);
 			}
 			const phases = result.details?.phases ?? [];
-			const rendered = renderTodoPhases(phases, result.details?.completedTasks ?? [], options, context.args, theme);
+			const rendered = renderTodoPhases(
+				phases,
+				result.details?.completedTasks ?? [],
+				options,
+				context.args,
+				theme,
+				context.spinnerFrame,
+			);
 			const text = rendered || getTextContent(result) || "Todo list is empty.";
 			return new Text(text, 0, 0);
 		},
