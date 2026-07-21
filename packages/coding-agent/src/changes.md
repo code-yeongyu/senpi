@@ -1,5 +1,31 @@
 # changes
 
+## Fuzzy file search one-shot and sessions (2026-07-21)
+
+### What changed
+
+- `modes/app-server/search/`: added bounded deterministic file traversal, subsequence scoring, same-token one-shot
+  cancellation, and replaceable query sessions with latest-query update and completion notifications.
+- `modes/app-server/runtime.ts` and `server/notifications.ts`: registered the stable one-shot method plus the three
+  experimental session methods, routed the two stable session notifications globally, and cancelled outstanding work on
+  runtime teardown.
+- `test/suite/` and `test/qa/app-server/`: pinned traversal/scoring limits, cancellation and session races, request
+  gates, ungated notification fanout, manifest status, and a zero-token source-CLI fixture-tree scenario.
+
+### Why
+
+- Codex clients use fuzzy file search for path completion and rely on cancellation tokens and long-lived sessions to
+  avoid stale results while a query changes rapidly.
+
+### Why extension system couldn't handle this
+
+- File-search requests and global app-server notifications are transport-level JSON-RPC behavior below the extension
+  boundary.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: the fork-only `modes/app-server/search/` implementation and app-server registration/router allowlists.
+
 ## Wave 2 app-server parity verifier corrections (2026-07-20)
 
 ### What changed

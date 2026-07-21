@@ -130,6 +130,14 @@ export function objectAt(value: unknown, key: string): Record<string, unknown> {
 	return objectValue(object[key]);
 }
 
+export function numberAt(value: unknown, key: string): number {
+	const child = objectValue(value)[key];
+	if (typeof child !== "number") {
+		throw new Error(`Expected ${key} to be a number`);
+	}
+	return child;
+}
+
 export function stringAt(value: unknown, key: string): string {
 	const object = objectValue(value);
 	const child = object[key];
