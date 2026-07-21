@@ -216,7 +216,7 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 		clearCompactionRecheck();
 		const settingsManager = SettingsManager.create(ctx.cwd, agentDir, { projectTrusted: ctx.isProjectTrusted() });
 		const settings = resolveConfigReloadSettings(settingsManager);
-		if (!settings.enabled || ctx.mode === "print") {
+		if (!settings.enabled || ctx.mode === "print" || ctx.mode === "json") {
 			pi.events.emit(CONFIG_WATCH_READY, { enabled: false });
 			return;
 		}

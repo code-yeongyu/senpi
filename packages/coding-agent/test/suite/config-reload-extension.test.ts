@@ -17,15 +17,18 @@ import {
 	CONFIG_WATCH_RELOADED,
 } from "../../src/core/extensions/builtin/config-reload/protocol.ts";
 import type { WatchEventListener } from "../../src/core/extensions/builtin/config-reload/watch-engine.ts";
+import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
 import type {
 	ExtensionAPI,
 	ExtensionCommandContextActions,
 	ExtensionContext,
+	ExtensionMode,
 	ExtensionUIContext,
 	SessionShutdownEvent,
 	SessionStartEvent,
 } from "../../src/core/extensions/types.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
+import { createTestExtensionsResult } from "../utilities.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 type Deferred = {
@@ -176,13 +179,14 @@ async function invoke(
 
 function fakeContext(options: {
 	readonly cwd: string;
+	readonly mode?: ExtensionMode;
 	readonly notify?: (message: string) => void;
 	readonly requestReload?: () => Promise<void>;
 	readonly isCompacting?: () => boolean;
 }): ExtensionContext {
 	return {
 		cwd: options.cwd,
-		mode: "tui",
+		mode: options.mode ?? "tui",
 		ui: ui((message) => options.notify?.(message)),
 		isIdle: () => true,
 		hasPendingMessages: () => false,
@@ -212,6 +216,23 @@ afterEach(() => {
 });
 
 describe("config reload builtin extension", () => {
+	it("is registered by default before final MCP and loads without diagnostics", async () => {
+		const configReloadIndex = builtinExtensions.findIndex((extension) => extension.id === "config-reload");
+		const mcpIndex = builtinExtensions.findIndex((extension) => extension.id === "mcp");
+		expect(configReloadIndex).toBeGreaterThanOrEqual(0);
+		expect(mcpIndex).toBeGreaterThan(configReloadIndex);
+
+		const configReload = builtinExtensions[configReloadIndex];
+		if (!configReload) throw new Error("config-reload builtin was not registered");
+		const registrationDir = mkdtempSync(join(tmpdir(), "senpi-config-reload-registration-"));
+		agentDirs.push(registrationDir);
+		const extensionsResult = await createTestExtensionsResult(
+			[{ factory: configReload.factory, path: "<builtin:config-reload>" }],
+			registrationDir,
+		);
+		expect(extensionsResult.errors).toEqual([]);
+	});
+
 	it("requests one reload and notifies when an idle settings file changes", async () => {
 		vi.useFakeTimers();
 		const fixture = await createFixture();
@@ -433,6 +454,24 @@ describe("config reload builtin extension", () => {
 		expect(watches.activeListenerCount(externalDir)).toBe(1);
 	});
 
+	it.each(["print", "json"] as const)("does not start watchers in short-lived %s mode", async (mode) => {
+		const agentDir = mkdtempSync(join(tmpdir(), "senpi-config-reload-short-lived-"));
+		agentDirs.push(agentDir);
+		writeJson(join(agentDir, "settings.json"), { theme: "dark" });
+		const watches = createWatchProbe();
+		const extension = createManualExtension(createEventBus());
+		configReloadExtension(extension.api, { agentDir, subscribe: watches.subscribe, logger: silentLogger() });
+
+		await invoke(
+			extension.handlers,
+			"session_start",
+			{ type: "session_start", reason: "startup" } satisfies SessionStartEvent,
+			fakeContext({ cwd: agentDir, mode }),
+		);
+
+		expect(watches.subscribeCalls).toEqual([]);
+	});
+
 	it("emits changed without throwing when the host has no requestReload action", async () => {
 		vi.useFakeTimers();
 		const fixture = await createFixture({ withReload: false });
@@ -448,6 +487,45 @@ describe("config reload builtin extension", () => {
 			paths: [fixture.settingsPath],
 			deferred: true,
 		});
+	});
+
+	it("logs unavailable requestReload once while continuing to emit changed events", async () => {
+		vi.useFakeTimers();
+		const agentDir = mkdtempSync(join(tmpdir(), "senpi-config-reload-no-reload-"));
+		agentDirs.push(agentDir);
+		const settingsPath = join(agentDir, "settings.json");
+		writeJson(settingsPath, { theme: "dark" });
+		const watches = createWatchProbe();
+		const info = vi.fn();
+		const logger: ConfigReloadLogger = {
+			debug: vi.fn(),
+			info,
+			warn: vi.fn(),
+			error: vi.fn(),
+		};
+		const bus = createEventBus();
+		const changed: unknown[] = [];
+		bus.on(CONFIG_WATCH_CHANGED, (payload) => changed.push(payload));
+		const extension = createManualExtension(bus);
+		configReloadExtension(extension.api, { agentDir, subscribe: watches.subscribe, logger });
+		await invoke(
+			extension.handlers,
+			"session_start",
+			{ type: "session_start", reason: "startup" } satisfies SessionStartEvent,
+			fakeContext({ cwd: agentDir }),
+		);
+
+		writeJson(settingsPath, { theme: "light" });
+		watches.emit(agentDir, "settings.json");
+		await vi.advanceTimersByTimeAsync(200);
+		writeJson(settingsPath, { theme: "dark" });
+		watches.emit(agentDir, "settings.json");
+		await vi.advanceTimersByTimeAsync(200);
+
+		expect(changed).toHaveLength(2);
+		expect(
+			info.mock.calls.filter(([event]) => event === "reload_requested"),
+		).toEqual([["reload_requested", { reason: "requestReload unavailable", paths: [] }]]);
 	});
 
 	it("does not construct project watchers when the session is untrusted", async () => {
@@ -481,6 +559,20 @@ describe("config reload builtin extension", () => {
 		const fixture = await createFixture({ settingsContent: '{"configReload":{"enabled":false}}\n' });
 
 		expect(fixture.watches.subscribeCalls).toEqual([]);
+	});
+
+	it("falls back to default watching when configReload fields are malformed", async () => {
+		vi.useFakeTimers();
+		const malformedConfigReload = '{"configReload":{"enabled":"yes","debounceMs":"fast","watch":"all"}}\n';
+		const fixture = await createFixture({ settingsContent: malformedConfigReload });
+		expect(fixture.watches.subscribeCalls).toContain(fixture.agentDir);
+
+		writeFileSync(
+			fixture.settingsPath,
+			'{"theme":"light","configReload":{"enabled":"yes","debounceMs":"fast","watch":"all"}}\n',
+		);
+		await settleChange(fixture, fixture.agentDir, "settings.json");
+		expect(fixture.reload).toHaveBeenCalledTimes(1);
 	});
 
 	it("excludes settings-declared skill paths when skills watching is disabled", async () => {
