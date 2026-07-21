@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
-import { type Api, getModels, getProviders, type Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import {
 	type PromptPresetSettings,

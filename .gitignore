@@ -31,7 +31,6 @@ packages/*/dist/*
 packages/*/dist-chrome/
 packages/*/dist-firefox/
 packages/ai/src/providers/.model-generation-*/
-packages/ai/src/providers/data/
 *.cpuprofile
 
 # Environment

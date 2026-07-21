@@ -879,7 +879,7 @@ export async function main(args: string[], options?: MainOptions) {
 
 	// RPC refreshes catalogs here in the background; interactive mode starts its refresh after TUI initialization.
 	if (!offlineMode && appMode === "rpc") {
-		void modelRuntime.refresh().catch(() => {});
+		void services.modelRuntime.refresh().catch(() => {});
 	}
 
 	if (appMode === "rpc") {

@@ -45,7 +45,7 @@ var commandTypes = []string{
 	// Model
 	"set_model", "cycle_model", "get_available_models",
 	// Thinking
-	"set_thinking_level", "cycle_thinking_level",
+	"set_thinking_level", "cycle_thinking_level", "get_available_thinking_levels",
 	// Queue modes
 	"set_steering_mode", "set_follow_up_mode",
 	// Compaction
@@ -219,6 +219,9 @@ var eventTypes = []string{
 	// --- retry fallback lifecycle (agent-session.ts) ---
 	"retry_fallback_applied", "retry_fallback_succeeded",
 	"retry_fallback_reverted", "retry_fallback_exhausted",
+	// --- summarization retry lifecycle (agent-session.ts) ---
+	"summarization_retry_scheduled", "summarization_retry_attempt_start",
+	"summarization_retry_finished",
 	// --- auth login flow (task 13): additive, event-only completion ---
 	"auth_login_url", "auth_login_end",
 	// --- emitted by the connection handler (not in AgentSessionEvent) ---

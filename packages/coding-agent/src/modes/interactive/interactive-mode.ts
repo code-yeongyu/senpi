@@ -79,7 +79,11 @@ import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/
 import { appendHiddenTuiStdout } from "../../core/hidden-stdout-log.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
-import { createCompactionSummaryMessage } from "../../core/messages.ts";
+import {
+	type ArtifactMessage,
+	createCompactionSummaryMessage,
+	type UserMessageWithAttachments,
+} from "../../core/messages.ts";
 import {
 	defaultModelPerProvider,
 	findExactModelReferenceMatch,
@@ -3796,25 +3800,34 @@ export class InteractiveMode {
 	}
 
 	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void {
-		switch (message.role) {
+		const messageForRender = message as AgentMessage | UserMessageWithAttachments | ArtifactMessage;
+		switch (messageForRender.role) {
 			case "bashExecution": {
-				const component = new BashExecutionComponent(message.command, this.ui, message.excludeFromContext);
-				if (message.output) {
-					component.appendOutput(message.output);
+				const component = new BashExecutionComponent(
+					messageForRender.command,
+					this.ui,
+					messageForRender.excludeFromContext,
+				);
+				if (messageForRender.output) {
+					component.appendOutput(messageForRender.output);
 				}
 				component.setComplete(
-					message.exitCode,
-					message.cancelled,
-					message.truncated ? ({ truncated: true } as TruncationResult) : undefined,
-					message.fullOutputPath,
+					messageForRender.exitCode,
+					messageForRender.cancelled,
+					messageForRender.truncated ? ({ truncated: true } as TruncationResult) : undefined,
+					messageForRender.fullOutputPath,
 				);
 				this.chatContainer.addChild(component);
 				break;
 			}
 			case "custom": {
-				if (message.display) {
-					const renderer = this.session.extensionRunner.getMessageRenderer(message.customType);
-					const component = new CustomMessageComponent(message, renderer, this.getMarkdownThemeWithSettings());
+				if (messageForRender.display) {
+					const renderer = this.session.extensionRunner.getMessageRenderer(messageForRender.customType);
+					const component = new CustomMessageComponent(
+						messageForRender,
+						renderer,
+						this.getMarkdownThemeWithSettings(),
+					);
 					component.setExpanded(this.toolOutputExpanded);
 					this.chatContainer.addChild(component);
 				}
@@ -3822,20 +3835,23 @@ export class InteractiveMode {
 			}
 			case "compactionSummary": {
 				this.chatContainer.addChild(new Spacer(1));
-				const component = new CompactionSummaryMessageComponent(message, this.getMarkdownThemeWithSettings());
+				const component = new CompactionSummaryMessageComponent(
+					messageForRender,
+					this.getMarkdownThemeWithSettings(),
+				);
 				component.setExpanded(this.toolOutputExpanded);
 				this.chatContainer.addChild(component);
 				break;
 			}
 			case "branchSummary": {
 				this.chatContainer.addChild(new Spacer(1));
-				const component = new BranchSummaryMessageComponent(message, this.getMarkdownThemeWithSettings());
+				const component = new BranchSummaryMessageComponent(messageForRender, this.getMarkdownThemeWithSettings());
 				component.setExpanded(this.toolOutputExpanded);
 				this.chatContainer.addChild(component);
 				break;
 			}
 			case "user": {
-				const textContent = this.getUserMessageText(message);
+				const textContent = this.getUserMessageText(messageForRender);
 				if (textContent) {
 					if (this.chatContainer.children.length > 0) {
 						this.chatContainer.addChild(new Spacer(1));
@@ -3875,7 +3891,7 @@ export class InteractiveMode {
 			}
 			case "assistant": {
 				const assistantComponent = new AssistantMessageComponent(
-					message,
+					messageForRender,
 					this.hideThinkingBlock,
 					this.getMarkdownThemeWithSettings(),
 					this.hiddenThinkingLabel,
@@ -3889,8 +3905,12 @@ export class InteractiveMode {
 				// Tool results are rendered inline with tool calls, handled separately
 				break;
 			}
+			case "artifact":
+			case "user-with-attachments": {
+				break;
+			}
 			default: {
-				const exhaustive: never = message;
+				const exhaustive: never = messageForRender;
 				void exhaustive;
 			}
 		}

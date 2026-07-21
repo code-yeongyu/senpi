@@ -171,9 +171,7 @@ export class ModelRuntime implements Models {
 		runtime.rebuildProviders();
 		const refreshFromNetwork = runtime.modelNetworkEnabled && options.allowModelNetwork === true;
 		const controller = refreshFromNetwork ? new AbortController() : undefined;
-		const timeout = controller
-			? setTimeout(() => controller.abort(), runtime.modelRefreshTimeoutMs)
-			: undefined;
+		const timeout = controller ? setTimeout(() => controller.abort(), runtime.modelRefreshTimeoutMs) : undefined;
 		try {
 			await runtime.refresh({ allowNetwork: refreshFromNetwork, signal: controller?.signal });
 		} finally {
@@ -613,7 +611,7 @@ export class ModelRuntime implements Models {
 	 * touches the network.
 	 */
 	private refreshAfterRegistration(): Promise<ModelsRefreshResult> {
-		if (!this.allowModelNetwork) return this.refresh({ allowNetwork: false });
+		if (!this.modelNetworkEnabled) return this.refresh({ allowNetwork: false });
 		const controller = new AbortController();
 		const timeout = setTimeout(() => controller.abort(), this.modelRefreshTimeoutMs);
 		return this.refresh({ allowNetwork: true, signal: controller.signal }).finally(() => clearTimeout(timeout));

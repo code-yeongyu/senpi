@@ -40,7 +40,7 @@ describe("build-all", () => {
 			"packages/server",
 		]);
 		assert.ok(index("packages/agent") > index("packages/ai"));
-		assert.ok(index("packages/storage/sqlite-node") > index("packages/ai"));
+		assert.ok(index("packages/storage/sqlite-node") > index("packages/agent"));
 		assert.ok(index("packages/coding-agent") > index("packages/agent"));
 		assert.ok(index("packages/web-ui") > index("packages/agent"));
 		assert.ok(index("packages/server") > index("packages/coding-agent"));

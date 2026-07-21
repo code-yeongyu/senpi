@@ -26,7 +26,11 @@ function createSession(options: {
 	toolUsage?: AssistantUsage;
 }): AgentSession {
 	const usage = options.usage;
-	const entries: Array<Record<string, unknown>> = [];
+	const entries: Array<{
+		type: string;
+		message?: { role: string; usage: AssistantUsage };
+		usage?: AssistantUsage;
+	}> = [];
 
 	if (usage !== undefined) {
 		entries.push({
@@ -84,16 +88,16 @@ function createSession(options: {
 					latestCacheHitRate: undefined as number | undefined,
 				};
 				for (const entry of entries) {
-					if (entry.type === "message" && entry.message.role === "assistant") {
-						totals.input += entry.message.usage.input;
-						totals.output += entry.message.usage.output;
-						totals.cacheRead += entry.message.usage.cacheRead;
-						totals.cacheWrite += entry.message.usage.cacheWrite;
-						totals.cost += entry.message.usage.cost.total;
-						const latestPromptTokens =
-							entry.message.usage.input + entry.message.usage.cacheRead + entry.message.usage.cacheWrite;
+					const message = entry.message;
+					if (entry.type === "message" && message?.role === "assistant") {
+						totals.input += message.usage.input;
+						totals.output += message.usage.output;
+						totals.cacheRead += message.usage.cacheRead;
+						totals.cacheWrite += message.usage.cacheWrite;
+						totals.cost += message.usage.cost.total;
+						const latestPromptTokens = message.usage.input + message.usage.cacheRead + message.usage.cacheWrite;
 						totals.latestCacheHitRate =
-							latestPromptTokens > 0 ? (entry.message.usage.cacheRead / latestPromptTokens) * 100 : undefined;
+							latestPromptTokens > 0 ? (message.usage.cacheRead / latestPromptTokens) * 100 : undefined;
 					}
 				}
 				return totals;
