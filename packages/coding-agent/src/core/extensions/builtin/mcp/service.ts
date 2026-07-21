@@ -11,6 +11,7 @@ import type { McpServerExposureStatus } from "./expose/status.ts";
 import { cleanupMcpOutputArtifacts } from "./guard/output-guard.ts";
 import { markMcpConnectionNeedsAuth } from "./health.ts";
 import { configureMcpConnectionLifecycle, disposeMcpConnectionLifecycle } from "./idle.ts";
+import { refreshMcpInstructionsForSession } from "./instructions.ts";
 import { createMcpLogger } from "./log.ts";
 import {
 	buildMcpTombstoneDefinition,
@@ -324,7 +325,17 @@ export class McpService {
 					raceMcpStartupConnect({
 						entry,
 						pi,
-						registerDirectTools: (targetPi) => this.#registerDirectTools(targetPi),
+						registerDirectTools: async (targetPi) => {
+							await this.#registerDirectTools(targetPi);
+							// A raced attach ran its history replay before this catalog
+							// existed; replay now so restored tools still land on the
+							// first turn's payload (idempotent: already-active names skip).
+							if (this.#sessionContext !== null) this.#rehydrateFromSessionHistory(this.#sessionContext);
+							// The session instructions block was likewise captured at attach
+							// time, before this server connected; rebuild it so the first
+							// turn carries this server's instructions after a raced connect.
+							refreshMcpInstructionsForSession(this);
+						},
 						serverConfig: server.config,
 						shouldRefreshTools: () => !this.#disposed && this.#toolRefreshGeneration === toolRefreshGeneration,
 						deadlineMs: resolveMcpStartupTimeoutMs(server.config.startupTimeoutMs),

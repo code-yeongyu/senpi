@@ -1,5 +1,38 @@
 # mcp Extension Changes
 
+## Raced background registration replays session state (2026-07-21)
+
+### What changed
+- `service.ts` (`#syncFromConfig`): the `registerDirectTools` continuation that
+  runs when a raced startup connect finishes in the background now also
+  (a) replays `#rehydrateFromSessionHistory` from the stored session context
+  and (b) rebuilds the session `<mcp_instructions>` block via
+  `refreshMcpInstructionsForSession`. Both were captured once at attach
+  completion, which — after PR #260 routed cold lazy servers through the
+  bounded startup race — can predate the backgrounded connect, so a resumed
+  session lost its restored (tool_search-promoted) tools on the first turn
+  and the first turn's system prompt carried no server instructions.
+- Tests: `rehydration-wiring.test.ts` awaits the raced registration before
+  asserting the first-turn payload; `instructions.test.ts` attaches the
+  harness session explicitly and awaits registration; mcp suites broadly
+  await raced background completion via new fixture seams
+  (`awaitMcpToolRegistration`/`awaitMcpTool` in `fixtures/register-call.ts`,
+  `awaitMcpConnected` in `fixtures/service-lifecycle.ts`).
+
+### Why
+- The attach-time replay and instructions capture assume the catalog exists
+  when attach returns. The startup race deliberately breaks that assumption
+  for slow servers; the background continuation must refresh every piece of
+  session state derived from the catalog, not just the tool registrations.
+
+### Why extension system couldn't handle this alone
+- The continuation lives inside the MCP builtin's startup-race plumbing;
+  only the builtin holds the session context, tier-B registration, and the
+  instructions module state.
+
+### Expected merge conflict zones
+- LOW: `service.ts` `#syncFromConfig` raced-connect options block.
+
 ## Non-blocking startup for cold lazy servers + configurable startup window (2026-07-21)
 
 ### What changed

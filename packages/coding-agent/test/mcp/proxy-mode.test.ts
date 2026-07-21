@@ -9,6 +9,7 @@ import { computeMcpExposurePolicy } from "../../src/core/extensions/builtin/mcp/
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
 import {
 	attach,
+	awaitMcpTool,
 	capturingPi,
 	mcpRoot as makeMcpRoot,
 	registeredTool,
@@ -40,6 +41,7 @@ describe("tier-C proxy mode", () => {
 		setConfig(root, { fx: { ...stdioServer(["--tools", "5"]), exposure: "proxy" } });
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpTool(pi, "mcp_fx");
 
 		const mcpActive = withoutMcpUtilityTools(pi.getActiveTools()).filter((name) => name.startsWith("mcp_"));
 		expect(mcpActive).toEqual(["mcp_fx"]);
