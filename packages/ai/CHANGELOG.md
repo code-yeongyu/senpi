@@ -8,10 +8,18 @@
 
 - Added Claude text tool-call recovery for leaked bare or `antml:` invokes, with code/thinking exclusions, eager streaming projection, native-call ordering, fail-closed collision and abort handling, bounded parsing, and native history replay support.
 - Added the `alibaba-token-plan` provider for Alibaba Cloud Model Studio prepaid Token Plan (OpenAI-compatible `ap-southeast-1` endpoint) with a generated Qwen/GLM/DeepSeek/Kimi/MiniMax catalog, per-family thinking compat, `ALIBABA_TOKEN_PLAN_API_KEY` env detection, and opt-in live coverage across the provider test matrix.
+- Added Qwen Token Plan and Qwen Token Plan China as built-in providers with regional endpoints, API-key authentication, and generated model catalogs ([#6858](https://github.com/earendil-works/pi/pull/6858) by [@QuintinShaw](https://github.com/QuintinShaw)).
+- Added `retryAssistantCall()` for bounded retries of transient assistant failures with lifecycle callbacks and abort handling ([#6901](https://github.com/earendil-works/pi/pull/6901) by [@davidbrai](https://github.com/davidbrai)).
+- Added `contentText`, a shared `uuidv7` utility, optional usage metadata for tool result messages, and refreshed Gemini model metadata.
 
 ### Changed
 
+- Changed generated model catalogs to keep TypeScript model shapes separate from ignored JSON model values, and added offline model-data validation before compilation.
+
 ### Fixed
+
+- Fixed inherited stored credential env resolution, OpenAI-compatible duplicate tool-call ID replay, Kimi thinking metadata, OpenCode Responses routing, Codex WebSocket UUIDs, GPT-5.6 context windows, and OpenAI Responses early stream retry classification.
+- Fixed Kimi K3 models from Moonshot AI and Moonshot AI China to use the OpenAI thinking format and expose reasoning effort support.
 
 ### Removed
 

@@ -23,7 +23,6 @@
 
 - LOW: preview construction and execute-result details in `preview.ts` / `apply.ts` / `tool.ts`.
 
-||||||| 9ee0c4a3e
 ## Capability-driven dual-variant exposure (2026-07-19)
 
 ### What changed

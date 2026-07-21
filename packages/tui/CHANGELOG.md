@@ -10,6 +10,10 @@
 
 ### Fixed
 
+- Fixed terminal shutdown to clear the editor's inverted software cursor before restoring the hardware cursor, avoiding a duplicate cursor artifact ([#6790](https://github.com/earendil-works/pi/pull/6790) by [@dam9000](https://github.com/dam9000)).
+- Fixed ANSI-aware text wrapping to recognize CRLF and CR line endings while preserving styles across lines ([#6764](https://github.com/earendil-works/pi/pull/6764) by [@xz-dev](https://github.com/xz-dev)).
+- Fixed editor paste registry corruption when deleting paste markers, including undo restoration and marker renumbering ([#6844](https://github.com/earendil-works/pi/issues/6844)).
+
 ### Removed
 
 ## [2026.7.20-2] - 2026-07-20
