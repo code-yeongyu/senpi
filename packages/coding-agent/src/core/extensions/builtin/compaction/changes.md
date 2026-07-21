@@ -1,5 +1,56 @@
 # Builtin compaction extension changes
 
+## Diagnosable summary-generation failures + thinking headroom (2026-07-21)
+
+- `speculative.ts` `runExtensionCompaction()` no longer collapses every non-summary
+  outcome into a silent `undefined` (which the handler could only report as
+  "compaction generator returned no summary"). It now resolves `undefined` **only
+  for aborts** and throws a typed `SummaryGenerationError` otherwise:
+  - missing/unresolvable credentials → `kind: "auth"`,
+    `summarization credentials unavailable: <registry error>`.
+  - a completed response with zero text blocks (adaptive-thinking models can burn
+    the whole output budget on thinking; tool-forwarding means a model can also
+    answer with a bare tool call) → `kind: "empty-summary"`,
+    `summarization response contained no text (stopReason: <reason>)`.
+- `index.ts` `session_before_compact` handler maps outcomes precisely:
+  - `SummaryGenerationError` → `{ cancel: true, reason: error.message }` so
+    `/compact` shows the real diagnosis via `compaction_end.errorMessage`.
+  - aborted generation with `event.signal.aborted` → `{ cancel: true }` with **no
+    reason**, letting agent-session's aborted branch render the plain
+    "Compaction cancelled" instead of the misleading "returned no summary"
+    (core hardcodes `aborted: true` for extension cancels and suppresses
+    `errorMessage` only when no extension reason is present).
+  - any other `undefined` keeps the legacy "compaction generator returned no
+    summary" reason as a defensive fallback.
+- `index.ts` `applyBlockingCompaction()` catches `SummaryGenerationError` and
+  degrades to the legacy "unavailable" outcome, so automatic routes
+  (hard-limit/proactive/turn-end recovery/degradation monitor) behave exactly as
+  before instead of erroring the turn; the precise reason still surfaces when the
+  hook route runs.
+- Summarization output budget: the flat `MAX_SUMMARY_TOKENS = 8192` became
+  `summaryMaxTokens(model, contextWindow)` =
+  `min(32768, model.maxTokens, floor(contextWindow / 2))` (the headroom cap
+  applies when the model reports no output cap). Adaptive-thinking models emit
+  reasoning tokens before the summary text, so the 8192 cap could be consumed
+  entirely by thinking and end the stream with zero text — the exact "returned
+  no summary" failure this change diagnoses. The half-window clamp reserves
+  half the window for input so providers enforcing input + output <=
+  contextWindow no longer reject requests up-front (catalog models with
+  contextWindow == maxTokens); oversized conversations still flow through the
+  existing overflow-retry prune. Models with `maxTokens < 8192` also stop
+  receiving an over-cap request.
+- Abort precedence: `runExtensionCompaction()` checks the caller signal before
+  and after credential resolution, so a user abort can never surface as a
+  "summarization credentials unavailable" rejection.
+- Tests: `test/compaction/speculative-compaction.test.ts` (typed errors, token
+  caps) and `test/compaction/before-compact-error-surfacing.test.ts` (handler
+  reason mapping, abort-without-reason).
+
+Expected upstream conflict zones: `builtin/compaction/speculative.ts` around the
+auth check, `getSummaryText` consumption, and stream options;
+`builtin/compaction/index.ts` `session_before_compact` cancel paths and
+`applyBlockingCompaction`.
+
 ## Idle watchdog on local summarization streams (2026-07-21)
 
 - `speculative.ts` `generateSummaryMessage` now drives the summarization stream through a

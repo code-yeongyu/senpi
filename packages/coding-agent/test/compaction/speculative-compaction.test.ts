@@ -1,4 +1,10 @@
-import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai";
+import {
+	type FauxModelDefinition,
+	fauxAssistantMessage,
+	fauxThinking,
+	fauxToolCall,
+	registerFauxProvider,
+} from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { DEFAULT_COMPACTION_SETTINGS } from "../../src/core/compaction/index.ts";
@@ -27,16 +33,24 @@ afterEach(() => {
 	}
 });
 
-function createContext(options?: { revision?: number }): TestSpeculativeCompactionContext {
-	const registration = registerFauxProvider();
+function createContext(options?: {
+	revision?: number;
+	models?: FauxModelDefinition[];
+	withAuth?: boolean;
+	shrink?: boolean;
+}): TestSpeculativeCompactionContext {
+	const withAuth = options?.withAuth ?? true;
+	const registration = registerFauxProvider(options?.models ? { models: options.models } : {});
 	registrations.push(registration);
 	const model = registration.getModel();
 	const authStorage = AuthStorage.inMemory();
-	authStorage.setRuntimeApiKey(model.provider, "faux-key");
+	if (withAuth) {
+		authStorage.setRuntimeApiKey(model.provider, "faux-key");
+	}
 	const modelRegistry = ModelRegistry.inMemory(authStorage);
 	modelRegistry.registerProvider(model.provider, {
 		baseUrl: model.baseUrl,
-		apiKey: "faux-key",
+		...(withAuth ? { apiKey: "faux-key" } : {}),
 		api: registration.api,
 		models: registration.models.map((registeredModel) => ({
 			id: registeredModel.id,
@@ -51,13 +65,14 @@ function createContext(options?: { revision?: number }): TestSpeculativeCompacti
 		})),
 	});
 	const sessionManager = SessionManager.inMemory();
+	const historyRepeat = options?.shrink ? 120 : 12_000;
 	sessionManager.appendMessage({
 		role: "user",
-		content: [{ type: "text", text: "first user ".repeat(12_000) }],
+		content: [{ type: "text", text: "first user ".repeat(historyRepeat) }],
 		timestamp: Date.now() - 3_000,
 	});
 	sessionManager.appendMessage({
-		...fauxAssistantMessage("first assistant ".repeat(12_000), { timestamp: Date.now() - 2_000 }),
+		...fauxAssistantMessage("first assistant ".repeat(historyRepeat), { timestamp: Date.now() - 2_000 }),
 		api: model.api,
 		provider: model.provider,
 		model: model.id,
@@ -405,6 +420,148 @@ describe("speculative compaction", () => {
 
 		// Then
 		expect(result?.summary).toBe("large-input summary");
+	});
+
+	it("rejects with a typed empty-summary error naming the stop reason", async () => {
+		// Given: adaptive-thinking models can burn the whole output budget on
+		// thinking and end at the cap with no text blocks at all.
+		const context = createContext();
+		const snapshot = createSpeculativeCompactionSnapshot(context, { generation: 1 });
+		context.registration.setResponses([
+			fauxAssistantMessage([fauxThinking("all budget spent thinking")], { stopReason: "length" }),
+		]);
+
+		// When
+		let caught: unknown;
+		try {
+			if (!snapshot) throw new Error("expected snapshot");
+			await runExtensionCompaction(context, snapshot);
+		} catch (error) {
+			caught = error;
+		}
+
+		// Then
+		expect(caught).toBeInstanceOf(Error);
+		expect((caught as Error).name).toBe("SummaryGenerationError");
+		expect((caught as { kind?: string }).kind).toBe("empty-summary");
+		expect((caught as Error).message).toContain("stopReason: length");
+	});
+
+	it("rejects with an empty-summary error when the model answers with a bare tool call", async () => {
+		// Given: the summarization request forwards the agent's tools, so a model
+		// can hijack the request and respond with a tool call instead of text.
+		const context = createContext();
+		const snapshot = createSpeculativeCompactionSnapshot(context, { generation: 1 });
+		context.registration.setResponses([
+			fauxAssistantMessage([fauxToolCall("read", { path: "/tmp/x" })], { stopReason: "toolUse" }),
+		]);
+
+		// When
+		let caught: unknown;
+		try {
+			if (!snapshot) throw new Error("expected snapshot");
+			await runExtensionCompaction(context, snapshot);
+		} catch (error) {
+			caught = error;
+		}
+
+		// Then
+		expect((caught as Error | undefined)?.name).toBe("SummaryGenerationError");
+		expect((caught as Error | undefined)?.message).toContain("stopReason: toolUse");
+	});
+
+	it("rejects with a typed auth error when credentials cannot be resolved", async () => {
+		// Given
+		const context = createContext({ withAuth: false });
+		const snapshot = createSpeculativeCompactionSnapshot(context, { generation: 1 });
+		context.registration.setResponses([fauxAssistantMessage("never reached")]);
+
+		// When
+		let caught: unknown;
+		try {
+			if (!snapshot) throw new Error("expected snapshot");
+			await runExtensionCompaction(context, snapshot);
+		} catch (error) {
+			caught = error;
+		}
+
+		// Then
+		expect((caught as Error | undefined)?.name).toBe("SummaryGenerationError");
+		expect((caught as { kind?: string } | undefined)?.kind).toBe("auth");
+		expect((caught as Error | undefined)?.message).toContain("credentials unavailable");
+	});
+
+	it("caps the summarization request tokens at the model maximum", async () => {
+		// Given: the default faux model advertises maxTokens 16384, below the
+		// summary headroom, so the request must use the model cap.
+		const context = createContext();
+		const snapshot = createSpeculativeCompactionSnapshot(context, { generation: 1 });
+		context.registration.setResponses([fauxAssistantMessage("capped summary")]);
+
+		// When
+		const result = snapshot ? await runExtensionCompaction(context, snapshot) : undefined;
+
+		// Then
+		expect(result?.summary).toBe("capped summary");
+		const call = context.registration.getCallLog()[0];
+		expect(call?.options?.maxTokens).toBe(16_384);
+	});
+
+	it("grants summarization headroom above the legacy 8k cap for large-output models", async () => {
+		// Given: thinking models emit reasoning tokens before the summary text,
+		// so an 8192-token cap can starve the text entirely. Large-output models
+		// get the full 32k headroom.
+		const context = createContext({
+			models: [{ id: "faux-large", contextWindow: 200_000, maxTokens: 131_072 }],
+		});
+		const snapshot = createSpeculativeCompactionSnapshot(context, { generation: 1 });
+		context.registration.setResponses([fauxAssistantMessage("roomy summary")]);
+
+		// When
+		const result = snapshot ? await runExtensionCompaction(context, snapshot) : undefined;
+
+		// Then
+		expect(result?.summary).toBe("roomy summary");
+		const call = context.registration.getCallLog()[0];
+		expect(call?.options?.maxTokens).toBe(32_768);
+	});
+
+	it("leaves half the context window for input when the model advertises no separate output cap", async () => {
+		// Given: some providers enforce input + max_tokens <= contextWindow
+		// (catalog models with contextWindow == maxTokens, e.g. small OpenRouter
+		// models); reserving the whole window for output makes every
+		// summarization request invalid. keepRecentTokens shrinks to the window's
+		// keep cap (0.3*32768), so the prepared history must be tiny.
+		const context = createContext({
+			models: [{ id: "faux-tight", contextWindow: 32_768, maxTokens: 32_768 }],
+			shrink: true,
+		});
+		const snapshot = createSpeculativeCompactionSnapshot(context, { generation: 1 });
+		context.registration.setResponses([fauxAssistantMessage("tight summary")]);
+
+		// When
+		const result = snapshot ? await runExtensionCompaction(context, snapshot) : undefined;
+
+		// Then
+		expect(result?.summary).toBe("tight summary");
+		const call = context.registration.getCallLog()[0];
+		expect(call?.options?.maxTokens).toBeLessThanOrEqual(Math.floor(32_768 / 2));
+	});
+
+	it("treats a pre-aborted signal as an abort even when credentials are unavailable", async () => {
+		// Given: abort must take precedence over failure diagnosis — the user
+		// cancelling a compaction must never read as a credential error.
+		const context = createContext({ withAuth: false });
+		const snapshot = createSpeculativeCompactionSnapshot(context, { generation: 1 });
+		if (!snapshot) throw new Error("expected snapshot");
+		const controller = new AbortController();
+		controller.abort();
+
+		// When
+		const result = await runExtensionCompaction(context, snapshot, controller.signal);
+
+		// Then
+		expect(result).toBeUndefined();
 	});
 });
 
