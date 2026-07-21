@@ -43,6 +43,62 @@ function delay(ms: number): Promise<void> {
 }
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
+const BASH_UPDATE_THROTTLE_MS = 100;
+
+export interface ThrottledEmitter {
+	schedule(): void;
+	flush(): void;
+	dispose(): void;
+}
+
+/**
+ * Emit immediately, then coalesce subsequent schedules into one trailing update.
+ * `dispose` intentionally discards a pending update so callers can stop cleanly.
+ */
+export function createThrottledEmitter(emit: () => void, throttleMs = BASH_UPDATE_THROTTLE_MS): ThrottledEmitter {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	let dirty = false;
+	let lastEmissionAt: number | undefined;
+
+	const emitIfDirty = () => {
+		if (!dirty) return;
+		dirty = false;
+		lastEmissionAt = Date.now();
+		emit();
+	};
+
+	const clearTimer = () => {
+		if (timer !== undefined) {
+			clearTimeout(timer);
+			timer = undefined;
+		}
+	};
+
+	return {
+		schedule() {
+			dirty = true;
+			if (timer !== undefined) return;
+			const elapsed = lastEmissionAt === undefined ? throttleMs : Date.now() - lastEmissionAt;
+			if (elapsed >= throttleMs) {
+				emitIfDirty();
+				return;
+			}
+			timer = setTimeout(() => {
+				timer = undefined;
+				emitIfDirty();
+			}, throttleMs - elapsed);
+		},
+		flush() {
+			clearTimer();
+			emitIfDirty();
+		},
+		dispose() {
+			clearTimer();
+			dirty = false;
+			lastEmissionAt = undefined;
+		},
+	};
+}
 
 type ForegroundWaitOutcome = "exited" | "abort_grace" | "timeout_grace";
 
