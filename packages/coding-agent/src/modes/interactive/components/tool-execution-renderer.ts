@@ -3,6 +3,7 @@ import { Box, type Component, Container, getCapabilities, Text } from "@earendil
 import type { ToolRenderContext } from "../../../core/extensions/types.ts";
 import { createAllToolDefinitions, type ToolDef, type ToolName } from "../../../core/tools/index.ts";
 import { theme } from "../theme/theme.ts";
+import { formatToolProgressLine, readToolProgress } from "../tool-progress.ts";
 import {
 	createToolCallFallback,
 	createToolResultFallback,
@@ -64,11 +65,12 @@ export class ToolExecutionRenderer extends Container {
 				? (text: string) => theme.bg("toolErrorBg", text)
 				: (text: string) => theme.bg("toolSuccessBg", text);
 
+		const progress = state.isPartial ? readToolProgress(state.result?.details) : undefined;
 		if (!this.hasRendererDefinition) {
 			this.contentText.setCustomBgFn(background);
-			this.contentText.setText(
-				formatToolExecutionFallback(this.identity.toolName, state.args, state.result, state.showImages),
-			);
+			let text = formatToolExecutionFallback(this.identity.toolName, state.args, state.result, state.showImages);
+			if (progress) text += `\n${formatToolProgressLine(progress, Date.now(), state.spinnerFrame)}`;
+			this.contentText.setText(text);
 			return;
 		}
 
@@ -77,6 +79,8 @@ export class ToolExecutionRenderer extends Container {
 		container.detachAll();
 		this.renderCall(container);
 		if (state.result) this.renderResult(container, state.result);
+		if (progress)
+			container.addChild(new Text(formatToolProgressLine(progress, Date.now(), state.spinnerFrame), 0, 0));
 	}
 
 	private getCallRenderer(): ToolDef["renderCall"] | undefined {

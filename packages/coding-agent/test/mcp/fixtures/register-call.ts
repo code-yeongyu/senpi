@@ -12,7 +12,7 @@ import type {
 	ToolDefinition,
 } from "../../../src/core/extensions/types.ts";
 import { getMessageText, type Harness } from "../../suite/harness.ts";
-import { type FakePi, fakePi, makeRoot, type TestRoot } from "./service-lifecycle.ts";
+import { type FakePi, fakePi, makeRoot, type TestRoot, waitForCondition } from "./service-lifecycle.ts";
 
 export type RegisteredMcpTool = ToolDefinition<TSchema, unknown, unknown>;
 
@@ -34,6 +34,46 @@ export async function attach(
 		pi,
 		{ agentDir: root.agentDir },
 	);
+}
+
+/**
+ * Await the startup-race background registration for the given servers.
+ * Attach is bounded by MCP_STARTUP_RACE_MS: a connect slower than the race
+ * registers its tools in a background continuation, so tests asserting the
+ * post-attach tool set must await that refresh the way production consumers
+ * (the next turn's tool snapshot) do.
+ */
+export async function awaitMcpToolRegistration(
+	serverNames: string | readonly string[],
+	timeoutMs = 10_000,
+): Promise<void> {
+	const names = typeof serverNames === "string" ? [serverNames] : serverNames;
+	await waitForCondition(
+		() =>
+			names.every((name) =>
+				getMcpService()
+					.getTierBSearchable()
+					.some((tool) => tool.server === name),
+			),
+		timeoutMs,
+	);
+}
+
+/** Await registration of one specific tool on a capturing pi (use for proxy
+ * gateways / zero-searchable-tool servers where getTierBSearchable stays empty). */
+export async function awaitMcpTool(pi: CapturingPi, toolName: string, timeoutMs = 10_000): Promise<void> {
+	await waitForCondition(() => pi.toolDefinitions.has(toolName), timeoutMs);
+}
+
+/**
+ * Harness counterpart of attach(): the harness never emits session_start, so
+ * the MCP extension would otherwise attach on the first prompt's
+ * before_agent_start. Emit it now and await the raced registration so the
+ * first prompt's tool snapshot is deterministic.
+ */
+export async function attachHarnessSession(harness: Harness, serverNames: string | readonly string[]): Promise<void> {
+	await harness.getExtensionRunner().emit({ type: "session_start", reason: "startup" });
+	await awaitMcpToolRegistration(serverNames);
 }
 
 export function mcpExtensionFor(agentDir: string, activeTools?: string[]): ExtensionFactory {

@@ -6,6 +6,7 @@ import mcpExtension from "../../src/core/extensions/builtin/mcp/index.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
 import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
+import { attachHarnessSession } from "./fixtures/register-call.ts";
 import { cleanupRoots, makeRoot, setConfig, stdioServer, type TestRoot } from "./fixtures/service-lifecycle.ts";
 
 const cleanupTasks: Array<() => Promise<void>> = [];
@@ -41,7 +42,7 @@ describe("MCP server instructions injection", () => {
 		const root = makeInstructionsRoot("single");
 		setConfig(root, { fx: stdioServer(["--tools", "1", "--instructions", "Use fixture echo carefully."]) });
 
-		const systemPrompt = await captureSystemPrompt(root);
+		const systemPrompt = await captureSystemPrompt(root, "fx");
 
 		expect(blockCount(systemPrompt)).toBe(1);
 		expect(systemPrompt).toContain(
@@ -53,7 +54,7 @@ describe("MCP server instructions injection", () => {
 		const root = makeInstructionsRoot("cap");
 		setConfig(root, { fx: stdioServer(["--tools", "1", "--instructions", "a".repeat(5000)]) });
 
-		const systemPrompt = await captureSystemPrompt(root);
+		const systemPrompt = await captureSystemPrompt(root, "fx");
 		const content = instructionContent(systemPrompt, "fx");
 
 		expect(blockCount(systemPrompt)).toBe(1);
@@ -65,12 +66,12 @@ describe("MCP server instructions injection", () => {
 		const root = makeInstructionsRoot("stable");
 		setConfig(root, { fx: stdioServer(["--tools", "1", "--instructions", "first instructions"]) });
 
-		const harness = await createInstructionsHarness(root);
+		const harness = await createInstructionsHarness(root, "fx");
 		const first = await promptAndCaptureSystemPrompt(harness);
 		setConfig(root, { fx: stdioServer(["--tools", "1", "--instructions", "second instructions"]) });
 		getMcpService().getConnection("fx")?.markToolsChanged();
 		const sameSession = await promptAndCaptureSystemPrompt(harness);
-		const nextSession = await captureSystemPrompt(root);
+		const nextSession = await captureSystemPrompt(root, "fx");
 
 		expect(sameSession).toBe(first);
 		expect(first).toContain("first instructions");
@@ -89,7 +90,7 @@ describe("MCP server instructions injection", () => {
 			]),
 		});
 
-		const systemPrompt = await captureSystemPrompt(root);
+		const systemPrompt = await captureSystemPrompt(root, 'fx" bad');
 
 		expect(blockCount(systemPrompt)).toBe(1);
 		expect(systemPrompt).toContain(`<mcp_instructions server="fx&quot; bad">`);
@@ -107,15 +108,18 @@ function makeInstructionsRoot(slug: string): TestRoot {
 	return root;
 }
 
-async function captureSystemPrompt(root: TestRoot): Promise<string> {
-	const harness = await createInstructionsHarness(root);
+async function captureSystemPrompt(root: TestRoot, serverName?: string): Promise<string> {
+	const harness = await createInstructionsHarness(root, serverName);
 	return promptAndCaptureSystemPrompt(harness);
 }
 
-async function createInstructionsHarness(root: TestRoot): Promise<Harness> {
+async function createInstructionsHarness(root: TestRoot, serverName?: string): Promise<Harness> {
 	process.env[ENV_AGENT_DIR] = root.agentDir;
 	const harness = await createHarness({ extensionFactories: [mcpExtension as ExtensionFactory] });
 	harnesses.push(harness);
+	// The harness never emits session_start on its own; attach + await the
+	// raced registration so the first prompt's instructions are deterministic.
+	if (serverName !== undefined) await attachHarnessSession(harness, serverName);
 	return harness;
 }
 

@@ -11,6 +11,7 @@ import { getMcpService, resetMcpServiceForTests } from "../../src/core/extension
 import { delay, readNumberFile, readNumberFileOrZero, serverConfig, waitFor } from "./fixtures/reconnect.ts";
 import {
 	attach,
+	awaitMcpToolRegistration,
 	capturingPi,
 	mcpRoot as makeMcpRoot,
 	registeredTool,
@@ -74,6 +75,7 @@ describe("MCP auto reconnect", () => {
 		setConfig(root, { fx: stdioServer(["--tools", "1", "--spawn-counter-file", counterFile, "--crash-after", "1"]) });
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 
 		const first = await tool.execute("tc-first", { value: "first" }, undefined, undefined, testContext());
@@ -93,7 +95,10 @@ describe("MCP auto reconnect", () => {
 		const pi = capturingPi();
 		await attach(root, pi);
 
-		await waitFor(() => getMcpService().getConnection("fx")?.state === "suspended");
+		// The breaker opens only after five spawn+crash cycles; with Math.random
+		// mocked to 0 the backoff is zeroed, so the bound is fixture process
+		// churn, which stretches well past 5s under full-suite fork parallelism.
+		await waitFor(() => getMcpService().getConnection("fx")?.state === "suspended", 20_000);
 		await delay(500);
 
 		expect(readNumberFile(counterFile)).toBeLessThanOrEqual(6);
@@ -113,6 +118,7 @@ describe("MCP auto reconnect", () => {
 		setConfig(root, { fx: stdioServer(["--tools", "1", "--spawn-counter-file", counterFile]) });
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 		const connection = getMcpService().getConnection("fx");
 		if (connection === undefined) throw new Error("missing fx connection");
 		connection.markSuspended(new Error("test breaker open"));
@@ -139,6 +145,7 @@ describe("MCP auto reconnect", () => {
 		});
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 
 		await expect(tool.execute("tc-crash", { value: "once" }, undefined, undefined, testContext())).rejects.toThrow(
@@ -164,6 +171,7 @@ describe("MCP auto reconnect", () => {
 		});
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 		const connection = getMcpService().getConnection("fx");
 		if (connection === undefined) throw new Error("missing fx connection");
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
@@ -200,6 +208,7 @@ describe("MCP auto reconnect", () => {
 		});
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 		const connection = getMcpService().getConnection("fx");
 		if (connection === undefined) throw new Error("missing fx connection");
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
@@ -239,6 +248,7 @@ describe("MCP auto reconnect", () => {
 		});
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 		const firstPid = readNumberFile(pidFile);
 		process.kill(firstPid, "SIGKILL");

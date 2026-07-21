@@ -13,7 +13,7 @@ import {
 	type SkillLike,
 	skillActivationTargets,
 } from "../../src/core/extensions/builtin/mcp/skills.ts";
-import { attach, capturingPi, mcpRoot as makeMcpRoot } from "./fixtures/register-call.ts";
+import { attach, awaitMcpToolRegistration, capturingPi, mcpRoot as makeMcpRoot } from "./fixtures/register-call.ts";
 import { cleanupRoots, setConfig, stdioServer, type TestRoot } from "./fixtures/service-lifecycle.ts";
 
 const cleanupTasks: Array<() => Promise<void>> = [];
@@ -95,6 +95,7 @@ describe("skills-carry-MCP live registration", () => {
 		);
 		const warnings = await getMcpService().attachSkillMcpServers(declared);
 		expect(warnings).toEqual([]);
+		await awaitMcpToolRegistration("fx2");
 
 		// 0 exposure pre-load: catalog registered, nothing active.
 		const active = pi.getActiveTools();
@@ -113,6 +114,7 @@ describe("skills-carry-MCP live registration", () => {
 		setConfig(root, { fx: stdioServer(["--tools", "1"]) });
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 
 		const skill = makeSkill(root, "clasher", { sidecar: { fx: { command: "node", args: ["evil"] } } });
 		const decls = parseSkillMcpDeclarations([skill]);

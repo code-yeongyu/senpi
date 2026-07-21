@@ -169,6 +169,8 @@ import {
 } from "./theme/theme.ts";
 import { InteractiveThemeController } from "./theme/theme-controller.ts";
 import { ToolArgsRevealController } from "./tool-args-reveal.ts";
+import { readToolProgress } from "./tool-progress.ts";
+import { ToolResultRevealController } from "./tool-result-reveal.ts";
 import {
 	blendWorkingStatusShimmerRgbColor,
 	formatActiveToolWorkingLabel,
@@ -471,6 +473,7 @@ export class InteractiveMode {
 	private streamingMessage: AssistantMessage | undefined = undefined;
 	private readonly streamingReveal: StreamingRevealController;
 	private readonly toolArgsReveal: ToolArgsRevealController;
+	private readonly toolResultReveal: ToolResultRevealController;
 
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
@@ -586,6 +589,11 @@ export class InteractiveMode {
 			requestRender: () => this.ui.requestRender(),
 		});
 		this.toolArgsReveal = new ToolArgsRevealController({
+			getSmoothStreaming: () => this.settingsManager.getSmoothStreaming(),
+			getSmoothStreamingFps: () => this.settingsManager.getSmoothStreamingFps(),
+			requestRender: () => this.ui.requestRender(),
+		});
+		this.toolResultReveal = new ToolResultRevealController({
 			getSmoothStreaming: () => this.settingsManager.getSmoothStreaming(),
 			getSmoothStreamingFps: () => this.settingsManager.getSmoothStreamingFps(),
 			requestRender: () => this.ui.requestRender(),
@@ -3450,7 +3458,18 @@ export class InteractiveMode {
 			case "tool_execution_update": {
 				const component = this.pendingTools.get(event.toolCallId);
 				if (component) {
-					component.updateResult({ ...event.partialResult, isError: false }, true);
+					if (!this.toolResultReveal.update(event.toolCallId, component, event.partialResult)) {
+						component.updateResult({ ...event.partialResult, isError: false }, true);
+					}
+					const activity = readToolProgress(event.partialResult.details)?.activity;
+					if (activity) {
+						const label = formatActiveToolWorkingLabel(event.toolName, { command: activity });
+						this.activeToolExecutions.set(event.toolCallId, label);
+						this.workingMessage = label;
+						this.activeToolExecutionTerminalTitle = `${APP_TITLE} - ${label}`;
+						this.refreshWorkingLoaderMessage();
+						this.applyTerminalTitle();
+					}
 					this.requestStreamingRender();
 				}
 				break;
@@ -3461,6 +3480,7 @@ export class InteractiveMode {
 				this.toolArgsReveal.finish(event.toolCallId);
 				const component = this.pendingTools.get(event.toolCallId);
 				if (component) {
+					this.toolResultReveal.finish(event.toolCallId);
 					component.updateResult({ ...event.result, isError: event.isError });
 					this.pendingTools.delete(event.toolCallId);
 					this.ui.requestRender();
@@ -3476,6 +3496,7 @@ export class InteractiveMode {
 				this.clearActiveToolExecutionStatus();
 				this.clearToolHookStatuses();
 				this.streamingReveal.stop();
+				this.toolResultReveal.stop();
 				if (this.streamingComponent) {
 					this.chatContainer.removeChild(this.streamingComponent);
 					this.streamingComponent = undefined;
@@ -4794,6 +4815,7 @@ export class InteractiveMode {
 						this.settingsManager.setSmoothStreaming(enabled);
 						this.applySmoothStreamingRenderFps();
 						this.toolArgsReveal.refresh();
+						this.toolResultReveal.refresh();
 						if (this.streamingMessage) {
 							this.streamingReveal.setTarget(this.streamingMessage);
 						}
@@ -4802,6 +4824,7 @@ export class InteractiveMode {
 					onSmoothStreamingFpsChange: (fps) => {
 						this.settingsManager.setSmoothStreamingFps(fps);
 						this.toolArgsReveal.refresh();
+						this.toolResultReveal.refresh();
 						if (this.settingsManager.getSmoothStreaming()) {
 							this.applySmoothStreamingRenderFps();
 							if (this.streamingMessage) {
@@ -6633,6 +6656,7 @@ export class InteractiveMode {
 
 	stop(): void {
 		this.streamingReveal.stop();
+		this.toolResultReveal.stop();
 		if (this.settingsManager.getShowTerminalProgress()) {
 			this.ui.terminal.setProgress(false);
 		}

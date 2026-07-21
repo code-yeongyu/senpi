@@ -88,6 +88,16 @@ export async function readCounter(file: string): Promise<number> {
 	return Number(raw.trim());
 }
 
+/** Await the raced attach-time connect for a server: attach is bounded by the
+ * startup race, so a slow connect completes in a background continuation. */
+export async function awaitMcpConnected(
+	service: ReturnType<typeof getMcpService>,
+	name: string,
+	timeoutMs = 10_000,
+): Promise<void> {
+	await waitForCondition(() => service.getConnection(name)?.state === "connected", timeoutMs);
+}
+
 export async function waitForCondition(assertion: () => boolean | Promise<boolean>, timeoutMs: number): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {

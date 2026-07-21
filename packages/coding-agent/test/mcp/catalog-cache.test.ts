@@ -6,6 +6,7 @@ import { loadMcpConfig } from "../../src/core/extensions/builtin/mcp/config.ts";
 import { getMcpService, McpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
 import {
 	attach,
+	awaitMcpToolRegistration,
 	capturingPi,
 	registeredTool,
 	testContext,
@@ -63,8 +64,10 @@ describe("MCP disk metadata cache", () => {
 		const pi = capturingPi();
 
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
+		await awaitCacheTools(root, 2);
 
-		expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
+		expect(dedupedRegisteredTools(pi)).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
 		expect(await readCounter(counterFile)).toBe(1);
 		const cache = await readCache(root);
 		expect(cache.servers.fx.tools.map((tool) => tool.name)).toEqual(["tool_1", "tool_2"]);
@@ -78,8 +81,10 @@ describe("MCP disk metadata cache", () => {
 		const pi = capturingPi();
 
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
+		await awaitCacheTools(root, 1);
 
-		expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual(["mcp_fx_tool_1"]);
+		expect(dedupedRegisteredTools(pi)).toEqual(["mcp_fx_tool_1"]);
 		const cache = await readCache(root);
 		expect(cache.servers.fx.tools.map((tool) => tool.name)).toEqual(["tool_1"]);
 	});
@@ -92,8 +97,10 @@ describe("MCP disk metadata cache", () => {
 		const pi = capturingPi();
 
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
+		await awaitCacheTools(root, 1);
 
-		expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual(["mcp_fx_tool_1"]);
+		expect(dedupedRegisteredTools(pi)).toEqual(["mcp_fx_tool_1"]);
 		expect(withoutMcpUtilityTools(pi.registeredTools)).not.toContain("mcp_fx_fake_999");
 		expect(await readCounter(counterFile)).toBe(1);
 		const cache = await readCache(root);
@@ -134,6 +141,15 @@ describe("MCP disk metadata cache", () => {
 					agentDir: root.agentDir,
 				}),
 			]);
+			// Both attaches are race-bounded; the cache refresh completes in the
+			// background continuation, so await the torn-write window closing.
+			await waitForCondition(async () => {
+				try {
+					return (await readCache(root)).servers.fx.tools.length === 3;
+				} catch {
+					return false;
+				}
+			}, 10_000);
 			const cache = await readCache(root);
 			expect(cache.servers.fx.tools.map((tool) => tool.name)).toEqual(["tool_1", "tool_2", "tool_3"]);
 		} finally {
@@ -157,6 +173,26 @@ function cachePath(root: TestRoot): string {
 function writeCache(root: TestRoot, servers: Record<string, CacheServer>): void {
 	mkdirSync(join(root.agentDir, "cache"), { recursive: true });
 	writeFileSync(cachePath(root), `${JSON.stringify({ version: 1, servers }, null, 2)}\n`);
+}
+
+/** The raced attach can register the same catalog twice: the continuation
+ * scheduled at the race deadline and attach's own registration pass when the
+ * connect lands between the two. Production registerTool replaces by name, so
+ * assert the deduped set (same invariant as the exposure-policy suite). */
+function dedupedRegisteredTools(pi: ReturnType<typeof capturingPi>): string[] {
+	return [...new Set(withoutMcpUtilityTools(pi.registeredTools))];
+}
+
+/** The raced background continuation writes the disk cache after the in-memory
+ * catalog is set; await the file landing before asserting its contents. */
+async function awaitCacheTools(root: TestRoot, count: number): Promise<void> {
+	await waitForCondition(async () => {
+		try {
+			return (await readCache(root)).servers.fx.tools.length === count;
+		} catch {
+			return false;
+		}
+	}, 10_000);
 }
 
 async function readCache(root: TestRoot): Promise<CacheFile> {

@@ -21,6 +21,25 @@
 
 - MEDIUM: `agent-session.ts` `prompt()` entry serialization and the streaming queue dispatch branch.
 
+## Memoized materialized session views (2026-07-21)
+
+### What changed
+
+- `session-manager.ts`: added a monotonic `mutationCount` bumped by every mutator (`_appendEntry`, `branch()`,
+  `resetLeaf()`, `setSessionFile`, `newSession`, `createBranchedSession`). `getEntries()` is memoized on
+  `mutationCount`, no-arg `getBranch()` on `(leafId, mutationCount)` (explicit `fromId` bypasses), and
+  `getSessionName()` is O(1) via a cached value maintained on `appendSessionInfo`/`_buildIndex` (empty name still
+  clears the title). `getEntries()` now returns a shared cached array callers must not mutate.
+
+### Why extension system couldn't handle this alone
+
+- The mutation surface and resident-store materialization are private to `SessionManager`; external wrappers cannot
+  observe every invalidation point.
+
+### Expected merge conflict zones
+
+- LOW: private fields and the listed getters; upstream rarely touches `SessionManager` internals.
+
 ## Smooth streaming settings (2026-07-20)
 
 ### What changed

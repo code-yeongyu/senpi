@@ -11,6 +11,7 @@
 ### Changed
 
 ### Fixed
+- Fixed the interactive render hot path re-materializing the entire session every frame: `SessionManager.getEntries()`, no-arg `getBranch()`, and `getSessionName()` are now memoized behind a monotonic mutation counter, eliminating repeated deep copies of large sessions at frame rate.
 
 ### Removed
 

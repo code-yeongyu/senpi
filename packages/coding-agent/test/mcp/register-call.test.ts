@@ -6,6 +6,8 @@ import { getMcpService, resetMcpServiceForTests } from "../../src/core/extension
 import { createHarness, type Harness } from "../suite/harness.ts";
 import {
 	attach,
+	attachHarnessSession,
+	awaitMcpToolRegistration,
 	capturingPi,
 	expectFileToContain,
 	mcpRoot as makeMcpRoot,
@@ -44,6 +46,7 @@ describe("MCP catalog + registerTool bridge", () => {
 		const pi = capturingPi();
 
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 
 		expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual([
 			"mcp_fx_tool_1",
@@ -63,6 +66,7 @@ describe("MCP catalog + registerTool bridge", () => {
 			extensionFactories: [mcpExtensionFor(root.agentDir)],
 		});
 		harnesses.push(harness);
+		await attachHarnessSession(harness, "fx");
 		harness.setResponses([
 			(context) => {
 				providerToolNames.push((context.tools ?? []).map((tool) => tool.name).sort());
@@ -84,6 +88,7 @@ describe("MCP catalog + registerTool bridge", () => {
 		setConfig(root, { fx: stdioServer(["--tools", "0", "--iserror-tool"]) });
 		const harness = await createHarness({ extensionFactories: [mcpExtensionFor(root.agentDir)] });
 		harnesses.push(harness);
+		await attachHarnessSession(harness, "fx");
 		harness.setResponses([
 			fauxAssistantMessage(fauxToolCall("mcp_fx_iserror_tool", {}), { stopReason: "toolUse" }),
 			fauxAssistantMessage("continued after error"),
@@ -104,6 +109,7 @@ describe("MCP catalog + registerTool bridge", () => {
 		const pi = capturingPi();
 
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 
 		const tool = registeredTool(pi, "mcp_fx_huge_schema_tool");
 		const expected = convertJsonSchemaToTypeBox(readSchemaFixture("nasty-input.schema.json"));
@@ -117,6 +123,7 @@ describe("MCP catalog + registerTool bridge", () => {
 		setConfig(root, { fx: stdioServer(["--tools", "1", "--slow-tool-call", "2000", "--cancel-log", cancelLog]) });
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 		const controller = new AbortController();
 		let sawProgress = (): void => {};
@@ -143,6 +150,7 @@ describe("MCP catalog + registerTool bridge", () => {
 		setConfig(root, { fx: stdioServer(["--tools", "1", "--slow-tool-call", "50"]) });
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 
 		const [first, second] = await Promise.all([
@@ -162,6 +170,10 @@ describe("MCP catalog + registerTool bridge", () => {
 			extensionFactories: [mcpExtensionFor(root.agentDir, ["mcp_fx_tool_1"])],
 		});
 		harnesses.push(harness);
+		await attachHarnessSession(harness, "fx");
+		// Registration resets the active set to the exposure default; re-apply the
+		// restricted subset deterministically after the raced refresh landed.
+		harness.session.setActiveToolsByName(["mcp_fx_tool_1"]);
 		harness.setResponses([
 			(context) => {
 				providerToolNames.push((context.tools ?? []).map((tool) => tool.name).sort());

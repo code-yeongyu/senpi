@@ -38,10 +38,17 @@ export interface WebfetchDetails {
 }
 
 export interface WebfetchProgressDetails {
-	phase: "fetching";
+	phase: "fetching" | "downloading" | "converting";
 	url: string;
 	format: WebfetchFormat;
 	timeoutSeconds: number;
+	bytesRead?: number;
+	totalBytes?: number;
+	progress: {
+		activity: string;
+		startedAt: number;
+		maxWaitMs: number;
+	};
 }
 
 export type WebfetchRenderDetails = WebfetchDetails | WebfetchProgressDetails;
@@ -62,9 +69,30 @@ export const webfetch = defineTool<typeof Params, WebfetchRenderDetails>({
 	async execute(_toolCallId, params, signal, onUpdate, _ctx) {
 		const format = parseWebfetchFormat(params.format);
 		const timeoutSeconds = clampTimeout(params.timeout);
-		onUpdate?.({
-			content: [{ type: "text", text: `Fetching ${params.url} as ${format} (timeout ${timeoutSeconds}s)` }],
-			details: { phase: "fetching", url: params.url, format, timeoutSeconds },
+		const startedAt = Date.now();
+		const progress = {
+			activity: `fetching ${params.url}`,
+			startedAt,
+			maxWaitMs: timeoutSeconds * 1000,
+		};
+		let downloadedTotalBytes: number | undefined;
+		const emitProgress = (details: WebfetchProgressDetails): void => {
+			onUpdate?.({
+				content: [
+					{
+						type: "text",
+						text: `Fetching ${params.url} as ${format} (timeout ${timeoutSeconds}s)`,
+					},
+				],
+				details,
+			});
+		};
+		emitProgress({
+			phase: "fetching",
+			url: params.url,
+			format,
+			timeoutSeconds,
+			progress,
 		});
 
 		const fetched = await fetchUrl({
@@ -72,9 +100,30 @@ export const webfetch = defineTool<typeof Params, WebfetchRenderDetails>({
 			format,
 			timeoutSeconds,
 			...(signal === undefined ? {} : { signal }),
+			onProgress: (bytesRead, totalBytes) => {
+				downloadedTotalBytes = totalBytes;
+				emitProgress({
+					phase: "downloading",
+					url: params.url,
+					format,
+					timeoutSeconds,
+					bytesRead,
+					...(totalBytes === undefined ? {} : { totalBytes }),
+					progress,
+				});
+			},
 		});
 		const raw = new TextDecoder().decode(fetched.body);
 		const contentType = fetched.contentType.toLowerCase();
+		emitProgress({
+			phase: "converting",
+			url: params.url,
+			format,
+			timeoutSeconds,
+			bytesRead: fetched.bytes,
+			...(downloadedTotalBytes === undefined ? {} : { totalBytes: downloadedTotalBytes }),
+			progress,
+		});
 		const isHtml = contentType.includes("text/html") || contentType.includes("application/xhtml+xml");
 		let text = raw;
 		let converted = false;

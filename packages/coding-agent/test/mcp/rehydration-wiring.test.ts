@@ -10,8 +10,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TOOL_SEARCH_ACTIVATION_MARKER } from "../../src/core/extensions/builtin/mcp/expose/tool-search.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
-import { attach, capturingPi, mcpRoot as makeMcpRoot } from "./fixtures/register-call.ts";
-import { cleanupRoots, setConfig, stdioServer, type TestRoot } from "./fixtures/service-lifecycle.ts";
+import { attach, awaitMcpToolRegistration, capturingPi, mcpRoot as makeMcpRoot } from "./fixtures/register-call.ts";
+import { cleanupRoots, setConfig, stdioServer, type TestRoot, waitForCondition } from "./fixtures/service-lifecycle.ts";
 
 const cleanupTasks: Array<() => Promise<void>> = [];
 
@@ -46,6 +46,7 @@ describe("tool_search rehydration wiring", () => {
 		setConfig(root, { fx: { ...stdioServer(["--tools", "3"]), exposure: "search" } });
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 
 		expect(pi.getActiveTools()).toContain("tool_search");
 		expect(pi.getActiveTools()).not.toContain("mcp_fx_tool_2");
@@ -62,6 +63,7 @@ describe("tool_search rehydration wiring", () => {
 		setConfig(root, { fx: { ...stdioServer(["--tools", "3"]), exposure: "search" } });
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 
 		// Names no longer in the catalog stay dropped.
 		expect(getMcpService().rehydrateActiveToolsFromHistory(historyWithActivation("mcp_fx_tool_99"))).toEqual([]);
@@ -91,6 +93,9 @@ describe("tool_search rehydration wiring", () => {
 			pi,
 			{ agentDir: root.agentDir },
 		);
+		// The raced attach replays history again once the background registration
+		// lands; await the restore before asserting the first-turn payload.
+		await waitForCondition(() => pi.getActiveTools().includes("mcp_fx_tool_2"), 10_000);
 		// No explicit rehydrate call: attach itself must have replayed history.
 		expect(pi.getActiveTools()).toContain("mcp_fx_tool_2");
 		expect(pi.getActiveTools()).toContain("tool_search");
@@ -101,6 +106,7 @@ describe("tool_search rehydration wiring", () => {
 		setConfig(root, { fx: { ...stdioServer(["--tools", "3"]), exposure: "search" } });
 		const pi = capturingPi();
 		await attach(root, pi);
+		await awaitMcpToolRegistration("fx");
 
 		expect(getMcpService().maybeRehydrateFromHistory(historyWithActivation("mcp_fx_tool_2"))).toEqual([
 			"mcp_fx_tool_2",
