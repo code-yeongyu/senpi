@@ -1,5 +1,5 @@
 import { benchRunMetadata, forceGc, percentile, readIterations } from "./_meta.ts";
-import { getModels, getProviders } from "../src/models.ts";
+import { getModels, getProviders } from "../src/models-static.ts";
 
 function runScenario(): number {
 	let found = 0;

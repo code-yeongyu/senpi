@@ -19,8 +19,6 @@ import { createInterface } from "readline";
 import { StringDecoder } from "string_decoder";
 import { getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
-import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
-
 import {
 	type BashExecutionMessage,
 	type CustomMessage,
@@ -28,6 +26,7 @@ import {
 	createCompactionSummaryMessage,
 	createCustomMessage,
 } from "./messages.ts";
+import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
 
 export interface UsageTotals {
 	input: number;

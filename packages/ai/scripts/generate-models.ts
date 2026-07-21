@@ -1739,13 +1739,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					},
 					reasoning: isKimiK3 || m.reasoning === true,
 					...(isKimiK3 ? { thinkingLevelMap: KIMI_K3_THINKING_LEVEL_MAP } : {}),
-					// K3 accepts video input on the Kimi coding endpoint (kimi-code parity:
-					// Anthropic-compatible `{type:"video"}` content blocks).
-					input: isKimiK3
-						? ["text", "image", "video"]
-						: m.modalities?.input?.includes("image")
-							? ["text", "image"]
-							: ["text"],
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
 						input: m.cost?.input || impliedCost?.input || 0,
 						output: m.cost?.output || impliedCost?.output || 0,

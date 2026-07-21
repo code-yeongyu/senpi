@@ -3,6 +3,7 @@
 // Copyright (c) 2025-2026 Can Bölük
 // https://github.com/can1357/oh-my-pi
 
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { stripAnsi } from "../../../../utils/ansi.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
 
@@ -494,6 +495,10 @@ export function isTodoPhaseArray(value: unknown): value is TodoPhase[] {
 	return Array.isArray(value) && value.every(isTodoPhase);
 }
 
+function isTodoToolResult(message: AgentMessage): message is Extract<AgentMessage, { role: "toolResult" }> {
+	return message.role === "toolResult" && (message.toolName === "todo" || message.toolName === "todowrite");
+}
+
 export function getLatestPhasesFromBranchEntries(entries: BranchEntry[]): TodoPhase[] {
 	let phases: TodoPhase[] = [];
 
@@ -505,10 +510,10 @@ export function getLatestPhasesFromBranchEntries(entries: BranchEntry[]): TodoPh
 		}
 
 		if (entry.type !== "message" || !isRecord(entry.message)) continue;
-		if (entry.message.role !== "toolResult") continue;
-		if (entry.message.toolName !== "todo" && entry.message.toolName !== "todowrite") continue;
+		const message = entry.message as AgentMessage;
+		if (!isTodoToolResult(message)) continue;
 
-		const parsed = readTodoPayload(entry.message.details);
+		const parsed = readTodoPayload(message.details);
 		if (parsed) phases = clonePhases(parsed);
 	}
 

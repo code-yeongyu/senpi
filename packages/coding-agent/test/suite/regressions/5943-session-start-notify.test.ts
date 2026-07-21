@@ -210,6 +210,9 @@ function getMessageText(event: MessageEvent): string {
 		return "";
 	}
 	const content = message.content;
+	if (content === undefined) {
+		return "";
+	}
 	if (typeof content === "string") {
 		return content;
 	}

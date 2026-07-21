@@ -9,7 +9,13 @@ import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-a
 import { contentText, type RetryCallbacks, type RetryPolicy, retryAssistantCall } from "@earendil-works/pi-ai";
 import type { AssistantMessage, Context, Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
-import { convertToLlm, filterContextExcludedMessages, isContextExcludedCustomMessage } from "../messages.ts";
+import {
+	type ArtifactMessage,
+	convertToLlm,
+	filterContextExcludedMessages,
+	isContextExcludedCustomMessage,
+	type UserMessageWithAttachments,
+} from "../messages.ts";
 import {
 	buildSessionContext,
 	type CompactionEntry,
@@ -311,16 +317,21 @@ function estimateTextAndImageContentChars(content: string | Array<{ type: string
  */
 export function estimateTokens(message: AgentMessage): number {
 	let chars = 0;
+	const extendedMessage = message as AgentMessage | UserMessageWithAttachments | ArtifactMessage;
 
-	switch (message.role) {
+	switch (extendedMessage.role) {
 		case "user": {
 			chars = estimateTextAndImageContentChars(
-				(message as { content: string | Array<{ type: string; text?: string }> }).content,
+				(extendedMessage as { content: string | Array<{ type: string; text?: string }> }).content,
 			);
 			return Math.ceil(chars / 4);
 		}
+		case "user-with-attachments": {
+			chars = estimateTextAndImageContentChars(extendedMessage.content);
+			return Math.ceil(chars / 4);
+		}
 		case "assistant": {
-			const assistant = message as AssistantMessage;
+			const assistant = extendedMessage as AssistantMessage;
 			for (const block of assistant.content) {
 				if (block.type === "text") {
 					chars += block.text.length;
@@ -334,30 +345,35 @@ export function estimateTokens(message: AgentMessage): number {
 		}
 		case "custom":
 		case "toolResult": {
-			chars = estimateTextAndImageContentChars(message.content);
+			chars = estimateTextAndImageContentChars(extendedMessage.content);
 			return Math.ceil(chars / 4);
 		}
 		case "bashExecution": {
-			chars = message.command.length + weightedChars(message.output);
+			chars = extendedMessage.command.length + weightedChars(extendedMessage.output);
 			return Math.ceil(chars / 4);
 		}
 		case "branchSummary":
 		case "compactionSummary": {
-			chars = message.summary.length;
+			chars = extendedMessage.summary.length;
 			return Math.ceil(chars / 4);
 		}
+		case "artifact":
+			return 0;
 	}
 }
 
 function isCutPointMessage(message: AgentMessage): boolean {
-	switch (message.role) {
+	const extendedMessage = message as AgentMessage | UserMessageWithAttachments | ArtifactMessage;
+	switch (extendedMessage.role) {
 		case "user":
+		case "user-with-attachments":
 		case "assistant":
 		case "bashExecution":
 		case "custom":
 		case "branchSummary":
 		case "compactionSummary":
 			return true;
+		case "artifact":
 		case "toolResult":
 			return false;
 	}
@@ -365,13 +381,16 @@ function isCutPointMessage(message: AgentMessage): boolean {
 }
 
 function isTurnStartMessage(message: AgentMessage): boolean {
-	switch (message.role) {
+	const extendedMessage = message as AgentMessage | UserMessageWithAttachments | ArtifactMessage;
+	switch (extendedMessage.role) {
 		case "user":
+		case "user-with-attachments":
 		case "bashExecution":
 		case "custom":
 		case "branchSummary":
 		case "compactionSummary":
 			return true;
+		case "artifact":
 		case "assistant":
 		case "toolResult":
 			return false;

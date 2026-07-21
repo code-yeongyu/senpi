@@ -243,13 +243,12 @@ export async function createTestSession(options: TestSessionOptions = {}): Promi
 	const model = getModel("anthropic", "claude-sonnet-4-5")!;
 	const agent = new Agent({
 		getApiKey: () => API_KEY,
-		streamFn: options.streamFn,
 		initialState: {
 			model,
 			systemPrompt: options.systemPrompt ?? "You are a helpful assistant. Be extremely concise.",
 			tools: createCodingTools(process.cwd()),
 		},
-		streamFn: streamSimple,
+		streamFn: options.streamFn ?? streamSimple,
 	});
 
 	const sessionManager = options.inMemory ? SessionManager.inMemory() : SessionManager.create(tempDir);
