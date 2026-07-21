@@ -1689,8 +1689,15 @@ export class AgentSession {
 			throwIfCancelled();
 		}
 		const shouldWaitForSessionWork = options?.source !== "extension";
+		// A steer/followUp submission during an active run can be queued immediately.
+		// Waiting on the session-work barrier here would trap the message inside this
+		// call for the rest of the run whenever a queued continuation (e.g. an active
+		// goal chain) holds the barrier, making typed input invisible until the run
+		// ends or the user aborts.
+		const canQueueWhileStreaming = this.isStreaming && !this.isCompacting && options?.streamingBehavior !== undefined;
 		if (
 			shouldWaitForSessionWork &&
+			!canQueueWhileStreaming &&
 			(!this.isStreaming || this.isCompacting || this._sessionWorkBarrier.hasActiveWork)
 		) {
 			await this._waitForSettledSessionWork();
@@ -1767,6 +1774,29 @@ export class AgentSession {
 				promptDisposition?.("queued");
 				preflightResult?.(true);
 				return;
+			}
+
+			// The queue-while-streaming bypass above skipped the settled-work wait. If
+			// the run ended while input was being expanded, serialize with remaining
+			// session work before sending a fresh prompt, and re-queue if a scheduled
+			// continuation started a new run in the meantime.
+			if (
+				canQueueWhileStreaming &&
+				shouldWaitForSessionWork &&
+				(this.isCompacting || this._sessionWorkBarrier.hasActiveWork)
+			) {
+				await this._waitForSettledSessionWork();
+				throwIfCancelled();
+				if (this.isStreaming) {
+					if (options?.streamingBehavior === "followUp") {
+						await this._queueFollowUp(expandedText, currentImages);
+					} else {
+						await this._queueSteer(expandedText, currentImages);
+					}
+					promptDisposition?.("queued");
+					preflightResult?.(true);
+					return;
+				}
 			}
 
 			// Flush any pending bash messages before the new prompt
