@@ -5,7 +5,6 @@
 - Result: PR-ready merge of `badlogic/pi-mono` release `v0.81.1`.
 - Upstream release tag: `v0.81.1` (`20be4b18d4c57487f8993d2762bace129f0cf7c6`).
 - Merged upstream head: `upstream/main` (`dd6bea41efa8caa7a10fe5a6401676dc5699f83f`).
-- Final branch head: `d7a09995e9b1d69514ebd756071e3f117fa1d57a`.
 - Confirmed ancestry: `upstream/main` is an ancestor of `HEAD`.
 - Upstream pin: `.github/upstream.json` records tag `v0.81.1`, sha `dd6bea41efa8caa7a10fe5a6401676dc5699f83f`, synced at `2026-07-21T22:06:51Z`.
 
