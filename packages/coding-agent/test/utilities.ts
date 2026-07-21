@@ -8,7 +8,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Agent, type StreamFn } from "@earendil-works/pi-agent-core";
 import type { OAuthCredentials } from "@earendil-works/pi-ai";
-import { getModel } from "@earendil-works/pi-ai/compat";
+import { getModel, streamSimple } from "@earendil-works/pi-ai/compat";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
@@ -243,12 +243,12 @@ export async function createTestSession(options: TestSessionOptions = {}): Promi
 	const model = getModel("anthropic", "claude-sonnet-4-5")!;
 	const agent = new Agent({
 		getApiKey: () => API_KEY,
-		streamFn: options.streamFn,
 		initialState: {
 			model,
 			systemPrompt: options.systemPrompt ?? "You are a helpful assistant. Be extremely concise.",
 			tools: createCodingTools(process.cwd()),
 		},
+		streamFn: options.streamFn ?? streamSimple,
 	});
 
 	const sessionManager = options.inMemory ? SessionManager.inMemory() : SessionManager.create(tempDir);

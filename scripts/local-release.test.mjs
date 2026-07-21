@@ -68,7 +68,7 @@ describe("local release package list", () => {
 		// When
 		const result = spawnSync(
 			process.execPath,
-			[join(process.cwd(), "scripts", "local-release.mjs"), "--skip-check", "--skip-install", "--out", outDir],
+			[join(process.cwd(), "scripts", "local-release.mjs"), "--skip-check", "--skip-test", "--skip-install", "--out", outDir],
 			{
 				cwd: repoRoot,
 				encoding: "utf8",
@@ -141,9 +141,10 @@ function writeLocalReleaseFixture(repoRoot) {
 		["packages/pty", "@earendil-works/pi-pty"],
 		["packages/tui", "@earendil-works/pi-tui"],
 		["packages/agent", "@earendil-works/pi-agent-core"],
+		["packages/storage/sqlite-node", "@earendil-works/pi-storage-sqlite-node"],
 		["packages/senpi-codemode", "@code-yeongyu/senpi-codemode"],
 		["packages/coding-agent", "@code-yeongyu/senpi"],
-		["packages/orchestrator", "@code-yeongyu/senpi-orchestrator"],
+		["packages/server", "@code-yeongyu/senpi-server"],
 	]) {
 		writeJson(join(repoRoot, directory, "package.json"), { name, version: "0.0.0" });
 		mkdirSync(join(repoRoot, directory, "dist"), { recursive: true });

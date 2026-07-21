@@ -33,7 +33,7 @@ jobs:
       SOURCE_REF: ${{ github.event.inputs.source_ref || github.event.inputs.tag || github.ref_name }}
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.SOURCE_REF }}
           persist-credentials: false
@@ -44,14 +44,32 @@ jobs:
           bun-version: 1.3.14
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version: '22'
           registry-url: 'https://registry.npmjs.org'
-          package-manager-cache: false
 
-      - name: Build binaries
-        run: ./scripts/build-binaries.sh
+      - name: Create source archive
+        run: |
+          set -euo pipefail
+
+          VERSION="${RELEASE_TAG#v}"
+          mkdir -p release-assets
+          ./scripts/create-source-archive.sh \
+            --version "${VERSION}" \
+            --ref HEAD \
+            --out "release-assets/pi-${VERSION}-source.tar.gz"
+
+      - name: Build binaries from source archive
+        run: |
+          set -euo pipefail
+
+          VERSION="${RELEASE_TAG#v}"
+          build_root="$(mktemp -d)"
+          trap 'rm -rf "${build_root}"' EXIT
+          tar -xzf "release-assets/pi-${VERSION}-source.tar.gz" -C "${build_root}"
+          "${build_root}/pi-${VERSION}/scripts/build-binaries.sh" \
+            --out "${GITHUB_WORKSPACE}/packages/coding-agent/binaries"
 
       - name: Prepare GitHub release payload
         run: |
@@ -84,7 +102,9 @@ jobs:
           cp "${binary_assets[@]}" "${GITHUB_WORKSPACE}/release-assets/"
 
           cd "${GITHUB_WORKSPACE}/release-assets"
+          source_asset="pi-${VERSION}-source.tar.gz"
           release_assets=(
+            "${source_asset}"
             pi-darwin-arm64.tar.gz
             pi-darwin-x64.tar.gz
             pi-linux-x64.tar.gz
@@ -126,7 +146,10 @@ jobs:
 
           cd release-assets
 
+          VERSION="${RELEASE_TAG#v}"
+          source_asset="pi-${VERSION}-source.tar.gz"
           expected_assets=(
+            "${source_asset}"
             pi-darwin-arm64.tar.gz
             pi-darwin-x64.tar.gz
             pi-linux-x64.tar.gz
@@ -145,7 +168,7 @@ jobs:
 
           sha256sum -c SHA256SUMS
 
-      - name: Create draft GitHub Release and upload binaries
+      - name: Create draft GitHub Release and upload assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -153,7 +176,10 @@ jobs:
 
           cd release-assets
 
+          VERSION="${RELEASE_TAG#v}"
+          source_asset="pi-${VERSION}-source.tar.gz"
           release_assets=(
+            "${source_asset}"
             pi-darwin-arm64.tar.gz
             pi-darwin-x64.tar.gz
             pi-linux-x64.tar.gz
@@ -202,15 +228,15 @@ jobs:
       SOURCE_REF: ${{ github.event.inputs.source_ref || github.event.inputs.tag || github.ref_name }}
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.SOURCE_REF }}
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version: '22'
           registry-url: 'https://registry.npmjs.org'
           cache: npm
 
@@ -218,18 +244,19 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
-          sudo ln -s "$(which fdfind)" /usr/local/bin/fd
+          sudo ln -s $(which fdfind) /usr/local/bin/fd
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      # Build only — the tagged commit already passed the required "Check and test"
-      # status gate on main (full `npm run check` + `npm test`). Re-running the whole
-      # workspace test suite here is redundant and, on this contended publish runner,
-      # its subprocess-heavy suites (app-server/daemon, MCP, PTY) leak handles and hang
-      # the job. Build produces the dist artifacts `scripts/publish.mjs` bundles.
       - name: Build
         run: npm run build
+
+      - name: Check
+        run: npm run check
+
+      - name: Test
+        run: npm test
 
       - name: Upgrade npm for trusted publishing
         run: |

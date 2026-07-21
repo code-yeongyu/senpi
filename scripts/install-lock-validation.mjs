@@ -1,9 +1,4 @@
-import {
-	isExactVersionSpec,
-	packageDependencies,
-	packageNameFromLockPath,
-	resolveExternalDependency,
-} from "./install-lock-utils.mjs";
+import { isExactVersionSpec, packageNameFromLockPath, resolveExternalDependency } from "./install-lock-utils.mjs";
 
 export function validateGeneratedFiles(options) {
 	const { installerPackageJson, installLock, internalNames, internalPackagePrefixes, allowedInstallScriptPackages } =
@@ -77,7 +72,7 @@ export function validateGeneratedFiles(options) {
 	}
 
 	for (const [lockPath, entry] of Object.entries(installLock.packages)) {
-		for (const [dependencyName, dependencySpec] of Object.entries(packageDependencies(entry))) {
+		for (const [dependencyName, dependencySpec] of Object.entries(entry.dependencies ?? {})) {
 			let dependencyLockPath;
 			try {
 				dependencyLockPath = resolveExternalDependency(installLock.packages, dependencyName, lockPath, dependencySpec);
@@ -90,6 +85,21 @@ export function validateGeneratedFiles(options) {
 			if (isExactVersionSpec(dependencySpec) && dependencyEntry.version !== dependencySpec) {
 				errors.push(
 					`${lockPath || "root"} dependency ${dependencyName}@${dependencySpec} resolves to ${dependencyEntry.version}`,
+				);
+			}
+		}
+		for (const [dependencyName, dependencySpec] of Object.entries(entry.optionalDependencies ?? {})) {
+			let dependencyLockPath;
+			try {
+				dependencyLockPath = resolveExternalDependency(installLock.packages, dependencyName, lockPath, dependencySpec);
+			} catch {
+				continue;
+			}
+
+			const dependencyEntry = installLock.packages[dependencyLockPath];
+			if (isExactVersionSpec(dependencySpec) && dependencyEntry.version !== dependencySpec) {
+				errors.push(
+					`${lockPath || "root"} optional dependency ${dependencyName}@${dependencySpec} resolves to ${dependencyEntry.version}`,
 				);
 			}
 		}

@@ -43,6 +43,13 @@ function readJson(path) {
 	return JSON.parse(readFileSync(path, "utf8"));
 }
 
+function dependencyItems(entry) {
+	return [
+		...Object.entries(entry.dependencies ?? {}).map(([name, spec]) => ({ name, optional: false, spec })),
+		...Object.entries(entry.optionalDependencies ?? {}).map(([name, spec]) => ({ name, optional: true, spec })),
+	];
+}
+
 function getInternalWorkspaces(lockPackages) {
 	const workspaces = new Map();
 
@@ -72,10 +79,9 @@ function addInternalWorkspace(installLockPackages, addedPaths, queue, name, work
 	installLockPackages[outputPath] = sortedPackageEntry(entry);
 	addedPaths.add(outputPath);
 
-	for (const [dependencyName, dependencySpec] of Object.entries(packageDependencies(packageJson))) {
+	for (const dependency of dependencyItems(packageJson)) {
 		queue.push({
-			name: dependencyName,
-			spec: dependencySpec,
+			...dependency,
 			from: outputPath,
 			resolveFrom: workspace.lockPath,
 			sourceBase: workspace.lockPath,
@@ -85,7 +91,15 @@ function addInternalWorkspace(installLockPackages, addedPaths, queue, name, work
 }
 
 function addExternalPackage(lockPackages, installLockPackages, addedPaths, queue, item) {
-	const lockPath = resolveExternalDependency(lockPackages, item.name, item.resolveFrom, item.spec);
+	let lockPath;
+	try {
+		lockPath = resolveExternalDependency(lockPackages, item.name, item.resolveFrom, item.spec);
+	} catch (error) {
+		if (item.optional) {
+			return;
+		}
+		throw error;
+	}
 	const outputPath = rebaseResolvedLockPath(lockPath, item.sourceBase, item.outputBase);
 	if (addedPaths.has(outputPath)) {
 		return;
@@ -95,10 +109,9 @@ function addExternalPackage(lockPackages, installLockPackages, addedPaths, queue
 	installLockPackages[outputPath] = copyLockEntry(entry);
 	addedPaths.add(outputPath);
 
-	for (const [dependencyName, dependencySpec] of Object.entries(packageDependencies(entry))) {
+	for (const dependency of dependencyItems(entry)) {
 		queue.push({
-			name: dependencyName,
-			spec: dependencySpec,
+			...dependency,
 			from: outputPath,
 			resolveFrom: lockPath,
 			sourceBase: item.sourceBase,
@@ -153,9 +166,8 @@ function generateInstallLock() {
 	};
 	const addedPaths = new Set([""]);
 	const internalNames = new Set();
-	const queue = Object.entries(packageDependencies(installerPackageJson)).map(([name, spec]) => ({
-		name,
-		spec,
+	const queue = dependencyItems(installerPackageJson).map((dependency) => ({
+		...dependency,
 		from: "",
 		resolveFrom: "",
 		sourceBase: "",
@@ -178,7 +190,7 @@ function generateInstallLock() {
 			continue;
 		}
 
-			addExternalPackage(lockPackages, installLockPackages, addedPaths, queue, item);
+		addExternalPackage(lockPackages, installLockPackages, addedPaths, queue, item);
 	}
 
 	const installLock = {

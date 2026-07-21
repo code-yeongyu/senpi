@@ -11,6 +11,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
 import type { CompactionResult } from "../../../compaction/index.ts";
+import type { ArtifactMessage, UserMessageWithAttachments } from "../../../messages.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
 import type { ServiceTier, SessionBeforeCompactEvent } from "../../types.ts";
 
@@ -334,24 +335,27 @@ function convertAssistantMessage(message: AssistantMessage, messageIndex: number
 }
 
 function convertAgentMessage(message: AgentMessage, messageIndex: number): OpenAiRemoteInputItem[] | undefined {
-	switch (message.role) {
+	const extendedMessage = message as AgentMessage | UserMessageWithAttachments | ArtifactMessage;
+	switch (extendedMessage.role) {
 		case "user":
-			return [{ role: "user", content: convertUserContent(message.content) }];
+		case "user-with-attachments":
+			return [{ role: "user", content: convertUserContent(extendedMessage.content) }];
 		case "assistant":
-			return convertAssistantMessage(message, messageIndex);
+			return convertAssistantMessage(extendedMessage, messageIndex);
 		case "toolResult": {
-			const [callId = message.toolCallId] = message.toolCallId.split("|");
-			const output = toolResultText(message.content);
+			const [callId = extendedMessage.toolCallId] = extendedMessage.toolCallId.split("|");
+			const output = toolResultText(extendedMessage.content);
 			if (output === undefined) return undefined;
 			return [{ type: "function_call_output", call_id: callId, output }];
 		}
 		case "bashExecution":
 		case "branchSummary":
 		case "compactionSummary":
+		case "artifact":
 		case "custom":
 			return undefined;
 		default: {
-			const exhaustive: never = message;
+			const exhaustive: never = extendedMessage;
 			return exhaustive;
 		}
 	}

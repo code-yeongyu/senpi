@@ -6,9 +6,16 @@
  */
 
 import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { contentText, type RetryCallbacks, type RetryPolicy, retryAssistantCall } from "@earendil-works/pi-ai";
 import type { AssistantMessage, Context, Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
-import { convertToLlm, filterContextExcludedMessages, isContextExcludedCustomMessage } from "../messages.ts";
+import {
+	type ArtifactMessage,
+	convertToLlm,
+	filterContextExcludedMessages,
+	isContextExcludedCustomMessage,
+	type UserMessageWithAttachments,
+} from "../messages.ts";
 import {
 	buildSessionContext,
 	type CompactionEntry,
@@ -101,8 +108,33 @@ export interface CompactionResult<T = unknown> {
 	firstKeptEntryId: string;
 	tokensBefore: number;
 	estimatedTokensAfter?: number;
+	/** Usage from the LLM call(s) that generated this summary, if available */
+	usage?: Usage;
 	/** Extension-specific data (e.g., ArtifactIndex, version markers for structured compaction) */
 	details?: T;
+}
+
+function combineUsage(first: Usage, second: Usage): Usage {
+	return {
+		input: first.input + second.input,
+		output: first.output + second.output,
+		cacheRead: first.cacheRead + second.cacheRead,
+		cacheWrite: first.cacheWrite + second.cacheWrite,
+		...(first.cacheWrite1h !== undefined || second.cacheWrite1h !== undefined
+			? { cacheWrite1h: (first.cacheWrite1h ?? 0) + (second.cacheWrite1h ?? 0) }
+			: {}),
+		...(first.reasoning !== undefined || second.reasoning !== undefined
+			? { reasoning: (first.reasoning ?? 0) + (second.reasoning ?? 0) }
+			: {}),
+		totalTokens: first.totalTokens + second.totalTokens,
+		cost: {
+			input: first.cost.input + second.cost.input,
+			output: first.cost.output + second.cost.output,
+			cacheRead: first.cost.cacheRead + second.cost.cacheRead,
+			cacheWrite: first.cost.cacheWrite + second.cost.cacheWrite,
+			total: first.cost.total + second.cost.total,
+		},
+	};
 }
 
 // ============================================================================
@@ -285,16 +317,21 @@ function estimateTextAndImageContentChars(content: string | Array<{ type: string
  */
 export function estimateTokens(message: AgentMessage): number {
 	let chars = 0;
+	const extendedMessage = message as AgentMessage | UserMessageWithAttachments | ArtifactMessage;
 
-	switch (message.role) {
+	switch (extendedMessage.role) {
 		case "user": {
 			chars = estimateTextAndImageContentChars(
-				(message as { content: string | Array<{ type: string; text?: string }> }).content,
+				(extendedMessage as { content: string | Array<{ type: string; text?: string }> }).content,
 			);
 			return Math.ceil(chars / 4);
 		}
+		case "user-with-attachments": {
+			chars = estimateTextAndImageContentChars(extendedMessage.content);
+			return Math.ceil(chars / 4);
+		}
 		case "assistant": {
-			const assistant = message as AssistantMessage;
+			const assistant = extendedMessage as AssistantMessage;
 			for (const block of assistant.content) {
 				if (block.type === "text") {
 					chars += block.text.length;
@@ -308,30 +345,35 @@ export function estimateTokens(message: AgentMessage): number {
 		}
 		case "custom":
 		case "toolResult": {
-			chars = estimateTextAndImageContentChars(message.content);
+			chars = estimateTextAndImageContentChars(extendedMessage.content);
 			return Math.ceil(chars / 4);
 		}
 		case "bashExecution": {
-			chars = message.command.length + weightedChars(message.output);
+			chars = extendedMessage.command.length + weightedChars(extendedMessage.output);
 			return Math.ceil(chars / 4);
 		}
 		case "branchSummary":
 		case "compactionSummary": {
-			chars = message.summary.length;
+			chars = extendedMessage.summary.length;
 			return Math.ceil(chars / 4);
 		}
+		case "artifact":
+			return 0;
 	}
 }
 
 function isCutPointMessage(message: AgentMessage): boolean {
-	switch (message.role) {
+	const extendedMessage = message as AgentMessage | UserMessageWithAttachments | ArtifactMessage;
+	switch (extendedMessage.role) {
 		case "user":
+		case "user-with-attachments":
 		case "assistant":
 		case "bashExecution":
 		case "custom":
 		case "branchSummary":
 		case "compactionSummary":
 			return true;
+		case "artifact":
 		case "toolResult":
 			return false;
 	}
@@ -339,13 +381,16 @@ function isCutPointMessage(message: AgentMessage): boolean {
 }
 
 function isTurnStartMessage(message: AgentMessage): boolean {
-	switch (message.role) {
+	const extendedMessage = message as AgentMessage | UserMessageWithAttachments | ArtifactMessage;
+	switch (extendedMessage.role) {
 		case "user":
+		case "user-with-attachments":
 		case "bashExecution":
 		case "custom":
 		case "branchSummary":
 		case "compactionSummary":
 			return true;
+		case "artifact":
 		case "assistant":
 		case "toolResult":
 			return false;
@@ -579,35 +624,47 @@ function createSummarizationOptions(
 	return options;
 }
 
-async function completeSummarization(
+/**
+ * Shared choke point for every compaction/branch-summary summarization call. Wraps the
+ * single LLM call in {@link retryAssistantCall} so transient stream drops (e.g.
+ * `terminated`, socket close) honor the configured retry policy instead of failing
+ * the whole compaction on the first attempt. Deterministic errors and aborts return
+ * immediately (see {@link retryAssistantCall}).
+ */
+export async function completeSummarization(
 	model: Model<any>,
 	context: Context,
 	options: SimpleStreamOptions,
 	streamFn?: SummarizationStreamFn,
+	retry?: RetryPolicy,
+	callbacks?: RetryCallbacks,
 ): Promise<AssistantMessage> {
-	// Request-local controller: the idle watchdog must be able to tear down a
-	// stalled summarization request without aborting the caller's own signal.
-	const requestController = new AbortController();
-	const callerSignal = options.signal;
-	const onCallerAbort = () => requestController.abort(callerSignal?.reason);
-	if (callerSignal) {
-		if (callerSignal.aborted) onCallerAbort();
-		else callerSignal.addEventListener("abort", onCallerAbort, { once: true });
-	}
-	try {
-		const requestOptions = { ...options, signal: requestController.signal };
-		const responseStream = streamFn
-			? await streamFn(model, context, requestOptions)
-			: streamSimple(model, context, requestOptions);
-		await consumeStreamWithIdleTimeout(responseStream, {
-			idleTimeoutMs: DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
-			abort: () => requestController.abort(),
-			signal: callerSignal,
-		});
-		return await responseStream.result();
-	} finally {
-		if (callerSignal) callerSignal.removeEventListener("abort", onCallerAbort);
-	}
+	const produce = async (): Promise<AssistantMessage> => {
+		// Request-local controller: the idle watchdog must be able to tear down a
+		// stalled summarization request without aborting the caller's own signal.
+		const requestController = new AbortController();
+		const callerSignal = options.signal;
+		const onCallerAbort = () => requestController.abort(callerSignal?.reason);
+		if (callerSignal) {
+			if (callerSignal.aborted) onCallerAbort();
+			else callerSignal.addEventListener("abort", onCallerAbort, { once: true });
+		}
+		try {
+			const requestOptions = { ...options, signal: requestController.signal };
+			const responseStream = streamFn
+				? await streamFn(model, context, requestOptions)
+				: streamSimple(model, context, requestOptions);
+			await consumeStreamWithIdleTimeout(responseStream, {
+				idleTimeoutMs: DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
+				abort: () => requestController.abort(),
+				signal: callerSignal,
+			});
+			return await responseStream.result();
+		} finally {
+			if (callerSignal) callerSignal.removeEventListener("abort", onCallerAbort);
+		}
+	};
+	return retryAssistantCall(produce, retry, options.signal, callbacks);
 }
 
 async function transformSummarySource(
@@ -663,7 +720,48 @@ export async function generateSummary(
 	streamFn?: StreamFn,
 	env?: Record<string, string>,
 	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>,
+	retry?: RetryPolicy,
+	callbacks?: RetryCallbacks,
 ): Promise<string> {
+	return (
+		await generateSummaryWithUsage(
+			currentMessages,
+			model,
+			reserveTokens,
+			apiKey,
+			headers,
+			signal,
+			customInstructions,
+			previousSummary,
+			extraBody,
+			thinkingLevel,
+			streamFn,
+			env,
+			transformContext,
+			retry,
+			callbacks,
+		)
+	).text;
+}
+
+/** Generate or update a conversation summary and return its provider usage. */
+export async function generateSummaryWithUsage(
+	currentMessages: AgentMessage[],
+	model: Model<any>,
+	reserveTokens: number,
+	apiKey: string | undefined,
+	headers?: Record<string, string>,
+	signal?: AbortSignal,
+	customInstructions?: string,
+	previousSummary?: string,
+	extraBody?: Record<string, unknown>,
+	thinkingLevel?: ThinkingLevel,
+	streamFn?: StreamFn,
+	env?: Record<string, string>,
+	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>,
+	retry?: RetryPolicy,
+	callbacks?: RetryCallbacks,
+): Promise<{ text: string; usage: Usage }> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
@@ -713,18 +811,17 @@ export async function generateSummary(
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
 		completionOptions,
 		streamFn,
+		retry,
+		callbacks,
 	);
 
 	if (response.stopReason === "error") {
 		throw new Error(`Summarization failed: ${response.errorMessage || "Unknown error"}`);
 	}
 
-	const textContent = response.content
-		.filter((c): c is { type: "text"; text: string } => c.type === "text")
-		.map((c) => c.text)
-		.join("\n");
+	const textContent = contentText(response.content);
 
-	return textContent;
+	return { text: textContent, usage: response.usage };
 }
 
 // ============================================================================
@@ -870,6 +967,8 @@ export async function compact(
 	streamFn?: StreamFn,
 	env?: Record<string, string>,
 	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>,
+	retry?: RetryPolicy,
+	callbacks?: RetryCallbacks,
 ): Promise<CompactionResult> {
 	const {
 		firstKeptEntryId,
@@ -884,26 +983,32 @@ export async function compact(
 
 	// Generate summaries and merge into one
 	let summary: string;
+	let summaryUsage: Usage;
 
 	if (isSplitTurn && turnPrefixMessages.length > 0) {
-		const historyResult =
-			messagesToSummarize.length > 0
-				? await generateSummary(
-						messagesToSummarize,
-						model,
-						settings.reserveTokens,
-						apiKey,
-						headers,
-						signal,
-						customInstructions,
-						previousSummary,
-						extraBody,
-						thinkingLevel,
-						streamFn,
-						env,
-						transformContext,
-					)
-				: "No prior history.";
+		let historyText = "No prior history.";
+		let historyUsage: Usage | undefined;
+		if (messagesToSummarize.length > 0) {
+			const historyResult = await generateSummaryWithUsage(
+				messagesToSummarize,
+				model,
+				settings.reserveTokens,
+				apiKey,
+				headers,
+				signal,
+				customInstructions,
+				previousSummary,
+				extraBody,
+				thinkingLevel,
+				streamFn,
+				env,
+				transformContext,
+				retry,
+				callbacks,
+			);
+			historyText = historyResult.text;
+			historyUsage = historyResult.usage;
+		}
 		const turnPrefixResult = await generateTurnPrefixSummary(
 			turnPrefixMessages,
 			model,
@@ -916,12 +1021,15 @@ export async function compact(
 			thinkingLevel,
 			streamFn,
 			transformContext,
+			retry,
+			callbacks,
 		);
 		// Merge into single summary
-		summary = `${historyResult}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult}`;
+		summary = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.text}`;
+		summaryUsage = historyUsage ? combineUsage(historyUsage, turnPrefixResult.usage) : turnPrefixResult.usage;
 	} else {
 		// Just generate history summary
-		summary = await generateSummary(
+		const result = await generateSummaryWithUsage(
 			messagesToSummarize,
 			model,
 			settings.reserveTokens,
@@ -935,7 +1043,11 @@ export async function compact(
 			streamFn,
 			env,
 			transformContext,
+			retry,
+			callbacks,
 		);
+		summary = result.text;
+		summaryUsage = result.usage;
 	}
 
 	// Compute file lists and append to summary
@@ -950,6 +1062,7 @@ export async function compact(
 		summary,
 		firstKeptEntryId,
 		tokensBefore,
+		usage: summaryUsage,
 		details: { readFiles, modifiedFiles } as CompactionDetails,
 	};
 }
@@ -969,7 +1082,9 @@ async function generateTurnPrefixSummary(
 	thinkingLevel?: ThinkingLevel,
 	streamFn?: SummarizationStreamFn,
 	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>,
-): Promise<string> {
+	retry?: RetryPolicy,
+	callbacks?: RetryCallbacks,
+): Promise<{ text: string; usage: Usage }> {
 	const maxTokens = Math.min(
 		Math.floor(0.5 * reserveTokens),
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
@@ -991,14 +1106,16 @@ async function generateTurnPrefixSummary(
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
 		createSummarizationOptions(model, maxTokens, apiKey, headers, env, signal, thinkingLevel, extraBody),
 		streamFn,
+		retry,
+		callbacks,
 	);
 
 	if (response.stopReason === "error") {
 		throw new Error(`Turn prefix summarization failed: ${response.errorMessage || "Unknown error"}`);
 	}
 
-	return response.content
-		.filter((c): c is { type: "text"; text: string } => c.type === "text")
-		.map((c) => c.text)
-		.join("\n");
+	return {
+		text: contentText(response.content),
+		usage: response.usage,
+	};
 }

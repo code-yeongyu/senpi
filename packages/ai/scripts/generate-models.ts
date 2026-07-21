@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import {
@@ -18,6 +18,14 @@ import type {
 	OpenAICompletionsCompat,
 	OpenAIResponsesCompat,
 } from "../src/types.ts";
+import {
+	createModelDataManifest,
+	type ModelDataStructure,
+	MODEL_DATA_MANIFEST_FILE,
+	readModelDataStructure,
+	validateGeneratedModelData,
+	validateModelDataDirectory,
+} from "./model-data.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -25,11 +33,13 @@ const packageRoot = join(__dirname, "..");
 
 function readGeneratorOptions(args: string[]): {
 	strict: boolean;
+	dataOnly: boolean;
 	jsonOnly: boolean;
 	jsonOutputDir: string | undefined;
 	pretty: boolean;
 } {
 	let strict = false;
+	let dataOnly = false;
 	let jsonOnly = false;
 	let jsonOutputDir: string | undefined;
 	let pretty = false;
@@ -38,6 +48,10 @@ function readGeneratorOptions(args: string[]): {
 		const arg = args[index];
 		if (arg === "--strict") {
 			strict = true;
+			continue;
+		}
+		if (arg === "--data-only") {
+			dataOnly = true;
 			continue;
 		}
 		if (arg === "--json-only") {
@@ -58,7 +72,8 @@ function readGeneratorOptions(args: string[]): {
 	}
 
 	if (jsonOnly && !jsonOutputDir) throw new Error("--json-only requires --json-output");
-	return { strict, jsonOnly, jsonOutputDir, pretty };
+	if (dataOnly && (jsonOnly || jsonOutputDir)) throw new Error("--data-only cannot be combined with JSON catalog output");
+	return { strict, dataOnly, jsonOnly, jsonOutputDir, pretty };
 }
 
 const generatorOptions = readGeneratorOptions(process.argv.slice(2));
@@ -245,9 +260,9 @@ const DEEPSEEK_V4_THINKING_LEVEL_MAP = {
 const KIMI_K3_THINKING_LEVEL_MAP = {
 	off: null,
 	minimal: null,
-	low: null,
+	low: "low",
 	medium: null,
-	high: null,
+	high: "high",
 	xhigh: null,
 	max: "max",
 } as const;
@@ -1696,11 +1711,11 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			};
 			const hasCanonicalModel = Object.prototype.hasOwnProperty.call(kimiModels, "kimi-for-coding");
 
-			const kimiAliases = new Set(["k2p5", "k2p6"]);
+			const kimiAliases = new Set(["k2p5", "k2p6", "k2p7"]);
 
 			for (const [modelId, m] of Object.entries(kimiModels)) {
 				if (m.tool_call !== true) continue;
-				// models.dev may expose versioned aliases (e.g. k2p5/k2p6).
+				// models.dev may expose versioned aliases (e.g. k2p5/k2p6/k2p7).
 				// Normalize aliases to the canonical model id and drop duplicates when canonical exists.
 				if (kimiAliases.has(modelId) && hasCanonicalModel) continue;
 
@@ -1724,13 +1739,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					},
 					reasoning: isKimiK3 || m.reasoning === true,
 					...(isKimiK3 ? { thinkingLevelMap: KIMI_K3_THINKING_LEVEL_MAP } : {}),
-					// K3 accepts video input on the Kimi coding endpoint (kimi-code parity:
-					// Anthropic-compatible `{type:"video"}` content blocks).
-					input: isKimiK3
-						? ["text", "image", "video"]
-						: m.modalities?.input?.includes("image")
-							? ["text", "image"]
-							: ["text"],
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
 						input: m.cost?.input || impliedCost?.input || 0,
 						output: m.cost?.output || impliedCost?.output || 0,
@@ -1774,6 +1783,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				if (isKimiK3) {
 					compat.requiresReasoningContentOnAssistantMessages = true;
 					compat.deferredToolsMode = "kimi";
+					compat.thinkingFormat = "openai";
+					compat.supportsReasoningEffort = true;
 				}
 				models.push({
 					id: modelId,
@@ -1854,40 +1865,62 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
+		function createAlibabaTokenPlanCompat(modelId: string): OpenAICompletionsCompat {
+			const compat: OpenAICompletionsCompat = {
+				supportsStore: false,
+				supportsDeveloperRole: false,
+				maxTokensField: "max_tokens",
+			};
+			const family = modelId.toLowerCase();
+			if (family.startsWith("qwen")) {
+				// DashScope compatible-mode toggles Qwen thinking via top-level enable_thinking.
+				compat.thinkingFormat = "qwen";
+			} else if (family.startsWith("deepseek")) {
+				compat.requiresReasoningContentOnAssistantMessages = true;
+				compat.thinkingFormat = "deepseek";
+			} else if (family.startsWith("kimi")) {
+				compat.thinkingFormat = "deepseek";
+				compat.supportsReasoningEffort = false;
+			}
+			return compat;
+		}
+
 		// Alibaba Cloud Model Studio Token Plan (prepaid, OpenAI-compatible).
-		// The models.dev `alibaba-token-plan` catalog targets the ap-southeast-1
-		// endpoint; image/video models are skipped via the tool_call filter.
-		const alibabaTokenPlanBaseUrl = "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
-		const alibabaTokenPlanModels = data["alibaba-token-plan"]?.models;
-		if (alibabaTokenPlanModels) {
-			for (const [modelId, model] of Object.entries(alibabaTokenPlanModels)) {
+		// The fork keeps the original provider id while upstream also exposes
+		// the same catalog under qwen-token-plan regional aliases.
+		const alibabaTokenPlanVariants = [
+			{
+				source: "alibaba-token-plan",
+				provider: "alibaba-token-plan",
+				baseUrl: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+			},
+			{
+				source: "alibaba-token-plan",
+				provider: "qwen-token-plan",
+				baseUrl: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+			},
+			{
+				source: "alibaba-token-plan-cn",
+				provider: "qwen-token-plan-cn",
+				baseUrl: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+			},
+		] as const;
+
+		for (const { source, provider, baseUrl } of alibabaTokenPlanVariants) {
+			const providerModels = data[source]?.models;
+			if (!providerModels) continue;
+
+			for (const [modelId, model] of Object.entries(providerModels)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-
-				const compat: OpenAICompletionsCompat = {
-					supportsStore: false,
-					supportsDeveloperRole: false,
-					maxTokensField: "max_tokens",
-				};
-				const family = modelId.toLowerCase();
-				if (family.startsWith("qwen")) {
-					// DashScope compatible-mode toggles Qwen thinking via top-level enable_thinking.
-					compat.thinkingFormat = "qwen";
-				} else if (family.startsWith("deepseek")) {
-					compat.requiresReasoningContentOnAssistantMessages = true;
-					compat.thinkingFormat = "deepseek";
-				} else if (family.startsWith("kimi")) {
-					compat.thinkingFormat = "deepseek";
-					compat.supportsReasoningEffort = false;
-				}
 
 				models.push({
 					id: modelId,
 					name: m.name || modelId,
 					api: "openai-completions",
-					provider: "alibaba-token-plan",
-					baseUrl: alibabaTokenPlanBaseUrl,
-					compat,
+					provider,
+					baseUrl,
+					compat: createAlibabaTokenPlanCompat(modelId),
 					reasoning: m.reasoning === true,
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
@@ -2367,10 +2400,10 @@ async function generateModels() {
 
 	// OpenAI Codex (ChatGPT OAuth) models
 	// NOTE: These are not fetched from models.dev; we keep a small, explicit list to avoid aliases.
-	// Older model limits are based on observed server behavior; GPT-5.6 follows Codex's 372k catalog limit.
+	// Older model limits are based on observed server behavior; GPT-5.6 follows Codex's 272k catalog limit (formerly 372k).
 	const CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 	const CODEX_CONTEXT = 272000;
-	const CODEX_GPT_56_CONTEXT = 372000;
+	const CODEX_GPT_56_CONTEXT = 272000;
 	const CODEX_SPARK_CONTEXT = 128000;
 	const CODEX_MAX_TOKENS = 128000;
 	const codexModels: Model<"openai-codex-responses">[] = [
@@ -2482,6 +2515,29 @@ async function generateModels() {
 		});
 	}
 
+	// Add qwen3.8-max-preview to Qwen Token Plan providers until models.dev includes it
+	for (const qwenTpProvider of ["qwen-token-plan", "qwen-token-plan-cn"] as const) {
+		if (!allModels.some((m) => m.provider === qwenTpProvider && m.id === "qwen3.8-max-preview")) {
+			const baseUrl =
+				qwenTpProvider === "qwen-token-plan"
+					? "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+					: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1";
+			allModels.push({
+				id: "qwen3.8-max-preview",
+				name: "Qwen3.8 Max Preview",
+				api: "openai-completions",
+				provider: qwenTpProvider,
+				baseUrl,
+				compat: { thinkingFormat: "qwen", supportsDeveloperRole: false, supportsStore: false } satisfies OpenAICompletionsCompat,
+				reasoning: true,
+				input: ["text", "image"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 1000000,
+				maxTokens: 65536,
+			});
+		}
+	}
+
 	// Add "auto" alias for openrouter/auto
 	if (!allModels.some(m => m.provider === "openrouter" && m.id === "auto")) {
 		allModels.push({
@@ -2584,63 +2640,154 @@ async function generateModels() {
 			jsonProviders[providerId][modelId] = providers[providerId][modelId];
 		}
 	}
-	const writeJson = (path: string, value: unknown) =>
-		writeFileSync(path, `${JSON.stringify(value, null, generatorOptions.pretty ? 2 : undefined)}\n`);
+
+	const serializeJson = (value: unknown) => `${JSON.stringify(value, null, generatorOptions.pretty ? 2 : undefined)}\n`;
+	const writeJson = (path: string, value: unknown) => writeFileSync(path, serializeJson(value));
+	let generatedDataProviderIds = sortedProviderIds;
+	let generatedDataProviders = jsonProviders;
+	let modelDataStructure: ModelDataStructure = Object.fromEntries(
+		sortedProviderIds.map((providerId) => [
+			providerId,
+			Object.fromEntries(
+				Object.entries(jsonProviders[providerId]).map(([modelId, model]) => [modelId, model.api]),
+			),
+		]),
+	);
+
+	if (generatorOptions.dataOnly) {
+		modelDataStructure = readModelDataStructure(packageRoot);
+		generatedDataProviderIds = Object.keys(modelDataStructure);
+		const hydratedProviders: typeof jsonProviders = {};
+		const hydrationErrors: string[] = [];
+		for (const [providerId, expectedModels] of Object.entries(modelDataStructure)) {
+			hydratedProviders[providerId] = {};
+			for (const [modelId, expectedApi] of Object.entries(expectedModels)) {
+				const model = jsonProviders[providerId]?.[modelId];
+				if (!model) {
+					hydrationErrors.push(`missing ${providerId}/${modelId}`);
+					continue;
+				}
+				if (model.api !== expectedApi) {
+					hydrationErrors.push(`${providerId}/${modelId} uses ${model.api}, expected ${expectedApi}`);
+					continue;
+				}
+				hydratedProviders[providerId][modelId] = model;
+			}
+		}
+		if (hydrationErrors.length > 0) {
+			throw new Error(`Cannot hydrate the committed model catalog:\n${hydrationErrors.map((error) => `  - ${error}`).join("\n")}`);
+		}
+		generatedDataProviders = hydratedProviders;
+	}
 
 	if (!generatorOptions.jsonOnly) {
-		// Generate TypeScript structural catalogs and adjacent JSON values.
-		const generatedHeader = `// This file is auto-generated by scripts/generate-models.ts
+		// Stage and validate all provider values before replacing the current generated data.
+		const providersDir = join(packageRoot, "src/providers");
+		const dataDir = join(providersDir, "data");
+		const stagingRoot = mkdtempSync(join(providersDir, ".model-generation-"));
+		const stagedDataDir = join(stagingRoot, "data");
+		const previousDataDir = join(stagingRoot, "previous-data");
+		let restoreStructuralCatalog: (() => void) | undefined;
+		try {
+			mkdirSync(stagedDataDir, { recursive: true });
+			const fileContents: Record<string, string> = {};
+			for (const providerId of generatedDataProviderIds) {
+				const filename = `${providerId}.json`;
+				const content = serializeJson(generatedDataProviders[providerId]);
+				fileContents[filename] = content;
+				writeFileSync(join(stagedDataDir, filename), content);
+			}
+			writeJson(
+				join(stagedDataDir, MODEL_DATA_MANIFEST_FILE),
+				createModelDataManifest(modelDataStructure, fileContents),
+			);
+			validateModelDataDirectory(modelDataStructure, stagedDataDir);
+
+			if (!generatorOptions.dataOnly) {
+				// Generate TypeScript structural catalogs only after the model data is complete and valid.
+				const previousShardContents = new Map(
+					readdirSync(providersDir)
+						.filter((entry) => entry.endsWith(".models.ts"))
+						.map((entry) => [entry, readFileSync(join(providersDir, entry), "utf8")] as const),
+				);
+				const aggregatorPath = join(packageRoot, "src/models.generated.ts");
+				const previousAggregator = readFileSync(aggregatorPath, "utf8");
+				restoreStructuralCatalog = () => {
+					for (const entry of readdirSync(providersDir)) {
+						if (entry.endsWith(".models.ts")) rmSync(join(providersDir, entry));
+					}
+					for (const [entry, content] of previousShardContents) {
+						writeFileSync(join(providersDir, entry), content);
+					}
+					writeFileSync(aggregatorPath, previousAggregator);
+				};
+
+				const generatedHeader = `// This file is auto-generated by scripts/generate-models.ts
 // Do not edit manually - run 'npm run generate-models' to update
 
 `;
-		const catalogConstName = (providerId: string) =>
-			`${providerId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_MODELS`;
-		const providersDir = join(packageRoot, "src/providers");
-		const dataDir = join(providersDir, "data");
+				const catalogConstName = (providerId: string) =>
+					`${providerId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_MODELS`;
+				const generatedShardFiles = new Set<string>();
 
-		function emitModelShape(model: Model<any>, indent: string): string {
-			return `${indent}${JSON.stringify(model.id)}: Model<${JSON.stringify(model.api)}> & {\n${indent}\tid: ${JSON.stringify(model.id)};\n${indent}\tprovider: ${JSON.stringify(model.provider)};\n${indent}};\n`;
-		}
+				function emitModelShape(model: Model<any>, indent: string): string {
+					return `${indent}${JSON.stringify(model.id)}: Model<${JSON.stringify(model.api)}> & {\n${indent}\tid: ${JSON.stringify(model.id)};\n${indent}\tprovider: ${JSON.stringify(model.provider)};\n${indent}};\n`;
+				}
 
-		// Remove stale per-provider catalogs and their generated values.
-		for (const entry of readdirSync(providersDir)) {
-			if (entry.endsWith(".models.ts")) {
-				rmSync(join(providersDir, entry));
+				for (const providerId of sortedProviderIds) {
+					const models = providers[providerId];
+					let output = generatedHeader;
+					output += `import values from "./data/${providerId}.json" with { type: "json" };\n`;
+					output += `import type { Model } from "../types.ts";\n\n`;
+					output += `export const ${catalogConstName(providerId)} = values as {\n`;
+					for (const modelId of Object.keys(models).sort()) {
+						output += emitModelShape(models[modelId], "\t");
+					}
+					output += `};\n`;
+					const filename = `${providerId}.models.ts`;
+					generatedShardFiles.add(filename);
+					writeFileSync(join(providersDir, filename), output);
+				}
+				for (const entry of readdirSync(providersDir)) {
+					if (entry.endsWith(".models.ts") && !generatedShardFiles.has(entry)) rmSync(join(providersDir, entry));
+				}
+				console.log(`Generated ${sortedProviderIds.length} catalog structures under src/providers/`);
+
+				let output = generatedHeader;
+				for (const providerId of sortedProviderIds) {
+					output += `import { ${catalogConstName(providerId)} } from "./providers/${providerId}.models.ts";\n`;
+				}
+				output += `\nexport const MODELS = {\n`;
+				for (const providerId of sortedProviderIds) {
+					output += `\t${JSON.stringify(providerId)}: ${catalogConstName(providerId)},\n`;
+				}
+				output += `} as const;\n`;
+				writeFileSync(aggregatorPath, output);
+				console.log("Generated src/models.generated.ts");
 			}
-		}
-		rmSync(dataDir, { recursive: true, force: true });
-		mkdirSync(dataDir, { recursive: true });
 
-		// Per-provider catalog structure and values (sorted for deterministic output).
-		for (const providerId of sortedProviderIds) {
-			const models = providers[providerId];
-			const sortedModelIds = Object.keys(models).sort();
-			let output = generatedHeader;
-			output += `import values from "./data/${providerId}.json" with { type: "json" };\n`;
-			output += `import type { Model } from "../types.ts";\n\n`;
-			output += `export const ${catalogConstName(providerId)} = values as {\n`;
-			for (const modelId of sortedModelIds) {
-				output += emitModelShape(models[modelId], "\t");
+			const hadPreviousData = existsSync(dataDir);
+			if (hadPreviousData) renameSync(dataDir, previousDataDir);
+			try {
+				renameSync(stagedDataDir, dataDir);
+				validateGeneratedModelData(packageRoot);
+			} catch (error) {
+				rmSync(dataDir, { recursive: true, force: true });
+				if (hadPreviousData && existsSync(previousDataDir)) renameSync(previousDataDir, dataDir);
+				throw error;
 			}
-			output += `};\n`;
-			writeFileSync(join(providersDir, `${providerId}.models.ts`), output);
-			writeJson(join(dataDir, `${providerId}.json`), jsonProviders[providerId]);
+			restoreStructuralCatalog = undefined;
+			console.log(
+				generatorOptions.dataOnly
+					? "Hydrated JSON model values under src/providers/data/"
+					: "Generated JSON model values under src/providers/data/",
+			);
+		} catch (error) {
+			restoreStructuralCatalog?.();
+			throw error;
+		} finally {
+			rmSync(stagingRoot, { recursive: true, force: true });
 		}
-		console.log(`Generated ${sortedProviderIds.length} catalog structures under src/providers/`);
-		console.log("Generated JSON model values under src/providers/data/");
-
-		// Aggregator
-		let output = generatedHeader;
-		for (const providerId of sortedProviderIds) {
-			output += `import { ${catalogConstName(providerId)} } from "./providers/${providerId}.models.ts";\n`;
-		}
-		output += `\nexport const MODELS = {\n`;
-		for (const providerId of sortedProviderIds) {
-			output += `\t${JSON.stringify(providerId)}: ${catalogConstName(providerId)},\n`;
-		}
-		output += `} as const;\n`;
-		writeFileSync(join(packageRoot, "src/models.generated.ts"), output);
-		console.log("Generated src/models.generated.ts");
 	}
 
 	if (generatorOptions.jsonOutputDir) {

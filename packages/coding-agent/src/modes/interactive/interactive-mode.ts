@@ -79,7 +79,11 @@ import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/
 import { appendHiddenTuiStdout } from "../../core/hidden-stdout-log.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
-import { createCompactionSummaryMessage } from "../../core/messages.ts";
+import {
+	type ArtifactMessage,
+	createCompactionSummaryMessage,
+	type UserMessageWithAttachments,
+} from "../../core/messages.ts";
 import {
 	defaultModelPerProvider,
 	findExactModelReferenceMatch,
@@ -94,6 +98,7 @@ import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
+import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard, readClipboardText } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
@@ -992,6 +997,13 @@ export class InteractiveMode {
 	 */
 	async run(): Promise<void> {
 		await this.init();
+
+		if (!process.env.PI_OFFLINE) {
+			void this.session.modelRuntime
+				.refresh()
+				.then(() => this.updateAvailableProviderCount())
+				.catch(() => {});
+		}
 
 		// Start version check asynchronously
 		checkForNewPiVersion(this.version).then((newVersion) => {
@@ -3695,6 +3707,32 @@ export class InteractiveMode {
 				this.ui.requestRender();
 				break;
 			}
+
+			case "summarization_retry_scheduled": {
+				this.showError(event.errorMessage);
+				this.showStatusIndicator(
+					new RetryStatusIndicator(this.ui, event.attempt, event.maxAttempts, event.delayMs),
+				);
+				this.ui.requestRender();
+				break;
+			}
+
+			case "summarization_retry_attempt_start": {
+				this.clearStatusIndicator("retry");
+				if (event.source === "branchSummary") {
+					this.showStatusIndicator(new BranchSummaryStatusIndicator(this.ui));
+				} else {
+					this.showStatusIndicator(new CompactionStatusIndicator(this.ui, event.reason));
+				}
+				this.ui.requestRender();
+				break;
+			}
+
+			case "summarization_retry_finished": {
+				this.clearStatusIndicator("retry");
+				this.ui.requestRender();
+				break;
+			}
 		}
 	}
 
@@ -3762,25 +3800,34 @@ export class InteractiveMode {
 	}
 
 	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void {
-		switch (message.role) {
+		const messageForRender = message as AgentMessage | UserMessageWithAttachments | ArtifactMessage;
+		switch (messageForRender.role) {
 			case "bashExecution": {
-				const component = new BashExecutionComponent(message.command, this.ui, message.excludeFromContext);
-				if (message.output) {
-					component.appendOutput(message.output);
+				const component = new BashExecutionComponent(
+					messageForRender.command,
+					this.ui,
+					messageForRender.excludeFromContext,
+				);
+				if (messageForRender.output) {
+					component.appendOutput(messageForRender.output);
 				}
 				component.setComplete(
-					message.exitCode,
-					message.cancelled,
-					message.truncated ? ({ truncated: true } as TruncationResult) : undefined,
-					message.fullOutputPath,
+					messageForRender.exitCode,
+					messageForRender.cancelled,
+					messageForRender.truncated ? ({ truncated: true } as TruncationResult) : undefined,
+					messageForRender.fullOutputPath,
 				);
 				this.chatContainer.addChild(component);
 				break;
 			}
 			case "custom": {
-				if (message.display) {
-					const renderer = this.session.extensionRunner.getMessageRenderer(message.customType);
-					const component = new CustomMessageComponent(message, renderer, this.getMarkdownThemeWithSettings());
+				if (messageForRender.display) {
+					const renderer = this.session.extensionRunner.getMessageRenderer(messageForRender.customType);
+					const component = new CustomMessageComponent(
+						messageForRender,
+						renderer,
+						this.getMarkdownThemeWithSettings(),
+					);
 					component.setExpanded(this.toolOutputExpanded);
 					this.chatContainer.addChild(component);
 				}
@@ -3788,20 +3835,23 @@ export class InteractiveMode {
 			}
 			case "compactionSummary": {
 				this.chatContainer.addChild(new Spacer(1));
-				const component = new CompactionSummaryMessageComponent(message, this.getMarkdownThemeWithSettings());
+				const component = new CompactionSummaryMessageComponent(
+					messageForRender,
+					this.getMarkdownThemeWithSettings(),
+				);
 				component.setExpanded(this.toolOutputExpanded);
 				this.chatContainer.addChild(component);
 				break;
 			}
 			case "branchSummary": {
 				this.chatContainer.addChild(new Spacer(1));
-				const component = new BranchSummaryMessageComponent(message, this.getMarkdownThemeWithSettings());
+				const component = new BranchSummaryMessageComponent(messageForRender, this.getMarkdownThemeWithSettings());
 				component.setExpanded(this.toolOutputExpanded);
 				this.chatContainer.addChild(component);
 				break;
 			}
 			case "user": {
-				const textContent = this.getUserMessageText(message);
+				const textContent = this.getUserMessageText(messageForRender);
 				if (textContent) {
 					if (this.chatContainer.children.length > 0) {
 						this.chatContainer.addChild(new Spacer(1));
@@ -3841,7 +3891,7 @@ export class InteractiveMode {
 			}
 			case "assistant": {
 				const assistantComponent = new AssistantMessageComponent(
-					message,
+					messageForRender,
 					this.hideThinkingBlock,
 					this.getMarkdownThemeWithSettings(),
 					this.hiddenThinkingLabel,
@@ -3855,8 +3905,12 @@ export class InteractiveMode {
 				// Tool results are rendered inline with tool calls, handled separately
 				break;
 			}
+			case "artifact":
+			case "user-with-attachments": {
+				break;
+			}
 			default: {
-				const exhaustive: never = message;
+				const exhaustive: never = messageForRender;
 				void exhaustive;
 			}
 		}
@@ -5039,10 +5093,13 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	/** Update the footer's available provider count from current model candidates */
-	private async updateAvailableProviderCount(): Promise<void> {
-		const models = await this.getModelCandidates();
-		const uniqueProviders = new Set(models.map((m) => m.provider));
+	/** Update the footer's available provider count from the current snapshot without refreshing catalogs. */
+	private updateAvailableProviderCount(): void {
+		const models =
+			this.session.scopedModels.length > 0
+				? this.session.scopedModels.map((scoped) => scoped.model)
+				: this.session.modelRuntime.getAvailableSnapshot();
+		const uniqueProviders = new Set(models.map((model) => model.provider));
 		this.footerDataProvider.setAvailableProviderCount(uniqueProviders.size);
 	}
 
@@ -6275,22 +6332,9 @@ export class InteractiveMode {
 		const cacheWaste = computeCacheWaste(entries, this.session.modelRuntime);
 
 		// Cost/token totals per provider/model actually used (e.g. OpenRouter `auto`
-		// resolves to a concrete responseModel), sorted by cost descending.
-		const perModelMap = new Map<string, { key: string; cost: number; tokens: number }>();
-		for (const entry of entries) {
-			if (entry.type !== "message" || entry.message.role !== "assistant") continue;
-			const message = entry.message;
-			const usage = message.usage;
-			const key = `${message.provider}/${message.responseModel ?? message.model}`;
-			let bucket = perModelMap.get(key);
-			if (!bucket) {
-				bucket = { key, cost: 0, tokens: 0 };
-				perModelMap.set(key, bucket);
-			}
-			bucket.cost += usage.cost.total;
-			bucket.tokens += usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
-		}
-		const perModel = Array.from(perModelMap.values()).sort((a, b) => b.cost - a.cost);
+		// resolves to a concrete responseModel). Usage without model attribution is
+		// grouped separately so the breakdown reconciles with the session total.
+		const usageBreakdown = getUsageCostBreakdown(entries);
 
 		let info = `${theme.bold("Session Info")}\n\n`;
 		if (sessionName) {
@@ -6324,8 +6368,8 @@ export class InteractiveMode {
 		if (stats.cost > 0 || cacheWaste.missedTokens > 0) {
 			info += `\n${theme.bold("Cost")}\n`;
 			info += `${theme.fg("dim", "Total:")} $${stats.cost.toFixed(3)}`;
-			if (perModel.length > 1) {
-				for (const entry of perModel) {
+			if (usageBreakdown.length > 1) {
+				for (const entry of usageBreakdown) {
 					info += `\n  ${theme.fg("dim", `${entry.key}:`)} $${entry.cost.toFixed(3)} ${theme.fg("dim", `(${formatTokens(entry.tokens)} tokens)`)}`;
 				}
 			}

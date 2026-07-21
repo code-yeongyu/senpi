@@ -1,6 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { describe, expect, it } from "vitest";
-import { getModel } from "../src/models.ts";
+import { getModel } from "../src/models-static.ts";
 import { streamAnthropic } from "../src/providers/anthropic.ts";
 import type { Context, ProviderNativeContent } from "../src/types.ts";
 
