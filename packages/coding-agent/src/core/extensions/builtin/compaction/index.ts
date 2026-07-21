@@ -36,6 +36,7 @@ import {
 	runExtensionCompaction,
 	type SpeculativeCompactionResult,
 	type SpeculativeCompactionSnapshot,
+	SummaryGenerationError,
 } from "./speculative.ts";
 import { type CompactionExtensionState, createInitialState, resetTurnCounter } from "./state.ts";
 import * as todoBridge from "./todo-bridge.ts";
@@ -296,9 +297,18 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 				endCompactionFeedback(ctx, feedbackSignal, result);
 				return result;
 			}
-			const compaction = await runExtensionCompaction(ctx, snapshot, feedbackSignal, (delta) =>
-				ctx.updateCompaction?.({ reason: "extension", delta }),
-			);
+			let compaction: CompactionResult | undefined;
+			try {
+				compaction = await runExtensionCompaction(ctx, snapshot, feedbackSignal, (delta) =>
+					ctx.updateCompaction?.({ reason: "extension", delta }),
+				);
+			} catch (error) {
+				// Auto-path parity: summary-generation failures (missing credentials,
+				// text-less response) degrade to "unavailable" exactly as before
+				// instead of erroring the turn; the precise reason still surfaces on
+				// the session_before_compact route.
+				if (!(error instanceof SummaryGenerationError)) throw error;
+			}
 			const result = await applyGeneratedCompaction(ctx, snapshot, () => speculativeGeneration, compaction);
 			endCompactionFeedback(ctx, feedbackSignal, result);
 			return result;
@@ -367,12 +377,21 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 			// re-send the same conversation and burn tokens on the same failure.
 			// The reason threads into compaction_end.errorMessage so the UI shows
 			// the real provider message; ctx.ui.notify would be a duplicate toast.
-			const message = error instanceof Error ? error.message : String(error);
 			pendingMetadata.delete(event.requestId);
+			if (error instanceof SummaryGenerationError) {
+				return { cancel: true, reason: error.message };
+			}
+			const message = error instanceof Error ? error.message : String(error);
 			return { cancel: true, reason: `compaction generator failed: ${message}` };
 		}
 		if (!compaction) {
 			pendingMetadata.delete(event.requestId);
+			if (event.signal.aborted) {
+				// User abort: returning no reason lets agent-session's aborted branch
+				// render the plain "Compaction cancelled" instead of a misleading
+				// "returned no summary" rejection.
+				return { cancel: true };
+			}
 			return { cancel: true, reason: "compaction generator returned no summary" };
 		}
 
