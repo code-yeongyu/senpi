@@ -146,6 +146,79 @@ describe("OpenAI remote compaction", () => {
 		]);
 	});
 
+	it("omits the sentinel id when replaying a custom tool call as a function call", () => {
+		// Custom tool calls are stored with the "<call_id>|custom" id sentinel
+		// (processResponsesStream). The Responses API rejects any function_call
+		// item id not beginning with "fc", so the remote-compaction replay must
+		// omit the sentinel instead of failing the whole compaction request.
+		const branch: SessionEntry[] = [
+			{
+				type: "model_change",
+				id: "model",
+				parentId: null,
+				timestamp: new Date(1_775_000_000_000).toISOString(),
+				provider: "openai",
+				modelId: "gpt-5.4",
+			},
+			messageEntry("u1", "model", {
+				role: "user",
+				content: [{ type: "text", text: "Patch it." }],
+				timestamp: 1,
+			}),
+			messageEntry("a1", "u1", {
+				role: "assistant",
+				api: "openai-responses",
+				provider: "openai",
+				model: "gpt-5.4",
+				content: [
+					{
+						type: "toolCall",
+						id: "call_patch|custom",
+						name: "apply_patch",
+						arguments: { input: "*** Begin Patch\n*** End Patch" },
+					},
+				],
+				usage: {
+					input: 100,
+					output: 20,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 120,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "toolUse",
+				timestamp: 2,
+			}),
+			messageEntry("t1", "a1", {
+				role: "toolResult",
+				toolCallId: "call_patch|custom",
+				toolName: "apply_patch",
+				content: [{ type: "text", text: "patch applied" }],
+				isError: false,
+				timestamp: 3,
+			}),
+		];
+
+		const request = createOpenAiRemoteCompactionRequest({
+			model: OPENAI_MODEL,
+			systemPrompt: "You are senpi.",
+			branchEntries: branch,
+			tokensBefore: 1234,
+		});
+
+		expect(request?.body.input).toContainEqual({
+			type: "function_call",
+			call_id: "call_patch",
+			name: "apply_patch",
+			arguments: JSON.stringify({ input: "*** Begin Patch\n*** End Patch" }),
+		});
+		expect(request?.body.input).toContainEqual({
+			type: "function_call_output",
+			call_id: "call_patch",
+			output: "patch applied",
+		});
+	});
+
 	it("builds a Codex-style Responses WebSocket compaction payload", () => {
 		const request = createOpenAiRemoteCompactionRequest({
 			model: OPENAI_MODEL,

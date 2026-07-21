@@ -1,5 +1,18 @@
 # Builtin compaction extension changes
 
+## Omit non-"fc" item ids in remote-compaction tool-call replay (2026-07-22)
+
+- `openai-remote.ts` `convertToolCall()` now spreads the replayed item `id` only when it
+  begins with "fc", matching the Responses API item-id rule. A custom tool call stored as
+  `<call_id>|custom` previously produced `id: "custom"` in remote-compaction input, which
+  the API rejects with `Invalid 'input[N].id': 'custom'`.
+- Tests: `test/compaction/openai-remote-compaction.test.ts` (sentinel omission in the
+  remote request input) and `test/compaction/custom-tool-call-id-replay.test.ts`
+  (wire-level: drives `runExtensionCompaction` against a local Responses server that
+  enforces the id rule, proving the poisoned history compacts successfully).
+
+Expected upstream conflict zones: `builtin/compaction/openai-remote.ts` `convertToolCall()`.
+
 ## Diagnosable summary-generation failures + thinking headroom (2026-07-21)
 
 - `speculative.ts` `runExtensionCompaction()` no longer collapses every non-summary
