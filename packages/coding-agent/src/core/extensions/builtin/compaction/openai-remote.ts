@@ -156,8 +156,8 @@ export function createOpenAiRemoteCompactionRequest(options: {
 	serviceTier?: ServiceTier;
 }): OpenAiRemoteCompactionRequest | undefined {
 	if (!isOpenAiResponsesModel(options.model)) return undefined;
-	const input = convertBranchEntries(options.branchEntries);
-	if (!input || input.length === 0) return undefined;
+	const input = convertBranchEntries(options.branchEntries, options.model);
+	if (input.length === 0) return undefined;
 	return {
 		body: {
 			model: options.model.id,
@@ -569,7 +569,7 @@ export async function runOpenAiRemoteCompaction(
 			route: "builtin.compaction.openai_remote",
 			requestId: event.requestId,
 			modelId: model.id,
-			reason: "session-not-openai-native",
+			reason: "empty-compaction-input",
 		});
 		return undefined;
 	}
@@ -723,8 +723,7 @@ export function rewriteOpenAiPayloadWithRemoteCompaction(
 	const remote = latestRemoteCompaction(options.branchEntries);
 	if (!remote) return undefined;
 
-	const postCompactionItems = convertBranchEntries(options.branchEntries.slice(remote.index + 1));
-	if (!postCompactionItems) return undefined;
+	const postCompactionItems = convertBranchEntries(options.branchEntries.slice(remote.index + 1), options.model);
 
 	const input = [...leadingPromptMessages(payload.input), ...remote.details.replacementInput, ...postCompactionItems];
 	emit?.({

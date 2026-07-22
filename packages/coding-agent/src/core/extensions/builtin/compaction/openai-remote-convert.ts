@@ -1,6 +1,16 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, ImageContent, TextContent, ToolCall } from "@earendil-works/pi-ai";
-import type { SessionEntry } from "../../../session-manager.ts";
+import type {
+	Api,
+	AssistantMessage,
+	ImageContent,
+	Message,
+	Model,
+	TextContent,
+	ToolCall,
+	ToolResultMessage,
+} from "@earendil-works/pi-ai";
+import { convertToLlm } from "../../../messages.ts";
+import { type SessionEntry, sessionEntryToContextMessages } from "../../../session-manager.ts";
 import type { ServiceTier } from "../../types.ts";
 
 export const OPENAI_REMOTE_COMPACTION_SCHEMA = "senpi.compaction.openai-remote.v1";
@@ -34,7 +44,7 @@ type OpenAiFunctionCallItem = {
 type OpenAiFunctionCallOutputItem = {
 	type: "function_call_output";
 	call_id: string;
-	output: string;
+	output: string | OpenAiInputContent[];
 };
 export type OpenAiRemoteTransport = "websocket" | "compact-endpoint";
 type OpenAiCompactionItem = {
@@ -113,16 +123,6 @@ function parseTextSignature(
 	return { id: signature };
 }
 
-function toolResultText(content: string | TextContent[] | (TextContent | ImageContent)[]): string | undefined {
-	if (typeof content === "string") return content;
-	const parts: string[] = [];
-	for (const block of content) {
-		if (block.type !== "text") return undefined;
-		parts.push(block.text);
-	}
-	return parts.join("\n");
-}
-
 function convertUserContent(content: string | (TextContent | ImageContent)[]): OpenAiInputContent[] {
 	if (typeof content === "string") return [{ type: "input_text", text: content }];
 	return content.map((block): OpenAiInputContent => {
@@ -172,13 +172,14 @@ function convertToolCall(block: ToolCall): OpenAiFunctionCallItem {
 	};
 }
 
-function isSameOpenAiResponsesAssistant(message: AssistantMessage): boolean {
-	return message.provider === "openai" && message.api === "openai-responses";
-}
-
-function convertAssistantMessage(message: AssistantMessage, messageIndex: number): OpenAiRemoteInputItem[] | undefined {
-	if (!isSameOpenAiResponsesAssistant(message)) return undefined;
-
+/**
+ * Convert any assistant message — OpenAI Responses-native or foreign — into
+ * replayable input items. Native text/reasoning/tool-call items are preserved
+ * verbatim; blocks that have no OpenAI Responses representation (foreign
+ * thinking, unknown provider-native payloads) are skipped, mirroring what the
+ * provider would have received for that message in a normal turn.
+ */
+function convertAssistantMessage(message: AssistantMessage, messageIndex: number): OpenAiRemoteInputItem[] {
 	const items: OpenAiRemoteInputItem[] = [];
 	for (const block of message.content) {
 		switch (block.type) {
@@ -187,8 +188,7 @@ function convertAssistantMessage(message: AssistantMessage, messageIndex: number
 				break;
 			case "thinking": {
 				const reasoning = convertThinking(block);
-				if (!reasoning) return undefined;
-				items.push(reasoning);
+				if (reasoning) items.push(reasoning);
 				break;
 			}
 			case "toolCall":
@@ -196,42 +196,53 @@ function convertAssistantMessage(message: AssistantMessage, messageIndex: number
 				break;
 			case "providerNative": {
 				const item = providerNativeItem(block.raw);
-				if (!item) return undefined;
-				items.push(item);
+				if (item) items.push(item);
 				break;
 			}
 		}
 	}
-	return items.length > 0 ? items : undefined;
+	return items;
 }
 
-function convertAgentMessage(message: AgentMessage, messageIndex: number): OpenAiRemoteInputItem[] | undefined {
+/**
+ * Convert a tool result into a function_call_output item, mirroring the
+ * Responses API payload builder: image results stay structured for
+ * image-capable models and degrade to a text placeholder otherwise.
+ */
+function convertToolResultMessage(message: ToolResultMessage, model: Model<Api>): OpenAiRemoteInputItem[] {
+	const [callId = message.toolCallId] = message.toolCallId.split("|");
+	const text = message.content
+		.filter((block): block is TextContent => block.type === "text")
+		.map((block) => block.text)
+		.join("\n");
+	const images = message.content.filter((block): block is ImageContent => block.type === "image");
+	let output: string | OpenAiInputContent[];
+	if (images.length > 0 && model.input.includes("image")) {
+		const parts: OpenAiInputContent[] = [];
+		if (text.length > 0) parts.push({ type: "input_text", text });
+		for (const image of images) {
+			parts.push({
+				type: "input_image",
+				detail: "auto",
+				image_url: `data:${image.mimeType};base64,${image.data}`,
+			});
+		}
+		output = parts.length > 0 ? parts : "(no tool output)";
+	} else {
+		output = text.length > 0 ? text : images.length > 0 ? "(see attached image)" : "(no tool output)";
+	}
+	return [{ type: "function_call_output", call_id: callId, output }];
+}
+
+function convertLlmMessage(message: Message, messageIndex: number, model: Model<Api>): OpenAiRemoteInputItem[] {
 	switch (message.role) {
 		case "user":
 			return [{ role: "user", content: convertUserContent(message.content) }];
 		case "assistant":
 			return convertAssistantMessage(message, messageIndex);
-		case "toolResult": {
-			const [callId = message.toolCallId] = message.toolCallId.split("|");
-			const output = toolResultText(message.content);
-			if (output === undefined) return undefined;
-			return [{ type: "function_call_output", call_id: callId, output }];
-		}
-		case "bashExecution":
-		case "branchSummary":
-		case "compactionSummary":
-		case "custom":
-			return undefined;
-		default: {
-			const exhaustive: never = message;
-			return exhaustive;
-		}
+		case "toolResult":
+			return convertToolResultMessage(message, model);
 	}
-}
-
-function detailsFromEntry(entry: SessionEntry): OpenAiRemoteCompactionDetails | undefined {
-	if (entry.type !== "compaction") return undefined;
-	return getOpenAiRemoteCompactionDetails(entry.details);
 }
 
 export function getOpenAiRemoteCompactionDetails(value: unknown): OpenAiRemoteCompactionDetails | undefined {
@@ -260,35 +271,40 @@ export function getOpenAiRemoteCompactionDetails(value: unknown): OpenAiRemoteCo
 	};
 }
 
-export function convertBranchEntries(entries: SessionEntry[]): OpenAiRemoteInputItem[] | undefined {
+/**
+ * Convert session branch entries into OpenAI Responses input items.
+ *
+ * The route gate is provider capability (checked by the caller), not history
+ * provenance: any entry the session can carry is converted through the same
+ * pipeline the normal context path uses (`sessionEntryToContextMessages` +
+ * `convertToLlm`), so foreign-provider messages, bash executions, branch
+ * summaries, and prior local compactions degrade to their canonical text
+ * form instead of disqualifying remote compaction. Prior OpenAI remote
+ * compaction checkpoints splice their native `replacementInput` in order.
+ */
+export function convertBranchEntries(entries: SessionEntry[], model: Model<Api>): OpenAiRemoteInputItem[] {
 	const items: OpenAiRemoteInputItem[] = [];
+	let pendingMessages: AgentMessage[] = [];
 	let messageIndex = 0;
-	for (const entry of entries) {
-		switch (entry.type) {
-			case "message": {
-				const converted = convertAgentMessage(entry.message, messageIndex);
-				if (!converted) return undefined;
-				items.push(...converted);
-				messageIndex++;
-				break;
-			}
-			case "compaction": {
-				const details = detailsFromEntry(entry);
-				if (!details) return undefined;
-				items.push(...details.replacementInput);
-				break;
-			}
-			case "branch_summary":
-			case "custom_message":
-				return undefined;
-			case "thinking_level_change":
-			case "model_change":
-			case "custom":
-			case "label":
-			case "session_info":
-				break;
+	const flush = (): void => {
+		for (const message of convertToLlm(pendingMessages)) {
+			items.push(...convertLlmMessage(message, messageIndex, model));
+			messageIndex++;
 		}
+		pendingMessages = [];
+	};
+	for (const entry of entries) {
+		if (entry.type === "compaction") {
+			const details = getOpenAiRemoteCompactionDetails(entry.details);
+			if (details) {
+				flush();
+				items.push(...details.replacementInput);
+				continue;
+			}
+		}
+		pendingMessages.push(...sessionEntryToContextMessages(entry));
 	}
+	flush();
 	return items;
 }
 
