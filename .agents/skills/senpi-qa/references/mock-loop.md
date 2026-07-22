@@ -62,6 +62,27 @@ take precedence for built-in providers and reach even the localhost fake.
 `--with-tool` scripts two turns (model → `bash` tool call → final text) to prove
 the full loop iterates. It passes `--approve` for project trust.
 
+`--with-reasoning` scripts a thinking block before the final text in all three
+wire formats. The fake server records emitted deltas in a server-side stream log;
+the command fails unless the real CLI completes, returns
+`SENPI-QA-FINAL-MARKER-9d2c`, and that independent log reconstructs a reasoning
+body containing `SENPI-QA-REASONING-MARKER-7f3a`. `--slow` makes the reasoning
+body long, emits it in 12 chunks, and uses a 500ms inter-chunk delay so an abort
+or steering driver has a deterministic in-flight window.
+
+```bash
+node .agents/skills/senpi-qa/scripts/mock-loop.mjs \
+  --with-reasoning --api openai-responses
+```
+
+`--with-reasoning --serve --serve-env /tmp/senpi-qa.env` keeps that same
+reasoning-scripted server alive for an external TUI. Once the sandbox, localhost
+server, and `models.json` are ready, it prints `SENPI_QA_SERVE_READY=1`; the
+env file is sourceable and contains the isolated agent/session paths,
+`SENPI_QA_MODELS_JSON`, and explicitly blanked provider-key variables so ambient
+credentials cannot leak into the TUI. It prints an auth-guard receipt before the
+ready sentinel and shuts down the local server on `SIGTERM`.
+
 `--with-text-tool-leak` and `--with-truncated-text-tool-leak` exercise Claude
 XML recovery through the real source CLI for `anthropic-messages` and
 `openai-completions`:

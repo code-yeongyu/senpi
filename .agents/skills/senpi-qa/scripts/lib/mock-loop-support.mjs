@@ -32,7 +32,22 @@ export const API_PRESETS = {
 
 export const ALL_APIS = Object.keys(API_PRESETS);
 
-const PROVIDER_ENV_KEYS = [
+export const QA_REASONING_MARKER = "SENPI-QA-REASONING-MARKER-7f3a";
+export const QA_FINAL_MARKER = "SENPI-QA-FINAL-MARKER-9d2c";
+
+/** Shared reasoning-first mock turn for loop, RPC, and external TUI QA. */
+export function reasoningScriptedTurn({ slow = false } = {}) {
+	return {
+		reasoning: slow
+			? `${QA_REASONING_MARKER} ${"Keep streaming deterministic reasoning for an abort window. ".repeat(36)}`
+			: `${QA_REASONING_MARKER} deterministic mock reasoning before the final answer.`,
+		text: QA_FINAL_MARKER,
+		chunks: slow ? 12 : 3,
+		chunkDelayMs: slow ? 500 : 0,
+	};
+}
+
+export const PROVIDER_ENV_KEYS = [
 	"ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN", "OPENAI_API_KEY", "AZURE_OPENAI_API_KEY", "DEEPSEEK_API_KEY",
 	"NVIDIA_API_KEY", "GEMINI_API_KEY", "GOOGLE_CLOUD_API_KEY", "GROQ_API_KEY", "CEREBRAS_API_KEY", "XAI_API_KEY",
 	"FIREWORKS_API_KEY", "TOGETHER_API_KEY", "OPENROUTER_API_KEY", "AI_GATEWAY_API_KEY", "ZAI_API_KEY",

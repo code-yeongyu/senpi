@@ -14,11 +14,22 @@
  *   node rpc-drive.mjs --state                     # print live get_state
  *   node rpc-drive.mjs --prompt "say PONG" \       # drive a real turn (needs a model)
  *        [--provider P --model M] [--evidence SLUG]
+ *   node rpc-drive.mjs --with-mock openai-responses --with-reasoning \
+ *        --prompt "say PONG" --evidence rpc-reasoning
  */
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createChecks, evidenceDir, guardRealAuth, installCleanupHooks, makeSandbox, spawnCli } from "./lib/common.mjs";
+import { startFakeModelServer } from "./lib/fake-model-server.mjs";
+import {
+	ALL_APIS,
+	API_PRESETS,
+	QA_FINAL_MARKER,
+	hermeticEnv,
+	reasoningScriptedTurn,
+	writeMockModelsJson,
+} from "./lib/mock-loop-support.mjs";
 
 /**
  * Minimal JSON-lines RPC client over a spawned `--mode rpc` child.
@@ -29,6 +40,7 @@ export class RpcClient {
 		this.child = spawnCli(["--mode", "rpc", "--no-session", "--no-context-files", ...extraArgs], { env, cwd });
 		this.pending = new Map();
 		this.events = [];
+		this.eventWaiters = [];
 		this.responses = [];
 		this.seq = 0;
 		this._buf = "";
@@ -61,6 +73,12 @@ export class RpcClient {
 				}
 			} else if (msg && msg.type) {
 				this.events.push(msg);
+				for (const waiter of [...this.eventWaiters]) {
+					if (!waiter.pred(msg)) continue;
+					clearTimeout(waiter.timer);
+					this.eventWaiters.splice(this.eventWaiters.indexOf(waiter), 1);
+					waiter.resolve(msg);
+				}
 			}
 		}
 	}
@@ -89,17 +107,15 @@ export class RpcClient {
 		const found = this.events.find(pred);
 		if (found) return Promise.resolve(found);
 		return new Promise((resolve, reject) => {
-			const start = Date.now();
-			const iv = setInterval(() => {
-				const hit = this.events.find(pred);
-				if (hit) {
-					clearInterval(iv);
-					resolve(hit);
-				} else if (Date.now() - start > timeoutMs) {
-					clearInterval(iv);
+			const waiter = {
+				pred,
+				resolve,
+				timer: setTimeout(() => {
+					this.eventWaiters.splice(this.eventWaiters.indexOf(waiter), 1);
 					reject(new Error(`event wait timeout after ${timeoutMs}ms`));
-				}
-			}, 50);
+				}, timeoutMs),
+			};
+			this.eventWaiters.push(waiter);
 		});
 	}
 
@@ -160,57 +176,99 @@ async function driveState() {
 	box.cleanup();
 }
 
-async function drivePrompt(message, { provider, model, slug }) {
+async function drivePrompt(message, { provider, model, slug, mockApi, withReasoning }) {
 	installCleanupHooks();
 	const guard = guardRealAuth();
-	const box = makeSandbox("rpc-prompt");
-	const extraArgs = [];
-	if (provider) extraArgs.push("--provider", provider);
-	if (model) extraArgs.push("--model", model);
-	const client = new RpcClient({ env: box.env, cwd: box.cwd, extraArgs });
+	const box = makeSandbox(mockApi ? `rpc-mock-${mockApi}` : "rpc-prompt");
+	let server;
+	let client;
+	try {
+		const extraArgs = [];
+		let env = box.env;
+		if (mockApi) {
+			const preset = API_PRESETS[mockApi];
+			const turn = withReasoning
+				? reasoningScriptedTurn()
+				: { text: "SENPI-QA-RPC-MOCK-FINAL-7f3a" };
+			server = await startFakeModelServer({ turns: [turn] });
+			writeMockModelsJson(box.agentDir, server, mockApi);
+			env = hermeticEnv(box.env);
+			extraArgs.push("--provider", preset.provider, "--model", preset.modelId);
+		} else {
+			if (provider) extraArgs.push("--provider", provider);
+			if (model) extraArgs.push("--model", model);
+		}
+		client = new RpcClient({ env, cwd: box.cwd, extraArgs });
 
-	await client.send({ type: "get_state" }); // ensure booted
-	const ack = await client.send({ type: "prompt", message });
-	if (ack.success !== true) throw new Error(`prompt rejected: ${JSON.stringify(ack)}`);
+		await client.send({ type: "get_state" }); // ensure booted
+		const ack = await client.send({ type: "prompt", message });
+		if (ack.success !== true) throw new Error(`prompt rejected: ${JSON.stringify(ack)}`);
 
-	// Wait for the turn to finish, then pull the assistant text.
-	await client.waitForEvent((e) => e.type === "agent_end" || e.type === "agent_aborted", { timeoutMs: 90000 }).catch(
-		() => {},
-	);
-	const last = await client.send({ type: "get_last_assistant_text" });
-	const text = last.data?.text ?? "";
-	process.stdout.write(`${text}\n`);
+		// Mock reasoning runs are a strict end-to-end assertion: do not let a
+		// terminal timeout or user abort masquerade as a stream with thinking.
+		const terminal = await client.waitForEvent((e) => e.type === "agent_end" || e.type === "agent_aborted", { timeoutMs: 90000 });
+		if (withReasoning && terminal.type !== "agent_end") throw new Error(`reasoning mock turn did not complete: ${terminal.type}`);
+		const last = await client.send({ type: "get_last_assistant_text" });
+		const text = last.data?.text ?? "";
+		const thinkingFrames = client.events.filter(
+			(event) => event.type === "message_update" && event.assistantMessageEvent?.type === "thinking_delta",
+		);
+		if (withReasoning && thinkingFrames.length === 0) {
+			throw new Error("reasoning mock turn completed without an RPC thinking_delta frame");
+		}
+		if (withReasoning && !text.includes(QA_FINAL_MARKER)) {
+			throw new Error(`reasoning mock turn did not return ${QA_FINAL_MARKER}`);
+		}
+		process.stdout.write(`${text}\n`);
 
-	if (slug) {
-		const dir = evidenceDir(slug);
-		writeFileSync(join(dir, "rpc-events.jsonl"), client.events.map((e) => JSON.stringify(e)).join("\n"));
-		writeFileSync(join(dir, "rpc-last-assistant.txt"), text);
-		process.stderr.write(`evidence: ${dir}\n`);
+		if (slug) {
+			const dir = evidenceDir(slug);
+			writeFileSync(join(dir, "rpc-events.jsonl"), client.events.map((event) => JSON.stringify(event)).join("\n"));
+			writeFileSync(join(dir, "rpc-last-assistant.txt"), text);
+			process.stderr.write(`evidence: ${dir}\n`);
+		}
+		return text;
+	} finally {
+		client?.close();
+		if (server) await server.stop();
+		guard.assertUnchanged();
+		box.cleanup();
 	}
-
-	client.close();
-	guard.assertUnchanged();
-	box.cleanup();
-	return text;
 }
 
 // --- entrypoint ---
 const argv = process.argv.slice(2);
+const flag = (name) => {
+	const index = argv.indexOf(name);
+	return index >= 0 ? argv[index + 1] : undefined;
+};
+const mockApi = flag("--with-mock");
+if (mockApi && !API_PRESETS[mockApi]) {
+	process.stderr.write(`unknown --with-mock API ${mockApi}. valid: ${ALL_APIS.join(", ")}\n`);
+	process.exit(2);
+}
 if (argv[0] === "--self-test") {
 	selfTest();
 } else if (argv[0] === "--state") {
 	driveState();
-} else if (argv[0] === "--prompt") {
-	const message = argv[1];
-	const get = (flag) => {
-		const i = argv.indexOf(flag);
-		return i >= 0 ? argv[i + 1] : undefined;
-	};
+} else if (argv.includes("--prompt")) {
+	const message = flag("--prompt");
+	const withReasoning = argv.includes("--with-reasoning");
 	if (!message) {
 		process.stderr.write("usage: rpc-drive.mjs --prompt <message> [--provider P --model M] [--evidence SLUG]\n");
 		process.exit(2);
 	}
-	drivePrompt(message, { provider: get("--provider"), model: get("--model"), slug: get("--evidence") }).catch((e) => {
+	if (withReasoning && !mockApi) {
+		process.stderr.write("--with-reasoning requires --with-mock <api>\n");
+		process.exit(2);
+	}
+	drivePrompt(message, {
+		provider: flag("--provider"),
+		model: flag("--model"),
+		slug: flag("--evidence"),
+		mockApi,
+		withReasoning,
+	}).catch((e) => {
 		process.stderr.write(`${e instanceof Error ? e.stack : String(e)}\n`);
 		process.exit(1);
 	});
@@ -221,6 +279,7 @@ if (argv[0] === "--self-test") {
 			"  node rpc-drive.mjs --self-test            verify get_state round-trips (no API)",
 			"  node rpc-drive.mjs --state               print live RpcSessionState",
 			"  node rpc-drive.mjs --prompt <msg> ...    drive a real turn (needs a model)",
+			"  node rpc-drive.mjs --with-mock <api> --with-reasoning --prompt <msg> [--evidence SLUG]",
 			"",
 		].join("\n"),
 	);

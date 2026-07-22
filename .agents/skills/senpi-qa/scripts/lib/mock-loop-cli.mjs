@@ -2,6 +2,7 @@ const KNOWN_COMMANDS = new Set([
 	"--run",
 	"--self-test",
 	"--with-mcp-tool",
+	"--with-reasoning",
 	"--with-text-tool-leak",
 	"--with-tool",
 	"--with-truncated-text-tool-leak",
