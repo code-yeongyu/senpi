@@ -1,5 +1,16 @@
 # Core Extensions Changes
 
+## 2026-07-22 - Config-reload rejection loop breaker
+
+### What changed
+
+- `builtin/config-reload/index.ts`: rejected watch registrations are now fingerprinted (`id`, `displayName`, `targets`, `hasValidate`) and remembered per registration id. A synchronous re-registration with an identical payload after a rejection is ignored without re-emitting `CONFIG_WATCH_REJECTED`, breaking the reject → re-register synchronous recursion that crashed startup with `RangeError: Maximum call stack size exceeded`. Acceptance and unregistration clear the recorded fingerprint, so a repaired registration with a changed payload is processed normally. Suppressions are logged once at debug level as `registration_rejection_suppressed`.
+- `test/suite/config-reload-extension.test.ts`: regression coverage for the single-rejection loop break and for post-rejection repair with a changed target.
+
+### Why
+
+External plugins that re-register synchronously from a `CONFIG_WATCH_REJECTED` listener (sticky-rejection recovery) recursed unboundedly against restricted-target rejections; the existing identity guard only covered accepted registrations re-emitted on ready, and rejected registrations were never recorded.
+
 ## 2026-07-21 - Look-at and image settings context APIs
 
 ### What changed

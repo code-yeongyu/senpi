@@ -17,6 +17,7 @@ export type ConfigReloadLogEvent =
 	| "reload_completed"
 	| "validation_rejected"
 	| "registration_rejected"
+	| "registration_rejection_suppressed"
 	| "watcher_error"
 	| "registration_added"
 	| "registration_removed";
@@ -29,6 +30,7 @@ export interface ConfigReloadLogDetails {
 	reload_completed: { durationMs: number };
 	validation_rejected: { registrationId: string; errorCount: number };
 	registration_rejected: { registrationId: string; errorCount: number };
+	registration_rejection_suppressed: { registrationId: string };
 	watcher_error: { path: string; message: string };
 	registration_added: { id: string };
 	registration_removed: { id: string };
