@@ -11,69 +11,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
-    name: Check and test
+  build-check-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version: 22
           cache: npm
 
       - name: Install system dependencies
         run: |
-          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
-          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y \
-            libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
-          sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
+          sudo apt-get update
+          sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
+          sudo ln -s $(which fdfind) /usr/local/bin/fd
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
+
+      - name: Build
+        run: npm run build
 
       - name: Check
         run: npm run check
 
-      - name: Build workspace package entries
-        run: npm run build
-
       - name: Test
-        timeout-minutes: 50
         run: npm test
-
-  terminal-cross-os:
-    name: Terminal tools (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
-
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
-        with:
-          node-version: '24'
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      # The persistent-terminal TS runtime + tool suite must pass on all three OS. Native
-      # ConPTY/PTY behavior is proven separately by the Native Prebuilds cargo job; here the
-      # loader falls back to the child_process pipe backend when no host prebuild is present,
-      # so these tests exercise the cross-OS TS layer (loader, session, screen, tools).
-      - name: PTY package tests
-        run: npm run test --workspace @earendil-works/pi-pty
-
-      - name: Terminal extension + shell resolution tests
-        shell: bash
-        run: npx vitest run test/suite/terminal-extension.test.ts test/suite/terminal-settings-notify.test.ts test/suite/shell-config-kind.test.ts
-        working-directory: packages/coding-agent

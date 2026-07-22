@@ -36,6 +36,7 @@ import { existsSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { computeNextVersion } from "./calver.mjs";
 import {
+	runCheckModelData,
 	runGenerateImageModels,
 	runGenerateModels,
 	runInstallLock,
@@ -298,6 +299,7 @@ function main() {
 	runPackageLockRefresh(args.dryRun, runCommand, log, dryRunLog);
 	runGenerateModels(args.dryRun, runCommand, log, dryRunLog);
 	runGenerateImageModels(args.dryRun, runCommand, log, dryRunLog);
+	runCheckModelData(args.dryRun, runCommand, log, dryRunLog);
 	runShrinkwrap(args.dryRun, runCommand, log, dryRunLog);
 	runInstallLock(args.dryRun, runCommand, log, dryRunLog);
 	stampChangelogs(version, date, args.dryRun, capturedChangelogSubsections, log, dryRunLog);

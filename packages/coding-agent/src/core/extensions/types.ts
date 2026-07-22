@@ -31,6 +31,7 @@ import type {
 	SimpleStreamOptions,
 	TextContent,
 	ToolResultMessage,
+	Usage,
 } from "@earendil-works/pi-ai";
 import type {
 	AutocompleteItem,
@@ -1065,6 +1066,8 @@ interface ToolResultEventBase {
 	input: Record<string, unknown>;
 	content: (TextContent | ImageContent)[];
 	isError: boolean;
+	/** Usage from the tool execution itself, if available. */
+	usage?: Usage;
 }
 
 export interface BashToolResultEvent extends ToolResultEventBase {
@@ -1233,6 +1236,7 @@ export interface ToolResultEventResult {
 	content?: (TextContent | ImageContent)[];
 	details?: unknown;
 	isError?: boolean;
+	usage?: Usage;
 }
 
 export interface MessageEndEventResult {
@@ -1278,6 +1282,7 @@ export interface SessionBeforeTreeResult {
 	summary?: {
 		summary: string;
 		details?: unknown;
+		usage?: Usage;
 	};
 	/** Override custom instructions for summarization */
 	customInstructions?: string;

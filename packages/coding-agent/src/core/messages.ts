@@ -75,12 +75,29 @@ export interface CompactionSummaryMessage {
 	timestamp: number;
 }
 
+export interface UserMessageWithAttachments {
+	role: "user-with-attachments";
+	content: string | (TextContent | ImageContent)[];
+	timestamp: number;
+	attachments?: unknown[];
+}
+
+export interface ArtifactMessage {
+	role: "artifact";
+	action: "create" | "update" | "delete";
+	filename: string;
+	content?: string;
+	title?: string;
+	timestamp: string;
+}
+
 // Extend CustomAgentMessages via declaration merging
 declare module "@earendil-works/pi-agent-core" {
 	interface CustomAgentMessages {
 		bashExecution: BashExecutionMessage;
 		custom: CustomMessage;
 		branchSummary: BranchSummaryMessage;
+		compactionSummary: CompactionSummaryMessage;
 	}
 }
 
@@ -158,50 +175,67 @@ export function createCustomMessage(
 export function convertToLlm(messages: AgentMessage[]): Message[] {
 	return messages
 		.map((m): Message | undefined => {
-			switch (m.role) {
+			const message = m as AgentMessage | UserMessageWithAttachments | ArtifactMessage;
+			switch (message.role) {
 				case "bashExecution":
 					// Skip messages excluded from context (!! prefix)
-					if (m.excludeFromContext) {
+					if (message.excludeFromContext) {
 						return undefined;
 					}
 					return {
 						role: "user",
-						content: [{ type: "text", text: bashExecutionToText(m) }],
-						timestamp: m.timestamp,
+						content: [{ type: "text", text: bashExecutionToText(message) }],
+						timestamp: message.timestamp,
 					};
 				case "custom": {
-					if (isContextExcludedCustomMessage(m.customType)) {
+					if (isContextExcludedCustomMessage(message.customType)) {
 						return undefined;
 					}
 
-					const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
+					const content =
+						typeof message.content === "string"
+							? [{ type: "text" as const, text: message.content }]
+							: message.content;
 					return {
 						role: "user",
 						content,
-						timestamp: m.timestamp,
+						timestamp: message.timestamp,
 					};
 				}
+				case "user-with-attachments":
+					return {
+						role: "user",
+						content: message.content,
+						timestamp: message.timestamp,
+					};
 				case "branchSummary":
 					return {
 						role: "user",
-						content: [{ type: "text" as const, text: BRANCH_SUMMARY_PREFIX + m.summary + BRANCH_SUMMARY_SUFFIX }],
-						timestamp: m.timestamp,
+						content: [
+							{ type: "text" as const, text: BRANCH_SUMMARY_PREFIX + message.summary + BRANCH_SUMMARY_SUFFIX },
+						],
+						timestamp: message.timestamp,
 					};
 				case "compactionSummary":
 					return {
 						role: "user",
 						content: [
-							{ type: "text" as const, text: COMPACTION_SUMMARY_PREFIX + m.summary + COMPACTION_SUMMARY_SUFFIX },
+							{
+								type: "text" as const,
+								text: COMPACTION_SUMMARY_PREFIX + message.summary + COMPACTION_SUMMARY_SUFFIX,
+							},
 						],
-						timestamp: m.timestamp,
+						timestamp: message.timestamp,
 					};
 				case "user":
 				case "assistant":
 				case "toolResult":
-					return m;
+					return message;
+				case "artifact":
+					return undefined;
 				default:
 					// biome-ignore lint/correctness/noSwitchDeclarations: fine
-					const _exhaustiveCheck: never = m;
+					const _exhaustiveCheck: never = message;
 					return undefined;
 			}
 		})

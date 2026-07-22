@@ -12,9 +12,10 @@ const packages = [
 	{ directory: "packages/pty", name: "@earendil-works/pi-pty" },
 	{ directory: "packages/tui", name: "@earendil-works/pi-tui" },
 	{ directory: "packages/agent", name: "@earendil-works/pi-agent-core" },
+	{ directory: "packages/storage/sqlite-node", name: "@earendil-works/pi-storage-sqlite-node" },
 	{ directory: "packages/senpi-codemode", name: "@code-yeongyu/senpi-codemode" },
 	{ directory: "packages/coding-agent", name: "@code-yeongyu/senpi" },
-	{ directory: "packages/orchestrator", name: "@code-yeongyu/senpi-orchestrator" },
+	{ directory: "packages/server", name: "@code-yeongyu/senpi-server" },
 ];
 const packageCliCommand = "senpi";
 const captureMaxBufferBytes = 64 * 1024 * 1024;
@@ -218,21 +219,21 @@ function main() {
 	const binaryDirectory = join(outDir, "bun");
 	mkdirSync(tarballDirectory, { recursive: true });
 
-	if (!options.skipCheck || !options.skipTest) {
-		run("npm", ["--prefix", "packages/ai", "run", "generate-models"], { cwd: repoRoot });
-	}
+	// Release artifacts always use a freshly generated, strictly validated catalog,
+	// including when checks or tests are explicitly skipped.
+	run("npm", ["run", "generate:models"], { cwd: repoRoot });
 
 	if (!options.skipCheck) {
 		run("npm", ["run", "check"], { cwd: repoRoot });
 	}
 
-	if (!options.skipTest) {
-		run("npm", ["test"], { cwd: repoRoot });
-	}
-
 	for (const pkg of packages) {
 		run("npm", ["run", "clean"], { cwd: pkg.directory });
-		run("npm", ["run", "build"], { cwd: pkg.directory });
+		run("npm", ["run", pkg.directory === "packages/ai" ? "build:offline" : "build"], { cwd: pkg.directory });
+	}
+
+	if (!options.skipTest) {
+		run("./test.sh", [], { cwd: repoRoot });
 	}
 
 	prepareSenpiBundledWorkspaces(repoRoot);

@@ -584,6 +584,10 @@ export function createRpcConnectionHandler(
 				return success(id, "cycle_thinking_level", { level });
 			}
 
+			case "get_available_thinking_levels": {
+				return success(id, "get_available_thinking_levels", { levels: session.getAvailableThinkingLevels() });
+			}
+
 			// =================================================================
 			// Queue Modes
 			// =================================================================

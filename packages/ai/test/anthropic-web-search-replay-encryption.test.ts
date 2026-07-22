@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getModel } from "../src/models.ts";
+import { getModel } from "../src/models-static.ts";
 import "../src/providers/register-builtins.ts";
 import { streamSimple } from "../src/stream.ts";
 import type { AssistantMessage, Context, Model } from "../src/types.ts";

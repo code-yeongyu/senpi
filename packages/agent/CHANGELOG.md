@@ -4,11 +4,19 @@
 
 ### Breaking Changes
 
+- Changed `SessionStorage` to support cursor-based entry reads, session names/statistics, root-or-compaction paths, and retained compaction checkpoints ([#6594](https://github.com/earendil-works/pi/pull/6594) by [@cristinaponcela](https://github.com/cristinaponcela)).
+- Moved the `uuidv7` export to `@earendil-works/pi-ai` ([#6834](https://github.com/earendil-works/pi/pull/6834) by [@xl0](https://github.com/xl0)).
+
 ### Added
+
+- Added retry policy support and lifecycle events for compaction and branch-summary operations in `AgentHarness` ([#6901](https://github.com/earendil-works/pi/pull/6901) by [@davidbrai](https://github.com/davidbrai)).
+- Added usage metadata to tool results, compaction entries, and branch summaries in the agent harness ([#6671](https://github.com/earendil-works/pi/pull/6671) by [@davidbrai](https://github.com/davidbrai)).
 
 ### Changed
 
 ### Fixed
+
+- Restored the `Agent` `streamFn` option and host-configurable fallback for omitted agent-loop stream functions without reintroducing a `pi-ai/compat` dependency ([#6915](https://github.com/earendil-works/pi/issues/6915)).
 
 ### Removed
 

@@ -35,7 +35,6 @@
 - Merge-conflict risk: low. The app-server tree and HEAD fixture are fork-only; on a future Codex pin, regenerate evidence
   first and then re-derive the handwritten facade.
 
-||||||| 9ee0c4a3e
 ## 2026-07-21 — config-reload settings-manager seam
 
 - Changed: `src/core/settings-manager.ts` tracks recent process-written settings content hashes by absolute path, with bounded, expiring, consume-on-match entries shared across settings-manager and storage instances.

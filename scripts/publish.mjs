@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { assertSenpiPackedWorkspaceFiles, prepareSenpiBundledWorkspaces } from "./prepare-senpi-bundled-workspaces.mjs";
 
 // Only STANDALONE-published npm packages belong here. Excluded on purpose:
-//  - @code-yeongyu/senpi-orchestrator is `private: true` (never published).
+//  - @code-yeongyu/senpi-server is `private: true` (never published).
 //  - @code-yeongyu/senpi-codemode ships via senpi's `bundleDependencies` (packed
 //    INTO the @code-yeongyu/senpi tarball), so consumers get it without a registry
 //    entry; publishing it standalone via OIDC trusted publishing fails E404 because
@@ -14,6 +14,7 @@ import { assertSenpiPackedWorkspaceFiles, prepareSenpiBundledWorkspaces } from "
 const packages = [
 	{ directory: "packages/ai", name: "@earendil-works/pi-ai" },
 	{ directory: "packages/agent", name: "@earendil-works/pi-agent-core" },
+	{ directory: "packages/storage/sqlite-node", name: "@earendil-works/pi-storage-sqlite-node" },
 	{ directory: "packages/tui", name: "@earendil-works/pi-tui" },
 	{ directory: "packages/coding-agent", name: "@code-yeongyu/senpi" },
 ];

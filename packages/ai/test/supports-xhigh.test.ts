@@ -106,10 +106,10 @@ describe("getSupportedThinkingLevels", () => {
 		}
 	});
 
-	it("includes only max for Kimi Coding K3", () => {
+	it("includes only low, high, max for Kimi Coding K3", () => {
 		const model = getModel("kimi-coding", "k3");
 		expect(model).toBeDefined();
-		expect(getSupportedThinkingLevels(model!)).toEqual(["max"]);
+		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "high", "max"]);
 	});
 
 	it("includes only high for OpenCode Grok Build", () => {

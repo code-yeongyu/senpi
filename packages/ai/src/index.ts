@@ -52,6 +52,8 @@ export * from "./utils/json-parse.ts";
 export * from "./utils/overflow.ts";
 export * from "./utils/retry.ts";
 export * from "./utils/stop-details.ts";
+export { contentText } from "./utils/text.ts";
 export * from "./utils/tool-pair-repair.ts";
 export * from "./utils/typebox-helpers.ts";
+export { uuidv7 } from "./utils/uuid.ts";
 export * from "./utils/validation.ts";
