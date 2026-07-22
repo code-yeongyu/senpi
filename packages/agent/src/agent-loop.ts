@@ -377,6 +377,19 @@ async function streamAssistantResponse(
 ): Promise<AssistantMessage> {
 	let partialMessage: AssistantMessage | null = null;
 	let addedPartial = false;
+	const thinkingTiming = new Map<number, { startedAt: number; endedAt?: number }>();
+
+	function propagateThinkingTiming(finalMessage: AssistantMessage): void {
+		for (const timing of thinkingTiming.values()) {
+			if (timing.endedAt === undefined) timing.endedAt = Date.now();
+		}
+		for (const [contentIndex, timing] of thinkingTiming) {
+			const block = finalMessage.content[contentIndex];
+			if (block?.type !== "thinking") continue;
+			block.startedAt = timing.startedAt;
+			block.endedAt = timing.endedAt;
+		}
+	}
 
 	// Dedicated controller for the provider request so the loop can tear the
 	// request down itself (idle timeout), not only when the caller aborts.
@@ -452,6 +465,23 @@ async function streamAssistantResponse(
 					case "toolcall_end":
 						if (partialMessage) {
 							partialMessage = event.partial;
+							if (
+								event.type === "thinking_start" ||
+								event.type === "thinking_delta" ||
+								event.type === "thinking_end"
+							) {
+								let timing = thinkingTiming.get(event.contentIndex);
+								if (event.type === "thinking_start" && timing === undefined) {
+									timing = { startedAt: Date.now() };
+									thinkingTiming.set(event.contentIndex, timing);
+								}
+								if (event.type === "thinking_end" && timing !== undefined) timing.endedAt = Date.now();
+								const block = partialMessage.content[event.contentIndex];
+								if (block?.type === "thinking" && timing !== undefined) {
+									block.startedAt = timing.startedAt;
+									if (timing.endedAt !== undefined) block.endedAt = timing.endedAt;
+								}
+							}
 							context.messages[context.messages.length - 1] = partialMessage;
 							await emit({
 								type: "message_update",
@@ -464,6 +494,7 @@ async function streamAssistantResponse(
 					case "done":
 					case "error": {
 						const finalMessage = normalizeTerminalAssistantMessage(await response.result(), event);
+						propagateThinkingTiming(finalMessage);
 						if (addedPartial) {
 							context.messages[context.messages.length - 1] = finalMessage;
 						} else {
@@ -482,6 +513,7 @@ async function streamAssistantResponse(
 		}
 
 		const finalMessage = await response.result();
+		propagateThinkingTiming(finalMessage);
 		if (addedPartial) {
 			context.messages[context.messages.length - 1] = finalMessage;
 		} else {
@@ -497,6 +529,7 @@ async function streamAssistantResponse(
 			error,
 			partialMessage,
 		);
+		propagateThinkingTiming(finalMessage);
 		if (addedPartial) {
 			context.messages[context.messages.length - 1] = finalMessage;
 		} else {
