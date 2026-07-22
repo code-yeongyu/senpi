@@ -1,5 +1,16 @@
 # Local fork changes
 
+## 2026-07-22 — app-server runtime import test without npm subprocess
+
+- Changed: `test/suite/app-server-protocol.test.ts` now executes its runtime `.js` import probe with
+  `node --import tsx --eval` instead of `npx tsx -e`.
+- Why: npm configuration warnings are unrelated to the protocol import contract but are emitted on the spawned
+  subprocess stderr in CI, making the otherwise-successful test fail.
+- What changed: test runner invocation only; the imported module, assertions, and runtime behavior are unchanged.
+- Why the extension system could not handle this: this is hermetic package test infrastructure, not runtime extension
+  behavior.
+- Merge-conflict risk: low. The only conflict zone is the subprocess invocation in the focused protocol metadata test.
+
 ## 2026-07-22 — Fully self-contained publish tarball (npm packaging MODULE_NOT_FOUND fix)
 
 - Changed:

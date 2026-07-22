@@ -270,10 +270,11 @@ describe("app-server protocol metadata", () => {
 		const manifest = readCapabilityManifest();
 		const stableCount = manifest.implemented.stable.length + manifest.out.stable.length;
 		const result = spawnSync(
-			"npx",
+			process.execPath,
 			[
+				"--import",
 				"tsx",
-				"-e",
+				"--eval",
 				'import {EXPERIMENTAL_SERVER_NOTIFICATION_METHODS,STABLE_CLIENT_REQUEST_METHODS} from "./src/modes/app-server/protocol/methods.js"; console.log("STABLE="+STABLE_CLIENT_REQUEST_METHODS.length,"EXPERIMENTAL_NOTIFICATIONS="+EXPERIMENTAL_SERVER_NOTIFICATION_METHODS.length,STABLE_CLIENT_REQUEST_METHODS.includes("thread/start"),EXPERIMENTAL_SERVER_NOTIFICATION_METHODS.includes("thread/settings/updated"))',
 			],
 			{
