@@ -40,7 +40,7 @@
 	"devDependencies": {
 		"@mariozechner/mini-lit": "0.2.1",
 		"@tailwindcss/cli": "4.3.0",
-		"concurrently": "9.2.1",
+		"concurrently": "9.2.4",
 		"tailwindcss": "4.3.0",
 		"typescript": "6.0.3"
 	},

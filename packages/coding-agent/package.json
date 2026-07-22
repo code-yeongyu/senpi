@@ -89,6 +89,7 @@
 		"@earendil-works/pi-tui"
 	],
 	"overrides": {
+		"@hono/node-server": "2.0.10",
 		"rimraf": "6.1.2",
 		"gaxios": {
 			"rimraf": "6.1.2"
