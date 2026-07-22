@@ -3,7 +3,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Tool } from "@earendil-works/pi-ai";
 import type { CompactionResult } from "../../../compaction/index.ts";
 import { convertToLlm } from "../../../messages.ts";
-import type { CompactionEntry } from "../../../session-manager.ts";
+import { buildContextEntries, type CompactionEntry, sessionEntryToContextMessages } from "../../../session-manager.ts";
 import type { ContextUsage, ExtensionAPI, ExtensionContext, SessionBeforeCompactEvent } from "../../types.ts";
 import * as checkpointState from "./checkpoint-state.ts";
 import * as breaker from "./circuit-breaker.ts";
@@ -150,6 +150,10 @@ function createBlockingRemoteCompactionEvent(
 
 export default function compactionExtension(pi: ExtensionAPI): void {
 	let state: CompactionExtensionState = createInitialState();
+	// Messages not yet persisted in the session branch (the in-flight prompt),
+	// captured at context-assembly time so the remote-compaction payload replay
+	// can append them after the branch-derived items.
+	let pendingProviderMessages: AgentMessage[] = [];
 	const degradationState = createDegradationMonitorState();
 	const restorationState = state.restoration ?? restoration.createRestorationTrackerState();
 	state = { ...state, restoration: restorationState };
@@ -476,6 +480,14 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("context", (event, ctx) => {
+		// Messages beyond the persisted branch history are the in-flight prompt;
+		// stash them so the remote-compaction payload replay can append them.
+		const branchEntries = typeof ctx.sessionManager.getBranch === "function" ? ctx.sessionManager.getBranch() : [];
+		const historyMessageCount = buildContextEntries(branchEntries).flatMap((entry) =>
+			sessionEntryToContextMessages(entry),
+		).length;
+		pendingProviderMessages = event.messages.slice(historyMessageCount);
+
 		const usage = ctx.getContextUsage();
 		const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
 		const promptContextWindow = getPromptContextWindow(contextWindow, ctx.model?.maxTokens);
@@ -493,7 +505,7 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 	pi.on("before_provider_request", (event, ctx) => {
 		return rewriteOpenAiPayloadWithRemoteCompaction(
 			event.payload,
-			{ model: ctx.model, branchEntries: ctx.sessionManager.getBranch() },
+			{ model: ctx.model, branchEntries: ctx.sessionManager.getBranch(), pendingMessages: pendingProviderMessages },
 			(data) => pi.events.emit(SENPI_COMPACTION_EVENT, data),
 		);
 	});

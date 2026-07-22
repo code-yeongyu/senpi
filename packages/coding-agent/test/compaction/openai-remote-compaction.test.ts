@@ -11,6 +11,12 @@ import {
 	runOpenAiRemoteCompaction,
 } from "../../src/core/extensions/builtin/compaction/openai-remote.ts";
 import type { SessionBeforeCompactEvent } from "../../src/core/extensions/types.ts";
+import {
+	BRANCH_SUMMARY_PREFIX,
+	BRANCH_SUMMARY_SUFFIX,
+	COMPACTION_SUMMARY_PREFIX,
+	COMPACTION_SUMMARY_SUFFIX,
+} from "../../src/core/messages.ts";
 import type { SessionEntry, SessionMessageEntry } from "../../src/core/session-manager.ts";
 
 const OPENAI_MODEL = {
@@ -112,7 +118,7 @@ function compactionEvent(branchEntries: SessionEntry[]): SessionBeforeCompactEve
 }
 
 describe("OpenAI remote compaction", () => {
-	it("builds a compact request only when every context message is OpenAI Responses-compatible", () => {
+	it("builds a compact request from a fully OpenAI-native branch", () => {
 		const request = createOpenAiRemoteCompactionRequest({
 			model: OPENAI_MODEL,
 			systemPrompt: "You are senpi.",
@@ -386,7 +392,243 @@ describe("OpenAI remote compaction", () => {
 		]);
 	});
 
-	it("falls back when a non-OpenAI assistant message is present", () => {
+	it("degrades a non-OpenAI assistant message into replayable input items", () => {
+		const branch = openAiBranch();
+		branch.splice(
+			2,
+			1,
+			messageEntry("anthropic", "u1", {
+				role: "assistant",
+				api: "anthropic-messages",
+				provider: "anthropic",
+				model: "claude-opus-4-7",
+				content: [
+					{ type: "thinking", thinking: "claude reasoned here", thinkingSignature: "sig_anthropic" },
+					{ type: "text", text: "not native" },
+				],
+				usage: {
+					input: 10,
+					output: 2,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 12,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "stop",
+				timestamp: 2,
+			}),
+		);
+
+		const request = createOpenAiRemoteCompactionRequest({
+			model: OPENAI_MODEL,
+			systemPrompt: "You are senpi.",
+			branchEntries: branch,
+			tokensBefore: 1234,
+		});
+
+		expect(request).toBeDefined();
+		expect(request?.body.input).toContainEqual({
+			type: "message",
+			role: "assistant",
+			status: "completed",
+			id: expect.any(String),
+			content: [{ type: "output_text", text: "not native", annotations: [] }],
+		});
+		// Foreign thinking blocks have no OpenAI reasoning item and are skipped.
+		expect(JSON.stringify(request?.body.input)).not.toContain("claude reasoned here");
+	});
+
+	it("converts bash execution messages to user text instead of bailing", () => {
+		const branch = [
+			...openAiBranch(),
+			messageEntry("bash1", "u2", {
+				role: "bashExecution",
+				command: "ls",
+				output: "file.txt",
+				exitCode: 0,
+				cancelled: false,
+				truncated: false,
+				timestamp: 5,
+			}),
+		];
+
+		const request = createOpenAiRemoteCompactionRequest({
+			model: OPENAI_MODEL,
+			systemPrompt: "You are senpi.",
+			branchEntries: branch,
+			tokensBefore: 1234,
+		});
+
+		expect(request?.body.input).toContainEqual({
+			role: "user",
+			content: [{ type: "input_text", text: "Ran `ls`\n```\nfile.txt\n```" }],
+		});
+	});
+
+	it("degrades a prior local compaction entry into a summary user message", () => {
+		const branch: SessionEntry[] = [
+			...openAiBranch(),
+			{
+				type: "compaction",
+				id: "localcompact",
+				parentId: "u2",
+				timestamp: new Date(1_775_000_002_000).toISOString(),
+				summary: "local summary text",
+				firstKeptEntryId: "u2",
+				tokensBefore: 500,
+				fromHook: true,
+			},
+			messageEntry("u3", "localcompact", {
+				role: "user",
+				content: [{ type: "text", text: "after local compaction" }],
+				timestamp: 6,
+			}),
+		];
+
+		const request = createOpenAiRemoteCompactionRequest({
+			model: OPENAI_MODEL,
+			systemPrompt: "You are senpi.",
+			branchEntries: branch,
+			tokensBefore: 1234,
+		});
+
+		expect(request).toBeDefined();
+		expect(request?.body.input).toContainEqual({
+			role: "user",
+			content: [
+				{
+					type: "input_text",
+					text: `${COMPACTION_SUMMARY_PREFIX}local summary text${COMPACTION_SUMMARY_SUFFIX}`,
+				},
+			],
+		});
+		expect(request?.body.input).toContainEqual({
+			role: "user",
+			content: [{ type: "input_text", text: "after local compaction" }],
+		});
+	});
+
+	it("includes branch summary and custom message entries as user text", () => {
+		const branch: SessionEntry[] = [
+			...openAiBranch(),
+			{
+				type: "branch_summary",
+				id: "bs1",
+				parentId: "u2",
+				timestamp: new Date(1_775_000_002_000).toISOString(),
+				fromId: "u1",
+				summary: "branch work",
+			},
+			{
+				type: "custom_message",
+				id: "cm1",
+				parentId: "bs1",
+				timestamp: new Date(1_775_000_003_000).toISOString(),
+				customType: "note",
+				content: "remember this",
+				display: false,
+			},
+		];
+
+		const request = createOpenAiRemoteCompactionRequest({
+			model: OPENAI_MODEL,
+			systemPrompt: "You are senpi.",
+			branchEntries: branch,
+			tokensBefore: 1234,
+		});
+
+		expect(request).toBeDefined();
+		expect(request?.body.input).toContainEqual({
+			role: "user",
+			content: [{ type: "input_text", text: `${BRANCH_SUMMARY_PREFIX}branch work${BRANCH_SUMMARY_SUFFIX}` }],
+		});
+		expect(request?.body.input).toContainEqual({
+			role: "user",
+			content: [{ type: "input_text", text: "remember this" }],
+		});
+	});
+
+	it("renders image tool results as structured output for image-capable models and text fallback otherwise", () => {
+		const branch: SessionEntry[] = [
+			{
+				type: "model_change",
+				id: "model",
+				parentId: null,
+				timestamp: new Date(1_775_000_000_000).toISOString(),
+				provider: "openai",
+				modelId: "gpt-5.4",
+			},
+			messageEntry("u1", "model", {
+				role: "user",
+				content: [{ type: "text", text: "look at this" }],
+				timestamp: 1,
+			}),
+			messageEntry("t1", "u1", {
+				role: "toolResult",
+				toolCallId: "call_shot|fc_shot",
+				toolName: "read",
+				content: [
+					{ type: "text", text: "screenshot follows" },
+					{ type: "image", mimeType: "image/png", data: "QUJD" },
+				],
+				isError: false,
+				timestamp: 2,
+			}),
+		];
+
+		const imageCapable = createOpenAiRemoteCompactionRequest({
+			model: OPENAI_MODEL,
+			systemPrompt: "You are senpi.",
+			branchEntries: branch,
+			tokensBefore: 1234,
+		});
+		expect(imageCapable?.body.input).toContainEqual({
+			type: "function_call_output",
+			call_id: "call_shot",
+			output: [
+				{ type: "input_text", text: "screenshot follows" },
+				{ type: "input_image", detail: "auto", image_url: "data:image/png;base64,QUJD" },
+			],
+		});
+
+		const textOnlyModel = { ...OPENAI_MODEL, input: ["text"] } as typeof OPENAI_MODEL;
+		const textOnly = createOpenAiRemoteCompactionRequest({
+			model: textOnlyModel,
+			systemPrompt: "You are senpi.",
+			branchEntries: branch,
+			tokensBefore: 1234,
+		});
+		expect(textOnly?.body.input).toContainEqual({
+			type: "function_call_output",
+			call_id: "call_shot",
+			output: "screenshot follows",
+		});
+
+		const imageOnlyBranch: SessionEntry[] = [
+			branch[0]!,
+			messageEntry("t2", "model", {
+				role: "toolResult",
+				toolCallId: "call_pic|fc_pic",
+				toolName: "read",
+				content: [{ type: "image", mimeType: "image/png", data: "QUJD" }],
+				isError: false,
+				timestamp: 3,
+			}),
+		];
+		const imageOnly = createOpenAiRemoteCompactionRequest({
+			model: textOnlyModel,
+			systemPrompt: "You are senpi.",
+			branchEntries: imageOnlyBranch,
+			tokensBefore: 1234,
+		});
+		expect(imageOnly?.body.input).toContainEqual({
+			type: "function_call_output",
+			call_id: "call_pic",
+			output: "(see attached image)",
+		});
+	});
+
+	it("runs remote compaction for a mixed-provider branch when the current model supports it", async () => {
 		const branch = openAiBranch();
 		branch.splice(
 			2,
@@ -410,14 +652,155 @@ describe("OpenAI remote compaction", () => {
 			}),
 		);
 
-		expect(
-			createOpenAiRemoteCompactionRequest({
-				model: OPENAI_MODEL,
-				systemPrompt: "You are senpi.",
-				branchEntries: branch,
-				tokensBefore: 1234,
+		const emitted: unknown[] = [];
+		const capturedBodies: unknown[] = [];
+		const compactOnlyModel = {
+			...OPENAI_MODEL,
+			baseUrl: "https://ccapi.example.com/v1",
+			compat: { supportsWebSocket: false },
+		} satisfies Model<"openai-responses">;
+		const ctx = {
+			model: compactOnlyModel,
+			serviceTier: undefined,
+			modelRegistry: {
+				getApiKeyAndHeaders: async () => ({ ok: true as const, apiKey: "test-key" }),
+			},
+			sessionManager: { getSessionId: () => "session-1" },
+			getSystemPrompt: () => "You are senpi.",
+		};
+
+		const result = await runOpenAiRemoteCompaction(ctx, compactionEvent(branch), (event) => emitted.push(event), {
+			fetch: async (_url, init) => {
+				capturedBodies.push(JSON.parse(String(init?.body)));
+				return new Response(
+					JSON.stringify({
+						id: "resp_compact_mixed",
+						created_at: 1_775_000_002,
+						object: "response.compaction",
+						output: [
+							{
+								type: "message",
+								id: "u1_remote",
+								role: "user",
+								content: [{ type: "input_text", text: "Please inspect the build." }],
+							},
+							{ type: "compaction", id: "cmp_mixed", encrypted_content: "encrypted-mixed" },
+						],
+						usage: { input_tokens: 100, output_tokens: 10, total_tokens: 110 },
+					}),
+					{ status: 200, headers: { "content-type": "application/json" } },
+				);
+			},
+		});
+
+		expect(result?.details.schema).toBe(OPENAI_REMOTE_COMPACTION_SCHEMA);
+		expect(emitted).toMatchObject([
+			{ action: "remote_started", transport: "compact-endpoint" },
+			{ action: "remote_completed", transport: "compact-endpoint" },
+		]);
+		expect(capturedBodies).toHaveLength(1);
+		expect((capturedBodies[0] as { input: unknown[] }).input).toContainEqual({
+			type: "message",
+			role: "assistant",
+			status: "completed",
+			id: expect.any(String),
+			content: [{ type: "output_text", text: "not native", annotations: [] }],
+		});
+	});
+
+	it("rewrites provider payloads when post-compaction history is not OpenAI-native", () => {
+		const remoteResult = buildOpenAiRemoteCompactionResult({
+			model: OPENAI_MODEL,
+			firstKeptEntryId: "u2",
+			tokensBefore: 1234,
+			requestInputItemCount: 5,
+			response: {
+				id: "resp_compact",
+				created_at: 1_775_000_001,
+				object: "response.compaction",
+				output: [
+					{
+						type: "message",
+						id: "u1_remote",
+						role: "user",
+						content: [{ type: "input_text", text: "Please inspect the build." }],
+					},
+					{ type: "compaction", id: "cmp_1", encrypted_content: "encrypted-summary" },
+				],
+			},
+		});
+		const branchWithMixedTail: SessionEntry[] = [
+			...openAiBranch(),
+			{
+				type: "compaction",
+				id: "compact",
+				parentId: "u2",
+				timestamp: new Date(1_775_000_002_000).toISOString(),
+				summary: remoteResult.summary,
+				firstKeptEntryId: remoteResult.firstKeptEntryId,
+				tokensBefore: remoteResult.tokensBefore,
+				details: remoteResult.details,
+				fromHook: true,
+			},
+			messageEntry("bash1", "compact", {
+				role: "bashExecution",
+				command: "git status",
+				output: "clean",
+				exitCode: 0,
+				cancelled: false,
+				truncated: false,
+				timestamp: 5,
 			}),
-		).toBeUndefined();
+			messageEntry("a2", "bash1", {
+				role: "assistant",
+				api: "anthropic-messages",
+				provider: "anthropic",
+				model: "claude-opus-4-7",
+				content: [{ type: "text", text: "switched to claude after compaction" }],
+				usage: {
+					input: 10,
+					output: 2,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 12,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "stop",
+				timestamp: 6,
+			}),
+		];
+
+		const rewritten = rewriteOpenAiPayloadWithRemoteCompaction(
+			{
+				model: "gpt-5.4",
+				input: [{ role: "developer", content: "current system prompt" }],
+				stream: true,
+			},
+			{ model: OPENAI_MODEL, branchEntries: branchWithMixedTail },
+		);
+
+		expect(rewritten).toMatchObject({
+			model: "gpt-5.4",
+			input: [
+				{ role: "developer", content: "current system prompt" },
+				{
+					type: "message",
+					id: "u1_remote",
+					role: "user",
+					content: [{ type: "input_text", text: "Please inspect the build." }],
+				},
+				{ type: "compaction", id: "cmp_1", encrypted_content: "encrypted-summary" },
+				{ role: "user", content: [{ type: "input_text", text: "Ran `git status`\n```\nclean\n```" }] },
+				{
+					type: "message",
+					role: "assistant",
+					status: "completed",
+					id: expect.any(String),
+					content: [{ type: "output_text", text: "switched to claude after compaction", annotations: [] }],
+				},
+			],
+			stream: true,
+		});
 	});
 
 	it("stores remote compaction replacement input in result details for replay", () => {
@@ -505,6 +888,80 @@ describe("OpenAI remote compaction", () => {
 			{ role: "user", content: [{ type: "input_text", text: "Great. Commit it." }] },
 			{ type: "context_compaction", encrypted_content: "encrypted-websocket-summary" },
 		]);
+	});
+
+	it("appends the pending prompt that is not yet persisted in the branch", () => {
+		const remoteResult = buildOpenAiRemoteCompactionResult({
+			model: OPENAI_MODEL,
+			firstKeptEntryId: "u2",
+			tokensBefore: 1234,
+			requestInputItemCount: 5,
+			response: {
+				id: "resp_compact",
+				created_at: 1_775_000_001,
+				object: "response.compaction",
+				output: [
+					{
+						type: "message",
+						id: "u1_remote",
+						role: "user",
+						content: [{ type: "input_text", text: "Please inspect the build." }],
+					},
+					{ type: "compaction", id: "cmp_1", encrypted_content: "encrypted-summary" },
+				],
+			},
+		});
+		const branchEndingAtCompaction: SessionEntry[] = [
+			...openAiBranch(),
+			{
+				type: "compaction",
+				id: "compact",
+				parentId: "u2",
+				timestamp: new Date(1_775_000_002_000).toISOString(),
+				summary: remoteResult.summary,
+				firstKeptEntryId: remoteResult.firstKeptEntryId,
+				tokensBefore: remoteResult.tokensBefore,
+				details: remoteResult.details,
+				fromHook: true,
+			},
+		];
+
+		const rewritten = rewriteOpenAiPayloadWithRemoteCompaction(
+			{
+				model: "gpt-5.4",
+				input: [
+					{ role: "developer", content: "current system prompt" },
+					{ role: "user", content: [{ type: "input_text", text: "fallback compact summary" }] },
+					{ role: "user", content: [{ type: "input_text", text: "Turn three: after compaction." }] },
+				],
+				stream: true,
+			},
+			{
+				model: OPENAI_MODEL,
+				branchEntries: branchEndingAtCompaction,
+				pendingMessages: [
+					{
+						role: "user",
+						content: [{ type: "text", text: "Turn three: after compaction." }],
+						timestamp: 7,
+					},
+				],
+			},
+		);
+
+		expect(rewritten).toMatchObject({
+			input: [
+				{ role: "developer", content: "current system prompt" },
+				{
+					type: "message",
+					id: "u1_remote",
+					role: "user",
+					content: [{ type: "input_text", text: "Please inspect the build." }],
+				},
+				{ type: "compaction", id: "cmp_1", encrypted_content: "encrypted-summary" },
+				{ role: "user", content: [{ type: "input_text", text: "Turn three: after compaction." }] },
+			],
+		});
 	});
 
 	it("rewrites provider payloads to replay native compacted history plus post-compact messages", () => {

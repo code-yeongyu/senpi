@@ -1,5 +1,42 @@
 # Builtin compaction extension changes
 
+## Preserve the in-flight prompt in remote-compaction payload replay (2026-07-22)
+
+- `index.ts`, `openai-remote.ts`, `openai-remote-convert.ts`: the `before_provider_request` replay after a
+  remote compaction rebuilt the payload from the persisted branch only. The in-flight user prompt is not yet
+  persisted at that point, so the replayed payload silently dropped it — the model never saw the first message
+  after a remote compaction. The `context` handler now stashes the not-yet-persisted tail messages
+  (`pendingProviderMessages`) and the rewrite appends their conversion after the branch-derived items.
+  Pre-existing on main; surfaced by the mixed-history e2e QA scenario.
+- Tests: `test/compaction/openai-remote-compaction.test.ts` (pending-prompt rewrite case) and
+  `.agents/skills/senpi-qa/scripts/compaction-remote-qa.mjs` (asserts the post-compaction payload carries the prompt).
+
+Expected upstream conflict zones: `builtin/compaction/index.ts` context/provider-request handlers,
+`builtin/compaction/openai-remote.ts` payload rewrite.
+
+## OpenAI remote compaction gated on provider capability, not history provenance (2026-07-22)
+
+- `openai-remote-convert.ts` (new, extracted from `openai-remote.ts`): the remote-compaction route no longer
+  requires the entire session branch to be OpenAI Responses-native. The route gate is now provider capability
+  only (current model is `provider "openai"` + `api "openai-responses"`, matching codex's
+  `supports_remote_compaction()`), and branch conversion is total: entries flow through the same
+  `sessionEntryToContextMessages` + `convertToLlm` pipeline the normal context path uses, so foreign-provider
+  assistant messages, bash executions, branch summaries, custom messages, and prior LOCAL compaction entries
+  degrade to their canonical text form instead of forcing a local-summarization fallback. Prior OpenAI remote
+  compaction entries still splice their native `replacementInput` in order.
+- Image-bearing tool results now mirror the Responses payload builder: structured `input_text`/`input_image`
+  parts for image-capable models, `(see attached image)` placeholder otherwise.
+- `rewriteOpenAiPayloadWithRemoteCompaction` no longer silently skips the rewrite when post-compaction history
+  is not OpenAI-native (previously the session then sent the full uncompacted context on the next turn).
+- The `session-not-openai-native` fallback reason is gone; request building can only decline on an empty input
+  (`empty-compaction-input`).
+- Tests: `test/compaction/openai-remote-compaction.test.ts` — degradation cases for mixed providers, bash
+  executions, local compaction entries, branch/custom entries, image tool results, a mixed-history remote run
+  through `runOpenAiRemoteCompaction`, and the post-compaction payload rewrite with a non-native tail.
+
+Expected upstream conflict zones: `builtin/compaction/openai-remote.ts` request building and payload rewrite;
+`builtin/compaction/openai-remote-convert.ts` (new file, no upstream counterpart).
+
 ## Skip placeholder synthesis for errored/aborted assistants (2026-07-22)
 
 - `repair-tool-pairs.ts` no longer synthesizes placeholder tool results for toolCalls declared by
