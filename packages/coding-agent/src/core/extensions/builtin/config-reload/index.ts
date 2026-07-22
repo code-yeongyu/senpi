@@ -107,6 +107,7 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	const subscribe = options.subscribe ?? createFsWatchEventSource();
 	const logger = options.logger ?? createConfigReloadLogger(agentDir);
 	const registrations = new Map<string, ConfigWatchRegistration>();
+	const rejectedRegistrations = new Map<string, string>();
 	const eventUnsubscribes: Array<() => void> = [];
 	const pending = new Map<string, PendingChange>();
 	let engine: ConfigReloadWatchEngine | undefined;
@@ -149,11 +150,22 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 
 	const handleRegistration = (payload: unknown): void => {
 		if (!isConfigWatchRegistration(payload)) return;
+		const fingerprint = registrationFingerprint(payload);
+		// A component may synchronously re-register from a CONFIG_WATCH_REJECTED
+		// listener (e.g. sticky-rejection recovery). Rejected registrations are
+		// never stored, so the identity guard below cannot break that recursion;
+		// ignoring an identical payload after one rejection does.
+		if (rejectedRegistrations.get(payload.id) === fingerprint) {
+			logger.debug("registration_rejection_suppressed", { registrationId: payload.id });
+			return;
+		}
 		const cwd = currentContext?.cwd ?? process.cwd();
 		if (registrationHasRestrictedTarget(payload, cwd, agentDir)) {
+			rejectedRegistrations.set(payload.id, fingerprint);
 			rejectRegistration(payload.id, ["Configuration watch target is restricted"]);
 			return;
 		}
+		rejectedRegistrations.delete(payload.id);
 
 		// A component may re-emit its unchanged registration when it receives the
 		// ready event from rebuildWatchers. Rebuilding for that same payload emits
@@ -169,6 +181,7 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 
 	const handleUnregistration = (payload: unknown): void => {
 		if (!isConfigWatchUnregistration(payload)) return;
+		rejectedRegistrations.delete(payload.id);
 		if (!registrations.delete(payload.id)) return;
 		pending.delete(payload.id);
 		logger.info("registration_removed", { id: payload.id });
@@ -732,6 +745,19 @@ function validateKeybindingsFile(path: string): string | undefined {
 	} catch (error) {
 		return `Invalid keybindings.json: ${errorMessage(error)}`;
 	}
+}
+
+function registrationFingerprint(registration: ConfigWatchRegistration): string {
+	return JSON.stringify({
+		id: registration.id,
+		displayName: registration.displayName,
+		targets: registration.targets.map((target) => ({
+			path: target.path,
+			kind: target.kind,
+			filterGlobs: target.filterGlobs ?? null,
+		})),
+		hasValidate: registration.validate !== undefined,
+	});
 }
 
 function registrationHasRestrictedTarget(
