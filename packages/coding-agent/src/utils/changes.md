@@ -181,3 +181,21 @@
 ### Expected merge conflict zones on next upstream sync
 
 - MEDIUM: `waitForChildProcess` signature and the listener wiring around the pi#5303 idle-grace logic.
+
+## OpenCode-parity duration formatting (2026-07-22)
+
+### What changed
+
+- `duration.ts`: added `formatDuration`, matching OpenCode's duration display boundaries and rounding behavior.
+
+### Why
+
+- Shared duration displays need the same compact output as OpenCode, including its sub-minute rounding behavior.
+
+### Why extension system couldn't handle this
+
+- `formatDuration` is a leaf utility intended for direct use by core display surfaces.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: new `duration.ts` utility and its fork-tracker entry.
