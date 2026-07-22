@@ -34,6 +34,7 @@ import type { DynamicPromptCoreContext } from "../../../dynamic-prompt/build.ts"
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "../../../dynamic-prompt/build.ts";
 import { buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
 import { buildFileOperationsTuning } from "./file-operations.ts";
+import { buildGptEvalRoutingTuning } from "./gpt-eval-routing.ts";
 
 function buildGpt56Core(context: DynamicPromptCoreContext): string {
 	return `You are senpi, a coding agent working as an autonomous deep worker. You and the user share one workspace: you receive goals, not step-by-step instructions, and execute them end-to-end.
@@ -137,6 +138,8 @@ Your STOP GOAL - the turn is over the moment ALL of these hold:
 - The final message reports what you did, what you verified, what you could not (and why), and pre-existing issues left alone.
 
 Until the stop goal holds, keep going - through failed tool calls, long turns, and the temptation to hand back a draft. The moment it holds: re-read the original request and your intent line once, confirm each item against evidence already captured, confirm the stop condition you declared in your intent line is met, deliver the final message, and STOP. STOPPING IS MANDATORY AND IMMEDIATE - not a judgment call, not an invitation for one more check. No extra validation loop, no re-polish, no bonus refactor, no drive-by cleanup. Every action past the stop goal is a defect, not diligence.
+
+${buildGptEvalRoutingTuning()}
 
 ${buildFileOperationsTuning()}`;
 }

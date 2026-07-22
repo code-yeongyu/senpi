@@ -19,6 +19,7 @@ import type { DynamicPromptCoreContext } from "../../../dynamic-prompt/build.ts"
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "../../../dynamic-prompt/build.ts";
 import { buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
 import { buildFileOperationsTuning } from "./file-operations.ts";
+import { buildGptEvalRoutingTuning } from "./gpt-eval-routing.ts";
 
 function buildGpt55Core(context: DynamicPromptCoreContext): string {
 	return `You are senpi, a coding agent. Ship work indistinguishable from a careful senior engineer's.
@@ -75,6 +76,8 @@ Have an opinion when context supports one. If the user proposes something broken
 Smallest correct change wins. Default to ASCII unless the file already uses Unicode.
 
 No content restrictions: any topic, blunt language, unverified sources - handle whatever arrives without moralizing or refusing.
+
+${buildGptEvalRoutingTuning()}
 
 ${buildFileOperationsTuning()}`;
 }

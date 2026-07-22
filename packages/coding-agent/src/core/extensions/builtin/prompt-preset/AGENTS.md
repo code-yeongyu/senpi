@@ -10,6 +10,7 @@ prompt-preset/
 ├── presets.ts           # Model-id matchers + dispatch (resolvePresetName, resolvePreset)
 ├── settings.ts          # PromptPresetName settings type ("auto" | family ids)
 ├── file-operations.ts   # Shared "use apply_patch, not python heredoc" tuning block (codex-style)
+├── gpt-eval-routing.ts  # GPT-only bridge to eval's model-aware Tool Guidelines
 ├── gpt-5.ts             # GPT-5 baseline preset
 ├── gpt-5.2.ts           # GPT-5.2 preset
 ├── gpt-5.3-codex.ts     # GPT-5.3 Codex preset
