@@ -48,9 +48,10 @@ describe("OpenAI completions stream lifecycle", () => {
 			timeoutMs: 40,
 		}).result();
 		await requestReceived.promise;
-		const response = await result;
-		releaseResponse.resolve();
-		await waitForHandlers();
+		const response = await result.finally(async () => {
+			releaseResponse.resolve();
+			await waitForHandlers();
+		});
 
 		expect(response.stopReason).toBe("error");
 		expect(response.errorMessage).toMatch(/timed out|aborted/i);
