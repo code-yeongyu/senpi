@@ -1,5 +1,27 @@
 # changes
 
+## braille tool progress spinner (2026-07-22)
+
+### What changed
+
+- `tool-progress.ts`: partial tool progress rows now use the same ten-frame braille spinner sequence as other Senpi
+  waiting surfaces instead of cycling directional triangles (`⏵`, `⏷`, `⏴`, `⏶`).
+
+### Why
+
+- Long-running task, team-wait, and terminal progress rows should read as active work rather than a rotating disclosure
+  marker. The existing 80ms component ticker already advances frames; the formatter now presents that animation with
+  standard terminal spinner glyphs.
+
+### Why extension system couldn't handle this
+
+- Generic partial-progress rows are composed by the built-in `ToolExecutionRenderer` after extension result renderers
+  run, so an individual tool extension cannot replace the host-owned progress prefix consistently.
+
+### Expected merge conflict zones
+
+- LOW: `tool-progress.ts` around `formatToolProgressLine()`.
+
 ## todo completion strike reveal (2026-07-21)
 
 ### What changed

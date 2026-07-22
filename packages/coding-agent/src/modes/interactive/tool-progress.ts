@@ -1,5 +1,7 @@
 import { formatWorkingElapsedSeconds } from "./working-status.ts";
 
+const TOOL_PROGRESS_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
+
 export interface ToolProgressDetails {
 	readonly activity?: string;
 	readonly startedAt: number;
@@ -25,6 +27,8 @@ export function formatToolProgressLine(progress: ToolProgressDetails, now: numbe
 	const elapsed = formatWorkingElapsedSeconds((now - progress.startedAt) / 1_000);
 	const maxWait =
 		progress.maxWaitMs === undefined ? "" : ` / max ${Math.max(0, Math.floor(progress.maxWaitMs / 1_000))}s`;
-	const spinner = spinnerFrame === undefined ? "⏵" : ["⏵", "⏷", "⏴", "⏶"][spinnerFrame % 4];
+	const spinner =
+		TOOL_PROGRESS_SPINNER_FRAMES[(spinnerFrame ?? 0) % TOOL_PROGRESS_SPINNER_FRAMES.length] ??
+		TOOL_PROGRESS_SPINNER_FRAMES[0];
 	return `${spinner} ${activity} · ${elapsed}${maxWait}`;
 }
