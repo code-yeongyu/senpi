@@ -4,8 +4,10 @@ import { getModel, streamSimple } from "../src/compat.ts";
 import type { Context, Model } from "../src/types.ts";
 
 const activeServers: Server[] = [];
+const activeHandlers = new Set<Promise<void>>();
 
 afterEach(async () => {
+	await waitForHandlers();
 	await Promise.all(
 		activeServers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
 	);
@@ -34,19 +36,27 @@ describe("OpenAI completions stream lifecycle", () => {
 	});
 
 	it("still times out when response headers never arrive", async () => {
-		const baseUrl = await startServer((response) => {
-			setTimeout(() => streamThinkingResponse(response), 150);
+		const requestReceived = Promise.withResolvers<void>();
+		const releaseResponse = Promise.withResolvers<void>();
+		const baseUrl = await startServer(async (response) => {
+			requestReceived.resolve();
+			await releaseResponse.promise;
+			if (!response.destroyed) await streamThinkingResponse(response);
 		});
-		const response = await streamSimple(testModel(baseUrl), userContext(), {
+		const result = streamSimple(testModel(baseUrl), userContext(), {
 			apiKey: "test",
 			timeoutMs: 40,
 		}).result();
+		await requestReceived.promise;
+		const response = await result;
+		releaseResponse.resolve();
+		await waitForHandlers();
 
 		expect(response.stopReason).toBe("error");
 		expect(response.errorMessage).toMatch(/timed out|aborted/i);
 	});
 
-	it("rejects a real SSE stream that closes without finish_reason", async () => {
+	it("rejects a real SSE transport EOF without finish_reason", async () => {
 		const baseUrl = await startServer((response) => {
 			response.writeHead(200, { "content-type": "text/event-stream" });
 			response.write(
@@ -55,7 +65,7 @@ describe("OpenAI completions stream lifecycle", () => {
 					choices: [{ index: 0, delta: { reasoning_content: "partial" }, finish_reason: null }],
 				})}\n\n`,
 			);
-			response.end("data: [DONE]\n\n");
+			response.end();
 		});
 		const response = await streamSimple(testModel(baseUrl), userContext(), {
 			apiKey: "test",
@@ -84,9 +94,13 @@ function testModel(baseUrl: string): Model<"openai-completions"> {
 
 async function startServer(handle: (response: ServerResponse) => void | Promise<void>): Promise<string> {
 	const server = createServer((_request, response) => {
-		Promise.resolve(handle(response)).catch((error: unknown) => {
-			response.destroy(error instanceof Error ? error : new Error(String(error)));
-		});
+		const handler = Promise.resolve()
+			.then(() => handle(response))
+			.catch((error: unknown) => {
+				response.destroy(error instanceof Error ? error : new Error(String(error)));
+			})
+			.finally(() => activeHandlers.delete(handler));
+		activeHandlers.add(handler);
 	});
 	activeServers.push(server);
 	await new Promise<void>((resolve, reject) => {
@@ -96,6 +110,10 @@ async function startServer(handle: (response: ServerResponse) => void | Promise<
 	const address = server.address();
 	if (address === null || typeof address === "string") throw new Error("Expected TCP server address");
 	return `http://127.0.0.1:${address.port}/v1`;
+}
+
+async function waitForHandlers(): Promise<void> {
+	await Promise.all(activeHandlers);
 }
 
 async function streamThinkingResponse(
