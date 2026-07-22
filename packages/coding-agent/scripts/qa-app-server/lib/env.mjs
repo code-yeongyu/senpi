@@ -81,13 +81,15 @@ export function hermeticEnv(base) {
 }
 
 export function spawnCli(args, scratch) {
+	const sourceRepoRoot = resolve(process.env.SENPI_QA_REPO_ROOT ?? repoRoot);
+	const sourcePackageDir = join(sourceRepoRoot, "packages", "coding-agent");
 	const child = spawn(
 		process.execPath,
 		[
-			join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs"),
+			join(sourceRepoRoot, "node_modules", "tsx", "dist", "cli.mjs"),
 			"--tsconfig",
-			join(repoRoot, "tsconfig.json"),
-			join(packageDir, "src", "cli.ts"),
+			join(sourceRepoRoot, "tsconfig.json"),
+			join(sourcePackageDir, "src", "cli.ts"),
 			...args,
 		],
 		{ cwd: scratch.cwd, detached: shouldDetachChildren(), env: scratch.env, stdio: ["pipe", "pipe", "pipe"] },

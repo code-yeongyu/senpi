@@ -1,5 +1,5 @@
 import { type Api, getModels, getProviders, type Model } from "@earendil-works/pi-ai/compat";
-import type { AskForApproval } from "../protocol/generated/v2/index.ts";
+import type { AskForApproval } from "../protocol/index.ts";
 import { objectValue, optionalString } from "./handler-params.ts";
 
 const DEFAULT_APPROVAL_POLICY: AskForApproval = "never";
@@ -22,7 +22,6 @@ export function requestedApprovalPolicy(params: Record<string, unknown>): AskFor
 	const value = params.approvalPolicy;
 	switch (value) {
 		case "untrusted":
-		case "on-failure":
 		case "on-request":
 		case "never":
 			return value;

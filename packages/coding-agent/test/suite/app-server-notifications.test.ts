@@ -1,4 +1,8 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import type { AppServerApprovalRequest } from "../../src/modes/app-server/server/approval-types.ts";
+import { canDeliverNotification, createConnection } from "../../src/modes/app-server/server/connection.ts";
 import {
 	NotificationRouter,
 	type RoutableConnection,
@@ -63,6 +67,10 @@ const turnNotification: RouterNotification = {
 	params: { threadId: "t1", turn: { id: "turn-1" } },
 };
 
+const headMethodsFixture: {
+	readonly experimentalServerNotifications: readonly string[];
+} = JSON.parse(readFileSync(join(process.cwd(), "test/fixtures/app-server-methods-codex-head.json"), "utf8"));
+
 describe("app-server notification router", () => {
 	it("broadcasts lifecycle notifications while scoping turn notifications to thread subscribers", () => {
 		// Given: two initialized connections and one subscriber to thread t1.
@@ -97,7 +105,8 @@ describe("app-server notification router", () => {
 		// Given: a thread with no subscribers and two terminal notifications.
 		const entry = thread("t1");
 		const c = new FakeConnection({ id: "C" });
-		const router = new NotificationRouter({ connections: [c], threads: [entry] });
+		const emittedAtMs = 1_900_000_007;
+		const router = new NotificationRouter({ connections: [c], threads: [entry], now: () => emittedAtMs });
 
 		// When: terminal events happen before C subscribes, then a live event follows.
 		router.toThread("t1", { method: "turn/completed", params: { threadId: "t1", turn: { id: "turn-1" } } });
@@ -111,7 +120,81 @@ describe("app-server notification router", () => {
 			"error",
 			"turn/started",
 		]);
+		expect(c.received.map((notification) => notification.emittedAtMs)).toEqual([
+			emittedAtMs,
+			emittedAtMs,
+			emittedAtMs,
+		]);
 		expect(entry.queuedTerminalNotifications).toEqual([]);
+	});
+
+	it("stamps a notification once before fanout", () => {
+		// Given: two initialized recipients and a deterministic emission clock.
+		const first = new FakeConnection({ id: "first" });
+		const second = new FakeConnection({ id: "second" });
+		const emittedAtMs = 1_900_000_011;
+		let clockCalls = 0;
+		const router = new NotificationRouter({
+			connections: [first, second],
+			now: () => {
+				clockCalls += 1;
+				return emittedAtMs;
+			},
+		});
+
+		// When: one global notification is fanned out.
+		router.broadcast(lifecycleNotification);
+
+		// Then: both serialized envelopes retain the same populated emission timestamp.
+		expect(first.received[0]?.emittedAtMs).toBe(emittedAtMs);
+		expect(second.received[0]?.emittedAtMs).toBe(emittedAtMs);
+		expect(clockCalls).toBe(1);
+	});
+
+	it("preserves a queued terminal timestamp through later subscription", () => {
+		// Given: a clock whose value changes between emission and subscription.
+		const entry = thread("t1");
+		const connection = new FakeConnection({ id: "subscriber" });
+		let currentTime = 100;
+		let clockCalls = 0;
+		const router = new NotificationRouter({
+			connections: [connection],
+			threads: [entry],
+			now: () => {
+				clockCalls += 1;
+				return currentTime;
+			},
+		});
+
+		// When: a terminal event is queued at 100, then replayed after the clock advances to 200.
+		router.toThread("t1", { method: "turn/completed", params: { threadId: "t1", turn: { id: "turn-1" } } });
+		currentTime = 200;
+		router.subscribe("t1", "subscriber");
+		router.toThread("t1", turnNotification);
+
+		// Then: replay keeps the original timestamp and only the live event consumes the new clock value.
+		expect(connection.received.map((message) => message.emittedAtMs)).toEqual([100, 200]);
+		expect(clockCalls).toBe(2);
+	});
+
+	it("does not add notification metadata to approval server requests", () => {
+		// Given: an approval request routed to one thread subscriber.
+		const entry = thread("t1");
+		entry.subscribers.add("approver");
+		const approver = new FakeConnection({ id: "approver" });
+		const router = new NotificationRouter({ connections: [approver], threads: [entry], now: () => 123 });
+		const request: AppServerApprovalRequest = {
+			id: 17,
+			method: "item/commandExecution/requestApproval",
+			params: { threadId: "t1", turnId: "turn-1", itemId: "item-1" },
+		};
+
+		// When: the server request travels through the shared thread router.
+		router.toThread("t1", request);
+
+		// Then: its request id survives and emittedAtMs remains notification-only.
+		expect(approver.received).toEqual([request]);
+		expect(approver.received[0]).not.toHaveProperty("emittedAtMs");
 	});
 
 	it("bounds queued terminal notifications at 100 and evicts oldest entries", () => {
@@ -191,17 +274,90 @@ describe("app-server notification router", () => {
 		expect(entry.queuedTerminalNotifications).toEqual([]);
 	});
 
-	it("filters experimental notifications unless a connection opts into experimentalApi", () => {
-		// Given: two initialized connections with different experimental capability settings.
+	it("filters every HEAD-experimental notification unless a connection opts into experimentalApi", () => {
+		// Given: two initialized thread subscribers with different experimental capability settings.
+		const entry = thread("t1");
+		entry.subscribers.add("stable");
+		entry.subscribers.add("experimental");
+		const stable = new FakeConnection({ id: "stable", experimentalApi: false });
+		const experimental = new FakeConnection({ id: "experimental", experimentalApi: true });
+		const router = new NotificationRouter({ connections: [stable, experimental], threads: [entry] });
+
+		// When: each method from common.rs experimental metadata is routed.
+		for (const method of headMethodsFixture.experimentalServerNotifications) {
+			router.toThread("t1", { method, params: { threadId: "t1" } });
+		}
+
+		// Then: only the experimental-capable connection receives the complete set.
+		expect(stable.received).toEqual([]);
+		expect(experimental.received.map((notification) => notification.method)).toEqual(
+			headMethodsFixture.experimentalServerNotifications,
+		);
+	});
+
+	it("uses the complete HEAD experimental metadata in direct delivery checks", () => {
+		// Given: initialized connections on either side of the experimentalApi gate.
+		const stable = createConnection({
+			id: "stable-direct",
+			transportKind: "stdio",
+			send: () => undefined,
+			close: () => undefined,
+		});
+		const experimental = createConnection({
+			id: "experimental-direct",
+			transportKind: "stdio",
+			send: () => undefined,
+			close: () => undefined,
+		});
+		stable.initialize(
+			{
+				clientInfo: { name: "stable", title: null, version: "1" },
+				capabilities: { experimentalApi: false, requestAttestation: false },
+			},
+			"1",
+		);
+		experimental.initialize(
+			{
+				clientInfo: { name: "experimental", title: null, version: "1" },
+				capabilities: { experimentalApi: true, requestAttestation: false },
+			},
+			"1",
+		);
+
+		// When/Then: every pinned experimental method is gated consistently by canDeliverNotification.
+		for (const method of headMethodsFixture.experimentalServerNotifications) {
+			const notification = { method, params: { threadId: "t1" } };
+			expect(canDeliverNotification(stable, notification), method).toBe(false);
+			expect(canDeliverNotification(experimental, notification), method).toBe(true);
+		}
+	});
+
+	it("rejects global broadcast of experimental thread settings updates", () => {
+		// Given: an experimental-capable connection and a thread-scoped experimental notification.
+		const connection = new FakeConnection({ id: "experimental", experimentalApi: true });
+		const router = new NotificationRouter({ connections: [connection] });
+
+		// When/Then: experimental metadata does not grant global broadcast authority.
+		expect(() =>
+			router.broadcast({
+				method: "thread/settings/updated",
+				params: { threadId: "t1", threadSettings: {} },
+			}),
+		).toThrow(/not allowed for broadcast/);
+		expect(connection.received).toEqual([]);
+	});
+
+	it("delivers stable remote-control status notifications without experimentalApi", () => {
+		// Given: stable and experimental initialized connections.
 		const stable = new FakeConnection({ id: "stable", experimentalApi: false });
 		const experimental = new FakeConnection({ id: "experimental", experimentalApi: true });
 		const router = new NotificationRouter({ connections: [stable, experimental] });
 
-		// When: an experimental notification is broadcast.
-		router.broadcast({ method: "remoteControl/status/changed", params: { status: "inactive" } });
+		// When: the HEAD-stable remote-control status notification is broadcast.
+		router.broadcast({ method: "remoteControl/status/changed", params: { status: "disabled" } });
 
-		// Then: only the experimental-capable connection receives it.
-		expect(stable.received).toEqual([]);
+		// Then: both recipients receive it.
+		expect(stable.received.map((notification) => notification.method)).toEqual(["remoteControl/status/changed"]);
 		expect(experimental.received.map((notification) => notification.method)).toEqual([
 			"remoteControl/status/changed",
 		]);

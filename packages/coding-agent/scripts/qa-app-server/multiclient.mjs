@@ -73,11 +73,12 @@ try {
 	if (negative) {
 		throw new Error(`negative self-test expected terminal event to be withheld, got ${terminalForB.method}`);
 	}
+	clientA.assertServerEnvelopes();
+	clientB.assertServerEnvelopes();
 
 	clientA.close();
 	clientB.close();
 	await fake.stop();
-	scratch.cleanup();
 	pass(transcript, "multiclient");
 } catch (error) {
 	fail(transcript, "multiclient", error);

@@ -14,6 +14,7 @@ export class StdioRpcClient {
 		this.transcript = transcript;
 		this.label = label;
 		this.messages = [];
+		this.messageWaiters = new Set();
 		this.buffer = "";
 		child.stdout.on("data", (chunk) => this.readStdout(chunk.toString("utf8")));
 		child.stderr.on("data", (chunk) => this.transcript.push(`[${this.label} stderr] ${chunk.toString("utf8").trimEnd()}`));
@@ -21,6 +22,10 @@ export class StdioRpcClient {
 
 	mark() {
 		return this.messages.length;
+	}
+
+	assertServerEnvelopes() {
+		return assertServerEnvelopes(this.messages, this.transcript, this.label);
 	}
 
 	notify(method, params = {}) {
@@ -45,6 +50,10 @@ export class StdioRpcClient {
 		this.child.stdin.end();
 	}
 
+	waitForMessageEvent(predicate, fromIndex = 0, timeoutMs = 20000) {
+		return waitForMessageEvent(this, predicate, fromIndex, timeoutMs);
+	}
+
 	readStdout(text) {
 		this.buffer += text;
 		for (;;) {
@@ -63,8 +72,10 @@ export class StdioRpcClient {
 	}
 
 	record(message) {
+		const index = this.messages.length;
 		this.messages.push(message);
 		this.transcript.push(`[${this.label} <<] ${JSON.stringify(message)}`);
+		notifyMessageWaiters(this, message, index);
 	}
 }
 
@@ -74,6 +85,7 @@ export class WebSocketRpcClient {
 		this.transcript = transcript;
 		this.label = label;
 		this.messages = [];
+		this.messageWaiters = new Set();
 		socket.on("message", (data, isBinary) => {
 			if (isBinary) {
 				this.record({ error: "binary websocket frame" });
@@ -98,6 +110,10 @@ export class WebSocketRpcClient {
 		return this.messages.length;
 	}
 
+	assertServerEnvelopes() {
+		return assertServerEnvelopes(this.messages, this.transcript, this.label);
+	}
+
 	notify(method, params = {}) {
 		this.write({ method, params });
 	}
@@ -116,6 +132,10 @@ export class WebSocketRpcClient {
 		return waitFor(() => this.messages.slice(fromIndex).find(predicate), timeoutMs, `${this.label} message`);
 	}
 
+	waitForMessageEvent(predicate, fromIndex = 0, timeoutMs = 20000) {
+		return waitForMessageEvent(this, predicate, fromIndex, timeoutMs);
+	}
+
 	close() {
 		this.socket.terminate();
 	}
@@ -126,8 +146,10 @@ export class WebSocketRpcClient {
 	}
 
 	record(message) {
+		const index = this.messages.length;
 		this.messages.push(message);
 		this.transcript.push(`[${this.label} <<] ${JSON.stringify(message)}`);
+		notifyMessageWaiters(this, message, index);
 	}
 }
 
@@ -195,6 +217,28 @@ export function upgradeStatus(port, headers = {}) {
 	});
 }
 
+function waitForMessageEvent(client, predicate, fromIndex, timeoutMs) {
+	const existing = client.messages.slice(fromIndex).find(predicate);
+	if (existing !== undefined) return Promise.resolve(existing);
+	return new Promise((resolveWait, rejectWait) => {
+		const waiter = { predicate, fromIndex, resolveWait, rejectWait, timeout: undefined };
+		waiter.timeout = setTimeout(() => {
+			client.messageWaiters.delete(waiter);
+			rejectWait(new ProbeError(`Timed out waiting for ${client.label} message event`));
+		}, timeoutMs);
+		client.messageWaiters.add(waiter);
+	});
+}
+
+function notifyMessageWaiters(client, message, index) {
+	for (const waiter of [...client.messageWaiters]) {
+		if (index < waiter.fromIndex || !waiter.predicate(message)) continue;
+		clearTimeout(waiter.timeout);
+		client.messageWaiters.delete(waiter);
+		waiter.resolveWait(message);
+	}
+}
+
 export function waitFor(read, timeoutMs, label) {
 	return new Promise((resolveWait, rejectWait) => {
 		const deadline = Date.now() + timeoutMs;
@@ -219,6 +263,30 @@ export function requiredThreadId(result) {
 		throw new ProbeError(`missing thread id in ${JSON.stringify(result)}`);
 	}
 	return threadId;
+}
+
+function assertServerEnvelopes(messages, transcript, label) {
+	let notificationCount = 0;
+	let serverRequestCount = 0;
+	for (const message of messages) {
+		if (typeof message !== "object" || message === null || typeof message.method !== "string") continue;
+		if ("id" in message) {
+			serverRequestCount += 1;
+			if ("emittedAtMs" in message) {
+				throw new ProbeError(`server request ${message.method} unexpectedly included emittedAtMs`);
+			}
+			continue;
+		}
+		notificationCount += 1;
+		if (!Number.isSafeInteger(message.emittedAtMs) || message.emittedAtMs <= 0) {
+			throw new ProbeError(`notification ${message.method} missing populated emittedAtMs`);
+		}
+	}
+	if (notificationCount === 0) throw new ProbeError("no server notifications were observed");
+	transcript.push(
+		`[${label} assert] notifications=${notificationCount} emittedAtMs=populated serverRequests=${serverRequestCount} emittedAtMs=absent`,
+	);
+	return { notificationCount, serverRequestCount };
 }
 
 export function pass(transcript, name) {

@@ -5,8 +5,12 @@ const qaPorts = Object.freeze([18990, 18991, 18992, 18993, 18994, 18995, 18996, 
 
 export async function startFakeModelServer(turns) {
 	const requests = [];
+	const responses = new Set();
+	const heldResponses = new Set();
 	let callIndex = 0;
 	const server = createServer((req, res) => {
+		responses.add(res);
+		res.once("close", () => responses.delete(res));
 		const chunks = [];
 		req.on("data", (chunk) => chunks.push(chunk));
 		req.on("end", () => {
@@ -28,7 +32,7 @@ export async function startFakeModelServer(turns) {
 			}
 			const turn = turns[Math.min(callIndex, turns.length - 1)] ?? { text: "OK" };
 			callIndex += 1;
-			writeCompletionsSse(res, turn, body.model ?? "mock-model");
+			writeCompletionsSse(res, turn, body.model ?? "mock-model", heldResponses);
 		});
 	});
 	const port = await listenOnQaPort(server);
@@ -37,9 +41,13 @@ export async function startFakeModelServer(turns) {
 	return {
 		url: `http://127.0.0.1:${port}/v1`,
 		requests,
+		releaseHolds: () => {
+			for (const release of [...heldResponses]) release();
+		},
 		stop: () =>
 			new Promise((resolveStop) => {
 				untrackCloser(close);
+				for (const response of responses) response.destroy();
 				server.close(() => resolveStop());
 			}),
 	};
@@ -84,7 +92,7 @@ function sendJson(res, status, obj) {
 	res.end(JSON.stringify(obj));
 }
 
-function writeCompletionsSse(res, turn, modelId) {
+function writeCompletionsSse(res, turn, modelId, heldResponses) {
 	res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
 	const base = { id: "chatcmpl-mock", object: "chat.completion.chunk", created: 0, model: modelId };
 	const send = (delta, finish = null) => {
@@ -96,6 +104,18 @@ function writeCompletionsSse(res, turn, modelId) {
 		res.end();
 	};
 	send({ role: "assistant", content: "" });
+	if (turn.hold === true) {
+		let release;
+		release = () => {
+			heldResponses.delete(release);
+			if (res.destroyed) return;
+			send({}, "stop");
+			complete();
+		};
+		heldResponses.add(release);
+		res.once("close", () => heldResponses.delete(release));
+		return;
+	}
 	if (turn.toolCalls?.length) {
 		send({
 			tool_calls: turn.toolCalls.map((toolCall, index) => ({

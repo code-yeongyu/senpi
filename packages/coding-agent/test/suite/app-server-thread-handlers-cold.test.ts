@@ -121,8 +121,12 @@ describe("app-server thread cold lifecycle handlers", () => {
 
 		// Then: lifecycle notifications announce closure and notLoaded status.
 		expect(connection.received).toEqual([
-			{ method: "thread/closed", params: { threadId } },
-			{ method: "thread/status/changed", params: { threadId, status: { type: "notLoaded" } } },
+			{ method: "thread/closed", params: { threadId }, emittedAtMs: expect.any(Number) },
+			{
+				method: "thread/status/changed",
+				params: { threadId, status: { type: "notLoaded" } },
+				emittedAtMs: expect.any(Number),
+			},
 		]);
 	});
 
@@ -146,8 +150,12 @@ describe("app-server thread cold lifecycle handlers", () => {
 		// Then: the thread is announced closed and no longer loaded.
 		expect(emptied).toEqual([threadId]);
 		expect(observer.received).toEqual([
-			{ method: "thread/closed", params: { threadId } },
-			{ method: "thread/status/changed", params: { threadId, status: { type: "notLoaded" } } },
+			{ method: "thread/closed", params: { threadId }, emittedAtMs: expect.any(Number) },
+			{
+				method: "thread/status/changed",
+				params: { threadId, status: { type: "notLoaded" } },
+				emittedAtMs: expect.any(Number),
+			},
 		]);
 		expect(threads.listLoaded()).toEqual([]);
 	});

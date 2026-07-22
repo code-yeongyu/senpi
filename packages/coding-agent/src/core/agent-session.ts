@@ -2349,6 +2349,21 @@ export class AgentSession {
 	 * @throws Error if no auth is configured for the model
 	 */
 	async setModel(model: Model<any>): Promise<SystemPromptChangeEvent | undefined> {
+		return this._setModel(model, true);
+	}
+
+	/**
+	 * Set the model for this session without changing the global model defaults.
+	 * The selection is still persisted in this session's history.
+	 */
+	async setSessionModel(model: Model<Api>): Promise<SystemPromptChangeEvent | undefined> {
+		return this._setModel(model, false);
+	}
+
+	private async _setModel(
+		model: Model<Api>,
+		updateGlobalDefaults: boolean,
+	): Promise<SystemPromptChangeEvent | undefined> {
 		if (!(await this._modelRuntime.checkAuth(model.provider))) {
 			throw new Error(`No API key for ${model.provider}/${model.id}`);
 		}
@@ -2362,7 +2377,7 @@ export class AgentSession {
 		}
 
 		return await this._switchActiveModel(model, {
-			persistDefault: true,
+			persistDefault: updateGlobalDefaults,
 			appendSessionEntry: true,
 			emitModelSelect: true,
 			invalidateCompaction: true,
@@ -2413,8 +2428,10 @@ export class AgentSession {
 
 		if (opts.ephemeralThinkingLevel !== undefined) {
 			this._applyEphemeralThinkingLevel(thinkingLevel);
-		} else {
+		} else if (opts.persistDefault) {
 			this.setThinkingLevel(thinkingLevel);
+		} else {
+			this.setSessionThinkingLevel(thinkingLevel);
 		}
 
 		if (!opts.emitModelSelect) return undefined;
@@ -2493,6 +2510,18 @@ export class AgentSession {
 	 * Saves to session and settings only if the level actually changes.
 	 */
 	setThinkingLevel(level: ThinkingLevel): void {
+		this._setThinkingLevel(level, true);
+	}
+
+	/**
+	 * Set the thinking level for this session without changing the global default.
+	 * The effective level is still persisted in this session's history.
+	 */
+	setSessionThinkingLevel(level: ThinkingLevel): void {
+		this._setThinkingLevel(level, false);
+	}
+
+	private _setThinkingLevel(level: ThinkingLevel, updateGlobalDefault: boolean): void {
 		const availableLevels = this.getAvailableThinkingLevels();
 		const effectiveLevel = availableLevels.includes(level) ? level : this._clampThinkingLevel(level, availableLevels);
 
@@ -2507,7 +2536,7 @@ export class AgentSession {
 
 		if (isChanging) {
 			this.sessionManager.appendThinkingLevelChange(effectiveLevel);
-			if (this.supportsThinking() || effectiveLevel !== "off") {
+			if (updateGlobalDefault && (this.supportsThinking() || effectiveLevel !== "off")) {
 				this.settingsManager.setDefaultThinkingLevel(effectiveLevel);
 			}
 			this._emit({ type: "thinking_level_changed", level: effectiveLevel });

@@ -1,10 +1,12 @@
-import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ApplyPatchError } from "./errors.ts";
 import { parsePatch } from "./parser.ts";
 import { replaceChunks } from "./patch-replace.ts";
+import { buildPatchPreviewFile, readPatchFileSnapshot } from "./preview.ts";
 import { normalizePatchText } from "./text.ts";
 import type {
+	AppliedPatchOperation,
 	ApplyPatchFailure,
 	ApplyPatchProgressCallback,
 	ApplyPatchRecoveryInstructions,
@@ -58,18 +60,30 @@ export async function __testWriteFileAtomic(
 async function applySingleHunk(
 	cwd: string,
 	hunk: ParsedPatch,
-): Promise<{ summary: string; appliedFile: string; fuzz: number }> {
+): Promise<{
+	readonly summary: string;
+	readonly appliedFile: string;
+	readonly fuzz: number;
+	readonly preview: ReturnType<typeof buildPatchPreviewFile>;
+}> {
 	const absolutePath = resolvePatchPath(cwd, hunk.filePath);
 	if (hunk.type === "add") {
+		const source = await readPatchFileSnapshot(absolutePath);
+		const preview = buildPatchPreviewFile({ hunk, source, newContent: hunk.content });
 		await mkdir(path.dirname(absolutePath), { recursive: true });
 		await writeFileAtomic(absolutePath, hunk.content);
-		return { summary: `add: ${hunk.filePath}`, appliedFile: hunk.filePath, fuzz: 0 };
+		return { summary: `add: ${hunk.filePath}`, appliedFile: hunk.filePath, fuzz: 0, preview };
 	}
 
 	if (hunk.type === "delete") {
-		await stat(absolutePath);
+		const oldContent = await readFile(absolutePath, "utf-8");
+		const preview = buildPatchPreviewFile({
+			hunk,
+			source: { exists: true, content: oldContent },
+			newContent: "",
+		});
 		await rm(absolutePath);
-		return { summary: `delete: ${hunk.filePath}`, appliedFile: hunk.filePath, fuzz: 0 };
+		return { summary: `delete: ${hunk.filePath}`, appliedFile: hunk.filePath, fuzz: 0, preview };
 	}
 
 	const currentContent = await readFile(absolutePath, "utf-8");
@@ -80,6 +94,14 @@ async function applySingleHunk(
 
 	if (hunk.movePath) {
 		const absoluteMovePath = resolvePatchPath(cwd, hunk.movePath);
+		const moveDestination =
+			absoluteMovePath === absolutePath ? undefined : await readPatchFileSnapshot(absoluteMovePath);
+		const preview = buildPatchPreviewFile({
+			hunk,
+			source: { exists: true, content: currentContent },
+			newContent: chunkResult.content,
+			...(moveDestination ? { moveDestination } : {}),
+		});
 		await mkdir(path.dirname(absoluteMovePath), { recursive: true });
 		await writeFileAtomic(absoluteMovePath, chunkResult.content);
 		if (absoluteMovePath !== absolutePath) await rm(absolutePath);
@@ -87,11 +109,17 @@ async function applySingleHunk(
 			summary: `move: ${hunk.filePath} -> ${hunk.movePath}`,
 			appliedFile: hunk.movePath,
 			fuzz: chunkResult.fuzz,
+			preview,
 		};
 	}
 
+	const preview = buildPatchPreviewFile({
+		hunk,
+		source: { exists: true, content: currentContent },
+		newContent: chunkResult.content,
+	});
 	await writeFileAtomic(absolutePath, chunkResult.content);
-	return { summary: `update: ${hunk.filePath}`, appliedFile: hunk.filePath, fuzz: chunkResult.fuzz };
+	return { summary: `update: ${hunk.filePath}`, appliedFile: hunk.filePath, fuzz: chunkResult.fuzz, preview };
 }
 
 function createRecoveryInstructions(
@@ -138,18 +166,20 @@ export async function applyPatchDetailed(
 	const hunks = parseNonEmptyPatch(patchText);
 	const summaries: string[] = [];
 	const appliedFiles: string[] = [];
+	const appliedOperations: AppliedPatchOperation[] = [];
 	const failures: ApplyPatchFailure[] = [];
 	let fuzz = 0;
 
-	for (const hunk of hunks) {
+	for (const [operationIndex, hunk] of hunks.entries()) {
 		try {
 			const applied = await applySingleHunk(cwd, hunk);
 			summaries.push(applied.summary);
 			appliedFiles.push(applied.appliedFile);
+			appliedOperations.push({ operationIndex, preview: applied.preview });
 			fuzz += applied.fuzz;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			failures.push({ filePath: hunk.filePath, operation: hunk.type, message });
+			failures.push({ operationIndex, filePath: hunk.filePath, operation: hunk.type, message });
 		}
 		await notifyApplyPatchProgress(onProgress, {
 			applied: appliedFiles.length,
@@ -164,7 +194,7 @@ export async function applyPatchDetailed(
 		failures,
 		hasPartialSuccess: appliedFiles.length > 0 && failures.length > 0,
 		recoveryInstructions: { mustReadFiles: [], mustNotReadFiles: [] },
-		details: { fuzz },
+		details: { fuzz, appliedOperations },
 	};
 	result.recoveryInstructions = createRecoveryInstructions(result);
 	return result;
@@ -174,21 +204,25 @@ export async function applyPatch(cwd: string, patchText: string): Promise<string
 	const hunks = parseNonEmptyPatch(patchText);
 	const summaries: string[] = [];
 	const appliedFiles: string[] = [];
-	for (const hunk of hunks) {
+	const appliedOperations: AppliedPatchOperation[] = [];
+	for (const [operationIndex, hunk] of hunks.entries()) {
 		try {
 			const applied = await applySingleHunk(cwd, hunk);
 			summaries.push(applied.summary);
 			appliedFiles.push(applied.appliedFile);
+			appliedOperations.push({ operationIndex, preview: applied.preview });
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			const failures: ApplyPatchFailure[] = [{ filePath: hunk.filePath, operation: hunk.type, message }];
+			const failures: ApplyPatchFailure[] = [
+				{ operationIndex, filePath: hunk.filePath, operation: hunk.type, message },
+			];
 			const result: ApplyPatchResult = {
 				summaries,
 				appliedFiles,
 				failures,
 				hasPartialSuccess: appliedFiles.length > 0,
 				recoveryInstructions: createRecoveryInstructions({ appliedFiles, failures }),
-				details: { fuzz: 0 },
+				details: { fuzz: 0, appliedOperations },
 			};
 			throw new ApplyPatchError(message, result);
 		}

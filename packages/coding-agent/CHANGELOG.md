@@ -6,6 +6,8 @@
 
 ### Added
 
+- Documented the Codex HEAD app-server parity surface, protocol provenance, intentional `-32601` boundaries, and the source-oracle differential QA harness. The documentation now calls out deliberate behavior differences, including post-restart history reconstruction, aggregated turn diffs, partial thread settings, and honest account reads.
+
 ### Changed
 
 ### Fixed

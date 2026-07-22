@@ -10,7 +10,9 @@ export const STABLE_CLIENT_REQUEST_METHODS = [
 	"account/sendAddCreditsNudgeEmail",
 	"account/usage/read",
 	"account/workspaceMessages/read",
+	"app/installed",
 	"app/list",
+	"app/read",
 	"command/exec",
 	"command/exec/resize",
 	"command/exec/terminate",
@@ -96,6 +98,8 @@ export const STABLE_CLIENT_REQUEST_METHODS = [
 export const EXPERIMENTAL_ONLY_CLIENT_REQUEST_METHODS = [
 	"collaborationMode/list",
 	"environment/add",
+	"environment/info",
+	"environment/status",
 	"fuzzyFileSearch/sessionStart",
 	"fuzzyFileSearch/sessionStop",
 	"fuzzyFileSearch/sessionUpdate",
@@ -117,6 +121,7 @@ export const EXPERIMENTAL_ONLY_CLIENT_REQUEST_METHODS = [
 	"thread/backgroundTerminals/terminate",
 	"thread/decrement_elicitation",
 	"thread/increment_elicitation",
+	"thread/items/list",
 	"thread/memoryMode/set",
 	"thread/realtime/appendAudio",
 	"thread/realtime/appendSpeech",
@@ -125,8 +130,8 @@ export const EXPERIMENTAL_ONLY_CLIENT_REQUEST_METHODS = [
 	"thread/realtime/start",
 	"thread/realtime/stop",
 	"thread/search",
+	"thread/searchOccurrences",
 	"thread/settings/update",
-	"thread/turns/items/list",
 	"thread/turns/list",
 ] as const;
 
@@ -168,6 +173,7 @@ export const SERVER_NOTIFICATION_METHODS = [
 	"model/verification",
 	"process/exited",
 	"process/outputDelta",
+	"rawResponse/completed",
 	"rawResponseItem/completed",
 	"remoteControl/status/changed",
 	"serverRequest/resolved",
@@ -176,6 +182,8 @@ export const SERVER_NOTIFICATION_METHODS = [
 	"thread/closed",
 	"thread/compacted",
 	"thread/deleted",
+	"thread/environment/connected",
+	"thread/environment/disconnected",
 	"thread/goal/cleared",
 	"thread/goal/updated",
 	"thread/name/updated",
@@ -200,6 +208,23 @@ export const SERVER_NOTIFICATION_METHODS = [
 	"warning",
 	"windows/worldWritableWarning",
 	"windowsSandbox/setupCompleted",
+] as const;
+
+export const EXPERIMENTAL_SERVER_NOTIFICATION_METHODS = [
+	"process/exited",
+	"process/outputDelta",
+	"thread/environment/connected",
+	"thread/environment/disconnected",
+	"thread/realtime/closed",
+	"thread/realtime/error",
+	"thread/realtime/itemAdded",
+	"thread/realtime/outputAudio/delta",
+	"thread/realtime/sdp",
+	"thread/realtime/started",
+	"thread/realtime/transcript/delta",
+	"thread/realtime/transcript/done",
+	"thread/settings/updated",
+	"turn/moderationMetadata",
 ] as const;
 
 export const SERVER_REQUEST_METHODS = [

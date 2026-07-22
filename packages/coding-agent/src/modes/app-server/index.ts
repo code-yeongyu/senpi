@@ -1,5 +1,3 @@
-import { ENV_SESSION_DIR, getAgentDir } from "../../config.ts";
-import { type CreateAgentSessionOptions, type CreateAgentSessionResult, createAgentSession } from "../../core/sdk.ts";
 import {
 	APP_SERVER_LISTEN_USAGE,
 	type AppServerCliArgs,
@@ -12,14 +10,7 @@ import {
 	formatAppServerUsage,
 	parseAppServerCliArgs,
 } from "./cli-args.ts";
-import { createRegistry, type MethodRegistry } from "./rpc/registry.ts";
-import { ApprovalBridge, createAppServerUIContext } from "./server/approvals.ts";
-import { NotificationRouter } from "./server/notifications.ts";
-import type { ServerCore } from "./server/server-core.ts";
-import { registerThreadLifecycleHandlers, type ThreadLifecycleController } from "./threads/handlers.ts";
-import { ThreadNotFoundError, ThreadRegistry } from "./threads/registry.ts";
-import { TurnLog } from "./threads/turn-log.ts";
-import { createTurnEngine, type TurnEngineApi } from "./threads/turns.ts";
+import { type AppServerRuntime, createAppServerRuntime } from "./runtime.ts";
 import { type StdioTransport, startStdioTransport } from "./transports/stdio.ts";
 import { startAppServerUnixSocketListener, type UnixSocketListenerHandle } from "./transports/unix-socket.ts";
 import {
@@ -27,16 +18,9 @@ import {
 	type WebSocketListenerAuth,
 	type WebSocketListenerHandle,
 } from "./transports/websocket.ts";
-import {
-	createModeTurnStore,
-	createRoutedServerCore,
-	registerLoadedThreadObjectListHandler,
-	turnInterruptParams,
-	turnStartParams,
-	turnSteerParams,
-} from "./turn-adapter.ts";
 
 export { runAppServerDaemonCommand } from "./daemon.ts";
+export { createAppServerRuntime } from "./runtime.ts";
 export {
 	APP_SERVER_LISTEN_USAGE,
 	type AppServerCliArgs,
@@ -121,102 +105,6 @@ export async function runAppServerMode(options: AppServerModeOptions): Promise<v
 		process.off("SIGINT", handleSignal);
 		process.off("SIGTERM", handleSignal);
 	}
-}
-
-type AppServerRuntime = {
-	readonly core: ServerCore;
-	readonly threads: ThreadRegistry;
-	readonly turnLog: TurnLog;
-	readonly turns: TurnEngineApi;
-	readonly dispose: () => void;
-};
-
-function createAppServerRuntime(requestShutdown: (reason: string) => void): AppServerRuntime {
-	const notifications = new NotificationRouter();
-	const registry = createRegistry();
-	let threads: ThreadRegistry;
-	const approvals = new ApprovalBridge((threadId, message) => {
-		let subscriberCount = 0;
-		try {
-			subscriberCount = threads.getLoadedThread(threadId).subscribers.size;
-		} catch (error: unknown) {
-			if (error instanceof ThreadNotFoundError) {
-				return 0;
-			}
-			throw error;
-		}
-		notifications.toThread(threadId, message);
-		return subscriberCount;
-	});
-	let lifecycle: ThreadLifecycleController | undefined;
-	const core = createRoutedServerCore(registry, notifications, approvals, (threadId) => {
-		lifecycle?.scheduleIdleUnloadForThread(threadId);
-	});
-	threads = new ThreadRegistry({
-		agentDir: getAgentDir(),
-		sessionDir: process.env[ENV_SESSION_DIR],
-		createSession: (options) => createBoundAppServerSession(options, approvals, notifications, requestShutdown),
-	});
-	const turnLog = new TurnLog();
-	const turns = createTurnEngine({
-		store: createModeTurnStore(threads),
-		turnLog,
-		emitToThread: (threadId, notification) => notifications.toThread(threadId, notification),
-		broadcast: (notification) => notifications.broadcast(notification),
-	});
-	registerTurnHandlers(registry, turns);
-
-	lifecycle = registerThreadLifecycleHandlers(registry, {
-		threads,
-		turnLog,
-		notifications,
-		idleUnloadMinutes: 30,
-		replayPendingApprovals: (threadId) => {
-			approvals.replayPendingForThread(threadId);
-		},
-	});
-	registerLoadedThreadObjectListHandler(registry, threads);
-
-	return { core, threads, turnLog, turns, dispose: () => lifecycle?.dispose() };
-}
-
-async function createBoundAppServerSession(
-	options: CreateAgentSessionOptions,
-	approvals: ApprovalBridge,
-	notifications: NotificationRouter,
-	requestShutdown: (reason: string) => void,
-): Promise<CreateAgentSessionResult> {
-	const result = await createAgentSession(options);
-	const threadId = result.session.sessionId;
-	await result.session.bindExtensions({
-		uiContext: createAppServerUIContext(approvals, threadId),
-		mode: "rpc",
-		shutdownHandler: () => requestShutdown("extension shutdown"),
-		onError: (error) => {
-			notifications.toThread(threadId, { method: "error", params: error });
-		},
-	});
-	result.session.subscribe((event) => {
-		if (event.type === "agent_end") {
-			approvals.cancelPendingForThread(threadId);
-		}
-	});
-	return result;
-}
-
-function registerTurnHandlers(registry: MethodRegistry, turns: TurnEngineApi): void {
-	registry.register("turn/start", {
-		scope: "thread",
-		handler: (context) => turns.startTurn(turnStartParams(context.request)),
-	});
-	registry.register("turn/steer", {
-		scope: "thread",
-		handler: (context) => turns.steerTurn(turnSteerParams(context.request)),
-	});
-	registry.register("turn/interrupt", {
-		scope: "thread",
-		handler: (context) => turns.interruptTurn(turnInterruptParams(context.request)),
-	});
 }
 
 function toWebSocketAuth(auth: AppServerWsAuth | undefined): WebSocketListenerAuth | undefined {

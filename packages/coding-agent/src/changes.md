@@ -1,5 +1,127 @@
 # changes
 
+## App-server web-search projection and cumulative turn diffs (2026-07-21)
+
+### What changed
+
+- `modes/app-server/threads/`: projects only OpenAI `web_search_call` metadata into the structured Codex `webSearch`
+  shape, preserves readable generic provider-native items for other subtypes, and emits subscriber-only
+  `turn/diff/updated` notifications rebuilt from per-tool patches in file-change source order.
+- `core/tools/` and `core/extensions/builtin/gpt-apply-patch/`: preserve source-backed unified patches for real edit,
+  write, multi-file, partial-success, repeated same-path, dependent sequential, and move-only results.
+- Non-empty app-server `fileChange` changes use the generated v2 tagged kind shape; moves retain the source path,
+  expose the destination in `move_path`, and carry an applicable delete/add-or-update representation.
+- `test/suite/` and `test/qa/app-server/`: cover final web-search payload fidelity, concurrent completion ordering, real
+  mutation result shapes, per-turn reset, notification envelopes, subscriber routing, and a zero-token source-CLI run.
+
+### Why
+
+- Codex app-server clients render native web-search activity and live file-change previews from these item and
+  notification contracts; synthesized fields and missing diffs break that client experience.
+
+### Why extension system couldn't handle this
+
+- Provider-native item projection, turn-scoped diff state, and subscriber notification routing are app-server protocol
+  infrastructure below the extension boundary; source patches must be captured by each mutation tool before apply.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: the fork-only `modes/app-server/threads/projection*.ts` implementation and its app-server QA fixtures.
+- MEDIUM: write/apply_patch result details where source baselines are captured.
+
+## Fuzzy file search one-shot and sessions (2026-07-21)
+
+### What changed
+
+- `modes/app-server/search/`: added bounded deterministic file traversal, subsequence scoring, same-token one-shot
+  cancellation, and replaceable query sessions with latest-query update and completion notifications.
+- `modes/app-server/runtime.ts` and `server/notifications.ts`: registered the stable one-shot method plus the three
+  experimental session methods, routed the two stable session notifications globally, and cancelled outstanding work on
+  runtime teardown.
+- `test/suite/` and `test/qa/app-server/`: pinned traversal/scoring limits, cancellation and session races, request
+  gates, ungated notification fanout, manifest status, and a zero-token source-CLI fixture-tree scenario.
+
+### Why
+
+- Codex clients use fuzzy file search for path completion and rely on cancellation tokens and long-lived sessions to
+  avoid stale results while a query changes rapidly.
+
+### Why extension system couldn't handle this
+
+- File-search requests and global app-server notifications are transport-level JSON-RPC behavior below the extension
+  boundary.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: the fork-only `modes/app-server/search/` implementation and app-server registration/router allowlists.
+
+## Wave 2 app-server parity verifier corrections (2026-07-20)
+
+### What changed
+
+- `modes/app-server/protocol/`: corrected fuzzy-search result keys to Codex's snake-case wire names and completed the
+  handwritten thread-item/history facade so runtime modules no longer import generated protocol files directly.
+- `modes/app-server/threads/`: made source-kind parsing strict, applied Codex's interactive-session default when search
+  source filters are omitted or empty, rejected malformed search `u32`/boolean fields, separated user-activity recency
+  from general updates, persisted unarchive timestamp bumps, rejected non-`u32` history limits, preserved every
+  projected history-item variant plus completed-turn lifecycle data, read cold history without loading the thread,
+  deferred compact work and `item/started` until after the RPC acknowledgement, and recorded rejected compactions as
+  failed without fabricating a completed item.
+- `modes/app-server/server/models.ts`: validates `remoteControl/client/list` parameters before returning the honest
+  no-remote-control internal error.
+- `test/qa/app-server/`: extended the Todo 8–12 drivers for the rejected edge cases and made the compaction fixture
+  exercise explicit manual compaction without being preempted by automatic compaction.
+
+### Why
+
+- Independent parity verification found boundary-validation, persistence, timestamp, import-layer, and failure-path
+  mismatches that the first wave's happy-path tests did not distinguish from Codex HEAD behavior.
+
+### Why extension system couldn't handle this
+
+- These contracts are JSON-RPC parsing, thread persistence/projection, and app-server lifecycle behavior below the
+  extension boundary.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: the fork-only `modes/app-server/` and app-server QA surfaces. Preserve Codex wire names and re-run the focused
+  verifier drivers if upstream session timestamp or compaction behavior changes.
+
+## Codex HEAD app-server catalogs, facade, and terminal envelopes (2026-07-20)
+
+### What changed
+
+- `modes/app-server/protocol/`: aligned method catalogs with the pinned Codex HEAD source, added complete experimental
+  notification metadata, and added handwritten facade types for the catalog, config, account, collaboration-mode,
+  fuzzy-search, thread-parity, terminal-error, and notification-envelope surfaces selected by the parity plan.
+- `modes/app-server/server/connection.ts`, `server/notifications.ts`, `rpc/envelope.ts`, `rpc/ndjson.ts`: gate
+  experimental notifications from the shared catalog and populate one `emittedAtMs` timestamp per notification before
+  fanout, preserving it through final transport serialization while leaving server requests untouched.
+- `modes/app-server/server/server-core.ts`: added post-response deferred actions so later thread handlers can guarantee
+  response-before-notification ordering.
+- `modes/app-server/threads/turns.ts`, `turn-adapter.ts`, `threads/projection.ts`: replaced the fork-only terminal
+  `turn/failed` wire event with Codex HEAD's ordered `error` plus failed `turn/completed` pair, sharing one `TurnError`.
+- `modes/app-server/server/models.ts`: moved model catalog runtime typing onto the handwritten facade while retaining the
+  existing remote-control behavior for its dedicated follow-up task.
+
+### Why
+
+- Codex's generated TypeScript exporter omits experimental request roots and cannot by itself describe the live HEAD
+  catalog. Senpi needs a stable, Node-compatible facade derived from both the pinned source inventory and generated
+  evidence.
+- Current Codex clients expect populated notification timestamps, capability-aware experimental delivery, and terminal
+  failures expressed through the canonical error/completion pair.
+
+### Why extension system couldn't handle this
+
+- Method catalogs, transport envelopes, response-frame ordering, and terminal event projection are app-server protocol
+  infrastructure that runs outside the coding-agent extension surface.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: the fork-only `modes/app-server/` tree. Re-derive catalogs and facade shapes from the new Codex source before
+  resolving conflicts; never hand-edit `protocol/generated/**`.
+
 ## Parallel side questions via `/btw` (2026-07-21)
 
 ### What changed

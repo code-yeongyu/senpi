@@ -33,7 +33,6 @@ export type InitializeResponse = {
 
 export type AskForApproval =
 	| "untrusted"
-	| "on-failure"
 	| "on-request"
 	| {
 			readonly granular: {
@@ -51,7 +50,7 @@ export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access"
 export type SandboxPolicy =
 	| { readonly type: "dangerFullAccess" }
 	| { readonly type: "readOnly"; readonly networkAccess: boolean }
-	| { readonly type: "externalSandbox"; readonly networkAccess: "restricted" | "enabled" | "disabled" }
+	| { readonly type: "externalSandbox"; readonly networkAccess: "restricted" | "enabled" }
 	| {
 			readonly type: "workspaceWrite";
 			readonly writableRoots: readonly AbsolutePathBuf[];
@@ -60,10 +59,10 @@ export type SandboxPolicy =
 			readonly excludeSlashTmp: boolean;
 	  };
 
-export type Personality = string;
-export type MultiAgentMode = string;
+export type Personality = "none" | "friendly" | "pragmatic";
+export type MultiAgentMode = "explicitRequestOnly" | "proactive" | { readonly custom: string };
 export type ReasoningEffort = string;
-export type ReasoningSummary = string;
+export type ReasoningSummary = "auto" | "concise" | "detailed" | "none";
 export type ServiceTier = string;
 export type ThreadSource = string;
 export type ThreadStartSource = string;
@@ -97,10 +96,10 @@ export type UserInput =
 export type TurnEnvironmentParams = JsonValue;
 export type DynamicToolSpec = JsonValue;
 export type SelectedCapabilityRoot = JsonValue;
-export type ActivePermissionProfile = JsonValue;
+export type ActivePermissionProfile = { readonly id: string; readonly extends: string | null };
 export type GitInfo = {
 	readonly sha: string | null;
 	readonly branch: string | null;
 	readonly originUrl: string | null;
 };
-export type RemoteControlConnectionStatus = string;
+export type RemoteControlConnectionStatus = "disabled" | "connecting" | "connected" | "errored";

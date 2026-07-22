@@ -2,12 +2,10 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import {
 	type Exchange,
 	parseRecord,
 	type RpcRequest,
-	requiredMethods,
 	stringAt,
 	validateDocs,
 	withNumberId,
@@ -67,6 +65,11 @@ class LineReader {
 const codingAgentDir = process.cwd();
 const repoRoot = resolve(codingAgentDir, "../..");
 const evidencePath = join(repoRoot, ".omo/evidence/task-20-live-examples.txt");
+const capabilityManifestPath = join(codingAgentDir, "test/qa/app-server/capability-manifest.json");
+
+type CapabilityManifest = {
+	readonly documentation: { readonly methods: readonly string[] };
+};
 
 const scratchRoot = await mkdtemp(join(tmpdir(), "senpi-task20-docs-"));
 const child = spawn("npx", ["tsx", "src/cli.ts", "app-server"], {
@@ -77,13 +80,16 @@ const child = spawn("npx", ["tsx", "src/cli.ts", "app-server"], {
 		SENPI_CODING_AGENT_DIR: join(scratchRoot, "agent"),
 		SENPI_CODING_AGENT_SESSION_DIR: join(scratchRoot, "sessions"),
 	},
+	detached: process.platform !== "win32",
 	stdio: ["pipe", "pipe", "pipe"],
 });
 const reader = new LineReader(child);
 const exchanges: Exchange[] = [];
+const manifest: CapabilityManifest = JSON.parse(await readFile(capabilityManifestPath, "utf8"));
+const documentedMethods = new Set(manifest.documentation.methods);
 
 try {
-	const initialize = await send({
+	const initialize = await sendDocumented({
 		id: 1,
 		method: "initialize",
 		params: {
@@ -91,48 +97,99 @@ try {
 			capabilities: { experimentalApi: true, requestAttestation: false },
 		},
 	});
-	await send({ id: 2, method: "model/list", params: { includeHidden: false } });
-	await send({ id: 3, method: "remoteControl/status/read" });
-	const started = await send({ id: 4, method: "thread/start", params: { cwd: join(scratchRoot, "cwd") } });
+	await sendDocumented({ id: 2, method: "model/list", params: { includeHidden: false } });
+	await sendDocumented({ id: 3, method: "remoteControl/status/read" });
+	const started = await sendDocumented({ id: 4, method: "thread/start", params: { cwd: join(scratchRoot, "cwd") } });
 	const threadId = stringAt(started.response, ["result", "thread", "id"]);
-	await send({ id: 5, method: "thread/resume", params: { threadId } });
-	await send({ id: 6, method: "thread/list", params: { limit: 1 } });
-	await send({ id: 7, method: "thread/loaded/list", params: { limit: 1 } });
-	await send({ id: 8, method: "thread/read", params: { threadId, includeTurns: false } });
-	await send({ id: 9, method: "thread/name/set", params: { threadId, name: "Docs example" } });
-	await send({ id: 10, method: "turn/interrupt", params: { threadId, turnId: "not-active" } });
-	await send({
+	await sendDocumented({ id: 5, method: "thread/resume", params: { threadId } });
+	await sendDocumented({ id: 6, method: "thread/list", params: { limit: 1 } });
+	await sendDocumented({ id: 7, method: "thread/loaded/list", params: { limit: 1 } });
+	await sendDocumented({ id: 8, method: "thread/read", params: { threadId, includeTurns: false } });
+	await sendDocumented({ id: 9, method: "thread/name/set", params: { threadId, name: "Docs example" } });
+	await sendDocumented({ id: 10, method: "turn/interrupt", params: { threadId, turnId: "not-active" } });
+	await sendDocumented({
 		id: 11,
 		method: "turn/steer",
 		params: { threadId, expectedTurnId: "not-active", input: [{ type: "text", text: "Prefer brevity." }] },
 	});
-	await send({
+	await sendDocumented({
 		id: 12,
 		method: "turn/start",
 		params: { threadId: "missing-thread", input: [{ type: "text", text: "Say ok." }] },
 	});
-	const forked = await send({ id: 13, method: "thread/fork", params: { threadId, cwd: join(scratchRoot, "fork") } });
+	const forked = await sendDocumented({
+		id: 13,
+		method: "thread/fork",
+		params: { threadId, cwd: join(scratchRoot, "fork") },
+	});
 	const forkId = stringAt(forked.response, ["result", "thread", "id"]);
-	await send({ id: 14, method: "thread/archive", params: { threadId } });
-	await send({ id: 15, method: "thread/delete", params: { threadId: forkId } });
-	await send({ id: 16, method: "thread/unsubscribe", params: { threadId } });
-	await send({ id: 17, method: "thread/search", params: { query: "docs" } });
+	await sendDocumented({ id: 14, method: "thread/archive", params: { threadId } });
+	await sendDocumented({ id: 15, method: "thread/delete", params: { threadId: forkId } });
+	await sendDocumented({ id: 16, method: "thread/unsubscribe", params: { threadId } });
+	await sendDocumented({ id: 17, method: "thread/search", params: { searchTerm: "docs" } });
+	await sendDocumented({ id: 18, method: "thread/turns/list", params: { threadId } });
+	await sendDocumented({ id: 19, method: "thread/items/list", params: { threadId } });
+	await sendDocumented({ id: 20, method: "thread/compact/start", params: { threadId } });
 
 	if (!("result" in initialize.response)) {
 		throw new Error("initialize did not return a result");
 	}
 	await writeEvidence(exchanges, reader.stderrText());
 	validateDocs(await readFile("docs/app-server.md", "utf8"), exchanges);
+	if (exchanges.map((exchange) => exchange.method).join("\n") !== manifest.documentation.methods.join("\n")) {
+		throw new Error("live documentation exchange order differs from capability manifest");
+	}
 	console.log(`LIVE_EXCHANGE_COUNT=${exchanges.length}`);
-	console.log(`DOCUMENTED_METHODS_VALIDATED=${requiredMethods.length}`);
+	console.log(`DOCUMENTED_METHODS_VALIDATED=${manifest.documentation.methods.length}`);
 	console.log("PASS_DOC_EXAMPLES_MATCH_LIVE_STATUS_AND_KEYS=true");
 	console.log(`EVIDENCE_PATH=${evidencePath}`);
 } finally {
 	child.stdin.end();
-	child.kill("SIGTERM");
-	await delay(100);
-	child.kill("SIGKILL");
+	await stopChild(child);
 	await rm(scratchRoot, { recursive: true, force: true });
+}
+
+async function stopChild(childProcess: ChildProcessWithoutNullStreams): Promise<void> {
+	if (childProcess.exitCode !== null || childProcess.signalCode !== null) return;
+	const closed = waitForChildClose(childProcess);
+	signalChildProcess(childProcess, "SIGTERM");
+	if (await settlesWithin(closed, 2_500)) return;
+	signalChildProcess(childProcess, "SIGKILL");
+	if (!(await settlesWithin(closed, 5_000))) {
+		throw new Error("documented app-server child did not exit during cleanup");
+	}
+}
+
+function waitForChildClose(childProcess: ChildProcessWithoutNullStreams): Promise<void> {
+	return new Promise((resolveClose, rejectClose) => {
+		childProcess.once("close", () => resolveClose());
+		childProcess.once("error", rejectClose);
+	});
+}
+
+function signalChildProcess(childProcess: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
+	if (childProcess.pid === undefined) return;
+	try {
+		process.kill(process.platform === "win32" ? childProcess.pid : -childProcess.pid, signal);
+	} catch (error: unknown) {
+		if (!(error instanceof Error) || !("code" in error) || error.code !== "ESRCH") throw error;
+	}
+}
+
+function settlesWithin(promise: Promise<void>, timeoutMs: number): Promise<boolean> {
+	return new Promise((resolveSettled) => {
+		const timer = setTimeout(() => resolveSettled(false), timeoutMs);
+		promise.then(
+			() => {
+				clearTimeout(timer);
+				resolveSettled(true);
+			},
+			() => {
+				clearTimeout(timer);
+				resolveSettled(true);
+			},
+		);
+	});
 }
 
 async function send(request: RpcRequest): Promise<Exchange> {
@@ -147,6 +204,13 @@ async function send(request: RpcRequest): Promise<Exchange> {
 			return exchange;
 		}
 	}
+}
+
+async function sendDocumented(request: RpcRequest): Promise<Exchange> {
+	if (!documentedMethods.has(request.method)) {
+		throw new Error(`method ${request.method} is missing from capability manifest documentation`);
+	}
+	return send(request);
 }
 
 async function writeEvidence(liveExchanges: readonly Exchange[], stderr: string): Promise<void> {

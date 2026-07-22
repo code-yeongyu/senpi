@@ -142,6 +142,10 @@ function compareOptionalRecordKeys(label: string, documented: unknown, live: unk
 
 function compareOptionalArrayItemKeys(label: string, documented: unknown, live: unknown): void {
 	if (!Array.isArray(documented) && !Array.isArray(live)) return;
+	if (!Array.isArray(documented) || !Array.isArray(live)) {
+		throw new Error(`${label} is not an array in both responses`);
+	}
+	if (documented.length === 0 && live.length === 0) return;
 	const documentedFirst = arrayFirstRecord(documented, `${label} documented`);
 	const liveFirst = arrayFirstRecord(live, `${label} live`);
 	compareKeys(label, documentedFirst, liveFirst);

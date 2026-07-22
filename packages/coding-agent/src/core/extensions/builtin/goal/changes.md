@@ -3,7 +3,24 @@
 ## Overview
 Persistent per-thread goal tracking as an in-tree builtin. Ports the standalone
 `pi-goal` extension into senpi with no dependency on it, file-based persistence,
-codex-aligned tool naming, and the budget concept removed.
+codex-aligned tool naming, and budget-driven behavior removed. An optional
+`tokenBudget` is retained only as inert persistence/wire compatibility metadata.
+
+## App-server token budget compatibility metadata (2026-07-19)
+
+### What changed
+- `Goal.tokenBudget?: number` is accepted when reading stored goals so the app-server adapter can preserve Codex's
+  required nullable `ThreadGoal.tokenBudget` wire member.
+- The builtin goal tools and continuation engine remain budget-free: they do not create, update, enforce, or react to
+  this metadata.
+
+### Why
+- Codex's app-server goal shape always includes `tokenBudget`, while older Senpi goal files have no such field. Keeping
+  it optional in persistence supports both formats without adding budget statuses, continuations, or transitions.
+
+### Expected merge conflict zones on next upstream sync
+- LOW in `types.ts` and `store.ts` around the additive compatibility field and stored-goal parser.
+- NONE in the tool schemas, continuation policy, usage accounting, or status model.
 
 ## Mid-turn token usage accounting via message_end (2026-07-20)
 
@@ -112,7 +129,9 @@ codex-aligned tool naming, and the budget concept removed.
   `getAgentDir()/extensions/goal/no-session/<sha256(cwd)[:24]>` fallback.
 
 ### Budget removal (the deliberate divergence)
-- Dropped the `token_budget` create param and the `Goal.tokenBudget` field.
+- Dropped the `token_budget` create param and initially dropped the `Goal.tokenBudget` field. The optional field was
+  later reintroduced solely as inert app-server persistence/wire compatibility metadata; the create tool still has no
+  budget parameter.
 - Dropped the `budgetLimited` status; `GoalStatus` is now `active|paused|complete`.
 - Removed `validateTokenBudget`, the budget-limit continuation prompt, the
   `goal-budget-limit` message type, and every budget-driven status transition

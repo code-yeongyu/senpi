@@ -163,12 +163,18 @@ describe("app-server turn log", () => {
 			{
 				turnId: "turn-1",
 				startedAt: "2026-07-02T00:00:00.000Z",
+				completedAt: null,
+				durationMs: null,
+				error: null,
 				status: "running",
 				items: [{ id: "item-1", type: "text", text: "hello" }],
 			},
 			{
 				turnId: "turn-2",
 				startedAt: "2026-07-02T00:00:01.000Z",
+				completedAt: null,
+				durationMs: null,
+				error: null,
 				status: "completed",
 				items: [],
 			},

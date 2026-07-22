@@ -38,6 +38,21 @@ describe("app-server JSON-RPC envelope", () => {
 		expect(line).not.toContain("jsonrpc");
 	});
 
+	it("preserves emittedAtMs when serializing notifications", () => {
+		// Given: a populated server-notification envelope.
+		const notification = {
+			method: "thread/status/changed",
+			params: { threadId: "thread-1", status: { type: "idle" } },
+			emittedAtMs: 1_900_000_041,
+		};
+
+		// When: the notification is serialized to its transport frame.
+		const line = serializeNdjsonMessage(notification);
+
+		// Then: the emission timestamp survives the final wire boundary.
+		expect(JSON.parse(line)).toEqual(notification);
+	});
+
 	it("tolerates jsonrpc on parsed requests", () => {
 		// Given: an upstream-compatible client request that includes jsonrpc.
 		const line = '{"jsonrpc":"2.0","id":"req-1","method":"initialize","params":{}}';

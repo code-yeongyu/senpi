@@ -1,7 +1,7 @@
 import { arch, platform, release, type } from "node:os";
 import type { ClientInfo, InitializeCapabilities, InitializeParams, InitializeResponse } from "../protocol/index.ts";
-import { SERVER_NOTIFICATION_METHODS } from "../protocol/methods.ts";
-import type { RpcEnvelope, RpcNotification } from "../rpc/envelope.ts";
+import { EXPERIMENTAL_SERVER_NOTIFICATION_METHODS, SERVER_NOTIFICATION_METHODS } from "../protocol/methods.ts";
+import { populateOutboundNotificationEnvelope, type RpcEnvelope, type RpcNotification } from "../rpc/envelope.ts";
 import type { RegistryConnection, ConnectionCapabilities as RegistryConnectionCapabilities } from "../rpc/registry.ts";
 
 export type ConnectionId = string;
@@ -50,7 +50,8 @@ const DEFAULT_CAPABILITIES: ConnectionCapabilities = {
 	requestAttestation: false,
 };
 
-const STABLE_SERVER_NOTIFICATIONS = new Set<string>(SERVER_NOTIFICATION_METHODS);
+const SERVER_NOTIFICATIONS = new Set<string>(SERVER_NOTIFICATION_METHODS);
+const EXPERIMENTAL_SERVER_NOTIFICATIONS = new Set<string>(EXPERIMENTAL_SERVER_NOTIFICATION_METHODS);
 
 export class ManagedConnection implements Connection {
 	readonly id: ConnectionId;
@@ -101,7 +102,7 @@ export class ManagedConnection implements Connection {
 	}
 
 	async send(message: RpcEnvelope): Promise<void> {
-		await this.sendMessage(message);
+		await this.sendMessage(populateOutboundNotificationEnvelope(message));
 	}
 
 	async close(reason: string): Promise<void> {
@@ -133,10 +134,13 @@ export function canDeliverNotification(connection: Connection, notification: Rpc
 	if (!connection.initialized) {
 		return false;
 	}
+	if (!SERVER_NOTIFICATIONS.has(notification.method)) {
+		return false;
+	}
 	if (connection.optOutNotificationMethods.has(notification.method)) {
 		return false;
 	}
-	return connection.capabilities.experimentalApi || STABLE_SERVER_NOTIFICATIONS.has(notification.method);
+	return !EXPERIMENTAL_SERVER_NOTIFICATIONS.has(notification.method) || connection.capabilities.experimentalApi;
 }
 
 export function buildInitializeResponse(connection: Connection, codexHome: string): InitializeResponse {

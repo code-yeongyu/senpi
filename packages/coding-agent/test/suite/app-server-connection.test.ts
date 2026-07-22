@@ -37,7 +37,7 @@ describe("app-server connection initialize gate", () => {
 		await core.receive(id, request(9, "thread/list"));
 
 		// Then: the initialize gate rejects it before method lookup.
-		expect(sent).toEqual([{ id: 9, error: { code: -32000, message: "Not initialized" } }]);
+		expect(sent).toEqual([{ id: 9, error: { code: -32600, message: "Not initialized" } }]);
 	});
 
 	it("initializes once, stores capabilities, and rejects a second initialize", async () => {
@@ -69,7 +69,7 @@ describe("app-server connection initialize gate", () => {
 		});
 		expect(core.getConnection(id)?.capabilities.experimentalApi).toBe(true);
 		expect(core.getConnection(id)?.optOutNotificationMethods.has("thread/started")).toBe(true);
-		expect(sent[1]).toEqual({ id: 2, error: { code: -32000, message: "Already initialized" } });
+		expect(sent[1]).toEqual({ id: 2, error: { code: -32600, message: "Already initialized" } });
 	});
 
 	it("keeps direct connection initialization single-use and response-free", () => {
@@ -154,7 +154,11 @@ describe("app-server connection initialize gate", () => {
 		// Then: only the non-opted-out notification is delivered after the initialize response.
 		expect(sent).toEqual([
 			{ id: 1, result: expect.any(Object) },
-			{ method: "thread/status/changed", params: { threadId: "thread-1" } },
+			{
+				method: "thread/status/changed",
+				params: { threadId: "thread-1" },
+				emittedAtMs: expect.any(Number),
+			},
 		]);
 	});
 });

@@ -1,5 +1,40 @@
 # Local fork changes
 
+## 2026-07-21 — Codex HEAD app-server parity documentation refresh
+
+- Changed:
+  - `docs/app-server.md`, `src/modes/app-server/AGENTS.md`, and the package changelog: documented the final
+    capability-mapped Codex HEAD surface, protocol provenance, intentionally unsupported requests, and the
+    source-oracle differential harness.
+- Why: integrations need an accurate compatibility boundary. The prior inventory still described implemented
+  parity methods as unavailable and did not explain deliberate differences such as restart-time history
+  reconstruction, aggregated diffs, the settings subset, or honest account reads.
+- What changed: documentation and its hermetic documentation checker only; no app-server runtime behavior changed.
+- Why the extension system could not handle this: protocol compatibility, runtime invariants, and QA-harness
+  operation are package-level contracts rather than extension behavior.
+- Merge-conflict risk: low. The primary conflict zone is the app-server capability table when the Codex protocol
+  pin changes again.
+
+## 2026-07-20 — Codex HEAD app-server facade and contract fixtures
+
+- Changed:
+  - `src/modes/app-server/protocol/` and related app-server runtime seams: added the handwritten Node-compatible facade,
+    HEAD method/experimental-notification catalogs, populated notification envelopes, deferred post-response actions,
+    and the canonical terminal error/completion pair.
+  - `test/fixtures/app-server-methods-codex-head.json`, app-server facade/error/notification/dispatch/terminal suites, and
+    the QA capability manifest: pin the source-derived catalogs and the intended wire behavior without importing the
+    generated tree at runtime. The source-driven QA probes also assert that notification timestamps survive transport
+    serialization while approval server requests remain unstamped.
+- Why: Codex's generated TypeScript exporter intentionally excludes experimental request roots, while Senpi still needs
+  a complete typed contract for the capability-mapped parity work and evidence that catalog or envelope drift fails
+  loudly.
+- What changed: protocol/runtime/test surface only; the generated Codex fixture remains byte-identical and the existing
+  remote-control response is intentionally left for its later implementation task.
+- Why the extension system could not handle this: app-server method registration, transport envelopes, and JSON-RPC
+  frame ordering happen below the extension API.
+- Merge-conflict risk: low. The app-server tree and HEAD fixture are fork-only; on a future Codex pin, regenerate evidence
+  first and then re-derive the handwritten facade.
+
 ## 2026-07-21 — config-reload settings-manager seam
 
 - Changed: `src/core/settings-manager.ts` tracks recent process-written settings content hashes by absolute path, with bounded, expiring, consume-on-match entries shared across settings-manager and storage instances.

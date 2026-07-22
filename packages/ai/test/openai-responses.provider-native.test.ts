@@ -13,6 +13,54 @@ function createSseResponse(events: unknown[]): Response {
 }
 
 describe("OpenAI Responses provider-native content blocks", () => {
+	it("reconciles a completed provider-native item over its partial added frame", async () => {
+		// Given: the real Responses lifecycle where web-search action metadata arrives only on done.
+		const model = getModel("openai", "gpt-5.4");
+		const context: Context = {
+			messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
+		};
+		const partialWebSearchCall = {
+			type: "web_search_call",
+			id: "ws_partial",
+			status: "in_progress",
+		};
+		const completedWebSearchCall = {
+			...partialWebSearchCall,
+			status: "completed",
+			action: { type: "search", query: "senpi parity", queries: null },
+		};
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			createSseResponse([
+				{ type: "response.output_item.added", item: partialWebSearchCall, output_index: 0 },
+				{ type: "response.output_item.done", item: completedWebSearchCall, output_index: 0 },
+				{
+					type: "response.completed",
+					response: {
+						id: "resp_partial_native",
+						status: "completed",
+						output: [completedWebSearchCall],
+						usage: {
+							input_tokens: 0,
+							output_tokens: 0,
+							total_tokens: 0,
+							input_tokens_details: { cached_tokens: 0 },
+						},
+					},
+				},
+			]),
+		);
+
+		// When: the adapter completes the response stream.
+		const assistantMessage = await streamOpenAIResponses(model, context, { apiKey: "test-key" }).result();
+
+		// Then: the persisted native block is the final provider item, not the partial placeholder.
+		expect(assistantMessage.content).toContainEqual({
+			type: "providerNative",
+			subtype: "web_search_call",
+			raw: completedWebSearchCall,
+		});
+	});
+
 	it("surfaces unknown output items as providerNative content", async () => {
 		const model = getModel("openai", "gpt-5.4");
 		const context: Context = {

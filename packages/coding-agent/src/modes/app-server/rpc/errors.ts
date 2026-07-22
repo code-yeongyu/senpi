@@ -1,3 +1,5 @@
+import type { CodexErrorInfo as FacadeCodexErrorInfo } from "../protocol/terminal.ts";
+
 export interface JsonRpcError {
 	readonly code: number;
 	readonly message: string;
@@ -24,23 +26,7 @@ export type CodexErrorInfo =
 	| { readonly kind: "activeTurnNotSteerable"; readonly turnKind: NonSteerableTurnKind }
 	| { readonly kind: "other" };
 
-export type SerializedCodexErrorInfo =
-	| "contextWindowExceeded"
-	| "sessionBudgetExceeded"
-	| "usageLimitExceeded"
-	| "serverOverloaded"
-	| "cyberPolicy"
-	| "internalServerError"
-	| "unauthorized"
-	| "badRequest"
-	| "threadRollbackFailed"
-	| "sandboxError"
-	| "other"
-	| { readonly httpConnectionFailed: { readonly httpStatusCode: number | null } }
-	| { readonly responseStreamConnectionFailed: { readonly httpStatusCode: number | null } }
-	| { readonly responseStreamDisconnected: { readonly httpStatusCode: number | null } }
-	| { readonly responseTooManyFailedAttempts: { readonly httpStatusCode: number | null } }
-	| { readonly activeTurnNotSteerable: { readonly turnKind: NonSteerableTurnKind } };
+export type SerializedCodexErrorInfo = FacadeCodexErrorInfo;
 
 export const codexErrorInfo = {
 	contextWindowExceeded: (): CodexErrorInfo => ({ kind: "contextWindowExceeded" }),
@@ -145,11 +131,11 @@ export function overloadedError(): JsonRpcError {
 }
 
 export function notInitializedError(): JsonRpcError {
-	return { code: -32000, message: "Not initialized" };
+	return { code: -32600, message: "Not initialized" };
 }
 
 export function alreadyInitializedError(): JsonRpcError {
-	return { code: -32000, message: "Already initialized" };
+	return { code: -32600, message: "Already initialized" };
 }
 
 export function experimentalCapabilityError(method: string): JsonRpcError {

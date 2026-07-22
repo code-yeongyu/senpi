@@ -55,9 +55,12 @@ try {
 	if (!client.messages.slice(mark).some((message) => message.method === "item/completed" && message.params?.threadId === threadId)) {
 		throw new Error("turn stream did not include item/completed");
 	}
+	const envelopes = client.assertServerEnvelopes();
+	if (envelopes.serverRequestCount !== 1) {
+		throw new Error(`expected one unstamped approval server request, got ${envelopes.serverRequestCount}`);
+	}
 	client.close();
 	await fake.stop();
-	scratch.cleanup();
 	pass(transcript, "approval");
 } catch (error) {
 	fail(transcript, "approval", error);

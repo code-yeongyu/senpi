@@ -1,4 +1,4 @@
-import type { ThreadListResponse, ThreadLoadedListResponse } from "../protocol/generated/v2/index.ts";
+import type { ThreadListResponse, ThreadLoadedListResponse } from "../protocol/index.ts";
 import type { ThreadArchiveState } from "./archive-state.ts";
 import { decodeCursor, encodeCursor, objectValue, optionalNumber, optionalString } from "./handler-params.ts";
 import type { ThreadRegistry, WireThread } from "./registry.ts";
@@ -26,7 +26,7 @@ export async function listThreadsResponse(
 	const threads = archived ? await archivedListThreads(page.threads, dependencies.archiveState) : page.threads;
 	const filtered = await filterByArchiveState(threads, archived, dependencies.archiveState);
 	return {
-		data: filtered.map((thread) => buildWireThread(thread, dependencies.turnLog, false)),
+		data: await Promise.all(filtered.map((thread) => buildWireThread(thread, dependencies.turnLog, false))),
 		nextCursor: page.nextCursor,
 		backwardsCursor: null,
 	};

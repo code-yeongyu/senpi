@@ -1,17 +1,22 @@
 # Codex app-server protocol
 
-This directory vendors the TypeScript protocol generated from `codex-cli 0.142.5`.
+This directory vendors the TypeScript protocol fixture from Codex git commit
+`0fb559f0f6e231a88ac02ea002d3ecd248e2b515` (author date 2026-07-18).
 
 Generated source:
 
 ```bash
-codex app-server generate-ts --experimental --out src/modes/app-server/protocol/generated
+packages/coding-agent/scripts/generate-app-server-protocol.sh \
+  --from-checkout /Users/yeongyu/local-workspaces/codex
 ```
 
-The generated `.ts` payload was copied verbatim from:
+Checkout mode recursively copies this Codex-maintained fixture verbatim, deletes
+files no longer present upstream, preserves only the local `generated/package.json`
+compilation shim, and derives `PROTOCOL_VERSION.txt` from the checkout's HEAD SHA
+and author date:
 
 ```text
-.omo/ulw-research/20260702-114518/raw/schema-ts-experimental
+/Users/yeongyu/local-workspaces/codex/codex-rs/app-server-protocol/schema/typescript
 ```
 
 Do not hand-edit files under `generated/`. Update them with
@@ -29,7 +34,31 @@ the shim marks that subtree as CommonJS without changing any generated
 TypeScript bytes. Keep app-facing protocol imports out of `generated/**`; use
 the non-generated facade instead.
 
-The non-generated `index.ts` facade avoids importing the raw generated tree
-directly while still providing typed app-facing protocol shapes for the
-initialize, thread, turn, model-list, server-notification, and server-request
-surfaces used by later app-server work.
+## Handwritten facade policy
+
+The non-generated facade is the app-server build and runtime contract. It is
+handwritten from the pinned Codex source and generated evidence, then exposed
+through `index.ts`. Runtime modules must import protocol types from that facade;
+the raw generated tree must never become a runtime dependency. Direct generated
+imports are restricted to isolated type-evidence and compatibility checks while
+the corresponding facade surface is being filled in.
+
+The generated TypeScript tree is not a complete inventory of Codex runtime
+methods. Codex's exporter intentionally omits experimental request roots, even
+when `common.rs` still declares and serves those methods. Supplemental facade
+modules therefore cover the experimental request families selected by the
+parity plan, using the pinned `common.rs` method fixture as provenance instead
+of treating exporter absence as runtime removal.
+
+The facade also records these deliberate projections:
+
+- `SENPI_COLLABORATION_MODE` is the single generated-schema-valid
+  `CollaborationMode` projection used by Senpi. Its nested
+  `reasoning_effort` member remains snake_case because that is the Codex wire
+  contract.
+- Fuzzy-file results use the pinned Codex HEAD `match_type` and `file_name`
+  members. This common-protocol record intentionally remains snake_case even
+  though most v2 request and response members are camelCase.
+- Account usage and rate-limit counters that are bigint-like in Codex source
+  are normalized to JSON-safe `number` values in the facade. JavaScript
+  `bigint` cannot be serialized in an app-server JSON frame.

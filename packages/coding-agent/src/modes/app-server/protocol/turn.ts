@@ -14,15 +14,18 @@ import type {
 	TurnEnvironmentParams,
 	UserInput,
 } from "./base.ts";
+import type { CollaborationMode } from "./collaboration-mode.ts";
+import type { TurnError, TurnStatus } from "./terminal.ts";
 
 export type TurnsPage = JsonValue;
+export type TurnItemsView = "notLoaded" | "summary" | "full";
 
 export type Turn = {
 	readonly id: string;
 	readonly items: readonly JsonValue[];
-	readonly itemsView: JsonValue;
-	readonly status: JsonValue;
-	readonly error: JsonValue | null;
+	readonly itemsView: TurnItemsView;
+	readonly status: TurnStatus;
+	readonly error: TurnError | null;
 	readonly startedAt: number | null;
 	readonly completedAt: number | null;
 	readonly durationMs: number | null;
@@ -50,7 +53,7 @@ export type TurnStartParams = TurnCommonParams & {
 	readonly summary?: ReasoningSummary | null;
 	readonly personality?: Personality | null;
 	readonly outputSchema?: JsonValue | null;
-	readonly collaborationMode?: JsonValue | null;
+	readonly collaborationMode?: CollaborationMode | null;
 	readonly multiAgentMode?: MultiAgentMode | null;
 };
 export type TurnStartResponse = { readonly turn: Turn };

@@ -248,9 +248,9 @@ describe("Coding Agent Tools", () => {
 
 			const result = await writeTool.execute("test-call-3", { path: testFile, content });
 
-			expect(getTextOutput(result)).toContain("Successfully wrote");
-			expect(getTextOutput(result)).toContain(testFile);
-			expect(result.details).toBeUndefined();
+			expect(getTextOutput(result)).toBe(`Successfully wrote ${content.length} bytes to ${testFile}`);
+			expect(result.details?.operation).toBe("add");
+			expect(applyPatch("", result.details?.patch ?? "")).toBe(content);
 		});
 
 		it("should create parent directories", async () => {

@@ -14,11 +14,13 @@ import {
 import {
 	registerThreadLifecycleHandlers,
 	type ThreadLifecycleController,
+	type ThreadLifecycleHandlersOptions,
 } from "../../src/modes/app-server/threads/handlers.ts";
 import { ThreadRegistry, type ThreadRegistryOptions } from "../../src/modes/app-server/threads/registry.ts";
 import { TurnLog } from "../../src/modes/app-server/threads/turn-log.ts";
 
-type HarnessOptions = Pick<ThreadRegistryOptions, "createSession">;
+type HarnessOptions = Pick<ThreadRegistryOptions, "createSession"> &
+	Pick<ThreadLifecycleHandlersOptions, "deferUntilResponded">;
 
 export const roots: string[] = [];
 
@@ -91,6 +93,7 @@ export function createHarnessForRoot(
 		threads,
 		turnLog,
 		notifications,
+		deferUntilResponded: options.deferUntilResponded,
 		idleUnloadMinutes: 5,
 	});
 	return { connection, registry, threads, turnLog, notifications, lifecycle };
@@ -125,6 +128,14 @@ export function responseResult(response: Awaited<ReturnType<MethodRegistry["disp
 export function objectAt(value: unknown, key: string): Record<string, unknown> {
 	const object = objectValue(value);
 	return objectValue(object[key]);
+}
+
+export function numberAt(value: unknown, key: string): number {
+	const child = objectValue(value)[key];
+	if (typeof child !== "number") {
+		throw new Error(`Expected ${key} to be a number`);
+	}
+	return child;
 }
 
 export function stringAt(value: unknown, key: string): string {
