@@ -25,6 +25,7 @@ import type {
 	ExtensionWidgetOptions,
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
+import { getSupportedThinkingLevels } from "../../core/thinking-levels.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { buildCustomUnsupportedRequest, DEFAULT_CUSTOM_EXTENSION_LABEL } from "./custom-capability.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
@@ -471,6 +472,13 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "prompt": {
+				if (command.thinkingLevel !== undefined && session.isStreaming && command.streamingBehavior !== undefined) {
+					return error(
+						id,
+						"prompt",
+						"Cannot set thinkingLevel on a queued prompt; set it after the current turn completes.",
+					);
+				}
 				// Start prompt handling immediately, but emit the authoritative response only after
 				// prompt preflight succeeds. Queued and immediately handled prompts also count as success.
 				let preflightSucceeded = false;
@@ -478,6 +486,7 @@ export function createRpcConnectionHandler(
 					.prompt(command.message, {
 						images: command.images,
 						streamingBehavior: command.streamingBehavior,
+						thinkingLevel: command.thinkingLevel,
 						source: "rpc",
 						preflightResult: (didSucceed) => {
 							if (didSucceed) {
@@ -564,7 +573,12 @@ export function createRpcConnectionHandler(
 
 			case "get_available_models": {
 				const models = await session.modelRegistry.getAvailable();
-				return success(id, "get_available_models", { models });
+				return success(id, "get_available_models", {
+					models: models.map((model) => ({
+						...model,
+						supportedThinkingLevels: getSupportedThinkingLevels(model),
+					})),
+				});
 			}
 
 			// =================================================================
@@ -572,7 +586,18 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "set_thinking_level": {
-				session.setThinkingLevel(command.level);
+				if (command.scope === "turn") {
+					session.setSessionThinkingLevel(command.level);
+					if (session.thinkingLevel !== command.level) {
+						return error(
+							id,
+							"set_thinking_level",
+							`Thinking level ${command.level} is not supported by the active model.`,
+						);
+					}
+				} else {
+					session.setThinkingLevel(command.level);
+				}
 				return success(id, "set_thinking_level");
 			}
 

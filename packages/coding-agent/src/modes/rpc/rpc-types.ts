@@ -19,7 +19,14 @@ import type { SourceInfo } from "../../core/source-info.ts";
 
 export type RpcCommand =
 	// Prompting
-	| { id?: string; type: "prompt"; message: string; images?: ImageContent[]; streamingBehavior?: "steer" | "followUp" }
+	| {
+			id?: string;
+			type: "prompt";
+			message: string;
+			images?: ImageContent[];
+			streamingBehavior?: "steer" | "followUp";
+			thinkingLevel?: ThinkingLevel;
+	  }
 	| { id?: string; type: "steer"; message: string; images?: ImageContent[] }
 	| { id?: string; type: "follow_up"; message: string; images?: ImageContent[] }
 	| { id?: string; type: "abort" }
@@ -34,7 +41,7 @@ export type RpcCommand =
 	| { id?: string; type: "get_available_models" }
 
 	// Thinking
-	| { id?: string; type: "set_thinking_level"; level: ThinkingLevel }
+	| { id?: string; type: "set_thinking_level"; level: ThinkingLevel; scope?: "turn" }
 	| { id?: string; type: "cycle_thinking_level" }
 
 	// Queue modes
@@ -175,7 +182,7 @@ export type RpcResponse =
 			type: "response";
 			command: "get_available_models";
 			success: true;
-			data: { models: Model<any>[] };
+			data: { models: Array<Model<any> & { supportedThinkingLevels: ThinkingLevel[] }> };
 	  }
 
 	// Thinking
@@ -326,3 +333,9 @@ export type RpcExtensionUIResponse =
 	| { type: "extension_ui_response"; id: string; value: string }
 	| { type: "extension_ui_response"; id: string; confirmed: boolean }
 	| { type: "extension_ui_response"; id: string; cancelled: true };
+
+/** Emitted when the effective session thinking level changes. */
+export interface RpcThinkingLevelChangedEvent {
+	type: "thinking_level_changed";
+	level: ThinkingLevel;
+}

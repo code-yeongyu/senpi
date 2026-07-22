@@ -962,3 +962,17 @@ If upstream modifies any compaction route (manual, threshold, overflow, pre-prom
 - Extended `packages/coding-agent/src/core/model-registry.ts` so `models.json` (and `pi.registerProvider()`) accepts `extraBody` at both provider and per-model level. `getApiKeyAndHeaders` now resolves `extraBody`, and `sdk.ts` merges provider/model extraBody with any call-site `extraBody` before invoking `streamSimple`.
 - This had to be done in core because `ThinkingLevel` is exported from `@mariozechner/pi-agent-core` and every UI/CLI/settings surface needed to be widened, and because `getApiKeyAndHeaders` + stream option composition live in core `ModelRegistry`/`sdk.ts`.
 - Expected merge-conflict zone on upstream sync: `model-registry.ts` schemas + `getApiKeyAndHeaders`, `sdk.ts` stream option composition, `cli/args.ts` validator, `settings-manager.ts` thinking level type, `agent-session.ts` thinking cycle list, interactive TUI thinking selector and border color map.
+
+## RPC prompt-level thinking and fallback level events (2026-07-22)
+
+### What changed
+
+- `agent-session.ts`: accepts a session-only `PromptOptions.thinkingLevel`, rejects queued prompts carrying it before queue mutation, and emits `thinking_level_changed` when retry fallback applies an ephemeral level.
+
+### Why extension system couldn't handle this
+
+- Prompt preflight, session-only level application, fallback model switching, and session event emission are private core lifecycle boundaries.
+
+### Expected merge conflict zones
+
+- HIGH: `agent-session.ts` prompt serialization and fallback model-switch logic.

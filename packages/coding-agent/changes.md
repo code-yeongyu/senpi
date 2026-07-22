@@ -255,3 +255,11 @@
   - Added `scripts/build-all.mjs`: PM-agnostic orchestrator that detects the parent package manager via `$npm_execpath` / `$npm_config_user_agent`, strips the known pnpm-only `npm_config_*` env keys before spawning children, and runs `<pm> run build` in each workspace in dependency order. The companion `scripts/run-web-ui-check.mjs` does the same for `packages/web-ui`'s `check`.
 - Why the extension system could not handle this: package-manager compatibility, install layout, root build orchestration, and postinstall approval lists are all controlled by package/workspace config files and spawn-time env, none of which a runtime extension can intercept.
 - Merge-conflict risk: low to medium per file. Expected conflict zones are the `dependencies`/`scripts` blocks of the five modified `package.json` files, the new settings and `packages` list in `pnpm-workspace.yaml`, and the orchestrator scripts. On the next upstream sync: (1) keep the fork's `scripts/build-all.mjs` and `scripts/run-web-ui-check.mjs`; (2) keep the `trustedDependencies` / `pnpm.onlyBuiltDependencies` entries in root `package.json`; (3) merge additional workspace packages upstream adds into `pnpm-workspace.yaml`; (4) keep the added direct deps in the five package.json files unless upstream inlines equivalent deps.
+
+## 2026-07-22 — RPC supported-thinking-level contract tests
+
+- Changed: added hermetic RPC coverage for synthetic reasoning, non-reasoning, and explicit `xhigh: null` model fixtures.
+- Why: RPC clients need a stable model-level capability contract before rendering thinking-level controls.
+- What changed: test-only package coverage; runtime seams are documented in the matching core and RPC change logs.
+- Why the extension system could not handle this: the RPC process, wire response, and model registry are package-owned surfaces.
+- Merge-conflict risk: low. The test file is fork-only.

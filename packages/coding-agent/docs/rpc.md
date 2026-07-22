@@ -48,6 +48,11 @@ Send a user prompt to the agent. The command response is emitted after the promp
 {"id": "req-1", "type": "prompt", "message": "Hello, world!"}
 ```
 
+With a session-only thinking level:
+```json
+{"id": "req-1", "type": "prompt", "message": "Solve this carefully", "thinkingLevel": "high"}
+```
+
 With images:
 ```json
 {"type": "prompt", "message": "What's in this image?", "images": [{"type": "image", "data": "base64-encoded-data", "mimeType": "image/png"}]}
@@ -63,6 +68,7 @@ With images:
 - `"followUp"`: Wait until the agent finishes. Message is delivered only when agent stops.
 
 If the agent is streaming and no `streamingBehavior` is specified, the command returns an error.
+Queued prompts cannot include `thinkingLevel`; wait for the current turn to complete before changing it.
 
 **Extension commands**: If the message is an extension command (e.g., `/mycommand`), it executes immediately even during streaming. Extension commands manage their own LLM interaction via `pi.sendMessage()`.
 
@@ -264,7 +270,7 @@ List all configured models.
 {"type": "get_available_models"}
 ```
 
-Response contains an array of full [Model](#model) objects:
+Response contains an array of full [Model](#model) objects with supported thinking levels:
 ```json
 {
   "type": "response",
@@ -294,6 +300,9 @@ Response:
 ```json
 {"type": "response", "command": "set_thinking_level", "success": true}
 ```
+
+Pass `"scope": "turn"` to change only the current session level without rewriting the global default. The command
+returns an error when the active model cannot apply the requested level.
 
 #### cycle_thinking_level
 
@@ -1289,6 +1298,7 @@ Source files:
   "provider": "anthropic",
   "baseUrl": "https://api.anthropic.com",
   "reasoning": true,
+	  "supportedThinkingLevels": ["off", "minimal", "low", "medium", "high"],
   "input": ["text", "image"],
   "contextWindow": 200000,
   "maxTokens": 16384,
@@ -1300,6 +1310,10 @@ Source files:
   }
 }
 ```
+
+| Field | Description |
+| --- | --- |
+| `supportedThinkingLevels` | Thinking levels accepted by this model. Non-reasoning models expose only `"off"`. |
 
 ### UserMessage
 

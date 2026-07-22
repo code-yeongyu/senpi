@@ -44,6 +44,7 @@ export interface ModelInfo {
 	id: string;
 	contextWindow: number;
 	reasoning: boolean;
+	supportedThinkingLevels?: ThinkingLevel[];
 }
 
 export type RpcEventListener = (event: AgentSessionEvent) => void;

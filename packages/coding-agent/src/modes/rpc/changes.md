@@ -133,3 +133,21 @@ fork change here is a merge-conflict surface on upstream syncs.
 
 - MEDIUM: `rpc-mode.ts` event emission sites.
 - LOW: `jsonl.ts` write helpers; `event-output-buffer.ts` is fork-only.
+
+## Supported thinking levels and turn-scoped thinking controls (2026-07-22)
+
+### What changed
+
+- `get_available_models` now decorates every model with the core-authoritative `supportedThinkingLevels` list.
+- RPC `prompt` accepts `thinkingLevel` for immediate prompts and rejects queued level changes before queue mutation.
+- `set_thinking_level` accepts `scope: "turn"` for a session-only setting and returns an error unless the effective level exactly matches the request.
+- RPC contracts expose the `thinking_level_changed` event and the TypeScript client preserves model capability data when available.
+
+### Why extension system couldn't handle this
+
+- JSONL RPC command parsing, response assembly, and session event forwarding happen below the extension API.
+
+### Expected merge conflict zones
+
+- MEDIUM: `connection-handler.ts` command dispatch and `rpc-types.ts` response unions.
+- LOW: `rpc-client.ts` model metadata and `docs/rpc.md` protocol reference.

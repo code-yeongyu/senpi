@@ -359,6 +359,8 @@ export interface PromptOptions {
 	images?: ImageContent[];
 	/** When streaming, how to queue the message: "steer" (interrupt) or "followUp" (wait). Required if streaming. */
 	streamingBehavior?: "steer" | "followUp";
+	/** Session-only thinking level applied before starting this prompt. */
+	thinkingLevel?: ThinkingLevel;
 	/** Source of input for extension input event handlers. Defaults to "interactive". */
 	source?: InputSource;
 	/** Internal hook used by RPC mode to observe prompt preflight acceptance or rejection. */
@@ -1766,6 +1768,9 @@ export class AgentSession {
 						"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
 					);
 				}
+				if (options.thinkingLevel !== undefined) {
+					throw new Error("Cannot set thinkingLevel on a queued prompt; set it after the current turn completes.");
+				}
 				if (options.streamingBehavior === "followUp") {
 					await this._queueFollowUp(expandedText, currentImages);
 				} else {
@@ -1788,6 +1793,11 @@ export class AgentSession {
 				await this._waitForSettledSessionWork();
 				throwIfCancelled();
 				if (this.isStreaming) {
+					if (options?.thinkingLevel !== undefined) {
+						throw new Error(
+							"Cannot set thinkingLevel on a queued prompt; set it after the current turn completes.",
+						);
+					}
 					if (options?.streamingBehavior === "followUp") {
 						await this._queueFollowUp(expandedText, currentImages);
 					} else {
@@ -1900,6 +1910,9 @@ export class AgentSession {
 		throwIfCancelled();
 		promptDisposition?.("started");
 		preflightResult?.(true);
+		if (options?.thinkingLevel !== undefined) {
+			this.setSessionThinkingLevel(options.thinkingLevel);
+		}
 		await this._promptAgent(messages);
 		await this.waitForRetry();
 		await this.waitForIdle();
@@ -2439,7 +2452,11 @@ export class AgentSession {
 	}
 
 	private _applyEphemeralThinkingLevel(level: ThinkingLevel): void {
+		const previousLevel = this.agent.state.thinkingLevel;
 		this.agent.state.thinkingLevel = level;
+		if (previousLevel !== level) {
+			this._emit({ type: "thinking_level_changed", level });
+		}
 	}
 
 	/**
