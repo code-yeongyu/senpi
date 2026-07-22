@@ -10,7 +10,7 @@ Generated: 2026-07-22T01:44:24Z
 - Upstream release tag SHA: `20be4b18d4c57487f8993d2762bace129f0cf7c6`
 - Merged upstream main SHA: `dd6bea41efa8caa7a10fe5a6401676dc5699f83f`
 - Merge commit: `394c21245777e89386bc9a83e5896c1918545616`
-- Final HEAD: `29147725c2f4b6ebea790e91d6fab4785006ce5c`
+- QA/fix HEAD before this report commit: `29147725c2f4b6ebea790e91d6fab4785006ce5c`
 - Ancestry confirmed: `upstream/main` is an ancestor of final HEAD.
 
 ## Fork State Preserved
