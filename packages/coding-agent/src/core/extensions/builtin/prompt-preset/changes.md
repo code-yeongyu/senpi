@@ -1,5 +1,32 @@
 # prompt-preset Extension Changes
 
+## Eval-first routing for GPT presets (2026-07-22)
+
+### What changed
+
+- `gpt-eval-routing.ts` (new): exports the GPT-only
+  `buildGptEvalRoutingTuning()` rule. Each GPT-5.x builder adds
+  that rule, which directs an available `eval` tool to its own live
+  multi-call Tool Guidelines rather than duplicating their model-aware
+  routing details.
+- `test/suite/prompt-presets-gpt-eval-routing.test.ts` (new): verifies every GPT-5
+  preset, including both full-core 5.5/5.6 variants, defers to the actual
+  eval guideline and that Grok does not inherit the GPT-only rule.
+
+### Why
+
+- The eval extension already provides the cross-model Code Mode surface and
+  model-aware batching guidance. GPT presets need one high-level route to
+  that surface, but repeating a generic direct-call policy conflicts with
+  the family-specific guidance and would leak into Grok through the shared
+  file-operation helper.
+
+### Expected merge conflict zones
+
+- LOW: the GPT preset imports and `gpt-eval-routing.ts` helper if
+  upstream adds GPT-specific eval guidance; keep it separate from the
+  Grok-shared file-operation block.
+
 ## Todo tool prompt naming (2026-07-19)
 
 ### What changed
