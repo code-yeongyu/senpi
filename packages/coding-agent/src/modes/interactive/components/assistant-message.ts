@@ -1,5 +1,6 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { type Component, Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
+import { formatDuration } from "../../../utils/duration.ts";
 import { formatProviderNativeBody, formatProviderNativeSummary } from "../../provider-native-rendering.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createBoundedRenderSignature } from "./render-signature.ts";
@@ -144,18 +145,49 @@ export class AssistantMessageComponent extends Container {
 				}
 				case "thinking": {
 					const thinkingBlocks: string[] = [];
+					let hasTiming = false;
+					let isDone = true;
+					let minStart = Number.POSITIVE_INFINITY;
+					let maxEnd = Number.NEGATIVE_INFINITY;
 					for (; i < message.content.length; i++) {
 						const thinkingContent = message.content[i];
 						if (thinkingContent.type !== "thinking") break;
+						const startedAt = thinkingContent.startedAt;
+						if (startedAt !== undefined) {
+							hasTiming = true;
+							minStart = Math.min(minStart, startedAt);
+							const endedAt = thinkingContent.endedAt;
+							if (endedAt === undefined) {
+								isDone = false;
+							} else {
+								maxEnd = Math.max(maxEnd, endedAt);
+							}
+						}
 						const thinking = thinkingContent.thinking.trim();
 						if (thinking) thinkingBlocks.push(thinking);
 					}
 					i--;
 					if (thinkingBlocks.length === 0) break;
-					const text = this.hideThinkingBlock
-						? theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel))
-						: thinkingBlocks.join("\n\n");
-					descriptors.push({ kind: this.hideThinkingBlock ? "thinking-label" : "thinking-md", text });
+					if (!hasTiming) {
+						const text = this.hideThinkingBlock
+							? theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel))
+							: thinkingBlocks.join("\n\n");
+						descriptors.push({ kind: this.hideThinkingBlock ? "thinking-label" : "thinking-md", text });
+					} else {
+						const label = isDone
+							? theme.italic(
+									theme.fg("thinkingText", `Thought: ${formatDuration(Math.max(0, maxEnd - minStart))}`),
+								)
+							: theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel));
+						if (this.hideThinkingBlock) {
+							descriptors.push({ kind: "thinking-label", text: label });
+						} else {
+							descriptors.push(
+								{ kind: "thinking-label", text: label },
+								{ kind: "thinking-md", text: thinkingBlocks.join("\n\n") },
+							);
+						}
+					}
 					if (message.content.slice(i + 1).some((following) => isVisibleContent(following, false)))
 						descriptors.push(SPACER_DESCRIPTOR);
 					break;

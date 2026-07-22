@@ -1,5 +1,33 @@
 # changes
 
+## per-section thinking duration headers (2026-07-22)
+
+### What changed
+
+- `components/assistant-message.ts`: consecutive thinking sections with `startedAt` timing now show an italic
+  `Thought: <duration>` header above visible reasoning, or replace the collapsed `Thinking...` label when reasoning is
+  hidden. Active timed sections keep the configured thinking label; untimed and all-empty legacy sections retain their
+  prior rendering.
+- `../../../test/assistant-message.test.ts`: covers finished, active, legacy, empty/redacted, custom-label, and
+  all-empty thinking-duration rendering states.
+- `../../../test/streaming-reveal.test.ts`: verifies partially revealed thinking blocks retain their timing metadata.
+
+### Why
+
+- Per-section elapsed time makes completed reasoning runs legible without exposing hidden reasoning or introducing a
+  live timer into the transcript.
+
+### Why extension system couldn't handle this
+
+- Thinking-section coalescing, hidden-label selection, streaming display slices, and transcript descriptor
+  reconciliation are private core renderer behavior; an extension cannot insert a stable header into that sequence or
+  preserve its metadata through the host-owned reveal path.
+
+### Expected merge conflict zones
+
+- LOW: `components/assistant-message.ts` around consecutive-thinking descriptor construction.
+- LOW: `changes.md` fork-entry prepend.
+
 ## braille tool progress spinner (2026-07-22)
 
 ### What changed
