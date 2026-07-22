@@ -4,9 +4,10 @@ export const WORKSPACE_PACKAGES = [
 	"packages/ai/package.json",
 	"packages/agent/package.json",
 	"packages/coding-agent/package.json",
-	"packages/orchestrator/package.json",
 	"packages/pty/package.json",
 	"packages/senpi-codemode/package.json",
+	"packages/server/package.json",
+	"packages/storage/sqlite-node/package.json",
 	"packages/tui/package.json",
 	"packages/web-ui/package.json",
 ];

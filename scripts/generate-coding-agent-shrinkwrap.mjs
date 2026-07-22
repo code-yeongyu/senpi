@@ -43,6 +43,13 @@ function packageDependencies(entry) {
 	};
 }
 
+function dependencyItems(entry) {
+	return [
+		...Object.keys(entry.dependencies ?? {}).map((name) => ({ name, optional: false })),
+		...Object.keys(entry.optionalDependencies ?? {}).map((name) => ({ name, optional: true })),
+	];
+}
+
 function sortedObject(object) {
 	return Object.fromEntries(Object.entries(object).sort(([a], [b]) => a.localeCompare(b)));
 }
@@ -209,13 +216,21 @@ function addInternalWorkspace(shrinkwrapPackages, addedPaths, queue, name, works
 	shrinkwrapPackages[outputPath] = sortedPackageEntry(entry);
 	addedPaths.add(outputPath);
 
-	for (const dependencyName of Object.keys(packageDependencies(packageJson))) {
-		queue.push({ name: dependencyName, from: outputPath });
+	for (const dependency of dependencyItems(packageJson)) {
+		queue.push({ ...dependency, from: outputPath });
 	}
 }
 
-function addExternalPackage(lockPackages, shrinkwrapPackages, addedPaths, queue, name, from) {
-	const lockPath = resolveExternalDependency(lockPackages, name, from);
+function addExternalPackage(lockPackages, shrinkwrapPackages, addedPaths, queue, item) {
+	let lockPath;
+	try {
+		lockPath = resolveExternalDependency(lockPackages, item.name, item.from);
+	} catch (error) {
+		if (item.optional) {
+			return;
+		}
+		throw error;
+	}
 	if (addedPaths.has(lockPath)) {
 		return;
 	}
@@ -224,8 +239,8 @@ function addExternalPackage(lockPackages, shrinkwrapPackages, addedPaths, queue,
 	shrinkwrapPackages[lockPath] = copyLockEntry(entry);
 	addedPaths.add(lockPath);
 
-	for (const dependencyName of Object.keys(packageDependencies(entry))) {
-		queue.push({ name: dependencyName, from: lockPath });
+	for (const dependency of dependencyItems(entry)) {
+		queue.push({ ...dependency, from: lockPath });
 	}
 }
 
@@ -275,7 +290,7 @@ function validateShrinkwrap(shrinkwrap, internalNames) {
 	}
 
 	for (const [lockPath, entry] of Object.entries(shrinkwrap.packages)) {
-		for (const dependencyName of Object.keys(packageDependencies(entry))) {
+		for (const dependencyName of Object.keys(entry.dependencies ?? {})) {
 			const dependencyIncluded = [...includedPaths].some(
 				(candidate) => candidate === `node_modules/${dependencyName}` || candidate.endsWith(`/node_modules/${dependencyName}`),
 			);
@@ -309,7 +324,7 @@ function generateShrinkwrap() {
 	};
 	const addedPaths = new Set([""]);
 	const internalNames = new Set();
-	const queue = Object.keys(packageDependencies(codingAgentPackage)).map((name) => ({ name, from: "" }));
+	const queue = dependencyItems(codingAgentPackage).map((dependency) => ({ ...dependency, from: "" }));
 
 	while (queue.length > 0) {
 		const item = queue.shift();
@@ -327,7 +342,7 @@ function generateShrinkwrap() {
 			continue;
 		}
 
-		addExternalPackage(lockPackages, shrinkwrapPackages, addedPaths, queue, item.name, item.from);
+		addExternalPackage(lockPackages, shrinkwrapPackages, addedPaths, queue, item);
 	}
 
 	const shrinkwrap = {

@@ -36,7 +36,8 @@ const DEFAULT_PACKAGES = [
 	"@code-yeongyu/senpi",
 	"@earendil-works/pi-ai",
 	"@earendil-works/pi-agent-core",
-	"@code-yeongyu/senpi-orchestrator",
+	"@code-yeongyu/senpi-server",
+	"@earendil-works/pi-storage-sqlite-node",
 	"@earendil-works/pi-tui",
 	"@earendil-works/pi-web-ui",
 ];

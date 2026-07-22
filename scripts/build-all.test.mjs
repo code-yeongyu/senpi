@@ -34,14 +34,16 @@ describe("build-all", () => {
 			"packages/pty",
 			"packages/ai",
 			"packages/agent",
+			"packages/storage/sqlite-node",
 			"packages/coding-agent",
 			"packages/web-ui",
-			"packages/orchestrator",
+			"packages/server",
 		]);
 		assert.ok(index("packages/agent") > index("packages/ai"));
+		assert.ok(index("packages/storage/sqlite-node") > index("packages/ai"));
 		assert.ok(index("packages/coding-agent") > index("packages/agent"));
 		assert.ok(index("packages/web-ui") > index("packages/agent"));
-		assert.ok(index("packages/orchestrator") > index("packages/coding-agent"));
+		assert.ok(index("packages/server") > index("packages/coding-agent"));
 	});
 
 	it("builds pty beside tui in the first native-adjacent phase", () => {
