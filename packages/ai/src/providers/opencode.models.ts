@@ -77,6 +77,14 @@ export const OPENCODE_MODELS = values as {
 		id: "gemini-3.5-flash";
 		provider: "opencode";
 	};
+	"gemini-3.5-flash-lite": Model<"google-generative-ai"> & {
+		id: "gemini-3.5-flash-lite";
+		provider: "opencode";
+	};
+	"gemini-3.6-flash": Model<"google-generative-ai"> & {
+		id: "gemini-3.6-flash";
+		provider: "opencode";
+	};
 	"glm-5": Model<"openai-completions"> & {
 		id: "glm-5";
 		provider: "opencode";
@@ -173,10 +181,6 @@ export const OPENCODE_MODELS = values as {
 		id: "grok-build-0.1";
 		provider: "opencode";
 	};
-	"hy3-free": Model<"openai-completions"> & {
-		id: "hy3-free";
-		provider: "opencode";
-	};
 	"kimi-k2.5": Model<"openai-completions"> & {
 		id: "kimi-k2.5";
 		provider: "opencode";
@@ -187,6 +191,10 @@ export const OPENCODE_MODELS = values as {
 	};
 	"kimi-k2.7-code": Model<"openai-completions"> & {
 		id: "kimi-k2.7-code";
+		provider: "opencode";
+	};
+	"laguna-s-2.1-free": Model<"openai-completions"> & {
+		id: "laguna-s-2.1-free";
 		provider: "opencode";
 	};
 	"mimo-v2.5-free": Model<"openai-completions"> & {
