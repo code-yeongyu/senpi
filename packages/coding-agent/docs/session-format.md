@@ -59,7 +59,11 @@ interface ImageContent {
 interface ThinkingContent {
   type: "thinking";
   thinking: string;
+  startedAt?: number;  // Unix epoch milliseconds
+  endedAt?: number;    // Unix epoch milliseconds
 }
+
+`startedAt` and `endedAt` are optional epoch milliseconds stamped by the agent loop at stream-event receipt on a best-effort basis. They are absent on pre-feature sessions and on messages not produced through the agent loop. Renderers must treat their absence as "no timing available".
 
 interface ToolCall {
   type: "toolCall";
