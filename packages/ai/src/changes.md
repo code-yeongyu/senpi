@@ -1,5 +1,33 @@
 # AI Source Changes
 
+## 2026-07-22 - Drop tool results of errored/aborted assistants in transformMessages
+
+### What changed and why
+
+- `api/transform-messages.ts`: the pairing pass now records the toolCall ids of every assistant it skips
+  because `stopReason === "error" | "aborted"` into `droppedCallIds` (mirroring the existing skip condition),
+  and the emit loop no longer emits a toolResult whose `toolCallId` is in that set — unless the id is also
+  declared by a kept assistant (`nextToolCallIndexById`), which still pairs through the normal windows.
+  Previously the errored assistant was dropped while its result (a real one, or a placeholder synthesized by
+  the compaction pipeline's `repairOrphanedToolResults`) survived, so the request carried a `role:"tool"`
+  message whose `tool_call_id` no assistant declared; strict providers (apitopia/kimi openai-completions)
+  reject it with `400 tool_call_id ... is not found`, permanently bricking compaction for the session.
+  True orphans (id declared nowhere) and results of kept assistants are unchanged, and kept assistants'
+  unanswered calls still get the synthetic "No result provided" result.
+- `utils/tool-pair-repair.ts`: `repairOrphanedToolResults` no longer synthesizes placeholder results for
+  toolCalls declared by errored/aborted assistants (defense in depth; those assistants are dropped by
+  `transformMessages` anyway). The coding-agent compaction copy received the identical guard; the two
+  files remain verbatim copies.
+- `../test/transform-messages-errored-tool-results.test.ts`: drop cases (errored + real result, aborted +
+  synthesized placeholder), preservation cases (kept pair, "No result provided" synthesis, true orphan
+  passthrough), and an id re-declared by a later kept assistant. `../test/tool-pair-repair.test.ts`: no
+  synthesis for errored/aborted assistants, synthesis kept for a kept re-declaration.
+
+### Expected merge conflict zones
+
+- LOW: `api/transform-messages.ts` second-pass pairing loop and toolResult emit branch;
+  `utils/tool-pair-repair.ts` dangling-call synthesis loop.
+
 ## 2026-07-21 - OpenAI Responses provider-native completion reconciliation
 
 ### What changed and why

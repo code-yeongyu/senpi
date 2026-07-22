@@ -47,6 +47,9 @@ export function repairOrphanedToolResults(messages: Message[]): Message[] {
 
 		output.push(message);
 		if (message.role === "assistant") {
+			// Errored/aborted assistants are dropped downstream by transformMessages;
+			// synthesizing results for their calls would only create orphans there.
+			if (message.stopReason === "error" || message.stopReason === "aborted") continue;
 			for (const block of message.content) {
 				if (block.type !== "toolCall" || !dangling.has(block.id)) continue;
 				const incomplete = block.incomplete === true;

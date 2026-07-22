@@ -225,4 +225,45 @@ describe("repairOrphanedToolResults", () => {
 		expect(synth.isError).toBe(true);
 		expect(resultText(synth)).toBe("custom truncation reason. Re-issue the tool call with complete arguments.");
 	});
+
+	it("does not synthesize a result for a dangling call of an errored assistant", () => {
+		const messages: Message[] = [
+			userMsg("run", 1),
+			{ ...assistantWithCall("call-dead", "edit", 2), stopReason: "error" as const },
+		];
+
+		const result = repairOrphanedToolResults(messages);
+
+		expect(result).toEqual(messages);
+	});
+
+	it("does not synthesize a result for a dangling call of an aborted assistant", () => {
+		const messages: Message[] = [
+			userMsg("run", 1),
+			{ ...assistantWithCall("call-dead", "edit", 2), stopReason: "aborted" as const },
+		];
+
+		const result = repairOrphanedToolResults(messages);
+
+		expect(result).toEqual(messages);
+	});
+
+	it("still synthesizes for a kept assistant re-declaring an id an errored assistant used", () => {
+		const messages: Message[] = [
+			userMsg("run", 1),
+			{ ...assistantWithCall("call-reused", "edit", 2), stopReason: "error" as const },
+			assistantWithCall("call-reused", "edit", 3),
+		];
+
+		const result = repairOrphanedToolResults(messages);
+
+		expect(result).toHaveLength(4);
+		expect(result[3]).toMatchObject({
+			role: "toolResult",
+			toolCallId: "call-reused",
+			toolName: "edit",
+			content: [{ type: "text", text: TOOL_RESULT_PLACEHOLDER }],
+			isError: false,
+		});
+	});
 });

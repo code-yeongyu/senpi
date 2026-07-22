@@ -235,6 +235,10 @@ export function transformMessages<TApi extends Api>(
 	const result: Message[] = [];
 	const toolResultsById = new Map<string, { message: ToolResultMessage; sourceIndex: number; consumed: boolean }[]>();
 	const nextToolCallIndexById = new Map<string, number[]>();
+	// Tool calls declared only by assistants the emit loop drops (errored/aborted).
+	// Their results must not be emitted either: a strict provider rejects a tool
+	// message whose tool_call_id no assistant in the request declares.
+	const droppedCallIds = new Set<string>();
 
 	for (let sourceIndex = 0; sourceIndex < transformed.length; sourceIndex++) {
 		const message = transformed[sourceIndex];
@@ -244,7 +248,13 @@ export function transformMessages<TApi extends Api>(
 			toolResultsById.set(message.toolCallId, entries);
 			continue;
 		}
-		if (message.role !== "assistant" || message.stopReason === "error" || message.stopReason === "aborted") {
+		if (message.role !== "assistant") {
+			continue;
+		}
+		if (message.stopReason === "error" || message.stopReason === "aborted") {
+			for (const block of message.content) {
+				if (block.type === "toolCall") droppedCallIds.add(block.id);
+			}
 			continue;
 		}
 		for (const block of message.content) {
@@ -261,7 +271,14 @@ export function transformMessages<TApi extends Api>(
 			const entry = toolResultsById
 				.get(message.toolCallId)
 				?.find((candidate) => candidate.sourceIndex === sourceIndex);
-			if (!entry?.consumed) result.push(message);
+			if (!entry?.consumed) {
+				// Skip results whose call was declared only by a dropped
+				// (errored/aborted) assistant. An id re-declared by a kept assistant
+				// still pairs through the normal windows, so keep those results.
+				if (!droppedCallIds.has(message.toolCallId) || nextToolCallIndexById.has(message.toolCallId)) {
+					result.push(message);
+				}
+			}
 			continue;
 		}
 		if (message.role !== "assistant") {

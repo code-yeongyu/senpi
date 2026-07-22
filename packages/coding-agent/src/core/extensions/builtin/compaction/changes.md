@@ -1,5 +1,21 @@
 # Builtin compaction extension changes
 
+## Skip placeholder synthesis for errored/aborted assistants (2026-07-22)
+
+- `repair-tool-pairs.ts` no longer synthesizes placeholder tool results for toolCalls declared by
+  assistant messages with `stopReason "error" | "aborted"`. `transformMessages`
+  (`packages/ai/src/api/transform-messages.ts`) drops those assistants from every provider request, so a
+  synthesized placeholder became a `role:"tool"` message whose `tool_call_id` no assistant declared —
+  strict providers (apitopia/kimi openai-completions) answered `400 tool_call_id ... is not found` and the
+  session's compaction was permanently rejected. The primary fix lives in `transformMessages` (results of
+  dropped assistants are no longer emitted); this guard is defense in depth. The sibling copy
+  `packages/ai/src/utils/tool-pair-repair.ts` received the identical change; the files remain verbatim
+  copies, so the "duplicated verbatim" comments still hold.
+- Tests: `test/compaction/tool-pair-repair.test.ts` asserts no synthesis for errored/aborted assistants.
+
+Expected upstream conflict zones: `builtin/compaction/repair-tool-pairs.ts` dangling-call synthesis loop
+and the shared `packages/ai/src/utils/tool-pair-repair.ts` copy.
+
 ## Omit non-"fc" item ids in remote-compaction tool-call replay (2026-07-22)
 
 - `openai-remote.ts` `convertToolCall()` now spreads the replayed item `id` only when it

@@ -343,4 +343,19 @@ describe("compaction tool-pair repair behavior", () => {
 			});
 		});
 	});
+
+	describe("Given session with a dangling tool call on an errored/aborted assistant", () => {
+		describe("When tool-pair-repair runs", () => {
+			it("Then no synthetic result is added (transformMessages drops the assistant downstream)", () => {
+				for (const stopReason of ["error", "aborted"] as const) {
+					const messages = buildToolCallWithoutResultSession();
+					messages[1] = { ...(messages[1] as AssistantMessage), stopReason };
+
+					const reconstructed = repairOrphanedToolResults(messages);
+
+					expect(reconstructed).toEqual(messages);
+				}
+			});
+		});
+	});
 });
