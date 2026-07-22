@@ -167,6 +167,18 @@ describe("streaming reveal pure helpers", () => {
 		expect(textAt(target, 3)).toBe(`${family}B`);
 	});
 
+	test("#given a partially revealed timed Thought block #when building its display message #then preserves timing fields", () => {
+		const target = makeMessage([{ type: "thinking", thinking: "reasoning", startedAt: 1_000, endedAt: 4_200 }]);
+
+		const display = buildDisplayMessage(target, 3, false);
+		const block = display.content[0];
+		if (block?.type !== "thinking") throw new TypeError("Expected a thinking block");
+
+		expect(block.thinking).toBe("rea");
+		expect(block.startedAt).toBe(1_000);
+		expect(block.endedAt).toBe(4_200);
+	});
+
 	test("#given a fixed backlog #when stepping at 30 60 and 120fps #then completion times stay within one 30fps tick", () => {
 		const revealTime = (fps: number): number => {
 			const dt = 1000 / fps;

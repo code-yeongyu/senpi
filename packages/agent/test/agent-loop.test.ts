@@ -156,7 +156,320 @@ function isLlmMessage(message: AgentMessage): message is Message {
 	return message.role === "user" || message.role === "assistant" || message.role === "toolResult";
 }
 
+function createThinkingPartial(thinking: string, contentIndex = 0): AssistantMessage {
+	const content: AssistantMessage["content"] = [];
+	content[contentIndex] = { type: "thinking", thinking };
+	return createAssistantMessage(content);
+}
+
+function getThinkingBlock(message: AgentMessage, contentIndex = 0) {
+	if (message.role !== "assistant") throw new Error("Expected assistant message");
+	const block = message.content[contentIndex];
+	if (block?.type !== "thinking") throw new Error("Expected thinking block");
+	return block;
+}
+
+function createThinkingTestConfig(): AgentLoopConfig {
+	return { model: createModel(), convertToLlm: identityConverter };
+}
+
+class ThrowingThinkingAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
+	private readonly thrownError: Error;
+	private readonly partial: AssistantMessage;
+
+	constructor(thrownError: Error, partial: AssistantMessage) {
+		super(
+			(event) => event.type === "done" || event.type === "error",
+			(event) => {
+				if (event.type === "done") return event.message;
+				if (event.type === "error") return event.error;
+				throw new Error("Unexpected event type");
+			},
+		);
+		this.thrownError = thrownError;
+		this.partial = partial;
+	}
+
+	override async *[Symbol.asyncIterator](): AsyncIterator<AssistantMessageEvent> {
+		yield { type: "start", partial: createAssistantMessage([]) };
+		yield { type: "thinking_start", contentIndex: 0, partial: this.partial };
+		throw this.thrownError;
+	}
+
+	override result(): Promise<AssistantMessage> {
+		return Promise.reject(this.thrownError);
+	}
+}
+
 describe("agentLoop with AgentMessage", () => {
+	it("stamps thinking timing on a completed thinking block", async () => {
+		const start = createThinkingPartial("");
+		const delta = createThinkingPartial("reasoning");
+		const end = createThinkingPartial("reasoning");
+		const final = createThinkingPartial("reasoning");
+		const stream = agentLoop(
+			[createUserMessage("Hello")],
+			{ systemPrompt: "Test", messages: [], tools: [] },
+			createThinkingTestConfig(),
+			undefined,
+			() => {
+				const response = new MockAssistantStream();
+				queueMicrotask(() => {
+					response.push({ type: "start", partial: createAssistantMessage([]) });
+					response.push({ type: "thinking_start", contentIndex: 0, partial: start });
+					response.push({ type: "thinking_delta", contentIndex: 0, delta: "reasoning", partial: delta });
+					response.push({ type: "thinking_end", contentIndex: 0, content: "reasoning", partial: end });
+					response.push({
+						type: "text_delta",
+						contentIndex: 1,
+						delta: "answer",
+						partial: createAssistantMessage([
+							{ type: "thinking", thinking: "reasoning" },
+							{ type: "text", text: "answer" },
+						]),
+					});
+					response.push({ type: "done", reason: "stop", message: final });
+				});
+				return response;
+			},
+		);
+		const { messages } = await collectAgentEvents(stream);
+		const block = getThinkingBlock(messages[1] as AssistantMessage);
+		expect(typeof block.startedAt).toBe("number");
+		expect(typeof block.endedAt).toBe("number");
+		expect(block.endedAt).toBeGreaterThanOrEqual(block.startedAt as number);
+	});
+
+	it("stamps independent timing for two thinking blocks", async () => {
+		const start = createAssistantMessage([
+			{ type: "thinking", thinking: "" },
+			{ type: "thinking", thinking: "" },
+		]);
+		const final = createAssistantMessage([
+			{ type: "thinking", thinking: "one" },
+			{ type: "thinking", thinking: "two" },
+		]);
+		const stream = agentLoop(
+			[createUserMessage("Hello")],
+			{ systemPrompt: "Test", messages: [], tools: [] },
+			createThinkingTestConfig(),
+			undefined,
+			() => {
+				const response = new MockAssistantStream();
+				queueMicrotask(() => {
+					response.push({ type: "start", partial: createAssistantMessage([]) });
+					response.push({ type: "thinking_start", contentIndex: 0, partial: start });
+					response.push({
+						type: "thinking_end",
+						contentIndex: 0,
+						content: "one",
+						partial: createAssistantMessage([
+							{ type: "thinking", thinking: "one" },
+							{ type: "thinking", thinking: "" },
+						]),
+					});
+					response.push({
+						type: "thinking_start",
+						contentIndex: 1,
+						partial: createAssistantMessage([
+							{ type: "thinking", thinking: "one" },
+							{ type: "thinking", thinking: "" },
+						]),
+					});
+					response.push({ type: "thinking_end", contentIndex: 1, content: "two", partial: final });
+					response.push({ type: "done", reason: "stop", message: final });
+				});
+				return response;
+			},
+		);
+		const { messages } = await collectAgentEvents(stream);
+		for (const index of [0, 1]) {
+			const block = getThinkingBlock(messages[1] as AssistantMessage, index);
+			expect(typeof block.startedAt).toBe("number");
+			expect(typeof block.endedAt).toBe("number");
+			expect(block.endedAt).toBeGreaterThanOrEqual(block.startedAt as number);
+		}
+	});
+
+	it("keeps startedAt stable across thinking updates", async () => {
+		const partials = [
+			createThinkingPartial(""),
+			createThinkingPartial("reasoning"),
+			createThinkingPartial("reasoning"),
+		];
+		const final = createThinkingPartial("reasoning");
+		const stream = agentLoop(
+			[createUserMessage("Hello")],
+			{ systemPrompt: "Test", messages: [], tools: [] },
+			createThinkingTestConfig(),
+			undefined,
+			() => {
+				const response = new MockAssistantStream();
+				queueMicrotask(() => {
+					response.push({ type: "start", partial: createAssistantMessage([]) });
+					response.push({ type: "thinking_start", contentIndex: 0, partial: partials[0] });
+					response.push({ type: "thinking_delta", contentIndex: 0, delta: "reasoning", partial: partials[1] });
+					response.push({ type: "thinking_end", contentIndex: 0, content: "reasoning", partial: partials[2] });
+					response.push({ type: "done", reason: "stop", message: final });
+				});
+				return response;
+			},
+		);
+		const { events } = await collectAgentEvents(stream);
+		const startedAts = events
+			.filter(
+				(event): event is Extract<AgentEvent, { type: "message_update" }> =>
+					event.type === "message_update" && event.assistantMessageEvent.type.startsWith("thinking_"),
+			)
+			.map((event) => getThinkingBlock(event.message).startedAt);
+		expect(startedAts).toHaveLength(3);
+		expect(startedAts.every((startedAt) => typeof startedAt === "number")).toBe(true);
+		const startedAtBytes = startedAts.map((startedAt) => JSON.stringify(startedAt));
+		expect(startedAtBytes.every((startedAt) => startedAt === startedAtBytes[0])).toBe(true);
+	});
+
+	it("closes thinking timing on abort error events", async () => {
+		const partial = createThinkingPartial("");
+		const final = createThinkingPartial("");
+		const stream = agentLoop(
+			[createUserMessage("Hello")],
+			{ systemPrompt: "Test", messages: [], tools: [] },
+			createThinkingTestConfig(),
+			undefined,
+			() => {
+				const response = new MockAssistantStream();
+				queueMicrotask(() => {
+					response.push({ type: "start", partial: createAssistantMessage([]) });
+					response.push({ type: "thinking_start", contentIndex: 0, partial });
+					response.push({ type: "error", reason: "aborted", error: final });
+				});
+				return response;
+			},
+		);
+		const { messages } = await collectAgentEvents(stream);
+		const block = getThinkingBlock(messages[1] as AssistantMessage);
+		expect(typeof block.startedAt).toBe("number");
+		expect(typeof block.endedAt).toBe("number");
+		expect(block.endedAt).toBeGreaterThanOrEqual(block.startedAt as number);
+	});
+
+	it("closes thinking timing when abort throws from the reader", async () => {
+		const partial = createThinkingPartial("");
+		const stream = agentLoop(
+			[createUserMessage("Hello")],
+			{ systemPrompt: "Test", messages: [], tools: [] },
+			createThinkingTestConfig(),
+			undefined,
+			() => new ThrowingThinkingAssistantStream(new Error("aborted"), partial),
+		);
+		const { messages } = await collectAgentEvents(stream);
+		const block = getThinkingBlock(messages[1] as AssistantMessage);
+		expect(typeof block.startedAt).toBe("number");
+		expect(typeof block.endedAt).toBe("number");
+		expect(block.endedAt).toBeGreaterThanOrEqual(block.startedAt as number);
+	});
+
+	it("closes unterminated thinking timing when the stream falls through", async () => {
+		const partial = createThinkingPartial("");
+		const final = createThinkingPartial("");
+		const stream = agentLoop(
+			[createUserMessage("Hello")],
+			{ systemPrompt: "Test", messages: [], tools: [] },
+			createThinkingTestConfig(),
+			undefined,
+			() => {
+				const response = new MockAssistantStream();
+				queueMicrotask(() => {
+					response.push({ type: "start", partial: createAssistantMessage([]) });
+					response.push({ type: "thinking_start", contentIndex: 0, partial });
+					response.end(final);
+				});
+				return response;
+			},
+		);
+		const { messages } = await collectAgentEvents(stream);
+		const block = getThinkingBlock(messages[1] as AssistantMessage);
+		expect(typeof block.startedAt).toBe("number");
+		expect(typeof block.endedAt).toBe("number");
+		expect(block.endedAt).toBeGreaterThanOrEqual(block.startedAt as number);
+	});
+
+	it("gracefully closes thinking timing when an indexed block is missing", async () => {
+		const partial = createAssistantMessage([
+			{ type: "thinking", thinking: "" },
+			{ type: "thinking", thinking: "" },
+		]);
+		const final = createThinkingPartial("one");
+		const stream = agentLoop(
+			[createUserMessage("Hello")],
+			{ systemPrompt: "Test", messages: [], tools: [] },
+			createThinkingTestConfig(),
+			undefined,
+			() => {
+				const response = new MockAssistantStream();
+				queueMicrotask(() => {
+					response.push({ type: "start", partial: createAssistantMessage([]) });
+					response.push({ type: "thinking_start", contentIndex: 0, partial });
+					response.push({ type: "thinking_start", contentIndex: 1, partial });
+					response.push({ type: "done", reason: "stop", message: final });
+				});
+				return response;
+			},
+		);
+		const { messages } = await collectAgentEvents(stream);
+		const block = getThinkingBlock(messages[1] as AssistantMessage);
+		expect(typeof block.startedAt).toBe("number");
+		expect(typeof block.endedAt).toBe("number");
+		expect(block.endedAt).toBeGreaterThanOrEqual(block.startedAt as number);
+	});
+
+	it("leaves messages without thinking events unaffected", async () => {
+		const final = createAssistantMessage([{ type: "text", text: "answer" }]);
+		const stream = agentLoop(
+			[createUserMessage("Hello")],
+			{ systemPrompt: "Test", messages: [], tools: [] },
+			createThinkingTestConfig(),
+			undefined,
+			() => {
+				const response = new MockAssistantStream();
+				queueMicrotask(() => response.push({ type: "done", reason: "stop", message: final }));
+				return response;
+			},
+		);
+		const { messages } = await collectAgentEvents(stream);
+		expect(messages[1]).toBe(final);
+		expect("startedAt" in final.content[0]).toBe(false);
+		expect("endedAt" in final.content[0]).toBe(false);
+	});
+
+	it("stamps endedAt on the thinking_end message update", async () => {
+		const start = createThinkingPartial("");
+		const end = createThinkingPartial("reasoning");
+		const final = createThinkingPartial("reasoning");
+		const stream = agentLoop(
+			[createUserMessage("Hello")],
+			{ systemPrompt: "Test", messages: [], tools: [] },
+			createThinkingTestConfig(),
+			undefined,
+			() => {
+				const response = new MockAssistantStream();
+				queueMicrotask(() => {
+					response.push({ type: "start", partial: createAssistantMessage([]) });
+					response.push({ type: "thinking_start", contentIndex: 0, partial: start });
+					response.push({ type: "thinking_end", contentIndex: 0, content: "reasoning", partial: end });
+					response.push({ type: "done", reason: "stop", message: final });
+				});
+				return response;
+			},
+		);
+		const { events } = await collectAgentEvents(stream);
+		const endUpdate = events.find(
+			(event) => event.type === "message_update" && event.assistantMessageEvent.type === "thinking_end",
+		);
+		if (endUpdate?.type !== "message_update") throw new Error("Expected thinking_end update");
+		expect(typeof getThinkingBlock(endUpdate.message).endedAt).toBe("number");
+	});
+
 	it("should emit events with AgentMessage types", async () => {
 		const context: AgentContext = {
 			systemPrompt: "You are helpful.",

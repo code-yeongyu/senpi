@@ -344,6 +344,10 @@ export interface TextContent {
 export interface ThinkingContent {
 	type: "thinking";
 	thinking: string;
+	/** Epoch ms, stamped by the agent loop at stream-event receipt, best-effort. */
+	startedAt?: number;
+	/** Epoch ms, stamped by the agent loop at stream-event receipt, best-effort. */
+	endedAt?: number;
 	thinkingSignature?: string; // e.g., for OpenAI responses, the reasoning item ID
 	/** When true, the thinking content was redacted by safety filters. The opaque
 	 *  encrypted payload is stored in `thinkingSignature` so it can be passed back

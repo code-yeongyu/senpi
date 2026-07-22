@@ -298,6 +298,118 @@ describe("AssistantMessageComponent", () => {
 		expect(rendered).toContain("answer");
 	});
 
+	test("renders a finished Thought duration header above the visible Markdown body", () => {
+		initTheme("dark");
+
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([
+				{ type: "thinking", thinking: "visible **Markdown** body", startedAt: 1_000, endedAt: 4_200 },
+			]),
+		);
+		const rendered = stripAnsi(component.render(80).join("\n"));
+		const headerIndex = rendered.indexOf("Thought: 3.2s");
+		const bodyIndex = rendered.indexOf("visible Markdown body");
+
+		expect(rendered.split("\n").some((line) => line.trim() === "Thought: 3.2s")).toBe(true);
+		expect(headerIndex).toBeGreaterThanOrEqual(0);
+		expect(bodyIndex).toBeGreaterThan(headerIndex);
+	});
+
+	test("renders a finished Thought duration in place of the hidden label", () => {
+		initTheme("dark");
+
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([{ type: "thinking", thinking: "hidden body", startedAt: 1_000, endedAt: 4_200 }]),
+			true,
+		);
+		const rendered = stripAnsi(component.render(80).join("\n"));
+
+		expect(rendered.split("\n").some((line) => line.trim() === "Thought: 3.2s")).toBe(true);
+		expect(rendered).not.toContain("Thinking...");
+		expect(rendered).not.toContain("hidden body");
+	});
+
+	test("uses the hidden label for an active Thought run", () => {
+		initTheme("dark");
+
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([
+				{ type: "thinking", thinking: "active body", startedAt: 1_000 },
+				{ type: "thinking", thinking: "still active", startedAt: 1_100 },
+			]),
+		);
+		const rendered = stripAnsi(component.render(80).join("\n"));
+
+		expect(rendered.split("\n").some((line) => line.trim() === "Thinking...")).toBe(true);
+		expect(rendered).toContain("active body");
+		expect(rendered).not.toContain("Thought:");
+	});
+
+	test("keeps legacy no Thought runs unchanged", () => {
+		initTheme("dark");
+
+		const message = createAssistantMessage([{ type: "thinking", thinking: "legacy body" }]);
+		const visible = stripAnsi(new AssistantMessageComponent(message).render(80).join("\n"));
+		const hidden = stripAnsi(new AssistantMessageComponent(message, true).render(80).join("\n"));
+
+		expect(visible).toBe(`\n legacy body${" ".repeat(68)}`);
+		expect(visible).not.toContain("Thought:");
+		expect(hidden).toBe(`\n Thinking...${" ".repeat(68)}`);
+		expect(hidden).not.toContain("Thought:");
+	});
+
+	test("spans empty timed blocks when computing a finished Thought duration", () => {
+		initTheme("dark");
+
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([
+				{ type: "thinking", thinking: "", startedAt: 1_000, endedAt: 1_500 },
+				{ type: "thinking", thinking: "visible body", startedAt: 2_000, endedAt: 5_000 },
+			]),
+		);
+		const rendered = stripAnsi(component.render(80).join("\n"));
+
+		expect(rendered.split("\n").some((line) => line.trim() === "Thought: 4.0s")).toBe(true);
+		expect(rendered).toContain("visible body");
+	});
+
+	test("uses a custom label for active Thought runs but a duration for finished runs", () => {
+		initTheme("dark");
+
+		const active = new AssistantMessageComponent(
+			createAssistantMessage([{ type: "thinking", thinking: "active body", startedAt: 1_000 }]),
+			false,
+			undefined,
+			"Custom thinking label",
+		);
+		const finished = new AssistantMessageComponent(
+			createAssistantMessage([{ type: "thinking", thinking: "finished body", startedAt: 1_000, endedAt: 4_200 }]),
+			true,
+			undefined,
+			"Custom thinking label",
+		);
+
+		expect(stripAnsi(active.render(80).join("\n"))).toContain("Custom thinking label");
+		expect(stripAnsi(finished.render(80).join("\n"))).toContain("Thought: 3.2s");
+		expect(stripAnsi(finished.render(80).join("\n"))).not.toContain("Custom thinking label");
+	});
+
+	test("renders no Thought header or body for all-empty timed runs", () => {
+		initTheme("dark");
+
+		const message = createAssistantMessage([
+			{ type: "thinking", thinking: "", startedAt: 1_000, endedAt: 4_200 },
+			{ type: "thinking", thinking: "   ", startedAt: 1_100, endedAt: 4_000 },
+		]);
+		const visible = stripAnsi(new AssistantMessageComponent(message).render(80).join("\n"));
+		const hidden = stripAnsi(new AssistantMessageComponent(message, true).render(80).join("\n"));
+
+		expect(visible).not.toContain("Thought:");
+		expect(visible.trim()).toBe("");
+		expect(hidden).not.toContain("Thought:");
+		expect(hidden.trim()).toBe("");
+	});
+
 	test("uses configured output padding for text and thinking", () => {
 		initTheme("dark");
 

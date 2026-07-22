@@ -271,3 +271,22 @@
 
 - `packages/agent/src/harness/types.ts` around `FileError` construction.
 - `packages/agent/src/harness/agent-harness.ts` around `hasOwn()`.
+
+## 2026-07-22 - Per-thinking-block stream timing
+
+### What changed and why
+
+- `agent-loop.ts` now stamps each streamed thinking block's `startedAt` and `endedAt` with best-effort receipt timestamps. Every thinking update is restamped because thinking projection middleware may replace the block object between events; terminal completion, error/abort, reader failure, and normal stream fallthrough all close unfinished blocks before emitting the final message.
+
+### Files modified
+
+- `packages/agent/src/agent-loop.ts`
+- `packages/agent/test/agent-loop.test.ts`
+
+### Why the extension system could not handle this
+
+- The timestamps must be attached at the agent loop's provider-event choke point, before extensions receive message updates or terminal messages.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `packages/agent/src/agent-loop.ts` streaming event switch and terminal response paths.

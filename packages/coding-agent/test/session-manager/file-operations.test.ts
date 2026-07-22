@@ -176,6 +176,85 @@ describe("findMostRecentSession", () => {
 	});
 });
 
+describe("SessionManager thinking persistence", () => {
+	let tempDir: string;
+
+	beforeEach(() => {
+		tempDir = join(tmpdir(), `session-test-${Date.now()}`);
+		mkdirSync(tempDir, { recursive: true });
+	});
+
+	afterEach(() => {
+		rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	function reloadedThinkingBlock(file: string, entryId: string) {
+		const entry = SessionManager.open(file, tempDir).getEntry(entryId);
+		if (entry?.type !== "message" || entry.message.role !== "assistant") {
+			throw new Error("Expected reloaded assistant message");
+		}
+		const block = entry.message.content[0];
+		if (block?.type !== "thinking") {
+			throw new Error("Expected reloaded thinking block");
+		}
+		return block;
+	}
+
+	it("preserves thinking timing through a file-backed reload", () => {
+		const file = join(tempDir, "thinking-timing.jsonl");
+		const session = SessionManager.open(file, tempDir);
+		const entryId = session.appendMessage({
+			role: "assistant",
+			content: [{ type: "thinking", thinking: "reasoning", startedAt: 1000, endedAt: 4200 }],
+			api: "anthropic-messages",
+			provider: "anthropic",
+			model: "test",
+			usage: {
+				input: 1,
+				output: 1,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 2,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: Date.now(),
+		});
+
+		const thinking = reloadedThinkingBlock(file, entryId);
+		expect(thinking.startedAt).toBe(1000);
+		expect(thinking.endedAt).toBe(4200);
+	});
+
+	it("keeps pre-feature thinking blocks without timing through a file-backed reload", () => {
+		const file = join(tempDir, "legacy-thinking.jsonl");
+		const session = SessionManager.open(file, tempDir);
+		const entryId = session.appendMessage({
+			role: "assistant",
+			content: [{ type: "thinking", thinking: "legacy reasoning" }],
+			api: "anthropic-messages",
+			provider: "anthropic",
+			model: "test",
+			usage: {
+				input: 1,
+				output: 1,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 2,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: Date.now(),
+		});
+
+		const thinking = reloadedThinkingBlock(file, entryId);
+		expect(thinking.startedAt).toBeUndefined();
+		expect(thinking.endedAt).toBeUndefined();
+		expect(thinking).not.toHaveProperty("startedAt");
+		expect(thinking).not.toHaveProperty("endedAt");
+	});
+});
+
 describe("SessionManager custom flat session directory", () => {
 	let tempDir: string;
 	let projectA: string;

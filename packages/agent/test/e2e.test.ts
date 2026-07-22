@@ -251,7 +251,12 @@ describe("Agent integration with faux provider", () => {
 		const assistantMessage = agent.state.messages[1];
 		if (assistantMessage?.role !== "assistant") throw new Error("Expected assistant message");
 		expect(assistantMessage.content).toEqual([
-			{ type: "thinking", thinking: "step by step" },
+			expect.objectContaining({
+				type: "thinking",
+				thinking: "step by step",
+				startedAt: expect.any(Number),
+				endedAt: expect.any(Number),
+			}),
 			{ type: "text", text: "4" },
 		]);
 	});

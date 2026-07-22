@@ -568,3 +568,13 @@
 - `src/types.ts` `ThinkingLevel` union.
 - Each provider's `streamSimple<Provider>` reasoning mapping block.
 - `src/providers/simple-options.ts` exported reserved-key sets.
+
+## 2026-07-22 - Thinking content stream timing metadata
+
+### What changed and why
+
+- `ThinkingContent` now exposes optional `startedAt` and `endedAt` epoch-millisecond fields. The agent loop stamps these at provider stream-event receipt on a best-effort basis, allowing consumers to measure individual reasoning-block duration without changing provider event contracts.
+
+### Expected merge conflict zones
+
+- LOW: `src/types.ts` `ThinkingContent` interface.
