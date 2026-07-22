@@ -545,6 +545,79 @@ describe("config reload builtin extension", () => {
 		expect(watches.subscribeCalls.filter((path) => path === join(agentDir, "omo"))).toHaveLength(1);
 	});
 
+	it("rejects a synchronous identical re-registration once without recursing", async () => {
+		const agentDir = mkdtempSync(join(tmpdir(), "senpi-config-reload-rejection-loop-"));
+		agentDirs.push(agentDir);
+		writeJson(join(agentDir, "settings.json"), { theme: "dark" });
+		const bus = createEventBus();
+		const watches = createWatchProbe();
+		const extension = createManualExtension(bus);
+		configReloadExtension(extension.api, { agentDir, subscribe: watches.subscribe, logger: silentLogger() });
+		await invoke(
+			extension.handlers,
+			"session_start",
+			{ type: "session_start", reason: "startup" } satisfies SessionStartEvent,
+			fakeContext({ cwd: agentDir }),
+		);
+		const restrictedDir = join(agentDir, "sessions");
+		const createRegistration = () => ({
+			id: "omo",
+			displayName: ".omo config",
+			targets: [{ path: restrictedDir, kind: "dir" as const }],
+		});
+		const rejected: unknown[] = [];
+		bus.on(CONFIG_WATCH_REJECTED, (payload) => {
+			rejected.push(payload);
+			bus.emit(CONFIG_WATCH_REGISTER, createRegistration());
+		});
+
+		bus.emit(CONFIG_WATCH_REGISTER, createRegistration());
+
+		expect(rejected).toHaveLength(1);
+		expect(rejected[0]).toEqual({
+			registrationId: "omo",
+			paths: [],
+			errors: ["Configuration watch target is restricted"],
+		});
+		expect(watches.subscribeCalls).not.toContain(restrictedDir);
+		expect(watches.activeListenerCount(restrictedDir)).toBe(0);
+	});
+
+	it("processes a re-registration with a changed target after a rejection", async () => {
+		const agentDir = mkdtempSync(join(tmpdir(), "senpi-config-reload-rejection-repair-"));
+		agentDirs.push(agentDir);
+		writeJson(join(agentDir, "settings.json"), { theme: "dark" });
+		const bus = createEventBus();
+		const watches = createWatchProbe();
+		const extension = createManualExtension(bus);
+		configReloadExtension(extension.api, { agentDir, subscribe: watches.subscribe, logger: silentLogger() });
+		await invoke(
+			extension.handlers,
+			"session_start",
+			{ type: "session_start", reason: "startup" } satisfies SessionStartEvent,
+			fakeContext({ cwd: agentDir }),
+		);
+		const rejected: unknown[] = [];
+		bus.on(CONFIG_WATCH_REJECTED, (payload) => rejected.push(payload));
+		bus.emit(CONFIG_WATCH_REGISTER, {
+			id: "omo",
+			displayName: ".omo config",
+			targets: [{ path: join(agentDir, "sessions"), kind: "dir" }],
+		});
+		expect(rejected).toHaveLength(1);
+
+		const repairedDir = join(agentDir, "omo-config");
+		mkdirSync(repairedDir);
+		bus.emit(CONFIG_WATCH_REGISTER, {
+			id: "omo",
+			displayName: ".omo config",
+			targets: [{ path: repairedDir, kind: "dir" }],
+		});
+
+		expect(rejected).toHaveLength(1);
+		expect(watches.activeListenerCount(repairedDir)).toBe(1);
+	});
+
 	it("buffers factory-time registrations until session_start", async () => {
 		vi.useFakeTimers();
 		const agentDir = mkdtempSync(join(tmpdir(), "senpi-config-reload-buffer-"));
