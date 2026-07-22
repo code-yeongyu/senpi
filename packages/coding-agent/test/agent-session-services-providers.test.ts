@@ -77,7 +77,7 @@ describe("createAgentSessionServices provider registration order", () => {
 	it("flushes mixed pre-bind registrations in call order (native then legacy)", async () => {
 		const applied = await recordRegistrations(nativeRegistration("ord-native"), legacyRegistration("ord-legacy"));
 
-		expect(applied).toEqual(["native:ord-native", "config:ord-legacy"]);
+		expect(applied).toEqual(["native:ord-native", "config:ord-legacy", "config:glm-zcode"]);
 	});
 
 	it("flushes mixed pre-bind registrations in call order (legacy then native)", async () => {
@@ -87,6 +87,6 @@ describe("createAgentSessionServices provider registration order", () => {
 			legacyRegistration("ord-legacy-last"),
 		);
 
-		expect(applied).toEqual(["config:ord-legacy-first", "native:ord-native", "config:ord-legacy-last"]);
+		expect(applied).toEqual(["config:ord-legacy-first", "native:ord-native", "config:ord-legacy-last", "config:glm-zcode"]);
 	});
 });

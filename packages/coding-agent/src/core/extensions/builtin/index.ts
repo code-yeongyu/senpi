@@ -8,6 +8,7 @@ import configReloadExtension from "./config-reload/index.ts";
 import diffExtension from "./diff.ts";
 import filesExtension from "./files.ts";
 import goalExtension from "./goal/index.ts";
+import glmZcodeExtension from "./glm-zcode/index.ts";
 import gptApplyPatchExtension from "./gpt-apply-patch/index.ts";
 import historySearchExtension from "./history-search/index.ts";
 import hooksExtension from "./hooks/index.ts";
@@ -74,6 +75,7 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "nested-agents-md", factory: nestedAgentsMdExtension },
 	{ id: "rules", factory: piRulesExtension },
 	{ id: "goal", factory: goalExtension },
+	{ id: "glm-zcode", factory: glmZcodeExtension },
 	{ id: "btw", factory: btwExtension },
 	// Config reload follows settings-dependent builtins so reloads rebuild their resolved settings before MCP observes them.
 	{ id: "config-reload", factory: configReloadExtension },
