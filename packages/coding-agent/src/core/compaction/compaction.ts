@@ -753,6 +753,7 @@ export function prepareCompaction(
 	pathEntries: SessionEntry[],
 	settings: CompactionSettings,
 	forceProgress = false,
+	allowSummaryOnly = false,
 ): CompactionPreparation | undefined {
 	if (pathEntries.length > 0 && pathEntries[pathEntries.length - 1].type === "compaction") {
 		return undefined;
@@ -818,7 +819,10 @@ export function prepareCompaction(
 		}
 	}
 
-	if (messagesToSummarize.length === 0 && turnPrefixMessages.length === 0) {
+	// A model switch can make an existing summary too large even when no new
+	// messages were added. The retry fallback path explicitly opts into
+	// regenerating that summary for its selected model's smaller context window.
+	if (messagesToSummarize.length === 0 && turnPrefixMessages.length === 0 && (!previousSummary || !allowSummaryOnly)) {
 		return undefined;
 	}
 

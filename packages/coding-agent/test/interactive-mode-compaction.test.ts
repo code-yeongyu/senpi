@@ -200,7 +200,9 @@ describe("InteractiveMode compaction events", () => {
 			...fakeThis.showStatus.mock.calls.map((call) => String(call[0])),
 		].join("\n");
 		expect(feedback).toMatch(/would.?overflow|overflow|rejected/i);
-		expect(fakeThis.flushCompactionQueue).toHaveBeenCalledWith({ willRetry: false });
+		// Rejected compaction retains editor-owned input instead of submitting it
+		// through a recursive post-compaction prompt path.
+		expect(fakeThis.flushCompactionQueue).not.toHaveBeenCalled();
 	});
 
 	test("sanitizes a detached continuation launch failure before rendering", async () => {

@@ -11,6 +11,8 @@
   handler in the same event emission cannot rebind an old completion or durable apply to a newer operation.
 - `stale-revision` is a structured compaction rejection cause for a source that changed before durable append.
 - The builtin compaction extension threads that signal through local and remote summary generation and application.
+- `model_select` sources now distinguish fallback apply and fallback revert transitions, allowing model-scoped
+  extensions to update prompts and active tools before the retry request.
 
 ### Why
 

@@ -15,6 +15,10 @@
   post-`agent_end` queue drain so only an accepted `AgentSession` recovery may resume queued work, and overflow can
   force a split-turn preparation when keeping the only oversized prompt would otherwise leave no compactable source.
 - Compaction rejects stale source snapshots with `stale-revision` before the durable entry append.
+- Retry fallback model changes invalidate prior-model compaction and re-check the selected model's context window.
+  Summary-only re-compaction is allowed only for this retry boundary.
+- Assistant history is classified around the latest compaction by persisted branch order; an older payload timestamp
+  cannot hide a message whose entry was appended after the compaction boundary.
 
 ### Why
 
