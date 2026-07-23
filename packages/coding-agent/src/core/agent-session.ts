@@ -836,8 +836,8 @@ export class AgentSession {
 				...turn,
 				context: { ...turn.context, messages },
 			};
-			const previousSnapshot = await previousPrepareNextTurnWithContext?.(postCompactionTurn, signal);
-			const previousContext = previousSnapshot?.context ?? postCompactionTurn.context;
+			let previousSnapshot = await previousPrepareNextTurnWithContext?.(postCompactionTurn, signal);
+			let previousContext = previousSnapshot?.context ?? postCompactionTurn.context;
 			// The previous callback may await while agent_end extensions enqueue
 			// continuation work. Re-sample after it returns so that work cannot
 			// slip through with the stale provider snapshot it observed on entry.
@@ -845,12 +845,32 @@ export class AgentSession {
 			if (!compactedBeforeCallback) {
 				compactedAfterCallback = await compactBeforeNextAdmission();
 			}
+			if (compactedAfterCallback) {
+				// The callback's first result describes the stale pre-compaction
+				// context. Reapply it once to the compacted context so any host
+				// transformation reaches the provider request. Do not re-sample after
+				// this invocation: one replay is the bounded admission path.
+				const postLateCompactionTurn = {
+					...turn,
+					context: { ...turn.context, messages: this.agent.state.messages.slice() },
+				};
+				const postLateCompactionSnapshot = await previousPrepareNextTurnWithContext?.(
+					postLateCompactionTurn,
+					signal,
+				);
+				previousSnapshot = {
+					...previousSnapshot,
+					...postLateCompactionSnapshot,
+					context: postLateCompactionSnapshot?.context ?? postLateCompactionTurn.context,
+				};
+				previousContext = previousSnapshot.context ?? postLateCompactionTurn.context;
+			}
 
 			return {
 				...previousSnapshot,
 				context: {
 					...previousContext,
-					messages: compactedAfterCallback ? this.agent.state.messages.slice() : previousContext.messages,
+					messages: previousContext.messages,
 					systemPrompt: this._systemPromptOverride ?? this._baseSystemPrompt,
 					tools: this.agent.state.tools.slice(),
 				},

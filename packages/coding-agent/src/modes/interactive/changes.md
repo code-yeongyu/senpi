@@ -7,6 +7,8 @@
 - `interactive-mode.ts`: input queued while compaction owns the editor is automatically transferred only after an
   accepted compaction result. Rejected, failed, or aborted compaction retains the input in the editor-owned queue
   instead of resubmitting it through the unchanged required-compaction gate and recursively starting compaction.
+- Consecutive `compaction_start` events share one Escape override. The original editor handler is preserved through
+  supersession and restored exactly once on terminal cleanup, session rebind, invalidation, or TUI stop.
 
 ### Why
 
