@@ -32,6 +32,10 @@
 			"types": "./dist/oauth.d.ts",
 			"import": "./dist/oauth.js"
 		},
+		"./node/provider-scope": {
+			"types": "./dist/node/provider-scope.d.ts",
+			"import": "./dist/node/provider-scope.js"
+		},
 		"./bedrock-provider": {
 			"types": "./dist/bedrock-provider.d.ts",
 			"import": "./dist/bedrock-provider.js"

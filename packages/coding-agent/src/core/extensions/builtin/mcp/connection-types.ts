@@ -1,5 +1,6 @@
 import type { McpOAuthProvider } from "./auth/oauth-provider.ts";
 import type { McpServerConfig } from "./config-schema.ts";
+import type { McpElicitationUiProvider } from "./elicitation.ts";
 import type { McpLogger } from "./log.ts";
 
 export type ServerConnectionState =
@@ -33,6 +34,7 @@ export interface ServerConnectionOptions {
 	readonly logger: McpLogger;
 	readonly env?: Record<string, string | undefined>;
 	readonly authProvider?: McpOAuthProvider;
+	readonly elicitationUiProvider?: McpElicitationUiProvider;
 }
 
 export type ServerConnectionListener<TEvent> = (event: TEvent) => void | Promise<void>;

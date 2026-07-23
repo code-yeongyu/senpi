@@ -1,5 +1,5 @@
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import type { ExtensionAPI, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
+import type { ExtensionAPI, ExtensionUIContext, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
 import { detectLiteralBearerWarnings, resolveAuthMode, resolveServerAuth } from "./auth/context.ts";
 import { collectToolCatalog } from "./catalog.ts";
 import { getValidCachedServer, readMcpCatalogCache } from "./catalog-cache.ts";
@@ -10,7 +10,7 @@ import { collectAllPages } from "./expose/pagination.ts";
 import { mapMcpCatalogNames } from "./expose/register.ts";
 import type { McpSessionRegistration } from "./expose/session.ts";
 import type { McpServerExposureStatus } from "./expose/status.ts";
-import { cleanupMcpOutputArtifacts } from "./guard/output-guard.ts";
+import { cleanupMcpOutputArtifacts, McpOutputArtifacts } from "./guard/output-guard.ts";
 import { markMcpConnectionNeedsAuth } from "./health.ts";
 import { configureMcpConnectionLifecycle, disposeMcpConnectionLifecycle } from "./idle.ts";
 import { refreshMcpInstructionsForSession } from "./instructions.ts";
@@ -52,6 +52,7 @@ import {
 type ListedTool = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
 type ListedResource = Awaited<ReturnType<Client["listResources"]>>["resources"][number];
 type ListedResourceTemplate = Awaited<ReturnType<Client["listResourceTemplates"]>>["resourceTemplates"][number];
+type McpElicitationUi = Pick<ExtensionUIContext, "input" | "select" | "confirm">;
 
 export { registerToolsPreservingActiveSet } from "./active-set.ts";
 
@@ -66,7 +67,11 @@ export class McpService {
 	#config: ResolvedMcpConfig | null = null;
 	#authAgentDir: string | undefined;
 	#authEnv: Record<string, string | undefined> | undefined;
+	#elicitationUiProvider: (() => McpElicitationUi | undefined) | undefined;
+	#mcpInstructions = "";
 	readonly #pendingAuth = new Map<string, import("./auth/oauth-provider.ts").McpOAuthProvider>();
+	readonly #interactiveAuthServers = new Set<string>();
+	readonly #promptCommandNames = new Set<string>();
 	#refreshActiveSetWhenNoTools = false;
 	#tierBRegistration: McpSessionRegistration | undefined;
 	#historyScanned = false;
@@ -77,6 +82,7 @@ export class McpService {
 	readonly #wireStatusBySession = new Map<string, McpWireStatusSnapshot>();
 	readonly #connections = new Map<string, McpConnectionEntry>();
 	readonly #connectionKeysByName = new Map<string, string>();
+	readonly #outputArtifacts = new McpOutputArtifacts();
 
 	async attachSession(
 		event: SessionStartEvent,
@@ -198,13 +204,22 @@ export class McpService {
 		this.#lastDisposeReason = reason;
 		this.#sessionContext = null;
 		this.#config = null;
+		this.#elicitationUiProvider = undefined;
+		this.#mcpInstructions = "";
+		this.#pendingAuth.clear();
+		this.#interactiveAuthServers.clear();
+		this.#promptCommandNames.clear();
 		this.#wireStatusBySession.clear();
 		this.#latestWireStatus = { servers: [] };
 		const entries = [...this.#connections.values()];
 		this.#connections.clear();
 		this.#connectionKeysByName.clear();
 		await Promise.all(entries.map((entry) => disposeEntryConnection(entry)));
-		await cleanupMcpOutputArtifacts();
+		await cleanupMcpOutputArtifacts(this.#outputArtifacts);
+	}
+
+	getMcpOutputArtifacts(): McpOutputArtifacts {
+		return this.#outputArtifacts;
 	}
 
 	isDisposed(): boolean {
@@ -313,12 +328,14 @@ export class McpService {
 				authProvider: authPlan.provider,
 				config: server.config,
 				env: options.env,
+				elicitationUiProvider: () => this.getMcpElicitationUi(),
 				logger,
 				serverName: name,
 			});
 			const cachedCatalog = useCache ? getValidCachedServer(cache, name, server.configHash) : undefined;
 			const entry: McpConnectionEntry = {
 				agentDir: options.agentDir,
+				artifacts: this.#outputArtifacts,
 				authPlan,
 				cacheRefreshedAfterConnect: false,
 				cachedCatalog,
@@ -538,6 +555,40 @@ export class McpService {
 	#entryForName(name: string): McpConnectionEntry | undefined {
 		const key = this.#connectionKeysByName.get(name);
 		return key === undefined ? undefined : this.#connections.get(key);
+	}
+
+	setMcpInstructions(instructions: string): void {
+		this.#mcpInstructions = instructions;
+	}
+
+	getMcpInstructions(): string {
+		return this.#mcpInstructions;
+	}
+
+	setMcpElicitationUiProvider(provider: (() => McpElicitationUi | undefined) | undefined): void {
+		this.#elicitationUiProvider = provider;
+	}
+
+	getMcpElicitationUi(): McpElicitationUi | undefined {
+		return this.#elicitationUiProvider?.();
+	}
+
+	isMcpPromptCommandRegistered(name: string): boolean {
+		return this.#promptCommandNames.has(name);
+	}
+
+	markMcpPromptCommandRegistered(name: string): void {
+		this.#promptCommandNames.add(name);
+	}
+
+	beginInteractiveAuth(serverName: string): boolean {
+		if (this.#interactiveAuthServers.has(serverName)) return false;
+		this.#interactiveAuthServers.add(serverName);
+		return true;
+	}
+
+	endInteractiveAuth(serverName: string): void {
+		this.#interactiveAuthServers.delete(serverName);
 	}
 
 	getPendingAuth(): Map<string, import("./auth/oauth-provider.ts").McpOAuthProvider> {

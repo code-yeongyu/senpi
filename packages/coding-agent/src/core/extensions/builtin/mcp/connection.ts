@@ -36,6 +36,7 @@ export class ServerConnection {
 	readonly #env: Record<string, string | undefined> | undefined;
 	readonly #config: ServerConnectionOptions["config"];
 	readonly #authProvider: McpOAuthProvider | undefined;
+	readonly #elicitationUiProvider: ServerConnectionOptions["elicitationUiProvider"];
 	#state: ServerConnectionState;
 	#generation = 0;
 	#connection: McpTransportConnection | undefined;
@@ -52,6 +53,7 @@ export class ServerConnection {
 		this.#logger = options.logger;
 		this.#env = options.env;
 		this.#authProvider = options.authProvider;
+		this.#elicitationUiProvider = options.elicitationUiProvider;
 		this.#state = options.config.enabled ? "idle" : "disabled";
 	}
 
@@ -181,6 +183,7 @@ export class ServerConnection {
 			authProvider: this.#authProvider,
 			config: this.#config,
 			env: this.#env,
+			elicitationUiProvider: this.#elicitationUiProvider,
 			logger: this.#logger,
 			serverName: this.serverName,
 		});

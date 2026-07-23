@@ -2,16 +2,15 @@ import type { McpService } from "./service.ts";
 
 const MAX_INSTRUCTIONS_CHARS = 4000;
 
-let sessionInstructionsBlock = "";
-
 export function refreshMcpInstructionsForSession(service: McpService): void {
-	sessionInstructionsBlock = buildMcpInstructionsBlock(service);
+	service.setMcpInstructions(buildMcpInstructionsBlock(service));
 }
 
-export function injectMcpInstructions(systemPrompt: string): string | undefined {
-	if (sessionInstructionsBlock.length === 0) return undefined;
-	if (systemPrompt.includes(sessionInstructionsBlock)) return undefined;
-	return `${systemPrompt}\n\n${sessionInstructionsBlock}`;
+export function injectMcpInstructions(service: McpService, systemPrompt: string): string | undefined {
+	const instructions = service.getMcpInstructions();
+	if (instructions.length === 0) return undefined;
+	if (systemPrompt.includes(instructions)) return undefined;
+	return `${systemPrompt}\n\n${instructions}`;
 }
 
 function buildMcpInstructionsBlock(service: McpService): string {

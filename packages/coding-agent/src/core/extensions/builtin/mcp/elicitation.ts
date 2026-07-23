@@ -23,6 +23,11 @@ export const MCP_ELICITATION_TIMEOUT_MS = 5 * 60 * 1000;
 
 type ElicitationUi = Pick<ExtensionUIContext, "input" | "select" | "confirm">;
 
+export type McpElicitationUiProvider = () => ElicitationUi | undefined;
+export interface McpElicitationUiOwner {
+	getMcpElicitationUi(): ElicitationUi | undefined;
+}
+
 export interface ElicitationResponse {
 	action: "accept" | "decline" | "cancel";
 	content?: Record<string, string | number | boolean>;
@@ -37,20 +42,24 @@ interface ElicitProperty {
 	enum?: unknown[];
 }
 
-let currentUi: (() => ElicitationUi | undefined) | undefined;
+let legacyUiProvider: McpElicitationUiProvider | undefined;
 
-/** The extension points this at the live session UI (undefined in print mode). */
-export function setMcpElicitationUiProvider(provider: (() => ElicitationUi | undefined) | undefined): void {
-	currentUi = provider;
+/** Legacy classic-session seam. Session-owned services pass themselves directly. */
+export function setMcpElicitationUiProvider(provider: McpElicitationUiProvider | undefined): void {
+	legacyUiProvider = provider;
 }
 
 /** Wire the elicitation/create handler onto a fresh client. */
-export function configureMcpElicitation(client: Client, timeoutMs: number = MCP_ELICITATION_TIMEOUT_MS): void {
+export function configureMcpElicitation(
+	client: Client,
+	owner: McpElicitationUiOwner | McpElicitationUiProvider | undefined = legacyUiProvider,
+	timeoutMs: number = MCP_ELICITATION_TIMEOUT_MS,
+): void {
 	client.setRequestHandler(ElicitRequestSchema, async (request) => {
 		const params = request.params;
 		// URL mode is deliberately unsupported in v1 (form mode only).
 		if (!("requestedSchema" in params)) return { action: "decline" };
-		const ui = currentUi?.();
+		const ui = typeof owner === "function" ? owner() : owner?.getMcpElicitationUi();
 		if (ui === undefined) return { action: "decline" };
 		return await runElicitationForm(ui, params.message, params.requestedSchema, timeoutMs);
 	});

@@ -20,12 +20,14 @@ import type { McpCachedServerCatalog } from "./catalog-cache.ts";
 import type { ServerConnection } from "./connection.ts";
 import { ToolExecError } from "./errors.ts";
 import type { McpToolDetails } from "./expose/register.ts";
+import type { McpOutputArtifacts } from "./guard/output-guard.ts";
 import { applyMcpOutputGuard } from "./guard/output-guard.ts";
 
 export interface McpResourceServer {
 	readonly server: string;
 	readonly connection: ServerConnection;
 	readonly agentDir?: string;
+	readonly artifacts?: McpOutputArtifacts;
 	readonly outputGuard?: Parameters<typeof applyMcpOutputGuard>[1]["outputGuard"];
 	readonly requestTimeoutMs?: number;
 	readonly resources: NonNullable<McpCachedServerCatalog["resources"]>;
@@ -71,6 +73,7 @@ export async function readMcpResourceAsText(server: McpResourceServer, uri: stri
 	});
 	const guarded = await applyMcpOutputGuard([{ type: "text", text: parts.join("\n") }], {
 		agentDir: server.agentDir,
+		artifacts: server.artifacts,
 		outputGuard: server.outputGuard,
 		server: server.server,
 	});

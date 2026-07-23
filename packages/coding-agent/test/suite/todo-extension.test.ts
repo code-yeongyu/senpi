@@ -953,7 +953,7 @@ describe("todo extension", () => {
 			// to the stable completed row (excludes the unstruck phase header above it).
 			const firstStruck = animatedCoverage.findIndex((coverage) => coverage > 0);
 			if (firstStruck < 0) throw new Error("Expected a struck row");
-			return strikeFlags(animatedLines.slice(firstStruck, animatedStableIndex)).flatMap((flags) => flags);
+			return strikeFlags(animatedLines.slice(firstStruck, animatedStableIndex)).flat();
 		})();
 		const firstUnstruck = animatedFlags.indexOf(false);
 		const struckBeyondBoundary = firstUnstruck >= 0 && animatedFlags.slice(firstUnstruck + 1).some((flag) => flag);

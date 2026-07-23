@@ -14,6 +14,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "../../types.ts";
 import type { McpCachedServerCatalog } from "./catalog-cache.ts";
 import type { ServerConnection } from "./connection.ts";
 import { createMcpLogger } from "./log.ts";
+import type { McpService } from "./service.ts";
 
 export interface McpPromptServer {
 	readonly server: string;
@@ -31,13 +32,27 @@ export function resetMcpPromptCommandsForTests(): void {
 	registeredCommandNames.clear();
 }
 
-export function registerMcpPromptCommands(pi: CommandRegistrar, servers: readonly McpPromptServer[]): string[] {
+export function registerMcpPromptCommands(pi: CommandRegistrar, servers: readonly McpPromptServer[]): string[];
+export function registerMcpPromptCommands(
+	service: McpService,
+	pi: CommandRegistrar,
+	servers: readonly McpPromptServer[],
+): string[];
+export function registerMcpPromptCommands(
+	serviceOrPi: McpService | CommandRegistrar,
+	piOrServers: CommandRegistrar | readonly McpPromptServer[],
+	serversArg?: readonly McpPromptServer[],
+): string[] {
+	const service = serversArg === undefined ? undefined : (serviceOrPi as McpService);
+	const pi = (serversArg === undefined ? serviceOrPi : piOrServers) as CommandRegistrar;
+	const servers = (serversArg === undefined ? piOrServers : serversArg) as readonly McpPromptServer[];
 	const added: string[] = [];
 	for (const server of servers) {
 		for (const prompt of server.prompts) {
 			const commandName = `mcp:${server.server}:${prompt.name}`;
-			if (registeredCommandNames.has(commandName)) continue;
-			registeredCommandNames.add(commandName);
+			if (service?.isMcpPromptCommandRegistered(commandName) ?? registeredCommandNames.has(commandName)) continue;
+			if (service) service.markMcpPromptCommandRegistered(commandName);
+			else registeredCommandNames.add(commandName);
 			added.push(commandName);
 			pi.registerCommand(commandName, {
 				description: prompt.description ?? `MCP prompt ${prompt.name} from ${server.server}`,

@@ -136,6 +136,7 @@ export const NEO_RUNTIME_OPTION_CARVEOUT_FIELDS: Readonly<Record<string, string>
 	mode: "output mode dispatch; the daemon always speaks rpc over the socket",
 	print: "print-mode dispatch; TTY-less --neo falls back to classic print in the launcher",
 	neo: "the --neo flag itself; consumed by the launcher to choose the neo path",
+	multiSession: "RPC-host process flag; neo daemon workers always use classic per-connection RPC",
 	// Diagnostics are produced by the parser, not a runtime input.
 	diagnostics: "parser-produced diagnostics; not a runtime construction input",
 	// Neo launcher-local flags never forwarded to the daemon runtime.

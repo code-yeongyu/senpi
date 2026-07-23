@@ -4,7 +4,11 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { McpOAuthProvider } from "./auth/oauth-provider.ts";
 import type { McpServerConfig } from "./config-schema.ts";
-import { configureMcpElicitation, MCP_CLIENT_ELICITATION_CAPABILITY } from "./elicitation.ts";
+import {
+	configureMcpElicitation,
+	MCP_CLIENT_ELICITATION_CAPABILITY,
+	type McpElicitationUiProvider,
+} from "./elicitation.ts";
 import { AuthError, ConnectError, TimeoutError } from "./errors.ts";
 import type { McpLogger } from "./log.ts";
 import { delay, reapProcessTree } from "./process-tree.ts";
@@ -26,6 +30,7 @@ export type CreateMcpTransportOptions = {
 	readonly config: McpServerConfig;
 	readonly logger: McpLogger;
 	readonly env?: Record<string, string | undefined>;
+	readonly elicitationUiProvider?: McpElicitationUiProvider;
 	// Present only when OAuth is the resolved auth mode for this server.
 	readonly authProvider?: McpOAuthProvider;
 };
@@ -113,7 +118,14 @@ function createStdioConnection(options: CreateMcpTransportOptions, connectTimeou
 		stderr: "pipe",
 	});
 	pipeStderr(transport, options.logger);
-	return createConnection(options.serverName, "stdio", transport, connectTimeoutMs, { logger: options.logger });
+	return createConnection(
+		options.serverName,
+		"stdio",
+		transport,
+		connectTimeoutMs,
+		{ logger: options.logger },
+		options.elicitationUiProvider,
+	);
 }
 
 function createHttpConnection(options: CreateMcpTransportOptions, connectTimeoutMs: number): McpTransportConnection {
@@ -138,7 +150,14 @@ function createHttpConnection(options: CreateMcpTransportOptions, connectTimeout
 		authProvider: options.authProvider,
 		requestInit: Object.keys(headers).length === 0 ? undefined : { headers },
 	});
-	return createConnection(options.serverName, "http", transport, connectTimeoutMs, { logger: options.logger });
+	return createConnection(
+		options.serverName,
+		"http",
+		transport,
+		connectTimeoutMs,
+		{ logger: options.logger },
+		options.elicitationUiProvider,
+	);
 }
 
 function createConnection(
@@ -147,6 +166,7 @@ function createConnection(
 	transport: Transport,
 	connectTimeoutMs: number,
 	asyncErrorSink: McpAsyncErrorSink,
+	elicitationUiProvider: McpElicitationUiProvider | undefined,
 ): McpTransportConnection {
 	let lastRootPid: number | null = null;
 	const readRootPid = (): number | null => (transport instanceof StdioClientTransport ? transport.pid : null);
@@ -156,7 +176,7 @@ function createConnection(
 	if (transport instanceof StdioClientTransport) trackStdioStart(transport, captureRootPid);
 	return {
 		captureRootPid,
-		client: buildMcpClient(),
+		client: buildMcpClient(elicitationUiProvider),
 		connectTimeoutMs,
 		asyncErrorSink,
 		getRootPid: () => {
@@ -269,7 +289,7 @@ function isTerminableHttpTransport(
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
-function buildMcpClient(): Client {
+function buildMcpClient(elicitationUiProvider: McpElicitationUiProvider | undefined): Client {
 	// Elicitation capability is declared EMPTY on purpose (form mode only;
 	// Spring-AI servers reject richer shapes) and the create-handler is wired
 	// before any connect so mid-call requests never race registration.
@@ -277,6 +297,6 @@ function buildMcpClient(): Client {
 		{ name: "senpi-mcp-client", version: "0.0.0" },
 		{ capabilities: MCP_CLIENT_ELICITATION_CAPABILITY },
 	);
-	configureMcpElicitation(client);
+	configureMcpElicitation(client, elicitationUiProvider);
 	return client;
 }

@@ -1,5 +1,63 @@
 # changes
 
+## Multi-session RPC mode, session-owned MCP/config-reload state, and back-compat guarantee (2026-07-23)
+
+### What changed
+
+- `src/modes/rpc/`: new `--multi-session` startup flag. `senpi --mode rpc --multi-session`
+  constructs NO default session (no default `AgentSessionRuntime`, no default extension/watcher load).
+  Mode is fixed at process start; there is no runtime transition. New modules: `session-registry.ts`,
+  `session-command-router.ts`, `session-binding.ts`, `multi-session-host.ts` (each ≤250 pure LOC).
+- Multi-session wire protocol per the D1 normative table (see `docs/rpc.md` → Multi-session mode, and
+  the `rpc-mode.ts` header doc block for the verbatim table): `get_protocol_info` (answered in BOTH
+  modes; side-effect-free; THE capability probe), `open_session` / `close_session` / `list_sessions`,
+  mandatory `sessionId` routing on session-scoped commands, `sessionId` tagging on all session-owned
+  output, stable error codes (`unknown_session`, `session_closing`, `session_path_in_use`,
+  `missing_session_id`, `multi_session_disabled`, `invalid_path`, `open_failed: <detail>`), identities
+  (D6: response-level `sessionId` = opaque routing handle, ephemeral per process epoch;
+  `state.sessionId` = durable JSONL identity), and the D9 ordering guarantee (strict FIFO per session,
+  one total stdout order, fair round-robin between sessions' queued complete records, NO cross-session
+  batch coalescing, starvation freedom NOT promised).
+- `src/core/extensions/builtin/mcp/` and `src/core/extensions/builtin/config-reload/`: in multi-session
+  mode each session OWNS its MCP service instance (extension factory closes over it; helpers take the
+  instance, never call the `getMcpService()` global getter), its elicitation/instructions/prompts state,
+  and its `reloadHandoff` keyed by the session handle. Classic single-session mode keeps the globals
+  (no behavior change).
+- Session-owned config-reload state: the fs-watcher reload chain
+  (`config-reload/index.ts` → `agent-session.ts:3807` `resetApiProviders()`) is scoped per session via
+  the pi-ai provider scope, so reloading session A cannot reset session B's providers.
+
+### Why
+
+- A single shared `senpi --mode rpc --multi-session` process serves all of a provider instance's
+  threads concurrently. Cross-session turns run concurrently; per-session turn serialization comes
+  from `AgentSession`. Session-scoped state (provider registry, MCP, config-reload) must be owned by
+  the session so one conversation can never corrupt another.
+
+### Back-compat guarantee
+
+- Classic single-session mode (`senpi --mode rpc`, no flag) is byte-identical to today. The ONLY
+  additive classic-mode behavior is that `get_protocol_info` is answered (side-effect-free). Existing
+  RPC tests, the classic-compat characterization pin suite, and the neo-daemon suites stay green
+  unchanged.
+
+### Explicit non-goal
+
+- Per-session AuthStorage / multi-tenant key isolation is NOT added inside the shared process. The
+  process is single-tenant; tenancy isolation remains the neo daemon's job (per-connection worker
+  model). The neo daemon's behavior and its header distrust rationale are unchanged.
+
+### Why extension system couldn't handle this
+
+- Session lifecycle, the multi-session host/router/registry, MCP service ownership, and config-reload
+  handoff are protocol and core-runtime infrastructure below the extension boundary.
+
+### Expected merge conflict zones on next upstream sync
+
+- HIGH: `src/modes/rpc/` (new multi-session modules + `rpc-mode.ts`/`connection-handler.ts` seams).
+- MEDIUM: `src/core/extensions/builtin/mcp/service.ts` global getter removal on the multi-session path.
+- LOW: `src/core/extensions/builtin/config-reload/index.ts` reloadHandoff keying.
+
 ## App-server web-search projection and cumulative turn diffs (2026-07-21)
 
 ### What changed

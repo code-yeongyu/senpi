@@ -54,6 +54,7 @@ import { builtInExtensions } from "./extensions/index.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
+import { runMultiSessionHost } from "./modes/rpc/multi-session-host.ts";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
@@ -700,6 +701,7 @@ export async function main(args: string[], options?: MainOptions) {
 		sessionManager,
 		sessionStartEvent,
 		projectTrustContext,
+		launchProfile,
 	}) => {
 		const isInitialRuntime = sessionStartEvent === undefined;
 		const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
@@ -769,11 +771,35 @@ export async function main(args: string[], options?: MainOptions) {
 		});
 		const scopedModels =
 			modelPatterns && modelPatterns.length > 0 ? await resolveModelScope(modelPatterns, modelRuntime) : [];
+		// Multi-session opens carry their per-session startup choices here rather
+		// than through process argv. This deliberately feeds the same resolver as
+		// --provider/--model/--thinking, preserving classic flag semantics.
+		const runtimeParsed: Args =
+			launchProfile === undefined
+				? parsed
+				: {
+						...parsed,
+						...(launchProfile.creationModel === undefined
+							? {}
+							: {
+									provider: launchProfile.creationModel.provider,
+									model: launchProfile.creationModel.modelId,
+								}),
+						...(launchProfile.initialThinkingLevel === undefined
+							? {}
+							: { thinking: launchProfile.initialThinkingLevel as Args["thinking"] }),
+					};
 		const {
 			options: sessionOptions,
 			cliThinkingFromModel,
 			diagnostics: sessionOptionDiagnostics,
-		} = buildSessionOptions(parsed, scopedModels, sessionManager.hasContextMessages(), modelRuntime, settingsManager);
+		} = buildSessionOptions(
+			runtimeParsed,
+			scopedModels,
+			sessionManager.hasContextMessages(),
+			modelRuntime,
+			settingsManager,
+		);
 		diagnostics.push(...sessionOptionDiagnostics);
 
 		if (parsed.apiKey) {
@@ -801,7 +827,7 @@ export async function main(args: string[], options?: MainOptions) {
 			customTools: sessionOptions.customTools,
 			autoTitleSessions: appMode === "interactive" && !sessionManager.hasContextMessages(),
 		});
-		const cliThinkingOverride = parsed.thinking !== undefined || cliThinkingFromModel;
+		const cliThinkingOverride = runtimeParsed.thinking !== undefined || cliThinkingFromModel;
 		if (created.session.model && cliThinkingOverride) {
 			created.session.setThinkingLevel(created.session.thinkingLevel);
 		}
@@ -813,6 +839,17 @@ export async function main(args: string[], options?: MainOptions) {
 		};
 	};
 	time("createRuntime");
+	if (appMode === "rpc" && parsed.multiSession) {
+		printTimings();
+		await runMultiSessionHost({
+			agentDir,
+			createRuntime,
+			cwd,
+			creationModel:
+				parsed.provider && parsed.model ? { provider: parsed.provider, modelId: parsed.model } : undefined,
+			initialThinkingLevel: parsed.thinking,
+		});
+	}
 	const runtime = await createAgentSessionRuntime(createRuntime, {
 		cwd: sessionManager.getCwd(),
 		agentDir,

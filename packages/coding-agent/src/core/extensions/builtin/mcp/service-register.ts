@@ -24,6 +24,7 @@ export async function registerMcpServiceDirectTools(
 			const serverConfig = config.servers[entry.name]?.config;
 			return {
 				agentDir: entry.agentDir,
+				artifacts: entry.artifacts,
 				cachedCatalog: entry.cachedCatalog,
 				connection: entry.connection,
 				ensureFresh: () => entry.authPlan?.refresh?.ensureFresh().then(() => undefined) ?? Promise.resolve(),

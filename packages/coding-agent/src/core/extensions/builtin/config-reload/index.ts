@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve, sep } from "node:path";
+import { bindToProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../../../config.ts";
 import { resolvePath } from "../../../../utils/paths.ts";
 import { ModelConfig } from "../../../model-config.ts";
@@ -81,11 +82,36 @@ type ReloadHandoff = {
 	readonly changes: readonly { readonly registrationId: string; readonly paths: readonly string[] }[];
 };
 
-/**
- * The builtin module is statically imported, so this survives replacement extension
- * factories during session.reload(). It closes the watcher-to-watcher race window.
- */
-let reloadHandoff: ReloadHandoff | undefined;
+/** Session-keyed handoffs survive replacement extension factories during reload. */
+export class ConfigReloadHandoffRegistry<T> {
+	readonly #handoffs = new Map<string, T>();
+
+	set(sessionHandle: string, handoff: T): void {
+		this.#handoffs.set(sessionHandle, handoff);
+	}
+
+	take(sessionHandle: string): T | undefined {
+		const handoff = this.#handoffs.get(sessionHandle);
+		this.#handoffs.delete(sessionHandle);
+		return handoff;
+	}
+
+	delete(sessionHandle: string): void {
+		this.#handoffs.delete(sessionHandle);
+	}
+}
+
+const reloadHandoffs = new ConfigReloadHandoffRegistry<ReloadHandoff>();
+
+function bindExternalCallback<TArgs extends unknown[], TResult>(
+	callback: (...args: TArgs) => TResult,
+): (...args: TArgs) => TResult {
+	try {
+		return bindToProviderScope(callback);
+	} catch {
+		return callback;
+	}
+}
 
 export interface ConfigReloadExtensionOptions {
 	readonly agentDir?: string;
@@ -103,6 +129,15 @@ export interface ConfigReloadExtensionOptions {
  * filesystem event source and agent directory.
  */
 export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExtensionOptions = {}): void {
+	const sessionOwned = (() => {
+		try {
+			bindToProviderScope(() => undefined);
+			return true;
+		} catch {
+			return false;
+		}
+	})();
+	const handoffKey = (ctx: ExtensionContext): string => (sessionOwned ? ctx.sessionManager.getSessionId() : "classic");
 	const agentDir = resolve(options.agentDir ?? getAgentDir());
 	const subscribe = options.subscribe ?? createFsWatchEventSource();
 	const logger = options.logger ?? createConfigReloadLogger(agentDir);
@@ -258,10 +293,10 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 			debounceMs: settings.debounceMs,
 			clock: options.clock,
 			hashFile: options.hashFile,
-			onRealChange: enqueueChange,
-			onError: (error, path) => {
+			onRealChange: bindExternalCallback(enqueueChange),
+			onError: bindExternalCallback((error, path) => {
 				logger.error("watcher_error", { path, message: errorMessage(error) });
-			},
+			}),
 		});
 		logger.info("watcher_started", { targetCount: activeTargets.length });
 		pi.events.emit(CONFIG_WATCH_READY, { enabled: true });
@@ -288,11 +323,11 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 		const paths = uniquePaths(changes.flatMap((change) => change.paths));
 		reloadInFlight = true;
 		tornDown = false;
-		reloadHandoff = {
+		reloadHandoffs.set(handoffKey(ctx), {
 			hashesAtRequest: engine?.getBaselineSnapshot() ?? new Map<string, string>(),
 			requestedAt: Date.now(),
 			changes,
-		};
+		});
 		ctx.ui.notify(`Hot-reloading: ${formatPaths(paths)}`, "info");
 		logger.info("reload_requested", { reason: "config changed", paths });
 
@@ -300,11 +335,11 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 			await ctx.requestReload();
 			if (!tornDown) {
 				reloadInFlight = false;
-				reloadHandoff = undefined;
+				reloadHandoffs.delete(handoffKey(ctx));
 			}
 		} catch (error) {
 			reloadInFlight = false;
-			reloadHandoff = undefined;
+			reloadHandoffs.delete(handoffKey(ctx));
 			logger.error("watcher_error", { path: "reload", message: errorMessage(error) });
 		}
 	};
@@ -319,9 +354,9 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	};
 
 	const processReloadHandoff = async (event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
-		if (event.reason !== "reload" || !reloadHandoff) return;
-		const handoff = reloadHandoff;
-		reloadHandoff = undefined;
+		if (event.reason !== "reload") return;
+		const handoff = reloadHandoffs.take(handoffKey(ctx));
+		if (!handoff) return;
 		const paths = uniquePaths(handoff.changes.flatMap((change) => change.paths));
 		for (const change of handoff.changes) {
 			pi.events.emit(CONFIG_WATCH_RELOADED, {
@@ -363,6 +398,7 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 		return { trusted: "undecided" };
 	});
 	pi.on("session_shutdown", (event) => {
+		const closingContext = currentContext;
 		tornDown = true;
 		started = false;
 		currentContext = undefined;
@@ -370,7 +406,7 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 		clearCompactionRecheck();
 		cleanupEventListeners();
 		pending.clear();
-		if (event.reason !== "reload") reloadHandoff = undefined;
+		if (event.reason !== "reload" && closingContext) reloadHandoffs.delete(handoffKey(closingContext));
 	});
 
 	function canRequestReload(ctx: ExtensionContext): boolean {

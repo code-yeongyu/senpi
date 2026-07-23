@@ -3,6 +3,7 @@ import type { ServerAuthPlan } from "./auth/context.ts";
 import type { McpCachedServerCatalog } from "./catalog-cache.ts";
 import type { ResolvedMcpServer } from "./config-schema.ts";
 import type { ServerConnection, ServerConnectionState } from "./connection.ts";
+import type { McpOutputArtifacts } from "./guard/output-guard.ts";
 import type { McpLogger } from "./log.ts";
 
 export type McpDisposeReason = Extract<SessionShutdownEvent["reason"], "quit" | "reload">;
@@ -142,6 +143,7 @@ export interface McpConnectionEntry {
 	readonly createdAtMs: number;
 	readonly counters: McpServerCounters;
 	readonly agentDir?: string;
+	readonly artifacts?: McpOutputArtifacts;
 	readonly authPlan?: ServerAuthPlan;
 	cachedCatalog?: McpCachedServerCatalog;
 	cacheRefreshedAfterConnect: boolean;

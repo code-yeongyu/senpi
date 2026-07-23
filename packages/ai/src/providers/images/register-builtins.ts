@@ -1,5 +1,5 @@
 import type { generateImages as generateImagesOpenRouterFunction } from "../../api/openrouter-images.ts";
-import { registerImagesApiProvider } from "../../images-api-registry.ts";
+import { registerBuiltinImagesApiProvider } from "../../images-api-registry.ts";
 import type { AssistantImages, ImagesContext, ImagesFunction, ImagesModel, ImagesOptions } from "../../types.ts";
 
 interface OpenRouterImagesProviderModule {
@@ -41,7 +41,7 @@ export const generateImagesOpenRouter: ImagesFunction<"openrouter-images", Image
 };
 
 export function registerBuiltInImagesApiProviders(): void {
-	registerImagesApiProvider({
+	registerBuiltinImagesApiProvider({
 		api: "openrouter-images",
 		generateImages: generateImagesOpenRouter,
 	});

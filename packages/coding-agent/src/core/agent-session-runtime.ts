@@ -25,6 +25,14 @@ export interface CreateAgentSessionRuntimeResult extends CreateAgentSessionResul
 	diagnostics: AgentSessionRuntimeDiagnostic[];
 }
 
+/** Immutable flags selected when a runtime is first launched. */
+export interface AgentSessionLaunchProfile {
+	cwd: string;
+	permissionPreset?: string;
+	creationModel?: { provider: string; modelId: string };
+	initialThinkingLevel?: string;
+}
+
 /**
  * Creates a full runtime for a target cwd and session manager.
  *
@@ -38,6 +46,7 @@ export type CreateAgentSessionRuntimeFactory = (options: {
 	sessionManager: SessionManager;
 	sessionStartEvent?: SessionStartEvent;
 	projectTrustContext?: ProjectTrustContext;
+	launchProfile?: Readonly<AgentSessionLaunchProfile>;
 }) => Promise<CreateAgentSessionRuntimeResult>;
 
 /**
@@ -79,6 +88,7 @@ export class AgentSessionRuntime {
 	private readonly createRuntime: CreateAgentSessionRuntimeFactory;
 	private _diagnostics: AgentSessionRuntimeDiagnostic[];
 	private _modelFallbackMessage?: string;
+	private readonly _launchProfile?: Readonly<AgentSessionLaunchProfile>;
 
 	constructor(
 		_session: AgentSession,
@@ -86,12 +96,14 @@ export class AgentSessionRuntime {
 		createRuntime: CreateAgentSessionRuntimeFactory,
 		_diagnostics: AgentSessionRuntimeDiagnostic[] = [],
 		_modelFallbackMessage?: string,
+		launchProfile?: Readonly<AgentSessionLaunchProfile>,
 	) {
 		this._session = _session;
 		this._services = _services;
 		this.createRuntime = createRuntime;
 		this._diagnostics = _diagnostics;
 		this._modelFallbackMessage = _modelFallbackMessage;
+		this._launchProfile = launchProfile;
 	}
 
 	get services(): AgentSessionServices {
@@ -112,6 +124,10 @@ export class AgentSessionRuntime {
 
 	get modelFallbackMessage(): string | undefined {
 		return this._modelFallbackMessage;
+	}
+
+	get launchProfile(): Readonly<AgentSessionLaunchProfile> | undefined {
+		return this._launchProfile;
 	}
 
 	setRebindSession(rebindSession?: (session: AgentSession) => Promise<void>): void {
@@ -214,6 +230,7 @@ export class AgentSessionRuntime {
 				sessionManager,
 				sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
 				projectTrustContext: options?.projectTrustContextFactory?.(sessionManager.getCwd()),
+				launchProfile: this._launchProfile,
 			}),
 		);
 		await this.finishSessionReplacement(options?.withSession);
@@ -246,6 +263,7 @@ export class AgentSessionRuntime {
 				agentDir: this.services.agentDir,
 				sessionManager,
 				sessionStartEvent: { type: "session_start", reason: "new", previousSessionFile },
+				launchProfile: this._launchProfile,
 			}),
 		);
 		if (options?.setup) {
@@ -300,6 +318,7 @@ export class AgentSessionRuntime {
 						agentDir: this.services.agentDir,
 						sessionManager,
 						sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
+						launchProfile: this._launchProfile,
 					}),
 				);
 				await this.finishSessionReplacement(options?.withSession);
@@ -323,6 +342,7 @@ export class AgentSessionRuntime {
 					agentDir: this.services.agentDir,
 					sessionManager,
 					sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
+					launchProfile: this._launchProfile,
 				}),
 			);
 			await this.finishSessionReplacement(options?.withSession);
@@ -342,6 +362,7 @@ export class AgentSessionRuntime {
 				agentDir: this.services.agentDir,
 				sessionManager,
 				sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
+				launchProfile: this._launchProfile,
 			}),
 		);
 		await this.finishSessionReplacement(options?.withSession);
@@ -386,6 +407,7 @@ export class AgentSessionRuntime {
 				agentDir: this.services.agentDir,
 				sessionManager,
 				sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
+				launchProfile: this._launchProfile,
 			}),
 		);
 		await this.finishSessionReplacement();
@@ -415,6 +437,7 @@ export async function createAgentSessionRuntime(
 		agentDir: string;
 		sessionManager: SessionManager;
 		sessionStartEvent?: SessionStartEvent;
+		launchProfile?: Readonly<AgentSessionLaunchProfile>;
 	},
 ): Promise<AgentSessionRuntime> {
 	assertSessionCwdExists(options.sessionManager, options.cwd);
@@ -425,6 +448,7 @@ export async function createAgentSessionRuntime(
 		createRuntime,
 		result.diagnostics,
 		result.modelFallbackMessage,
+		options.launchProfile,
 	);
 }
 

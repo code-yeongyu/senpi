@@ -3,6 +3,7 @@ import { cachedToolsToCatalogEntries, collectToolCatalog, type McpToolCatalogEnt
 import type { McpCachedServerCatalog } from "../catalog-cache.ts";
 import type { ResolvedMcpConfig } from "../config-schema.ts";
 import type { ServerConnection } from "../connection.ts";
+import type { McpOutputArtifacts } from "../guard/output-guard.ts";
 import { createMcpLogger, type McpLogger } from "../log.ts";
 import type { McpPromptServer } from "../prompts.ts";
 import { createMcpResourceTools, type McpResourceServer } from "../resources.ts";
@@ -20,6 +21,7 @@ export interface McpDirectRegistrationEntry {
 	readonly connection: ServerConnection;
 	readonly logger: McpLogger;
 	readonly agentDir?: string;
+	readonly artifacts?: McpOutputArtifacts;
 	readonly cachedCatalog?: McpCachedServerCatalog;
 	readonly ensureFresh?: () => Promise<void>;
 	readonly ensureCachedToolConnected?: () => Promise<void>;
@@ -45,6 +47,7 @@ export async function registerDirectMcpTools(
 				? entry.connection.state === "connected"
 					? await collectToolCatalog(entry.name, entry.connection, server.config, {
 							agentDir: entry.agentDir,
+							artifacts: entry.artifacts,
 							ensureFresh: entry.ensureFresh,
 							outputGuard: config.settings.outputGuard,
 						})
@@ -57,6 +60,7 @@ export async function registerDirectMcpTools(
 						entry.ensureCachedToolConnected ?? (() => entry.connection.connect().then(() => undefined)),
 						{
 							agentDir: entry.agentDir,
+							artifacts: entry.artifacts,
 							ensureFresh: entry.ensureFresh,
 							outputGuard: config.settings.outputGuard,
 						},
@@ -74,6 +78,7 @@ export async function registerDirectMcpTools(
 		if (cachedResources.length > 0) {
 			resourceServers.push({
 				agentDir: entry.agentDir,
+				artifacts: entry.artifacts,
 				connection: entry.connection,
 				outputGuard: config.settings.outputGuard,
 				requestTimeoutMs: server.config.requestTimeoutMs,

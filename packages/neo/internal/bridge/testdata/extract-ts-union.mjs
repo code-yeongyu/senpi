@@ -49,7 +49,7 @@ const read = (rel) => readFileSync(join(ROOT, rel), "utf8");
  * Returns the text between `=` and the terminating top-level `;`.
  */
 function extractTypeBody(source, name) {
-	const re = new RegExp(`export type ${name}\\s*=`);
+	const re = new RegExp(`(?:export\\s+)?type ${name}\\s*=`);
 	const m = re.exec(source);
 	if (!m) throw new Error(`type ${name} not found`);
 	let i = m.index + m[0].length;
@@ -108,7 +108,10 @@ const extTypes = read("packages/coding-agent/src/core/extensions/types.ts");
 const connectionHandler = read("packages/coding-agent/src/modes/rpc/connection-handler.ts");
 
 // --- Commands (RpcCommand.type) ---
-const commandBody = extractTypeBody(rpcTypes, "RpcCommand");
+// RpcCommand composes the established command union with its additive routing
+// envelope. Scan both declarations so this source-derived bridge guard remains
+// exhaustive when the protocol factors a shared union.
+const commandBody = [extractTypeBody(rpcTypes, "RpcCommand"), extractTypeBody(rpcTypes, "RpcSessionCommand")].join("\n");
 const commands = uniq(literalsForKey(commandBody, "type"));
 
 // --- Response commands (RpcResponse.command) ---

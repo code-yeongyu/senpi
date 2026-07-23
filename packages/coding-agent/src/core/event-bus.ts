@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { bindToProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 
 export interface EventBus {
 	emit(channel: string, data: unknown): void;
@@ -16,9 +17,10 @@ export function createEventBus(): EventBusController {
 			emitter.emit(channel, data);
 		},
 		on: (channel, handler) => {
+			const scopedHandler = bindHandler(handler);
 			const safeHandler = async (data: unknown) => {
 				try {
-					await handler(data);
+					await scopedHandler(data);
 				} catch (err) {
 					console.error(`Event handler error (${channel}):`, err);
 				}
@@ -30,4 +32,14 @@ export function createEventBus(): EventBusController {
 			emitter.removeAllListeners();
 		},
 	};
+}
+
+function bindHandler<TArgs extends unknown[], TResult>(
+	handler: (...args: TArgs) => TResult,
+): (...args: TArgs) => TResult {
+	try {
+		return bindToProviderScope(handler);
+	} catch {
+		return handler;
+	}
 }

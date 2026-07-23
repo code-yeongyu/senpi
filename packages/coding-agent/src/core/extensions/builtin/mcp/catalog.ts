@@ -3,6 +3,7 @@ import type { McpCachedServerCatalog } from "./catalog-cache.ts";
 import type { McpServerConfig, McpSettings } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
 import { collectAllPages } from "./expose/pagination.ts";
+import type { McpOutputArtifacts } from "./guard/output-guard.ts";
 import type { McpEnsureFreshAuth } from "./health.ts";
 
 type ListedTool = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
@@ -18,10 +19,11 @@ export interface McpToolCatalogEntry {
 	ensureConnected?: () => Promise<void>;
 	ensureFresh?: McpEnsureFreshAuth;
 	agentDir?: string;
+	artifacts?: McpOutputArtifacts;
 	outputGuard?: McpSettings["outputGuard"];
 }
 
-type McpToolCatalogOptions = Pick<McpToolCatalogEntry, "agentDir" | "ensureFresh" | "outputGuard">;
+type McpToolCatalogOptions = Pick<McpToolCatalogEntry, "agentDir" | "artifacts" | "ensureFresh" | "outputGuard">;
 
 export async function collectToolCatalog(
 	server: string,
@@ -35,6 +37,7 @@ export async function collectToolCatalog(
 	return result.items.map((tool) => ({
 		annotations: tool.annotations,
 		agentDir: options.agentDir,
+		artifacts: options.artifacts,
 		connection,
 		description: tool.description,
 		ensureFresh: options.ensureFresh,
@@ -57,6 +60,7 @@ export function cachedToolsToCatalogEntries(
 	return catalog.tools.map((tool) => ({
 		annotations: tool.annotations,
 		agentDir: options.agentDir,
+		artifacts: options.artifacts,
 		connection,
 		description: tool.description,
 		ensureConnected,
