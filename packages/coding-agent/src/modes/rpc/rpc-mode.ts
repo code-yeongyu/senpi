@@ -15,6 +15,55 @@
  * logic can also serve one socket connection in the neo daemon. This file owns
  * exactly the process-level concerns that a per-connection handler must NOT
  * touch: stdout takeover, stdin wiring, signal handlers, and process exit.
+ *
+ * ── Multi-session mode (`--multi-session`) ─────────────────────────────────
+ *
+ * Startup: `senpi --mode rpc --multi-session` → NO default session is constructed
+ * (no default `AgentSessionRuntime`, no default extension/watcher load). Classic
+ * `senpi --mode rpc` is byte-identical to today. Mode is fixed at process start;
+ * there is no runtime transition.
+ *
+ * D1 normative table (multi-session mode):
+ *
+ * | Command          | Params                                                                                          | Success data                                    | Notes |
+ * | ---------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------- | ----- |
+ * | `get_protocol_info` | -                                                                                             | `{ protocolVersion: 1, capabilities: ["multi_session"], mode: "classic"|"multi" }` | Answered in BOTH modes; side-effect-free; THE capability probe. |
+ * | `open_session`    | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState }`         | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there); `provider`/`modelId` applied only on create (resume restores the session's model); params form the immutable launch profile (D8). |
+ * | `close_session`   | `sessionId`                                                                                    | `{}`                                            | Aborts active work, awaits agent idle + settled persistence, flushes queued events, detaches subscriptions; its response is the LAST record tagged with that handle — no events after (test-pinned). |
+ * | `list_sessions`   | -                                                                                               | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status }] }` | Includes `opening`/`closing` entries with their status. |
+ * | every existing command | + `sessionId` (REQUIRED in multi mode)                                                      | unchanged                                       | Routed to that session. |
+ *
+ * Identities (D6): response-level `sessionId` = opaque routing handle, unique per
+ * process epoch, ephemeral (dies with the child). `state.sessionId` = durable
+ * JSONL session identity (what a resume cursor stores today). `list_sessions`
+ * exposes both. Clients store both, discard routing handles on child exit, verify
+ * only durable ids against cursors.
+ *
+ * Stable error codes (in the response `error` field, machine-matchable):
+ * `unknown_session`, `session_closing`, `session_path_in_use`, `missing_session_id`
+ * (session-scoped command without `sessionId` in multi mode), `multi_session_disabled`
+ * (`open_session` in classic mode), `invalid_path` (relative `sessionPath`/`cwd`),
+ * `open_failed: <detail>`.
+ *
+ * Tagging: every response/event/`extension_ui_request` belonging to a session
+ * carries top-level `sessionId` (routing handle). `get_protocol_info`/
+ * `list_sessions` responses are untagged. Classic mode: nothing tagged
+ * (byte-identical).
+ *
+ * Ordering guarantee (D9): strict FIFO per session; one total stdout order;
+ * cross-session order unspecified; fair round-robin between sessions' queued
+ * complete records; NO cross-session batch coalescing (per-session event buffers;
+ * the process-wide single-array coalescer in `event-output-buffer.ts` must not
+ * merge records of different sessions into one write). Starvation freedom is NOT
+ * promised (single pipe); a giant tool record delays others — bounded only by
+ * record completion.
+ *
+ * Duplicate/idempotency: duplicate `open_session` while a path reservation is
+ * held → `session_path_in_use`. `close_session` on unknown/already-closed →
+ * `unknown_session` error. Request `id`s are client-owned; the server echoes them
+ * without dedup.
+ *
+ * Full prose docs: `packages/coding-agent/docs/rpc.md` (Multi-session mode).
  */
 
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";

@@ -1,5 +1,49 @@
 # AI Source Changes
 
+## 2026-07-23 - Session-scoped provider resolution via node-only AsyncLocalStorage subpath
+
+### What changed and why
+
+- New node-only subpath module `packages/ai/src/node/provider-scope.ts`, exported as
+  `@earendil-works/pi-ai/node/provider-scope`. It owns an `AsyncLocalStorage<ProviderScope>` plus
+  `runWithProviderScope` and `bindToProviderScope(fn)` (explicit callback binding for EventEmitter/
+  watcher callbacks, because EventEmitter does not propagate ALS from registration time).
+  `ProviderScope` carries `active|closed` state and a per-scope overlay `Map`.
+- `api-registry.ts` stays browser-neutral: a synchronous scope-accessor install hook (default: none)
+  lets the RPC host install a strict accessor. With no accessor installed, every classic path is
+  byte-identical (browser smoke pins this). The faux fast path (`getRegisteredFauxProvider` short-circuit
+  at `api-registry.ts:78-82`) consults the active scope first or is scope-keyed.
+- Scope-aware behavior for ALL registry operations: `getApiProvider`, `getApiProviders`,
+  `registerApiProvider`, `unregisterApiProviders`, `clearApiProviders`, `resetApiProviders`
+  (`compat.ts:143-147`). In an active scope, resolution = `session overlay → immutable builtin set` —
+  NEVER the mutable legacy global. After `close_session` the scope is closed and any lookup/mutation
+  through it throws (no silent fallback). Reaching provider lookup in multi-session mode with NO
+  active scope throws a diagnostic error (fail-loud, not fall-through).
+- The image-provider registry is scoped identically to the API-provider registry (same overlay →
+  immutable-builtins-only resolution, same closed-scope throws semantics).
+- Builtin identity semantics preserved: `getBuiltinProviderForModel` (`compat.ts:127-140,173`)
+  keeps reference-identity routing in `getBuiltinProviderForModel` / `builtinApiProviderInstances`
+  while a scope holds unrelated overlay entries.
+- Browser-safety approach: the synchronous scope-accessor install hook keeps `packages/ai` root and
+  compat exports browser-neutral; the only `node:async_hooks` import lives behind the node-only
+  subpath. Root/compat stay browser-safe; `npm run check:browser-smoke` stays green.
+
+### What future refactors must NOT break
+
+- Overlay → immutable-builtins-only resolution in an active scope; NEVER fall back to the mutable legacy
+  global in multi-session mode.
+- A closed scope must throw on any lookup/mutation (no silent fallback).
+- Builtin identity semantics (`builtinApiProviderInstances` reference-identity routing in
+  `getBuiltinProviderForModel`) must keep working while a scope holds unrelated overlay entries.
+- Root/compat exports must stay browser-safe: no `node:async_hooks` (or any node-only) import reachable
+  from root or compat; the scope accessor ships only from the node-only subpath.
+- No new dependencies (`node:async_hooks` is built-in).
+
+### Expected merge conflict zones
+
+- MEDIUM: `api-registry.ts` scope-accessor install hook + the faux fast-path short-circuit.
+- LOW: `compat.ts` builtin identity routing (additive guard only).
+
 ## 2026-07-22 - Drop tool results of errored/aborted assistants in transformMessages
 
 ### What changed and why

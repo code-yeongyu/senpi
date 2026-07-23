@@ -1,5 +1,41 @@
 # Changes
 
+## 2026-07-23 - uuidv7 concurrency refutation + immutable launch profile
+
+### What changed and why
+
+- `harness/session/uuid.ts`: the inlined UUIDv7 implementation uses a synchronous counter over module
+  state. A concurrency refutation test (`test/uuid-concurrency.test.ts`) records that N interleaved
+  async tasks calling `uuidv7()` produce unique, monotonic-per-timestamp ids — the synchronous counter
+  makes uniqueness hold under interleaving (no `await` between timestamp read and counter increment).
+  This is a recorded refutation WITH a test, not a bare assertion; it documents that the existing
+  synchronous-counter design is correct under interleaving so future refactors do not "fix" a
+  non-bug by adding an async lock that would change id ordering.
+- `core/agent-session-runtime.ts` (`CreateAgentSessionRuntimeFactory`, `:35,74-242,411`): runtime
+  construction now carries an immutable per-open launch profile
+  `{ permissionPreset, creationModel, initialThinkingLevel, cwd }`. The profile is retained by
+  `AgentSessionRuntime` and survives `new_session`/`switch_session`/reload unless the command
+  explicitly changes it. This carries per-session `cwd`, permission-preset, model selection, and
+  thinking level with identical semantics to today's spawn flags, without `main.ts` closing over
+  process-level parse.
+
+### Files modified
+
+- `harness/session/uuid.ts` (no production change; refutation test only)
+- `../test/uuid-concurrency.test.ts` (new)
+- `core/agent-session-runtime.ts`
+
+### Why the extension system could not handle this
+
+- The UUIDv7 counter and the launch-profile retention live inside `pi-agent-core` before coding-agent
+  extensions or mode renderers participate; the profile must be carried by the runtime the session
+  registry constructs inside `runWithProviderScope`.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `harness/session/uuid.ts` (unchanged production code; test is fork-only).
+- MEDIUM: `core/agent-session-runtime.ts` around `CreateAgentSessionRuntimeFactory` options.
+
 ## 2026-07-17 - Truncation-recovery flagged-call failure and proxy payload
 
 ### What changed and why
