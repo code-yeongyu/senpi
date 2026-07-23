@@ -68,6 +68,13 @@ import {
 	prepareCompaction,
 	shouldCompact,
 } from "./compaction/index.ts";
+import {
+	beginCompactionOperation,
+	type CompactionLifecycleState,
+	finishCompactionOperation,
+	initialCompactionLifecycleState,
+	promoteCompactionOperation,
+} from "./compaction/lifecycle.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "./dynamic-prompt/index.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
@@ -462,6 +469,9 @@ export class AgentSession {
 	// Compaction state
 	private _compactionAbortController: AbortController | undefined = undefined;
 	private _autoCompactionAbortController: AbortController | undefined = undefined;
+	private _compactionOperationController: AbortController | undefined = undefined;
+	private _compactionFeedbackController: AbortController | undefined = undefined;
+	private _compactionState: CompactionLifecycleState = initialCompactionLifecycleState();
 	private readonly _sessionWorkBarrier = new SessionWorkBarrier();
 	private _overflowRecoveryAttempted = false;
 	private _messageRevision = 0;
@@ -1510,10 +1520,15 @@ export class AgentSession {
 	/** Whether compaction or branch summarization is currently running */
 	get isCompacting(): boolean {
 		return (
+			this._compactionState.status === "running" ||
 			this._autoCompactionAbortController !== undefined ||
 			this._compactionAbortController !== undefined ||
 			this._branchSummaryAbortController !== undefined
 		);
+	}
+
+	get compactionState(): Readonly<CompactionLifecycleState> {
+		return this._compactionState;
 	}
 
 	/** All messages including custom types like BashExecutionMessage */
@@ -2677,7 +2692,8 @@ export class AgentSession {
 	async compact(customInstructions?: string): Promise<CompactionResult> {
 		this._disconnectFromAgent();
 		await this.abort();
-		this._compactionAbortController = new AbortController();
+		const controller = new AbortController();
+		this._compactionAbortController = controller;
 		this._emit({ type: "compaction_start", reason: "manual" });
 
 		try {
@@ -2702,7 +2718,9 @@ export class AgentSession {
 			});
 			throw error;
 		} finally {
-			this._compactionAbortController = undefined;
+			if (this._compactionAbortController === controller && this._compactionState.status !== "running") {
+				this._compactionAbortController = undefined;
+			}
 			this._reconnectToAgent();
 		}
 	}
@@ -2720,6 +2738,8 @@ export class AgentSession {
 			this._compactionAbortController = new AbortController();
 			this._emit({ type: "compaction_start", reason: options.reason });
 		}
+		const controller = this._compactionAbortController;
+		if (!controller) return { applied: false, reason: "rejected" };
 
 		try {
 			const execution = await this._executeCompaction({
@@ -2744,23 +2764,38 @@ export class AgentSession {
 			});
 			return { applied: false, reason: "rejected" };
 		} finally {
-			this._compactionAbortController = undefined;
+			if (this._compactionAbortController === controller && this._compactionState.status !== "running") {
+				this._compactionAbortController = undefined;
+			}
+			if (this._compactionFeedbackController === controller && this._compactionState.status !== "running") {
+				this._compactionFeedbackController = undefined;
+			}
 		}
 	}
 
 	private _beginExtensionCompactionFeedback(reason: CompactionReason): AbortSignal {
-		if (!this._compactionAbortController) {
-			this._compactionAbortController = new AbortController();
+		let controller =
+			this._compactionOperationController ?? this._compactionAbortController ?? this._autoCompactionAbortController;
+		if (!controller) {
+			controller = new AbortController();
+			this._compactionAbortController = controller;
+			this._compactionFeedbackController = controller;
 			this._emit({ type: "compaction_start", reason });
 		}
-		return this._compactionAbortController.signal;
+		const model = this.model;
+		if (model) {
+			this._beginCompactionOperation(randomUUID(), reason, model, controller, "feedback");
+		}
+		return controller.signal;
 	}
 
 	private _updateExtensionCompactionFeedback(options: {
 		reason: CompactionReason;
+		signal?: AbortSignal;
 		delta?: string;
 		text?: string;
 	}): void {
+		if (options.signal && this._compactionOperationController?.signal !== options.signal) return;
 		if (!this._compactionAbortController && !this._autoCompactionAbortController) return;
 		this._emit({
 			type: "compaction_progress",
@@ -2772,11 +2807,14 @@ export class AgentSession {
 
 	private _endExtensionCompactionFeedback(options: {
 		reason: CompactionReason;
+		signal?: AbortSignal;
 		aborted?: boolean;
 		errorMessage?: string;
 	}): void {
-		const controller = this._compactionAbortController;
+		const controller =
+			this._compactionOperationController ?? this._compactionAbortController ?? this._autoCompactionAbortController;
 		if (!controller) return;
+		if (options.signal && controller.signal !== options.signal) return;
 		const aborted = options.aborted ?? controller.signal.aborted;
 		this._emit({
 			type: "compaction_end",
@@ -2786,25 +2824,37 @@ export class AgentSession {
 			willRetry: false,
 			errorMessage: aborted ? undefined : options.errorMessage,
 		});
-		this._compactionAbortController = undefined;
+		if (
+			this._compactionState.status === "running" &&
+			this._compactionOperationController === controller &&
+			this._compactionState.stage === "feedback"
+		) {
+			this._finishCompactionOperation(this._compactionState.operationId, aborted ? "aborted" : "failed", {
+				errorMessage: aborted ? "Compaction cancelled" : (options.errorMessage ?? "Compaction did not apply"),
+			});
+		}
+		if (this._compactionFeedbackController === controller) {
+			this._compactionFeedbackController = undefined;
+			if (this._compactionAbortController === controller) {
+				this._compactionAbortController = undefined;
+			}
+		}
 	}
 
 	private async _executeCompaction(request: CompactionExecutionRequest): Promise<CompactionExecutionResult> {
+		const model = this.model;
+		if (!model) throw new Error(formatNoModelSelectedMessage());
+		const thinkingLevel = this.thinkingLevel;
+		const controller = this._compactionAbortController ?? this._autoCompactionAbortController;
+		if (!controller) throw new Error("Compaction abort controller unavailable");
+		const requestId = randomUUID();
+		const operationId = this._beginCompactionOperation(requestId, request.reason, model, controller, "execution");
 		const finishCompactionWork = this._sessionWorkBarrier.begin();
 		const agentMessagesAtStart = request.agentMessagesAtStart ?? this.agent.state.messages.slice();
+		const signal = controller.signal;
 		try {
-			if (!this.model) {
-				throw new Error(formatNoModelSelectedMessage());
-			}
-
-			const requestId = randomUUID();
 			const pathEntries = this.sessionManager.getBranch();
 			const settings = this.settingsManager.getCompactionSettings();
-
-			const signal = this._compactionAbortController?.signal ?? this._autoCompactionAbortController?.signal;
-			if (!signal) {
-				throw new Error("Compaction abort controller unavailable");
-			}
 
 			let compactionResult = request.precomputed;
 			let fromExtension = request.precomputed !== undefined;
@@ -2833,6 +2883,10 @@ export class AgentSession {
 					})) as SessionBeforeCompactResult | undefined;
 
 					if (extensionResult?.cancel) {
+						this._finishCompactionOperation(operationId, "failed", {
+							rejectionCause: extensionResult.rejectionCause ?? "cancelled-by-extension",
+							errorMessage: extensionResult.reason,
+						});
 						return await this._rejectCompaction(
 							request,
 							requestId,
@@ -2849,16 +2903,16 @@ export class AgentSession {
 				}
 
 				if (!compactionResult) {
-					const { apiKey, headers, extraBody, env } = await this._getCompactionRequestAuth(this.model);
+					const { apiKey, headers, extraBody, env } = await this._getCompactionRequestAuth(model);
 					compactionResult = await compact(
 						preparation,
-						this.model,
+						model,
 						apiKey,
 						headers,
 						request.customInstructions,
 						signal,
 						extraBody,
-						this.thinkingLevel,
+						thinkingLevel,
 						this.agent.streamFn,
 						env,
 						this.agent.transformContext,
@@ -2869,8 +2923,14 @@ export class AgentSession {
 			if (signal.aborted) {
 				throw new Error("Compaction cancelled");
 			}
+			if (!this._isCurrentCompactionOperation(operationId, controller)) {
+				throw new DOMException("Compaction superseded", "AbortError");
+			}
 
-			if (this._wouldCompactionOverflow(pathEntries, compactionResult, fromExtension)) {
+			if (this._wouldCompactionOverflow(pathEntries, compactionResult, fromExtension, model)) {
+				this._finishCompactionOperation(operationId, "failed", {
+					rejectionCause: "would-overflow",
+				});
 				return await this._rejectCompaction(request, requestId, "would-overflow", false);
 			}
 
@@ -2897,6 +2957,7 @@ export class AgentSession {
 			this.agent.state.messages = [...sessionContext.messages, ...messagesAppendedDuringCompaction];
 			compactionResult.estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
 			this._incrementMessageRevision();
+			this._finishCompactionOperation(operationId, "completed");
 
 			await this._extensionRunner.emit({
 				type: "session_compact",
@@ -2919,8 +2980,69 @@ export class AgentSession {
 			});
 
 			return { accepted: true, requestId, result: compactionResult, compactionEntry: savedEntry, fromExtension };
+		} catch (error) {
+			const aborted = signal.aborted || (error instanceof Error && error.name === "AbortError");
+			this._finishCompactionOperation(operationId, aborted ? "aborted" : "failed", {
+				errorMessage: error instanceof Error ? error.message : String(error),
+			});
+			throw error;
 		} finally {
 			finishCompactionWork();
+		}
+	}
+
+	private _beginCompactionOperation(
+		operationId: string,
+		reason: CompactionReason,
+		model: Model<Api>,
+		controller: AbortController,
+		stage: "feedback" | "execution",
+	): string {
+		if (this._compactionState.status === "running") {
+			if (this._compactionOperationController === controller) {
+				const currentOperationId = this._compactionState.operationId;
+				if (stage === "execution") {
+					this._compactionState = promoteCompactionOperation(this._compactionState, currentOperationId);
+				}
+				return currentOperationId;
+			}
+			this._compactionOperationController?.abort();
+		}
+		this._compactionOperationController = controller;
+		this._compactionState = beginCompactionOperation(this._compactionState, {
+			operationId,
+			stage,
+			reason,
+			model: { provider: model.provider, id: model.id },
+			startedRevision: this._messageRevision,
+		});
+		return operationId;
+	}
+
+	private _isCurrentCompactionOperation(operationId: string, controller: AbortController): boolean {
+		return (
+			this._compactionState.status === "running" &&
+			this._compactionState.operationId === operationId &&
+			this._compactionOperationController === controller &&
+			!controller.signal.aborted
+		);
+	}
+
+	private _finishCompactionOperation(
+		operationId: string,
+		status: "completed" | "failed" | "aborted",
+		options: { rejectionCause?: CompactionRejectionCause; errorMessage?: string } = {},
+	): void {
+		const previous = this._compactionState;
+		const next = finishCompactionOperation(previous, {
+			operationId,
+			status,
+			endedRevision: this._messageRevision,
+			...options,
+		});
+		this._compactionState = next;
+		if (previous.status === "running" && previous.operationId === operationId && next !== previous) {
+			this._compactionOperationController = undefined;
 		}
 	}
 
@@ -2928,9 +3050,10 @@ export class AgentSession {
 		pathEntries: SessionEntry[],
 		compactionResult: CompactionResult,
 		fromExtension: boolean,
+		model: Model<Api>,
 	): boolean {
 		const currentLeaf = pathEntries[pathEntries.length - 1];
-		if (!currentLeaf || !this.model) return false;
+		if (!currentLeaf) return false;
 
 		const simulatedCompactionEntry: CompactionEntry = {
 			type: "compaction",
@@ -2950,7 +3073,7 @@ export class AgentSession {
 		).messages;
 		const contextTokens = estimateMessagesTokens(filterContextExcludedMessages(simulatedMessages));
 		const settings = this.settingsManager.getCompactionSettings();
-		return contextTokens > this.model.contextWindow - settings.reserveTokens;
+		return contextTokens > model.contextWindow - settings.reserveTokens;
 	}
 
 	private async _rejectCompaction(
@@ -2998,8 +3121,21 @@ export class AgentSession {
 	 * Cancel in-progress compaction (manual or auto).
 	 */
 	abortCompaction(): void {
+		const feedbackController = this._compactionFeedbackController;
 		this._compactionAbortController?.abort();
 		this._autoCompactionAbortController?.abort();
+		this._compactionOperationController?.abort();
+		if (this._compactionState.status === "running") {
+			this._finishCompactionOperation(this._compactionState.operationId, "aborted", {
+				errorMessage: "Compaction cancelled",
+			});
+		}
+		if (feedbackController && this._compactionFeedbackController === feedbackController) {
+			this._compactionFeedbackController = undefined;
+			if (this._compactionAbortController === feedbackController) {
+				this._compactionAbortController = undefined;
+			}
+		}
 	}
 
 	/**
@@ -3094,7 +3230,16 @@ export class AgentSession {
 				this._incrementMessageRevision();
 			}
 			if (inlineReason) {
-				return await this._runPrePromptCompaction(assistantMessage, skipAbortedCheck, "overflow", willRetry);
+				const compacted = await this._runPrePromptCompaction(
+					assistantMessage,
+					skipAbortedCheck,
+					"overflow",
+					willRetry,
+				);
+				if (!compacted) {
+					throw new RequiredCompactionError();
+				}
+				return true;
 			} else {
 				return await this._runAutoCompaction("overflow", willRetry);
 			}
@@ -3147,7 +3292,8 @@ export class AgentSession {
 		willRetry = false,
 	): Promise<boolean> {
 		this._emit({ type: "compaction_start", reason });
-		this._compactionAbortController = new AbortController();
+		const controller = new AbortController();
+		this._compactionAbortController = controller;
 
 		try {
 			const execution = await this._executeCompaction({
@@ -3177,7 +3323,9 @@ export class AgentSession {
 			});
 			return false;
 		} finally {
-			this._compactionAbortController = undefined;
+			if (this._compactionAbortController === controller && this._compactionState.status !== "running") {
+				this._compactionAbortController = undefined;
+			}
 		}
 	}
 
@@ -3577,7 +3725,8 @@ export class AgentSession {
 					void (async () => {
 						this._disconnectFromAgent();
 						await this.abort();
-						this._compactionAbortController = new AbortController();
+						const controller = new AbortController();
+						this._compactionAbortController = controller;
 						this._emit({ type: "compaction_start", reason: "extension" });
 
 						try {
@@ -3606,7 +3755,9 @@ export class AgentSession {
 							const err = error instanceof Error ? error : new Error(String(error));
 							options?.onError?.(err);
 						} finally {
-							this._compactionAbortController = undefined;
+							if (this._compactionAbortController === controller && this._compactionState.status !== "running") {
+								this._compactionAbortController = undefined;
+							}
 							this._reconnectToAgent();
 						}
 					})();

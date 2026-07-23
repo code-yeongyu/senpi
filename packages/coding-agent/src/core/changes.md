@@ -1,5 +1,23 @@
 # changes
 
+## Session-owned compaction lifecycle (2026-07-23)
+
+### What changed
+
+- `agent-session.ts` now owns a monotonic compaction operation state, snapshots the active model and controller at
+  operation start, rejects stale completion/feedback, and retains the terminal result until another operation begins.
+- Provider-confirmed overflow remains fail-closed when required pre-prompt compaction fails, even when the local token
+  estimate is below the configured threshold.
+
+### Why extension system couldn't handle this alone
+
+- Model selection, durable session append, provider-overflow recovery, controller ownership, and prompt admission are
+  private `AgentSession` lifecycle boundaries.
+
+### Expected merge conflict zones
+
+- HIGH: `agent-session.ts` compaction execution, pre-prompt recovery, abort handling, and extension context bindings.
+
 ## Streaming steer/followUp submissions bypass the session-work barrier (2026-07-21)
 
 ### What changed
