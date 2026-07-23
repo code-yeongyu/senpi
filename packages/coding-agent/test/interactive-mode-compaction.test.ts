@@ -299,4 +299,98 @@ describe("InteractiveMode compaction events", () => {
 		expect(fakeThis.compactionQueuedMessages).toEqual([]);
 		expect(fakeThis.showError).not.toHaveBeenCalled();
 	});
+
+	test("restores the normal escape handler after a superseded compaction sequence", async () => {
+		const statusContainer = new Container();
+		const abortCompaction = vi.fn();
+		const abortAndFireQueuedMessages = vi.fn().mockResolvedValue(undefined);
+		const fakeThis = {
+			isInitialized: true,
+			footer: { invalidate: vi.fn() },
+			autoCompactionEscapeHandler: undefined as (() => void) | undefined,
+			autoCompactionProgressText: "",
+			retryEscapeHandler: undefined as (() => void) | undefined,
+			activeStatusIndicator: undefined as { dispose(): void } | undefined,
+			defaultEditor: {
+				onEscape: undefined as (() => void) | undefined,
+				onAction: vi.fn(),
+				onCtrlD: undefined as unknown,
+				onChange: undefined as unknown,
+				onPasteImage: undefined as unknown,
+			},
+			editor: { getText: () => "", setText: vi.fn() },
+			session: {
+				isStreaming: true,
+				retryAttempt: 0,
+				isBashRunning: false,
+				abortBash: vi.fn(),
+				abortCompaction,
+			},
+			abortAndFireQueuedMessages,
+			isBashMode: false,
+			lastEscapeTime: 0,
+			statusContainer,
+			chatContainer: { clear: vi.fn(), addChild: vi.fn() },
+			rebuildChatFromMessages: vi.fn(),
+			addMessageToChat: vi.fn(),
+			showError: vi.fn(),
+			showWarning: vi.fn(),
+			showStatus: vi.fn(),
+			clearStatusIndicator: vi.fn(),
+			updateEditorBorderColor: vi.fn(),
+			showTreeSelector: vi.fn(),
+			showUserMessageSelector: vi.fn(),
+			flushCompactionQueue: vi.fn().mockResolvedValue(undefined),
+			settingsManager: { getShowTerminalProgress: () => false, getDoubleEscapeAction: () => "none" },
+			ui: { requestRender: vi.fn(), terminal: { setProgress: vi.fn() }, onDebug: undefined as unknown },
+		};
+
+		// Install the real normal Escape handler, then drive the real event handler
+		// through a supersession sequence: compaction A starts, compaction B starts
+		// before A ends (A is superseded and never emits compaction_end), then B ends.
+		const setupKeyHandlers = Reflect.get(InteractiveMode.prototype, "setupKeyHandlers") as (
+			this: typeof fakeThis,
+		) => void;
+		setupKeyHandlers.call(fakeThis);
+		const normalEscapeHandler = fakeThis.defaultEditor.onEscape;
+		expect(typeof normalEscapeHandler).toBe("function");
+
+		const handleEvent = Reflect.get(InteractiveMode.prototype, "handleEvent") as (
+			this: typeof fakeThis,
+			event:
+				| { type: "compaction_start"; reason: "extension" }
+				| {
+						type: "compaction_end";
+						reason: "extension";
+						result: { tokensBefore: number; summary: string } | undefined;
+						aborted: boolean;
+						willRetry: boolean;
+						accepted: boolean;
+				  },
+		) => Promise<void>;
+
+		await handleEvent.call(fakeThis, { type: "compaction_start", reason: "extension" });
+		await handleEvent.call(fakeThis, { type: "compaction_start", reason: "extension" });
+		await handleEvent.call(fakeThis, {
+			type: "compaction_end",
+			reason: "extension",
+			result: { tokensBefore: 42, summary: "summary" },
+			aborted: false,
+			willRetry: false,
+			accepted: true,
+		});
+
+		// The compaction escape override must be fully unwound back to the handler
+		// that was installed before compaction A started, not to compaction A's stale
+		// abort closure captured when compaction B superseded it.
+		expect(fakeThis.autoCompactionEscapeHandler).toBeUndefined();
+		expect(fakeThis.defaultEditor.onEscape).toBe(normalEscapeHandler);
+
+		// Escape during streaming/retry must run the normal cancellation path.
+		fakeThis.defaultEditor.onEscape?.();
+		expect(abortAndFireQueuedMessages).toHaveBeenCalledTimes(1);
+		expect(abortCompaction).not.toHaveBeenCalled();
+
+		fakeThis.activeStatusIndicator?.dispose();
+	});
 });

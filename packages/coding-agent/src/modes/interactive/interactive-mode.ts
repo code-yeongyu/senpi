@@ -418,6 +418,13 @@ export interface InteractiveModeOptions {
 }
 
 export class InteractiveMode {
+	private static restoreCompactionEscapeOverride(host: InteractiveMode): void {
+		if (!host.compactionEscapeOverrideActive) return;
+		host.defaultEditor.onEscape = host.autoCompactionEscapeHandler;
+		host.autoCompactionEscapeHandler = undefined;
+		host.compactionEscapeOverrideActive = false;
+	}
+
 	private runtimeHost: AgentSessionRuntime;
 	private options: InteractiveModeOptions;
 	private ui: TUI;
@@ -512,6 +519,7 @@ export class InteractiveMode {
 
 	// Auto-compaction state
 	private autoCompactionEscapeHandler?: () => void;
+	private compactionEscapeOverrideActive = false;
 	private autoCompactionProgressText = "";
 
 	// Auto-retry state
@@ -572,6 +580,7 @@ export class InteractiveMode {
 		this.options = options;
 		this.autoTrustOnReloadCwd = options.autoTrustOnReloadCwd;
 		this.runtimeHost.setBeforeSessionInvalidate(() => {
+			InteractiveMode.restoreCompactionEscapeOverride(this);
 			this.resetExtensionUI();
 		});
 		this.runtimeHost.setRebindSession(async () => {
@@ -1895,6 +1904,7 @@ export class InteractiveMode {
 	}
 
 	private async rebindCurrentSession(options: { renderBeforeBind?: boolean } = {}): Promise<void> {
+		InteractiveMode.restoreCompactionEscapeOverride(this);
 		this.unsubscribe?.();
 		this.unsubscribe = undefined;
 		this.applyRuntimeSettings();
@@ -3541,7 +3551,10 @@ export class InteractiveMode {
 					this.ui.terminal.setProgress(true);
 				}
 				// Keep editor active; submissions are queued during compaction.
-				this.autoCompactionEscapeHandler = this.defaultEditor.onEscape;
+				if (!this.compactionEscapeOverrideActive) {
+					this.autoCompactionEscapeHandler = this.defaultEditor.onEscape;
+					this.compactionEscapeOverrideActive = true;
+				}
 				this.defaultEditor.onEscape = () => {
 					this.session.abortCompaction();
 				};
@@ -3574,10 +3587,7 @@ export class InteractiveMode {
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(false);
 				}
-				if (this.autoCompactionEscapeHandler) {
-					this.defaultEditor.onEscape = this.autoCompactionEscapeHandler;
-					this.autoCompactionEscapeHandler = undefined;
-				}
+				InteractiveMode.restoreCompactionEscapeOverride(this);
 				this.clearStatusIndicator("compaction");
 				this.autoCompactionProgressText = "";
 				if (event.aborted) {
@@ -6681,6 +6691,7 @@ export class InteractiveMode {
 	}
 
 	stop(): void {
+		InteractiveMode.restoreCompactionEscapeOverride(this);
 		this.streamingReveal.stop();
 		this.toolResultReveal.stop();
 		if (this.settingsManager.getShowTerminalProgress()) {

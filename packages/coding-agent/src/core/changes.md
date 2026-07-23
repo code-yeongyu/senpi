@@ -27,6 +27,10 @@
   before retrying.
 - Message objects are associated with their persisted session-entry order. Compaction-boundary checks use that order
   (and treat pending `message_end` persistence as post-boundary) instead of relying only on payload timestamps.
+- Session reload materialization restores those message-to-entry associations, so older payload timestamps cannot
+  bypass post-compaction admission after reopening a session.
+- When a late queue triggers compaction after a host `prepareNextTurnWithContext` callback, the callback is replayed
+  once against the compacted context so its message filtering/injection contract reaches the provider request.
 
 ### Why extension system couldn't handle this alone
 

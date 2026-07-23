@@ -712,6 +712,104 @@ describe("AgentSession compaction characterization", () => {
 		expect(continuationRequest.indexOf(injectedMarker)).toBeLessThan(continuationRequest.indexOf(largeToolResult));
 	});
 
+	it("reapplies a late constructor next-turn transform to the post-compaction provider request", async () => {
+		// given a constructor callback that suspends mid-turn and transforms the
+		// context (inject + redact + reorder), and a queue that arrives while the
+		// callback is suspended so the second admission sample compacts.
+		const callbackStarted = createDeferred();
+		const releaseCallback = createDeferred();
+		const injectedMarker = "INJECTED_LATE_CALLBACK_CONTEXT";
+		const compactionSummary = "late callback compaction summary";
+		const queuedText = "queued while the next-turn callback is suspended";
+		let continuationRequest = "";
+		const prepareNextTurnWithContext = vi.fn(async (turn: PrepareNextTurnContext) => {
+			callbackStarted.resolve();
+			await releaseCallback.promise;
+			return {
+				context: {
+					...turn.context,
+					messages: [
+						{
+							role: "user" as const,
+							content: [{ type: "text" as const, text: injectedMarker }],
+							timestamp: Date.now(),
+						},
+						...turn.context.messages.filter((message) => message.role !== "compactionSummary").reverse(),
+					],
+				},
+			};
+		});
+		const harness = await createHarness({
+			settings: {
+				compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 1_000 },
+				retry: { enabled: false },
+			},
+			models: [{ id: "faux-1", contextWindow: 5_000 }],
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => ({
+						compaction: {
+							summary: compactionSummary,
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+							details: {},
+						},
+					}));
+				},
+			],
+			prepareNextTurnWithContext,
+		});
+		harnesses.push(harness);
+		const seedTimestamp = Date.now() - 2_000;
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "late callback prior context ".repeat(220) }],
+			timestamp: seedTimestamp,
+		});
+		harness.sessionManager.appendMessage(
+			createAssistant(harness, {
+				text: "prior response",
+				stopReason: "stop",
+				totalTokens: 700,
+				timestamp: seedTimestamp + 1_000,
+			}),
+		);
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		const model = harness.getModel();
+		harness.setResponses([
+			{
+				...fauxAssistantMessage("first response before the queued admission"),
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
+				usage: createUsage(4_500),
+			},
+			(context) => {
+				continuationRequest = JSON.stringify(context.messages);
+				return fauxAssistantMessage("response after the queued admission");
+			},
+		]);
+
+		// when the first turn completes, the callback suspends, a queue arrives, and
+		// the second admission sample compacts before the continuation request.
+		const promptPromise = harness.session.prompt("trigger the late next-turn callback");
+		void promptPromise.catch(() => undefined);
+		await callbackStarted.promise;
+		await harness.session.steer(queuedText);
+		releaseCallback.resolve();
+		await promptPromise;
+
+		// then the queued admission did compact exactly once, and the provider
+		// request for the drained queue still respects the host transformation
+		// (reapplied on the post-compaction context), not the raw compacted state.
+		expect(prepareNextTurnWithContext).toHaveBeenCalled();
+		expect(harness.eventsOfType("compaction_start")).toHaveLength(1);
+		expect(continuationRequest).toContain(injectedMarker);
+		expect(continuationRequest).not.toContain(compactionSummary);
+		expect(continuationRequest.indexOf(injectedMarker)).toBeGreaterThanOrEqual(0);
+		expect(continuationRequest.indexOf(injectedMarker)).toBeLessThan(continuationRequest.indexOf(queuedText));
+	});
+
 	it("applies the provider context transform to inline compaction summarization", async () => {
 		// given
 		const sensitiveToolOutput = "SENSITIVE_TOOL_OUTPUT";

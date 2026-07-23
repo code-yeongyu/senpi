@@ -882,10 +882,10 @@ export class SessionManager {
 	private flushed: boolean = false;
 	private fileEntries: FileEntry[] = [];
 	private byId: Map<string, SessionEntry> = new Map();
-	// Runtime-only identity tracking lets AgentSession compare a live message to
-	// a compaction boundary by append order rather than provider timestamps.
-	// Reconstructed messages intentionally have no entry identity and use the
-	// timestamp fallback in AgentSession.
+	// Runtime-only identity tracking lets AgentSession compare messages to a
+	// compaction boundary by append order rather than provider timestamps.
+	// Materialized persisted messages are bound as they are read; only pending
+	// messages that have not reached a session entry use AgentSession's fallback.
 	private entryOrdersById: Map<string, number> = new Map();
 	private messageEntryPositions = new WeakMap<AgentMessage, { entryId: string; order: number }>();
 	private labelsById: Map<string, string> = new Map();
@@ -1131,6 +1131,17 @@ export class SessionManager {
 		this._persist(residentEntry);
 	}
 
+	private _materializeEntry(entry: SessionEntry): SessionEntry {
+		const materialized = this.residentStore.materialize(entry);
+		if (materialized.type === "message") {
+			const order = this.entryOrdersById.get(materialized.id);
+			if (order !== undefined) {
+				this.messageEntryPositions.set(materialized.message, { entryId: materialized.id, order });
+			}
+		}
+		return materialized;
+	}
+
 	/**
 	 * Fold one entry into the running usage totals. Totals iterate ALL entries
 	 * (not branch-scoped), matching the footer hot path's historical semantics.
@@ -1325,12 +1336,12 @@ export class SessionManager {
 
 	getLeafEntry(): SessionEntry | undefined {
 		const entry = this.leafId ? this.byId.get(this.leafId) : undefined;
-		return entry ? this.residentStore.materialize(entry) : undefined;
+		return entry ? this._materializeEntry(entry) : undefined;
 	}
 
 	getEntry(id: string): SessionEntry | undefined {
 		const entry = this.byId.get(id);
-		return entry ? this.residentStore.materialize(entry) : undefined;
+		return entry ? this._materializeEntry(entry) : undefined;
 	}
 
 	/**
@@ -1340,7 +1351,7 @@ export class SessionManager {
 		const children: SessionEntry[] = [];
 		for (const entry of this.byId.values()) {
 			if (entry.parentId === parentId) {
-				children.push(this.residentStore.materialize(entry));
+				children.push(this._materializeEntry(entry));
 			}
 		}
 		return children;
@@ -1401,7 +1412,7 @@ export class SessionManager {
 		const startId = fromId ?? this.leafId;
 		let current = startId ? this.byId.get(startId) : undefined;
 		while (current) {
-			path.unshift(this.residentStore.materialize(current));
+			path.unshift(this._materializeEntry(current));
 			current = current.parentId ? this.byId.get(current.parentId) : undefined;
 		}
 		if (fromId === undefined) {
@@ -1481,7 +1492,7 @@ export class SessionManager {
 		}
 		const entries = this.fileEntries
 			.filter((e): e is SessionEntry => e.type !== "session")
-			.map((entry) => this.residentStore.materialize(entry));
+			.map((entry) => this._materializeEntry(entry));
 		this.entriesCache = { mutation: this.mutationCount, entries };
 		return entries;
 	}
