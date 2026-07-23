@@ -1,5 +1,21 @@
 # Builtin compaction extension changes
 
+## Session-owned compaction completion state (2026-07-23)
+
+- AgentSession now records compaction as `idle`, `running`, `completed`, `failed`, or `aborted` with a monotonic
+  generation and operation identity.
+- Compaction snapshots the current AgentSession model at operation start. If main-thread retry fallback selected a
+  different model, that active model performs compaction; there is no compaction-specific fallback policy.
+- Extension feedback starts the same operation before summary generation and carries its abort signal through
+  progress, application, and terminal feedback.
+- Stale or duplicate terminal events cannot overwrite a newer compaction operation.
+- Durable append is guarded by the current operation and controller identity.
+- Required compaction remains fail-closed when generation or application fails, including provider-confirmed overflow
+  that the local token estimate places below the configured threshold.
+
+Expected upstream conflict zones: `agent-session.ts` around compaction execution, abort handling, and status access;
+`core/compaction/lifecycle.ts`.
+
 ## Sanitize Anthropic tool pairs on direct summarization requests (2026-07-23)
 
 - `speculative.ts`: local compaction summarization now applies the existing Anthropic payload sanitizer at the direct

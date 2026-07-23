@@ -125,6 +125,8 @@ describe("AgentSession applyCompaction", () => {
 
 	it("emits one compaction start while an extension prepares and applies a summary", async () => {
 		// given
+		const observedCompactionStates: string[] = [];
+		let harness: Harness;
 		const extension = (pi: ExtensionAPI): void => {
 			pi.on("before_agent_start", async (_event, ctx) => {
 				const entries = ctx.sessionManager.getEntries();
@@ -134,6 +136,7 @@ describe("AgentSession applyCompaction", () => {
 				}
 
 				ctx.beginCompaction?.({ reason: "extension" });
+				observedCompactionStates.push(harness.session.compactionState.status);
 				await ctx.applyCompaction(
 					{
 						summary: "extension feedback summary",
@@ -145,7 +148,7 @@ describe("AgentSession applyCompaction", () => {
 				return undefined;
 			});
 		};
-		const harness = await createHarness({ extensionFactories: [extension] });
+		harness = await createHarness({ extensionFactories: [extension] });
 		harnesses.push(harness);
 		harness.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two")]);
 		await harness.session.prompt("one");
@@ -165,5 +168,6 @@ describe("AgentSession applyCompaction", () => {
 			reason: "extension",
 			aborted: false,
 		});
+		expect(observedCompactionStates).toEqual(["running"]);
 	});
 });

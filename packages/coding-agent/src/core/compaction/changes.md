@@ -1,5 +1,21 @@
 # changes.md — compaction
 
+## Operation lifecycle reducer (2026-07-23)
+
+### What changed
+
+- `lifecycle.ts` adds the pure `idle` / `running` / `completed` / `failed` / `aborted` transition model used by
+  `AgentSession`, including monotonic generations, feedback-to-execution promotion, and stale terminal-event rejection.
+
+### Why
+
+- Compaction completion must remain observable after controllers are released, while delayed work from an older
+  generation must not overwrite the active operation.
+
+### Expected merge conflict zones
+
+- NONE: `lifecycle.ts` is a new fork-owned module.
+
 ## Summarization stream idle watchdog (2026-07-21)
 
 ### What changed

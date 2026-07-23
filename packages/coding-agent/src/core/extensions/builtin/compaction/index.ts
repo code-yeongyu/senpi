@@ -112,7 +112,7 @@ function endCompactionFeedback(
 	result: SpeculativeCompactionResult,
 ): void {
 	if (shouldEndFeedback(result)) {
-		ctx.endCompaction?.({ reason: "extension", aborted: signal?.aborted });
+		ctx.endCompaction?.({ reason: "extension", signal, aborted: signal?.aborted });
 	}
 }
 
@@ -301,7 +301,7 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 			let compaction: CompactionResult | undefined;
 			try {
 				compaction = await runExtensionCompaction(ctx, snapshot, feedbackSignal, (delta) =>
-					ctx.updateCompaction?.({ reason: "extension", delta }),
+					ctx.updateCompaction?.({ reason: "extension", signal: feedbackSignal, delta }),
 				);
 			} catch (error) {
 				// Auto-path parity: summary-generation failures (missing credentials,
@@ -317,6 +317,7 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 			const message = error instanceof Error ? error.message : String(error);
 			ctx.endCompaction?.({
 				reason: "extension",
+				signal: feedbackSignal,
 				aborted: feedbackSignal?.aborted,
 				errorMessage: `Compaction failed: ${message}`,
 			});
@@ -369,7 +370,7 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 		let compaction: CompactionResult | undefined;
 		try {
 			compaction = await runExtensionCompaction(ctx, snapshot, event.signal, (delta) =>
-				ctx.updateCompaction?.({ reason: event.reason, delta }),
+				ctx.updateCompaction?.({ reason: event.reason, signal: event.signal, delta }),
 			);
 		} catch (error) {
 			// Surface the real provider failure (e.g. a policy refusal or rate

@@ -1,5 +1,18 @@
 # Core Extensions Changes
 
+## 2026-07-23 - Compaction feedback operation handles
+
+### What changed
+
+- `ExtensionContext` compaction feedback actions now return and accept an optional operation `AbortSignal`, allowing
+  progress and terminal feedback from superseded generations to be ignored without breaking existing extensions.
+- The builtin compaction extension threads that signal through local and remote summary generation and application.
+
+### Why
+
+Asynchronous summary feedback can arrive after a newer compaction begins; operation identity prevents stale progress
+or completion from mutating the current session lifecycle.
+
 ## 2026-07-22 - Config-reload rejection loop breaker
 
 ### What changed
