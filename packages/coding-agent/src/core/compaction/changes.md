@@ -11,9 +11,9 @@
 - Extension contexts retain the signal returned by `beginCompaction()` and supply it to legacy `updateCompaction()` /
   `endCompaction()` calls that omit one. Core accepts feedback mutations only from the current signal.
 - Provider admissions now share one required-compaction gate for prompt preflight, extension-triggered turns, and
-  next turns. Provider-confirmed overflow synchronously stops agent-core's post-`agent_end` queue drain so only an
-  accepted `AgentSession` recovery may resume queued work, and it can force a split-turn preparation when keeping the
-  only oversized prompt would otherwise leave no compactable source.
+  next turns. Silent provider overflow and threshold-required compaction synchronously stop agent-core's
+  post-`agent_end` queue drain so only an accepted `AgentSession` recovery may resume queued work, and overflow can
+  force a split-turn preparation when keeping the only oversized prompt would otherwise leave no compactable source.
 - Compaction rejects stale source snapshots with `stale-revision` before the durable entry append.
 
 ### Why
