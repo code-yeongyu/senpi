@@ -1,12 +1,14 @@
 # packages/senpi-codemode
 
 `@code-yeongyu/senpi-codemode` is a source-only Senpi extension that registers
-the persistent-kernel `eval` tool for JavaScript, Python, Ruby, and Julia.
+the persistent-kernel `eval` tool for JavaScript, Python, Ruby, and Julia, plus
+the GPT-only `exec`/`wait` JavaScript Code Mode surface.
 
 ## STRUCTURE
 
 ```text
 src/index.ts                     Extension factory: registers baseline eval, re-registers at session_start after runtime resolution, re-registers on model_select when active model changes
+src/codemode/                    GPT exec/wait cell lifecycle, nested-tool bridge, and public schemas
 src/prompt/                      Model-aware eval prompt templates and batching dialect selection
 src/config/                      Settings schema, defaults, env overrides
 src/extension/                   Session generations and kernel ownership
@@ -28,6 +30,9 @@ test/                            Vitest contracts and the omp parity ledger
 
 - `eval` is registered at extension load and re-registered at `session_start`
   after settings, interpreter availability, and active task-tool names resolve.
+- `exec`/`wait` are active only for GPT models. Their short-lived JavaScript
+  workers compose active tools as `tools.<name>(args)` and are independent from
+  eval's persistent language kernels.
 - Eval prompt dialect is selected from the active model id; host/workstation context is explicit; renderer/status semantics are structured.
 - Session generations fence old kernels and callbacks. A retired generation
   must not emit into a newer session.
@@ -54,6 +59,7 @@ test/                            Vitest contracts and the omp parity ledger
 | Task | Path |
 | --- | --- |
 | Register or narrow eval | `src/index.ts`, `src/tool/eval-tool.ts` |
+| GPT Code Mode lifecycle | `src/codemode/runtime.ts`, `src/codemode/tools.ts` |
 | Prompt behavior | `src/prompt/eval-prompt.ts` |
 | Call/result rendering | `src/tool/render.ts` |
 | Cell settlement and output | `src/tool/cell-handler.ts`, `src/output/` |

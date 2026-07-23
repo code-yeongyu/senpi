@@ -1,25 +1,24 @@
 # prompt-preset Extension Changes
 
-## Eval-first routing for GPT presets (2026-07-22)
+## GPT Code Mode routing for GPT presets (2026-07-22)
 
 ### What changed
 
-- `gpt-eval-routing.ts` (new): exports the GPT-only
-  `buildGptEvalRoutingTuning()` rule. Each GPT-5.x builder adds
-  that rule, which directs an available `eval` tool to its own live
-  multi-call Tool Guidelines rather than duplicating their model-aware
-  routing details.
-- `test/suite/prompt-presets-gpt-eval-routing.test.ts` (new): verifies every GPT-5
-  preset, including both full-core 5.5/5.6 variants, defers to the actual
-  eval guideline and that Grok does not inherit the GPT-only rule.
+- `gpt-eval-routing.ts`: exports the GPT-only
+  `buildGptEvalRoutingTuning()` rule. Each GPT-5.x builder adds that
+  rule, which selects `exec`/`wait` for bounded JavaScript tool
+  orchestration when those tools are available, while retaining
+  `eval`'s live model-aware guidance as the fallback.
+- `test/suite/prompt-presets-gpt-eval-routing.test.ts`: verifies every GPT-5
+  preset, including both full-core 5.5/5.6 variants, routes both Code Mode
+  surfaces correctly and that Grok does not inherit the GPT-only rule.
 
 ### Why
 
-- The eval extension already provides the cross-model Code Mode surface and
-  model-aware batching guidance. GPT presets need one high-level route to
-  that surface, but repeating a generic direct-call policy conflicts with
-  the family-specific guidance and would leak into Grok through the shared
-  file-operation helper.
+- The persistent eval extension remains the cross-model Code Mode surface and
+  model-aware batching guide. GPT presets need a separate high-level route to
+  the GPT-only public executor without losing eval as the fallback or leaking
+  either policy into Grok through the shared file-operation helper.
 
 ### Expected merge conflict zones
 
