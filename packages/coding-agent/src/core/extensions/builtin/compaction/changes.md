@@ -1,5 +1,24 @@
 # Builtin compaction extension changes
 
+## Support native remote compaction for OpenAI Codex models (2026-07-23)
+
+- `openai-remote-model.ts`, `openai-remote-schema.ts`, `openai-remote.ts`, `openai-remote-convert.ts`,
+  `index.ts`: native remote compaction now treats `openai-codex` / `openai-codex-responses` as a supported
+  provider capability.
+  Codex compaction uses the ChatGPT backend's `/codex/responses/compact` route with OAuth Bearer auth,
+  the JWT-derived `chatgpt-account-id`, Codex session/window identity headers, the Responses beta flag,
+  and `originator: senpi`. The compact parser accepts Codex's output-only JSON response while retaining
+  strict direct-OpenAI response validation.
+- Codex OAuth remote compaction is restricted to the canonical ChatGPT origin and loopback QA/proxy
+  origins, preventing OAuth bearer tokens and conversation history from being sent to arbitrary remote
+  custom URLs. Persisted replacement history is replayed only when its provider/API identity exactly
+  matches the current model family.
+- Persisted remote-compaction details retain the paired provider/API identity so the next Codex request
+  replays the encrypted compaction item and in-flight prompt through the existing payload rewrite hook.
+  Direct `openai` / `openai-responses` endpoint and WebSocket behavior remains unchanged.
+- Regressions: `test/suite/regressions/issue-296-openai-codex-remote-compaction.test.ts` and
+  `test/suite/regressions/issue-296-openai-codex-remote-compaction-boundaries.test.ts`.
+
 ## Preserve the in-flight prompt in remote-compaction payload replay (2026-07-22)
 
 - `index.ts`, `openai-remote.ts`, `openai-remote-convert.ts`: the `before_provider_request` replay after a

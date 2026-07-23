@@ -24,6 +24,7 @@ import {
 	runOpenAiRemoteCompaction,
 	SENPI_COMPACTION_EVENT,
 } from "./openai-remote.ts";
+import { isOpenAiRemoteCompactionModel } from "./openai-remote-model.ts";
 import * as cap from "./per-turn-cap.ts";
 import * as policy from "./policy.ts";
 import { repairOrphanedToolResults } from "./repair-tool-pairs.ts";
@@ -56,10 +57,6 @@ interface PendingCompactionMetadata {
 
 function approxTokens(text: string): number {
 	return Math.ceil(text.length / 4);
-}
-
-function isOpenAiResponsesModel(model: ExtensionContext["model"]): boolean {
-	return model?.provider === "openai" && model.api === "openai-responses";
 }
 
 function estimatePendingPromptTokens(event: { prompt?: string; images?: readonly unknown[] }): number {
@@ -230,7 +227,7 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 	): Promise<SpeculativeCompactionResult> {
 		let feedbackSignal = ctx.beginCompaction?.({ reason: "extension" });
 		try {
-			if (isOpenAiResponsesModel(ctx.model)) {
+			if (isOpenAiRemoteCompactionModel(ctx.model)) {
 				const remoteGeneration = speculativeGeneration + 1;
 				const remoteSnapshot = createSpeculativeCompactionSnapshot(ctx, {
 					generation: remoteGeneration,
@@ -494,7 +491,7 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 		const sourceMessages = shouldApplyContextReduction({
 			usageTokens: usage?.tokens ?? null,
 			contextWindow,
-			isProviderNativeCompactionPath: isOpenAiResponsesModel(ctx.model),
+			isProviderNativeCompactionPath: isOpenAiRemoteCompactionModel(ctx.model),
 		})
 			? reduceContextMessages(event.messages, BUILTIN_CONTEXT_REDUCTION_OPTIONS).messages
 			: event.messages;
