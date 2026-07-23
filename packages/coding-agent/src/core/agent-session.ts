@@ -841,9 +841,11 @@ export class AgentSession {
 				context: {
 					...previousContext,
 					messages: compacted ? this.agent.state.messages.slice() : previousContext.messages,
+					systemPrompt: this._systemPromptOverride ?? this._baseSystemPrompt,
+					tools: this.agent.state.tools.slice(),
 				},
-				model: previousSnapshot?.model ?? this.agent.state.model,
-				thinkingLevel: previousSnapshot?.thinkingLevel ?? this.agent.state.thinkingLevel,
+				model: this.agent.state.model,
+				thinkingLevel: this.agent.state.thinkingLevel,
 			};
 		};
 	}
@@ -976,11 +978,11 @@ export class AgentSession {
 		// final agent_end. This subscriber intentionally processes its own event
 		// queue asynchronously, so a later recovery rejection cannot abort that
 		// drain in time. agent_end itself is still an awaited synchronous boundary
-		// before that drain: transfer provider-confirmed overflow ownership there,
-		// retaining queues until AgentSession accepts recovery.
+		// before that drain: transfer every required overflow or threshold
+		// compaction to AgentSession, retaining queues until recovery is accepted.
 		if (event.type === "agent_end") {
 			const lastAssistant = this._findLastAssistantInMessages(event.messages);
-			if (lastAssistant && this._requiresOverflowRecovery(lastAssistant)) {
+			if (lastAssistant && this._getRequiredAutoCompactionReason(lastAssistant)) {
 				this.agent.abort();
 			}
 		}
@@ -1048,14 +1050,59 @@ export class AgentSession {
 		return undefined;
 	}
 
-	private _requiresOverflowRecovery(message: AssistantMessage): boolean {
+	/**
+	 * Synchronously mirror the auto-compaction decision that _checkCompaction()
+	 * will make after agent_end. Agent core drains queues before that async work
+	 * runs, so only this preflight can transfer required admissions safely.
+	 */
+	private _getRequiredAutoCompactionReason(message: AssistantMessage): "overflow" | "threshold" | undefined {
+		const settings = this.settingsManager.getCompactionSettings();
+		if (!settings.enabled || message.stopReason === "aborted") {
+			return undefined;
+		}
+
 		const model = this.model;
-		return (
-			model !== undefined &&
-			(message.stopReason === "error" || message.stopReason === "length") &&
-			isContextOverflow(message, model.contextWindow) &&
-			isSameOverflowSource(message, model, this._modelRuntime.getCompatibilityRequestConfig(model).upstreamModelId)
+		if (!model || this._isAssistantFromBeforeLatestCompaction(message)) {
+			return undefined;
+		}
+
+		const sameModel = isSameOverflowSource(
+			message,
+			model,
+			this._modelRuntime.getCompatibilityRequestConfig(model).upstreamModelId,
 		);
+		const contextUsage = this.getContextUsage();
+		const currentContextNeedsCompaction =
+			contextUsage !== undefined &&
+			contextUsage.tokens !== null &&
+			shouldCompact(contextUsage.tokens, contextUsage.contextWindow, settings);
+		if (isContextOverflow(message, model.contextWindow) && (sameModel || currentContextNeedsCompaction)) {
+			return "overflow";
+		}
+
+		let contextTokens: number;
+		const directContextTokens = message.usage ? calculateContextTokens(message.usage) : 0;
+		if (message.stopReason !== "error" && directContextTokens !== 0) {
+			contextTokens = directContextTokens;
+		} else {
+			const messages = filterContextExcludedMessages(this.agent.state.messages);
+			const estimate = estimateContextTokens(messages);
+			if (estimate.lastUsageIndex === null) {
+				return undefined;
+			}
+			const compactionEntry = getLatestCompactionEntry(this.sessionManager.getBranch());
+			const usageMessage = messages[estimate.lastUsageIndex];
+			if (
+				compactionEntry &&
+				usageMessage?.role === "assistant" &&
+				usageMessage.timestamp <= new Date(compactionEntry.timestamp).getTime()
+			) {
+				return undefined;
+			}
+			contextTokens = estimate.tokens;
+		}
+
+		return shouldCompact(contextTokens, model.contextWindow, settings) ? "threshold" : undefined;
 	}
 
 	private _agentEndAllowsQueuedContinuation(messages: AgentMessage[]): boolean {
@@ -1077,7 +1124,7 @@ export class AgentSession {
 		if (lastAssistant.stopReason === "aborted" || lastAssistant.stopReason === "error") {
 			return false;
 		}
-		if (this._requiresOverflowRecovery(lastAssistant)) {
+		if (this._getRequiredAutoCompactionReason(lastAssistant)) {
 			return false;
 		}
 
@@ -1231,7 +1278,7 @@ export class AgentSession {
 		if (event.type === "agent_end" && this._lastAssistantMessage) {
 			const msg = this._lastAssistantMessage;
 			this._lastAssistantMessage = undefined;
-			const requiredOverflowRecovery = this._requiresOverflowRecovery(msg);
+			const requiredAutoCompaction = this._getRequiredAutoCompactionReason(msg);
 
 			// Retry transient failures normally and eligible hard errors only through a fallback.
 			const retryableError = this._isRetryableError(msg);
@@ -1245,7 +1292,15 @@ export class AgentSession {
 
 			this._resolveRetry();
 			launchedContinuation = await this._checkCompaction(msg);
-			if (requiredOverflowRecovery && !launchedContinuation) {
+			// _runAutoCompaction() returns false both when recovery was rejected and
+			// when an accepted compaction had no queue to continue. Re-sample after
+			// it settles so only the still-required (rejected) case fails admission.
+			if (
+				requiredAutoCompaction &&
+				!launchedContinuation &&
+				this.agent.hasQueuedMessages() &&
+				this._getRequiredAutoCompactionReason(msg) !== undefined
+			) {
 				this._requiredCompactionAdmissionError = new RequiredCompactionError();
 			}
 		}
