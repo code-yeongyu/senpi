@@ -83,12 +83,16 @@ describe("InteractiveMode compaction events", () => {
 		await handleEvent.call(fakeThis, {
 			type: "compaction_progress",
 			reason: "extension",
-			delta: "live summary chunk",
+			delta: "live summary\nchunk",
 		});
 
-		const rendered = stripAnsi(statusContainer.children.flatMap((child) => child.render(120)).join("\n"));
-		expect(rendered).toContain("Compacting context");
-		expect(rendered).toContain("live summary chunk");
+		const rendered = statusContainer.children
+			.flatMap((child) => child.render(120))
+			.map((line) => stripAnsi(line))
+			.filter((line) => line.trim().length > 0);
+		expect(rendered).toHaveLength(2);
+		expect(rendered[0]).toContain("Compacting context");
+		expect(rendered[1]).toContain("live summary chunk");
 
 		fakeThis.autoCompactionLoader?.stop();
 	});

@@ -3561,11 +3561,13 @@ export class InteractiveMode {
 					event.text !== undefined ? event.text : `${this.autoCompactionProgressText}${event.delta ?? ""}`;
 				if (!nextText) break;
 				this.autoCompactionProgressText = nextText;
-				const preview = nextText.length > 4_000 ? `...${nextText.slice(nextText.length - 4_000)}` : nextText;
+				const previewSource = nextText.length > 4_000 ? `...${nextText.slice(nextText.length - 4_000)}` : nextText;
+				const preview = previewSource.replace(/\s+/g, " ").trim();
+				if (!preview) break;
 				this.statusContainer.clear();
 				this.statusContainer.addChild(this.activeStatusIndicator);
 				this.statusContainer.addChild(new Spacer(1));
-				this.statusContainer.addChild(new Text(theme.fg("muted", preview), 1, 0));
+				this.statusContainer.addChild(new TruncatedText(theme.fg("muted", preview), 1, 0));
 				this.ui.requestRender();
 				break;
 			}

@@ -1,5 +1,28 @@
 # changes
 
+## bounded compaction progress preview (2026-07-24)
+
+### What changed
+
+- Streamed compaction summary progress is normalized and rendered as a single `TruncatedText` row beneath the active
+  compaction indicator.
+- Multiline summary content no longer expands the transient status container or pushes the editor and transcript
+  through repeated terminal viewport remaps.
+
+### Why
+
+- Compaction summaries can contain thousands of characters and many newlines. Rendering that temporary content
+  verbatim above the editor made the composer move with every progress update and pushed prior output into scrollback,
+  which looked like transcript deletion.
+
+### Why extension system couldn't handle this
+
+- Compaction progress events and the status/editor container layout are private interactive-mode rendering surfaces.
+
+### Expected merge conflict zones
+
+- MEDIUM: `interactive-mode.ts` compaction progress event rendering.
+
 ## per-section thinking duration headers (2026-07-22)
 
 ### What changed
