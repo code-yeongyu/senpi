@@ -330,6 +330,42 @@ class CompactionRejectedError extends Error {
 	}
 }
 
+class CompactionCancelledError extends Error {
+	constructor() {
+		super("Compaction cancelled");
+		this.name = "CompactionCancelledError";
+	}
+}
+
+/**
+ * An execution failure annotated with whether this operation still owns its
+ * terminal transition. Callers must not publish a terminal event for an
+ * operation that a newer compaction generation has superseded.
+ */
+class CompactionExecutionError extends Error {
+	readonly ownsTerminalTransition: boolean;
+	readonly aborted: boolean;
+
+	constructor(error: unknown, ownsTerminalTransition: boolean, aborted: boolean) {
+		super(error instanceof Error ? error.message : String(error));
+		this.name = "CompactionExecutionError";
+		this.ownsTerminalTransition = ownsTerminalTransition;
+		this.aborted = aborted;
+	}
+}
+
+function compactionExecutionOwnsTerminalTransition(error: unknown): boolean {
+	return !(error instanceof CompactionExecutionError) || error.ownsTerminalTransition;
+}
+
+function isCompactionExecutionAborted(error: unknown): boolean {
+	return (
+		(error instanceof CompactionExecutionError && error.aborted) ||
+		error instanceof CompactionCancelledError ||
+		(error instanceof Error && error.name === "AbortError")
+	);
+}
+
 class RequiredCompactionError extends Error {
 	constructor() {
 		super("Context remains above the compaction threshold because compaction did not complete");
@@ -763,17 +799,28 @@ export class AgentSession {
 			// admission: a tool continuation or queued steer/follow-up messages. A
 			// completed turn with no continuation keeps pre-PR timing, while the
 			// prior prepare callback and context refresh below still run every turn.
-			if (turn.toolResults.length > 0 || this.agent.hasQueuedMessages()) {
+			const compactBeforeNextAdmission = async (): Promise<boolean> => {
+				if (turn.toolResults.length === 0 && !this.agent.hasQueuedMessages()) {
+					return false;
+				}
 				await this._agentEventQueue;
+				// A queue can be cleared while waiting for persistence. Re-sample it
+				// immediately before compaction so a completed turn never compacts
+				// merely because it once had a possible continuation.
+				if (turn.toolResults.length === 0 && !this.agent.hasQueuedMessages()) {
+					return false;
+				}
 				try {
-					compacted = await this._enforceCompactionBeforeProvider(turn.message, true, "threshold");
+					return await this._enforceCompactionBeforeProvider(turn.message, true, "threshold");
 				} catch (error) {
 					if (error instanceof RequiredCompactionError && this.agent.hasQueuedMessages()) {
 						this._requiredCompactionAdmissionError = error;
 					}
 					throw error;
 				}
-			}
+			};
+
+			compacted = await compactBeforeNextAdmission();
 			const messages = compacted ? this.agent.state.messages.slice() : turn.context.messages;
 
 			const postCompactionTurn = {
@@ -782,16 +829,21 @@ export class AgentSession {
 			};
 			const previousSnapshot = await previousPrepareNextTurnWithContext?.(postCompactionTurn, signal);
 			const previousContext = previousSnapshot?.context ?? postCompactionTurn.context;
+			// The previous callback may await while agent_end extensions enqueue
+			// continuation work. Re-sample after it returns so that work cannot
+			// slip through with the stale provider snapshot it observed on entry.
+			if (!compacted) {
+				compacted = await compactBeforeNextAdmission();
+			}
 
 			return {
 				...previousSnapshot,
 				context: {
 					...previousContext,
-					systemPrompt: this._systemPromptOverride ?? this._baseSystemPrompt,
-					tools: this.agent.state.tools.slice(),
+					messages: compacted ? this.agent.state.messages.slice() : previousContext.messages,
 				},
-				model: this.agent.state.model,
-				thinkingLevel: this.agent.state.thinkingLevel,
+				model: previousSnapshot?.model ?? this.agent.state.model,
+				thinkingLevel: previousSnapshot?.thinkingLevel ?? this.agent.state.thinkingLevel,
 			};
 		};
 	}
@@ -886,6 +938,10 @@ export class AgentSession {
 		this._requiredCompactionAdmissionError = undefined;
 		try {
 			await this.agent.prompt(messages);
+			// AgentSession's subscriber intentionally queues event work instead of
+			// blocking Agent core. Wait for this run's queued recovery decision
+			// before reporting prompt completion to the caller.
+			await this._agentEventQueue;
 			const requiredCompactionError = this._requiredCompactionAdmissionError;
 			this._requiredCompactionAdmissionError = undefined;
 			if (requiredCompactionError) {
@@ -916,6 +972,19 @@ export class AgentSession {
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = (event: AgentEvent): void => {
+		// Agent core drains native steer/follow-up queues immediately after its
+		// final agent_end. This subscriber intentionally processes its own event
+		// queue asynchronously, so a later recovery rejection cannot abort that
+		// drain in time. agent_end itself is still an awaited synchronous boundary
+		// before that drain: transfer provider-confirmed overflow ownership there,
+		// retaining queues until AgentSession accepts recovery.
+		if (event.type === "agent_end") {
+			const lastAssistant = this._findLastAssistantInMessages(event.messages);
+			if (lastAssistant && this._requiresOverflowRecovery(lastAssistant)) {
+				this.agent.abort();
+			}
+		}
+
 		// Create retry promise synchronously before queueing async processing.
 		// Agent.emit() calls this handler synchronously, and prompt() calls waitForRetry()
 		// as soon as agent.prompt() resolves. If _retryPromise is created only inside
@@ -979,6 +1048,16 @@ export class AgentSession {
 		return undefined;
 	}
 
+	private _requiresOverflowRecovery(message: AssistantMessage): boolean {
+		const model = this.model;
+		return (
+			model !== undefined &&
+			(message.stopReason === "error" || message.stopReason === "length") &&
+			isContextOverflow(message, model.contextWindow) &&
+			isSameOverflowSource(message, model, this._modelRuntime.getCompatibilityRequestConfig(model).upstreamModelId)
+		);
+	}
+
 	private _agentEndAllowsQueuedContinuation(messages: AgentMessage[]): boolean {
 		let lastAssistantIndex = -1;
 		for (let index = messages.length - 1; index >= 0; index--) {
@@ -996,6 +1075,9 @@ export class AgentSession {
 			return false;
 		}
 		if (lastAssistant.stopReason === "aborted" || lastAssistant.stopReason === "error") {
+			return false;
+		}
+		if (this._requiresOverflowRecovery(lastAssistant)) {
 			return false;
 		}
 
@@ -1149,6 +1231,7 @@ export class AgentSession {
 		if (event.type === "agent_end" && this._lastAssistantMessage) {
 			const msg = this._lastAssistantMessage;
 			this._lastAssistantMessage = undefined;
+			const requiredOverflowRecovery = this._requiresOverflowRecovery(msg);
 
 			// Retry transient failures normally and eligible hard errors only through a fallback.
 			const retryableError = this._isRetryableError(msg);
@@ -1162,6 +1245,9 @@ export class AgentSession {
 
 			this._resolveRetry();
 			launchedContinuation = await this._checkCompaction(msg);
+			if (requiredOverflowRecovery && !launchedContinuation) {
+				this._requiredCompactionAdmissionError = new RequiredCompactionError();
+			}
 		}
 
 		if (event.type === "agent_end") {
@@ -2732,8 +2818,11 @@ export class AgentSession {
 			if (error instanceof CompactionRejectedError) {
 				throw new Error(error.message);
 			}
+			if (!compactionExecutionOwnsTerminalTransition(error)) {
+				throw error;
+			}
 			const message = error instanceof Error ? error.message : String(error);
-			const aborted = message === "Compaction cancelled" || (error instanceof Error && error.name === "AbortError");
+			const aborted = isCompactionExecutionAborted(error);
 			this._emit({
 				type: "compaction_end",
 				reason: "manual",
@@ -2778,8 +2867,11 @@ export class AgentSession {
 			}
 			return { applied: true, reason: "ok" };
 		} catch (error) {
+			if (!compactionExecutionOwnsTerminalTransition(error)) {
+				return { applied: false, reason: "rejected" };
+			}
 			const message = error instanceof Error ? error.message : String(error);
-			const aborted = message === "Compaction cancelled" || (error instanceof Error && error.name === "AbortError");
+			const aborted = isCompactionExecutionAborted(error);
 			this._emit({
 				type: "compaction_end",
 				reason: options.reason,
@@ -2910,17 +3002,15 @@ export class AgentSession {
 						signal,
 					})) as SessionBeforeCompactResult | undefined;
 
+					if (!this._compactionLifecycle.isCurrent(operationId, controller)) {
+						throw new CompactionCancelledError();
+					}
+
 					if (extensionResult?.cancel) {
-						this._compactionLifecycle.finish({
-							operationId,
-							status: "failed",
-							endedRevision: this._messageRevision,
-							rejectionCause: extensionResult.rejectionCause ?? "cancelled-by-extension",
-							errorMessage: extensionResult.reason,
-						});
 						return await this._rejectCompaction(
 							request,
 							requestId,
+							operationId,
 							extensionResult.rejectionCause ?? "cancelled-by-extension",
 							true,
 							extensionResult.reason,
@@ -2952,10 +3042,10 @@ export class AgentSession {
 			}
 
 			if (signal.aborted) {
-				throw new Error("Compaction cancelled");
+				throw new CompactionCancelledError();
 			}
 			if (!this._compactionLifecycle.isCurrent(operationId, controller)) {
-				throw new DOMException("Compaction superseded", "AbortError");
+				throw new CompactionCancelledError();
 			}
 
 			const lifecycleState = this._compactionLifecycle.state;
@@ -2977,23 +3067,11 @@ export class AgentSession {
 				lifecycleState.startedRevision !== this._messageRevision ||
 				!onlyPendingPersistenceAppends;
 			if (sourceChanged) {
-				this._compactionLifecycle.finish({
-					operationId,
-					status: "failed",
-					endedRevision: this._messageRevision,
-					rejectionCause: "stale-revision",
-				});
-				return await this._rejectCompaction(request, requestId, "stale-revision", false);
+				return await this._rejectCompaction(request, requestId, operationId, "stale-revision", false);
 			}
 
 			if (this._wouldCompactionOverflow(pathEntries, compactionResult, fromExtension, model)) {
-				this._compactionLifecycle.finish({
-					operationId,
-					status: "failed",
-					endedRevision: this._messageRevision,
-					rejectionCause: "would-overflow",
-				});
-				return await this._rejectCompaction(request, requestId, "would-overflow", false);
+				return await this._rejectCompaction(request, requestId, operationId, "would-overflow", false);
 			}
 
 			const compactionEntryId = this.sessionManager.appendCompaction(
@@ -3030,11 +3108,15 @@ export class AgentSession {
 			this.agent.state.messages = [...sessionContext.messages, ...preservedPendingMessages];
 			compactionResult.estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
 			this._incrementMessageRevision();
-			this._compactionLifecycle.finish({
-				operationId,
-				status: "completed",
-				endedRevision: this._messageRevision,
-			});
+			if (
+				!this._compactionLifecycle.finish({
+					operationId,
+					status: "completed",
+					endedRevision: this._messageRevision,
+				})
+			) {
+				throw new CompactionCancelledError();
+			}
 
 			this._emit({
 				type: "compaction_end",
@@ -3058,14 +3140,21 @@ export class AgentSession {
 
 			return { accepted: true, requestId, result: compactionResult, compactionEntry: savedEntry, fromExtension };
 		} catch (error) {
-			const aborted = signal.aborted || (error instanceof Error && error.name === "AbortError");
-			this._compactionLifecycle.finish({
-				operationId,
-				status: aborted ? "aborted" : "failed",
-				endedRevision: this._messageRevision,
-				errorMessage: error instanceof Error ? error.message : String(error),
-			});
-			throw error;
+			if (error instanceof CompactionExecutionError) {
+				throw error;
+			}
+			const lifecycleState = this._compactionLifecycle.state;
+			const ownsTerminalTransition = lifecycleState.status !== "idle" && lifecycleState.operationId === operationId;
+			const aborted = signal.aborted || isCompactionExecutionAborted(error);
+			if (ownsTerminalTransition && lifecycleState.status === "running") {
+				this._compactionLifecycle.finish({
+					operationId,
+					status: aborted ? "aborted" : "failed",
+					endedRevision: this._messageRevision,
+					errorMessage: error instanceof Error ? error.message : String(error),
+				});
+			}
+			throw new CompactionExecutionError(error, ownsTerminalTransition, aborted);
 		} finally {
 			finishCompactionWork();
 		}
@@ -3123,6 +3212,7 @@ export class AgentSession {
 	private async _rejectCompaction(
 		request: CompactionExecutionRequest,
 		requestId: string,
+		operationId: string,
 		rejectionCause: CompactionRejectionCause,
 		aborted: boolean,
 		extensionReason?: string,
@@ -3138,6 +3228,17 @@ export class AgentSession {
 			? `Compaction rejected: ${trimmedExtensionReason}`
 			: describeCompactionRejection(rejectionCause);
 		const errorMessage = aborted && !trimmedExtensionReason ? undefined : detailedMessage;
+		if (
+			!this._compactionLifecycle.finish({
+				operationId,
+				status: "failed",
+				endedRevision: this._messageRevision,
+				rejectionCause,
+				...(trimmedExtensionReason !== undefined ? { errorMessage: trimmedExtensionReason } : {}),
+			})
+		) {
+			throw new CompactionCancelledError();
+		}
 		this._emit({
 			type: "compaction_end",
 			reason: request.reason,
@@ -3370,12 +3471,14 @@ export class AgentSession {
 			}
 			return execution.accepted;
 		} catch (error) {
+			if (!compactionExecutionOwnsTerminalTransition(error)) {
+				return false;
+			}
 			if (isContextOverflow(lastAssistantMessage, this.model?.contextWindow ?? 0)) {
 				this._overflowRecoveryAttempted = false;
 			}
 			const errorMessage = error instanceof Error ? error.message : "compaction failed";
-			const aborted =
-				errorMessage === "Compaction cancelled" || (error instanceof Error && error.name === "AbortError");
+			const aborted = isCompactionExecutionAborted(error);
 			this._emit({
 				type: "compaction_end",
 				reason,
@@ -3502,10 +3605,12 @@ export class AgentSession {
 
 			return false;
 		} catch (error) {
+			if (!compactionExecutionOwnsTerminalTransition(error)) {
+				return false;
+			}
 			if (reason === "overflow") this._overflowRecoveryAttempted = false;
 			const errorMessage = error instanceof Error ? error.message : "compaction failed";
-			const aborted =
-				errorMessage === "Compaction cancelled" || (error instanceof Error && error.name === "AbortError");
+			const aborted = isCompactionExecutionAborted(error);
 			this._emit({
 				type: "compaction_end",
 				reason,
@@ -3805,9 +3910,11 @@ export class AgentSession {
 								options?.onError?.(new CompactionRejectedError(execution.rejectionCause));
 							}
 						} catch (error) {
+							if (!compactionExecutionOwnsTerminalTransition(error)) {
+								return;
+							}
 							const message = error instanceof Error ? error.message : String(error);
-							const aborted =
-								message === "Compaction cancelled" || (error instanceof Error && error.name === "AbortError");
+							const aborted = isCompactionExecutionAborted(error);
 							this._emit({
 								type: "compaction_end",
 								reason: "extension",

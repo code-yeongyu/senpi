@@ -12,7 +12,9 @@
   or summary generation (`stale-revision`), preserving intervening context without duplicate replay.
 - Required compaction uses one provider-admission gate for normal prompts, extension-triggered turns, and every next
   turn. Provider-confirmed overflow remains fail-closed even when the local token estimate is below the configured
-  threshold; failed recovery restores the overflow context so later prompts cannot bypass the same requirement.
+  threshold; `agent_end` synchronously transfers overflow continuation ownership to `AgentSession` before agent-core
+  can drain native queues, and failed recovery restores the overflow context so later prompts cannot bypass the same
+  requirement.
 
 ### Why extension system couldn't handle this alone
 

@@ -24,6 +24,25 @@ interface PostApplyFeedbackCapture {
 	secondSignal?: AbortSignal;
 }
 
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+	let resolve: (() => void) | undefined;
+	const promise = new Promise<void>((next) => {
+		resolve = next;
+	});
+	if (!resolve) throw new Error("Deferred resolver was not initialized");
+	return { promise, resolve };
+}
+
+function createManualCompactionResult(harness: Harness, summary: string) {
+	const firstEntry = harness.sessionManager.getEntries()[0];
+	if (!firstEntry) throw new Error("Expected a session entry before compaction");
+	return {
+		summary,
+		firstKeptEntryId: firstEntry.id,
+		tokensBefore: 42,
+	};
+}
+
 /**
  * Drives the real extension surface: feedback begun in before_agent_start is
  * applied, and the accepted session_compact handler immediately begins the
@@ -287,5 +306,117 @@ describe("compaction feedback lifecycle", () => {
 		});
 		expect(harness.session.isCompacting).toBe(true);
 		expect(harness.eventsOfType("compaction_end")).toHaveLength(1);
+	});
+
+	it("does not emit an execution terminal from A after B supersedes it", async () => {
+		const firstExecutionStarted = createDeferred();
+		const releaseFirstExecution = createDeferred();
+		const secondExecutionStarted = createDeferred();
+		const releaseSecondExecution = createDeferred();
+		let executionCount = 0;
+		const harness = await createHarness({
+			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async () => {
+						executionCount++;
+						if (executionCount === 1) {
+							firstExecutionStarted.resolve();
+							await releaseFirstExecution.promise;
+						} else {
+							secondExecutionStarted.resolve();
+							await releaseSecondExecution.promise;
+						}
+						return { compaction: createManualCompactionResult(harness, `manual summary ${executionCount}`) };
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("seed response")]);
+		await harness.session.prompt("seed context ".repeat(40));
+		harness.events.length = 0;
+
+		const operationA = harness.session.compact();
+		await firstExecutionStarted.promise;
+		const operationB = harness.session.compact();
+		await secondExecutionStarted.promise;
+
+		try {
+			releaseFirstExecution.resolve();
+			await expect(operationA).rejects.toThrow("Compaction cancelled");
+			expect(
+				harness.events
+					.filter((event) => event.type === "compaction_start" || event.type === "compaction_end")
+					.map((event) => event.type),
+			).toEqual(["compaction_start", "compaction_start"]);
+			expect(harness.session.compactionState).toMatchObject({
+				status: "running",
+				generation: 2,
+				stage: "execution",
+			});
+			expect(harness.session.isCompacting).toBe(true);
+		} finally {
+			releaseSecondExecution.resolve();
+			await expect(operationB).resolves.toBeDefined();
+		}
+	});
+
+	it.each([
+		["two extensions", true],
+		["two handlers in one extension", false],
+	])("keeps feedback ownership isolated across %s in one emission", async (_label, splitExtensions) => {
+		let firstContext: ExtensionContext | undefined;
+		let secondContext: ExtensionContext | undefined;
+		let firstSignal: AbortSignal | undefined;
+		let secondSignal: AbortSignal | undefined;
+		const firstHandler = (_event: { type: "agent_settled" }, ctx: ExtensionContext) => {
+			firstContext = ctx;
+			firstSignal = ctx.beginCompaction?.({ reason: "extension" });
+		};
+		const secondHandler = (_event: { type: "agent_settled" }, ctx: ExtensionContext) => {
+			secondContext = ctx;
+			secondSignal = ctx.beginCompaction?.({ reason: "extension" });
+		};
+		const harness = await createHarness({
+			extensionFactories: splitExtensions
+				? [(pi) => pi.on("agent_settled", firstHandler), (pi) => pi.on("agent_settled", secondHandler)]
+				: [
+						(pi) => {
+							pi.on("agent_settled", firstHandler);
+							pi.on("agent_settled", secondHandler);
+						},
+					],
+		});
+		harnesses.push(harness);
+
+		await harness.getExtensionRunner().emit({ type: "agent_settled" });
+		if (!firstContext || !secondContext || !firstSignal || !secondSignal) {
+			throw new Error("Expected both handlers to retain their feedback context");
+		}
+		expect(firstSignal.aborted).toBe(true);
+		expect(secondSignal.aborted).toBe(false);
+		expect(harness.session.compactionState).toMatchObject({ status: "running", generation: 2 });
+
+		try {
+			firstContext.endCompaction?.({ reason: "extension", errorMessage: "A ended late" });
+			expect(harness.session.compactionState).toMatchObject({
+				status: "running",
+				generation: 2,
+				stage: "feedback",
+			});
+			expect(harness.eventsOfType("compaction_end")).toHaveLength(0);
+		} finally {
+			secondContext.endCompaction?.({ reason: "extension", errorMessage: "B ended itself" });
+		}
+
+		expect(harness.session.compactionState).toMatchObject({
+			status: "failed",
+			generation: 2,
+			errorMessage: "B ended itself",
+		});
+		expect(harness.eventsOfType("compaction_end")).toEqual([
+			expect.objectContaining({ reason: "extension", errorMessage: "B ended itself" }),
+		]);
 	});
 });

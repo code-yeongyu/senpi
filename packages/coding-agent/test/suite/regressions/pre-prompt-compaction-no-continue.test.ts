@@ -273,6 +273,136 @@ describe("pre-prompt compaction regression", () => {
 		);
 	});
 
+	it("retains native steer and follow-up queues after an error-terminal overflow recovery is rejected", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 10_000, maxTokens: 1_000 }],
+			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async () => ({
+						cancel: true,
+						rejectionCause: "cancelled-by-extension",
+						reason: "required recovery rejected",
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		const providerStarted = createDeferred();
+		const releaseProvider = createDeferred();
+		harness.setResponses([
+			async () => {
+				providerStarted.resolve();
+				await releaseProvider.promise;
+				return fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: "context_length_exceeded",
+				});
+			},
+			fauxAssistantMessage("must not reach provider"),
+		]);
+
+		const initialPrompt = harness.session.prompt("x".repeat(40_000));
+		await providerStarted.promise;
+		await harness.session.prompt("retain native steer", { streamingBehavior: "steer" });
+		await harness.session.followUp("retain native follow-up");
+		releaseProvider.resolve();
+
+		await expect(initialPrompt).rejects.toThrow(
+			"Context remains above the compaction threshold because compaction did not complete",
+		);
+		expect(harness.faux.state.callCount).toBe(1);
+		expect(harness.session.getSteeringMessages()).toEqual(["retain native steer"]);
+		expect(harness.session.getFollowUpMessages()).toEqual(["retain native follow-up"]);
+		expect(harness.session.agent.hasQueuedMessages()).toBe(true);
+
+		await expect(harness.session.prompt("later normal admission")).rejects.toThrow(
+			"Context remains above the compaction threshold because compaction did not complete",
+		);
+		await expect(
+			harness.session.sendCustomMessage(
+				{ customType: "extension-note", content: "later custom admission", display: true },
+				{ triggerTurn: true },
+			),
+		).rejects.toThrow("Context remains above the compaction threshold because compaction did not complete");
+
+		expect(harness.faux.state.callCount).toBe(1);
+		expect(harness.session.getSteeringMessages()).toEqual(["retain native steer"]);
+		expect(harness.session.getFollowUpMessages()).toEqual(["retain native follow-up"]);
+	});
+
+	it("does not admit agent_end queues that arrive after the first next-turn compaction sample", async () => {
+		const firstPrepareSampled = createDeferred();
+		const releaseFirstPrepare = createDeferred();
+		let prepareCount = 0;
+		let queuedAtAgentEnd = false;
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 10_000, maxTokens: 1_000 }],
+			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
+			prepareNextTurnWithContext: async () => {
+				prepareCount++;
+				if (prepareCount === 1) {
+					firstPrepareSampled.resolve();
+					await releaseFirstPrepare.promise;
+				}
+				return undefined;
+			},
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async () => ({
+						cancel: true,
+						rejectionCause: "cancelled-by-extension",
+						reason: "late queue recovery rejected",
+					}));
+				},
+				(pi) => {
+					pi.on("agent_end", () => {
+						if (queuedAtAgentEnd) return;
+						queuedAtAgentEnd = true;
+						pi.sendUserMessage("late native follow-up", { deliverAs: "followUp" });
+						pi.sendUserMessage("late native steer", { deliverAs: "steer" });
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		const model = harness.getModel();
+		harness.setResponses([
+			{
+				...fauxAssistantMessage("", { stopReason: "length" }),
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
+				usage: createUsage(10_000),
+			},
+			fauxAssistantMessage("must not reach provider"),
+			fauxAssistantMessage("must not reach provider either"),
+		]);
+
+		const prompt = harness.session.prompt("x".repeat(40_000));
+		await firstPrepareSampled.promise;
+		expect(harness.session.pendingMessageCount).toBe(0);
+		releaseFirstPrepare.resolve();
+		await expect(prompt).rejects.toThrow(
+			"Context remains above the compaction threshold because compaction did not complete",
+		);
+		await harness.session.waitForSettledSessionWork();
+
+		expect(harness.eventsOfType("compaction_end")).toContainEqual(
+			expect.objectContaining({
+				reason: "overflow",
+				accepted: false,
+				rejectionCause: "cancelled-by-extension",
+			}),
+		);
+		expect(harness.faux.state.callCount).toBe(1);
+		expect(harness.session.getSteeringMessages()).toEqual(["late native steer"]);
+		expect(harness.session.getFollowUpMessages()).toEqual(["late native follow-up"]);
+		expect(harness.session.agent.hasQueuedMessages()).toBe(true);
+	});
+
 	it("blocks sendCustomMessage triggerTurn when overflow compaction is rejected below the local threshold", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 10_000, maxTokens: 1_000 }],
