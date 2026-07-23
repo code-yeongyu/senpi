@@ -63,6 +63,8 @@ export interface Args {
 	neoListen?: string;
 	/** Self-register into the neo daemon registry when listening (daemon-internal). */
 	neoRegister?: boolean;
+	/** Serve independently routed plain-RPC sessions over one stdio process. */
+	multiSession?: boolean;
 	messages: string[];
 	fileArgs: string[];
 	/** Unknown flags (potentially extension flags) - map of flag name to value */
@@ -211,6 +213,8 @@ export function parseArgs(args: string[], options: { neoEnabled?: boolean } = {}
 			result.neoListen = args[++i];
 		} else if (neoEnabled && arg === "--register") {
 			result.neoRegister = true;
+		} else if (arg === "--multi-session") {
+			result.multiSession = true;
 		} else if (arg.startsWith("@")) {
 			result.fileArgs.push(arg.slice(1)); // Remove @ prefix
 		} else if (arg.startsWith("--")) {

@@ -54,6 +54,7 @@ import { builtInExtensions } from "./extensions/index.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
+import { runMultiSessionHost } from "./modes/rpc/multi-session-host.ts";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
@@ -813,6 +814,17 @@ export async function main(args: string[], options?: MainOptions) {
 		};
 	};
 	time("createRuntime");
+	if (appMode === "rpc" && parsed.multiSession) {
+		printTimings();
+		await runMultiSessionHost({
+			agentDir,
+			createRuntime,
+			cwd,
+			creationModel:
+				parsed.provider && parsed.model ? { provider: parsed.provider, modelId: parsed.model } : undefined,
+			initialThinkingLevel: parsed.thinking,
+		});
+	}
 	const runtime = await createAgentSessionRuntime(createRuntime, {
 		cwd: sessionManager.getCwd(),
 		agentDir,
