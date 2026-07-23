@@ -68,13 +68,7 @@ import {
 	prepareCompaction,
 	shouldCompact,
 } from "./compaction/index.ts";
-import {
-	beginCompactionOperation,
-	type CompactionLifecycleState,
-	finishCompactionOperation,
-	initialCompactionLifecycleState,
-	promoteCompactionOperation,
-} from "./compaction/lifecycle.ts";
+import { CompactionLifecycleCoordinator, type CompactionLifecycleState } from "./compaction/lifecycle.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "./dynamic-prompt/index.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
@@ -317,6 +311,8 @@ function describeCompactionRejection(cause: CompactionRejectionCause): string {
 			return "Compaction rejected: the compaction circuit breaker is open after repeated failures. Wait for the cooldown and retry.";
 		case "per-turn-cap":
 			return "Compaction rejected: per-turn compaction cap reached for this turn.";
+		case "stale-revision":
+			return "Compaction rejected: the session changed while the summary was being prepared. Retry compaction against the latest context.";
 	}
 }
 
@@ -455,6 +451,13 @@ export class AgentSession {
 	private _unsubscribeAgent?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private _agentEventQueue: Promise<void> = Promise.resolve();
+	/**
+	 * Exact message objects whose message_end persistence is still queued.
+	 * Agent core appends messages to agent.state.messages before emitting
+	 * message_end; until that event settles on _agentEventQueue, compaction must
+	 * treat these identities as pending persistence, never as stale or droppable.
+	 */
+	private readonly _messageEndsAwaitingPersistence = new Set<AgentMessage>();
 	private _isAgentRunActive = false;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
@@ -469,11 +472,10 @@ export class AgentSession {
 	// Compaction state
 	private _compactionAbortController: AbortController | undefined = undefined;
 	private _autoCompactionAbortController: AbortController | undefined = undefined;
-	private _compactionOperationController: AbortController | undefined = undefined;
-	private _compactionFeedbackController: AbortController | undefined = undefined;
-	private _compactionState: CompactionLifecycleState = initialCompactionLifecycleState();
+	private readonly _compactionLifecycle = new CompactionLifecycleCoordinator();
 	private readonly _sessionWorkBarrier = new SessionWorkBarrier();
 	private _overflowRecoveryAttempted = false;
+	private _requiredCompactionAdmissionError: RequiredCompactionError | undefined;
 	private _messageRevision = 0;
 
 	// Branch summarization state
@@ -756,22 +758,24 @@ export class AgentSession {
 				? async (_turn: PrepareNextTurnContext, signal?: AbortSignal) => await this.agent.prepareNextTurn?.(signal)
 				: undefined);
 		this.agent.prepareNextTurnWithContext = async (turn, signal) => {
-			let messages = turn.context.messages;
-			if (turn.toolResults.length > 0) {
+			let compacted = false;
+			// Enforce compaction only when this prepare precedes an actual provider
+			// admission: a tool continuation or queued steer/follow-up messages. A
+			// completed turn with no continuation keeps pre-PR timing, while the
+			// prior prepare callback and context refresh below still run every turn.
+			if (turn.toolResults.length > 0 || this.agent.hasQueuedMessages()) {
 				await this._agentEventQueue;
-				const compacted = await this._checkCompaction(turn.message, true, "threshold");
-				if (compacted) {
-					messages = this.agent.state.messages.slice();
-				} else {
-					const settings = this.settingsManager.getCompactionSettings();
-					const contextTokens = estimateContextTokens(
-						filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
-					).tokens;
-					if (settings.enabled && this.model && shouldCompact(contextTokens, this.model.contextWindow, settings)) {
-						throw new RequiredCompactionError();
+				try {
+					compacted = await this._enforceCompactionBeforeProvider(turn.message, true, "threshold");
+				} catch (error) {
+					if (error instanceof RequiredCompactionError && this.agent.hasQueuedMessages()) {
+						this._requiredCompactionAdmissionError = error;
 					}
+					throw error;
 				}
 			}
+			const messages = compacted ? this.agent.state.messages.slice() : turn.context.messages;
+
 			const postCompactionTurn = {
 				...turn,
 				context: { ...turn.context, messages },
@@ -879,9 +883,29 @@ export class AgentSession {
 
 	private async _promptAgent(messages: AgentMessage | AgentMessage[]): Promise<void> {
 		this._isAgentRunActive = true;
+		this._requiredCompactionAdmissionError = undefined;
 		try {
 			await this.agent.prompt(messages);
+			const requiredCompactionError = this._requiredCompactionAdmissionError;
+			this._requiredCompactionAdmissionError = undefined;
+			if (requiredCompactionError) {
+				throw requiredCompactionError;
+			}
 		} catch (error) {
+			if (
+				error instanceof Error &&
+				error.message ===
+					"Agent is already processing a prompt. Use steer() or followUp() to queue messages, or wait for completion."
+			) {
+				const queuedMessages = Array.isArray(messages) ? messages : [messages];
+				for (const message of queuedMessages) this.agent.steer(message);
+				const userMessage = queuedMessages.find((message) => message.role === "user");
+				if (userMessage?.role === "user") {
+					this._steeringMessages.push(this._extractUserMessageText(userMessage.content));
+					this._emitQueueUpdate();
+				}
+				return;
+			}
 			await this._emitAgentSettled();
 			throw error;
 		}
@@ -899,10 +923,24 @@ export class AgentSession {
 		// and waitForRetry() can miss the in-flight retry.
 		this._createRetryPromiseForAgentEnd(event);
 
-		this._agentEventQueue = this._agentEventQueue.then(
+		// The message object is already in agent.state.messages when message_end
+		// fires; track its exact identity until this event's queued processing
+		// settles so compaction can distinguish pending persistence from stale state.
+		const pendingMessage = event.type === "message_end" ? event.message : undefined;
+		if (pendingMessage !== undefined) {
+			this._messageEndsAwaitingPersistence.add(pendingMessage);
+		}
+
+		const processing = this._agentEventQueue.then(
 			() => this._processAgentEvent(event),
 			() => this._processAgentEvent(event),
 		);
+		this._agentEventQueue =
+			pendingMessage !== undefined
+				? processing.finally(() => {
+						this._messageEndsAwaitingPersistence.delete(pendingMessage);
+					})
+				: processing;
 
 		// Keep queue alive if an event handler fails
 		this._agentEventQueue.catch(() => {});
@@ -1520,7 +1558,7 @@ export class AgentSession {
 	/** Whether compaction or branch summarization is currently running */
 	get isCompacting(): boolean {
 		return (
-			this._compactionState.status === "running" ||
+			this._compactionLifecycle.state.status === "running" ||
 			this._autoCompactionAbortController !== undefined ||
 			this._compactionAbortController !== undefined ||
 			this._branchSummaryAbortController !== undefined
@@ -1528,7 +1566,7 @@ export class AgentSession {
 	}
 
 	get compactionState(): Readonly<CompactionLifecycleState> {
-		return this._compactionState;
+		return this._compactionLifecycle.state;
 	}
 
 	/** All messages including custom types like BashExecutionMessage */
@@ -1847,21 +1885,8 @@ export class AgentSession {
 				throw new Error(formatNoApiKeyFoundMessage(this.model.provider));
 			}
 
-			// Check if we need to compact before sending (catches aborted responses).
 			// The user's new prompt is sent below, so do not call agent.continue() here.
-			const lastAssistant = this._findLastAssistantMessage();
-			if (lastAssistant) {
-				const compacted = await this._checkCompaction(lastAssistant, false, "pre_prompt");
-				if (!compacted && !this._isAssistantFromBeforeLatestCompaction(lastAssistant)) {
-					const settings = this.settingsManager.getCompactionSettings();
-					const contextTokens = estimateContextTokens(
-						filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
-					).tokens;
-					if (settings.enabled && this.model && shouldCompact(contextTokens, this.model.contextWindow, settings)) {
-						throw new RequiredCompactionError();
-					}
-				}
-			}
+			await this._enforceCompactionBeforeProvider(this._findLastAssistantMessage(), false, "pre_prompt");
 
 			// Build messages array (custom message if any, then user message)
 			messages = [];
@@ -2199,6 +2224,7 @@ export class AgentSession {
 				this.agent.steer(appMessage);
 			}
 		} else if (options?.triggerTurn) {
+			await this._enforceCompactionBeforeProvider(this._findLastAssistantMessage(), false, "pre_prompt");
 			await this._promptAgent(appMessage);
 		} else {
 			this.agent.state.messages.push(appMessage);
@@ -2718,7 +2744,7 @@ export class AgentSession {
 			});
 			throw error;
 		} finally {
-			if (this._compactionAbortController === controller && this._compactionState.status !== "running") {
+			if (this._compactionAbortController === controller && this._compactionLifecycle.state.status !== "running") {
 				this._compactionAbortController = undefined;
 			}
 			this._reconnectToAgent();
@@ -2764,28 +2790,27 @@ export class AgentSession {
 			});
 			return { applied: false, reason: "rejected" };
 		} finally {
-			if (this._compactionAbortController === controller && this._compactionState.status !== "running") {
+			if (this._compactionAbortController === controller && this._compactionLifecycle.state.status !== "running") {
 				this._compactionAbortController = undefined;
-			}
-			if (this._compactionFeedbackController === controller && this._compactionState.status !== "running") {
-				this._compactionFeedbackController = undefined;
 			}
 		}
 	}
 
 	private _beginExtensionCompactionFeedback(reason: CompactionReason): AbortSignal {
-		let controller =
-			this._compactionOperationController ?? this._compactionAbortController ?? this._autoCompactionAbortController;
-		if (!controller) {
-			controller = new AbortController();
-			this._compactionAbortController = controller;
-			this._compactionFeedbackController = controller;
-			this._emit({ type: "compaction_start", reason });
-		}
+		const controller = new AbortController();
+		this._compactionAbortController = controller;
 		const model = this.model;
-		if (model) {
-			this._beginCompactionOperation(randomUUID(), reason, model, controller, "feedback");
-		}
+		this._compactionLifecycle.begin(
+			{
+				operationId: randomUUID(),
+				stage: "feedback",
+				reason,
+				model: model ? { provider: model.provider, id: model.id } : undefined,
+				startedRevision: this._messageRevision,
+			},
+			controller,
+		);
+		this._emit({ type: "compaction_start", reason });
 		return controller.signal;
 	}
 
@@ -2795,8 +2820,7 @@ export class AgentSession {
 		delta?: string;
 		text?: string;
 	}): void {
-		if (options.signal && this._compactionOperationController?.signal !== options.signal) return;
-		if (!this._compactionAbortController && !this._autoCompactionAbortController) return;
+		if (!options.signal || !this._compactionLifecycle.hasCurrentSignal(options.signal)) return;
 		this._emit({
 			type: "compaction_progress",
 			reason: options.reason,
@@ -2811,11 +2835,18 @@ export class AgentSession {
 		aborted?: boolean;
 		errorMessage?: string;
 	}): void {
-		const controller =
-			this._compactionOperationController ?? this._compactionAbortController ?? this._autoCompactionAbortController;
-		if (!controller) return;
-		if (options.signal && controller.signal !== options.signal) return;
-		const aborted = options.aborted ?? controller.signal.aborted;
+		if (!options.signal || !this._compactionLifecycle.hasCurrentSignal(options.signal)) return;
+		const operation = this._compactionLifecycle.state;
+		if (operation.status !== "running" || operation.stage !== "feedback") return;
+		const aborted = options.aborted ?? options.signal.aborted;
+		this._compactionLifecycle.finish({
+			operationId: operation.operationId,
+			status: aborted ? "aborted" : "failed",
+			endedRevision: this._messageRevision,
+			...(aborted
+				? { errorMessage: "Compaction cancelled" }
+				: { errorMessage: options.errorMessage ?? "Compaction did not apply" }),
+		});
 		this._emit({
 			type: "compaction_end",
 			reason: options.reason,
@@ -2824,20 +2855,8 @@ export class AgentSession {
 			willRetry: false,
 			errorMessage: aborted ? undefined : options.errorMessage,
 		});
-		if (
-			this._compactionState.status === "running" &&
-			this._compactionOperationController === controller &&
-			this._compactionState.stage === "feedback"
-		) {
-			this._finishCompactionOperation(this._compactionState.operationId, aborted ? "aborted" : "failed", {
-				errorMessage: aborted ? "Compaction cancelled" : (options.errorMessage ?? "Compaction did not apply"),
-			});
-		}
-		if (this._compactionFeedbackController === controller) {
-			this._compactionFeedbackController = undefined;
-			if (this._compactionAbortController === controller) {
-				this._compactionAbortController = undefined;
-			}
+		if (this._compactionAbortController?.signal === options.signal) {
+			this._compactionAbortController = undefined;
 		}
 	}
 
@@ -2848,7 +2867,16 @@ export class AgentSession {
 		const controller = this._compactionAbortController ?? this._autoCompactionAbortController;
 		if (!controller) throw new Error("Compaction abort controller unavailable");
 		const requestId = randomUUID();
-		const operationId = this._beginCompactionOperation(requestId, request.reason, model, controller, "execution");
+		const operationId = this._compactionLifecycle.begin(
+			{
+				operationId: requestId,
+				stage: "execution",
+				reason: request.reason,
+				model: { provider: model.provider, id: model.id },
+				startedRevision: this._messageRevision,
+			},
+			controller,
+		);
 		const finishCompactionWork = this._sessionWorkBarrier.begin();
 		const agentMessagesAtStart = request.agentMessagesAtStart ?? this.agent.state.messages.slice();
 		const signal = controller.signal;
@@ -2860,7 +2888,7 @@ export class AgentSession {
 			let fromExtension = request.precomputed !== undefined;
 
 			if (!compactionResult) {
-				const preparation = prepareCompaction(pathEntries, settings);
+				const preparation = prepareCompaction(pathEntries, settings, request.reason === "overflow");
 
 				if (!preparation) {
 					const lastEntry = pathEntries[pathEntries.length - 1];
@@ -2883,7 +2911,10 @@ export class AgentSession {
 					})) as SessionBeforeCompactResult | undefined;
 
 					if (extensionResult?.cancel) {
-						this._finishCompactionOperation(operationId, "failed", {
+						this._compactionLifecycle.finish({
+							operationId,
+							status: "failed",
+							endedRevision: this._messageRevision,
 							rejectionCause: extensionResult.rejectionCause ?? "cancelled-by-extension",
 							errorMessage: extensionResult.reason,
 						});
@@ -2923,12 +2954,43 @@ export class AgentSession {
 			if (signal.aborted) {
 				throw new Error("Compaction cancelled");
 			}
-			if (!this._isCurrentCompactionOperation(operationId, controller)) {
+			if (!this._compactionLifecycle.isCurrent(operationId, controller)) {
 				throw new DOMException("Compaction superseded", "AbortError");
 			}
 
+			const lifecycleState = this._compactionLifecycle.state;
+			const currentMessagesAtCheck = this.agent.state.messages;
+			const startPrefixIntact = agentMessagesAtStart.every(
+				(message, index) => currentMessagesAtCheck[index] === message,
+			);
+			// Appends after the start snapshot are fresh only while they are exact
+			// message_end identities still awaiting persistence. Any revision change,
+			// other append, replacement, or reorder still makes this compaction stale.
+			const onlyPendingPersistenceAppends =
+				startPrefixIntact &&
+				currentMessagesAtCheck
+					.slice(agentMessagesAtStart.length)
+					.every((message) => this._messageEndsAwaitingPersistence.has(message));
+			const sourceChanged =
+				lifecycleState.status !== "running" ||
+				lifecycleState.operationId !== operationId ||
+				lifecycleState.startedRevision !== this._messageRevision ||
+				!onlyPendingPersistenceAppends;
+			if (sourceChanged) {
+				this._compactionLifecycle.finish({
+					operationId,
+					status: "failed",
+					endedRevision: this._messageRevision,
+					rejectionCause: "stale-revision",
+				});
+				return await this._rejectCompaction(request, requestId, "stale-revision", false);
+			}
+
 			if (this._wouldCompactionOverflow(pathEntries, compactionResult, fromExtension, model)) {
-				this._finishCompactionOperation(operationId, "failed", {
+				this._compactionLifecycle.finish({
+					operationId,
+					status: "failed",
+					endedRevision: this._messageRevision,
 					rejectionCause: "would-overflow",
 				});
 				return await this._rejectCompaction(request, requestId, "would-overflow", false);
@@ -2954,19 +3016,24 @@ export class AgentSession {
 			const messagesAppendedDuringCompaction = hasUnchangedPrefix
 				? currentAgentMessages.slice(agentMessagesAtStart.length)
 				: [];
-			this.agent.state.messages = [...sessionContext.messages, ...messagesAppendedDuringCompaction];
+			// Preserve an identity-deduped, agent-ordered union of the append-during-
+			// compaction suffix and exact messages still awaiting persistence. Their
+			// queued message_end owns exactly-once persistence, so they are kept in
+			// agent state only and never persisted here.
+			const preservedIdentities = new Set<AgentMessage>(messagesAppendedDuringCompaction);
+			for (const message of currentAgentMessages) {
+				if (this._messageEndsAwaitingPersistence.has(message)) {
+					preservedIdentities.add(message);
+				}
+			}
+			const preservedPendingMessages = currentAgentMessages.filter((message) => preservedIdentities.delete(message));
+			this.agent.state.messages = [...sessionContext.messages, ...preservedPendingMessages];
 			compactionResult.estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
 			this._incrementMessageRevision();
-			this._finishCompactionOperation(operationId, "completed");
-
-			await this._extensionRunner.emit({
-				type: "session_compact",
-				reason: request.reason,
-				requestId,
-				accepted: true,
-				compactionEntry: savedEntry,
-				fromExtension,
-				willRetry: request.willRetry,
+			this._compactionLifecycle.finish({
+				operationId,
+				status: "completed",
+				endedRevision: this._messageRevision,
 			});
 
 			this._emit({
@@ -2979,70 +3046,28 @@ export class AgentSession {
 				accepted: true,
 			});
 
+			await this._extensionRunner.emit({
+				type: "session_compact",
+				reason: request.reason,
+				requestId,
+				accepted: true,
+				compactionEntry: savedEntry,
+				fromExtension,
+				willRetry: request.willRetry,
+			});
+
 			return { accepted: true, requestId, result: compactionResult, compactionEntry: savedEntry, fromExtension };
 		} catch (error) {
 			const aborted = signal.aborted || (error instanceof Error && error.name === "AbortError");
-			this._finishCompactionOperation(operationId, aborted ? "aborted" : "failed", {
+			this._compactionLifecycle.finish({
+				operationId,
+				status: aborted ? "aborted" : "failed",
+				endedRevision: this._messageRevision,
 				errorMessage: error instanceof Error ? error.message : String(error),
 			});
 			throw error;
 		} finally {
 			finishCompactionWork();
-		}
-	}
-
-	private _beginCompactionOperation(
-		operationId: string,
-		reason: CompactionReason,
-		model: Model<Api>,
-		controller: AbortController,
-		stage: "feedback" | "execution",
-	): string {
-		if (this._compactionState.status === "running") {
-			if (this._compactionOperationController === controller) {
-				const currentOperationId = this._compactionState.operationId;
-				if (stage === "execution") {
-					this._compactionState = promoteCompactionOperation(this._compactionState, currentOperationId);
-				}
-				return currentOperationId;
-			}
-			this._compactionOperationController?.abort();
-		}
-		this._compactionOperationController = controller;
-		this._compactionState = beginCompactionOperation(this._compactionState, {
-			operationId,
-			stage,
-			reason,
-			model: { provider: model.provider, id: model.id },
-			startedRevision: this._messageRevision,
-		});
-		return operationId;
-	}
-
-	private _isCurrentCompactionOperation(operationId: string, controller: AbortController): boolean {
-		return (
-			this._compactionState.status === "running" &&
-			this._compactionState.operationId === operationId &&
-			this._compactionOperationController === controller &&
-			!controller.signal.aborted
-		);
-	}
-
-	private _finishCompactionOperation(
-		operationId: string,
-		status: "completed" | "failed" | "aborted",
-		options: { rejectionCause?: CompactionRejectionCause; errorMessage?: string } = {},
-	): void {
-		const previous = this._compactionState;
-		const next = finishCompactionOperation(previous, {
-			operationId,
-			status,
-			endedRevision: this._messageRevision,
-			...options,
-		});
-		this._compactionState = next;
-		if (previous.status === "running" && previous.operationId === operationId && next !== previous) {
-			this._compactionOperationController = undefined;
 		}
 	}
 
@@ -3074,6 +3099,25 @@ export class AgentSession {
 		const contextTokens = estimateMessagesTokens(filterContextExcludedMessages(simulatedMessages));
 		const settings = this.settingsManager.getCompactionSettings();
 		return contextTokens > model.contextWindow - settings.reserveTokens;
+	}
+
+	/**
+	 * Replaces agent state with the canonical session context while keeping exact
+	 * message objects whose message_end persistence is still queued. Identities
+	 * already present in the session context are kept from the context only, so
+	 * nothing is duplicated; the queued message_end still owns exactly-once
+	 * persistence for the rest.
+	 */
+	private _restoreAgentMessagesFromSession(): void {
+		const sessionMessages = this.sessionManager.buildSessionContext().messages;
+		const seen = new Set<AgentMessage>(sessionMessages);
+		const pendingMessages: AgentMessage[] = [];
+		for (const message of this.agent.state.messages) {
+			if (seen.has(message) || !this._messageEndsAwaitingPersistence.has(message)) continue;
+			seen.add(message);
+			pendingMessages.push(message);
+		}
+		this.agent.state.messages = [...sessionMessages, ...pendingMessages];
 	}
 
 	private async _rejectCompaction(
@@ -3121,20 +3165,18 @@ export class AgentSession {
 	 * Cancel in-progress compaction (manual or auto).
 	 */
 	abortCompaction(): void {
-		const feedbackController = this._compactionFeedbackController;
+		const feedbackOperation = this._compactionLifecycle.abort(this._messageRevision);
 		this._compactionAbortController?.abort();
 		this._autoCompactionAbortController?.abort();
-		this._compactionOperationController?.abort();
-		if (this._compactionState.status === "running") {
-			this._finishCompactionOperation(this._compactionState.operationId, "aborted", {
-				errorMessage: "Compaction cancelled",
+		if (feedbackOperation?.stage === "feedback") {
+			this._compactionAbortController = undefined;
+			this._emit({
+				type: "compaction_end",
+				reason: feedbackOperation.reason,
+				result: undefined,
+				aborted: true,
+				willRetry: false,
 			});
-		}
-		if (feedbackController && this._compactionFeedbackController === feedbackController) {
-			this._compactionFeedbackController = undefined;
-			if (this._compactionAbortController === feedbackController) {
-				this._compactionAbortController = undefined;
-			}
 		}
 	}
 
@@ -3156,6 +3198,28 @@ export class AgentSession {
 	 * @param assistantMessage The assistant message to check
 	 * @param skipAbortedCheck If false, include aborted messages (for pre-prompt check). Default: true
 	 */
+	private async _enforceCompactionBeforeProvider(
+		assistantMessage: AssistantMessage | undefined,
+		skipAbortedCheck: boolean,
+		inlineReason: "pre_prompt" | "threshold",
+	): Promise<boolean> {
+		const compacted = assistantMessage
+			? await this._checkCompaction(assistantMessage, skipAbortedCheck, inlineReason)
+			: false;
+		if (compacted || (assistantMessage && this._isAssistantFromBeforeLatestCompaction(assistantMessage))) {
+			return compacted;
+		}
+
+		const settings = this.settingsManager.getCompactionSettings();
+		const contextTokens = estimateContextTokens(
+			filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
+		).tokens;
+		if (settings.enabled && this.model && shouldCompact(contextTokens, this.model.contextWindow, settings)) {
+			throw new RequiredCompactionError();
+		}
+		return false;
+	}
+
 	private async _checkCompaction(
 		assistantMessage: AssistantMessage,
 		skipAbortedCheck = true,
@@ -3235,7 +3299,7 @@ export class AgentSession {
 				? await this._runPrePromptCompaction(assistantMessage, skipAbortedCheck, "overflow", willRetry)
 				: await this._runAutoCompaction("overflow", willRetry);
 			if (!compacted && removedOverflowAssistant) {
-				this.agent.state.messages = this.sessionManager.buildSessionContext().messages;
+				this._restoreAgentMessagesFromSession();
 				this._incrementMessageRevision();
 			}
 			if (!compacted && inlineReason) {
@@ -3322,7 +3386,7 @@ export class AgentSession {
 			});
 			return false;
 		} finally {
-			if (this._compactionAbortController === controller && this._compactionState.status !== "running") {
+			if (this._compactionAbortController === controller && this._compactionLifecycle.state.status !== "running") {
 				this._compactionAbortController = undefined;
 			}
 		}
@@ -3395,6 +3459,7 @@ export class AgentSession {
 			const preparation = prepareCompaction(
 				this.sessionManager.getBranch(),
 				this.settingsManager.getCompactionSettings(),
+				reason === "overflow",
 			);
 			if (!preparation) {
 				if (reason === "overflow") this._overflowRecoveryAttempted = false;
@@ -3754,7 +3819,10 @@ export class AgentSession {
 							const err = error instanceof Error ? error : new Error(String(error));
 							options?.onError?.(err);
 						} finally {
-							if (this._compactionAbortController === controller && this._compactionState.status !== "running") {
+							if (
+								this._compactionAbortController === controller &&
+								this._compactionLifecycle.state.status !== "running"
+							) {
 								this._compactionAbortController = undefined;
 							}
 							this._reconnectToAgent();
@@ -4555,9 +4623,8 @@ export class AgentSession {
 				this.sessionManager.appendLabelChange(targetId, label);
 			}
 
-			// Update agent state
-			const sessionContext = this.sessionManager.buildSessionContext();
-			this.agent.state.messages = sessionContext.messages;
+			// Update agent state (preserving exact messages still awaiting persistence)
+			this._restoreAgentMessagesFromSession();
 			this._incrementMessageRevision();
 
 			// Emit session_tree event

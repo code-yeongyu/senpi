@@ -1,5 +1,29 @@
 # changes.md — compaction
 
+## Lifecycle ownership and required-admission safety (2026-07-23)
+
+### What changed
+
+- `lifecycle.ts` now owns the active compaction controller together with reducer transitions, so feedback from an older
+  generation cannot progress or terminate a newer one. Feedback-only cancellation emits one terminal
+  `compaction_end`, and accepted compactions emit their terminal event before `session_compact` handlers can start
+  another generation.
+- Extension contexts retain the signal returned by `beginCompaction()` and supply it to legacy `updateCompaction()` /
+  `endCompaction()` calls that omit one. Core accepts feedback mutations only from the current signal.
+- Provider admissions now share one required-compaction gate for prompt preflight, extension-triggered turns, and
+  next turns. Provider-confirmed overflow can force a split-turn preparation when keeping the only oversized prompt
+  would otherwise leave no compactable source.
+- Compaction rejects stale source snapshots with `stale-revision` before the durable entry append.
+
+### Why
+
+A late extension completion could overwrite fresh feedback, and some continuation routes skipped required compaction.
+Compacting a source that changed during summary generation could also append a stale checkpoint over intervening work.
+
+### Expected merge conflict zones
+
+- LOW: `lifecycle.ts` and the compaction admission calls in `agent-session.ts`.
+
 ## Operation lifecycle reducer (2026-07-23)
 
 ### What changed

@@ -902,6 +902,7 @@ export class ExtensionRunner {
 		const runner = this;
 		const getModel = this.getModel;
 		const getServiceTier = this.getServiceTier;
+		let compactionSignal: AbortSignal | undefined;
 		return {
 			get ui() {
 				runner.assertActive();
@@ -993,15 +994,16 @@ export class ExtensionRunner {
 			},
 			beginCompaction: (options) => {
 				runner.assertActive();
-				return runner.beginCompactionFn?.(options);
+				compactionSignal = runner.beginCompactionFn?.(options);
+				return compactionSignal;
 			},
 			updateCompaction: (options) => {
 				runner.assertActive();
-				runner.updateCompactionFn?.(options);
+				runner.updateCompactionFn?.({ ...options, signal: options.signal ?? compactionSignal });
 			},
 			endCompaction: (options) => {
 				runner.assertActive();
-				runner.endCompactionFn?.(options);
+				runner.endCompactionFn?.({ ...options, signal: options.signal ?? compactionSignal });
 			},
 			getMessageRevision: () => {
 				runner.assertActive();

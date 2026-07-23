@@ -4,11 +4,15 @@
 
 ### What changed
 
-- `agent-session.ts` now owns a monotonic compaction operation state, snapshots the active model and controller at
-  operation start, rejects stale completion/feedback, and retains the terminal result until another operation begins.
-- Provider-confirmed overflow remains fail-closed when required pre-prompt compaction fails, even when the local token
-  estimate is below the configured threshold; failed recovery restores the overflow context so later prompts cannot
-  bypass the same requirement.
+- `agent-session.ts` now holds a monotonic compaction lifecycle coordinator that snapshots the active model and
+  controller at operation start, rejects stale completion/feedback, and retains the terminal result until another
+  operation begins. Feedback-only aborts publish one terminal event, and accepted completions publish their terminal
+  event before `session_compact` handlers can begin a fresh operation.
+- Durable append now rejects a generation whose message revision or agent-message snapshot changed during preparation
+  or summary generation (`stale-revision`), preserving intervening context without duplicate replay.
+- Required compaction uses one provider-admission gate for normal prompts, extension-triggered turns, and every next
+  turn. Provider-confirmed overflow remains fail-closed even when the local token estimate is below the configured
+  threshold; failed recovery restores the overflow context so later prompts cannot bypass the same requirement.
 
 ### Why extension system couldn't handle this alone
 
