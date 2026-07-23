@@ -341,12 +341,14 @@ export interface BeginCompactionOptions {
 
 export interface UpdateCompactionOptions {
 	reason: CompactionReason;
+	signal?: AbortSignal;
 	delta?: string;
 	text?: string;
 }
 
 export interface EndCompactionOptions {
 	reason: CompactionReason;
+	signal?: AbortSignal;
 	aborted?: boolean;
 	errorMessage?: string;
 }
