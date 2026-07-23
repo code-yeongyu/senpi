@@ -338,8 +338,8 @@ describe("Classic single-session RPC characterization pins (todo 2)", () => {
 
 				// No extra keys beyond the classic shape (no sessionId, no code, no data).
 				expect(Object.keys(errorResponse!).sort()).toEqual(["command", "error", "id", "success", "type"].sort());
-				expect(Object.hasOwn(errorResponse, "sessionId")).toBe(false);
-				expect(Object.hasOwn(errorResponse, "code")).toBe(false);
+				expect(Object.hasOwn(errorResponse!, "sessionId")).toBe(false);
+				expect(Object.hasOwn(errorResponse!, "code")).toBe(false);
 
 				// The whole exchange (single error line) also lacks sessionId.
 				assertNoSessionIdTagging("unknown command");
@@ -362,7 +362,7 @@ describe("Classic single-session RPC characterization pins (todo 2)", () => {
 					(r) => r.type === "response" && r.command === "parse" && r.success === false,
 				);
 				expect(parseError?.error).toEqual(expect.stringContaining("Failed to parse command"));
-				expect(Object.hasOwn(parseError, "sessionId")).toBe(false);
+				expect(Object.hasOwn(parseError!, "sessionId")).toBe(false);
 				assertNoSessionIdTagging("parse error");
 			} finally {
 				await cleanup();

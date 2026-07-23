@@ -66,6 +66,10 @@ var commandTypes = []string{
 	// and logout answer synchronously; login_start responds immediately and the
 	// URL + result arrive as auth_login_url / auth_login_end events.
 	"get_auth_providers", "login_start", "login_cancel", "login_api_key", "logout",
+	// Multi-session protocol controls. The classic neo worker answers the
+	// capability probe and rejects open_session; the generic command envelope
+	// still preserves all valid wire variants.
+	"get_protocol_info", "open_session", "close_session", "list_sessions",
 }
 
 // KnownCommandTypes returns the mirrored RpcCommand.type set as a lookup.
