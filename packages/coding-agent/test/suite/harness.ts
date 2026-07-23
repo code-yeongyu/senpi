@@ -18,7 +18,7 @@ import { registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import type { ExtensionRunner } from "../../src/core/extensions/index.ts";
-import { convertToLlm } from "../../src/core/messages.ts";
+import { convertToLlmForTransport } from "../../src/core/messages.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import type { Settings } from "../../src/core/settings-manager.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
@@ -81,6 +81,7 @@ export interface HarnessOptions {
 	persistSession?: boolean;
 	autoTitleSessions?: boolean;
 	fallbackNow?: () => number;
+	transportImageBudget?: { budgetBytes: number; alwaysKeepNewest: number };
 }
 
 export interface Harness {
@@ -163,7 +164,11 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 			systemPrompt: options.systemPrompt ?? "You are a test assistant.",
 			tools: [],
 		},
-		convertToLlm,
+		convertToLlm: (messages: AgentMessage[]) =>
+			convertToLlmForTransport(messages, {
+				blockImages: settingsManager.getBlockImages(),
+				...options.transportImageBudget,
+			}),
 		onPayload: async (payload) => {
 			options.onPayload?.(payload);
 			const runner = extensionRunnerRef.current;
