@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getApiProvider, registerApiProvider } from "@earendil-works/pi-ai/compat";
@@ -8,14 +8,25 @@ import type {
 	CreateAgentSessionRuntimeFactory,
 	CreateAgentSessionRuntimeResult,
 } from "../src/core/agent-session-runtime.ts";
+import { createEventBus } from "../src/core/event-bus.ts";
+import configReloadExtension from "../src/core/extensions/builtin/config-reload/index.ts";
+import type {
+	WatchClock,
+	WatchEventListener,
+	WatchEventSource,
+} from "../src/core/extensions/builtin/config-reload/watch-engine.ts";
+import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "../src/core/extensions/types.ts";
 import type { RpcSessionBinding } from "../src/modes/rpc/session-binding.ts";
 import { SessionCommandRouter } from "../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../src/modes/rpc/session-event-writer.ts";
 import { RpcSessionRegistry } from "../src/modes/rpc/session-registry.ts";
+import { createHarness, type Harness } from "./suite/harness.ts";
 
 const roots: string[] = [];
+const reloadHarnesses: Harness[] = [];
 
 afterEach(() => {
+	for (const harness of reloadHarnesses.splice(0)) harness.cleanup();
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -33,6 +44,58 @@ function provider(api: string, owner: string) {
 		},
 		streamSimple: () => {
 			throw new Error(`provider ${owner} is a test sentinel`);
+		},
+	};
+}
+
+/** Invokes the wrapped provider so its per-session sentinel becomes observable. */
+function resolvedProviderOwner(api: string): string {
+	const resolved = getApiProvider(api);
+	if (!resolved) throw new Error(`missing scoped provider ${api}`);
+	try {
+		resolved.stream({ api } as never, {} as never);
+	} catch (error) {
+		const match = /^provider (.+) is a test sentinel$/.exec(error instanceof Error ? error.message : String(error));
+		if (match?.[1]) return match[1];
+		throw error;
+	}
+	throw new Error(`provider ${api} did not produce its sentinel`);
+}
+
+type RegisteredWatchProbe = {
+	readonly subscribe: WatchEventSource;
+	emit(path: string, filename: string): void;
+};
+
+function registeredWatchProbe(): RegisteredWatchProbe {
+	const listeners = new Map<string, Set<WatchEventListener>>();
+	return {
+		subscribe: (path, listener) => {
+			const registered = listeners.get(path) ?? new Set<WatchEventListener>();
+			registered.add(listener);
+			listeners.set(path, registered);
+			return () => registered.delete(listener);
+		},
+		emit: (path, filename) => {
+			for (const listener of listeners.get(path) ?? []) listener("change", filename);
+		},
+	};
+}
+
+function manuallyFlushedWatchClock(): WatchClock & { flush(): void } {
+	const callbacks = new Set<() => void>();
+	return {
+		setTimeout: (callback) => {
+			callbacks.add(callback);
+			return callback as unknown as ReturnType<typeof setTimeout>;
+		},
+		clearTimeout: (timer) => callbacks.delete(timer as unknown as () => void),
+		flush: () => {
+			while (callbacks.size > 0) {
+				const scheduled = [...callbacks];
+				callbacks.clear();
+				for (const callback of scheduled) callback();
+			}
 		},
 	};
 }
@@ -94,9 +157,7 @@ function hostFixture() {
 		const binding: RpcSessionBinding = {
 			handle: async (command: { type?: string }) => {
 				if (command.type !== "prompt") return;
-				const resolved = runWithProviderScope(entry.scope, () => getApiProvider("rpc-isolation-provider"));
-				if (!resolved) throw new Error("missing scoped provider");
-				const owner = resolved.stream.toString().includes("owner") ? "resolved" : "resolved";
+				const owner = runWithProviderScope(entry.scope, () => resolvedProviderOwner("rpc-isolation-provider"));
 				resolutions.set(sessionId, owner);
 				eventWriter.enqueue(sessionId, { type: "message_update", text: `stream:${sessionId}` });
 				eventWriter.enqueue(sessionId, { type: "agent_end", text: `done:${sessionId}` });
@@ -131,8 +192,8 @@ describe("multi-session RPC isolation battery", () => {
 			host.send({ id: "prompt-b", type: "prompt", sessionId: bravo, message: "bravo" }),
 		]);
 
-		expect(host.resolutions.get(alpha)).toBe("resolved");
-		expect(host.resolutions.get(bravo)).toBe("resolved");
+		expect(host.resolutions.get(alpha)).toBe("owner-1");
+		expect(host.resolutions.get(bravo)).toBe("owner-2");
 		const streamed = records(host.output).filter(
 			(line) => line.type === "message_update" || line.type === "agent_end",
 		);
@@ -151,11 +212,91 @@ describe("multi-session RPC isolation battery", () => {
 		await host.send({ id: "close-a", type: "close_session", sessionId: alpha });
 		await host.send({ id: "prompt-b", type: "prompt", sessionId: bravo, message: "B survives" });
 
-		expect(host.resolutions.get(bravo)).toBe("resolved");
+		expect(host.resolutions.get(bravo)).toBe("owner-2");
 		expect(records(host.output).find((line) => line.id === "close-a")).toMatchObject({
 			sessionId: alpha,
 			success: true,
 		});
+	});
+
+	it("runs the registered config-reload watcher callback through AgentSession.reload without clearing B's overlay", async () => {
+		const host = hostFixture();
+		await host.send({ id: "open-a", type: "open_session", cwd: host.cwd, sessionPath: join(host.cwd, "a.jsonl") });
+		await host.send({ id: "open-b", type: "open_session", cwd: host.cwd, sessionPath: join(host.cwd, "b.jsonl") });
+		const alpha = openedHandle(host.output, "open-a");
+		const bravo = openedHandle(host.output, "open-b");
+		const alphaEntry = host.registry.getForCommand(alpha, "prompt");
+		const bravoEntry = host.registry.getForCommand(bravo, "prompt");
+		const api = "rpc-reload-isolation-provider";
+		runWithProviderScope(alphaEntry.scope, () => registerApiProvider(provider(api, "reload-A")));
+		runWithProviderScope(bravoEntry.scope, () => registerApiProvider(provider(api, "reload-B")));
+		expect(host.registry.list().find((entry) => entry.sessionId === bravo)?.status).toBe("open");
+		await host.send({ id: "prompt-b-before-a-reload", type: "prompt", sessionId: bravo, message: "B is active" });
+		expect(host.resolutions.get(bravo)).toBe("owner-2");
+
+		// This is a real AgentSession. The callback below reaches its production
+		// reload() implementation, including agent-session.ts resetApiProviders().
+		const harness = await runWithProviderScope(alphaEntry.scope, () => createHarness());
+		reloadHarnesses.push(harness);
+		const agentDir = join(harness.tempDir, "agent");
+		mkdirSync(agentDir, { recursive: true });
+		const settingsPath = join(agentDir, "settings.json");
+		writeFileSync(settingsPath, '{"theme":"dark"}\n');
+
+		const watches = registeredWatchProbe();
+		const clock = manuallyFlushedWatchClock();
+		const handlers = new Map<string, Array<(event: unknown, context: ExtensionContext) => unknown>>();
+		const extensionApi = {
+			events: createEventBus(),
+			on: (event: string, handler: (event: unknown, context: ExtensionContext) => unknown) => {
+				const registered = handlers.get(event) ?? [];
+				registered.push(handler);
+				handlers.set(event, registered);
+			},
+		} as unknown as ExtensionAPI;
+		runWithProviderScope(alphaEntry.scope, () =>
+			configReloadExtension(extensionApi, { agentDir, subscribe: watches.subscribe, clock }),
+		);
+		const reloadStarted = Promise.withResolvers<void>();
+		let reloadCount = 0;
+		const context = {
+			cwd: harness.tempDir,
+			mode: "tui",
+			sessionManager: alphaEntry.runtime!.session.sessionManager,
+			ui: { notify: () => {} },
+			isIdle: () => true,
+			hasPendingMessages: () => false,
+			isProjectTrusted: () => true,
+			isCompacting: () => false,
+			requestReload: async () => {
+				reloadCount += 1;
+				await harness.session.reload();
+				reloadStarted.resolve();
+			},
+		} as unknown as ExtensionContext;
+		const sessionStart = handlers.get("session_start")?.[0];
+		if (!sessionStart) throw new Error("config-reload extension did not register session_start");
+		await runWithProviderScope(alphaEntry.scope, () =>
+			sessionStart({ type: "session_start", reason: "startup" } satisfies SessionStartEvent, context),
+		);
+
+		writeFileSync(settingsPath, '{"theme":"light"}\n');
+		// fs.watch delivery is nondeterministic in a parallel test run, so invoke
+		// the callback registered by the production config-reload extension directly.
+		watches.emit(agentDir, "settings.json");
+		clock.flush();
+		await reloadStarted.promise;
+
+		expect(reloadCount).toBe(1);
+		expect(runWithProviderScope(alphaEntry.scope, () => getApiProvider(api))).toBeUndefined();
+		expect(runWithProviderScope(bravoEntry.scope, () => resolvedProviderOwner(api))).toBe("reload-B");
+		await host.send({
+			id: "prompt-b-after-a-reload",
+			type: "prompt",
+			sessionId: bravo,
+			message: "B survives A reload",
+		});
+		expect(host.resolutions.get(bravo)).toBe("owner-2");
 	});
 
 	it("opens eight host sessions and closes all of them without registry leakage", async () => {
