@@ -1077,7 +1077,6 @@ export class ExtensionRunner {
 	}
 
 	async emit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
-		const ctx = this.createContext();
 		let result: SessionBeforeEventResult | undefined;
 
 		for (const ext of this.extensions) {
@@ -1086,7 +1085,7 @@ export class ExtensionRunner {
 
 			for (const handler of handlers) {
 				try {
-					const handlerResult = await handler(event, ctx);
+					const handlerResult = await handler(event, this.createContext());
 
 					if (this.isSessionBeforeEvent(event) && handlerResult) {
 						result = handlerResult as SessionBeforeEventResult;
@@ -1111,7 +1110,6 @@ export class ExtensionRunner {
 	}
 
 	async emitModelSelect(event: ModelSelectEvent): Promise<ModelSelectEventResult | undefined> {
-		const ctx = this.createContext();
 		let result: ModelSelectEventResult | undefined;
 
 		for (const ext of this.extensions) {
@@ -1124,7 +1122,7 @@ export class ExtensionRunner {
 					// the active toolset (gpt-apply-patch) must let later handlers
 					// (prompt-preset) rebuild from the post-swap tools in the same emission.
 					const liveEvent: ModelSelectEvent = { ...event, systemPromptOptions: this.getSystemPromptOptionsFn() };
-					const handlerResult = await handler(liveEvent, ctx);
+					const handlerResult = await handler(liveEvent, this.createContext());
 					if (handlerResult) {
 						const nextResult = handlerResult as ModelSelectEventResult;
 						if (nextResult.systemPrompt !== undefined || nextResult.systemPromptName !== undefined) {
@@ -1159,7 +1157,6 @@ export class ExtensionRunner {
 	}
 
 	async emitMessageEnd(event: MessageEndEvent): Promise<AgentMessage | undefined> {
-		const ctx = this.createContext();
 		let currentMessage = event.message;
 		let modified = false;
 
@@ -1170,7 +1167,9 @@ export class ExtensionRunner {
 			for (const handler of handlers) {
 				try {
 					const currentEvent: MessageEndEvent = { ...event, message: currentMessage };
-					const handlerResult = (await handler(currentEvent, ctx)) as MessageEndEventResult | undefined;
+					const handlerResult = (await handler(currentEvent, this.createContext())) as
+						| MessageEndEventResult
+						| undefined;
 					if (!handlerResult?.message) continue;
 
 					if (handlerResult.message.role !== currentMessage.role) {
@@ -1201,7 +1200,6 @@ export class ExtensionRunner {
 	}
 
 	async emitToolResult(event: ToolResultEvent): Promise<ToolResultEventResult | undefined> {
-		const ctx = this.createContext();
 		const currentEvent: ToolResultEvent = { ...event };
 		let modified = false;
 
@@ -1210,7 +1208,7 @@ export class ExtensionRunner {
 			if (!handlers || handlers.length === 0) continue;
 
 			for (const handler of handlers) {
-				const hookRun = this.beginToolHookRun(ctx, {
+				const hookRun = this.beginToolHookRun(this.createContext(), {
 					hookName: "PostToolUse",
 					toolName: event.toolName,
 					toolCallId: event.toolCallId,
@@ -1265,7 +1263,6 @@ export class ExtensionRunner {
 	}
 
 	async emitToolCall(event: ToolCallEvent): Promise<ToolCallEventResult | undefined> {
-		const ctx = this.createContext();
 		let result: ToolCallEventResult | undefined;
 
 		for (const ext of this.extensions) {
@@ -1273,7 +1270,7 @@ export class ExtensionRunner {
 			if (!handlers || handlers.length === 0) continue;
 
 			for (const handler of handlers) {
-				const hookRun = this.beginToolHookRun(ctx, {
+				const hookRun = this.beginToolHookRun(this.createContext(), {
 					hookName: "PreToolUse",
 					toolName: event.toolName,
 					toolCallId: event.toolCallId,
@@ -1305,15 +1302,13 @@ export class ExtensionRunner {
 	}
 
 	async emitUserBash(event: UserBashEvent): Promise<UserBashEventResult | undefined> {
-		const ctx = this.createContext();
-
 		for (const ext of this.extensions) {
 			const handlers = ext.handlers.get("user_bash");
 			if (!handlers || handlers.length === 0) continue;
 
 			for (const handler of handlers) {
 				try {
-					const handlerResult = await handler(event, ctx);
+					const handlerResult = await handler(event, this.createContext());
 					if (handlerResult) {
 						return handlerResult as UserBashEventResult;
 					}
@@ -1334,7 +1329,6 @@ export class ExtensionRunner {
 	}
 
 	async emitContext(messages: AgentMessage[]): Promise<AgentMessage[]> {
-		const ctx = this.createContext();
 		let currentMessages = cloneJsonValue(messages);
 
 		for (const ext of this.extensions) {
@@ -1344,7 +1338,7 @@ export class ExtensionRunner {
 			for (const handler of handlers) {
 				try {
 					const event: ContextEvent = { type: "context", messages: currentMessages };
-					const handlerResult = await handler(event, ctx);
+					const handlerResult = await handler(event, this.createContext());
 
 					if (handlerResult && (handlerResult as ContextEventResult).messages) {
 						currentMessages = (handlerResult as ContextEventResult).messages!;
@@ -1366,7 +1360,6 @@ export class ExtensionRunner {
 	}
 
 	async emitBeforeProviderRequest(payload: unknown): Promise<unknown> {
-		const ctx = this.createContext();
 		let currentPayload = payload;
 
 		for (const ext of this.extensions) {
@@ -1379,7 +1372,7 @@ export class ExtensionRunner {
 						type: "before_provider_request",
 						payload: currentPayload,
 					};
-					const handlerResult = await handler(event, ctx);
+					const handlerResult = await handler(event, this.createContext());
 					if (handlerResult !== undefined) {
 						currentPayload = handlerResult;
 					}
@@ -1400,8 +1393,6 @@ export class ExtensionRunner {
 	}
 
 	async emitBeforeProviderHeaders(headers: ProviderHeaders): Promise<ProviderHeaders> {
-		const ctx = this.createContext();
-
 		for (const ext of this.extensions) {
 			const handlers = ext.handlers.get("before_provider_headers");
 			if (!handlers || handlers.length === 0) continue;
@@ -1413,7 +1404,7 @@ export class ExtensionRunner {
 						type: "before_provider_headers",
 						headers,
 					};
-					await handler(event, ctx);
+					await handler(event, this.createContext());
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
@@ -1437,14 +1428,6 @@ export class ExtensionRunner {
 		systemPromptOptions: BuildSystemPromptOptions,
 	): Promise<BeforeAgentStartCombinedResult | undefined> {
 		let currentSystemPrompt = systemPrompt;
-		const ctx = Object.defineProperties(
-			{},
-			Object.getOwnPropertyDescriptors(this.createContext()),
-		) as ExtensionContext;
-		ctx.getSystemPrompt = () => {
-			this.assertActive();
-			return currentSystemPrompt;
-		};
 		const messages: NonNullable<BeforeAgentStartEventResult["message"]>[] = [];
 		let systemPromptModified = false;
 
@@ -1454,6 +1437,16 @@ export class ExtensionRunner {
 
 			for (const handler of handlers) {
 				try {
+					// Keep guarded context getters lazy while giving each handler its
+					// own legacy omitted-signal ownership slot.
+					const ctx = Object.defineProperties(
+						{},
+						Object.getOwnPropertyDescriptors(this.createContext()),
+					) as ExtensionContext;
+					ctx.getSystemPrompt = () => {
+						this.assertActive();
+						return currentSystemPrompt;
+					};
 					const event: BeforeAgentStartEvent = {
 						type: "before_agent_start",
 						prompt,
@@ -1505,7 +1498,6 @@ export class ExtensionRunner {
 		themePaths: Array<{ path: string; extensionPath: string }>;
 		hookPaths: Array<{ path: string; extensionPath: string }>;
 	}> {
-		const ctx = this.createContext();
 		const skillPaths: Array<{ path: string; extensionPath: string }> = [];
 		const promptPaths: Array<{ path: string; extensionPath: string }> = [];
 		const themePaths: Array<{ path: string; extensionPath: string }> = [];
@@ -1518,7 +1510,7 @@ export class ExtensionRunner {
 			for (const handler of handlers) {
 				try {
 					const event: ResourcesDiscoverEvent = { type: "resources_discover", cwd, reason };
-					const handlerResult = await handler(event, ctx);
+					const handlerResult = await handler(event, this.createContext());
 					const result = handlerResult as ResourcesDiscoverResult | undefined;
 
 					if (result?.skillPaths?.length) {
@@ -1556,7 +1548,6 @@ export class ExtensionRunner {
 		source: InputSource,
 		streamingBehavior?: "steer" | "followUp",
 	): Promise<InputEventResult> {
-		const ctx = this.createContext();
 		let currentText = text;
 		let currentImages = images;
 
@@ -1570,7 +1561,7 @@ export class ExtensionRunner {
 						source,
 						streamingBehavior,
 					};
-					const result = (await handler(event, ctx)) as InputEventResult | undefined;
+					const result = (await handler(event, this.createContext())) as InputEventResult | undefined;
 					if (result?.action === "handled") return result;
 					if (result?.action === "transform") {
 						currentText = result.text;
