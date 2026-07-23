@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added an OpenAI Codex remote-compaction capability to the provider contract.
+
 ### Changed
 
 ### Fixed

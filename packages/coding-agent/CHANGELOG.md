@@ -6,9 +6,15 @@
 
 ### Added
 
+- Added OpenAI Codex remote compaction with provider capability gating and safe preservation of the in-flight prompt during replay ([#304](https://github.com/code-yeongyu/senpi/pull/304)).
+- Added GPT Code Mode and eval routing, including `exec` and `wait` support for compatible GPT models ([#301](https://github.com/code-yeongyu/senpi/pull/301)).
+- Added per-section thinking-duration headers in interactive output.
+
 ### Changed
 
 ### Fixed
+
+- Fixed interactive tool-progress durations to use the shared OpenCode-parity formatter.
 
 ### Removed
 

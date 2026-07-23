@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added the GPT-only Code Mode runtime with `exec` and `wait` tools, plus model-aware GPT eval routing ([#301](https://github.com/code-yeongyu/senpi/pull/301)).
+
 ### Changed
 
 ### Fixed

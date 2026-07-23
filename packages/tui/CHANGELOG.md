@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed tool-progress duration formatting to use the shared OpenCode-parity formatter.
+
 ### Removed
 
 ## [2026.7.22-2] - 2026-07-22

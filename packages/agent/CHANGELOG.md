@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added timing metadata to completed thinking blocks so clients can present per-section durations.
+
 ### Changed
 
 ### Fixed
