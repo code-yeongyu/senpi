@@ -7,7 +7,8 @@
 - `agent-session.ts` now owns a monotonic compaction operation state, snapshots the active model and controller at
   operation start, rejects stale completion/feedback, and retains the terminal result until another operation begins.
 - Provider-confirmed overflow remains fail-closed when required pre-prompt compaction fails, even when the local token
-  estimate is below the configured threshold.
+  estimate is below the configured threshold; failed recovery restores the overflow context so later prompts cannot
+  bypass the same requirement.
 
 ### Why extension system couldn't handle this alone
 
