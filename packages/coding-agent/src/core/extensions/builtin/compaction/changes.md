@@ -1,5 +1,16 @@
 # Builtin compaction extension changes
 
+## Sanitize Anthropic tool pairs on direct summarization requests (2026-07-23)
+
+- `speculative.ts`: local compaction summarization now applies the existing Anthropic payload sanitizer at the direct
+  `stream()` boundary. Unlike normal agent turns, this side request does not run the extension runner's
+  `before_provider_request` hooks, so an orphan `tool_result` that survived message conversion previously reached
+  Anthropic unchanged and permanently rejected compaction for an over-limit session.
+- Regression: `test/compaction/anthropic-tool-pair-guard.test.ts` drives the real Anthropic wire adapter against a local
+  endpoint that rejects orphan results, proving the summarization request is valid before it leaves senpi.
+
+Expected upstream conflict zones: `builtin/compaction/speculative.ts` direct summary stream options.
+
 ## Support native remote compaction for OpenAI Codex models (2026-07-23)
 
 - `openai-remote-model.ts`, `openai-remote-schema.ts`, `openai-remote.ts`, `openai-remote-convert.ts`,

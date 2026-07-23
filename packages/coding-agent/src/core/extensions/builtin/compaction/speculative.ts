@@ -24,6 +24,7 @@ import { convertToLlm } from "../../../messages.ts";
 import type { ModelRegistry } from "../../../model-registry.ts";
 import type { ReadonlySessionManager } from "../../../session-manager.ts";
 import type { ApplyCompactionResult, ContextUsage } from "../../types.ts";
+import { sanitizeAnthropicPayload } from "../tool-pair-guard/sanitize-anthropic-payload.ts";
 import { computeEffectiveKeepRecentTokens, computeEffectiveThreshold } from "./policy.ts";
 import { buildPrompt, type MergedCompactionPromptVariant } from "./prompts.ts";
 import { repairOrphanedToolResults } from "./repair-tool-pairs.ts";
@@ -165,6 +166,7 @@ async function generateSummaryMessage(options: {
 				apiKey: options.auth.apiKey,
 				headers: options.auth.headers,
 				extraBody: options.auth.extraBody,
+				...(options.snapshot.model.api === "anthropic-messages" ? { onPayload: sanitizeAnthropicPayload } : {}),
 				maxTokens: summaryMaxTokens(options.snapshot.model, options.snapshot.contextWindow),
 				signal: requestController.signal,
 			},
