@@ -3225,24 +3225,23 @@ export class AgentSession {
 			// Remove the error message from agent state (it IS saved to session for history,
 			// but we don't want it in context for the retry)
 			const messages = this.agent.state.messages;
+			let removedOverflowAssistant = false;
 			if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
 				this.agent.state.messages = messages.slice(0, -1);
+				removedOverflowAssistant = true;
 				this._incrementMessageRevision();
 			}
-			if (inlineReason) {
-				const compacted = await this._runPrePromptCompaction(
-					assistantMessage,
-					skipAbortedCheck,
-					"overflow",
-					willRetry,
-				);
-				if (!compacted) {
-					throw new RequiredCompactionError();
-				}
-				return true;
-			} else {
-				return await this._runAutoCompaction("overflow", willRetry);
+			const compacted = inlineReason
+				? await this._runPrePromptCompaction(assistantMessage, skipAbortedCheck, "overflow", willRetry)
+				: await this._runAutoCompaction("overflow", willRetry);
+			if (!compacted && removedOverflowAssistant) {
+				this.agent.state.messages = this.sessionManager.buildSessionContext().messages;
+				this._incrementMessageRevision();
 			}
+			if (!compacted && inlineReason) {
+				throw new RequiredCompactionError();
+			}
+			return compacted;
 		}
 
 		// Case 2: Threshold - context is getting large

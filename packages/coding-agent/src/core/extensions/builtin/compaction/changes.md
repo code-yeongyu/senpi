@@ -11,7 +11,8 @@
 - Stale or duplicate terminal events cannot overwrite a newer compaction operation.
 - Durable append is guarded by the current operation and controller identity.
 - Required compaction remains fail-closed when generation or application fails, including provider-confirmed overflow
-  that the local token estimate places below the configured threshold.
+  that the local token estimate places below the configured threshold; rejected recovery restores the overflow
+  context so a later prompt cannot bypass the same requirement.
 
 Expected upstream conflict zones: `agent-session.ts` around compaction execution, abort handling, and status access;
 `core/compaction/lifecycle.ts`.

@@ -126,9 +126,14 @@ describe("pre-prompt compaction regression", () => {
 		await expect(harness.session.prompt("next prompt")).rejects.toThrow(
 			"Context remains above the compaction threshold because compaction did not complete",
 		);
+		await expect(harness.session.prompt("retry prompt")).rejects.toThrow(
+			"Context remains above the compaction threshold because compaction did not complete",
+		);
 
 		expect(harness.faux.state.callCount).toBe(0);
 		expect(getUserTexts(harness)).not.toContain("next prompt");
+		expect(getUserTexts(harness)).not.toContain("retry prompt");
+		expect(harness.eventsOfType("compaction_end").filter((event) => event.accepted === false)).toHaveLength(2);
 		expect(harness.eventsOfType("compaction_end")).toContainEqual(
 			expect.objectContaining({
 				reason: "overflow",
