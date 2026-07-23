@@ -171,6 +171,7 @@ type ActiveRun = {
 	promise: Promise<void>;
 	resolve: () => void;
 	abortController: AbortController;
+	suppressQueuedMessageDrain: boolean;
 };
 
 /**
@@ -322,6 +323,16 @@ export class Agent {
 	/** Abort the current run, if one is active. */
 	abort(): void {
 		this.activeRun?.abortController.abort();
+	}
+
+	/**
+	 * Keep queued steering and follow-up messages for an external owner after
+	 * this run reaches agent_end, without changing the active abort signal.
+	 */
+	suppressQueuedMessageDrain(): void {
+		if (this.activeRun) {
+			this.activeRun.suppressQueuedMessageDrain = true;
+		}
 	}
 
 	/**
@@ -505,7 +516,7 @@ export class Agent {
 		const promise = new Promise<void>((resolve) => {
 			resolvePromise = resolve;
 		});
-		this.activeRun = { promise, resolve: resolvePromise, abortController };
+		this.activeRun = { promise, resolve: resolvePromise, abortController, suppressQueuedMessageDrain: false };
 
 		this._state.isStreaming = true;
 		this._state.streamingMessage = undefined;
@@ -513,7 +524,11 @@ export class Agent {
 
 		try {
 			await executor(abortController.signal);
-			while (!abortController.signal.aborted && this.hasQueuedMessages()) {
+			while (
+				!abortController.signal.aborted &&
+				!this.activeRun?.suppressQueuedMessageDrain &&
+				this.hasQueuedMessages()
+			) {
 				await this.runQueuedMessagesAfterAgentEnd(abortController.signal);
 			}
 		} catch (error) {

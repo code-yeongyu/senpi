@@ -49,7 +49,7 @@ export interface SpeculativeCompactionContext {
 	getSystemPrompt?(): string;
 	applyCompaction(
 		precomputed: CompactionResult,
-		options: { reason: "extension"; expectedRevision: number },
+		options: { reason: "extension"; expectedRevision: number; signal?: AbortSignal },
 	): Promise<ApplyCompactionResult>;
 }
 
@@ -466,6 +466,7 @@ export async function applyGeneratedCompaction(
 	snapshot: SpeculativeCompactionSnapshot | undefined,
 	getCurrentGeneration: () => number,
 	compaction: CompactionResult | undefined,
+	signal?: AbortSignal,
 ): Promise<SpeculativeCompactionResult> {
 	if (!snapshot || !compaction) return { applied: false, reason: "unavailable" };
 
@@ -476,6 +477,7 @@ export async function applyGeneratedCompaction(
 	return await context.applyCompaction(compaction, {
 		reason: "extension",
 		expectedRevision: snapshot.expectedRevision,
+		signal,
 	});
 }
 

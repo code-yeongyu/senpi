@@ -166,13 +166,13 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 	const pendingMetadata = new Map<string, PendingCompactionMetadata>();
 
 	function getSummarizationTools(): Tool[] {
-		if (typeof pi.getAllTools !== "function") return [];
+		if (typeof pi.getAllTools !== "function" || typeof pi.getActiveTools !== "function") return [];
 		try {
-			return pi.getAllTools().map((tool) => ({
-				name: tool.name,
-				description: tool.description,
-				parameters: tool.parameters,
-			}));
+			const definitionsByName = new Map(pi.getAllTools().map((tool) => [tool.name, tool]));
+			return pi.getActiveTools().flatMap((name) => {
+				const tool = definitionsByName.get(name);
+				return tool ? [{ name: tool.name, description: tool.description, parameters: tool.parameters }] : [];
+			});
 		} catch {
 			// Tool registry not bound yet (extension still loading); the summary
 			// request simply goes out without tool definitions.
@@ -254,6 +254,7 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 							remoteSnapshot,
 							() => speculativeGeneration,
 							remoteCompaction,
+							feedbackSignal,
 						);
 						endCompactionFeedback(ctx, feedbackSignal, result);
 						return result;
@@ -275,6 +276,7 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 					pendingJob.snapshot,
 					() => speculativeGeneration,
 					compaction,
+					feedbackSignal,
 				);
 				if (result.applied || result.reason === "stale") {
 					speculativeJob = undefined;
@@ -310,7 +312,13 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 				// the session_before_compact route.
 				if (!(error instanceof SummaryGenerationError)) throw error;
 			}
-			const result = await applyGeneratedCompaction(ctx, snapshot, () => speculativeGeneration, compaction);
+			const result = await applyGeneratedCompaction(
+				ctx,
+				snapshot,
+				() => speculativeGeneration,
+				compaction,
+				feedbackSignal,
+			);
 			endCompactionFeedback(ctx, feedbackSignal, result);
 			return result;
 		} catch (error) {

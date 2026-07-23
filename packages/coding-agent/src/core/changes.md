@@ -17,6 +17,11 @@
   later prompts cannot bypass the same requirement.
 - Next-turn snapshots reapply the live active tools and effective per-run system prompt after asynchronous preparation,
   so a tool removed during the turn is neither advertised nor executable by the following provider request.
+- Required ownership now suppresses only agent-core's post-`agent_end` queue drain, not the run abort signal. Deferred
+  extension dispatch retains the real source signal, so compaction ownership does not masquerade as user cancellation.
+- Retry and fallback admission resolve required compaction first; rejected recovery retains native queues without
+  dispatching a provider retry. Active-tool changes advance the context revision and abort active core compaction so
+  summaries prepared against a prior tool set cannot apply.
 
 ### Why extension system couldn't handle this alone
 

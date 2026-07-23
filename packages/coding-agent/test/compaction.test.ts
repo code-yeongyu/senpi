@@ -1,4 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Tool } from "@earendil-works/pi-ai";
 import type { AssistantMessage, Context, Model, StreamOptions, Usage } from "@earendil-works/pi-ai/compat";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -200,18 +201,22 @@ interface CapturedCompactionHandlers {
 	modelSelect: ModelSelectHandler;
 }
 
-function captureBeforeAgentStartHandler(): BeforeAgentStartHandler {
+function captureBeforeAgentStartHandler(options?: {
+	activeTools?: string[];
+	allTools?: Tool[];
+}): BeforeAgentStartHandler {
 	let handler: BeforeAgentStartHandler | undefined;
-	const api: ExtensionAPI = Object.assign(Object.create(null), {
+	const api = Object.assign(Object.create(null), {
 		on: (event: string, currentHandler: BeforeAgentStartHandler) => {
 			if (event === "before_agent_start") {
 				handler = currentHandler;
 			}
 		},
 		appendEntry: vi.fn(),
-		getActiveTools: () => [],
+		getActiveTools: () => options?.activeTools ?? [],
+		getAllTools: () => options?.allTools ?? [],
 		getThinkingLevel: () => "off" as const,
-	});
+	}) as ExtensionAPI;
 
 	compactionExtension(api);
 	if (!handler) {
@@ -930,6 +935,54 @@ describe("builtin compaction extension threshold regressions", () => {
 
 		// then
 		expect(order).toEqual(["auth-start", "apply-called", "hook-returned"]);
+	});
+
+	it("sends only active registered and MCP tools to blocking compaction summarization", async () => {
+		const handler = captureBeforeAgentStartHandler({
+			activeTools: ["registered_active"],
+			allTools: [
+				{
+					name: "registered_active",
+					description: "Active registered tool",
+					parameters: { type: "object", properties: {} },
+				},
+				{
+					name: "mcp__inactive_server__query",
+					description: "Inactive MCP tool",
+					parameters: { type: "object", properties: {} },
+				},
+			],
+		});
+		const model = createAnthropicModel("claude-tools", 200_000);
+		const branchEntries = [
+			createMessageEntry(createUserMessage("first request")),
+			createMessageEntry(createAssistantMessage("first answer", createMockUsage(4_000, 500))),
+			createMessageEntry(createUserMessage("second request")),
+			createMessageEntry(createAssistantMessage("second answer", createMockUsage(5_000, 500))),
+		];
+		const providerToolNames: string[][] = [];
+		completeMock.mockImplementation(async (_model: Model<string>, context: Context) => {
+			providerToolNames.push((context.tools ?? []).map((tool) => tool.name));
+			return createAssistantMessage("summary constrained to active tools");
+		});
+		const ctx = createExtensionContext({
+			model,
+			sessionManager: Object.assign(Object.create(null), {
+				getEntries: () => branchEntries,
+				getBranch: () => branchEntries,
+			}) as ExtensionContext["sessionManager"],
+			modelRegistry: Object.assign(Object.create(null), {
+				getApiKeyAndHeaders: async () => ({ ok: true as const, apiKey: "test-key" }),
+			}) as ExtensionContext["modelRegistry"],
+			getContextUsage: () => ({ tokens: 190_000, contextWindow: 200_000, percent: 95 }),
+			getCompactionSettings: () => ({ ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 1 }),
+			beginCompaction: () => new AbortController().signal,
+			applyCompaction: async () => ({ applied: true, reason: "ok" }),
+		});
+
+		await handler({ type: "before_agent_start", systemPrompt: "system" }, ctx);
+
+		expect(providerToolNames).toEqual([["registered_active"]]);
 	});
 
 	it("starts compaction feedback before blocking extension summary generation", async () => {

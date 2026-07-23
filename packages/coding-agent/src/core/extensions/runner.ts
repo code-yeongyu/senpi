@@ -1011,7 +1011,7 @@ export class ExtensionRunner {
 			},
 			applyCompaction: (precomputed, options) => {
 				runner.assertActive();
-				return runner.applyCompactionFn(precomputed, options);
+				return runner.applyCompactionFn(precomputed, { ...options, signal: options.signal ?? compactionSignal });
 			},
 			getSystemPrompt: () => {
 				runner.assertActive();
