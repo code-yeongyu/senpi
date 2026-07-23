@@ -12,6 +12,8 @@
 
 ### Changed
 
+- Updated the vendored Codex app-server protocol types to Codex commit `9fc715c0861c956c894a91890b78dc05b304ba29`.
+
 ### Fixed
 
 - Fixed interactive tool-progress durations to use the shared OpenCode-parity formatter.

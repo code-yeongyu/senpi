@@ -657,6 +657,10 @@ export const VERCEL_AI_GATEWAY_MODELS = values as {
 		id: "stepfun/step-3.7-flash";
 		provider: "vercel-ai-gateway";
 	};
+	"tencent/hy3": Model<"anthropic-messages"> & {
+		id: "tencent/hy3";
+		provider: "vercel-ai-gateway";
+	};
 	"thinkingmachines/inkling": Model<"anthropic-messages"> & {
 		id: "thinkingmachines/inkling";
 		provider: "vercel-ai-gateway";

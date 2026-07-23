@@ -10,8 +10,8 @@ const codexCheckoutDir = "/Users/yeongyu/local-workspaces/codex";
 const codexCheckoutGeneratedDir = join(codexCheckoutDir, "codex-rs/app-server-protocol/schema/typescript");
 const protocolVersionPath = join(protocolDir, "PROTOCOL_VERSION.txt");
 const generatorPath = join(process.cwd(), "scripts/generate-app-server-protocol.sh");
-const expectedSha = "0fb559f0f6e231a88ac02ea002d3ecd248e2b515";
-const expectedAuthorDate = "2026-07-18";
+const expectedSha = "9fc715c0861c956c894a91890b78dc05b304ba29";
+const expectedAuthorDate = "2026-07-22";
 const expectedVersion = `codex-git ${expectedSha} (${expectedAuthorDate})`;
 
 function listFiles(dir: string): string[] {

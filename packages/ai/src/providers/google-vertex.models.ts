@@ -37,6 +37,14 @@ export const GOOGLE_VERTEX_MODELS = values as {
 		id: "gemini-3.5-flash";
 		provider: "google-vertex";
 	};
+	"gemini-3.5-flash-lite": Model<"google-vertex"> & {
+		id: "gemini-3.5-flash-lite";
+		provider: "google-vertex";
+	};
+	"gemini-3.6-flash": Model<"google-vertex"> & {
+		id: "gemini-3.6-flash";
+		provider: "google-vertex";
+	};
 	"gemini-flash-latest": Model<"google-vertex"> & {
 		id: "gemini-flash-latest";
 		provider: "google-vertex";

@@ -25,6 +25,10 @@ export const OPENCODE_GO_MODELS = values as {
 		id: "grok-4.5";
 		provider: "opencode-go";
 	};
+	"hy3": Model<"openai-completions"> & {
+		id: "hy3";
+		provider: "opencode-go";
+	};
 	"kimi-k2.6": Model<"openai-completions"> & {
 		id: "kimi-k2.6";
 		provider: "opencode-go";
