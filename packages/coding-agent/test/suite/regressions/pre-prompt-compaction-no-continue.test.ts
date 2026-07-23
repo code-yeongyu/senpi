@@ -13,6 +13,15 @@ function createUsage(totalTokens: number) {
 	};
 }
 
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+	let resolve: (() => void) | undefined;
+	const promise = new Promise<void>((next) => {
+		resolve = next;
+	});
+	if (!resolve) throw new Error("Deferred resolver was not initialized");
+	return { promise, resolve };
+}
+
 describe("pre-prompt compaction regression", () => {
 	const harnesses: Harness[] = [];
 
@@ -212,5 +221,122 @@ describe("pre-prompt compaction regression", () => {
 		});
 		expect(getUserTexts(harness)).toContain(".");
 		expect(harness.faux.state.callCount).toBe(1);
+	});
+
+	it("blocks a queued steer continuation when overflow compaction is rejected", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 10_000, maxTokens: 1_000 }],
+			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async () => ({
+						cancel: true,
+						rejectionCause: "cancelled-by-extension",
+						reason: "forced rejection",
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		const firstTurnStarted = createDeferred();
+		const releaseFirstTurn = createDeferred();
+		harness.setResponses([
+			async () => {
+				firstTurnStarted.resolve();
+				await releaseFirstTurn.promise;
+				// Provider-confirmed overflow: native length stop with zero output and
+				// a full context window (the 40_000-char prompt fills the 10_000 window).
+				return fauxAssistantMessage("", { stopReason: "length" });
+			},
+			fauxAssistantMessage("must not reach provider"),
+		]);
+
+		const promptPromise = harness.session.prompt("x".repeat(40_000));
+		await firstTurnStarted.promise;
+		const steerPromise = harness.session.prompt("steered follow-up", { streamingBehavior: "steer" });
+		releaseFirstTurn.resolve();
+
+		// The steered continuation must reject at turn admission instead of
+		// reaching the provider with the still-overflowing context.
+		await expect(promptPromise).rejects.toThrow(
+			"Context remains above the compaction threshold because compaction did not complete",
+		);
+		await steerPromise;
+		expect(harness.faux.state.callCount).toBe(1);
+		expect(harness.eventsOfType("compaction_end")).toContainEqual(
+			expect.objectContaining({
+				reason: "overflow",
+				accepted: false,
+				rejectionCause: "cancelled-by-extension",
+			}),
+		);
+	});
+
+	it("blocks sendCustomMessage triggerTurn when overflow compaction is rejected below the local threshold", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 10_000, maxTokens: 1_000 }],
+			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 1_000 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async () => ({
+						cancel: true,
+						rejectionCause: "cancelled-by-extension",
+						reason: "forced rejection",
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		const now = Date.now();
+		const model = harness.getModel();
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "earlier prompt" }],
+			timestamp: now - 3000,
+		});
+		harness.sessionManager.appendMessage({
+			...fauxAssistantMessage("earlier response", { timestamp: now - 2000 }),
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: createUsage(50),
+		});
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "previous prompt" }],
+			timestamp: now - 1000,
+		});
+		const overflowAssistant: AssistantMessage = {
+			...fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "context_length_exceeded",
+				timestamp: now - 500,
+			}),
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: createUsage(100),
+		};
+		harness.sessionManager.appendMessage(overflowAssistant);
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		harness.setResponses([fauxAssistantMessage("must not reach provider")]);
+
+		await expect(
+			harness.session.sendCustomMessage(
+				{ customType: "extension-note", content: "trigger a turn", display: true },
+				{ triggerTurn: true },
+			),
+		).rejects.toThrow("Context remains above the compaction threshold because compaction did not complete");
+
+		expect(harness.faux.state.callCount).toBe(0);
+		expect(harness.eventsOfType("compaction_end")).toContainEqual(
+			expect.objectContaining({
+				reason: "overflow",
+				accepted: false,
+				rejectionCause: "cancelled-by-extension",
+			}),
+		);
 	});
 });

@@ -91,7 +91,12 @@ export type { AgentToolResult, AgentToolUpdateCallback, ToolExecutionMode };
 export type ServiceTier = "auto" | "flex" | "priority";
 // biome-ignore format: keep literal union alias consistent with nearby ServiceTier style.
 export type CompactionReason = "manual" | "threshold" | "overflow" | "pre_prompt" | "branch" | "extension";
-export type CompactionRejectionCause = "cancelled-by-extension" | "would-overflow" | "circuit-breaker" | "per-turn-cap";
+export type CompactionRejectionCause =
+	| "cancelled-by-extension"
+	| "would-overflow"
+	| "circuit-breaker"
+	| "per-turn-cap"
+	| "stale-revision";
 
 // ============================================================================
 // UI Context

@@ -6,6 +6,9 @@
 
 - `ExtensionContext` compaction feedback actions now return and accept an optional operation `AbortSignal`, allowing
   progress and terminal feedback from superseded generations to be ignored without breaking existing extensions.
+  A context remembers its `beginCompaction()` signal and supplies it to legacy `updateCompaction()` and
+  `endCompaction()` calls that omit the signal, so an old context cannot end a newer operation.
+- `stale-revision` is a structured compaction rejection cause for a source that changed before durable append.
 - The builtin compaction extension threads that signal through local and remote summary generation and application.
 
 ### Why
