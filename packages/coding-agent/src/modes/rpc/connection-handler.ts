@@ -38,11 +38,18 @@ import type {
 	RpcSessionState,
 	RpcSlashCommand,
 } from "./rpc-types.ts";
+import { SessionExtensionUiRequests } from "./session-extension-ui-requests.ts";
 
 /** Additive per-connection options. Absent = classic default (byte-identical). */
 export interface RpcConnectionOptions {
 	/** Client capability flags from the handshake (e.g. custom_unsupported opt-in). */
 	capabilities?: readonly string[];
+	/** Called instead of requesting process shutdown for a session-owned binding. */
+	shutdownHandler?: () => void;
+	/** Session registries own runtime disposal themselves. */
+	disposeRuntime?: boolean;
+	/** Multi-session routing handle. Absent preserves classic wire output exactly. */
+	sessionId?: string;
 }
 
 /**
@@ -85,17 +92,21 @@ export function createRpcConnectionHandler(
 	options: RpcConnectionOptions = {},
 ): RpcConnectionHandler {
 	const clientCapabilities = options.capabilities;
+	const routingSessionId = options.sessionId;
 	let session = runtimeHost.session;
 	let unsubscribe: (() => void) | undefined;
 	let unsubscribeBackpressure: (() => void) | undefined;
 	const eventOutput = createRpcEventOutputBuffer(sink.writeRaw);
 
+	const tagSessionRecord = <T extends object>(value: T): T | (T & { sessionId: string }) =>
+		routingSessionId === undefined ? value : { ...value, sessionId: routingSessionId };
+
 	const output = (obj: RpcResponse | RpcExtensionUIRequest | object) => {
-		eventOutput.writeImmediate(obj);
+		eventOutput.writeImmediate(tagSessionRecord(obj));
 	};
 
 	const outputEvent = (event: object) => {
-		eventOutput.enqueueEvent(event);
+		eventOutput.enqueueEvent(tagSessionRecord(event));
 	};
 
 	const waitForRpcBackpressure = async (): Promise<void> => {
@@ -119,10 +130,7 @@ export function createRpcConnectionHandler(
 	};
 
 	// Pending extension UI requests waiting for response
-	const pendingExtensionRequests = new Map<
-		string,
-		{ resolve: (value: RpcExtensionUIResponse) => void; reject: (error: Error) => void }
-	>();
+	const pendingExtensionRequests = new SessionExtensionUiRequests();
 
 	let shutdownRequested = false;
 
@@ -398,7 +406,11 @@ export function createRpcConnectionHandler(
 				},
 			},
 			shutdownHandler: () => {
-				shutdownRequested = true;
+				if (options.shutdownHandler) {
+					options.shutdownHandler();
+				} else {
+					shutdownRequested = true;
+				}
 			},
 			onError: (err) => {
 				output({ type: "extension_error", extensionPath: err.extensionPath, event: err.event, error: err.error });
@@ -467,6 +479,17 @@ export function createRpcConnectionHandler(
 		const id = command.id;
 
 		switch (command.type) {
+			case "get_protocol_info":
+				return {
+					id,
+					type: "response",
+					command: "get_protocol_info",
+					success: true,
+					data: { protocolVersion: 1, capabilities: ["multi_session"], mode: "classic" },
+				};
+			case "open_session":
+				return error(id, "open_session", "multi_session_disabled");
+
 			// =================================================================
 			// Prompting
 			// =================================================================
@@ -866,10 +889,10 @@ export function createRpcConnectionHandler(
 			parsed.type === "extension_ui_response"
 		) {
 			const response = parsed as RpcExtensionUIResponse;
-			const pending = pendingExtensionRequests.get(response.id);
-			if (pending) {
-				pendingExtensionRequests.delete(response.id);
-				pending.resolve(response);
+			if (!pendingExtensionRequests.resolve(response) && routingSessionId !== undefined) {
+				// This binding owns exactly one session's request map. A response not
+				// requested here is a routed protocol error, never a cross-session match.
+				output(error(undefined, "extension_ui_response", "unknown_extension_ui_request"));
 			}
 			return;
 		}
@@ -894,11 +917,14 @@ export function createRpcConnectionHandler(
 	};
 
 	const dispose = async (): Promise<void> => {
+		pendingExtensionRequests.close();
 		unsubscribe?.();
 		unsubscribeBackpressure?.();
 		unsubscribe = undefined;
 		unsubscribeBackpressure = undefined;
-		await runtimeHost.dispose();
+		if (options.disposeRuntime !== false) {
+			await runtimeHost.dispose();
+		}
 	};
 
 	// Perform the initial bind synchronously-scheduled so the handler is ready
