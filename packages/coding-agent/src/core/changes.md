@@ -22,6 +22,11 @@
 - Retry and fallback admission resolve required compaction first; rejected recovery retains native queues without
   dispatching a provider retry. Active-tool changes advance the context revision and abort active core compaction so
   summaries prepared against a prior tool set cannot apply.
+- Fallback apply/revert transitions emit typed model-selection events, rebuild model-scoped tools and prompts, abort
+  compaction prepared for the prior model, and re-run required compaction against the selected model's context window
+  before retrying.
+- Message objects are associated with their persisted session-entry order. Compaction-boundary checks use that order
+  (and treat pending `message_end` persistence as post-boundary) instead of relying only on payload timestamps.
 
 ### Why extension system couldn't handle this alone
 

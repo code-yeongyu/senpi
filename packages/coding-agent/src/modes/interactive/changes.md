@@ -1,5 +1,22 @@
 # changes
 
+## accepted-only compaction queue transfer (2026-07-24)
+
+### What changed
+
+- `interactive-mode.ts`: input queued while compaction owns the editor is automatically transferred only after an
+  accepted compaction result. Rejected, failed, or aborted compaction retains the input in the editor-owned queue
+  instead of resubmitting it through the unchanged required-compaction gate and recursively starting compaction.
+
+### Why
+
+- Rejection and cancellation do not create a new admissible context. Automatically replaying the same prompt caused an
+  unbounded compaction-start/rejection/restore loop.
+
+### Expected merge conflict zones
+
+- LOW: `interactive-mode.ts` `compaction_end` handling around `flushCompactionQueue()`.
+
 ## per-section thinking duration headers (2026-07-22)
 
 ### What changed

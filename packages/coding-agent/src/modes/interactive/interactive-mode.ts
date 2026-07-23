@@ -3625,7 +3625,12 @@ export class InteractiveMode {
 						this.chatContainer.addChild(new Text(theme.fg("error", message), 1, 0));
 					}
 				}
-				void this.flushCompactionQueue({ willRetry: event.willRetry });
+				// Only an accepted compaction transfers editor-owned input to the
+				// session. Rejections and aborts retain the draft for an explicit
+				// user retry while the UI cleanup above still always runs.
+				if (event.accepted === true || event.result !== undefined) {
+					void this.flushCompactionQueue({ willRetry: event.willRetry });
+				}
 				this.ui.requestRender();
 				break;
 			}

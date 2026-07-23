@@ -110,6 +110,7 @@ import type {
 	ApplyCompactionResult,
 	CompactionReason,
 	CompactionRejectionCause,
+	ModelSelectSource,
 } from "./extensions/types.ts";
 import { type BashExecutionMessage, type CustomMessage, filterContextExcludedMessages } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
@@ -278,6 +279,7 @@ interface CompactionExecutionRequest {
 	skipAbortedCheck?: boolean;
 	lastAssistantMessage?: AgentMessage;
 	precomputed?: CompactionResult;
+	allowSummaryOnly?: boolean;
 	agentMessagesAtStart?: readonly AgentMessage[];
 }
 
@@ -512,6 +514,12 @@ export class AgentSession {
 	private readonly _sessionWorkBarrier = new SessionWorkBarrier();
 	private _overflowRecoveryAttempted = false;
 	private _requiredCompactionAdmissionError: RequiredCompactionError | undefined;
+	// A retry continuation immediately follows an accepted compaction. Its first
+	// response must not retrigger threshold compaction from stale provider usage.
+	private _skipNextPostRetryCompactionCheck = false;
+	private _blockedPostCompactionAssistant: { assistant: AssistantMessage; revision: number } | undefined;
+	private _skipNextPostCompactionAssistantCheck = false;
+	private readonly _assistantsPendingAtCompaction = new WeakSet<AssistantMessage>();
 	private _messageRevision = 0;
 
 	// Branch summarization state
@@ -612,8 +620,9 @@ export class AgentSession {
 					persistDefault: false,
 					appendSessionEntry: true,
 					entryReason: reason,
-					emitModelSelect: reason === "fallback-revert",
-					invalidateCompaction: false,
+					emitModelSelect: true,
+					modelSelectSource: reason,
+					invalidateCompaction: true,
 					ephemeralThinkingLevel: thinking,
 				});
 			},
@@ -872,6 +881,7 @@ export class AgentSession {
 
 	private _incrementMessageRevision(): void {
 		this._messageRevision++;
+		this._blockedPostCompactionAssistant = undefined;
 	}
 
 	getMessageRevision(): number {
@@ -1057,6 +1067,7 @@ export class AgentSession {
 	 * runs, so only this preflight can transfer required admissions safely.
 	 */
 	private _getRequiredAutoCompactionReason(message: AssistantMessage): "overflow" | "threshold" | undefined {
+		if (this._skipNextPostRetryCompactionCheck) return undefined;
 		const settings = this.settingsManager.getCompactionSettings();
 		if (!settings.enabled || message.stopReason === "aborted") {
 			return undefined;
@@ -1096,7 +1107,7 @@ export class AgentSession {
 			if (
 				compactionEntry &&
 				usageMessage?.role === "assistant" &&
-				usageMessage.timestamp <= new Date(compactionEntry.timestamp).getTime()
+				this._isAssistantFromBeforeLatestCompaction(usageMessage)
 			) {
 				return undefined;
 			}
@@ -1271,8 +1282,9 @@ export class AgentSession {
 			}
 		}
 
-		// Check auto-retry and auto-compaction after agent completes
+		// Check auto-retry and auto-compaction after agent completes.
 		let launchedContinuation = false;
+		let retryContinuationBlocked = false;
 		const userAbortSuppressedQueuedContinuation =
 			event.type === "agent_end" && this._suppressQueuedContinuationAfterUserAbort;
 		if (userAbortSuppressedQueuedContinuation) {
@@ -1285,60 +1297,65 @@ export class AgentSession {
 		if (event.type === "agent_end" && this._lastAssistantMessage) {
 			const msg = this._lastAssistantMessage;
 			this._lastAssistantMessage = undefined;
-			const requiredAutoCompaction = this._getRequiredAutoCompactionReason(msg);
+			const skipPostRetryCompaction = this._skipNextPostRetryCompactionCheck;
+			this._skipNextPostRetryCompactionCheck = false;
+			const requiredAutoCompaction = skipPostRetryCompaction
+				? undefined
+				: this._getRequiredAutoCompactionReason(msg);
 
 			// Retry transient failures normally and eligible hard errors only through a fallback.
 			const retryableError = this._isRetryableError(msg);
 			const hardErrorFallbackEligible = this._isHardErrorFallbackEligible(msg);
 			const retryCanAdmitProvider =
 				this.settingsManager.getRetrySettings().enabled && (retryableError || hardErrorFallbackEligible);
-			let retryCompactionRejected = false;
 			let compactedBeforeRetry = false;
 			if (retryCanAdmitProvider && requiredAutoCompaction) {
-				try {
-					compactedBeforeRetry = await this._enforceCompactionBeforeProvider(msg, true, "threshold", true);
-				} catch (error) {
-					if (error instanceof RequiredCompactionError) {
-						retryCompactionRejected = true;
-					} else {
-						throw error;
-					}
-				}
+				this._retireFailedRetryAssistant(msg);
+				compactedBeforeRetry = await this._runPrePromptCompaction(msg, true, "threshold", true);
+				retryContinuationBlocked = !compactedBeforeRetry;
 			}
 
-			let didRetry = false;
-			if (!retryCompactionRejected) {
+			let retryOutcome: "continued" | "blocked" | "not-handled" = "not-handled";
+			if (!retryContinuationBlocked) {
 				if (retryableError) {
-					didRetry = await this._handleRetryableError(msg);
+					retryOutcome = await this._handleRetryableError(msg);
 				} else if (hardErrorFallbackEligible) {
-					didRetry = await this._handleRetryableError(msg, { hardErrorFallback: true });
+					retryOutcome = await this._handleRetryableError(msg, { hardErrorFallback: true });
 				}
 			}
-			if (didRetry) return; // Retry was initiated, don't proceed to compaction
+			if (retryOutcome === "continued") return;
 
 			this._resolveRetry();
-			if (compactedBeforeRetry && this.agent.hasQueuedMessages()) {
-				this._scheduleContinuationAfterCurrentEvent();
-				launchedContinuation = true;
-			} else if (!retryCompactionRejected) {
-				launchedContinuation = await this._checkCompaction(msg);
-				// _runAutoCompaction() returns false both when recovery was rejected and
-				// when an accepted compaction had no queue to continue. Re-sample after
-				// it settles so only the still-required (rejected) case fails admission.
-				if (
-					requiredAutoCompaction &&
-					!launchedContinuation &&
-					this.agent.hasQueuedMessages() &&
-					this._getRequiredAutoCompactionReason(msg) !== undefined
-				) {
-					this._requiredCompactionAdmissionError = new RequiredCompactionError();
+			retryContinuationBlocked ||= retryOutcome === "blocked";
+			if (!retryContinuationBlocked && !skipPostRetryCompaction) {
+				if (compactedBeforeRetry && this.agent.hasQueuedMessages()) {
+					this._scheduleContinuationAfterCurrentEvent();
+					launchedContinuation = true;
+				} else {
+					launchedContinuation = await this._checkCompaction(msg);
+					// _runAutoCompaction() returns false both when recovery was rejected and
+					// when an accepted compaction had no queue to continue. Re-sample after
+					// it settles so only the still-required (rejected) case fails admission.
+					if (
+						requiredAutoCompaction &&
+						!launchedContinuation &&
+						this.agent.hasQueuedMessages() &&
+						this._getRequiredAutoCompactionReason(msg) !== undefined
+					) {
+						this._requiredCompactionAdmissionError = new RequiredCompactionError();
+					}
 				}
 			}
 		}
 
 		if (event.type === "agent_end") {
 			this._flushPendingBashMessages();
-			if (!launchedContinuation && allowsQueuedContinuation && this.agent.hasQueuedMessages()) {
+			if (
+				!launchedContinuation &&
+				!retryContinuationBlocked &&
+				allowsQueuedContinuation &&
+				this.agent.hasQueuedMessages()
+			) {
 				this._scheduleContinuationAfterCurrentEvent();
 				launchedContinuation = true;
 			}
@@ -1378,9 +1395,47 @@ export class AgentSession {
 		return undefined;
 	}
 
+	/**
+	 * Retry failures stay in append-only history but must not be retained in the
+	 * active context branch. Otherwise split-turn compaction keeps the failed
+	 * assistant response verbatim and cannot make progress before a retry.
+	 */
+	private _retireFailedRetryAssistant(message: AssistantMessage): void {
+		const position = this.sessionManager.getMessageEntryPosition(message);
+		if (!position || this.sessionManager.getLeafId() !== position.entryId) return;
+		const entry = this.sessionManager.getEntry(position.entryId);
+		if (entry?.type !== "message") return;
+
+		if (entry.parentId === null) {
+			this.sessionManager.resetLeaf();
+		} else {
+			this.sessionManager.branch(entry.parentId);
+		}
+		const messageIndex = this.agent.state.messages.lastIndexOf(message);
+		if (messageIndex !== -1) {
+			this.agent.state.messages = this.agent.state.messages.slice(0, messageIndex);
+		}
+		this._incrementMessageRevision();
+	}
+
 	private _isAssistantFromBeforeLatestCompaction(assistantMessage: AssistantMessage): boolean {
 		const compactionEntry = getLatestCompactionEntry(this.sessionManager.getBranch());
-		return compactionEntry !== null && assistantMessage.timestamp <= new Date(compactionEntry.timestamp).getTime();
+		if (compactionEntry === null) return false;
+
+		// An agent message_end can still be awaiting persistence while compaction
+		// commits. It is necessarily a post-boundary message, even when a provider
+		// supplied an older payload timestamp.
+		if (this._messageEndsAwaitingPersistence.has(assistantMessage)) return false;
+
+		const messagePosition = this.sessionManager.getMessageEntryPosition(assistantMessage);
+		const compactionOrder = this.sessionManager.getEntryOrder(compactionEntry.id);
+		if (messagePosition !== undefined && compactionOrder !== undefined) {
+			return messagePosition.order <= compactionOrder;
+		}
+
+		// Reloaded/reconstructed messages have no runtime identity. Retain the
+		// historical timestamp heuristic only for that compatibility path.
+		return assistantMessage.timestamp <= new Date(compactionEntry.timestamp).getTime();
 	}
 
 	private _replaceMessageInPlace(target: AgentMessage, replacement: AgentMessage): void {
@@ -2538,7 +2593,7 @@ export class AgentSession {
 	private async _emitModelSelect(
 		nextModel: Model<any>,
 		previousModel: Model<any> | undefined,
-		source: "set" | "cycle" | "restore",
+		source: ModelSelectSource,
 	): Promise<SystemPromptChangeEvent | undefined> {
 		if (!this._modelSelectionChangesContext(previousModel, nextModel)) return undefined;
 		const result = await this._extensionRunner.emitModelSelect({
@@ -2613,6 +2668,7 @@ export class AgentSession {
 			persistDefault: updateGlobalDefaults,
 			appendSessionEntry: true,
 			emitModelSelect: true,
+			modelSelectSource: "set",
 			invalidateCompaction: true,
 		});
 	}
@@ -2633,6 +2689,7 @@ export class AgentSession {
 			appendSessionEntry: boolean;
 			entryReason?: "fallback" | "fallback-revert";
 			emitModelSelect: boolean;
+			modelSelectSource: ModelSelectSource;
 			invalidateCompaction: boolean;
 			ephemeralThinkingLevel?: ThinkingLevel;
 		},
@@ -2668,7 +2725,7 @@ export class AgentSession {
 		}
 
 		if (!opts.emitModelSelect) return undefined;
-		return await this._emitModelSelect(model, previousModel, "set");
+		return await this._emitModelSelect(model, previousModel, opts.modelSelectSource);
 	}
 
 	private _applyEphemeralThinkingLevel(level: ThinkingLevel): void {
@@ -3076,7 +3133,12 @@ export class AgentSession {
 			let fromExtension = request.precomputed !== undefined;
 
 			if (!compactionResult) {
-				const preparation = prepareCompaction(pathEntries, settings, request.reason === "overflow");
+				const preparation = prepareCompaction(
+					pathEntries,
+					settings,
+					request.reason === "overflow",
+					request.allowSummaryOnly,
+				);
 
 				if (!preparation) {
 					const lastEntry = pathEntries[pathEntries.length - 1];
@@ -3201,6 +3263,12 @@ export class AgentSession {
 				}
 			}
 			const preservedPendingMessages = currentAgentMessages.filter((message) => preservedIdentities.delete(message));
+			this._skipNextPostCompactionAssistantCheck = true;
+			for (const message of preservedPendingMessages) {
+				if (message.role === "assistant") {
+					this._assistantsPendingAtCompaction.add(message);
+				}
+			}
 			this.agent.state.messages = [...sessionContext.messages, ...preservedPendingMessages];
 			compactionResult.estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
 			this._incrementMessageRevision();
@@ -3401,6 +3469,20 @@ export class AgentSession {
 		inlineReason: "pre_prompt" | "threshold",
 		retryAfterCompaction = false,
 	): Promise<boolean> {
+		const blockedAdmission = this._blockedPostCompactionAssistant;
+		if (
+			blockedAdmission !== undefined &&
+			blockedAdmission.assistant === assistantMessage &&
+			blockedAdmission.revision === this._messageRevision
+		) {
+			throw new RequiredCompactionError();
+		}
+
+		const settings = this.settingsManager.getCompactionSettings();
+		const model = this.model;
+		const contextTokens = estimateContextTokens(
+			filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
+		).tokens;
 		const compacted = assistantMessage
 			? await this._checkCompaction(assistantMessage, skipAbortedCheck, inlineReason, retryAfterCompaction)
 			: false;
@@ -3408,11 +3490,7 @@ export class AgentSession {
 			return compacted;
 		}
 
-		const settings = this.settingsManager.getCompactionSettings();
-		const contextTokens = estimateContextTokens(
-			filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
-		).tokens;
-		if (!settings.enabled || !this.model || !shouldCompact(contextTokens, this.model.contextWindow, settings)) {
+		if (!settings.enabled || !model || !shouldCompact(contextTokens, model.contextWindow, settings)) {
 			return false;
 		}
 
@@ -3468,6 +3546,15 @@ export class AgentSession {
 		if (this._isAssistantFromBeforeLatestCompaction(assistantMessage)) {
 			return false;
 		}
+		if (this._skipNextPostCompactionAssistantCheck) {
+			this._skipNextPostCompactionAssistantCheck = false;
+			// The first ordinary post-compaction response can still report stale
+			// provider usage. An active overflow recovery is different: its retry
+			// response must be checked so the one-retry cap can terminate it.
+			if (!this._assistantsPendingAtCompaction.has(assistantMessage) && !this._overflowRecoveryAttempted) {
+				return false;
+			}
+		}
 
 		// Case 1: Overflow - LLM returned context overflow error.
 		// If the saved assistant provider differs from the currently selected provider alias,
@@ -3481,7 +3568,18 @@ export class AgentSession {
 			const willRetry = retryAfterCompaction || assistantMessage.stopReason !== "stop";
 
 			if (!willRetry) {
-				return await this._runAutoCompaction("overflow", false);
+				const compacted = await this._runAutoCompaction("overflow", false);
+				if (
+					!compacted &&
+					this._compactionLifecycle.state.status === "failed" &&
+					getLatestCompactionEntry(this.sessionManager.getBranch()) !== null
+				) {
+					this._blockedPostCompactionAssistant = {
+						assistant: assistantMessage,
+						revision: this._messageRevision,
+					};
+				}
+				return compacted;
 			}
 
 			if (this._overflowRecoveryAttempted) {
@@ -3547,7 +3645,7 @@ export class AgentSession {
 				if (
 					compactionEntry &&
 					usageMsg.role === "assistant" &&
-					(usageMsg as AssistantMessage).timestamp <= new Date(compactionEntry.timestamp).getTime()
+					this._isAssistantFromBeforeLatestCompaction(usageMsg)
 				) {
 					return false;
 				}
@@ -3563,7 +3661,18 @@ export class AgentSession {
 					retryAfterCompaction,
 				);
 			} else {
-				return await this._runAutoCompaction("threshold", false);
+				const compacted = await this._runAutoCompaction("threshold", false);
+				if (
+					!compacted &&
+					this._compactionLifecycle.state.status === "failed" &&
+					getLatestCompactionEntry(this.sessionManager.getBranch()) !== null
+				) {
+					this._blockedPostCompactionAssistant = {
+						assistant: assistantMessage,
+						revision: this._messageRevision,
+					};
+				}
+				return compacted;
 			}
 		}
 		return false;
@@ -3574,6 +3683,7 @@ export class AgentSession {
 		skipAbortedCheck: boolean,
 		reason: "pre_prompt" | "overflow" | "threshold" = "pre_prompt",
 		willRetry = false,
+		allowSummaryOnly = false,
 	): Promise<boolean> {
 		this._emit({ type: "compaction_start", reason });
 		const controller = new AbortController();
@@ -3585,6 +3695,7 @@ export class AgentSession {
 				willRetry,
 				lastAssistantMessage,
 				skipAbortedCheck,
+				allowSummaryOnly,
 			});
 			if (!execution.accepted && isContextOverflow(lastAssistantMessage, this.model?.contextWindow ?? 0)) {
 				this._overflowRecoveryAttempted = false;
@@ -4350,16 +4461,16 @@ export class AgentSession {
 
 	/**
 	 * Handle retryable errors with exponential backoff.
-	 * @returns true if retry was initiated, false if max retries exceeded or disabled
+	 * @returns whether retry continuation started, was blocked by compaction, or was not handled
 	 */
 	private async _handleRetryableError(
 		message: AssistantMessage,
 		options: { hardErrorFallback?: boolean } = {},
-	): Promise<boolean> {
+	): Promise<"continued" | "blocked" | "not-handled"> {
 		const settings = this.settingsManager.getRetrySettings();
 		if (!settings.enabled) {
 			this._resolveRetry();
-			return false;
+			return "not-handled";
 		}
 
 		// Retry promise is created synchronously in _handleAgentEvent for agent_end.
@@ -4379,7 +4490,7 @@ export class AgentSession {
 			switchedFallback = await this._retryFallback.tryFallback("hard-error", { errorMessage });
 			if (!switchedFallback) {
 				this._resolveRetry();
-				return false;
+				return "not-handled";
 			}
 			// The fallback starts fresh; the failed model's transient attempts do not carry over.
 			this._retryAttempt = 1;
@@ -4388,7 +4499,7 @@ export class AgentSession {
 			// same-model retries or the transient over-budget fallback escape hatch.
 			if (this._retryAttempt + 1 > settings.maxRetries) {
 				this._resolveRetry();
-				return false;
+				return "not-handled";
 			}
 			switchedFallback = await this._retryFallback.tryFallback("refusal", {});
 			if (!switchedFallback) {
@@ -4397,7 +4508,7 @@ export class AgentSession {
 					this._emit({ type: "retry_fallback_exhausted", chainKey: exhaustedChainKey, lastError: errorMessage });
 				}
 				this._resolveRetry();
-				return false;
+				return "not-handled";
 			}
 			this._retryAttempt++;
 		} else {
@@ -4427,7 +4538,7 @@ export class AgentSession {
 					});
 					this._retryAttempt = 0;
 					this._resolveRetry();
-					return false;
+					return "not-handled";
 				}
 			}
 		}
@@ -4443,7 +4554,7 @@ export class AgentSession {
 			});
 			this._retryAttempt = 0;
 			this._resolveRetry();
-			return false;
+			return "not-handled";
 		}
 
 		if (!switchedFallback) {
@@ -4487,13 +4598,41 @@ export class AgentSession {
 				finalError: "Retry cancelled",
 			});
 			this._resolveRetry();
-			return false;
+			return "not-handled";
 		}
 		this._retryAbortController = undefined;
 
 		// Turn boundary: a suppression that expired during the backoff sleep lets
 		// the retry continue on the restored primary instead of the fallback model.
 		await this._maybeRestoreFallbackPrimary();
+
+		// Model fallback (or reversion) can select a smaller context window after
+		// the prior retry checks. Revalidate canonical session context immediately
+		// before the continuation so a rejected compaction never admits that model.
+		const model = this.model;
+		const compactionSettings = this.settingsManager.getCompactionSettings();
+		const contextTokens = estimateContextTokens(
+			filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
+		).tokens;
+		if (
+			compactionSettings.enabled &&
+			model &&
+			shouldCompact(contextTokens, model.contextWindow, compactionSettings)
+		) {
+			if (!(await this._runPrePromptCompaction(message, true, "threshold", true, true))) {
+				const attempt = this._retryAttempt;
+				this._retryAttempt = 0;
+				this._emit({
+					type: "auto_retry_end",
+					success: false,
+					attempt,
+					finalError: new RequiredCompactionError().message,
+				});
+				this._resolveRetry();
+				return "blocked";
+			}
+			this._skipNextPostRetryCompactionCheck = true;
+		}
 
 		// Retry via continue() - use setTimeout to break out of event handler chain
 		setTimeout(() => {
@@ -4502,7 +4641,7 @@ export class AgentSession {
 			});
 		}, 0);
 
-		return true;
+		return "continued";
 	}
 
 	/**
