@@ -336,6 +336,8 @@ export interface CompactOptions {
 export interface ApplyCompactionOptions {
 	reason: CompactionReason;
 	expectedRevision?: number;
+	/** The feedback operation that owns this apply, when one was begun. */
+	signal?: AbortSignal;
 }
 
 export type ApplyCompactionResult = { applied: true; reason: "ok" } | { applied: false; reason: "stale" | "rejected" };

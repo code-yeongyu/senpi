@@ -547,6 +547,42 @@ describe("Agent", () => {
 		expect(() => agent.abort()).not.toThrow();
 	});
 
+	it("retains agent_end queues without aborting when drain suppression is requested", async () => {
+		let providerCalls = 0;
+		let agentEndSignal: AbortSignal | undefined;
+		const agent = new Agent({
+			streamFn: () => {
+				providerCalls++;
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					stream.push({
+						type: "done",
+						reason: "stop",
+						message: createAssistantMessage(`response ${providerCalls}`),
+					});
+				});
+				return stream;
+			},
+		});
+		agent.subscribe((event, signal) => {
+			if (event.type !== "agent_end" || providerCalls !== 1) return;
+			agentEndSignal = signal;
+			agent.followUp({ role: "user", content: "deferred follow-up", timestamp: Date.now() });
+			agent.suppressQueuedMessageDrain();
+		});
+
+		await agent.prompt("first prompt");
+
+		expect(agentEndSignal?.aborted).toBe(false);
+		expect(agent.hasQueuedMessages()).toBe(true);
+		expect(providerCalls).toBe(1);
+
+		await agent.continue();
+
+		expect(agent.hasQueuedMessages()).toBe(false);
+		expect(providerCalls).toBe(2);
+	});
+
 	it("should throw when prompt() called while streaming", async () => {
 		let abortSignal: AbortSignal | undefined;
 		const agent = new Agent({

@@ -723,4 +723,192 @@ describe("pre-prompt compaction regression", () => {
 		).rejects.toThrow("Context remains above the compaction threshold because compaction did not complete");
 		expect(harness.faux.state.callCount).toBe(1);
 	});
+
+	it.each([
+		{
+			label: "silent overflow",
+			contextWindow: 10_000,
+			reserveTokens: 0,
+			prompt: "x".repeat(44_000),
+			reason: "overflow",
+		},
+		{
+			label: "threshold",
+			contextWindow: 13_000,
+			reserveTokens: 3_000,
+			prompt: "x".repeat(38_000),
+			reason: "threshold",
+		},
+	])("keeps the agent signal live for a signal-aware $label agent_end continuation", async (scenario) => {
+		const observedAbortStates: boolean[] = [];
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: scenario.contextWindow, maxTokens: 1_000 }],
+			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: scenario.reserveTokens } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => ({
+						compaction: {
+							summary: `${scenario.label} signal summary`,
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+							details: {},
+						},
+					}));
+				},
+				(pi) => {
+					let queued = false;
+					pi.on("agent_end", (_event, ctx) => {
+						observedAbortStates.push(ctx.signal?.aborted ?? false);
+						if (queued || ctx.signal?.aborted) return;
+						queued = true;
+						pi.sendUserMessage("signal-aware continuation", { deliverAs: "followUp" });
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(`${scenario.label} answer`),
+			fauxAssistantMessage("continuation answer"),
+		]);
+
+		await harness.session.prompt(scenario.prompt);
+		await harness.session.waitForSettledSessionWork();
+
+		expect(observedAbortStates[0]).toBe(false);
+		expect(harness.eventsOfType("compaction_end")).toContainEqual(
+			expect.objectContaining({ reason: scenario.reason, accepted: true }),
+		);
+		expect(harness.faux.state.callCount).toBe(2);
+		expect(getUserTexts(harness)).toContain("signal-aware continuation");
+		expect(getAssistantTexts(harness)).toContain("continuation answer");
+	});
+
+	it("still exposes genuine user cancellation to an agent_end handler", async () => {
+		const providerStarted = createDeferred();
+		const releaseProvider = createDeferred();
+		const observedAbortStates: boolean[] = [];
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("agent_end", (_event, ctx) => {
+						observedAbortStates.push(ctx.signal?.aborted ?? false);
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			async () => {
+				providerStarted.resolve();
+				await releaseProvider.promise;
+				return fauxAssistantMessage("cancelled response");
+			},
+		]);
+
+		const prompt = harness.session.prompt("wait for cancellation");
+		await providerStarted.promise;
+		const abort = harness.session.abort();
+		releaseProvider.resolve();
+		await abort;
+		await prompt;
+		await harness.session.waitForSettledSessionWork();
+
+		expect(observedAbortStates).toContain(true);
+	});
+
+	it("rejects both normal and custom admissions after an oversized custom message follows accepted compaction", async () => {
+		let compactionRequests = 0;
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 5_000, maxTokens: 1_000 }],
+			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 1_000 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async () => {
+						compactionRequests++;
+						return {
+							cancel: true,
+							rejectionCause: "cancelled-by-extension",
+							reason: "reject follow-up compaction",
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		const now = Date.now();
+		const model = harness.getModel();
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "context before compaction" }],
+			timestamp: now - 1_000,
+		});
+		harness.sessionManager.appendMessage({
+			...fauxAssistantMessage("retained assistant", { timestamp: now - 500 }),
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: createUsage(100),
+		});
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		const retainedAssistant = harness.sessionManager.getEntries().at(-1);
+		if (retainedAssistant?.type !== "message") {
+			throw new Error("Expected an assistant entry to retain after compaction");
+		}
+
+		await expect(
+			harness.session.applyCompaction(
+				{
+					summary: "accepted baseline summary",
+					firstKeptEntryId: retainedAssistant.id,
+					tokensBefore: 100,
+				},
+				{ reason: "extension", expectedRevision: harness.session.getMessageRevision() },
+			),
+		).resolves.toEqual({ applied: true, reason: "ok" });
+
+		const oversizedCustomContent = "oversized custom state ".repeat(2_000);
+		await harness.session.sendCustomMessage({
+			customType: "oversized-post-compaction-state",
+			content: oversizedCustomContent,
+			display: true,
+		});
+		harness.setResponses([
+			fauxAssistantMessage("normal provider must not run"),
+			fauxAssistantMessage("custom provider must not run"),
+		]);
+
+		const normalError = await harness.session.prompt("normal admission").then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		const customError = await harness.session
+			.sendCustomMessage(
+				{ customType: "custom-trigger", content: "custom admission", display: true },
+				{ triggerTurn: true },
+			)
+			.then(
+				() => undefined,
+				(error: unknown) => error,
+			);
+
+		expect(normalError).toBeInstanceOf(Error);
+		expect((normalError as Error).message).toContain(
+			"Context remains above the compaction threshold because compaction did not complete",
+		);
+		expect(customError).toBeInstanceOf(Error);
+		expect((customError as Error).message).toContain(
+			"Context remains above the compaction threshold because compaction did not complete",
+		);
+		expect(compactionRequests).toBe(2);
+		expect(harness.faux.state.callCount).toBe(0);
+		expect(harness.session.messages).toContainEqual(
+			expect.objectContaining({
+				role: "custom",
+				customType: "oversized-post-compaction-state",
+				content: oversizedCustomContent,
+			}),
+		);
+	});
 });

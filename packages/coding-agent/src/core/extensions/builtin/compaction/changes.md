@@ -1,5 +1,16 @@
 # Builtin compaction extension changes
 
+## Active-tool-only summarization requests (2026-07-23)
+
+- `index.ts`: direct local summarization requests now map the current active tool names to registered definitions.
+  Inactive registered tools, including inactive MCP catalog entries, no longer consume remote compaction payload
+  budget or appear as callable tools to the summarizer.
+- Applied speculative summaries carry their handler's feedback signal, allowing core to reject a superseded apply
+  before durable session mutation.
+
+Expected upstream conflict zones: `builtin/compaction/index.ts` tool snapshot construction and
+`builtin/compaction/speculative.ts` apply path.
+
 ## Session-owned compaction completion state (2026-07-23)
 
 - AgentSession now records compaction as `idle`, `running`, `completed`, `failed`, or `aborted` with a monotonic

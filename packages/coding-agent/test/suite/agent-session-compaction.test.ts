@@ -1,4 +1,4 @@
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, PrepareNextTurnContext } from "@earendil-works/pi-agent-core";
 import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
@@ -71,6 +71,49 @@ function createUsage(totalTokens: number) {
 		totalTokens,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
+}
+
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+	let resolve: (() => void) | undefined;
+	const promise = new Promise<void>((next) => {
+		resolve = next;
+	});
+	if (!resolve) throw new Error("Deferred resolver was not initialized");
+	return { promise, resolve };
+}
+
+function bypassFirstPrePromptCompaction(harness: Harness): void {
+	const original = Reflect.get(harness.session, "_enforceCompactionBeforeProvider");
+	if (typeof original !== "function") {
+		throw new Error("AgentSession._enforceCompactionBeforeProvider is not available for retry characterization");
+	}
+	let bypassed = false;
+	Reflect.set(harness.session, "_enforceCompactionBeforeProvider", async (...args: unknown[]) => {
+		if (!bypassed) {
+			bypassed = true;
+			return false;
+		}
+		return await original.apply(harness.session, args);
+	});
+}
+
+function seedSuccessfulContextAboveThreshold(harness: Harness): void {
+	const model = harness.getModel();
+	const timestamp = Date.now() - 1_000;
+	harness.sessionManager.appendMessage({
+		role: "user",
+		content: [{ type: "text", text: "successful context seed" }],
+		timestamp: timestamp - 1,
+	});
+	harness.sessionManager.appendMessage(
+		createAssistant(harness, {
+			text: "successful response before retryable failure",
+			stopReason: "stop",
+			totalTokens: (model.contextWindow ?? 10_000) - 999,
+			timestamp,
+		}),
+	);
+	harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
 }
 
 function createAssistant(
@@ -605,6 +648,70 @@ describe("AgentSession compaction characterization", () => {
 		expect(callbackContexts[0]).not.toContain("callback prior context ");
 	});
 
+	it("retains a constructor next-turn context transform in the provider request after compaction", async () => {
+		const largeToolResult = "transformed callback tool output ".repeat(300);
+		const compactionSummary = "transform-before-next-turn summary";
+		const injectedMarker = "INJECTED_NEXT_TURN_CONTEXT";
+		const callbackInputs: string[] = [];
+		let continuationRequest = "";
+		const prepareNextTurnWithContext = vi.fn(async (turn: PrepareNextTurnContext) => {
+			callbackInputs.push(JSON.stringify(turn.context.messages));
+			return {
+				context: {
+					...turn.context,
+					messages: [
+						{
+							role: "user" as const,
+							content: [{ type: "text" as const, text: injectedMarker }],
+							timestamp: Date.now(),
+						},
+						...turn.context.messages.filter((message) => message.role !== "compactionSummary").reverse(),
+					],
+				},
+			};
+		});
+		const harness = await createHarness({
+			settings: {
+				compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 1_000 },
+				retry: { enabled: false },
+			},
+			models: [{ id: "faux-1", contextWindow: 5_000 }],
+			extensionFactories: [createResultToolExtension(largeToolResult, compactionSummary)],
+			prepareNextTurnWithContext,
+		});
+		harnesses.push(harness);
+		const timestamp = Date.now() - 2_000;
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "transform prior context ".repeat(220) }],
+			timestamp,
+		});
+		harness.sessionManager.appendMessage(
+			createAssistant(harness, {
+				text: "prior response",
+				stopReason: "stop",
+				totalTokens: 700,
+				timestamp: timestamp + 1_000,
+			}),
+		);
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("large_result", {}), { stopReason: "toolUse" }),
+			(context) => {
+				continuationRequest = JSON.stringify(context.messages);
+				return fauxAssistantMessage("done after transformed callback");
+			},
+		]);
+
+		await harness.session.prompt("run the transformed callback result tool");
+
+		expect(prepareNextTurnWithContext).toHaveBeenCalled();
+		expect(callbackInputs).toContainEqual(expect.stringContaining(compactionSummary));
+		expect(continuationRequest).toContain(injectedMarker);
+		expect(continuationRequest).not.toContain(compactionSummary);
+		expect(continuationRequest.indexOf(injectedMarker)).toBeLessThan(continuationRequest.indexOf(largeToolResult));
+	});
+
 	it("applies the provider context transform to inline compaction summarization", async () => {
 		// given
 		const sensitiveToolOutput = "SENSITIVE_TOOL_OUTPUT";
@@ -968,6 +1075,100 @@ describe("AgentSession compaction characterization", () => {
 		await vi.advanceTimersByTimeAsync(100);
 
 		expect(continueSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it("compacts a retryable zero-usage error before retrying when the prior context is above threshold", async () => {
+		let acceptedCompactionsAtRetryProviderCall = 0;
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 10_000, maxTokens: 1_000 }],
+			settings: {
+				compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 1_000 },
+				retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 },
+			},
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => ({
+						compaction: {
+							summary: "retry threshold summary",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+							details: {},
+						},
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedSuccessfulContextAboveThreshold(harness);
+		bypassFirstPrePromptCompaction(harness);
+		harness.setResponses([
+			createAssistant(harness, { stopReason: "error", errorMessage: "overloaded_error", totalTokens: 0 }),
+			() => {
+				acceptedCompactionsAtRetryProviderCall = harness
+					.eventsOfType("compaction_end")
+					.filter((event) => event.reason === "threshold" && event.accepted).length;
+				return fauxAssistantMessage("retry succeeded after compaction");
+			},
+		]);
+
+		await harness.session.prompt("trigger zero-usage retryable failure");
+
+		expect(harness.faux.state.callCount).toBe(2);
+		expect(acceptedCompactionsAtRetryProviderCall).toBe(1);
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(1);
+	});
+
+	it("retains queues and skips the retry provider call when required retry compaction is rejected", async () => {
+		const providerStarted = createDeferred();
+		const releaseError = createDeferred();
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 10_000, maxTokens: 1_000 }],
+			settings: {
+				compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 1_000 },
+				retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 },
+			},
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async () => ({
+						cancel: true,
+						rejectionCause: "cancelled-by-extension",
+						reason: "retry compaction rejected",
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedSuccessfulContextAboveThreshold(harness);
+		bypassFirstPrePromptCompaction(harness);
+		harness.setResponses([
+			async () => {
+				providerStarted.resolve();
+				await releaseError.promise;
+				return createAssistant(harness, {
+					stopReason: "error",
+					errorMessage: "overloaded_error",
+					totalTokens: 0,
+				});
+			},
+			fauxAssistantMessage("retry provider must not run"),
+		]);
+
+		const prompt = harness.session.prompt("trigger rejected retry compaction");
+		await providerStarted.promise;
+		await harness.session.followUp("retain retry follow-up");
+		releaseError.resolve();
+		await prompt;
+
+		expect(harness.eventsOfType("compaction_end")).toContainEqual(
+			expect.objectContaining({
+				reason: "threshold",
+				accepted: false,
+				rejectionCause: "cancelled-by-extension",
+			}),
+		);
+		expect(harness.faux.state.callCount).toBe(1);
+		expect(harness.session.getFollowUpMessages()).toEqual(["retain retry follow-up"]);
+		expect(harness.session.agent.hasQueuedMessages()).toBe(true);
 	});
 
 	it("does not retry overflow recovery more than once", async () => {

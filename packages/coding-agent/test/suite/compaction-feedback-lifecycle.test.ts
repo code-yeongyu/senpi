@@ -419,4 +419,67 @@ describe("compaction feedback lifecycle", () => {
 			expect.objectContaining({ reason: "extension", errorMessage: "B ended itself" }),
 		]);
 	});
+
+	it("rejects A's stale apply after B supersedes feedback from the same emission", async () => {
+		let captureContexts = false;
+		let contextA: ExtensionContext | undefined;
+		let contextB: ExtensionContext | undefined;
+		let signalA: AbortSignal | undefined;
+		let signalB: AbortSignal | undefined;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("agent_settled", (_event, ctx) => {
+						if (!captureContexts) return;
+						contextA = ctx;
+						signalA = ctx.beginCompaction?.({ reason: "extension" });
+					});
+					pi.on("agent_settled", (_event, ctx) => {
+						if (!captureContexts) return;
+						contextB = ctx;
+						signalB = ctx.beginCompaction?.({ reason: "extension" });
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("seed response")]);
+		await harness.session.prompt("seed context");
+
+		const firstEntry = harness.sessionManager.getEntries()[0];
+		if (!firstEntry) throw new Error("Expected a persisted entry for precomputed compaction");
+		const expectedRevision = harness.session.getMessageRevision();
+		const precomputed = {
+			summary: "summary prepared by A before B superseded it",
+			firstKeptEntryId: firstEntry.id,
+			tokensBefore: 42,
+		};
+		captureContexts = true;
+		await harness.getExtensionRunner().emit({ type: "agent_settled" });
+		if (!contextA || !contextB || !signalA || !signalB) {
+			throw new Error("Expected both same-emission extension contexts to begin feedback");
+		}
+
+		try {
+			expect(signalA.aborted).toBe(true);
+			expect(signalB.aborted).toBe(false);
+			const staleResult = await contextA.applyCompaction(precomputed, {
+				reason: "extension",
+				expectedRevision,
+			});
+			expect(staleResult).toEqual({ applied: false, reason: "stale" });
+			expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(0);
+			expect(harness.session.compactionState).toMatchObject({ status: "running", generation: 2, stage: "feedback" });
+
+			const freshResult = await contextB.applyCompaction(precomputed, {
+				reason: "extension",
+				expectedRevision,
+			});
+			expect(freshResult).toEqual({ applied: true, reason: "ok" });
+			expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(1);
+			expect(harness.session.compactionState).toMatchObject({ status: "completed" });
+		} finally {
+			contextB.endCompaction?.({ reason: "extension", signal: signalB });
+		}
+	});
 });
