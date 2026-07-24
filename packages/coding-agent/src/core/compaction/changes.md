@@ -1,5 +1,26 @@
 # changes.md — compaction
 
+## Bounded staged compaction planner (2026-07-25)
+
+### What changed
+
+- `compaction.ts` adds a pure `planStagedCompactionChunk()` planner. It selects a token-budgeted contiguous prefix of
+  complete oldest turns, retains the newest turn, keeps assistant tool calls with their results, and incorporates the
+  latest accepted summary into each next-stage budget.
+- Planning returns an explicit `no-fit` result when the oldest complete turn cannot fit or no older turn remains, and
+  every ready plan advances `firstKeptEntryId`.
+- Local summarization now identifies summary-request context overflow with `CompactionSummaryOverflowError` so
+  `AgentSession` can switch to durable staged recovery instead of treating it as an unrelated provider failure.
+
+### Why
+
+A one-shot summary can exceed the model context before any checkpoint is written. Retrying after silently deleting
+old summary input would persist the original checkpoint boundary without actually summarizing that deleted history.
+
+### Expected merge conflict zones
+
+- MEDIUM: `compaction.ts` around preparation and summarization error handling.
+
 ## Lifecycle ownership and required-admission safety (2026-07-23)
 
 ### What changed

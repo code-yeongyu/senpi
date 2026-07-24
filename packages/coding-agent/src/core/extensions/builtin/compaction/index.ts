@@ -336,7 +336,9 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_before_compact", async (event, ctx) => {
 		invalidateSpeculativeCompaction();
-		if (cap.shouldRejectByCap(state, { reason: event.reason }).cancel) {
+		// A staged sequence is one logical compaction. Admit it against the cap on
+		// stage 1, then let later durable checkpoints finish that admitted recovery.
+		if ((!event.stage || event.stage.index === 1) && cap.shouldRejectByCap(state, { reason: event.reason }).cancel) {
 			return {
 				cancel: true,
 				rejectionCause: "per-turn-cap",
@@ -390,7 +392,11 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 			// the real provider message; ctx.ui.notify would be a duplicate toast.
 			pendingMetadata.delete(event.requestId);
 			if (error instanceof SummaryGenerationError) {
-				return { cancel: true, reason: error.message };
+				return {
+					cancel: true,
+					...(error.kind === "context-overflow" ? { rejectionCause: "would-overflow" as const } : {}),
+					reason: error.message,
+				};
 			}
 			const message = error instanceof Error ? error.message : String(error);
 			return { cancel: true, reason: `compaction generator failed: ${message}` };
@@ -422,7 +428,9 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 			const branchEntries = ctx.sessionManager.getBranch();
 			const firstKeptIndex = branchEntries.findIndex((entry) => entry.id === event.compactionEntry.firstKeptEntryId);
 			const keptEntries = firstKeptIndex === -1 ? [] : branchEntries.slice(firstKeptIndex);
-			state = cap.incrementAccepted(state);
+			if (!event.stage || event.stage.index === 1) {
+				state = cap.incrementAccepted(state);
+			}
 			state = breaker.recordSuccess(state);
 			state = updateLastYield(state, event.compactionEntry);
 			resetOnSessionCompact(degradationState);

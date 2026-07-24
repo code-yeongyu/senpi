@@ -80,9 +80,9 @@ function approxTokens(text: string): number {
  * manual route and degrade to "unavailable" on automatic routes.
  */
 export class SummaryGenerationError extends Error {
-	readonly kind: "auth" | "empty-summary";
+	readonly kind: "auth" | "context-overflow" | "empty-summary";
 
-	constructor(kind: "auth" | "empty-summary", message: string) {
+	constructor(kind: "auth" | "context-overflow" | "empty-summary", message: string) {
 		super(message);
 		this.name = "SummaryGenerationError";
 		this.kind = kind;
@@ -296,16 +296,6 @@ function pruneOldMessagesToBudget(messages: AgentMessage[], targetTokens: number
 	return pruned;
 }
 
-function removeOldestHistoryItemForOverflowRetry(messages: AgentMessage[]): AgentMessage[] | undefined {
-	if (messages.length <= 1) return undefined;
-	const boundaryIndex = findLastUserLikeIndex(messages);
-	return (
-		removeFirstOldToolPair(messages, boundaryIndex)?.messages ??
-		removeFirstOldMessage(messages, boundaryIndex)?.messages ??
-		(messages.length > 1 ? messages.slice(1) : undefined)
-	);
-}
-
 function estimateTotalTokens(messages: AgentMessage[]): number {
 	let total = 0;
 	for (const message of messages) total += estimateTokens(message);
@@ -396,7 +386,7 @@ export async function runExtensionCompaction(
 		throw new SummaryGenerationError("auth", `summarization credentials unavailable: ${detail}`);
 	}
 
-	let messages = pruneToolResults(
+	const messages = pruneToolResults(
 		[...snapshot.preparation.messagesToSummarize, ...snapshot.preparation.turnPrefixMessages],
 		snapshot.contextWindow,
 	);
@@ -406,66 +396,60 @@ export async function runExtensionCompaction(
 		customInstructions: snapshot.customInstructions,
 	});
 
-	while (true) {
-		if (signal?.aborted) return undefined;
-		const response = await generateSummaryMessage({
-			context,
-			messages,
-			onProgress,
-			prompt,
-			signal,
-			snapshot,
-			auth: {
-				apiKey: auth.apiKey,
-				headers: auth.headers,
-				extraBody: auth.extraBody,
-			},
-		});
-		if (!response) return undefined;
+	if (signal?.aborted) return undefined;
+	const response = await generateSummaryMessage({
+		context,
+		messages,
+		onProgress,
+		prompt,
+		signal,
+		snapshot,
+		auth: {
+			apiKey: auth.apiKey,
+			headers: auth.headers,
+			extraBody: auth.extraBody,
+		},
+	});
+	if (!response) return undefined;
 
-		if (isAssistantMessage(response) && isContextOverflow(response, snapshot.contextWindow)) {
-			const retryMessages = removeOldestHistoryItemForOverflowRetry(messages);
-			if (!retryMessages || retryMessages.length === messages.length) {
-				break;
-			}
-			messages = retryMessages;
-			continue;
-		}
-
-		if (isAssistantMessage(response) && response.stopReason === "aborted") {
-			// A partial summary from an aborted stream must never be applied.
-			return undefined;
-		}
-
-		if (isAssistantMessage(response) && response.stopReason === "error") {
-			// Surface the real provider failure instead of silently degrading
-			// into a generic "Compaction cancelled".
-			throw new Error(response.errorMessage || "Compaction summary request failed");
-		}
-
-		const summary = getSummaryText(response);
-		if (!summary) {
-			const stopReason = isAssistantMessage(response) ? response.stopReason : "unknown";
-			throw new SummaryGenerationError(
-				"empty-summary",
-				`summarization response contained no text (stopReason: ${stopReason})`,
-			);
-		}
-
-		// Informational only: the core rejects an applied compaction that would
-		// still overflow (_wouldCompactionOverflow). Rejecting here based on the
-		// size of the *discarded* input made large sessions uncompactable.
-		const tokenEstimate = estimateContextTokens(convertToLlm(messages)).tokens + approxTokens(summary);
-
-		return {
-			summary,
-			firstKeptEntryId: snapshot.preparation.firstKeptEntryId,
-			tokensBefore: snapshot.preparation.tokensBefore,
-			details: { schema: SUMMARY_SCHEMA, promptVariant: snapshot.promptVariant, tokenEstimate },
-		};
+	if (isAssistantMessage(response) && isContextOverflow(response, snapshot.contextWindow)) {
+		throw new SummaryGenerationError(
+			"context-overflow",
+			"compaction summary request exceeded the context window; retrying with staged compaction",
+		);
 	}
 
-	throw new Error("Compaction summary request exceeded the context window after retrying with a smaller input");
+	if (isAssistantMessage(response) && response.stopReason === "aborted") {
+		// A partial summary from an aborted stream must never be applied.
+		return undefined;
+	}
+
+	if (isAssistantMessage(response) && response.stopReason === "error") {
+		// Surface the real provider failure instead of silently degrading
+		// into a generic "Compaction cancelled".
+		throw new Error(response.errorMessage || "Compaction summary request failed");
+	}
+
+	const summary = getSummaryText(response);
+	if (!summary) {
+		const stopReason = isAssistantMessage(response) ? response.stopReason : "unknown";
+		throw new SummaryGenerationError(
+			"empty-summary",
+			`summarization response contained no text (stopReason: ${stopReason})`,
+		);
+	}
+
+	// Informational only: the core rejects an applied compaction that would
+	// still overflow (_wouldCompactionOverflow). Rejecting here based on the
+	// size of the *discarded* input made large sessions uncompactable.
+	const tokenEstimate = estimateContextTokens(convertToLlm(messages)).tokens + approxTokens(summary);
+
+	return {
+		summary,
+		firstKeptEntryId: snapshot.preparation.firstKeptEntryId,
+		tokensBefore: snapshot.preparation.tokensBefore,
+		details: { schema: SUMMARY_SCHEMA, promptVariant: snapshot.promptVariant, tokenEstimate },
+	};
 }
 
 export async function applyGeneratedCompaction(

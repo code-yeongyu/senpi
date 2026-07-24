@@ -7,7 +7,7 @@
 
 import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Context, Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
-import { streamSimple } from "@earendil-works/pi-ai/compat";
+import { isContextOverflow, streamSimple } from "@earendil-works/pi-ai/compat";
 import { convertToLlm, filterContextExcludedMessages, isContextExcludedCustomMessage } from "../messages.ts";
 import {
 	buildSessionContext,
@@ -30,6 +30,14 @@ type SummarizationStreamFn = StreamFn;
 type SummarizationOptions = SimpleStreamOptions & {
 	readonly env?: Record<string, string>;
 };
+
+/** Signals that only the summarization input, not the main agent turn, overflowed. */
+export class CompactionSummaryOverflowError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "CompactionSummaryOverflowError";
+	}
+}
 
 // ============================================================================
 // File Operation Tracking
@@ -715,6 +723,12 @@ export async function generateSummary(
 		streamFn,
 	);
 
+	if (isContextOverflow(response, model.contextWindow)) {
+		throw new CompactionSummaryOverflowError(
+			response.errorMessage || "Compaction summary request exceeded the context window",
+		);
+	}
+
 	if (response.stopReason === "error") {
 		throw new Error(`Summarization failed: ${response.errorMessage || "Unknown error"}`);
 	}
@@ -749,6 +763,188 @@ export interface CompactionPreparation {
 	settings: CompactionSettings;
 }
 
+export interface StagedCompactionChunk {
+	/** Preparation for exactly one durable, contiguous-prefix checkpoint. */
+	preparation: CompactionPreparation;
+	/** First context-visible entry included in this chunk. */
+	firstSummarizedEntryId: string;
+	/** Last context-visible entry included in this chunk. */
+	lastSummarizedEntryId: string;
+	/** Estimated previous-summary plus new-message tokens sent to the summarizer. */
+	estimatedInputTokens: number;
+}
+
+export type StagedCompactionPlan =
+	| { status: "ready"; chunk: StagedCompactionChunk }
+	| {
+			status: "no-fit";
+			reason: "single-group-too-large" | "no-older-complete-turn";
+			budgetTokens: number;
+			requiredTokens: number;
+			entryId?: string;
+	  };
+
+interface StagedTurnGroup {
+	startIndex: number;
+	endIndex: number;
+	messages: AgentMessage[];
+	tokens: number;
+}
+
+function getPreviousCompactionBoundary(pathEntries: SessionEntry[]): {
+	boundaryStart: number;
+	previousSummary: string | undefined;
+	prevCompactionIndex: number;
+} {
+	let prevCompactionIndex = -1;
+	for (let i = pathEntries.length - 1; i >= 0; i--) {
+		if (pathEntries[i].type === "compaction") {
+			prevCompactionIndex = i;
+			break;
+		}
+	}
+
+	if (prevCompactionIndex < 0) {
+		return { boundaryStart: 0, previousSummary: undefined, prevCompactionIndex };
+	}
+
+	const prevCompaction = pathEntries[prevCompactionIndex] as CompactionEntry;
+	const firstKeptEntryIndex = pathEntries.findIndex((entry) => entry.id === prevCompaction.firstKeptEntryId);
+	return {
+		boundaryStart: firstKeptEntryIndex >= 0 ? firstKeptEntryIndex : prevCompactionIndex + 1,
+		previousSummary: prevCompaction.summary,
+		prevCompactionIndex,
+	};
+}
+
+function buildStagedTurnGroups(pathEntries: SessionEntry[], boundaryStart: number): StagedTurnGroup[] {
+	const groups: StagedTurnGroup[] = [];
+	let current: StagedTurnGroup | undefined;
+
+	for (let index = boundaryStart; index < pathEntries.length; index++) {
+		const messages = contextMessagesForCompactionEntry(pathEntries[index]);
+		for (const message of messages) {
+			if (isTurnStartMessage(message) && current && current.messages.length > 0) {
+				groups.push(current);
+				current = undefined;
+			}
+			current ??= { startIndex: index, endIndex: index + 1, messages: [], tokens: 0 };
+			current.endIndex = index + 1;
+			current.messages.push(message);
+			current.tokens += estimateTokens(message);
+		}
+	}
+
+	if (current && current.messages.length > 0) {
+		groups.push(current);
+	}
+	return groups;
+}
+
+/**
+ * Plan one bounded staged-compaction chunk without mutating session state.
+ *
+ * Chunks always contain a contiguous prefix of complete turns. The newest turn
+ * is retained, and assistant tool calls remain grouped with every following
+ * tool result because a chunk boundary is only placed at a user-like turn
+ * start. A successful caller can therefore append the returned checkpoint and
+ * call this function again against the new branch; the cursor must advance to
+ * `preparation.firstKeptEntryId` on every accepted stage.
+ */
+export function planStagedCompactionChunk(
+	pathEntries: SessionEntry[],
+	settings: CompactionSettings,
+	inputBudgetTokens: number,
+): StagedCompactionPlan {
+	const budgetTokens = Math.max(1, Math.floor(inputBudgetTokens));
+	const { boundaryStart, previousSummary, prevCompactionIndex } = getPreviousCompactionBoundary(pathEntries);
+	const groups = buildStagedTurnGroups(pathEntries, boundaryStart);
+	const previousSummaryTokens = previousSummary ? Math.ceil(previousSummary.length / 4) : 0;
+
+	if (groups.length < 2) {
+		return {
+			status: "no-fit",
+			reason: "no-older-complete-turn",
+			budgetTokens,
+			requiredTokens: previousSummaryTokens + (groups[0]?.tokens ?? 0),
+			...(groups[0] ? { entryId: pathEntries[groups[0].startIndex]?.id } : {}),
+		};
+	}
+
+	const availableMessageTokens = budgetTokens - previousSummaryTokens;
+	const oldestGroup = groups[0];
+	if (availableMessageTokens < oldestGroup.tokens) {
+		return {
+			status: "no-fit",
+			reason: "single-group-too-large",
+			budgetTokens,
+			requiredTokens: previousSummaryTokens + oldestGroup.tokens,
+			entryId: pathEntries[oldestGroup.startIndex]?.id,
+		};
+	}
+
+	let selectedGroupCount = 0;
+	let selectedMessageTokens = 0;
+	// Always retain the newest complete turn as the continuation suffix.
+	while (selectedGroupCount < groups.length - 1) {
+		const candidate = groups[selectedGroupCount];
+		if (selectedMessageTokens + candidate.tokens > availableMessageTokens) break;
+		selectedMessageTokens += candidate.tokens;
+		selectedGroupCount++;
+	}
+
+	if (selectedGroupCount === 0) {
+		return {
+			status: "no-fit",
+			reason: "single-group-too-large",
+			budgetTokens,
+			requiredTokens: previousSummaryTokens + oldestGroup.tokens,
+			entryId: pathEntries[oldestGroup.startIndex]?.id,
+		};
+	}
+
+	const selectedGroups = groups.slice(0, selectedGroupCount);
+	const firstSelectedGroup = selectedGroups[0];
+	const lastSelectedGroup = selectedGroups[selectedGroups.length - 1];
+	const firstKeptGroup = groups[selectedGroupCount];
+	const firstKeptEntry = pathEntries[firstKeptGroup.startIndex];
+	const firstSummarizedEntry = pathEntries[firstSelectedGroup.startIndex];
+	const lastSummarizedEntry = pathEntries[lastSelectedGroup.endIndex - 1];
+	if (!firstKeptEntry?.id || !firstSummarizedEntry?.id || !lastSummarizedEntry?.id) {
+		return {
+			status: "no-fit",
+			reason: "no-older-complete-turn",
+			budgetTokens,
+			requiredTokens: previousSummaryTokens + selectedMessageTokens,
+		};
+	}
+
+	const messagesToSummarize = selectedGroups.flatMap((group) => group.messages);
+	const fileOps = extractFileOperations(messagesToSummarize, pathEntries, prevCompactionIndex);
+	const tokensBefore = estimateContextTokens(
+		filterContextExcludedMessages(buildSessionContext(pathEntries).messages),
+	).tokens;
+
+	return {
+		status: "ready",
+		chunk: {
+			preparation: {
+				firstKeptEntryId: firstKeptEntry.id,
+				messagesToSummarize,
+				turnPrefixMessages: [],
+				isSplitTurn: false,
+				tokensBefore,
+				previousSummary,
+				fileOps,
+				settings,
+			},
+			firstSummarizedEntryId: firstSummarizedEntry.id,
+			lastSummarizedEntryId: lastSummarizedEntry.id,
+			estimatedInputTokens: previousSummaryTokens + selectedMessageTokens,
+		},
+	};
+}
+
 export function prepareCompaction(
 	pathEntries: SessionEntry[],
 	settings: CompactionSettings,
@@ -759,22 +955,7 @@ export function prepareCompaction(
 		return undefined;
 	}
 
-	let prevCompactionIndex = -1;
-	for (let i = pathEntries.length - 1; i >= 0; i--) {
-		if (pathEntries[i].type === "compaction") {
-			prevCompactionIndex = i;
-			break;
-		}
-	}
-
-	let previousSummary: string | undefined;
-	let boundaryStart = 0;
-	if (prevCompactionIndex >= 0) {
-		const prevCompaction = pathEntries[prevCompactionIndex] as CompactionEntry;
-		previousSummary = prevCompaction.summary;
-		const firstKeptEntryIndex = pathEntries.findIndex((entry) => entry.id === prevCompaction.firstKeptEntryId);
-		boundaryStart = firstKeptEntryIndex >= 0 ? firstKeptEntryIndex : prevCompactionIndex + 1;
-	}
+	const { boundaryStart, previousSummary, prevCompactionIndex } = getPreviousCompactionBoundary(pathEntries);
 	const boundaryEnd = pathEntries.length;
 
 	const tokensBefore = estimateContextTokens(
@@ -1008,6 +1189,12 @@ async function generateTurnPrefixSummary(
 		createSummarizationOptions(model, maxTokens, apiKey, headers, env, signal, thinkingLevel, extraBody),
 		streamFn,
 	);
+
+	if (isContextOverflow(response, model.contextWindow)) {
+		throw new CompactionSummaryOverflowError(
+			response.errorMessage || "Turn prefix summary request exceeded the context window",
+		);
+	}
 
 	if (response.stopReason === "error") {
 		throw new Error(`Turn prefix summarization failed: ${response.errorMessage || "Unknown error"}`);

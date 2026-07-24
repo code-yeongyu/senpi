@@ -1,5 +1,23 @@
 # changes
 
+## Durable staged compaction recovery (2026-07-25)
+
+### What changed
+
+- `agent-session.ts` preserves the existing one-shot compaction attempt, then falls back on `would-overflow` to at
+  most eight complete-turn stages within five minutes.
+- Each accepted intermediate stage appends a normal compaction entry before the next request. A later error or abort
+  therefore preserves the last accepted checkpoint, while the original provider retry is marked `willRetry` only on
+  the stage that actually brings active context below budget.
+- Staged execution rejects a non-advancing cursor, an oversized single turn, and a summary that leaves no budget for
+  the next checkpoint. The eighth stage must finish below budget or is rejected without another append.
+
+### Why
+
+One-shot overflow recovery could not recover when its own summarization request or resulting checkpoint remained too
+large. The bounded append-only sequence makes partial progress restart-safe without changing successful one-shot
+behavior.
+
 ## Session-owned compaction lifecycle (2026-07-23)
 
 ### What changed

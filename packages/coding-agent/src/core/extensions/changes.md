@@ -1,5 +1,22 @@
 # Core Extensions Changes
 
+## 2026-07-25 - Optional staged compaction metadata
+
+### What changed
+
+- `SessionBeforeCompactEvent` and both `SessionCompactEvent` variants accept optional `stage` metadata with a
+  one-based index, hard maximum, and terminal `final` flag.
+- Existing handlers remain source-compatible because the field is additive and ordinary one-shot compactions omit it.
+
+### Why
+
+Builtin compaction policy must treat several durable checkpoints as one admitted logical compaction while observers
+can still correlate intermediate versus final stages.
+
+### Expected merge conflict zones
+
+- HIGH: `types.ts` around the public compaction event interfaces.
+
 ## 2026-07-23 - Compaction feedback operation handles
 
 ### What changed

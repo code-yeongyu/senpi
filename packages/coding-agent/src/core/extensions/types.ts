@@ -98,6 +98,16 @@ export type CompactionRejectionCause =
 	| "per-turn-cap"
 	| "stale-revision";
 
+/** Optional metadata for one stage of a bounded logical compaction. */
+export interface CompactionStage {
+	/** One-based stage number. */
+	index: number;
+	/** Hard upper bound on provider calls made by the staged recovery sequence. */
+	maxStages: number;
+	/** Present on terminal stage events after the resulting context is measured. */
+	final?: boolean;
+}
+
 // ============================================================================
 // UI Context
 // ============================================================================
@@ -716,6 +726,8 @@ export interface SessionBeforeCompactEvent {
 	branchEntries: SessionEntry[];
 	customInstructions?: string;
 	signal: AbortSignal;
+	/** Present only when core is recovering from an oversized one-shot compaction. */
+	stage?: CompactionStage;
 }
 
 /**
@@ -740,6 +752,8 @@ export interface SessionCompactAcceptedEvent {
 	fromExtension: boolean;
 	/** True when the aborted turn is retried after this compaction (overflow recovery) */
 	willRetry: boolean;
+	/** Present only for an accepted durable stage of one logical compaction. */
+	stage?: CompactionStage;
 }
 
 export interface SessionCompactRejectedEvent {
@@ -757,6 +771,8 @@ export interface SessionCompactRejectedEvent {
 	compactionEntry?: undefined;
 	fromExtension: false;
 	willRetry: false;
+	/** Present only when a staged attempt was rejected. */
+	stage?: CompactionStage;
 }
 
 /** Fired before an extension runtime is torn down due to quit, reload, or session replacement. */

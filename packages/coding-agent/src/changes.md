@@ -1,3 +1,23 @@
+## Staged context compaction recovery (2026-07-25)
+
+### What changed
+
+- Oversized one-shot compactions now recover through bounded, durable complete-turn stages while successful one-shot
+  compactions retain their existing path.
+- Intermediate checkpoints are append-only and restart-safe; no-fit, later-stage failure, non-progress, stage-count,
+  and time bounds fail explicitly without retrying the original provider prompt.
+
+### Why extension system couldn't handle this alone
+
+Only `AgentSession` owns provider retry admission, lifecycle generations, message revision guards, and durable
+`SessionManager.appendCompaction()` ordering across multiple summary calls.
+
+### Expected merge conflict zones
+
+- MEDIUM: `core/agent-session.ts` compaction execution and recovery helpers.
+- MEDIUM: `core/compaction/compaction.ts` preparation helpers.
+- HIGH: `core/extensions/types.ts` public compaction event interfaces.
+
 ## Manual compaction keeps agent lifecycle subscription through abort (2026-07-24)
 
 - `core/agent-session.ts`: manual or extension-initiated compaction claims its synchronous admission/barrier first,

@@ -478,7 +478,7 @@ describe("speculative compaction", () => {
 		expect(deltas.join("")).toBe("live summary");
 	});
 
-	it("retries a compaction summary request with a smaller input after a context-window failure", async () => {
+	it("surfaces a context-window failure for durable staged recovery", async () => {
 		// Given
 		const context = createContext();
 		const snapshot = createSpeculativeCompactionSnapshot(context, { generation: 1 });
@@ -488,18 +488,17 @@ describe("speculative compaction", () => {
 				errorMessage:
 					"Your input exceeds the context window of this model. Please adjust your input and try again.",
 			}),
-			fauxAssistantMessage("retry summary"),
 		]);
 
-		// When
-		const result = snapshot ? await runExtensionCompaction(context, snapshot) : undefined;
-
-		// Then
-		expect(result?.summary).toBe("retry summary");
-		expect(context.registration.getCallLog()).toHaveLength(2);
+		// When / Then
+		await expect(snapshot ? runExtensionCompaction(context, snapshot) : undefined).rejects.toMatchObject({
+			name: "SummaryGenerationError",
+			kind: "context-overflow",
+		});
+		expect(context.registration.getCallLog()).toHaveLength(1);
 	});
 
-	it("keeps pruning and retrying after repeated compaction summary context-window failures", async () => {
+	it("does not drop old messages from a checkpoint after a summary context-window failure", async () => {
 		// Given
 		const context = createContext();
 		context.getCompactionSettings = () => ({ ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 1 });
@@ -515,36 +514,19 @@ describe("speculative compaction", () => {
 				errorMessage:
 					"Your input exceeds the context window of this model. Please adjust your input and try again.",
 			}),
-			fauxAssistantMessage("", {
-				stopReason: "error",
-				errorMessage:
-					"Your input exceeds the context window of this model. Please adjust your input and try again.",
-			}),
-			fauxAssistantMessage("eventually compacted"),
 		]);
 
-		// When
-		const result = snapshot ? await runExtensionCompaction(context, snapshot) : undefined;
-
-		// Then
-		expect(result?.summary).toBe("eventually compacted");
-		const requestTexts = context.registration.getCallLog().map((entry) => {
-			const firstMessage = entry.context.messages[0];
-			if (!firstMessage) return "";
-			const content = firstMessage.content;
-			if (typeof content === "string") return content;
-			return content
-				.filter((part) => part.type === "text")
-				.map((part) => part.text)
-				.join("\n");
+		// When / Then
+		await expect(snapshot ? runExtensionCompaction(context, snapshot) : undefined).rejects.toMatchObject({
+			name: "SummaryGenerationError",
+			kind: "context-overflow",
 		});
-		expect(requestTexts).toHaveLength(3);
-		expect(requestTexts[0]).toContain("first user");
-		expect(requestTexts[1]).not.toContain("first user");
-		expect(requestTexts[1]).toContain("first assistant");
-		expect(requestTexts[2]).not.toContain("first assistant");
-		expect(requestTexts[2]).toContain("second user");
-		expect(requestTexts[2]).not.toContain("kept recent user");
+		const calls = context.registration.getCallLog();
+		expect(calls).toHaveLength(1);
+		const requestText = calls[0]?.context.messages.map(messageText).join("\n") ?? "";
+		expect(requestText).toContain("first user");
+		expect(requestText).toContain("second user");
+		expect(requestText).not.toContain("kept recent user");
 	});
 
 	it("sends the conversation as native messages with a trailing summarization instruction", async () => {

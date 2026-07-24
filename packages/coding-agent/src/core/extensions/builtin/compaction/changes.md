@@ -1,3 +1,13 @@
+## Durable staged overflow handoff (2026-07-25)
+
+- Local summary context overflow is surfaced as structured `would-overflow` feedback instead of deleting oldest
+  messages from the summarizer input while retaining the original checkpoint boundary.
+- Staged requests after stage 1 bypass a second per-turn admission check, and accepted-stage accounting increments
+  only once for the logical compaction. Other accepted-stage effects remain append-driven so a later abort still leaves
+  a valid latest checkpoint.
+
+Expected upstream conflict zones: `builtin/compaction/index.ts` event policy and `speculative.ts` summary error path.
+
 ## Canonical remote compaction provenance and route ownership (2026-07-24)
 
 - `openai-remote-model.ts`: provenance now hashes the normalized endpoint and every final header by default. The only excluded volatile transport headers are `content-length`, `user-agent`, `request-id`, `x-request-id`, and `x-client-request-id`; raw values are never persisted. This binds non-Codex checkpoints to authorization plus final tenant/workspace routing headers.

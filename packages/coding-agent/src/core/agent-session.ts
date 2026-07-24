@@ -58,13 +58,16 @@ import { sleep } from "../utils/sleep.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import {
+	type CompactionPreparation,
 	type CompactionResult,
+	CompactionSummaryOverflowError,
 	calculateContextTokens,
 	collectEntriesForBranchSummary,
 	compact,
 	estimateContextTokens,
 	estimateTokens,
 	generateBranchSummary,
+	planStagedCompactionChunk,
 	prepareCompaction,
 	shouldCompact,
 } from "./compaction/index.ts";
@@ -110,6 +113,7 @@ import type {
 	ApplyCompactionResult,
 	CompactionReason,
 	CompactionRejectionCause,
+	CompactionStage,
 	ModelSelectSource,
 } from "./extensions/types.ts";
 import { type BashExecutionMessage, type CustomMessage, filterContextExcludedMessages } from "./messages.ts";
@@ -179,8 +183,8 @@ export type AgentSessionEvent =
 			steering: readonly string[];
 			followUp: readonly string[];
 	  }
-	| { type: "compaction_start"; reason: CompactionReason }
-	| { type: "compaction_progress"; reason: CompactionReason; delta?: string; text?: string }
+	| { type: "compaction_start"; reason: CompactionReason; stage?: CompactionStage }
+	| { type: "compaction_progress"; reason: CompactionReason; delta?: string; text?: string; stage?: CompactionStage }
 	| { type: "entry_appended"; entry: SessionEntry }
 	| { type: "session_info_changed"; name: string | undefined }
 	| ExtensionToolHookLifecycleEvent
@@ -196,6 +200,7 @@ export type AgentSessionEvent =
 			accepted?: boolean;
 			rejectionCause?: CompactionRejectionCause;
 			errorMessage?: string;
+			stage?: CompactionStage;
 	  }
 	| { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
 	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
@@ -283,6 +288,10 @@ interface CompactionExecutionRequest {
 	precomputed?: CompactionResult;
 	allowSummaryOnly?: boolean;
 	agentMessagesAtStart?: readonly AgentMessage[];
+	preparation?: CompactionPreparation;
+	stage?: CompactionStage;
+	allowIntermediateOverflow?: boolean;
+	suppressWouldOverflowFeedback?: boolean;
 }
 
 type CompactionExecutionResult =
@@ -292,6 +301,7 @@ type CompactionExecutionResult =
 			result: CompactionResult;
 			compactionEntry: CompactionEntry;
 			fromExtension: boolean;
+			stageFinal: boolean;
 	  }
 	| {
 			accepted: false;
@@ -389,6 +399,21 @@ class RequiredCompactionError extends Error {
 		super("Context remains above the compaction threshold because compaction did not complete");
 		this.name = "RequiredCompactionError";
 	}
+}
+
+const STAGED_COMPACTION_MAX_STAGES = 8;
+const STAGED_COMPACTION_MAX_DURATION_MS = 5 * 60 * 1000;
+const STAGED_COMPACTION_INPUT_RATIO = 0.4;
+
+class StagedCompactionError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "StagedCompactionError";
+	}
+}
+
+function getStagedCompactionInputBudget(model: Model<Api>): number {
+	return Math.max(1, Math.floor(model.contextWindow * STAGED_COMPACTION_INPUT_RATIO));
 }
 
 class MissingModelAccessError extends Error {
@@ -3305,7 +3330,7 @@ export class AgentSession {
 			this._disconnectFromAgent();
 			disconnected = true;
 			this._emit({ type: "compaction_start", reason: "manual" });
-			const execution = await this._executeCompaction({
+			const execution = await this._executeCompactionWithStagedRecovery({
 				controller,
 				owner: "compaction",
 				reason: "manual",
@@ -3366,7 +3391,7 @@ export class AgentSession {
 		this._claimCompactionController(controller, "compaction");
 
 		try {
-			const execution = await this._executeCompaction({
+			const execution = await this._executeCompactionWithStagedRecovery({
 				controller,
 				owner: "compaction",
 				reason: options.reason,
@@ -3465,6 +3490,103 @@ export class AgentSession {
 		this._releaseCompactionController(options.signal);
 	}
 
+	private async _executeCompactionWithStagedRecovery(
+		request: CompactionExecutionRequest,
+	): Promise<CompactionExecutionResult> {
+		const initialExecution = await this._executeCompaction({ ...request, suppressWouldOverflowFeedback: true });
+		if (
+			initialExecution.accepted ||
+			initialExecution.rejectionCause !== "would-overflow" ||
+			request.preparation !== undefined
+		) {
+			return initialExecution;
+		}
+
+		return await this._executeStagedCompaction(request);
+	}
+
+	private async _executeStagedCompaction(request: CompactionExecutionRequest): Promise<CompactionExecutionResult> {
+		const model = this.model;
+		if (!model) throw new Error(formatNoModelSelectedMessage());
+		const startedAt = Date.now();
+		const inputBudgetTokens = getStagedCompactionInputBudget(model);
+		let previousCursor: string | undefined;
+		let timedOut = false;
+		const timeout = setTimeout(() => {
+			timedOut = true;
+			request.controller.abort();
+		}, STAGED_COMPACTION_MAX_DURATION_MS);
+
+		try {
+			for (let stageIndex = 1; stageIndex <= STAGED_COMPACTION_MAX_STAGES; stageIndex++) {
+				if (Date.now() - startedAt >= STAGED_COMPACTION_MAX_DURATION_MS) {
+					throw new StagedCompactionError(
+						`Staged compaction exceeded ${STAGED_COMPACTION_MAX_DURATION_MS}ms after ${stageIndex - 1} stages`,
+					);
+				}
+				if (
+					!this._ownsCompactionController(request.controller, request.owner) ||
+					request.controller.signal.aborted
+				) {
+					throw new CompactionCancelledError();
+				}
+
+				const plan = planStagedCompactionChunk(
+					this.sessionManager.getBranch(),
+					this.settingsManager.getCompactionSettings(),
+					inputBudgetTokens,
+				);
+				if (plan.status === "no-fit") {
+					const entry = plan.entryId ? ` at entry ${plan.entryId}` : "";
+					throw new StagedCompactionError(
+						plan.reason === "single-group-too-large"
+							? `Staged compaction cannot fit the oldest complete turn${entry}: estimated ${plan.requiredTokens} tokens exceeds the ${plan.budgetTokens}-token stage budget`
+							: `Staged compaction cannot advance${entry}: no older complete turn remains outside the required continuation suffix`,
+					);
+				}
+
+				const cursor = plan.chunk.preparation.firstKeptEntryId;
+				if (cursor === previousCursor) {
+					throw new StagedCompactionError(`Staged compaction made no cursor progress at entry ${cursor}`);
+				}
+				const stage: CompactionStage = { index: stageIndex, maxStages: STAGED_COMPACTION_MAX_STAGES };
+				this._emit({ type: "compaction_start", reason: request.reason, stage });
+				this._emit({
+					type: "compaction_progress",
+					reason: request.reason,
+					stage,
+					text: `Compacting stage ${stageIndex}/${STAGED_COMPACTION_MAX_STAGES}`,
+				});
+
+				const execution = await this._executeCompaction({
+					...request,
+					precomputed: undefined,
+					preparation: plan.chunk.preparation,
+					stage,
+					allowIntermediateOverflow: stageIndex < STAGED_COMPACTION_MAX_STAGES,
+					agentMessagesAtStart: this.agent.state.messages.slice(),
+				});
+				if (!execution.accepted || execution.stageFinal) {
+					return execution;
+				}
+				previousCursor = cursor;
+			}
+
+			throw new StagedCompactionError(
+				`Staged compaction reached the ${STAGED_COMPACTION_MAX_STAGES}-stage limit before fitting the context`,
+			);
+		} catch (error) {
+			if (timedOut) {
+				throw new StagedCompactionError(
+					`Staged compaction exceeded ${STAGED_COMPACTION_MAX_DURATION_MS}ms before recovery completed`,
+				);
+			}
+			throw error;
+		} finally {
+			clearTimeout(timeout);
+		}
+	}
+
 	private async _executeCompaction(request: CompactionExecutionRequest): Promise<CompactionExecutionResult> {
 		const model = this.model;
 		if (!model) throw new Error(formatNoModelSelectedMessage());
@@ -3501,12 +3623,9 @@ export class AgentSession {
 			let fromExtension = request.precomputed !== undefined;
 
 			if (!compactionResult) {
-				const preparation = prepareCompaction(
-					pathEntries,
-					settings,
-					request.reason === "overflow",
-					request.allowSummaryOnly,
-				);
+				const preparation =
+					request.preparation ??
+					prepareCompaction(pathEntries, settings, request.reason === "overflow", request.allowSummaryOnly);
 
 				if (!preparation) {
 					const lastEntry = pathEntries[pathEntries.length - 1];
@@ -3527,6 +3646,7 @@ export class AgentSession {
 						branchEntries: pathEntries,
 						customInstructions: request.customInstructions,
 						signal,
+						...(request.stage ? { stage: request.stage } : {}),
 					})) as SessionBeforeCompactResult | undefined;
 					for (const message of this.agent.state.messages) {
 						if (
@@ -3560,19 +3680,33 @@ export class AgentSession {
 
 				if (!compactionResult) {
 					const { apiKey, headers, extraBody, env } = await this._getCompactionRequestAuth(model);
-					compactionResult = await compact(
-						preparation,
-						model,
-						apiKey,
-						headers,
-						request.customInstructions,
-						signal,
-						extraBody,
-						thinkingLevel,
-						this.agent.streamFn,
-						env,
-						this.agent.transformContext,
-					);
+					try {
+						compactionResult = await compact(
+							preparation,
+							model,
+							apiKey,
+							headers,
+							request.customInstructions,
+							signal,
+							extraBody,
+							thinkingLevel,
+							this.agent.streamFn,
+							env,
+							this.agent.transformContext,
+						);
+					} catch (error) {
+						if (error instanceof CompactionSummaryOverflowError) {
+							return await this._rejectCompaction(
+								request,
+								requestId,
+								operationId,
+								"would-overflow",
+								false,
+								error.message,
+							);
+						}
+						throw error;
+					}
 				}
 			}
 
@@ -3609,9 +3743,22 @@ export class AgentSession {
 				return await this._rejectCompaction(request, requestId, operationId, "stale-revision", false);
 			}
 
-			if (this._wouldCompactionOverflow(pathEntries, compactionResult, fromExtension, model)) {
+			if (request.stage && Math.ceil(compactionResult.summary.length / 4) >= getStagedCompactionInputBudget(model)) {
+				return await this._rejectCompaction(
+					request,
+					requestId,
+					operationId,
+					"would-overflow",
+					false,
+					"staged compaction summary would overflow the input budget for the next checkpoint",
+				);
+			}
+
+			const wouldOverflow = this._wouldCompactionOverflow(pathEntries, compactionResult, fromExtension, model);
+			if (wouldOverflow && !(request.stage && request.allowIntermediateOverflow)) {
 				return await this._rejectCompaction(request, requestId, operationId, "would-overflow", false);
 			}
+			const stageFinal = !wouldOverflow;
 
 			const compactionEntryId = this.sessionManager.appendCompaction(
 				compactionResult.summary,
@@ -3663,14 +3810,17 @@ export class AgentSession {
 				throw new CompactionCancelledError();
 			}
 
+			const willRetry = request.stage ? request.willRetry && stageFinal : request.willRetry;
+			const completedStage = request.stage ? { ...request.stage, final: stageFinal } : undefined;
 			this._emit({
 				type: "compaction_end",
 				reason: request.reason,
 				result: compactionResult,
 				aborted: false,
-				willRetry: request.willRetry,
+				willRetry,
 				requestId,
 				accepted: true,
+				...(completedStage ? { stage: completedStage } : {}),
 			});
 
 			await this._extensionRunner.emit({
@@ -3680,10 +3830,18 @@ export class AgentSession {
 				accepted: true,
 				compactionEntry: savedEntry,
 				fromExtension,
-				willRetry: request.willRetry,
+				willRetry,
+				...(completedStage ? { stage: completedStage } : {}),
 			});
 
-			return { accepted: true, requestId, result: compactionResult, compactionEntry: savedEntry, fromExtension };
+			return {
+				accepted: true,
+				requestId,
+				result: compactionResult,
+				compactionEntry: savedEntry,
+				fromExtension,
+				stageFinal,
+			};
 		} catch (error) {
 			if (error instanceof CompactionExecutionError) {
 				throw error;
@@ -3762,7 +3920,9 @@ export class AgentSession {
 		aborted: boolean,
 		extensionReason?: string,
 	): Promise<CompactionExecutionResult> {
-		// Per plan Section 1: rejection must never be silent. The compaction_end event
+		// User-visible rejection must never be silent. The one exception is the
+		// internal one-shot would-overflow signal immediately consumed by staged
+		// recovery; its staged terminal event owns the visible outcome. Otherwise the compaction_end event
 		// carries a non-empty human-readable errorMessage (unless the user aborted, where
 		// the aborted branch already renders "Compaction cancelled"). session_compact is
 		// also emitted with accepted:false so the compaction extension's circuit-breaker
@@ -3784,6 +3944,9 @@ export class AgentSession {
 		) {
 			throw new CompactionCancelledError();
 		}
+		if (request.suppressWouldOverflowFeedback && rejectionCause === "would-overflow") {
+			return { accepted: false, requestId, rejectionCause };
+		}
 		this._emit({
 			type: "compaction_end",
 			reason: request.reason,
@@ -3794,6 +3957,7 @@ export class AgentSession {
 			accepted: false,
 			rejectionCause,
 			errorMessage,
+			...(request.stage ? { stage: request.stage } : {}),
 		});
 		await this._extensionRunner.emit({
 			type: "session_compact",
@@ -3803,6 +3967,7 @@ export class AgentSession {
 			rejectionCause,
 			fromExtension: false,
 			willRetry: false,
+			...(request.stage ? { stage: request.stage } : {}),
 		});
 		return { accepted: false, requestId, rejectionCause };
 	}
@@ -4119,7 +4284,7 @@ export class AgentSession {
 		this._emit({ type: "compaction_start", reason });
 
 		try {
-			const execution = await this._executeCompaction({
+			const execution = await this._executeCompactionWithStagedRecovery({
 				controller,
 				owner: "compaction",
 				reason,
@@ -4252,7 +4417,7 @@ export class AgentSession {
 			if (!this._ownsCompactionController(autoCompactionController, "auto")) return false;
 			this._emit({ type: "compaction_start", reason });
 
-			const execution = await this._executeCompaction({
+			const execution = await this._executeCompactionWithStagedRecovery({
 				controller: autoCompactionController,
 				owner: "auto",
 				reason,
@@ -4595,7 +4760,7 @@ export class AgentSession {
 							this._disconnectFromAgent();
 							disconnected = true;
 							this._emit({ type: "compaction_start", reason: "extension" });
-							const execution = await this._executeCompaction({
+							const execution = await this._executeCompactionWithStagedRecovery({
 								controller,
 								owner: "compaction",
 								reason: "extension",
