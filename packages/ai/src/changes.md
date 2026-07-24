@@ -1,5 +1,13 @@
 # AI Source Changes
 
+## 2026-07-24 - Retry Codex upstream availability failures
+
+### What changed and why
+
+- Treat the exact `upstream_unavailable` provider error code as a transient retry candidate.
+- This covers Codex proxy WebSocket failures such as `ConnectionClosedOK` while preserving the existing
+  non-retryable quota/billing override and bounded retry policy.
+
 ## 2026-07-23 - Session-scoped provider resolution via node-only AsyncLocalStorage subpath
 
 ### What changed and why

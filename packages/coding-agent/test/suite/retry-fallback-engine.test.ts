@@ -6,6 +6,8 @@ import { createHarness, type Harness } from "./harness.ts";
 
 const primary = "faux/faux-1";
 const fallback = "faux/faux-2";
+const codexUpstreamUnavailableMessage =
+	"Error: upstream_unavailable: Codex upstream websocket send failed via proxy endpoint unknown: ConnectionClosedOK";
 
 type EventTranscriptEntry =
 	| { type: "message_start" | "message_end"; role: string }
@@ -92,6 +94,34 @@ describe("retry fallback engine", () => {
 		expect(harness.eventsOfType("retry_fallback_succeeded")).toMatchObject([{ model: fallback, chainKey: primary }]);
 		expect(harness.faux.state.callCount).toBe(2);
 		expect(harness.eventsOfType("agent_end").map((event) => event.willRetry)).toEqual([true, false]);
+	});
+
+	it("retries Codex upstream websocket availability failures without a fallback chain", async () => {
+		const harness = await createHarness({
+			settings: {
+				retry: {
+					enabled: true,
+					baseDelayMs: 1,
+				},
+			},
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: codexUpstreamUnavailableMessage,
+			}),
+			fauxAssistantMessage("fallback recovered"),
+		]);
+
+		await harness.session.prompt("recover the upstream websocket");
+
+		expect(harness.eventsOfType("auto_retry_start")).toMatchObject([
+			{ attempt: 1, delayMs: 1, errorMessage: codexUpstreamUnavailableMessage },
+		]);
+		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
+		expect(harness.eventsOfType("agent_end").map((event) => event.willRetry)).toEqual([true, false]);
+		expect(harness.faux.state.callCount).toBe(2);
 	});
 
 	it("removes only the failed assistant while preserving state across a fallback switch", async () => {

@@ -10,6 +10,8 @@ const nvidiaNIMResourceExhaustedMessage = "ResourceExhausted: Worker local total
 const bunFetchSocketClosedMessage =
 	"The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()";
 const openAIResponsesEarlyEofMessage = "OpenAI Responses stream ended before a terminal response event";
+const codexUpstreamUnavailableMessage =
+	"Error: upstream_unavailable: Codex upstream websocket send failed via proxy endpoint unknown: ConnectionClosedOK";
 
 describe("provider retry classification", () => {
 	it("matches explicit provider retry guidance", () => {
@@ -56,6 +58,14 @@ describe("provider retry classification", () => {
 		expect(
 			isRetryableAssistantError(
 				fauxAssistantMessage("", { stopReason: "error", errorMessage: openAIResponsesEarlyEofMessage }),
+			),
+		).toBe(true);
+	});
+
+	it("classifies Codex upstream websocket availability failures as retryable", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: codexUpstreamUnavailableMessage }),
 			),
 		).toBe(true);
 	});
