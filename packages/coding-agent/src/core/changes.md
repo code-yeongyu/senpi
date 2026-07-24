@@ -8,8 +8,9 @@
   controller at operation start, rejects stale completion/feedback, and retains the terminal result until another
   operation begins. Feedback-only aborts publish one terminal event, and accepted completions publish their terminal
   event before `session_compact` handlers can begin a fresh operation.
-- Durable append now rejects a generation whose message revision or agent-message snapshot changed during preparation
-  or summary generation (`stale-revision`), preserving intervening context without duplicate replay.
+- Durable append recognizes hidden `PreCompact` hook diagnostics as operation-owned appends outside the summary while
+  later revision or agent-message changes still reject as `stale-revision`, preserving intervening context without
+  duplicate replay.
 - Required compaction uses one provider-admission gate for normal prompts, extension-triggered turns, and every next
   turn. Provider-confirmed overflow remains fail-closed even when the local token estimate is below the configured
   threshold or stale threshold usage is suppressed after compaction/retry; `agent_end` synchronously transfers both

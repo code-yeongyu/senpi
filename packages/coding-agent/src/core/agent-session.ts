@@ -3242,18 +3242,26 @@ export class AgentSession {
 			const startPrefixIntact = agentMessagesAtStart.every(
 				(message, index) => currentMessagesAtCheck[index] === message,
 			);
+			const appendedMessages = currentMessagesAtCheck.slice(agentMessagesAtStart.length);
 			// Appends after the start snapshot are fresh only while they are exact
-			// message_end identities still awaiting persistence. Any revision change,
-			// other append, replacement, or reorder still makes this compaction stale.
+			// message_end identities awaiting persistence or hidden lifecycle-hook
+			// diagnostics. Any other append, replacement, or reorder remains stale.
 			const onlyPendingPersistenceAppends =
 				startPrefixIntact &&
-				currentMessagesAtCheck
-					.slice(agentMessagesAtStart.length)
-					.every((message) => this._messageEndsAwaitingPersistence.has(message));
+				appendedMessages.every(
+					(message) =>
+						this._messageEndsAwaitingPersistence.has(message) ||
+						(message.role === "custom" && message.customType === "senpi.hook" && message.display === false),
+				);
+			const startedRevision =
+				lifecycleState.status === "running" ? lifecycleState.startedRevision : this._messageRevision;
+			const revisionDelta = this._messageRevision - startedRevision;
+			const revisionStillOwned =
+				revisionDelta === 0 || (onlyPendingPersistenceAppends && revisionDelta === appendedMessages.length);
 			const sourceChanged =
 				lifecycleState.status !== "running" ||
 				lifecycleState.operationId !== operationId ||
-				lifecycleState.startedRevision !== this._messageRevision ||
+				!revisionStillOwned ||
 				!onlyPendingPersistenceAppends;
 			if (sourceChanged) {
 				return await this._rejectCompaction(request, requestId, operationId, "stale-revision", false);
