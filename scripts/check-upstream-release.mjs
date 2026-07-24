@@ -22,8 +22,9 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
 
-const UPSTREAM_REMOTE = "upstream";
 const UPSTREAM_REPO = "badlogic/pi-mono";
+const UPSTREAM_REMOTE_URL = `https://github.com/${UPSTREAM_REPO}.git`;
+const UPSTREAM_MAIN_REF = "refs/remotes/pi-mono/main";
 const PIN_PATH = ".github/upstream.json";
 
 function log(message) {
@@ -55,7 +56,7 @@ function latestUpstreamReleaseTag() {
 		log("gh releases/latest unavailable; falling back to remote tags");
 	}
 
-	const lsRemote = run("git", ["ls-remote", "--tags", "--refs", UPSTREAM_REMOTE, "v*"]);
+	const lsRemote = run("git", ["ls-remote", "--tags", "--refs", UPSTREAM_REMOTE_URL, "v*"]);
 	const tags = lsRemote
 		.split("\n")
 		.filter(Boolean)
@@ -81,10 +82,16 @@ function compareSemver(a, b) {
 
 function resolveTagSha(tag) {
 	// Fetch the tag so the commit object exists locally for the ancestry check.
-	const fetch = tryRun("git", ["fetch", "--quiet", UPSTREAM_REMOTE, "--no-tags", `+refs/tags/${tag}:refs/upstream-tags/${tag}`]);
+	const fetch = tryRun("git", [
+		"fetch",
+		"--quiet",
+		UPSTREAM_REMOTE_URL,
+		"--no-tags",
+		`+refs/tags/${tag}:refs/upstream-tags/${tag}`,
+	]);
 	if (!fetch.ok) {
 		// Fall back to a full tag fetch.
-		tryRun("git", ["fetch", "--quiet", "--tags", UPSTREAM_REMOTE]);
+		tryRun("git", ["fetch", "--quiet", "--tags", UPSTREAM_REMOTE_URL]);
 	}
 	const peeled = tryRun("git", ["rev-parse", `refs/upstream-tags/${tag}^{commit}`]);
 	if (peeled.ok && peeled.stdout) {
@@ -94,7 +101,8 @@ function resolveTagSha(tag) {
 }
 
 function resolveUpstreamHeadSha() {
-	return run("git", ["rev-parse", `${UPSTREAM_REMOTE}/main`]);
+	run("git", ["fetch", "--quiet", UPSTREAM_REMOTE_URL, `+refs/heads/main:${UPSTREAM_MAIN_REF}`]);
+	return run("git", ["rev-parse", UPSTREAM_MAIN_REF]);
 }
 
 function currentPinTag() {
@@ -129,7 +137,7 @@ function main() {
 	const sha = resolveTagSha(tag);
 	log(`resolved ${tag} -> ${sha}`);
 	const upstreamHeadSha = resolveUpstreamHeadSha();
-	log(`resolved ${UPSTREAM_REMOTE}/main -> ${upstreamHeadSha}`);
+	log(`resolved ${UPSTREAM_REPO} main -> ${upstreamHeadSha}`);
 
 	if (force) {
 		log("--force set; proceeding regardless of merge state");
