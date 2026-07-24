@@ -1,5 +1,32 @@
 # changes
 
+## Inspector handoff and VM-import crash isolation (2026-07-24)
+
+### What changed
+
+- The launcher closes an inherited startup Inspector endpoint immediately before spawning `cli-main`, allowing the
+  child process to bind the same configured endpoint instead of failing with `address already in use`.
+- With `SENPI_RECOVER_INSPECTOR_VM_IMPORT=1` set at process start, interactive mode recovers only the exact unhandled
+  Inspector-eval rejection produced when `import()` runs without a VM dynamic-import callback. Recovery is fail-closed
+  by default; application-owned VM failures and unrelated uncaught exceptions remain fatal.
+
+### Why
+
+- The launcher and child previously inherited one fixed Inspector port, so developers attached to the wrapper rather
+  than the TUI process. Running asynchronous `import()` in Node's Inspector VM then terminated the attached process.
+  Node exposes no non-spoofable Inspector provenance on the global exception, so continuing requires an explicit
+  developer opt-in rather than weakening the default fatal boundary.
+
+### Why extension system couldn't handle this
+
+- Inspector ownership is decided before extensions load, and process-wide uncaught-exception handling belongs to the
+  host's terminal-restoration boundary.
+
+### Expected merge conflict zones
+
+- LOW: `cli.ts` immediately before the `cli-main` spawn.
+- LOW: `modes/interactive/interactive-mode.ts` uncaught-exception handler.
+
 ## Multi-session RPC mode, session-owned MCP/config-reload state, and back-compat guarantee (2026-07-23)
 
 ### What changed
