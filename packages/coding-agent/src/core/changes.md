@@ -1,5 +1,27 @@
 # changes
 
+## Provider-bound inline image budget (2026-07-22)
+
+### What changed
+
+- `messages.ts`: added a transport-only 24 MiB inline image budget. Provider-bound conversion keeps the newest image
+  block, counts it against the budget, and replaces images older than the hard recency cutoff with a re-read
+  placeholder while preserving all text and leaving the persisted session untouched.
+- `sdk.ts`: routes the main agent loop through the shared transport conversion while preserving the dynamic
+  `images.blockImages` kill switch and its existing placeholder/deduplication behavior.
+- `test/suite/harness.ts`: uses the same transport conversion and accepts a small injectable image budget for
+  deterministic first-request integration coverage.
+
+### Why extension system couldn't handle this alone
+
+- Inline images must be bounded after session messages are converted but before every main-loop provider request,
+  including resumed sessions and provider fallbacks. That conversion boundary is owned by the core Agent wiring.
+
+### Expected merge conflict zones
+
+- MEDIUM: `sdk.ts` around the Agent `convertToLlm` wiring.
+- LOW: the transport helpers at the end of `messages.ts` and the Agent construction in `test/suite/harness.ts`.
+
 ## Streaming steer/followUp submissions bypass the session-work barrier (2026-07-21)
 
 ### What changed

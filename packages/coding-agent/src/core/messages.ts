@@ -207,3 +207,132 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 		})
 		.filter((m) => m !== undefined);
 }
+
+// ============================================================================
+// Transport image budget
+// ============================================================================
+
+/**
+ * Cap on inline image base64 (characters approximately equal wire bytes) per
+ * provider request. Anthropic documents a 32 MB request limit; reserving the
+ * remainder for text and request overhead keeps the transport below that wall.
+ */
+export const TRANSPORT_IMAGE_BUDGET_BYTES = 24 * 1024 * 1024;
+
+export const IMAGE_ELISION_PLACEHOLDER =
+	"[Image elided: an older image was removed to keep the request within the provider's size limit. Re-read the source file if you need to view it again.]";
+
+export const BLOCKED_IMAGE_PLACEHOLDER = "Image reading is disabled.";
+
+export interface ElideOldImagesOptions {
+	/** Cumulative inline image base64 budget. Defaults to TRANSPORT_IMAGE_BUDGET_BYTES. */
+	budgetBytes?: number;
+	/** Newest image blocks always kept regardless of budget. They still consume it. Defaults to 1. */
+	alwaysKeepNewest?: number;
+}
+
+export interface TransportConvertOptions extends ElideOldImagesOptions {
+	/** Replace every image when the images.blockImages setting is enabled. */
+	blockImages: boolean;
+}
+
+/** Drop consecutive duplicates of a placeholder produced by adjacent image replacements. */
+export function dedupeConsecutivePlaceholder(
+	content: (TextContent | ImageContent)[],
+	placeholder: string,
+): (TextContent | ImageContent)[] {
+	return content.filter(
+		(block, index, blocks) =>
+			!(
+				block.type === "text" &&
+				block.text === placeholder &&
+				index > 0 &&
+				blocks[index - 1].type === "text" &&
+				(blocks[index - 1] as TextContent).text === placeholder
+			),
+	);
+}
+
+/**
+ * Bound inline image payload at request-build time. Images are considered from
+ * newest to oldest. Once an image would exceed the budget, it and every older
+ * image are replaced by a text placeholder. The newest protected blocks are
+ * kept regardless of size, but still consume the budget.
+ *
+ * The input and persisted session remain untouched. If every image fits, the
+ * original array reference is returned.
+ */
+export function elideOldImages(messages: Message[], options?: ElideOldImagesOptions): Message[] {
+	const budgetBytes = options?.budgetBytes ?? TRANSPORT_IMAGE_BUDGET_BYTES;
+	const alwaysKeepNewest = options?.alwaysKeepNewest ?? 1;
+	const imagesToElide = new Set<string>();
+	let keptImages = 0;
+	let imageBytes = 0;
+	let cutoffReached = false;
+
+	for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex--) {
+		const message = messages[messageIndex];
+		if ((message.role !== "user" && message.role !== "toolResult") || !Array.isArray(message.content)) {
+			continue;
+		}
+
+		for (let blockIndex = message.content.length - 1; blockIndex >= 0; blockIndex--) {
+			const block = message.content[blockIndex];
+			if (block.type !== "image") continue;
+
+			if (cutoffReached) {
+				imagesToElide.add(`${messageIndex}:${blockIndex}`);
+				continue;
+			}
+
+			if (keptImages < alwaysKeepNewest || imageBytes + block.data.length <= budgetBytes) {
+				keptImages++;
+				imageBytes += block.data.length;
+				continue;
+			}
+
+			cutoffReached = true;
+			imagesToElide.add(`${messageIndex}:${blockIndex}`);
+		}
+	}
+
+	if (imagesToElide.size === 0) return messages;
+
+	return messages.map((message, messageIndex) => {
+		if ((message.role !== "user" && message.role !== "toolResult") || !Array.isArray(message.content)) {
+			return message;
+		}
+		if (!message.content.some((_block, blockIndex) => imagesToElide.has(`${messageIndex}:${blockIndex}`))) {
+			return message;
+		}
+
+		const replaced = message.content.map((block, blockIndex): TextContent | ImageContent =>
+			imagesToElide.has(`${messageIndex}:${blockIndex}`) ? { type: "text", text: IMAGE_ELISION_PLACEHOLDER } : block,
+		);
+		return {
+			...message,
+			content: dedupeConsecutivePlaceholder(replaced, IMAGE_ELISION_PLACEHOLDER) as typeof message.content,
+		};
+	});
+}
+
+/** Convert messages for the main provider transport and apply its image policy. */
+export function convertToLlmForTransport(messages: AgentMessage[], options: TransportConvertOptions): Message[] {
+	const converted = convertToLlm(messages);
+	if (!options.blockImages) return elideOldImages(converted, options);
+
+	return converted.map((message) => {
+		if ((message.role !== "user" && message.role !== "toolResult") || !Array.isArray(message.content)) {
+			return message;
+		}
+		if (!message.content.some((block) => block.type === "image")) return message;
+
+		const replaced = message.content.map((block): TextContent | ImageContent =>
+			block.type === "image" ? { type: "text", text: BLOCKED_IMAGE_PLACEHOLDER } : block,
+		);
+		return {
+			...message,
+			content: dedupeConsecutivePlaceholder(replaced, BLOCKED_IMAGE_PLACEHOLDER) as typeof message.content,
+		};
+	});
+}
