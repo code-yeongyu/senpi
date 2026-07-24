@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { APP_NAME, getPackageDir, VERSION } from "./config.ts";
+import { releaseInheritedInspectorForChild } from "./inspector-policy.ts";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.ts";
 
 process.title = APP_NAME;
@@ -35,6 +36,7 @@ function isMissingBundledWorkspaceDependencies(packageDir: string): boolean {
 async function runFullCli(): Promise<number> {
 	const extension = import.meta.url.endsWith(".ts") ? ".ts" : ".js";
 	const fullCliPath = fileURLToPath(new URL(`./cli-main${extension}`, import.meta.url));
+	releaseInheritedInspectorForChild();
 	return await new Promise<number>((resolve, reject) => {
 		const child = spawn(process.execPath, [...process.execArgv, fullCliPath, ...args], {
 			env: process.env,
