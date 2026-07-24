@@ -57,6 +57,15 @@ function retryTranscript(events: Harness["events"]): EventTranscriptEntry[] {
 	});
 }
 
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+	let resolve: (() => void) | undefined;
+	const promise = new Promise<void>((next) => {
+		resolve = next;
+	});
+	if (!resolve) throw new Error("Deferred resolver was not initialized");
+	return { promise, resolve };
+}
+
 describe("retry fallback engine", () => {
 	const harnesses: Harness[] = [];
 	afterEach(() => {
@@ -310,6 +319,142 @@ describe("retry fallback engine", () => {
 			expect(harness.eventsOfType("compaction_start")).toHaveLength(2);
 			expect(harness.eventsOfType("compaction_end").filter((event) => event.accepted === true)).toHaveLength(2);
 		}
+	});
+
+	it("owns a provider-confirmed fallback retry overflow despite the post-retry compaction skip", async () => {
+		// Composition: a retryable primary error selects the smaller fallback window,
+		// the required fallback-window compaction succeeds (arming
+		// _skipNextPostRetryCompactionCheck), and the fallback retry itself then
+		// returns provider-confirmed overflow. The skip flag may still suppress a
+		// threshold-only stale-usage check, but it must never suppress overflow
+		// ownership: the overflow needs its own required compaction (rejected here,
+		// so recovery fails closed) while queued steer/follow-up messages are
+		// retained instead of draining into the provider.
+		let compactionRequests = 0;
+		const harness = await createHarness({
+			models: [
+				{ id: "faux-1", contextWindow: 1_000, maxTokens: 64 },
+				{ id: "faux-2", contextWindow: 100, maxTokens: 64 },
+			],
+			settings: {
+				compaction: { enabled: true, reserveTokens: 0, keepRecentTokens: 0 },
+				retry: {
+					enabled: true,
+					baseDelayMs: 1,
+					fallbackChains: { [primary]: [fallback] },
+					fallbackRevertPolicy: "never",
+				},
+			},
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", (event) => {
+						compactionRequests++;
+						if (compactionRequests > 2) {
+							return {
+								cancel: true,
+								rejectionCause: "cancelled-by-extension" as const,
+								reason: "fallback overflow recovery rejected",
+							};
+						}
+						return {
+							compaction: {
+								summary: compactionRequests === 1 ? "p".repeat(480) : "fallback summary",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: event.preparation.tokensBefore,
+							},
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		const primaryModel = harness.getModel("faux-1");
+		if (!primaryModel) throw new Error("Expected primary fallback model");
+		const historyTimestamp = Date.now() - 1_000;
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "history before retry fallback" }],
+			timestamp: historyTimestamp,
+		});
+		harness.sessionManager.appendMessage({
+			...fauxAssistantMessage("history response", { timestamp: historyTimestamp + 1 }),
+			api: primaryModel.api,
+			provider: primaryModel.provider,
+			model: primaryModel.id,
+			usage: {
+				input: 900,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 900,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+		});
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+
+		const fallbackStarted = createDeferred();
+		const releaseFallback = createDeferred();
+		harness.setResponses([
+			async (_context, _options, _state, model) => {
+				expect(model.id).toBe("faux-1");
+				return fauxAssistantMessage("context ".repeat(900), {
+					stopReason: "error",
+					errorMessage: "overloaded_error",
+				});
+			},
+			async (_context, _options, _state, model) => {
+				expect(model.id).toBe("faux-2");
+				fallbackStarted.resolve();
+				await releaseFallback.promise;
+				// Provider-confirmed overflow from the fallback model itself.
+				return fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: "context_length_exceeded",
+				});
+			},
+			fauxAssistantMessage("must not reach provider"),
+			fauxAssistantMessage("must not reach provider either"),
+		]);
+
+		const prompt = harness.session.prompt("trigger fallback overflow ownership");
+		await fallbackStarted.promise;
+		await harness.session.prompt("retain fallback steer", { streamingBehavior: "steer" });
+		await harness.session.followUp("retain fallback follow-up");
+		releaseFallback.resolve();
+		// The follow-up fix owns whether the already-completed prompt itself
+		// rejects; the fail-closed admission contract below is what this RED pins.
+		await prompt.then(
+			() => undefined,
+			() => undefined,
+		);
+		await harness.session.waitForSettledSessionWork();
+
+		expect(harness.eventsOfType("retry_fallback_applied")).toMatchObject([{ from: primary, to: fallback }]);
+		// The required fallback-window compaction succeeded before the retry,
+		// which is what arms the post-retry skip flag under test.
+		expect(harness.eventsOfType("compaction_end")).toContainEqual(
+			expect.objectContaining({ reason: "threshold", accepted: true }),
+		);
+		// RED: the skip flag must not suppress overflow ownership of the fallback
+		// retry response, so a second required compaction runs and fails closed.
+		expect(harness.eventsOfType("compaction_end")).toContainEqual(
+			expect.objectContaining({
+				reason: "overflow",
+				accepted: false,
+				rejectionCause: "cancelled-by-extension",
+			}),
+		);
+		expect(harness.session.getSteeringMessages()).toEqual(["retain fallback steer"]);
+		expect(harness.session.getFollowUpMessages()).toEqual(["retain fallback follow-up"]);
+		expect(harness.session.agent.hasQueuedMessages()).toBe(true);
+		expect(harness.faux.state.callCount).toBe(2);
+
+		await expect(harness.session.prompt("later normal admission")).rejects.toThrow(
+			"Context remains above the compaction threshold because compaction did not complete",
+		);
+		expect(harness.faux.state.callCount).toBe(2);
+		expect(harness.session.getSteeringMessages()).toEqual(["retain fallback steer"]);
+		expect(harness.session.getFollowUpMessages()).toEqual(["retain fallback follow-up"]);
 	});
 
 	it("submits a complete fallback request rather than reusing primary continuation state", async () => {

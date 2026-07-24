@@ -477,6 +477,8 @@ const THINKING_LEVELS_WITH_MAX: ThinkingLevel[] = ["off", "minimal", "low", "med
 // AgentSession Class
 // ============================================================================
 
+type PostRetryCompactionState = { kind: "none" } | { kind: "skip-next-threshold"; owner: "retry-fallback-window" };
+
 export class AgentSession {
 	readonly agent: Agent;
 	readonly sessionManager: SessionManager;
@@ -516,7 +518,7 @@ export class AgentSession {
 	private _requiredCompactionAdmissionError: RequiredCompactionError | undefined;
 	// A retry continuation immediately follows an accepted compaction. Its first
 	// response must not retrigger threshold compaction from stale provider usage.
-	private _skipNextPostRetryCompactionCheck = false;
+	private _postRetryCompactionState: PostRetryCompactionState = { kind: "none" };
 	private _blockedPostCompactionAssistant: { assistant: AssistantMessage; revision: number } | undefined;
 	private _skipNextPostCompactionAssistantCheck = false;
 	private readonly _assistantsPendingAtCompaction = new WeakSet<AssistantMessage>();
@@ -1086,8 +1088,16 @@ export class AgentSession {
 	 * will make after agent_end. Agent core drains queues before that async work
 	 * runs, so only this preflight can transfer required admissions safely.
 	 */
-	private _getRequiredAutoCompactionReason(message: AssistantMessage): "overflow" | "threshold" | undefined {
-		if (this._skipNextPostRetryCompactionCheck) return undefined;
+	private _consumePostRetryThresholdSkip(): boolean {
+		const suppressThreshold = this._postRetryCompactionState.kind === "skip-next-threshold";
+		this._postRetryCompactionState = { kind: "none" };
+		return suppressThreshold;
+	}
+
+	private _getRequiredAutoCompactionReason(
+		message: AssistantMessage,
+		suppressThreshold = this._postRetryCompactionState.kind === "skip-next-threshold",
+	): "overflow" | "threshold" | undefined {
 		const settings = this.settingsManager.getCompactionSettings();
 		if (!settings.enabled || message.stopReason === "aborted") {
 			return undefined;
@@ -1108,9 +1118,12 @@ export class AgentSession {
 			contextUsage !== undefined &&
 			contextUsage.tokens !== null &&
 			shouldCompact(contextUsage.tokens, contextUsage.contextWindow, settings);
-		if (isContextOverflow(message, model.contextWindow) && (sameModel || currentContextNeedsCompaction)) {
+		const contextOverflow =
+			isContextOverflow(message, model.contextWindow) && (sameModel || currentContextNeedsCompaction);
+		if (contextOverflow && (message.stopReason === "error" || !suppressThreshold)) {
 			return "overflow";
 		}
+		if (suppressThreshold) return undefined;
 
 		let contextTokens: number;
 		const directContextTokens = message.usage ? calculateContextTokens(message.usage) : 0;
@@ -1317,11 +1330,8 @@ export class AgentSession {
 		if (event.type === "agent_end" && this._lastAssistantMessage) {
 			const msg = this._lastAssistantMessage;
 			this._lastAssistantMessage = undefined;
-			const skipPostRetryCompaction = this._skipNextPostRetryCompactionCheck;
-			this._skipNextPostRetryCompactionCheck = false;
-			const requiredAutoCompaction = skipPostRetryCompaction
-				? undefined
-				: this._getRequiredAutoCompactionReason(msg);
+			const suppressPostRetryThreshold = this._consumePostRetryThresholdSkip();
+			const requiredAutoCompaction = this._getRequiredAutoCompactionReason(msg, suppressPostRetryThreshold);
 
 			// Retry transient failures normally and eligible hard errors only through a fallback.
 			const retryableError = this._isRetryableError(msg);
@@ -1331,7 +1341,7 @@ export class AgentSession {
 			let compactedBeforeRetry = false;
 			if (retryCanAdmitProvider && requiredAutoCompaction) {
 				this._retireFailedRetryAssistant(msg);
-				compactedBeforeRetry = await this._runPrePromptCompaction(msg, true, "threshold", true);
+				compactedBeforeRetry = await this._runPrePromptCompaction(msg, true, requiredAutoCompaction, true);
 				retryContinuationBlocked = !compactedBeforeRetry;
 			}
 
@@ -1347,7 +1357,8 @@ export class AgentSession {
 
 			this._resolveRetry();
 			retryContinuationBlocked ||= retryOutcome === "blocked";
-			if (!retryContinuationBlocked && !skipPostRetryCompaction) {
+			const shouldRunPostRetryCompaction = !suppressPostRetryThreshold || requiredAutoCompaction === "overflow";
+			if (!retryContinuationBlocked && shouldRunPostRetryCompaction) {
 				if (compactedBeforeRetry && this.agent.hasQueuedMessages()) {
 					this._scheduleContinuationAfterCurrentEvent();
 					launchedContinuation = true;
@@ -3566,14 +3577,14 @@ export class AgentSession {
 		if (this._isAssistantFromBeforeLatestCompaction(assistantMessage)) {
 			return false;
 		}
+		let suppressPostCompactionThreshold = false;
 		if (this._skipNextPostCompactionAssistantCheck) {
 			this._skipNextPostCompactionAssistantCheck = false;
 			// The first ordinary post-compaction response can still report stale
-			// provider usage. An active overflow recovery is different: its retry
-			// response must be checked so the one-retry cap can terminate it.
-			if (!this._assistantsPendingAtCompaction.has(assistantMessage) && !this._overflowRecoveryAttempted) {
-				return false;
-			}
+			// provider usage. This exemption applies only to threshold estimates;
+			// provider-confirmed overflow remains required.
+			suppressPostCompactionThreshold =
+				!this._assistantsPendingAtCompaction.has(assistantMessage) && !this._overflowRecoveryAttempted;
 		}
 
 		// Case 1: Overflow - LLM returned context overflow error.
@@ -3584,7 +3595,11 @@ export class AgentSession {
 			contextUsage !== undefined &&
 			contextUsage.tokens !== null &&
 			shouldCompact(contextUsage.tokens, contextUsage.contextWindow, settings);
-		if (isContextOverflow(assistantMessage, contextWindow) && (sameModel || currentContextNeedsCompaction)) {
+		const contextOverflow =
+			isContextOverflow(assistantMessage, contextWindow) && (sameModel || currentContextNeedsCompaction);
+		const providerConfirmedOverflow = assistantMessage.stopReason === "error" && contextOverflow;
+		if (suppressPostCompactionThreshold && !providerConfirmedOverflow) return false;
+		if (contextOverflow) {
 			const willRetry = retryAfterCompaction || assistantMessage.stopReason !== "stop";
 
 			if (!willRetry) {
@@ -3641,7 +3656,6 @@ export class AgentSession {
 			}
 			return compacted;
 		}
-
 		// Case 2: Threshold - context is getting large
 		// For error messages or all-zero usage messages, estimate from the last valid response.
 		// This ensures sessions that hit persistent API errors (e.g. 529) or malformed zero-usage
@@ -4651,7 +4665,10 @@ export class AgentSession {
 				this._resolveRetry();
 				return "blocked";
 			}
-			this._skipNextPostRetryCompactionCheck = true;
+			this._postRetryCompactionState = {
+				kind: "skip-next-threshold",
+				owner: "retry-fallback-window",
+			};
 		}
 
 		// Retry via continue() - use setTimeout to break out of event handler chain
