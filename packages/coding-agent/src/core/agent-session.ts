@@ -4232,6 +4232,8 @@ export class AgentSession {
 				if (reason === "overflow") this._overflowRecoveryAttempted = false;
 				return false;
 			}
+			if (!this._ownsCompactionController(autoCompactionController, "auto")) return false;
+			this._emit({ type: "compaction_start", reason });
 
 			const authResult = await this._modelRuntime.getAuth(this.model);
 			if (!this._ownsCompactionController(autoCompactionController, "auto")) return false;
@@ -4250,7 +4252,6 @@ export class AgentSession {
 				return false;
 			}
 			if (!this._ownsCompactionController(autoCompactionController, "auto")) return false;
-			this._emit({ type: "compaction_start", reason });
 
 			const execution = await this._executeCompaction({
 				controller: autoCompactionController,
