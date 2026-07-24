@@ -303,6 +303,7 @@ describe("eval renderer", () => {
 						output: "ok",
 						status: "complete",
 						statusEvents: [
+							{ op: "status-events-omitted", count: 26 },
 							{ op: "cat", files: 2, chars: 9 },
 							{ op: "ls", count: 3 },
 							{ op: "env", action: "set", key: "TOKEN", value: "secret" },
@@ -332,6 +333,7 @@ describe("eval renderer", () => {
 
 		// Then
 		for (const summary of [
+			"status-events-omitted 26 earlier events omitted",
 			"cat 2 files · 9 chars",
 			"ls 3 entries",
 			"env set TOKEN=secret",
