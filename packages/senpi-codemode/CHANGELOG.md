@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Bound each eval cell's retained status history while preserving the newest events and an exact omitted-event count.
+
 ### Removed
 
 ## [2026.7.23] - 2026-07-23
