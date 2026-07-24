@@ -4235,8 +4235,17 @@ export class AgentSession {
 
 			const authResult = await this._modelRuntime.getAuth(this.model);
 			if (!this._ownsCompactionController(autoCompactionController, "auto")) return false;
+			this._emit({ type: "compaction_start", reason });
+			if (!this._ownsCompactionController(autoCompactionController, "auto")) return false;
 			if (this.agent.streamFn === streamSimple && !authResult?.auth.apiKey) {
 				if (reason === "overflow") this._overflowRecoveryAttempted = false;
+				this._emit({
+					type: "compaction_end",
+					reason,
+					result: undefined,
+					aborted: false,
+					willRetry: false,
+				});
 				return false;
 			}
 
@@ -4247,10 +4256,16 @@ export class AgentSession {
 			);
 			if (!preparation) {
 				if (reason === "overflow") this._overflowRecoveryAttempted = false;
+				this._emit({
+					type: "compaction_end",
+					reason,
+					result: undefined,
+					aborted: false,
+					willRetry: false,
+				});
 				return false;
 			}
 			if (!this._ownsCompactionController(autoCompactionController, "auto")) return false;
-			this._emit({ type: "compaction_start", reason });
 
 			const execution = await this._executeCompaction({
 				controller: autoCompactionController,

@@ -388,6 +388,42 @@ describe("AgentSession compaction characterization", () => {
 		expect(getStreamCallCount()).toBe(1);
 	});
 
+	it("balances auto-compaction events when there is nothing to prepare", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+
+		await runAutoCompaction(harness.session, "threshold", false);
+
+		const compactionEvents = harness.events.filter(
+			(event) => event.type === "compaction_start" || event.type === "compaction_end",
+		);
+		expect(compactionEvents).toEqual([
+			{ type: "compaction_start", reason: "threshold" },
+			expect.objectContaining({
+				type: "compaction_end",
+				reason: "threshold",
+				result: undefined,
+				aborted: false,
+				willRetry: false,
+			}),
+		]);
+	});
+
+	it("does not publish a stale preflight end after a start listener aborts auto-compaction", async () => {
+		const harness = await createHarness({ withConfiguredAuth: false });
+		harnesses.push(harness);
+		harness.session.subscribe((event) => {
+			if (event.type === "compaction_start" && event.reason === "threshold") {
+				harness.session.abortCompaction();
+			}
+		});
+
+		await runAutoCompaction(harness.session, "threshold", false);
+
+		expect(harness.eventsOfType("compaction_start")).toEqual([{ type: "compaction_start", reason: "threshold" }]);
+		expect(harness.eventsOfType("compaction_end")).toHaveLength(0);
+	});
+
 	it("does not emit compaction events for a normal response below the threshold", async () => {
 		// given
 		const harness = await createHarness({
@@ -1353,12 +1389,12 @@ describe("AgentSession compaction characterization", () => {
 		await checkCompaction(harness.session, secondOverflow);
 
 		const overflowStarts = harness.eventsOfType("compaction_start").filter((event) => event.reason === "overflow");
-		const terminalOverflowFailures = harness
-			.eventsOfType("compaction_end")
-			.filter((event) =>
-				event.errorMessage?.startsWith("Context overflow recovery failed after one compact-and-retry attempt"),
-			);
+		const overflowEnds = harness.eventsOfType("compaction_end").filter((event) => event.reason === "overflow");
+		const terminalOverflowFailures = overflowEnds.filter((event) =>
+			event.errorMessage?.startsWith("Context overflow recovery failed after one compact-and-retry attempt"),
+		);
 		expect(overflowStarts).toHaveLength(2);
+		expect(overflowEnds).toHaveLength(2);
 		expect(terminalOverflowFailures).toHaveLength(0);
 	});
 

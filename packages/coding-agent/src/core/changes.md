@@ -8,6 +8,8 @@
   controller at operation start, rejects stale completion/feedback, and retains the terminal result until another
   operation begins. Feedback-only aborts publish one terminal event, and accepted completions publish their terminal
   event before `session_compact` handlers can begin a fresh operation.
+- Owned automatic compaction attempts start before authentication/preparation validation and end when preflight
+  rejects. Ownership is rechecked after start so synchronous listener supersession cannot publish a stale terminal.
 - Durable append now rejects a generation whose message revision or agent-message snapshot changed during preparation
   or summary generation (`stale-revision`), preserving intervening context without duplicate replay.
 - Required compaction uses one provider-admission gate for normal prompts, extension-triggered turns, and every next
