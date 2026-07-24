@@ -74,7 +74,7 @@ Configuration is loaded in this order:
 | `taskTools.output` | `"task_output"` | Registered tool name used by `output()`. |
 | `outputSink.headBytes` | `20480` | Bytes retained from the beginning of a middle-truncated preview; `0` disables it. |
 | `outputSink.maxColumns` | `768` | Maximum rendered output columns; `0` disables column clamping. |
-| `statusEvents` | `true` | Enables kernel status-event forwarding and rendering. |
+| `statusEvents` | `true` | Enables kernel status-event forwarding and rendering. Each cell retains at most 100 status rows; after overflow, one omitted-count row precedes the latest 99 events. |
 
 `SENPI_CODEMODE_PY`, `SENPI_CODEMODE_JS`, `SENPI_CODEMODE_RB`, and
 `SENPI_CODEMODE_JL` override the corresponding file setting. `1` or `true`

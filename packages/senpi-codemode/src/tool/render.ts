@@ -404,6 +404,9 @@ function formatStatusEvent(event: EvalStatusEvent, theme: Theme | undefined): st
 		case "phase":
 			parts.push(eventString(event.title) ?? "");
 			break;
+		case "status-events-omitted":
+			parts.push(`${eventNumber(event.count)} earlier events omitted`);
+			break;
 		default: {
 			if (event.count !== undefined) parts.push(String(event.count));
 			const path = eventString(event.path);
