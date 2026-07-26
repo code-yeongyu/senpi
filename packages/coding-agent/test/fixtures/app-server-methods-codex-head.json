@@ -1,6 +1,6 @@
 {
   "provenance": {
-    "codexGit": "0fb559f0f6e231a88ac02ea002d3ecd248e2b515",
+    "codexGit": "9fc715c0861c956c894a91890b78dc05b304ba29",
     "source": "codex-rs/app-server-protocol/src/protocol/common.rs",
     "clientRequestDefinitionLine": 472,
     "serverRequestDefinitionLine": 1482,

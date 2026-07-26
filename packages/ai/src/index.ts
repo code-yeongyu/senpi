@@ -16,6 +16,7 @@ export type { MistralOptions } from "./api/mistral-conversations.ts";
 export type { OpenAICodexResponsesOptions, OpenAICodexWebSocketDebugStats } from "./api/openai-codex-responses.ts";
 export type { OpenAICompletionsOptions } from "./api/openai-completions.ts";
 export type { OpenAIResponsesOptions } from "./api/openai-responses.ts";
+export { convertResponsesMessages } from "./api/openai-responses-shared.ts";
 export type { PiMessagesEvent, PiMessagesOptions, PiMessagesRewriteImpact } from "./api/pi-messages.ts";
 export { getApiProvider } from "./api-registry.ts";
 export * from "./auth/context.ts";
@@ -31,6 +32,13 @@ export type {
 	OAuthSelectOption,
 	OAuthSelectPrompt,
 } from "./compat/extension-oauth-types.ts";
+export {
+	CONTEXT_PROVENANCE_FIELD,
+	type ContextProvenance,
+	contextProvenanceFingerprint,
+	copyContextProvenance,
+	getContextProvenance,
+} from "./context-provenance.ts";
 export * from "./env-api-keys.ts";
 export * from "./images-models.ts";
 export * from "./models.ts";
@@ -49,9 +57,13 @@ export * from "./types.ts";
 export * from "./utils/diagnostics.ts";
 export * from "./utils/event-stream.ts";
 export * from "./utils/json-parse.ts";
+export { extractOpenAiCodexAccountId } from "./utils/openai-codex-auth.ts";
 export * from "./utils/overflow.ts";
 export * from "./utils/retry.ts";
+export * from "./utils/server-fallback-receipt.ts";
 export * from "./utils/stop-details.ts";
+export { contentText } from "./utils/text.ts";
 export * from "./utils/tool-pair-repair.ts";
 export * from "./utils/typebox-helpers.ts";
+export { uuidv7 } from "./utils/uuid.ts";
 export * from "./utils/validation.ts";

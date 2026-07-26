@@ -1,6 +1,8 @@
 import { join } from "node:path";
 import { Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
 import chalk from "chalk";
+// BETA(omo-local-update): removable beta import - delete with src/beta/omo-local-update.ts
+import { runOmoLocalUpdateBeta } from "./beta/omo-local-update.ts";
 import { selectConfig } from "./cli/config-selector.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import {
@@ -817,6 +819,15 @@ export async function handlePackageCommand(
 
 			case "update": {
 				const target = options.updateTarget ?? { type: "self" };
+				// BETA(omo-local-update): remove this block, src/beta/omo-local-update.ts and all test/omo-local-update* files to drop the feature.
+				if (options.showExtensionsSkippedNote) {
+					await runOmoLocalUpdateBeta({
+						env: process.env,
+						agentDir,
+						settings: settingsManager.getGlobalSettings(),
+						force: options.force,
+					});
+				}
 				if (options.showExtensionsSkippedNote) {
 					console.log(
 						chalk.dim(`Extensions are skipped. Run ${APP_NAME} update --extensions to update extensions.`),

@@ -293,6 +293,115 @@ describe("config reload builtin extension", () => {
 		expect(fixture.reload).not.toHaveBeenCalled();
 	});
 
+	it("suppresses an external routine-only settings change", async () => {
+		vi.useFakeTimers();
+		const fixture = await createFixture({ settingsContent: '{"theme":"dark","defaultModel":"m1"}\n' });
+
+		// Another process changed only the default model (e.g. /model in a second session).
+		writeFileSync(fixture.settingsPath, '{"theme":"dark","defaultModel":"m2"}\n');
+		await settleChange(fixture, fixture.agentDir, "settings.json");
+		expect(fixture.reload).not.toHaveBeenCalled();
+		expect(fixture.notifications).toEqual([]);
+
+		// Another process changed only the default thinking level.
+		writeFileSync(fixture.settingsPath, '{"theme":"dark","defaultModel":"m2","defaultThinkingLevel":"high"}\n');
+		await settleChange(fixture, fixture.agentDir, "settings.json");
+		expect(fixture.reload).not.toHaveBeenCalled();
+		expect(fixture.notifications).toEqual([]);
+	});
+
+	it("does not show the deferred notice for a routine-only change while busy", async () => {
+		vi.useFakeTimers();
+		const started = createDeferred();
+		const release = createDeferred();
+		const fixture = await createFixture();
+		fixture.harness.setResponses([
+			async () => {
+				started.resolve();
+				await release.promise;
+				return fauxAssistantMessage("finished");
+			},
+		]);
+		const prompt = fixture.harness.session.prompt("keep the agent busy");
+		await started.promise;
+
+		writeFileSync(fixture.settingsPath, '{"theme":"dark","defaultModel":"m2"}\n');
+		await settleChange(fixture, fixture.agentDir, "settings.json");
+		expect(fixture.notifications).toEqual([]);
+
+		release.resolve();
+		await prompt;
+		expect(fixture.reload).not.toHaveBeenCalled();
+	});
+
+	it("reloads an external settings change that touches non-routine keys", async () => {
+		vi.useFakeTimers();
+		const fixture = await createFixture({ settingsContent: '{"theme":"dark","defaultModel":"m1"}\n' });
+
+		// Routine write first: suppressed, and must not poison the diff base.
+		writeFileSync(fixture.settingsPath, '{"theme":"dark","defaultModel":"m2"}\n');
+		await settleChange(fixture, fixture.agentDir, "settings.json");
+		expect(fixture.reload).not.toHaveBeenCalled();
+
+		// Mixed routine + structural change: reloads.
+		writeFileSync(fixture.settingsPath, '{"theme":"light","defaultModel":"m3"}\n');
+		await settleChange(fixture, fixture.agentDir, "settings.json");
+		expect(fixture.reload).toHaveBeenCalledTimes(1);
+	});
+
+	it("suppresses consecutive routine writes and falls through on unparseable content", async () => {
+		vi.useFakeTimers();
+		const fixture = await createFixture({ settingsContent: '{"theme":"dark"}\n' });
+
+		writeFileSync(fixture.settingsPath, '{"theme":"dark","defaultProvider":"p1"}\n');
+		await settleChange(fixture, fixture.agentDir, "settings.json");
+		expect(fixture.reload).not.toHaveBeenCalled();
+
+		writeFileSync(fixture.settingsPath, '{"theme":"dark","defaultProvider":"p1","defaultThinkingLevel":"low"}\n');
+		await settleChange(fixture, fixture.agentDir, "settings.json");
+		expect(fixture.reload).not.toHaveBeenCalled();
+
+		// Unparseable content is not suppressed: it reaches the validator and is rejected as before.
+		writeFileSync(fixture.settingsPath, "{nope");
+		await settleChange(fixture, fixture.agentDir, "settings.json");
+		expect(fixture.reload).not.toHaveBeenCalled();
+		expect(fixture.notifications.some((message) => message.includes("Config change rejected"))).toBe(true);
+	});
+
+	it("suppresses a routine external write when another registration watches the same settings file", async () => {
+		vi.useFakeTimers();
+		const fixture = await createFixture({ settingsContent: '{"theme":"dark","defaultModel":"m1"}\n' });
+		fixture.events.emit(CONFIG_WATCH_REGISTER, {
+			id: "external-settings",
+			displayName: "External settings watcher",
+			targets: [{ path: fixture.settingsPath, kind: "file" }],
+		});
+
+		writeFileSync(fixture.settingsPath, '{"theme":"dark","defaultModel":"m2"}\n');
+		await settleChange(fixture, fixture.agentDir, "settings.json");
+
+		expect(fixture.reload).not.toHaveBeenCalled();
+		expect(fixture.notifications).toEqual([]);
+	});
+
+	it("suppresses a self-write when another registration watches the same settings file", async () => {
+		vi.useFakeTimers();
+		const fixture = await createFixture();
+		fixture.events.emit(CONFIG_WATCH_REGISTER, {
+			id: "external-settings",
+			displayName: "External settings watcher",
+			targets: [{ path: fixture.settingsPath, kind: "file" }],
+		});
+		const writer = SettingsManager.create(fixture.harness.tempDir, fixture.agentDir, { projectTrusted: true });
+		writer.setTheme("light");
+		await writer.flush();
+
+		await settleChange(fixture, fixture.agentDir, "settings.json");
+
+		expect(fixture.reload).not.toHaveBeenCalled();
+		expect(fixture.notifications).toEqual([]);
+	});
+
 	it("rejects a registered target whose validator fails", async () => {
 		vi.useFakeTimers();
 		const fixture = await createFixture();

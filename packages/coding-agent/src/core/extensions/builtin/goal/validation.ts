@@ -1,19 +1,32 @@
 import { GOAL_STATUS_VALUES, type GoalStatus } from "./types.ts";
 
 export const MAX_OBJECTIVE_LENGTH = 4_000;
-const GOAL_TOO_LONG_FILE_HINT =
-	"Put longer instructions in a file and refer to that file in the goal, for example: /goal follow the instructions in docs/goal.md.";
+const WHITESPACE_LOOKBACK = 200;
 
-export function validateObjective(value: string): string {
+export type ValidatedObjective = {
+	objective: string;
+	truncated: boolean;
+	fullTextFileName?: string;
+};
+
+export function validateObjective(value: string, fullTextFileName: string): ValidatedObjective {
 	const objective = value.trim();
 	if (objective.length === 0) throw new Error("objective must not be empty");
-	const objectiveCharacters = [...objective].length;
-	if (objectiveCharacters > MAX_OBJECTIVE_LENGTH) {
-		throw new Error(
-			`Goal objective is too long: ${objectiveCharacters.toLocaleString()} characters. Limit: ${MAX_OBJECTIVE_LENGTH.toLocaleString()} characters. ${GOAL_TOO_LONG_FILE_HINT}`,
-		);
-	}
-	return objective;
+	const codePoints = [...objective];
+	if (codePoints.length <= MAX_OBJECTIVE_LENGTH) return { objective, truncated: false };
+
+	const marker = truncationMarker(fullTextFileName);
+	const payloadBudget = MAX_OBJECTIVE_LENGTH - [...marker].length;
+	const payload = codePoints.slice(0, nearestWhitespaceCut(codePoints, payloadBudget) ?? payloadBudget).join("");
+	return { objective: `${payload}${marker}`, truncated: true, fullTextFileName };
+}
+
+export function truncationMarker(fullTextFileName: string): string {
+	return `… [truncated; full objective: ${fullTextFileName}]`;
+}
+
+export function objectiveTruncationNotice(fullTextFileName: string): string {
+	return `Objective was truncated; full objective saved to ${fullTextFileName}.`;
 }
 
 export function isGoalStatus(value: unknown): value is GoalStatus {
@@ -26,13 +39,17 @@ export function isNonNegativeSafeInteger(value: unknown): value is number {
 
 export function resolveTokenBudget(current: number | undefined, update: number | null | undefined): number | undefined {
 	if (update === undefined) return current;
-	if (update === null) return undefined;
-	return validateTokenBudget(update);
+	return update === null ? undefined : validateTokenBudget(update);
 }
 
 export function validateTokenBudget(value: number): number {
-	if (!isNonNegativeSafeInteger(value)) {
-		throw new Error("token budget must be a non-negative integer");
-	}
+	if (!isNonNegativeSafeInteger(value)) throw new Error("token budget must be a non-negative integer");
 	return value;
+}
+
+function nearestWhitespaceCut(codePoints: string[], payloadBudget: number): number | undefined {
+	for (let index = payloadBudget - 1; index >= Math.max(0, payloadBudget - WHITESPACE_LOOKBACK); index -= 1) {
+		if (/\s/u.test(codePoints[index] ?? "")) return index;
+	}
+	return undefined;
 }

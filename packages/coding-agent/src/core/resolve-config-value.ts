@@ -145,12 +145,17 @@ export function isConfigValueConfigured(config: string, env?: Record<string, str
 export function resolveConfigValue(config: string, env?: Record<string, string>): string | undefined {
 	const reference = parseConfigValueReference(config);
 	if (reference.type === "command") {
-		return executeCommand(reference.config);
+		// Credentials can carry a per-session environment. Those commands must not
+		// reuse a process-wide result produced under another session's environment.
+		return env === undefined ? executeCommand(reference.config) : executeCommandUncached(reference.config, env);
 	}
 	return resolveTemplate(reference.parts, env);
 }
 
-function executeWithConfiguredShell(command: string): { executed: boolean; value: string | undefined } {
+function executeWithConfiguredShell(
+	command: string,
+	env?: Record<string, string>,
+): { executed: boolean; value: string | undefined } {
 	try {
 		const { shell, args, commandTransport } = getShellConfig();
 		const commandFromStdin = commandTransport === "stdin";
@@ -161,6 +166,7 @@ function executeWithConfiguredShell(command: string): { executed: boolean; value
 			stdio: [commandFromStdin ? "pipe" : "ignore", "pipe", "ignore"],
 			shell: false,
 			windowsHide: true,
+			...(env === undefined ? {} : { env: { ...process.env, ...env } }),
 		});
 
 		if (result.error) {
@@ -182,12 +188,13 @@ function executeWithConfiguredShell(command: string): { executed: boolean; value
 	}
 }
 
-function executeWithDefaultShell(command: string): string | undefined {
+function executeWithDefaultShell(command: string, env?: Record<string, string>): string | undefined {
 	try {
 		const output = execSync(command, {
 			encoding: "utf-8",
 			timeout: 10000,
 			stdio: ["ignore", "pipe", "ignore"],
+			...(env === undefined ? {} : { env: { ...process.env, ...env } }),
 		});
 		return output.trim() || undefined;
 	} catch {
@@ -195,14 +202,14 @@ function executeWithDefaultShell(command: string): string | undefined {
 	}
 }
 
-function executeCommandUncached(commandConfig: string): string | undefined {
+function executeCommandUncached(commandConfig: string, env?: Record<string, string>): string | undefined {
 	const command = commandConfig.slice(1);
 	return process.platform === "win32"
 		? (() => {
-				const configuredResult = executeWithConfiguredShell(command);
-				return configuredResult.executed ? configuredResult.value : executeWithDefaultShell(command);
+				const configuredResult = executeWithConfiguredShell(command, env);
+				return configuredResult.executed ? configuredResult.value : executeWithDefaultShell(command, env);
 			})()
-		: executeWithDefaultShell(command);
+		: executeWithDefaultShell(command, env);
 }
 
 function executeCommand(commandConfig: string): string | undefined {
@@ -221,7 +228,7 @@ function executeCommand(commandConfig: string): string | undefined {
 export function resolveConfigValueUncached(config: string, env?: Record<string, string>): string | undefined {
 	const reference = parseConfigValueReference(config);
 	if (reference.type === "command") {
-		return executeCommandUncached(reference.config);
+		return executeCommandUncached(reference.config, env);
 	}
 	return resolveTemplate(reference.parts, env);
 }

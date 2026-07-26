@@ -92,8 +92,15 @@ import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
+import { formatTimings, time } from "../../core/timings.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
+import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
+import {
+	consumeEarlyInspectorVmImportRecoveries,
+	INSPECTOR_VM_IMPORT_WARNING,
+	isRecoverableInspectorVmImportError,
+} from "../../inspector-policy.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard, readClipboardText } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
@@ -150,6 +157,8 @@ import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
+import { editInExternalEditor } from "./external-editor.ts";
+import { GrokChrome, type InteractiveChrome, type InteractiveFooter } from "./grok/chrome.ts";
 import { restoreInteractiveStderr, takeOverInteractiveStderr } from "./interactive-stderr-guard.ts";
 import { getModelSearchText } from "./model-search.ts";
 import { resolveStartupToolPaths } from "./startup-tools.ts";
@@ -232,6 +241,15 @@ function formatToolHookTerminalTitle(event: ToolHookStatusStartEvent): string {
 	const hookName = sanitizeWorkingStatusPlainText(event.hookName) || "hook";
 	const statusMessage = sanitizeWorkingStatusPlainText(event.statusMessage);
 	return `${APP_TITLE} - ${hookName}: ${statusMessage}`;
+}
+
+function sanitizeTuiErrorMessage(value: string): string {
+	return value
+		.replace(/\u001b\][\s\S]*?(?:\u0007|\u001b\\|\u009c|$)/g, "")
+		.replace(/(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]/g, "")
+		.replace(/\r\n?/g, "\n")
+		.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "")
+		.replace(/[ \t\f\v]+/g, " ");
 }
 
 type RenderSessionItem = AgentMessage | Extract<SessionEntry, { type: "custom" }>;
@@ -337,9 +355,9 @@ function hasDefaultModelProvider(providerId: string): providerId is keyof typeof
 	return providerId in defaultModelPerProvider;
 }
 
-// isApiKeyLoginProvider now lives in core/auth-providers.ts so the RPC login path
-// (neo) and the classic selectors share ONE source of truth. Re-exported here to
-// keep the existing public import (test/oauth-selector.test.ts) working, and used
+// isApiKeyLoginProvider now lives in core/auth-providers.ts so RPC clients and
+// the classic selectors share ONE source of truth. Re-exported here to keep the
+// existing public import (test/oauth-selector.test.ts) working, and used
 // locally by getLoginProviderOptions below.
 export { isApiKeyLoginProvider };
 
@@ -415,11 +433,21 @@ export interface InteractiveModeOptions {
 	initialMessages?: string[];
 	/** Force verbose startup (overrides quietStartup setting) */
 	verbose?: boolean;
+	/** Select an experimental interactive chrome. */
+	chrome?: InteractiveChrome | "grok";
 }
 
 export class InteractiveMode {
+	private static restoreCompactionEscapeOverride(host: InteractiveMode): void {
+		if (!host.compactionEscapeOverrideActive) return;
+		host.defaultEditor.onEscape = host.autoCompactionEscapeHandler;
+		host.autoCompactionEscapeHandler = undefined;
+		host.compactionEscapeOverrideActive = false;
+	}
+
 	private runtimeHost: AgentSessionRuntime;
 	private options: InteractiveModeOptions;
+	private chrome: InteractiveChrome | undefined;
 	private ui: TUI;
 	private loadedResourcesContainer: Container;
 	private chatContainer: Container;
@@ -433,7 +461,7 @@ export class InteractiveMode {
 	private autocompleteProviderWrappers: AutocompleteProviderFactory[] = [];
 	private fdPath: string | undefined;
 	private editorContainer: Container;
-	private footer: FooterComponent;
+	private footer: InteractiveFooter;
 	private footerDataProvider: FooterDataProvider;
 	// Stored so the same manager can be injected into custom editors, selectors, and extension UI.
 	private keybindings: KeybindingsManager;
@@ -512,6 +540,7 @@ export class InteractiveMode {
 
 	// Auto-compaction state
 	private autoCompactionEscapeHandler?: () => void;
+	private compactionEscapeOverrideActive = false;
 	private autoCompactionProgressText = "";
 
 	// Auto-retry state
@@ -570,8 +599,10 @@ export class InteractiveMode {
 	constructor(runtimeHost: AgentSessionRuntime, options: InteractiveModeOptions = {}) {
 		this.runtimeHost = runtimeHost;
 		this.options = options;
+		this.chrome = options.chrome === "grok" ? new GrokChrome() : options.chrome;
 		this.autoTrustOnReloadCwd = options.autoTrustOnReloadCwd;
 		this.runtimeHost.setBeforeSessionInvalidate(() => {
+			InteractiveMode.restoreCompactionEscapeOverride(this);
 			this.resetExtensionUI();
 		});
 		this.runtimeHost.setRebindSession(async () => {
@@ -612,15 +643,25 @@ export class InteractiveMode {
 		setKeybindings(this.keybindings);
 		const editorPaddingX = this.settingsManager.getEditorPaddingX();
 		const autocompleteMaxVisible = this.settingsManager.getAutocompleteMaxVisible();
-		this.defaultEditor = new CustomEditor(this.ui, getEditorTheme(), this.keybindings, {
-			paddingX: editorPaddingX,
-			autocompleteMaxVisible,
-		});
+		if (this.chrome) {
+			this.defaultEditor = this.chrome.createBaseEditor({
+				ui: this.ui,
+				keybindings: this.keybindings,
+				editorOptions: { paddingX: editorPaddingX, autocompleteMaxVisible },
+			});
+		} else {
+			this.defaultEditor = new CustomEditor(this.ui, getEditorTheme(), this.keybindings, {
+				paddingX: editorPaddingX,
+				autocompleteMaxVisible,
+			});
+		}
 		this.editor = this.defaultEditor;
 		this.editorContainer = new Container();
 		this.editorContainer.addChild(this.editor as Component);
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
-		this.footer = new FooterComponent(this.session, this.footerDataProvider);
+		this.footer = this.chrome
+			? this.chrome.createFooter(this.session, this.footerDataProvider)
+			: new FooterComponent(this.session, this.footerDataProvider);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 
 		// Load hide thinking block setting
@@ -848,18 +889,39 @@ export class InteractiveMode {
 
 		// Add header container as first child. Populate it after applying theme settings.
 		// Keep loaded resources before chat so restored session messages never precede them.
-		this.ui.addChild(this.headerContainer);
-		this.ui.addChild(this.loadedResourcesContainer);
+		if (this.chrome) {
+			this.renderWidgets(); // Initialize with default spacer
+			for (const component of this.chrome.arrangeRoot(
+				[
+					this.headerContainer,
+					this.loadedResourcesContainer,
+					this.chatContainer,
+					this.pendingMessagesContainer,
+					this.statusContainer,
+					this.hookStatusContainer,
+					this.widgetContainerAbove,
+					this.editorContainer,
+					this.widgetContainerBelow,
+					this.footer,
+				],
+				this.ui,
+			)) {
+				this.ui.addChild(component);
+			}
+		} else {
+			this.ui.addChild(this.headerContainer);
+			this.ui.addChild(this.loadedResourcesContainer);
 
-		this.ui.addChild(this.chatContainer);
-		this.ui.addChild(this.pendingMessagesContainer);
-		this.ui.addChild(this.statusContainer);
-		this.ui.addChild(this.hookStatusContainer);
-		this.renderWidgets(); // Initialize with default spacer
-		this.ui.addChild(this.widgetContainerAbove);
-		this.ui.addChild(this.editorContainer);
-		this.ui.addChild(this.widgetContainerBelow);
-		this.ui.addChild(this.footer);
+			this.ui.addChild(this.chatContainer);
+			this.ui.addChild(this.pendingMessagesContainer);
+			this.ui.addChild(this.statusContainer);
+			this.ui.addChild(this.hookStatusContainer);
+			this.renderWidgets(); // Initialize with default spacer
+			this.ui.addChild(this.widgetContainerAbove);
+			this.ui.addChild(this.editorContainer);
+			this.ui.addChild(this.widgetContainerBelow);
+			this.ui.addChild(this.footer);
+		}
 		this.ui.setFocus(this.editor);
 
 		this.setupKeyHandlers();
@@ -878,7 +940,12 @@ export class InteractiveMode {
 		await this.themeController.applyFromSettings();
 
 		// Add header with keybindings from config (unless silenced)
-		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
+		if (this.chrome) {
+			this.builtInHeader = this.chrome.createWelcomeContent(APP_NAME, this.version);
+			this.headerContainer.addChild(new Spacer(1));
+			this.headerContainer.addChild(this.builtInHeader);
+			this.headerContainer.addChild(new Spacer(1));
+		} else if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
 			const logo = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
 
 			// Build startup instructions using keybinding hint helpers
@@ -992,6 +1059,13 @@ export class InteractiveMode {
 	 */
 	async run(): Promise<void> {
 		await this.init();
+
+		if (!process.env.PI_OFFLINE) {
+			void this.session.modelRuntime
+				.refresh()
+				.then(() => this.updateAvailableProviderCount())
+				.catch(() => {});
+		}
 
 		// Start version check asynchronously
 		checkForNewPiVersion(this.version).then((newVersion) => {
@@ -1254,8 +1328,16 @@ export class InteractiveMode {
 	 * Get a short path relative to the package root for display.
 	 */
 	private getShortPath(fullPath: string, sourceInfo?: SourceInfo): string {
+		const normalizedFullPath = fullPath.replace(/\\/g, "/");
 		const baseDir = sourceInfo?.baseDir;
 		if (baseDir && this.isPackageSource(sourceInfo)) {
+			const normalizedBaseDir = baseDir.replace(/\\/g, "/");
+			const npmRootMatch = normalizedBaseDir.match(/^(.*\/node_modules)\/(@?[^/]+(?:\/[^/]+)?)$/);
+			// If fullPath is under the same node_modules root as baseDir, preserve that relative topology.
+			if (npmRootMatch?.[1] && normalizedFullPath.startsWith(`${npmRootMatch[1]}/`)) {
+				return path.posix.relative(normalizedBaseDir, normalizedFullPath);
+			}
+
 			const relativePath = path.relative(path.resolve(baseDir), path.resolve(fullPath));
 			if (
 				relativePath &&
@@ -1269,12 +1351,12 @@ export class InteractiveMode {
 		}
 
 		const source = sourceInfo?.source ?? "";
-		const npmMatch = fullPath.match(/node_modules\/(@?[^/]+(?:\/[^/]+)?)\/(.*)/);
+		const npmMatch = normalizedFullPath.match(/node_modules\/(@?[^/]+(?:\/[^/]+)?)\/(.*)/);
 		if (npmMatch && source.startsWith("npm:")) {
 			return npmMatch[2];
 		}
 
-		const gitMatch = fullPath.match(/git\/[^/]+\/[^/]+\/(.*)/);
+		const gitMatch = normalizedFullPath.match(/git\/[^/]+\/[^/]+\/(.*)/);
 		if (gitMatch && source.startsWith("git:")) {
 			return gitMatch[1];
 		}
@@ -1895,6 +1977,7 @@ export class InteractiveMode {
 	}
 
 	private async rebindCurrentSession(options: { renderBeforeBind?: boolean } = {}): Promise<void> {
+		InteractiveMode.restoreCompactionEscapeOverride(this);
 		this.unsubscribe?.();
 		this.unsubscribe = undefined;
 		this.applyRuntimeSettings();
@@ -1962,6 +2045,7 @@ export class InteractiveMode {
 			modelRegistry: extensionRunner.getModelRegistry(),
 			model: this.session.model,
 			serviceTier: this.session.serviceTier,
+			thinkingLevel: this.session.thinkingLevel,
 			isIdle: () => this.session.isIdle,
 			isProjectTrusted: () => this.settingsManager.isProjectTrusted(),
 			signal: this.session.agent.signal,
@@ -2267,11 +2351,17 @@ export class InteractiveMode {
 		}
 		if (this.session.isStreaming && this.activeStatusIndicator?.kind !== "working") {
 			this.showStatusIndicator(
-				new WorkingStatusIndicator(
-					this.ui,
-					this.workingMessage ?? this.defaultWorkingMessage,
-					this.getWorkingIndicatorOptions(),
-				),
+				this.chrome
+					? this.chrome.createWorkingIndicator(
+							this.ui,
+							this.workingMessage ?? this.defaultWorkingMessage,
+							this.getWorkingIndicatorOptions(),
+						)
+					: new WorkingStatusIndicator(
+							this.ui,
+							this.workingMessage ?? this.defaultWorkingMessage,
+							this.getWorkingIndicatorOptions(),
+						),
 			);
 		}
 		this.ui.requestRender();
@@ -2781,7 +2871,11 @@ export class InteractiveMode {
 
 		if (factory) {
 			// Create the custom editor with tui, theme, and keybindings
-			const newEditor = factory(this.ui, getEditorTheme(), this.keybindings);
+			const newEditor = factory(
+				this.ui,
+				this.chrome ? this.chrome.getEditorTheme() : getEditorTheme(),
+				this.keybindings,
+			);
 
 			// Wire up callbacks from the default editor
 			newEditor.onSubmit = this.defaultEditor.onSubmit;
@@ -2920,7 +3014,8 @@ export class InteractiveMode {
 							const w = (component as { width?: number }).width;
 							return w ? { width: w } : undefined;
 						};
-						const handle = this.ui.showOverlay(component, resolveOptions());
+						const overlayOptions = resolveOptions();
+						const handle = this.ui.showOverlay(component, overlayOptions);
 						// Expose handle to caller for visibility control
 						options?.onHandle?.(handle);
 					} else {
@@ -3012,18 +3107,9 @@ export class InteractiveMode {
 				this.showError(`Failed to open history search: ${error instanceof Error ? error.message : String(error)}`);
 			}
 		});
-		this.defaultEditor.onAction("app.sessions.observe", async () => {
-			try {
-				await this.session.prompt("/sessions");
-			} catch (error) {
-				this.showError(
-					`Failed to open session observer: ${error instanceof Error ? error.message : String(error)}`,
-				);
-			}
-		});
 		this.defaultEditor.onAction("app.tools.expand", () => this.toggleToolOutputExpansion());
 		this.defaultEditor.onAction("app.thinking.toggle", () => this.toggleThinkingBlockVisibility());
-		this.defaultEditor.onAction("app.editor.external", () => this.openExternalEditor());
+		this.defaultEditor.onAction("app.editor.external", () => void this.handleOpenExternalEditor());
 		this.defaultEditor.onAction("app.message.copy", () => void this.handleCopyCommand());
 		this.defaultEditor.onAction("app.message.followUp", () => this.handleFollowUp());
 		this.defaultEditor.onAction("app.message.dequeue", () => this.handleDequeue());
@@ -3201,7 +3287,7 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
-			if (text === "/quit") {
+			if (text === "/quit" || text === "/exit") {
 				this.editor.setText("");
 				await this.shutdown();
 				return;
@@ -3296,11 +3382,17 @@ export class InteractiveMode {
 				}
 				if (this.workingVisible) {
 					this.showStatusIndicator(
-						new WorkingStatusIndicator(
-							this.ui,
-							this.workingMessage ?? this.defaultWorkingMessage,
-							this.getWorkingIndicatorOptions(),
-						),
+						this.chrome
+							? this.chrome.createWorkingIndicator(
+									this.ui,
+									this.workingMessage ?? this.defaultWorkingMessage,
+									this.getWorkingIndicatorOptions(),
+								)
+							: new WorkingStatusIndicator(
+									this.ui,
+									this.workingMessage ?? this.defaultWorkingMessage,
+									this.getWorkingIndicatorOptions(),
+								),
 					);
 				} else {
 					this.clearStatusIndicator();
@@ -3370,18 +3462,7 @@ export class InteractiveMode {
 						if (content.type === "toolCall") {
 							let component = this.pendingTools.get(content.id);
 							if (!component) {
-								component = new ToolExecutionComponent(
-									content.name,
-									content.id,
-									content.arguments,
-									{
-										showImages: this.settingsManager.getShowImages(),
-										imageWidthCells: this.settingsManager.getImageWidthCells(),
-									},
-									this.getRegisteredToolDefinition(content.name),
-									this.ui,
-									this.sessionManager.getCwd(),
-								);
+								component = this.createToolExecutionComponent(content.name, content.id, content.arguments);
 								component.setExpanded(this.toolOutputExpanded);
 								this.chatContainer.addChild(component);
 								this.pendingTools.set(content.id, component);
@@ -3444,22 +3525,15 @@ export class InteractiveMode {
 				this.ui.requestRender();
 				break;
 
+			case "bash_execution_update":
+				// The bash execution callback handles TUI output rendering.
+				break;
+
 			case "tool_execution_start": {
 				this.handleToolExecutionStart(event);
 				let component = this.pendingTools.get(event.toolCallId);
 				if (!component) {
-					component = new ToolExecutionComponent(
-						event.toolName,
-						event.toolCallId,
-						event.args,
-						{
-							showImages: this.settingsManager.getShowImages(),
-							imageWidthCells: this.settingsManager.getImageWidthCells(),
-						},
-						this.getRegisteredToolDefinition(event.toolName),
-						this.ui,
-						this.sessionManager.getCwd(),
-					);
+					component = this.createToolExecutionComponent(event.toolName, event.toolCallId, event.args);
 					component.setExpanded(this.toolOutputExpanded);
 					this.chatContainer.addChild(component);
 					this.pendingTools.set(event.toolCallId, component);
@@ -3541,7 +3615,10 @@ export class InteractiveMode {
 					this.ui.terminal.setProgress(true);
 				}
 				// Keep editor active; submissions are queued during compaction.
-				this.autoCompactionEscapeHandler = this.defaultEditor.onEscape;
+				if (!this.compactionEscapeOverrideActive) {
+					this.autoCompactionEscapeHandler = this.defaultEditor.onEscape;
+					this.compactionEscapeOverrideActive = true;
+				}
 				this.defaultEditor.onEscape = () => {
 					this.session.abortCompaction();
 				};
@@ -3562,10 +3639,7 @@ export class InteractiveMode {
 				if (!nextText) break;
 				this.autoCompactionProgressText = nextText;
 				const preview = nextText.length > 4_000 ? `...${nextText.slice(nextText.length - 4_000)}` : nextText;
-				this.statusContainer.clear();
-				this.statusContainer.addChild(this.activeStatusIndicator);
-				this.statusContainer.addChild(new Spacer(1));
-				this.statusContainer.addChild(new Text(theme.fg("muted", preview), 1, 0));
+				this.activeStatusIndicator.setProgressText(sanitizeTerminalLabel(preview));
 				this.ui.requestRender();
 				break;
 			}
@@ -3574,22 +3648,19 @@ export class InteractiveMode {
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(false);
 				}
-				if (this.autoCompactionEscapeHandler) {
-					this.defaultEditor.onEscape = this.autoCompactionEscapeHandler;
-					this.autoCompactionEscapeHandler = undefined;
-				}
+				InteractiveMode.restoreCompactionEscapeOverride(this);
 				this.clearStatusIndicator("compaction");
 				this.autoCompactionProgressText = "";
 				if (event.aborted) {
 					// Prefer the extension-provided reason over the generic "cancelled"
 					// label so per-turn-cap / circuit-breaker / provider-error cancels are
 					// no longer indistinguishable from a user-triggered abort.
-					const cancelMessage = event.errorMessage ?? "Compaction cancelled";
+					const cancelMessage = sanitizeTerminalLabel(event.errorMessage ?? "Compaction cancelled");
 					if (event.reason === "manual") {
 						this.showError(cancelMessage);
 					} else if (event.errorMessage) {
 						this.chatContainer.addChild(new Spacer(1));
-						this.chatContainer.addChild(new Text(theme.fg("error", event.errorMessage), 1, 0));
+						this.chatContainer.addChild(new Text(theme.fg("error", cancelMessage), 1, 0));
 					} else {
 						this.showStatus("Auto-compaction cancelled");
 					}
@@ -3598,7 +3669,7 @@ export class InteractiveMode {
 					this.rebuildChatFromMessages();
 					this.addMessageToChat(
 						createCompactionSummaryMessage(
-							event.result.summary,
+							sanitizeTerminalLabel(event.result.summary),
 							event.result.tokensBefore,
 							new Date().toISOString(),
 							event.result.details,
@@ -3606,11 +3677,11 @@ export class InteractiveMode {
 					);
 					this.footer.invalidate();
 				} else if (event.errorMessage) {
+					const errorMessage = sanitizeTerminalLabel(event.errorMessage);
 					if (event.reason === "manual") {
-						this.showError(event.errorMessage);
+						this.showError(errorMessage);
 					} else {
-						this.chatContainer.addChild(new Spacer(1));
-						this.chatContainer.addChild(new Text(theme.fg("error", event.errorMessage), 1, 0));
+						this.chatContainer.addChild(new Text(theme.fg("error", errorMessage), 1, 0));
 					}
 				} else if (event.accepted === false) {
 					// Exhaustive fallback per plan Section 1: compaction_end must never fall
@@ -3625,7 +3696,12 @@ export class InteractiveMode {
 						this.chatContainer.addChild(new Text(theme.fg("error", message), 1, 0));
 					}
 				}
-				void this.flushCompactionQueue({ willRetry: event.willRetry });
+				// Only an accepted compaction transfers editor-owned input to the
+				// session. Rejections and aborts retain the draft for an explicit
+				// user retry while the UI cleanup above still always runs.
+				if (event.accepted === true || event.result !== undefined) {
+					void this.flushCompactionQueue({ willRetry: event.willRetry });
+				}
 				this.ui.requestRender();
 				break;
 			}
@@ -3653,6 +3729,14 @@ export class InteractiveMode {
 			case "retry_fallback_exhausted":
 				this.showError(`Fallback chain exhausted for ${event.chainKey}: ${event.lastError}`);
 				this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
+				break;
+
+			case "server_fallback_aborted":
+				this.showWarning(
+					event.chainConfigured
+						? `Server fallback ${event.from} -> ${event.to} aborted; retrying on your fallback chain`
+						: `Server fallback ${event.from} -> ${event.to} aborted; no chain configured (set one with /fallback)`,
+				);
 				break;
 
 			case "auto_retry_start": {
@@ -3692,6 +3776,32 @@ export class InteractiveMode {
 				if (!event.success) {
 					this.showError(`Retry failed after ${event.attempt} attempts: ${event.finalError || "Unknown error"}`);
 				}
+				this.ui.requestRender();
+				break;
+			}
+
+			case "summarization_retry_scheduled": {
+				this.showError(event.errorMessage);
+				this.showStatusIndicator(
+					new RetryStatusIndicator(this.ui, event.attempt, event.maxAttempts, event.delayMs),
+				);
+				this.ui.requestRender();
+				break;
+			}
+
+			case "summarization_retry_attempt_start": {
+				this.clearStatusIndicator("retry");
+				if (event.source === "branchSummary") {
+					this.showStatusIndicator(new BranchSummaryStatusIndicator(this.ui));
+				} else {
+					this.showStatusIndicator(new CompactionStatusIndicator(this.ui, event.reason));
+				}
+				this.ui.requestRender();
+				break;
+			}
+
+			case "summarization_retry_finished": {
+				this.clearStatusIndicator("retry");
 				this.ui.requestRender();
 				break;
 			}
@@ -3780,7 +3890,12 @@ export class InteractiveMode {
 			case "custom": {
 				if (message.display) {
 					const renderer = this.session.extensionRunner.getMessageRenderer(message.customType);
-					const component = new CustomMessageComponent(message, renderer, this.getMarkdownThemeWithSettings());
+					const component = new CustomMessageComponent(
+						message,
+						renderer,
+						this.getMarkdownThemeWithSettings(),
+						this.outputPad,
+					);
 					component.setExpanded(this.toolOutputExpanded);
 					this.chatContainer.addChild(component);
 				}
@@ -3862,6 +3977,36 @@ export class InteractiveMode {
 		}
 	}
 
+	private createToolExecutionComponent(toolName: string, toolCallId: string, args: unknown): ToolExecutionComponent {
+		if (this.chrome) {
+			return new ToolExecutionComponent(
+				toolName,
+				toolCallId,
+				args,
+				{
+					showImages: this.settingsManager.getShowImages(),
+					imageWidthCells: this.settingsManager.getImageWidthCells(),
+				},
+				this.getRegisteredToolDefinition(toolName),
+				this.ui,
+				this.sessionManager.getCwd(),
+				this.chrome.toolPresentation,
+			);
+		}
+		return new ToolExecutionComponent(
+			toolName,
+			toolCallId,
+			args,
+			{
+				showImages: this.settingsManager.getShowImages(),
+				imageWidthCells: this.settingsManager.getImageWidthCells(),
+			},
+			this.getRegisteredToolDefinition(toolName),
+			this.ui,
+			this.sessionManager.getCwd(),
+		);
+	}
+
 	private renderSessionItems(
 		items: readonly RenderSessionItem[],
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
@@ -3892,18 +4037,7 @@ export class InteractiveMode {
 				// Render tool call components
 				for (const content of message.content) {
 					if (content.type === "toolCall") {
-						const component = new ToolExecutionComponent(
-							content.name,
-							content.id,
-							content.arguments,
-							{
-								showImages: this.settingsManager.getShowImages(),
-								imageWidthCells: this.settingsManager.getImageWidthCells(),
-							},
-							this.getRegisteredToolDefinition(content.name),
-							this.ui,
-							this.sessionManager.getCwd(),
-						);
+						const component = this.createToolExecutionComponent(content.name, content.id, content.arguments);
 						component.setExpanded(this.toolOutputExpanded);
 						this.chatContainer.addChild(component);
 
@@ -4133,9 +4267,13 @@ export class InteractiveMode {
 	 * call ui.stop() to restore cooked mode, the cursor, and disable bracketed
 	 * paste / Kitty / modifyOtherKeys sequences.
 	 */
-	private uncaughtCrash(error: Error): never {
+	private uncaughtCrash(error: Error, origin: "uncaughtException" | "unhandledRejection"): void {
 		if (this.isShuttingDown) {
 			process.exit(1);
+		}
+		if (isRecoverableInspectorVmImportError(error, origin)) {
+			this.showWarning(INSPECTOR_VM_IMPORT_WARNING);
+			return;
 		}
 		this.isShuttingDown = true;
 		try {
@@ -4196,9 +4334,16 @@ export class InteractiveMode {
 		// Restore the terminal before the process dies on any uncaught throw.
 		// Without this, an unhandled exception from extension code (or anywhere
 		// in pi) leaves the terminal in raw mode with no cursor.
-		const uncaughtExceptionHandler = (error: Error) => this.uncaughtCrash(error);
+		const uncaughtExceptionHandler = (error: Error, origin: "uncaughtException" | "unhandledRejection") =>
+			this.uncaughtCrash(error, origin);
 		process.prependListener("uncaughtException", uncaughtExceptionHandler);
 		this.signalCleanupHandlers.push(() => process.off("uncaughtException", uncaughtExceptionHandler));
+
+		// Surface Inspector rejections that the early bootstrap seam recovered before this
+		// handler (and the TUI warning surface) existed.
+		if (consumeEarlyInspectorVmImportRecoveries() > 0) {
+			this.showWarning(INSPECTOR_VM_IMPORT_WARNING);
+		}
 	}
 
 	private unregisterSignalHandlers(): void {
@@ -4289,7 +4434,12 @@ export class InteractiveMode {
 	}
 
 	private updateEditorBorderColor(): void {
-		if (this.isBashMode) {
+		if (this.chrome) {
+			this.editor.borderColor = this.chrome.getEditorBorderColor({
+				isBashMode: this.isBashMode,
+				thinkingLevel: this.session.thinkingLevel || "off",
+			});
+		} else if (this.isBashMode) {
 			this.editor.borderColor = theme.getBashModeBorderColor();
 		} else {
 			const level = this.session.thinkingLevel || "off";
@@ -4372,59 +4522,22 @@ export class InteractiveMode {
 		this.showStatus(`Thinking blocks: ${this.hideThinkingBlock ? "hidden" : "visible"}`);
 	}
 
-	private async openExternalEditor(): Promise<void> {
+	private async handleOpenExternalEditor(): Promise<void> {
 		const editorCmd = this.settingsManager.getExternalEditorCommand();
-		if (!editorCmd) {
-			this.showWarning("No editor configured. Set externalEditor in settings.json or $VISUAL/$EDITOR.");
-			return;
-		}
-
-		const currentText = this.editor.getExpandedText?.() ?? this.editor.getText();
-		const tmpFile = path.join(os.tmpdir(), `pi-editor-${Date.now()}.pi.md`);
-
+		const content = this.editor.getExpandedText?.() ?? this.editor.getText();
+		this.ui.stop();
+		restoreInteractiveStderr();
 		try {
-			// Write current content to temp file
-			fs.writeFileSync(tmpFile, currentText, "utf-8");
-
-			// Stop TUI to release terminal
-			restoreInteractiveStderr();
-			this.ui.stop();
-
-			// Split by space to support editor arguments (e.g., "code --wait")
-			const [editor, ...editorArgs] = editorCmd.split(" ");
-
-			process.stdout.write(`Launching external editor: ${editorCmd}\nPi will resume when the editor exits.\n`);
-
-			// Do not use spawnSync here. On Windows, synchronous child_process calls can keep
-			// Node/libuv's console input read active after ui.stop() pauses stdin, racing
-			// vim/nvim for the console input buffer until Ctrl+C cancels the pending read.
-			const status = await new Promise<number | null>((resolve) => {
-				const child = spawn(editor, [...editorArgs, tmpFile], {
-					stdio: "inherit",
-					shell: process.platform === "win32",
-				});
-				child.on("error", () => resolve(null));
-				child.on("close", (code) => resolve(code));
+			const result = await editInExternalEditor({
+				command: editorCmd,
+				content,
 			});
-
-			// On successful exit (status 0), replace editor content
-			if (status === 0) {
-				const newContent = fs.readFileSync(tmpFile, "utf-8").replace(/\n$/, "");
-				this.editor.setText(newContent);
+			if (result.status === "complete") {
+				this.editor.setText(result.content);
 			}
-			// On non-zero exit, keep original text (no action needed)
 		} finally {
-			// Clean up temp file
-			try {
-				fs.unlinkSync(tmpFile);
-			} catch {
-				// Ignore cleanup errors
-			}
-
-			// Restart TUI
 			takeOverInteractiveStderr();
 			this.ui.start();
-			// Force full re-render since external editor uses alternate screen
 			this.ui.requestRender(true);
 		}
 	}
@@ -4440,7 +4553,7 @@ export class InteractiveMode {
 
 	showError(errorMessage: string): void {
 		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new Text(theme.fg("error", `Error: ${errorMessage}`), 1, 0));
+		this.chatContainer.addChild(new Text(theme.fg("error", `Error: ${sanitizeTuiErrorMessage(errorMessage)}`), 1, 0));
 		this.ui.requestRender();
 	}
 
@@ -4891,7 +5004,11 @@ export class InteractiveMode {
 						this.outputPad = padding;
 						if (this.streamingComponent || this.session.isStreaming) {
 							for (const child of this.chatContainer.children) {
-								if (child instanceof AssistantMessageComponent || child instanceof UserMessageComponent) {
+								if (
+									child instanceof AssistantMessageComponent ||
+									child instanceof CustomMessageComponent ||
+									child instanceof UserMessageComponent
+								) {
 									child.setOutputPad(padding);
 								}
 							}
@@ -5991,6 +6108,7 @@ export class InteractiveMode {
 			this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
 			this.outputPad = this.settingsManager.getOutputPad();
 			this.rebuildChatFromMessages();
+			time("chatRebuild", "reload");
 			chatRestoredBeforeSessionStart = true;
 		};
 
@@ -6031,10 +6149,12 @@ export class InteractiveMode {
 			if (modelsJsonError) {
 				this.showError(`models.json error: ${modelsJsonError}`);
 			}
+			const reloadedMessage = savedImplicitProjectTrust
+				? "Reloaded keybindings, extensions, skills, prompts, themes, and context files; saved project trust"
+				: "Reloaded keybindings, extensions, skills, prompts, themes, and context files";
+			const reloadTimings = formatTimings("reload");
 			this.showStatus(
-				savedImplicitProjectTrust
-					? "Reloaded keybindings, extensions, skills, prompts, themes, and context files; saved project trust"
-					: "Reloaded keybindings, extensions, skills, prompts, themes, and context files",
+				reloadTimings === undefined ? reloadedMessage : `${reloadedMessage} | reload timings: ${reloadTimings}`,
 			);
 			dismissReloadBox(this.editor as Component);
 			reloadBoxDismissed = true;
@@ -6275,22 +6395,9 @@ export class InteractiveMode {
 		const cacheWaste = computeCacheWaste(entries, this.session.modelRuntime);
 
 		// Cost/token totals per provider/model actually used (e.g. OpenRouter `auto`
-		// resolves to a concrete responseModel), sorted by cost descending.
-		const perModelMap = new Map<string, { key: string; cost: number; tokens: number }>();
-		for (const entry of entries) {
-			if (entry.type !== "message" || entry.message.role !== "assistant") continue;
-			const message = entry.message;
-			const usage = message.usage;
-			const key = `${message.provider}/${message.responseModel ?? message.model}`;
-			let bucket = perModelMap.get(key);
-			if (!bucket) {
-				bucket = { key, cost: 0, tokens: 0 };
-				perModelMap.set(key, bucket);
-			}
-			bucket.cost += usage.cost.total;
-			bucket.tokens += usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
-		}
-		const perModel = Array.from(perModelMap.values()).sort((a, b) => b.cost - a.cost);
+		// resolves to a concrete responseModel). Usage without model attribution is
+		// grouped separately so the breakdown reconciles with the session total.
+		const usageBreakdown = getUsageCostBreakdown(entries);
 
 		let info = `${theme.bold("Session Info")}\n\n`;
 		if (sessionName) {
@@ -6324,8 +6431,8 @@ export class InteractiveMode {
 		if (stats.cost > 0 || cacheWaste.missedTokens > 0) {
 			info += `\n${theme.bold("Cost")}\n`;
 			info += `${theme.fg("dim", "Total:")} $${stats.cost.toFixed(3)}`;
-			if (perModel.length > 1) {
-				for (const entry of perModel) {
+			if (usageBreakdown.length > 1) {
+				for (const entry of usageBreakdown) {
 					info += `\n  ${theme.fg("dim", `${entry.key}:`)} $${entry.cost.toFixed(3)} ${theme.fg("dim", `(${formatTokens(entry.tokens)} tokens)`)}`;
 				}
 			}
@@ -6414,7 +6521,6 @@ export class InteractiveMode {
 		const cycleThinkingLevel = this.getAppKeyDisplay("app.thinking.cycle");
 		const cycleModelForward = this.getAppKeyDisplay("app.model.cycleForward");
 		const selectModel = this.getAppKeyDisplay("app.model.select");
-		const observeSessions = this.getAppKeyDisplay("app.sessions.observe");
 		const expandTools = this.getAppKeyDisplay("app.tools.expand");
 		const toggleThinking = this.getAppKeyDisplay("app.thinking.toggle");
 		const externalEditor = this.getAppKeyDisplay("app.editor.external");
@@ -6460,7 +6566,6 @@ export class InteractiveMode {
 | \`${cycleThinkingLevel}\` | Cycle thinking level |
 | \`${cycleModelForward}\` / \`${cycleModelBackward}\` | Cycle models |
 | \`${selectModel}\` | Open model selector |
-| \`${observeSessions}\` | Observe session transcripts |
 | \`${expandTools}\` | Toggle tool output expansion |
 | \`${toggleThinking}\` | Toggle thinking block visibility |
 | \`${externalEditor}\` | Edit message in external editor |
@@ -6676,6 +6781,7 @@ export class InteractiveMode {
 	}
 
 	stop(): void {
+		InteractiveMode.restoreCompactionEscapeOverride(this);
 		this.streamingReveal.stop();
 		this.toolResultReveal.stop();
 		if (this.settingsManager.getShowTerminalProgress()) {

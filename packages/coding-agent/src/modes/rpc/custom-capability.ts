@@ -3,9 +3,9 @@
  *
  * In RPC mode `ctx.ui.custom` cannot render a third-party component — there is no
  * TUI to render it FROM. Historically it returned `undefined` synchronously with
- * NO wire message, so a default RPC client saw nothing at all. The neo client
- * wants a native "this extension UI requires the classic TUI" notice, so it
- * opts in via a client capability flag.
+ * NO wire message, so a default RPC client saw nothing at all. A client that
+ * can present a native "this extension UI requires the classic TUI" notice opts
+ * in via a capability flag.
  *
  * This gate is a PURE function so the additive-only guarantee is unit-provable:
  * only a client that advertised the `custom_unsupported` capability gets the
@@ -21,10 +21,9 @@ import type { RpcExtensionUIRequest } from "./rpc-types.ts";
 export const CUSTOM_UNSUPPORTED_CAPABILITY = "custom_unsupported";
 
 /**
- * Env var carrying client capabilities to a single-connection stdio rpc host
- * (comma-separated). The neo daemon sets it when spawning a per-connection child
- * from the handshake's `hello.capabilities`; a plain stdio client leaves it unset
- * and sees byte-identical default behavior.
+ * Env var carrying client capabilities to a single-connection stdio RPC host
+ * (comma-separated). A launcher may set it from a client handshake; a plain
+ * stdio client leaves it unset and sees byte-identical default behavior.
  */
 export const RPC_CLIENT_CAPABILITIES_ENV = "SENPI_RPC_CLIENT_CAPABILITIES";
 

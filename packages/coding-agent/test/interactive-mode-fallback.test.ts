@@ -31,6 +31,30 @@ function createFixture(): FallbackLifecycleFixture {
 const handleEvent = (InteractiveMode.prototype as unknown as InteractiveEventHandler).handleEvent;
 
 describe("InteractiveMode fallback lifecycle", () => {
+	it("explains a server-side fallback abort and points at /fallback without a chain", async () => {
+		const withChain = createFixture();
+		await handleEvent.call(withChain, {
+			type: "server_fallback_aborted",
+			from: "claude-fable-5",
+			to: "claude-opus-4-8",
+			chainConfigured: true,
+		});
+		expect(withChain.showWarning).toHaveBeenCalledWith(
+			"Server fallback claude-fable-5 -> claude-opus-4-8 aborted; retrying on your fallback chain",
+		);
+
+		const withoutChain = createFixture();
+		await handleEvent.call(withoutChain, {
+			type: "server_fallback_aborted",
+			from: "claude-opus-5",
+			to: "claude-opus-4-6",
+			chainConfigured: false,
+		});
+		expect(withoutChain.showWarning).toHaveBeenCalledWith(
+			"Server fallback claude-opus-5 -> claude-opus-4-6 aborted; no chain configured (set one with /fallback)",
+		);
+	});
+
 	it("renders fallback notices and maintains the fallback footer status", async () => {
 		const fixture = createFixture();
 

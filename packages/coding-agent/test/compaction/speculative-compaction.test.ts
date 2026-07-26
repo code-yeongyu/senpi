@@ -5,9 +5,18 @@ import {
 	fauxToolCall,
 	registerFauxProvider,
 } from "@earendil-works/pi-ai";
+import {
+	type Context,
+	createAssistantMessageEventStream,
+	type Model,
+	registerApiProvider,
+	type StreamOptions,
+	unregisterApiProviders,
+} from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { DEFAULT_COMPACTION_SETTINGS } from "../../src/core/compaction/index.ts";
+import compactionExtension from "../../src/core/extensions/builtin/compaction/index.ts";
 import { shouldStartSpeculativeCompaction } from "../../src/core/extensions/builtin/compaction/policy.ts";
 import {
 	applyGeneratedCompaction,
@@ -18,6 +27,7 @@ import {
 } from "../../src/core/extensions/builtin/compaction/speculative.ts";
 import { ModelRegistry } from "../../src/core/model-registry.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
+import { createHarness } from "../suite/harness.ts";
 
 const registrations: Array<{ unregister: () => void }> = [];
 
@@ -236,6 +246,217 @@ describe("speculative compaction", () => {
 
 		// Then
 		expect(result).toBeUndefined();
+	});
+
+	it("runs the non-remote summarizer through the final extension request pipeline", async () => {
+		const api = `compaction-stream-${Math.random().toString(36).slice(2)}`;
+		const provider = `compaction-provider-${Math.random().toString(36).slice(2)}`;
+		const sourceId = `compaction-stream-capture-${api}`;
+		const rawSecret = "STREAM_COMPACTION_RAW_SECRET";
+		const redactedSecret = "STREAM_COMPACTION_REDACTED";
+		const stages: string[] = [];
+		let captured: { context: Context; payload: unknown; headers: StreamOptions["headers"] | undefined } | undefined;
+		const captureStream = (model: Model<typeof api>, context: Context, options?: StreamOptions) => {
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() => {
+				void (async () => {
+					const initialPayload = { system: context.systemPrompt, messages: context.messages };
+					const payload = (await options?.onPayload?.(initialPayload, model)) ?? initialPayload;
+					captured = { context, payload, headers: options?.headers ? { ...options.headers } : undefined };
+					stages.push("provider");
+					const message = fauxAssistantMessage("stream summary");
+					stream.push({ type: "done", reason: "stop", message });
+					stream.end(message);
+				})().catch((error) => {
+					const message = fauxAssistantMessage("", {
+						stopReason: "error",
+						errorMessage: error instanceof Error ? error.message : String(error),
+					});
+					stream.push({ type: "error", reason: "error", error: message });
+					stream.end(message);
+				});
+			});
+			return stream;
+		};
+
+		const harness = await createHarness({
+			api,
+			provider,
+			models: [{ id: "stream-compact", contextWindow: 32_000 }],
+			settings: { compaction: { enabled: true, keepRecentTokens: 1 } },
+			extensionFactories: [
+				compactionExtension,
+				(pi) => {
+					pi.on("context", (event) => {
+						stages.push("context-redact");
+						return {
+							messages: event.messages.map((message) => {
+								if (message.role !== "user" || typeof message.content === "string") return message;
+								return {
+									...message,
+									content: message.content.map((part) =>
+										part.type === "text"
+											? { ...part, text: part.text.replaceAll(rawSecret, redactedSecret) }
+											: part,
+									),
+								};
+							}),
+						};
+					});
+					pi.on("context", () => {
+						stages.push("context-final");
+					});
+					pi.on("before_provider_request", (event) => {
+						stages.push("payload");
+						return { ...(event.payload as Record<string, unknown>), extension_request_hook: "applied" };
+					});
+					pi.on("before_provider_headers", (event) => {
+						stages.push("headers");
+						event.headers["x-compaction-request-hook"] = "applied";
+					});
+				},
+			],
+		});
+
+		harness.faux.unregister();
+		registerApiProvider({ api, stream: captureStream, streamSimple: captureStream }, sourceId);
+		try {
+			await harness.session.bindExtensions({});
+			const model = harness.getModel();
+			harness.sessionManager.appendMessage({
+				role: "user",
+				content: [{ type: "text", text: `persisted ${rawSecret}` }],
+				timestamp: 1,
+			});
+			harness.sessionManager.appendMessage({
+				...fauxAssistantMessage("persisted assistant"),
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
+				timestamp: 2,
+			});
+			harness.sessionManager.appendMessage({
+				role: "user",
+				content: [{ type: "text", text: "retain this turn" }],
+				timestamp: 3,
+			});
+			harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+
+			await harness.session.compact();
+
+			expect(JSON.stringify(harness.sessionManager.getEntries())).toContain(rawSecret);
+			expect(captured).toBeDefined();
+			const capturedSecretMessage = captured?.context.messages.find(
+				(message) =>
+					message.role === "user" &&
+					typeof message.content !== "string" &&
+					message.content.some((part) => part.type === "text" && part.text.includes("persisted")),
+			);
+			const capturedSecretText =
+				capturedSecretMessage?.role === "user" && Array.isArray(capturedSecretMessage.content)
+					? capturedSecretMessage.content
+							.filter((part): part is { type: "text"; text: string } => part.type === "text")
+							.map((part) => part.text)
+							.join("\n")
+					: "";
+			expect(capturedSecretText).toContain(redactedSecret);
+			expect(capturedSecretText).not.toContain(rawSecret);
+			expect(captured?.payload).toMatchObject({ extension_request_hook: "applied" });
+			expect(captured?.headers?.["x-compaction-request-hook"]).toBe("applied");
+			for (const stage of ["context-redact", "context-final", "payload", "headers"]) {
+				expect(stages.indexOf(stage)).toBeGreaterThanOrEqual(0);
+				expect(stages.indexOf(stage)).toBeLessThan(stages.indexOf("provider"));
+			}
+			expect(stages.indexOf("context-redact")).toBeLessThan(stages.indexOf("context-final"));
+		} finally {
+			unregisterApiProviders(sourceId);
+			harness.cleanup();
+		}
+	});
+
+	it("redacts a persisted custom message via raw-message context hooks before the non-remote summarizer stream", async () => {
+		const api = `compaction-stream-${Math.random().toString(36).slice(2)}`;
+		const provider = `compaction-provider-${Math.random().toString(36).slice(2)}`;
+		const sourceId = `compaction-stream-capture-${api}`;
+		const rawSecret = "PERSISTED_CUSTOM_RAW_SECRET";
+		const redactedSecret = "[redacted persisted custom secret]";
+		let contextHookRan = false;
+		let hookSawRawCustomSecret = false;
+		let captured: Context | undefined;
+		const captureStream = (_model: Model<typeof api>, context: Context, _options?: StreamOptions) => {
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() => {
+				captured = context;
+				const message = fauxAssistantMessage("stream summary");
+				stream.push({ type: "done", reason: "stop", message });
+				stream.end(message);
+			});
+			return stream;
+		};
+
+		const harness = await createHarness({
+			api,
+			provider,
+			models: [{ id: "stream-compact", contextWindow: 32_000 }],
+			settings: { compaction: { enabled: true, keepRecentTokens: 1 } },
+			extensionFactories: [
+				compactionExtension,
+				(pi) => {
+					pi.on("context", (event) => {
+						contextHookRan = true;
+						return {
+							messages: event.messages.map((message) => {
+								if (message.role !== "custom" || message.customType !== "secret") return message;
+								hookSawRawCustomSecret = true;
+								return { ...message, content: redactedSecret };
+							}),
+						};
+					});
+				},
+			],
+		});
+
+		harness.faux.unregister();
+		registerApiProvider({ api, stream: captureStream, streamSimple: captureStream }, sourceId);
+		try {
+			await harness.session.bindExtensions({});
+			const model = harness.getModel();
+			harness.sessionManager.appendCustomMessageEntry(
+				"secret",
+				[{ type: "text", text: `persisted ${rawSecret}` }],
+				false,
+			);
+			harness.sessionManager.appendMessage({
+				...fauxAssistantMessage("persisted assistant"),
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
+				timestamp: 2,
+			});
+			harness.sessionManager.appendMessage({
+				role: "user",
+				content: [{ type: "text", text: "retain this turn" }],
+				timestamp: 3,
+			});
+			harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+
+			await harness.session.compact();
+
+			// The raw session keeps the persisted secret untouched; only the
+			// outgoing summarization stream input is redacted.
+			expect(JSON.stringify(harness.sessionManager.getEntries())).toContain(rawSecret);
+			expect(contextHookRan).toBe(true);
+			// Ordered context hooks must run on the raw AgentMessage list, before
+			// convertToLlm/repair erases role + customType.
+			expect(hookSawRawCustomSecret).toBe(true);
+			expect(captured).toBeDefined();
+			const capturedText = JSON.stringify(captured?.messages);
+			expect(capturedText).toContain(redactedSecret);
+			expect(capturedText).not.toContain(rawSecret);
+		} finally {
+			unregisterApiProviders(sourceId);
+			harness.cleanup();
+		}
 	});
 
 	it("streams generated summary deltas to the compaction progress callback", async () => {

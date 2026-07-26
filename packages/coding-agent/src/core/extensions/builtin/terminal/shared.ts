@@ -7,6 +7,7 @@ export const TERMINAL_OUTPUT_TOOL = "bash_output";
 export const TERMINAL_KILL_TOOL = "kill_bash";
 export const TERMINAL_INPUT_TOOL = "bash_input";
 export const TERMINAL_RESIZE_TOOL = "bash_resize";
+export const TERMINAL_MONITOR_TOOL = "monitor";
 
 /** Companion tools that must never dangle without a live PTY `bash`. */
 export const TERMINAL_COMPANION_TOOLS = [
@@ -14,6 +15,7 @@ export const TERMINAL_COMPANION_TOOLS = [
 	TERMINAL_KILL_TOOL,
 	TERMINAL_INPUT_TOOL,
 	TERMINAL_RESIZE_TOOL,
+	TERMINAL_MONITOR_TOOL,
 ] as const;
 
 export const DEFAULT_COLS = 120;
@@ -31,7 +33,6 @@ export const BACKGROUND_START_GRACE_MS = 250;
  * the agent blocked forever.
  */
 export const KILLED_SESSION_EXIT_GRACE_MS = 5000;
-export const DEFAULT_OUTPUT_WAIT_TIMEOUT_SECONDS = 30;
 
 /**
  * Non-interactive environment for foreground one-shot commands (codex-style):

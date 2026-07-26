@@ -16,8 +16,9 @@ function parsePositiveInt(value: string | undefined): number | undefined {
 }
 
 export function resolveBashTimeoutDefaults(env: EnvLike): BashTimeoutDefaults {
-	const defaultSeconds = parsePositiveInt(env.PI_BASH_DEFAULT_TIMEOUT_SECONDS) ?? BASH_DEFAULT_TIMEOUT_SECONDS;
-	const rawMax = parsePositiveInt(env.PI_BASH_MAX_TIMEOUT_SECONDS) ?? BASH_MAX_TIMEOUT_SECONDS;
+	const { PI_BASH_DEFAULT_TIMEOUT_SECONDS: defaultTimeout, PI_BASH_MAX_TIMEOUT_SECONDS: maxTimeout } = env;
+	const defaultSeconds = parsePositiveInt(defaultTimeout) ?? BASH_DEFAULT_TIMEOUT_SECONDS;
+	const rawMax = parsePositiveInt(maxTimeout) ?? BASH_MAX_TIMEOUT_SECONDS;
 	const maxSeconds = Math.max(rawMax, defaultSeconds);
 	return { defaultSeconds, maxSeconds };
 }

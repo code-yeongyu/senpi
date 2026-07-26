@@ -12,6 +12,96 @@
 
 ### Removed
 
+## [2026.7.25-2] - 2026-07-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.7.25] - 2026-07-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.7.24] - 2026-07-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [0.82.0] - 2026-07-24
+
+### Breaking Changes
+
+- Replaced `AgentHarness`'s `ExecutionEnv` dependency and context-free `AgentTool` inputs with application-defined `toolContext` values and context-aware `AgentHarnessTool` definitions.
+
+### Added
+
+- Added context-aware `read`, `write`, `edit`, and `bash` harness tools backed by `ExecutionEnv`, including async bash execution preparation.
+
+### Changed
+
+- Aligned harness tool path handling, edit serialization, shell output capture, explicit non-inherited environments, and cross-platform process cleanup with coding-agent behavior.
+
+### Fixed
+
+- Fixed compaction and branch-summary requests to use fresh routing session IDs with prompt caching disabled where supported ([#6618](https://github.com/earendil-works/pi/pull/6618) by [@tmustier](https://github.com/tmustier)).
+
+## [0.81.1] - 2026-07-21
+
+### Added
+
+- Added retry policy support and lifecycle events for compaction and branch-summary operations in `AgentHarness` ([#6901](https://github.com/earendil-works/pi/pull/6901) by [@davidbrai](https://github.com/davidbrai)).
+
+### Fixed
+
+- Restored the `Agent` `streamFn` option and host-configurable fallback for omitted agent-loop stream functions without reintroducing a `pi-ai/compat` dependency ([#6915](https://github.com/earendil-works/pi/issues/6915)).
+
+## [0.81.0] - 2026-07-21
+
+### Breaking Changes
+
+- Changed `SessionStorage` to use `getPathToRootOrCompaction()`, require session name and statistics methods, support cursor-based entry reads, and store retained compaction tails as self-contained checkpoints ([#6594](https://github.com/earendil-works/pi/pull/6594) by [@cristinaponcela](https://github.com/cristinaponcela)).
+- Moved the `uuidv7` export to `@earendil-works/pi-ai` ([#6834](https://github.com/earendil-works/pi/pull/6834) by [@xl0](https://github.com/xl0)).
+- Replaced the optional `Agent` `streamFn` fallback with a required `streamFunction` and made low-level loop stream functions required, preventing `@earendil-works/pi-ai/compat` and all built-in providers from entering selective-provider bundles ([#6851](https://github.com/earendil-works/pi/issues/6851)).
+
+### Added
+
+- Added usage metadata to tool results, compaction entries, and branch summaries in the agent harness ([#6671](https://github.com/earendil-works/pi/pull/6671) by [@davidbrai](https://github.com/davidbrai)).
+
+## [2026.7.23] - 2026-07-23
+
+### Breaking Changes
+
+### Added
+
+- Added timing metadata to completed thinking blocks so clients can present per-section durations.
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.7.22-2] - 2026-07-22
 
 ### Breaking Changes
@@ -106,6 +196,8 @@
 ## [2026.7.16-2] - 2026-07-16
 
 ## [2026.7.16] - 2026-07-16
+
+## [0.80.10] - 2026-07-16
 
 ## [0.80.9] - 2026-07-16
 

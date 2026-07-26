@@ -28,6 +28,8 @@ export {
 	type SelectItem,
 	SelectList,
 	type SelectListLayoutOptions,
+	type SelectListRenderRow,
+	type SelectListRowParts,
 	type SelectListTheme,
 	type SelectListTruncatePrimaryContext,
 } from "./components/select-list.ts";

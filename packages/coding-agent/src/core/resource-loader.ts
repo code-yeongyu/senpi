@@ -39,7 +39,7 @@ import { SettingsManager } from "./settings-manager.ts";
 import type { Skill } from "./skills.ts";
 import { loadSkills } from "./skills.ts";
 import { createSourceInfo, type SourceInfo } from "./source-info.ts";
-import { resetTimings } from "./timings.ts";
+import { resetTimings, time } from "./timings.ts";
 
 export interface ResourceExtensionPaths {
 	skillPaths?: Array<{ path: string; metadata: PathMetadata }>;
@@ -50,6 +50,15 @@ export interface ResourceExtensionPaths {
 
 export interface ResourceLoaderReloadOptions {
 	resolveProjectTrust?: (input: { extensionsResult: LoadExtensionsResult }) => Promise<boolean>;
+	/**
+	 * The SettingsManager the caller already reloaded immediately before this call.
+	 * The reload is skipped only when it is the very manager this loader owns, so a
+	 * caller holding a different manager (SDK callers may supply either
+	 * independently) can never suppress a reload it still needed. Ignored while
+	 * project trust is being resolved: that path must re-read settings after the
+	 * trust flip so project-scoped values are never stale.
+	 */
+	settingsAlreadyReloadedFor?: SettingsManager;
 }
 
 export interface ResourceLoader {
@@ -192,6 +201,9 @@ function loadContextFileFromDir(dir: string): { path: string; content: string } 
 		const filePath = join(dir, filename);
 		if (existsSync(filePath)) {
 			try {
+				if (!statSync(filePath).isFile()) {
+					continue;
+				}
 				return {
 					path: filePath,
 					content: readFileSync(filePath, "utf-8"),
@@ -492,11 +504,16 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 
 		// reload() preserves SettingsManager.projectTrusted and reloads settings for that trust state.
-		await this.settingsManager.reload();
+		const settingsAreFresh =
+			options?.settingsAlreadyReloadedFor === this.settingsManager && options?.resolveProjectTrust === undefined;
+		if (!settingsAreFresh) {
+			await this.settingsManager.reload();
+		}
 		const resolvedPaths = await this.packageManager.resolve();
 		const cliExtensionPaths = await this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
 			temporary: true,
 		});
+		time("packageResolve", "extensions");
 		const metadataByPath = new Map<string, PathMetadata>();
 
 		this.extensionSkillSourceInfos = new Map();
@@ -581,6 +598,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 		this.lastSkillPaths = skillPaths;
 		this.updateSkillsFromPaths(skillPaths, metadataByPath);
+		time("skills", "extensions");
 		for (const p of this.additionalSkillPaths) {
 			if (isLocalPath(p)) {
 				const resolved = this.resolveResourcePath(p);
@@ -596,6 +614,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 		this.lastPromptPaths = promptPaths;
 		this.updatePromptsFromPaths(promptPaths, metadataByPath);
+		time("prompts", "extensions");
 		for (const p of this.additionalPromptTemplatePaths) {
 			if (isLocalPath(p)) {
 				const resolved = this.resolveResourcePath(p);
@@ -615,6 +634,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 		this.lastThemePaths = themePaths;
 		this.updateThemesFromPaths(themePaths, metadataByPath);
+		time("themes", "extensions");
 		for (const p of this.additionalThemePaths) {
 			const resolved = this.resolveResourcePath(p);
 			if (!existsSync(resolved) && !this.themeDiagnostics.some((d) => d.path === resolved)) {
@@ -632,6 +652,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		};
 		const resolvedAgentsFiles = this.agentsFilesOverride ? this.agentsFilesOverride(agentsFiles) : agentsFiles;
 		this.agentsFiles = resolvedAgentsFiles.agentsFiles;
+		time("contextFiles", "extensions");
 
 		// SYSTEM.md / APPEND_SYSTEM.md file discovery was intentionally removed; the explicit
 		// options are the only static prompt source (see packages/coding-agent/changes.md).

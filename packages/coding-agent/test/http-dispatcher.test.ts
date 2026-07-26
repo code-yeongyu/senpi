@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { applyHttpProxySettings } from "../src/core/http-dispatcher.ts";
+import { applyHttpProxySettings, configureHttpDispatcher } from "../src/core/http-dispatcher.ts";
 
 const PROXY_ENV_KEYS = ["HTTP_PROXY", "HTTPS_PROXY"] as const;
 
@@ -49,5 +49,18 @@ describe("http proxy settings", () => {
 
 		expect(process.env.HTTP_PROXY).toBeUndefined();
 		expect(process.env.HTTPS_PROXY).toBeUndefined();
+	});
+
+	it("pins one process-global dispatcher configuration for multi-session RPC", () => {
+		process.argv.push("--multi-session");
+		try {
+			configureHttpDispatcher(31_000);
+			expect(() => configureHttpDispatcher(32_000)).toThrow(
+				"Multi-session RPC shares one process-global Undici dispatcher",
+			);
+		} finally {
+			const index = process.argv.lastIndexOf("--multi-session");
+			if (index >= 0) process.argv.splice(index, 1);
+		}
 	});
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { getModel } from "../src/models.ts";
+import { getModel } from "../src/compat.ts";
 import { streamGoogle } from "../src/providers/google.ts";
 import { convertMessages } from "../src/providers/google-shared.ts";
 import { streamGoogleVertex } from "../src/providers/google-vertex.ts";

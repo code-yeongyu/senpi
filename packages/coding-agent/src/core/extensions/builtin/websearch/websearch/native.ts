@@ -29,17 +29,11 @@ interface NativeEntryOptions {
 }
 
 function nativeMapping(model: NativeModelInfo): NativeProviderMapping | null {
-	if (
-		model.provider === "openai" &&
-		(/^(gpt-5\.5(-fast)?|gpt-4\.1(-mini)?)$/.test(model.id) || /^gpt-4o(-mini)?(-\d{4}-\d{2}-\d{2})?$/.test(model.id))
-	) {
+	if (model.provider === "openai" && /^gpt-(4o|4\.1|5)/.test(model.id) && !model.id.includes("codex")) {
 		return { provider: "openai", resource: "responses" };
 	}
 
-	if (
-		model.provider === "anthropic" &&
-		(/^claude-(opus|sonnet)-4(-\d+)?$/.test(model.id) || /^claude-(opus|sonnet)-4-\d+-\d{8}$/.test(model.id))
-	) {
+	if (model.provider === "anthropic" && /^claude-/.test(model.id)) {
 		return { provider: "anthropic", resource: "messages" };
 	}
 

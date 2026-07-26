@@ -126,6 +126,26 @@ describe("goal mid-turn token usage accounting", () => {
 		expect(tokensUsedOf(completed)).toBe(150);
 	});
 
+	it("update_goal blocked mid-turn reports tokens accumulated from streamed assistant messages", async () => {
+		const harness = createGoalHarness();
+		const ctx = await makeCtx();
+		await harness.tools
+			.get("create_goal")
+			?.execute("c1", { objective: "Wait for a decision" }, undefined, undefined, ctx);
+		await runHandlers(harness.handlers, "agent_start", { type: "agent_start" }, ctx);
+		await streamAssistantMessage(harness, ctx, assistantMessage(100, 50));
+
+		const blocked = await harness.tools
+			.get("update_goal")
+			?.execute("u1", { status: "blocked", reason: "Waiting on a decision" }, undefined, undefined, ctx);
+
+		expect(tokensUsedOf(blocked)).toBe(150);
+		expect(await readGoal(storeRefFor(ctx))).toMatchObject({
+			status: "blocked",
+			blockedReason: "Waiting on a decision",
+		});
+	});
+
 	it("get_goal mid-turn reports tokens accumulated from streamed assistant messages", async () => {
 		const harness = createGoalHarness();
 		const ctx = await makeCtx();

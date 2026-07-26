@@ -1,13 +1,14 @@
 {
 	"name": "@code-yeongyu/senpi-install",
-	"version": "2026.7.22-2",
+	"version": "2026.7.25-2",
 	"private": true,
 	"description": "Lockfile root used by the Pi installer and updater.",
 	"dependencies": {
-		"@code-yeongyu/senpi": "2026.7.22-2"
+		"@code-yeongyu/senpi": "2026.7.25-2"
 	},
 	"overrides": {
 		"@hono/node-server": "2.0.10",
+		"protobufjs": "7.6.5",
 		"rimraf": "6.1.2",
 		"gaxios": {
 			"rimraf": "6.1.2"

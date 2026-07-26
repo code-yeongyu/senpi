@@ -169,6 +169,7 @@ export class FooterComponent implements Component {
 			coloredSegments.push(theme.fg("dim", text));
 			plainSegments.push(text);
 		}
+
 		// Kimi Coding is subscription-backed despite using API-key authentication.
 		const usingSubscription = state.model
 			? state.model.provider === "kimi-coding" || this.session.modelRuntime.isUsingOAuth(state.model.provider)

@@ -1,4 +1,5 @@
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
+import type { KernelInterruptHandle } from "../../tool/types.ts";
 import { createInlineWorker, type WorkerLike } from "./inline-worker.ts";
 import {
 	assertJavaScriptKernelOpen,
@@ -48,14 +49,16 @@ export class JavaScriptKernel {
 		return await promise;
 	}
 
-	async interrupt(reason = "interrupted"): Promise<void> {
+	async interrupt(reason = "interrupted"): Promise<KernelInterruptHandle> {
 		assertJavaScriptKernelOpen(this.#lifecycle, "interrupt");
 		const active = this.#runs.active;
 		const target = this.#runs.takeInterruptTarget();
-		if (!target) return;
+		if (!target) return { stateRetained: Promise.resolve(true) };
 		if (target === active) this.#clearTimeout();
 		this.#runs.settle(target, stoppedResult(target.input.cellId, `JS cell interrupted: ${reason}`));
 		await this.#restartAfterStop();
+		// A restart always replaces the worker VM, so no user global survives.
+		return { stateRetained: Promise.resolve(false) };
 	}
 
 	async reset(): Promise<void> {

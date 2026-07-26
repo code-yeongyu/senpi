@@ -12,6 +12,25 @@
 #   4. Add an environment secret `PI_GIST_TOKEN` on `pi-analyze` with gist
 #      creation permission. The analysis job uses it to upload the redacted
 #      session gist.
+#   5. Add an environment secret `PI_AUTH_UPDATE_TOKEN` on `pi-analyze` with
+#      permission to update this repo's environment secrets. The analysis job
+#      uses it to write back refreshed `PI_AUTH_JSON` contents. Fine-grained
+#      tokens need repository permission `Environments: read and write` on this
+#      repo; classic tokens need the `repo` scope. The `Secrets` permission is
+#      not enough: it only covers repository-level Actions secrets, while every
+#      `/repos/{owner}/{repo}/environments/{env}/secrets/*` endpoint is governed
+#      by `Environments`. Without it `gh secret set` fails with "Resource not
+#      accessible by personal access token" and the stored credential goes stale
+#      until its refresh token is rejected.
+#
+# `PI_AUTH_JSON` must come from a login dedicated to this workflow. OpenAI Codex
+# rotates refresh tokens on every refresh, so sharing one auth.json with a
+# developer machine invalidates whichever copy refreshes second, and analysis
+# then fails with "OAuth refresh failed for openai-codex".
+#
+# The selected runner must have Node.js support plus gh, fd, and ripgrep. GitHub
+# hosted runners are bootstrapped below; future self-hosted aliases should have
+# those dependencies preinstalled or installable by the setup steps.
 #
 # The session runs in a high-entropy checkout directory so the recorded cwd is
 # a unique string. Import the session into a local checkout with the
@@ -43,7 +62,7 @@ jobs:
     steps:
       - name: Verify sender permission
         id: verify
-        uses: actions/github-script@v7
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           ORG_READ_TOKEN: ${{ secrets.EARENDIL_ORG_READ_TOKEN }}
         with:
@@ -181,13 +200,13 @@ jobs:
         run: echo "name=pi-ci-$(openssl rand -hex 16)" >> "$GITHUB_OUTPUT"
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: ${{ steps.workdir.outputs.name }}
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
@@ -204,6 +223,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Write auth.json
+        id: write_auth
         env:
           PI_AUTH_JSON: ${{ secrets.PI_AUTH_JSON }}
         run: |
@@ -216,7 +236,7 @@ jobs:
           chmod 600 "$RUNNER_TEMP/pi-agent/auth.json"
 
       - name: Write issue context
-        uses: actions/github-script@v7
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           EXTRA_INSTRUCTIONS: ${{ needs.authorize.outputs.extra_instructions }}
           ISSUE_CONTEXT_PATH: ${{ steps.workdir.outputs.name }}/.issue-analysis-context.json
@@ -261,6 +281,7 @@ jobs:
             });
 
       - name: Run pi issue analysis
+        id: run_pi
         shell: bash
         working-directory: ${{ steps.workdir.outputs.name }}
         env:
@@ -283,6 +304,75 @@ jobs:
             --model "$ISSUE_ANALYSIS_MODEL" \
             --thinking "$ISSUE_ANALYSIS_THINKING" \
             "$prompt" | tee "$RUNNER_TEMP/pi-out/output.md"
+
+      - name: Persist refreshed auth.json
+        if: always() && steps.write_auth.outcome == 'success'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          GH_TOKEN: ${{ secrets.PI_AUTH_UPDATE_TOKEN }}
+          PI_AUTH_JSON: ${{ secrets.PI_AUTH_JSON }}
+          PI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-agent
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const { spawn } = require('child_process');
+
+            if (!process.env.GH_TOKEN) {
+              throw new Error('PI_AUTH_UPDATE_TOKEN is not configured for the pi-analyze environment');
+            }
+
+            const authPath = path.join(process.env.PI_CODING_AGENT_DIR, 'auth.json');
+            if (!fs.existsSync(authPath)) {
+              core.warning('auth.json was not created; skipping auth persistence');
+              return;
+            }
+
+            const authJson = fs.readFileSync(authPath, 'utf8');
+            let parsed;
+            try {
+              parsed = JSON.parse(authJson);
+            } catch (error) {
+              throw new Error(`Refusing to persist malformed auth.json: ${error instanceof Error ? error.message : String(error)}`);
+            }
+
+            const codexAuth = parsed['openai-codex'];
+            if (codexAuth?.type !== 'oauth' || typeof codexAuth.refresh !== 'string' || codexAuth.refresh.length === 0) {
+              throw new Error('Refusing to persist auth.json without openai-codex OAuth refresh credentials');
+            }
+
+            if (authJson === process.env.PI_AUTH_JSON) {
+              console.log('auth.json is unchanged; skipping secret update');
+              return;
+            }
+
+            await new Promise((resolve, reject) => {
+              const child = spawn(
+                'gh',
+                ['secret', 'set', 'PI_AUTH_JSON', '--env', 'pi-analyze', '--repo', process.env.GITHUB_REPOSITORY],
+                { env: process.env, stdio: ['pipe', 'inherit', 'pipe'] },
+              );
+              const stderrChunks = [];
+              child.stderr.on('data', (chunk) => {
+                stderrChunks.push(chunk);
+                process.stderr.write(chunk);
+              });
+              child.on('error', reject);
+              child.on('close', (code) => {
+                if (code === 0) {
+                  resolve();
+                  return;
+                }
+                const details = Buffer.concat(stderrChunks).toString().trim();
+                reject(
+                  new Error(
+                    `gh secret set failed with exit code ${code}${details ? `: ${details}` : ''}. ` +
+                      'PI_AUTH_UPDATE_TOKEN needs repository permission "Environments: read and write" on this repo.',
+                  ),
+                );
+              });
+              child.stdin.end(authJson);
+            });
 
       - name: Export session files
         id: export_session_files
@@ -340,8 +430,8 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Comment with session import instructions
-        if: steps.gist.outcome == 'success'
-        uses: actions/github-script@v7
+        if: always() && steps.run_pi.outcome == 'success' && steps.gist.outcome == 'success'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           GIST_URL: ${{ steps.gist.outputs.url }}
           GIST_ID: ${{ steps.gist.outputs.id }}
@@ -418,9 +508,33 @@ jobs:
               body,
             });
 
+      - name: Comment on analysis failure
+        if: always() && steps.run_pi.outcome == 'failure'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          GIST_URL: ${{ steps.gist.outputs.url }}
+          SHARE_URL: ${{ steps.gist.outputs.share_url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          script: |
+            const lines = ['Pi issue analysis failed; no analysis was produced.', '', `Run: ${process.env.RUN_URL}`];
+            if (process.env.SHARE_URL) {
+              lines.push(`Partial session: ${process.env.SHARE_URL}`);
+            }
+            if (process.env.GIST_URL) {
+              lines.push(`Gist: ${process.env.GIST_URL}`);
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: lines.join('\n'),
+            });
+
       - name: Remove trigger label
         if: always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             try {

@@ -55,8 +55,10 @@ type RenderSessionContextThis = {
 	session: { retryAttempt: number; modelRegistry: { find(provider: string, modelId: string): undefined } };
 	toolOutputExpanded: boolean;
 	isInitialized: boolean;
+	chrome: undefined;
 	updateEditorBorderColor(): void;
 	getRegisteredToolDefinition(toolName: string): undefined;
+	createToolExecutionComponent(toolName: string, toolCallId: string, args: unknown): ToolExecutionComponent;
 	clearPendingTools(): void;
 	handleToolExecutionEnd(event: Extract<AgentSessionEvent, { type: "tool_execution_end" }>): void;
 	addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void;
@@ -90,8 +92,12 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 		session: { retryAttempt: 0, modelRegistry: { find: () => undefined } },
 		toolOutputExpanded: false,
 		isInitialized: true,
+		// Classic chrome: renderSessionItems builds tool components through the
+		// real factory, which consults this field to pick the presentation.
+		chrome: undefined,
 		updateEditorBorderColor: vi.fn(),
 		getRegisteredToolDefinition: (_toolName: string) => undefined,
+		createToolExecutionComponent: Reflect.get(InteractiveMode.prototype, "createToolExecutionComponent"),
 		clearPendingTools: Reflect.get(InteractiveMode.prototype, "clearPendingTools"),
 		handleToolExecutionEnd: Reflect.get(InteractiveMode.prototype, "handleToolExecutionEnd"),
 		renderSessionItems: (InteractiveMode.prototype as unknown as { renderSessionItems: RenderSessionItems })

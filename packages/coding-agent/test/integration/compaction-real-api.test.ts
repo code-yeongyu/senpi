@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { getModel, type Model } from "@earendil-works/pi-ai/compat";
+import { getModel, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
@@ -96,6 +96,7 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction extensions (real AP
 		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		const agent = new Agent({
 			getApiKey: () => API_KEY,
+			streamFn: streamSimple,
 			initialState: {
 				model,
 				systemPrompt: "You are a helpful assistant. Be concise.",
@@ -522,6 +523,7 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("Compaction with thinking model
 	function createSession(model: Model<any>, thinkingLevel: ThinkingLevel = "high") {
 		const agent = new Agent({
 			getApiKey: () => API_KEY,
+			streamFn: streamSimple,
 			initialState: {
 				model,
 				systemPrompt: "You are a helpful assistant. Be concise.",
@@ -600,6 +602,7 @@ describe.skipIf(!process.env.PI_RUN_INTEGRATION)("AgentSession compaction e2e", 
 		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		const agent = new Agent({
 			getApiKey: () => API_KEY,
+			streamFn: streamSimple,
 			initialState: {
 				model,
 				systemPrompt: "You are a helpful assistant. Be concise.",

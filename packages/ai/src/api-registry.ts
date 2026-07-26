@@ -33,12 +33,37 @@ export interface ApiProviderInternal {
 	streamSimple: ApiStreamSimpleFunction;
 }
 
-type RegisteredApiProvider = {
+export type RegisteredApiProvider = {
 	provider: ApiProviderInternal;
 	sourceId?: string;
 };
 
+/** Browser-neutral shape installed by the node-only provider-scope subpath. */
+export interface ProviderScopeAccess {
+	state: "active" | "closed";
+	overlay: Map<string, RegisteredApiProvider>;
+}
+
 const apiProviderRegistry = new Map<string, RegisteredApiProvider>();
+const builtinApiProviderRegistry = new Map<string, RegisteredApiProvider>();
+let getProviderScope: () => ProviderScopeAccess | undefined = () => undefined;
+let providerScopeStrictMode = false;
+
+/** Installs the optional node-only scope lookup without importing node APIs here. */
+export function installProviderScopeAccessor(accessor: () => ProviderScopeAccess | undefined): void {
+	getProviderScope = accessor;
+}
+
+export function setProviderScopeStrictMode(enabled: boolean): void {
+	providerScopeStrictMode = enabled;
+}
+
+function getActiveProviderScope(): ProviderScopeAccess | undefined {
+	const scope = getProviderScope();
+	if (scope?.state === "closed") throw new Error("Provider scope is closed");
+	if (!scope && providerScopeStrictMode) throw new Error("Provider scope is required in strict mode");
+	return scope;
+}
 
 function wrapStream<TApi extends Api, TOptions extends StreamOptions>(
 	api: TApi,
@@ -60,21 +85,46 @@ function wrapStreamSimple<TApi extends Api>(
 	};
 }
 
-export function registerApiProvider<TApi extends Api, TOptions extends StreamOptions>(
+function createRegisteredProvider<TApi extends Api, TOptions extends StreamOptions>(
 	provider: ApiProvider<TApi, TOptions>,
 	sourceId?: string,
-): void {
-	apiProviderRegistry.set(provider.api, {
+): RegisteredApiProvider {
+	return {
 		provider: {
 			api: provider.api,
 			stream: wrapStream(provider.api, provider.stream),
 			streamSimple: wrapStreamSimple(provider.api, provider.streamSimple),
 		},
 		sourceId,
-	});
+	};
+}
+
+export function registerApiProvider<TApi extends Api, TOptions extends StreamOptions>(
+	provider: ApiProvider<TApi, TOptions>,
+	sourceId?: string,
+): void {
+	const scope = getActiveProviderScope();
+	const registry = scope ? scope.overlay : apiProviderRegistry;
+	registry.set(provider.api, createRegisteredProvider(provider, sourceId));
+}
+
+/** Registers a builtin once, retaining its immutable identity for active scopes. */
+export function registerBuiltinApiProvider<TApi extends Api, TOptions extends StreamOptions>(
+	provider: ApiProvider<TApi, TOptions>,
+): void {
+	const registered = builtinApiProviderRegistry.get(provider.api) ?? createRegisteredProvider(provider);
+	builtinApiProviderRegistry.set(provider.api, registered);
+	if (!apiProviderRegistry.has(provider.api)) apiProviderRegistry.set(provider.api, registered);
+}
+
+export function getBuiltinApiProvider(api: Api): ApiProviderInternal | undefined {
+	return builtinApiProviderRegistry.get(api)?.provider;
 }
 
 export function getApiProvider(api: Api): ApiProviderInternal | undefined {
+	const scope = getActiveProviderScope();
+	if (scope) return scope.overlay.get(api)?.provider ?? builtinApiProviderRegistry.get(api)?.provider;
+
 	const faux = getRegisteredFauxProvider(api);
 	if (faux) {
 		return {
@@ -87,15 +137,24 @@ export function getApiProvider(api: Api): ApiProviderInternal | undefined {
 }
 
 export function getApiProviders(): ApiProviderInternal[] {
+	const scope = getActiveProviderScope();
+	if (scope) {
+		const providers = new Map(builtinApiProviderRegistry);
+		for (const [api, entry] of scope.overlay) providers.set(api, entry);
+		return Array.from(providers.values(), (entry) => entry.provider);
+	}
 	return Array.from(apiProviderRegistry.values(), (entry) => entry.provider);
 }
 
 export function unregisterApiProviders(sourceId: string): void {
-	for (const [api, entry] of apiProviderRegistry.entries()) {
-		if (entry.sourceId === sourceId) apiProviderRegistry.delete(api);
+	const scope = getActiveProviderScope();
+	const registry = scope ? scope.overlay : apiProviderRegistry;
+	for (const [api, entry] of registry.entries()) {
+		if (entry.sourceId === sourceId) registry.delete(api);
 	}
 }
 
 export function clearApiProviders(): void {
-	apiProviderRegistry.clear();
+	const scope = getActiveProviderScope();
+	(scope ? scope.overlay : apiProviderRegistry).clear();
 }

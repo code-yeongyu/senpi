@@ -3,17 +3,26 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { generateBranchSummary, prepareBranchEntries } from "../src/core/compaction/index.ts";
 import type { SessionEntry } from "../src/core/session-manager.ts";
 
-const { completeSimpleMock } = vi.hoisted(() => ({
-	completeSimpleMock: vi.fn(),
+const { streamSimpleMock } = vi.hoisted(() => ({
+	streamSimpleMock: vi.fn(),
 }));
 
 vi.mock("@earendil-works/pi-ai/compat", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@earendil-works/pi-ai/compat")>();
 	return {
 		...actual,
-		completeSimple: completeSimpleMock,
+		streamSimple: streamSimpleMock,
 	};
 });
+
+function createSummaryStream(response: AssistantMessage) {
+	return {
+		async *[Symbol.asyncIterator]() {
+			// The watchdog-driven consumer drains events; none are needed here.
+		},
+		result: async () => response,
+	};
+}
 
 function createModel(): Model<"anthropic-messages"> {
 	return {
@@ -84,8 +93,8 @@ function createEntries(): SessionEntry[] {
 
 describe("branch summarization custom messages", () => {
 	beforeEach(() => {
-		completeSimpleMock.mockReset();
-		completeSimpleMock.mockResolvedValue(createAssistantResponse("## Goal\nKeep branch context"));
+		streamSimpleMock.mockReset();
+		streamSimpleMock.mockReturnValue(createSummaryStream(createAssistantResponse("## Goal\nKeep branch context")));
 	});
 
 	it("keeps custom messages in prepareBranchEntries", () => {
@@ -112,7 +121,8 @@ describe("branch summarization custom messages", () => {
 		});
 
 		// then
-		const promptText = completeSimpleMock.mock.calls[0][1].messages[0].content[0].text;
+		expect(streamSimpleMock).toHaveBeenCalledOnce();
+		const promptText = streamSimpleMock.mock.calls[0][1].messages[0].content[0].text;
 		expect(promptText).toContain("Investigate compaction regression.");
 		expect(promptText).toContain("I am checking branch summarization.");
 		expect(promptText).toContain("Remember the branch-specific observation.");

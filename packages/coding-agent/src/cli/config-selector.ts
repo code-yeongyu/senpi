@@ -23,7 +23,7 @@ export async function selectConfig(options: ConfigSelectorOptions): Promise<void
 	initTheme(options.settingsManager.getTheme(), true);
 
 	return new Promise((resolve) => {
-		const ui = new TUI(new ProcessTerminal({ onExternalStdoutWrite: appendHiddenTuiStdout }));
+		const ui = new TUI(new ProcessTerminal({ onExternalStdoutWrite: appendHiddenTuiStdout }), undefined);
 		let resolved = false;
 
 		const selector = new ConfigSelectorComponent(

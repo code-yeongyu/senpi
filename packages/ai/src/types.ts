@@ -67,6 +67,8 @@ export type KnownProvider =
 	| "kimi-coding"
 	| "cloudflare-workers-ai"
 	| "cloudflare-ai-gateway"
+	| "qwen-token-plan"
+	| "qwen-token-plan-cn"
 	| "xiaomi"
 	| "xiaomi-token-plan-cn"
 	| "xiaomi-token-plan-ams"
@@ -109,6 +111,12 @@ export type ProviderEnv = Record<string, string>;
 export type ProviderHeaders = Record<string, string | null>;
 export type SessionAffinityFormat = "openai" | "openai-nosession" | "openrouter";
 
+/** Effective model and fully transformed headers for a request payload hook. */
+export type ProviderRequestMetadata = {
+	model: Model<Api>;
+	headers: ProviderHeaders;
+};
+
 export interface ProviderResponse {
 	status: number;
 	headers: Record<string, string>;
@@ -118,6 +126,15 @@ export interface StreamOptions {
 	temperature?: number;
 	maxTokens?: number;
 	signal?: AbortSignal;
+	/**
+	 * Abort the request when the provider reports that a safety classifier
+	 * declined the requested model and a substitute model served the turn
+	 * instead (Anthropic `server-side-fallback-*` betas). The substitute's output
+	 * is billed but was never requested, so aborting keeps model selection with
+	 * the caller. Providers without server-side fallback ignore this.
+	 * Default: undefined (honor the substituted response).
+	 */
+	abortServerSideFallback?: boolean;
 	apiKey?: string;
 	/**
 	 * Preferred transport for providers that support multiple transports.
@@ -139,7 +156,11 @@ export interface StreamOptions {
 	 * Optional callback for inspecting or replacing provider payloads before sending.
 	 * Return undefined to keep the payload unchanged.
 	 */
-	onPayload?: (payload: unknown, model: Model<Api>) => unknown | undefined | Promise<unknown | undefined>;
+	onPayload?: (
+		payload: unknown,
+		model: Model<Api>,
+		request?: ProviderRequestMetadata,
+	) => unknown | undefined | Promise<unknown | undefined>;
 	/**
 	 * Optional callback invoked after an HTTP response is received and before
 	 * its body stream is consumed.
@@ -458,6 +479,8 @@ export interface ToolResultMessage<TDetails = any> {
 	toolName: string;
 	content: (TextContent | ImageContent)[]; // Supports text and images
 	details?: TDetails;
+	/** Usage from the tool execution itself, if available. Not part of main LLM context accounting. */
+	usage?: Usage;
 	/**
 	 * Names from `Context.tools` that became available after this result.
 	 * Providers with native deferred tool loading use this as the load point;
@@ -499,11 +522,33 @@ export interface FreeformToolFormat {
 	definition: string;
 }
 
+/** OpenAI grammar variants for constrained sampling. */
+export type GrammarFormat = "openai_lark" | "openai_regex";
+
+export type GrammarVariants = Partial<Record<GrammarFormat, string>>;
+
+/**
+ * Optional provider-side constrained sampling configs for a tool.
+ *
+ * The `json_schema` value roughly maps to the concept of `strict` in APIs which is
+ * implemented as json-schema constrained sampling by APIs. Grammar variants let
+ * callers provide provider-specific encodings of the same intended language.
+ */
+export type ConstrainedSamplingConfig =
+	| {
+			type: "json_schema";
+			strict: "prefer" | "require";
+	  }
+	| {
+			type: "grammar";
+			variants: GrammarVariants;
+	  };
 export interface Tool<TParameters extends TSchema = TSchema> {
 	name: string;
 	description: string;
 	parameters: TParameters;
 	freeform?: FreeformToolFormat;
+	constrainedSampling?: false | ConstrainedSamplingConfig;
 }
 
 export interface Context {
@@ -580,6 +625,8 @@ export interface OpenAICompletionsCompat {
 	vercelGatewayRouting?: VercelGatewayRouting;
 	/** Whether z.ai supports top-level `tool_stream: true` for streaming tool call deltas. Default: false. */
 	zaiToolStream?: boolean;
+	/** Whether the provider supports OpenAI custom tools with Lark/regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. Default: false; the generated model catalog enables it for capable models. */
+	supportsOpenAIGrammarTools?: boolean;
 	/** Whether the provider supports the `strict` field in tool definitions. Default: true. */
 	supportsStrictMode?: boolean;
 	/**
@@ -593,7 +640,7 @@ export interface OpenAICompletionsCompat {
 	 * Supported values: "hermes", "morph-xml", "xml" (deprecated alias for "morph-xml"), "yaml-xml", "gemma4-delimiter", "anthropic-xml", "antml"
 	 */
 	toolCallFormat?: string;
-	/** Cache control convention for prompt caching. "anthropic" applies Anthropic-style `cache_control` markers to the system prompt, last tool definition, and last user/assistant text content. */
+	/** Cache control convention for prompt caching. "anthropic" applies Anthropic-style `cache_control` markers to the system prompt, last tool definition, and last user, assistant, or tool-result text content. */
 	cacheControlFormat?: "anthropic";
 	/** Whether to send session-affinity data from `options.sessionId`. Default: false. */
 	sendSessionAffinityHeaders?: boolean;
@@ -617,8 +664,14 @@ export interface OpenAIResponsesCompat {
 	supportsWebSocket?: boolean;
 	/** Whether the provider supports the OpenAI Responses native `web_search_preview` tool. Default: true for api.openai.com only. */
 	supportsWebSearchPreview?: boolean;
+	/** Whether the provider supports strict JSON-schema function tools. Defaults are API-specific; generated OpenAI models enable it explicitly. */
+	supportsStrictMode?: boolean;
+	/** Whether to emit OpenAI custom tools with Lark/regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. Default: false; the generated model catalog enables it for capable models. */
+	supportsOpenAIGrammarTools?: boolean;
 	/** Whether the model supports client-executed tool search for deferred tools. Default: false. */
 	supportsToolSearch?: boolean;
+	/** Whether the model accepts `prompt_cache_options` (OpenAI GPT-5.6+ explicit prompt caching). Older OpenAI models reject the parameter. Default: false. */
+	supportsExplicitPromptCacheMode?: boolean;
 }
 
 /** Compatibility settings for Anthropic Messages-compatible APIs. */
@@ -681,6 +734,8 @@ export interface AnthropicMessagesCompat {
 	forceAdaptiveThinking?: boolean;
 	/** Whether to replay empty thinking signatures as `signature: ""` instead of converting thinking to text. Default: false. */
 	allowEmptySignature?: boolean;
+	/** Whether the provider supports Anthropic strict tool schemas. Default: false; generated Anthropic models enable it explicitly. */
+	supportsStrictTools?: boolean;
 	/**
 	 * How to replay thinking blocks that have no usable Anthropic signature.
 	 * `"text"` demotes them to text; `"empty-signature"` preserves Anthropic's
@@ -704,6 +759,12 @@ export interface AnthropicMessagesCompat {
 	 * the payload. Default: true only for the first-party Anthropic endpoint.
 	 */
 	supportsWebSearch?: boolean;
+}
+
+/** Compatibility settings for Amazon Bedrock models. */
+export interface BedrockCompat {
+	/** Whether the model supports Bedrock strict tool schemas. Default: false. */
+	supportsStrictMode?: boolean;
 }
 
 /**

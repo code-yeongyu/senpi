@@ -82,6 +82,19 @@ export class RetryFallbackController {
 	}
 
 	/**
+	 * Whether a chain exists for the current model at all, regardless of whether
+	 * a candidate is usable right now. `canTryFallback()` answers the latter and
+	 * goes false on cooldown or exhaustion, so it cannot tell a UI "you never
+	 * configured a chain" apart from "the chain is spent".
+	 */
+	hasConfiguredChain(): boolean {
+		const current = this.deps.getCurrentSelector();
+		if (!current) return false;
+		const chains = canonicalizeFallbackChains(this.deps.getSettings().chains, this.deps.registry);
+		return resolveChainKey(current.model, current.thinkingLevel, chains) !== undefined;
+	}
+
+	/**
 	 * Revert to the chain's original model at a turn boundary. Only fires for
 	 * unpinned state under the cooldown-expiry policy once the original selector
 	 * is no longer suppressed and is still usable; pinned (refusal) state and the

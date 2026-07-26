@@ -110,7 +110,7 @@ describe("RPC fallback events", () => {
 	it("streams applied and succeeded fallback events over JSONL", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1" }, { id: "faux-2" }],
-			settings: { retry: { enabled: true, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } } },
+			settings: { retry: { enabled: true, baseDelayMs: 1, maxRetries: 0, fallbackChains: { [primary]: [fallback] } } },
 		});
 		harnesses.push(harness);
 		harness.setResponses([

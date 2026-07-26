@@ -1,3 +1,4 @@
+import type { UserMessage } from "@earendil-works/pi-ai";
 import type { AgentSessionEvent } from "../../../core/agent-session.ts";
 import type {
 	JsonValue,
@@ -8,6 +9,7 @@ import type {
 	TurnStartResponse,
 	TurnSteerParams,
 	TurnSteerResponse,
+	UserInput,
 } from "../protocol/index.ts";
 import { EventProjector } from "./projection.ts";
 import type { ProjectedNotification } from "./projection-types.ts";
@@ -71,6 +73,10 @@ class TurnEngine<Entry extends TurnEngineThreadEntry> {
 		this.broadcast = options.broadcast;
 	}
 
+	observeThread(threadId: ThreadId): void {
+		this.ensureSessionSubscription(threadId, this.getLoadedThreadOrThrow(threadId));
+	}
+
 	startTurn(params: TurnStartParams, deferNotifications?: TurnNotificationDeferral): Promise<TurnStartResponse> {
 		this.getLoadedThreadOrThrow(params.threadId);
 
@@ -80,7 +86,7 @@ class TurnEngine<Entry extends TurnEngineThreadEntry> {
 				try {
 					const parsedInput = parseInput(params.input);
 					const entry = this.getLoadedThreadOrThrow(params.threadId);
-					this.ensureSessionSubscription(params.threadId, entry);
+					this.observeThread(params.threadId);
 					const turnId = createTurnId();
 					const startedAtMs = Date.now();
 					const startedAt = new Date(startedAtMs).toISOString();
@@ -297,9 +303,10 @@ class TurnEngine<Entry extends TurnEngineThreadEntry> {
 		} catch {
 			return;
 		}
-		const activeTurn = entry.activeTurn;
+		let activeTurn = entry.activeTurn;
 		if (!activeTurn) {
-			return;
+			activeTurn = this.startExtensionTurn(threadId, entry, event);
+			if (!activeTurn) return;
 		}
 		let state = this.projectorByThreadId.get(threadId);
 		if (!state || state.turnId !== activeTurn.turnId) {
@@ -325,6 +332,43 @@ class TurnEngine<Entry extends TurnEngineThreadEntry> {
 		}
 	}
 
+	private startExtensionTurn(
+		threadId: ThreadId,
+		entry: Entry,
+		event: TurnEngineSessionEvent,
+	): { readonly turnId: string; readonly startedAt: string } | null {
+		const sessionEvent = event as AgentSessionEvent;
+		if (sessionEvent.type !== "message_start" || sessionEvent.message.role !== "user") {
+			return null;
+		}
+
+		const turnId = createTurnId();
+		const startedAtMs = Date.now();
+		const startedAt = new Date(startedAtMs).toISOString();
+		const turn = buildTurn(turnId, "inProgress", startedAtMs, null, []);
+		const userMessage = buildExtensionUserMessage(sessionEvent.message);
+		entry.activeTurn = { turnId, startedAt };
+		entry.status = "active";
+		entry.updatedAt = startedAt;
+		this.turnLog.recordTurn(threadId, { turnId, startedAt, status: "running" });
+		this.pendingByThreadId.set(threadId, {
+			turnId,
+			startedAt,
+			startedAtMs,
+			resolve: () => {},
+			interrupted: false,
+			completed: false,
+			deferTerminalNotifications: undefined,
+		});
+		this.broadcast({
+			method: "thread/status/changed",
+			params: { threadId, status: { type: "active", activeFlags: [] } },
+		});
+		this.emitToThread(threadId, { method: "turn/started", params: { threadId, turn } });
+		this.emitUserMessage(threadId, turnId, startedAtMs, userMessage);
+		return entry.activeTurn;
+	}
+
 	private finalizeProjection(threadId: ThreadId): void {
 		const state = this.projectorByThreadId.get(threadId);
 		if (!state) {
@@ -347,4 +391,16 @@ class TurnEngine<Entry extends TurnEngineThreadEntry> {
 			throw invalidRequest(`Thread not found: ${threadId}`);
 		}
 	}
+}
+
+function buildExtensionUserMessage(message: UserMessage): WireItem {
+	const content: UserInput[] =
+		typeof message.content === "string"
+			? [{ type: "text", text: message.content, text_elements: [] }]
+			: message.content.map((part) =>
+					part.type === "text"
+						? { type: "text", text: part.text, text_elements: [] }
+						: { type: "image", url: `data:${part.mimeType};base64,${part.data}` },
+				);
+	return buildUserMessage(null, content);
 }

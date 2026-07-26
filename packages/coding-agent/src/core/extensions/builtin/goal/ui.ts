@@ -21,6 +21,8 @@ export function goalStatusText(goal: Goal, liveElapsedSeconds?: number): string 
 		}
 		case "paused":
 			return "Goal paused (/goal resume)";
+		case "blocked":
+			return goal.blockedReason ? `Goal blocked: ${goal.blockedReason}` : "Goal blocked";
 		case "complete":
 			return "Goal achieved";
 	}

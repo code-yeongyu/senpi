@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent } from "@earendil-works/pi-agent-core";
 import { registerFauxProvider } from "@earendil-works/pi-ai";
+import { streamSimple } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentSession } from "../../src/core/agent-session.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
@@ -113,6 +114,7 @@ describe("Compaction extension hooks", () => {
 
 		const agent = new Agent({
 			getApiKey: () => undefined,
+			streamFn: streamSimple,
 			initialState: {
 				model,
 				systemPrompt: "You are a helpful assistant. Be concise.",

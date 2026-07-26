@@ -1,9 +1,9 @@
-import { createInMemoryModelRegistry, getModelRuntime } from "../model-runtime-test-utils.ts";
+import { createInMemoryModelRegistry, createModelRegistry, getModelRuntime } from "../model-runtime-test-utils.ts";
 /**
  * Local test harness for the new coding-agent test suite.
  */
 
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage, AgentOptions, AgentTool } from "@earendil-works/pi-agent-core";
@@ -14,11 +14,11 @@ import type {
 	FauxResponseStep,
 	Model,
 } from "@earendil-works/pi-ai/compat";
-import { registerFauxProvider } from "@earendil-works/pi-ai/compat";
+import { registerFauxProvider, streamSimple } from "@earendil-works/pi-ai/compat";
 import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import type { ExtensionRunner } from "../../src/core/extensions/index.ts";
-import { convertToLlm } from "../../src/core/messages.ts";
+import { convertToLlmForTransport } from "../../src/core/messages.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import type { Settings } from "../../src/core/settings-manager.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
@@ -81,9 +81,12 @@ export interface HarnessOptions {
 	persistSession?: boolean;
 	autoTitleSessions?: boolean;
 	fallbackNow?: () => number;
+	transportImageBudget?: { budgetBytes: number; alwaysKeepNewest: number };
+	modelsJson?: Record<string, unknown>;
 }
 
 export interface Harness {
+	agent: Agent;
 	session: AgentSession;
 	sessionManager: SessionManager;
 	settingsManager: SettingsManager;
@@ -130,7 +133,11 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 	if (withConfiguredAuth) {
 		await authStorage.modify(model.provider, async () => ({ type: "api_key", key: "faux-key" }));
 	}
-	const modelRegistry = await createInMemoryModelRegistry(authStorage);
+	const modelsPath = options.modelsJson === undefined ? undefined : join(tempDir, "models.json");
+	if (modelsPath) writeFileSync(modelsPath, JSON.stringify(options.modelsJson));
+	const modelRegistry = modelsPath
+		? await createModelRegistry(authStorage, modelsPath)
+		: await createInMemoryModelRegistry(authStorage);
 	if (withConfiguredAuth) {
 		modelRegistry.registerProvider(model.provider, {
 			baseUrl: model.baseUrl,
@@ -158,23 +165,28 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 
 	const agent = new Agent({
 		getApiKey: () => (withConfiguredAuth ? "faux-key" : undefined),
+		streamFn: streamSimple,
 		initialState: {
 			model,
 			systemPrompt: options.systemPrompt ?? "You are a test assistant.",
 			tools: [],
 		},
-		convertToLlm,
+		convertToLlm: (messages: AgentMessage[]) =>
+			convertToLlmForTransport(messages, {
+				blockImages: settingsManager.getBlockImages(),
+				...options.transportImageBudget,
+			}),
 		onPayload: async (payload) => {
 			options.onPayload?.(payload);
 			const runner = extensionRunnerRef.current;
-			if (!runner?.hasHandlers("before_provider_request")) {
+			if (!runner?.isActive || !runner.hasHandlers("before_provider_request")) {
 				return payload;
 			}
 			return runner.emitBeforeProviderRequest(payload);
 		},
 		onResponse: async (response) => {
 			const runner = extensionRunnerRef.current;
-			if (!runner?.hasHandlers("after_provider_response")) {
+			if (!runner?.isActive || !runner.hasHandlers("after_provider_response")) {
 				return;
 			}
 			await runner.emit({
@@ -185,7 +197,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		},
 		transformContext: async (messages: AgentMessage[]) => {
 			const runner = extensionRunnerRef.current;
-			if (!runner) return messages;
+			if (!runner?.isActive) return messages;
 			return runner.emitContext(messages);
 		},
 		prepareNextTurnWithContext: options.prepareNextTurnWithContext,
@@ -224,6 +236,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 	});
 
 	return {
+		agent,
 		session,
 		sessionManager,
 		settingsManager,

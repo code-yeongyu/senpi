@@ -233,12 +233,12 @@ describe("goal store (budget-free)", () => {
 		const first = await createGoal(ref, "Original");
 		await accountGoalUsage(ref, { input: 23, output: 2, cacheRead: 0, cacheWrite: 4, totalTokens: 25 }, 70);
 
-		const paused = await updateGoal(ref, { status: "paused" });
+		const paused = await updateGoal(ref, { status: "paused" }, "user");
 		expect(paused.id).toBe(first.id);
 		expect(paused.tokensUsed).toBe(25);
 		expect(paused.timeUsedSeconds).toBe(70);
 
-		const replaced = await updateGoal(ref, { objective: "Replacement" });
+		const replaced = await updateGoal(ref, { objective: "Replacement" }, "user");
 		expect(replaced.id).not.toBe(first.id);
 		expect(replaced.tokensUsed).toBe(0);
 		expect(replaced.timeUsedSeconds).toBe(0);
@@ -248,9 +248,9 @@ describe("goal store (budget-free)", () => {
 	it("resumes a matching nonterminal goal when the objective is set again", async () => {
 		const ref = await tempStore();
 		const first = await createGoal(ref, "Same");
-		const paused = await updateGoal(ref, { status: "paused" });
+		const paused = await updateGoal(ref, { status: "paused" }, "user");
 
-		const resumed = await updateGoal(ref, { objective: "Same" });
+		const resumed = await updateGoal(ref, { objective: "Same" }, "user");
 
 		expect(paused.id).toBe(first.id);
 		expect(resumed.id).toBe(first.id);
@@ -288,7 +288,7 @@ describe("goal store (budget-free)", () => {
 	it("only accounts active usage unless the completing turn is finalized", async () => {
 		const ref = await tempStore();
 		await createGoal(ref, "Tracked");
-		await updateGoal(ref, { status: "paused" });
+		await updateGoal(ref, { status: "paused" }, "user");
 
 		const activeOnly = await accountGoalUsage(
 			ref,

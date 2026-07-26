@@ -23,7 +23,11 @@ type AgentSessionEvent =
   | SystemPromptChangeEvent           // type: "system_prompt_change"
   | ExtensionToolHookLifecycleEvent   // type: "tool_hook_status"
   | { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
-  | { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string };
+  | { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
+  | { type: "summarization_retry_scheduled"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
+  | { type: "summarization_retry_attempt_start"; source: "branchSummary" }
+  | { type: "summarization_retry_attempt_start"; source: "compaction"; reason: "manual" | "threshold" | "overflow" }
+  | { type: "summarization_retry_finished" };
 ```
 
 `queue_update` emits the full pending steering and follow-up queues whenever they change. `compaction_start`, `compaction_progress`, and `compaction_end` cover both manual and automatic compaction. `session_info_changed` fires when the session display name changes, `thinking_level_changed` when the thinking level changes, `system_prompt_change` (see `SystemPromptChangeEvent` in [`extensions/types.ts`](../src/core/extensions/types.ts)) when a model switch changes the active system prompt, and `tool_hook_status` (see `ExtensionToolHookLifecycleEvent` in [`extensions/runner.ts`](../src/core/extensions/runner.ts)) for extension tool hook start/end phases.

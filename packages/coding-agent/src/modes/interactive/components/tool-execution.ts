@@ -1,5 +1,6 @@
 import { Container, Spacer, type TUI } from "@earendil-works/pi-tui";
 import type { ToolDef } from "../../../core/tools/index.ts";
+import { GrokToolRow } from "../grok/tool-row.ts";
 import { readToolProgress } from "../tool-progress.ts";
 import { createBoundedRenderSignature } from "./render-signature.ts";
 import { hasCompletedTodoTasks, TODO_STRIKE_FRAME_INTERVAL_MS, TODO_STRIKE_TOTAL_FRAMES } from "./todo-strike.ts";
@@ -12,13 +13,18 @@ export interface ToolExecutionOptions {
 	imageWidthCells?: number;
 }
 
+/** Visual shell chosen by interactive chrome; classic remains the default. */
+export type ToolExecutionPresentation = "classic" | "grok";
+
 const PENDING_RENDER_FRAME_INTERVAL_MS = 80;
 
 export class ToolExecutionComponent extends Container {
 	private readonly identity: ToolExecutionIdentity;
 	private readonly ui: TUI;
-	private readonly renderer: ToolExecutionRenderer;
-	private readonly images: ToolExecutionImages;
+	private readonly renderer: ToolExecutionRenderer | undefined;
+	private readonly images: ToolExecutionImages | undefined;
+	private readonly grokRow: GrokToolRow | undefined;
+	private readonly presentation: ToolExecutionPresentation;
 	private args: unknown;
 	private expanded = false;
 	private showImages: boolean;
@@ -43,6 +49,7 @@ export class ToolExecutionComponent extends Container {
 		toolDefinition: ToolDef | undefined,
 		ui: TUI,
 		cwd: string,
+		presentation: ToolExecutionPresentation = "classic",
 	) {
 		super();
 		this.identity = { toolName, toolCallId, cwd, toolDefinition };
@@ -50,18 +57,29 @@ export class ToolExecutionComponent extends Container {
 		this.showImages = options.showImages ?? true;
 		this.imageWidthCells = options.imageWidthCells ?? 60;
 		this.ui = ui;
+		this.presentation = presentation;
 		const initialState = this.createRenderState();
-		this.renderer = new ToolExecutionRenderer(this.identity, initialState, () => {
-			this.invalidate();
-			this.ui.requestRender();
-		});
-		this.images = new ToolExecutionImages(() => {
-			this.invalidateRenderCache();
-			this.ui.requestRender();
-		});
-		this.addChild(new Spacer(1));
-		this.addChild(this.renderer);
-		this.addChild(this.images);
+		if (this.presentation === "grok") {
+			this.grokRow = new GrokToolRow({
+				toolName: this.identity.toolName,
+				isPartial: initialState.isPartial,
+				result: initialState.result,
+			});
+			this.addChild(new Spacer(1));
+			this.addChild(this.grokRow);
+		} else {
+			this.renderer = new ToolExecutionRenderer(this.identity, initialState, () => {
+				this.invalidate();
+				this.ui.requestRender();
+			});
+			this.images = new ToolExecutionImages(() => {
+				this.invalidateRenderCache();
+				this.ui.requestRender();
+			});
+			this.addChild(new Spacer(1));
+			this.addChild(this.renderer);
+			this.addChild(this.images);
+		}
 		this.updateSpinnerAnimation();
 		this.updateDisplay();
 	}
@@ -95,7 +113,7 @@ export class ToolExecutionComponent extends Container {
 		this.updateSpinnerAnimation();
 		this.updateTodoStrikeAnimation();
 		this.updateDisplay();
-		this.images.updateResult(result);
+		this.images?.updateResult(result);
 		this.invalidateRenderCache();
 	}
 
@@ -132,15 +150,19 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	override render(width: number): string[] {
+		if (this.presentation === "grok") return super.render(width);
+
 		const signature = this.createRenderSignature();
 		if (this.cachedLines && this.cachedWidth === width && this.cachedSignature === signature) {
 			return [...this.cachedLines];
 		}
 
 		let lines: string[];
-		if (this.renderer.hasRendererDefinition && this.renderer.renderShell === "self") {
-			const contentLines = this.renderer.render(width);
-			const imageLines = this.images.render(width);
+		const renderer = this.renderer!;
+		const images = this.images!;
+		if (renderer.hasRendererDefinition && renderer.renderShell === "self") {
+			const contentLines = renderer.render(width);
+			const imageLines = images.render(width);
 			if (contentLines.length === 0 && imageLines.length === 0) return [];
 			lines = contentLines.length > 0 ? ["", ...contentLines, ...imageLines] : imageLines;
 		} else {
@@ -159,11 +181,20 @@ export class ToolExecutionComponent extends Container {
 		this.lastDisplaySignature = displaySignature;
 		this.invalidateRenderCache();
 		const state = this.createRenderState();
-		this.renderer.update(state);
-		this.images.updateOptions({
+		if (this.grokRow) {
+			this.grokRow.update({
+				toolName: this.identity.toolName,
+				isPartial: state.isPartial,
+				result: state.result,
+			});
+			return;
+		}
+		const renderer = this.renderer!;
+		this.renderer!.update(state);
+		this.images!.updateOptions({
 			showImages: state.showImages,
 			maxWidthCells: this.imageWidthCells,
-			showRendererFallback: this.renderer.hasResultRenderer,
+			showRendererFallback: renderer.hasResultRenderer,
 		});
 	}
 

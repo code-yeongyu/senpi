@@ -32,7 +32,7 @@ persist an optional `tokenBudget` only as inert app-server wire-compatibility
 metadata. The builtin tools do not create or interpret it. There is no
 `budgetLimited`/`usageLimited` status, budget-limit continuation, or
 budget-driven status transition. `tokensUsed` and `timeUsedSeconds` remain
-display-only usage metrics. Status is exactly `active | paused | complete`.
+display-only usage metrics. Status is `active | paused | blocked | complete`; `blocked` carries `blockedReason`/`blockedAt` and suppresses continuations.
 
 ## PERSISTENCE
 
@@ -61,9 +61,10 @@ Do not return an `isError` property; it is ignored.
 
 ## CONVENTIONS
 
-- **Single goal per thread.** `create_goal` fails (throws) if one already exists;
-  use `update_goal` only to mark complete. `/goal <objective>` replaces with a UI
-  confirm.
+- **Single goal per thread.** `create_goal` fails while an UNFINISHED goal exists;
+  over a `complete` goal it replaces, archiving the old goal to
+  `<threadId>.history.jsonl`. `update_goal` marks `complete` or `blocked` (blocked
+  requires a `reason`). `/goal <objective>` replaces with a UI confirm.
 - **Continuation is opt-in by state**: hidden prompts are queued only while a goal
   is `active`, idle, and there are no pending messages.
 - **Usage accounting is display-only**: `accountGoalUsage` increments

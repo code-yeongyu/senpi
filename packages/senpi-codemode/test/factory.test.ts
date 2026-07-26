@@ -10,6 +10,7 @@ describe("senpi-codemode extension factory", () => {
 			registerTool(tool: { readonly name: string }) {
 				registeredTools.push(tool.name);
 			},
+			registerRemovedToolHint() {},
 			on(event: string) {
 				events.push(event);
 			},

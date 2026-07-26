@@ -11,7 +11,8 @@ platform/runtime).
 | Tool | Purpose |
 |------|---------|
 | `bash` | Run a command in a PTY. `run_in_background: true` starts a persistent session and returns a `bash_id` immediately. Foreground `timeout` (seconds) is a kill deadline. |
-| `bash_output` | Read new output from a session, or `wait_for` a regex / exit / timeout. `filter` regex-filters lines; `view: "screen"` returns the rendered xterm grid. |
+| `bash_output` | Peek at a session without blocking: new output since the last read, or the status line. `filter` regex-filters lines; `view: "screen"` returns the rendered xterm grid. |
+| `monitor` | Watch a long-running command (`description`, `command`, `filter?`, `timeout_ms?`, `persistent?`) and inject matching stdout lines as coalesced events. |
 | `bash_input` | Send stdin (`input`) or named keys (`keys: ["ctrl+c"]`, `["enter"]`, `["up"]`) to steer a REPL or interrupt a process. |
 | `bash_resize` | Resize a session's PTY (`cols`, `rows`) so full-screen TUIs reflow. |
 | `kill_bash` | Tree-kill one session (`bash_id`) or all (`all: true`), leaving no orphans. |
@@ -20,8 +21,10 @@ Background sessions are NEVER killed by `timeout` (they live until they exit or 
 call `kill_bash`), even though the bash-timeout extension injects a default `timeout`
 into every `bash` call. Foreground calls behave like the classic `bash` tool.
 
-Typical flow: start with `run_in_background: true`, subscribe with `bash_output`
-(`wait_for`), steer with `bash_input`, then `kill_bash` when done.
+Typical flow: start with `run_in_background: true`, watch for patterns with `monitor`,
+peek with `bash_output`, steer with `bash_input`, then `kill_bash` when done. Completion
+arrives as a notification carrying the exit code and output tail, so a follow-up
+`bash_output` read is only needed when the tail is not enough.
 
 ## Mutual exclusion with native Anthropic bash
 

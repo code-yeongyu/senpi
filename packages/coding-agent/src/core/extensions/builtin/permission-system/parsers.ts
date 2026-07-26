@@ -138,6 +138,7 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 
 	registry.register("bash", parseBashLikePermission("command"));
 	registry.register("bash_input", parseBashLikePermission("input"));
+	registry.register("monitor", parseBashLikePermission("command"));
 
 	const editParser: ToolPermissionParser = () => {
 		return [fallbackPermissionRequest("edit")];

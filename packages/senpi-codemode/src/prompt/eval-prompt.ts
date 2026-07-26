@@ -21,7 +21,7 @@ export interface EvalPromptOptions {
 }
 
 /** Prompt dialect for the eval-first batching emphasis. */
-export type EvalEmphasisStyle = "default" | "claude" | "codex" | "kimi";
+export type EvalEmphasisStyle = "default" | "claude" | "codex" | "gpt" | "kimi";
 
 const CLAUDE_MODEL_RE = /(^|[/.:])claude[-.]/i;
 const GLM_MODEL_RE = /(^|[/.:@-])glm[-.]?\d/i;
@@ -32,14 +32,22 @@ const OPENAI_MODEL_RE = /(^|[/.:])(gpt|chatgpt|codex)[-.]|(^|[/.:])o[134](?:[-.]
  * Selects the eval-first batching dialect for a model id:
  * - `claude`: Claude/GLM — direct imperatives; both are steered most reliably
  *   by explicit tagged directives (GLM prompting guidance routes to Claude's).
- * - `codex`: OpenAI reasoning families — terse bounded rules, no emphasis spam.
+ * - `gpt`: GPT models — terse composition-forward rules that direct detached
+ *   cells to notify on completion instead of being polled.
+ * - `codex`: Other OpenAI reasoning families — terse bounded rules, no emphasis spam.
  * - `kimi`: Kimi K-series — maximum-emphasis POSITIVE imperatives (uppercase/
  *   bold DO-framing); all-caps NEVER prohibitions stay out because they make
  *   K-series overthink instead of comply.
  * - `default`: everything else (and no model) — maximum-emphasis fallback.
  */
+/** True only for GPT model ids that receive the terse eval composition dialect. */
+export function isGptCodeModeModel(modelId: string | undefined): boolean {
+	return modelId !== undefined && /(^|[/.:])gpt[-.]/iu.test(modelId);
+}
+
 export function evalEmphasisStyle(modelId: string | undefined): EvalEmphasisStyle {
 	if (!modelId) return "default";
+	if (isGptCodeModeModel(modelId)) return "gpt";
 	if (CLAUDE_MODEL_RE.test(modelId) || GLM_MODEL_RE.test(modelId)) return "claude";
 	if (KIMI_MODEL_RE.test(modelId)) return "kimi";
 	if (OPENAI_MODEL_RE.test(modelId)) return "codex";
@@ -92,7 +100,11 @@ Work incrementally: imports in one call, define in the next, test, then use — 
 - Enumerate every lookup the step needs, then run all independent ones simultaneously with \`parallel(thunks)\` inside the cell; keep calls sequential only when one result feeds the next.
 - Write real code around the calls: loop or comprehend over file sets with \`read()\`/stdlib, branch per case, and wrap risky calls in try/except so one failure degrades only its item — recover or retry inside the cell, keep the batch alive.
 - Post-process \`tool.<name>()\` results programmatically and return distilled facts, not raw dumps.
-</eval_first_batching>{{/if}}{{#if styleCodex}}Route multi-call steps through eval: one cell per step, independent lookups dispatched together via \`parallel(thunks)\`; keep work sequential only when one result determines the next action.
+</eval_first_batching>{{/if}}{{#if styleGpt}}<gpt_eval_dialect>
+GPT eval: compose multi-tool work inside one cell with \`tool.<name>(args)\` and \`parallel(thunks)\`; do not split a planned step into serial tool calls.
+- Long pure-compute cells detach on timeout and notify on completion. Do not poll or re-run them; use \`eval({ action: "peek"|"stop", cell_id })\` only to inspect or stop a detached cell.
+- Reduce tool results in the cell and return only decision-relevant facts.
+</gpt_eval_dialect>{{/if}}{{#if styleCodex}}Route multi-call steps through eval: one cell per step, independent lookups dispatched together via \`parallel(thunks)\`; keep work sequential only when one result determines the next action.
 - Loop or comprehend over file sets with \`read()\`/stdlib instead of reading files one call at a time; post-process \`tool.<name>()\` results programmatically.
 - Wrap failable calls in try/except inside the cell; a failed item degrades only itself. After two distinct failed strategies for the same fact, fall back to direct tool calls.
 - Reduce large results in-kernel to the facts the task needs before returning.{{/if}}{{#if styleKimi}}**EVAL IS YOUR SUPERPOWER — MAKE IT YOUR DEFAULT WAY TO ACT.** Before any step, think: "how do I execute this WHOLE step in ONE parallelized cell?" — then write that ONE cell.
@@ -112,13 +124,17 @@ Fields:
 - \`code\` — cell body, verbatim. Newlines/quotes JSON-encoded; no fences, no headers.
 - \`title\` (optional) — short transcript label (e.g. \`"imports"\`).
 - \`timeout\` (optional) — seconds. Raise only for heavy compute or long{{#if spawns}} non-agent{{/if}} tool calls.
+- \`on_timeout\` (optional) — \`"detach"\` keeps pure computation running in interactive sessions (the default); \`"error"\` interrupts for deadline-sensitive work and is the print/json default.
 - \`reset\` (optional) — wipe this language's kernel first.{{#ifAll py js}} Per-language: a \`py\` reset never touches the JS VM.{{/ifAll}}
+- \`action\` (optional) — defaults to \`"run"\`. A detached cell returns its id: use \`eval({ action: "peek", cell_id })\` for buffered output/state or \`eval({ action: "stop", cell_id })\` to cancel it.
+
+A detached cell keeps its language kernel busy while it finishes. Do not re-run a detached cell: the same-language busy error names its cell id and output tail; another language can continue. Completion arrives as one notification with the final value/error and buffered output. Stopping a cell interrupts its kernel; the stop result states whether kernel state survived or the kernel was restarted and its variables lost.
 
 {{#if py}}Live event loop: use top-level \`await\` directly; \`asyncio.run(…)\` raises "cannot be called from a running event loop".{{/if}}
 {{#if js}}JS runs under Node.js worker: top-level \`await\`/\`return\` work; \`fetch\`/\`Buffer\` available.{{/if}}
 {{#if rb}}Ruby: synchronous; helper options are keyword args{{#if spawns}} (e.g. \`output("id", limit: 2)\`){{/if}}; the last expression auto-displays unless it is \`nil\`, an assignment, or a definition (like IRB).{{/if}}
 {{#if jl}}Julia: synchronous; helper options are standard keyword args{{#if spawns}} (e.g. \`output("id", limit=2)\`){{/if}}; the last expression auto-displays unless it is an assignment or a definition (like the Julia REPL).{{/if}}
-On error, fix and re-run only the failing step — prior calls' state survives.
+On error, fix and re-run only the failing step. State usually survives a normal error, but a timeout or stop may have restarted the kernel — its message says which. Before rebuilding state, check a sentinel (a variable you defined earlier); only re-establish what is actually gone, since blind re-runs duplicate side effects.
 </instruction>
 
 <prelude>
@@ -135,7 +151,7 @@ write(path, content) → str
 env(key?=None, value?=None) → str | None | dict
     No args → full env dict; one → value of \`key\`; two → set \`key=value\`, return value.
 {{#if spawns}}output(*ids, format?="raw", offset?=None, limit?=None) → str | dict | list[dict]
-    Task/agent output by id. \`format\` selects full (\`"raw"\`) or trailing (\`"tail"\`) output.
+    Task/agent output by id. Reads immediately: running tasks return their status; \`format\` selects full (\`"raw"\`) or trailing (\`"tail"\`) output.
 {{/if}}tool.<name>(args) → unknown
     Invoke any session tool; \`args\` = its parameter object.
 completion(prompt, model?="default", system?=None, schema?=None) → str | dict
@@ -186,6 +202,7 @@ export function buildEvalPrompt(
 		spawnDefaultAgent,
 		styleClaude: style === "claude",
 		styleCodex: style === "codex",
+		styleGpt: style === "gpt",
 		styleKimi: style === "kimi",
 		styleDefault: style === "default",
 		hostLine: options.hostLine ?? "",
@@ -225,6 +242,7 @@ const BATCHING_GUIDELINES: Record<EvalEmphasisStyle, string> = {
 	claude:
 		"Prefer eval for any step needing more than one tool call: one cell that runs independent calls in parallel, handles per-call failures in code, and returns distilled facts.",
 	codex: "Route multi-call steps through eval: one cell per step, independent calls dispatched in parallel; fall back to direct tool calls when one call is sufficient or each result changes the next decision.",
+	gpt: "Use eval to compose tool work in one cell; long cells detach on timeout and notify on completion, so do not poll.",
 	kimi: "**EVAL IS YOUR SUPERPOWER — DEFAULT TO IT.** Execute EVERY multi-call step as ONE eval cell: run ALL independent calls simultaneously via parallel(thunks), handle failures per item in code, and return ONLY distilled facts.",
 };
 

@@ -17,8 +17,7 @@ Senpi is an extension-first coding-agent monorepo. Keep changes scoped, preserve
 | `packages/coding-agent/` | `senpi` CLI, sessions, extensions, RPC, interactive mode |
 | `packages/tui/` | Differential terminal renderer and editor primitives |
 | `packages/web-ui/` | Lit browser components, storage, sandboxed artifacts |
-| `packages/neo/` | Independent Go TUI and TypeScript RPC bridge client |
-| `packages/orchestrator/` | Experimental daemon, IPC, RPC-process supervision |
+| `packages/server/` | Experimental daemon, IPC, RPC-process supervision |
 | `packages/pty/` | TypeScript PTY loader, sessions, registry, pipe fallback |
 | `packages/senpi-codemode/` | Source-only persistent-kernel `eval` extension |
 | `crates/senpi-pty/` | Rust/N-API native PTY implementation and ABI owner |
@@ -54,7 +53,6 @@ CLI/session -> packages/coding-agent/src/core -> interactive | print | RPC
                                          |
 Terminal UI -> packages/tui     Browser UI -> packages/web-ui
 Persistent terminals -> packages/pty -> crates/senpi-pty
-Alternate TUI -> packages/neo -> coding-agent RPC protocol
 ```
 
 ## COMMANDS
@@ -63,7 +61,6 @@ Alternate TUI -> packages/neo -> coding-agent RPC protocol
 - Full static validation after code changes: `npm run check`; it does not run tests.
 - Full workspace tests when broad validation is justified: `npm test`.
 - Narrow tests run from the package root using that package's test command.
-- Go validation: `go build ./...`, `go vet ./...`, `go test ./...` from `packages/neo/`; root coverage is `npm run check:neo`.
 - Never run `npm run dev` in this repository.
 
 ## CONVENTIONS

@@ -331,6 +331,41 @@ describe("app-server turn engine", () => {
 		expect(turn.items[1]?.text).toBe("mock answer");
 	});
 
+	it("projects an extension-origin user message as a tracked turn without a client-initiated turn", async () => {
+		// Given: an idle app-server thread subscribed before any client-initiated turn.
+		const { engine, store, notifications, turnLog } = createHarness();
+		const entry = store.add("thread-a");
+		engine.observeThread("thread-a");
+
+		// When: an extension injects a user message while no client turn is active.
+		entry.session.emit({
+			type: "message_start",
+			message: { role: "user", content: [{ type: "text", text: "extension wakeup" }] },
+		} as { type: string });
+		entry.session.emitAgentEnd();
+		await entry.taskQueue;
+
+		// Then: the injected message has a complete, independently tracked app-server turn.
+		expect(notifications.map((notification) => notification.method)).toEqual([
+			"thread/status/changed",
+			"turn/started",
+			"item/started",
+			"item/completed",
+			"thread/status/changed",
+			"turn/completed",
+		]);
+		const started = notifications.find((notification) => notification.method === "turn/started");
+		const completed = notifications.find((notification) => notification.method === "turn/completed");
+		expect(started?.params).toMatchObject({ threadId: "thread-a", turn: { status: "inProgress" } });
+		expect(completed?.params).toMatchObject({
+			threadId: "thread-a",
+			turn: { id: (started?.params as { turn: { id: string } }).turn.id, status: "completed" },
+		});
+		expect(turnLog.readTurns("thread-a")[0]?.items).toMatchObject([
+			{ type: "userMessage", clientId: null, content: [{ type: "text", text: "extension wakeup" }] },
+		]);
+	});
+
 	it("closes dangling tool items before turn/completed when execution never finished", async () => {
 		// Given: a turn whose assistant message requested a tool that never executed.
 		const { engine, store, notifications } = createHarness();

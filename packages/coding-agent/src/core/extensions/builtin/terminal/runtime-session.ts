@@ -5,7 +5,7 @@ import {
 	type TerminalSessionExit,
 	type TerminalSessionOptions,
 } from "@earendil-works/pi-pty";
-import { DEFAULT_SCROLLBACK, MAX_SESSION_OUTPUT_CHARS, safeRegExp } from "./shared.ts";
+import { DEFAULT_SCROLLBACK, MAX_SESSION_OUTPUT_CHARS } from "./shared.ts";
 
 export interface TerminalRuntimeOptions extends TerminalSessionOptions {
 	readonly scrollback?: number;
@@ -16,20 +16,10 @@ export interface DeltaRead {
 	readonly droppedChars: number;
 }
 
-type OutputWaitOutcome = "matched" | "exited" | "timeout" | "aborted" | "invalid_pattern";
-
-interface OutputWaiter {
-	readonly regex: RegExp;
-	buffer: string;
-	timer: ReturnType<typeof setTimeout> | null;
-	readonly signal: AbortSignal | undefined;
-	readonly onAbort: () => void;
-	readonly resolve: (outcome: OutputWaitOutcome) => void;
-}
-
 /**
- * A live terminal session: a pi-pty {@link TerminalSession} plus an xterm screen model,
- * a bounded decoded-output buffer with a per-consumer read cursor, and `wait_for` waiters.
+ * A live terminal session: a pi-pty {@link TerminalSession} plus an xterm screen model
+ * and a bounded decoded-output buffer with a per-consumer read cursor. Reads are pure
+ * non-blocking peeks; watchers subscribe through `onOutput` (the monitor path).
  */
 export class TerminalRuntimeSession {
 	readonly session: TerminalSession;
@@ -39,7 +29,6 @@ export class TerminalRuntimeSession {
 	private buffer = "";
 	private droppedChars = 0;
 	private consumed = 0;
-	private readonly waiters = new Set<OutputWaiter>();
 	private readonly outputListeners = new Set<(chunk: string) => void>();
 	private unsubscribeData: (() => void) | null = null;
 
@@ -62,7 +51,6 @@ export class TerminalRuntimeSession {
 				}
 			}
 		});
-		this.session.onExit(() => this.settleWaiters("exited"));
 		this.session.start();
 	}
 
@@ -92,10 +80,6 @@ export class TerminalRuntimeSession {
 			const overflow = this.buffer.length - MAX_SESSION_OUTPUT_CHARS;
 			this.buffer = this.buffer.slice(overflow);
 			this.droppedChars += overflow;
-		}
-		for (const waiter of this.waiters) {
-			waiter.buffer += text;
-			if (waiter.regex.test(waiter.buffer)) this.resolveWaiter(waiter, "matched");
 		}
 		return text;
 	}
@@ -128,55 +112,10 @@ export class TerminalRuntimeSession {
 		void this.screen.resize(cols, rows);
 	}
 
-	/**
-	 * Wait until `pattern` matches unread or newly produced output, the session exits, the
-	 * timeout elapses, or the wait is aborted.
-	 */
-	waitFor(pattern: string, timeoutMs: number, signal?: AbortSignal): Promise<OutputWaitOutcome> {
-		const regex = safeRegExp(pattern);
-		if (regex === null) return Promise.resolve("invalid_pattern");
-		if (this.exited) return Promise.resolve("exited");
-		if (signal?.aborted) return Promise.resolve("aborted");
-		const unreadStart = Math.max(this.consumed, this.droppedChars);
-		const unreadOutput = this.buffer.slice(unreadStart - this.droppedChars);
-		if (regex.test(unreadOutput)) return Promise.resolve("matched");
-		return new Promise((resolve) => {
-			const waiter: OutputWaiter = {
-				regex,
-				buffer: unreadOutput,
-				timer: null,
-				signal,
-				onAbort: () => this.resolveWaiter(waiter, "aborted"),
-				resolve,
-			};
-			this.waiters.add(waiter);
-			waiter.timer = setTimeout(() => this.resolveWaiter(waiter, "timeout"), timeoutMs);
-			if (signal) {
-				signal.addEventListener("abort", waiter.onAbort, { once: true });
-				if (signal.aborted) this.resolveWaiter(waiter, "aborted");
-			}
-		});
-	}
-
 	dispose(): void {
 		this.unsubscribeData?.();
 		this.unsubscribeData = null;
 		this.outputListeners.clear();
-		this.settleWaiters(this.exited ? "exited" : "timeout");
 		this.screen.dispose();
-	}
-
-	private settleWaiters(outcome: "exited" | "timeout"): void {
-		for (const waiter of [...this.waiters]) this.resolveWaiter(waiter, outcome);
-	}
-
-	private resolveWaiter(waiter: OutputWaiter, outcome: Exclude<OutputWaitOutcome, "invalid_pattern">): void {
-		if (!this.waiters.delete(waiter)) return;
-		if (waiter.timer !== null) {
-			clearTimeout(waiter.timer);
-			waiter.timer = null;
-		}
-		waiter.signal?.removeEventListener("abort", waiter.onAbort);
-		waiter.resolve(outcome);
 	}
 }

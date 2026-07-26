@@ -1,4 +1,5 @@
-import { type Api, getModels, getProviders, type Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import {
 	type PromptPresetSettings,
@@ -51,6 +52,7 @@ describe("Kimi K3 prompt preset", () => {
 		expect(preset?.prompt).toContain("You are senpi");
 		expect(preset?.prompt).toContain("## Intent Gate");
 		expect(preset?.prompt).toContain("running on Kimi K3");
+		expect(preset?.prompt).toContain("I'll stop when [the exact, observable condition that ends this turn]");
 		expect(preset?.prompt).toContain("evidence-first");
 		expect(preset?.prompt).toContain("skip filler verification language");
 		expect(preset?.prompt).toContain("a recommendation, not a survey");

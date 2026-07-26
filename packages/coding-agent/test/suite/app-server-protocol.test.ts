@@ -113,7 +113,7 @@ describe("app-server protocol metadata", () => {
 		const fixture: HeadMethodsFixture = JSON.parse(readFileSync(headMethodsFixturePath, "utf8"));
 
 		// When/Then: every runtime catalog matches the pinned source catalog exactly.
-		expect(fixture.provenance.codexGit).toBe("0fb559f0f6e231a88ac02ea002d3ecd248e2b515");
+		expect(fixture.provenance.codexGit).toBe("9fc715c0861c956c894a91890b78dc05b304ba29");
 		expect(fixture.provenance.source).toBe("codex-rs/app-server-protocol/src/protocol/common.rs");
 		expect(STABLE_CLIENT_REQUEST_METHODS).toEqual(fixture.stableClientRequests);
 		expect(EXPERIMENTAL_ONLY_CLIENT_REQUEST_METHODS).toEqual(fixture.experimentalClientRequests);

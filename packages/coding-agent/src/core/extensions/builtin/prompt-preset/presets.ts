@@ -5,6 +5,7 @@ import { buildClaudeOpus45Prompt } from "./claude-opus-4-5.ts";
 import { buildClaudeOpus46Prompt } from "./claude-opus-4-6.ts";
 import { buildClaudeOpus47Prompt } from "./claude-opus-4-7.ts";
 import { buildClaudeOpus48Prompt } from "./claude-opus-4-8.ts";
+import { buildClaudeOpus5Prompt } from "./claude-opus-5.ts";
 import { buildGlm52Prompt } from "./glm-5-2.ts";
 import { buildGpt52Prompt } from "./gpt-5.2.ts";
 import { buildGpt53CodexPrompt } from "./gpt-5.3-codex.ts";
@@ -104,6 +105,10 @@ function isClaudeFable5Model(modelId: string): boolean {
 	return normalizeModelId(modelId).includes("fable-5");
 }
 
+function isClaudeOpus5Model(modelId: string): boolean {
+	return normalizeModelId(modelId).includes("opus-5");
+}
+
 type ClaudeOpusVersion = "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6" | "claude-opus-4-5";
 
 function extractClaudeOpusVersion(modelId: string): ClaudeOpusVersion | undefined {
@@ -152,6 +157,9 @@ export function resolvePresetName(
 	if (isClaudeFable5Model(model.id)) {
 		return "claude-fable-5";
 	}
+	if (isClaudeOpus5Model(model.id)) {
+		return "claude-opus-5";
+	}
 	const claudeVersion = extractClaudeOpusVersion(model.id);
 	if (claudeVersion) {
 		return claudeVersion;
@@ -191,6 +199,8 @@ function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPrompt
 			return { name, prompt: buildKimiK26Prompt(options) };
 		case "claude-fable-5":
 			return { name, prompt: buildClaudeFable5Prompt(options) };
+		case "claude-opus-5":
+			return { name, prompt: buildClaudeOpus5Prompt(options) };
 		case "claude-opus-4-8":
 			return { name, prompt: buildClaudeOpus48Prompt(options) };
 		case "claude-opus-4-7":

@@ -70,7 +70,9 @@ class ThreadGoalHandlers {
 					objective,
 					tokenBudget.present && tokenBudget.value !== null ? tokenBudget.value : undefined,
 				);
-				return status === undefined || status === "active" ? created : updateGoal(ref, { status });
+				return status === undefined || status === "active"
+					? created
+					: updateGoal(ref, { status }, status === "complete" ? "model" : "user");
 			}
 
 			const update: GoalUpdate = {
@@ -78,7 +80,7 @@ class ThreadGoalHandlers {
 				...(status === undefined ? {} : { status }),
 				...(tokenBudget.present ? { tokenBudget: tokenBudget.value } : {}),
 			};
-			return updateGoal(ref, update);
+			return updateGoal(ref, update, status === "complete" ? "model" : "user");
 		});
 		const response = { goal: toThreadGoal(goal) } satisfies ThreadGoalSetResponse;
 		const notify = (): void => {

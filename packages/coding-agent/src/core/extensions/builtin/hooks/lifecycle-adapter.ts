@@ -144,6 +144,7 @@ export function recordLifecycleHookResult(
 	pi: Pick<ExtensionAPI, "sendMessage">,
 	event: LifecycleHookEvent,
 	details: LifecycleResultDetails,
+	options?: { compactionRequestId?: string },
 ): void {
 	if (details.contexts.length === 0 && details.diagnostics.length === 0 && details.reason === undefined) return;
 	const content =
@@ -156,6 +157,7 @@ export function recordLifecycleHookResult(
 			details: {
 				event,
 				diagnostics: details.diagnostics.map(safeDiagnosticDetails),
+				...(options?.compactionRequestId === undefined ? {} : { compactionRequestId: options.compactionRequestId }),
 			},
 		},
 		{ triggerTurn: false },

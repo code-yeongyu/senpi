@@ -1,6 +1,6 @@
 # packages/coding-agent/src/core/extensions/builtin
 
-27 in-tree extensions. Each is the canonical answer to "can senpi do X without core changes?". Registration order matters.
+26 in-tree extensions. Each is the canonical answer to "can senpi do X without core changes?". Registration order matters.
 
 ## INVENTORY (registration order from `builtin/index.ts`)
 
@@ -9,7 +9,7 @@
 | 1 | `hooks` | `hooks/` | Settings-configured lifecycle command hooks (PreToolUse/PostToolUse-style) with trust hashing + live status |
 | 2 | `permission-system` | `permission-system/` | Full opencode-style permission port: rules, JSONL storage, prompts |
 | 3 | `gpt-apply-patch` | `gpt-apply-patch/` | Codex-style `apply_patch` tool with rich render + freeform grammar |
-| 4 | `prompt-preset` | `prompt-preset/` | Per-model system prompts (gpt-5.x, claude-fable-5, claude-opus-4-{5,6,7,8}, glm-5.2, kimi-k2-{6,7}, kimi-k3) |
+| 4 | `prompt-preset` | `prompt-preset/` | Per-model system prompts (gpt-5.x, claude-fable-5, claude-opus-5, claude-opus-4-{5,6,7,8}, glm-5.2, kimi-k2-{6,7}, kimi-k3) |
 | 5 | `todowrite` | `todotools/` | Op-based oh-my-pi todo port + `/todo` command; fully diverged from `../pi-extensions/pi-todotools` |
 | 6 | `redraws` | `redraws.ts` | Force-redraw event hooks for stable streaming visuals |
 | 7 | `anthropic-web-search` | `anthropic-web-search/` | Anthropic-native web search tool |
@@ -22,17 +22,16 @@
 | 14 | `compaction` | `compaction/` | Plugsuit-style speculative + emergency compaction with restoration |
 | 15 | `history-search` | `history-search/` | Cross-session transcript search overlay (indexes session files) |
 | 16 | `import-repro` | `import-repro.ts` | `/ir` command — import an issue-analysis CI session gist and switch to it |
-| 17 | `session-observer` | `session-observer/` | `/sessions` command — peek at previous session transcripts in a HUD |
-| 18 | `websearch` | `websearch/` | Provider-backed `web_search` tool + `/websearch` (providers incl. kimi); vendored from `../pi-extensions/pi-websearch` |
-| 19 | `webfetch` | `webfetch/` | `webfetch` tool (md/text/html, gated by `PI_WEBFETCH`); vendored from `../pi-extensions/pi-webfetch` |
-| 20 | `look-at` | `look-at/` | Vision-model delegation tool for media analysis when the active model cannot accept image input |
-| 21 | `nested-agents-md` | `nested-agents-md/` | Auto-injects nearby `AGENTS.md` + `/nested-agents`; vendored from `../pi-extensions/pi-nested-agents-md` |
-| 22 | `rules` | `rules/` | Rule-file discovery + `/rules`/`/reload-rules`; vendored from `../pi-extensions/pi-rules` |
-| 23 | `goal` | `goal/` | Budget-free goal tools + `/goal`; vendored from `../pi-extensions/pi-goal` |
-| 24 | `glm-zcode` | `glm-zcode/` | Unofficial ZCode OAuth login that provisions a Z.AI API key for GLM-5.2 |
-| 25 | `btw` | `btw/` | `/btw` side-question command that queries in parallel without touching the main session |
-| 26 | `config-reload` | `config-reload/` | Hash-gated watcher for trusted global/project config surfaces that defers a full session reload until idle and exposes the `config-watch:*` event protocol; registered after settings-dependent builtins so a reload rebuilds their resolved settings, and before final MCP observation |
-| 27 | `mcp` | `mcp/` | Built-in MCP client: `mcpServers` config, stdio/http transports, `/mcp` commands, tool exposure policy — see `mcp/changes.md` |
+| 17 | `websearch` | `websearch/` | Provider-backed `web_search` tool + `/websearch` (providers incl. kimi); vendored from `../pi-extensions/pi-websearch` |
+| 18 | `webfetch` | `webfetch/` | `webfetch` tool (md/text/html, gated by `PI_WEBFETCH`); vendored from `../pi-extensions/pi-webfetch` |
+| 19 | `look-at` | `look-at/` | Vision-model delegation tool for media analysis when the active model cannot accept image input |
+| 20 | `nested-agents-md` | `nested-agents-md/` | Auto-injects nearby `AGENTS.md` + `/nested-agents`; vendored from `../pi-extensions/pi-nested-agents-md` |
+| 21 | `rules` | `rules/` | Rule-file discovery + `/rules`/`/reload-rules`; vendored from `../pi-extensions/pi-rules` |
+| 22 | `goal` | `goal/` | Budget-free goal tools + `/goal`; vendored from `../pi-extensions/pi-goal` |
+| 23 | `glm-zcode` | `glm-zcode/` | Unofficial ZCode OAuth login that provisions a Z.AI API key for GLM-5.2 |
+| 24 | `btw` | `btw/` | `/btw` side-question command that queries in parallel without touching the main session |
+| 25 | `config-reload` | `config-reload/` | Hash-gated watcher for trusted global/project config surfaces that defers a full session reload until idle and exposes the `config-watch:*` event protocol; registered after settings-dependent builtins so a reload rebuilds their resolved settings, and before final MCP observation |
+| 26 | `mcp` | `mcp/` | Built-in MCP client: `mcpServers` config, stdio/http transports, `/mcp` commands, tool exposure policy — see `mcp/changes.md` |
 
 Plus bundled extension **codemode** (`@code-yeongyu/senpi-codemode`, resolved by resource-loader.ts) and 4 **global default extensions** (resolved fast-path): `diff`, `files`, `prompt-url-widget`, `tps` (in `globalDefaultExtensionFactories`).
 
@@ -48,7 +47,7 @@ Plus bundled extension **codemode** (`@code-yeongyu/senpi-codemode`, resolved by
 
 - **Subdirectory extensions** ship multi-file: `index.ts` + supporting `.ts` (`registry.ts`, `types.ts`, `parsers.ts`, etc.).
 - **Single-file extensions** are kept flat (`diff.ts`, `files.ts`, `redraws.ts`, `service-tier.ts`, `tps.ts`, `prompt-url-widget.ts`).
-- **`prompt-preset/`** has per-model files (`gpt-5.5.ts`, `claude-opus-4-7.ts`, …) and a shared `file-operations.ts` tuning block. New model = new preset file + entry in `presets.ts`. Models covered: gpt-5.x, claude-fable-5, claude-opus-4-{5,6,7,8}, glm-5.2, kimi-k2-{6,7}, kimi-k3.
+- **`prompt-preset/`** has per-model files (`gpt-5.5.ts`, `claude-opus-4-7.ts`, …) and a shared `file-operations.ts` tuning block. New model = new preset file + entry in `presets.ts`. Models covered: gpt-5.x, claude-fable-5, claude-opus-5, claude-opus-4-{5,6,7,8}, glm-5.2, kimi-k2-{6,7}, kimi-k3.
 - **`permission-system/` is a full port** of opencode's permission flow.
 - **`compaction/`** is policy-rich (`policy.ts`, `speculative.ts`, `restoration-tracker.ts`, `circuit-breaker.ts`, `degradation-monitor.ts`, `per-turn-cap.ts`, `tool-truncation.ts`, `checkpoint-state.ts`, `context-reduction.ts`, `openai-remote.ts`, `repair-tool-pairs.ts`, `state.ts`, `todo-bridge.ts`, `prompts.ts`). Touch only with policy tests in lock-step.
 - **External versions**: `external-versions.json` pins versions of sibling `../pi-extensions` packages used as vendored builtins; refresh with `packages/coding-agent/scripts/sync-builtin-extensions.mjs`.

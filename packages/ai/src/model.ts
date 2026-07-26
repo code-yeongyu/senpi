@@ -1,6 +1,7 @@
 import type {
 	AnthropicMessagesCompat,
 	Api,
+	BedrockCompat,
 	CacheRetention,
 	ModelCost,
 	OpenAICompletionsCompat,
@@ -34,9 +35,11 @@ export interface Model<TApi extends Api> {
 	/** Compatibility overrides for OpenAI-compatible APIs. If not set, auto-detected from baseUrl. */
 	compat?: TApi extends "openai-completions"
 		? OpenAICompletionsCompat
-		: TApi extends "openai-responses" | "openai-codex-responses"
+		: TApi extends "openai-responses" | "openai-codex-responses" | "azure-openai-responses"
 			? OpenAIResponsesCompat
 			: TApi extends "anthropic-messages"
 				? AnthropicMessagesCompat
-				: never;
+				: TApi extends "bedrock-converse-stream"
+					? BedrockCompat
+					: never;
 }

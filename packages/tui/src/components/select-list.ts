@@ -15,12 +15,45 @@ export interface SelectItem {
 	description?: string;
 }
 
+/**
+ * Decomposed parts of a single select-list row, handed to a custom
+ * {@link SelectListTheme.renderRow} composer.
+ */
+export interface SelectListRowParts {
+	/**
+	 * The selection prefix exactly as rendered ("→ " selected, "  " not).
+	 * For selected rows the theme's `selectedPrefix` has already been applied,
+	 * so the prefix can be coloured independently of the row background.
+	 */
+	prefix: string;
+	/** The truncated primary label, without column-alignment padding. */
+	primary: string;
+	/**
+	 * The truncated description including the column-alignment spacing that
+	 * separates it from the primary text. Undefined when the row renders no
+	 * description column (no description, or a terminal narrower than 40).
+	 */
+	description?: string;
+	isSelected: boolean;
+}
+
+/** Custom row composer for {@link SelectListTheme.renderRow}. */
+export type SelectListRenderRow = (parts: SelectListRowParts) => string;
+
 export interface SelectListTheme {
 	selectedPrefix: (text: string) => string;
 	selectedText: (text: string) => string;
 	description: (text: string) => string;
 	scrollInfo: (text: string) => string;
 	noMatch: (text: string) => string;
+	/**
+	 * Optional row composer. When present it takes over rendering of every
+	 * item row, receiving the decomposed {@link SelectListRowParts} so prefix,
+	 * primary text, description, and row background can be styled
+	 * independently. When absent, rendering is byte-identical to the legacy
+	 * composition (prefix + primary wrapped in `selectedText`, etc.).
+	 */
+	renderRow?: SelectListRenderRow;
 }
 
 export interface SelectListTruncatePrimaryContext {
@@ -157,22 +190,31 @@ export class SelectList implements Component {
 
 			if (remainingWidth > MIN_DESCRIPTION_WIDTH) {
 				const truncatedDesc = truncateToWidth(descriptionSingleLine, remainingWidth, "");
-				if (isSelected) {
-					return this.theme.selectedText(`${prefix}${truncatedValue}${spacing}${truncatedDesc}`);
-				}
-
-				const descText = this.theme.description(spacing + truncatedDesc);
-				return prefix + truncatedValue + descText;
+				return this.composeRow(prefix, truncatedValue, spacing + truncatedDesc, isSelected);
 			}
 		}
 
 		const maxWidth = width - prefixWidth - 2;
 		const truncatedValue = this.truncatePrimary(item, isSelected, maxWidth, maxWidth);
-		if (isSelected) {
-			return this.theme.selectedText(`${prefix}${truncatedValue}`);
+		return this.composeRow(prefix, truncatedValue, undefined, isSelected);
+	}
+
+	private composeRow(prefix: string, primary: string, description: string | undefined, isSelected: boolean): string {
+		if (this.theme.renderRow) {
+			return this.theme.renderRow({
+				prefix: isSelected ? this.theme.selectedPrefix(prefix) : prefix,
+				primary,
+				description,
+				isSelected,
+			});
 		}
 
-		return prefix + truncatedValue;
+		// Legacy composition — byte-identical to the pre-seam renderer.
+		if (isSelected) {
+			return this.theme.selectedText(`${prefix}${primary}${description ?? ""}`);
+		}
+
+		return prefix + primary + (description !== undefined ? this.theme.description(description) : "");
 	}
 
 	private getPrimaryColumnWidth(): number {

@@ -1,5 +1,19 @@
 # changes
 
+## Removed legacy `--neo` CLI flags and launcher plumbing (2026-07-26)
+
+### What changed
+
+- Removed the gated `--neo` flag family, help text, launcher modules, and early-dispatch path. Unknown long flags continue to use the extension-flag channel.
+
+### Why
+
+- The retired Go TUI no longer has a supported entry point.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: removal-only change in fork-owned CLI glue.
+
 ## System-prompt flags forwarded to the neo launcher argv (2026-07-18)
 
 ### What changed

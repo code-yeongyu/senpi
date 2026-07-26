@@ -1,5 +1,25 @@
 # Local fork changes
 
+## 2026-07-26 — Resolve Bun dependencies through fork-owned aliases (#230)
+
+- Changed: `scripts/publish.mjs` stages the four upstream-named private source
+  packages as `@code-yeongyu/senpi-ai`, `@code-yeongyu/senpi-agent-core`,
+  `@code-yeongyu/senpi-tui`, and `@code-yeongyu/senpi-pty`, alongside
+  `@code-yeongyu/senpi-codemode` and `@code-yeongyu/senpi`. The source package
+  manifests retain `private: true` and their `@earendil-works/*` names.
+- Why: Bun resolves declared dependencies from npm and ignores npm's
+  `bundleDependencies`, while the upstream-owned `@earendil-works` namespace
+  neither grants this fork publish access nor contains the fork's lockstep
+  versions. Removing those dependency keys makes npm omit their bundled copies.
+- What changed: the staged senpi manifest preserves each original dependency
+  key so npm packs it at the source import path, but rewrites its spec to an
+  npm alias targeting the matching `@code-yeongyu/senpi-*` package. Bun fetches
+  only the owned alias; npm retains and resolves the bundled original package.
+  The code source imports stay unchanged, and `@code-yeongyu/senpi-server`
+  remains private.
+- Merge-conflict risk: low. `scripts/publish.mjs` temporary manifest staging
+  and `stagePublishManifest()` alias rewriting are the expected conflict zones.
+
 ## 2026-07-22 — app-server runtime import test without npm subprocess
 
 - Changed: `test/suite/app-server-protocol.test.ts` now executes its runtime `.js` import probe with

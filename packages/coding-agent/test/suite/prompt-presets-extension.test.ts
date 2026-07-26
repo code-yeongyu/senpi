@@ -1,6 +1,8 @@
-import { type Api, getModels, getProviders, type Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import { buildDynamicSystemPrompt } from "../../src/core/dynamic-prompt/build.ts";
+import { GPT56_EXECUTION_RULES } from "../../src/core/extensions/builtin/prompt-preset/gpt-5.6.ts";
 import {
 	type PromptPresetSettings,
 	resolvePreset,
@@ -170,8 +172,11 @@ describe("prompt preset resolver", () => {
 		expect(preset?.prompt).toContain("reconcile every item");
 		// GPT-5.6 tuning: prioritization instead of brevity, tool-loop stopping conditions.
 		expect(preset?.prompt).toContain("fewest useful tool loops");
-		expect(preset?.prompt).toContain("serial is the exception");
 		expect(preset?.prompt).toContain("Lead with the conclusion");
+		// Execution discipline: every typed directive ships in the rendered core.
+		for (const rule of GPT56_EXECUTION_RULES) {
+			expect(preset?.prompt).toContain(rule.directive);
+		}
 		// Hephaestus parity: autonomous deep-worker contracts.
 		expect(preset?.prompt).toContain("Implement, don't propose");
 		expect(preset?.prompt).toContain("## Manual QA Gate");

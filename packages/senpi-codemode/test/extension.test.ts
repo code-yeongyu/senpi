@@ -6,7 +6,7 @@ import type { Api, Model } from "@earendil-works/pi-ai/compat";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import type { CodemodeSessionManager } from "../src/extension/session-manager.ts";
 import senpiCodemode, { type CodemodeExtensionAPI } from "../src/index.ts";
-import type { EvalKernelResult, EvalKernelRunInput } from "../src/tool/types.ts";
+import type { EvalKernelResult, EvalKernelRunInput, KernelInterruptHandle } from "../src/tool/types.ts";
 import { fakeExtensionContext } from "./eval/fakes.ts";
 
 interface RegisteredHandler {
@@ -17,6 +17,10 @@ interface RegisteredHandler {
 class FakePi {
 	readonly tools: string[] = [];
 	readonly handlers: RegisteredHandler[] = [];
+	readonly messages: string[] = [];
+	readonly deliveries: Array<{ readonly content: string; readonly deliverAs: "steer" | "followUp" | undefined }> = [];
+	readonly removedToolHints: Record<string, string> = {};
+	readonly #nextMessage = Promise.withResolvers<string>();
 	readonly activeTools = new Set<string>(["eval"]);
 	registeredTool: Parameters<CodemodeExtensionAPI["registerTool"]>[0] | undefined;
 	registerTool(tool: Parameters<CodemodeExtensionAPI["registerTool"]>[0]): void {
@@ -24,14 +28,32 @@ class FakePi {
 		this.activeTools.add(tool.name);
 		if (tool.name === "eval") this.registeredTool = tool;
 	}
+	registerRemovedToolHint(name: string, hint: string): void {
+		this.removedToolHints[name] = hint;
+	}
 	on(event: string, handler: RegisteredHandler["handler"]): void {
 		this.handlers.push({ event, handler });
 	}
 	getActiveTools(): string[] {
 		return [...this.activeTools];
 	}
+	getAllTools(): readonly { readonly name: string }[] {
+		return this.tools.map((name) => ({ name }));
+	}
+	setActiveTools(toolNames: string[]): void {
+		this.activeTools.clear();
+		for (const toolName of toolNames) this.activeTools.add(toolName);
+	}
 	async executeTool(): Promise<never> {
 		throw new Error("nested tool execution was not expected");
+	}
+	sendUserMessage(content: string, options?: { readonly deliverAs?: "steer" | "followUp" }): void {
+		this.messages.push(content);
+		this.deliveries.push({ content, deliverAs: options?.deliverAs });
+		this.#nextMessage.resolve(content);
+	}
+	nextMessage(): Promise<string> {
+		return this.#nextMessage.promise;
 	}
 }
 
@@ -50,7 +72,7 @@ class DisposableManager implements CodemodeSessionManager {
 
 	async getKernel(): Promise<{
 		run(input: EvalKernelRunInput): Promise<EvalKernelResult>;
-		interrupt(reason?: string): Promise<void>;
+		interrupt(reason?: string): Promise<KernelInterruptHandle>;
 		deliverToolReply(): void;
 		reset(): Promise<void>;
 		close(): Promise<void>;
@@ -80,6 +102,7 @@ class DisposableManager implements CodemodeSessionManager {
 			interrupt: async (reason) => {
 				this.events.push("interrupt");
 				controller.abort(reason);
+				return { stateRetained: Promise.resolve(true) };
 			},
 			deliverToolReply: () => undefined,
 			reset: async () => undefined,
@@ -144,7 +167,10 @@ async function emit(pi: FakePi, event: string, payload: unknown, ctx: ExtensionC
 }
 
 describe("senpi-codemode extension factory", () => {
-	afterEach(() => vi.clearAllMocks());
+	afterEach(() => {
+		vi.clearAllMocks();
+		vi.useRealTimers();
+	});
 
 	it("registers eval exactly once and has no module side effects", () => {
 		const pi = new FakePi();
@@ -255,6 +281,32 @@ describe("senpi-codemode extension factory", () => {
 		}
 	});
 
+	it("registers only eval with the GPT dialect for GPT models", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "senpi-codemode-gpt-eval-"));
+		const pi = new FakePi();
+		const manager = new DisposableManager();
+		senpiCodemode(pi, { createSessionManager: () => manager });
+		const ctx = { ...extensionContext(cwd), model: fakeModel("gpt-5.6") };
+
+		try {
+			await emit(pi, "session_start", { reason: "startup" }, ctx);
+
+			const tool = pi.registeredTool;
+			if (!tool) throw new Error("eval tool was not registered");
+			expect([...new Set(pi.tools)]).toEqual(["eval"]);
+			expect(pi.activeTools).toEqual(new Set(["eval"]));
+			expect(pi.removedToolHints).toEqual({
+				exec: expect.stringContaining("use eval"),
+				wait: expect.stringContaining("eval"),
+			});
+			expect(tool.description).toContain("<gpt_eval_dialect>");
+			expect(tool.description).toContain("detach on timeout");
+		} finally {
+			await emit(pi, "session_shutdown", {}, ctx);
+			await rm(cwd, { recursive: true, force: true });
+		}
+	});
+
 	it("registers the model-tuned dialect at session start and re-registers on model_select", async () => {
 		// Given a session whose active model is a Claude family id
 		const cwd = await mkdtemp(join(tmpdir(), "senpi-codemode-modelselect-"));
@@ -281,10 +333,10 @@ describe("senpi-codemode extension factory", () => {
 			// When the model switches to an OpenAI family id
 			await emit(pi, "model_select", { model: fakeModel("gpt-5.6") }, ctx);
 
-			// Then eval is re-registered with the codex dialect
+			// Then eval is re-registered with the GPT dialect
 			const switched = pi.registeredTool;
 			if (!switched) throw new Error("eval tool was not re-registered");
-			expect(switched.description).toContain("Route multi-call steps through eval");
+			expect(switched.description).toContain("<gpt_eval_dialect>");
 			expect(switched.description).not.toContain("<eval_first_batching>");
 
 			// And a same-model reselection does not re-register
@@ -367,6 +419,8 @@ describe("senpi-codemode extension factory", () => {
 });
 
 describe("senpi-codemode extension lifecycle", () => {
+	afterEach(() => vi.useRealTimers());
+
 	it("settles a mid-run cell as an error and rejects post-shutdown work", async () => {
 		const pi = new FakePi();
 		const manager = new DisposableManager();
@@ -385,6 +439,37 @@ describe("senpi-codemode extension lifecycle", () => {
 		).rejects.toMatchObject({ name: "CodemodeSessionDisposedError" });
 		expect([manager.disposeCount, manager.getKernelCount]).toEqual([1, 1]);
 		expect(manager.runControllers[0]?.signal.aborted).toBe(true);
+	});
+
+	it("injects one guarded interactive completion notification for a detached cell", async () => {
+		vi.useFakeTimers();
+		const pi = new FakePi();
+		const manager = new DisposableManager();
+		senpiCodemode(pi, { createSessionManager: () => manager });
+		const ctx = { ...extensionContext(), mode: "tui" as const, model: fakeModel("claude-opus-4-8") };
+		await emit(pi, "session_start", { reason: "startup" }, ctx);
+		const tool = pi.registeredTool;
+		if (!tool) throw new Error("eval tool was not registered");
+		const notification = pi.nextMessage();
+		const run = tool.execute(
+			"notified-detached",
+			{ language: "js", code: "await pending()", timeout: 1, on_timeout: "detach" },
+			undefined,
+			undefined,
+			ctx,
+		);
+		await manager.runStarted.promise;
+		await vi.advanceTimersByTimeAsync(1_000);
+		await run;
+
+		manager.runControllers[0]?.abort(new Error("kernel crashed"));
+		const content = await notification;
+
+		expect(pi.deliveries).toEqual([{ content, deliverAs: "steer" }]);
+		expect(content).toContain("notified-detached");
+		expect(content).toContain("kernel disposed");
+		expect(content).toContain("Kernel state updated - variables are available to the next eval cell.");
+		await emit(pi, "session_shutdown", {}, ctx);
 	});
 
 	it("aborts and settles tracked eval work before disposing the session manager", async () => {

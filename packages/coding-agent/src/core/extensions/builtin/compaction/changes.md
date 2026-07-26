@@ -1,4 +1,118 @@
+## Canonical remote compaction provenance and route ownership (2026-07-24)
+
+- `openai-remote-model.ts`: provenance now hashes the normalized endpoint and every final header by default. The only excluded volatile transport headers are `content-length`, `user-agent`, `request-id`, `x-request-id`, and `x-client-request-id`; raw values are never persisted. This binds non-Codex checkpoints to authorization plus final tenant/workspace routing headers.
+- Codex checkpoints instead bind to the JWT-derived `chatgpt-account-id` and every other final non-volatile header, deliberately excluding only the rotating `authorization` bearer value. Codex remote compaction now applies normal Responses header ordering: extension header transforms first, then configured authorization/account, originator, user agent, beta, and session/cache-affinity fields.
+- `agent-session.ts`: each compaction execution now proves its explicit auto/manual route controller still owns the operation before beginning lifecycle state. An auto compaction superseded during async auth admission publishes no lifecycle events and cannot disturb the newer manual operation.
+- Regressions: `test/compaction/canonical-routes.test.ts`, `test/suite/regressions/issue-296-openai-codex-remote-compaction.test.ts`, and `test/suite/compaction-race.test.ts` cover header routing differences, refresh-stable Codex account provenance, canonical override repair, and auth-admission supersession.
+
+## Replay remote checkpoints from final context payloads (2026-07-24)
+
+- `openai-remote.ts`: replay proves the checkpoint boundary by projecting the compaction-aware session prefix through
+  the same OpenAI Responses converter used by the real provider request, then requiring the final payload prefix to
+  match item-for-item. It only replaces a proven prefix; a context hook that inserts, removes, reorders, or changes a
+  checkpoint item declines native replay and sends the final transformed full payload unchanged. The post-checkpoint
+  suffix, including the in-flight prompt, always comes directly from that final payload and is never reconstructed
+  from persisted raw messages.
+- `openai-remote.ts`: both the direct compact endpoint and WebSocket route validate the final
+  `before_provider_request` replacement as an OpenAI compact body. Invalid replacements emit
+  `remote_fallback` with `invalid-compact-request-payload` and are rejected before transport, never retried with the
+  pre-hook payload.
+- Regressions: `test/compaction/canonical-routes.test.ts` covers a context hook that changes prefix cardinality and
+  confirms final-payload fallback, while `test/compaction/openai-remote-compaction.test.ts` covers invalid downstream
+  compact request replacements, final-payload redaction, and native/mixed-history provenance. The Codex regression
+  exercises the same proven-prefix replay path.
+- Repeated checkpoints project their prefix through the same compaction-aware branch view as normal session context,
+  excluding superseded older summaries before canonical Responses conversion.
+- Non-remote summarization runs context hooks on raw `AgentMessage` values before `convertToLlm`, preserving
+  role/customType-based redaction contracts while leaving persisted messages byte-identical.
+- Remote checkpoint provenance now records normalized endpoint/trust-domain identity plus a SHA-256 fingerprint of the
+  effective auth tenant (never raw credentials). Legacy, cross-endpoint, or cross-tenant entries decline replay.
+- Replay boundaries require non-enumerable message/item provenance to survive the canonical context pipeline. Missing,
+  duplicated, reordered, reconstructed, or mutated provenance keeps the final transformed full payload unchanged.
+
 # Builtin compaction extension changes
+
+## Reasoning-free summarization + shrink warm start (2026-07-26)
+
+- `speculative.ts` `generateSummaryMessage` now merges `summarizationReasoningOptions(model)` into the stream
+  options: `thinkingEnabled: false` for anthropic-messages and the cheapest catalog-supported effort for the
+  OpenAI Responses/Completions families (minimal when legal, otherwise low/medium/high), with reasoning summaries
+  disabled for Responses. Summarization requests previously inherited each provider's *default* reasoning mode;
+  a hard-coded `minimal` also disappeared at adapter resolution on catalog rows where `minimal: null`, restoring
+  that default. Both cases burned latency and output budget on invisible thinking before emitting the summary.
+  Codex now sends `summary: "off"` while direct/Azure Responses omit the summary field; non-reasoning models are
+  untouched.
+- `index.ts` `model_select`: on a context-window shrink (e.g. 1M -> 256k) with usage already over the new
+  window's speculative threshold, the handler now starts a speculative compaction at switch time. Previously
+  nothing ran until the next turn, so the first request to the smaller-window model could overflow, surface the
+  raw provider error, and only then recover. The warm-started job also lets the next turn's blocking compaction
+  await a finished summary instead of generating one while the user waits.
+- Duplicate `model_select` delivery for the same selected model reuses the in-flight/finished speculative job
+  instead of aborting it and launching a second summary.
+- Tests: `test/compaction/summarization-reasoning-options.test.ts` (per-API options),
+  `test/compaction/summarization-reasoning-payload.test.ts` (final OpenAI/Codex/Azure/Kimi payloads), and
+  `test/suite/model-shrink-speculative-warmstart.test.ts` (threshold start plus duplicate-event idempotency).
+
+Expected upstream conflict zones: `builtin/compaction/speculative.ts` around the stream options in
+`generateSummaryMessage`, and `builtin/compaction/index.ts` around the `model_select` handler.
+
+## Active-tool-only summarization requests (2026-07-23)
+
+- `index.ts`: direct local summarization requests now map the current active tool names to registered definitions.
+  Inactive registered tools, including inactive MCP catalog entries, no longer consume remote compaction payload
+  budget or appear as callable tools to the summarizer.
+- Applied speculative summaries carry their handler's feedback signal, allowing core to reject a superseded apply
+  before durable session mutation.
+
+Expected upstream conflict zones: `builtin/compaction/index.ts` tool snapshot construction and
+`builtin/compaction/speculative.ts` apply path.
+
+## Session-owned compaction completion state (2026-07-23)
+
+- AgentSession now records compaction as `idle`, `running`, `completed`, `failed`, or `aborted` with a monotonic
+  generation and operation identity.
+- Compaction snapshots the current AgentSession model at operation start. If main-thread retry fallback selected a
+  different model, that active model performs compaction; there is no compaction-specific fallback policy.
+- Extension feedback starts the same operation before summary generation and carries its abort signal through
+  progress, application, and terminal feedback.
+- Stale or duplicate terminal events cannot overwrite a newer compaction operation.
+- Durable append is guarded by the current operation and controller identity.
+- Required compaction remains fail-closed when generation or application fails, including provider-confirmed overflow
+  that the local token estimate places below the configured threshold; rejected recovery restores the overflow
+  context so a later prompt cannot bypass the same requirement.
+
+Expected upstream conflict zones: `agent-session.ts` around compaction execution, abort handling, and status access;
+`core/compaction/lifecycle.ts`.
+
+## Sanitize Anthropic tool pairs on direct summarization requests (2026-07-23)
+
+- `speculative.ts`: local compaction summarization now applies the existing Anthropic payload sanitizer at the direct
+  `stream()` boundary. Unlike normal agent turns, this side request does not run the extension runner's
+  `before_provider_request` hooks, so an orphan `tool_result` that survived message conversion previously reached
+  Anthropic unchanged and permanently rejected compaction for an over-limit session.
+- Regression: `test/compaction/anthropic-tool-pair-guard.test.ts` drives the real Anthropic wire adapter against a local
+  endpoint that rejects orphan results, proving the summarization request is valid before it leaves senpi.
+
+Expected upstream conflict zones: `builtin/compaction/speculative.ts` direct summary stream options.
+
+## Support native remote compaction for OpenAI Codex models (2026-07-23)
+
+- `openai-remote-model.ts`, `openai-remote-schema.ts`, `openai-remote.ts`, `openai-remote-convert.ts`,
+  `index.ts`: native remote compaction now treats `openai-codex` / `openai-codex-responses` as a supported
+  provider capability.
+  Codex compaction uses the ChatGPT backend's `/codex/responses/compact` route with OAuth Bearer auth,
+  the JWT-derived `chatgpt-account-id`, Codex session/window identity headers, the Responses beta flag,
+  and `originator: senpi`. The compact parser accepts Codex's output-only JSON response while retaining
+  strict direct-OpenAI response validation.
+- Codex OAuth remote compaction is restricted to the canonical ChatGPT origin and loopback QA/proxy
+  origins, preventing OAuth bearer tokens and conversation history from being sent to arbitrary remote
+  custom URLs. Persisted replacement history is replayed only when its provider/API identity exactly
+  matches the current model family.
+- Persisted remote-compaction details retain the paired provider/API identity so the next Codex request
+  replays the encrypted compaction item and in-flight prompt through the existing payload rewrite hook.
+  Direct `openai` / `openai-responses` endpoint and WebSocket behavior remains unchanged.
+- Regressions: `test/suite/regressions/issue-296-openai-codex-remote-compaction.test.ts` and
+  `test/suite/regressions/issue-296-openai-codex-remote-compaction-boundaries.test.ts`.
 
 ## Preserve the in-flight prompt in remote-compaction payload replay (2026-07-22)
 

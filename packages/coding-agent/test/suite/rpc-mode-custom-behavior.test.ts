@@ -4,23 +4,9 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { buildCustomUnsupportedRequest, CUSTOM_UNSUPPORTED_CAPABILITY } from "../../src/modes/rpc/custom-capability.ts";
 
-// Additive characterization test for the RPC-mode ctx.ui.custom behavior.
-//
-// Task 14 (neo) reimplements the 5 builtin ctx.ui.custom extensions natively in
-// Go and adds a Go-side "custom_unsupported" notice dialog. Task 13 wired the
-// additive, capability-gated emission on the TS side: `async custom()` now lives
-// in the per-connection handler (connection-handler.ts, where
-// createExtensionUIContext moved when the daemon core was extracted). Its body is
-// GATED — for a DEFAULT (unflagged) client it still returns undefined with NO
-// wire message (byte-identical), and ONLY when the client advertised the
-// custom_unsupported capability does it emit an additive
-// extension_ui_request{method:"custom_unsupported"} before returning undefined.
-//
-// This test (1) pins the real source body of `async custom()` so the
-// characterization cannot silently drift, then (2) exercises the pure gate helper
-// (buildCustomUnsupportedRequest) proving BOTH observable properties: unflagged =
-// no request; flagged = exactly one additive request. The gate is the single
-// source of truth the handler calls.
+// Characterization coverage for the capability-gated RPC ctx.ui.custom behavior.
+// Default clients receive no wire request; clients that advertise the capability
+// receive one additive custom_unsupported extension UI request.
 
 const thisDir = dirname(fileURLToPath(import.meta.url));
 const connectionHandlerPath = join(thisDir, "..", "..", "src", "modes", "rpc", "connection-handler.ts");

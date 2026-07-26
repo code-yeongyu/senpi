@@ -43,6 +43,15 @@ export class SelectorCooldowns {
 		if (/rate[ -]?limit|429|too many requests/.test(message)) return 30_000;
 		if (/overloaded|capacity/.test(message)) return 45_000 + this.capacityJitterMs();
 		if (/5xx|\b5\d\d\b|server|internal error/.test(message)) return 20_000;
+		// Transport blips (timeouts, DNS, socket drops) say nothing about model
+		// health; the 5-minute default parked the primary and blocked revert-to-primary.
+		if (
+			/timed? out|timeout|econnreset|econnrefused|etimedout|socket hang up|socket connection was closed|network.?error|connection.?error|connection.?refused|connection.?lost|other side closed|fetch failed|getaddrinfo|enotfound|eai_again|upstream.?connect|reset before headers|terminated|websocket.?closed|websocket.?error|ended without|stream ended before message_stop|stream ended before a terminal response event|http2 request did not get a response/.test(
+				message,
+			)
+		) {
+			return 60_000;
+		}
 		return 5 * 60_000;
 	}
 

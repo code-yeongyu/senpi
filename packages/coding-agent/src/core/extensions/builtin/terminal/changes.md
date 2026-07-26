@@ -3,6 +3,106 @@
 The persistent-terminal tool suite (`bash` swapped to PTY-backed + `bash_output`,
 `kill_bash`, `bash_input`, `bash_resize`). Backed by `@earendil-works/pi-pty`.
 
+## bash_output peek-only (2026-07-26)
+
+### What changed
+
+- `bash_output` is now a pure non-blocking peek: new output since the last read, the status
+  line, or `view:"screen"`. The `wait_for` blocking path (plus `block` and the wait
+  `timeout`) is removed from the tool and from `TerminalRuntimeSession` (waiter machinery,
+  `waitFor()`, exit-settling) — watchers subscribe through `onOutput` (the monitor path)
+  instead of blocking inside a read call.
+- `wait_for`, `block`, and `timeout` stay in the schema as deprecated ghost params: passing
+  any of them returns `BASH_OUTPUT_WAIT_REMOVED_GUIDANCE`, a one-line migration error that
+  redirects pattern watches to `monitor({command, filter})`, names the peek-or-relaunch
+  fallback for already-running sessions, and notes completion notifications carry the tail.
+- The terminal prompt section, `docs/terminal-tools.md`, the senpi-qa skill, and the
+  pty-drive self-test now teach the monitor/notification model; a repo consistency-gate
+  test (`test/prompt-surface-stale-wait-idioms.test.ts`) fails on any non-ghost `wait_for`
+  teaching in shipped prompt surfaces.
+
+### Why
+
+Corpus mining (875 sessions) showed 76% of `bash_output` calls were `wait_for` waits and
+30% were empty polls — the notification channel and the monitor tool already do that work.
+`bash_input`, `kill_bash`, `run_in_background`, and the notify pipeline are untouched
+(plan: `.omo/plans/eval-exec-merge-and-injection-wakeup.md`, todo 13).
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `tools/bash-output.ts` schema + execute path (fork-owned tool).
+- LOW: `runtime-session.ts` (fork-owned class; waiter removal is additive-safe upstream).
+- LOW: `prompt.ts` terminal prompt section.
+
+## Monitor watcher sessions (2026-07-26)
+
+### What changed
+
+- Added the PTY-backed `monitor` terminal-extension tool. `monitor({ description, command,
+  filter?, timeout_ms?, persistent? })` starts through the existing `TerminalManager` and returns
+  its normal `bash_N` id immediately, so `bash_output` remains the bounded peek surface and
+  `kill_bash` terminates the same watcher process tree. `action:"rearm"` deliberately reports a
+  no-op for a live non-paused monitor; wake-budget pausing and rearming delivery land with the
+  notification layer.
+- `monitor-registry.ts` line-buffers terminal output with one bounded unfinished line per live
+  watcher, emits only complete stdout lines (optionally regex-filtered), and emits one final
+  completion/timeout/kill summary. The terminal runtime retains the bounded full output, so
+  filtered and overflow lines remain peekable.
+- The permission parser classifies monitor commands in the existing `bash` permission class,
+  preserving the same approval path as `bash` rather than creating a parallel executor policy.
+
+### Why
+
+Long-running builds, CI, and log tails should report decision-relevant state changes without
+polling. Keeping monitor inside the terminal extension is required because its session manager is
+session-scoped private state; a shared cross-tool registry would enlarge the fork surface without
+improving the handle contract (plan: `.omo/plans/eval-exec-merge-and-injection-wakeup.md`, todo 3).
+
+### Event delivery (2026-07-26)
+
+- `monitor-notify.ts` batches stdout events for two seconds and applies a per-monitor five-second
+  injection limit by default. One session queue coalesces simultaneous monitors, caps each message
+  at 50 lines / 4KB with a `bash_output` peek reminder for overflow, and bounds retained queue
+  state to that one capped batch.
+- The existing terminal notification guard and mode mapping are shared: `wake` steers,
+  `next-turn` follows up, `off` suppresses, and `print`/`json` plus sessions without a model never
+  inject or create an auth-less turn. Five monitor-only wakes add one pause notice to the fifth
+  injection and pause live watchers until `monitor({ action:"rearm", bash_id })` explicitly
+  resumes delivery.
+- `terminal.monitorCoalesceWindowMs`, `monitorRateLimitMs`, `monitorMaxLinesPerInjection`,
+  `monitorMaxCharsPerInjection`, and `monitorWakeBudget` tune the coalescing/rate/batch/budget
+  limits. Monitor calls render with their description or rearm handle, and the terminal prompt
+  teaches decision-relevant watcher output rather than noisy log forwarding.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `extension.ts` terminal tool registration and session teardown.
+- LOW: `settings.ts` terminal notification settings shape.
+- LOW: `shared.ts` companion tool list and terminal tool constants.
+
+## Payload-rich background completion notifications (2026-07-26)
+
+### What changed
+
+- `notify.ts` `buildNotice()`: the background-session completion notice now embeds the exit
+  status (unchanged) AND the final output tail (sanitized via `sanitizeTerminalOutput`,
+  tail-capped at `NOTICE_TAIL_MAX_CHARS` = 2000 chars, with a truncation note that the full
+  history is still peekable) INSTEAD of the old `Use bash_output({ bash_id: "..." }) to read
+  its output` instruction. Notify modes (`wake`/`next-turn`/`off`) and all guards
+  (non-interactive `print`/`json` suppression, no auth-less turn spin, once per session id)
+  are unchanged. `bash_output` itself is untouched.
+
+### Why
+
+Real session evidence: session `019f79b8-3bec` received the old reminder, dutifully called
+`bash_output`, and got `(no new output)` — a wasted round per background completion. The
+notification is authoritative; receiving it must make a follow-up read unnecessary
+(plan: `.omo/plans/eval-exec-merge-and-injection-wakeup.md`, todo 1 / lane S1).
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `notify.ts` `buildNotice()` body (single function; guards untouched).
+
 ## Model-facing output is sanitized and bounded (2026-07-21)
 
 ### What changed

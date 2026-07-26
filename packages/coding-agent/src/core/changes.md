@@ -1,5 +1,126 @@
 # changes
 
+## Composable leading skill commands (2026-07-26)
+
+### What changed
+
+- `agent-session.ts`: `/skill:<name>` now accepts a leading whitespace-separated run of loaded skills, expanding each unique skill in written order before appending the remaining prompt text. Repeated skills expand only once, unknown skills stop the run and remain literal, and slash text outside that leading run is never interpreted as a skill command.
+- Explicit expansion is capped at `MAX_SKILL_EXPANSIONS_PER_PROMPT` (5). Commands beyond the cap remain literal and emit an existing `skill_expansion` error-channel notification, preventing a composed prompt from growing context without bound.
+- The shared expansion seam is called by `prompt()`, `steer()`, and `followUp()`, so queued and non-TUI/RPC prompt paths receive identical behavior.
+
+### Why extension system couldn't handle this alone
+
+Skill commands are resource-loader entries rather than extension commands, and their substitution happens in the private `AgentSession` prompt and queue boundary before the outbound user message is assembled.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` `_expandSkillCommand()` if upstream revises skill-command parsing.
+
+## Provider-bound inline image budget (2026-07-26)
+
+### What changed
+
+- `messages.ts`: added a transport-only 24 MiB inline image budget. Provider-bound conversion keeps the newest image
+  block, counts it against the budget, and replaces images older than the hard recency cutoff with a re-read
+  placeholder while preserving all text and leaving the persisted session untouched.
+- `sdk.ts`: routes the main agent loop through the shared transport conversion while preserving the dynamic
+  `images.blockImages` kill switch and its existing placeholder/deduplication behavior.
+- `test/suite/harness.ts`: uses the same transport conversion and accepts a small injectable image budget for
+  deterministic first-request integration coverage.
+
+### Why extension system couldn't handle this alone
+
+- Inline images must be bounded after session messages are converted but before every main-loop provider request,
+  including resumed sessions and provider fallbacks. That conversion boundary is owned by the core Agent wiring.
+
+### Expected merge conflict zones
+
+- MEDIUM: `sdk.ts` around the Agent `convertToLlm` wiring.
+- LOW: the transport helpers at the end of `messages.ts` and the Agent construction in `test/suite/harness.ts`.
+
+## Thinking-level tier detection for Claude 5 families and GPT-5.6 (2026-07-25)
+
+### What changed
+
+- `src/core/thinking-levels.ts`: `supportsXhigh` now recognizes `gpt-5.6`, `opus-5`, `sonnet-5` and
+  `fable-5`; `supportsMax` recognizes `opus-5`, `sonnet-5` and `fable-5`. These lists are the fallback
+  for models with no `thinkingLevelMap` (custom `models.json` entries and third-party gateways), so
+  those models previously could not reach the `xhigh` / `max` tiers in the level cycler even though
+  their provider accepts them. Bundled catalog models are unaffected because an explicit map wins.
+- This file is the coding-agent copy of the tier predicates; `packages/ai/src/models.ts` owns the
+  `pi-ai` copy and was updated in lockstep.
+
+### Why
+
+- `off` also became selectable for Claude Fable 5 in this change set: `packages/ai` now encodes
+  "cannot send `thinking.type: disabled`" as a compat fact rather than `thinkingLevelMap.off: null`,
+  and the Messages provider pins the cheapest effort for an off turn. The selector needed no change
+  for that - removing the `null` was enough.
+
+## Session-owned compaction lifecycle (2026-07-23)
+
+### What changed
+
+- `agent-session.ts` now holds a monotonic compaction lifecycle coordinator that snapshots the active model and
+  controller at operation start, rejects stale completion/feedback, and retains the terminal result until another
+  operation begins. Feedback-only aborts publish one terminal event, and accepted completions publish their terminal
+  event before `session_compact` handlers can begin a fresh operation.
+- Owned automatic compaction attempts publish balanced start/end events when execution cannot begin. Ownership is
+  rechecked after start: a synchronous listener that supersedes the controller with a new operation silences the stale
+  terminal event (the new owner publishes its own lifecycle), while a listener that aborts the same controller still
+  receives an `aborted` terminal event so UI state opened on `compaction_start` is always closed.
+- Durable append now rejects a generation whose message revision or agent-message snapshot changed during preparation
+  or summary generation (`stale-revision`), preserving intervening context without duplicate replay.
+- Required compaction uses one provider-admission gate for normal prompts, extension-triggered turns, and every next
+  turn. Provider-confirmed overflow remains fail-closed even when the local token estimate is below the configured
+  threshold; `agent_end` synchronously transfers both silent-overflow and threshold-compaction continuation ownership
+  to `AgentSession` before agent-core can drain native queues, and failed recovery restores the overflow context so
+  later prompts cannot bypass the same requirement.
+- Next-turn snapshots reapply the live active tools and effective per-run system prompt after asynchronous preparation,
+  so a tool removed during the turn is neither advertised nor executable by the following provider request.
+- Required ownership now suppresses only agent-core's post-`agent_end` queue drain, not the run abort signal. Deferred
+  extension dispatch retains the real source signal, so compaction ownership does not masquerade as user cancellation.
+- Retry and fallback admission resolve required compaction first; rejected recovery retains native queues without
+  dispatching a provider retry. Active-tool changes advance the context revision and abort active core compaction so
+  summaries prepared against a prior tool set cannot apply.
+- Fallback apply/revert transitions emit typed model-selection events, rebuild model-scoped tools and prompts, abort
+  compaction prepared for the prior model, and re-run required compaction against the selected model's context window
+  before retrying.
+- Message objects are associated with their persisted session-entry order. Compaction-boundary checks use that order
+  (and treat pending `message_end` persistence as post-boundary) instead of relying only on payload timestamps.
+- Session reload materialization restores those message-to-entry associations, so older payload timestamps cannot
+  bypass post-compaction admission after reopening a session.
+- When a late queue triggers compaction after a host `prepareNextTurnWithContext` callback, the callback is replayed
+  once against the compacted context so its message filtering/injection contract reaches the provider request.
+- Every compaction execution receives its route-owned controller explicitly. Auto compaction cannot promote unrelated
+  extension feedback, and superseded feedback controller references are released even when their stale terminal
+  callback never arrives.
+- Post-retry and post-compaction usage exemptions suppress only stale threshold accounting. Provider-confirmed
+  overflow always retains queue ownership and runs fail-closed recovery.
+- Extension-originated provider turns now wait behind active session work and manual compaction. `clearQueue()` clears
+  both native and post-compaction deferred ownership layers, preventing canceled steer/follow-up input from resurfacing.
+- Provider admission is checked again after assembling `nextTurn` and `before_agent_start` custom messages. Rejected
+  compaction restores one-shot additions transactionally; accepted compaction rebuilds and rechecks the final visible
+  request before the provider is called.
+- Request-local context provenance is attached non-enumerably to message identities and removed from persisted/session
+  JSON. Remote replay uses it to prove the exact checkpoint boundary after filtering, injection, or reordering.
+- Trigger-turn custom messages serialize behind manual/extension compaction before they are appended or sent.
+  Scheduled continuation revalidates the canonical context against any model selected by `session_compact`, retaining
+  queues when the smaller model requires rejected re-compaction.
+- Manual and extension compaction claim a synchronous pending-admission barrier before their first await, closing the
+  same-tick window where a trigger-turn custom message could overtake startup. Retry continuation failures that occur
+  before provider dispatch now settle retry/idle state and retain queues instead of hanging the session.
+- Fire-and-forget `session_start` messages defer past replacement-session work without being discarded as stale.
+
+### Why extension system couldn't handle this alone
+
+- Model selection, durable session append, provider-overflow recovery, controller ownership, and prompt admission are
+  private `AgentSession` lifecycle boundaries.
+
+### Expected merge conflict zones
+
+- HIGH: `agent-session.ts` compaction execution, pre-prompt recovery, abort handling, and extension context bindings.
+
 ## Streaming steer/followUp submissions bypass the session-work barrier (2026-07-21)
 
 ### What changed

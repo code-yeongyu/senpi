@@ -1,5 +1,22 @@
 # mcp Extension Changes
 
+## Classic reload preserves unchanged MCP servers (2026-07-26)
+
+### What changed
+- Classic (non-provider-scoped) MCP reloads keep the shared `McpService` alive. The reload-time `session_start` reattaches it and its existing config-hash reconciliation preserves unchanged servers while replacing changed definitions and disposing removed definitions.
+- Provider-scoped MCP services still dispose on `reload`, because rebuilding an extension factory creates a new scoped instance and preserving the old one would orphan its child processes.
+- Core now emits `{ type: "session_extensions_removed", reason: "reload", removed: Array<{ path, resolvedPath }> }` on the old runner after it knows the rebuilt extension set. MCP matches its builtin identity (`<builtin:mcp>`) in that event and disposes the preserved classic service when MCP is disabled during a reload.
+- `/mcp reconnect <name>` remains the explicit escape hatch for a server that is connected but wedged: it renews that server without requiring a full reload.
+
+### Why
+- Spawning every MCP server again on every classic reload adds a fixed process startup cost even when config is unchanged. Preserving and reconciling retains healthy children, while the removal event closes the only gap where the preserved singleton otherwise loses its owning extension.
+
+### Why extension system couldn't handle this alone
+- The core alone can identify removed extension entries but must remain resource-agnostic; MCP alone cannot know the post-reload builtin set at `session_shutdown`. The core event provides the lifecycle boundary and MCP owns the service-specific disposal.
+
+### Expected merge conflict zones
+- LOW: `index.ts` lifecycle handlers; `service.ts` remains the config-hash reconciliation owner.
+
 ## Raced background registration replays session state (2026-07-21)
 
 ### What changed

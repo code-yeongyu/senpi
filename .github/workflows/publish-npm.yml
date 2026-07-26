@@ -20,7 +20,7 @@ name: Release
         default: false
 
 permissions:
-  contents: write
+  contents: read
   id-token: write
 
 concurrency:
@@ -36,8 +36,7 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-          persist-credentials: true
+          persist-credentials: false
 
       - name: Configure git identity
         run: |
@@ -68,9 +67,14 @@ jobs:
       - name: Run release
         if: inputs.publish-only != true
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.UPSTREAM_AUTOMATION_TOKEN }}
           SENPI_SKIP_PM_VERIFY: '1'
         run: |
+          test -n "$GH_TOKEN" || {
+            echo "::error::UPSTREAM_AUTOMATION_TOKEN is required to push release commits and tags through branch protection."
+            exit 1
+          }
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           ARGS=()
           if [ -n "${{ inputs.version }}" ]; then
             ARGS+=(--version "${{ inputs.version }}")

@@ -7,8 +7,8 @@ import type {
 	ThinkingBudgets,
 	Transport,
 } from "@earendil-works/pi-ai";
-import { streamSimple } from "@earendil-works/pi-ai/compat";
 import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.ts";
+import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
 	AfterToolCallContext,
 	AfterToolCallResult,
@@ -98,7 +98,7 @@ export interface AgentOptions {
 	initialState?: Partial<Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">>;
 	convertToLlm?: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
 	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
-	streamFn?: StreamFn;
+	streamFn: StreamFn;
 	getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
 	onPayload?: SimpleStreamOptions["onPayload"];
 	onResponse?: SimpleStreamOptions["onResponse"];
@@ -119,6 +119,8 @@ export interface AgentOptions {
 	timeoutMs?: number;
 	maxRetryDelayMs?: number;
 	toolExecution?: ToolExecutionMode;
+	removedToolHints?: Record<string, string>;
+	abortServerSideFallback?: boolean;
 }
 
 class PendingMessageQueue {
@@ -171,6 +173,7 @@ type ActiveRun = {
 	promise: Promise<void>;
 	resolve: () => void;
 	abortController: AbortController;
+	suppressQueuedMessageDrain: boolean;
 };
 
 /**
@@ -187,7 +190,7 @@ export class Agent {
 
 	public convertToLlm: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
 	public transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
-	public streamFn: StreamFn;
+	public streamFunction: StreamFn;
 	public getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
 	public onPayload?: SimpleStreamOptions["onPayload"];
 	public onResponse?: SimpleStreamOptions["onResponse"];
@@ -218,27 +221,35 @@ export class Agent {
 	public maxRetryDelayMs?: number;
 	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
 	public toolExecution: ToolExecutionMode;
+	/** Migration guidance returned when a removed tool name is called. */
+	public removedToolHints: Record<string, string>;
+	/** Forwarded to the stream function; providers without server-side fallback ignore it. */
+	public abortServerSideFallback?: boolean;
 
-	constructor(options: AgentOptions = {}) {
-		this._state = createMutableAgentState(options.initialState);
-		this.convertToLlm = options.convertToLlm ?? defaultConvertToLlm;
-		this.transformContext = options.transformContext;
-		this.streamFn = options.streamFn ?? streamSimple;
-		this.getApiKey = options.getApiKey;
-		this.onPayload = options.onPayload;
-		this.onResponse = options.onResponse;
-		this.beforeToolCall = options.beforeToolCall;
-		this.afterToolCall = options.afterToolCall;
-		this.prepareNextTurn = options.prepareNextTurn;
-		this.prepareNextTurnWithContext = options.prepareNextTurnWithContext;
-		this.steeringQueue = new PendingMessageQueue(options.steeringMode ?? "one-at-a-time");
-		this.followUpQueue = new PendingMessageQueue(options.followUpMode ?? "one-at-a-time");
-		this.sessionId = options.sessionId;
-		this.thinkingBudgets = options.thinkingBudgets;
-		this.transport = options.transport ?? "auto";
-		this.timeoutMs = options.timeoutMs;
-		this.maxRetryDelayMs = options.maxRetryDelayMs;
-		this.toolExecution = options.toolExecution ?? "parallel";
+	constructor(options: AgentOptions) {
+		// Older compiled consumers may omit options or streamFn even though the current API requires them.
+		const runtimeOptions: Partial<AgentOptions> = options ?? {};
+		this._state = createMutableAgentState(runtimeOptions.initialState);
+		this.convertToLlm = runtimeOptions.convertToLlm ?? defaultConvertToLlm;
+		this.transformContext = runtimeOptions.transformContext;
+		this.streamFunction = runtimeOptions.streamFn ?? getDefaultStreamFn();
+		this.getApiKey = runtimeOptions.getApiKey;
+		this.onPayload = runtimeOptions.onPayload;
+		this.onResponse = runtimeOptions.onResponse;
+		this.beforeToolCall = runtimeOptions.beforeToolCall;
+		this.afterToolCall = runtimeOptions.afterToolCall;
+		this.prepareNextTurn = runtimeOptions.prepareNextTurn;
+		this.prepareNextTurnWithContext = runtimeOptions.prepareNextTurnWithContext;
+		this.steeringQueue = new PendingMessageQueue(runtimeOptions.steeringMode ?? "one-at-a-time");
+		this.followUpQueue = new PendingMessageQueue(runtimeOptions.followUpMode ?? "one-at-a-time");
+		this.sessionId = runtimeOptions.sessionId;
+		this.thinkingBudgets = runtimeOptions.thinkingBudgets;
+		this.transport = runtimeOptions.transport ?? "auto";
+		this.timeoutMs = runtimeOptions.timeoutMs;
+		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
+		this.toolExecution = runtimeOptions.toolExecution ?? "parallel";
+		this.removedToolHints = runtimeOptions.removedToolHints ?? {};
+		this.abortServerSideFallback = runtimeOptions.abortServerSideFallback;
 	}
 
 	/**
@@ -325,6 +336,16 @@ export class Agent {
 	}
 
 	/**
+	 * Keep queued steering and follow-up messages for an external owner after
+	 * this run reaches agent_end, without changing the active abort signal.
+	 */
+	suppressQueuedMessageDrain(): void {
+		if (this.activeRun) {
+			this.activeRun.suppressQueuedMessageDrain = true;
+		}
+	}
+
+	/**
 	 * Resolve when the current run and all awaited event listeners have finished.
 	 *
 	 * This resolves after `agent_end` listeners settle.
@@ -355,6 +376,32 @@ export class Agent {
 		}
 		const messages = this.normalizePromptInput(input, images);
 		await this.runPromptMessages(messages);
+	}
+
+	/** Continue by delivering queued input first when a compaction leaves custom context at the tail. */
+	async continueWithQueuedMessages(): Promise<void> {
+		if (this.activeRun) {
+			throw new Error("Agent is already processing. Wait for completion before continuing.");
+		}
+
+		if (this._state.messages[this._state.messages.length - 1]?.role === "assistant") {
+			await this.continue();
+			return;
+		}
+
+		const queuedSteering = this.steeringQueue.drain();
+		if (queuedSteering.length > 0) {
+			await this.runPromptMessages(queuedSteering, { skipInitialSteeringPoll: true });
+			return;
+		}
+
+		const queuedFollowUps = this.followUpQueue.drain();
+		if (queuedFollowUps.length > 0) {
+			await this.runPromptMessages(queuedFollowUps);
+			return;
+		}
+
+		await this.continue();
 	}
 
 	/** Continue from the current transcript. The last message must be a user or tool-result message. */
@@ -417,7 +464,7 @@ export class Agent {
 				this.createLoopConfig(options),
 				(event) => this.processEvents(event),
 				signal,
-				this.streamFn,
+				this.streamFunction,
 			);
 		});
 	}
@@ -429,7 +476,7 @@ export class Agent {
 				this.createLoopConfig(),
 				(event) => this.processEvents(event),
 				signal,
-				this.streamFn,
+				this.streamFunction,
 			);
 		});
 	}
@@ -456,7 +503,9 @@ export class Agent {
 			thinkingBudgets: this.thinkingBudgets,
 			timeoutMs: this.timeoutMs,
 			maxRetryDelayMs: this.maxRetryDelayMs,
+			abortServerSideFallback: this.abortServerSideFallback,
 			toolExecution: this.toolExecution,
+			removedToolHints: this.removedToolHints,
 			beforeToolCall: this.beforeToolCall,
 			afterToolCall: this.afterToolCall,
 			prepareNextTurn:
@@ -505,7 +554,7 @@ export class Agent {
 		const promise = new Promise<void>((resolve) => {
 			resolvePromise = resolve;
 		});
-		this.activeRun = { promise, resolve: resolvePromise, abortController };
+		this.activeRun = { promise, resolve: resolvePromise, abortController, suppressQueuedMessageDrain: false };
 
 		this._state.isStreaming = true;
 		this._state.streamingMessage = undefined;
@@ -513,7 +562,11 @@ export class Agent {
 
 		try {
 			await executor(abortController.signal);
-			while (!abortController.signal.aborted && this.hasQueuedMessages()) {
+			while (
+				!abortController.signal.aborted &&
+				!this.activeRun?.suppressQueuedMessageDrain &&
+				this.hasQueuedMessages()
+			) {
 				await this.runQueuedMessagesAfterAgentEnd(abortController.signal);
 			}
 		} catch (error) {
@@ -532,7 +585,7 @@ export class Agent {
 				this.createLoopConfig({ skipInitialSteeringPoll: true }),
 				(event) => this.processEvents(event),
 				signal,
-				this.streamFn,
+				this.streamFunction,
 			);
 			return;
 		}
@@ -548,7 +601,7 @@ export class Agent {
 			this.createLoopConfig(),
 			(event) => this.processEvents(event),
 			signal,
-			this.streamFn,
+			this.streamFunction,
 		);
 	}
 

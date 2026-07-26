@@ -34,9 +34,13 @@ Colocated `*.test.mjs` files run via root `npm run test:scripts` (`node --test s
 
 - `local-release.mjs`: Smoke-test release to a temp directory. Doesn't push tags.
 
-- `publish.mjs`: Publishes the four standalone packages (`@earendil-works/pi-ai`,
-  `@earendil-works/pi-agent-core`, `@earendil-works/pi-tui`, `@code-yeongyu/senpi`).
-  `@code-yeongyu/senpi-orchestrator` is `private: true` and explicitly excluded.
+- `publish.mjs`: Publishes six fork-owned packages in release order:
+  `@code-yeongyu/senpi-ai`, `@code-yeongyu/senpi-agent-core`,
+  `@code-yeongyu/senpi-tui`, `@code-yeongyu/senpi-pty`,
+  `@code-yeongyu/senpi-codemode`, and `@code-yeongyu/senpi`.
+  The four upstream-named source packages remain `private`; the publisher copies
+  each to a temporary manifest under the fork scope. `@code-yeongyu/senpi-server`
+  is `private: true` and explicitly excluded.
 
 - `build-binaries.sh`: Mirrors `.github/workflows/build-binaries.yml` for local
   cross-platform binary builds.
@@ -57,12 +61,21 @@ Manages workspace packages embedded in the published `@code-yeongyu/senpi` tarba
 The publish tarball is fully self-contained: `copyPublishDependencies` stages the ENTIRE
 runtime closure from `publish-deps.lock.json` (all registry deps + transitives, not just the
 workspace closure) into `packages/coding-agent/node_modules`, and `stagePublishManifest`
-rewrites the publish manifest so `bundleDependencies` lists every staged package while all
-`dependencies` edges (including the registry-absent `^2026.x` workspace specs) stay intact.
-npm then needs no registry fetch at install time; the previous partial bundle let arborist
+rewrites the publish manifest so `bundleDependencies` lists every platform-portable staged
+package while the original `dependencies` keys stay intact. Their staged specs point
+through npm aliases to the matching fork-owned `@code-yeongyu/senpi-*` package: npm still
+packs the original import paths, while Bun resolves only the fork-owned alias rather than
+fetching unavailable upstream lockstep versions. The previous partial bundle let arborist
 abort reify mid-flight and drop arbitrary registry deps (ERR_MODULE_NOT_FOUND).
 Staging dirties `packages/coding-agent/package.json`; restore it with `git checkout --`
 after packing/publishing.
+
+`bundleDependencies` deliberately excludes packages that declare `os`/`cpu`/`libc`
+(`isPlatformConstrainedPackage`). npm resolves those fields against the installing machine, but
+the bundle is one artifact shipped to every platform and npm republishes the bundled set as
+required `dependencies` in the registry manifest — so bundling the publish runner's own natives
+(linux-x64, per `publish-npm.yml`) made `npm install @code-yeongyu/senpi` fail with
+EBADPLATFORM everywhere else. They remain optional registry deps, resolved per install target.
 
 ## check-mcp-docs.test.mjs
 

@@ -13,15 +13,10 @@ import { ModelRegistry } from "../../src/core/model-registry.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 
 /**
- * Reproduces the production failure where a compaction summarization request
- * replayed a custom tool call (stored with the "<call_id>|custom" sentinel) as
- * a function_call item with id "custom", and the OpenAI Responses API rejected
- * the whole request:
- *   Invalid 'input[166].id': 'custom'. Expected an ID that begins with 'fc'.
- *
- * The wiremock server applies the API's id rule to every function_call input
- * item and answers 400 with that exact error shape when violated, so this test
- * fails against the real wire path whenever an invalid id leaks into a request.
+ * Reproduces the compaction replay of a custom tool call stored with the
+ * "<call_id>|custom" sentinel. The wiremock applies the Responses API's
+ * function_call id rule, while the assertions require the sentinel to recover
+ * its raw custom_tool_call shape and never reach the wire as an item id.
  */
 
 const PROVIDER = "openai";
@@ -251,12 +246,26 @@ describe("compaction replay of custom tool calls over the wire", () => {
 		expect(result?.summary).toBe(SUMMARY_TEXT);
 		expect(server.bodies.length).toBeGreaterThan(0);
 		const inputs = server.bodies.flatMap((body) => (Array.isArray(body.input) ? (body.input as InputItem[]) : []));
-		// Vacuous-test guard: the poisoned call must actually reach the wire.
-		expect(inputs.some((item) => item.type === "function_call" && item.name === "apply_patch")).toBe(true);
+		// Vacuous-test guard: the persisted call/result pair must reach the wire.
+		const patchCall = inputs.find((item) => item.type === "custom_tool_call" && item.name === "apply_patch");
+		expect(patchCall).toEqual({
+			type: "custom_tool_call",
+			call_id: "call_patch",
+			name: "apply_patch",
+			input: "*** Begin Patch\n*** End Patch",
+		});
+		expect(patchCall).not.toHaveProperty("id");
+		expect(inputs).toContainEqual({
+			type: "custom_tool_call_output",
+			call_id: "call_patch",
+			name: "apply_patch",
+			output: "patch applied",
+		});
 		for (const item of inputs) {
 			if (item.type === "function_call" && typeof item.id === "string") {
 				expect(item.id.startsWith("fc")).toBe(true);
 			}
 		}
+		expect(inputs.some((item) => item.id === "custom")).toBe(false);
 	});
 });

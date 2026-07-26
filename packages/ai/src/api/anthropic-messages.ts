@@ -29,17 +29,28 @@ import type {
 	Tool,
 	ToolCall,
 	ToolResultMessage,
+	UserMessage,
 } from "../types.ts";
 import { isVideoMimeType } from "../types.ts";
+import { combineAbortSignals } from "../utils/abort-signals.ts";
 import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
+import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import {
+	applyServerFallbackAbort,
+	parseServerFallbackReceipt,
+	parseStickyFallbackReceipt,
+	type ServerFallbackReceipt,
+} from "../utils/server-fallback-receipt.ts";
+import { normalizeToolCallId } from "../utils/tool-call-id.ts";
 import { isForcedToolChoiceUnsupportedError, omitToolChoiceParam } from "../utils/tool-choice-fallback.ts";
 
 import { resolveCloudflareBaseUrl } from "./cloudflare.ts";
+import { resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import {
 	ANTHROPIC_RESERVED_BODY_KEYS,
@@ -220,7 +231,35 @@ const FINE_GRAINED_TOOL_STREAMING_BETA = "fine-grained-tool-streaming-2025-05-14
 const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
 const COMPUTER_USE_BETA_PREFIX = "computer-use-";
 const NATIVE_COMPUTER_TOOL_TYPE = "computer_20250124";
-const ADAPTIVE_THINKING_MODEL_MARKERS = ["opus-4-6", "opus-4-7", "sonnet-4-6"] as const;
+const ADAPTIVE_THINKING_MODEL_MARKERS = [
+	"opus-4-6",
+	"opus-4-7",
+	"opus-4-8",
+	"opus-5",
+	"sonnet-4-6",
+	"sonnet-5",
+	"fable-5",
+	"mythos-5",
+] as const;
+/**
+ * Adaptive families that expose the real `xhigh` effort tier. Everything else on the
+ * adaptive ladder tops out at `max` (Opus/Sonnet 4.6 are four-tier: low/medium/high/max).
+ */
+const NATIVE_XHIGH_EFFORT_MODEL_MARKERS = [
+	"opus-4-7",
+	"opus-4-8",
+	"opus-5",
+	"sonnet-5",
+	"fable-5",
+	"mythos-5",
+] as const;
+/**
+ * Adaptive families that reject `thinking: {type: "disabled"}` outright (verified 400:
+ * `"thinking.type.disabled" is not supported for this model`). The generated catalog also encodes
+ * this as `compat.supportsDisabledThinking: false`, but `models.json` entries and third-party
+ * gateway rows carry no generated compat, so the family fact has to live here as well.
+ */
+const DISABLED_THINKING_REJECTING_MODEL_MARKERS = ["fable-5", "mythos-5"] as const;
 const CLAUDE_FABLE_OR_MYTHOS_MODEL_ID = /^claude-(?:fable|mythos)(?:-|$)/i;
 const UNSUPPORTED_NATIVE_COMPUTER_TOOL_MODEL_MARKERS = [
 	"opus-4-6",
@@ -277,6 +316,7 @@ function getAnthropicCompat(
 		allowEmptySignature: model.compat?.allowEmptySignature ?? false,
 		unsignedThinkingReplay:
 			model.compat?.unsignedThinkingReplay ?? (model.compat?.allowEmptySignature ? "empty-signature" : "text"),
+		supportsStrictTools: model.compat?.supportsStrictTools ?? false,
 		supportsToolReferences: model.compat?.supportsToolReferences ?? defaultSupportsToolReferences(model),
 		// Default: first-party Anthropic only. Anthropic-compatible providers
 		// (kimi-coding, fireworks, copilot, gateways) may execute the server-side
@@ -373,6 +413,10 @@ function mergeHeaders(...headerSources: (Record<string, string | null> | undefin
 	return merged;
 }
 
+function hasAuthorizationHeader(headers?: Record<string, string>): boolean {
+	return Object.keys(headers ?? {}).some((name) => name.toLowerCase() === "authorization");
+}
+
 interface ServerSentEvent {
 	event: string | null;
 	data: string;
@@ -463,6 +507,122 @@ function isAnthropicWebSearchReplayBlock(raw: unknown): boolean {
 	if (!isRecord(raw)) return false;
 	if (raw.type === "web_search_tool_result") return true;
 	return raw.type === "server_tool_use" && raw.name === "web_search";
+}
+
+// Anthropic validates server-tool pairing per request: a `server_tool_use` /
+// `mcp_tool_use` must be answered by its `*_tool_result`, and a result must
+// have its use — otherwise the API answers `400 ... \`web_search\` tool use
+// with id ... was found without a corresponding \`web_search_tool_result\`
+// block` and the session wedges, because history only grows.
+//
+// The pair may span two assistant messages. A mixed turn (a client `tool_use`
+// next to a `server_tool_use`, stop `tool_use`) returns with the server tool
+// deferred: the client answers with tool results, and the continuation
+// assistant message starts with the deferred result. Such a turn is LIVE while
+// only tool results follow it — dropping the pending use would stop the API
+// from running the deferred tool. A `pause_turn` turn replays the same way.
+//
+// The turn CLOSES — and a pending use becomes unpairable — when anything but
+// tool results follows it (a user text message tells the API the assistant
+// turn is over) or when a later assistant message exists without ever
+// answering it. Symmetrically, a result is valid when its use sits in the same
+// or an earlier assistant message (the deferred-continuation shape), and is
+// unpairable when its use is nowhere. Only the unpairable halves are dropped;
+// live turns and resolved pairs replay byte-for-byte.
+interface ProviderNativeToolPairing {
+	readonly resolvedUseIds: ReadonlySet<string>;
+	readonly liveUseIds: ReadonlySet<string>;
+	readonly validResultIds: ReadonlySet<string>;
+}
+
+// The user turn a pending server tool can survive is one that carries only
+// tool results. Anything else the wire would emit — real text, an image —
+// closes the assistant turn (the API then 400s the still-open use). A blank
+// message serializes to nothing, so it closes nothing.
+function userMessageClosesServerTurn(message: UserMessage): boolean {
+	if (typeof message.content === "string") return message.content.trim().length > 0;
+	return message.content.some(
+		(block) => (block.type === "text" && block.text.trim().length > 0) || block.type === "image",
+	);
+}
+
+function collectProviderNativeToolPairing(
+	messages: Message[],
+	model: Model<"anthropic-messages">,
+	deferredToolNames: ReadonlySet<string>,
+	normalizeToolName: (name: string) => string,
+	discardedFallbackToolCallIds: ReadonlySet<string>,
+): ProviderNativeToolPairing {
+	const resolvedUseIds = new Set<string>();
+	const validResultIds = new Set<string>();
+	// Uses whose turn can still be resumed. A same-model assistant resets the
+	// set: its own result blocks may answer the prior pending uses, and any use
+	// it leaves pending becomes the open set. Anything that closes the turn —
+	// user text, a tool result whose deferred-tool references serialize sibling
+	// text after the results, or another model's assistant — empties it.
+	let pendingUseIds = new Set<string>();
+	const loadedReferenceNames = new Set<string>();
+	for (const message of messages) {
+		if (message.role === "assistant") {
+			const priorUseIds = pendingUseIds;
+			pendingUseIds = new Set<string>();
+			if (!isSameAnthropicModel(message, model)) continue;
+			for (const block of message.content) {
+				if (block.type !== "providerNative" || !isRecord(block.raw)) continue;
+				const raw = block.raw;
+				if (typeof raw.type !== "string" || !REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES.has(raw.type)) continue;
+				if (isProviderNativeToolUseBlock(raw) && typeof raw.id === "string") pendingUseIds.add(raw.id);
+			}
+			for (const block of message.content) {
+				if (block.type !== "providerNative" || !isRecord(block.raw)) continue;
+				const raw = block.raw;
+				if (typeof raw.type !== "string" || !REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES.has(raw.type)) continue;
+				const toolUseId = raw.tool_use_id;
+				if (typeof toolUseId !== "string") continue;
+				if (priorUseIds.has(toolUseId) || pendingUseIds.has(toolUseId)) {
+					resolvedUseIds.add(toolUseId);
+					validResultIds.add(toolUseId);
+				}
+			}
+			continue;
+		}
+		if (message.role === "toolResult") {
+			// Conversion drops a discarded pre-fallback result without touching
+			// loadedToolNames, so it must not load the name here either.
+			if (discardedFallbackToolCallIds.has(message.toolCallId)) continue;
+			// convertToolResult emits sibling text after the tool_result blocks only
+			// for names that survive the deferred/loaded filter, so only those names
+			// close the turn; a stale or already-loaded name leaves the result plain
+			// and the pending use resumable.
+			let emitsReferences = false;
+			for (const name of message.addedToolNames ?? []) {
+				const normalizedName = normalizeToolName(name);
+				if (!deferredToolNames.has(normalizedName) || loadedReferenceNames.has(normalizedName)) continue;
+				loadedReferenceNames.add(normalizedName);
+				emitsReferences = true;
+			}
+			if (emitsReferences) pendingUseIds = new Set<string>();
+			continue;
+		}
+		if (message.role === "user" && userMessageClosesServerTurn(message)) {
+			pendingUseIds = new Set<string>();
+		}
+	}
+	// Whatever is still pending at the end of history belongs to the last
+	// assistant message and can still resume, so it is live rather than unpaired.
+	return { resolvedUseIds, liveUseIds: pendingUseIds, validResultIds };
+}
+
+// True for a server-tool block whose counterpart can never arrive: a use that
+// is neither answered nor resumable, or a result whose use is nowhere.
+// Blocks that pair nothing (`fallback`, `container_upload`) are never unpaired.
+function isUnpairedProviderNativeToolBlock(raw: unknown, pairing: ProviderNativeToolPairing): boolean {
+	if (!isRecord(raw)) return false;
+	if (isProviderNativeToolUseBlock(raw)) {
+		return typeof raw.id !== "string" || !(pairing.resolvedUseIds.has(raw.id) || pairing.liveUseIds.has(raw.id));
+	}
+	const toolUseId = raw.tool_use_id;
+	return typeof toolUseId === "string" && !pairing.validResultIds.has(toolUseId);
 }
 
 // tool_use ids referenced by server-tool result blocks in content[0, boundary).
@@ -938,6 +1098,10 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			timestamp: Date.now(),
 		};
 
+		const serverFallbackAbort = new AbortController();
+		let serverFallbackReceipt: ServerFallbackReceipt | undefined;
+		const combinedAbort = combineAbortSignals([options?.signal, serverFallbackAbort.signal]);
+		const requestSignal = combinedAbort.signal;
 		try {
 			let client: Anthropic;
 			let isOAuth: boolean;
@@ -947,7 +1111,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				isOAuth = false;
 			} else {
 				const apiKey = options?.apiKey;
-				if (!apiKey) {
+				const optionsHeaders = providerHeadersToRecord(options?.headers);
+				if (!apiKey && !hasAuthorizationHeader(optionsHeaders)) {
 					throw new Error(`No API key for provider: ${model.provider}`);
 				}
 
@@ -972,7 +1137,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					apiKey,
 					options?.interleavedThinking ?? true,
 					shouldUseFineGrainedToolStreamingBeta(model, context),
-					providerHeadersToRecord(options?.headers),
+					optionsHeaders,
 					copilotDynamicHeaders,
 					cacheSessionId,
 					options?.env,
@@ -996,9 +1161,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				const payloadRequestMetadata = extractPayloadRequestMetadata(params);
 				params = payloadRequestMetadata.params;
 				const requestOptions = {
-					...(options?.signal ? { signal: options.signal } : {}),
+					...(requestSignal ? { signal: requestSignal } : {}),
 					...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
-					maxRetries: options?.maxRetries ?? 0,
+					maxRetries: 0,
 					...(payloadRequestMetadata.headers ? { headers: payloadRequestMetadata.headers } : {}),
 				};
 				try {
@@ -1015,19 +1180,25 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					throw error;
 				}
 			};
-			let request: { params: MessageCreateParamsStreaming; response: Response };
-			try {
-				request = await createRequest();
-			} catch (error) {
-				if (unsignedThinkingReplay !== "text" && isInvalidUnsignedThinkingSignatureError(error)) {
-					unsignedThinkingReplay = "text";
-					if (fallbackKey) unsignedThinkingTextReplayFallbacks.add(fallbackKey);
-					request = await createRequest();
-				} else {
-					throw error;
-				}
-			}
-			const { response } = request;
+			const { params: sentParams, response } = await retryProviderRequest(
+				async () => {
+					try {
+						return await createRequest();
+					} catch (error) {
+						if (unsignedThinkingReplay !== "text" && isInvalidUnsignedThinkingSignatureError(error)) {
+							unsignedThinkingReplay = "text";
+							if (fallbackKey) unsignedThinkingTextReplayFallbacks.add(fallbackKey);
+							return createRequest();
+						}
+						throw error;
+					}
+				},
+				{
+					maxRetries: options?.maxRetries,
+					maxRetryDelayMs: options?.maxRetryDelayMs,
+					signal: requestSignal,
+				},
+			);
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
@@ -1038,7 +1209,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				| (ProviderNativeContent & { partialJson?: string; index?: number });
 			const blocks = output.content as Block[];
 
-			for await (const event of iterateAnthropicEvents(response, options?.signal)) {
+			for await (const event of iterateAnthropicEvents(response, requestSignal)) {
 				if (event.type === "message_start") {
 					output.responseId = event.message.id;
 					// Capture initial token usage from message_start event
@@ -1052,7 +1223,25 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					output.usage.totalTokens =
 						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
 					calculateCost(model, output.usage);
+					const stickyReceipt =
+						options?.abortServerSideFallback === true
+							? parseStickyFallbackReceipt(event.message.usage, sentParams.model, event.message.model)
+							: undefined;
+					if (stickyReceipt !== undefined) {
+						serverFallbackReceipt = stickyReceipt;
+						serverFallbackAbort.abort();
+						break;
+					}
 				} else if (event.type === "content_block_start") {
+					const receipt =
+						options?.abortServerSideFallback === true
+							? parseServerFallbackReceipt(event.content_block)
+							: undefined;
+					if (receipt !== undefined) {
+						serverFallbackReceipt = receipt;
+						serverFallbackAbort.abort();
+						break;
+					}
 					if (event.content_block.type === "text") {
 						const block: Block = {
 							type: "text",
@@ -1238,13 +1427,19 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				throw new Error("Request was aborted");
 			}
 
+			if (serverFallbackReceipt !== undefined) {
+				applyServerFallbackAbort(output, serverFallbackReceipt);
+			}
+
 			if (output.stopReason === "aborted" || output.stopReason === "error") {
 				throw new Error(output.errorMessage || "An unknown error occurred");
 			}
 
+			combinedAbort.cleanup();
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
+			combinedAbort.cleanup();
 			for (const block of output.content) {
 				delete (block as { index?: number }).index;
 				// An aborted stream never reaches content_block_stop; keep whatever
@@ -1286,12 +1481,35 @@ function matchesModelMarker(
 	return candidates.some((candidate) => markers.some((marker) => candidate.includes(marker)));
 }
 
-function isOpus46(model: Pick<Model<"anthropic-messages">, "id" | "name">): boolean {
-	return matchesModelMarker(model, ["opus-4-6"]);
+function supportsNativeXhighEffort(model: Pick<Model<"anthropic-messages">, "id" | "name">): boolean {
+	return matchesModelMarker(model, NATIVE_XHIGH_EFFORT_MODEL_MARKERS);
 }
 
-function isOpus47(model: Pick<Model<"anthropic-messages">, "id" | "name">): boolean {
-	return matchesModelMarker(model, ["opus-4-7"]);
+/** True when the model cannot accept `thinking: {type: "disabled"}` on the wire. */
+function cannotDisableThinking(
+	model: Model<"anthropic-messages">,
+	compat: { supportsDisabledThinking: boolean },
+): boolean {
+	if (!compat.supportsDisabledThinking) return true;
+	if (model.thinkingLevelMap?.off === null) return true;
+	return matchesModelMarker(model, DISABLED_THINKING_REJECTING_MODEL_MARKERS);
+}
+
+function disableThinkingForRequest(
+	params: MessageCreateParamsStreaming,
+	model: Model<"anthropic-messages">,
+	compat: { supportsDisabledThinking: boolean },
+): void {
+	// A degraded/disabled turn must not retain the caller's higher effort.
+	delete (params as { output_config?: unknown }).output_config;
+	if (cannotDisableThinking(model, compat)) {
+		delete params.thinking;
+		if (supportsAdaptiveThinking(model)) {
+			params.output_config = { effort: "low" } as NonNullable<MessageCreateParamsStreaming["output_config"]>;
+		}
+		return;
+	}
+	params.thinking = { type: "disabled" };
 }
 
 function supportsAdaptiveThinking(model: Model<"anthropic-messages">): boolean {
@@ -1304,7 +1522,7 @@ function supportsAdaptiveThinking(model: Model<"anthropic-messages">): boolean {
 /**
  * Map ThinkingLevel to Anthropic effort levels for adaptive thinking.
  * Note: effort "max" is available on all adaptive-thinking Claude models, while native
- * "xhigh" is only available on Opus 4.7/4.8, Sonnet 5, and Fable 5.
+ * "xhigh" is only available on Opus 4.7/4.8, Opus 5, Sonnet 5, and Fable 5.
  */
 function mapThinkingLevelToEffort(
 	model: Model<"anthropic-messages">,
@@ -1322,12 +1540,11 @@ function mapThinkingLevelToEffort(
 		case "high":
 			return "high";
 		case "xhigh":
-			if (isOpus47(model)) return "xhigh";
-			if (isOpus46(model)) return "max";
-			return "high";
+			// Only called for adaptive models, so the floor is the adaptive ladder's top
+			// tier (`max`), never `high` — degrading xhigh to high silently under-thinks.
+			return supportsNativeXhighEffort(model) ? "xhigh" : "max";
 		case "max":
-			if (isOpus47(model) || isOpus46(model)) return "max";
-			return "high";
+			return "max";
 		default:
 			return "high";
 	}
@@ -1339,7 +1556,7 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	const apiKey = options?.apiKey;
-	if (!apiKey) {
+	if (!apiKey && !hasAuthorizationHeader(providerHeadersToRecord(options?.headers))) {
 		throw new Error(`No API key for provider: ${model.provider}`);
 	}
 
@@ -1384,7 +1601,7 @@ function isOAuthToken(apiKey: string): boolean {
 
 function createClient(
 	model: Model<"anthropic-messages">,
-	apiKey: string,
+	apiKey: string | undefined,
 	interleavedThinking: boolean,
 	useFineGrainedToolStreamingBeta: boolean,
 	optionsHeaders?: Record<string, string>,
@@ -1454,7 +1671,7 @@ function createClient(
 	}
 
 	// OAuth: Bearer auth, Claude Code identity headers
-	if (isOAuthToken(apiKey)) {
+	if (apiKey && isOAuthToken(apiKey)) {
 		const client = new Anthropic({
 			apiKey: null,
 			authToken: apiKey,
@@ -1483,7 +1700,7 @@ function createClient(
 	const sessionAffinityHeaders: Record<string, string | null> =
 		sessionId && getAnthropicCompat(model).sendSessionAffinityHeaders ? { "x-session-affinity": sessionId } : {};
 	const client = new Anthropic({
-		apiKey,
+		apiKey: apiKey ?? null,
 		authToken: null,
 		baseURL: model.baseUrl,
 		dangerouslyAllowBrowser: true,
@@ -1596,9 +1813,17 @@ function buildParams(
 				immediateTools,
 				isOAuthToken,
 				compat.supportsEagerToolInputStreaming,
+				compat.supportsStrictTools,
 				compat.supportsCacheControlOnTools ? cacheControl : undefined,
 			),
-			...convertTools(deferredTools, isOAuthToken, compat.supportsEagerToolInputStreaming, undefined, true),
+			...convertTools(
+				deferredTools,
+				isOAuthToken,
+				compat.supportsEagerToolInputStreaming,
+				compat.supportsStrictTools,
+				undefined,
+				true,
+			),
 		];
 	}
 
@@ -1625,14 +1850,20 @@ function buildParams(
 					display,
 				} as MessageCreateParamsStreaming["thinking"];
 			}
-		} else if (
-			options?.thinkingEnabled === false &&
-			compat.supportsDisabledThinking &&
-			model.thinkingLevelMap?.off !== null
-		) {
-			params.thinking = { type: "disabled" };
+		} else if (options?.thinkingEnabled === false) {
+			// Some adaptive families reject `thinking.type: "disabled"` and default
+			// to reasoning when omitted. Keep their request valid at the cheapest
+			// legal effort; use an explicit disabled block everywhere else.
+			disableThinkingForRequest(params, model, compat);
 		}
 	}
+
+	// Anthropic rejects a thinking-enabled request whose final assistant turn
+	// contains tool_use but does not begin with a thinking block. Cross-model
+	// histories lose their signed thinking blocks (demoted to text or dropped),
+	// so degrade thinking for this request instead of failing every turn.
+	if (params.thinking && params.thinking.type !== "disabled" && finalAssistantTurnStartsWithToolUse(params.messages))
+		disableThinkingForRequest(params, model, compat);
 
 	if (options?.metadata) {
 		const userId = options.metadata.user_id;
@@ -1668,9 +1899,23 @@ function applyExtraBodyToAnthropicParams(
 	}
 }
 
-// Normalize tool call IDs to match Anthropic's required pattern and length
-function normalizeToolCallId(id: string): string {
-	return id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+type AnthropicMessageParam = MessageCreateParamsStreaming["messages"][number];
+
+/**
+ * Whether the final assistant turn contains tool_use without a leading
+ * thinking/redacted_thinking block. Anthropic requires thinking-enabled
+ * requests to start that turn with a thinking block.
+ */
+function finalAssistantTurnStartsWithToolUse(messages: AnthropicMessageParam[]): boolean {
+	for (let index = messages.length - 1; index >= 0; index--) {
+		const message = messages[index];
+		if (message.role !== "assistant") continue;
+		if (!Array.isArray(message.content) || message.content.length === 0) return false;
+		const first = message.content[0];
+		if (first.type === "thinking" || first.type === "redacted_thinking") return false;
+		return message.content.some((block) => block.type === "tool_use");
+	}
+	return false;
 }
 
 function convertToolResult(
@@ -1725,6 +1970,13 @@ function convertMessages(
 	// assistant turn below; drop their tool_results in lockstep so none dangle.
 	const discardedFallbackToolCallIds = collectDiscardedFallbackToolCallIds(transformedMessages, model);
 	const rejectsNativeWebSearchReplay = !getAnthropicCompat(model).supportsWebSearch;
+	const providerNativeToolPairing = collectProviderNativeToolPairing(
+		transformedMessages,
+		model,
+		deferredToolNames,
+		normalizeToolName,
+		discardedFallbackToolCallIds,
+	);
 
 	for (let i = 0; i < transformedMessages.length; i++) {
 		const msg = transformedMessages[i];
@@ -1856,7 +2108,8 @@ function convertMessages(
 					if (
 						isSameModel &&
 						isReplayableAnthropicProviderNativeBlock(block.raw) &&
-						!(rejectsNativeWebSearchReplay && isAnthropicWebSearchReplayBlock(block.raw))
+						!(rejectsNativeWebSearchReplay && isAnthropicWebSearchReplayBlock(block.raw)) &&
+						!isUnpairedProviderNativeToolBlock(block.raw, providerNativeToolPairing)
 					) {
 						blocks.push(block.raw);
 					}
@@ -1934,23 +2187,34 @@ function convertTools(
 	tools: Tool[],
 	isOAuthToken: boolean,
 	supportsEagerToolInputStreaming: boolean,
+	supportsStrictTools: boolean,
 	cacheControl?: CacheControlEphemeral,
 	deferLoading = false,
 ): Anthropic.Messages.Tool[] {
 	if (!tools) return [];
 
 	return tools.map((tool, index) => {
+		const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictTools);
 		const schema = tool.parameters as { properties?: unknown; required?: string[] };
+		const legacyInputSchema = {
+			type: "object" as const,
+			properties: schema.properties ?? {},
+			required: schema.required ?? [],
+		};
+		const inputSchema =
+			strict === true
+				? {
+						...(tool.parameters as Record<string, unknown>),
+						...legacyInputSchema,
+					}
+				: legacyInputSchema;
 
 		return {
 			name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name,
 			description: tool.description,
 			...(supportsEagerToolInputStreaming ? { eager_input_streaming: true } : {}),
-			input_schema: {
-				type: "object",
-				properties: schema.properties ?? {},
-				required: schema.required ?? [],
-			},
+			...(strict === true ? { strict: true } : {}),
+			input_schema: inputSchema,
 			...(deferLoading ? { defer_loading: true } : {}),
 			...(cacheControl && index === tools.length - 1 ? { cache_control: cacheControl } : {}),
 		};

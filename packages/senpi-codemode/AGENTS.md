@@ -28,7 +28,9 @@ test/                            Vitest contracts and the omp parity ledger
 
 - `eval` is registered at extension load and re-registered at `session_start`
   after settings, interpreter availability, and active task-tool names resolve.
-- Eval prompt dialect is selected from the active model id; host/workstation context is explicit; renderer/status semantics are structured.
+- Eval prompt dialect is selected from the active model id; GPT models receive a
+  terse composition-forward dialect that documents detached-cell completion.
+  Host/workstation context is explicit; renderer/status semantics are structured.
 - Session generations fence old kernels and callbacks. A retired generation
   must not emit into a newer session.
 - Kernels persist state per language, while per-cell callbacks are rebound for

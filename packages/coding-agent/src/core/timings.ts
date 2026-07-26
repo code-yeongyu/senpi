@@ -4,12 +4,17 @@
  */
 
 const ENABLED = process.env.PI_TIMING === "1";
+export interface TimingEntry {
+	label: string;
+	ms: number;
+}
+
 interface TimingNamespace {
-	timings: Array<{ label: string; ms: number }>;
+	timings: TimingEntry[];
 	lastTime: number;
 }
 
-type TimingLabel = "main" | "extensions";
+export type TimingLabel = "main" | "extensions" | "reload";
 
 const timingNamespaces = new Map<TimingLabel, TimingNamespace>();
 
@@ -40,6 +45,18 @@ function printTimingGroup(title: string, timings: TimingNamespace["timings"]): v
 	}
 	console.error(`  TOTAL: ${printableTimings.reduce((a, b) => a + b.ms, 0)}ms`);
 	console.error(`${"-".repeat(title.length + 8)}\n`);
+}
+
+export function getTimings(namespace: TimingLabel): readonly TimingEntry[] {
+	return timingNamespaces.get(namespace)?.timings ?? [];
+}
+
+export function formatTimings(namespace: TimingLabel): string | undefined {
+	const entries = getTimings(namespace).filter((entry) => entry.ms >= 0);
+	if (entries.length === 0) return undefined;
+	const total = entries.reduce((sum, entry) => sum + entry.ms, 0);
+	const parts = entries.map((entry) => `${entry.label} ${entry.ms}ms`).join("  ");
+	return `${parts}  |  total ${total}ms`;
 }
 
 export function printTimings(): void {

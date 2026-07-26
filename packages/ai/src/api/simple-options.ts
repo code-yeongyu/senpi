@@ -145,6 +145,7 @@ export function buildBaseOptions(
 		temperature: options?.temperature,
 		maxTokens: clampMaxTokensToContext(model, context, options?.maxTokens ?? model.maxTokens),
 		signal: options?.signal,
+		abortServerSideFallback: options?.abortServerSideFallback,
 		apiKey: apiKey || options?.apiKey,
 		transport: options?.transport,
 		cacheRetention: options?.cacheRetention ?? model.cacheRetention,

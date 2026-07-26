@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { upsertStatusEvent } from "../src/tool/status-events.ts";
+import { STATUS_EVENT_HISTORY_LIMIT, upsertStatusEvent } from "../src/tool/status-events.ts";
 import type { EvalStatusEvent } from "../src/tool/types.ts";
 
 describe("upsertStatusEvent", () => {
@@ -43,5 +43,36 @@ describe("upsertStatusEvent", () => {
 			{ op: "agent", status: "missing-id" },
 			{ op: "agent", status: "missing-id" },
 		]);
+	});
+
+	it("bounds status history while reporting how many earlier events were omitted", () => {
+		const events: EvalStatusEvent[] = [];
+		const totalEvents = STATUS_EVENT_HISTORY_LIMIT + 25;
+
+		for (let index = 0; index < totalEvents; index += 1) {
+			upsertStatusEvent(events, {
+				op: "read",
+				path: `/tmp/file-${index}.txt`,
+				preview: "x".repeat(500),
+			});
+		}
+
+		expect(events).toHaveLength(STATUS_EVENT_HISTORY_LIMIT);
+		expect(events[0]).toEqual({ op: "status-events-omitted", count: 26 });
+		expect(events[1]).toMatchObject({ op: "read", path: "/tmp/file-26.txt" });
+		expect(events.at(-1)).toMatchObject({ op: "read", path: `/tmp/file-${totalEvents - 1}.txt` });
+	});
+
+	it("reserves the omission marker when event 101 arrives", () => {
+		const events: EvalStatusEvent[] = [];
+
+		for (let index = 0; index <= STATUS_EVENT_HISTORY_LIMIT; index += 1) {
+			upsertStatusEvent(events, { op: "read", path: `/tmp/file-${index}.txt` });
+		}
+
+		expect(events).toHaveLength(STATUS_EVENT_HISTORY_LIMIT);
+		expect(events[0]).toEqual({ op: "status-events-omitted", count: 2 });
+		expect(events[1]).toMatchObject({ op: "read", path: "/tmp/file-2.txt" });
+		expect(events.at(-1)).toMatchObject({ op: "read", path: "/tmp/file-100.txt" });
 	});
 });

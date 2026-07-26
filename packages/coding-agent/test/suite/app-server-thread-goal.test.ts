@@ -1,5 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
+import { createGoal, updateGoal } from "../../src/core/extensions/builtin/goal/store.ts";
+import { goalStoreRef } from "../../src/core/extensions/builtin/goal/store-ref.ts";
 import {
 	cleanupRoots,
 	createHarness,
@@ -77,6 +79,31 @@ describe("app-server thread goal handlers", () => {
 		expect(response).toEqual({
 			id: 11,
 			error: { code: -32600, message: `unsupported goal status: ${status}` },
+		});
+	});
+
+	it("reads a persisted blocked goal while thread/goal/set continues to reject blocked", async () => {
+		// Given: a started persistent thread with an agent-created blocked goal.
+		const { connection, registry, root, threads } = await createHarness();
+		const threadId = threadIdFromResponse(
+			await registry.dispatch(connection, { id: 12, method: "thread/start", params: { cwd: root } }),
+		);
+		const thread = threads.getLoadedThread(threadId);
+		const ref = goalStoreRef(thread.session.sessionManager, thread.cwd);
+		await createGoal(ref, "Wait for the user decision");
+		await updateGoal(ref, { status: "blocked", reason: "Waiting for user decision" }, "model");
+
+		// When: the persisted goal is read through the app-server wire.
+		const response = await registry.dispatch(connection, {
+			id: 13,
+			method: "thread/goal/get",
+			params: { threadId },
+		});
+
+		// Then: blocked is exposed by get while set remains deliberately user-rejected.
+		expect(objectAt(responseResult(response), "goal")).toMatchObject({
+			threadId,
+			status: "blocked",
 		});
 	});
 

@@ -45,23 +45,35 @@ export function configureModeEnv(root: string): void {
 	vi.spyOn(process, "exit").mockImplementation(exitThrows);
 }
 
-export async function startWsAppServerMode(port: QaPort): Promise<RunningAppServerMode> {
-	const banner = captureStderrPort();
-	const mode = runAppServerMode({
-		kind: "server",
-		listen: {
-			kind: "ws",
-			url: `ws://127.0.0.1:${port}`,
-			host: "127.0.0.1",
-			port,
-		},
-		wsAuth: { kind: "off" },
-		jsonLogs: false,
-	});
-	runningModes.push(mode);
-	const observedPort = await Promise.race([banner.wait, mode.then(() => failModeExited())]);
-	expect(observedPort).toBe(port);
-	return { mode, port: observedPort, banner };
+export async function startWsAppServerMode(preferredPort: QaPort): Promise<RunningAppServerMode> {
+	const ports = [preferredPort, ...QA_PORTS.filter((port) => port !== preferredPort)];
+	for (const port of ports) {
+		const banner = captureStderrPort();
+		const mode = runAppServerMode({
+			kind: "server",
+			listen: {
+				kind: "ws",
+				url: `ws://127.0.0.1:${port}`,
+				host: "127.0.0.1",
+				port,
+			},
+			wsAuth: { kind: "off" },
+			jsonLogs: false,
+		});
+		runningModes.push(mode);
+		try {
+			const observedPort = await Promise.race([banner.wait, mode.then(() => failModeExited())]);
+			expect(observedPort).toBe(port);
+			return { mode, port: observedPort, banner };
+		} catch (error) {
+			runningModes.splice(runningModes.indexOf(mode), 1);
+			banner.restore();
+			if (!(error instanceof Error) || !/EADDRINUSE|address already in use/.test(error.message)) {
+				throw error;
+			}
+		}
+	}
+	throw new Error("No app-server QA port is available");
 }
 
 export async function stopWsAppServerMode(running: RunningAppServerMode): Promise<void> {

@@ -1,5 +1,15 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { once } from "node:events";
+import {
+	type FSWatcher,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +18,14 @@ import {
 	createFsWatchEventSource,
 	type WatchEventListener,
 } from "../src/core/extensions/builtin/config-reload/watch-engine.ts";
+
+const mocks = vi.hoisted(() => ({ fsWatch: vi.fn() }));
+
+vi.mock("node:fs", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs")>();
+	mocks.fsWatch.mockImplementation(actual.watch);
+	return { ...actual, watch: mocks.fsWatch };
+});
 
 type EventSourceProbe = {
 	readonly subscribe: (_path: string, listener: WatchEventListener) => () => void;
@@ -302,32 +320,31 @@ describe("config reload watch engine", () => {
 		const watchReadyPath = join(tempDir, "watch-ready.txt");
 		writeFileSync(settingsPath, "before");
 		writeFileSync(watchReadyPath, "before");
-		let resolveReady: (() => void) | undefined;
 		let resolveSettingsChange: ((change: { readonly changedPaths: readonly string[] }) => void) | undefined;
-		const watcherReady = new Promise<void>((resolve) => {
-			resolveReady = resolve;
-		});
 		const settingsChanged = new Promise<{ readonly changedPaths: readonly string[] }>((resolve) => {
 			resolveSettingsChange = resolve;
 		});
+		mocks.fsWatch.mockClear();
 		createEngine({
-			targets: [
-				{ id: "settings", kind: "dir-recursive", path: tempDir, allowList: ["settings.json", "watch-ready.txt"] },
-			],
+			targets: [{ id: "settings", kind: "dir-recursive", path: tempDir, allowList: ["settings.json"] }],
 			subscribe: createFsWatchEventSource(),
 			onRealChange: (change) => {
-				if (change.changedPaths.includes(watchReadyPath)) resolveReady?.();
 				if (change.changedPaths.includes(settingsPath)) resolveSettingsChange?.(change);
 			},
 		});
 
+		const watcher = mocks.fsWatch.mock.results.at(-1)?.value as FSWatcher | undefined;
+		if (!watcher) {
+			throw new Error("production fs.watch was not registered");
+		}
+		const watcherReady = once(watcher, "change");
 		const awaitChange = async <T>(change: Promise<T>, label: string): Promise<T> => {
 			let timeout: ReturnType<typeof setTimeout> | undefined;
 			try {
 				return await Promise.race([
 					change,
 					new Promise<never>((_resolve, reject) => {
-						timeout = setTimeout(() => reject(new Error(`fs.watch ${label} was not delivered`)), 2_000);
+						timeout = setTimeout(() => reject(new Error(`fs.watch ${label} was not delivered`)), 10_000);
 					}),
 				]);
 			} finally {
@@ -335,7 +352,7 @@ describe("config reload watch engine", () => {
 			}
 		};
 
-		// Wait for an event from this exact engine watcher before making the assertion write.
+		// Subscribe to the production FSWatcher event before arming the assertion write.
 		writeFileSync(watchReadyPath, "armed");
 		await awaitChange(watcherReady, "readiness event");
 		writeFileSync(settingsPath, "after");

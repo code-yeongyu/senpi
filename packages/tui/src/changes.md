@@ -1,5 +1,20 @@
 # TUI delta rendering fork changes
 
+## 2026-07-26: composable leading skill autocomplete
+
+### What changed
+
+- `autocomplete.ts` reopens slash suggestions for a `/skill:` token after a completed, known leading skill command and offers only skill commands there. Completion inserts the selected second skill command with its leading slash and trailing space.
+- Other slash commands remain leading-only, and skill suggestions do not appear after prose or an unknown leading skill. This keeps the autocomplete contract aligned with the executable leading-run parser in coding-agent.
+
+### Why this cannot be expressed externally
+
+The shared autocomplete provider owns the suggestion and insertion decisions that editor consumers use before the coding-agent session receives a prompt.
+
+### Expected merge conflict zones
+
+- LOW: `autocomplete.ts` slash-command suggestion and completion branches. This fork-local diff is deliberately minimal because the file is shared with upstream pi.
+
 ## 2026-07-19: configurable render fps cap and shared segmenter exports
 
 ### What changed

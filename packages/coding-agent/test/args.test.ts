@@ -1,7 +1,22 @@
-import { describe, expect, test } from "vitest";
-import { parseArgs } from "../src/cli/args.ts";
+import { describe, expect, test, vi } from "vitest";
+import { parseArgs, printHelp } from "../src/cli/args.ts";
 
 describe("parseArgs", () => {
+	describe("removed flags", () => {
+		test("--neo is an unknown extension flag and never appears in help", () => {
+			const parsed = parseArgs(["--neo"]);
+			expect(parsed.unknownFlags.get("neo")).toBe(true);
+
+			const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+			try {
+				printHelp();
+				expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).not.toContain("--neo");
+			} finally {
+				logSpy.mockRestore();
+			}
+		});
+	});
+
 	describe("--version flag", () => {
 		test("parses --version flag", () => {
 			const result = parseArgs(["--version"]);

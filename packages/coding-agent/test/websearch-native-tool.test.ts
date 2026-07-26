@@ -119,12 +119,12 @@ describe("vendored websearch native tool", () => {
 		expect(progress[1]?.attempts).toEqual([]);
 		const providerLabels = progress[0]?.providerLabels ?? [];
 		expect(providerLabels).toHaveLength(4);
-		expect(providerLabels[0]).toBe("native/openai");
-		expect(providerLabels[1]?.endsWith("/anthropic")).toBe(true);
+		expect(providerLabels[0]).toBe("openai/native");
+		expect(providerLabels[1]?.startsWith("anthropic/")).toBe(true);
 		expect(providerLabels[1]).not.toContain("claude");
-		expect(providerLabels[2]).toBe("configured-first/duckduckgo-html");
-		expect(providerLabels[3]).toBe("configured-second/z-ai");
-		expect(providerLabels.filter((label) => label.endsWith("/openai"))).toEqual(["native/openai"]);
+		expect(providerLabels[2]).toBe("duckduckgo-html/configured-first");
+		expect(providerLabels[3]).toBe("z-ai/configured-second");
+		expect(providerLabels.filter((label) => label.startsWith("openai/"))).toEqual(["openai/native"]);
 		expect(authModels).toEqual(["gpt-5.5", "claude-sonnet-4-20250514"]);
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});

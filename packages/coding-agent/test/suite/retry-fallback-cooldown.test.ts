@@ -26,7 +26,21 @@ describe("SelectorCooldowns", () => {
 		["5xx", "HTTP 503", 20_000],
 		["server", "server error", 20_000],
 		["internal", "internal error", 20_000],
+		["timeout", "Request timed out.", 60_000],
+		["fetch failed", "fetch failed", 60_000],
+		["network connection lost", "Network connection lost.", 60_000],
+		[
+			"DNS transport",
+			"The pending stream has been canceled (caused by: getaddrinfo ENOTFOUND bedrock-runtime.us-east-1.amazonaws.com)",
+			60_000,
+		],
+		["5xx wins over timeout", "HTTP 500 internal error - request timed out", 20_000],
+		["premature stream end", "Stream ended without finish_reason", 60_000],
+		["anthropic stream stop", "Anthropic stream ended before message_stop", 60_000],
+		["terminal response event", "stream ended before a terminal response event", 60_000],
+		["http2 no response", "http2 request did not get a response", 60_000],
 		["unknown", undefined, 5 * 60_000],
+		["unknown provider hiccup", "weird provider hiccup", 5 * 60_000],
 		["empty", "", 5 * 60_000],
 	])("uses the %s duration class", (_name, errorMessage, durationMs) => {
 		let time = 0;

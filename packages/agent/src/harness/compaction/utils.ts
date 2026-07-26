@@ -1,4 +1,12 @@
-import type { Message } from "@earendil-works/pi-ai";
+import {
+	contentText,
+	type ImageContent,
+	type Message,
+	type ProviderNativeContent,
+	type TextContent,
+	type ThinkingContent,
+	type ToolCall,
+} from "@earendil-works/pi-ai";
 import type { AgentMessage } from "../../types.ts";
 
 /** File paths touched by a session branch or compaction range. */
@@ -87,29 +95,40 @@ function truncateForSummary(text: string, maxChars: number): string {
 	return `${text.slice(0, maxChars)}\n\n[... ${truncatedChars} more characters truncated]`;
 }
 
+type SummaryContentBlock = TextContent | ImageContent | ThinkingContent | ToolCall | ProviderNativeContent;
+type PortableSummaryContentBlock = Exclude<SummaryContentBlock, ProviderNativeContent>;
+
+function isPortableSummaryContentBlock(block: SummaryContentBlock): block is PortableSummaryContentBlock {
+	return block.type !== "providerNative";
+}
+
+/**
+ * Extract text from content that may retain provider-native replay blocks.
+ *
+ * Provider-native blocks must remain on the original assistant message for
+ * same-provider replay, but are not part of pi-ai's portable `contentText`
+ * contract. Normalize a filtered copy for summarization instead of casting or
+ * mutating the persisted message.
+ */
+export function contentTextForSummary(content: string | readonly SummaryContentBlock[], separator = "\n"): string {
+	if (typeof content === "string") return content;
+	return contentText(content.filter(isPortableSummaryContentBlock), separator);
+}
+
 /** Serialize LLM messages to plain text for summarization prompts. */
 export function serializeConversation(messages: Message[]): string {
 	const parts: string[] = [];
 
 	for (const msg of messages) {
 		if (msg.role === "user") {
-			const content =
-				typeof msg.content === "string"
-					? msg.content
-					: msg.content
-							.filter((c): c is { type: "text"; text: string } => c.type === "text")
-							.map((c) => c.text)
-							.join("");
+			const content = contentTextForSummary(msg.content, "");
 			if (content) parts.push(`[User]: ${content}`);
 		} else if (msg.role === "assistant") {
-			const textParts: string[] = [];
 			const thinkingParts: string[] = [];
 			const toolCalls: string[] = [];
 
 			for (const block of msg.content) {
-				if (block.type === "text") {
-					textParts.push(block.text);
-				} else if (block.type === "thinking") {
+				if (block.type === "thinking") {
 					thinkingParts.push(block.thinking);
 				} else if (block.type === "toolCall") {
 					const args = block.arguments as Record<string, unknown>;
@@ -123,17 +142,14 @@ export function serializeConversation(messages: Message[]): string {
 			if (thinkingParts.length > 0) {
 				parts.push(`[Assistant thinking]: ${thinkingParts.join("\n")}`);
 			}
-			if (textParts.length > 0) {
-				parts.push(`[Assistant]: ${textParts.join("\n")}`);
+			if (msg.content.some((block) => block.type === "text")) {
+				parts.push(`[Assistant]: ${contentTextForSummary(msg.content)}`);
 			}
 			if (toolCalls.length > 0) {
 				parts.push(`[Assistant tool calls]: ${toolCalls.join("; ")}`);
 			}
 		} else if (msg.role === "toolResult") {
-			const content = msg.content
-				.filter((c): c is { type: "text"; text: string } => c.type === "text")
-				.map((c) => c.text)
-				.join("");
+			const content = contentTextForSummary(msg.content, "");
 			if (content) {
 				parts.push(`[Tool result]: ${truncateForSummary(content, TOOL_RESULT_MAX_CHARS)}`);
 			}

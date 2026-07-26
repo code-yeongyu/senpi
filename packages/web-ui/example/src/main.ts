@@ -1,6 +1,7 @@
 import "@mariozechner/mini-lit/dist/ThemeToggle.js";
 import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
-import { getModel, type TextContent } from "@earendil-works/pi-ai";
+import type { TextContent } from "@earendil-works/pi-ai";
+import { getModel, streamSimple } from "@earendil-works/pi-ai/compat";
 import {
 	type AgentState,
 	ApiKeyPromptDialog,
@@ -161,6 +162,7 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 	}
 
 	agent = new Agent({
+		streamFn: streamSimple,
 		initialState: initialState || {
 			systemPrompt: `You are a helpful AI assistant with access to various tools.
 

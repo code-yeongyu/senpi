@@ -1,5 +1,54 @@
 # changes.md — compaction
 
+## Lifecycle ownership and required-admission safety (2026-07-23)
+
+### What changed
+
+- `lifecycle.ts` now owns the active compaction controller together with reducer transitions, so feedback from an older
+  generation cannot progress or terminate a newer one. Feedback-only cancellation emits one terminal
+  `compaction_end`, and accepted compactions emit their terminal event before `session_compact` handlers can start
+  another generation.
+- Extension contexts retain the signal returned by `beginCompaction()` and supply it to legacy `updateCompaction()` /
+  `endCompaction()` calls that omit one. Core accepts feedback mutations only from the current signal.
+- Provider admissions now share one required-compaction gate for prompt preflight, extension-triggered turns, and
+  next turns. Silent provider overflow and threshold-required compaction synchronously stop agent-core's
+  post-`agent_end` queue drain so only an accepted `AgentSession` recovery may resume queued work, and overflow can
+  force a split-turn preparation when keeping the only oversized prompt would otherwise leave no compactable source.
+- Compaction rejects stale source snapshots with `stale-revision` before the durable entry append.
+- Retry fallback model changes invalidate prior-model compaction and re-check the selected model's context window.
+  Summary-only re-compaction is allowed only for this retry boundary.
+- Assistant history is classified around the latest compaction by persisted branch order; an older payload timestamp
+  cannot hide a message whose entry was appended after the compaction boundary.
+- Execution routes pass their own controller into core compaction; an auto request supersedes unrelated feedback
+  instead of inheriting/promoting its controller and leaving outer compaction state stuck.
+- The one-turn post-compaction and post-retry stale-usage exemptions are shared across synchronous queue ownership,
+  asynchronous checking, and admission resampling, while explicit provider overflow is never exempt.
+
+### Why
+
+A late extension completion could overwrite fresh feedback, and some continuation routes skipped required compaction.
+Compacting a source that changed during summary generation could also append a stale checkpoint over intervening work.
+
+### Expected merge conflict zones
+
+- LOW: `lifecycle.ts` and the compaction admission calls in `agent-session.ts`.
+
+## Operation lifecycle reducer (2026-07-23)
+
+### What changed
+
+- `lifecycle.ts` adds the pure `idle` / `running` / `completed` / `failed` / `aborted` transition model used by
+  `AgentSession`, including monotonic generations, feedback-to-execution promotion, and stale terminal-event rejection.
+
+### Why
+
+- Compaction completion must remain observable after controllers are released, while delayed work from an older
+  generation must not overwrite the active operation.
+
+### Expected merge conflict zones
+
+- NONE: `lifecycle.ts` is a new fork-owned module.
+
 ## Summarization stream idle watchdog (2026-07-21)
 
 ### What changed

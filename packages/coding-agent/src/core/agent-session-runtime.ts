@@ -9,7 +9,7 @@ import type {
 	SessionShutdownEvent,
 	SessionStartEvent,
 } from "./extensions/index.ts";
-import { emitSessionShutdownEvent } from "./extensions/runner.ts";
+import { type ExtensionRunner, emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type { CreateAgentSessionResult } from "./sdk.ts";
 import { assertSessionCwdExists } from "./session-cwd.ts";
 import { SessionManager } from "./session-manager.ts";
@@ -25,6 +25,14 @@ export interface CreateAgentSessionRuntimeResult extends CreateAgentSessionResul
 	diagnostics: AgentSessionRuntimeDiagnostic[];
 }
 
+/** Immutable flags selected when a runtime is first launched. */
+export interface AgentSessionLaunchProfile {
+	cwd: string;
+	permissionPreset?: string;
+	creationModel?: { provider: string; modelId: string };
+	initialThinkingLevel?: string;
+}
+
 /**
  * Creates a full runtime for a target cwd and session manager.
  *
@@ -38,6 +46,7 @@ export type CreateAgentSessionRuntimeFactory = (options: {
 	sessionManager: SessionManager;
 	sessionStartEvent?: SessionStartEvent;
 	projectTrustContext?: ProjectTrustContext;
+	launchProfile?: Readonly<AgentSessionLaunchProfile>;
 }) => Promise<CreateAgentSessionRuntimeResult>;
 
 /**
@@ -79,6 +88,12 @@ export class AgentSessionRuntime {
 	private readonly createRuntime: CreateAgentSessionRuntimeFactory;
 	private _diagnostics: AgentSessionRuntimeDiagnostic[];
 	private _modelFallbackMessage?: string;
+	private readonly _launchProfile?: Readonly<AgentSessionLaunchProfile>;
+	private _removedOnReplacement?: {
+		oldRunner: ExtensionRunner;
+		oldIdentities: Array<{ path: string; resolvedPath: string }>;
+		reason: SessionShutdownEvent["reason"];
+	};
 
 	constructor(
 		_session: AgentSession,
@@ -86,12 +101,14 @@ export class AgentSessionRuntime {
 		createRuntime: CreateAgentSessionRuntimeFactory,
 		_diagnostics: AgentSessionRuntimeDiagnostic[] = [],
 		_modelFallbackMessage?: string,
+		launchProfile?: Readonly<AgentSessionLaunchProfile>,
 	) {
 		this._session = _session;
 		this._services = _services;
 		this.createRuntime = createRuntime;
 		this._diagnostics = _diagnostics;
 		this._modelFallbackMessage = _modelFallbackMessage;
+		this._launchProfile = launchProfile;
 	}
 
 	get services(): AgentSessionServices {
@@ -112,6 +129,10 @@ export class AgentSessionRuntime {
 
 	get modelFallbackMessage(): string | undefined {
 		return this._modelFallbackMessage;
+	}
+
+	get launchProfile(): Readonly<AgentSessionLaunchProfile> | undefined {
+		return this._launchProfile;
 	}
 
 	setRebindSession(rebindSession?: (session: AgentSession) => Promise<void>): void {
@@ -165,7 +186,17 @@ export class AgentSessionRuntime {
 	}
 
 	private async teardownCurrent(reason: SessionShutdownEvent["reason"], targetSessionFile?: string): Promise<void> {
-		await emitSessionShutdownEvent(this.session.extensionRunner, {
+		const oldRunner = this.session.extensionRunner;
+		// Test hosts and partial runner implementations may lack identity introspection;
+		// skip removal reporting there rather than break the replacement itself.
+		if (typeof oldRunner.getExtensionIdentities === "function") {
+			this._removedOnReplacement = {
+				oldRunner,
+				oldIdentities: oldRunner.getExtensionIdentities(),
+				reason,
+			};
+		}
+		await emitSessionShutdownEvent(oldRunner, {
 			type: "session_shutdown",
 			reason,
 			targetSessionFile,
@@ -174,11 +205,26 @@ export class AgentSessionRuntime {
 		this.session.dispose();
 	}
 
-	private apply(result: CreateAgentSessionRuntimeResult): void {
+	private async reportRemovedExtensions(): Promise<void> {
+		const pending = this._removedOnReplacement;
+		this._removedOnReplacement = undefined;
+		if (!pending) return;
+		const newRunner = this.session.extensionRunner;
+		if (typeof newRunner.getExtensionIdentities !== "function") return;
+		const newResolvedPaths = new Set(
+			newRunner.getExtensionIdentities().map((extension) => extension.resolvedPath),
+		);
+		const removed = pending.oldIdentities.filter((extension) => !newResolvedPaths.has(extension.resolvedPath));
+		if (removed.length === 0) return;
+		await pending.oldRunner.emit({ type: "session_extensions_removed", reason: pending.reason, removed });
+	}
+
+	private async apply(result: CreateAgentSessionRuntimeResult): Promise<void> {
 		this._session = result.session;
 		this._services = result.services;
 		this._diagnostics = result.diagnostics;
 		this._modelFallbackMessage = result.modelFallbackMessage;
+		await this.reportRemovedExtensions();
 	}
 
 	private async finishSessionReplacement(withSession?: (ctx: ReplacedSessionContext) => Promise<void>): Promise<void> {
@@ -207,13 +253,14 @@ export class AgentSessionRuntime {
 		const sessionManager = SessionManager.open(sessionPath, undefined, options?.cwdOverride);
 		assertSessionCwdExists(sessionManager, this.cwd);
 		await this.teardownCurrent("resume", sessionManager.getSessionFile());
-		this.apply(
+		await this.apply(
 			await this.createRuntime({
 				cwd: sessionManager.getCwd(),
 				agentDir: this.services.agentDir,
 				sessionManager,
 				sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
 				projectTrustContext: options?.projectTrustContextFactory?.(sessionManager.getCwd()),
+				launchProfile: this._launchProfile,
 			}),
 		);
 		await this.finishSessionReplacement(options?.withSession);
@@ -240,12 +287,13 @@ export class AgentSessionRuntime {
 		}
 
 		await this.teardownCurrent("new", sessionManager.getSessionFile());
-		this.apply(
+		await this.apply(
 			await this.createRuntime({
 				cwd: this.cwd,
 				agentDir: this.services.agentDir,
 				sessionManager,
 				sessionStartEvent: { type: "session_start", reason: "new", previousSessionFile },
+				launchProfile: this._launchProfile,
 			}),
 		);
 		if (options?.setup) {
@@ -294,12 +342,13 @@ export class AgentSessionRuntime {
 				const sessionManager = SessionManager.create(this.cwd, sessionDir);
 				sessionManager.newSession({ parentSession: currentSessionFile });
 				await this.teardownCurrent("fork", sessionManager.getSessionFile());
-				this.apply(
+				await this.apply(
 					await this.createRuntime({
 						cwd: this.cwd,
 						agentDir: this.services.agentDir,
 						sessionManager,
 						sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
+						launchProfile: this._launchProfile,
 					}),
 				);
 				await this.finishSessionReplacement(options?.withSession);
@@ -317,12 +366,13 @@ export class AgentSessionRuntime {
 				throw new Error("Failed to create forked session");
 			}
 			await this.teardownCurrent("fork", sessionManager.getSessionFile());
-			this.apply(
+			await this.apply(
 				await this.createRuntime({
 					cwd: sessionManager.getCwd(),
 					agentDir: this.services.agentDir,
 					sessionManager,
 					sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
+					launchProfile: this._launchProfile,
 				}),
 			);
 			await this.finishSessionReplacement(options?.withSession);
@@ -336,12 +386,13 @@ export class AgentSessionRuntime {
 			sessionManager.createBranchedSession(targetLeafId);
 		}
 		await this.teardownCurrent("fork", sessionManager.getSessionFile());
-		this.apply(
+		await this.apply(
 			await this.createRuntime({
 				cwd: this.cwd,
 				agentDir: this.services.agentDir,
 				sessionManager,
 				sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
+				launchProfile: this._launchProfile,
 			}),
 		);
 		await this.finishSessionReplacement(options?.withSession);
@@ -380,12 +431,13 @@ export class AgentSessionRuntime {
 		const sessionManager = SessionManager.open(destinationPath, sessionDir, cwdOverride);
 		assertSessionCwdExists(sessionManager, this.cwd);
 		await this.teardownCurrent("resume", sessionManager.getSessionFile());
-		this.apply(
+		await this.apply(
 			await this.createRuntime({
 				cwd: sessionManager.getCwd(),
 				agentDir: this.services.agentDir,
 				sessionManager,
 				sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
+				launchProfile: this._launchProfile,
 			}),
 		);
 		await this.finishSessionReplacement();
@@ -415,6 +467,7 @@ export async function createAgentSessionRuntime(
 		agentDir: string;
 		sessionManager: SessionManager;
 		sessionStartEvent?: SessionStartEvent;
+		launchProfile?: Readonly<AgentSessionLaunchProfile>;
 	},
 ): Promise<AgentSessionRuntime> {
 	assertSessionCwdExists(options.sessionManager, options.cwd);
@@ -425,6 +478,7 @@ export async function createAgentSessionRuntime(
 		createRuntime,
 		result.diagnostics,
 		result.modelFallbackMessage,
+		options.launchProfile,
 	);
 }
 

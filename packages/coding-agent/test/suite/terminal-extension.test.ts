@@ -6,17 +6,14 @@ import { TerminalManager } from "../../src/core/extensions/builtin/terminal/mana
 import { TerminalRuntimeSession } from "../../src/core/extensions/builtin/terminal/runtime-session.ts";
 import { createPtyBashTool } from "../../src/core/extensions/builtin/terminal/tools/bash.ts";
 import { createBashInputTool } from "../../src/core/extensions/builtin/terminal/tools/bash-input.ts";
-import {
-	bashOutputSchema,
-	createBashOutputTool,
-} from "../../src/core/extensions/builtin/terminal/tools/bash-output.ts";
+import { createBashOutputTool } from "../../src/core/extensions/builtin/terminal/tools/bash-output.ts";
 import { createBashResizeTool } from "../../src/core/extensions/builtin/terminal/tools/bash-resize.ts";
 import type { TerminalToolContext } from "../../src/core/extensions/builtin/terminal/tools/context.ts";
 import { createKillBashTool } from "../../src/core/extensions/builtin/terminal/tools/kill-bash.ts";
 import type { Harness } from "./harness.ts";
 import { createHarness } from "./harness.ts";
 
-const COMPANIONS = ["bash_output", "bash_input", "bash_resize", "kill_bash"];
+const COMPANIONS = ["bash_output", "bash_input", "bash_resize", "kill_bash", "monitor"];
 
 function firstText(result: { content: Array<{ type: string; text?: string }> }): string {
 	return result.content.find((block) => block.type === "text")?.text ?? "";
@@ -105,7 +102,7 @@ describe("terminal builtin extension — real session execution (pipe fallback)"
 		expect(firstText(result)).toContain("hello-fg");
 	});
 
-	it("returns a bash_id promptly for background commands and honors wait_for", async () => {
+	it("returns a bash_id promptly for background commands and peeks new output", async () => {
 		const bash = createPtyBashTool(ctx);
 		const output = createBashOutputTool(ctx);
 		const started = await bash.execute(
@@ -117,8 +114,20 @@ describe("terminal builtin extension — real session execution (pipe fallback)"
 		expect(idMatch).not.toBeNull();
 		const bashId = idMatch![1]!;
 
-		const waited = await output.execute("call-wait", { bash_id: bashId, wait_for: "READY_MARK", timeout: 5 });
-		expect(firstText(waited)).toContain("READY_MARK");
+		// Wait for the output event-driven (monitor-style), then peek without blocking.
+		const runtime = ctx.manager.get(bashId);
+		if (!runtime) throw new Error(`No terminal session found with id: ${bashId}`);
+		await new Promise<void>((resolve, reject) => {
+			const timer = setTimeout(() => reject(new Error("READY_MARK never arrived within 5s")), 5000);
+			const unsubscribe = runtime.onOutput((chunk) => {
+				if (!chunk.includes("READY_MARK")) return;
+				clearTimeout(timer);
+				unsubscribe();
+				resolve();
+			});
+		});
+		const peeked = await output.execute("call-peek", { bash_id: bashId });
+		expect(firstText(peeked)).toContain("READY_MARK");
 	});
 
 	it("kills a background session and reports absence afterward", async () => {
@@ -210,25 +219,17 @@ describe("terminal builtin extension — bash_output robustness", () => {
 		else process.env.SENPI_PTY_FORCE_PIPE = savedForcePipe;
 	});
 
-	it("bash_output wait_for is released by an AbortSignal without killing the live background PTY", async () => {
+	it("bash_output peek returns immediately for a silent long-running session", async () => {
 		const bash = createPtyBashTool(ctx);
 		const output = createBashOutputTool(ctx);
 		const started = await bash.execute("call-bg-abort", { command: "sleep 30", run_in_background: true }, undefined);
 		const bashId = /ID: (bash_\d+)/.exec(firstText(started))?.[1];
 		if (!bashId) throw new Error("Background bash did not return an id");
 
-		const controller = new AbortController();
-		const waitPromise = output.execute(
-			"call-wait-abort",
-			{ bash_id: bashId, wait_for: "NEVER_MATCHES_THIS_PATTERN_XYZ", timeout: 10 },
-			controller.signal,
-		);
-		const waitCompleted = new Promise<Awaited<typeof waitPromise>>((resolve, reject) => {
-			const timeout = setTimeout(
-				() => reject(new Error("AbortSignal did not release wait_for within 1 second")),
-				1000,
-			);
-			waitPromise.then(
+		const peekPromise = output.execute("call-peek-immediate", { bash_id: bashId });
+		const peekCompleted = new Promise<Awaited<typeof peekPromise>>((resolve, reject) => {
+			const timeout = setTimeout(() => reject(new Error("peek did not return within 1 second")), 1000);
+			peekPromise.then(
 				(value) => {
 					clearTimeout(timeout);
 					resolve(value);
@@ -240,8 +241,7 @@ describe("terminal builtin extension — bash_output robustness", () => {
 			);
 		});
 
-		controller.abort();
-		const result = await waitCompleted;
+		const result = await peekCompleted;
 		expect(firstText(result)).toContain("status: running");
 
 		const statusCheck = await output.execute("call-status-check", { bash_id: bashId });
@@ -249,43 +249,42 @@ describe("terminal builtin extension — bash_output robustness", () => {
 		await manager.stop(bashId);
 	});
 
-	it("matches unread output that arrived before waiter registration", async () => {
-		const runtime = new TerminalRuntimeSession("buffered-output-fixture", {});
-		const ingestValue: unknown = Reflect.get(runtime, "ingest");
-		if (typeof ingestValue !== "function") throw new Error("Runtime ingest method missing");
-		Reflect.apply(ingestValue, runtime, [new TextEncoder().encode("CODEX_EXIT=0")]);
-		vi.useFakeTimers();
-
-		try {
-			const outcome = runtime.waitFor("CODEX_EXIT=", 1000);
-			await vi.advanceTimersByTimeAsync(1000);
-			await expect(outcome).resolves.toBe("matched");
-		} finally {
-			runtime.session.kill();
-			runtime.dispose();
-			vi.useRealTimers();
-		}
-	});
-
-	it("bounds an oversized timeout at the 300-second schema and runtime ceiling", async () => {
-		const timeoutSchema = bashOutputSchema.properties.timeout;
-		expect("maximum" in timeoutSchema ? timeoutSchema.maximum : undefined).toBe(300);
-
+	it("wait_for ghost param returns migration guidance naming monitor without blocking", async () => {
 		const bash = createPtyBashTool(ctx);
 		const output = createBashOutputTool(ctx);
-		const started = await bash.execute(
-			"call-bg-clamp",
-			{ command: "echo READY", run_in_background: true },
-			undefined,
-		);
+		const started = await bash.execute("call-bg-ghost", { command: "sleep 30", run_in_background: true }, undefined);
 		const bashId = /ID: (bash_\d+)/.exec(firstText(started))?.[1];
 		if (!bashId) throw new Error("Background bash did not return an id");
-		const runtime = ctx.manager.get(bashId);
-		if (!runtime) throw new Error(`No terminal session found with id: ${bashId}`);
 
-		const waitForSpy = vi.spyOn(runtime, "waitFor").mockResolvedValueOnce("timeout");
-		await output.execute("call-wait-oversized", { bash_id: bashId, wait_for: "READY", timeout: 1800 }, undefined);
+		const ghostPromise = output.execute("call-ghost-wait", {
+			bash_id: bashId,
+			wait_for: "NEVER_MATCHES_THIS_PATTERN_XYZ",
+			timeout: 10,
+		});
+		const ghostCompleted = new Promise<Awaited<typeof ghostPromise>>((resolve, reject) => {
+			const timeout = setTimeout(() => reject(new Error("ghost-param call blocked for over 1 second")), 1000);
+			ghostPromise.then(
+				(value) => {
+					clearTimeout(timeout);
+					resolve(value);
+				},
+				(error: unknown) => {
+					clearTimeout(timeout);
+					reject(error);
+				},
+			);
+		});
 
-		expect(waitForSpy).toHaveBeenCalledWith("READY", 300000, undefined);
+		const result = await ghostCompleted;
+		expect(result.isError).toBe(true);
+		const text = firstText(result);
+		expect(text).toContain("wait_for removed");
+		expect(text).toContain("monitor(");
+		expect(text).toContain("kill_bash");
+
+		// The session is untouched: peek still works and kill tears it down.
+		const statusCheck = await output.execute("call-status-after-ghost", { bash_id: bashId });
+		expect(firstText(statusCheck)).toContain("status: running");
+		await manager.stop(bashId);
 	});
 });

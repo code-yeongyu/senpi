@@ -14,7 +14,7 @@ const packages = [
 	{ directory: "packages/agent", name: "@earendil-works/pi-agent-core" },
 	{ directory: "packages/senpi-codemode", name: "@code-yeongyu/senpi-codemode" },
 	{ directory: "packages/coding-agent", name: "@code-yeongyu/senpi" },
-	{ directory: "packages/orchestrator", name: "@code-yeongyu/senpi-orchestrator" },
+	{ directory: "packages/server", name: "@code-yeongyu/senpi-server" },
 ];
 const packageCliCommand = "senpi";
 const captureMaxBufferBytes = 64 * 1024 * 1024;

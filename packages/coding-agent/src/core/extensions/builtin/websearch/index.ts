@@ -3,6 +3,7 @@ import { isAnthropicWebSearchEnabled, supportsNativeAnthropicWebSearch } from ".
 import { isOpenaiWebSearchEnabled, supportsNativeOpenAiWebSearch } from "../openai-web-search/index.ts";
 
 import { loadWebsearchConfig } from "./websearch/config.ts";
+import { providerEntryLabel } from "./websearch/search.ts";
 import { createWebSearchTool } from "./websearch/tool.ts";
 import type { ConfigLoadResult, WebsearchConfig } from "./websearch/types.ts";
 
@@ -31,12 +32,8 @@ export default function (pi: ExtensionAPI): void {
 		message: "Missing websearch config. Create .pi/websearch.json or ~/.pi/websearch.json before starting pi.",
 	};
 
-	function providerLabel(provider: WebsearchConfig["providers"][number]): string {
-		return provider.id ? `${provider.id}/${provider.provider}` : provider.provider;
-	}
-
 	function providerList(config: WebsearchConfig): string {
-		return config.providers.map(providerLabel).join(", ");
+		return config.providers.map(providerEntryLabel).join(", ");
 	}
 
 	function clearUi(ctx: ExtensionContext): void {

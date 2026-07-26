@@ -121,6 +121,10 @@
 				{
 					"title": "TUI Components",
 					"path": "tui.md"
+				},
+				{
+					"title": "Grok Neo Mode (Experimental)",
+					"path": "grok-neo.md"
 				}
 			]
 		},

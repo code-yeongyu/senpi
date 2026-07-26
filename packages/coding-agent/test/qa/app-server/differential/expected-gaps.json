@@ -9,7 +9,7 @@
     {
       "id": "goal-status-subset",
       "methods": ["thread/goal/set"],
-      "rationale": "Senpi's goal backing store supports active, paused, and complete only. Codex-only blocked, usageLimited, and budgetLimited statuses are rejected rather than fabricated."
+      "rationale": "Senpi's goal backing store supports active, paused, blocked, and complete. `blocked` is readable via thread/goal/get and settable only by the agent (update_goal); thread/goal/set deliberately rejects blocked/usageLimited/budgetLimited (budget statuses do not exist in this backing store)."
     },
     {
       "id": "history-after-restart",

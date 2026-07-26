@@ -107,12 +107,10 @@ describe("openai responses custom tool support", () => {
 		]);
 	});
 
-	it("omits the sentinel item id when replaying a custom tool call without its freeform tool", () => {
+	it("recovers persisted custom calls without active tools as raw custom Responses items", () => {
 		// processResponsesStream stores custom_tool_call blocks with the
-		// "<call_id>|custom" id sentinel. Requests that replay history without
-		// the freeform tool registered (compaction strips `freeform` from its
-		// summarization tool list) fall into the function_call branch — and the
-		// Responses API rejects any function_call item id not beginning with "fc".
+		// "<call_id>|custom" id sentinel. Compaction sends no tool definitions,
+		// so this must recover the original freeform wire shape from persistence.
 		const context: Context = {
 			messages: [
 				{
@@ -142,25 +140,59 @@ describe("openai responses custom tool support", () => {
 					timestamp: 2,
 				},
 			],
-			tools: [
-				{
-					name: "apply_patch",
-					description: "freeform stripped, as compaction summarization tools are",
-					parameters: Type.Object({ input: Type.String() }),
-				},
-			],
+			tools: [],
 		};
 
-		const items = convertResponsesMessages(model, context, new Set(["openai"]));
+		const replayModel = { ...model, id: "gpt-5-replay" } as Model<"openai-responses">;
+		const items = convertResponsesMessages(replayModel, context, new Set(["openai"]));
 		expect(items).toEqual([
 			{
-				type: "function_call",
+				type: "custom_tool_call",
 				call_id: "call_1",
 				name: "apply_patch",
-				arguments: JSON.stringify({ input: "*** Begin Patch\n*** End Patch" }),
+				input: "*** Begin Patch\n*** End Patch",
 			},
-			{ type: "function_call_output", call_id: "call_1", output: "ok" },
+			{ type: "custom_tool_call_output", call_id: "call_1", name: "apply_patch", output: "ok" },
 		]);
+		// Never let the persisted sentinel reach the provider as an item id.
+		expect(items[0]).not.toHaveProperty("id");
+	});
+
+	it("gives an active grammar declaration precedence over sentinel freeform recovery", () => {
+		const items = convertResponsesMessages(
+			model,
+			{
+				messages: [
+					{
+						role: "assistant",
+						content: [
+							{
+								type: "toolCall",
+								id: "call_grammar|custom",
+								name: "apply_patch",
+								arguments: { input: "persisted freeform input", patch: "active grammar input" },
+							},
+						],
+						api: "openai-responses",
+						provider: "openai",
+						model: "gpt-5",
+						usage: zeroUsage(),
+						stopReason: "toolUse",
+						timestamp: 1,
+					},
+				],
+				tools: [],
+			},
+			new Set(["openai"]),
+			{ grammarToolInputProperties: new Map([["apply_patch", "patch"]]) },
+		);
+
+		expect(items[0]).toEqual({
+			type: "custom_tool_call",
+			call_id: "call_grammar",
+			name: "apply_patch",
+			input: "active grammar input",
+		});
 		expect(items[0]).not.toHaveProperty("id");
 	});
 

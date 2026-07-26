@@ -1,3 +1,4 @@
+import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
 
 const bedrockMock = vi.hoisted(() => ({
@@ -50,9 +51,9 @@ import type { Context, Message } from "../src/types.ts";
 
 const baseModel = getModel("amazon-bedrock", "us.anthropic.claude-sonnet-4-5-20250929-v1:0");
 
-async function capturePayload(context: Context): Promise<unknown> {
+async function capturePayload(context: Context, model = baseModel): Promise<unknown> {
 	let capturedPayload: unknown;
-	const s = streamBedrock(baseModel, context, {
+	const s = streamBedrock(model, context, {
 		cacheRetention: "none",
 		signal: AbortSignal.abort(),
 		onPayload: (payload) => {
@@ -65,6 +66,34 @@ async function capturePayload(context: Context): Promise<unknown> {
 	}
 	return capturedPayload;
 }
+
+describe("Bedrock constrained sampling", () => {
+	it("gates native strict tool use by model capability", async () => {
+		const context: Context = {
+			messages: [{ role: "user", content: "Use the tool", timestamp: Date.now() }],
+			tools: [
+				{
+					name: "lookup",
+					description: "Look up a value",
+					parameters: Type.Object({ value: Type.String() }),
+					constrainedSampling: { type: "json_schema", strict: "require" },
+				},
+			],
+		};
+		const payload = await capturePayload(context);
+		const toolConfig = (payload as { toolConfig: { tools: Array<{ toolSpec: { strict?: boolean } }> } }).toolConfig;
+		expect(toolConfig.tools[0].toolSpec.strict).toBe(true);
+
+		context.tools![0].constrainedSampling = { type: "json_schema", strict: "prefer" };
+		const novaPayload = await capturePayload(context, getModel("amazon-bedrock", "amazon.nova-lite-v1:0"));
+		const novaToolConfig = (
+			novaPayload as {
+				toolConfig: { tools: Array<{ toolSpec: { strict?: boolean } }> };
+			}
+		).toolConfig;
+		expect(novaToolConfig.tools[0].toolSpec.strict).toBeUndefined();
+	});
+});
 
 describe("bedrock convertMessages skips unknown content types", () => {
 	it("skips unknown user content blocks instead of throwing", async () => {
@@ -241,5 +270,76 @@ describe("bedrock convertMessages skips unknown content types", () => {
 		expect(payload).toBeDefined();
 		const p = payload as { messages: Array<{ role: string; content: unknown[] }> };
 		expect(p.messages).toHaveLength(0);
+	});
+});
+
+describe("Bedrock foreign tool call id normalization", () => {
+	it("never collides when truncating long foreign tool call ids sharing a 64-char prefix", async () => {
+		const sharedPrefix = `call_${"A".repeat(200)}`;
+		const now = Date.now();
+		const usage = {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		};
+		const messages: Message[] = [
+			{ role: "user", content: "run tools", timestamp: now - 3000 },
+			{
+				role: "assistant",
+				content: [
+					{ type: "toolCall", id: `${sharedPrefix}1111`, name: "bash", arguments: {} },
+					{ type: "toolCall", id: `${sharedPrefix}2222`, name: "read", arguments: {} },
+				],
+				api: "openai-completions",
+				provider: "moonshot",
+				model: "kimi-k2-6",
+				usage,
+				stopReason: "toolUse",
+				timestamp: now - 2000,
+			},
+			{
+				role: "toolResult",
+				toolCallId: `${sharedPrefix}1111`,
+				toolName: "bash",
+				content: [{ type: "text", text: "ok" }],
+				isError: false,
+				timestamp: now - 1000,
+			},
+			{
+				role: "toolResult",
+				toolCallId: `${sharedPrefix}2222`,
+				toolName: "read",
+				content: [{ type: "text", text: "ok" }],
+				isError: false,
+				timestamp: now - 1000,
+			},
+		];
+
+		const payload = await capturePayload({ messages });
+		const p = payload as {
+			messages: Array<{
+				role: string;
+				content: Array<{ toolUse?: { toolUseId?: string }; toolResult?: { toolUseId?: string } }>;
+			}>;
+		};
+		const toolUseIds = p.messages
+			.flatMap((message) => message.content)
+			.map((block) => block.toolUse?.toolUseId)
+			.filter((id): id is string => id !== undefined);
+		const toolResultIds = p.messages
+			.flatMap((message) => message.content)
+			.map((block) => block.toolResult?.toolUseId)
+			.filter((id): id is string => id !== undefined);
+
+		expect(toolUseIds).toHaveLength(2);
+		expect(new Set(toolUseIds).size).toBe(2);
+		expect(new Set(toolResultIds)).toEqual(new Set(toolUseIds));
+		for (const id of toolUseIds) {
+			expect(id.length).toBeLessThanOrEqual(64);
+			expect(id).toMatch(/^[a-zA-Z0-9_-]+$/);
+		}
 	});
 });

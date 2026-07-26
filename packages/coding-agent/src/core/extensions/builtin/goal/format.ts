@@ -32,6 +32,8 @@ export function goalStatusLabel(status: GoalStatus): string {
 			return "active";
 		case "paused":
 			return "paused";
+		case "blocked":
+			return "blocked";
 		case "complete":
 			return "complete";
 	}
@@ -45,6 +47,7 @@ export function formatGoalForTool(goal: Goal | null): string {
 		`Time used: ${formatGoalElapsedSeconds(goal.timeUsedSeconds)}`,
 		`Tokens used: ${formatTokensCompact(goal.tokensUsed)}`,
 	];
+	if (goal.blockedReason) lines.push(`Blocked reason: ${goal.blockedReason}`);
 	if (goal.completedAt) lines.push(`Completed at: ${new Date(goal.completedAt * 1000).toISOString()}`);
 	return lines.join("\n");
 }
@@ -53,8 +56,9 @@ export function goalToolResponse(goal: Goal | null): GoalToolResponse {
 	return { goal: goal === null ? null : goalToolSnapshot(goal) };
 }
 
-export function formatGoalToolResponse(goal: Goal | null): string {
-	return JSON.stringify(goalToolResponse(goal), null, 2);
+export function formatGoalToolResponse(goal: Goal | null, notice?: string): string {
+	const response = JSON.stringify(goalToolResponse(goal), null, 2);
+	return notice === undefined ? response : `${response}\n${notice}`;
 }
 
 function goalToolSnapshot(goal: Goal): GoalToolSnapshot {
@@ -66,6 +70,8 @@ function goalToolSnapshot(goal: Goal): GoalToolSnapshot {
 		timeUsedSeconds: goal.timeUsedSeconds,
 		createdAt: goal.createdAt,
 		updatedAt: goal.updatedAt,
+		...(goal.blockedReason === undefined ? {} : { blockedReason: goal.blockedReason }),
+		...(goal.blockedAt === undefined ? {} : { blockedAt: goal.blockedAt }),
 	};
 }
 

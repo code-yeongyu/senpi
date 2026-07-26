@@ -13,6 +13,11 @@ export const HTTP_IDLE_TIMEOUT_CHOICES = [
 
 const originalGlobalFetch = globalThis.fetch;
 let installedGlobalFetch: typeof globalThis.fetch | undefined;
+let multiSessionDispatcherTimeoutMs: number | undefined;
+
+function isMultiSessionRpcProcess(): boolean {
+	return process.argv.includes("--multi-session");
+}
 
 export function parseHttpIdleTimeoutMs(value: unknown): number | undefined {
 	if (typeof value === "string") {
@@ -43,6 +48,14 @@ export function formatHttpIdleTimeoutMs(timeoutMs: number): string {
 export function applyHttpProxySettings(httpProxy: string | undefined): void {
 	const proxy = httpProxy?.trim();
 	if (!proxy) return;
+	if (isMultiSessionRpcProcess()) {
+		const existing = process.env.HTTP_PROXY ?? process.env.HTTPS_PROXY;
+		if (existing !== undefined && existing !== proxy) {
+			throw new Error(
+				"Multi-session RPC shares one process-global HTTP proxy; proxy settings must be fixed at process startup.",
+			);
+		}
+	}
 	process.env.HTTP_PROXY ??= proxy;
 	process.env.HTTPS_PROXY ??= proxy;
 }
@@ -80,6 +93,14 @@ export function configureHttpDispatcher(timeoutMs: number = DEFAULT_HTTP_IDLE_TI
 	const normalizedTimeoutMs = parseHttpIdleTimeoutMs(timeoutMs);
 	if (normalizedTimeoutMs === undefined) {
 		throw new Error(`Invalid HTTP idle timeout: ${String(timeoutMs)}`);
+	}
+	if (isMultiSessionRpcProcess()) {
+		if (multiSessionDispatcherTimeoutMs !== undefined && multiSessionDispatcherTimeoutMs !== normalizedTimeoutMs) {
+			throw new Error(
+				"Multi-session RPC shares one process-global Undici dispatcher; HTTP idle timeout must be fixed at process startup.",
+			);
+		}
+		multiSessionDispatcherTimeoutMs = normalizedTimeoutMs;
 	}
 	const dispatcher = withUndiciErrorListener(
 		new undici.EnvHttpProxyAgent({

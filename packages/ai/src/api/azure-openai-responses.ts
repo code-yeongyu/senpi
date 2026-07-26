@@ -14,6 +14,8 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
+import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
@@ -99,7 +101,11 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
 			const client = createClient(model, apiKey, options);
-			let params = buildParams(model, context, options, deploymentName);
+			const grammarToolInputProperties = createGrammarToolInputProperties(
+				context.tools,
+				model.compat?.supportsOpenAIGrammarTools ?? false,
+			);
+			let params = buildParams(model, context, options, deploymentName, grammarToolInputProperties);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
 				params = nextParams as ResponseCreateParamsStreaming;
@@ -107,13 +113,20 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
-				maxRetries: options?.maxRetries ?? 0,
+				maxRetries: 0,
 			};
-			const { data: openaiStream, response } = await client.responses.create(params, requestOptions).withResponse();
+			const { data: openaiStream, response } = await retryProviderRequest(
+				() => client.responses.create(params, requestOptions).withResponse(),
+				{
+					maxRetries: options?.maxRetries,
+					maxRetryDelayMs: options?.maxRetryDelayMs,
+					signal: options?.signal,
+				},
+			);
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
-			await processResponsesStream(openaiStream, output, stream, model);
+			await processResponsesStream(openaiStream, output, stream, model, { grammarToolInputProperties });
 
 			if (options?.signal?.aborted) {
 				throw new Error("Request was aborted");
@@ -128,8 +141,9 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 		} catch (error) {
 			for (const block of output.content) {
 				delete (block as { index?: number }).index;
-				// partialJson is only a streaming scratch buffer; never persist it.
+				// Streaming scratch buffers are only used during parsing; never persist them.
 				delete (block as { partialJson?: string }).partialJson;
+				delete (block as { customInput?: unknown }).customInput;
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatAzureOpenAIError(error);
@@ -154,7 +168,13 @@ export const streamSimple: StreamFunction<"azure-openai-responses", SimpleStream
 	const base = buildBaseOptions(model, context, options, apiKey);
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
 	const reasoningEffort =
-		clampedReasoning === "off" ? undefined : clampedReasoning === "max" ? "high" : clampedReasoning;
+		clampedReasoning === "off"
+			? undefined
+			: clampedReasoning === "max" && model.thinkingLevelMap?.max !== undefined
+				? "max"
+				: clampedReasoning === "max"
+					? "high"
+					: clampedReasoning;
 
 	return stream(model, context, {
 		...base,
@@ -255,8 +275,20 @@ function buildParams(
 	context: Context,
 	options: AzureOpenAIResponsesOptions | undefined,
 	deploymentName: string,
+	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
+		context.tools,
+		model.compat?.supportsOpenAIGrammarTools ?? false,
+	),
 ) {
-	const messages = convertResponsesMessages(model, context, AZURE_TOOL_CALL_PROVIDERS);
+	const requestedReasoningEffort = options?.reasoningEffort ?? (options?.reasoningSummary ? "medium" : undefined);
+	const mappedReasoningEffort =
+		requestedReasoningEffort === undefined ? undefined : model.thinkingLevelMap?.[requestedReasoningEffort];
+	const reasoningEffort = mappedReasoningEffort === undefined ? requestedReasoningEffort : mappedReasoningEffort;
+	const reasoningRequested = reasoningEffort !== undefined && reasoningEffort !== null;
+	const reasoningUnavailable = reasoningEffort === null;
+	const messages = convertResponsesMessages(model, context, AZURE_TOOL_CALL_PROVIDERS, {
+		grammarToolInputProperties,
+	});
 
 	const params: ResponseCreateParamsStreaming = {
 		model: deploymentName,
@@ -275,20 +307,20 @@ function buildParams(
 	}
 
 	if (context.tools && context.tools.length > 0) {
-		params.tools = convertResponsesTools(context.tools);
+		params.tools = convertResponsesTools(context.tools, {
+			supportsStrictMode: model.compat?.supportsStrictMode ?? true,
+			supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
+		});
 	}
 
 	if (model.reasoning) {
-		if (options?.reasoningEffort || options?.reasoningSummary) {
-			const effort = options?.reasoningEffort
-				? (model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort)
-				: "medium";
+		if (reasoningRequested) {
 			params.reasoning = {
-				effort: effort as NonNullable<typeof params.reasoning>["effort"],
-				summary: options?.reasoningSummary || "auto",
+				effort: reasoningEffort as NonNullable<typeof params.reasoning>["effort"],
+				...(options?.reasoningSummary === null ? {} : { summary: options?.reasoningSummary || "auto" }),
 			};
 			params.include = ["reasoning.encrypted_content"];
-		} else if (model.thinkingLevelMap?.off !== null) {
+		} else if (!reasoningUnavailable && model.thinkingLevelMap?.off !== null) {
 			params.reasoning = {
 				effort: (model.thinkingLevelMap?.off ?? "none") as NonNullable<typeof params.reasoning>["effort"],
 			};

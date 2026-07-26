@@ -11,6 +11,7 @@ import type {
 	AssistantMessage,
 	Context,
 	Model,
+	ModelThinkingLevel,
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
@@ -30,8 +31,9 @@ import {
 	convertTools,
 	isThinkingPart,
 	mapStopReason,
-	mapToolChoice,
+	resolveGoogleFunctionCallingMode,
 	retainThoughtSignature,
+	supportsGoogleStrictToolSampling,
 	toProviderNativeContent,
 } from "./google-shared.ts";
 import { applyExtraBody, buildBaseOptions, GOOGLE_RESERVED_BODY_KEYS } from "./simple-options.ts";
@@ -328,12 +330,19 @@ export const streamSimple: StreamFunction<"google-generative-ai", SimpleStreamOp
 	}
 
 	const base = buildBaseOptions(model, context, options, apiKey);
-	if (!options?.reasoning) {
+	// `reasoning` is typed as ThinkingLevel, but runtime callers can hand "off"
+	// through, and Gemini 3 maps null "off" so a post-clamp check cannot see it.
+	// Thinking-off takes the disabled wire form, never an enabled one.
+	if (!options?.reasoning || (options.reasoning as ModelThinkingLevel) === "off") {
 		return stream(model, context, { ...base, thinking: { enabled: false } } satisfies GoogleOptions);
 	}
 
 	const clampedReasoning = clampThinkingLevel(model, options.reasoning);
-	const effort = (clampedReasoning === "off" ? "high" : clampedReasoning) as ClampedThinkingLevel;
+	if (clampedReasoning === "off") {
+		// Only non-reasoning models clamp every request to "off".
+		return stream(model, context, { ...base, thinking: { enabled: false } } satisfies GoogleOptions);
+	}
+	const effort = clampedReasoning as ClampedThinkingLevel;
 	const googleModel = model as Model<"google-generative-ai">;
 
 	if (isGemini3ProModel(googleModel) || isGemini3FlashModel(googleModel) || isGemma4Model(googleModel)) {
@@ -390,21 +399,17 @@ function buildParams(
 		generationConfig.maxOutputTokens = options.maxTokens;
 	}
 
+	const functionCallingMode = context.tools?.length
+		? resolveGoogleFunctionCallingMode(context.tools, options.toolChoice, supportsGoogleStrictToolSampling(model.id))
+		: undefined;
 	const config: GenerateContentConfig = {
 		...(Object.keys(generationConfig).length > 0 && generationConfig),
 		...(context.systemPrompt && { systemInstruction: sanitizeSurrogates(context.systemPrompt) }),
 		...(context.tools && context.tools.length > 0 && { tools: convertTools(context.tools) }),
+		...(functionCallingMode !== undefined && {
+			toolConfig: { functionCallingConfig: { mode: functionCallingMode } },
+		}),
 	};
-
-	if (context.tools && context.tools.length > 0 && options.toolChoice) {
-		config.toolConfig = {
-			functionCallingConfig: {
-				mode: mapToolChoice(options.toolChoice),
-			},
-		};
-	} else {
-		config.toolConfig = undefined;
-	}
 
 	if (options.thinking?.enabled && model.reasoning) {
 		const thinkingConfig: ThinkingConfig = { includeThoughts: true };

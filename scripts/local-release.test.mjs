@@ -143,7 +143,7 @@ function writeLocalReleaseFixture(repoRoot) {
 		["packages/agent", "@earendil-works/pi-agent-core"],
 		["packages/senpi-codemode", "@code-yeongyu/senpi-codemode"],
 		["packages/coding-agent", "@code-yeongyu/senpi"],
-		["packages/orchestrator", "@code-yeongyu/senpi-orchestrator"],
+		["packages/server", "@code-yeongyu/senpi-server"],
 	]) {
 		writeJson(join(repoRoot, directory, "package.json"), { name, version: "0.0.0" });
 		mkdirSync(join(repoRoot, directory, "dist"), { recursive: true });

@@ -61,30 +61,53 @@ export function hermeticEnv(boxEnv) {
 	return env;
 }
 
-export function writeMockModelsJson(agentDir, server, apiName, modelOverrides = {}) {
+/**
+ * Register the primary preset model plus optional additional local mock models.
+ * Additional models share the local server and provider unless explicitly
+ * overridden. Supplying retry writes the isolated sandbox settings.json.
+ */
+export function writeMockModelsJson(agentDir, server, apiName, modelOverrides = {}, { models = [], retry } = {}) {
 	const preset = API_PRESETS[apiName];
 	const baseUrl = preset.baseUrl(server);
+	if (!Array.isArray(models)) {
+		throw new Error("mock models must be an array of additional model definitions");
+	}
+	const modelDefaults = {
+		baseUrl,
+		api: apiName,
+		contextWindow: 128000,
+		maxTokens: 4096,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	};
+	const additionalModels = models.map((model, index) => {
+		if (!model || typeof model !== "object" || Array.isArray(model) || typeof model.id !== "string" || !model.id) {
+			throw new Error(`mock models[${index}] must define a non-empty id`);
+		}
+		return { ...modelDefaults, ...model };
+	});
+	const configuredModels = [{ id: preset.modelId, ...modelDefaults, ...modelOverrides }, ...additionalModels];
+	const modelIds = new Set();
+	for (const model of configuredModels) {
+		if (modelIds.has(model.id)) throw new Error(`mock models must not repeat id ${model.id}`);
+		modelIds.add(model.id);
+	}
 	const config = {
 		providers: {
 			[preset.provider]: {
 				baseUrl,
 				apiKey: preset.apiKey,
 				api: apiName,
-				models: [
-					{
-						id: preset.modelId,
-						baseUrl,
-						api: apiName,
-						contextWindow: 128000,
-						maxTokens: 4096,
-						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-						...modelOverrides,
-					},
-				],
+				models: configuredModels,
 			},
 		},
 	};
 	writeFileSync(join(agentDir, "models.json"), JSON.stringify(config, null, 2));
+	if (retry !== undefined) {
+		if (!retry || typeof retry !== "object" || Array.isArray(retry)) {
+			throw new Error("mock retry settings must be an object");
+		}
+		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ retry }, null, 2));
+	}
 }
 
 export function assertMcpFixtureToolName(toolName) {

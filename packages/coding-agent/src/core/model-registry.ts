@@ -14,6 +14,7 @@ export type ResolvedRequestAuth =
 			apiKey?: string;
 			headers?: Record<string, string>;
 			extraBody?: Record<string, unknown>;
+			baseUrl?: string;
 			upstreamModelId?: string;
 			serviceTier?: "auto" | "flex" | "priority";
 			env?: Record<string, string>;
@@ -53,8 +54,8 @@ export class ModelRegistry {
 	}
 
 	/** Reload models.json asynchronously. Await before making synchronous registry reads. */
-	refresh(): Promise<void> {
-		return this.runtime.reloadConfig();
+	async refresh(): Promise<void> {
+		await this.runtime.refresh();
 	}
 
 	getError(): string | undefined {
@@ -119,6 +120,7 @@ export class ModelRegistry {
 				apiKey: resolution.auth.apiKey,
 				headers,
 				extraBody: compatibility.extraBody,
+				baseUrl: resolution.auth.baseUrl,
 				upstreamModelId: compatibility.upstreamModelId,
 				serviceTier: compatibility.serviceTier,
 				env: resolution.env,

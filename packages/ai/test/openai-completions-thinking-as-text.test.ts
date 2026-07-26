@@ -40,6 +40,7 @@ const compat = {
 	supportsStrictMode: true,
 	toolSchemaFlavor: undefined,
 	toolCallFormat: undefined,
+	supportsOpenAIGrammarTools: false,
 	cacheControlFormat: undefined,
 	sendSessionAffinityHeaders: false,
 	sessionAffinityFormat: "openai",

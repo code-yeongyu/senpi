@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getModel } from "../src/models.ts";
+import { getModel } from "../src/compat.ts";
 import { streamAnthropic } from "../src/providers/anthropic.ts";
 import type { Context, Model } from "../src/types.ts";
 

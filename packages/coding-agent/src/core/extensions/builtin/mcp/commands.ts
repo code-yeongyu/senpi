@@ -22,14 +22,14 @@ const SUBCOMMANDS = [
 
 const AUTH_SUBCOMMANDS = new Set(["auth", "auth-start", "auth-complete", "logout"]);
 
-export function registerMcpCommands(pi: ExtensionAPI): void {
+export function registerMcpCommands(pi: ExtensionAPI, service = getMcpService()): void {
 	pi.registerCommand("mcp", {
 		description: "Inspect and manage MCP servers.",
 		getArgumentCompletions: (prefix) =>
 			SUBCOMMANDS.filter((item) => item.startsWith(prefix)).map((value) => ({ value, label: value })),
 		handler: async (rawArgs, ctx) => {
 			try {
-				await handleMcpCommand(rawArgs, ctx, pi);
+				await handleMcpCommand(rawArgs, ctx, pi, service);
 			} catch (error) {
 				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
 			}
@@ -37,46 +37,53 @@ export function registerMcpCommands(pi: ExtensionAPI): void {
 	});
 }
 
-async function handleMcpCommand(rawArgs: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
+async function handleMcpCommand(
+	rawArgs: string,
+	ctx: ExtensionCommandContext,
+	pi: ExtensionAPI,
+	service: ReturnType<typeof getMcpService>,
+): Promise<void> {
 	const args = splitCommandArgs(rawArgs);
 	const subcommand = args[0] ?? "";
 	if (subcommand === "") {
-		await showPanel(ctx);
+		await showPanel(ctx, service);
 		return;
 	}
 	if (AUTH_SUBCOMMANDS.has(subcommand)) {
-		await handleMcpAuthCommand(subcommand, args.slice(1), ctx, pi);
+		await handleMcpAuthCommand(subcommand, args.slice(1), ctx, pi, service);
 		return;
 	}
 	if (subcommand === "status") {
-		await notifyStatus(ctx);
+		await notifyStatus(ctx, service);
 		return;
 	}
 	if (subcommand === "add") {
-		await addServer(args.slice(1), ctx, pi);
+		await addServer(args.slice(1), ctx, pi, service);
 		return;
 	}
 	if (subcommand === "enable" || subcommand === "disable") {
-		await setServerEnabled(ctx, pi, args[1] ?? "", subcommand === "enable");
+		await setServerEnabled(ctx, pi, service, args[1] ?? "", subcommand === "enable");
 		return;
 	}
 	if (subcommand === "test") {
-		await testServer(args[1] ?? "", ctx);
+		await testServer(args[1] ?? "", ctx, service);
 		return;
 	}
 	if (subcommand === "logs") {
-		showLogs(args[1] ?? "", ctx);
+		showLogs(args[1] ?? "", ctx, service);
 		return;
 	}
 	if (subcommand === "reconnect") {
-		await reconnectServer(args[1] ?? "", ctx, pi);
+		await reconnectServer(args[1] ?? "", ctx, pi, service);
 		return;
 	}
 	ctx.ui.notify(`Unknown /mcp subcommand: ${subcommand}`, "error");
 }
 
-async function showPanel(ctx: ExtensionCommandContext): Promise<void> {
-	const text = await renderStatus("MCP servers");
+type McpCommandService = ReturnType<typeof getMcpService>;
+
+async function showPanel(ctx: ExtensionCommandContext, service: McpCommandService): Promise<void> {
+	const text = await renderStatus("MCP servers", service);
 	if (!ctx.hasUI) {
 		ctx.ui.notify(text);
 		return;
@@ -85,12 +92,11 @@ async function showPanel(ctx: ExtensionCommandContext): Promise<void> {
 	if (choice === undefined) ctx.ui.notify(text);
 }
 
-async function notifyStatus(ctx: ExtensionCommandContext): Promise<void> {
-	ctx.ui.notify(await renderStatus("MCP status"));
+async function notifyStatus(ctx: ExtensionCommandContext, service: McpCommandService): Promise<void> {
+	ctx.ui.notify(await renderStatus("MCP status", service));
 }
 
-async function renderStatus(title: string): Promise<string> {
-	const service = getMcpService();
+async function renderStatus(title: string, service: McpCommandService): Promise<string> {
 	const rows = await buildMcpStatusRows(service.getServerSnapshots(), (name) => service.getServerExposureStatus(name));
 	return formatMcpStatus(title, rows);
 }
@@ -99,6 +105,7 @@ async function addServer(
 	args: readonly string[],
 	ctx: ExtensionCommandContext,
 	pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
+	service: McpCommandService,
 ): Promise<void> {
 	const [name, ...endpoint] = args;
 	if (!name || endpoint.length === 0) {
@@ -116,48 +123,49 @@ async function addServer(
 		return;
 	}
 	addGlobalMcpServer(name, server);
-	await getMcpService().attachSession({ type: "session_start", reason: "reload" }, ctx, pi);
+	await service.attachSession({ type: "session_start", reason: "reload" }, ctx, pi);
 	ctx.ui.notify(`Added MCP server ${name}`);
 }
 
 async function setServerEnabled(
 	ctx: ExtensionCommandContext,
 	pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
+	service: McpCommandService,
 	name: string,
 	enabled: boolean,
 ): Promise<void> {
-	if (!ensureKnown(name, ctx)) return;
+	if (!ensureKnown(name, ctx, service)) return;
 	if (!setGlobalMcpServerEnabled(name, enabled)) {
 		ctx.ui.notify(`MCP server ${name} is not in the global config file`, "error");
 		return;
 	}
 	ctx.ui.notify(`MCP server ${name} connecting`);
-	await getMcpService().attachSession({ type: "session_start", reason: "reload" }, ctx, pi);
+	await service.attachSession({ type: "session_start", reason: "reload" }, ctx, pi);
 	ctx.ui.notify(`${enabled ? "Enabled" : "Disabled"} MCP server ${name}`);
 }
 
-async function testServer(name: string, ctx: ExtensionCommandContext): Promise<void> {
-	if (!ensureKnown(name, ctx)) return;
-	const connection = getMcpService().getConnection(name);
+async function testServer(name: string, ctx: ExtensionCommandContext, service: McpCommandService): Promise<void> {
+	if (!ensureKnown(name, ctx, service)) return;
+	const connection = service.getConnection(name);
 	if (connection === undefined) return;
 	const started = Date.now();
 	try {
 		await connection.connect();
 		const result = await connection.client.listTools({}, { timeout: 2000 });
 		const elapsedMs = Date.now() - started;
-		getMcpService().recordCall(name, elapsedMs, false);
+		service.recordCall(name, elapsedMs, false);
 		ctx.ui.notify(`MCP test ${name} ok (${elapsedMs}ms): ${result.tools.length} tools`);
 	} catch (error) {
 		const elapsedMs = Date.now() - started;
-		getMcpService().recordCall(name, elapsedMs, true);
+		service.recordCall(name, elapsedMs, true);
 		const message = error instanceof Error ? error.message : String(error);
 		ctx.ui.notify(`MCP test ${name} failed (${elapsedMs}ms): ${message}`, "error");
 	}
 }
 
-function showLogs(name: string, ctx: ExtensionCommandContext): void {
-	if (!ensureKnown(name, ctx)) return;
-	const lines = getMcpService().getLogLines(name, 20);
+function showLogs(name: string, ctx: ExtensionCommandContext, service: McpCommandService): void {
+	if (!ensureKnown(name, ctx, service)) return;
+	const lines = service.getLogLines(name, 20);
 	ctx.ui.notify(lines.length === 0 ? `MCP logs for ${name}: (empty)` : lines.join("\n"));
 }
 
@@ -165,10 +173,10 @@ async function reconnectServer(
 	name: string,
 	ctx: ExtensionCommandContext,
 	pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
+	service: McpCommandService,
 ): Promise<void> {
-	if (!ensureKnown(name, ctx)) return;
+	if (!ensureKnown(name, ctx, service)) return;
 	try {
-		const service = getMcpService();
 		await service.reconnectServer(name);
 		await service.attachSession({ type: "session_start", reason: "reload" }, ctx, pi);
 		ctx.ui.notify(`MCP reconnect ${name} connected`);
@@ -178,15 +186,9 @@ async function reconnectServer(
 	}
 }
 
-function ensureKnown(name: string, ctx: ExtensionCommandContext): boolean {
-	if (
-		name.length > 0 &&
-		getMcpService()
-			.getServerSnapshots()
-			.some((snapshot) => snapshot.name === name)
-	)
-		return true;
-	const known = getMcpService()
+function ensureKnown(name: string, ctx: ExtensionCommandContext, service: McpCommandService): boolean {
+	if (name.length > 0 && service.getServerSnapshots().some((snapshot) => snapshot.name === name)) return true;
+	const known = service
 		.getServerSnapshots()
 		.map((snapshot) => snapshot.name)
 		.join(", ");

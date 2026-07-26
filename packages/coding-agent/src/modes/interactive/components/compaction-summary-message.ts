@@ -3,6 +3,16 @@ import type { CompactionSummaryMessage } from "../../../core/messages.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { keyText } from "./keybinding-hints.ts";
 
+const TERMINAL_ESCAPE_SEQUENCE =
+	/(?:\u001B\]|\u009D)[\s\S]*?(?:\u0007|\u001B\\|\u009C)|(?:\u001B\[|\u009B)[0-?]*[ -/]*[@-~]/g;
+
+function sanitizeCompactionSummary(summary: string): string {
+	return summary
+		.replace(TERMINAL_ESCAPE_SEQUENCE, "")
+		.replace(/\r\n?/g, "\n")
+		.replace(/[\u0000-\u0009\u000B-\u001F\u007F-\u009F]/g, "");
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -58,7 +68,7 @@ export class CompactionSummaryMessageComponent extends Box {
 			const detailLine = details ? `\n${details}\n\n` : "\n\n";
 			const header = `**Compacted from ${tokenStr} tokens**${detailLine}`;
 			this.addChild(
-				new Markdown(header + this.message.summary, 0, 0, this.markdownTheme, {
+				new Markdown(header + sanitizeCompactionSummary(this.message.summary), 0, 0, this.markdownTheme, {
 					color: (text: string) => theme.fg("customMessageText", text),
 				}),
 			);

@@ -23,8 +23,9 @@ export async function probeListen(
 	paths: TokenPaths,
 	listen: AppServerListen,
 	timeoutMs: number,
+	signal?: AbortSignal,
 ): Promise<string | undefined> {
-	if (listen.kind === "stdio") return undefined;
+	if (listen.kind === "stdio" || signal?.aborted) return undefined;
 	let token: string | undefined;
 	try {
 		token = (await readFile(paths.tokenFile, "utf8")).trim();
@@ -37,21 +38,33 @@ export async function probeListen(
 		listen.kind === "ws"
 			? listen.url
 			: `ws+unix://${listen.path ?? join(dirname(paths.tokenFile), "app-server.sock")}:/`;
-	return probeWebSocket(probeTarget, token && token.length > 0 ? token : undefined, timeoutMs);
+	return probeWebSocket(probeTarget, token && token.length > 0 ? token : undefined, timeoutMs, signal);
 }
 
-export function probeWebSocket(url: string, token: string | undefined, timeoutMs: number): Promise<string | undefined> {
+export function probeWebSocket(
+	url: string,
+	token: string | undefined,
+	timeoutMs: number,
+	signal?: AbortSignal,
+): Promise<string | undefined> {
 	return new Promise((resolveProbe) => {
+		if (signal?.aborted) {
+			resolveProbe(undefined);
+			return;
+		}
 		let settled = false;
 		const socket = new WebSocket(url, token ? { headers: { Authorization: `Bearer ${token}` } } : undefined);
 		const finish = (result: string | undefined): void => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timeout);
-			socket.close();
+			signal?.removeEventListener("abort", onAbort);
+			socket.terminate();
 			resolveProbe(result);
 		};
+		const onAbort = (): void => finish(undefined);
 		const timeout = setTimeout(() => finish(undefined), timeoutMs);
+		signal?.addEventListener("abort", onAbort, { once: true });
 		socket.once("open", () => {
 			socket.send(
 				JSON.stringify({
@@ -79,12 +92,15 @@ export async function pollProbe(
 	paths: TokenPaths,
 	listen: AppServerListen,
 	timeoutMs: number,
+	signal?: AbortSignal,
 ): Promise<string | undefined> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() <= deadline) {
-		const probe = await probeListen(paths, listen, 2_000);
+		if (signal?.aborted) return undefined;
+		const probe = await probeListen(paths, listen, 2_000, signal);
 		if (probe) return probe;
-		await delay(100);
+		if (signal?.aborted) return undefined;
+		await delay(100, signal);
 	}
 	return undefined;
 }
@@ -148,8 +164,20 @@ export function runningUnmanagedOutput(listen: AppServerListen, version: string)
 	return { status: "running-unmanaged", listen: listen.url, version };
 }
 
-function delay(ms: number): Promise<void> {
-	return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+	return new Promise((resolveDelay) => {
+		if (signal?.aborted) {
+			resolveDelay();
+			return;
+		}
+		const finish = (): void => {
+			clearTimeout(timeout);
+			signal?.removeEventListener("abort", finish);
+			resolveDelay();
+		};
+		const timeout = setTimeout(finish, ms);
+		signal?.addEventListener("abort", finish, { once: true });
+	});
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {

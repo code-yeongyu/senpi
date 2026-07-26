@@ -1,5 +1,66 @@
 # Changes
 
+## 2026-07-23 - Session-owned post-agent_end queue drain suppression
+
+### What changed and why
+
+- `Agent` now exposes `suppressQueuedMessageDrain()` for the active run. It stops only the lifecycle-owned
+  post-`agent_end` steering/follow-up drain, retaining both queues without aborting the run signal.
+- `Agent` now exposes `continueWithQueuedMessages()` so compaction recovery can deliver retained steer/follow-up input
+  when custom context leaves the transcript tail non-assistant.
+- The coding-agent compaction admission gate uses this ownership transfer for required recovery. Real user aborts
+  continue to abort the active signal and retain the normal terminal semantics.
+- Scheduled continuation can revalidate a model changed by `session_compact`, recompact if required, and then deliver
+  retained queues without inventing an empty continuation turn.
+
+### Files modified
+
+- `agent.ts`
+- `../test/agent.test.ts`
+
+### Why the extension system could not handle this
+
+- Native queue draining and active-run signal ownership occur inside `Agent` after event subscribers return.
+
+### Expected merge conflict zones on next upstream sync
+
+- MEDIUM: `agent.ts` active-run lifecycle and post-`agent_end` queue draining.
+
+## 2026-07-23 - uuidv7 concurrency refutation + immutable launch profile
+
+### What changed and why
+
+- `harness/session/uuid.ts`: the inlined UUIDv7 implementation uses a synchronous counter over module
+  state. A concurrency refutation test (`test/uuid-concurrency.test.ts`) records that N interleaved
+  async tasks calling `uuidv7()` produce unique, monotonic-per-timestamp ids — the synchronous counter
+  makes uniqueness hold under interleaving (no `await` between timestamp read and counter increment).
+  This is a recorded refutation WITH a test, not a bare assertion; it documents that the existing
+  synchronous-counter design is correct under interleaving so future refactors do not "fix" a
+  non-bug by adding an async lock that would change id ordering.
+- `core/agent-session-runtime.ts` (`CreateAgentSessionRuntimeFactory`, `:35,74-242,411`): runtime
+  construction now carries an immutable per-open launch profile
+  `{ permissionPreset, creationModel, initialThinkingLevel, cwd }`. The profile is retained by
+  `AgentSessionRuntime` and survives `new_session`/`switch_session`/reload unless the command
+  explicitly changes it. This carries per-session `cwd`, permission-preset, model selection, and
+  thinking level with identical semantics to today's spawn flags, without `main.ts` closing over
+  process-level parse.
+
+### Files modified
+
+- `harness/session/uuid.ts` (no production change; refutation test only)
+- `../test/uuid-concurrency.test.ts` (new)
+- `core/agent-session-runtime.ts`
+
+### Why the extension system could not handle this
+
+- The UUIDv7 counter and the launch-profile retention live inside `pi-agent-core` before coding-agent
+  extensions or mode renderers participate; the profile must be carried by the runtime the session
+  registry constructs inside `runWithProviderScope`.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `harness/session/uuid.ts` (unchanged production code; test is fork-only).
+- MEDIUM: `core/agent-session-runtime.ts` around `CreateAgentSessionRuntimeFactory` options.
 ## 2026-07-17 - Truncation-recovery flagged-call failure and proxy payload
 
 ### What changed and why

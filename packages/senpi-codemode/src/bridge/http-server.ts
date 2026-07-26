@@ -75,7 +75,12 @@ async function handleRequest(
 	options: BridgeServerOptions,
 ): Promise<void> {
 	const abortController = new AbortController();
-	request.on("close", () => abortController.abort());
+	// IncomingMessage "close" fires on normal message completion in Node >= 16,
+	// so premature disconnect must be detected on the response side instead:
+	// its "close" without a finished response means the connection died mid-call.
+	response.on("close", () => {
+		if (!response.writableFinished) abortController.abort();
+	});
 	if (request.method !== "POST") {
 		sendJson(response, 404, { ok: false, error: transportError("not_found", "Bridge route was not found") });
 		return;

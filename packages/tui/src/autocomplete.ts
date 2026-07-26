@@ -320,6 +320,26 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 				};
 			}
 
+			const tokenStart = textBeforeCursor.search(/\S+$/);
+			const currentToken = tokenStart === -1 ? "" : textBeforeCursor.slice(tokenStart);
+			if (
+				currentToken.startsWith("/skill:") &&
+				this.isLeadingKnownSkillCommandRun(textBeforeCursor.slice(0, tokenStart))
+			) {
+				const skillCommands = this.commands.filter((command) => {
+					const name = "name" in command ? command.name : command.value;
+					return name.startsWith("skill:");
+				});
+				const filtered = getSlashCommandSuggestions(skillCommands, currentToken.slice(1));
+
+				if (filtered.length === 0) return null;
+
+				return {
+					items: filtered,
+					prefix: currentToken,
+				};
+			}
+
 			const commandName = textBeforeCursor.slice(1, spaceIndex);
 			const argumentText = textBeforeCursor.slice(spaceIndex + 1);
 
@@ -372,9 +392,13 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		const adjustedAfterCursor =
 			isQuotedPrefix && hasTrailingQuoteInItem && hasLeadingQuoteAfterCursor ? afterCursor.slice(1) : afterCursor;
 
-		// Check if we're completing a slash command (prefix starts with "/" but NOT a file path)
-		// Slash commands are at the start of the line and don't contain path separators after the first /
-		const isSlashCommand = prefix.startsWith("/") && beforePrefix.trim() === "" && !prefix.slice(1).includes("/");
+		// Check if we're completing a slash command (prefix starts with "/" but NOT a file path).
+		// Skill commands may also appear after an already-known leading skill command.
+		const isSlashCommand =
+			prefix.startsWith("/") &&
+			!prefix.slice(1).includes("/") &&
+			(beforePrefix.trim() === "" ||
+				(prefix.startsWith("/skill:") && this.isLeadingKnownSkillCommandRun(beforePrefix)));
 		if (isSlashCommand) {
 			// This is a command name completion
 			const newLine = `${beforePrefix}/${item.value} ${adjustedAfterCursor}`;
@@ -441,6 +465,21 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			cursorLine,
 			cursorCol: beforePrefix.length + cursorOffset,
 		};
+	}
+
+	private isLeadingKnownSkillCommandRun(text: string): boolean {
+		const tokens = text.trim().split(/\s+/);
+		return (
+			tokens.length > 0 &&
+			tokens.every((token) => {
+				if (!token.startsWith("/skill:")) return false;
+				const commandName = token.slice(1);
+				return this.commands.some((command) => {
+					const name = "name" in command ? command.name : command.value;
+					return name === commandName;
+				});
+			})
+		);
 	}
 
 	// Extract @ prefix for fuzzy file suggestions

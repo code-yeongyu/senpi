@@ -335,7 +335,7 @@ describe("todo extension", () => {
 		// Then the result is an error and both memory and session state stay unchanged
 		const result = getLatestTodoResult(harness);
 		expect(result.content.some((content) => content.type === "text" && content.text.includes("Errors:"))).toBe(true);
-		expect(phasesFromResult(result)).toEqual([
+		expect(getLatestPhasesFromBranchEntries(harness.sessionManager.getBranch())).toEqual([
 			{ name: "Tasks", tasks: [{ content: "Stable task", status: "in_progress" }] },
 		]);
 		expect(
@@ -953,7 +953,7 @@ describe("todo extension", () => {
 			// to the stable completed row (excludes the unstruck phase header above it).
 			const firstStruck = animatedCoverage.findIndex((coverage) => coverage > 0);
 			if (firstStruck < 0) throw new Error("Expected a struck row");
-			return strikeFlags(animatedLines.slice(firstStruck, animatedStableIndex)).flatMap((flags) => flags);
+			return strikeFlags(animatedLines.slice(firstStruck, animatedStableIndex)).flat();
 		})();
 		const firstUnstruck = animatedFlags.indexOf(false);
 		const struckBeyondBoundary = firstUnstruck >= 0 && animatedFlags.slice(firstUnstruck + 1).some((flag) => flag);

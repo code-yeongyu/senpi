@@ -20,7 +20,6 @@ export interface AppKeybindings {
 	"app.model.cycleBackward": true;
 	"app.model.select": true;
 	readonly "app.history.search": true;
-	readonly "app.sessions.observe": true;
 	"app.tools.expand": true;
 	"app.thinking.toggle": true;
 	"app.session.toggleNamedFilter": true;
@@ -87,7 +86,6 @@ export const KEYBINDINGS = {
 	},
 	"app.model.select": { defaultKeys: "ctrl+l", description: "Open model selector" },
 	"app.history.search": { defaultKeys: "ctrl+r", description: "Search prompt history across sessions" },
-	"app.sessions.observe": { defaultKeys: "ctrl+s", description: "Observe session transcripts" },
 	"app.tools.expand": { defaultKeys: "ctrl+o", description: "Toggle tool output" },
 	"app.thinking.toggle": {
 		defaultKeys: "ctrl+t",
@@ -255,7 +253,6 @@ const KEYBINDING_NAME_MIGRATIONS = {
 	cycleModelForward: "app.model.cycleForward",
 	cycleModelBackward: "app.model.cycleBackward",
 	selectModel: "app.model.select",
-	observeSessions: "app.sessions.observe",
 	expandTools: "app.tools.expand",
 	toggleThinking: "app.thinking.toggle",
 	toggleSessionNamedFilter: "app.session.toggleNamedFilter",

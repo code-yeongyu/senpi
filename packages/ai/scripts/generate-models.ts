@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
+import { getEffortThinkingLevelMap, type ModelsDevReasoningOption } from "./models-dev-reasoning-options.ts";
 import {
 	CLOUDFLARE_AI_GATEWAY_ANTHROPIC_BASE_URL,
 	CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL,
@@ -18,6 +19,14 @@ import type {
 	OpenAICompletionsCompat,
 	OpenAIResponsesCompat,
 } from "../src/types.ts";
+import {
+	createModelDataManifest,
+	type ModelDataStructure,
+	MODEL_DATA_MANIFEST_FILE,
+	readModelDataProviderIds,
+	validateGeneratedModelData,
+	validateModelDataDirectory,
+} from "./model-data.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -25,11 +34,13 @@ const packageRoot = join(__dirname, "..");
 
 function readGeneratorOptions(args: string[]): {
 	strict: boolean;
+	dataOnly: boolean;
 	jsonOnly: boolean;
 	jsonOutputDir: string | undefined;
 	pretty: boolean;
 } {
 	let strict = false;
+	let dataOnly = false;
 	let jsonOnly = false;
 	let jsonOutputDir: string | undefined;
 	let pretty = false;
@@ -38,6 +49,10 @@ function readGeneratorOptions(args: string[]): {
 		const arg = args[index];
 		if (arg === "--strict") {
 			strict = true;
+			continue;
+		}
+		if (arg === "--data-only") {
+			dataOnly = true;
 			continue;
 		}
 		if (arg === "--json-only") {
@@ -58,7 +73,8 @@ function readGeneratorOptions(args: string[]): {
 	}
 
 	if (jsonOnly && !jsonOutputDir) throw new Error("--json-only requires --json-output");
-	return { strict, jsonOnly, jsonOutputDir, pretty };
+	if (dataOnly && (jsonOnly || jsonOutputDir)) throw new Error("--data-only cannot be combined with JSON catalog output");
+	return { strict, dataOnly, jsonOnly, jsonOutputDir, pretty };
 }
 
 const generatorOptions = readGeneratorOptions(process.argv.slice(2));
@@ -67,7 +83,9 @@ interface ModelsDevModel {
 	id: string;
 	name: string;
 	tool_call?: boolean;
+	structured_output?: boolean;
 	reasoning?: boolean;
+	reasoning_options?: ModelsDevReasoningOption[];
 	limit?: {
 		context?: number;
 		output?: number;
@@ -96,6 +114,12 @@ interface ModelsDevModel {
 		npm?: string;
 	};
 }
+
+interface ModelsDevProvider {
+	models?: Record<string, ModelsDevModel>;
+}
+
+type ModelsDevCatalog = Record<string, ModelsDevProvider>;
 
 interface NvidiaNimModelListItem {
 	id: string;
@@ -295,6 +319,7 @@ const ANT_LING_RING_THINKING_LEVEL_MAP = {
 	xhigh: "xhigh",
 } as const;
 
+const BEDROCK_INFERENCE_PROFILE_ONLY_MODEL_IDS = new Set(["anthropic.claude-opus-5"]);
 const MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS = new Set(["gpt-5.6"]);
 const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 	"gpt-5.4",
@@ -402,6 +427,43 @@ function mergeThinkingLevelMap(model: Model<any>, map: NonNullable<Model<any>["t
 	model.thinkingLevelMap = { ...model.thinkingLevelMap, ...map };
 }
 
+const modelsDevReasoningOptions = new Map<string, ModelsDevReasoningOption[]>();
+
+function getModelKey(model: Pick<Model<Api>, "provider" | "id">): string {
+	return `${model.provider}:${model.id}`;
+}
+
+function recordModelsDevReasoningOptions(provider: string, id: string, sourceModel: ModelsDevModel): void {
+	if (sourceModel.reasoning_options !== undefined) {
+		modelsDevReasoningOptions.set(`${provider}:${id}`, sourceModel.reasoning_options);
+	}
+}
+
+function supportsDirectReasoningEffort(model: Model<Api>): boolean {
+	if (model.api === "anthropic-messages") return model.compat?.forceAdaptiveThinking === true;
+	if (
+		model.api === "openai-responses" ||
+		model.api === "azure-openai-responses" ||
+		model.api === "openai-codex-responses"
+	) {
+		return true;
+	}
+	if (model.api !== "openai-completions") return false;
+
+	const compat = {
+		...detectOpenAICompletionsCompat(model as Model<"openai-completions">),
+		...(model.compat as OpenAICompletionsCompat | undefined),
+	};
+	return compat.thinkingFormat === "openai" && compat.supportsReasoningEffort;
+}
+
+function applyModelsDevReasoningOptionMetadata(model: Model<Api>): void {
+	const reasoningOptions = modelsDevReasoningOptions.get(getModelKey(model));
+	if (!reasoningOptions || !supportsDirectReasoningEffort(model)) return;
+	const thinkingLevelMap = getEffortThinkingLevelMap(reasoningOptions);
+	if (thinkingLevelMap) mergeThinkingLevelMap(model, thinkingLevelMap);
+}
+
 function getTogetherCompat(modelId: string, reasoning: boolean): OpenAICompletionsCompat {
 	if (!reasoning) return TOGETHER_BASE_COMPAT;
 	if (TOGETHER_REASONING_EFFORT_MODELS.has(modelId)) return TOGETHER_REASONING_EFFORT_COMPAT;
@@ -453,17 +515,28 @@ function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 		modelId.includes("opus-4.7") ||
 		modelId.includes("opus-4-8") ||
 		modelId.includes("opus-4.8") ||
+		modelId.includes("opus-5") ||
+		modelId.includes("opus.5") ||
 		modelId.includes("sonnet-4-6") ||
 		modelId.includes("sonnet-4.6") ||
 		modelId.includes("sonnet-5") ||
 		modelId.includes("sonnet.5") ||
+		modelId.includes("opus-5") ||
+		modelId.includes("opus.5") ||
 		modelId.includes("fable-5")
 	);
 }
 
 function isAnthropicTemperatureUnsupportedModel(modelId: string): boolean {
 	const id = modelId.toLowerCase();
-	return id.includes("opus-4-7") || id.includes("opus-4.7") || id.includes("opus-4-8") || id.includes("opus-4.8");
+	return (
+		id.includes("opus-4-7") ||
+		id.includes("opus-4.7") ||
+		id.includes("opus-4-8") ||
+		id.includes("opus-4.8") ||
+		id.includes("opus-5") ||
+		id.includes("opus.5")
+	);
 }
 
 const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
@@ -482,6 +555,7 @@ const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
 	chatTemplateKwargs: {},
 	zaiToolStream: false,
 	supportsStrictMode: true,
+	supportsOpenAIGrammarTools: false,
 	sendSessionAffinityHeaders: false,
 	supportsLongCacheRetention: true,
 } satisfies Required<Omit<OpenAICompletionsCompat, "cacheControlFormat" | "deferredToolsMode">> & {
@@ -540,7 +614,8 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 	const isDeepSeek = provider === "deepseek" || baseUrl.includes("deepseek.com");
 	const isOpenRouterDeveloperRoleModel =
 		isOpenRouter && (model.id.startsWith("anthropic/") || model.id.startsWith("openai/"));
-	const cacheControlFormat = provider === "openrouter" && model.id.startsWith("anthropic/") ? "anthropic" : undefined;
+	const cacheControlFormat =
+		provider === "openrouter" && /^~?anthropic\//.test(model.id) ? "anthropic" : undefined;
 
 	return {
 		supportsStore: !isNonStandard,
@@ -569,6 +644,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		chatTemplateKwargs: {},
 		zaiToolStream: false,
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
+		supportsOpenAIGrammarTools: false,
 		...(cacheControlFormat ? { cacheControlFormat } : {}),
 		sendSessionAffinityHeaders: false,
 		supportsLongCacheRetention: !(
@@ -610,6 +686,39 @@ function applyOpenAICompletionsCompatMetadata(model: Model<Api>): void {
 	}
 }
 
+function applyStrictToolCompatMetadata(model: Model<Api>): void {
+	if (model.provider === "openai" && model.api === "openai-responses") {
+		model.compat = { ...(model.compat as OpenAIResponsesCompat | undefined), supportsStrictMode: true };
+	} else if (model.provider === "anthropic" && model.api === "anthropic-messages") {
+		mergeAnthropicMessagesCompat(model, { supportsStrictTools: true });
+	}
+}
+
+// Responses endpoints verified (OpenAI, ChatGPT Codex backend, GitHub Copilot,
+// opencode zen) or documented (Azure OpenAI, Cloudflare AI Gateway) to pass
+// OpenAI custom grammar tools through. OpenAI rejects `type: "custom"` tools
+// for pre-GPT-5 models (gpt-4.x, gpt-4o, o-series).
+const OPENAI_GRAMMAR_TOOL_PROVIDERS = new Set([
+	"openai",
+	"openai-codex",
+	"azure-openai-responses",
+	"github-copilot",
+	"opencode",
+	"cloudflare-ai-gateway",
+]);
+const OPENAI_GRAMMAR_TOOL_APIS = new Set<Api>([
+	"openai-responses",
+	"azure-openai-responses",
+	"openai-codex-responses",
+]);
+
+function applyOpenAIGrammarToolCompatMetadata(model: Model<Api>): void {
+	if (!OPENAI_GRAMMAR_TOOL_APIS.has(model.api) || !OPENAI_GRAMMAR_TOOL_PROVIDERS.has(model.provider)) return;
+	const match = /^gpt-(\d+)/.exec(model.id);
+	if (!match || Number(match[1]) < 5) return;
+	model.compat = { ...(model.compat as OpenAIResponsesCompat | undefined), supportsOpenAIGrammarTools: true };
+}
+
 function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
 	const isOpenAIResponses = model.provider === "openai" && model.api === "openai-responses";
 	const isOpenAICodex = model.provider === "openai-codex" && model.api === "openai-codex-responses";
@@ -617,6 +726,18 @@ function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
 	model.compat = {
 		...(model.compat as OpenAIResponsesCompat | undefined),
 		supportsToolSearch: true,
+	};
+}
+
+// OpenAI charges prompt-cache writes starting with the GPT-5.6 family, and exactly
+// those models accept `prompt_cache_options`; older models reject the parameter.
+// https://developers.openai.com/api/docs/guides/prompt-caching
+function applyOpenAIExplicitPromptCacheMetadata(model: Model<Api>): void {
+	if (model.provider !== "openai" || model.api !== "openai-responses") return;
+	if (!(model.cost.cacheWrite > 0)) return;
+	model.compat = {
+		...(model.compat as OpenAIResponsesCompat | undefined),
+		supportsExplicitPromptCacheMode: true,
 	};
 }
 
@@ -659,6 +780,9 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	if (supportsOpenAiMax(model)) {
 		mergeThinkingLevelMap(model, { max: "max" });
 	}
+	if (model.provider === "openai" && model.id.startsWith("gpt-5.6")) {
+		mergeThinkingLevelMap(model, { minimal: "minimal" });
+	}
 	if (model.provider === "openai" && model.id === "gpt-5.5") {
 		mergeThinkingLevelMap(model, { minimal: null });
 	}
@@ -667,7 +791,7 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	}
 	// Anthropic adaptive-thinking effort support (per Anthropic adaptive thinking docs):
 	// - "max" is available on all adaptive-thinking Claude models.
-	// - "xhigh" is only available on Opus 4.7/4.8, Sonnet 5, and Fable 5.
+	// - "xhigh" is available on Opus 4.7/4.8, Opus 5, Sonnet 5, and Fable 5.
 	if (
 		model.id.includes("opus-4-6") ||
 		model.id.includes("opus-4.6") ||
@@ -681,13 +805,27 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 		model.id.includes("opus-4.7") ||
 		model.id.includes("opus-4-8") ||
 		model.id.includes("opus-4.8") ||
+		model.id.includes("opus-5") ||
+		model.id.includes("opus.5") ||
 		model.id.includes("sonnet-5") ||
-		model.id.includes("sonnet.5")
+		model.id.includes("sonnet.5") ||
+		model.id.includes("opus-5") ||
+		model.id.includes("opus.5")
 	) {
 		mergeThinkingLevelMap(model, { xhigh: "xhigh", max: "max" });
 	}
 	if (model.id.includes("fable-5")) {
-		mergeThinkingLevelMap(model, { off: null, xhigh: "xhigh", max: "max" });
+		mergeThinkingLevelMap(model, { xhigh: "xhigh", max: "max" });
+		if (model.api === "anthropic-messages") {
+			// Fable 5 rejects `thinking: {type: "disabled"}` (verified 400: `"thinking.type.disabled"
+			// is not supported for this model`) and defaults to adaptive thinking when the field is
+			// omitted, so the Messages provider pins the cheapest effort for a thinking-off turn.
+			// Encoding that as a compat fact instead of `thinkingLevelMap.off: null` keeps `off` a
+			// selectable level while still keeping `thinking.type: "disabled"` off the wire.
+			mergeAnthropicMessagesCompat(model, { supportsDisabledThinking: false });
+		} else {
+			mergeThinkingLevelMap(model, { off: null });
+		}
 	}
 	if (model.api === "anthropic-messages" && isAnthropicAdaptiveThinkingModel(model.id)) {
 		mergeAnthropicMessagesCompat(model, { forceAdaptiveThinking: true });
@@ -961,7 +1099,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		console.log("Fetching models from models.dev API...");
 		const response = await fetch("https://models.dev/api.json");
 		if (!response.ok) throw new Error(`models.dev API returned ${response.status}`);
-		const data = await response.json();
+		const data = (await response.json()) as ModelsDevCatalog;
 
 		const models: Model<any>[] = [];
 		const nvidiaNimModelIds = data.nvidia?.models ? await fetchNvidiaNimModelIds() : new Map<string, string>();
@@ -971,6 +1109,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data["amazon-bedrock"].models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
+				if (BEDROCK_INFERENCE_PROFILE_ONLY_MODEL_IDS.has(modelId)) continue;
 
 				let id = modelId;
 
@@ -1000,7 +1139,9 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					},
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
+					...(m.structured_output === true && { compat: { supportsStrictMode: true } }),
 				});
+				recordModelsDevReasoningOptions("amazon-bedrock" as const, id, m);
 			}
 		}
 
@@ -1027,6 +1168,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("anthropic", modelId, m);
 			}
 		}
 
@@ -1060,6 +1202,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: source.limit?.context || 4096,
 					maxTokens: source.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("google", modelId, source);
 			}
 		}
 
@@ -1101,6 +1244,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: source.limit?.context || 4096,
 					maxTokens: source.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("google-vertex", modelId, source);
 			}
 		}
 
@@ -1129,6 +1273,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("openai", modelId, m);
 			}
 		}
 
@@ -1155,6 +1300,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("groq", modelId, m);
 			}
 		}
 
@@ -1181,6 +1327,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("cerebras", modelId, m);
 			}
 		}
 
@@ -1208,6 +1355,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					maxTokens: m.limit?.output || 4096,
 					compat: { sendSessionAffinityHeaders: true },
 				});
+				recordModelsDevReasoningOptions("cloudflare-workers-ai", modelId, m);
 			}
 		}
 
@@ -1264,6 +1412,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					maxTokens: m.limit?.output || 4096,
 					...(compat ? { compat } : {}),
 				});
+				recordModelsDevReasoningOptions("cloudflare-ai-gateway", id, m);
 			}
 		}
 
@@ -1292,6 +1441,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("xai", modelId, m);
 			}
 		}
 
@@ -1334,6 +1484,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 						contextWindow: m.limit?.context || 4096,
 						maxTokens: m.limit?.output || 4096,
 					});
+					recordModelsDevReasoningOptions(provider, modelId, m);
 				}
 			}
 		}
@@ -1361,6 +1512,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("mistral", modelId, m);
 			}
 		}
 
@@ -1390,6 +1542,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("huggingface", modelId, m);
 			}
 		}
 
@@ -1427,6 +1580,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 						supportsLongCacheRetention: false,
 					},
 				});
+				recordModelsDevReasoningOptions("fireworks", modelId, m);
 			}
 		}
 
@@ -1461,6 +1615,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("nvidia", liveModelId, m);
 			}
 		}
 
@@ -1493,6 +1648,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("together", modelId, m);
 			}
 		}
 
@@ -1600,6 +1756,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions(variant.provider, modelId, m);
 			}
 		}
 
@@ -1650,6 +1807,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				};
 
 				models.push(copilotModel);
+				recordModelsDevReasoningOptions("github-copilot", modelId, m);
 			}
 		}
 
@@ -1683,6 +1841,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 						contextWindow: m.limit?.context || 4096,
 						maxTokens: m.limit?.output || 4096,
 					});
+					recordModelsDevReasoningOptions(provider, modelId, m);
 				}
 			}
 		}
@@ -1696,11 +1855,11 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			};
 			const hasCanonicalModel = Object.prototype.hasOwnProperty.call(kimiModels, "kimi-for-coding");
 
-			const kimiAliases = new Set(["k2p5", "k2p6"]);
+			const kimiAliases = new Set(["k2p5", "k2p6", "k2p7"]);
 
 			for (const [modelId, m] of Object.entries(kimiModels)) {
 				if (m.tool_call !== true) continue;
-				// models.dev may expose versioned aliases (e.g. k2p5/k2p6).
+				// models.dev may expose versioned aliases (e.g. k2p5/k2p6/k2p7).
 				// Normalize aliases to the canonical model id and drop duplicates when canonical exists.
 				if (kimiAliases.has(modelId) && hasCanonicalModel) continue;
 
@@ -1740,6 +1899,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("kimi-coding", normalizedId, m);
 			}
 		}
 
@@ -1774,6 +1934,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				if (isKimiK3) {
 					compat.requiresReasoningContentOnAssistantMessages = true;
 					compat.deferredToolsMode = "kimi";
+					compat.thinkingFormat = "openai";
+					compat.supportsReasoningEffort = true;
 				}
 				models.push({
 					id: modelId,
@@ -1782,7 +1944,6 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					provider,
 					baseUrl,
 					reasoning: isKimiK3 || m.reasoning === true,
-					...(isKimiK3 ? { thinkingLevelMap: KIMI_K3_THINKING_LEVEL_MAP } : {}),
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
 						input: m.cost?.input || (isKimiK3 ? KIMI_K3_COST.input : 0),
@@ -1794,6 +1955,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					maxTokens: m.limit?.output || 4096,
 					compat,
 				});
+				recordModelsDevReasoningOptions(provider, modelId, m);
 			}
 		}
 
@@ -1851,6 +2013,59 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions(provider, modelId, m);
+			}
+		}
+
+		// Process Alibaba Cloud Model Studio Token Plan models
+		// Two regions (international / cn) with identical catalogs, separate
+		// endpoints and API keys (sk-sp- prefix). models.dev keys are
+		// "alibaba-token-plan[-cn]"; pi exposes them as "qwen-token-plan[-cn]".
+		const qwenTokenPlanCompat: OpenAICompletionsCompat = {
+			thinkingFormat: "qwen",
+			supportsDeveloperRole: false,
+			supportsStore: false,
+		};
+		const qwenTokenPlanVariants = [
+			{
+				source: "alibaba-token-plan",
+				provider: "qwen-token-plan",
+				baseUrl: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+			},
+			{
+				source: "alibaba-token-plan-cn",
+				provider: "qwen-token-plan-cn",
+				baseUrl: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+			},
+		] as const;
+
+		for (const { source, provider, baseUrl } of qwenTokenPlanVariants) {
+			const providerModels = data[source]?.models;
+			if (!providerModels) continue;
+
+			for (const [modelId, model] of Object.entries(providerModels)) {
+				const m = model as ModelsDevModel;
+				if (m.tool_call !== true) continue;
+
+				models.push({
+					id: modelId,
+					name: m.name || modelId,
+					api: "openai-completions",
+					provider,
+					baseUrl,
+					compat: qwenTokenPlanCompat,
+					reasoning: m.reasoning === true,
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
+				});
+				recordModelsDevReasoningOptions(provider, modelId, m);
 			}
 		}
 
@@ -2367,10 +2582,10 @@ async function generateModels() {
 
 	// OpenAI Codex (ChatGPT OAuth) models
 	// NOTE: These are not fetched from models.dev; we keep a small, explicit list to avoid aliases.
-	// Older model limits are based on observed server behavior; GPT-5.6 follows Codex's 372k catalog limit.
+	// Older model limits are based on observed server behavior; GPT-5.6 follows Codex's 272k catalog limit (formerly 372k).
 	const CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 	const CODEX_CONTEXT = 272000;
-	const CODEX_GPT_56_CONTEXT = 372000;
+	const CODEX_GPT_56_CONTEXT = 272000;
 	const CODEX_SPARK_CONTEXT = 128000;
 	const CODEX_MAX_TOKENS = 128000;
 	const codexModels: Model<"openai-codex-responses">[] = [
@@ -2482,6 +2697,29 @@ async function generateModels() {
 		});
 	}
 
+	// Add qwen3.8-max-preview to Qwen Token Plan providers until models.dev includes it
+	for (const qwenTpProvider of ["qwen-token-plan", "qwen-token-plan-cn"] as const) {
+		if (!allModels.some((m) => m.provider === qwenTpProvider && m.id === "qwen3.8-max-preview")) {
+			const baseUrl =
+				qwenTpProvider === "qwen-token-plan"
+					? "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+					: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1";
+			allModels.push({
+				id: "qwen3.8-max-preview",
+				name: "Qwen3.8 Max Preview",
+				api: "openai-completions",
+				provider: qwenTpProvider,
+				baseUrl,
+				compat: { thinkingFormat: "qwen", supportsDeveloperRole: false, supportsStore: false } satisfies OpenAICompletionsCompat,
+				reasoning: true,
+				input: ["text", "image"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 1000000,
+				maxTokens: 65536,
+			});
+		}
+	}
+
 	// Add "auto" alias for openrouter/auto
 	if (!allModels.some(m => m.provider === "openrouter" && m.id === "auto")) {
 		allModels.push({
@@ -2558,9 +2796,13 @@ async function generateModels() {
 	allModels.push(...azureOpenAiModels);
 
 	for (const model of allModels) {
-		applyThinkingLevelMetadata(model);
 		applyOpenAICompletionsCompatMetadata(model);
+		applyModelsDevReasoningOptionMetadata(model);
+		applyThinkingLevelMetadata(model);
+		applyStrictToolCompatMetadata(model);
+		applyOpenAIGrammarToolCompatMetadata(model);
 		applyOpenAIToolSearchMetadata(model);
+		applyOpenAIExplicitPromptCacheMetadata(model);
 	}
 
 	// Group by provider and deduplicate by model ID
@@ -2584,63 +2826,138 @@ async function generateModels() {
 			jsonProviders[providerId][modelId] = providers[providerId][modelId];
 		}
 	}
-	const writeJson = (path: string, value: unknown) =>
-		writeFileSync(path, `${JSON.stringify(value, null, generatorOptions.pretty ? 2 : undefined)}\n`);
+
+	const serializeJson = (value: unknown) => `${JSON.stringify(value, null, generatorOptions.pretty ? 2 : undefined)}\n`;
+	const writeJson = (path: string, value: unknown) => writeFileSync(path, serializeJson(value));
+	const generatedDataProviderIds = generatorOptions.dataOnly
+		? readModelDataProviderIds(packageRoot)
+		: sortedProviderIds;
+	const missingProviderIds = generatedDataProviderIds.filter((providerId) => !jsonProviders[providerId]);
+	if (missingProviderIds.length > 0) {
+		throw new Error(`Cannot hydrate missing providers: ${missingProviderIds.join(", ")}`);
+	}
+
+	// Only the ignored internal data is grouped by API for type derivation. Public JSON catalog output stays flat.
+	const generatedDataProviders: Record<string, Record<string, Record<string, Model<Api>>>> = {};
+	const modelDataStructure: ModelDataStructure = {};
+	for (const providerId of generatedDataProviderIds) {
+		const models = jsonProviders[providerId];
+		generatedDataProviders[providerId] = {};
+		modelDataStructure[providerId] = {};
+		const apiIds = Array.from(new Set(Object.values(models).map((model) => model.api))).sort();
+		for (const api of apiIds) {
+			generatedDataProviders[providerId][api] = {};
+			for (const [modelId, model] of Object.entries(models)) {
+				if (model.api !== api) continue;
+				generatedDataProviders[providerId][api][modelId] = model;
+				modelDataStructure[providerId][modelId] = api;
+			}
+		}
+	}
+
+	const generatedAt = new Date().toISOString();
 
 	if (!generatorOptions.jsonOnly) {
-		// Generate TypeScript structural catalogs and adjacent JSON values.
-		const generatedHeader = `// This file is auto-generated by scripts/generate-models.ts
+		// Stage and validate all provider values before replacing the current generated data.
+		const providersDir = join(packageRoot, "src/providers");
+		const dataDir = join(providersDir, "data");
+		const stagingRoot = mkdtempSync(join(providersDir, ".model-generation-"));
+		const stagedDataDir = join(stagingRoot, "data");
+		const previousDataDir = join(stagingRoot, "previous-data");
+		let restoreGeneratedCatalog: (() => void) | undefined;
+		try {
+			mkdirSync(stagedDataDir, { recursive: true });
+			const fileContents: Record<string, string> = {};
+			for (const providerId of generatedDataProviderIds) {
+				const filename = `${providerId}.json`;
+				const content = serializeJson(generatedDataProviders[providerId]);
+				fileContents[filename] = content;
+				writeFileSync(join(stagedDataDir, filename), content);
+			}
+			writeJson(
+				join(stagedDataDir, MODEL_DATA_MANIFEST_FILE),
+				createModelDataManifest(modelDataStructure, fileContents, generatedAt),
+			);
+			validateModelDataDirectory(modelDataStructure, stagedDataDir);
+
+			if (!generatorOptions.dataOnly) {
+				const previousShardContents = new Map(
+					readdirSync(providersDir)
+						.filter((entry) => entry.endsWith(".models.ts"))
+						.map((entry) => [entry, readFileSync(join(providersDir, entry), "utf8")] as const),
+				);
+				const aggregatorPath = join(packageRoot, "src/models.generated.ts");
+				const previousAggregator = readFileSync(aggregatorPath, "utf8");
+				restoreGeneratedCatalog = () => {
+					for (const entry of readdirSync(providersDir)) {
+						if (entry.endsWith(".models.ts")) rmSync(join(providersDir, entry));
+					}
+					for (const [entry, content] of previousShardContents) {
+						writeFileSync(join(providersDir, entry), content);
+					}
+					writeFileSync(aggregatorPath, previousAggregator);
+				};
+
+				const generatedHeader = `// This file is auto-generated by scripts/generate-models.ts
 // Do not edit manually - run 'npm run generate-models' to update
 
 `;
-		const catalogConstName = (providerId: string) =>
-			`${providerId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_MODELS`;
-		const providersDir = join(packageRoot, "src/providers");
-		const dataDir = join(providersDir, "data");
+				const catalogConstName = (providerId: string) =>
+					`${providerId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_MODELS`;
+				const generatedShardFiles = new Set<string>();
+				for (const providerId of sortedProviderIds) {
+					let output = generatedHeader;
+					output += `import values from "./data/${providerId}.json" with { type: "json" };\n`;
+					output += `import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";\n\n`;
+					output += `export const ${catalogConstName(providerId)}: ModelCatalog<typeof values, ${JSON.stringify(providerId)}> =\n`;
+					output += `\tflattenModelCatalog(${JSON.stringify(providerId)}, values);\n`;
+					const filename = `${providerId}.models.ts`;
+					generatedShardFiles.add(filename);
+					writeFileSync(join(providersDir, filename), output);
+				}
+				for (const entry of readdirSync(providersDir)) {
+					if (entry.endsWith(".models.ts") && !generatedShardFiles.has(entry)) rmSync(join(providersDir, entry));
+				}
 
-		function emitModelShape(model: Model<any>, indent: string): string {
-			return `${indent}${JSON.stringify(model.id)}: Model<${JSON.stringify(model.api)}> & {\n${indent}\tid: ${JSON.stringify(model.id)};\n${indent}\tprovider: ${JSON.stringify(model.provider)};\n${indent}};\n`;
-		}
-
-		// Remove stale per-provider catalogs and their generated values.
-		for (const entry of readdirSync(providersDir)) {
-			if (entry.endsWith(".models.ts")) {
-				rmSync(join(providersDir, entry));
+				let output = generatedHeader;
+				for (const providerId of sortedProviderIds) {
+					output += `import { ${catalogConstName(providerId)} } from "./providers/${providerId}.models.ts";\n`;
+				}
+				output += `\nexport const MODELS: {\n`;
+				for (const providerId of sortedProviderIds) {
+					output += `\treadonly ${JSON.stringify(providerId)}: typeof ${catalogConstName(providerId)};\n`;
+				}
+				output += `} = {\n`;
+				for (const providerId of sortedProviderIds) {
+					output += `\t${JSON.stringify(providerId)}: ${catalogConstName(providerId)},\n`;
+				}
+				output += `};\n`;
+				writeFileSync(aggregatorPath, output);
+				console.log("Generated provider catalogs and src/models.generated.ts");
 			}
-		}
-		rmSync(dataDir, { recursive: true, force: true });
-		mkdirSync(dataDir, { recursive: true });
 
-		// Per-provider catalog structure and values (sorted for deterministic output).
-		for (const providerId of sortedProviderIds) {
-			const models = providers[providerId];
-			const sortedModelIds = Object.keys(models).sort();
-			let output = generatedHeader;
-			output += `import values from "./data/${providerId}.json" with { type: "json" };\n`;
-			output += `import type { Model } from "../types.ts";\n\n`;
-			output += `export const ${catalogConstName(providerId)} = values as {\n`;
-			for (const modelId of sortedModelIds) {
-				output += emitModelShape(models[modelId], "\t");
+			const hadPreviousData = existsSync(dataDir);
+			if (hadPreviousData) renameSync(dataDir, previousDataDir);
+			try {
+				renameSync(stagedDataDir, dataDir);
+				validateGeneratedModelData(packageRoot);
+			} catch (error) {
+				rmSync(dataDir, { recursive: true, force: true });
+				if (hadPreviousData && existsSync(previousDataDir)) renameSync(previousDataDir, dataDir);
+				throw error;
 			}
-			output += `};\n`;
-			writeFileSync(join(providersDir, `${providerId}.models.ts`), output);
-			writeJson(join(dataDir, `${providerId}.json`), jsonProviders[providerId]);
+			restoreGeneratedCatalog = undefined;
+			console.log(
+				generatorOptions.dataOnly
+					? "Hydrated JSON model values under src/providers/data/"
+					: "Generated JSON model values under src/providers/data/",
+			);
+		} catch (error) {
+			restoreGeneratedCatalog?.();
+			throw error;
+		} finally {
+			rmSync(stagingRoot, { recursive: true, force: true });
 		}
-		console.log(`Generated ${sortedProviderIds.length} catalog structures under src/providers/`);
-		console.log("Generated JSON model values under src/providers/data/");
-
-		// Aggregator
-		let output = generatedHeader;
-		for (const providerId of sortedProviderIds) {
-			output += `import { ${catalogConstName(providerId)} } from "./providers/${providerId}.models.ts";\n`;
-		}
-		output += `\nexport const MODELS = {\n`;
-		for (const providerId of sortedProviderIds) {
-			output += `\t${JSON.stringify(providerId)}: ${catalogConstName(providerId)},\n`;
-		}
-		output += `} as const;\n`;
-		writeFileSync(join(packageRoot, "src/models.generated.ts"), output);
-		console.log("Generated src/models.generated.ts");
 	}
 
 	if (generatorOptions.jsonOutputDir) {

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -104,12 +104,20 @@ describe("goal extension contract (budget-free)", () => {
 		expect(serialized).not.toContain("budget");
 	});
 
-	it("restricts update_goal to complete and drops budget language", () => {
+	it("exposes blocked updates with limit-aware goal guidance and no budget language", () => {
 		const { tools } = createGoalHarness();
+		const create = tools.get("create_goal");
 		const update = tools.get("update_goal");
 		const serialized = JSON.stringify(update).toLowerCase();
+		expect(create?.description).toMatch(/4,000.*file/i);
+		expect(JSON.stringify(create?.parameters)).toMatch(/4,000.*file/i);
+		expect(create?.description).toMatch(/complete.*archive.*unfinished/i);
 		expect(serialized).toContain("complete");
-		expect(serialized).not.toContain("blocked");
+		expect(serialized).toContain("blocked");
+		expect(serialized).toContain("reason");
+		expect(update?.description).toMatch(/3 consecutive goal turns/i);
+		expect(update?.description).toMatch(/fresh blocked audit after resume/i);
+		expect(update?.description).toMatch(/hard, slow, or uncertain/i);
 		expect(serialized).not.toContain("budget");
 		expect(JSON.stringify(tools.get("get_goal")).toLowerCase()).not.toContain("budget");
 	});
@@ -137,13 +145,72 @@ describe("goal extension contract (budget-free)", () => {
 		expect((await readGoal(ref))?.status).toBe("complete");
 	});
 
-	it("refuses a second create_goal while a goal exists", async () => {
+	it("replaces a completed goal through create_goal, archives it, and rejects unfinished goals", async () => {
 		const { tools } = createGoalHarness();
-		const ctx = await makeCtx();
+		const ctx = await makeCtx("thread/complete-create");
+		const ref = storeRefFor(ctx);
 		await tools.get("create_goal")?.execute("c1", { objective: "First" }, undefined, undefined, ctx);
+		await tools.get("update_goal")?.execute("u1", { status: "complete" }, undefined, undefined, ctx);
+
+		const replacement = await tools
+			.get("create_goal")
+			?.execute("c2", { objective: "Second" }, undefined, undefined, ctx);
+		expect(JSON.parse(textOf(replacement))).toMatchObject({ goal: { objective: "Second", status: "active" } });
+		const history = await readFile(join(ref.baseDir, `${encodeURIComponent(ref.threadId)}.history.jsonl`), "utf8");
+		expect(history.trim().split("\n")).toHaveLength(1);
+		expect(JSON.parse(history)).toMatchObject({ objective: "First", status: "complete" });
+
+		const unfinished = await makeCtx("thread-active-create");
+		await tools.get("create_goal")?.execute("c3", { objective: "Active" }, undefined, undefined, unfinished);
 		await expect(
-			tools.get("create_goal")?.execute("c2", { objective: "Second" }, undefined, undefined, ctx),
-		).rejects.toThrow("already has a goal");
+			tools.get("create_goal")?.execute("c4", { objective: "Replacement" }, undefined, undefined, unfinished),
+		).rejects.toThrow("unfinished goal");
+	});
+
+	it("spills an oversized objective with a marker-aware stored objective and notice", async () => {
+		const { tools } = createGoalHarness();
+		const ctx = await makeCtx("thread/oversized objective");
+		const ref = storeRefFor(ctx);
+		const objective = "x".repeat(4_200);
+
+		const result = await tools.get("create_goal")?.execute("c1", { objective }, undefined, undefined, ctx);
+		const goal = await readGoal(ref);
+		expect(textOf(result)).toContain("Objective was truncated; full objective saved to");
+		expect([...String(goal?.objective)].length).toBeLessThanOrEqual(4_000);
+		expect(goal?.objective).toContain("[truncated; full objective:");
+		expect(await readFile(join(ref.baseDir, `${encodeURIComponent(ref.threadId)}.objective-full.txt`), "utf8")).toBe(
+			objective,
+		);
+	});
+
+	it("requires a reason to block and suppresses continuation while blocked", async () => {
+		const { tools, handlers, sent } = createGoalHarness();
+		const ctx = await makeCtx();
+		await tools.get("create_goal")?.execute("c1", { objective: "Wait for a decision" }, undefined, undefined, ctx);
+		await expect(
+			tools.get("update_goal")?.execute("u1", { status: "blocked" }, undefined, undefined, ctx),
+		).rejects.toThrow("reason is required");
+		await expect(
+			tools
+				.get("update_goal")
+				?.execute("u2", { status: "complete", reason: "not allowed" }, undefined, undefined, ctx),
+		).rejects.toThrow("reason must not be provided");
+		await tools
+			.get("update_goal")
+			?.execute("u3", { status: "blocked", reason: "Waiting on a user decision" }, undefined, undefined, ctx);
+		await runHandlers(
+			handlers,
+			"agent_end",
+			{ type: "agent_end", messages: [assistantMessageWithStopReason("stop")] },
+			ctx,
+		);
+
+		expect(await readGoal(storeRefFor(ctx))).toMatchObject({
+			status: "blocked",
+			blockedReason: "Waiting on a user decision",
+			blockedAt: expect.any(Number),
+		});
+		expect(sent).toHaveLength(0);
 	});
 
 	it("queues a hidden continuation prompt after agent_end while a goal is active", async () => {

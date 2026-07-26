@@ -1,7 +1,7 @@
 import { once } from "node:events";
-import { createServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse } from "node:http";
+import { createServer, type RequestListener, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { AuthContext, AuthPrompt, RefreshModelsContext } from "@earendil-works/pi-ai";
+import type { AuthContext, AuthPrompt, ModelsStoreEntry } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { createEventBus } from "../src/core/event-bus.ts";
 import { createExtensionRuntime, loadExtensionFromFactory } from "../src/core/extensions/loader.ts";
@@ -24,31 +24,6 @@ async function listen(handler: RequestListener): Promise<{ server: Server; url: 
 function json(response: ServerResponse, value: unknown): void {
 	response.writeHead(200, { "Content-Type": "application/json" });
 	response.end(JSON.stringify(value));
-}
-
-// SSE test hub. `subscribed` resolves once the client watcher connects, so event
-// emission is gated on an observed subscription instead of a fixed timer.
-function createSseHub(): {
-	subscribed: Promise<void>;
-	attach: (request: IncomingMessage, response: ServerResponse) => void;
-	send: (event: unknown) => void;
-} {
-	const streams = new Set<ServerResponse>();
-	let notifySubscribed: () => void = () => {};
-	const subscribed = new Promise<void>((resolve) => {
-		notifySubscribed = resolve;
-	});
-	return {
-		subscribed,
-		attach(request, response) {
-			streams.add(response);
-			notifySubscribed();
-			request.on("close", () => streams.delete(response));
-		},
-		send(event) {
-			for (const response of streams) response.write(`data: ${JSON.stringify(event)}\n\n`);
-		},
-	};
 }
 
 afterEach(async () => {
@@ -84,7 +59,7 @@ describe("llama.cpp extension", () => {
 		expect(() => normalizeLlamaServerUrl("file:///tmp/llama")).toThrow("http or https");
 	});
 
-	it("exposes loaded and sleeping models with router metadata", () => {
+	it("exposes only loaded models with router metadata", () => {
 		const controller = createLlamaProvider();
 		controller.setCatalog(
 			[
@@ -92,12 +67,7 @@ describe("llama.cpp extension", () => {
 					id: "loaded",
 					status: { value: "loaded", args: ["llama-server", "--n-gpu-layers", "999"] },
 					architecture: { input_modalities: ["text", "image"] },
-					meta: { n_ctx: 16384, n_ctx_train: 131072 },
-				},
-				{
-					id: "sleeping",
-					status: { value: "sleeping", args: ["llama-server"] },
-					meta: { n_ctx: 8192 },
+					meta: { n_ctx: 65536, n_ctx_train: 131072 },
 				},
 				{ id: "unloaded", status: { value: "unloaded" } },
 				{ id: "loading", status: { value: "loading" } },
@@ -109,40 +79,55 @@ describe("llama.cpp extension", () => {
 			expect.objectContaining({
 				id: "loaded",
 				baseUrl: "http://localhost:8080/v1",
-				contextWindow: 16384,
-				maxTokens: 16384,
+				contextWindow: 65536,
+				maxTokens: 65536,
 				input: ["text", "image"],
-			}),
-			expect.objectContaining({
-				id: "sleeping",
-				baseUrl: "http://localhost:8080/v1",
-				contextWindow: 8192,
 			}),
 		]);
 	});
 
-	it("keeps models discoverable after the runner falls asleep", async () => {
-		let status: "loaded" | "sleeping" = "loaded";
-		const { url } = await listen((_request, response) => {
-			json(response, { data: [{ id: "test-model", status: { value: status }, meta: { n_ctx: 4096 } }] });
-		});
-		const { provider } = createLlamaProvider();
-		const context: RefreshModelsContext = {
-			allowNetwork: true,
-			credential: { type: "api_key", env: { LLAMA_BASE_URL: url } },
-			store: {
-				read: async () => undefined,
-				write: async () => {},
-				delete: async () => {},
+	it("persists and restores loaded models for cache-only startup refreshes", async () => {
+		let cachedEntry: ModelsStoreEntry | undefined;
+		const store = {
+			read: async () => cachedEntry,
+			write: async (entry: ModelsStoreEntry) => {
+				cachedEntry = structuredClone(entry);
+			},
+			delete: async () => {
+				cachedEntry = undefined;
 			},
 		};
+		const { url } = await listen((request, response) => {
+			if (request.url === "/models") {
+				json(response, {
+					data: [
+						{ id: "loaded", status: { value: "loaded" }, meta: { n_ctx: 32768 } },
+						{ id: "unloaded", status: { value: "unloaded" } },
+					],
+				});
+				return;
+			}
+			response.writeHead(404).end();
+		});
 
-		await provider.refreshModels!(context);
-		expect(provider.getModels().map((model) => model.id)).toEqual(["test-model"]);
+		const first = createLlamaProvider();
+		await first.provider.refreshModels?.({
+			credential: { type: "api_key", key: "local", env: { LLAMA_BASE_URL: url } },
+			store,
+			allowNetwork: true,
+		});
+		expect(first.provider.getModels().map((model) => model.id)).toEqual(["loaded"]);
+		expect(cachedEntry?.models.map((model) => model.id)).toEqual(["loaded"]);
 
-		status = "sleeping";
-		await provider.refreshModels!(context);
-		expect(provider.getModels().map((model) => model.id)).toEqual(["test-model"]);
+		const second = createLlamaProvider();
+		await second.provider.refreshModels?.({
+			credential: { type: "api_key", key: "local", env: { LLAMA_BASE_URL: url } },
+			store,
+			allowNetwork: false,
+		});
+		expect(second.provider.getModels()).toEqual([
+			expect.objectContaining({ id: "loaded", baseUrl: `${url}/v1`, contextWindow: 32768 }),
+		]);
 	});
 
 	it("stays dormant until configured and stores URL plus optional key", async () => {
@@ -218,18 +203,22 @@ describe("llama.cpp extension", () => {
 
 	it("loads with SSE progress and waits for the loaded catalog state", async () => {
 		let status: "unloaded" | "loading" | "loaded" = "unloaded";
-		const hub = createSseHub();
+		const streams = new Set<ServerResponse>();
+		const send = (event: unknown) => {
+			for (const response of streams) response.write(`data: ${JSON.stringify(event)}\n\n`);
+		};
 		const { url } = await listen((request, response) => {
 			if (request.url === "/models/sse") {
 				response.writeHead(200, { "Content-Type": "text/event-stream" });
-				hub.attach(request, response);
+				streams.add(response);
+				request.on("close", () => streams.delete(response));
 				return;
 			}
 			if (request.url === "/models/load" && request.method === "POST") {
 				status = "loading";
 				json(response, { success: true });
-				void hub.subscribed.then(() => {
-					hub.send({
+				setTimeout(() => {
+					send({
 						model: "test-model",
 						event: "status_change",
 						data: {
@@ -238,8 +227,8 @@ describe("llama.cpp extension", () => {
 						},
 					});
 					status = "loaded";
-					hub.send({ model: "test-model", event: "status_change", data: { status: "loaded" } });
-				});
+					send({ model: "test-model", event: "status_change", data: { status: "loaded" } });
+				}, 20);
 				return;
 			}
 			if (request.url === "/models") {
@@ -250,36 +239,36 @@ describe("llama.cpp extension", () => {
 		});
 
 		const progress: string[] = [];
-		const model = await new LlamaClient(url).loadAndWait(
-			"test-model",
-			(entry) => progress.push(entry.message),
-			AbortSignal.timeout(10_000),
-		);
+		const model = await new LlamaClient(url).loadAndWait("test-model", (entry) => progress.push(entry.message));
 		expect(model.status.value).toBe("loaded");
 		expect(progress).toContain("Loading text model");
 	});
 
 	it("downloads with byte progress and returns the refreshed catalog", async () => {
 		let status: "missing" | "downloading" | "unloaded" = "missing";
-		const hub = createSseHub();
+		const streams = new Set<ServerResponse>();
+		const send = (event: unknown) => {
+			for (const response of streams) response.write(`data: ${JSON.stringify(event)}\n\n`);
+		};
 		const { url } = await listen((request, response) => {
 			if (request.url === "/models/sse") {
 				response.writeHead(200, { "Content-Type": "text/event-stream" });
-				hub.attach(request, response);
+				streams.add(response);
+				request.on("close", () => streams.delete(response));
 				return;
 			}
 			if (request.url === "/models" && request.method === "POST") {
 				status = "downloading";
 				json(response, { success: true });
-				void hub.subscribed.then(() => {
-					hub.send({
+				setTimeout(() => {
+					send({
 						model: "owner/repo:Q4_K_M",
 						event: "download_progress",
-						data: { "https://example/model.gguf": { done: 512, total: 1024 } },
+						data: { progress: { "https://example/model.gguf": { done: 512, total: 1024 } } },
 					});
 					status = "unloaded";
-					hub.send({ model: "owner/repo:Q4_K_M", event: "download_finished", data: {} });
-				});
+					send({ model: "owner/repo:Q4_K_M", event: "download_finished", data: {} });
+				}, 20);
 				return;
 			}
 			if (request.url?.startsWith("/models")) {
@@ -292,11 +281,7 @@ describe("llama.cpp extension", () => {
 		});
 
 		const progress: LlamaProgress[] = [];
-		const models = await new LlamaClient(url).downloadAndWait(
-			"owner/repo:Q4_K_M",
-			(entry) => progress.push(entry),
-			AbortSignal.timeout(10_000),
-		);
+		const models = await new LlamaClient(url).downloadAndWait("owner/repo:Q4_K_M", (entry) => progress.push(entry));
 		expect(models).toEqual([{ id: "owner/repo:Q4_K_M", status: { value: "unloaded" } }]);
 		expect(progress).toContainEqual({
 			message: "Downloading model",

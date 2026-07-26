@@ -1,7 +1,13 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { type CompactionPreparation, compact, generateSummary } from "../src/core/compaction/index.ts";
+import {
+	type CompactionPreparation,
+	compact,
+	generateBranchSummary,
+	generateSummary,
+	serializeConversation,
+} from "../src/core/compaction/index.ts";
 
 const { streamSimpleMock } = vi.hoisted(() => ({
 	streamSimpleMock: vi.fn(),
@@ -84,6 +90,53 @@ describe("generateSummary reasoning options", () => {
 			reasoning: "medium",
 			apiKey: "test-key",
 		});
+	});
+
+	it("preserves the string result from generateSummary", async () => {
+		await expect(generateSummary(messages, createModel(false), 2000, "test-key")).resolves.toBe(
+			"## Goal\nTest summary",
+		);
+	});
+
+	it("normalizes provider-native blocks for summaries without mutating replay content", async () => {
+		const nativeBlock = {
+			type: "providerNative" as const,
+			subtype: "web_search_call",
+			raw: { id: "search-1", query: "provider-native replay state" },
+		};
+		const response = {
+			...mockSummaryResponse,
+			content: [nativeBlock, { type: "text" as const, text: "portable summary text" }],
+		};
+		const historicalAssistant: AssistantMessage = {
+			...mockSummaryResponse,
+			content: [{ type: "text", text: "assistant context" }, nativeBlock],
+		};
+		streamSimpleMock.mockReturnValue(fakeSummaryStream(response));
+
+		expect(serializeConversation([historicalAssistant])).toBe("[Assistant]: assistant context");
+		expect(historicalAssistant.content).toContain(nativeBlock);
+		await expect(generateSummary(messages, createModel(false), 2000, "test-key")).resolves.toBe(
+			"portable summary text",
+		);
+
+		const branchResult = await generateBranchSummary(
+			[
+				{
+					type: "message",
+					id: "branch-message",
+					parentId: null,
+					timestamp: new Date().toISOString(),
+					message: messages[0],
+				},
+			],
+			{ model: createModel(false), signal: new AbortController().signal },
+		);
+
+		expect(branchResult.summary).toBe(
+			"The user explored a different conversation branch before returning here.\nSummary of that exploration:\n\nportable summary text",
+		);
+		expect(response.content).toContain(nativeBlock);
 	});
 
 	it("does not set reasoning when thinking is off", async () => {

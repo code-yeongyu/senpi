@@ -12,6 +12,7 @@ import json
 import locale
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -886,6 +887,9 @@ def run_cell(cell_id: str, code: str) -> None:
     start = time.monotonic()
     stdout = io.StringIO()
     stderr = io.StringIO()
+    # SIGINT must interrupt user code here; the idle baseline (set between
+    # cells) ignores it so a late signal cannot kill the stdin-read loop.
+    signal.signal(signal.SIGINT, signal.default_int_handler)
     try:
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             body, expression = compile_cell(code)
@@ -914,6 +918,8 @@ def run_cell(cell_id: str, code: str) -> None:
                 "durationMs": elapsed(start),
             }
         )
+    finally:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 
 def elapsed(start: float) -> int:
@@ -942,6 +948,7 @@ def handle(message: dict[str, Any]) -> bool:
 
 
 def main() -> None:
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     for raw in sys.stdin:
         try:
             if not handle(json.loads(raw)):

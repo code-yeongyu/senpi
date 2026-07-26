@@ -117,6 +117,73 @@ describe("Anthropic forceAdaptiveThinking compat override", () => {
 		expect(payload.output_config).toEqual({ effort });
 	});
 
+	it("sends adaptive thinking payload for Claude Opus 5 ids when metadata is missing", async () => {
+		// given
+		const model: Model<"anthropic-messages"> = {
+			...makeCustomModel(),
+			id: "claude-opus-5",
+			name: "Claude Opus 5",
+		};
+
+		// when
+		const payload = await capturePayload(model, { reasoning: "high" });
+
+		// then
+		expect(payload.thinking).toEqual({ type: "adaptive", display: "summarized" });
+		expect(payload.output_config).toEqual({ effort: "high" });
+	});
+
+	it("sends adaptive thinking payload for Claude Opus 4.8 ids when metadata is missing", async () => {
+		// given
+		const model: Model<"anthropic-messages"> = {
+			...makeCustomModel(),
+			id: "claude-opus-4-8",
+			name: "Claude Opus 4.8",
+		};
+
+		// when
+		const payload = await capturePayload(model, { reasoning: "high" });
+
+		// then
+		expect(payload.thinking).toEqual({ type: "adaptive", display: "summarized" });
+		expect(payload.output_config).toEqual({ effort: "high" });
+	});
+
+	it("uses adaptive thinking for the built-in Claude Opus 5 model", async () => {
+		// when
+		const payload = await capturePayload(getModel("anthropic", "claude-opus-5"), { reasoning: "high" });
+
+		// then: budget thinking on an adaptive-only model returns an empty thinking block upstream
+		expect(payload.thinking).toEqual({ type: "adaptive", display: "summarized" });
+		expect(payload.thinking?.budget_tokens).toBeUndefined();
+		expect(payload.output_config?.effort).toBeTruthy();
+	});
+
+	it.each([
+		["xhigh", "xhigh"],
+		["max", "max"],
+	] as const)("maps Claude Opus 5 reasoning %s to native effort %s", async (reasoning, effort) => {
+		// given: Opus 5 natively supports xhigh and max effort (verified against the live API)
+		const model: Model<"anthropic-messages"> = {
+			...makeCustomModel(),
+			id: "claude-opus-5",
+			name: "Claude Opus 5",
+		};
+
+		// when
+		const payload = await capturePayload(model, { reasoning });
+
+		// then
+		expect(payload.thinking).toEqual({ type: "adaptive", display: "summarized" });
+		expect(payload.output_config).toEqual({ effort });
+	});
+
+	it("uses native max effort for the built-in Claude Opus 5 model", async () => {
+		const payload = await capturePayload(getModel("anthropic", "claude-opus-5"), { reasoning: "max" });
+
+		expect(payload.output_config).toEqual({ effort: "max" });
+	});
+
 	it("allows built-in adaptive models to opt out with compat.forceAdaptiveThinking false", async () => {
 		const model: Model<"anthropic-messages"> = {
 			...getModel("anthropic", "claude-opus-4-8"),

@@ -2,7 +2,7 @@
  * Task-13 manual QA driver (secret-free, sandboxed).
  *
  * Drives the REAL per-connection RPC core (createRpcConnectionHandler — the exact
- * code the neo daemon spawns) against a real AgentSession + real AuthStorage that
+ * code an RPC client connects to) against a real AgentSession + real AuthStorage that
  * writes ONLY to a throwaway SENPI_CODING_AGENT_DIR. OAuth is stubbed (no real
  * server, clearly-fake tokens). It prints machine-checkable observables:
  *

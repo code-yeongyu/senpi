@@ -58,6 +58,7 @@ export interface TurnEngineOptions<Entry extends TurnEngineThreadEntry = TurnEng
 }
 
 export type TurnEngineApi = {
+	readonly observeThread: (threadId: ThreadId) => void;
 	readonly startTurn: (
 		params: TurnStartParams,
 		deferNotifications?: TurnNotificationDeferral,

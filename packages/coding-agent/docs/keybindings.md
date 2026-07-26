@@ -89,7 +89,6 @@ Modifier combinations: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, `ctrl+1
 | `app.editor.external` | `ctrl+g` | Open in external editor (`externalEditor`, `$VISUAL`, `$EDITOR`, Notepad on Windows, or `nano` elsewhere) |
 | `app.clipboard.pasteImage` | `ctrl+v` (`alt+v` on Windows) | Paste image from clipboard |
 | `app.history.search` | `ctrl+r` | Search prompt history across sessions |
-| `app.sessions.observe` | `ctrl+s` | Observe session transcripts |
 
 ### Sessions
 

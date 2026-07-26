@@ -8,8 +8,10 @@
  *   - `/messages`          -> Anthropic Messages       (api "anthropic-messages")
  *   - `/responses`         -> OpenAI Responses         (api "openai-responses")
  *
- * Turns are scripted protocol-independently ({ reasoning?, text?, toolCalls? });
- * each handler renders the matching SSE. Run `node fake-model-server.mjs --self-test`.
+ * Turns are scripted protocol-independently ({ reasoning?, text?, toolCalls? })
+ * or as exclusive provider failures ({ error: { status, message } }). Success
+ * handlers render matching SSE; errors return non-200 provider JSON. Run
+ * `node fake-model-server.mjs --self-test`.
  */
 
 import { createServer } from "node:http";
@@ -18,7 +20,7 @@ import { pathToFileURL } from "node:url";
 const isMain = import.meta.url === pathToFileURL(process.argv[1] || "").href;
 
 /**
- * @param {{ port?: number, turns?: Array<{reasoning?:string, text?:string, chunks?:number, chunkDelayMs?:number, toolCalls?:Array<{id?:string,name:string,args:object}>}> }} opts
+ * @param {{ port?: number, turns?: Array<{reasoning?:string, text?:string, chunks?:number, chunkDelayMs?:number, toolCalls?:Array<{id?:string,name:string,args:object}>, error?:{status:number,message:string}}> }} opts
  * @returns {Promise<{url:string, origin:string, port:number, requests:object[], streamLog:Array<{streamId:number,protocol:string,kind:string,delta:string}>, stop:()=>Promise<void>}>}
  *
  * A turn's non-empty `reasoning` and `text` fields are each emitted as ONE delta
@@ -27,6 +29,7 @@ const isMain = import.meta.url === pathToFileURL(process.argv[1] || "").href;
  * reasoning on the identical chunking/delay path for abort and steering QA.
  */
 export function startFakeModelServer({ port = 0, turns = [{ text: "OK" }] } = {}) {
+	validateScriptedTurns(turns);
 	const requests = [];
 	const streamLog = [];
 	let callIndex = 0;
@@ -68,6 +71,7 @@ export function startFakeModelServer({ port = 0, turns = [{ text: "OK" }] } = {}
 			callIndex++;
 			const modelId = body.model || "mock";
 
+			if (turn.error) return sendProviderError(res, turn.error);
 			if (url.includes("/chat/completions")) return writeCompletionsSse(res, turn, modelId, streamLog, streamId);
 			if (url.includes("/messages")) return writeAnthropicSse(res, turn, modelId, streamLog, streamId);
 			if (url.includes("/responses")) return writeResponsesSse(res, turn, modelId, streamLog, streamId);
@@ -92,9 +96,42 @@ export function startFakeModelServer({ port = 0, turns = [{ text: "OK" }] } = {}
 	});
 }
 
+function validateScriptedTurns(turns) {
+	if (!Array.isArray(turns)) {
+		throw new Error("Invalid scripted turns: turns must be an array");
+	}
+	for (const [index, turn] of turns.entries()) {
+		if (!turn || typeof turn !== "object" || Array.isArray(turn) || !Object.hasOwn(turn, "error")) continue;
+		const error = turn.error;
+		const label = `Invalid scripted error turn at index ${index}`;
+		if (!error || typeof error !== "object" || Array.isArray(error)) {
+			throw new Error(`${label}: error must be an object with integer status and non-empty message`);
+		}
+		if (!Number.isInteger(error.status) || error.status < 400 || error.status > 599) {
+			throw new Error(`${label}: error.status must be an integer HTTP status from 400 through 599`);
+		}
+		if (typeof error.message !== "string" || !error.message.trim()) {
+			throw new Error(`${label}: error.message must be a non-empty string`);
+		}
+		const successField = ["reasoning", "text", "chunks", "chunkDelayMs", "toolCalls"].find((field) => Object.hasOwn(turn, field));
+		if (successField) {
+			throw new Error(`${label}: error turns cannot also define ${successField}`);
+		}
+	}
+}
+
 function sendJson(res, status, obj) {
 	res.writeHead(status, { "content-type": "application/json" });
 	res.end(JSON.stringify(obj));
+}
+
+function sendProviderError(res, error) {
+	sendJson(res, error.status, {
+		error: {
+			message: error.message,
+			type: error.status === 429 ? "rate_limit_error" : "server_error",
+		},
+	});
 }
 
 function sseHead(res) {
@@ -329,9 +366,17 @@ function byteSequenceInOrder(bytes, parts) {
 async function selfTest() {
 	const reasoning = "FAKE-THINK";
 	const text = "FAKE-OK";
+	const error = { status: 500, message: "overloaded_error" };
 	const reasoningPieces = splitIntoChunks(reasoning, 2);
 	const textPieces = splitIntoChunks(text, 2);
-	const srv = await startFakeModelServer({ turns: [{ reasoning, text, chunks: 2, chunkDelayMs: 0 }] });
+	const srv = await startFakeModelServer({
+		turns: [
+			{ reasoning, text, chunks: 2, chunkDelayMs: 0 },
+			{ reasoning, text, chunks: 2, chunkDelayMs: 0 },
+			{ reasoning, text, chunks: 2, chunkDelayMs: 0 },
+			{ error },
+		],
+	});
 	const checks = [];
 	const probe = async (label, path, headers, expectedBytes) => {
 		const r = await fetch(`${srv.origin}${path}`, {
@@ -370,6 +415,26 @@ async function selfTest() {
 			"event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"sequence_number\":5,\"output_index\":1,\"item\":{\"id\":\"msg_mock\",\"type\":\"message\"",
 			"event: response.completed\n",
 		]);
+		const errorResponse = await fetch(`${srv.origin}/v1/chat/completions`, {
+			method: "POST",
+			headers: { "content-type": "application/json", authorization: "Bearer k" },
+			body: JSON.stringify({ model: "m", stream: true, messages: [{ role: "user", content: "hi" }] }),
+		});
+		const errorPayload = await errorResponse.json();
+		const injectedError =
+			errorResponse.status === error.status &&
+			errorPayload?.error?.message === error.message &&
+			!errorResponse.headers.get("content-type")?.includes("text/event-stream");
+		checks.push(injectedError);
+		process.stdout.write(`[${injectedError ? "PASS" : "FAIL"}] scripted error returns non-200 provider JSON\n`);
+		let malformedErrorRejected = false;
+		try {
+			startFakeModelServer({ turns: [{ error: { status: 500 } }] });
+		} catch (validationError) {
+			malformedErrorRejected = validationError instanceof Error && validationError.message.includes("error.message must be a non-empty string");
+		}
+		checks.push(malformedErrorRejected);
+		process.stdout.write(`[${malformedErrorRejected ? "PASS" : "FAIL"}] malformed scripted error reports a clear validation error\n`);
 		const loggedReasoning = srv.streamLog.filter((entry) => entry.kind === "reasoning_delta").map((entry) => entry.delta);
 		const logComplete = loggedReasoning.join("") === reasoning.repeat(3);
 		checks.push(logComplete);

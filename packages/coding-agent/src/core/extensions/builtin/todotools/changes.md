@@ -131,3 +131,93 @@
   `renderResult` call site).
 - LOW: the shared `modes/interactive/components/todo-strike.ts` module
   (fork-only).
+
+## Sync provenance: pi-todotools 0.2.0 (2026-07-26)
+
+### Source
+
+- Canonical source: `code-yeongyu/pi-todotools` 0.2.0, merged by
+  [pi-todotools PR #13](https://github.com/code-yeongyu/pi-todotools/pull/13).
+- Version metadata was regenerated through `sync-builtin-extensions.mjs`.
+
+### Diff result
+
+The functional state and operation logic matches the canonical phased port. The
+remaining differences are intentional senpi adaptations: the `senpi.todo-state`
+persistence key, TypeBox/internal imports, the `todowrite` builtin identity,
+`todo-sidebar` widget renderer and completion animation, and the `/todo`
+command suite. No behavior delta surfaced during the resync comparison.
+
+## 2026-07-26 - Auto-correct malformed todo calls and surface real errors
+
+### Source
+
+- Fork-local change set (no upstream port). Motivated by session mining:
+  17 failures across 2,435 recorded todo calls, concentrated in kimi/glm
+  models; the replay contract lives in
+  `packages/coding-agent/test/fixtures/todo-arg-correction.fixtures.json`.
+
+### What changed
+
+- `TODO_PARAMS_SCHEMA.op` is now `Type.Optional(...)` so calls that omit the
+  operation reach `execute` and can be rescued; the advertised description
+  still states the operation is required ("Operation to perform. Required —
+  always pass it explicitly.") and auto-correction is never advertised.
+- `normalize.ts` (new): argument normalization runs before any state
+  application, in strict rule order — R0 blank-target guard (a
+  provided-but-blank `task`/`phase` on start/done/drop/rm errors instead of
+  silently widening into a bulk operation; a blank sibling of a non-blank
+  target is dropped quietly), R1 explicit-init preservation
+  (`{"op":"init","list":[]}` keeps its clear-the-list semantics), R-VIEW
+  short-circuit (`op:"view"` ignores every other field), R2 alias
+  canonicalization (`init`/`append` keys folded into effective `items`
+  BEFORE conflict detection so an alias can never bypass it), R3 conflict
+  detection + op inference (non-empty `list` plus non-empty effective
+  `items` errors as conflicting shapes; a missing `op` is inferred from the
+  payload shape or rejected with both canonical forms), R4 per-op
+  field-compatibility matrix (non-empty unrelated fields error as
+  conflicting shapes instead of passing through silently).
+- `fuzzy-match.ts` (new): task/phase resolution ladder with a conservatism
+  rule — auto-apply ONLY on unique exact or unique `sanitizeTodoText`
+  normalized (casefold) equality; containment and char-bigram Dice
+  (score >= 0.5) matches are suggestion-only (`Did you mean ...?`), because
+  containment can select a negated sibling ("Do not deploy X" contains
+  "Deploy X"). Uniqueness is enforced only on the corrections-present
+  model-tool path (`resolveTaskOrError`/`resolvePhaseOrError` invoked with a
+  `corrections` array); the omitted-corrections legacy path keeps
+  first-match semantics for `commands.ts` and `index.ts` consumers.
+- Throw-on-error: `execute` now THROWS on unrecoverable errors instead of
+  returning a result carrying `isError: true`, because
+  `packages/agent/src/agent-loop.ts` `executeToolCall`
+  (`executePreparedToolCall`) returns `{ result, isError: false }` for ANY
+  non-throwing execute — a tool-returned `isError` field is silently
+  dropped, so state-level errors reached providers flagged as success.
+  Throwing routes through the loop's error path and records
+  `isError: true`; the thrown message keeps the full remaining-items echo
+  models rely on for recovery. The dead `TodoToolResult.isError` field and
+  `isTodoToolError` helper were removed; `renderResult` now depends solely
+  on `context.isError`.
+- Init duplicate merging: duplicate phase names in an init list merge into
+  the first occurrence (items concatenated in order) and duplicate task
+  contents keep the first occurrence, each with an `[auto-corrected]`
+  correction; the empty-phase init error is preserved.
+- Append `phase` is now optional with the default chain active-task phase
+  -> last existing phase -> `DEFAULT_INIT_PHASE`, emitting
+  `[auto-corrected] append had no phase; used "<name>"`.
+- Prompt/schema guidance: a canonical init example line directly under the
+  Operations table, `phase?` in the append row, a verbatim-copy rule
+  ("done/start/drop take the task's EXACT text — copy it verbatim from the
+  latest todo result, never re-type from memory."), and sharpened schema
+  field descriptions on `op`, `task`, `phase`, and `items`.
+- Correction notices ride in plain tool-result `content` text (prepended to
+  the summary) and in `details.corrections`, so they need NO RPC/app-server
+  or web-ui rendering seam — every surface renders them generically.
+
+### Expected merge conflict zones
+
+- HIGH: `tools/todo.ts` — the schema (optional `op`, field descriptions) and
+  `execute` (normalization call, corrections threading, throw-on-error);
+  `state.ts` — `resolveTaskOrError`/`resolvePhaseOrError` signatures and
+  ladder integration, `initPhases` merge, `appendItems` default chain.
+- MEDIUM: `prompt.ts` (guidance text) and the fork-only `normalize.ts` /
+  `fuzzy-match.ts` modules if upstream ships similar correction logic.

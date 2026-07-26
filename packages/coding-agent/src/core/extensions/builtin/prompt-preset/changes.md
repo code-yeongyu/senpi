@@ -1,25 +1,180 @@
 # prompt-preset Extension Changes
 
-## Eval-first routing for GPT presets (2026-07-22)
+## GPT-5.6 execution discipline: eval-first parallel orchestration, test-first, atomic commits, LSP routing (2026-07-25)
 
 ### What changed
 
-- `gpt-eval-routing.ts` (new): exports the GPT-only
-  `buildGptEvalRoutingTuning()` rule. Each GPT-5.x builder adds
-  that rule, which directs an available `eval` tool to its own live
-  multi-call Tool Guidelines rather than duplicating their model-aware
-  routing details.
-- `test/suite/prompt-presets-gpt-eval-routing.test.ts` (new): verifies every GPT-5
-  preset, including both full-core 5.5/5.6 variants, defers to the actual
-  eval guideline and that Grok does not inherit the GPT-only rule.
+- `gpt-5.6.ts` exports `GPT56_EXECUTION_RULES` — typed rule data (`Gpt56ExecutionRuleId` / `Gpt56ExecutionConcern` / `Gpt56ExecutionRule`), the same shape `dynamic-prompt/verification.ts` uses for the shared test-discipline rules — carrying ten directives across six concerns: `tool-orchestration` (`eval-first-routing`, `parallel-batching`, `over-call-bias`, `in-kernel-reduction`, `stay-direct-exceptions`), `delegation`, `todo-discipline` (`todo-granularity`), `test-first`, `commit-discipline` (`atomic-commits`), `symbol-routing` (`lsp-symbol-routing`).
+- Each directive is interpolated exactly once, at its point of use in the existing core, replacing the weaker text it supersedes instead of being appended as a trailer:
+  - `Tool loops:` became `Tool orchestration:` — the old "Independent tool calls run in the same message - serial is the exception…" and "Each independent shell command is its own bash call" pair is gone, replaced by the code-cell routing contract (bridge → eval-first → parallel batching → over-call bias → in-kernel reduction → stay-direct exceptions), with a one-sentence fallback for sessions where no code-execution tool is registered. `buildGptEvalRoutingTuning()` moved from a trailing standalone paragraph into this paragraph, so the "which surface" bridge sits next to the "how wide" contract.
+  - `stay-direct-exceptions` absorbed the old standalone "empty or suspiciously narrow results" fallback sentence (one rule instead of two overlapping ones), and `over-call-bias` absorbed "when uncertain whether to call a tool, call it".
+  - Todo discipline: the mid-paragraph mechanics ("mark items `completed` the moment they finish, and update the list when scope shifts") collapsed into `todo-granularity`, which also adds finest-grain sizing (one item per edit plus the check that proves it) and the never-batch-updates rule.
+  - `## Pragmatism & Scope`: **"Default to not adding tests" was deleted** and replaced by `test-first`. This is an intentional policy flip for this preset — the two rules directly contradict each other, and the owner's workflow is TDD. The "never add tests to a codebase with no tests" carve-out went with it.
+  - `## Hard Limits`: the commit bullet keeps its permission gate and now also carries `atomic-commits` (per verified increment, repository's existing message convention, each commit green on its own).
+  - `lsp-symbol-routing` lands in the "never speculate about code you have not read" paragraph; `delegation` lands on the `Explore -> Plan -> …` line.
+  - `lsp-symbol-routing` is deliberately **conditional** ("when LSP tools are available"), which does not reopen the 2026-06 decision to rebind the Verification tiers from "diagnostics" to "type check / lint": senpi's own tool surface still exposes no LSP tool, and the Verification tiers are untouched. Harnesses that do expose `lsp_*` tools get the routing; sessions without them read a condition that is simply false, not a phantom validator.
+- `test/suite/prompt-presets-gpt-5-6.test.ts` (new) asserts the rule set as parsed data (ids → concerns, no emoji, minimum directive weight), that every directive renders exactly once and inside its expected `## ` section, that the eval-routing bridge sits in `Working the Task`, that "Default to not adding tests" is gone while `apply_patch` tuning stays, that the dieted core's sections survive, and that neither `gpt-5.5` nor `grok-4.5` inherits any 5.6 directive.
+- `test/suite/prompt-presets-extension.test.ts`: the stale `"serial is the exception"` sentence pin was replaced by a loop over `GPT56_EXECUTION_RULES`, so the case asserts rule data instead of a prompt sentence.
+- Rendered static prompt: 11,435 → 13,691 chars against this branch's base (+2,256, +19.7%, ~+565 tokens) under the same fixed options. That increase is the deliverable and is defended on its own: ten behaviors the model cannot derive, minus three sentences deleted outright, two overlapping fallback rules merged into one, and cell mechanics the eval tool description already owns trimmed back out.
 
 ### Why
 
-- The eval extension already provides the cross-model Code Mode surface and
-  model-aware batching guidance. GPT presets need one high-level route to
-  that surface, but repeating a generic direct-call policy conflicts with
-  the family-specific guidance and would leak into Grok through the shared
-  file-operation helper.
+- These ten behaviors are category-C context: GPT-5.6 cannot derive from priors that senpi exposes a persistent code kernel (`eval`, or `exec`/`wait`) that can batch a whole step's tool calls, that this fork wants deep-planned maximum-parallel batching and in-kernel reduction, that its workflow is TDD with atomic per-increment commits, or that LSP tools own symbol work. Everything the model already does well stays untouched.
+- The GPT-5.6 prompting guide's Programmatic-Tool-Calling section is explicit that generic wording ("use PTC efficiently") does not route: the prompt must name the stage, the eligible surface, the reduction/output expectation, and what stays direct. The rule set is written as that bounded contract, which is also why the emphasis is carried by declarative invariants (EVERY / NEVER / AT ONCE) rather than caps-spam the guide warns degrades 5.6.
+- Growth is defended per the entropy gate against this branch's base, not against savings banked by the earlier diet: every added directive replaces or absorbs weaker text, and review feedback bounded the two riskiest ones - the code-cell rule now scopes to steps whose calls can be planned up front (so it no longer contradicts the stay-direct exceptions), and the over-call bias is read-only, with side-effecting or approval-gated calls explicitly barred from riding along.
+- Rule data instead of prose keeps the coverage honest: senpi's own test-discipline rule requires prompt tests to assert behavior, decisions, structure, or parsed rule data rather than pinning sentences — and the placement table makes "bolted on at the bottom" a test failure.
+
+### Why extension system couldn't handle this differently
+
+- Everything lives inside the builtin `prompt-preset` extension (`gpt-5.6.ts` plus its tests) and reuses the shared `gpt-eval-routing.ts` / `file-operations.ts` / `buildTestDisciplineSection()` blocks; no core prompt code and no other preset changed. The eval tool's own model-aware batching dialect (`packages/senpi-codemode/src/prompt/eval-prompt.ts`, `codex` style for GPT ids) is deliberately left alone so other GPT presets keep their current wording.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `gpt-5.6.ts` — the file is fork-only; upstream has no counterpart.
+- LOW: `prompt-presets-extension.test.ts` gpt-5.6 case block, if upstream edits the same assertions.
+
+## GPT-5.6 dieted full-core rewrite (2026-07-25)
+
+### What changed
+
+- `gpt-5.6.ts`: dieted the full-core prompt in lockstep with the dieted `claude-fable-5.ts`/`claude-opus-5.ts` presets, using the GPT-5.6 prompting guide's own "simplify prompts first" doctrine (trim repeated rules, generic rationale, and examples that do not change behavior; keep outcomes, success criteria, stopping conditions, constraints, tool routing, and output shape). Rendered static prompt shrinks from 12,599 to 11,386 chars (~-304 tokens, -9.6%); the preset-owned core body — excluding the shared test-discipline/eval-routing/file-operations/workstation blocks, which stay byte-identical — shrinks from 10,634 to 9,421 chars (-11.4%). Every behavior preserved, verified by a 115-presence + 13-absence probe audit over rendered before/after prompts (probes derived from the before prompt; the same audit fails 85/128 probes against the gpt-5.5 render, so it discriminates).
+- Rules the prompt previously stated more than once are now stated exactly once: the `## Goal` section (goal-not-green-build / spec-satisfied-in-observable-behavior) merged into the Manual QA Gate intro and the first Stop Goal bullet; the final-message reporting shape lives only in `## Output` (the Stop Goal bullet references it instead of restating it); the shared-workspace fact lives only in the concurrency rule; "Never ask permission for obvious work" is subsumed by the authorization policy's opening sentence; `## Code Review Requests` collapsed into one Output rule.
+- Enumerated examples trimmed where they carry no routing weight: "how does X work" / "why is A broken" both kept (each names a question-shaped message that still routes to implementation); the "naming, indentation, imports, error handling" style list dropped from the surgical-implementation rule; "never in batches" / "never left `in_progress`" dropped as subsumed by "the moment they finish" and the reconcile-every-item enumeration.
+- The complete four-part GPT-5.6 stop contract is intact: binding declared per-turn stop condition in the routing line, per-result stop check in Tool loops, three-attempt failure cap in Failure Recovery, and the Stop Goal with mandatory-immediate stopping. Style remains prioritization/preserve-first — never generic brevity, which GPT-5.6 over-compresses under.
+- All test pins kept verbatim ("Implement, don't propose", "## Manual QA Gate", "## Failure Recovery", "## Pragmatism & Scope", "## Stop Goal", "I'll stop right away when", "BINDING", "STOPPING IS MANDATORY AND IMMEDIATE", "serial is the exception", "reconcile every item", "fewest useful tool loops", "Lead with the conclusion", "Never revert or modify changes you did not make", "type check", plus the omo-tool absence guards). No test changes needed.
+- `AGENTS.md`: `gpt-5.6.ts` file-table row and the `corePrompt` exception paragraph note the dieted state.
+
+### Why
+
+- Fork direction: diet the system prompts per the prompt-engineering skill. The GPT-5.6 guide itself reports minimal prompts beating process-heavy stacks by ~10-15% in OpenAI's evals at 41-66% fewer total tokens, and duplicated rules compete for attention. The reduction is smaller than the opus-5 diet (-20.0%) because this preset never carried a duplicated shared-core-plus-tuning stack — the savings are pure wording density plus true duplicate merges, with zero dropped behaviors.
+
+### Why extension system couldn't handle this differently
+
+- Content-only change inside this builtin's existing `corePrompt` override; no core prompt code changed.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `gpt-5.6.ts` is fork-only; conflicts only if upstream adds its own GPT-5.6 preset.
+
+
+## Claude Opus 5 dieted full-core rewrite (2026-07-24)
+
+### What changed
+
+- `claude-opus-5.ts`: converted from the thin-`tuningSection` shape to a full core rewrite via the `corePrompt` override, by explicit fork direction ("the whole new prompt, not just appending") and in lockstep with the dieted `claude-fable-5.ts`. Static prompt shrinks from 8,564 to 6,852 chars (~-428 tokens, -20.0%) with every behavior preserved — verified by a probe audit over rendered before/after prompts (shared-core probes + 15 Opus-5-specific probes covering the stop contract, observable-end-state goal framing, mandatory-immediate stopping, scope discipline, bounded single-pass verification, no post-stop re-checks, delegation caps, narration cadence, correction filter, document calibration, auto-compaction continuation; negative probes for scope-literalism, house-style counter, GPT/Kimi leakage, and fable-only tuning imports).
+- Each Opus 5 guide behavior merged where it binds tightest: stop contract in the intent gate; scope discipline beside intent routing (the "user's call is final" style rule is subsumed by the guide's "say so in a sentence and continue as asked"); bounded verification fused with the shared tier definitions ("run the tier that matches the change once and trust a green result"); delegation caps in Working the Task; narration cadence, correction filter, and document calibration in Style; auto-compaction continuation retargeted at the declared stop condition.
+- Deliberately NOT carried (unchanged from the tuning-era preset): 4.7/4.8 scope literalism, the cream/serif/terracotta counter, and any added re-check instructions (the Opus 5 guide says they compound into over-verification).
+- Test pins kept verbatim: "You are senpi", "## Intent Gate", "I'll stop when [the exact, observable condition that ends this turn]", "a defect, not diligence", "narrowing, widening, or transforming", "auto-compacts context".
+- `AGENTS.md`: `claude-opus-5.ts` joins the `corePrompt` exception list; file-table line updated.
+
+### Why
+
+- Fork direction: Fable 5 and Opus 5 must ship whole rewritten prompts, not the shared core with tuning appended. The tuning-era prompt restated checkpoint/stop/verification rules the shared core already carried; duplicated rules compete for attention. The earlier "not warranted" rationale argued sufficiency of the shared core, not minimality.
+
+### Why extension system couldn't handle this differently
+
+- Content-only change inside this builtin, consuming the existing `corePrompt` override; no core prompt code changed.
+
+### Expected merge conflict zones on next upstream sync
+
+- `claude-opus-5.ts` whole-file rewrite. Resolution: keep the `corePrompt` full-core shape and re-run the probe audit if upstream reshapes the shared core.
+
+## Claude Fable 5 dieted full-core rewrite + binding stop contract (2026-07-24)
+
+### What changed
+
+- `claude-fable-5.ts`: replaced the shared-core-plus-`tuningSection` shape with a full core rewrite via the `corePrompt` override (the documented full-rewrite path; same shape as `gpt-5.5.ts` / `gpt-5.6.ts` / `grok-4.5.ts`). The static prompt shrinks from 7,765 to 6,608 chars (~-290 tokens, -14.9%; -20.6% like-for-like before the stop-contract addition) with every behavior of the previous prompt preserved — verified by a 55-probe regex audit over the rendered before/after prompts (identity, routing line, anti-leakage guard, all six intent-routing rows, the five scope rules, turn-local reset, context-completion gate, parallel waves, exploration stop rules, verification tiers, all six shared test-discipline rules, claim audit, all hard blocks and anti-patterns, execution stance, style and summary rules, context-limit continuation; negative probes for `apply_patch` and Kimi filler-verification leakage).
+- Diet mechanics, per the Fable 5 prompting guide (instruction following is strong enough that one brief instruction steers behavior older models needed an enumerated list for; prompts written for prior models are often too prescriptive and can degrade output): the tuning's duplicated rule families are merged into the core and stated once (act-on-enough-info into Working the Task, claim-audit into Verification, outcome-first summary and context-limit continuation into Style), the 6-row intent table plus 5 scope bullets compress into 3 decision rules carrying the same routing behaviors, and enumerated example lists trim to one defining example per category.
+- **Binding stop contract** (explicit fork direction, mirroring `claude-opus-5.ts` / `gpt-5.6.ts`): the routing line gains "I'll stop when [the exact, observable condition that ends this turn]" — an observable end state, not a step count; binding once declared; when it holds: check against already-captured evidence, deliver the final message, stop ("anything past it ... is a defect, not diligence"). The context-limit line is retargeted at it ("Continue the work until your declared stop condition holds"). Fable 5's documented early-stopping and high-effort over-deliberation failure modes are both stop-goal misalignment, so one contract covers both directions.
+- Shared pieces stay single-sourced: `buildTestDisciplineSection()`, the rendered tool section via `DynamicPromptCoreContext`, the grep/glob specialized-search line via `getToolsPromptDisplay()`, `workstationDialect: "claude"`.
+- All existing test/QA marker phrases kept verbatim ("You are senpi", "## Intent Gate", "I read this as [intent] - [plan].", "a recommendation, not a survey", "audit each claim against a tool result", "on account of context limits").
+- `test/suite/prompt-presets-claude-fable-5.test.ts`: added a `TEST_DISCIPLINE_RULES` sweep (the rewrite must never silently drop a shared rule) and a stop-contract assertion.
+- `AGENTS.md`: `claude-fable-5.ts` joins the `corePrompt` exception list; file-table line updated.
+
+### Why
+
+- The Fable 5 preset stacked a 1.5K-char tuning on the full shared core, restating Style/Verification rules the core already carried; duplicated rules compete for attention and dilute each other. The Fable 5 prompting guide explicitly calls for removing over-prescriptive prior-model scaffolding. The stop contract follows the same fork direction already adopted for Opus 5 and GPT-5.6: reason about the observable goal, declare when to stop, and stop there.
+
+### Why extension system couldn't handle this differently
+
+- Content-only change inside this builtin, consuming the existing `corePrompt` override; no core prompt code changed.
+
+### Expected merge conflict zones on next upstream sync
+
+- `claude-fable-5.ts` whole-file rewrite. Resolution: keep the `corePrompt` full-core shape and re-run the probe audit if upstream reshapes the shared core.
+
+## Kimi K3 token diet via `corePrompt` rewrite + binding stop contract (2026-07-24)
+
+### What changed
+
+- `kimi-k3.ts`: switched from shared core + `tuningSection` to a `corePrompt` full-core rewrite (precedent: `gpt-5.5.ts`/`gpt-5.6.ts`). The K3 tuning is merged into a leaner Kimi-shaped core (~19% fewer static prompt chars) with every behavioral contract preserved and stated exactly once: identity/senior-engineer bar, required routing line, anti-leakage guard, dynamic specialized-search trigger line (via `getToolsPromptDisplay`), routing-by-true-intent classifier, scope discipline, turn-local intent reset, confirmation-turn re-entry rule, one-path commitment, mechanical-work direct action, parallel tool waves, exploration stop conditions, no-restate/no-re-derive/filler-verification ban, V1/V2/V3 verification tiers, shared `buildTestDisciplineSection()`, hard blocks, execution stance (act-then-report, recommendation-not-survey, opinionated disagreement, user's call final), smallest-correct-change, non-refusal, ASCII default, auto-compaction continuation. `workstationDialect: "kimi"` unchanged.
+- `kimi-k3.ts`: the routing line adopts the **binding stop contract** from the `claude-opus-5.ts`/`gpt-5.6.ts` presets — "I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn]." — with the think-through-the-goal requirement (observable end state, not a step count), evidence-only confirmation at the stop point, and "every action past the declared stop condition is a defect, not diligence". Phrased as a positive terminal condition in Opus 5's calm wording rather than GPT-5.6's all-caps Stop Goal, because the K2-line guidance says the trained loop terminates on a condition, not a token count, and all-caps directives make K2/K3-class models overthink. The auto-compaction continuation is retargeted at the declared stop condition.
+- `test/suite/prompt-presets-kimi-k3.test.ts`: added the stop-contract pin (mirrors the opus-5 suite).
+- `AGENTS.md`: `kimi-k3.ts` FILES row + the `corePrompt` exception paragraph now include K3.
+
+### Why
+
+- The shared core plus appended tuning double-taxed K3: the act-bias rule appeared three times (intent gate, style, tuning) and the no-re-derivation rule twice. Per the Kimi K2-line prompting guidance, K2/K3-class models reason proportionally to the unresolved decisions in their input, and duplicate strictness layered over their RL-tuned instruction following produces redundant verification loops and self-second-guessing — the exact overthinking the 2026-07-17 tuning tightening targeted. A `tuningSection` cannot remove scaffolding the builder already emitted, so the sanctioned `corePrompt` override is the only mechanism that both diets the prompt and keeps the change K3-scoped.
+- The stop contract is explicit fork direction (adopted on Opus 5 and GPT-5.6): make the model reason about its actual goal, declare an observable stop condition every turn, and stop there. For K3 it doubles as the strongest documented anti-overthinking lever — an explicit terminal condition for the think-act loop.
+- All pre-existing `prompt-presets-kimi-k3.test.ts` content pins hold unchanged ("You are senpi", "## Intent Gate", "running on Kimi K3", "evidence-first", "skip filler verification language", "a recommendation, not a survey", >2000 chars, no `apply_patch`/K2.x tuning leakage).
+
+### Why extension system couldn't handle this differently
+
+- Content-only change inside this builtin, using the builder's existing `corePrompt` override; no core prompt code changed.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `kimi-k3.ts` is fork-only; `AGENTS.md` prose rows and the K3 test suite only.
+
+## Claude Opus 5 preset (2026-07-24)
+
+### What changed
+
+- `claude-opus-5.ts`: new preset for the Claude Opus 5 family, following the thin-wrapper Claude lineage (`tuningSection` + `workstationDialect: "claude"`, never `corePrompt` — Anthropic's Opus 5 prompting guide states the model performs well out of the box on Opus 4.8 prompts, and 4.8 runs the shared dynamic core). The tuning is built paragraph-per-paragraph from the official guide (platform.claude.com → prompting-claude-opus-5) plus one harness fact:
+  - **Binding stop contract** (adapted from the `gpt-5.6.ts` Stop Goal): the routing line gains a declared, observable, per-turn stop condition ("I'll stop when …"), the model must think through the actual goal before naming it, and stopping the moment it holds is mandatory and immediate — "every action past the declared stop condition is a defect, not diligence". This one contract subsumes Opus 5's two documented failure modes, scope expansion and over-verification.
+  - **Scope constraint**: the guide's own anti-transformation text (no quiet narrowing/widening/transforming; finish the whole task; stop short of clearly-beyond actions). The 4.7/4.8 scope-literalism paragraph ("every"/"all" mean the full set) is deliberately NOT carried — Opus 5's failure mode inverted from under-scoping to over-scoping.
+  - **Bounded verification**: Opus 5 self-verifies unprompted; the tuning binds the shared verification tiers to a single pass and bans post-stop re-checks instead of adding verification instructions (which the guide says compound into over-verification).
+  - **Delegation caps**: guide text, phrased conditionally ("when a delegation tool is available") since base senpi exposes no spawn surface; inert without one, binding with one (e.g. omo-senpi task tools).
+  - **Narration cadence + late conciseness reminder**: Opus 5 narrates readily and runs longer responses; the guide recommends a short reminder near the end of long prompts — exactly where `tuningSection` lands.
+  - **Correction filter and written-deliverable length calibration**: trimmed guide text.
+  - **Auto-compaction continuation**: harness fact carried from every prior Claude preset, retargeted at the declared stop condition.
+  - NOT carried from 4.7/4.8: the tool-use-over-reasoning nudge (Opus 5 is documented as tool-forward) and the cream/serif/terracotta design counter (undocumented for Opus 5). NOT added: thinking-disabled artifact mitigations (senpi runs Claude with thinking enabled; the guide's primary mitigation is keeping it on).
+- `presets.ts`: `isClaudeOpus5Model` (`opus-5` boundary on the normalized id — cannot collide with `opus-4-5`/`opus-4.5`, which contain no `opus-5` substring), checked after the Fable 5 signal and before the 4.x version extraction; dispatch case added.
+- `settings.ts`: `"claude-opus-5"` joins `PromptPresetName` and `VALID_PRESETS`.
+- `docs/settings.md`, `AGENTS.md`, `builtin/AGENTS.md`: preset lists updated.
+- `test/suite/prompt-presets-claude-opus-5.test.ts`: id resolution across bare/provider-prefixed/Bedrock/dated/display-name shapes, non-routing of 4.x/4.5-dotted/fable-5 neighbors (and the reverse), settings force, GPT/Kimi tuning isolation, dropped-lineage pins (no scope-literalism, no house-style counter), and a future-proof catalog sweep (no Opus 5 ids ship in the catalog yet; the sweep guards the day they do).
+
+### Why
+
+- Claude Opus 5 shipped with its own prompting guide; without a preset it fell back to the untuned dynamic prompt and inherited none of the documented behavior counters. The stop-contract emphasis mirrors the gpt-5.6 preset per explicit fork direction: make the model reason deeply about its goal, declare when it will stop, and stop there.
+
+### Why extension system couldn't handle this differently
+
+- Content-only addition inside this builtin; follows the thin-wrapper preset architecture (tuningSection only).
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `claude-opus-5.ts` is fork-only; `presets.ts`/`settings.ts` touch shared lists — trivial adjacent-line conflicts if upstream adds presets.
+
+## GPT Code Mode routing for GPT presets (2026-07-22)
+
+### What changed
+
+- `gpt-eval-routing.ts`: exports the GPT-only
+  `buildGptEvalRoutingTuning()` rule. Each GPT-5.x builder adds that
+  rule, which selects `exec`/`wait` for bounded JavaScript tool
+  orchestration when those tools are available, while retaining
+  `eval`'s live model-aware guidance as the fallback.
+- `test/suite/prompt-presets-gpt-eval-routing.test.ts`: verifies every GPT-5
+  preset, including both full-core 5.5/5.6 variants, routes both Code Mode
+  surfaces correctly and that Grok does not inherit the GPT-only rule.
+
+### Why
+
+- The persistent eval extension remains the cross-model Code Mode surface and
+  model-aware batching guide. GPT presets need a separate high-level route to
+  the GPT-only public executor without losing eval as the fallback or leaking
+  either policy into Grok through the shared file-operation helper.
 
 ### Expected merge conflict zones
 

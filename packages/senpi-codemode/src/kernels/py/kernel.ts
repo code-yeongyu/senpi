@@ -1,3 +1,4 @@
+import type { KernelInterruptHandle } from "../../tool/types.ts";
 import type { PendingRun, PythonKernelRunOptions, PythonKernelStartOptions, ResultMessage } from "./kernel-contract.ts";
 import { failedPythonResult, PythonKernelTransport } from "./transport.ts";
 
@@ -41,7 +42,7 @@ export class PythonKernel {
 		});
 	}
 
-	async interrupt(reason = "interrupted"): Promise<void> {
+	async interrupt(reason = "interrupted"): Promise<KernelInterruptHandle> {
 		if (this.#failure) throw this.#failure;
 		for (const pending of [...this.#queue]) {
 			pending.interruptReason = reason;
@@ -49,7 +50,8 @@ export class PythonKernel {
 		}
 		const active = this.#active;
 		const transport = this.#transport;
-		if (!active || !transport || active.interruptReason !== undefined) return;
+		if (!active || !transport || active.interruptReason !== undefined)
+			return { stateRetained: Promise.resolve(true) };
 		active.interruptReason = reason;
 		if (active.timeoutTimer) clearTimeout(active.timeoutTimer);
 		active.timeoutTimer = null;
@@ -57,7 +59,11 @@ export class PythonKernel {
 			() => void this.#escalateInterruptedRun(active).catch(() => undefined),
 			interruptEscalationMs,
 		);
+		const stateRetained = new Promise<boolean>((resolve) => {
+			active.resolveStateRetained = resolve;
+		});
 		transport.interrupt(reason);
+		return { stateRetained };
 	}
 
 	async reset(): Promise<void> {
@@ -187,13 +193,18 @@ export class PythonKernel {
 		if (this.#transport !== transport) return;
 		const pending = this.#pending.get(result.cellId);
 		if (pending) this.#settleRun(pending, result);
+		// A result frame from the live runner proves the process survived the interrupt.
+		if (pending?.resolveStateRetained) pending.resolveStateRetained(true);
 	}
 
 	#onExit(transport: PythonKernelTransport, error: Error): void {
 		if (this.#transport !== transport) return;
 		this.#transport = null;
 		const active = this.#active;
-		if (active) this.#settleRun(active, failedPythonResult(active.input.cellId, "Python kernel died", error.message));
+		if (active) {
+			if (active.resolveStateRetained) active.resolveStateRetained(false);
+			this.#settleRun(active, failedPythonResult(active.input.cellId, "Python kernel died", error.message));
+		}
 		this.#startNext();
 	}
 
@@ -209,7 +220,10 @@ export class PythonKernel {
 			},
 		);
 		const active = this.#active;
-		if (active) this.#settleRun(active, failedPythonResult(active.input.cellId, "Python kernel died", error.message));
+		if (active) {
+			if (active.resolveStateRetained) active.resolveStateRetained(false);
+			this.#settleRun(active, failedPythonResult(active.input.cellId, "Python kernel died", error.message));
+		}
 	}
 
 	#settleRun(pending: PendingRun, result: ResultMessage): void {
@@ -258,6 +272,7 @@ export class PythonKernel {
 	async #escalateInterruptedRun(pending: PendingRun): Promise<void> {
 		if (this.#active !== pending || pending.interruptReason === undefined) return;
 		const transport = this.#transport;
+		if (pending.resolveStateRetained) pending.resolveStateRetained(false);
 		if (transport) await this.#beginRetirement(transport);
 		if (this.#pending.has(pending.input.cellId))
 			this.#settleRun(pending, failedPythonResult(pending.input.cellId, "Eval interrupted"));

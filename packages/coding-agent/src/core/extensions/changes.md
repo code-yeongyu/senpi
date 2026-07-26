@@ -1,5 +1,51 @@
 # Core Extensions Changes
 
+## 2026-07-26 - AgentEndEvent abort payload + goal resume at before_agent_start
+
+### What changed
+- `AgentEndEvent` gained optional `aborted?: boolean` and `abortSource?: "user" | "system"` (public API addition; goal builtin uses it to block active goals on user abort).
+- `builtin/goal` resumes a blocked goal inside `before_agent_start` (real-user-prompt-only event) instead of a sticky flag consumed at `agent_start`, removing the stale-flag race when final provider admission rejects a run.
+
+### Expected merge conflict zones
+- LOW: `types.ts` around the AgentEndEvent interface; `builtin/goal/index.ts` event handlers.
+
+
+## 2026-07-25 - Config-reload skips routine cross-process settings changes
+
+### What changed
+
+- `builtin/config-reload/routine-settings.ts` (new): content-diff classification for watched `settings.json` paths. When a change's top-level key diff is limited to routine, live-applied keys (`defaultModel`, `defaultProvider`, `defaultThinkingLevel`, `lastChangelogVersion`), the change is suppressed before validation and never reaches the notify/reload flow. The extension keeps a per-path content snapshot as the diff base, refreshed on watcher rebuild and advanced on every observed settings change (including self-write-suppressed ones), so each event is classified against the previous event's content. Missing or unparseable content is never suppressed and falls through to the existing validator.
+- `builtin/config-reload/index.ts`: `processChange` now resolves the self-write and routine-change exclusions once over the change's unique paths before `groupChangedPaths`, then groups the surviving paths for per-registration validation. Suppression state is per path, so classifying inside the registration loop double-processed a path watched by several registrations (external registrations may watch the agent dir; only `auth.json`, `sessions` and `logs` are restricted): the later group saw a consumed self-write marker and an already-advanced diff base and still notified and reloaded. `isSettingsPath`/`joinConfigDir` moved into the new module.
+- `test/suite/config-reload-extension.test.ts`: coverage for idle and busy-deferred routine-only suppression, non-routine/mixed reload preservation with diff-base freshness, consecutive routine writes, unparseable fall-through, and overlapping-registration suppression for both routine external writes and `SettingsManager` self-writes.
+
+### Why
+
+The self-write tracker is process-local, so /model or a thinking-level change in one session (or a background CLI run writing the shared global `settings.json`) surfaced in every other session as "Config changed; reloading when idle" followed by a full hot reload. These keys are applied live by the owning session (or never read back), so reloading other sessions buys nothing; structural changes (packages, extensions, retry, …) keep the existing reload behavior.
+
+## 2026-07-23 - Compaction feedback operation handles
+
+### What changed
+
+- `ExtensionContext` compaction feedback actions now return and accept an optional operation `AbortSignal`, allowing
+  progress and terminal feedback from superseded generations to be ignored without breaking existing extensions.
+  Each handler invocation receives an isolated context that remembers its own `beginCompaction()` signal and supplies
+  it to legacy `updateCompaction()`, `endCompaction()`, and `applyCompaction()` calls that omit the signal, so another
+  handler in the same event emission cannot rebind an old completion or durable apply to a newer operation.
+- `stale-revision` is a structured compaction rejection cause for a source that changed before durable append.
+- The builtin compaction extension threads that signal through local and remote summary generation and application.
+- `model_select` sources now distinguish fallback apply and fallback revert transitions, allowing model-scoped
+  extensions to update prompts and active tools before the retry request.
+- Builtin PreCompact diagnostics carry the active compaction request ID so their own feedback does not falsely trip the
+  source-revision guard; unrelated session or tool mutations remain stale-rejected.
+- `ExtensionRunner.prepareProviderRequest()` provides a request-local canonical path for compaction generation:
+  ordered `context` hooks, provider-body transforms, and header transforms run without mutating persisted messages.
+  The originating compaction handler is excluded to avoid recursive re-entry while later redaction hooks still run.
+
+### Why
+
+Asynchronous summary feedback can arrive after a newer compaction begins; operation identity prevents stale progress
+or completion from mutating the current session lifecycle.
+
 ## 2026-07-22 - Config-reload rejection loop breaker
 
 ### What changed

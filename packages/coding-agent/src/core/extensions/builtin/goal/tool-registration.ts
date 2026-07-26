@@ -1,9 +1,10 @@
 import { Type } from "typebox";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { formatGoalToolResponse } from "./format.ts";
-import { createGoal, readGoal, updateGoal } from "./store.ts";
+import { createGoal, objectiveFullTextFileName, readGoal, updateGoal } from "./store.ts";
 import type { Goal, GoalAccountingMode, GoalStoreRef } from "./types.ts";
-import { COMPLETABLE_GOAL_STATUS_VALUES } from "./types.ts";
+import { MODEL_SETTABLE_GOAL_STATUS_VALUES } from "./types.ts";
+import { objectiveTruncationNotice, validateObjective } from "./validation.ts";
 
 type GoalToolResult = AgentToolResult<Record<string, never>>;
 
@@ -11,6 +12,7 @@ export type GoalToolRegistrationDeps = {
 	readonly goalStoreRef: (ctx: ExtensionContext) => GoalStoreRef;
 	readonly accountCurrentAgentTurn: (ctx: ExtensionContext, mode: GoalAccountingMode) => Promise<Goal | null>;
 	readonly beginAgentGoalAccounting: (goal: Goal) => void;
+	readonly markGoalBlockedThisTurn: (goal: Goal) => void;
 	readonly markGoalCompletedThisTurn: (goal: Goal) => void;
 	readonly refreshGoalUi: (ctx: ExtensionContext, goal: Goal | null) => void;
 };
@@ -20,27 +22,34 @@ export function registerGoalTools(pi: ExtensionAPI, deps: GoalToolRegistrationDe
 		name: "create_goal",
 		label: "Create Goal",
 		description:
-			"Create a goal only when explicitly requested by the user or system/developer instructions; do not infer goals from ordinary tasks.\nFails if a goal already exists; use update_goal only for status.",
+			"Create a goal only when explicitly requested by the user or system/developer instructions; do not infer goals from ordinary tasks.\nObjectives are limited to 4,000 characters. For longer instructions, put the full objective in a file and refer to that file.\nReplaces the current goal when it is complete and archives it; fails if an unfinished goal exists.",
 		parameters: Type.Object(
 			{
 				objective: Type.String({
 					description:
-						"Required. The concrete objective to start pursuing. This starts a new active goal only when no goal is currently defined; if a goal already exists, this tool fails.",
+						"Required. The concrete objective to start pursuing. Limit: 4,000 characters. For longer instructions, put the full objective in a file and refer to that file.",
 				}),
 			},
 			{ additionalProperties: false },
 		),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const ref = deps.goalStoreRef(ctx);
-			if ((await readGoal(ref)) !== null) {
+			const current = await readGoal(ref);
+			if (current !== null && current.status !== "complete") {
 				throw new Error(
-					"cannot create a new goal because this thread already has a goal; use update_goal only when the existing goal is complete",
+					"cannot create a new goal because this thread already has an unfinished goal; use update_goal only when the existing goal is complete",
 				);
 			}
+			const validatedObjective = validateObjective(params.objective, objectiveFullTextFileName(ref));
 			const goal = await createGoal(ref, params.objective);
 			deps.beginAgentGoalAccounting(goal);
 			deps.refreshGoalUi(ctx, goal);
-			return toolText(formatGoalToolResponse(goal));
+			return toolText(
+				formatGoalToolResponse(
+					goal,
+					validatedObjective.truncated ? objectiveTruncationNotice(objectiveFullTextFileName(ref)) : undefined,
+				),
+			);
 		},
 	});
 
@@ -48,28 +57,37 @@ export function registerGoalTools(pi: ExtensionAPI, deps: GoalToolRegistrationDe
 		name: "update_goal",
 		label: "Update Goal",
 		description:
-			"Update the existing goal.\nUse this tool only to mark the goal achieved.\nSet status to `complete` only when the objective has actually been achieved and no required work remains.\nDo not mark a goal complete merely because you are stopping work.\nYou cannot use this tool to pause or resume a goal; those status changes are controlled by the user or system.\nWhen marking the goal achieved with status `complete`, report the final elapsed time and token usage from the tool result to the user.",
+			"Update the existing goal.\nSet status to `complete` only when the objective has actually been achieved and no required work remains. Do not mark a goal complete merely because you are stopping work.\nSet status to `blocked` only after the same blocking condition recurs for at least 3 consecutive goal turns. After resuming, begin a fresh blocked audit after resume. Never mark a goal blocked merely because the work is hard, slow, or uncertain.\nA non-empty reason is required when blocking; reason must not be provided when completing.\nYou cannot use this tool to pause or resume a goal; those status changes are controlled by the user or system.\nWhen marking the goal achieved with status `complete`, report the final elapsed time and token usage from the tool result to the user.",
 		parameters: Type.Object(
 			{
 				status: Type.Union(
-					COMPLETABLE_GOAL_STATUS_VALUES.map((status) => Type.Literal(status)),
-					{
-						description:
-							"Required. Set to complete only when the objective is achieved and no required work remains.",
-					},
+					MODEL_SETTABLE_GOAL_STATUS_VALUES.map((status) => Type.Literal(status)),
+					{ description: "Required. Set to complete when achieved or blocked with a non-empty reason." },
+				),
+				reason: Type.Optional(
+					Type.String({
+						description: "Required and non-empty when status is blocked; rejected when status is complete.",
+					}),
 				),
 			},
 			{ additionalProperties: false },
 		),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			if (params.status !== "complete") {
-				throw new Error(
-					"update_goal can only mark the existing goal complete; pause and resume are controlled by the user or system",
-				);
+			const reason = params.reason?.trim();
+			if (params.status === "blocked" && (reason === undefined || reason.length === 0)) {
+				throw new Error("reason is required when status is blocked");
+			}
+			if (params.status === "complete" && params.reason !== undefined) {
+				throw new Error("reason must not be provided when status is complete");
 			}
 			await deps.accountCurrentAgentTurn(ctx, "active");
-			const goal = await updateGoal(deps.goalStoreRef(ctx), { status: "complete" });
-			deps.markGoalCompletedThisTurn(goal);
+			const goal = await updateGoal(
+				deps.goalStoreRef(ctx),
+				params.status === "blocked" ? { status: "blocked", reason } : { status: "complete" },
+				"model",
+			);
+			if (goal.status === "blocked") deps.markGoalBlockedThisTurn(goal);
+			else deps.markGoalCompletedThisTurn(goal);
 			deps.refreshGoalUi(ctx, goal);
 			return toolText(formatGoalToolResponse(goal));
 		},

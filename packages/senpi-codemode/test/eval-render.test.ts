@@ -303,6 +303,7 @@ describe("eval renderer", () => {
 						output: "ok",
 						status: "complete",
 						statusEvents: [
+							{ op: "status-events-omitted", count: 26 },
 							{ op: "cat", files: 2, chars: 9 },
 							{ op: "ls", count: 3 },
 							{ op: "env", action: "set", key: "TOKEN", value: "secret" },
@@ -331,6 +332,9 @@ describe("eval renderer", () => {
 			.join("\n");
 
 		// Then
+		// The bound marker is folded into the omission summary line instead of rendering as its own row.
+		expect(text).toContain("26 earlier status events");
+		expect(text).not.toContain("status-events-omitted");
 		for (const summary of [
 			"cat 2 files · 9 chars",
 			"ls 3 entries",

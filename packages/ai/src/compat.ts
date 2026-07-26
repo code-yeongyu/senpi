@@ -90,7 +90,13 @@ export {
 	unregisterApiProviders,
 } from "./api-registry.ts";
 
-import { clearApiProviders, getApiProvider, registerApiProvider, unregisterApiProviders } from "./api-registry.ts";
+import {
+	clearApiProviders,
+	getApiProvider,
+	registerApiProvider,
+	registerBuiltinApiProvider,
+	unregisterApiProviders,
+} from "./api-registry.ts";
 
 export function registerFauxProvider(options: RegisterFauxProviderOptions = {}): FauxProviderRegistration {
 	const core = createFauxCore(options);
@@ -133,6 +139,7 @@ const builtinApiProviderInstances = new Map<Api, ReturnType<typeof getApiProvide
  */
 export function registerBuiltInApiProviders(): void {
 	for (const [api, streams] of BUILTIN_APIS) {
+		registerBuiltinApiProvider({ api, stream: streams.stream, streamSimple: streams.streamSimple });
 		if (!getApiProvider(api)) {
 			registerApiProvider({ api, stream: streams.stream, streamSimple: streams.streamSimple });
 		}

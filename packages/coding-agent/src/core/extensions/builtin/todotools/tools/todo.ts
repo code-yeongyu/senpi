@@ -15,6 +15,7 @@ import type {
 	ToolRenderContext,
 	ToolRenderResultOptions,
 } from "../../../types.ts";
+import { normalizeTodoParams } from "../normalize.ts";
 import { TODO_TOOL_DESCRIPTION } from "../prompt.ts";
 import {
 	applyParams,
@@ -27,20 +28,24 @@ import {
 	sanitizeTodoText,
 	TODO_STATE_ENTRY_TYPE,
 	type TodoCompletionTransition,
+	type TodoOperation,
 	type TodoPhase,
 	type TodoStateEntry,
 	type TodoToolDetails,
 } from "../state.ts";
 
-const TodoOperationSchema = Type.Union([
-	Type.Literal("init"),
-	Type.Literal("start"),
-	Type.Literal("done"),
-	Type.Literal("rm"),
-	Type.Literal("drop"),
-	Type.Literal("append"),
-	Type.Literal("view"),
-]);
+const TodoOperationSchema = Type.Union(
+	[
+		Type.Literal("init"),
+		Type.Literal("start"),
+		Type.Literal("done"),
+		Type.Literal("rm"),
+		Type.Literal("drop"),
+		Type.Literal("append"),
+		Type.Literal("view"),
+	],
+	{ description: "Operation to perform. Required — always pass it explicitly." },
+);
 
 const TodoPhaseInputSchema = Type.Object({
 	phase: Type.String({ description: "Phase name" }),
@@ -51,13 +56,15 @@ const TodoPhaseInputSchema = Type.Object({
 });
 
 export const TODO_PARAMS_SCHEMA = Type.Object({
-	op: TodoOperationSchema,
+	op: Type.Optional(TodoOperationSchema),
 	list: Type.Optional(Type.Array(TodoPhaseInputSchema, { description: "Phased task list for init" })),
-	task: Type.Optional(Type.String({ description: "Task content" })),
-	phase: Type.Optional(Type.String({ description: "Phase name" })),
+	task: Type.Optional(Type.String({ description: "Exact task text copied from the previous todo result" })),
+	phase: Type.Optional(Type.String({ description: "Exact phase name copied from the previous todo result" })),
 	// Keep this unconstrained at the schema boundary. init and append return
 	// operation-specific errors, while unrelated operations may ignore it.
-	items: Type.Optional(Type.Array(Type.String({ description: "Task content" }), { description: "Tasks to append" })),
+	items: Type.Optional(
+		Type.Array(Type.String({ description: "Task content" }), { description: "Task texts to append" }),
+	),
 });
 
 type TodoParams = Static<typeof TODO_PARAMS_SCHEMA>;
@@ -66,10 +73,6 @@ type TodoAccessors = {
 	getCurrentPhases: () => TodoPhase[];
 	setCurrentPhases: (phases: TodoPhase[]) => void;
 	syncWidget: (ctx: ExtensionContext) => void;
-};
-
-type TodoToolResult = AgentToolResult<TodoToolDetails> & {
-	isError?: boolean;
 };
 
 function countInitItems(params: TodoParams): { phases: number; tasks: number } {
@@ -106,6 +109,11 @@ function renderCallLabel(params: TodoParams): string {
 			return `todo rm: ${sanitizeTodoText(params.task ?? params.phase ?? "all") || "all"}`;
 		case "view":
 			return "todo view";
+		// Normalization can rescue a call that omitted `op`; label it generically until
+		// execute resolves the effective operation. Listing `undefined` explicitly (instead
+		// of `default`) keeps this switch exhaustive, so a new TodoOperation fails typecheck.
+		case undefined:
+			return "todo";
 	}
 }
 
@@ -178,6 +186,7 @@ function formatTaskLine(
 
 function computeTouchedPhases(
 	args: TodoParams,
+	operation: TodoOperation | undefined,
 	phases: readonly TodoPhase[],
 	completedTasks: readonly TodoCompletionTransition[],
 ): Set<string> | null {
@@ -188,16 +197,32 @@ function computeTouchedPhases(
 		if (activePhase) touched.add(activePhase.name);
 	}
 	for (const transition of completedTasks) touched.add(transition.phase);
-	if (args.op === "init") {
-		for (const phase of phases) touched.add(phase.name);
-	} else {
-		if (args.phase) {
-			const phase = phases.find((candidate) => candidate.name === args.phase);
-			if (phase) touched.add(phase.name);
+	// Exhaustive over TodoOperation | undefined so adding an operation is a typecheck
+	// failure here rather than a silent fall-through into target-scoped highlighting.
+	switch (operation) {
+		case "init":
+			for (const phase of phases) touched.add(phase.name);
+			break;
+		case "start":
+		case "done":
+		case "drop":
+		case "rm":
+		case "append":
+		case "view":
+		case undefined: {
+			if (args.phase) {
+				const phase = phases.find((candidate) => candidate.name === args.phase);
+				if (phase) touched.add(phase.name);
+			}
+			if (args.task) {
+				const hit = findTaskByContent([...phases], args.task);
+				if (hit) touched.add(hit.phase.name);
+			}
+			break;
 		}
-		if (args.task) {
-			const hit = findTaskByContent([...phases], args.task);
-			if (hit) touched.add(hit.phase.name);
+		default: {
+			const _exhaustive: never = operation;
+			return touched.size > 0 ? touched : null;
 		}
 	}
 	return touched.size > 0 ? touched : null;
@@ -210,6 +235,7 @@ function renderTodoPhases(
 	completedTasks: readonly TodoCompletionTransition[],
 	options: ToolRenderResultOptions,
 	args: TodoParams,
+	operation: TodoOperation | undefined,
 	theme: Theme,
 	frame: number | undefined,
 ): string {
@@ -217,7 +243,9 @@ function renderTodoPhases(
 	if (visiblePhases.length === 0) return "";
 
 	const touched =
-		options.expanded || visiblePhases.length === 1 ? null : computeTouchedPhases(args, visiblePhases, completedTasks);
+		options.expanded || visiblePhases.length === 1
+			? null
+			: computeTouchedPhases(args, operation, visiblePhases, completedTasks);
 	const completionKeysByPhase = new Map<string, Set<string>>();
 	for (const transition of completedTasks) {
 		let completionKeys = completionKeysByPhase.get(transition.phase);
@@ -265,16 +293,23 @@ export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): vo
 		],
 		parameters: TODO_PARAMS_SCHEMA,
 		executionMode: "sequential",
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<TodoToolResult> {
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<AgentToolResult<TodoToolDetails>> {
 			const previousPhases = clonePhases(accessors.getCurrentPhases());
-			const readOnly = params.op === "view";
+			const normalized = normalizeTodoParams(params as Record<string, unknown>, previousPhases);
+			if (normalized.error || !normalized.entry) {
+				const error =
+					normalized.error ?? 'Missing "op". Example: {"op":"init","list":[{"phase":"Setup","items":["..."]}]}';
+				throw new Error(`${error}\n\n${formatSummary(previousPhases, [], true)}`);
+			}
+			const entry = normalized.entry;
+			const corrections = normalized.corrections;
+			const readOnly = entry.op === "view";
 			const applied = readOnly
 				? { phases: previousPhases, errors: [] as string[] }
-				: applyParams(clonePhases(previousPhases), params);
-			const failed = applied.errors.length > 0;
-			const effective = failed ? previousPhases : applied.phases;
-			const completedTasks = readOnly || failed ? [] : getCompletionTransitions(previousPhases, applied.phases);
-			if (!readOnly && !failed) {
+				: applyParams(clonePhases(previousPhases), entry, corrections);
+			if (applied.errors.length > 0) throw new Error(formatSummary(previousPhases, applied.errors, readOnly));
+			const completedTasks = readOnly ? [] : getCompletionTransitions(previousPhases, applied.phases);
+			if (!readOnly) {
 				pi.appendEntry(TODO_STATE_ENTRY_TYPE, {
 					schema: "v2",
 					phases: clonePhases(applied.phases),
@@ -284,23 +319,22 @@ export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): vo
 			}
 
 			const details: TodoToolDetails = {
-				op: params.op,
-				phases: clonePhases(effective),
+				op: entry.op,
+				phases: clonePhases(applied.phases),
 				storage: ctx.sessionManager.getSessionFile() ? "session" : "memory",
 			};
+			if (corrections.length > 0) details.corrections = corrections;
 			if (completedTasks.length > 0) details.completedTasks = completedTasks;
+			const summary = formatSummary(applied.phases, [], readOnly);
+			const text = corrections.length > 0 ? `${corrections.join("\n")}\n\n${summary}` : summary;
 
-			return {
-				content: [{ type: "text", text: formatSummary(effective, applied.errors, readOnly) }],
-				details,
-				isError: failed ? true : undefined,
-			};
+			return { content: [{ type: "text", text }], details };
 		},
 		renderCall(args, theme) {
 			return new Text(theme.fg("toolTitle", theme.bold(renderCallLabel(args))), 0, 0);
 		},
 		renderResult(result, options, theme, context: ToolRenderContext<unknown, TodoParams>) {
-			if (isTodoToolError(result) || context.isError) {
+			if (context.isError) {
 				return new Text(theme.fg("toolOutput", getTextContent(result)), 0, 0);
 			}
 			const phases = result.details?.phases ?? [];
@@ -309,6 +343,7 @@ export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): vo
 				result.details?.completedTasks ?? [],
 				options,
 				context.args,
+				result.details?.op,
 				theme,
 				context.spinnerFrame,
 			);
@@ -318,8 +353,4 @@ export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): vo
 	};
 
 	pi.registerTool(tool);
-}
-
-function isTodoToolError(result: AgentToolResult<TodoToolDetails>): result is TodoToolResult {
-	return "isError" in result && result.isError === true;
 }

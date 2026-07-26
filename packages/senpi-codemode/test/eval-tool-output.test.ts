@@ -6,6 +6,7 @@ import type { AgentToolResult, AgentToolUpdateCallback } from "@code-yeongyu/sen
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultCodemodeSettings } from "../src/config/settings.ts";
 import { createEvalTool } from "../src/tool/eval-tool.ts";
+import { STATUS_EVENT_HISTORY_LIMIT } from "../src/tool/status-events.ts";
 import type { EvalToolDetails } from "../src/tool/types.ts";
 import { errorResult, FakeKernel, FakeManager, fakeExtensionContext, result } from "./eval/fakes.ts";
 
@@ -258,5 +259,49 @@ describe("eval tool output pipeline", () => {
 			isError: true,
 			cells: [{ status: "error", output: expect.stringContaining("partial") }],
 		});
+	});
+
+	it("bounds high-volume helper status history in partial and final details", async () => {
+		// Given
+		const totalEvents = STATUS_EVENT_HISTORY_LIMIT + 25;
+		const kernel = new FakeKernel([
+			...Array.from({ length: totalEvents }, (_, index) => ({
+				type: "status" as const,
+				event: {
+					op: "read",
+					path: `/tmp/file-${index}.txt`,
+					preview: "x".repeat(500),
+				},
+			})),
+			result("status-history", "done", 1),
+		]);
+		const tool = createEvalTool({
+			enabledLanguages: { js: true, py: false, rb: false, jl: false },
+			kernelManager: new FakeManager([["js", kernel]]),
+			cellTimeoutSeconds: 30,
+			executeTool: vi.fn(),
+		});
+		const partialHistoryLengths: number[] = [];
+		const onUpdate: AgentToolUpdateCallback<EvalToolDetails> = (update) => {
+			const historyLength = update.details.statusEvents?.length;
+			if (historyLength !== undefined) partialHistoryLengths.push(historyLength);
+		};
+
+		// When
+		const toolResult = await tool.execute(
+			"status-history",
+			{ language: "js", code: "for (const path of paths) read(path)" },
+			undefined,
+			onUpdate,
+			fakeExtensionContext(),
+		);
+
+		// Then
+		expect(partialHistoryLengths.length).toBeGreaterThanOrEqual(totalEvents);
+		expect(Math.max(...partialHistoryLengths)).toBe(STATUS_EVENT_HISTORY_LIMIT);
+		expect(partialHistoryLengths.every((length) => length <= STATUS_EVENT_HISTORY_LIMIT)).toBe(true);
+		expect(toolResult.details.statusEvents).toHaveLength(STATUS_EVENT_HISTORY_LIMIT);
+		expect(toolResult.details.statusEvents?.[0]).toEqual({ op: "status-events-omitted", count: 26 });
+		expect(toolResult.details.cells?.[0]?.statusEvents).toEqual(toolResult.details.statusEvents);
 	});
 });

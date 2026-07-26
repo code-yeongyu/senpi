@@ -7,7 +7,7 @@ import { defaultCodemodeSettings } from "../src/config/settings.ts";
 import { type CodemodeSessionManager, createCodemodeSessionManager } from "../src/extension/session-manager.ts";
 import type { InterpreterAvailability } from "../src/interpreters/detect.ts";
 import type { PythonKernelStartOptions } from "../src/kernels/py/kernel.ts";
-import type { EvalKernel, EvalKernelRunInput } from "../src/tool/types.ts";
+import type { EvalKernel, EvalKernelRunInput, KernelInterruptHandle } from "../src/tool/types.ts";
 import { fakeExtensionContext } from "./eval/fakes.ts";
 
 interface SessionManagerHarness {
@@ -42,7 +42,9 @@ class FakeKernel implements EvalKernel {
 		return { type: "result", cellId: input.cellId, ok: true, durationMs: 0 };
 	}
 
-	async interrupt(): Promise<void> {}
+	async interrupt(): Promise<KernelInterruptHandle> {
+		return { stateRetained: Promise.resolve(true) };
+	}
 
 	deliverToolReply(): void {}
 

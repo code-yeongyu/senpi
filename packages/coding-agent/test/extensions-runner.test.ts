@@ -129,6 +129,7 @@ describe("ExtensionRunner", () => {
 		getAllTools: () => [],
 		setActiveTools: () => {},
 		refreshTools: () => {},
+		registerRemovedToolHint: () => {},
 		getCommands: () => [],
 		setModel: async () => false,
 		getThinkingLevel: () => "off",
@@ -581,6 +582,50 @@ describe("ExtensionRunner", () => {
 
 			expect(tools).toHaveLength(1);
 			expect(tools[0]?.definition.description).toBe("first");
+		});
+	});
+
+	describe("removed-tool hint registration", () => {
+		it("treats a legacy extension record without hints as an empty registry", async () => {
+			const runtime = createExtensionRuntime();
+			const extension = await loadExtensionFromFactory(() => {}, tempDir, createEventBus(), runtime, "legacy.ts");
+			Reflect.deleteProperty(extension, "removedToolHints");
+			const runner = new ExtensionRunner([extension], runtime, tempDir, sessionManager, modelRegistry);
+
+			expect(() => runner.bindCore(extensionActions, extensionContextActions)).not.toThrow();
+		});
+
+		it("forwards plugin-registered hints during bind and after bind", async () => {
+			let pluginApi: import("../src/core/extensions/types.ts").ExtensionAPI | undefined;
+			const runtime = createExtensionRuntime();
+			const extension = await loadExtensionFromFactory(
+				(pi) => {
+					pluginApi = pi;
+					pi.registerRemovedToolHint("exec", "Use eval instead.");
+				},
+				tempDir,
+				createEventBus(),
+				runtime,
+				"plugin-hints.ts",
+			);
+			const runner = new ExtensionRunner([extension], runtime, tempDir, sessionManager, modelRegistry);
+			const registered: Record<string, string> = {};
+
+			runner.bindCore(
+				{
+					...extensionActions,
+					registerRemovedToolHint: (name, hint) => {
+						registered[name] = hint;
+					},
+				},
+				extensionContextActions,
+			);
+			pluginApi?.registerRemovedToolHint("wait", "Use eval completion notifications instead.");
+
+			expect(registered).toEqual({
+				exec: "Use eval instead.",
+				wait: "Use eval completion notifications instead.",
+			});
 		});
 	});
 

@@ -1,9 +1,35 @@
 import type { AgentTool, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage, fauxToolCall, type Model } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, type Model, type Usage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { BuildSystemPromptOptions, ExtensionAPI } from "../../src/index.ts";
 import { createHarness, getAssistantTexts, type Harness } from "./harness.ts";
+
+function seedBelowThresholdCompactionContext(harness: Harness): void {
+	const timestamp = Date.now() - 1_000;
+	const model = harness.getModel();
+	harness.sessionManager.appendMessage({
+		role: "user",
+		content: [{ type: "text", text: "preflight context ".repeat(120) }],
+		timestamp: timestamp - 1,
+	});
+	harness.sessionManager.appendMessage({
+		...fauxAssistantMessage("preflight response"),
+		api: model.api,
+		provider: model.provider,
+		model: model.id,
+		usage: {
+			input: 1_000,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 1_000,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		timestamp,
+	});
+	harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+}
 
 describe("AgentSession model and extension characterization", () => {
 	const harnesses: Harness[] = [];
@@ -298,6 +324,23 @@ describe("AgentSession model and extension characterization", () => {
 	});
 
 	it("allows extension tool_result handlers to modify tool results", async () => {
+		const toolUsage: Usage = {
+			input: 1,
+			output: 2,
+			cacheRead: 3,
+			cacheWrite: 4,
+			totalTokens: 10,
+			cost: { input: 0.1, output: 0.2, cacheRead: 0.3, cacheWrite: 0.4, total: 1 },
+		};
+		const patchedToolUsage: Usage = {
+			input: 5,
+			output: 6,
+			cacheRead: 7,
+			cacheWrite: 8,
+			totalTokens: 26,
+			cost: { input: 0.5, output: 0.6, cacheRead: 0.7, cacheWrite: 0.8, total: 2.6 },
+		};
+		let observedToolUsage: Usage | undefined;
 		const echoTool: AgentTool = {
 			name: "echo",
 			label: "Echo",
@@ -305,17 +348,21 @@ describe("AgentSession model and extension characterization", () => {
 			parameters: Type.Object({ text: Type.String() }),
 			execute: async (_toolCallId, params) => {
 				const text = typeof params === "object" && params !== null && "text" in params ? String(params.text) : "";
-				return { content: [{ type: "text", text }], details: { text } };
+				return { content: [{ type: "text", text }], details: { text }, usage: toolUsage };
 			},
 		};
 		const harness = await createHarness({
 			tools: [echoTool],
 			extensionFactories: [
 				(pi) => {
-					pi.on("tool_result", async () => ({
-						content: [{ type: "text", text: "patched result" }],
-						details: { patched: true },
-					}));
+					pi.on("tool_result", async (event) => {
+						observedToolUsage = event.usage;
+						return {
+							content: [{ type: "text", text: "patched result" }],
+							details: { patched: true },
+							usage: patchedToolUsage,
+						};
+					});
 				},
 			],
 		});
@@ -338,9 +385,12 @@ describe("AgentSession model and extension characterization", () => {
 		await harness.session.prompt("hi");
 
 		expect(getAssistantTexts(harness)).toContain("patched result");
-		expect(
-			harness.session.messages.find((message) => message.role === "toolResult" && message.details?.patched === true),
-		).toBeDefined();
+		const toolResult = harness.session.messages.find(
+			(message) => message.role === "toolResult" && message.details?.patched === true,
+		);
+		expect(observedToolUsage).toEqual(toolUsage);
+		expect(toolResult).toBeDefined();
+		expect(toolResult?.role === "toolResult" ? toolResult.usage : undefined).toEqual(patchedToolUsage);
 	});
 
 	it("allows extension context handlers to modify messages before the LLM call", async () => {
@@ -448,6 +498,75 @@ describe("AgentSession model and extension characterization", () => {
 		expect(seenOptions[0]?.cwd).toBe(harness.tempDir);
 		expect(seenOptions[0]?.selectedTools).toContain("read");
 		expect(seenOptions[1]?.selectedTools).toContain("mutated_tool");
+	});
+
+	it.each([
+		{
+			label: "next-turn and before_agent_start custom state on a normal prompt",
+			beforeAgentStartCalls: 1,
+			admit: async (harness: Harness, oversized: string) => {
+				await harness.session.sendCustomMessage(
+					{ customType: "oversized-next-turn", content: oversized, display: false },
+					{ deliverAs: "nextTurn" },
+				);
+				return await harness.session.prompt("normal prompt after initial preflight");
+			},
+		},
+		{
+			label: "trigger-turn custom state",
+			beforeAgentStartCalls: 0,
+			admit: async (harness: Harness, oversized: string) =>
+				await harness.session.sendCustomMessage(
+					{ customType: "oversized-trigger-turn", content: oversized, display: false },
+					{ triggerTurn: true },
+				),
+		},
+	])("rejects a fully assembled oversized request for $label before its provider call", async (scenario) => {
+		const oversized = "final request content ".repeat(4_000);
+		let beforeAgentStartCalls = 0;
+		let compactionRequests = 0;
+		const harness = await createHarness({
+			models: [{ id: "final-request-preflight", contextWindow: 5_000, maxTokens: 1_000 }],
+			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 1_000 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("before_agent_start", () => {
+						beforeAgentStartCalls += 1;
+						return {
+							message: {
+								customType: "oversized-before-agent-start",
+								content: oversized,
+								display: false,
+							},
+						};
+					});
+					pi.on("session_before_compact", () => {
+						compactionRequests += 1;
+						return {
+							cancel: true,
+							rejectionCause: "cancelled-by-extension",
+							reason: "final assembled request must not reach the provider",
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedBelowThresholdCompactionContext(harness);
+		harness.setResponses([fauxAssistantMessage("provider must not receive the oversized request")]);
+
+		const error = await scenario.admit(harness, oversized).then(
+			() => undefined,
+			(reason: unknown) => reason,
+		);
+
+		expect(error).toBeInstanceOf(Error);
+		expect((error as Error).message).toContain(
+			"Context remains above the compaction threshold because compaction did not complete",
+		);
+		expect(beforeAgentStartCalls).toBe(scenario.beforeAgentStartCalls);
+		expect(compactionRequests).toBe(1);
+		expect(harness.faux.state.callCount).toBe(0);
 	});
 
 	it("allows before_agent_start handlers to inject custom messages and modify the system prompt", async () => {

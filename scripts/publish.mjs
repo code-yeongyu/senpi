@@ -1,23 +1,31 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assertSenpiPackedWorkspaceFiles, prepareSenpiBundledWorkspaces } from "./prepare-senpi-bundled-workspaces.mjs";
+import {
+	assertSenpiPackedWorkspaceFiles,
+	prepareSenpiBundledWorkspaces,
+	rewriteOwnedRegistryAliases,
+} from "./prepare-senpi-bundled-workspaces.mjs";
 
-// Only STANDALONE-published npm packages belong here. Excluded on purpose:
-//  - @code-yeongyu/senpi-orchestrator is `private: true` (never published).
-//  - @code-yeongyu/senpi-codemode ships via senpi's `bundleDependencies` (packed
-//    INTO the @code-yeongyu/senpi tarball), so consumers get it without a registry
-//    entry; publishing it standalone via OIDC trusted publishing fails E404 because
-//    it is a brand-new scoped package name OIDC cannot create.
+// Source packages retain their upstream names and private guard. Each is published
+// from a temporary manifest under our scope, while every source import continues to
+// resolve through the original @earendil-works key and its owned npm alias.
+//
+// @code-yeongyu/senpi-server remains excluded because it is `private: true`, and
+// @earendil-works/pi-storage-sqlite-node keeps upstream's independent semver line.
 const packages = [
-	{ directory: "packages/ai", name: "@earendil-works/pi-ai" },
-	{ directory: "packages/agent", name: "@earendil-works/pi-agent-core" },
-	{ directory: "packages/tui", name: "@earendil-works/pi-tui" },
+	{ directory: "packages/ai", name: "@code-yeongyu/senpi-ai", rewriteManifest: true },
+	{ directory: "packages/agent", name: "@code-yeongyu/senpi-agent-core", rewriteManifest: true },
+	{ directory: "packages/tui", name: "@code-yeongyu/senpi-tui", rewriteManifest: true },
+	{ directory: "packages/pty", name: "@code-yeongyu/senpi-pty", rewriteManifest: true },
+	{ directory: "packages/senpi-codemode", name: "@code-yeongyu/senpi-codemode", rewriteManifest: true },
 	{ directory: "packages/coding-agent", name: "@code-yeongyu/senpi" },
 ];
-const sourceOnlyPackages = new Set([]);
+const sourceOnlyPackages = new Set(["@code-yeongyu/senpi-codemode"]);
+const temporaryPublishDirectories = [];
 
 const dryRun = process.argv.includes("--dry-run");
 const unknownArgs = process.argv.slice(2).filter((arg) => arg !== "--dry-run");
@@ -50,6 +58,30 @@ function run(command, args, options = {}) {
 
 function readPackageJson(directory) {
 	return JSON.parse(readFileSync(join(directory, "package.json"), "utf8"));
+}
+
+function stagePublishDirectory(pkg) {
+	if (!pkg.rewriteManifest) {
+		return pkg.directory;
+	}
+
+	const temporaryRoot = mkdtempSync(join(tmpdir(), "senpi-publish-"));
+	const directory = join(temporaryRoot, "package");
+	cpSync(pkg.directory, directory, { recursive: true });
+	const manifestPath = join(directory, "package.json");
+	const manifest = readPackageJson(directory);
+	manifest.name = pkg.name;
+	delete manifest.private;
+	rewriteOwnedRegistryAliases(manifest);
+	writeFileSync(manifestPath, `${JSON.stringify(manifest, null, "\t")}\n`);
+	temporaryPublishDirectories.push(temporaryRoot);
+	return directory;
+}
+
+function removeTemporaryPublishDirectories() {
+	for (const directory of temporaryPublishDirectories) {
+		rmSync(directory, { recursive: true, force: true });
+	}
 }
 
 function assertBuildOutputExists(directory) {
@@ -106,7 +138,7 @@ function isPublished(name, version) {
 const packageVersions = new Map();
 for (const pkg of packages) {
 	const packageJson = readPackageJson(pkg.directory);
-	if (packageJson.name !== pkg.name) {
+	if (!pkg.rewriteManifest && packageJson.name !== pkg.name) {
 		throw new Error(`${pkg.directory}/package.json has name ${packageJson.name}, expected ${pkg.name}`);
 	}
 	packageVersions.set(pkg.name, packageJson.version);
@@ -123,6 +155,7 @@ prepareSenpiBundledWorkspaces();
 
 const packageStates = packages.map((pkg) => ({
 	...pkg,
+	publishDirectory: stagePublishDirectory(pkg),
 	published: false,
 	version: packageVersions.get(pkg.name),
 }));
@@ -136,24 +169,29 @@ for (const pkg of packageStates) {
 	} else {
 		console.log(`${pkg.name}@${pkg.version} is not published; validating package contents before publish.`);
 	}
-	validatePack(pkg.directory);
+	validatePack(pkg.publishDirectory);
 	console.log();
 }
 
 if (dryRun) {
+	removeTemporaryPublishDirectories();
 	process.exit(0);
 }
 
 console.log("All packages validated; starting publication.\n");
 
-for (const pkg of packageStates) {
-	if (pkg.published) {
-		console.log(`Skipping ${pkg.name}@${pkg.version}: already published\n`);
-		continue;
-	}
+try {
+	for (const pkg of packageStates) {
+		if (pkg.published) {
+			console.log(`Skipping ${pkg.name}@${pkg.version}: already published\n`);
+			continue;
+		}
 
-	run("npm", ["publish", "--access", "public", "--tag", "latest", "--provenance", "--ignore-scripts"], {
-		cwd: pkg.directory,
-	});
-	console.log();
+		run("npm", ["publish", "--access", "public", "--tag", "latest", "--provenance", "--ignore-scripts"], {
+			cwd: pkg.publishDirectory,
+		});
+		console.log();
+	}
+} finally {
+	removeTemporaryPublishDirectories();
 }

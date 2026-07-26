@@ -160,3 +160,38 @@ codex-aligned tool naming, and budget-driven behavior removed. An optional
 - LOW: `builtin/index.ts` import block + `builtinExtensions` array if upstream
   reorders or adds builtins.
 - NONE for `extensions/types.ts` (untouched).
+
+## Sync from pi-goal 0.3.0 (2026-07-26)
+
+### Source
+
+- Canonical source: `code-yeongyu/pi-goal` 0.3.0, merged by
+  [pi-goal PR #1](https://github.com/code-yeongyu/pi-goal/pull/1).
+- Version metadata was regenerated through `sync-builtin-extensions.mjs`; this
+  builtin remains a manual-merge package because of senpi-only structure.
+
+### What changed
+
+- Imported the blocked lifecycle (`blockedReason`/`blockedAt`), model-only
+  blocked/complete transitions, and blocked continuation suppression.
+- `create_goal` now replaces a completed goal after JSONL archival; oversized
+  objectives are marker-budget truncated and preserve their full text in a
+  per-thread spill file.
+- Aligned tool schemas and guidance with the 4,000-character, complete-replace,
+  and blocked-audit contract while retaining budget-free behavior.
+
+### Senpi conflict zone: abort detection
+
+- Standalone pi-goal 0.3.0 captures `ctx.signal` and treats any aborted signal
+  as a user interruption. Senpi deliberately does not retain that heuristic:
+  todo 11 supplies an internal agent-end aborted flag so only a real user abort
+  blocks an active goal.
+- Follow up upstream: add an aborted flag and source to the published extension
+  API so standalone pi-goal can remove its `ctx.signal` heuristic too.
+
+### Expected merge conflict zones on the next sync
+
+- HIGH: `store.ts`/`persistence.ts` retain senpi's atomic writes and stale-brace
+  recovery while upstream owns the lifecycle persistence semantics.
+- MEDIUM: `index.ts`, `tool-registration.ts`, and `ui.ts` retain senpi's split
+  registration, elapsed ticker, and core abort-event integration.

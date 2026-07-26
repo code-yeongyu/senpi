@@ -21,8 +21,8 @@ function createModel(id: string): Model<Api> {
 const GPT_PRESETS = ["gpt-5", "gpt-5.2", "gpt-5.3-codex", "gpt-5.4", "gpt-5.5", "gpt-5.6"] as const;
 
 describe("GPT eval tool routing", () => {
-	it.each(GPT_PRESETS)("%s coordinates eligible tool work through eval", (presetName) => {
-		// Given: a GPT preset with the persistent eval tool registered.
+	it.each(GPT_PRESETS)("%s routes Code Mode orchestration separately from persistent eval work", (presetName) => {
+		// Given: a GPT preset with both Code Mode surfaces registered.
 		const settings: PromptPresetSettings = { promptPreset: presetName };
 		const model = createModel(presetName);
 		const evalGuideline = buildEvalPrompt(
@@ -30,8 +30,12 @@ describe("GPT eval tool routing", () => {
 			{ spawns: false, modelId: presetName },
 		).promptGuidelines[0];
 		const options = {
-			selectedTools: ["eval"],
-			toolSnippets: { eval: "Run one persistent code cell." },
+			selectedTools: ["eval", "exec", "wait"],
+			toolSnippets: {
+				eval: "Run one persistent code cell.",
+				exec: "Execute a bounded JavaScript Code Mode cell.",
+				wait: "Observe a yielded Code Mode cell.",
+			},
 			promptGuidelines: [evalGuideline],
 			contextFiles: [],
 			skills: [],
@@ -40,11 +44,13 @@ describe("GPT eval tool routing", () => {
 		// When: the system prompt is composed for that preset.
 		const preset = resolvePreset(model, settings, options);
 
-		// Then: its GPT-specific rule defers the detailed policy to eval's live tool guideline.
+		// Then: its GPT-specific route prefers the public Code Mode executor for
+		// bounded orchestration while retaining eval's live multi-language policy.
 		if (!preset) {
 			throw new Error(`expected ${presetName} preset to resolve`);
 		}
-		expect(preset.prompt).toContain("When `eval` is available, follow its Tool Guidelines for multi-call work.");
+		expect(preset.prompt).toContain("When `exec` and `wait` are available");
+		expect(preset.prompt).toContain("when `eval` is available, follow its Tool Guidelines");
 		expect(preset.prompt).toContain(evalGuideline);
 	});
 
@@ -68,5 +74,6 @@ describe("GPT eval tool routing", () => {
 		}
 		expect(preset.prompt).not.toContain("When `eval` is available, use it as the default coordinator");
 		expect(preset.prompt).not.toContain("When `eval` is available, follow its Tool Guidelines for multi-call work.");
+		expect(preset.prompt).not.toContain("When `exec` and `wait` are available");
 	});
 });

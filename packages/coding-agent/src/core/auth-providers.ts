@@ -2,8 +2,8 @@
  * Provider-list builders for the /login and /logout selectors.
  *
  * This is the single source of truth shared by the classic interactive mode and
- * the RPC connection handler (neo). It intentionally depends only on the
- * ModelRegistry (and its AuthStorage) so both the TUI and the headless RPC path
+ * the RPC connection handler. It intentionally depends only on the ModelRegistry
+ * (and its AuthStorage) so both the TUI and the headless RPC path
  * produce IDENTICAL provider lists — same ids, same display names, same
  * oauth/api_key classification, same status source.
  */

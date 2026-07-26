@@ -20,13 +20,17 @@ Fields:
 - \`code\` — cell body, verbatim. Newlines/quotes JSON-encoded; no fences, no headers.
 - \`title\` (optional) — short transcript label (e.g. \`"imports"\`).
 - \`timeout\` (optional) — seconds. Raise only for heavy compute or long non-agent tool calls.
+- \`on_timeout\` (optional) — \`"detach"\` keeps pure computation running in interactive sessions (the default); \`"error"\` interrupts for deadline-sensitive work and is the print/json default.
 - \`reset\` (optional) — wipe this language's kernel first. Per-language: a \`py\` reset never touches the JS VM.
+- \`action\` (optional) — defaults to \`"run"\`. A detached cell returns its id: use \`eval({ action: "peek", cell_id })\` for buffered output/state or \`eval({ action: "stop", cell_id })\` to cancel it.
+
+A detached cell keeps its language kernel busy while it finishes. Do not re-run a detached cell: the same-language busy error names its cell id and output tail; another language can continue. Completion arrives as one notification with the final value/error and buffered output. Stopping a cell interrupts its kernel; the stop result states whether kernel state survived or the kernel was restarted and its variables lost.
 
 Live event loop: use top-level \`await\` directly; \`asyncio.run(…)\` raises "cannot be called from a running event loop".
 JS runs under Node.js worker: top-level \`await\`/\`return\` work; \`fetch\`/\`Buffer\` available.
 Ruby: synchronous; helper options are keyword args (e.g. \`output("id", limit: 2)\`); the last expression auto-displays unless it is \`nil\`, an assignment, or a definition (like IRB).
 Julia: synchronous; helper options are standard keyword args (e.g. \`output("id", limit=2)\`); the last expression auto-displays unless it is an assignment or a definition (like the Julia REPL).
-On error, fix and re-run only the failing step — prior calls' state survives.
+On error, fix and re-run only the failing step. State usually survives a normal error, but a timeout or stop may have restarted the kernel — its message says which. Before rebuilding state, check a sentinel (a variable you defined earlier); only re-establish what is actually gone, since blind re-runs duplicate side effects.
 </instruction>
 
 <prelude>
@@ -43,7 +47,7 @@ write(path, content) → str
 env(key?=None, value?=None) → str | None | dict
     No args → full env dict; one → value of \`key\`; two → set \`key=value\`, return value.
 output(*ids, format?="raw", offset?=None, limit?=None) → str | dict | list[dict]
-    Task/agent output by id. \`format\` selects full (\`"raw"\`) or trailing (\`"tail"\`) output.
+    Task/agent output by id. Reads immediately: running tasks return their status; \`format\` selects full (\`"raw"\`) or trailing (\`"tail"\`) output.
 tool.<name>(args) → unknown
     Invoke any session tool; \`args\` = its parameter object.
 completion(prompt, model?="default", system?=None, schema?=None) → str | dict
@@ -131,11 +135,15 @@ Fields:
 - \`code\` — cell body, verbatim. Newlines/quotes JSON-encoded; no fences, no headers.
 - \`title\` (optional) — short transcript label (e.g. \`"imports"\`).
 - \`timeout\` (optional) — seconds. Raise only for heavy compute or long tool calls.
+- \`on_timeout\` (optional) — \`"detach"\` keeps pure computation running in interactive sessions (the default); \`"error"\` interrupts for deadline-sensitive work and is the print/json default.
 - \`reset\` (optional) — wipe this language's kernel first.
+- \`action\` (optional) — defaults to \`"run"\`. A detached cell returns its id: use \`eval({ action: "peek", cell_id })\` for buffered output/state or \`eval({ action: "stop", cell_id })\` to cancel it.
+
+A detached cell keeps its language kernel busy while it finishes. Do not re-run a detached cell: the same-language busy error names its cell id and output tail; another language can continue. Completion arrives as one notification with the final value/error and buffered output. Stopping a cell interrupts its kernel; the stop result states whether kernel state survived or the kernel was restarted and its variables lost.
 
 JS runs under Node.js worker: top-level \`await\`/\`return\` work; \`fetch\`/\`Buffer\` available.
 
-On error, fix and re-run only the failing step — prior calls' state survives.
+On error, fix and re-run only the failing step. State usually survives a normal error, but a timeout or stop may have restarted the kernel — its message says which. Before rebuilding state, check a sentinel (a variable you defined earlier); only re-establish what is actually gone, since blind re-runs duplicate side effects.
 </instruction>
 
 <prelude>
@@ -197,12 +205,16 @@ Fields:
 - \`code\` — cell body, verbatim. Newlines/quotes JSON-encoded; no fences, no headers.
 - \`title\` (optional) — short transcript label (e.g. \`"imports"\`).
 - \`timeout\` (optional) — seconds. Raise only for heavy compute or long tool calls.
+- \`on_timeout\` (optional) — \`"detach"\` keeps pure computation running in interactive sessions (the default); \`"error"\` interrupts for deadline-sensitive work and is the print/json default.
 - \`reset\` (optional) — wipe this language's kernel first. Per-language: a \`py\` reset never touches the JS VM.
+- \`action\` (optional) — defaults to \`"run"\`. A detached cell returns its id: use \`eval({ action: "peek", cell_id })\` for buffered output/state or \`eval({ action: "stop", cell_id })\` to cancel it.
+
+A detached cell keeps its language kernel busy while it finishes. Do not re-run a detached cell: the same-language busy error names its cell id and output tail; another language can continue. Completion arrives as one notification with the final value/error and buffered output. Stopping a cell interrupts its kernel; the stop result states whether kernel state survived or the kernel was restarted and its variables lost.
 
 Live event loop: use top-level \`await\` directly; \`asyncio.run(…)\` raises "cannot be called from a running event loop".
 JS runs under Node.js worker: top-level \`await\`/\`return\` work; \`fetch\`/\`Buffer\` available.
 
-On error, fix and re-run only the failing step — prior calls' state survives.
+On error, fix and re-run only the failing step. State usually survives a normal error, but a timeout or stop may have restarted the kernel — its message says which. Before rebuilding state, check a sentinel (a variable you defined earlier); only re-establish what is actually gone, since blind re-runs duplicate side effects.
 </instruction>
 
 <prelude>

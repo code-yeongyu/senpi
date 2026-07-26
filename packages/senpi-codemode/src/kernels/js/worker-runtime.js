@@ -63,6 +63,7 @@ export class JsWorkerRuntime {
 				},
 			},
 		);
+		globalThis.tools = globalThis.tool;
 		const originalLog = console.log.bind(console);
 		const originalError = console.error.bind(console);
 		const originalStdoutWrite = process.stdout.write;

@@ -261,6 +261,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		setActiveTools: notInitialized,
 		// registerTool() is valid during extension load; refresh is only needed post-bind.
 		refreshTools: () => {},
+		registerRemovedToolHint: () => {},
 		getCommands: notInitialized,
 		setModel: () => Promise.reject(new Error("Extension runtime not initialized")),
 		getThinkingLevel: notInitialized,
@@ -348,6 +349,17 @@ function createExtensionAPI(
 				sourceInfo: extension.sourceInfo,
 			});
 			runtime.refreshTools();
+		},
+
+		registerRemovedToolHint(name: string, hint: string): void {
+			runtime.assertActive();
+			let hints = extension.removedToolHints;
+			if (!hints) {
+				hints = new Map();
+				extension.removedToolHints = hints;
+			}
+			hints.set(name, hint);
+			runtime.registerRemovedToolHint(name, hint);
 		},
 
 		registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void {
@@ -565,6 +577,7 @@ function createExtension(extensionPath: string, resolvedPath: string, registrati
 		sourceInfo: createSyntheticSourceInfo(extensionPath, { source, baseDir }),
 		handlers: new Map(),
 		tools: new Map(),
+		removedToolHints: new Map(),
 		messageRenderers: new Map(),
 		entryRenderers: undefined,
 		commands: new Map(),

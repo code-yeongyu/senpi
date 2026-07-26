@@ -30,6 +30,8 @@ export interface AuthCommandDeps {
 	// Persists the provider between auth-start and auth-complete so the in-memory
 	// CSRF state survives across two command invocations in one session.
 	pending: Map<string, McpOAuthProvider>;
+	/** Per-service guard: the same server may authenticate in another session. */
+	interactiveGuard?: { begin(serverName: string): boolean; end(serverName: string): void };
 	flow?: OAuthFlowOptions;
 }
 
@@ -88,14 +90,16 @@ export async function runAuth(deps: AuthCommandDeps): Promise<void> {
 }
 
 async function runInteractive(deps: AuthCommandDeps): Promise<void> {
-	if (activeInteractiveAuthServers.has(deps.serverName)) {
+	const beginInteractiveAuth =
+		deps.interactiveGuard?.begin(deps.serverName) ?? !activeInteractiveAuthServers.has(deps.serverName);
+	if (!beginInteractiveAuth) {
 		throw new OAuthFlowError(
 			"needs_auth",
 			`MCP server ${deps.serverName} authorization is already in progress; complete the existing browser flow or retry after it finishes.`,
 			{ serverName: deps.serverName },
 		);
 	}
-	activeInteractiveAuthServers.add(deps.serverName);
+	if (deps.interactiveGuard === undefined) activeInteractiveAuthServers.add(deps.serverName);
 	let provider: McpOAuthProvider | undefined;
 	let channel: Awaited<ReturnType<typeof openCallbackChannel>> | undefined;
 	const oauth = deps.config.oauth;
@@ -139,7 +143,8 @@ async function runInteractive(deps: AuthCommandDeps): Promise<void> {
 		await deps.onReconnect();
 		deps.notify(`MCP server ${deps.serverName} authorized`);
 	} finally {
-		activeInteractiveAuthServers.delete(deps.serverName);
+		if (deps.interactiveGuard) deps.interactiveGuard.end(deps.serverName);
+		else activeInteractiveAuthServers.delete(deps.serverName);
 		await channel?.close();
 	}
 }

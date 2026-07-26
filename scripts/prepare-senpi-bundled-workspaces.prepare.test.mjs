@@ -173,14 +173,20 @@ describe("prepareSenpiBundledWorkspaces", () => {
 				name,
 			);
 		}
-		// ...and the manifest lists every staged package while preserving the ^2026.x edges.
+		// ...and the manifest lists every staged package. npm retains the original
+		// import-path keys for bundling, while Bun resolves upstream-named packages
+		// through the fork-owned aliases.
 		const manifest = JSON.parse(readFileSync(join(tempDir, "packages", "coding-agent", "package.json"), "utf8"));
 		const expectedBundle = [...BUNDLED_WORKSPACE_NAMES, "cross-spawn", "which"].sort((a, b) => a.localeCompare(b));
 		assert.deepEqual(manifest.bundleDependencies, expectedBundle);
 		assert.deepEqual(manifest.bundledDependencies, expectedBundle);
-		for (const name of BUNDLED_WORKSPACE_NAMES) {
-			assert.equal(manifest.dependencies[name], "^2026.7.22");
-		}
+		assert.deepEqual(manifest.dependencies, {
+			"@code-yeongyu/senpi-codemode": "^2026.7.22",
+			"@earendil-works/pi-agent-core": "npm:@code-yeongyu/senpi-agent-core@^2026.7.22",
+			"@earendil-works/pi-ai": "npm:@code-yeongyu/senpi-ai@^2026.7.22",
+			"@earendil-works/pi-pty": "npm:@code-yeongyu/senpi-pty@^2026.7.22",
+			"@earendil-works/pi-tui": "npm:@code-yeongyu/senpi-tui@^2026.7.22",
+		});
 	});
 
 	it("fails before bundling pty when a loader-visible file is missing", () => {

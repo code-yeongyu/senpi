@@ -21,7 +21,7 @@ describe("model fallback host wiring", () => {
 	it("makes a quick-set chain visible to the running retry engine", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1" }, { id: "faux-2" }],
-			settings: { retry: { enabled: true, baseDelayMs: 1 } },
+			settings: { retry: { enabled: true, baseDelayMs: 1, maxRetries: 0 } },
 			extensionFactories: [{ factory: modelFallbackExtension }],
 		});
 		harnesses.push(harness);
@@ -63,7 +63,7 @@ describe("model fallback host wiring", () => {
 	it("exposes active retry state through the live menu accessor", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1" }, { id: "faux-2" }],
-			settings: { retry: { enabled: true, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } } },
+			settings: { retry: { enabled: true, baseDelayMs: 1, maxRetries: 0, fallbackChains: { [primary]: [fallback] } } },
 		});
 		harnesses.push(harness);
 		harness.setResponses([

@@ -1,0 +1,146 @@
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { afterEach, describe, expect, it } from "vitest";
+import goalExtension from "../../src/core/extensions/builtin/goal/index.ts";
+import { createGoal, readGoal, updateGoal } from "../../src/core/extensions/builtin/goal/store.ts";
+import { goalStoreRef } from "../../src/core/extensions/builtin/goal/store-ref.ts";
+import type { GoalStatus } from "../../src/core/extensions/builtin/goal/types.ts";
+import { createHarness, type Harness } from "./harness.ts";
+
+type AgentEndSnapshot = {
+	aborted: boolean | undefined;
+	abortSource: "user" | "system" | undefined;
+	status: GoalStatus | undefined;
+	tokensUsed: number | undefined;
+	pendingMessages: boolean;
+};
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+	let resolve: (() => void) | undefined;
+	const promise = new Promise<void>((next) => {
+		resolve = next;
+	});
+	if (!resolve) throw new Error("Deferred resolver was not initialized");
+	return { promise, resolve };
+}
+
+describe("goal abort lifecycle through the agent session", () => {
+	const harnesses: Harness[] = [];
+
+	afterEach(() => {
+		while (harnesses.length > 0) harnesses.pop()?.cleanup();
+	});
+
+	it("marks an ESC-aborted goal blocked only after usage accounting, suppresses continuation, and resumes for the next user run", async () => {
+		const streamStarted = deferred();
+		const agentEnds: AgentEndSnapshot[] = [];
+		const statusesAtAgentStart: GoalStatus[] = [];
+		const harness = await createHarness({
+			persistSession: true,
+			extensionFactories: [
+				goalExtension,
+				(pi) => {
+					pi.on("message_update", (event) => {
+						if (event.message.role === "assistant") streamStarted.resolve();
+					});
+					pi.on("agent_start", async (_event, ctx) => {
+						const goal = await readGoal(goalStoreRef(ctx.sessionManager, ctx.cwd));
+						if (goal) statusesAtAgentStart.push(goal.status);
+					});
+					pi.on("agent_end", async (event, ctx) => {
+						const goal = await readGoal(goalStoreRef(ctx.sessionManager, ctx.cwd));
+						agentEnds.push({
+							aborted: event.aborted,
+							abortSource: event.abortSource,
+							status: goal?.status,
+							tokensUsed: goal?.tokensUsed,
+							pendingMessages: ctx.hasPendingMessages(),
+						});
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+		const ref = goalStoreRef(harness.sessionManager, harness.tempDir);
+		await createGoal(ref, "Finish the interrupted task");
+		harness.setResponses([fauxAssistantMessage("streaming response ".repeat(4_000))]);
+
+		const interruptedRun = harness.session.prompt("start the active goal");
+		await streamStarted.promise;
+		await harness.session.abort();
+		await interruptedRun;
+
+		expect(agentEnds).toEqual([
+			expect.objectContaining({
+				aborted: true,
+				abortSource: "user",
+				status: "blocked",
+				tokensUsed: expect.any(Number),
+				pendingMessages: false,
+			}),
+		]);
+		expect(agentEnds[0]?.tokensUsed).toBeGreaterThan(0);
+		expect(await readGoal(ref)).toMatchObject({
+			status: "blocked",
+			blockedReason: "user interrupted the turn",
+		});
+
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("update_goal", { status: "complete" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage("completed after resuming"),
+		]);
+		await harness.session.prompt("continue after interruption");
+
+		expect(statusesAtAgentStart).toEqual(["active", "active"]);
+		expect((await readGoal(ref))?.status).toBe("complete");
+	});
+
+	it("does not mark a normally completed agent run as aborted", async () => {
+		const observed: Array<{ aborted: boolean | undefined; abortSource: string | undefined }> = [];
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("agent_end", (event) => {
+						observed.push({ aborted: event.aborted, abortSource: event.abortSource });
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+		harness.setResponses([fauxAssistantMessage("normal completion")]);
+
+		await harness.session.prompt("run normally");
+
+		expect(observed).toEqual([{ aborted: undefined, abortSource: undefined }]);
+		expect(observed).toEqual([{ aborted: undefined, abortSource: undefined }]);
+	});
+	it("resumes a blocked goal at before_agent_start and never via a continuation-style agent_start", async () => {
+		const statusesAtBeforeAgentStart: GoalStatus[] = [];
+		const harness = await createHarness({
+			persistSession: true,
+			extensionFactories: [
+				goalExtension,
+				(pi) => {
+					pi.on("before_agent_start", async (_event, ctx) => {
+						const goal = await readGoal(goalStoreRef(ctx.sessionManager, ctx.cwd));
+						if (goal) statusesAtBeforeAgentStart.push(goal.status);
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+		const ref = goalStoreRef(harness.sessionManager, harness.tempDir);
+		await createGoal(ref, "Wait for the user");
+		await updateGoal(ref, { status: "blocked", reason: "waiting on the user" });
+
+		harness.setResponses([fauxAssistantMessage("resumed and done")]);
+		await harness.session.prompt("user returns");
+
+		// The observation extension's before_agent_start runs AFTER goalExtension's (registration order),
+		// so it sees the post-resume status.
+		expect(statusesAtBeforeAgentStart).toEqual(["active"]);
+		expect((await readGoal(ref))?.status).toBe("active");
+	});
+});

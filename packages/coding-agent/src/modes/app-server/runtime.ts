@@ -102,6 +102,7 @@ export function createAppServerRuntime(requestShutdown: (reason: string) => void
 		turnLog,
 		notifications,
 		deferUntilResponded: (connectionId, action) => core.deferUntilResponded(connectionId, action),
+		observeThread: (threadId) => turns.observeThread(threadId),
 		idleUnloadMinutes: 30,
 		replayPendingApprovals: (threadId) => {
 			approvals.replayPendingForThread(threadId);

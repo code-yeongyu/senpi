@@ -5,6 +5,7 @@
 
 import { stripAnsi } from "../../../../utils/ansi.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
+import { fuzzyResolvePhase, fuzzyResolveTask } from "./fuzzy-match.ts";
 
 export type TodoStatus = "pending" | "in_progress" | "completed" | "abandoned";
 
@@ -29,6 +30,7 @@ export type TodoToolDetails = {
 	op?: TodoOperation;
 	phases: TodoPhase[];
 	storage: "session" | "memory";
+	corrections?: string[];
 	completedTasks?: TodoCompletionTransition[];
 };
 
@@ -196,53 +198,115 @@ export function resolveTaskOrError(
 	phases: TodoPhase[],
 	content: string | undefined,
 	errors: string[],
+	corrections?: string[],
 ): TaskHit | undefined {
 	if (!content) {
 		errors.push("Missing task content");
 		return undefined;
 	}
-	const hit = findTaskByContent(phases, content);
-	if (!hit) {
-		if (/^task-\d+$/.test(content)) {
-			errors.push(
-				`Task "${content}" not found. Tasks are referenced by content, not by IDs — pass the task's full text from the previous result.`,
-			);
-		} else {
-			const totalTasks = phases.reduce((sum, phase) => sum + phase.tasks.length, 0);
-			const hint = totalTasks === 0 ? " (todo list is empty — was it replaced or not yet created?)" : "";
-			errors.push(`Task "${content}" not found${hint}`);
+	if (!corrections) {
+		const hit = findTaskByContent(phases, content);
+		if (!hit) {
+			if (/^task-\d+$/.test(content)) {
+				errors.push(
+					`Task "${content}" not found. Tasks are referenced by content, not by IDs — pass the task's full text from the previous result.`,
+				);
+			} else {
+				const totalTasks = phases.reduce((sum, phase) => sum + phase.tasks.length, 0);
+				const hint = totalTasks === 0 ? " (todo list is empty — was it replaced or not yet created?)" : "";
+				errors.push(`Task "${content}" not found${hint}`);
+			}
 		}
+		return hit;
 	}
-	return hit;
+
+	const resolution = fuzzyResolveTask(phases, content);
+	if (resolution.hit) {
+		if (resolution.corrected) {
+			corrections.push(
+				`[auto-matched] task "${content}" -> "${resolution.hit.task.content}" — pass the exact text from the previous todo result next time`,
+			);
+		}
+		return resolution.hit;
+	}
+
+	const exactMatches = phases.flatMap((phase) =>
+		phase.tasks.filter((task) => task.content === content).map((task) => ({ task, phase })),
+	);
+	if (exactMatches.length > 1) {
+		const phaseNames = [...new Set(exactMatches.map((match) => match.phase.name))].map((name) => `"${name}"`);
+		errors.push(
+			`Task "${content}" is ambiguous: duplicate task text exists in phases ${phaseNames.join(", ")}. Use /todo edit to make the task text unique.`,
+		);
+		return undefined;
+	}
+	if (/^task-\d+$/.test(content)) {
+		errors.push(
+			`Task "${content}" not found. Tasks are referenced by content, not by IDs — pass the task's full text from the previous result.`,
+		);
+		return undefined;
+	}
+	const totalTasks = phases.reduce((sum, phase) => sum + phase.tasks.length, 0);
+	const hint = totalTasks === 0 ? " (todo list is empty — was it replaced or not yet created?)" : "";
+	const suggestion = resolution.suggestion ? ` Did you mean "${resolution.suggestion}"?` : "";
+	errors.push(`Task "${content}" not found${hint}${suggestion}`);
+	return undefined;
 }
 
 export function resolvePhaseOrError(
 	phases: TodoPhase[],
 	name: string | undefined,
 	errors: string[],
+	corrections?: string[],
 ): TodoPhase | undefined {
 	if (!name) {
 		errors.push("Missing phase name");
 		return undefined;
 	}
-	const phase = findPhaseByName(phases, name);
-	if (!phase) errors.push(`Phase "${name}" not found`);
-	return phase;
+	if (!corrections) {
+		const phase = findPhaseByName(phases, name);
+		if (!phase) errors.push(`Phase "${name}" not found`);
+		return phase;
+	}
+
+	const resolution = fuzzyResolvePhase(phases, name);
+	if (resolution.hit) {
+		if (resolution.corrected) {
+			corrections.push(
+				`[auto-matched] phase "${name}" -> "${resolution.hit.name}" — pass the exact text from the previous todo result next time`,
+			);
+		}
+		return resolution.hit;
+	}
+	if (phases.filter((phase) => phase.name === name).length > 1) {
+		errors.push(
+			`Phase "${name}" is ambiguous: duplicate phase names exist. Use /todo edit to make the phase name unique.`,
+		);
+		return undefined;
+	}
+	const suggestion = resolution.suggestion ? ` Did you mean "${resolution.suggestion}"?` : "";
+	errors.push(`Phase "${name}" not found${suggestion}`);
+	return undefined;
 }
 
-export function getTaskTargets(phases: TodoPhase[], entry: TodoOpEntry, errors: string[]): TodoItem[] {
+export function getTaskTargets(
+	phases: TodoPhase[],
+	entry: TodoOpEntry,
+	errors: string[],
+	corrections?: string[],
+): TodoItem[] {
 	if (entry.task) {
-		const hit = resolveTaskOrError(phases, entry.task, errors);
+		const hit = resolveTaskOrError(phases, entry.task, errors, corrections);
 		return hit ? [hit.task] : [];
 	}
 	if (entry.phase) {
-		const phase = resolvePhaseOrError(phases, entry.phase, errors);
+		const phase = resolvePhaseOrError(phases, entry.phase, errors, corrections);
 		return phase ? [...phase.tasks] : [];
 	}
 	return phases.flatMap((phase) => phase.tasks);
 }
 
-export function initPhases(entry: TodoOpEntry, errors: string[]): TodoPhase[] {
+export function initPhases(entry: TodoOpEntry, errors: string[], corrections?: string[]): TodoPhase[] {
 	const list =
 		entry.list ??
 		(entry.items && entry.items.length > 0
@@ -253,29 +317,38 @@ export function initPhases(entry: TodoOpEntry, errors: string[]): TodoPhase[] {
 		return [];
 	}
 
-	const seenPhases = new Set<string>();
+	const phases: TodoPhase[] = [];
+	const phasesByName = new Map<string, TodoPhase>();
 	const seenTasks = new Set<string>();
 	for (const listEntry of list) {
-		if (seenPhases.has(listEntry.phase)) errors.push(`Duplicate phase "${listEntry.phase}" in init list`);
-		seenPhases.add(listEntry.phase);
 		if (listEntry.items.length === 0) errors.push(`Phase "${listEntry.phase}" has no tasks in init list`);
+		let phase = phasesByName.get(listEntry.phase);
+		if (phase) {
+			corrections?.push(`[auto-corrected] merged duplicate phase "${listEntry.phase}" in init list`);
+		} else {
+			phase = { name: listEntry.phase, tasks: [] };
+			phasesByName.set(listEntry.phase, phase);
+			phases.push(phase);
+		}
 		for (const content of listEntry.items) {
-			if (seenTasks.has(content)) errors.push(`Duplicate task "${content}" in init list`);
+			if (seenTasks.has(content)) {
+				corrections?.push(`[auto-corrected] kept first duplicate task "${content}" in init list`);
+				continue;
+			}
 			seenTasks.add(content);
+			phase.tasks.push({ content, status: "pending" });
 		}
 	}
 
-	return list.map((listEntry) => ({
-		name: listEntry.phase,
-		tasks: listEntry.items.map((content) => ({ content, status: "pending" })),
-	}));
+	return phases;
 }
 
-export function appendItems(phases: TodoPhase[], entry: TodoOpEntry, errors: string[]): TodoPhase[] {
-	if (!entry.phase) {
-		errors.push("Missing phase name for append operation");
-		return phases;
-	}
+export function appendItems(
+	phases: TodoPhase[],
+	entry: TodoOpEntry,
+	errors: string[],
+	corrections?: string[],
+): TodoPhase[] {
 	if (!entry.items || entry.items.length === 0) {
 		errors.push("Missing items for append operation");
 		return phases;
@@ -292,9 +365,17 @@ export function appendItems(phases: TodoPhase[], entry: TodoOpEntry, errors: str
 	}
 	if (hasDuplicate) return phases;
 
-	let phase = findPhaseByName(phases, entry.phase);
+	let phaseName = entry.phase;
+	if (!phaseName) {
+		const activeTask = nextActionableTask(phases);
+		const activePhase = activeTask ? phases.find((phase) => phase.tasks.includes(activeTask)) : undefined;
+		phaseName = activePhase?.name ?? phases[phases.length - 1]?.name ?? DEFAULT_INIT_PHASE;
+		corrections?.push(`[auto-corrected] append had no phase; used "${phaseName}"`);
+	}
+
+	let phase = findPhaseByName(phases, phaseName);
 	if (!phase) {
-		phase = { name: entry.phase, tasks: [] };
+		phase = { name: phaseName, tasks: [] };
 		phases.push(phase);
 	}
 
@@ -302,15 +383,20 @@ export function appendItems(phases: TodoPhase[], entry: TodoOpEntry, errors: str
 	return phases;
 }
 
-export function removeTasks(phases: TodoPhase[], entry: TodoOpEntry, errors: string[]): TodoPhase[] {
+export function removeTasks(
+	phases: TodoPhase[],
+	entry: TodoOpEntry,
+	errors: string[],
+	corrections?: string[],
+): TodoPhase[] {
 	if (entry.task) {
-		const hit = resolveTaskOrError(phases, entry.task, errors);
+		const hit = resolveTaskOrError(phases, entry.task, errors, corrections);
 		if (!hit) return phases;
 		hit.phase.tasks = hit.phase.tasks.filter((candidate) => candidate !== hit.task);
 		return phases;
 	}
 	if (entry.phase) {
-		const phase = resolvePhaseOrError(phases, entry.phase, errors);
+		const phase = resolvePhaseOrError(phases, entry.phase, errors, corrections);
 		if (!phase) return phases;
 		phase.tasks = [];
 		return phases;
@@ -319,12 +405,17 @@ export function removeTasks(phases: TodoPhase[], entry: TodoOpEntry, errors: str
 	return phases;
 }
 
-export function applyEntry(phases: TodoPhase[], entry: TodoOpEntry, errors: string[]): TodoPhase[] {
+export function applyEntry(
+	phases: TodoPhase[],
+	entry: TodoOpEntry,
+	errors: string[],
+	corrections?: string[],
+): TodoPhase[] {
 	switch (entry.op) {
 		case "init":
-			return initPhases(entry, errors);
+			return initPhases(entry, errors, corrections);
 		case "start": {
-			const hit = resolveTaskOrError(phases, entry.task, errors);
+			const hit = resolveTaskOrError(phases, entry.task, errors, corrections);
 			if (!hit) return phases;
 			for (const phase of phases) {
 				for (const candidate of phase.tasks) {
@@ -335,25 +426,29 @@ export function applyEntry(phases: TodoPhase[], entry: TodoOpEntry, errors: stri
 			return phases;
 		}
 		case "done":
-			for (const task of getTaskTargets(phases, entry, errors)) task.status = "completed";
+			for (const task of getTaskTargets(phases, entry, errors, corrections)) task.status = "completed";
 			return phases;
 		case "drop":
-			for (const task of getTaskTargets(phases, entry, errors)) task.status = "abandoned";
+			for (const task of getTaskTargets(phases, entry, errors, corrections)) task.status = "abandoned";
 			return phases;
 		case "rm":
-			return removeTasks(phases, entry, errors);
+			return removeTasks(phases, entry, errors, corrections);
 		case "append":
-			return appendItems(phases, entry, errors);
+			return appendItems(phases, entry, errors, corrections);
 		case "view":
 			return phases;
 	}
 }
 
-export function applyParams(phases: TodoPhase[], params: TodoOpEntry): { phases: TodoPhase[]; errors: string[] } {
+export function applyParams(
+	phases: TodoPhase[],
+	params: TodoOpEntry,
+	corrections?: string[],
+): { phases: TodoPhase[]; errors: string[] } {
 	if (params.op === "view") return { phases, errors: [] };
 	const original = clonePhases(phases);
 	const errors: string[] = [];
-	const next = applyEntry(phases, params, errors);
+	const next = applyEntry(phases, params, errors, corrections);
 	if (errors.length > 0) return { phases: original, errors };
 	normalizeInProgressTask(next);
 	return { phases: next, errors };

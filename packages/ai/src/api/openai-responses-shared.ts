@@ -14,6 +14,12 @@ import type {
 	ResponseStreamEvent,
 	ResponseToolSearchOutputItemParam,
 } from "openai/resources/responses/responses.js";
+import {
+	CONTEXT_PROVENANCE_FIELD,
+	type ContextProvenance,
+	contextProvenanceFingerprint,
+	getContextProvenance,
+} from "../context-provenance.ts";
 import { calculateCost } from "../models.ts";
 import type {
 	Api,
@@ -34,6 +40,13 @@ import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import {
+	appendGrammarToolInputJsonDelta,
+	type GrammarToolInputJsonBuffer,
+	getGrammarToolInput,
+	resolveGrammarConstrainedSampling,
+	resolveJsonSchemaStrictSampling,
+} from "./constrained-sampling.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 // =============================================================================
@@ -66,8 +79,57 @@ function parseTextSignature(
 	return { id: signature };
 }
 
+/**
+ * Parse a persisted reasoning-item signature, rejecting anything that is not a
+ * genuine Responses reasoning item. Foreign providers store non-JSON markers
+ * (Kimi's "reasoning_content") or opaque payloads (Anthropic signatures) in
+ * the same field; an unguarded JSON.parse turns a provenance mix-up into a
+ * client-side throw, and blindly pushing the parsed value leaks invalid items.
+ */
+function parseReasoningSignature(signature: string | undefined): ResponseReasoningItem | undefined {
+	if (!signature) return undefined;
+	try {
+		const parsed = JSON.parse(signature) as ResponseReasoningItem;
+		return parsed?.type === "reasoning" ? parsed : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+type ToolResultOutputContent = Array<ResponseInputText | ResponseInputImage>;
+
+function convertToolResultOutput<TApi extends Api>(
+	model: Model<TApi>,
+	content: readonly (TextContent | ImageContent)[],
+): string | ToolResultOutputContent {
+	const textResult = content
+		.filter((c): c is TextContent => c.type === "text")
+		.map((c) => c.text)
+		.join("\n");
+	const images = content.filter((c): c is ImageContent => c.type === "image");
+	const hasText = textResult.length > 0;
+
+	if (images.length === 0 || !model.input.includes("image")) {
+		return sanitizeSurrogates(hasText ? textResult : images.length > 0 ? "(see attached image)" : "(no tool output)");
+	}
+
+	const output: ToolResultOutputContent = [];
+	if (hasText) {
+		output.push({ type: "input_text", text: sanitizeSurrogates(textResult) });
+	}
+	for (const image of images) {
+		output.push({
+			type: "input_image",
+			detail: "auto",
+			image_url: `data:${image.mimeType};base64,${image.data}`,
+		});
+	}
+	return output;
+}
+
 export interface OpenAIResponsesStreamOptions {
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
+	grammarToolInputProperties?: ReadonlyMap<string, string>;
 	resolveServiceTier?: (
 		responseServiceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
 		requestServiceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
@@ -82,16 +144,23 @@ export interface ConvertResponsesMessagesOptions {
 	includeSystemPrompt?: boolean;
 	preserveThinking?: boolean;
 	preserveTextSignatures?: boolean;
+	grammarToolInputProperties?: ReadonlyMap<string, string>;
 	deferredTools?: ReadonlyMap<string, Tool>;
+	toolOptions?: ConvertResponsesToolsOptions;
+	/** Internal request-local provenance sealing pass. Never serialized to provider payloads. */
+	sealContextProvenance?: boolean;
 }
 
 export interface ConvertResponsesToolsOptions {
 	strict?: boolean | null;
+	supportsStrictMode?: boolean;
+	supportsOpenAIGrammarTools?: boolean;
 	deferLoading?: boolean;
 }
 
 type ResponseCustomToolCallItem = {
 	type: "custom_tool_call";
+	id?: string;
 	call_id: string;
 	name: string;
 	input?: string;
@@ -100,11 +169,13 @@ type ResponseCustomToolCallItem = {
 type ResponseCustomToolCallOutputItem = {
 	type: "custom_tool_call_output";
 	call_id: string;
-	name: string;
+	name?: string;
 	output: string | ResponseFunctionCallOutputItemList;
 };
 
 type ResponseInputItem = OpenAIResponseInputItem | ResponseCustomToolCallItem | ResponseCustomToolCallOutputItem;
+
+export const CUSTOM_TOOL_CALL_ITEM_ID_SENTINEL = "custom";
 
 type ResponseFunctionTool = Extract<OpenAITool, { type: "function" }>;
 
@@ -122,6 +193,30 @@ function isFreeformToolName(toolName: string, tools: Tool[] | undefined): boolea
 
 function getFreeformToolInput(argumentsValue: Record<string, unknown>): string {
 	return typeof argumentsValue.input === "string" ? argumentsValue.input : JSON.stringify(argumentsValue);
+}
+
+function contextProvenanceForInput(message: unknown, seal: boolean | undefined): ContextProvenance | undefined {
+	const provenance = getContextProvenance(message);
+	if (!provenance) return undefined;
+	const fingerprint = contextProvenanceFingerprint(message);
+	if (fingerprint === undefined) return undefined;
+	const stored = provenance.integrity;
+	if (stored === undefined && seal) {
+		provenance.integrity = fingerprint;
+		return provenance;
+	}
+	return stored === fingerprint ? provenance : undefined;
+}
+
+function withContextProvenance<T extends object>(item: T, message: unknown, seal: boolean | undefined): T {
+	const provenance = contextProvenanceForInput(message, seal);
+	if (provenance) {
+		Object.defineProperty(item, CONTEXT_PROVENANCE_FIELD, {
+			value: provenance,
+			enumerable: false,
+		});
+	}
+	return item;
 }
 // =============================================================================
 // Message conversion
@@ -148,10 +243,13 @@ export function convertResponsesMessages<TApi extends Api>(
 	};
 
 	const normalizeToolCallId = (id: string, _targetModel: Model<TApi>, source: AssistantMessage): string => {
-		if (!allowedToolCallProviders.has(model.provider)) return normalizeIdPart(id);
 		if (!id.includes("|")) return normalizeIdPart(id);
 		const [callId, itemId] = id.split("|");
 		const normalizedCallId = normalizeIdPart(callId);
+		if (itemId === CUSTOM_TOOL_CALL_ITEM_ID_SENTINEL) {
+			return `${normalizedCallId}|${CUSTOM_TOOL_CALL_ITEM_ID_SENTINEL}`;
+		}
+		if (!allowedToolCallProviders.has(model.provider)) return normalizeIdPart(id);
 		const isForeignToolCall = source.provider !== model.provider || source.api !== model.api;
 		let normalizedItemId = isForeignToolCall ? buildForeignResponsesItemId(itemId) : normalizeIdPart(itemId);
 		// OpenAI Responses API requires item id to start with "fc"
@@ -180,10 +278,16 @@ export function convertResponsesMessages<TApi extends Api>(
 	for (const msg of transformedMessages) {
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
-				messages.push({
-					role: "user",
-					content: [{ type: "input_text", text: sanitizeSurrogates(msg.content) }],
-				});
+				messages.push(
+					withContextProvenance(
+						{
+							role: "user",
+							content: [{ type: "input_text", text: sanitizeSurrogates(msg.content) }],
+						},
+						msg,
+						options?.sealContextProvenance,
+					),
+				);
 			} else {
 				const content: ResponseInputContent[] = msg.content.map((item): ResponseInputContent => {
 					if (item.type === "text") {
@@ -199,10 +303,7 @@ export function convertResponsesMessages<TApi extends Api>(
 					} satisfies ResponseInputImage;
 				});
 				if (content.length === 0) continue;
-				messages.push({
-					role: "user",
-					content,
-				});
+				messages.push(withContextProvenance({ role: "user", content }, msg, options?.sealContextProvenance));
 			}
 		} else if (msg.role === "assistant") {
 			const output: ResponseInputItem[] = [];
@@ -213,47 +314,78 @@ export function convertResponsesMessages<TApi extends Api>(
 				assistantMsg.api === model.api;
 			let textBlockIndex = 0;
 
+			const pushAssistantText = (text: string, textSignature?: string): void => {
+				const parsedSignature = parseTextSignature(textSignature);
+				const fallbackMessageId =
+					textBlockIndex === 0 ? `msg_pi_${msgIndex}` : `msg_pi_${msgIndex}_${textBlockIndex}`;
+				textBlockIndex++;
+				// OpenAI requires id to be max 64 characters
+				let msgId = parsedSignature?.id;
+				if (!msgId) {
+					msgId = fallbackMessageId;
+				} else if (msgId.length > 64) {
+					msgId = `msg_${shortHash(msgId)}`;
+				}
+				output.push({
+					type: "message",
+					role: "assistant",
+					content: [{ type: "output_text", text: sanitizeSurrogates(text), annotations: [] }],
+					status: "completed",
+					id: msgId,
+					phase: parsedSignature?.phase,
+				} satisfies ResponseOutputMessage);
+			};
+
 			for (const block of msg.content) {
 				if (block.type === "thinking") {
-					if (block.thinkingSignature) {
-						const reasoningItem = JSON.parse(block.thinkingSignature) as ResponseReasoningItem;
+					const reasoningItem = parseReasoningSignature(block.thinkingSignature);
+					if (reasoningItem) {
 						output.push(reasoningItem);
+					} else if (block.thinkingSignature && block.thinking.trim() !== "") {
+						// A signed thinking block whose signature is not a real reasoning
+						// item (foreign provenance or corrupted state): demote to plain
+						// text, mirroring the cross-model policy in transformMessages.
+						pushAssistantText(block.thinking);
 					}
+					// Signed foreign blocks with no text are intentionally dropped.
 				} else if (block.type === "providerNative") {
 				} else if (block.type === "text") {
 					const textBlock = block as TextContent;
-					const parsedSignature = parseTextSignature(textBlock.textSignature);
-					const fallbackMessageId =
-						textBlockIndex === 0 ? `msg_pi_${msgIndex}` : `msg_pi_${msgIndex}_${textBlockIndex}`;
-					textBlockIndex++;
-					// OpenAI requires id to be max 64 characters
-					let msgId = parsedSignature?.id;
-					if (!msgId) {
-						msgId = fallbackMessageId;
-					} else if (msgId.length > 64) {
-						msgId = `msg_${shortHash(msgId)}`;
-					}
-					output.push({
-						type: "message",
-						role: "assistant",
-						content: [{ type: "output_text", text: sanitizeSurrogates(textBlock.text), annotations: [] }],
-						status: "completed",
-						id: msgId,
-						phase: parsedSignature?.phase,
-					} satisfies ResponseOutputMessage);
+					pushAssistantText(textBlock.text, textBlock.textSignature);
 				} else if (block.type === "toolCall") {
 					const toolCall = block as ToolCall;
 					const [callId, itemIdRaw] = toolCall.id.split("|");
-					let itemId: string | undefined = itemIdRaw;
+					const customInputProperty = options?.grammarToolInputProperties?.get(toolCall.name);
+					const isPersistedFreeform = itemIdRaw === CUSTOM_TOOL_CALL_ITEM_ID_SENTINEL;
+					const isFreeform = isFreeformToolName(toolCall.name, context.tools) || isPersistedFreeform;
+					let itemId: string | undefined = isPersistedFreeform ? undefined : itemIdRaw;
+
+					// An active grammar declaration wins over sentinel recovery below: its
+					// named input property is richer than the persisted freeform fallback.
 
 					// For different-model messages, set id to undefined to avoid pairing validation.
 					// OpenAI tracks which fc_xxx IDs were paired with rs_xxx reasoning items.
 					// By omitting the id, we avoid triggering that validation (like cross-provider does).
-					if (isDifferentModel && itemId?.startsWith("fc_")) {
+					// Function-call item ids must begin with fc_ while freeform calls can replay
+					// without the local <call_id>|custom sentinel.
+					if (
+						(isDifferentModel && itemId?.startsWith("fc_")) ||
+						(!isFreeform && customInputProperty === undefined && !itemId?.startsWith("fc_"))
+					) {
 						itemId = undefined;
 					}
 
-					if (isFreeformToolName(toolCall.name, context.tools)) {
+					if (customInputProperty !== undefined) {
+						output.push({
+							type: "custom_tool_call",
+							...(itemId !== undefined ? { id: itemId } : {}),
+							call_id: callId,
+							name: toolCall.name,
+							input: sanitizeSurrogates(
+								getGrammarToolInput(toolCall.name, toolCall.arguments, customInputProperty),
+							),
+						} satisfies ResponseCustomToolCallItem);
+					} else if (isFreeform) {
 						output.push({
 							type: "custom_tool_call",
 							call_id: callId,
@@ -261,14 +393,9 @@ export function convertResponsesMessages<TApi extends Api>(
 							input: getFreeformToolInput(toolCall.arguments),
 						} satisfies ResponseCustomToolCallItem);
 					} else {
-						// The Responses API rejects function_call input items whose id does
-						// not begin with "fc". Custom tool calls replayed without their
-						// freeform tool (e.g. compaction summarization requests) carry the
-						// "<call_id>|custom" sentinel, not a server-issued id; omit it.
-						const replayableItemId = itemId?.startsWith("fc") ? itemId : undefined;
 						output.push({
 							type: "function_call",
-							...(replayableItemId ? { id: replayableItemId } : {}),
+							...(itemId?.startsWith("fc_") ? { id: itemId } : {}),
 							call_id: callId,
 							name: toolCall.name,
 							arguments: JSON.stringify(toolCall.arguments),
@@ -277,56 +404,47 @@ export function convertResponsesMessages<TApi extends Api>(
 				}
 			}
 			if (output.length === 0) continue;
-			messages.push(...output);
+			messages.push(...output.map((item) => withContextProvenance(item, msg, options?.sealContextProvenance)));
 		} else if (msg.role === "toolResult") {
-			const textResult = msg.content
-				.filter((c): c is TextContent => c.type === "text")
-				.map((c) => c.text)
-				.join("\n");
-			const hasImages = msg.content.some((c): c is ImageContent => c.type === "image");
-			const hasText = textResult.length > 0;
-			const [callId] = msg.toolCallId.split("|");
+			const [callId, itemIdRaw] = msg.toolCallId.split("|");
+			const output = convertToolResultOutput(model, msg.content);
+			const customInputProperty = options?.grammarToolInputProperties?.get(msg.toolName);
+			const isPersistedFreeform = itemIdRaw === CUSTOM_TOOL_CALL_ITEM_ID_SENTINEL;
 
-			let output: string | ResponseFunctionCallOutputItemList;
-			if (hasImages && model.input.includes("image")) {
-				const contentParts: ResponseFunctionCallOutputItemList = [];
-
-				if (hasText) {
-					contentParts.push({
-						type: "input_text",
-						text: sanitizeSurrogates(textResult),
-					});
-				}
-
-				for (const block of msg.content) {
-					if (block.type === "image") {
-						contentParts.push({
-							type: "input_image",
-							detail: "auto",
-							image_url: `data:${block.mimeType};base64,${block.data}`,
-						});
-					}
-				}
-
-				output = contentParts;
+			if (customInputProperty !== undefined) {
+				messages.push(
+					withContextProvenance(
+						{
+							type: "custom_tool_call_output",
+							call_id: callId,
+							output,
+						} satisfies ResponseCustomToolCallOutputItem,
+						msg,
+						options?.sealContextProvenance,
+					),
+				);
+			} else if (isFreeformToolName(msg.toolName, context.tools) || isPersistedFreeform) {
+				messages.push(
+					withContextProvenance(
+						{
+							type: "custom_tool_call_output",
+							call_id: callId,
+							name: msg.toolName,
+							output,
+						} satisfies ResponseCustomToolCallOutputItem,
+						msg,
+						options?.sealContextProvenance,
+					),
+				);
 			} else {
-				output = sanitizeSurrogates(hasText ? textResult : hasImages ? "(see attached image)" : "(no tool output)");
+				messages.push(
+					withContextProvenance(
+						{ type: "function_call_output", call_id: callId, output },
+						msg,
+						options?.sealContextProvenance,
+					),
+				);
 			}
-			if (isFreeformToolName(msg.toolName, context.tools)) {
-				messages.push({
-					type: "custom_tool_call_output",
-					call_id: callId,
-					name: msg.toolName,
-					output,
-				} satisfies ResponseCustomToolCallOutputItem);
-			} else {
-				messages.push({
-					type: "function_call_output",
-					call_id: callId,
-					output,
-				});
-			}
-
 			const deferredTools: Tool[] = [];
 			for (const name of msg.addedToolNames ?? []) {
 				const tool = options?.deferredTools?.get(name);
@@ -337,20 +455,35 @@ export function convertResponsesMessages<TApi extends Api>(
 			if (deferredTools.length > 0) {
 				const names = deferredTools.map((tool) => tool.name);
 				const searchCallId = `pi_tool_load_${shortHash(`${msg.toolCallId}:${names.join(",")}`)}`;
-				messages.push({
-					type: "tool_search_call",
-					call_id: searchCallId,
-					execution: "client",
-					status: "completed",
-					arguments: { query: names.join(" "), limit: names.length },
-				} satisfies ResponseInputItem);
-				messages.push({
-					type: "tool_search_output",
-					call_id: searchCallId,
-					execution: "client",
-					status: "completed",
-					tools: convertResponsesTools(deferredTools, { deferLoading: true }),
-				} satisfies ResponseToolSearchOutputItemParam);
+				messages.push(
+					withContextProvenance(
+						{
+							type: "tool_search_call",
+							call_id: searchCallId,
+							execution: "client",
+							status: "completed",
+							arguments: { query: names.join(" "), limit: names.length },
+						} satisfies ResponseInputItem,
+						msg,
+						options?.sealContextProvenance,
+					),
+				);
+				messages.push(
+					withContextProvenance(
+						{
+							type: "tool_search_output",
+							call_id: searchCallId,
+							execution: "client",
+							status: "completed",
+							tools: convertResponsesTools(deferredTools, {
+								...options?.toolOptions,
+								deferLoading: true,
+							}),
+						} satisfies ResponseToolSearchOutputItemParam,
+						msg,
+						options?.sealContextProvenance,
+					),
+				);
 			}
 		}
 		msgIndex++;
@@ -364,8 +497,25 @@ export function convertResponsesMessages<TApi extends Api>(
 // =============================================================================
 
 export function convertResponsesTools(tools: readonly Tool[], options?: ConvertResponsesToolsOptions): OpenAITool[] {
-	const strict = options?.strict === undefined ? false : options.strict;
+	const defaultStrict = options?.strict === undefined ? false : options.strict;
+	const supportsStrictMode = options?.supportsStrictMode ?? true;
+	const supportsOpenAIGrammarTools = options?.supportsOpenAIGrammarTools ?? false;
+
 	return tools.map((tool) => {
+		const grammar = resolveGrammarConstrainedSampling(tool, supportsOpenAIGrammarTools);
+		if (grammar) {
+			return {
+				type: "custom",
+				name: tool.name,
+				description: tool.description,
+				format: {
+					type: "grammar",
+					syntax: grammar.format,
+					definition: grammar.definition,
+				},
+				...(options?.deferLoading ? { defer_loading: true } : {}),
+			} satisfies OpenAITool;
+		}
 		if (tool.freeform) {
 			return {
 				type: "custom",
@@ -376,14 +526,20 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 			} as OpenAITool;
 		}
 
-		return {
+		const constrainedStrict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
+		const functionTool: Omit<ResponseFunctionTool, "strict"> & {
+			strict?: ResponseFunctionTool["strict"];
+		} = {
 			type: "function",
 			name: tool.name,
 			description: tool.description,
 			parameters: tool.parameters as ResponseFunctionTool["parameters"], // TypeBox already generates JSON Schema
-			strict,
 			...(options?.deferLoading ? { defer_loading: true } : {}),
-		} as OpenAITool;
+		};
+		if (supportsStrictMode) {
+			functionTool.strict = constrainedStrict ?? defaultStrict;
+		}
+		return functionTool as OpenAITool;
 	});
 }
 
@@ -391,13 +547,36 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 // Stream processing
 // =============================================================================
 
-type StreamingToolCall = ToolCall & { partialJson: string };
+type StreamingToolCall = ToolCall & {
+	partialJson?: string;
+	customInput?: {
+		property: string;
+		jsonBuffer: GrammarToolInputJsonBuffer;
+	};
+};
+
+function getCustomToolCallInput(block: StreamingToolCall): string {
+	const property = block.customInput?.property;
+	if (property === undefined) return "";
+	const value = block.arguments[property];
+	return typeof value === "string" ? value : "";
+}
+
+function appendCustomToolCallInput(block: StreamingToolCall, nextInput: string, close: boolean): string | undefined {
+	const customInput = block.customInput;
+	if (!customInput) return undefined;
+	const delta = appendGrammarToolInputJsonDelta(customInput.jsonBuffer, customInput.property, nextInput, close);
+	block.arguments = { [customInput.property]: nextInput };
+	return delta;
+}
 
 type ResponsesOutputSlot =
 	| { type: "thinking"; block: ThinkingContent; contentIndex: number }
 	| { type: "text"; block: TextContent; contentIndex: number }
 	| { type: "toolCall"; block: StreamingToolCall; contentIndex: number }
 	| { type: "providerNative"; block: ProviderNativeContent; contentIndex: number };
+
+type ToolCallOutputSlot = Extract<ResponsesOutputSlot, { type: "toolCall" }>;
 
 export async function processResponsesStream<TApi extends Api>(
 	openaiStream: AsyncIterable<ResponseStreamEvent>,
@@ -415,6 +594,15 @@ export async function processResponsesStream<TApi extends Api>(
 	): Extract<ResponsesOutputSlot, { type: TType }> | undefined => {
 		const slot = outputSlots.get(outputIndex);
 		return slot?.type === type ? (slot as Extract<ResponsesOutputSlot, { type: TType }>) : undefined;
+	};
+	const pushToolCallDelta = (slot: ToolCallOutputSlot, delta: string | undefined): void => {
+		if (delta === undefined) return;
+		stream.push({
+			type: "toolcall_delta",
+			contentIndex: slot.contentIndex,
+			delta,
+			partial: output,
+		});
 	};
 	const createSlot = (
 		outputIndex: number,
@@ -459,13 +647,17 @@ export async function processResponsesStream<TApi extends Api>(
 			return slot;
 		}
 		if (isResponseCustomToolCallItem(item)) {
+			const inputProperty = options?.grammarToolInputProperties?.get(item.name) ?? "input";
 			const input = item.input || "";
 			const block: StreamingToolCall = {
 				type: "toolCall",
-				id: `${item.call_id}|custom`,
+				id: `${item.call_id}|${item.id ?? CUSTOM_TOOL_CALL_ITEM_ID_SENTINEL}`,
 				name: item.name,
-				arguments: { input },
-				partialJson: JSON.stringify({ input }),
+				arguments: { [inputProperty]: input },
+				customInput: {
+					property: inputProperty,
+					jsonBuffer: { input: "", started: false, closed: false },
+				},
 			};
 			output.content.push(block);
 			const slot = {
@@ -487,6 +679,12 @@ export async function processResponsesStream<TApi extends Api>(
 		outputSlots.set(outputIndex, slot);
 		return slot;
 	};
+	const getOrCreateSlot = (
+		outputIndex: number,
+		item: ResponseOutputItem | ResponseCustomToolCallItem,
+	): ResponsesOutputSlot | undefined => {
+		return outputSlots.get(outputIndex) ?? createSlot(outputIndex, item);
+	};
 	// Azure OpenAI can omit reasoning.encrypted_content from response.output_item.done
 	// and provide it only in response.completed.response.output. Backfill the
 	// persisted reasoning signature from the terminal response to keep store:false
@@ -497,8 +695,8 @@ export async function processResponsesStream<TApi extends Api>(
 			const block = reasoningBlocksById.get(item.id);
 			if (!block?.thinkingSignature) continue;
 
-			const storedItem = JSON.parse(block.thinkingSignature) as ResponseReasoningItem;
-			if (storedItem.encrypted_content) continue;
+			const storedItem = parseReasoningSignature(block.thinkingSignature);
+			if (!storedItem || storedItem.encrypted_content) continue;
 			block.thinkingSignature = JSON.stringify({
 				...storedItem,
 				encrypted_content: item.encrypted_content,
@@ -601,36 +799,35 @@ export async function processResponsesStream<TApi extends Api>(
 			});
 		} else if (event.type === "response.function_call_arguments.delta") {
 			const slot = getSlot(event.output_index, "toolCall");
-			if (!slot) continue;
+			if (!slot || slot.block.partialJson === undefined) continue;
 			slot.block.partialJson += event.delta;
 			slot.block.arguments = parseStreamingJson(slot.block.partialJson);
-			stream.push({
-				type: "toolcall_delta",
-				contentIndex: slot.contentIndex,
-				delta: event.delta,
-				partial: output,
-			});
+			pushToolCallDelta(slot, event.delta);
 		} else if (event.type === "response.function_call_arguments.done") {
 			const slot = getSlot(event.output_index, "toolCall");
-			if (!slot) continue;
+			if (!slot || slot.block.partialJson === undefined) continue;
 			const previousPartialJson = slot.block.partialJson;
 			slot.block.partialJson = event.arguments;
 			slot.block.arguments = parseStreamingJson(slot.block.partialJson);
 
 			if (event.arguments.startsWith(previousPartialJson)) {
 				const delta = event.arguments.slice(previousPartialJson.length);
-				if (delta.length > 0) {
-					stream.push({
-						type: "toolcall_delta",
-						contentIndex: slot.contentIndex,
-						delta,
-						partial: output,
-					});
-				}
+				if (delta.length > 0) pushToolCallDelta(slot, delta);
 			}
+		} else if (event.type === "response.custom_tool_call_input.delta") {
+			const slot = getSlot(event.output_index, "toolCall");
+			if (!slot?.block.customInput) continue;
+			pushToolCallDelta(
+				slot,
+				appendCustomToolCallInput(slot.block, getCustomToolCallInput(slot.block) + event.delta, false),
+			);
+		} else if (event.type === "response.custom_tool_call_input.done") {
+			const slot = getSlot(event.output_index, "toolCall");
+			if (!slot?.block.customInput) continue;
+			pushToolCallDelta(slot, appendCustomToolCallInput(slot.block, event.input, true));
 		} else if (event.type === "response.output_item.done") {
 			const item = event.item;
-			const slot = outputSlots.get(event.output_index) ?? createSlot(event.output_index, item);
+			const slot = getOrCreateSlot(event.output_index, item);
 
 			if (item.type === "reasoning" && slot?.type === "thinking") {
 				const summaryText = item.summary?.map((s) => s.text).join("\n\n") || "";
@@ -655,11 +852,28 @@ export async function processResponsesStream<TApi extends Api>(
 					partial: output,
 				});
 				outputSlots.delete(event.output_index);
-			} else if (item.type === "function_call" && slot?.type === "toolCall") {
+			} else if (
+				item.type === "function_call" &&
+				slot?.type === "toolCall" &&
+				slot.block.partialJson !== undefined
+			) {
 				slot.block.arguments = parseStreamingJson(item.arguments || slot.block.partialJson || "{}");
 				// Finalize in-place and strip the scratch buffer so replay only
 				// carries parsed arguments.
-				delete (slot.block as { partialJson?: string }).partialJson;
+				delete slot.block.partialJson;
+				stream.push({
+					type: "toolcall_end",
+					contentIndex: slot.contentIndex,
+					toolCall: slot.block,
+					partial: output,
+				});
+				outputSlots.delete(event.output_index);
+			} else if (item.type === "custom_tool_call" && slot?.type === "toolCall" && slot.block.customInput) {
+				pushToolCallDelta(
+					slot,
+					appendCustomToolCallInput(slot.block, item.input ?? getCustomToolCallInput(slot.block), true),
+				);
+				delete slot.block.customInput;
 				stream.push({
 					type: "toolcall_end",
 					contentIndex: slot.contentIndex,

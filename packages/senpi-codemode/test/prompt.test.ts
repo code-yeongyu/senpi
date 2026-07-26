@@ -109,6 +109,21 @@ describe("buildEvalPrompt", () => {
 		}
 	});
 
+	it("documents timeout detachment, busy-kernel discipline, and detached-cell controls", () => {
+		const prompt = fullPrompt({ py: true, js: true, rb: false, jl: false });
+
+		expect(prompt).toContain("`on_timeout`");
+		expect(prompt).toContain('eval({ action: "peek", cell_id })');
+		expect(prompt).toContain('eval({ action: "stop", cell_id })');
+		expect(prompt).toContain("Do not re-run a detached cell");
+	});
+
+	it("teaches output() as an immediate status or transcript read", () => {
+		const prompt = fullPrompt({ py: true, js: true, rb: false, jl: false }, { spawns: true });
+
+		expect(prompt).toContain("Reads immediately: running tasks return their status");
+	});
+
 	it("keeps eval-specific prompt guidelines stable", () => {
 		// Given: a registered eval tool with no active model id.
 		// When: its prompt metadata is built.
@@ -133,10 +148,12 @@ describe("buildEvalPrompt", () => {
 			"accounts/fireworks/models/glm-5p2",
 		];
 		const kimiIds = ["kimi-k2.6", "@cf/moonshotai/kimi-k2.7-code", "accounts/fireworks/models/kimi-k2p6"];
-		const codexIds = ["gpt-5.6", "gpt-5.2-codex", "o3-mini", "@cf/openai/gpt-oss-120b", "codex-mini-latest"];
+		const gptIds = ["gpt-5.6", "gpt-5.2-codex", "@cf/openai/gpt-oss-120b"];
+		const codexIds = ["o3-mini", "codex-mini-latest"];
 		const defaultIds = ["gemini-2.5-flash", "deepseek-chat", "qwen3-coder", "minimax-m2.5"];
 		for (const id of claudeIds) expect(evalEmphasisStyle(id), id).toBe("claude");
 		for (const id of kimiIds) expect(evalEmphasisStyle(id), id).toBe("kimi");
+		for (const id of gptIds) expect(evalEmphasisStyle(id), id).toBe("gpt");
 		for (const id of codexIds) expect(evalEmphasisStyle(id), id).toBe("codex");
 		for (const id of defaultIds) expect(evalEmphasisStyle(id), id).toBe("default");
 		expect(evalEmphasisStyle(undefined)).toBe("default");
@@ -150,7 +167,7 @@ describe("buildEvalPrompt", () => {
 
 		// When: the descriptions are built.
 		const claude = render("claude-opus-4-8");
-		const codex = render("gpt-5.6");
+		const gpt = render("gpt-5.6");
 		const kimi = render("kimi-k2.6");
 		const fallback = render();
 
@@ -158,9 +175,10 @@ describe("buildEvalPrompt", () => {
 		expect(claude).toContain("<eval_first_batching>");
 		expect(claude).toContain("your default execution surface");
 		expect(claude).not.toContain("EVAL IS YOUR PRIMARY EXECUTION SURFACE");
-		expect(codex).toContain("Route multi-call steps through eval");
-		expect(codex).not.toContain("<eval_first_batching>");
-		expect(codex).not.toContain("EVAL IS YOUR PRIMARY EXECUTION SURFACE");
+		expect(gpt).toContain("<gpt_eval_dialect>");
+		expect(gpt).toContain("detach on timeout");
+		expect(gpt).not.toContain("<eval_first_batching>");
+		expect(gpt).not.toContain("EVAL IS YOUR PRIMARY EXECUTION SURFACE");
 		const kimiInstruction = kimi.slice(0, kimi.indexOf("<prelude>"));
 		expect(kimiInstruction).toContain("EVAL IS YOUR SUPERPOWER");
 		expect(kimiInstruction).not.toContain("NEVER kills the batch");
@@ -180,7 +198,7 @@ describe("buildEvalPrompt", () => {
 			"Prefer eval for any step needing more than one tool call: one cell that runs independent calls in parallel, handles per-call failures in code, and returns distilled facts.",
 		);
 		expect(guideline("gpt-5.6")).toBe(
-			"Route multi-call steps through eval: one cell per step, independent calls dispatched in parallel; fall back to direct tool calls when one call is sufficient or each result changes the next decision.",
+			"Use eval to compose tool work in one cell; long cells detach on timeout and notify on completion, so do not poll.",
 		);
 		expect(guideline("kimi-k2.6")).toBe(
 			"**EVAL IS YOUR SUPERPOWER — DEFAULT TO IT.** Execute EVERY multi-call step as ONE eval cell: run ALL independent calls simultaneously via parallel(thunks), handle failures per item in code, and return ONLY distilled facts.",

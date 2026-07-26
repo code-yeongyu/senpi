@@ -5,6 +5,8 @@
 import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from "@google/genai";
 import type { Context, ImageContent, Model, ProviderNativeContent, StopReason, TextContent, Tool } from "../types.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { normalizeToolCallId } from "../utils/tool-call-id.ts";
+import { resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 type GoogleApiType = "google-generative-ai" | "google-vertex";
@@ -94,12 +96,12 @@ export function convertMessages<T extends GoogleApiType>(
 	options: { preserveThinking?: boolean } = {},
 ): Content[] {
 	const contents: Content[] = [];
-	const normalizeToolCallId = (id: string): string => {
+	const normalizeId = (id: string): string => {
 		if (!requiresToolCallId(model.id)) return id;
-		return id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+		return normalizeToolCallId(id);
 	};
 
-	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId, {
+	const transformedMessages = transformMessages(context.messages, model, normalizeId, {
 		preserveThinking: options.preserveThinking,
 	});
 
@@ -324,9 +326,13 @@ export function convertTools(
 	];
 }
 
-/**
- * Map tool choice string to Gemini FunctionCallingConfigMode.
- */
+/** Gemini 3+ enforces required function parameters in validated tool-calling modes. */
+export function supportsGoogleStrictToolSampling(modelId: string): boolean {
+	const majorVersion = getGeminiMajorVersion(modelId);
+	return majorVersion !== undefined && majorVersion >= 3;
+}
+
+/** Map tool choice string to Gemini FunctionCallingConfigMode. */
 export function mapToolChoice(choice: string): FunctionCallingConfigMode {
 	switch (choice) {
 		case "auto":
@@ -338,6 +344,21 @@ export function mapToolChoice(choice: string): FunctionCallingConfigMode {
 		default:
 			return FunctionCallingConfigMode.AUTO;
 	}
+}
+
+export function resolveGoogleFunctionCallingMode(
+	tools: Tool[],
+	toolChoice: string | undefined,
+	supportsStrictMode: boolean,
+): FunctionCallingConfigMode | undefined {
+	const useStrictMode = tools.some((tool) => resolveJsonSchemaStrictSampling(tool, supportsStrictMode) === true);
+	if (toolChoice === "none" || toolChoice === "any") {
+		return mapToolChoice(toolChoice);
+	}
+	if (useStrictMode) {
+		return FunctionCallingConfigMode.VALIDATED;
+	}
+	return toolChoice ? mapToolChoice(toolChoice) : undefined;
 }
 
 /**

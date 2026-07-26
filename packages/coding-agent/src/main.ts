@@ -14,8 +14,6 @@ import { type Args, type Mode, parseArgs, printHelp } from "./cli/args.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
-import { runNeoDaemonLauncher } from "./cli/neo/daemon-launch.ts";
-import { runNeoLauncher } from "./cli/neo/launch.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { selectSession } from "./cli/session-picker.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
@@ -54,6 +52,7 @@ import { builtInExtensions } from "./extensions/index.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
+import { runMultiSessionHost } from "./modes/rpc/multi-session-host.ts";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
@@ -496,6 +495,24 @@ export interface MainOptions {
 	extensionFactories?: InlineExtension[];
 }
 
+/**
+ * Supply grok-night as a non-persistent fallback until a user explicitly chooses
+ * a theme. Existing settings are always returned first.
+ */
+export function applyGrokNeoThemeFallback(settingsManager: SettingsManager): void {
+	if (settingsManager.getThemeSetting() !== undefined) return;
+
+	const getThemeSetting = settingsManager.getThemeSetting.bind(settingsManager);
+	const setTheme = settingsManager.setTheme.bind(settingsManager);
+	let fallbackActive = true;
+
+	settingsManager.getThemeSetting = () => getThemeSetting() ?? (fallbackActive ? "grok-night" : undefined);
+	settingsManager.setTheme = (theme) => {
+		fallbackActive = false;
+		setTheme(theme);
+	};
+}
+
 export async function main(args: string[], options?: MainOptions) {
 	resetTimings();
 	const extensionFactories = [...builtInExtensions, ...(options?.extensionFactories ?? [])];
@@ -627,29 +644,6 @@ export async function main(args: string[], options?: MainOptions) {
 		time("firstTimeSetup");
 	}
 
-	// Neo (Go TUI) handoff. Dispatch EARLY — after the version/export/list-models
-	// fast-paths and first-time setup, but BEFORE any runtime or extension loading —
-	// so the launcher process never constructs an AgentSessionRuntime or loads
-	// extensions (that work belongs to the neo daemon's rpc connection). Runtime
-	// flags are forwarded to the Go binary as argv. Two carve-outs stay classic:
-	//   - `--help` shows classic help (which now lists --neo).
-	//   - Piped stdin resolves appMode to "print", so a TTY-less --neo falls through
-	//     to the classic print-mode path here instead of launching the TUI.
-	if (parsed.neo && !parsed.help && appMode === "interactive") {
-		const exitCode = await runNeoLauncher(parsed);
-		process.exit(exitCode);
-	}
-
-	// Neo daemon supervisor. When `--listen <path>` is present, run the shared
-	// daemon instead of a single runtime: bind the socket, register, and serve one
-	// child rpc worker per connection. Dispatched here (before any runtime or
-	// extension loading) because the supervisor process must NOT construct a
-	// runtime — that belongs to each connection's worker.
-	if (parsed.neoListen !== undefined) {
-		const exitCode = await runNeoDaemonLauncher(parsed);
-		process.exit(exitCode);
-	}
-
 	// Decide the final runtime cwd before creating cwd-bound runtime services.
 	// --session and --resume may select a session from another project, so project-local
 	// settings, resources, provider registrations, and models must be resolved only after
@@ -700,6 +694,7 @@ export async function main(args: string[], options?: MainOptions) {
 		sessionManager,
 		sessionStartEvent,
 		projectTrustContext,
+		launchProfile,
 	}) => {
 		const isInitialRuntime = sessionStartEvent === undefined;
 		const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
@@ -769,11 +764,35 @@ export async function main(args: string[], options?: MainOptions) {
 		});
 		const scopedModels =
 			modelPatterns && modelPatterns.length > 0 ? await resolveModelScope(modelPatterns, modelRuntime) : [];
+		// Multi-session opens carry their per-session startup choices here rather
+		// than through process argv. This deliberately feeds the same resolver as
+		// --provider/--model/--thinking, preserving classic flag semantics.
+		const runtimeParsed: Args =
+			launchProfile === undefined
+				? parsed
+				: {
+						...parsed,
+						...(launchProfile.creationModel === undefined
+							? {}
+							: {
+									provider: launchProfile.creationModel.provider,
+									model: launchProfile.creationModel.modelId,
+								}),
+						...(launchProfile.initialThinkingLevel === undefined
+							? {}
+							: { thinking: launchProfile.initialThinkingLevel as Args["thinking"] }),
+					};
 		const {
 			options: sessionOptions,
 			cliThinkingFromModel,
 			diagnostics: sessionOptionDiagnostics,
-		} = buildSessionOptions(parsed, scopedModels, sessionManager.hasContextMessages(), modelRuntime, settingsManager);
+		} = buildSessionOptions(
+			runtimeParsed,
+			scopedModels,
+			sessionManager.hasContextMessages(),
+			modelRuntime,
+			settingsManager,
+		);
 		diagnostics.push(...sessionOptionDiagnostics);
 
 		if (parsed.apiKey) {
@@ -783,7 +802,7 @@ export async function main(args: string[], options?: MainOptions) {
 					message: "--api-key requires a model to be specified via --model, --provider/--model, or --models",
 				});
 			} else {
-				await modelRuntime.setRuntimeApiKey(sessionOptions.model.provider, parsed.apiKey);
+				await modelRuntime.setRuntimeApiKey(sessionOptions.model.provider, parsed.apiKey, { allowNetwork: false });
 				await services.modelRuntime.getAvailable();
 			}
 		}
@@ -801,7 +820,7 @@ export async function main(args: string[], options?: MainOptions) {
 			customTools: sessionOptions.customTools,
 			autoTitleSessions: appMode === "interactive" && !sessionManager.hasContextMessages(),
 		});
-		const cliThinkingOverride = parsed.thinking !== undefined || cliThinkingFromModel;
+		const cliThinkingOverride = runtimeParsed.thinking !== undefined || cliThinkingFromModel;
 		if (created.session.model && cliThinkingOverride) {
 			created.session.setThinkingLevel(created.session.thinkingLevel);
 		}
@@ -813,6 +832,17 @@ export async function main(args: string[], options?: MainOptions) {
 		};
 	};
 	time("createRuntime");
+	if (appMode === "rpc" && parsed.multiSession) {
+		printTimings();
+		await runMultiSessionHost({
+			agentDir,
+			createRuntime,
+			cwd,
+			creationModel:
+				parsed.provider && parsed.model ? { provider: parsed.provider, modelId: parsed.model } : undefined,
+			initialThinkingLevel: parsed.thinking,
+		});
+	}
 	const runtime = await createAgentSessionRuntime(createRuntime, {
 		cwd: sessionManager.getCwd(),
 		agentDir,
@@ -820,7 +850,7 @@ export async function main(args: string[], options?: MainOptions) {
 	});
 	time("createAgentSessionRuntime");
 	const { services, session, modelFallbackMessage } = runtime;
-	const { settingsManager, resourceLoader } = services;
+	const { settingsManager, modelRuntime, resourceLoader } = services;
 	applyHttpProxySettings(settingsManager.getGlobalSettings().httpProxy);
 	configureHttpDispatcher(settingsManager.getHttpIdleTimeoutMs());
 
@@ -848,6 +878,9 @@ export async function main(args: string[], options?: MainOptions) {
 		stdinContent,
 	);
 	time("prepareInitialMessage");
+	if (parsed.grokNeo && appMode === "interactive") {
+		applyGrokNeoThemeFallback(settingsManager);
+	}
 	initTheme(settingsManager.getTheme(), appMode === "interactive");
 	time("initTheme");
 
@@ -877,6 +910,11 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(1);
 	}
 
+	// RPC refreshes catalogs here in the background; interactive mode starts its refresh after TUI initialization.
+	if (!offlineMode && appMode === "rpc") {
+		void modelRuntime.refresh().catch(() => {});
+	}
+
 	if (appMode === "rpc") {
 		printTimings();
 		await runRpcMode(runtime);
@@ -890,6 +928,7 @@ export async function main(args: string[], options?: MainOptions) {
 			initialTitlePrompt,
 			initialMessages: parsed.messages,
 			verbose: parsed.verbose,
+			chrome: parsed.grokNeo ? "grok" : undefined,
 		});
 		if (startupBenchmark) {
 			await interactiveMode.init();

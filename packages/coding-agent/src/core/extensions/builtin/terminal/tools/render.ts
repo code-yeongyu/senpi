@@ -2,9 +2,11 @@ import { Text } from "@earendil-works/pi-tui";
 import { truncateToVisualLines } from "../../../../../modes/interactive/components/visual-truncate.ts";
 import type { AgentToolResult, ToolDefinition } from "../../../types.ts";
 import type { BashOutputInput, bashOutputSchema } from "./bash-output.ts";
+import type { MonitorInput, monitorSchema } from "./monitor.ts";
 
 type BashOutputDetails = Record<string, unknown> | undefined;
 type BashOutputToolDefinition = ToolDefinition<typeof bashOutputSchema, BashOutputDetails>;
+type MonitorToolDefinition = ToolDefinition<typeof monitorSchema, BashOutputDetails>;
 type RenderResultOptions = Parameters<NonNullable<BashOutputToolDefinition["renderResult"]>>[1];
 
 const OUTPUT_PREVIEW_LINES = 8;
@@ -35,8 +37,15 @@ export function renderBashOutputCall(
 	args: BashOutputInput,
 	theme: Parameters<NonNullable<BashOutputToolDefinition["renderCall"]>>[1],
 ): Text {
-	const waitFor = args.wait_for ? ` wait_for:/${args.wait_for}/` : "";
-	return new Text(theme.fg("toolTitle", theme.bold(`bash_output ${args.bash_id}${waitFor}`)), 0, 0);
+	return new Text(theme.fg("toolTitle", theme.bold(`bash_output ${args.bash_id}`)), 0, 0);
+}
+
+export function renderMonitorCall(
+	args: MonitorInput,
+	theme: Parameters<NonNullable<MonitorToolDefinition["renderCall"]>>[1],
+): Text {
+	const label = args.action === "rearm" ? `monitor rearm ${args.bash_id}` : `monitor ${args.description}`;
+	return new Text(theme.fg("toolTitle", theme.bold(label)), 0, 0);
 }
 
 export function renderBashOutputResult(

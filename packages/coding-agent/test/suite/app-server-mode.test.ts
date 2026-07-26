@@ -32,6 +32,8 @@ describe("app-server mode entry", () => {
 			});
 			socket.send(JSON.stringify({ id: 4, method: "thread/unsubscribe", params: { threadId } }));
 			expect(await reader.readUntilResponse(4)).toEqual({ id: 4, result: { status: "unsubscribed" } });
+			socket.send(JSON.stringify({ id: 5, method: "thread/delete", params: { threadId } }));
+			expect(await reader.readUntilResponse(5)).toEqual({ id: 5, result: {} });
 		} finally {
 			reader.dispose();
 			socket.close();

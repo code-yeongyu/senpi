@@ -32,6 +32,7 @@ export interface ThreadLifecycleHandlersOptions {
 	readonly idleUnloadMinutes?: number;
 	readonly replayPendingApprovals?: (threadId: string, connectionId: string) => void;
 	readonly deferUntilResponded?: (connectionId: string, action: () => Promise<void> | void) => boolean;
+	readonly observeThread?: (threadId: string) => void;
 }
 
 type RuntimeThreadResponse = ThreadStartResponse | ThreadResumeResponse | ThreadForkResponse;
@@ -87,6 +88,7 @@ class ThreadLifecycleHandlers {
 		| ((connectionId: string, action: () => Promise<void> | void) => boolean)
 		| undefined;
 	private readonly archiveState: ThreadArchiveState;
+	private readonly observeThread: ((threadId: string) => void) | undefined;
 	private readonly searchCache = new ThreadSearchCache();
 	private readonly idleUnloadMs: number;
 	private readonly idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -98,6 +100,7 @@ class ThreadLifecycleHandlers {
 		this.replayPendingApprovals = options.replayPendingApprovals;
 		this.deferUntilResponded = options.deferUntilResponded;
 		this.archiveState = archiveState;
+		this.observeThread = options.observeThread;
 		this.idleUnloadMs = Math.max(0, options.idleUnloadMinutes ?? DEFAULT_IDLE_UNLOAD_MINUTES) * 60 * 1000;
 	}
 
@@ -448,6 +451,7 @@ class ThreadLifecycleHandlers {
 
 	private attachThread(entry: ThreadEntry): void {
 		this.notifications.addThread(entry);
+		this.observeThread?.(entry.id);
 		this.clearIdleTimer(entry.id);
 	}
 

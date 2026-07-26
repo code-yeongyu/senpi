@@ -1,5 +1,7 @@
 import { execFile, spawn } from "node:child_process";
+import { once } from "node:events";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,7 +11,7 @@ import {
 	stopValidatedPid,
 } from "../../src/modes/app-server/daemon/process.ts";
 import { createDaemonPaths, withDaemonStateLock } from "../../src/modes/app-server/daemon.ts";
-import { type QaPort, qaPortsFrom } from "../helpers/qa-port.ts";
+import { listenOnQaPort, type QaPort, qaPortsFrom } from "../helpers/qa-port.ts";
 
 const roots: string[] = [];
 const packageRoot = resolve(import.meta.dirname, "../..");
@@ -41,14 +43,16 @@ describe("app-server daemon state", () => {
 		const root = await scratchRoot("senpi-daemon-lock-");
 		const paths = createDaemonPaths(join(root, "agent"));
 		const events: string[] = [];
+		const firstEntered = createDeferred<void>();
 		const releaseFirst = createDeferred<void>();
 		const first = withDaemonStateLock(paths, async () => {
 			events.push("first-enter");
+			firstEntered.resolve(undefined);
 			await releaseFirst.promise;
 			events.push("first-exit");
 			return "first";
 		});
-		await eventually(() => expect(events).toEqual(["first-enter"]));
+		await withTimeout(firstEntered.promise, 2_000, "first daemon lock operation did not enter");
 
 		// When: a second operation starts before the first releases the lock.
 		const second = withDaemonStateLock(paths, async () => {
@@ -70,11 +74,11 @@ describe("app-server daemon state", () => {
 		const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
 			stdio: ["ignore", "ignore", "ignore"],
 		});
+		await withTimeout(once(child, "spawn"), 2_000, "child process did not spawn");
 		if (child.pid === undefined) throw new Error("expected child pid");
-		const pidFile = {
-			pid: child.pid,
-			processStartTime: await waitForChildStartTime(child.pid),
-		};
+		const processStartTime = await readProcessStartTime(child.pid);
+		if (!processStartTime) throw new Error(`child pid ${child.pid} had no process start time after spawning`);
+		const pidFile = { pid: child.pid, processStartTime };
 		await rm(stateDir, { recursive: true, force: true });
 
 		try {
@@ -83,7 +87,7 @@ describe("app-server daemon state", () => {
 
 			// Then: the helper only signals the process and leaves directory ownership to the caller.
 			await expect(access(stateDir)).rejects.toMatchObject({ code: "ENOENT" });
-			await eventually(async () => expect(await processMatchesPidFile(pidFile)).toBe(false));
+			expect(await processMatchesPidFile(pidFile)).toBe(false);
 		} finally {
 			if (await processMatchesPidFile(pidFile)) child.kill("SIGKILL");
 		}
@@ -95,7 +99,7 @@ describe.sequential("app-server daemon CLI", () => {
 		// Given: a scratch agent directory and a non-default loopback port.
 		const root = await scratchRoot("senpi-daemon-cli-");
 		const agentDir = join(root, "agent");
-		const startedDaemon = await startDaemonOnQaPort(agentDir);
+		const startedDaemon = await startDaemonAfterAddressInUse(agentDir);
 		const { listen, port, started } = startedDaemon;
 
 		try {
@@ -131,6 +135,12 @@ type DaemonCliResult = {
 	readonly stderr: string;
 };
 
+type StartedDaemon = {
+	readonly listen: string;
+	readonly port: QaPort;
+	readonly started: DaemonCliResult;
+};
+
 function createDeferred<T>(): {
 	readonly promise: Promise<T>;
 	readonly resolve: (value: T | PromiseLike<T>) => void;
@@ -148,11 +158,26 @@ async function scratchRoot(prefix: string): Promise<string> {
 	return root;
 }
 
-async function startDaemonOnQaPort(
-	agentDir: string,
-): Promise<{ readonly listen: string; readonly port: QaPort; readonly started: DaemonCliResult }> {
+async function startDaemonAfterAddressInUse(agentDir: string): Promise<StartedDaemon> {
+	const blocker = createServer((socket) => socket.destroy());
+	const blockedPort = await listenOnQaPort(blocker, 18999);
+	const blockedListen = `ws://127.0.0.1:${blockedPort}`;
+	try {
+		await expect(runDaemonCli(agentDir, ["start", "--listen", blockedListen])).rejects.toThrow(
+			`EADDRINUSE: app-server daemon cannot listen on ${blockedListen}`,
+		);
+		await expect(access(join(agentDir, "app-server-daemon", "stderr.log"))).rejects.toMatchObject({ code: "ENOENT" });
+		const started = await startDaemonOnQaPort(agentDir, blockedPort);
+		expect(started.port).not.toBe(blockedPort);
+		return started;
+	} finally {
+		await closeServer(blocker);
+	}
+}
+
+async function startDaemonOnQaPort(agentDir: string, preferredPort: QaPort = 18999): Promise<StartedDaemon> {
 	const failures: string[] = [];
-	for (const port of qaPortsFrom(18999)) {
+	for (const port of qaPortsFrom(preferredPort)) {
 		const listen = `ws://127.0.0.1:${port}`;
 		try {
 			const started = await runDaemonCli(agentDir, ["start", "--listen", listen]);
@@ -169,6 +194,18 @@ async function startDaemonOnQaPort(
 	throw new Error(`No free QA daemon port in ${qaPortsFrom().join(", ")} (${failures.join("; ")})`);
 }
 
+function closeServer(server: Server): Promise<void> {
+	return new Promise((resolveClose, rejectClose) => {
+		server.close((error) => {
+			if (error) {
+				rejectClose(error);
+				return;
+			}
+			resolveClose();
+		});
+	});
+}
+
 function runDaemonCli(agentDir: string, daemonArgs: readonly string[]): Promise<DaemonCliResult> {
 	return new Promise((resolveResult, reject) => {
 		const child = spawn("npx", ["tsx", "src/cli.ts", "app-server", "daemon", ...daemonArgs], {
@@ -176,8 +213,12 @@ function runDaemonCli(agentDir: string, daemonArgs: readonly string[]): Promise<
 			env: {
 				...process.env,
 				PI_OFFLINE: "1",
+				HOME: join(agentDir, "home"),
 				SENPI_CODING_AGENT_DIR: agentDir,
 				SENPI_CODING_AGENT_SESSION_DIR: join(agentDir, "sessions"),
+				XDG_CACHE_HOME: join(agentDir, "xdg-cache"),
+				XDG_CONFIG_HOME: join(agentDir, "xdg-config"),
+				XDG_DATA_HOME: join(agentDir, "xdg-data"),
 			},
 			stdio: ["ignore", "pipe", "pipe"],
 		});
@@ -200,7 +241,8 @@ function runDaemonCli(agentDir: string, daemonArgs: readonly string[]): Promise<
 		child.once("close", (code) => {
 			clearTimeout(timeout);
 			if (code !== 0) {
-				reject(new Error(`daemon command failed (${code}): ${daemonArgs.join(" ")}\n${stderr}`));
+				const output = [stderr.trim(), stdout.trim()].filter(Boolean).join("\n");
+				reject(new Error(`daemon command failed (${code}): ${daemonArgs.join(" ")}\n${output}`));
 				return;
 			}
 			const lines = stdout.trim().split("\n").filter(Boolean);
@@ -224,33 +266,20 @@ async function readProcessStartTime(pid: number): Promise<string | undefined> {
 	});
 }
 
-async function waitForChildStartTime(pid: number): Promise<string> {
-	const deadline = Date.now() + 2_000;
-	while (Date.now() <= deadline) {
-		const startTime = await readProcessStartTime(pid);
-		if (startTime) return startTime;
-		await new Promise((resolve) => setTimeout(resolve, 20));
-	}
-	throw new Error(`child pid ${pid} had no process start time`);
-}
-
-async function eventually(assertion: () => void | Promise<void>): Promise<void> {
-	const deadline = Date.now() + 2_000;
-	let lastError: unknown;
-	while (Date.now() < deadline) {
-		try {
-			await assertion();
-			return;
-		} catch (error: unknown) {
-			if (!(error instanceof Error)) throw error;
-			lastError = error;
-		}
-		await new Promise((resolve) => setTimeout(resolve, 20));
-	}
-	if (lastError instanceof Error) {
-		throw lastError;
-	}
-	throw new Error("condition was not met");
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+	return new Promise((resolveResult, rejectResult) => {
+		const timeout = setTimeout(() => rejectResult(new Error(message)), timeoutMs);
+		void promise.then(
+			(value) => {
+				clearTimeout(timeout);
+				resolveResult(value);
+			},
+			(error: unknown) => {
+				clearTimeout(timeout);
+				rejectResult(error);
+			},
+		);
+	});
 }
 
 function expectRecord(value: unknown): asserts value is Record<string, unknown> {

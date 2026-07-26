@@ -1,0 +1,626 @@
+{
+ "description": "Sanitized regression fixtures for the todo-tool-correction plan. raw_args are VERBATIM tool-call arguments mined from ~/.senpi/agent/sessions (2026-07-20..07-25). starting_state entries marked reconstructed=true are representative reconstructions from the error-echo text (exact pre-call state was not persisted); behavior class, not exact wording, is the contract for those. No secrets present (scanned).",
+ "mined": {
+  "total_todo_calls": 2435,
+  "failures": 17,
+  "window": "2026-07-19..2026-07-26"
+ },
+ "rules_version": "r2-conservative (unique-normalized-equality auto-match only; containment/similarity suggestion-only)",
+ "fixtures": [
+  {
+   "id": "fx01",
+   "source_model": "apitopia/kimi-k3",
+   "observed_error_kind": "state-level",
+   "raw_args": {
+    "op": "done",
+    "task": "synthesize non-overlapping findings and current status"
+   },
+   "starting_state": [
+    {
+     "name": "Acquire",
+     "tasks": [
+      {
+       "content": "fetch stall-analysis artifacts",
+       "status": "completed"
+      },
+      {
+       "content": "collect harness logs",
+       "status": "completed"
+      }
+     ]
+    },
+    {
+     "name": "Report",
+     "tasks": [
+      {
+       "content": "synthesize findings and write current-status report",
+       "status": "completed"
+      }
+     ]
+    }
+   ],
+   "starting_state_reconstructed": true,
+   "expected_behavior_after_fix": "throw: task not found; suggestion (did-you-mean) for the closest task; isError=true; state unchanged",
+   "observed_error_text_excerpt": "Errors: Task \"synthesize non-overlapping findings and current status\" not found\nRemaining items: none.\nOverall: 6/6 done, 0 open.\nActive phase 3/3 \"Report\" (1/1).\n  Acquire:\n    - [X] fetch 병현 stall-analysis markdown\n    - [X] locate sglang source repo/version used\n  Critical rev"
+  },
+  {
+   "id": "fx02",
+   "source_model": "apitopia/kimi-k3-unlocked",
+   "observed_error_kind": "loop-validation",
+   "raw_args": {
+    "items": [
+     "Wave1: DNS/WHOIS/TLS/HTTP/crt.sh fingerprint via eval — verify outputs in notepad",
+     "Wave2: fetch ydtour50.sbs content Tier1 engine, escalate CloakBrowser if blocked — verify captured text+screenshot",
+     "Wave3: enumerate >=3 sibling mirror domains — verify list with sources",
+     "Synthesize final report with evidence refs — verify all criteria PASS"
+    ]
+   },
+   "starting_state": [],
+   "starting_state_reconstructed": false,
+   "expected_behavior_after_fix": "auto-correct: op inferred as init (items-only, empty current list); [auto-corrected] notice; list initialized under DEFAULT_INIT_PHASE",
+   "observed_error_text_excerpt": "Validation failed for tool \"todo\":\n  - op: must have required properties op\n\nReceived arguments:\n{\n  \"items\": [\n    \"Wave1: DNS/WHOIS/TLS/HTTP/crt.sh fingerprint via eval — verify outputs in notepad\",\n    \"Wave2: fetch ydtour50.sbs content Tier1 engine, escalate CloakBrowser if b"
+  },
+  {
+   "id": "fx03",
+   "source_model": "quotio-openai/gpt-5.6-sol-fast",
+   "observed_error_kind": "state-level",
+   "raw_args": {
+    "op": "done",
+    "list": [],
+    "task": "Confirm temporary 13773 server is offline",
+    "phase": "",
+    "items": []
+   },
+   "starting_state": [
+    {
+     "name": "Migration",
+     "tasks": [
+      {
+       "content": "Capture current 13773 server config",
+       "status": "completed"
+      },
+      {
+       "content": "Migrate service to new port",
+       "status": "completed"
+      },
+      {
+       "content": "Verify new server healthy",
+       "status": "completed"
+      },
+      {
+       "content": "Confirm the temporary server on 13773 is offline",
+       "status": "completed"
+      }
+     ]
+    }
+   ],
+   "starting_state_reconstructed": true,
+   "expected_behavior_after_fix": "placeholder stripping: list=[]/phase=''/items=[] treated as absent (no notice); task non-blank but not an exact/unique-normalized match -> throw with did-you-mean; isError=true; state unchanged",
+   "observed_error_text_excerpt": "Errors: Task \"Confirm temporary 13773 server is offline\" not found\nRemaining items: none.\nOverall: 4/4 done, 0 open.\nActive phase 1/1 \"Migration\" (4/4).\n  Migration:\n    - [X] Capture current 13773 server command and health\n    - [X] Terminate stale Senpi and CUA process tree\n   "
+  },
+  {
+   "id": "fx04",
+   "source_model": "apitopia/kimi-k3",
+   "observed_error_kind": "loop-validation",
+   "raw_args": {
+    "list": [
+     {
+      "items": [
+       "W1-A: migration 0016 + drizzle schema + repos types/mapping + inline test DDL sweep — verify tsc + full bun test green",
+       "W1-B: src/lib/cost-limits.ts + unit tests RED→GREEN — verify bun test tests/unit/cost-limits.test.ts",
+       "W1 review: diff both lanes against plan D1-D4/D6 — verify checklist items"
+      ],
+      "phase": "Foundation"
+     },
+     {
+      "items": [
+       "W2-C: auth.ts enforcement + integration 429 tests RED→GREEN",
+       "W2-D: logUsage counter UPDATE + usage counter tests RED→GREEN",
+       "W2-E: admin PATCH/reset/list-enrich + integration tests RED→GREEN",
+       "W2 review: diff all three lanes, run full suite + typecheck"
+      ],
+      "phase": "Enforcement"
+     },
+     {
+      "items": [
+       "AGENTS.md doc row + section, openapi.json regen if committed",
+       "Oracle reviewer gate: submit diff+criteria+evidence, resolve blockers to unconditional approval",
+       "Final local gate: bun test + tsc --noEmit + biome check all green"
+      ],
+      "phase": "Review"
+     },
+     {
+      "items": [
+       "Prod D1 migration first — verify PRAGMA table_info shows 5 new columns",
+       "Commit + push main, watch deploy.yml to green",
+       "C6 live chain: insert test key limit=1µ¢, 200→429 evidence, counters SELECT, no-limit key 200, limit cleared 200",
+       "Cleanup: DELETE test key rows, verify count 0, receipt in notepad",
+       "Final report + update_goal complete"
+      ],
+      "phase": "Ship"
+     }
+    ]
+   },
+   "starting_state": [],
+   "starting_state_reconstructed": false,
+   "expected_behavior_after_fix": "auto-correct: op inferred as init (list provided without op); [auto-corrected] notice; list initialized",
+   "observed_error_text_excerpt": "Validation failed for tool \"todo\":\n  - op: must have required properties op\n\nReceived arguments:\n{\n  \"list\": [\n    {\n      \"items\": [\n        \"W1-A: migration 0016 + drizzle schema + repos types/mapping + inline test DDL sweep — verify tsc + full bun test green\",\n        \"W1-B: s"
+  },
+  {
+   "id": "fx05",
+   "source_model": "opengateway/z-ai/glm-5.2-ultrafast",
+   "observed_error_kind": "loop-validation",
+   "raw_args": {
+    "op": "Study kimi-k3-unlocked full implementation"
+   },
+   "starting_state": null,
+   "starting_state_reconstructed": false,
+   "expected_behavior_after_fix": "loop-level validation error (op not in enum) — unchanged by design; assert validateToolArguments throws the enum message",
+   "observed_error_text_excerpt": "Validation failed for tool \"todo\":\n  - op: must be equal to constant\n  - op: must be equal to constant\n  - op: must be equal to constant\n  - op: must be equal to constant\n  - op: must be equal to constant\n  - op: must be equal to constant\n  - op: must be equal to constant\n  - op:"
+  },
+  {
+   "id": "fx06",
+   "source_model": "opengateway/z-ai/glm-5.2-ultrafast",
+   "observed_error_kind": "loop-validation",
+   "raw_args": {
+    "list": [
+     {
+      "phase": "Build",
+      "items": [
+       "Build Galaga-style game with HTML5 Canvas",
+       "Add AI auto-pilot demo mode",
+       "Add wave system, enemies, shooting, scoring",
+       "Verify game runs in browser"
+      ]
+     },
+     {
+      "phase": "Record",
+      "items": [
+       "Open game in browser",
+       "Record screen during gameplay to MP4",
+       "Verify MP4 file is valid"
+      ]
+     }
+    ]
+   },
+   "starting_state": [],
+   "starting_state_reconstructed": false,
+   "expected_behavior_after_fix": "auto-correct: op inferred as init (list provided without op); [auto-corrected] notice; list initialized",
+   "observed_error_text_excerpt": "Validation failed for tool \"todo\":\n  - op: must have required properties op\n\nReceived arguments:\n{\n  \"list\": [\n    {\n      \"phase\": \"Build\",\n      \"items\": [\n        \"Build Galaga-style game with HTML5 Canvas\",\n        \"Add AI auto-pilot demo mode\",\n        \"Add wave system, enem"
+  },
+  {
+   "id": "fx07",
+   "source_model": "apitopia/kimi-k3-unlocked",
+   "observed_error_kind": "loop-validation",
+   "raw_args": {
+    "list": [
+     {
+      "phase": "Bootstrap",
+      "items": [
+       "Clone and survey reference repo structure",
+       "Extract physics constants and level data format from reference",
+       "Write decision-complete plan file to .omo/plans/mario-port.md",
+       "Record tier triage and skills in notepad"
+      ]
+     },
+     {
+      "phase": "Foundation",
+      "items": [
+       "Scaffold git+bun+vite+strict tsconfig+biome",
+       "RED: first failing physics constants test",
+       "GREEN: constants module flips test, commit foundation"
+      ]
+     },
+     {
+      "phase": "Simulation Core",
+      "items": [
+       "TDD fixed-point math and physics constants parity",
+       "TDD level format and converter from reference data",
+       "TDD tilemap collision and player movement physics",
+       "TDD camera scrolling rules, commit sim core"
+      ]
+     },
+     {
+      "phase": "Entities",
+      "items": [
+       "TDD Goomba and Koopa behaviors",
+       "TDD question/brick blocks, coins, powerups",
+       "TDD pipes, flagpole, scoring, timer, lives",
+       "Commit entities slice"
+      ]
+     },
+     {
+      "phase": "Presentation",
+      "items": [
+       "Extract sprite atlas from reference assets",
+       "Canvas 256x240 renderer with integer scaling",
+       "HUD, title screen, level transitions, input map",
+       "Commit presentation slice"
+      ]
+     },
+     {
+      "phase": "Parity and QA",
+      "items": [
+       "Dev server up, agent-browser captures title and gameplay evidence",
+       "Run parity checklist against reference, fix diffs",
+       "Full suite+typecheck+build green, final commit, cleanup receipts"
+      ]
+     }
+    ]
+   },
+   "starting_state": [],
+   "starting_state_reconstructed": false,
+   "expected_behavior_after_fix": "auto-correct: op inferred as init (list provided without op); [auto-corrected] notice; list initialized",
+   "observed_error_text_excerpt": "Validation failed for tool \"todo\":\n  - op: must have required properties op\n\nReceived arguments:\n{\n  \"list\": [\n    {\n      \"phase\": \"Bootstrap\",\n      \"items\": [\n        \"Clone and survey reference repo structure\",\n        \"Extract physics constants and level data format from ref"
+  },
+  {
+   "id": "fx08",
+   "source_model": "apitopia/kimi-k3",
+   "observed_error_kind": "loop-validation",
+   "raw_args": {
+    "items": [
+     "Boulder state + worktrees created",
+     "Wave1: T1 SessionManager mutation-counter cache (PR-1)",
+     "Wave1: T4 MCP startup race all lifecycles (PR-2)",
+     "Wave1: T5 port group-liveness cleanup to main (PR-2)",
+     "Wave1: T6 omo codegraph eager lifecycle (PR-3)",
+     "Wave1: T7 task8 teardown on feat/app-server-parity",
+     "Wave2: T2 incremental usage totals + footer (PR-1)",
+     "Wave3: T3 manual perf QA Bug A evidence",
+     "F1 senpi full gates on PR-1/PR-2 branches",
+     "F2 cross-fix live QA in ~/local-workspaces",
+     "F3 orphan reap to zero + probe recount",
+     "F4 PR hygiene, CI green, merge all PRs"
+    ]
+   },
+   "starting_state": [],
+   "starting_state_reconstructed": false,
+   "expected_behavior_after_fix": "auto-correct: op inferred as init (list provided without op); [auto-corrected] notice; list initialized",
+   "observed_error_text_excerpt": "Validation failed for tool \"todo\":\n  - op: must have required properties op\n\nReceived arguments:\n{\n  \"items\": [\n    \"Boulder state + worktrees created\",\n    \"Wave1: T1 SessionManager mutation-counter cache (PR-1)\",\n    \"Wave1: T4 MCP startup race all lifecycles (PR-2)\",\n    \"Wave"
+  },
+  {
+   "id": "fx09",
+   "source_model": "apitopia/kimi-k3",
+   "observed_error_kind": "loop-validation",
+   "raw_args": {
+    "list": [
+     {
+      "items": [
+       "Survey skills, fire discovery wave, open notepad",
+       "Record tier triage and detailed plan"
+      ],
+      "phase": "Bootstrap"
+     },
+     {
+      "items": [
+       "Create isolated PR worktree and branch"
+      ],
+      "phase": "Worktree"
+     },
+     {
+      "items": [
+       "Design and write senpi ulw-research skill",
+       "Wire team-mode default and debate flow"
+      ],
+      "phase": "ulw-research"
+     },
+     {
+      "items": [
+       "Rewrite senpi ultrawork prompt with eval-parallel directive"
+      ],
+      "phase": "ultrawork"
+     },
+     {
+      "items": [
+       "Run scoped tests and QA, capture evidence"
+      ],
+      "phase": "QA"
+     },
+     {
+      "items": [
+       "Open PR, pass CI, merge"
+      ],
+      "phase": "PR"
+     }
+    ]
+   },
+   "starting_state": [],
+   "starting_state_reconstructed": false,
+   "expected_behavior_after_fix": "auto-correct: op inferred as init (list provided without op); [auto-corrected] notice; list initialized",
+   "observed_error_text_excerpt": "Validation failed for tool \"todo\":\n  - op: must have required properties op\n\nReceived arguments:\n{\n  \"list\": [\n    {\n      \"items\": [\n        \"Survey skills, fire discovery wave, open notepad\",\n        \"Record tier triage and detailed plan\"\n      ],\n      \"phase\": \"Bootstrap\"\n   "
+  },
+  {
+   "id": "fx10",
+   "source_model": "apitopia/kimi-k3",
+   "observed_error_kind": "loop-validation",
+   "raw_args": {
+    "list": [
+     {
+      "phase": "Research",
+      "items": [
+       "Read GLM prompt reference + builtin category appends + senpi tool surface",
+       "Inspect ~/.senpi install layout for task + omo-senpi update path"
+      ]
+     },
+     {
+      "phase": "Prompt",
+      "items": [
+       "Write GLM-5.2-tuned eval-parallel prompt_append",
+       "Wire prompt_append into ~/.config/omo/omo.jsonc ultrafast categories"
+      ]
+     },
+     {
+      "phase": "Update",
+      "items": [
+       "Update task + omo-senpi to latest version"
+      ]
+     },
+     {
+      "phase": "Verify",
+      "items": [
+       "Validate omo.jsonc parses against schema",
+       "Verify updated installs work"
+      ]
+     }
+    ]
+   },
+   "starting_state": [],
+   "starting_state_reconstructed": false,
+   "expected_behavior_after_fix": "auto-correct: op inferred as init (list provided without op); [auto-corrected] notice; list initialized",
+   "observed_error_text_excerpt": "Validation failed for tool \"todo\":\n  - op: must have required properties op\n\nReceived arguments:\n{\n  \"list\": [\n    {\n      \"phase\": \"Research\",\n      \"items\": [\n        \"Read GLM prompt reference + builtin category appends + senpi tool surface\",\n        \"Inspect ~/.senpi install "
+  },
+  {
+   "id": "fx11",
+   "source_model": "apitopia/kimi-k3",
+   "observed_error_kind": "loop-validation",
+   "raw_args": {
+    "list": [
+     {
+      "items": [
+       "Map senpi adapter, orchestration stream path, web render path — verify by file:line map in notepad",
+       "Dump state.sqlite events for thread 39587eea — verify by event-type/timestamp dump",
+       "Run senpi CLI directly, timestamp stdout chunks — verify by timing log",
+       "Write root cause + fix plan to notepad — verify by cited diagnosis complete"
+      ],
+      "phase": "Discovery"
+     }
+    ]
+   },
+   "starting_state": [],
+   "starting_state_reconstructed": false,
+   "expected_behavior_after_fix": "auto-correct: op inferred as init (list provided without op); [auto-corrected] notice; list initialized",
+   "observed_error_text_excerpt": "Validation failed for tool \"todo\":\n  - op: must have required properties op\n\nReceived arguments:\n{\n  \"list\": [\n    {\n      \"items\": [\n        \"Map senpi adapter, orchestration stream path, web render path — verify by file:line map in notepad\",\n        \"Dump state.sqlite events fo"
+  },
+  {
+   "id": "fx12",
+   "source_model": "apitopia/kimi-k3",
+   "observed_error_kind": "state-level",
+   "raw_args": {
+    "append": [
+     "Fix oracle blocker 2 via Agent A: reasoning terminal-path flush + regression — verify by tests green",
+     "Fix oracle blocker 1 via Agent B: empty-delta throttle accounting + regression — verify by tests green",
+     "Re-review blocker fixes + re-run focused tests + gates — verify exit 0",
+     "Re-submit delta to same oracle — verify by APPROVE"
+    ],
+    "op": "append",
+    "phase": "Tasks"
+   },
+   "starting_state": [
+    {
+     "name": "Tasks",
+     "tasks": [
+      {
+       "content": "Review Agent B diff, run focused tests — verify by diff read + tests green",
+       "status": "in_progress"
+      },
+      {
+       "content": "Integration gates: vp check + vp run typecheck — verify exit 0",
+       "status": "pending"
+      },
+      {
+       "content": "Oracle review of integrated diff (HEAVY gate)",
+       "status": "pending"
+      }
+     ]
+    }
+   ],
+   "starting_state_reconstructed": true,
+   "expected_behavior_after_fix": "auto-correct: op-named key alias — 'append' key holds string[] while items is absent and op=='append'; use it as items; append 4 tasks to phase 'Tasks'; [auto-corrected] notice",
+   "observed_error_text_excerpt": "Errors: Missing items for append operation\nRemaining items (6):\n  - Review Agent B diff, run focused tests — verify by diff read + tests green [in_progress] (Tasks)\n  - Integration gates: vp check + vp run typecheck — verify exit 0 [pending] (Tasks)\n  - Oracle review of integrate"
+  },
+  {
+   "id": "fx13",
+   "source_model": "apitopia/kimi-k3",
+   "observed_error_kind": "loop-validation",
+   "raw_args": {
+    "list": [
+     {
+      "phase": "Setup",
+      "items": [
+       "Create worktree branch for footer notation change"
+      ]
+     },
+     {
+      "phase": "TDD",
+      "items": [
+       "Write failing formatTokens abbreviation test",
+       "Implement oh-my-pi-style formatTokens GREEN"
+      ]
+     },
+     {
+      "phase": "Verify",
+      "items": [
+       "Run scoped tests and npm run check",
+       "Real CLI QA evidence via senpi-qa"
+      ]
+     },
+     {
+      "phase": "Ship",
+      "items": [
+       "Commit, open PR, merge, cleanup worktree"
+      ]
+     }
+    ]
+   },
+   "starting_state": [],
+   "starting_state_reconstructed": false,
+   "expected_behavior_after_fix": "auto-correct: op inferred as init (list provided without op); [auto-corrected] notice; list initialized",
+   "observed_error_text_excerpt": "Validation failed for tool \"todo\":\n  - op: must have required properties op\n\nReceived arguments:\n{\n  \"list\": [\n    {\n      \"phase\": \"Setup\",\n      \"items\": [\n        \"Create worktree branch for footer notation change\"\n      ]\n    },\n    {\n      \"phase\": \"TDD\",\n      \"items\": [\n  "
+  },
+  {
+   "id": "fx14",
+   "source_model": "apitopia/kimi-k3",
+   "observed_error_kind": "loop-validation",
+   "raw_args": {
+    "items": [
+     "Setup worktrees, branches, deps, boulder state",
+     "W1-T1 watch engine hash gating (senpi)",
+     "W1-T2 settings self-write hash seam (senpi)",
+     "W1-T3 requestReload+isCompacting seam (senpi)",
+     "W1-T4 config-watch events protocol (senpi)",
+     "W1-T5 JSONL logger (senpi)",
+     "W1 verify+commit senpi todos 1-5",
+     "W2-T6 builtin extension core (senpi)",
+     "W2-T7 builtin registration+docs (senpi)",
+     "W2-T8 mode-matrix hardening (senpi)",
+     "W2 verify+commit senpi todos 6-8",
+     "W3-T9 omo path resolution+validate (omo)",
+     "W3-T10 omo config-watch component (omo)",
+     "W3-T11 omo compose wiring+flag (omo)",
+     "W3 verify+commit omo todos 9-11",
+     "W4-T12 senpi e2e QA via senpi-qa",
+     "W4-T13 omo e2e QA cross-repo",
+     "F1 plan compliance audit",
+     "F2 code quality review both repos",
+     "F3 fresh real manual QA re-run",
+     "F4 scope fidelity check",
+     "Push branches, open PRs, merge both repos",
+     "Cleanup worktrees, boulder, final receipts"
+    ]
+   },
+   "starting_state": [],
+   "starting_state_reconstructed": false,
+   "expected_behavior_after_fix": "auto-correct: op inferred as init (list provided without op); [auto-corrected] notice; list initialized",
+   "observed_error_text_excerpt": "Validation failed for tool \"todo\":\n  - op: must have required properties op\n\nReceived arguments:\n{\n  \"items\": [\n    \"Setup worktrees, branches, deps, boulder state\",\n    \"W1-T1 watch engine hash gating (senpi)\",\n    \"W1-T2 settings self-write hash seam (senpi)\",\n    \"W1-T3 reques"
+  },
+  {
+   "id": "fx15",
+   "source_model": "apitopia/kimi-k3",
+   "observed_error_kind": "loop-validation",
+   "raw_args": {
+    "list": [
+     {
+      "phase": "Setup",
+      "items": [
+       "Create worktree + branch off origin/main",
+       "Install deps in worktree"
+      ]
+     },
+     {
+      "phase": "RED",
+      "items": [
+       "RED ai: convertResponsesMessages omits invalid non-fc item id",
+       "RED coding-agent: openai-remote convertToolCall omits invalid id",
+       "RED coding-agent: wire-level compaction replay rejects poisoned id"
+      ]
+     },
+     {
+      "phase": "GREEN",
+      "items": [
+       "Fix convertResponsesMessages id omission",
+       "Fix openai-remote convertToolCall id omission",
+       "All three tests GREEN"
+      ]
+     },
+     {
+      "phase": "Verify",
+      "items": [
+       "Scoped test suites green + npm run check",
+       "Full npm test",
+       "senpi-qa CLI evidence (mock loop + rpc + smoke)",
+       "changes.md entries both packages",
+       "Reviewer loop approval (HEAVY gate)"
+      ]
+     },
+     {
+      "phase": "Ship",
+      "items": [
+       "Atomic commits + push",
+       "Open PR to main",
+       "CI + Cubic gates green",
+       "Merge with merge commit, wait MERGED",
+       "Worktree cleanup + final report"
+      ]
+     }
+    ]
+   },
+   "starting_state": [],
+   "starting_state_reconstructed": false,
+   "expected_behavior_after_fix": "auto-correct: op inferred as init (list provided without op); [auto-corrected] notice; list initialized",
+   "observed_error_text_excerpt": "Validation failed for tool \"todo\":\n  - op: must have required properties op\n\nReceived arguments:\n{\n  \"list\": [\n    {\n      \"phase\": \"Setup\",\n      \"items\": [\n        \"Create worktree + branch off origin/main\",\n        \"Install deps in worktree\"\n      ]\n    },\n    {\n      \"phase\":"
+  },
+  {
+   "id": "fx16",
+   "source_model": "apitopia/z-ai/glm-5.2-ultrafast-unlocked",
+   "observed_error_kind": "state-level",
+   "raw_args": {
+    "op": "start",
+    "task": "Investigate and fix compaction test #2 regression"
+   },
+   "starting_state": [
+    {
+     "name": "Release",
+     "tasks": [
+      {
+       "content": "Execute release.mjs --version 2026.7.24 (check build test commit tag push)",
+       "status": "in_progress"
+      },
+      {
+       "content": "Investigate compaction test regression #2 and fix",
+       "status": "pending"
+      }
+     ]
+    }
+   ],
+   "starting_state_reconstructed": true,
+   "expected_behavior_after_fix": "throw: task not found; did-you-mean suggests the near-miss compaction task; isError=true; NO auto-apply (containment/similarity is suggestion-only)",
+   "observed_error_text_excerpt": "Errors: Task \"Investigate and fix compaction test #2 regression\" not found\nRemaining items (5):\n  - Execute release.mjs --version 2026.7.24 (check build test commit tag push) [in_progress] (Release)\n  - Poll npm view until 2026.7.24 is published by CI [pending] (Publish)\n  - Inst"
+  },
+  {
+   "id": "fx17",
+   "source_model": "opengateway/z-ai/glm-5.2-ultrafast",
+   "observed_error_kind": "state-level",
+   "raw_args": {
+    "op": "init",
+    "list": [
+     {
+      "phase": "Dockerfile",
+      "items": [
+       "Dockerfile secret 제거 + 가드 반전 GREEN"
+      ]
+     },
+     {
+      "phase": "Ship",
+      "items": [
+       "커밋 + push + PR 생성",
+       "CI green + 머지(사용자 사전 승인: 이 작업 병합)",
+       "deploy-dev 트리거 관찰: Build Succeeded?"
+      ],
+      "phase2": "Verify"
+     },
+     {
+      "phase": "Dockerfile",
+      "items": [
+       "dev uptime 리셋 + memory 활성화 확인"
+      ],
+      "items2": []
+     }
+    ]
+   },
+   "starting_state": [],
+   "starting_state_reconstructed": false,
+   "expected_behavior_after_fix": "auto-correct: duplicate phase 'Dockerfile' in init list merged into first occurrence; [auto-corrected] notice; init succeeds",
+   "observed_error_text_excerpt": "Errors: Duplicate phase \"Dockerfile\" in init list\nRemaining items (3):\n  - Delegate lanes to unspecified-low parallel [in_progress] (ArbiterFix)\n  - Review worker PRs + adversarial verify [pending] (ArbiterFix)\n  - Merge arbiter env-respect PR [pending] (ArbiterFix)\nOverall: 4/7 "
+  }
+ ]
+}

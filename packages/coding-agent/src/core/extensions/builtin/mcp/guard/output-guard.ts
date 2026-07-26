@@ -6,6 +6,8 @@ import type { McpMappedContentBlock } from "../expose/schema-compat.ts";
 
 export interface McpOutputGuardOptions {
 	readonly agentDir?: string;
+	/** Owner of spill files for one MCP service/session. */
+	readonly artifacts?: McpOutputArtifacts;
 	readonly server: string;
 	readonly outputGuard?: McpSettings["outputGuard"];
 }
@@ -22,7 +24,25 @@ const DEFAULT_MAX_BYTES = 50 * 1024;
 const DEFAULT_MAX_LINES = 2000;
 const PREVIEW_BYTE_BUDGET = 8192;
 let spillCounter = 0;
-const spilledFiles = new Set<string>();
+
+/** Tracks the output artifacts owned by one MCP service. */
+export class McpOutputArtifacts {
+	readonly #files = new Set<string>();
+
+	track(path: string): void {
+		this.#files.add(path);
+	}
+
+	async cleanup(): Promise<void> {
+		const files = [...this.#files];
+		this.#files.clear();
+		await Promise.all(files.map((file) => rm(file, { force: true })));
+	}
+}
+
+// Legacy direct callers retain the historic process-wide owner. MCP services
+// pass their own owner so one session cannot remove another's spill files.
+const legacyArtifacts = new McpOutputArtifacts();
 
 export async function applyMcpOutputGuard(
 	content: readonly McpMappedContentBlock[],
@@ -112,14 +132,12 @@ async function writePayload(payload: Payload, options: McpOutputGuardOptions): P
 	);
 	await writeFile(path, payload.bytes, { mode: 0o600 });
 	await chmod(path, 0o600);
-	spilledFiles.add(path);
+	(options.artifacts ?? legacyArtifacts).track(path);
 	return path;
 }
 
-export async function cleanupMcpOutputArtifacts(): Promise<void> {
-	const files = [...spilledFiles];
-	spilledFiles.clear();
-	await Promise.all(files.map((file) => rm(file, { force: true })));
+export async function cleanupMcpOutputArtifacts(artifacts: McpOutputArtifacts = legacyArtifacts): Promise<void> {
+	await artifacts.cleanup();
 }
 
 function buildPreview(payload: Payload, limits: { maxBytes: number; maxLines: number }): string {

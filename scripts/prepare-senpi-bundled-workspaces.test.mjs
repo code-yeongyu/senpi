@@ -6,9 +6,11 @@ import { afterEach, describe, it } from "node:test";
 import {
 	SUPPORTED_NATIVE_PREBUILD_TARGETS,
 	assertSenpiPackedWorkspaceFiles,
+	bundlablePublishPackageNames,
 	bundledWorkspacePackageChecks,
 	copyPublishDependencies,
 	directNodeModulesPackageName,
+	isPlatformConstrainedPackage,
 	listStagedPublishPackageNames,
 	nativePrebuildFile,
 	nativePrebuildTarget,
@@ -70,6 +72,58 @@ describe("listStagedPublishPackageNames", () => {
 	});
 });
 
+describe("isPlatformConstrainedPackage", () => {
+	function writeStagedPackage(root, name, overrides) {
+		const packageDir = join(root, "node_modules", name);
+		mkdirSync(packageDir, { recursive: true });
+		writeJson(join(packageDir, "package.json"), { name, version: "1.0.0", ...overrides });
+		return packageDir;
+	}
+
+	it("detects os/cpu/libc constraints in both array and bare-string form", () => {
+		// Given
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-platform-constraint-"));
+
+		// When / Then
+		assert.equal(isPlatformConstrainedPackage(writeStagedPackage(tempDir, "portable", {})), false);
+		assert.equal(isPlatformConstrainedPackage(writeStagedPackage(tempDir, "os-array", { os: ["linux"] })), true);
+		assert.equal(isPlatformConstrainedPackage(writeStagedPackage(tempDir, "os-negated", { os: ["!win32"] })), true);
+		assert.equal(isPlatformConstrainedPackage(writeStagedPackage(tempDir, "cpu-string", { cpu: "arm64" })), true);
+		assert.equal(isPlatformConstrainedPackage(writeStagedPackage(tempDir, "libc-only", { libc: ["musl"] })), true);
+		// An empty constraint list restricts nothing, so it must not disqualify the package.
+		assert.equal(isPlatformConstrainedPackage(writeStagedPackage(tempDir, "empty", { os: [], cpu: [] })), false);
+	});
+
+	it("leaves an unreadable staged package bundled for the staging and pack gates to report", () => {
+		// Given
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-platform-unreadable-"));
+
+		// When / Then
+		assert.equal(isPlatformConstrainedPackage(join(tempDir, "node_modules", "absent")), false);
+	});
+});
+
+describe("bundlablePublishPackageNames", () => {
+	it("drops only the platform-constrained packages and preserves the staged order", () => {
+		// Given
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-bundlable-"));
+		const nodeModules = join(tempDir, "node_modules");
+		writePackage(tempDir, "@scope/native-linux");
+		writeJson(join(nodeModules, "@scope/native-linux", "package.json"), {
+			name: "@scope/native-linux",
+			version: "1.0.0",
+			os: ["linux"],
+			cpu: ["x64"],
+		});
+		writePackage(tempDir, "cross-spawn");
+		writePackage(tempDir, "typebox");
+
+		// When / Then
+		const staged = ["@scope/native-linux", "cross-spawn", "typebox"];
+		assert.deepEqual(bundlablePublishPackageNames(nodeModules, staged), ["cross-spawn", "typebox"]);
+	});
+});
+
 describe("stagePublishManifest", () => {
 	function writeCodingAgentManifest(root, overrides = {}) {
 		writeJson(join(root, "packages", "coding-agent", "package.json"), {
@@ -88,10 +142,10 @@ describe("stagePublishManifest", () => {
 		});
 	}
 
-	function stagePackage(root, name) {
+	function stagePackage(root, name, overrides = {}) {
 		const packageDir = join(root, "packages", "coding-agent", "node_modules", name);
 		mkdirSync(packageDir, { recursive: true });
-		writeJson(join(packageDir, "package.json"), { name, version: "1.0.0" });
+		writeJson(join(packageDir, "package.json"), { name, version: "1.0.0", ...overrides });
 	}
 
 	function stageAllRuntimePackages(root) {
@@ -121,7 +175,7 @@ describe("stagePublishManifest", () => {
 		assert.deepEqual(manifest.bundledDependencies, expected);
 	});
 
-	it("preserves all dependency edges, including the vendored ^2026.x workspace specs", () => {
+	it("keeps vendored import paths bundled while resolving them through owned registry aliases", () => {
 		// Given
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-stage-edges-"));
 		writeCodingAgentManifest(tempDir);
@@ -130,16 +184,42 @@ describe("stagePublishManifest", () => {
 		// When
 		stagePublishManifest(tempDir);
 
-		// Then: no dependency edge is dropped or rewritten, and no local specs exist.
+		// Then: npm retains the original dependency key for bundle extraction, while Bun
+		// resolves the alias target from the fork-owned scope instead of upstream.
 		const manifest = readStagedManifest(tempDir);
 		assert.deepEqual(manifest.dependencies, {
-			"@earendil-works/pi-ai": "^2026.7.22",
+			"@earendil-works/pi-ai": "npm:@code-yeongyu/senpi-ai@^2026.7.22",
 			"cross-spawn": "7.0.6",
 		});
 		assert.deepEqual(manifest.optionalDependencies, { "@mariozechner/clipboard": "0.3.9" });
+		assert.ok(manifest.bundleDependencies.includes("@earendil-works/pi-ai"));
 		for (const spec of [...Object.values(manifest.dependencies), ...Object.values(manifest.optionalDependencies)]) {
 			assert.doesNotMatch(spec, /^(file|link|workspace):/);
 		}
+	});
+
+	it("omits platform-constrained natives from bundleDependencies", () => {
+		// Given: the npm-publish job runs on linux-x64, so npm materializes only the linux
+		// clipboard binaries into the staged tree.
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-stage-platform-"));
+		writeCodingAgentManifest(tempDir);
+		stageAllRuntimePackages(tempDir);
+		stagePackage(tempDir, "@mariozechner/clipboard-linux-x64-gnu", { os: ["linux"], cpu: ["x64"] });
+		stagePackage(tempDir, "@mariozechner/clipboard-linux-x64-musl", { os: ["linux"], cpu: ["x64"], libc: ["musl"] });
+
+		// When
+		const bundled = stagePublishManifest(tempDir);
+
+		// Then: npm republishes the bundled set as required `dependencies`, so bundling either
+		// native would abort every non-linux-x64 install with EBADPLATFORM. Portable packages
+		// are still bundled, and the optional edge stays so npm resolves the installing
+		// platform's own binary.
+		const expected = ["@earendil-works/pi-ai", "@mariozechner/clipboard", "cross-spawn", "which"];
+		assert.deepEqual(bundled, expected);
+		const manifest = readStagedManifest(tempDir);
+		assert.deepEqual(manifest.bundleDependencies, expected);
+		assert.deepEqual(manifest.bundledDependencies, expected);
+		assert.deepEqual(manifest.optionalDependencies, { "@mariozechner/clipboard": "0.3.9" });
 	});
 
 	it("throws when a declared runtime dependency is not staged", () => {

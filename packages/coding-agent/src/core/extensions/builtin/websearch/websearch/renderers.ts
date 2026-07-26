@@ -1,5 +1,6 @@
 import { Text } from "@earendil-works/pi-tui";
 
+import { providerEntryLabel } from "./search.ts";
 import type { SearchDetails, SearchErrorDetails, SearchProgressDetails, SearchRenderDetails } from "./types.ts";
 
 interface ThemeLike {
@@ -34,12 +35,22 @@ function durationText(durationMs: number): string {
 function attemptLabel(attempts: SearchDetails["attempts"]): string {
 	return attempts
 		? attempts
-				.map(
-					(attempt) =>
-						`${attempt.entryId ? `${attempt.provider}/${attempt.entryId}` : attempt.provider}:${attempt.error ? "failed" : attempt.resultsCount}`,
-				)
+				.map((attempt) => `${providerEntryLabel(attempt)}:${attempt.error ? "failed" : attempt.resultsCount}`)
 				.join(" -> ")
 		: "";
+}
+
+function routeStateLabel(details: SearchProgressDetails): string {
+	const labels = details.routeLabels ?? details.providerLabels;
+	if (labels.length === 0) return "";
+	const attempts = details.attempts ?? [];
+	return labels
+		.map((label, index) => {
+			const attempt = attempts[index];
+			if (attempt) return `${label}:${attempt.error ? "failed" : attempt.resultsCount}`;
+			return `${label}:${index === attempts.length ? "searching" : "pending"}`;
+		})
+		.join(" -> ");
 }
 
 function isSearchProgressDetails(details: SearchRenderDetails | undefined): details is SearchProgressDetails {
@@ -67,15 +78,12 @@ export function renderSearchResult(
 		const details = result.details;
 		if (isSearchProgressDetails(details)) {
 			if (details.currentProvider) {
-				const total = details.providerLabels.length;
-				const position = Math.min((details.attempts?.length ?? 0) + 1, Math.max(total, 1));
-				const step = total > 1 ? ` [${position}/${total}]` : "";
 				const line = theme.fg(
 					"warning",
-					`Searching "${shorten(details.query, 80)}" via ${details.currentProvider}${step} (max ${details.maxResults})`,
+					`Searching "${shorten(details.query, 80)}" via ${details.currentProvider} (max ${details.maxResults})`,
 				);
-				const attempts = attemptLabel(details.attempts);
-				const rows = options.expanded && attempts ? [line, theme.fg("muted", `route ${attempts}`)] : [line];
+				const route = routeStateLabel(details);
+				const rows = options.expanded && route ? [line, theme.fg("muted", `route ${route}`)] : [line];
 				return new Text(rows.join("\n"), 0, 0);
 			}
 			const route = details.providerLabels.length > 0 ? details.providerLabels.join(" -> ") : "configured providers";
@@ -95,7 +103,7 @@ export function renderSearchResult(
 	if (details.error) return new Text(theme.fg("error", details.error), 0, 0);
 
 	const count = details.results.length;
-	const provider = details.entryId ? `${details.provider}/${details.entryId}` : details.provider;
+	const provider = providerEntryLabel(details);
 	const summary =
 		theme.fg("success", `${count} result${count === 1 ? "" : "s"}`) +
 		theme.fg(

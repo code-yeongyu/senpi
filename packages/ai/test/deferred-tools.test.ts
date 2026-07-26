@@ -423,6 +423,7 @@ describe("deferred tools", () => {
 			zaiToolStream: false,
 			supportsStrictMode: false,
 			supportsDisabledThinking: false,
+			supportsOpenAIGrammarTools: false,
 			cacheControlFormat: undefined,
 			toolCallFormat: undefined,
 			sendSessionAffinityHeaders: false,

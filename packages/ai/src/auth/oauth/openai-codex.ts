@@ -17,6 +17,7 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
 	});
 }
 
+import { extractOpenAiCodexAccountId } from "../../utils/openai-codex-auth.ts";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
 import type { AuthInteraction, OAuthAuth, OAuthCredential } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
@@ -36,7 +37,6 @@ const DEVICE_CODE_TIMEOUT_SECONDS = 15 * 60;
 const OPENAI_CODEX_BROWSER_LOGIN_METHOD = "browser";
 const OPENAI_CODEX_DEVICE_CODE_LOGIN_METHOD = "device_code";
 const SCOPE = "openid profile email offline_access";
-const JWT_CLAIM_PATH = "https://api.openai.com/auth";
 
 type OAuthToken = { access: string; refresh: string; expires: number };
 type TokenOperation = "exchange" | "refresh";
@@ -54,13 +54,6 @@ type DeviceAuthInfo = {
 type DeviceTokenSuccess = {
 	authorizationCode: string;
 	codeVerifier: string;
-};
-
-type JwtPayload = {
-	[JWT_CLAIM_PATH]?: {
-		chatgpt_account_id?: string;
-	};
-	[key: string]: unknown;
 };
 
 function createState(): string {
@@ -98,18 +91,6 @@ function parseAuthorizationInput(input: string): { code?: string; state?: string
 	}
 
 	return { code: value };
-}
-
-function decodeJwt(token: string): JwtPayload | null {
-	try {
-		const parts = token.split(".");
-		if (parts.length !== 3) return null;
-		const payload = parts[1] ?? "";
-		const decoded = atob(payload);
-		return JSON.parse(decoded) as JwtPayload;
-	} catch {
-		return null;
-	}
 }
 
 async function fetchWithLoginCancellation(input: string, init: RequestInit): Promise<Response> {
@@ -393,10 +374,7 @@ function startLocalOAuthServer(state: string): Promise<OAuthServerInfo> {
 }
 
 function getAccountId(accessToken: string): string | null {
-	const payload = decodeJwt(accessToken);
-	const auth = payload?.[JWT_CLAIM_PATH];
-	const accountId = auth?.chatgpt_account_id;
-	return typeof accountId === "string" && accountId.length > 0 ? accountId : null;
+	return extractOpenAiCodexAccountId(accessToken) ?? null;
 }
 
 function credentialsFromToken(token: OAuthToken): OAuthCredential {

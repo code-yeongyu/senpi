@@ -110,8 +110,9 @@ app-server/
 
 1. Probe the requested listener with a real `initialize` request.
 2. If the listener answers, print `already-running`.
-3. If a matching pidfile exists, wait briefly for that process to answer.
-4. Otherwise spawn a detached `senpi app-server --listen <url>` process, write the pidfile and settings, then probe until ready.
+3. For `ws://` listeners that do not answer, test whether the requested TCP address can be bound. A listener already occupying the address fails immediately with an `EADDRINUSE` diagnostic instead of spawning a child process.
+4. If a matching pidfile exists, wait briefly for that process to answer.
+5. Otherwise spawn a detached `senpi app-server --listen <url>` process, write the pidfile and settings, then probe until ready.
 
 For websocket listeners, the daemon probe reads the bearer token file and sends `Authorization: Bearer <token>`.
 

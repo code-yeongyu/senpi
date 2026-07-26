@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "../../../types.ts";
 import { createMcpLogger } from "../log.ts";
-import { getMcpService } from "../service.ts";
+import type { McpService } from "../service.ts";
 import { type AuthCommandDeps, runAuth, runAuthComplete, runAuthStart, runLogout } from "./commands-auth.ts";
 
 // Bridges the /mcp slash command to the pure auth flow runners in
@@ -10,9 +10,9 @@ export async function handleMcpAuthCommand(
 	args: readonly string[],
 	ctx: ExtensionCommandContext,
 	pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
+	service: McpService,
 ): Promise<void> {
 	const name = args[0] ?? "";
-	const service = getMcpService();
 	const target = service.getAuthTarget(name);
 	if (name.length === 0 || target === undefined) {
 		ctx.ui.notify(`Unknown MCP server: ${name || "<missing>"}`, "error");
@@ -36,6 +36,10 @@ export async function handleMcpAuthCommand(
 		},
 		openBrowser: (url) => ctx.ui.notify(`Open this URL to authorize ${name}:\n${url.toString()}`),
 		pending: service.getPendingAuth(),
+		interactiveGuard: {
+			begin: (serverName) => service.beginInteractiveAuth(serverName),
+			end: (serverName) => service.endInteractiveAuth(serverName),
+		},
 		serverName: name,
 	};
 	if (subcommand === "auth") return runAuth(deps);

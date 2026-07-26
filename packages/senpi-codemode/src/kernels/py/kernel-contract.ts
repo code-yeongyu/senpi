@@ -29,4 +29,6 @@ export interface PendingRun {
 	timeoutTimer: NodeJS.Timeout | null;
 	escalationTimer?: NodeJS.Timeout;
 	interruptReason?: string;
+	/** Set while an interrupt outcome is pending; resolved once the kernel knows whether state survived. */
+	resolveStateRetained?: (retained: boolean) => void;
 }

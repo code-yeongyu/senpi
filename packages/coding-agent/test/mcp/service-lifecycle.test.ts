@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { ServerConnection, ServerConnectionState } from "../../src/core/extensions/builtin/mcp/connection.ts";
 import {
 	getMcpService,
 	registerToolsPreservingActiveSet,
@@ -56,6 +57,32 @@ describe("McpService session lifecycle", () => {
 		expect(service.getServerSnapshots()).toMatchObject([
 			{ name: "shared", lifecycleState: "connected", pid: firstPid, configState: "enabled" },
 		]);
+	});
+
+	it("recovers a killed stdio child through manual reconnect", async () => {
+		const root = makeRoot("manual-reconnect", cleanupTasks);
+		const counterFile = join(root.agentDir, "manual-reconnect-spawns.txt");
+		setConfig(root, {
+			recoverable: stdioServer(["--tools", "1", "--spawn-counter-file", counterFile]),
+		});
+		const service = getMcpService();
+
+		await attach(service, root, "startup");
+		await awaitMcpConnected(service, "recoverable");
+		const firstPid = requiredPid(service, "recoverable");
+		const connection = service.getConnection("recoverable");
+		if (connection === undefined) throw new Error("missing recoverable connection");
+		const degraded = awaitConnectionState(connection, "degraded");
+		process.kill(firstPid, "SIGTERM");
+		await degraded;
+
+		await service.reconnectServer("recoverable");
+		await awaitMcpConnected(service, "recoverable");
+		const secondPid = requiredPid(service, "recoverable");
+
+		expect(secondPid).not.toBe(firstPid);
+		expect(await readCounter(counterFile)).toBe(2);
+		expect(service.getConnection("recoverable")?.state).toBe("connected");
 	});
 
 	it("disposes on reload and a subsequent session respawns the server", async () => {
@@ -273,6 +300,27 @@ describe("McpService session lifecycle", () => {
 		await assertAlive(pid2);
 	});
 });
+
+function awaitConnectionState(connection: ServerConnection, expected: ServerConnectionState): Promise<void> {
+	if (connection.state === expected) return Promise.resolve();
+	return new Promise<void>((resolve, reject) => {
+		const timeout = setTimeout(() => {
+			unsubscribe();
+			reject(new Error(`${connection.serverName} did not reach ${expected}`));
+		}, 10_000);
+		const unsubscribe = connection.onStateChange((event) => {
+			if (event.state !== expected) return;
+			clearTimeout(timeout);
+			unsubscribe();
+			resolve();
+		});
+		if (connection.state === expected) {
+			clearTimeout(timeout);
+			unsubscribe();
+			resolve();
+		}
+	});
+}
 
 describe("registerToolsPreservingActiveSet", () => {
 	it("restores the intended active tool set synchronously after auto-activating registration", () => {

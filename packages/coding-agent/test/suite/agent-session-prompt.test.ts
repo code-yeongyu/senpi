@@ -186,9 +186,71 @@ describe("AgentSession prompt characterization", () => {
 
 		await harness.session.prompt("/skill:test explain this");
 
-		expect(expandedPrompt).toContain('<skill name="test" location="');
-		expect(expandedPrompt).toContain("Use the skill body.");
-		expect(expandedPrompt).toContain("explain this");
+		expect(expandedPrompt).toBe(
+			`<skill name="test" location="${skillPath}">\nReferences are relative to ${tempDir}.\n\n# Test Skill\n\nUse the skill body.\n</skill>\n\nexplain this`,
+		);
+	});
+
+	it("expands every known skill in a leading skill-command run", async () => {
+		const tempDir = join(tmpdir(), `pi-skills-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		mkdirSync(tempDir, { recursive: true });
+		tempDirs.push(tempDir);
+		const firstSkillPath = join(tempDir, "first-skill.md");
+		const secondSkillPath = join(tempDir, "second-skill.md");
+		writeFileSync(firstSkillPath, "# First Skill\n\nUse the first skill.");
+		writeFileSync(secondSkillPath, "# Second Skill\n\nUse the second skill.");
+
+		const resourceLoader = {
+			...createTestResourceLoader(),
+			getSkills: () => ({
+				skills: [
+					{
+						name: "first",
+						description: "First skill",
+						filePath: firstSkillPath,
+						disableModelInvocation: false,
+						baseDir: tempDir,
+						sourceInfo: createSyntheticSourceInfo(firstSkillPath, {
+							source: "local",
+							scope: "project",
+							origin: "top-level",
+							baseDir: tempDir,
+						}),
+					},
+					{
+						name: "second",
+						description: "Second skill",
+						filePath: secondSkillPath,
+						disableModelInvocation: false,
+						baseDir: tempDir,
+						sourceInfo: createSyntheticSourceInfo(secondSkillPath, {
+							source: "local",
+							scope: "project",
+							origin: "top-level",
+							baseDir: tempDir,
+						}),
+					},
+				],
+				diagnostics: [],
+			}),
+		};
+		const harness = await createHarness({ resourceLoader });
+		harnesses.push(harness);
+		let expandedPrompt = "";
+
+		harness.setResponses([
+			(context) => {
+				const user = context.messages.find((message) => message.role === "user");
+				expandedPrompt = user ? getMessageText(user) : "";
+				return fauxAssistantMessage("ok");
+			},
+		]);
+
+		await harness.session.prompt("/skill:first /skill:second compose both skills");
+
+		expect(expandedPrompt).toBe(
+			`<skill name="first" location="${firstSkillPath}">\nReferences are relative to ${tempDir}.\n\n# First Skill\n\nUse the first skill.\n</skill>\n\n<skill name="second" location="${secondSkillPath}">\nReferences are relative to ${tempDir}.\n\n# Second Skill\n\nUse the second skill.\n</skill>\n\ncompose both skills`,
+		);
 	});
 
 	it("expands prompt templates before sending the prompt", async () => {

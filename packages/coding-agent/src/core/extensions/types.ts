@@ -19,6 +19,7 @@ import type {
 	Api,
 	AssistantMessageEvent,
 	AssistantMessageEventStream,
+	ConstrainedSamplingConfig,
 	Context,
 	FreeformToolFormat,
 	ImageContent,
@@ -31,6 +32,7 @@ import type {
 	SimpleStreamOptions,
 	TextContent,
 	ToolResultMessage,
+	Usage,
 } from "@earendil-works/pi-ai";
 import type {
 	AutocompleteItem,
@@ -91,7 +93,12 @@ export type { AgentToolResult, AgentToolUpdateCallback, ToolExecutionMode };
 export type ServiceTier = "auto" | "flex" | "priority";
 // biome-ignore format: keep literal union alias consistent with nearby ServiceTier style.
 export type CompactionReason = "manual" | "threshold" | "overflow" | "pre_prompt" | "branch" | "extension";
-export type CompactionRejectionCause = "cancelled-by-extension" | "would-overflow" | "circuit-breaker" | "per-turn-cap";
+export type CompactionRejectionCause =
+	| "cancelled-by-extension"
+	| "would-overflow"
+	| "circuit-breaker"
+	| "per-turn-cap"
+	| "stale-revision";
 
 // ============================================================================
 // UI Context
@@ -331,6 +338,8 @@ export interface CompactOptions {
 export interface ApplyCompactionOptions {
 	reason: CompactionReason;
 	expectedRevision?: number;
+	/** The feedback operation that owns this apply, when one was begun. */
+	signal?: AbortSignal;
 }
 
 export type ApplyCompactionResult = { applied: true; reason: "ok" } | { applied: false; reason: "stale" | "rejected" };
@@ -341,12 +350,14 @@ export interface BeginCompactionOptions {
 
 export interface UpdateCompactionOptions {
 	reason: CompactionReason;
+	signal?: AbortSignal;
 	delta?: string;
 	text?: string;
 }
 
 export interface EndCompactionOptions {
 	reason: CompactionReason;
+	signal?: AbortSignal;
 	aborted?: boolean;
 	errorMessage?: string;
 }
@@ -373,6 +384,8 @@ export interface ExtensionContext {
 	model: Model<any> | undefined;
 	/** Current service tier for the active model (from -fast suffix or scoped model config) */
 	serviceTier: ServiceTier | undefined;
+	/** Current thinking level, when provided by the session runtime. */
+	thinkingLevel?: ThinkingLevel;
 	/** Whether the agent is idle (not streaming) */
 	isIdle(): boolean;
 	/** Whether project-local trust is active for this context. */
@@ -405,6 +418,11 @@ export interface ExtensionContext {
 	sessionSettings: ExtensionSessionSettings;
 	/** Trigger compaction without awaiting completion. */
 	compact(options?: CompactOptions): void;
+	/**
+	 * Prepare a request-local provider context through the normal extension
+	 * boundary. Persisted session messages are never modified.
+	 */
+	prepareProviderRequest?(messages: AgentMessage[]): Promise<ProviderRequestPreparation>;
 	/** Start user-visible compaction feedback before an extension has a precomputed summary to apply. */
 	beginCompaction?(options: BeginCompactionOptions): AbortSignal | undefined;
 	/** Stream user-visible compaction content while an extension-generated summary is available. */
@@ -428,6 +446,13 @@ export interface ExtensionContext {
 	 * after the handler finished are ignored.
 	 */
 	updateToolHookStatus?(statusMessage: string): void;
+}
+
+/** Request-local transformations shared by normal and compaction provider calls. */
+export interface ProviderRequestPreparation {
+	messages: AgentMessage[];
+	transformPayload(payload: unknown): Promise<unknown>;
+	transformHeaders(headers: ProviderHeaders): Promise<ProviderHeaders>;
 }
 
 /**
@@ -553,6 +578,8 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	parameters: TParams;
 	/** Optional OpenAI Responses freeform tool metadata. */
 	freeform?: FreeformToolFormat;
+	/** Optional provider-side constrained sampling request for this tool. Set false to explicitly disable it, equivalent to leaving it undefined. */
+	constrainedSampling?: false | ConstrainedSamplingConfig;
 	/** Controls whether ToolExecutionComponent renders the standard colored shell or the tool renders its own framing. */
 	renderShell?: "default" | "self";
 
@@ -746,6 +773,13 @@ export interface SessionShutdownEvent {
 	targetSessionFile?: string;
 }
 
+/** Fired on the old extension runner when a reload or session replacement rebuilds the runner and one or more extensions are absent from it. */
+export interface SessionExtensionsRemovedEvent {
+	type: "session_extensions_removed";
+	reason: SessionShutdownEvent["reason"];
+	removed: Array<{ path: string; resolvedPath: string }>;
+}
+
 /** Preparation data for tree navigation */
 export interface TreePreparation {
 	targetId: string;
@@ -785,6 +819,7 @@ export type SessionEvent =
 	| SessionBeforeCompactEvent
 	| SessionCompactEvent
 	| SessionShutdownEvent
+	| SessionExtensionsRemovedEvent
 	| SessionBeforeTreeEvent
 	| SessionTreeEvent;
 
@@ -802,6 +837,10 @@ export interface ContextEvent {
 export interface BeforeProviderRequestEvent {
 	type: "before_provider_request";
 	payload: unknown;
+	/** Effective request model after auth/base-url/upstream-model resolution. */
+	model?: Model<Api>;
+	/** Final header transform output for this request. Values are never persisted. */
+	headers?: ProviderHeaders;
 }
 
 /**
@@ -843,6 +882,10 @@ export interface AgentStartEvent {
 export interface AgentEndEvent {
 	type: "agent_end";
 	messages: AgentMessage[];
+	/** True when the agent run ended through an abort rather than normal completion. */
+	aborted?: boolean;
+	/** Present when the host can attribute the abort to a user action or internal operation. */
+	abortSource?: "user" | "system";
 }
 
 /** Fired after an agent run has fully settled and no automatic retry, compaction, or queued continuation will run. */
@@ -914,7 +957,7 @@ export interface ToolExecutionEndEvent {
 // Model Events
 // ============================================================================
 
-export type ModelSelectSource = "set" | "cycle" | "restore";
+export type ModelSelectSource = "set" | "cycle" | "restore" | "fallback" | "fallback-revert";
 
 /** Fired when a new model is selected */
 export interface ModelSelectEvent {
@@ -1065,6 +1108,8 @@ interface ToolResultEventBase {
 	input: Record<string, unknown>;
 	content: (TextContent | ImageContent)[];
 	isError: boolean;
+	/** Usage from the tool execution itself, if available. */
+	usage?: Usage;
 }
 
 export interface BashToolResultEvent extends ToolResultEventBase {
@@ -1233,6 +1278,7 @@ export interface ToolResultEventResult {
 	content?: (TextContent | ImageContent)[];
 	details?: unknown;
 	isError?: boolean;
+	usage?: Usage;
 }
 
 export interface MessageEndEventResult {
@@ -1278,6 +1324,7 @@ export interface SessionBeforeTreeResult {
 	summary?: {
 		summary: string;
 		details?: unknown;
+		usage?: Usage;
 	};
 	/** Override custom instructions for summarization */
 	customInstructions?: string;
@@ -1293,6 +1340,8 @@ export interface SessionBeforeTreeResult {
 
 export interface MessageRenderOptions {
 	expanded: boolean;
+	/** Horizontal padding configured by the outputPad setting. */
+	outputPad: number;
 }
 
 export interface EntryRenderOptions {
@@ -1360,6 +1409,7 @@ export interface ExtensionAPI {
 	): void;
 	on(event: "session_compact", handler: ExtensionHandler<SessionCompactEvent>): void;
 	on(event: "session_shutdown", handler: ExtensionHandler<SessionShutdownEvent>): void;
+	on(event: "session_extensions_removed", handler: ExtensionHandler<SessionExtensionsRemovedEvent>): void;
 	on(event: "session_before_tree", handler: ExtensionHandler<SessionBeforeTreeEvent, SessionBeforeTreeResult>): void;
 	on(event: "session_tree", handler: ExtensionHandler<SessionTreeEvent>): void;
 	on(event: "context", handler: ExtensionHandler<ContextEvent, ContextEventResult>): void;
@@ -1397,6 +1447,9 @@ export interface ExtensionAPI {
 	registerTool<TParams extends TSchema = TSchema, TDetails = unknown, TState = any>(
 		tool: ToolDefinition<TParams, TDetails, TState>,
 	): void;
+
+	/** Register migration guidance returned when an intentionally removed tool is called. */
+	registerRemovedToolHint(name: string, hint: string): void;
 
 	/** Register an MCP server that the agent can use. Factory-time only. */
 	registerMcpServer(name: string, config: McpServerDeclaration): void;
@@ -1772,6 +1825,8 @@ export type SetActiveToolsHandler = (toolNames: string[]) => void;
 
 export type RefreshToolsHandler = () => void;
 
+export type RegisterRemovedToolHintHandler = (name: string, hint: string) => void;
+
 export type SetModelHandler = (model: Model<any>) => Promise<boolean>;
 
 export type GetThinkingLevelHandler = () => ThinkingLevel;
@@ -1829,6 +1884,8 @@ export interface ExtensionRuntimeState {
 	registerProvider: (name: string, config: ProviderConfig, extensionPath?: string) => void;
 	registerNativeProvider: (provider: Provider, extensionPath?: string) => void;
 	unregisterProvider: (name: string, extensionPath?: string) => void;
+	/** Forwards extension-registered migration guidance after the host binds actions. */
+	registerRemovedToolHint: RegisterRemovedToolHintHandler;
 }
 
 /**
@@ -1847,6 +1904,7 @@ export interface ExtensionActions {
 	getAllTools: GetAllToolsHandler;
 	setActiveTools: SetActiveToolsHandler;
 	refreshTools: RefreshToolsHandler;
+	registerRemovedToolHint: RegisterRemovedToolHintHandler;
 	getCommands: GetCommandsHandler;
 	setModel: SetModelHandler;
 	getThinkingLevel: GetThinkingLevelHandler;
@@ -1943,6 +2001,8 @@ export interface Extension {
 	sourceInfo: SourceInfo;
 	handlers: Map<string, HandlerFn[]>;
 	tools: Map<string, RegisteredTool>;
+	/** Optional for compatibility with extension records created before this additive registry. */
+	removedToolHints?: Map<string, string>;
 	messageRenderers: Map<string, MessageRenderer>;
 	entryRenderers?: Map<string, EntryRenderer>;
 	commands: Map<string, RegisteredCommand>;

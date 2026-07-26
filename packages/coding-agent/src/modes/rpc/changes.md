@@ -1,5 +1,20 @@
 # changes
 
+## Removed legacy `--neo` daemon support while preserving RPC contracts (2026-07-26)
+
+### What changed
+
+- Removed the legacy daemon, protocol, registry, child-worker, and runtime-option modules.
+- Retained the standard RPC connection handler and capability contract, with generic authentication and JSONL framing coverage migrated into the kept suite.
+
+### Why
+
+- The supported RPC surface is the standard `--mode rpc` host, not the retired Go TUI daemon.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: removal-only changes beside retained RPC infrastructure.
+
 ## Model-fallback event pass-through (2026-07-20)
 
 ### What changed

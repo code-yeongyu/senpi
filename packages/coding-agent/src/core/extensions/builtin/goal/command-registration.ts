@@ -43,7 +43,7 @@ export function registerGoalCommand(pi: ExtensionAPI, deps: GoalCommandRegistrat
 						if (command.status === "paused") {
 							await deps.accountCurrentAgentTurn(ctx, "active");
 						}
-						const goal = await updateGoal(deps.goalStoreRef(ctx), { status: command.status });
+						const goal = await updateGoal(deps.goalStoreRef(ctx), { status: command.status }, "user");
 						if (goal.status === "active") {
 							deps.beginAgentGoalAccounting(goal);
 						} else {
@@ -89,7 +89,7 @@ async function setGoalObjective(
 	if (current?.status === "active") {
 		await deps.accountCurrentAgentTurn(ctx, "active");
 	}
-	const goal = current === null ? await createGoal(ref, objective) : await updateGoal(ref, { objective });
+	const goal = current === null ? await createGoal(ref, objective) : await updateGoal(ref, { objective }, "user");
 	if (goal.status === "active") deps.beginAgentGoalAccounting(goal);
 	deps.refreshGoalUi(ctx, goal);
 	ctx.ui.notify(`Goal ${goalStatusLabel(goal.status)}\n${formatGoalForTool(goal)}`, "info");

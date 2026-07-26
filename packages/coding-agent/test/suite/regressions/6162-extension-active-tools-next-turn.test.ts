@@ -1,6 +1,7 @@
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
+import type { ExtensionContext } from "../../../src/core/extensions/types.ts";
 import type { ExtensionFactory } from "../../../src/index.ts";
 import { createHarness } from "../harness.ts";
 
@@ -186,6 +187,61 @@ describe("extension active tools next-turn refresh", () => {
 			expect(providerSystemPrompts[0]).toContain("keep this run override");
 			expect(providerSystemPrompts[1]).toContain("keep this run override");
 		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("stale-rejects an in-flight extension compaction after a tool is revoked", async () => {
+		let capturedContext: ExtensionContext | undefined;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.registerTool({
+						name: "active_compaction_tool",
+						label: "Active Compaction Tool",
+						description: "Remains active while compaction is prepared",
+						parameters: Type.Object({}),
+						execute: async () => ({ content: [{ type: "text", text: "active" }], details: {} }),
+					});
+					pi.registerTool({
+						name: "mcp__revoked_server__tool",
+						label: "Revoked MCP Tool",
+						description: "Is revoked before its summary can apply",
+						parameters: Type.Object({}),
+						execute: async () => ({ content: [{ type: "text", text: "revoked" }], details: {} }),
+					});
+					pi.on("agent_settled", (_event, ctx) => {
+						capturedContext = ctx;
+					});
+				},
+			],
+		});
+
+		try {
+			harness.session.setActiveToolsByName(["active_compaction_tool", "mcp__revoked_server__tool"]);
+			harness.setResponses([fauxAssistantMessage("seed response")]);
+			await harness.session.prompt("seed in-flight compaction context");
+			if (!capturedContext) throw new Error("Expected an ExtensionContext from agent_settled");
+			const firstEntry = harness.sessionManager.getEntries()[0];
+			if (!firstEntry) throw new Error("Expected a persisted source entry");
+			const expectedRevision = capturedContext.getMessageRevision();
+			const signal = capturedContext.beginCompaction?.({ reason: "extension" });
+			if (!signal) throw new Error("Expected compaction feedback signal");
+
+			harness.session.setActiveToolsByName(["active_compaction_tool"]);
+			const result = await capturedContext.applyCompaction(
+				{
+					summary: "summary prepared with mcp__revoked_server__tool",
+					firstKeptEntryId: firstEntry.id,
+					tokensBefore: 42,
+				},
+				{ reason: "extension", expectedRevision },
+			);
+
+			expect(result).toEqual({ applied: false, reason: "stale" });
+			expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(0);
+		} finally {
+			capturedContext?.endCompaction?.({ reason: "extension" });
 			harness.cleanup();
 		}
 	});

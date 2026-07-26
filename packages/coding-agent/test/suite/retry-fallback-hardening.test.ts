@@ -63,7 +63,7 @@ describe("retry fallback hardening", () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1" }, { id: "faux-2" }],
 			settings: {
-				retry: { enabled: true, baseDelayMs: 1, fallbackChains: { [primary]: [primary, fallback] } },
+				retry: { enabled: true, baseDelayMs: 1, maxRetries: 0, fallbackChains: { [primary]: [primary, fallback] } },
 			},
 		});
 		harnesses.push(harness);
@@ -79,7 +79,7 @@ describe("retry fallback hardening", () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1" }, { id: "faux-2" }],
 			api: "openai-responses",
-			settings: { retry: { enabled: true, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } } },
+			settings: { retry: { enabled: true, baseDelayMs: 1, maxRetries: 0, fallbackChains: { [primary]: [fallback] } } },
 		});
 		harnesses.push(harness);
 		harness.setResponses([overloaded(), fauxAssistantMessage("fallback answer")]);
@@ -96,7 +96,7 @@ describe("retry fallback hardening", () => {
 	it("logs the no-chain decision for an unconfigured model", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1" }, { id: "faux-2" }],
-			settings: { retry: { enabled: true, baseDelayMs: 1, maxRetries: 1 } },
+			settings: { retry: { enabled: true, baseDelayMs: 1, maxRetries: 0 } },
 		});
 		harnesses.push(harness);
 		harness.setResponses([overloaded(), fauxAssistantMessage("recovered")]);

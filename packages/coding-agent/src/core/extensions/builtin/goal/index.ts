@@ -1,8 +1,9 @@
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { registerGoalCommand } from "./command-registration.ts";
-import { shouldQueueGoalContinuationAfterAgentEnd, shouldQueueGoalContinuationWhenIdle } from "./continuation.ts";
+import { shouldQueueGoalContinuationAfterAgentEnd } from "./continuation.ts";
 import { GoalElapsedTicker } from "./elapsed-ticker.ts";
 import { formatGoalForTool, goalStatusLabel } from "./format.ts";
+import { isResumeOfPausedGoal, queueGoalContinuation, queueHiddenGoalPrompt } from "./lifecycle-helpers.ts";
 import { buildContinuationPrompt } from "./prompt.ts";
 import { accountGoalUsage, readGoal, updateGoal } from "./store.ts";
 import { goalStoreRef as buildGoalStoreRef } from "./store-ref.ts";
@@ -11,7 +12,6 @@ import { TurnUsageTracker } from "./turn-usage.ts";
 import type { Goal, GoalAccountingMode, GoalStoreRef } from "./types.ts";
 import { updateGoalUi } from "./ui.ts";
 
-const GOAL_CONTINUATION_MESSAGE_TYPE = "goal-continuation";
 const RESUME_GOAL_CHOICE = "Resume goal";
 const LEAVE_GOAL_PAUSED_CHOICE = "Leave paused";
 const STALE_EXTENSION_CONTEXT_ERROR_PREFIX = "This extension ctx is stale after session replacement or reload.";
@@ -24,6 +24,7 @@ type AgentGoalAccounting = {
 export default function goalExtension(pi: ExtensionAPI): void {
 	let agentTurnInProgress = false;
 	let agentGoalAccounting: AgentGoalAccounting | null = null;
+	let blockedThisTurnGoalId: string | null = null;
 	let completedThisTurnGoalId: string | null = null;
 	const turnUsage = new TurnUsageTracker();
 
@@ -42,6 +43,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		goalStoreRef: (ctx) => buildGoalStoreRef(ctx.sessionManager, ctx.cwd),
 		accountCurrentAgentTurn,
 		beginAgentGoalAccounting,
+		markGoalBlockedThisTurn,
 		markGoalCompletedThisTurn,
 		refreshGoalUi,
 	});
@@ -66,13 +68,25 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		if (await maybePromptResumePausedGoal(pi, ctx, event.reason, goal)) {
 			return;
 		}
-		if (shouldQueueGoalContinuationWhenIdle(goal, ctx.isIdle(), ctx.hasPendingMessages())) {
-			queueHiddenGoalPrompt(pi, buildContinuationPrompt(goal));
+		if (goal) queueGoalContinuation(pi, ctx, goal);
+	});
+
+	pi.on("before_agent_start", async (_event, ctx) => {
+		// before_agent_start fires only for real user prompts and BEFORE the host's final
+		// provider admission check (which can reject the run so no agent_start follows).
+		// Resuming a blocked goal here, instead of deferring to agent_start via a sticky
+		// flag, means a rejected run cannot leak a stale resume signal to a later
+		// continuation-style turn that starts the agent without a preceding user prompt.
+		const goal = await readGoal(goalStoreRef(ctx));
+		if (goal?.status === "blocked") {
+			const resumed = await updateGoal(goalStoreRef(ctx), { status: "active" }, "user");
+			refreshGoalUi(ctx, resumed);
 		}
 	});
 
 	pi.on("agent_start", async (_event, ctx) => {
 		agentTurnInProgress = true;
+		blockedThisTurnGoalId = null;
 		completedThisTurnGoalId = null;
 		turnUsage.reset();
 		const goal = await readGoal(goalStoreRef(ctx));
@@ -88,10 +102,23 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("agent_end", async (event, ctx) => {
-		const mode: GoalAccountingMode = completedThisTurnGoalId === null ? "active" : "activeOrComplete";
-		const goal = await accountCurrentAgentTurn(ctx, mode, event.messages);
+		const mode: GoalAccountingMode =
+			blockedThisTurnGoalId !== null
+				? "activeOrBlocked"
+				: completedThisTurnGoalId === null
+					? "active"
+					: "activeOrComplete";
+		let goal = await accountCurrentAgentTurn(ctx, mode, event.messages);
 		agentTurnInProgress = false;
+		blockedThisTurnGoalId = null;
 		completedThisTurnGoalId = null;
+		if (event.aborted === true && event.abortSource === "user" && goal?.status === "active") {
+			goal = await updateGoal(
+				goalStoreRef(ctx),
+				{ status: "blocked", reason: "user interrupted the turn" },
+				"model",
+			);
+		}
 		if (goal?.status === "active") {
 			beginAgentGoalAccounting(goal);
 		} else {
@@ -100,7 +127,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		refreshGoalUiBestEffort(ctx, goal);
 		if (
 			goal?.status === "active" &&
-			!ctx.signal?.aborted &&
+			!event.aborted &&
 			shouldQueueGoalContinuationAfterAgentEnd(goal, ctx.hasPendingMessages(), event.messages)
 		) {
 			queueHiddenGoalPrompt(pi, buildContinuationPrompt(goal));
@@ -131,7 +158,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		]);
 		if (choice !== RESUME_GOAL_CHOICE) return true;
 
-		const resumed = await updateGoal(goalStoreRef(ctx), { status: "active" });
+		const resumed = await updateGoal(goalStoreRef(ctx), { status: "active" }, "user");
 		beginAgentGoalAccounting(resumed);
 		refreshGoalUi(ctx, resumed);
 		ctx.ui.notify(`Goal ${goalStatusLabel(resumed.status)}\n${formatGoalForTool(resumed)}`, "info");
@@ -146,6 +173,10 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		agentGoalAccounting = { goalId: goal.id, measuredFromMilliseconds: Date.now() };
 	}
 
+	function markGoalBlockedThisTurn(goal: Goal): void {
+		if (agentTurnInProgress) blockedThisTurnGoalId = goal.id;
+	}
+
 	function markGoalCompletedThisTurn(goal: Goal): void {
 		if (!agentTurnInProgress) return;
 		completedThisTurnGoalId = goal.id;
@@ -156,6 +187,9 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		if (agentGoalAccounting?.goalId === goalId) {
 			agentGoalAccounting = null;
 		}
+		if (blockedThisTurnGoalId === goalId) {
+			blockedThisTurnGoalId = null;
+		}
 		if (completedThisTurnGoalId === goalId) {
 			completedThisTurnGoalId = null;
 		}
@@ -163,6 +197,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 
 	function clearAgentGoalAccounting(): void {
 		agentGoalAccounting = null;
+		blockedThisTurnGoalId = null;
 		completedThisTurnGoalId = null;
 	}
 
@@ -208,29 +243,6 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		}
 		return goal;
 	}
-}
-
-function isResumeOfPausedGoal(ctx: ExtensionContext, sessionStartReason: string, goal: Goal | null): goal is Goal {
-	return (
-		sessionStartReason === "resume" &&
-		goal?.status === "paused" &&
-		ctx.hasUI &&
-		ctx.isIdle() &&
-		!ctx.hasPendingMessages()
-	);
-}
-
-function queueGoalContinuation(pi: ExtensionAPI, ctx: ExtensionContext, goal: Goal): void {
-	if (shouldQueueGoalContinuationWhenIdle(goal, ctx.isIdle(), ctx.hasPendingMessages())) {
-		queueHiddenGoalPrompt(pi, buildContinuationPrompt(goal));
-	}
-}
-
-function queueHiddenGoalPrompt(pi: ExtensionAPI, content: string): void {
-	pi.sendMessage(
-		{ customType: GOAL_CONTINUATION_MESSAGE_TYPE, content, display: false },
-		{ triggerTurn: true, deliverAs: "followUp" },
-	);
 }
 
 function goalStoreRef(ctx: ExtensionContext): GoalStoreRef {

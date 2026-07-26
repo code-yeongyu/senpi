@@ -229,7 +229,7 @@ export default function hooksExtension(pi: ExtensionAPI): void {
 			trustState: state.trust,
 		});
 		const details = preCompactResultDetails(result);
-		recordLifecycleHookResult(pi, "PreCompact", details);
+		recordLifecycleHookResult(pi, "PreCompact", details, { compactionRequestId: event.requestId });
 		return sessionBeforeCompactResult(details);
 	});
 

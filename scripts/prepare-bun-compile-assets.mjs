@@ -8,8 +8,15 @@ const cssTreeRoots = [
 	join(repoRoot, "node_modules", "css-tree"),
 	join(repoRoot, "packages", "coding-agent", "node_modules", "css-tree"),
 ];
+const jsdomRoots = [
+	join(repoRoot, "node_modules", "jsdom"),
+	join(repoRoot, "packages", "coding-agent", "node_modules", "jsdom"),
+];
+const jsdomDefaultStylesheetRead =
+	/const defaultStyleSheet = fs\.readFileSync\(\s*path\.resolve\(\s*__dirname,\s*["']\.\.\/\.\.\/\.\.\/browser\/default-stylesheet\.css["']\s*\),\s*(?:\{\s*encoding:\s*["']utf-8["']\s*\}|["']utf8["'])\s*\);/;
 
-let preparedCount = 0;
+let preparedCssTreeCount = 0;
+let preparedJsdomCount = 0;
 
 for (const cssTreeRoot of cssTreeRoots) {
 	const patchJsonPath = join(cssTreeRoot, "data", "patch.json");
@@ -80,12 +87,36 @@ for (const cssTreeRoot of cssTreeRoots) {
 		}
 	}
 
-	preparedCount += 1;
+	preparedCssTreeCount += 1;
 }
 
-if (preparedCount === 0) {
-	console.log("[prepare-bun-compile-assets] css-tree patch data not installed; skipping");
+for (const jsdomRoot of jsdomRoots) {
+	const stylesheetPath = join(jsdomRoot, "lib", "jsdom", "browser", "default-stylesheet.css");
+	const computedStylePath = join(jsdomRoot, "lib", "jsdom", "living", "css", "helpers", "computed-style.js");
+	if (!existsSync(stylesheetPath) || !existsSync(computedStylePath)) {
+		continue;
+	}
+
+	const stylesheet = readFileSync(stylesheetPath, "utf8");
+	const computedStyleSource = readFileSync(computedStylePath, "utf8");
+	const inlinedStylesheet = `const defaultStyleSheet = ${JSON.stringify(stylesheet)};`;
+	const preparedComputedStyleSource = computedStyleSource.replace(jsdomDefaultStylesheetRead, inlinedStylesheet);
+	if (preparedComputedStyleSource === computedStyleSource) {
+		if (!computedStyleSource.includes(inlinedStylesheet)) {
+			throw new Error(`Unable to inline jsdom default stylesheet in ${computedStylePath}`);
+		}
+	} else {
+		writeFileSync(computedStylePath, preparedComputedStyleSource);
+	}
+
+	preparedJsdomCount += 1;
+}
+
+if (preparedCssTreeCount === 0 && preparedJsdomCount === 0) {
+	console.log("[prepare-bun-compile-assets] css-tree and jsdom assets not installed; skipping");
 	process.exit(0);
 }
 
-console.log(`[prepare-bun-compile-assets] prepared css-tree patch data for Bun compile (${preparedCount})`);
+console.log(
+	`[prepare-bun-compile-assets] prepared Bun compile assets (${preparedCssTreeCount} css-tree, ${preparedJsdomCount} jsdom)`,
+);

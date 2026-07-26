@@ -6,6 +6,8 @@ import { createHarness, type Harness } from "./harness.ts";
 
 const primary = "faux/faux-1";
 const fallback = "faux/faux-2";
+const codexUpstreamUnavailableMessage =
+	"Error: upstream_unavailable: Codex upstream websocket send failed via proxy endpoint unknown: ConnectionClosedOK";
 
 type EventTranscriptEntry =
 	| { type: "message_start" | "message_end"; role: string }
@@ -57,60 +59,28 @@ function retryTranscript(events: Harness["events"]): EventTranscriptEntry[] {
 	});
 }
 
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+	let resolve: (() => void) | undefined;
+	const promise = new Promise<void>((next) => {
+		resolve = next;
+	});
+	if (!resolve) throw new Error("Deferred resolver was not initialized");
+	return { promise, resolve };
+}
+
 describe("retry fallback engine", () => {
 	const harnesses: Harness[] = [];
 	afterEach(() => {
 		while (harnesses.length) harnesses.pop()?.cleanup();
 	});
 
-	it("switches immediately to a configured fallback and reports success", async () => {
+	it("retries the same model within budget instead of switching to the chain", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1" }, { id: "faux-2" }],
 			settings: {
 				retry: {
 					enabled: true,
-					baseDelayMs: 100,
-					fallbackChains: { [primary]: [fallback] },
-				},
-			},
-		});
-		harnesses.push(harness);
-		harness.setResponses([
-			fauxAssistantMessage("", {
-				stopReason: "error",
-				errorMessage: "overloaded_error",
-			}),
-			fauxAssistantMessage("fallback answer"),
-		]);
-
-		await harness.session.prompt("hello");
-
-		expect(harness.eventsOfType("auto_retry_start").map((event) => event.delayMs)).toEqual([0]);
-		expect(harness.eventsOfType("retry_fallback_applied")).toMatchObject([
-			{ from: primary, to: fallback, chainKey: primary },
-		]);
-		expect(harness.eventsOfType("retry_fallback_succeeded")).toMatchObject([{ model: fallback, chainKey: primary }]);
-		expect(harness.faux.state.callCount).toBe(2);
-		expect(harness.eventsOfType("agent_end").map((event) => event.willRetry)).toEqual([true, false]);
-	});
-
-	it("removes only the failed assistant while preserving state across a fallback switch", async () => {
-		const snapshotTool: AgentTool = {
-			name: "snapshot",
-			label: "Snapshot",
-			description: "Provides stable tool state for fallback assertions.",
-			parameters: Type.Object({}),
-			execute: async () => ({
-				content: [{ type: "text", text: "snapshot" }],
-				details: {},
-			}),
-		};
-		const harness = await createHarness({
-			models: [{ id: "faux-1" }, { id: "faux-2" }],
-			tools: [snapshotTool],
-			settings: {
-				retry: {
-					enabled: true,
+					maxRetries: 3,
 					baseDelayMs: 1,
 					fallbackChains: { [primary]: [fallback] },
 				},
@@ -118,55 +88,466 @@ describe("retry fallback engine", () => {
 		});
 		harnesses.push(harness);
 		harness.setResponses([
-			fauxAssistantMessage("first"),
-			fauxAssistantMessage("", {
-				stopReason: "error",
-				errorMessage: "overloaded_error",
-			}),
-			fauxAssistantMessage("recovered"),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			fauxAssistantMessage("primary recovered"),
 		]);
+
+		await harness.session.prompt("hello");
+
+		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
+		expect(harness.eventsOfType("auto_retry_start").map((event) => event.delayMs)).toEqual([1, 2]);
+		expect(harness.eventsOfType("auto_retry_end").map((event) => event.success)).toEqual([true]);
+		expect(harness.faux.state.callCount).toBe(3);
+	});
+
+	it("switches to a configured fallback only after the same-model retry budget is spent", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: {
+					enabled: true,
+					maxRetries: 3,
+					baseDelayMs: 1,
+					fallbackChains: { [primary]: [fallback] },
+				},
+			},
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			fauxAssistantMessage("fallback answer"),
+		]);
+
+		await harness.session.prompt("hello");
+
+		// 1,2,4 = same-model exponential backoff; the trailing 0 is the fallback switch.
+		expect(harness.eventsOfType("auto_retry_start").map((event) => event.delayMs)).toEqual([1, 2, 4, 0]);
+		expect(harness.eventsOfType("retry_fallback_applied")).toMatchObject([
+			{ from: primary, to: fallback, chainKey: primary, reason: "transient" },
+		]);
+		expect(harness.eventsOfType("retry_fallback_succeeded")).toMatchObject([{ model: fallback, chainKey: primary }]);
+		expect(harness.faux.state.callCount).toBe(5);
+		expect(harness.eventsOfType("agent_end").map((event) => event.willRetry)).toEqual([true, true, true, true, false]);
+	});
+
+	it("switches on the first transient error when no same-model retry budget exists", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: {
+					enabled: true,
+					maxRetries: 0,
+					baseDelayMs: 1,
+					fallbackChains: { [primary]: [fallback] },
+				},
+			},
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			fauxAssistantMessage("fallback answer"),
+		]);
+
+		await harness.session.prompt("hello");
+
+		expect(harness.eventsOfType("auto_retry_start").map((event) => event.delayMs)).toEqual([0]);
+		expect(harness.eventsOfType("retry_fallback_applied")).toMatchObject([
+			{ from: primary, to: fallback, chainKey: primary, reason: "transient" },
+		]);
+		expect(harness.faux.state.callCount).toBe(2);
+	});
+
+	it("spends a fresh retry budget on every rung of a fully failing chain", async () => {
+		const maxRetries = 2;
+		const chain = [fallback, "faux/faux-3"];
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }, { id: "faux-3" }],
+			settings: {
+				retry: {
+					enabled: true,
+					maxRetries,
+					baseDelayMs: 1,
+					fallbackChains: { [primary]: chain },
+				},
+			},
+		});
+		harnesses.push(harness);
+		harness.setResponses(
+			Array.from({ length: 12 }, () =>
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			),
+		);
+
+		await harness.session.prompt("hello");
+
+		// One leading primary call, then maxRetries same-model attempts per rung.
+		expect(harness.faux.state.callCount).toBe(1 + (chain.length + 1) * maxRetries);
+		expect(harness.eventsOfType("retry_fallback_applied").map((event) => event.to)).toEqual(chain);
+		expect(harness.eventsOfType("retry_fallback_exhausted").map((event) => event.chainKey)).toEqual([primary]);
+		expect(harness.eventsOfType("auto_retry_end").map((event) => event.success)).toEqual([false]);
+	});
+
+	// The tests below are about candidate selection, prompt/tool rebuild, compaction,
+	// request shape and cancellation - not switch timing. They pin `maxRetries: 0` so the
+	// chain still engages on the first transient error; the budget-exhaustion timing
+	// itself is covered by the tests above.
+	it("rebuilds model-scoped prompt and tools through an explicit fallback model_select", async () => {
+		const primaryPrivilegedTool: AgentTool = {
+			name: "primary_privileged",
+			label: "Primary Privileged",
+			description: "Must never remain active after a fallback switch.",
+			parameters: Type.Object({}),
+			execute: async () => ({ content: [{ type: "text", text: "primary" }], details: {} }),
+		};
+		const fallbackPresetTool: AgentTool = {
+			name: "fallback_preset",
+			label: "Fallback Preset",
+			description: "Only available through the fallback model preset.",
+			parameters: Type.Object({}),
+			execute: async () => ({ content: [{ type: "text", text: "fallback" }], details: {} }),
+		};
+		const modelSelectSources: string[] = [];
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			tools: [primaryPrivilegedTool, fallbackPresetTool],
+			initialActiveToolNames: ["primary_privileged"],
+			settings: { retry: { enabled: true, maxRetries: 0, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("model_select", (event) => {
+						modelSelectSources.push(`${event.previousModel?.id ?? "none"}->${event.model.id}:${event.source}`);
+						if (event.model.id !== "faux-2") return undefined;
+						pi.setActiveTools(["fallback_preset"]);
+						return { systemPrompt: "fallback preset system prompt", systemPromptName: "fallback-preset" };
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("first")]);
 		await harness.session.prompt("first turn");
 
 		let stateBeforeFailedAssistant: typeof harness.session.state.messages | undefined;
-		let systemPromptBeforeFailedAssistant: string | undefined;
-		let toolsBeforeFailedAssistant: unknown;
 		let fallbackRequestMessages: unknown;
 		let stateAtFallbackRequest: typeof harness.session.state.messages | undefined;
+		let fallbackRequestSystemPrompt: string | undefined;
+		let fallbackRequestToolNames: string[] | undefined;
 		harness.session.subscribe((event) => {
-			if (event.type === "auto_retry_start") {
+			if (event.type === "auto_retry_start")
 				stateBeforeFailedAssistant = structuredClone(harness.session.state.messages);
-				systemPromptBeforeFailedAssistant = harness.session.state.systemPrompt;
-				toolsBeforeFailedAssistant = JSON.parse(JSON.stringify(harness.session.state.tools));
-			}
 		});
 		harness.setResponses([
-			fauxAssistantMessage("", {
-				stopReason: "error",
-				errorMessage: "overloaded_error",
-			}),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
 			(context) => {
 				fallbackRequestMessages = structuredClone(context.messages);
 				stateAtFallbackRequest = structuredClone(harness.session.state.messages);
+				fallbackRequestSystemPrompt = context.systemPrompt;
+				fallbackRequestToolNames = (context.tools ?? []).map((tool) => tool.name);
 				return fauxAssistantMessage("recovered");
 			},
 		]);
 
 		await harness.session.prompt("second turn");
 
-		if (
-			!stateBeforeFailedAssistant ||
-			systemPromptBeforeFailedAssistant === undefined ||
-			!toolsBeforeFailedAssistant
-		) {
-			throw new Error("Missing pre-error fallback snapshot");
-		}
+		if (!stateBeforeFailedAssistant) throw new Error("Missing pre-error fallback snapshot");
 		expect(stateAtFallbackRequest).toEqual(stateBeforeFailedAssistant.slice(0, -1));
 		expect(fallbackRequestMessages).toEqual(stateBeforeFailedAssistant.slice(0, -1));
-		expect(harness.session.state.systemPrompt).toBe(systemPromptBeforeFailedAssistant);
-		expect(JSON.stringify(harness.session.state.systemPrompt)).toBe(
-			JSON.stringify(systemPromptBeforeFailedAssistant),
+		expect(modelSelectSources).toEqual(["faux-1->faux-2:fallback"]);
+		expect(fallbackRequestSystemPrompt).toBe("fallback preset system prompt");
+		expect(fallbackRequestToolNames).toEqual(["fallback_preset"]);
+		expect(harness.session.systemPrompt).toBe("fallback preset system prompt");
+		expect(harness.session.getActiveToolNames()).toEqual(["fallback_preset"]);
+		expect(harness.session.getActiveToolNames()).not.toContain("primary_privileged");
+	});
+
+	it("invalidates an in-flight compaction when retry fallback changes the model", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: { retry: { enabled: true, maxRetries: 0, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } } },
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("seed")]);
+		await harness.session.prompt("seed fallback compaction state");
+		const firstEntry = harness.sessionManager.getEntries()[0];
+		if (!firstEntry) throw new Error("Expected a persisted seed entry");
+		const beginFeedback = Reflect.get(harness.session, "_beginExtensionCompactionFeedback");
+		if (typeof beginFeedback !== "function") throw new Error("Expected extension compaction feedback lifecycle");
+		const signal = beginFeedback.call(harness.session, "extension") as AbortSignal;
+		let oldApply: Promise<unknown> | undefined;
+		harness.session.subscribe((event) => {
+			if (event.type !== "auto_retry_start" || event.delayMs !== 0) return;
+			oldApply = harness.session.applyCompaction(
+				{ summary: "must not apply after fallback selection", firstKeptEntryId: firstEntry.id, tokensBefore: 42 },
+				{ reason: "extension", signal },
+			);
+		});
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			fauxAssistantMessage("fallback answer"),
+		]);
+
+		await harness.session.prompt("trigger fallback while compaction is pending");
+
+		if (!oldApply) throw new Error("Expected fallback retry to attempt the stale apply");
+		await expect(oldApply).resolves.toEqual({ applied: false, reason: "stale" });
+		expect(signal.aborted).toBe(true);
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(0);
+	});
+
+	it.each([
+		["rejects", true],
+		["accepts", false],
+	])("revalidates the smaller fallback context window immediately before a retry (%s second compaction)", async (_label, rejectSecondCompaction) => {
+		let compactionCount = 0;
+		let releasePrimaryError: (() => void) | undefined;
+		const primaryErrorReady = new Promise<void>((resolve) => {
+			releasePrimaryError = resolve;
+		});
+		let primaryProviderStarted: (() => void) | undefined;
+		const primaryStarted = new Promise<void>((resolve) => {
+			primaryProviderStarted = resolve;
+		});
+		const fallbackCompactionEndsAtCall: number[] = [];
+		const harness = await createHarness({
+			models: [
+				{ id: "faux-1", contextWindow: 1_000, maxTokens: 64 },
+				{ id: "faux-2", contextWindow: 100, maxTokens: 64 },
+			],
+			settings: {
+				compaction: { enabled: true, reserveTokens: 0, keepRecentTokens: 0 },
+				retry: { enabled: true, maxRetries: 0, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } },
+			},
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", (event) => {
+						compactionCount++;
+						if (compactionCount === 2 && rejectSecondCompaction) {
+							return {
+								cancel: true,
+								rejectionCause: "cancelled-by-extension" as const,
+								reason: "fallback window requires a rejected second compaction",
+							};
+						}
+						return {
+							compaction: {
+								summary: compactionCount === 1 ? "p".repeat(480) : "fallback summary",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: event.preparation.tokensBefore,
+							},
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		const primaryModel = harness.getModel("faux-1");
+		if (!primaryModel) throw new Error("Expected primary fallback model");
+		const historyTimestamp = Date.now() - 1_000;
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "history before retry fallback" }],
+			timestamp: historyTimestamp,
+		});
+		harness.sessionManager.appendMessage({
+			...fauxAssistantMessage("history response", { timestamp: historyTimestamp + 1 }),
+			api: primaryModel.api,
+			provider: primaryModel.provider,
+			model: primaryModel.id,
+			usage: {
+				input: 900,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 900,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+		});
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		harness.setResponses([
+			async (_context, _options, _state, model) => {
+				if (model.id === "faux-1") {
+					primaryProviderStarted?.();
+					await primaryErrorReady;
+					return fauxAssistantMessage("context ".repeat(900), {
+						stopReason: "error",
+						errorMessage: "overloaded_error",
+					});
+				}
+				fallbackCompactionEndsAtCall.push(
+					harness.eventsOfType("compaction_end").filter((event) => event.accepted === true).length,
+				);
+				return fauxAssistantMessage("fallback answer");
+			},
+			(_context, _options, _state, model) => {
+				fallbackCompactionEndsAtCall.push(
+					harness.eventsOfType("compaction_end").filter((event) => event.accepted === true).length,
+				);
+				expect(model.id).toBe("faux-2");
+				return fauxAssistantMessage("fallback answer");
+			},
+			fauxAssistantMessage("queued continuation answer"),
+		]);
+
+		const prompt = harness.session.prompt("trigger fallback window revalidation");
+		await primaryStarted;
+		if (rejectSecondCompaction) {
+			await harness.session.followUp("queued until fallback context is safe");
+		}
+		releasePrimaryError?.();
+		await prompt;
+
+		expect(harness.eventsOfType("retry_fallback_applied")).toMatchObject([{ from: primary, to: fallback }]);
+		if (rejectSecondCompaction) {
+			expect(fallbackCompactionEndsAtCall).toEqual([]);
+			expect(harness.session.agent.hasQueuedMessages()).toBe(true);
+			expect(harness.eventsOfType("compaction_start")).toHaveLength(2);
+			expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({ accepted: false });
+		} else {
+			expect(fallbackCompactionEndsAtCall).toEqual([2]);
+			expect(harness.eventsOfType("compaction_start")).toHaveLength(2);
+			expect(harness.eventsOfType("compaction_end").filter((event) => event.accepted === true)).toHaveLength(2);
+		}
+	});
+
+	it("owns a provider-confirmed fallback retry overflow despite the post-retry compaction skip", async () => {
+		// Composition: a retryable primary error selects the smaller fallback window,
+		// the required fallback-window compaction succeeds (arming
+		// _skipNextPostRetryCompactionCheck), and the fallback retry itself then
+		// returns provider-confirmed overflow. The skip flag may still suppress a
+		// threshold-only stale-usage check, but it must never suppress overflow
+		// ownership: the overflow needs its own required compaction (rejected here,
+		// so recovery fails closed) while queued steer/follow-up messages are
+		// retained instead of draining into the provider.
+		let compactionRequests = 0;
+		const harness = await createHarness({
+			models: [
+				{ id: "faux-1", contextWindow: 1_000, maxTokens: 64 },
+				{ id: "faux-2", contextWindow: 100, maxTokens: 64 },
+			],
+			settings: {
+				compaction: { enabled: true, reserveTokens: 0, keepRecentTokens: 0 },
+				retry: {
+					maxRetries: 0,
+					enabled: true,
+					baseDelayMs: 1,
+					fallbackChains: { [primary]: [fallback] },
+					fallbackRevertPolicy: "never",
+				},
+			},
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", (event) => {
+						compactionRequests++;
+						if (compactionRequests > 2) {
+							return {
+								cancel: true,
+								rejectionCause: "cancelled-by-extension" as const,
+								reason: "fallback overflow recovery rejected",
+							};
+						}
+						return {
+							compaction: {
+								summary: compactionRequests === 1 ? "p".repeat(480) : "fallback summary",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: event.preparation.tokensBefore,
+							},
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		const primaryModel = harness.getModel("faux-1");
+		if (!primaryModel) throw new Error("Expected primary fallback model");
+		const historyTimestamp = Date.now() - 1_000;
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "history before retry fallback" }],
+			timestamp: historyTimestamp,
+		});
+		harness.sessionManager.appendMessage({
+			...fauxAssistantMessage("history response", { timestamp: historyTimestamp + 1 }),
+			api: primaryModel.api,
+			provider: primaryModel.provider,
+			model: primaryModel.id,
+			usage: {
+				input: 900,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 900,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+		});
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+
+		const fallbackStarted = createDeferred();
+		const releaseFallback = createDeferred();
+		harness.setResponses([
+			async (_context, _options, _state, model) => {
+				expect(model.id).toBe("faux-1");
+				return fauxAssistantMessage("context ".repeat(900), {
+					stopReason: "error",
+					errorMessage: "overloaded_error",
+				});
+			},
+			async (_context, _options, _state, model) => {
+				expect(model.id).toBe("faux-2");
+				fallbackStarted.resolve();
+				await releaseFallback.promise;
+				// Provider-confirmed overflow from the fallback model itself.
+				return fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: "context_length_exceeded",
+				});
+			},
+			fauxAssistantMessage("must not reach provider"),
+			fauxAssistantMessage("must not reach provider either"),
+		]);
+
+		const prompt = harness.session.prompt("trigger fallback overflow ownership");
+		await fallbackStarted.promise;
+		await harness.session.prompt("retain fallback steer", { streamingBehavior: "steer" });
+		await harness.session.followUp("retain fallback follow-up");
+		releaseFallback.resolve();
+		// The follow-up fix owns whether the already-completed prompt itself
+		// rejects; the fail-closed admission contract below is what this RED pins.
+		await prompt.then(
+			() => undefined,
+			() => undefined,
 		);
-		expect(JSON.stringify(harness.session.state.tools)).toBe(JSON.stringify(toolsBeforeFailedAssistant));
+		await harness.session.waitForSettledSessionWork();
+
+		expect(harness.eventsOfType("retry_fallback_applied")).toMatchObject([{ from: primary, to: fallback }]);
+		// The required fallback-window compaction succeeded before the retry,
+		// which is what arms the post-retry skip flag under test.
+		expect(harness.eventsOfType("compaction_end")).toContainEqual(
+			expect.objectContaining({ reason: "threshold", accepted: true }),
+		);
+		// RED: the skip flag must not suppress overflow ownership of the fallback
+		// retry response, so a second required compaction runs and fails closed.
+		expect(harness.eventsOfType("compaction_end")).toContainEqual(
+			expect.objectContaining({
+				reason: "overflow",
+				accepted: false,
+				rejectionCause: "cancelled-by-extension",
+			}),
+		);
+		expect(harness.session.getSteeringMessages()).toEqual(["retain fallback steer"]);
+		expect(harness.session.getFollowUpMessages()).toEqual(["retain fallback follow-up"]);
+		expect(harness.session.agent.hasQueuedMessages()).toBe(true);
+		expect(harness.faux.state.callCount).toBe(2);
+
+		await expect(harness.session.prompt("later normal admission")).rejects.toThrow(
+			"Context remains above the compaction threshold because compaction did not complete",
+		);
+		expect(harness.faux.state.callCount).toBe(2);
+		expect(harness.session.getSteeringMessages()).toEqual(["retain fallback steer"]);
+		expect(harness.session.getFollowUpMessages()).toEqual(["retain fallback follow-up"]);
 	});
 
 	it("submits a complete fallback request rather than reusing primary continuation state", async () => {
@@ -174,6 +555,7 @@ describe("retry fallback engine", () => {
 			models: [{ id: "faux-1" }, { id: "faux-2" }],
 			settings: {
 				retry: {
+					maxRetries: 0,
 					enabled: true,
 					baseDelayMs: 1,
 					fallbackChains: { [primary]: [fallback] },
@@ -209,6 +591,7 @@ describe("retry fallback engine", () => {
 			models: [{ id: "faux-1" }, { id: "faux-2" }],
 			settings: {
 				retry: {
+					maxRetries: 0,
 					enabled: true,
 					baseDelayMs: 100,
 					fallbackChains: { [primary]: [fallback] },
@@ -256,7 +639,7 @@ describe("retry fallback engine", () => {
 		harness.setResponses([
 			fauxAssistantMessage("", {
 				stopReason: "error",
-				errorMessage: "overloaded_error",
+				errorMessage: codexUpstreamUnavailableMessage,
 			}),
 			fauxAssistantMessage("recovered"),
 		]);
@@ -281,7 +664,7 @@ describe("retry fallback engine", () => {
 				attempt: 1,
 				maxAttempts: 3,
 				delayMs: 1,
-				errorMessage: "overloaded_error",
+				errorMessage: codexUpstreamUnavailableMessage,
 			},
 			{ type: "agent_start" },
 			{ type: "turn_start" },

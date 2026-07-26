@@ -62,6 +62,38 @@ take precedence for built-in providers and reach even the localhost fake.
 `--with-tool` scripts two turns (model → `bash` tool call → final text) to prove
 the full loop iterates. It passes `--approve` for project trust.
 
+### Retry and fallback scenarios
+
+`--scenario` provisions a primary `mock/mock-model`, a local fallback model,
+and isolated `settings.json` retry settings. Error turns are scripted as an
+exclusive turn object:
+
+```json
+{ "error": { "status": 500, "message": "overloaded_error" } }
+```
+
+The fake server returns that turn as a non-200 JSON provider error, not an SSE
+stream. Each command emits `SENPI_QA_RETRY_TRANSCRIPT`, including the ordered
+model request sequence, per-model attempt totals, and whether a switch occurred.
+
+```bash
+node .agents/skills/senpi-qa/scripts/mock-loop.mjs --scenario transient-recover
+node .agents/skills/senpi-qa/scripts/mock-loop.mjs --scenario budget-exhaust
+node .agents/skills/senpi-qa/scripts/mock-loop.mjs --scenario long-retry-after
+```
+
+- `transient-recover` sends two `500 overloaded_error` turns then succeeds: all
+  three requests must remain on the primary.
+- `budget-exhaust` sends four `500 overloaded_error` turns then succeeds: four
+  primary attempts consume the retry budget before the one fallback attempt.
+- `long-retry-after` sends one `429` with
+  `HTTP 429: rate_limit_exceeded - retry after 3600 seconds`: the next request
+  must immediately use the fallback, rather than wait an hour.
+
+The default `--self-test` runs these three scenarios end to end in addition to
+its API round-trips. `--self-test --api <name>` retains the API-specific
+round-trip coverage without rerunning the default retry scenarios.
+
 `--with-reasoning` scripts a thinking block before the final text in all three
 wire formats. The fake server records emitted deltas in a server-side stream log;
 the command fails unless the real CLI completes, returns

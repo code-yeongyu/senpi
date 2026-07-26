@@ -16,13 +16,13 @@ vi.mock("child_process", () => ({
 			callback: (error: Error | null, stdout: string, stderr: string) => void,
 		) => {
 			if (args[1] === "symbolic-ref") {
-				setTimeout(() => {
+				queueMicrotask(() => {
 					callback(resolvedBranch ? null : new Error("detached"), resolvedBranch ? `${resolvedBranch}\n` : "", "");
-					branchResolutionDelivered?.();
-				}, 0);
+					queueMicrotask(() => branchResolutionDelivered?.());
+				});
 				return;
 			}
-			setTimeout(() => callback(new Error("unsupported"), "", ""), 0);
+			queueMicrotask(() => callback(new Error("unsupported"), "", ""));
 		},
 	),
 	spawnSync: vi.fn((_command: string, args: readonly string[]) => {
@@ -73,14 +73,22 @@ function createReftableWorktree(tempDir: string): WorktreeFixture {
 	return { worktreeDir, reftableDir };
 }
 
-async function waitFor(condition: () => boolean, timeoutMs = 10000): Promise<void> {
-	const startedAt = Date.now();
-	while (!condition()) {
-		if (Date.now() - startedAt > timeoutMs) {
-			throw new Error("Timed out waiting for condition");
-		}
-		await new Promise((resolve) => setTimeout(resolve, 10));
+type FooterDataProviderInternals = {
+	reftableWatcher: FSWatcher | null;
+};
+
+function awaitReftableWatcherChange(provider: FooterDataProvider): Promise<void> {
+	const { reftableWatcher } = provider as unknown as FooterDataProviderInternals;
+	if (!reftableWatcher) {
+		throw new Error("Expected a reftable directory watcher");
 	}
+	return new Promise((resolve) => reftableWatcher.once("change", resolve));
+}
+
+function awaitBranchResolution(): Promise<void> {
+	return new Promise((resolve) => {
+		branchResolutionDelivered = resolve;
+	});
 }
 
 /** Await an exact event with a bounded timeout - no polling. */
@@ -203,17 +211,13 @@ describe("FooterDataProvider reftable branch detection", () => {
 			const onBranchChange = vi.fn();
 			provider.onBranchChange(onBranchChange);
 
-			// Subscribe to the exact async boundary before triggering the refresh: the
-			// mocked execFile delivers its branch resolution to the provider's in-flight
-			// refresh, and the provider's cache-compare/notify continuation drains with
-			// the current macrotask's microtasks. One setImmediate turn after delivery
-			// observes the settled state, so the not-notified assertion is non-vacuous.
-			const resolutionDelivered = new Promise<void>((resolve) => {
-				branchResolutionDelivered = resolve;
-			});
+			const reftableChange = awaitReftableWatcherChange(provider);
+			const resolutionDelivered = awaitBranchResolution();
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
-			await awaitWithTimeout(resolutionDelivered, "the reftable refresh to resolve the branch");
-			await new Promise<void>((resolve) => setImmediate(resolve));
+			await Promise.all([
+				awaitWithTimeout(reftableChange, "the reftable directory watcher to observe the update"),
+				awaitWithTimeout(resolutionDelivered, "the reftable refresh to resolve the branch"),
+			]);
 
 			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);
 			expect(vi.mocked(spawnSync)).not.toHaveBeenCalled();
@@ -233,11 +237,15 @@ describe("FooterDataProvider reftable branch detection", () => {
 			expect(provider.getGitBranch()).toBe("main");
 			vi.mocked(execFile).mockClear();
 
+			const reftableChange = awaitReftableWatcherChange(provider);
+			const resolutionDelivered = awaitBranchResolution();
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
 			writeFileSync(join(reftableDir, "tables.list"), "2\n");
 			writeFileSync(join(reftableDir, "tables.list"), "3\n");
-			await waitFor(() => vi.mocked(execFile).mock.calls.length === 1);
-			await new Promise((resolve) => setTimeout(resolve, 650));
+			await Promise.all([
+				awaitWithTimeout(reftableChange, "the reftable directory watcher to observe the updates"),
+				awaitWithTimeout(resolutionDelivered, "the debounced reftable refresh to resolve the branch"),
+			]);
 
 			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);
 		} finally {
@@ -256,9 +264,13 @@ describe("FooterDataProvider reftable branch detection", () => {
 			const onBranchChange = vi.fn();
 			provider.onBranchChange(onBranchChange);
 
+			const reftableChange = awaitReftableWatcherChange(provider);
+			const resolutionDelivered = awaitBranchResolution();
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
-			await waitFor(() => vi.mocked(execFile).mock.calls.length === 1);
-			await waitFor(() => provider.getGitBranch() === "foo");
+			await Promise.all([
+				awaitWithTimeout(reftableChange, "the reftable directory watcher to observe the update"),
+				awaitWithTimeout(resolutionDelivered, "the reftable refresh to resolve the branch"),
+			]);
 
 			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);
 			expect(provider.getGitBranch()).toBe("foo");

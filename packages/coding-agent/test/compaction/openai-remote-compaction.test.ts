@@ -1,6 +1,7 @@
-import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
-import { describe, expect, it } from "vitest";
+import { type AssistantMessage, fauxAssistantMessage, type Model } from "@earendil-works/pi-ai";
+import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_COMPACTION_SETTINGS } from "../../src/core/compaction/index.ts";
+import compactionExtension from "../../src/core/extensions/builtin/compaction/index.ts";
 import {
 	buildOpenAiRemoteCompactionResult,
 	buildOpenAiResponsesStreamCompactionResult,
@@ -18,6 +19,7 @@ import {
 	COMPACTION_SUMMARY_SUFFIX,
 } from "../../src/core/messages.ts";
 import type { SessionEntry, SessionMessageEntry } from "../../src/core/session-manager.ts";
+import { createHarness } from "../suite/harness.ts";
 
 const OPENAI_MODEL = {
 	id: "gpt-5.4",
@@ -349,6 +351,155 @@ describe("OpenAI remote compaction", () => {
 			{ action: "remote_started", transport: "websocket" },
 			{ action: "remote_completed", transport: "websocket" },
 		]);
+	});
+
+	it("runs the direct compact endpoint through the final extension request pipeline", async () => {
+		const rawSecret = "REMOTE_COMPACTION_RAW_SECRET";
+		const redactedSecret = "REMOTE_COMPACTION_REDACTED";
+		const stages: string[] = [];
+		let capturedBody: unknown;
+		let capturedHeaders: Headers | undefined;
+		const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+			stages.push("fetch");
+			capturedBody = JSON.parse(String(init?.body));
+			capturedHeaders = new Headers(init?.headers);
+			return new Response(
+				JSON.stringify({
+					id: "resp_compact_extension_pipeline",
+					created_at: 1_775_000_001,
+					object: "response.compaction",
+					output: [{ type: "compaction", encrypted_content: "encrypted-summary" }],
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		});
+
+		const harness = await createHarness({
+			api: "openai-responses",
+			provider: "openai",
+			models: [
+				{ id: OPENAI_MODEL.id, contextWindow: OPENAI_MODEL.contextWindow, maxTokens: OPENAI_MODEL.maxTokens },
+			],
+			settings: { compaction: { enabled: true, keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => compactionExtension(pi, { fetch: fetchMock }),
+				(pi) => {
+					pi.on("context", (event) => {
+						stages.push("context-redact");
+						return {
+							messages: event.messages.map((message) => {
+								if (message.role !== "user" || typeof message.content === "string") return message;
+								return {
+									...message,
+									content: message.content.map((part) =>
+										part.type === "text"
+											? { ...part, text: part.text.replaceAll(rawSecret, redactedSecret) }
+											: part,
+									),
+								};
+							}),
+						};
+					});
+					pi.on("context", () => {
+						stages.push("context-final");
+					});
+					pi.on("before_provider_request", (event) => {
+						stages.push("payload");
+						return { ...(event.payload as Record<string, unknown>), extension_request_hook: "applied" };
+					});
+					pi.on("before_provider_headers", (event) => {
+						stages.push("headers");
+						event.headers["x-compaction-request-hook"] = "applied";
+					});
+				},
+			],
+		});
+
+		try {
+			await harness.session.bindExtensions({});
+			const model = harness.getModel();
+			harness.sessionManager.appendMessage({
+				role: "user",
+				content: [{ type: "text", text: `persisted ${rawSecret}` }],
+				timestamp: 1,
+			});
+			harness.sessionManager.appendMessage({
+				...fauxAssistantMessage("persisted assistant"),
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
+				timestamp: 2,
+			});
+			harness.sessionManager.appendMessage({
+				role: "user",
+				content: [{ type: "text", text: "retain this turn" }],
+				timestamp: 3,
+			});
+			harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+
+			await harness.session.compact();
+
+			expect(JSON.stringify(harness.sessionManager.getEntries())).toContain(rawSecret);
+			expect(fetchMock).toHaveBeenCalledOnce();
+			const outgoing = JSON.stringify(capturedBody);
+			expect(outgoing).toContain(redactedSecret);
+			expect(outgoing).not.toContain(rawSecret);
+			expect(capturedBody).toMatchObject({ extension_request_hook: "applied" });
+			expect(capturedHeaders?.get("x-compaction-request-hook")).toBe("applied");
+			expect(stages).toEqual(["context-redact", "context-final", "headers", "payload", "fetch"]);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("rejects an invalid downstream compact request replacement before it reaches the network", async () => {
+		const compactOnlyModel = {
+			...OPENAI_MODEL,
+			baseUrl: "https://ccapi.example.com/v1",
+			compat: { supportsWebSocket: false },
+		} satisfies Model<"openai-responses">;
+		const emitted: unknown[] = [];
+		const originalPayloads: unknown[] = [];
+		const fetchMock = vi.fn(async () => {
+			throw new Error("an invalid replacement must not reach the compact endpoint");
+		});
+
+		const result = await runOpenAiRemoteCompaction(
+			{
+				model: compactOnlyModel,
+				serviceTier: undefined,
+				modelRegistry: {
+					getApiKeyAndHeaders: async () => ({ ok: true as const, apiKey: "test-key" }),
+				},
+				sessionManager: { getSessionId: () => "session-1" },
+				getSystemPrompt: () => "You are senpi.",
+				prepareProviderRequest: async (messages) => ({
+					messages,
+					transformPayload: async (payload) => {
+						originalPayloads.push(payload);
+						// This is the replacement returned by a downstream
+						// before_provider_request handler. It is not an OpenAiCompactBody.
+						return { model: 42, input: "not-an-input-array" };
+					},
+					transformHeaders: async (headers) => headers,
+				}),
+			},
+			compactionEvent(openAiBranch()),
+			(event) => emitted.push(event),
+			{ fetch: fetchMock },
+		);
+
+		expect(originalPayloads).toHaveLength(1);
+		expect(JSON.stringify(originalPayloads[0])).toContain("Please inspect the build.");
+		expect(fetchMock).not.toHaveBeenCalled();
+		expect(result).toBeUndefined();
+		expect(emitted).toContainEqual(
+			expect.objectContaining({
+				action: "remote_fallback",
+				reason: "invalid-compact-request-payload",
+				transport: "compact-endpoint",
+			}),
+		);
 	});
 
 	it("falls back when the compact endpoint does not respond before the remote timeout", async () => {
@@ -773,34 +924,35 @@ describe("OpenAI remote compaction", () => {
 		const rewritten = rewriteOpenAiPayloadWithRemoteCompaction(
 			{
 				model: "gpt-5.4",
-				input: [{ role: "developer", content: "current system prompt" }],
+				input: [
+					{ role: "developer", content: "current system prompt" },
+					{
+						role: "user",
+						content: [
+							{
+								type: "input_text",
+								text: `${COMPACTION_SUMMARY_PREFIX}${remoteResult.summary}${COMPACTION_SUMMARY_SUFFIX}`,
+							},
+						],
+					},
+					{ role: "user", content: [{ type: "input_text", text: "Great. Commit it." }] },
+					{ role: "user", content: [{ type: "input_text", text: "Ran `git status`\n```\nclean\n```" }] },
+					{
+						type: "message",
+						role: "assistant",
+						status: "completed",
+						id: "msg_post_compaction",
+						content: [{ type: "output_text", text: "switched to claude after compaction", annotations: [] }],
+					},
+				],
 				stream: true,
 			},
 			{ model: OPENAI_MODEL, branchEntries: branchWithMixedTail },
 		);
 
-		expect(rewritten).toMatchObject({
-			model: "gpt-5.4",
-			input: [
-				{ role: "developer", content: "current system prompt" },
-				{
-					type: "message",
-					id: "u1_remote",
-					role: "user",
-					content: [{ type: "input_text", text: "Please inspect the build." }],
-				},
-				{ type: "compaction", id: "cmp_1", encrypted_content: "encrypted-summary" },
-				{ role: "user", content: [{ type: "input_text", text: "Ran `git status`\n```\nclean\n```" }] },
-				{
-					type: "message",
-					role: "assistant",
-					status: "completed",
-					id: expect.any(String),
-					content: [{ type: "output_text", text: "switched to claude after compaction", annotations: [] }],
-				},
-			],
-			stream: true,
-		});
+		// Raw provider items carry no context-boundary provenance and must never
+		// authorize replacement, even when they look like session history.
+		expect(rewritten).toBeUndefined();
 	});
 
 	it("stores remote compaction replacement input in result details for replay", () => {
@@ -890,7 +1042,7 @@ describe("OpenAI remote compaction", () => {
 		]);
 	});
 
-	it("appends the pending prompt that is not yet persisted in the branch", () => {
+	it("replays the in-flight prompt from the final provider payload", () => {
 		const remoteResult = buildOpenAiRemoteCompactionResult({
 			model: OPENAI_MODEL,
 			firstKeptEntryId: "u2",
@@ -931,37 +1083,24 @@ describe("OpenAI remote compaction", () => {
 				model: "gpt-5.4",
 				input: [
 					{ role: "developer", content: "current system prompt" },
-					{ role: "user", content: [{ type: "input_text", text: "fallback compact summary" }] },
+					{
+						role: "user",
+						content: [
+							{
+								type: "input_text",
+								text: `${COMPACTION_SUMMARY_PREFIX}${remoteResult.summary}${COMPACTION_SUMMARY_SUFFIX}`,
+							},
+						],
+					},
+					{ role: "user", content: [{ type: "input_text", text: "Great. Commit it." }] },
 					{ role: "user", content: [{ type: "input_text", text: "Turn three: after compaction." }] },
 				],
 				stream: true,
 			},
-			{
-				model: OPENAI_MODEL,
-				branchEntries: branchEndingAtCompaction,
-				pendingMessages: [
-					{
-						role: "user",
-						content: [{ type: "text", text: "Turn three: after compaction." }],
-						timestamp: 7,
-					},
-				],
-			},
+			{ model: OPENAI_MODEL, branchEntries: branchEndingAtCompaction },
 		);
 
-		expect(rewritten).toMatchObject({
-			input: [
-				{ role: "developer", content: "current system prompt" },
-				{
-					type: "message",
-					id: "u1_remote",
-					role: "user",
-					content: [{ type: "input_text", text: "Please inspect the build." }],
-				},
-				{ type: "compaction", id: "cmp_1", encrypted_content: "encrypted-summary" },
-				{ role: "user", content: [{ type: "input_text", text: "Turn three: after compaction." }] },
-			],
-		});
+		expect(rewritten).toBeUndefined();
 	});
 
 	it("rewrites provider payloads to replay native compacted history plus post-compact messages", () => {
@@ -1010,27 +1149,24 @@ describe("OpenAI remote compaction", () => {
 				model: "gpt-5.4",
 				input: [
 					{ role: "developer", content: "current system prompt" },
-					{ role: "user", content: [{ type: "input_text", text: "fallback compact summary" }] },
+					{
+						role: "user",
+						content: [
+							{
+								type: "input_text",
+								text: `${COMPACTION_SUMMARY_PREFIX}${remoteResult.summary}${COMPACTION_SUMMARY_SUFFIX}`,
+							},
+						],
+					},
+					{ role: "user", content: [{ type: "input_text", text: "Great. Commit it." }] },
+					{ role: "user", content: [{ type: "input_text", text: "Continue after compaction." }] },
+					{ role: "user", content: [{ type: "input_text", text: "Continue after compaction." }] },
 				],
 				stream: true,
 			},
 			{ model: OPENAI_MODEL, branchEntries: branchWithRemoteCompaction },
 		);
 
-		expect(rewritten).toMatchObject({
-			model: "gpt-5.4",
-			input: [
-				{ role: "developer", content: "current system prompt" },
-				{
-					type: "message",
-					id: "u1_remote",
-					role: "user",
-					content: [{ type: "input_text", text: "Please inspect the build." }],
-				},
-				{ type: "compaction", id: "cmp_1", encrypted_content: "encrypted-summary" },
-				{ role: "user", content: [{ type: "input_text", text: "Continue after compaction." }] },
-			],
-			stream: true,
-		});
+		expect(rewritten).toBeUndefined();
 	});
 });

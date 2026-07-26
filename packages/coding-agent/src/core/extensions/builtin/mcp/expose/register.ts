@@ -110,6 +110,7 @@ export async function executeMcpCatalogEntry(
 	}
 	const guarded = await applyMcpOutputGuard(mapped.content, {
 		agentDir: entry.agentDir,
+		artifacts: entry.artifacts,
 		outputGuard: entry.outputGuard,
 		server: entry.server,
 	});

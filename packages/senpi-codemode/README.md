@@ -1,14 +1,19 @@
 # @code-yeongyu/senpi-codemode
 
-`@code-yeongyu/senpi-codemode` is Senpi's source-only persistent-kernel
-`eval` extension. It registers `eval`, owns one persistent kernel per enabled
-language, and re-registers the tool at session start after configuration,
-interpreter availability, and active task-tool names are known.
+`@code-yeongyu/senpi-codemode` is Senpi's source-only Code Mode extension. It
+registers the persistent-kernel `eval` execution surface for every eligible
+model. `eval` owns one persistent kernel per enabled language and re-registers
+at session start after configuration, interpreter availability, and active
+task-tool names are known.
 
 ## Capabilities
 
 - Persistent JavaScript, Python, Ruby, and Julia cells. State survives later
   cells in the same language until reset, restart, or session disposal.
+- Timeout detachment for interactive `eval`: long pure-compute cells return a
+  handle and continue in their existing kernel. Completion is injected with the
+  final value/error and buffered output; use `eval({ action: "peek"|"stop",
+  cell_id })` to inspect or terminate a detached cell.
 - Loopback, bearer-authenticated kernel bridge with bounded JSONL frames.
 - Structured status events for file operations, environment access, phases,
   bridge activity, and delegated task progress.
@@ -19,6 +24,8 @@ interpreter availability, and active task-tool names are known.
   fallbacks.
 - JavaScript import rewriting for supported local modules and package imports
   in the persistent Node.js worker.
+- GPT models receive a terse `eval` prompt dialect that prioritizes composing
+  active tools through `tool.<name>(args)` and documents detach-on-timeout.
 
 ## Kernels
 
@@ -65,13 +72,13 @@ Configuration is loaded in this order:
 | Key | Default | Effect |
 | --- | --- | --- |
 | `languages` | `py`/`js` enabled; `rb`/`jl` disabled | Selects desired languages before interpreter detection. |
-| `cellTimeoutSeconds` | `30` | Idle timeout for one cell unless the call supplies `timeout`. |
+| `cellTimeoutSeconds` | `30` | Idle timeout for one cell unless the call supplies `timeout`; interactive calls detach by default and print/json calls error. |
 | `parallelPoolWidth` | `4` | Maximum concurrent `parallel()` thunks. |
 | `taskTools.task` | `"task"` | Registered tool name used by `agent()`. |
 | `taskTools.output` | `"task_output"` | Registered tool name used by `output()`. |
 | `outputSink.headBytes` | `20480` | Bytes retained from the beginning of a middle-truncated preview; `0` disables it. |
 | `outputSink.maxColumns` | `768` | Maximum rendered output columns; `0` disables column clamping. |
-| `statusEvents` | `true` | Enables kernel status-event forwarding and rendering. |
+| `statusEvents` | `true` | Enables kernel status-event forwarding and rendering. Each cell retains at most 100 status rows; after overflow, one omitted-count row precedes the latest 99 events. |
 
 `SENPI_CODEMODE_PY`, `SENPI_CODEMODE_JS`, `SENPI_CODEMODE_RB`, and
 `SENPI_CODEMODE_JL` override the corresponding file setting. `1` or `true`
@@ -102,12 +109,30 @@ options object and asynchronous helpers are `await`-able.
 | `log(message)` / `phase(title)` | Emits progress text and starts a status phase. |
 
 `agent()` is available only when the configured task tool is active in the
-session. `output()` similarly requires the configured task-output tool. Missing
-tools produce a clear availability error instead of importing an orchestration
-package. `agent()` delegates through the tool contract, so task-engine
-permissions, progress updates, and transcripts remain owned by that engine.
+session. `output()` similarly requires the configured task-output tool and
+returns immediately: a running task reports its current status, while completed
+tasks return the requested transcript. Missing tools produce a clear
+availability error instead of importing an orchestration package. `agent()`
+delegates through the tool contract, so task-engine permissions, progress
+updates, and transcripts remain owned by that engine.
 `isolated`, `apply`, and `merge` are accepted for compatibility but emit a
 warning because this task-engine integration has no isolation model.
+
+## Detached cells
+
+`eval` accepts `on_timeout: "detach"|"error"`. The default is `"detach"` in
+interactive TUI, RPC, and app-server sessions; print and JSON one-shot runs
+default to `"error"` so their result is never silently detached. A detached
+cell keeps only its own language kernel busy. A new same-language call returns
+a busy error with its cell id and output tail; calls in other languages continue
+normally. Do not re-run the cell.
+
+Use `eval({ action: "peek", cell_id })` for its state and buffered output, or
+`eval({ action: "stop", cell_id })` to cancel it. Python stop interrupts the
+existing kernel and preserves variables. JavaScript stop kills and restarts its
+worker, so JavaScript VM state is lost. Detached completion messages state when
+kernel variables are available to the next eval cell; oversized buffered output
+is written under the session local root and referenced as `local://…`.
 
 ## Output and artifacts
 
@@ -135,6 +160,10 @@ loopback only and authenticates each session with a random bearer token.
 Session generations fence retired kernels and callbacks; each cell settles once
 across completion, errors, cancellation, timeout, bridge failure, or a kernel
 crash.
+
+GPT models use the same JavaScript `eval` worker trust boundary as other JavaScript cells;
+there is no separate execution runtime. `eval` is excluded from the nested tool
+namespace to prevent recursive execution.
 
 ## Validation
 

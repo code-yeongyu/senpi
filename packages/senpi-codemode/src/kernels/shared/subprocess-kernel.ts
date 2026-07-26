@@ -1,5 +1,6 @@
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
 import { decodeBridgeFrame, encodeBridgeFrame, isKernelToHostMessage } from "../../bridge/protocol.ts";
+import type { KernelInterruptHandle } from "../../tool/types.ts";
 import type { KernelResult, KernelRunInput, SubprocessKernelOptions, ToolCallMessage } from "./subprocess-contract.ts";
 import { type SubprocessLike, SubprocessProcess, type SubprocessSpawn, spawnSubprocess } from "./subprocess-process.ts";
 import { SubprocessRunQueue } from "./subprocess-queue.ts";
@@ -44,24 +45,26 @@ export class SubprocessKernel {
 		return run;
 	}
 
-	async interrupt(reason = "interrupted"): Promise<void> {
-		if (this.closed) return;
+	async interrupt(reason = "interrupted"): Promise<KernelInterruptHandle> {
+		if (this.closed) return { stateRetained: Promise.resolve(true) };
 		if (!this.runs.active) {
-			if (!this.retirementPromise) return;
+			if (!this.retirementPromise) return { stateRetained: Promise.resolve(true) };
 			const queued = this.runs.takeWaiting();
 			if (queued) this.runs.settle(queued, failureResult(queued, new CellInterruptedError(reason)));
-			return;
+			return { stateRetained: Promise.resolve(true) };
 		}
 		const process = this.process;
 		process?.retire();
 		this.runs.clearToolCalls();
 		const run = this.runs.active;
-		if (!run) return;
+		if (!run) return { stateRetained: Promise.resolve(true) };
 		this.runs.releaseActive(run);
 		this.runs.settle(run, failureResult(run, new CellInterruptedError(reason)));
 		const signal = globalThis.process.platform === "win32" ? "SIGTERM" : "SIGINT";
 		await this.restartProcess(process, signal, 5_000);
 		if (this.failure) throw this.failure;
+		// Restart always spawns a fresh interpreter, so no user global survives.
+		return { stateRetained: Promise.resolve(false) };
 	}
 
 	nextToolCall(): Promise<ToolCallMessage> {

@@ -40,7 +40,7 @@ async function waitExitBounded(session, timeoutMs = 4000) {
 	await Promise.race([session.waitExit(), delay(timeoutMs)]);
 }
 
-async function waitForText(session, needle, timeoutMs = 5000) {
+async function watchForText(session, needle, timeoutMs = 5000) {
 	const deadline = Date.now() + timeoutMs;
 	let buffer = "";
 	const unsubscribe = session.onData((chunk) => {
@@ -70,12 +70,15 @@ async function main() {
 
 	const { createTerminalSession, TerminalScreen, SessionRegistry } = await import("@earendil-works/pi-pty");
 
-	// Scenario A — background command + wait_for output.
+	// Scenario A — background command + monitor-style line watch, then a peek at the
+	// accumulated output. The harness subscribes to output events (what the monitor tool
+	// does) instead of blocking inside a read call; peeking then returns what arrived.
 	const shell = process.platform === "win32" ? "bash" : "/bin/bash";
 	const a = createTerminalSession({ command: shell, args: ["-c", "sleep 0.3; echo READY_MARK"], cols: 120, rows: 40 });
 	record(`backend: ${a.backend}`);
-	const seen = await waitForText(a, "READY_MARK");
-	checks.ok("A: wait_for sees READY_MARK", seen !== null);
+	const seen = await watchForText(a, "READY_MARK");
+	checks.ok("A: monitor-style line watch sees READY_MARK", seen !== null);
+	checks.ok("A: peek returns the watched output (READY_MARK)", seen !== null && seen.includes("READY_MARK"));
 	await waitExitBounded(a);
 
 	// Scenario B — interactive session steering via stdin. `cat` echoes each line back,
@@ -83,7 +86,7 @@ async function main() {
 	const b = createTerminalSession({ command: "cat", args: [], cols: 120, rows: 40 });
 	await delay(150);
 	b.write("STEER_42\n");
-	const steered = await waitForText(b, "STEER_42", 4000);
+	const steered = await watchForText(b, "STEER_42", 4000);
 	checks.ok("B: bash_input steers a live session (STEER_42)", steered !== null);
 	b.write("\x04"); // ctrl-d closes cat's stdin
 	b.kill();

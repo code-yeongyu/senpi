@@ -70,6 +70,7 @@ export const COMPLETIONS_COMPAT = {
 	chatTemplateKwargs: {},
 	zaiToolStream: false,
 	supportsStrictMode: true,
+	supportsOpenAIGrammarTools: false,
 	toolSchemaFlavor: undefined,
 	toolCallFormat: undefined,
 	cacheControlFormat: "anthropic",

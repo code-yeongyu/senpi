@@ -4,6 +4,7 @@ import type { ThreadGoal } from "../protocol/index.ts";
 const GOAL_STATUS_TO_THREAD_STATUS = {
 	active: "active",
 	paused: "paused",
+	blocked: "blocked",
 	complete: "complete",
 } as const satisfies Record<GoalStatus, ThreadGoal["status"]>;
 

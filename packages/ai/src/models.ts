@@ -12,7 +12,6 @@ import type {
 	CredentialStore,
 	ProviderAuth,
 } from "./auth/types.ts";
-import { MODELS } from "./models.generated.ts";
 import { InMemoryModelsStore, type ModelsStore, type ProviderModelsStore } from "./models-store.ts";
 import type {
 	Api,
@@ -31,61 +30,6 @@ import type {
 } from "./types.ts";
 
 export { ModelsError, type ModelsErrorCode } from "./auth/resolve.ts";
-
-const XIAOMI_MIMO_PROVIDERS = new Set([
-	"xiaomi",
-	"xiaomi-token-plan-cn",
-	"xiaomi-token-plan-ams",
-	"xiaomi-token-plan-sgp",
-]);
-
-function normalizeGeneratedModel<TApi extends Api>(model: Model<TApi> | undefined): Model<TApi> | undefined {
-	if (!model) return undefined;
-	if (XIAOMI_MIMO_PROVIDERS.has(model.provider) && model.id === "mimo-v2.5-pro") {
-		return {
-			...model,
-			compat: {
-				...model.compat,
-				requiresReasoningContentOnAssistantMessages: true,
-				thinkingFormat: "deepseek",
-				supportsDisabledThinking: false,
-			},
-		} as Model<TApi>;
-	}
-	if (model.provider === "anthropic" && model.id === "claude-opus-4-8") {
-		return {
-			...model,
-			thinkingLevelMap: {
-				...model.thinkingLevelMap,
-				max: "max",
-			},
-		};
-	}
-	return model;
-}
-
-/** @deprecated Use `getBuiltinModel` from `providers/all.ts` or a Models runtime. */
-export function getModel(provider: string, modelId: string): Model<any> {
-	const providerModels = MODELS[provider as keyof typeof MODELS] as Record<string, Model<Api>> | undefined;
-	const model = normalizeGeneratedModel(providerModels?.[modelId]);
-	if (!model) throw new Error(`Unknown model: ${provider}/${modelId}`);
-	return model;
-}
-
-/** @deprecated Use `getBuiltinModels` from `providers/all.ts` or a Models runtime. */
-export function getModels(provider: string): Model<any>[] {
-	const providerModels = MODELS[provider as keyof typeof MODELS] as Record<string, Model<Api>> | undefined;
-	return providerModels
-		? Object.values(providerModels)
-				.map((model) => normalizeGeneratedModel(model))
-				.filter((model): model is Model<Api> => model !== undefined)
-		: [];
-}
-
-/** @deprecated Use `getBuiltinProviders` from `providers/all.ts` or a Models runtime. */
-export function getProviders(): string[] {
-	return Object.keys(MODELS);
-}
 
 export interface RefreshModelsContext {
 	/** Effective configured credential. OAuth credentials are refreshed before network access. */
@@ -755,6 +699,7 @@ export function supportsXhigh<TApi extends Api>(model: Model<TApi>): boolean {
 		model.id.includes("gpt-5.3") ||
 		model.id.includes("gpt-5.4") ||
 		model.id.includes("gpt-5.5") ||
+		model.id.includes("gpt-5.6") ||
 		model.id.includes("deepseek-v4-pro") ||
 		model.id.includes("deepseek-v4-flash") ||
 		model.id.includes("opus-4-6") ||
@@ -762,7 +707,10 @@ export function supportsXhigh<TApi extends Api>(model: Model<TApi>): boolean {
 		model.id.includes("opus-4-7") ||
 		model.id.includes("opus-4.7") ||
 		model.id.includes("opus-4-8") ||
-		model.id.includes("opus-4.8")
+		model.id.includes("opus-4.8") ||
+		model.id.includes("opus-5") ||
+		model.id.includes("sonnet-5") ||
+		model.id.includes("fable-5")
 	);
 }
 

@@ -193,12 +193,11 @@ In-tree, tightly coupled to senpi internals. Loaded in this exact registration o
 | 11 | [`tool-pair-guard`](packages/coding-agent/src/core/extensions/builtin/tool-pair-guard/) | Sanitizes Anthropic request payloads by removing orphan `tool_result` blocks — compaction safety | — |
 | 12 | [`compaction`](packages/coding-agent/src/core/extensions/builtin/compaction/) | Speculative + emergency compaction policy: degradation monitor, circuit breaker, per-turn cap, todo bridging, checkpoint state, restoration tracker, tool-result truncation | [AGENTS.md](packages/coding-agent/src/core/extensions/builtin/compaction/AGENTS.md) · [changes.md](packages/coding-agent/src/core/extensions/builtin/compaction/changes.md) |
 | 13 | [`history-search`](packages/coding-agent/src/core/extensions/builtin/history-search/) | `/history` command — searches prompt history across sessions in an overlay | — |
-| 14 | [`session-observer`](packages/coding-agent/src/core/extensions/builtin/session-observer/) | `/sessions` command — peeks at previous session transcripts in a HUD overlay | — |
-| 15 | [`websearch`](packages/coding-agent/src/core/extensions/builtin/websearch/) | Provider-backed `web_search` tool with config-gated activation, TUI status, and source-aware results | — |
-| 16 | [`webfetch`](packages/coding-agent/src/core/extensions/builtin/webfetch/) | `webfetch` tool for URL content as markdown, text, or HTML with bounded time and size | — |
-| 17 | [`nested-agents-md`](packages/coding-agent/src/core/extensions/builtin/nested-agents-md/) | Auto-injects nearby `AGENTS.md` files when the agent reads from nested directories | — |
-| 18 | [`rules`](packages/coding-agent/src/core/extensions/builtin/rules/) | Auto-discovers project rule files and exposes `/rules` / `/reload-rules` commands | — |
-| 19 | [`goal`](packages/coding-agent/src/core/extensions/builtin/goal/) | Persistent goal tracking tools, footer state, and continuation prompts | — |
+| 14 | [`websearch`](packages/coding-agent/src/core/extensions/builtin/websearch/) | Provider-backed `web_search` tool with config-gated activation, TUI status, and source-aware results | — |
+| 15 | [`webfetch`](packages/coding-agent/src/core/extensions/builtin/webfetch/) | `webfetch` tool for URL content as markdown, text, or HTML with bounded time and size | — |
+| 16 | [`nested-agents-md`](packages/coding-agent/src/core/extensions/builtin/nested-agents-md/) | Auto-injects nearby `AGENTS.md` files when the agent reads from nested directories | — |
+| 17 | [`rules`](packages/coding-agent/src/core/extensions/builtin/rules/) | Auto-discovers project rule files and exposes `/rules` / `/reload-rules` commands | — |
+| 18 | [`goal`](packages/coding-agent/src/core/extensions/builtin/goal/) | Persistent goal tracking tools, footer state, and continuation prompts | — |
 
 > The builtin directories above are new vs upstream `pi-mono` — none exist in `badlogic/pi-mono`. Vendored versions are pinned in [`external-versions.json`](packages/coding-agent/src/core/extensions/builtin/external-versions.json) and synced from the sibling `pi-extensions` checkout with [`sync-builtin-extensions.mjs`](packages/coding-agent/scripts/sync-builtin-extensions.mjs).
 

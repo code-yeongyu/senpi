@@ -24,7 +24,6 @@ import promptUrlWidgetExtension from "./prompt-url-widget.ts";
 import redrawsExtension from "./redraws.ts";
 import piRulesExtension from "./rules/index.ts";
 import serviceTierExtension from "./service-tier.ts";
-import sessionObserverExtension from "./session-observer/index.ts";
 import terminalExtension from "./terminal/index.ts";
 import todowriteExtension from "./todotools/index.ts";
 import toolPairGuardExtension from "./tool-pair-guard/index.ts";
@@ -67,7 +66,6 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "compaction", factory: compactionExtension },
 	{ id: "history-search", factory: historySearchExtension },
 	{ id: "import-repro", factory: importReproExtension },
-	{ id: "session-observer", factory: sessionObserverExtension },
 	{ id: "websearch", factory: websearchExtension },
 	{ id: "webfetch", factory: webfetchExtension },
 	{ id: "video-in", factory: videoInExtension },

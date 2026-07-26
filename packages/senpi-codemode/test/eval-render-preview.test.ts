@@ -335,4 +335,59 @@ describe("eval renderer preview", () => {
 		for (const outputLine of outputLines) expect.soft(expandedText).toContain(outputLine);
 		expect.soft(expandedText).not.toContain("earlier status events");
 	});
+
+	it("Given a bounded status history when collapsed and expanded then the exact omission count survives", () => {
+		// Given: a history that overflowed the retention bound, e.g. 19,906 events kept as one
+		// marker plus the newest five real events.
+		const statusEvents = [
+			{ op: "status-events-omitted", count: 19_901 },
+			...Array.from({ length: 5 }, (_, index) => ({ op: "log", message: `status-${index + 1}` })),
+		];
+		const givenResult = evalResult(
+			{
+				language: "js",
+				durationMs: 1,
+				toolCalls: [],
+				truncated: false,
+				cells: [
+					{
+						index: 0,
+						code: "run()",
+						language: "js",
+						output: "ok",
+						status: "complete",
+						statusEvents,
+					},
+				],
+			},
+			"",
+		);
+
+		// When
+		const collapsedText = renderEvalResult(
+			givenResult,
+			{ expanded: false, isPartial: false },
+			undefined,
+			resultContext(),
+		)
+			.render(80)
+			.join("\n");
+		const expandedText = renderEvalResult(
+			givenResult,
+			{ expanded: true, isPartial: false },
+			undefined,
+			resultContext({ expanded: true }),
+		)
+			.render(80)
+			.join("\n");
+
+		// Then: collapsing keeps the newest three rows and reports 19,901 + 2 sliced omissions,
+		// while expanding shows every retained row above the exact marker count.
+		expect.soft(collapsedText).toContain("19903 earlier status events");
+		for (const visibleStatus of ["status-3", "status-4", "status-5"])
+			expect.soft(collapsedText).toContain(visibleStatus);
+		expect.soft(expandedText).toContain("19901 earlier status events");
+		for (let index = 1; index <= 5; index++) expect.soft(expandedText).toContain(`status-${index}`);
+		expect.soft(expandedText).not.toContain("status-events-omitted");
+	});
 });

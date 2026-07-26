@@ -77,7 +77,7 @@ function searchAbortSignal(
 }
 
 function noResultsMessage(config: SearchProviderEntry, request: SearchRequest): string {
-	return `Search provider ${entryLabel(config)} returned no results for "${request.query}".`;
+	return `Search provider ${providerEntryLabel(config)} returned no results for "${request.query}".`;
 }
 
 export interface SearchRoutingState {
@@ -89,10 +89,15 @@ export function createSearchRoutingState(providerCount: number): SearchRoutingSt
 	return { roundRobinCursor: 0, successCounts: Array.from({ length: providerCount }, () => 0) };
 }
 
-function entryLabel(entry: Pick<SearchProviderEntry, "provider" | "id"> | SearchAttempt): string {
-	if ("entryId" in entry && entry.entryId) return `${entry.provider}/${entry.entryId}`;
-	if ("id" in entry && entry.id) return `${entry.provider}/${entry.id}`;
-	return entry.provider;
+export function providerEntryLabel(entry: {
+	readonly provider: string;
+	readonly id?: string;
+	readonly entryId?: string;
+}): string {
+	const id = entry.entryId ?? entry.id;
+	if (!id || id === entry.provider) return entry.provider;
+	const nativePrefix = `native-${entry.provider}-`;
+	return `${entry.provider}/${id.startsWith(nativePrefix) ? "native" : id}`;
 }
 
 function sortedPriorityIndices(providers: SearchProviderEntry[]): number[] {
@@ -244,7 +249,11 @@ function attemptFromDetails(details: SearchDetails): SearchAttempt {
 	return attempt;
 }
 
-export type SearchAttemptListener = (providerLabel: string, attempts: readonly SearchAttempt[]) => void;
+export type SearchAttemptListener = (
+	providerLabel: string,
+	attempts: readonly SearchAttempt[],
+	routeLabels: readonly string[],
+) => void;
 
 export async function performSearch(
 	config: WebsearchConfig,
@@ -257,13 +266,17 @@ export async function performSearch(
 	const state = routingState ?? createSearchRoutingState(config.providers.length);
 	const order = selectOrder(config.strategy, config.providers, state);
 	const attempts: SearchAttempt[] = [];
+	const routeLabels = order.flatMap((index) => {
+		const provider = config.providers[index];
+		return provider ? [providerEntryLabel(provider)] : [];
+	});
 	const collected = new Map<string, SearchDetails["results"][number]>();
 	let selectedDetails: SearchDetails | undefined;
 
 	for (const index of order) {
 		const provider = config.providers[index];
 		if (!provider) continue;
-		onAttempt?.(entryLabel(provider), attempts);
+		onAttempt?.(providerEntryLabel(provider), attempts, routeLabels);
 		const details = await performProviderSearch(provider, request, signal);
 		attempts.push(attemptFromDetails(details));
 
@@ -315,7 +328,7 @@ export async function performSearch(
 		durationMs: Date.now() - startedAt,
 		strategy: config.strategy,
 		attempts,
-		error: `All configured search providers failed: ${attempts.map((attempt) => `${entryLabel(attempt)} ${attempt.error ?? "failed"}`).join("; ")}`,
+		error: `All configured search providers failed: ${attempts.map((attempt) => `${providerEntryLabel(attempt)} ${attempt.error ?? "failed"}`).join("; ")}`,
 	};
 }
 
@@ -324,7 +337,7 @@ export function formatSearchText(details: SearchDetails): string {
 	if (details.results.length === 0) return `No web search results found for "${details.query}".`;
 
 	const route = details.strategy
-		? ` via ${details.entryId ? `${details.provider}/${details.entryId}` : details.provider} (${details.strategy})`
+		? ` via ${providerEntryLabel(details)} (${details.strategy})`
 		: ` via ${details.provider}`;
 	const lines = [`Web search results for "${details.query}"${route}:`, ""];
 	if (details.attempts && details.attempts.length > 0) {
@@ -332,7 +345,7 @@ export function formatSearchText(details: SearchDetails): string {
 			`Routing attempts: ${details.attempts
 				.map(
 					(attempt) =>
-						`${entryLabel(attempt)} ${attempt.error ? `failed: ${attempt.error}` : `${attempt.resultsCount} result${attempt.resultsCount === 1 ? "" : "s"}`}`,
+						`${providerEntryLabel(attempt)} ${attempt.error ? `failed: ${attempt.error}` : `${attempt.resultsCount} result${attempt.resultsCount === 1 ? "" : "s"}`}`,
 				)
 				.join(" -> ")}`,
 			"",

@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { DEFAULT_COMPACTION_SETTINGS } from "../src/core/compaction/index.ts";
 import { renderSearchResult } from "../src/core/extensions/builtin/websearch/websearch/renderers.ts";
+import { formatSearchText } from "../src/core/extensions/builtin/websearch/websearch/search.ts";
 import { createWebSearchTool } from "../src/core/extensions/builtin/websearch/websearch/tool.ts";
 import type {
+	SearchDetails,
 	SearchProgressDetails,
 	WebsearchConfig,
 } from "../src/core/extensions/builtin/websearch/websearch/types.ts";
@@ -96,11 +98,13 @@ describe("websearch per-attempt progress", () => {
 		// then
 		expect(progress).toHaveLength(3);
 		expect(progress[0]?.currentProvider).toBeUndefined();
+		expect(progress[0]?.providerLabels).toEqual(["exa/primary", "exa/backup"]);
 		expect(progress[1]?.currentProvider).toBe("exa/primary");
 		expect(progress[1]?.attempts).toEqual([]);
 		expect(progress[2]?.currentProvider).toBe("exa/backup");
 		expect(progress[2]?.attempts).toHaveLength(1);
 		expect(progress[2]?.attempts?.[0]?.error).toContain("HTTP 500");
+		expect(progress[2]?.routeLabels).toEqual(["exa/primary", "exa/backup"]);
 		expect(result.details && "provider" in result.details ? result.details.entryId : undefined).toBe("backup");
 	});
 
@@ -110,6 +114,7 @@ describe("websearch per-attempt progress", () => {
 			phase: "searching",
 			query: "attempt progress",
 			providerLabels: ["exa/primary", "exa/backup"],
+			routeLabels: ["exa/primary", "exa/backup"],
 			maxResults: 10,
 			currentProvider: "exa/backup",
 			attempts: [{ provider: "exa", entryId: "primary", durationMs: 12, resultsCount: 0, error: "HTTP 500" }],
@@ -132,8 +137,94 @@ describe("websearch per-attempt progress", () => {
 			.join("\n");
 
 		// then
-		expect(collapsed).toContain('Searching "attempt progress" via exa/backup [2/2] (max 10)');
+		expect(collapsed).toContain('Searching "attempt progress" via exa/backup (max 10)');
+		expect(collapsed).not.toMatch(/\[\d+\/\d+\]/);
 		expect(collapsed).not.toContain("exa/primary ->");
-		expect(expanded).toContain("route exa/primary:failed");
+		expect(expanded).toContain("route exa/primary:failed -> exa/backup:searching");
+	});
+
+	it("#given three providers with the first failed and the second running #when rendering expanded partial output #then shows the three-state route string", () => {
+		// given
+		const details: SearchProgressDetails = {
+			phase: "searching",
+			query: "route render",
+			providerLabels: ["exa/primary", "duckduckgo-html/backup", "brave/extra"],
+			routeLabels: ["exa/primary", "duckduckgo-html/backup", "brave/extra"],
+			maxResults: 10,
+			currentProvider: "duckduckgo-html/backup",
+			attempts: [{ provider: "exa", entryId: "primary", durationMs: 9, resultsCount: 0, error: "HTTP 500" }],
+		};
+
+		// when
+		const collapsed = renderSearchResult(
+			{ content: [{ type: "text", text: "" }], details },
+			{ expanded: false, isPartial: true },
+			passthroughTheme,
+		)
+			.render(200)
+			.join("\n");
+		const expanded = renderSearchResult(
+			{ content: [{ type: "text", text: "" }], details },
+			{ expanded: true, isPartial: true },
+			passthroughTheme,
+		)
+			.render(200)
+			.join("\n");
+
+		// then
+		expect(collapsed).not.toMatch(/\[\d+\/\d+\]/);
+		expect(expanded).toContain("route exa/primary:failed -> duckduckgo-html/backup:searching -> brave/extra:pending");
+	});
+});
+
+describe("websearch native entry label collapse", () => {
+	const nativeDetails: SearchDetails = {
+		provider: "openai",
+		entryId: "native-openai-abc123",
+		query: "native label",
+		results: [{ title: "Native", url: "https://example.com/native", snippet: "snip" }],
+		durationMs: 7,
+		truncated: false,
+		strategy: "priority",
+		attempts: [{ provider: "openai", entryId: "native-openai-abc123", durationMs: 7, resultsCount: 1 }],
+	};
+
+	it("#given finished details with native-openai entryId #when rendering collapsed summary #then collapses to openai/native", () => {
+		// when
+		const rendered = renderSearchResult(
+			{ content: [{ type: "text", text: "ok" }], details: nativeDetails },
+			{ expanded: false },
+			passthroughTheme,
+		)
+			.render(200)
+			.join("\n");
+
+		// then
+		expect(rendered).toContain("via openai/native");
+		expect(rendered).not.toContain("native-openai-abc123");
+	});
+
+	it("#given finished details with native-openai entryId #when rendering expanded route #then collapses route line to openai/native:count", () => {
+		// when
+		const rendered = renderSearchResult(
+			{ content: [{ type: "text", text: "ok" }], details: nativeDetails },
+			{ expanded: true },
+			passthroughTheme,
+		)
+			.render(200)
+			.join("\n");
+
+		// then
+		expect(rendered).toContain("route openai/native:1");
+		expect(rendered).not.toContain("native-openai-abc123");
+	});
+
+	it("#given finished details with native-openai entryId and priority strategy #when formatting text #then route fragment collapses to openai/native", () => {
+		// when
+		const text = formatSearchText(nativeDetails);
+
+		// then
+		expect(text).toContain("via openai/native (priority)");
+		expect(text).not.toContain("native-openai-abc123");
 	});
 });

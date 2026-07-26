@@ -26,17 +26,31 @@ async function selfTest() {
 		`code=${help.code}`,
 	);
 
+	const helpWithRemovedFlagEnv = await runCli(["--help"], { ...opts, env: { ...box.env, SENPI_ENABLE_NEO: "1" } });
 	checks.ok(
-		"--help omits the gated --neo flag by default",
-		help.code === 0 && !help.stdout.includes("--neo"),
-		`code=${help.code}`,
+		"--help never advertises --neo, even when SENPI_ENABLE_NEO is set",
+		helpWithRemovedFlagEnv.code === 0 && !helpWithRemovedFlagEnv.stdout.includes("--neo"),
+		`code=${helpWithRemovedFlagEnv.code}`,
 	);
 
-	const helpNeo = await runCli(["--help"], { ...opts, env: { ...box.env, SENPI_ENABLE_NEO: "1" } });
+	const helpWithoutGrokNeo = await runCli(["--help"], {
+		...opts,
+		env: { ...box.env, SENPI_ENABLE_GROK_NEO: "" },
+	});
 	checks.ok(
-		"--help lists --neo when SENPI_ENABLE_NEO is set",
-		helpNeo.code === 0 && helpNeo.stdout.includes("--neo"),
-		`code=${helpNeo.code}`,
+		"--help omits --grok-neo by default",
+		helpWithoutGrokNeo.code === 0 && !helpWithoutGrokNeo.stdout.includes("--grok-neo"),
+		`code=${helpWithoutGrokNeo.code}`,
+	);
+
+	const helpWithGrokNeo = await runCli(["--help"], {
+		...opts,
+		env: { ...box.env, SENPI_ENABLE_GROK_NEO: "1" },
+	});
+	checks.ok(
+		"--help lists --grok-neo when SENPI_ENABLE_GROK_NEO=1",
+		helpWithGrokNeo.code === 0 && helpWithGrokNeo.stdout.includes("--grok-neo"),
+		`code=${helpWithGrokNeo.code}`,
 	);
 
 	const version = await runCli(["--version"], opts);

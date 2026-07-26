@@ -23,7 +23,8 @@ import {
 import { convertToLlm } from "../../../messages.ts";
 import type { ModelRegistry } from "../../../model-registry.ts";
 import type { ReadonlySessionManager } from "../../../session-manager.ts";
-import type { ApplyCompactionResult, ContextUsage } from "../../types.ts";
+import type { ApplyCompactionResult, ContextUsage, ProviderRequestPreparation } from "../../types.ts";
+import { sanitizeAnthropicPayload } from "../tool-pair-guard/sanitize-anthropic-payload.ts";
 import { computeEffectiveKeepRecentTokens, computeEffectiveThreshold } from "./policy.ts";
 import { buildPrompt, type MergedCompactionPromptVariant } from "./prompts.ts";
 import { repairOrphanedToolResults } from "./repair-tool-pairs.ts";
@@ -46,9 +47,10 @@ export interface SpeculativeCompactionContext {
 	getCompactionSettings?(): CompactionPreparation["settings"];
 	getMessageRevision(): number;
 	getSystemPrompt?(): string;
+	prepareProviderRequest?(messages: AgentMessage[]): Promise<ProviderRequestPreparation>;
 	applyCompaction(
 		precomputed: CompactionResult,
-		options: { reason: "extension"; expectedRevision: number },
+		options: { reason: "extension"; expectedRevision: number; signal?: AbortSignal },
 	): Promise<ApplyCompactionResult>;
 }
 
@@ -104,6 +106,33 @@ function summaryMaxTokens(model: Model<any>, contextWindow: number): number {
 	return headroom;
 }
 
+/**
+ * Reasoning override for summarization requests. Compaction must be fast: a
+ * summarization request that inherits the provider's default reasoning mode
+ * burns its latency (and output budget) on invisible thinking before emitting
+ * the summary. Disable or minimize reasoning per wire family; adapters ignore
+ * options their provider does not support. Mirrors how OpenAI Codex keeps its
+ * compaction turn cheap.
+ */
+function summarizationReasoningOptions(model: Model<any>): Record<string, unknown> {
+	if (!model.reasoning) return {};
+	if (model.api === "anthropic-messages") return { thinkingEnabled: false };
+	const reasoningEffort = (["minimal", "low", "medium", "high"] as const).find(
+		(level) => model.thinkingLevelMap?.[level] !== null,
+	);
+	if (!reasoningEffort) return {};
+	switch (model.api) {
+		case "openai-responses":
+		case "openai-codex-responses":
+		case "azure-openai-responses":
+			return { reasoningEffort, reasoningSummary: null };
+		case "openai-completions":
+			return { reasoningEffort };
+		default:
+			return {};
+	}
+}
+
 function getSummaryText(message: Message): string {
 	const content = Array.isArray(message.content)
 		? message.content
@@ -120,6 +149,7 @@ function isAssistantMessage(message: Message): message is AssistantMessage {
 }
 
 async function generateSummaryMessage(options: {
+	context: SpeculativeCompactionContext;
 	messages: AgentMessage[];
 	onProgress?: CompactionProgressCallback;
 	prompt: ReturnType<typeof buildPrompt>;
@@ -137,7 +167,6 @@ async function generateSummaryMessage(options: {
 	// deterministically refused by Anthropic's anti-distillation classifier
 	// ("reverse engineering or duplicating model outputs"), while the same
 	// content as native blocks with the agent's system prompt and tools passes.
-	const conversationMessages = repairOrphanedToolResults(convertToLlm(options.messages));
 	// Request-local controller: the idle watchdog must be able to tear down a
 	// stalled summarization request without aborting the caller's own signal.
 	const requestController = new AbortController();
@@ -147,28 +176,35 @@ async function generateSummaryMessage(options: {
 		else options.signal.addEventListener("abort", onCallerAbort, { once: true });
 	}
 	try {
-		const responseStream = stream(
-			options.snapshot.model,
+		const requestMessages: AgentMessage[] = [
+			...options.messages,
 			{
-				systemPrompt: options.snapshot.systemPrompt ?? options.prompt.system,
-				messages: [
-					...conversationMessages,
-					{
-						role: "user",
-						content: [{ type: "text", text: options.prompt.user }],
-						timestamp: Date.now(),
-					},
-				],
-				...(options.snapshot.tools && options.snapshot.tools.length > 0 ? { tools: options.snapshot.tools } : {}),
+				role: "user",
+				content: [{ type: "text", text: options.prompt.user }],
+				timestamp: Date.now(),
 			},
-			{
-				apiKey: options.auth.apiKey,
-				headers: options.auth.headers,
-				extraBody: options.auth.extraBody,
-				maxTokens: summaryMaxTokens(options.snapshot.model, options.snapshot.contextWindow),
-				signal: requestController.signal,
+		];
+		const providerRequest = await options.context.prepareProviderRequest?.(requestMessages);
+		const requestContext = {
+			systemPrompt: options.snapshot.systemPrompt ?? options.prompt.system,
+			messages: repairOrphanedToolResults(convertToLlm(providerRequest?.messages ?? requestMessages)),
+			...(options.snapshot.tools && options.snapshot.tools.length > 0 ? { tools: options.snapshot.tools } : {}),
+		};
+		const headers = providerRequest
+			? await providerRequest.transformHeaders(options.auth.headers ?? {})
+			: options.auth.headers;
+		const responseStream = stream(options.snapshot.model, requestContext, {
+			apiKey: options.auth.apiKey,
+			headers,
+			extraBody: options.auth.extraBody,
+			onPayload: async (payload, model) => {
+				const sanitized = model.api === "anthropic-messages" ? sanitizeAnthropicPayload(payload) : payload;
+				return providerRequest ? await providerRequest.transformPayload(sanitized) : sanitized;
 			},
-		);
+			maxTokens: summaryMaxTokens(options.snapshot.model, options.snapshot.contextWindow),
+			signal: requestController.signal,
+			...summarizationReasoningOptions(options.snapshot.model),
+		});
 		await consumeStreamWithIdleTimeout(responseStream, {
 			idleTimeoutMs: DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
 			abort: () => requestController.abort(),
@@ -401,6 +437,7 @@ export async function runExtensionCompaction(
 	while (true) {
 		if (signal?.aborted) return undefined;
 		const response = await generateSummaryMessage({
+			context,
 			messages,
 			onProgress,
 			prompt,
@@ -464,6 +501,7 @@ export async function applyGeneratedCompaction(
 	snapshot: SpeculativeCompactionSnapshot | undefined,
 	getCurrentGeneration: () => number,
 	compaction: CompactionResult | undefined,
+	signal?: AbortSignal,
 ): Promise<SpeculativeCompactionResult> {
 	if (!snapshot || !compaction) return { applied: false, reason: "unavailable" };
 
@@ -474,6 +512,7 @@ export async function applyGeneratedCompaction(
 	return await context.applyCompaction(compaction, {
 		reason: "extension",
 		expectedRevision: snapshot.expectedRevision,
+		signal,
 	});
 }
 

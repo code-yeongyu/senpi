@@ -24,6 +24,17 @@ afterEach(() => {
 });
 
 describe("SettingsManager retry fallback settings", () => {
+	it("defaults abortServerSideFallback to true and round-trips an explicit false", () => {
+		const { agentDir, projectDir } = createPaths();
+		expect(SettingsManager.create(projectDir, agentDir).getAbortServerSideFallback()).toBe(true);
+
+		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ retry: { abortServerSideFallback: false } }));
+		expect(SettingsManager.create(projectDir, agentDir).getAbortServerSideFallback()).toBe(false);
+
+		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ retry: { abortServerSideFallback: "no" } }));
+		expect(SettingsManager.create(projectDir, agentDir).getAbortServerSideFallback()).toBe(true);
+	});
+
 	it("returns defaults when fallback settings are unset or malformed", () => {
 		const { agentDir, projectDir } = createPaths();
 		expect(SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings()).toEqual({

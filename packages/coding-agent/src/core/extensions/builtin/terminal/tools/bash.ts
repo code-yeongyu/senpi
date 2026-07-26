@@ -103,6 +103,28 @@ export function createThrottledEmitter(emit: () => void, throttleMs = BASH_UPDAT
 
 type ForegroundWaitOutcome = "exited" | "abort_grace" | "timeout_grace";
 
+type SessionEnvSource = {
+	sessionManager?: { getSessionId: () => string; getSessionFile: () => string | undefined };
+	model?: { provider: string; id: string };
+	thinkingLevel?: string;
+	cwd?: string;
+};
+
+function sessionEnvOverrides(ctx: TerminalToolContext, execCtx?: SessionEnvSource): Record<string, string> {
+	const session = execCtx ?? ctx.getSessionContext?.();
+	if (!session?.sessionManager) return {};
+	const env: Record<string, string> = {};
+	env.PI_SESSION_ID = session.sessionManager.getSessionId();
+	const sessionFile = session.sessionManager.getSessionFile();
+	if (sessionFile) env.PI_SESSION_FILE = sessionFile;
+	if (session.model) {
+		env.PI_PROVIDER = session.model.provider;
+		env.PI_MODEL = session.model.id;
+	}
+	if (session.thinkingLevel) env.PI_REASONING_LEVEL = session.thinkingLevel;
+	return env;
+}
+
 /**
  * Wait for the session's exit to settle, but stop waiting a bounded grace after
  * the session has been killed. The native wait joins the PTY reader thread,
@@ -157,6 +179,7 @@ async function runForeground(
 	signal: AbortSignal | undefined,
 	cwd: string | undefined,
 	onUpdate: AgentToolUpdateCallback | undefined,
+	execCtx?: SessionEnvSource,
 ): Promise<TerminalToolResult> {
 	if (signal?.aborted) return errorResult("Command aborted");
 	const timeoutMs = input.timeout !== undefined ? Math.trunc(input.timeout * 1000) : undefined;
@@ -166,7 +189,7 @@ async function runForeground(
 		rows,
 		timeoutMs,
 		cwd,
-		envOverrides: FOREGROUND_ENV_OVERRIDES,
+		envOverrides: { ...sessionEnvOverrides(ctx, execCtx), ...FOREGROUND_ENV_OVERRIDES },
 	});
 	const startedAt = Date.now();
 	const activity = `running ${input.command.slice(0, 80)}`;
@@ -231,10 +254,17 @@ async function runBackground(
 	cols: number,
 	rows: number,
 	cwd: string | undefined,
+	execCtx?: SessionEnvSource,
 ): Promise<TerminalToolResult> {
 	// Background sessions are NEVER killed by `timeout` (bash-timeout injects a default into
 	// every bash call); they live until exit or kill_bash, so no timeoutMs is passed.
-	const { id, runtime } = await spawnCommandSession(ctx, { command: input.command, cols, rows, cwd });
+	const { id, runtime } = await spawnCommandSession(ctx, {
+		command: input.command,
+		cols,
+		rows,
+		cwd,
+		envOverrides: sessionEnvOverrides(ctx, execCtx),
+	});
 	if (ctx.onBackgroundExit) runtime.session.onExit(() => ctx.onBackgroundExit?.(id, runtime));
 
 	// Capture any output the command emits within a short grace window (or its exit).
@@ -257,19 +287,20 @@ export function createPtyBashTool(ctx: TerminalToolContext) {
 		description:
 			"Execute a shell command in a persistent PTY-backed session. Set run_in_background:true for long-lived or interactive sessions; steer them with bash_input, snapshot with bash_output, tear down with kill_bash. Foreground timeout is a kill deadline in seconds.",
 		promptSnippet: "Run shell commands; run_in_background:true for long-lived/interactive PTY sessions",
+		promptGuidelines: ["Inspect PI_* environment variables for current model and session details."],
 		parameters: ptyBashSchema,
 		async execute(
 			_toolCallId: string,
 			input: PtyBashInput,
 			signal?: AbortSignal,
 			onUpdate?: AgentToolUpdateCallback,
-			execCtx?: { cwd?: string },
+			execCtx?: SessionEnvSource,
 		): Promise<TerminalToolResult> {
 			const cols = resolveDimension(input.cols, ctx.defaultCols || DEFAULT_COLS);
 			const rows = resolveDimension(input.rows, ctx.defaultRows || DEFAULT_ROWS);
 			const cwd = execCtx?.cwd;
-			if (input.run_in_background) return runBackground(ctx, input, cols, rows, cwd);
-			return runForeground(ctx, input, cols, rows, signal, cwd, onUpdate);
+			if (input.run_in_background) return runBackground(ctx, input, cols, rows, cwd, execCtx);
+			return runForeground(ctx, input, cols, rows, signal, cwd, onUpdate, execCtx);
 		},
 	};
 }

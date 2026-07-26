@@ -1,5 +1,7 @@
-import { type Api, getModels, getProviders, type Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
+import { TEST_DISCIPLINE_RULES } from "../../src/core/dynamic-prompt/verification.ts";
 import {
 	type PromptPresetSettings,
 	resolvePreset,
@@ -83,6 +85,33 @@ describe("Claude Fable 5 prompt preset", () => {
 		// then
 		expect(preset?.name).toBe("claude-fable-5");
 		expect(preset?.prompt).toContain("audit each claim against a tool result");
+	});
+
+	it("keeps every shared test-discipline rule after the dieted core rewrite", () => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel("claude-fable-5", "anthropic");
+
+		// when
+		const preset = resolvePreset(model, settings);
+
+		// then
+		for (const rule of TEST_DISCIPLINE_RULES) {
+			expect(preset?.prompt).toContain(rule.directive);
+		}
+	});
+
+	it("declares the binding stop condition in the routing line", () => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel("claude-fable-5", "anthropic");
+
+		// when
+		const preset = resolvePreset(model, settings);
+
+		// then
+		expect(preset?.prompt).toContain("I'll stop when [the exact, observable condition that ends this turn].");
+		expect(preset?.prompt).toContain("defect, not diligence");
 	});
 
 	it("does not include GPT or Kimi tuning in the claude-fable-5 preset", () => {

@@ -62,7 +62,6 @@ export async function runEvalOutput(args: unknown, options: RunEvalOutputOptions
 					{
 						...(id.startsWith("st_") ? { task_id: id } : { name: id }),
 						mode,
-						block: true,
 					},
 					options.signal === undefined ? undefined : { signal: options.signal },
 				);

@@ -20,7 +20,6 @@ const taskOutputParamsSchema = Type.Object(
 		name: Type.Optional(Type.String()),
 		mode: Type.Optional(Type.Union([Type.Literal("status"), Type.Literal("tail"), Type.Literal("full")])),
 		tail_lines: Type.Optional(Type.Integer({ minimum: 1 })),
-		block: Type.Optional(Type.Boolean()),
 		timeout_ms: Type.Optional(Type.Integer({ minimum: 0 })),
 	},
 	{ additionalProperties: false },
@@ -52,12 +51,11 @@ function parseTaskOutputParams(value: unknown): TaskOutputParams {
 	if (value.mode !== "full" && value.mode !== "tail") {
 		throw new TaskOutputFixtureError("task_output requires an explicit transcript mode");
 	}
-	if (value.block !== true) throw new TaskOutputFixtureError("task_output requires block: true");
+	if ("block" in value) throw new TaskOutputFixtureError("task_output must not receive the removed block parameter");
 	return {
 		...(taskId === undefined ? {} : { task_id: taskId }),
 		...(name === undefined ? {} : { name }),
 		mode: value.mode,
-		block: value.block,
 	};
 }
 
@@ -114,7 +112,7 @@ describe("output bridge", () => {
 
 		// Then
 		expect(output).toBe("TRANSCRIPT:st_123:full\nsecond\nthird");
-		expect(calls).toEqual([{ toolName: "named_output", params: { task_id: "st_123", mode: "full", block: true } }]);
+		expect(calls).toEqual([{ toolName: "named_output", params: { task_id: "st_123", mode: "full" } }]);
 	});
 
 	it("returns transcripts in input order for multiple ids", async () => {
@@ -128,8 +126,8 @@ describe("output bridge", () => {
 		// Then
 		expect(output).toEqual(["TRANSCRIPT:st_123:tail\nsecond\nthird", "TRANSCRIPT:reviewer:tail\nsecond\nthird"]);
 		expect(calls).toEqual([
-			{ toolName: "task_output", params: { task_id: "st_123", mode: "tail", block: true } },
-			{ toolName: "task_output", params: { name: "reviewer", mode: "tail", block: true } },
+			{ toolName: "task_output", params: { task_id: "st_123", mode: "tail" } },
+			{ toolName: "task_output", params: { name: "reviewer", mode: "tail" } },
 		]);
 	});
 
@@ -275,7 +273,7 @@ describe("output bridge", () => {
 				type: "text",
 				text: expect.stringContaining("TRANSCRIPT:st_123:full"),
 			});
-			expect(calls).toEqual([{ toolName: "task_output", params: { task_id: "st_123", mode: "full", block: true } }]);
+			expect(calls).toEqual([{ toolName: "task_output", params: { task_id: "st_123", mode: "full" } }]);
 		} finally {
 			await kernel?.close();
 		}

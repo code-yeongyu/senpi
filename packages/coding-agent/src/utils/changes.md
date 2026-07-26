@@ -101,16 +101,15 @@
 
 - LOW: `shell.ts` around `sanitizeBinaryOutput()`.
 
-## Shared path shortening for the /sessions HUD (2026-05-24)
+## Shared path shortening (2026-05-24)
 
 ### What changed
 
-- `paths.ts`: `shortenPath()` (`~/…` shortening) is shared by the fork's `/sessions` session-observer HUD picker
-  (builtin `session-observer`).
+- `paths.ts`: `shortenPath()` (`~/…` shortening) is a shared utility used by core and builtins for consistent short display paths. It previously also backed the fork's `/sessions` session-observer HUD picker (builtin `session-observer`), which was removed on 2026-07-26; `shortenPath()` itself stays — other consumers remain.
 
 ### Why
 
-- The picker lists sessions across `~/.senpi/agent/sessions/` cwd-subdirs and needs consistent short display paths.
+- Callers that list paths across `~/.senpi/agent/sessions/` cwd-subdirs need consistent short display paths.
 
 ### Why extension system couldn't handle this
 

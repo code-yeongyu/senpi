@@ -3,6 +3,8 @@ import { SettingsManager } from "../../../settings-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { isAnthropicBashEnabled } from "../anthropic-bash/index.ts";
 import { TerminalManager } from "./manager.ts";
+import { MonitorNotifier } from "./monitor-notify.ts";
+import { MonitorRegistry } from "./monitor-registry.ts";
 import { TerminalNotifier } from "./notify.ts";
 import { TERMINAL_PROMPT_SECTION } from "./prompt.ts";
 import type { TerminalRuntimeSession } from "./runtime-session.ts";
@@ -14,11 +16,14 @@ import { createBashOutputTool } from "./tools/bash-output.ts";
 import { createBashResizeTool } from "./tools/bash-resize.ts";
 import type { TerminalToolContext } from "./tools/context.ts";
 import { createKillBashTool } from "./tools/kill-bash.ts";
+import { createMonitorTool } from "./tools/monitor.ts";
 
 interface TerminalExtensionState {
 	manager: TerminalManager | null;
 	settings: ResolvedTerminalSettings;
 	notifier: TerminalNotifier | null;
+	monitorNotifier: MonitorNotifier | null;
+	monitors: MonitorRegistry | null;
 	ctx: ExtensionContext | undefined;
 	shellPath: string | undefined;
 	steppedAside: boolean;
@@ -52,10 +57,16 @@ function buildToolContext(state: TerminalExtensionState): TerminalToolContext {
 		get defaultRows() {
 			return state.settings.defaultRows;
 		},
+		get monitorRegistry() {
+			state.monitors ??= new MonitorRegistry((event) => state.monitorNotifier?.notifyEvent(event));
+			return state.monitors;
+		},
 		getEnv: () => getShellEnv(),
+		getSessionContext: () => state.ctx,
 		onBackgroundExit: (id: string, runtime: TerminalRuntimeSession) => {
 			state.notifier?.notifyCompletion(id, runtime);
 		},
+		onMonitorRearmed: (id: string) => state.monitorNotifier?.rearm(id),
 	};
 }
 
@@ -92,6 +103,8 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 		manager: null,
 		settings: TERMINAL_SETTINGS_DEFAULTS,
 		notifier: null,
+		monitorNotifier: null,
+		monitors: null,
 		ctx: undefined,
 		shellPath: undefined,
 		steppedAside: false,
@@ -104,6 +117,7 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 	pi.registerTool(createBashInputTool(toolCtx));
 	pi.registerTool(createBashResizeTool(toolCtx));
 	pi.registerTool(createKillBashTool(toolCtx));
+	pi.registerTool(createMonitorTool(toolCtx));
 
 	pi.on("session_start", async (_event, ctx) => {
 		state.ctx = ctx;
@@ -115,6 +129,16 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 			getContext: () => state.ctx,
 			getMode: () => state.settings.notify,
 		});
+		state.monitorNotifier?.dispose();
+		state.monitorNotifier = new MonitorNotifier({
+			sendUserMessage: (content, options) => pi.sendUserMessage(content, options),
+			getContext: () => state.ctx,
+			getMode: () => state.settings.notify,
+			getSettings: () => state.settings.monitor,
+			pauseMonitors: () => state.monitors?.pauseAll() ?? [],
+		});
+		state.monitors?.dispose();
+		state.monitors = null;
 		await state.manager?.teardown();
 		state.manager = new TerminalManager({
 			maxSessions: state.settings.maxSessions,
@@ -128,12 +152,24 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 		syncToolset(pi, state);
 	});
 
+	pi.on("input", (event) => {
+		if (event.source !== "extension") state.monitorNotifier?.noteActivity();
+	});
+
+	pi.on("tool_call", () => {
+		state.monitorNotifier?.noteActivity();
+	});
+
 	pi.on("before_agent_start", async (event) => {
 		if (state.steppedAside) return undefined;
 		return { systemPrompt: `${event.systemPrompt}\n${TERMINAL_PROMPT_SECTION}` };
 	});
 
 	pi.on("session_shutdown", async () => {
+		state.monitorNotifier?.dispose();
+		state.monitorNotifier = null;
+		state.monitors?.dispose();
+		state.monitors = null;
 		await state.manager?.teardown();
 		state.manager = null;
 	});

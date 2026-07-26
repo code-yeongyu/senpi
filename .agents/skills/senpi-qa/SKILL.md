@@ -100,8 +100,8 @@ OpenAI and Anthropic (pick with `--api`; default `openai-completions`):
 | `anthropic-messages` | `anthropic` | `/v1/messages` · x-api-key |
 | `openai-responses` | `openai` | `/v1/responses` · Bearer |
 
-`--self-test` (no `--api`) round-trips all three. `--with-tool` proves the full
-loop (model → bash tool → final text). `--with-mcp-tool` registers a sandbox
+`--self-test` (no `--api`) round-trips all three and exercises the three
+error/retry scenarios below. `--with-tool` proves the full loop (model → bash tool → final text). `--with-mcp-tool` registers a sandbox
 extension that proxies `mcp_fx_tool_<n>` to the local MCP stdio fixture, then
 asserts the fixture call log exists and the model's second request contains the
 fixture result. The loop is hermetic: provider key env vars are stripped so only
@@ -112,6 +112,9 @@ node .agents/skills/senpi-qa/scripts/mock-loop.mjs --self-test
 node .agents/skills/senpi-qa/scripts/mock-loop.mjs --self-test --api anthropic-messages
 node .agents/skills/senpi-qa/scripts/mock-loop.mjs --with-tool --api openai-responses
 node .agents/skills/senpi-qa/scripts/mock-loop.mjs --with-mcp-tool mcp_fx_tool_1 --tool-args '{"value":"ok"}'
+node .agents/skills/senpi-qa/scripts/mock-loop.mjs --scenario transient-recover
+node .agents/skills/senpi-qa/scripts/mock-loop.mjs --scenario budget-exhaust
+node .agents/skills/senpi-qa/scripts/mock-loop.mjs --scenario long-retry-after
 node .agents/skills/senpi-qa/scripts/mock-loop.mjs --run "summarize this repo" --evidence mock-summary
 ```
 
@@ -128,8 +131,8 @@ node .agents/skills/senpi-qa/scripts/cli-smoke.mjs --self-test
 
 Drives the real `@earendil-works/pi-pty` runtime that backs the built-in `terminal`
 tools (`bash` / `bash_output` / `bash_input` / `bash_resize` / `kill_bash`) through the
-canonical scenarios: background command + `wait_for`, stdin steering, screen snapshot +
-resize reflow, and registry teardown with no orphans. Uses native PTY when a host
+canonical scenarios: background command + monitor-style line watch and peek, stdin
+steering, screen snapshot + resize reflow, and registry teardown with no orphans. Uses native PTY when a host
 prebuild is present, else the pipe fallback (`--force-pipe` forces it).
 
 ```bash
@@ -144,12 +147,12 @@ node .agents/skills/senpi-qa/scripts/pty-drive.mjs --self-test --force-pipe
 | `scripts/lib/common.mjs --self-check` | repo + tsx resolve; sandbox created and auto-removed; free port; real auth.json unchanged |
 | `scripts/lib/fake-model-server.mjs --self-test` | OpenAI SSE contract: scripted text streams back, `[DONE]` sent, request recorded |
 | `scripts/rpc-drive.mjs --self-test` | `get_state` returns the documented `RpcSessionState`, no API call, auth unchanged |
-| `scripts/mock-loop.mjs --self-test` | scripted marker returns through the real loop via the mock provider; request used the mock model + key; zero real calls; auth unchanged |
+| `scripts/mock-loop.mjs --self-test` | scripted marker returns through the real loop via the mock provider; retry error injection proves same-model recovery, retry-budget fallback, and long-retry-after fallback; zero real calls; auth unchanged |
 | `scripts/mock-loop.mjs --with-tool` | full loop: two model turns served, bash tool ran, final text returned |
 | `scripts/mock-loop.mjs --with-mcp-tool <tool>` | full loop with a registered sandbox MCP stdio fixture proxy; fails if the requested `mcp_fx_tool_<n>` is not registered, invoked, and fed back to the model |
 | `scripts/tui-smoke.mjs --self-test` | TUI boots, renders, accepts a keystroke, tears down; auth unchanged |
 | `scripts/cli-smoke.mjs --self-test` | `--help`/`--version`/`--list-models` work offline; unknown flag reported; auth unchanged |
-| `scripts/pty-drive.mjs --self-test` | PTY runtime backing the `terminal` tools: background `wait_for`, stdin steering, screen snapshot + resize, registry teardown (no orphans); auth unchanged |
+| `scripts/pty-drive.mjs --self-test` | PTY runtime backing the `terminal` tools: background line watch + peek, stdin steering, screen snapshot + resize, registry teardown (no orphans); auth unchanged |
 
 Run the whole suite:
 

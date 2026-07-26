@@ -84,6 +84,13 @@ describe("goal continuation gating", () => {
 		expect(shouldQueueGoalContinuationWhenIdle(active, false, false)).toBe(false);
 		expect(shouldQueueGoalContinuationWhenIdle(active, true, true)).toBe(false);
 		expect(shouldQueueGoalContinuationWhenIdle(makeGoal({ status: "paused" }), true, false)).toBe(false);
+		expect(
+			shouldQueueGoalContinuationWhenIdle(
+				makeGoal({ status: "blocked", blockedReason: "Waiting", blockedAt: 1 }),
+				true,
+				false,
+			),
+		).toBe(false);
 		expect(shouldQueueGoalContinuationWhenIdle(null, true, false)).toBe(false);
 	});
 
@@ -94,6 +101,13 @@ describe("goal continuation gating", () => {
 		expect(shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "complete" }), false, cleanMessages)).toBe(
 			false,
 		);
+		expect(
+			shouldQueueGoalContinuationAfterAgentEnd(
+				makeGoal({ status: "blocked", blockedReason: "Waiting", blockedAt: 1 }),
+				false,
+				cleanMessages,
+			),
+		).toBe(false);
 		expect(shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "active" }), false, [])).toBe(false);
 		expect(
 			shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "active" }), false, [
@@ -164,6 +178,9 @@ describe("goal status UI", () => {
 		expect(goalStatusText(makeGoal({ status: "active", timeUsedSeconds: 0 }))).toBe("Pursuing goal");
 		expect(goalStatusText(makeGoal({ status: "active", timeUsedSeconds: 65 }))).toBe("Pursuing goal (1m)");
 		expect(goalStatusText(makeGoal({ status: "paused" }))).toBe("Goal paused (/goal resume)");
+		expect(goalStatusText(makeGoal({ status: "blocked", blockedReason: "Waiting for review", blockedAt: 1 }))).toBe(
+			"Goal blocked: Waiting for review",
+		);
 		expect(goalStatusText(makeGoal({ status: "complete" }))).toBe("Goal achieved");
 	});
 

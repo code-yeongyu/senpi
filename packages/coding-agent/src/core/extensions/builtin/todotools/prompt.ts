@@ -18,8 +18,10 @@ Completing tasks out of phase order can move this pointer **back** to an earlier
 | done | task or phase | Mark completed |
 | drop | task or phase | Mark abandoned |
 | rm | task or phase (optional) | Remove task or phase; omit both to clear |
-| append | phase, items: string[] | Append tasks to phase; lazily creates phase |
+| append | phase?, items: string[] | Append tasks to phase; lazily creates phase |
 | view | — | Read-only: echo list |
+
+Example: {"op":"init","list":[{"phase":"Setup","items":["Survey code","Write tests"]}]}
 
 ## Anatomy
 - **Task content**: 5–10 words; what, not how. Unique identifier.
@@ -30,7 +32,7 @@ Completing tasks out of phase order can move this pointer **back** to an earlier
 - NEVER make a todo call your turn's only tool call — batch it with the real work: init with the first reads/edits, each done/start with the next action. Solo todo turns waste a round trip.
 - Blocked? append a task to the active phase, or drop.
 - Keep task/phase strings stable once introduced.
-- Lost the exact task text? view echoes the list — NEVER guess from memory.
+- Lost the exact task text? view echoes the list — NEVER guess from memory. done/start/drop take the task's EXACT text — copy it verbatim from the latest todo result, never re-type from memory.
 
 ## When to create a list
 - Task requires 3+ distinct steps
