@@ -87,6 +87,11 @@ describe("createAgentSessionServices provider registration order", () => {
 			legacyRegistration("ord-legacy-last"),
 		);
 
-		expect(applied).toEqual(["config:ord-legacy-first", "native:ord-native", "config:ord-legacy-last", "config:glm-zcode"]);
+		expect(applied).toEqual([
+			"config:ord-legacy-first",
+			"native:ord-native",
+			"config:ord-legacy-last",
+			"config:glm-zcode",
+		]);
 	});
 });
