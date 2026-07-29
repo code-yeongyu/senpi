@@ -32,10 +32,29 @@ export interface FooterUsageSegment {
 	readonly text: string;
 }
 
+export interface FooterTopLeftSegment {
+	readonly color: "accent" | "muted" | "success" | "warning";
+	readonly text: string;
+}
+
+export interface FooterTopLeftInput {
+	readonly path: string;
+	readonly branch: string;
+	readonly sessionName: string;
+	readonly omoNative: boolean;
+}
+
+export interface FooterStatusGroups {
+	readonly left: readonly string[];
+	readonly right: readonly string[];
+}
+
 export interface FooterBottomLine {
 	readonly left: string;
 	readonly right: string;
 }
+
+export const FOOTER_SEPARATOR = " • ";
 
 function trimOneDecimal(value: number): string {
 	const formatted = value.toFixed(1);
@@ -56,6 +75,17 @@ export function compactWorkingDirectory(cwd: string): string {
 	const compactPath = parts.slice(-2).join(pathSeparator);
 
 	return compactPath ? `[${compactPath}]` : "[]";
+}
+
+export function buildFooterTopLeftSegments(input: FooterTopLeftInput): readonly FooterTopLeftSegment[] {
+	const segments: FooterTopLeftSegment[] = [];
+	if (input.omoNative) {
+		segments.push({ color: "success", text: "(🏴‍☠️ OmO Native)" });
+	}
+	segments.push({ color: "accent", text: input.path });
+	if (input.branch) segments.push({ color: "warning", text: input.branch });
+	if (input.sessionName) segments.push({ color: "muted", text: input.sessionName });
+	return segments;
 }
 
 export function formatTokens(count: number): string {
@@ -113,7 +143,7 @@ export function fitFooterSegments(
 	maxWidth: number,
 	measure: (text: string) => number = visibleWidth,
 ): string {
-	const separator = " | ";
+	const separator = FOOTER_SEPARATOR;
 	const statusText = statusSegments.join(separator);
 	if (!statusText) return leadingSegments.join(separator);
 
@@ -131,10 +161,16 @@ export function fitFooterSegments(
 	return measure(elided) <= maxWidth ? elided : statusText;
 }
 
-export function sortedFooterStatuses(statuses: ReadonlyMap<string, string>): readonly string[] {
-	return Array.from(statuses.entries())
-		.sort(([left], [right]) => left.localeCompare(right))
-		.map(([, text]) => sanitizeFooterLabel(text));
+export function sortedFooterStatuses(statuses: ReadonlyMap<string, string>): FooterStatusGroups {
+	const left: string[] = [];
+	const right: string[] = [];
+	for (const [key, text] of Array.from(statuses.entries()).sort(([leftKey], [rightKey]) =>
+		leftKey.localeCompare(rightKey),
+	)) {
+		const target = key === "ext:nested-agents:status" ? left : right;
+		target.push(sanitizeFooterLabel(text));
+	}
+	return { left, right };
 }
 
 export function planFooterBottomLine(
@@ -145,7 +181,7 @@ export function planFooterBottomLine(
 	measure: (text: string) => number = visibleWidth,
 ): FooterBottomLine {
 	return {
-		left: usageSegments.join(" | "),
+		left: usageSegments.join(FOOTER_SEPARATOR),
 		right: fitFooterSegments([contextText], statusSegments, maxRightWidth, measure),
 	};
 }

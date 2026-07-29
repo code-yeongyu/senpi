@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
 	alignFooterLine,
+	buildFooterTopLeftSegments,
 	buildFooterUsageSegments,
 	compactWorkingDirectory,
 	fitFooterSegments,
@@ -17,7 +18,7 @@ describe("planFooterBottomLine", () => {
 
 		expect(line).toEqual({
 			left: "↑1K",
-			right: "32K/372K (8.6%) | quota 88%",
+			right: "32K/372K (8.6%) • quota 88%",
 		});
 	});
 });
@@ -32,7 +33,7 @@ describe("fitFooterSegments", () => {
 	it("includes context before status when space permits", () => {
 		const rendered = fitFooterSegments(["32K/372K (8.6%)"], ["quota 88%"], 40);
 
-		expect(rendered).toBe("32K/372K (8.6%) | quota 88%");
+		expect(rendered).toBe("32K/372K (8.6%) • quota 88%");
 	});
 
 	it("drops context before overflowing a wide status", () => {
@@ -85,15 +86,39 @@ describe("compactWorkingDirectory", () => {
 });
 
 describe("sortedFooterStatuses", () => {
-	it("preserves every extension status without key-specific substitution", () => {
+	it("keeps the nested-agent counter on the left and other statuses on the right", () => {
 		const statuses = sortedFooterStatuses(
 			new Map([
 				["provider", "quota 88%"],
 				["fast", "fast mode"],
+				["ext:nested-agents:status", "🤖 2"],
 			]),
 		);
 
-		expect(statuses).toEqual(["fast mode", "quota 88%"]);
+		expect(statuses).toEqual({
+			left: ["🤖 2"],
+			right: ["fast mode", "quota 88%"],
+		});
+	});
+});
+
+describe("buildFooterTopLeftSegments", () => {
+	it("prepends the built-in native badge only when the default footer exposes it", () => {
+		const active = buildFooterTopLeftSegments({
+			path: "[project/src]",
+			branch: "main",
+			sessionName: "",
+			omoNative: true,
+		});
+		const inactive = buildFooterTopLeftSegments({
+			path: "[project/src]",
+			branch: "main",
+			sessionName: "",
+			omoNative: false,
+		});
+
+		expect(active.at(0)).toEqual({ color: "success", text: "(🏴‍☠️ OmO Native)" });
+		expect(inactive.at(0)).toEqual({ color: "accent", text: "[project/src]" });
 	});
 });
 

@@ -3,8 +3,10 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 import {
 	alignStyledFooterLine,
+	buildFooterTopLeftSegments,
 	buildFooterUsageSegments,
 	compactWorkingDirectory,
+	FOOTER_SEPARATOR,
 	type FooterText,
 	type FooterUsageTotals,
 	formatTokens,
@@ -54,7 +56,7 @@ export function createTwoLineFooterFactory(ctx: ExtensionContext): FooterFactory
 			dispose: unsubscribe,
 			invalidate() {},
 			render(width: number): string[] {
-				const separator = theme.fg("borderMuted", " | ");
+				const separator = theme.fg("borderMuted", FOOTER_SEPARATOR);
 				const footerTextTools = {
 					colorTruncatedLeft: (text: string) => theme.fg("muted", text),
 					measure: visibleWidth,
@@ -89,18 +91,14 @@ export function createTwoLineFooterFactory(ctx: ExtensionContext): FooterFactory
 				const path = compactWorkingDirectory(ctx.cwd);
 				const branch = sanitizeFooterLabel(footerData.getGitBranch() ?? "");
 				const sessionName = sanitizeFooterLabel(ctx.sessionManager.getSessionName() ?? "");
-				const topPlainSegments = [path];
-				const topColoredSegments = [theme.fg("accent", path)];
-				if (branch) {
-					topPlainSegments.push(branch);
-					topColoredSegments.push(theme.fg("warning", branch));
-				}
-				if (sessionName) {
-					topPlainSegments.push(sessionName);
-					topColoredSegments.push(theme.fg("muted", sessionName));
-				}
-				const topLeftPlain = topPlainSegments.join(" | ");
-				const topLeftColored = topColoredSegments.join(separator);
+				const topLeftSegments = buildFooterTopLeftSegments({
+					path,
+					branch,
+					sessionName,
+					omoNative: footerData.isOmoNative(),
+				});
+				const topLeftPlain = topLeftSegments.map(({ text }) => text).join(FOOTER_SEPARATOR);
+				const topLeftColored = topLeftSegments.map(({ color, text }) => theme.fg(color, text)).join(separator);
 
 				const modelName = sanitizeFooterLabel(ctx.model?.id ?? "no-model");
 				const thinkingSuffix = ctx.model?.reasoning ? `:${ctx.thinkingLevel ?? "off"}` : "";
@@ -124,17 +122,26 @@ export function createTwoLineFooterFactory(ctx: ExtensionContext): FooterFactory
 					? ctx.model.provider === "kimi-coding" || ctx.modelRegistry.isUsingOAuth(ctx.model)
 					: false;
 				const usageSegments = buildFooterUsageSegments(usage, usingSubscription);
-				const bottomPlainSegments = usageSegments.map(({ text }) => text);
-				const bottomColoredSegments = usageSegments.map(({ color, text }) => theme.fg(color, text));
 				const statuses = sortedFooterStatuses(footerData.getExtensionStatuses());
-				const bottomLine = planFooterBottomLine(bottomPlainSegments, contextText, statuses, width, visibleWidth);
-				const statusColored = statuses.map((status) => theme.fg("dim", status)).join(separator);
+				const bottomPlainSegments = [...statuses.left, ...usageSegments.map(({ text }) => text)];
+				const bottomColoredSegments = [
+					...statuses.left.map((status) => theme.fg("dim", status)),
+					...usageSegments.map(({ color, text }) => theme.fg(color, text)),
+				];
+				const bottomLine = planFooterBottomLine(
+					bottomPlainSegments,
+					contextText,
+					statuses.right,
+					width,
+					visibleWidth,
+				);
+				const statusColored = statuses.right.map((status) => theme.fg("dim", status)).join(separator);
 				const bottomRightColored =
-					statuses.length === 0
+					statuses.right.length === 0
 						? contextColored
-						: bottomLine.right === statuses.join(" | ")
+						: bottomLine.right === statuses.right.join(FOOTER_SEPARATOR)
 							? statusColored
-							: bottomLine.right === `${contextText} | ${statuses.join(" | ")}`
+							: bottomLine.right === `${contextText}${FOOTER_SEPARATOR}${statuses.right.join(FOOTER_SEPARATOR)}`
 								? [contextColored, statusColored].join(separator)
 								: `${theme.fg("dim", "...")}${separator}${statusColored}`;
 

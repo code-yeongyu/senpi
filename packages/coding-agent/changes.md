@@ -2,9 +2,9 @@
 
 ## 2026-07-29 — Two-line footer extension example
 
-- Changed: added a public-API-only `examples/extensions/two-line-footer/` example with compact path, token, cache, context, model, and generic extension-status rendering. Extension statuses are preserved verbatim, sorted by key, and reserved at the right edge before left-side metrics are truncated.
+- Changed: added a public-API-only `examples/extensions/two-line-footer/` example with compact path, token, cache, context, model, and generic extension-status rendering. Built-in anchor indicators remain visible, one built-in context counter stays with the left-side metrics, and other extension statuses are sorted by key and reserved at the right edge before left-side metrics are truncated.
 - Why: users can opt into a denser two-row footer without adding core behavior or coupling status-producing extensions to a specific footer implementation.
-- Extension boundary: the example uses `ctx.ui.setFooter()` and `footerData.getExtensionStatuses()` exclusively; no core footer source changes are required.
+- Extension boundary: the example uses `ctx.ui.setFooter()` and public `footerData` accessors exclusively; no core footer source changes are required.
 - Merge-conflict risk: low. The change adds an isolated example directory, one test, one catalog row, and this record.
 
 ## 2026-07-28 — Billing-class provider errors always pin the session model swap
