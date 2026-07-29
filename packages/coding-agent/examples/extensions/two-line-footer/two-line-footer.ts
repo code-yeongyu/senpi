@@ -14,6 +14,7 @@ import {
 	sanitizeFooterLabel,
 	sortedFooterStatuses,
 } from "./footer-layout.ts";
+import { planFooterTopLine } from "./top-line-layout.ts";
 
 type FooterFactory = Exclude<Parameters<ExtensionContext["ui"]["setFooter"]>[0], undefined>;
 
@@ -97,8 +98,6 @@ export function createTwoLineFooterFactory(ctx: ExtensionContext): FooterFactory
 					sessionName,
 					omoNative: footerData.isOmoNative(),
 				});
-				const topLeftPlain = topLeftSegments.map(({ text }) => text).join(FOOTER_SEPARATOR);
-				const topLeftColored = topLeftSegments.map(({ color, text }) => theme.fg(color, text)).join(separator);
 
 				const modelName = sanitizeFooterLabel(ctx.model?.id ?? "no-model");
 				const thinkingSuffix = ctx.model?.reasoning ? `:${ctx.thinkingLevel ?? "off"}` : "";
@@ -108,15 +107,22 @@ export function createTwoLineFooterFactory(ctx: ExtensionContext): FooterFactory
 						? `(${sanitizeFooterLabel(ctx.model.provider)}) `
 						: "";
 				const modelWithProvider = `${providerPrefix}${modelWithoutProvider}`;
-				const modelPlain =
-					visibleWidth(topLeftPlain) + 2 + visibleWidth(modelWithProvider) <= width
-						? modelWithProvider
-						: modelWithoutProvider;
 				const coloredModel = `${theme.fg("accent", modelName)}${theme.fg("dim", thinkingSuffix)}`;
+				const topLine = planFooterTopLine({
+					width,
+					segments: topLeftSegments,
+					minimalRight: modelWithoutProvider,
+					fullRight: providerPrefix ? modelWithProvider : undefined,
+				});
+				const topLeftPlain = topLine.segments.map(({ text }) => text).join(FOOTER_SEPARATOR);
+				const topLeftColored = topLine.segments.map(({ color, text }) => theme.fg(color, text)).join(separator);
+				const modelPlain = topLine.right;
 				const modelColored =
 					modelPlain === modelWithProvider && providerPrefix
 						? `${theme.fg("muted", providerPrefix)}${coloredModel}`
-						: coloredModel;
+						: modelPlain === modelWithoutProvider
+							? coloredModel
+							: theme.fg("accent", modelPlain);
 
 				const usingSubscription = ctx.model
 					? ctx.model.provider === "kimi-coding" || ctx.modelRegistry.isUsingOAuth(ctx.model)

@@ -34,6 +34,7 @@ export interface FooterUsageSegment {
 
 export interface FooterTopLeftSegment {
 	readonly color: "accent" | "muted" | "success" | "warning";
+	readonly kind: "badge" | "branch" | "fallback" | "path" | "session";
 	readonly text: string;
 }
 
@@ -80,12 +81,28 @@ export function compactWorkingDirectory(cwd: string): string {
 export function buildFooterTopLeftSegments(input: FooterTopLeftInput): readonly FooterTopLeftSegment[] {
 	const segments: FooterTopLeftSegment[] = [];
 	if (input.omoNative) {
-		segments.push({ color: "success", text: "(🏴‍☠️ OmO Native)" });
+		segments.push({ color: "success", kind: "badge", text: "(🏴‍☠️ OmO Native)" });
 	}
-	segments.push({ color: "accent", text: input.path });
-	if (input.branch) segments.push({ color: "warning", text: input.branch });
-	if (input.sessionName) segments.push({ color: "muted", text: input.sessionName });
+	segments.push({ color: "accent", kind: "path", text: input.path });
+	if (input.branch) segments.push({ color: "warning", kind: "branch", text: input.branch });
+	if (input.sessionName) segments.push({ color: "muted", kind: "session", text: input.sessionName });
 	return segments;
+}
+
+export function elideHead(text: string, maxWidth: number): string {
+	if (maxWidth <= 0) return "";
+	if (visibleWidth(text) <= maxWidth) return text;
+	if (maxWidth === 1) return "…";
+	const budget = maxWidth - visibleWidth("…");
+	const kept: string[] = [];
+	let used = 0;
+	for (const char of [...text].reverse()) {
+		const charWidth = visibleWidth(char);
+		if (used + charWidth > budget) break;
+		kept.unshift(char);
+		used += charWidth;
+	}
+	return `…${kept.join("")}`;
 }
 
 export function formatTokens(count: number): string {
@@ -200,7 +217,7 @@ export function alignStyledFooterLine(line: FooterLine, tools: FooterTextTools):
 	let leftWidth = tools.measure(line.left.plain);
 
 	if (leftWidth > availableLeft) {
-		const truncatedLeft = tools.truncate(line.left.plain, availableLeft, "...");
+		const truncatedLeft = elideHead(line.left.plain, availableLeft);
 		renderedLeft = tools.colorTruncatedLeft(truncatedLeft);
 		leftWidth = tools.measure(truncatedLeft);
 	}

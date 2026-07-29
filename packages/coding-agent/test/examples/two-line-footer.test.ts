@@ -11,6 +11,7 @@ import {
 	sanitizeFooterLabel,
 	sortedFooterStatuses,
 } from "../../examples/extensions/two-line-footer/footer-layout.ts";
+import { planFooterTopLine } from "../../examples/extensions/two-line-footer/top-line-layout.ts";
 
 describe("planFooterBottomLine", () => {
 	it("keeps extension statuses in the right-aligned footer block", () => {
@@ -54,7 +55,7 @@ describe("alignFooterLine", () => {
 	it("truncates leading text before reserved text", () => {
 		const rendered = alignFooterLine("very-long-left", "right", 16);
 
-		expect(rendered).toBe("very-l...  right");
+		expect(rendered).toBe("…ong-left  right");
 	});
 
 	it("measures wide glyphs by terminal columns", () => {
@@ -68,6 +69,15 @@ describe("alignFooterLine", () => {
 		const rendered = alignFooterLine("", "상태상태상태", 9);
 
 		expect(visibleWidth(rendered)).toBe(9);
+	});
+
+	it("keeps the identifying tail when a long path must shrink", () => {
+		const rendered = alignFooterLine("[workspace/very-long-project/src] • main", "model", 36);
+
+		expect(rendered.startsWith("…")).toBe(true);
+		expect(rendered).toContain("project/src] • main");
+		expect(rendered.endsWith("model")).toBe(true);
+		expect(visibleWidth(rendered)).toBe(36);
 	});
 });
 
@@ -117,8 +127,58 @@ describe("buildFooterTopLeftSegments", () => {
 			omoNative: false,
 		});
 
-		expect(active.at(0)).toEqual({ color: "success", text: "(🏴‍☠️ OmO Native)" });
-		expect(inactive.at(0)).toEqual({ color: "accent", text: "[project/src]" });
+		expect(active.at(0)).toEqual({
+			color: "success",
+			kind: "badge",
+			text: "(🏴‍☠️ OmO Native)",
+		});
+		expect(inactive.at(0)).toEqual({
+			color: "accent",
+			kind: "path",
+			text: "[project/src]",
+		});
+	});
+});
+
+describe("planFooterTopLine", () => {
+	it("shrinks a long path before dropping the session", () => {
+		const segments = buildFooterTopLeftSegments({
+			path: "[workspace/very-long-project-name/src]",
+			branch: "main",
+			sessionName: "work",
+			omoNative: false,
+		});
+
+		const plan = planFooterTopLine({
+			width: 55,
+			segments,
+			minimalRight: "model",
+			fullRight: "(provider) model",
+		});
+
+		expect(plan.right).toBe("(provider) model");
+		expect(plan.segments.some((segment) => segment.kind === "session")).toBe(true);
+		expect(plan.segments.find((segment) => segment.kind === "path")?.text).toMatch(/^….*name\/src\]$/);
+	});
+
+	it("drops the session before shrinking a short path", () => {
+		const segments = buildFooterTopLeftSegments({
+			path: "[project/src]",
+			branch: "main",
+			sessionName: "a-very-long-session-name",
+			omoNative: false,
+		});
+
+		const plan = planFooterTopLine({
+			width: 42,
+			segments,
+			minimalRight: "model",
+			fullRight: "(provider) model",
+		});
+
+		expect(plan.right).toBe("(provider) model");
+		expect(plan.segments.some((segment) => segment.kind === "session")).toBe(false);
+		expect(plan.segments.find((segment) => segment.kind === "path")?.text).toBe("[project/src]");
 	});
 });
 
